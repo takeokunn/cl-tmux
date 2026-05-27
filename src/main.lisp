@@ -15,8 +15,21 @@
 
 (defvar *dirty*   t   "Set by reader threads; cleared by the main render step.")
 (defvar *running* t   "Loop sentinel; set nil by :detach command.")
+(defvar *resize-pending* nil
+  "Set by the SIGWINCH handler; the event loop relayouts once and clears it.
+   Polling terminal-size every frame is fragile (a transient garbage read
+   triggers a spurious resize storm), so geometry is re-read only on signal.")
 (defvar *term-rows* 24)
 (defvar *term-cols* 80)
+
+(defun install-sigwinch-handler ()
+  "Arm SIGWINCH so terminal resizes flag a one-shot relayout."
+  (sb-sys:enable-interrupt
+   sb-unix:sigwinch
+   (lambda (&rest _)
+     (declare (ignore _))
+     (setf *resize-pending* t
+           *dirty*           t))))
 
 ;;; ── PTY reader thread ──────────────────────────────────────────────────────
 
@@ -134,10 +147,22 @@
                  (pty-write (pane-fd ap)
                             (make-array 1 :element-type '(unsigned-byte 8)
                                           :initial-element b))))))))
+      ;; Re-read geometry and relayout only when SIGWINCH fired — never per
+      ;; frame.  This keeps a transient bad terminal-size read from driving a
+      ;; resize storm, and matches how real multiplexers handle resizing.
+      (when *resize-pending*
+        (setf *resize-pending* nil)
+        (multiple-value-setq (*term-rows* *term-cols*) (terminal-size))
+        (let ((win (session-active-window session)))
+          (when win
+            (window-relayout win (- *term-rows* *status-height*) *term-cols*))))
       (when *dirty*
         (setf *dirty* nil)
-        (multiple-value-setq (*term-rows* *term-cols*)
-          (terminal-size))
+        ;; A freshly selected window may have been laid out at a different
+        ;; size; fit it (cheap no-op when already correct).
+        (let ((win (session-active-window session)))
+          (when win
+            (ensure-window-fits win (- *term-rows* *status-height*) *term-cols*)))
         (render-session session *term-rows* *term-cols*)))))
 
 ;;; ── Entry point ────────────────────────────────────────────────────────────
@@ -159,10 +184,12 @@
     (dolist (pane (all-panes session))
       (start-reader-thread pane))
 
+    (install-sigwinch-handler)
+
     (handler-case
         (with-raw-mode
           (clear-display)
-          (setf *running* t *dirty* t)
+          (setf *running* t *dirty* t *resize-pending* nil)
           (event-loop session))
       (sb-posix:syscall-error (c)
         ;; Most likely: stdin is not a TTY.

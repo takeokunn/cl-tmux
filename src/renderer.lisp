@@ -59,8 +59,8 @@
                    (write-char (cell-char cell) stream))))
       (screen-clear-dirty screen))))
 
-(defun render-pane-border (stream pane)
-  "Draw a vertical separator bar immediately to the right of PANE."
+(defun render-vertical-border (stream pane)
+  "Draw a vertical separator bar in the reserved column to PANE's right."
   (reset-attrs stream)
   (let ((border-col (+ (pane-x pane) (pane-width pane)))
         (oy         (pane-y    pane))
@@ -68,6 +68,15 @@
     (loop for row below ph do
       (move-to stream (+ oy row) border-col)
       (write-char #\│ stream))))
+
+(defun render-horizontal-border (stream pane terminal-cols)
+  "Draw a horizontal separator bar in the reserved row below PANE."
+  (reset-attrs stream)
+  (let ((border-row (+ (pane-y pane) (pane-height pane)))
+        (ox         (pane-x pane))
+        (pw         (min (pane-width pane) (- terminal-cols (pane-x pane)))))
+    (move-to stream border-row ox)
+    (loop repeat pw do (write-char #\─ stream))))
 
 ;;; ── Status bar ─────────────────────────────────────────────────────────────
 
@@ -107,11 +116,17 @@
       ;; Render pane contents
       (dolist (p panes)
         (render-pane buf p))
-      ;; Separators between side-by-side panes
+      ;; Separators between adjacent panes (direction set by the split).
       (when (> (length panes) 1)
-        (loop for p in (butlast panes)
-              when (< (+ (pane-x p) (pane-width p)) terminal-cols)
-                do (render-pane-border buf p)))
+        (ecase (window-layout win)
+          (:vertical
+           (loop for p in (butlast panes)
+                 when (< (+ (pane-x p) (pane-width p)) terminal-cols)
+                   do (render-vertical-border buf p)))
+          (:horizontal
+           (loop for p in (butlast panes)
+                 do (render-horizontal-border buf p terminal-cols)))
+          ((nil) nil)))
       ;; Move cursor to the active pane's cursor position
       (let ((ap (session-active-pane session)))
         (when ap

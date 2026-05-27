@@ -23,6 +23,14 @@
 (defun blank-cell ()
   (make-cell))
 
+(declaim (inline clamp))
+(defun clamp (v lo hi) (max lo (min hi v)))
+
+(defun safe-code-char (cp)
+  "CODE-CHAR guarded against invalid code points; falls back to U+FFFD."
+  (or (and (< cp char-code-limit) (code-char cp))
+      (code-char #xFFFD)))
+
 ;;; ── Screen ─────────────────────────────────────────────────────────────────
 
 (defstruct (screen (:constructor %make-screen))
@@ -47,6 +55,9 @@
   (params      nil)       ; accumulated CSI parameter list (reversed while building)
   (cur-param   nil)       ; integer currently being assembled digit by digit
   (intermediate nil)      ; e.g. #\? for DEC private sequences
+  ;; UTF-8 decoder (state persists across read chunks)
+  (utf8-acc    0 :type fixnum)   ; code point assembled so far
+  (utf8-left   0 :type fixnum)   ; continuation bytes still expected
   ;; Dirty flag: set whenever a cell changes; cleared by renderer after paint
   (dirty-p t :type boolean)
   ;; Lock for thread safety (renderer ↔ PTY-reader threads)
@@ -61,6 +72,36 @@
                   :height height
                   :cells  cells
                   :scroll-bottom (1- height))))
+
+(defun screen-resize (screen new-width new-height)
+  "Resize SCREEN to NEW-WIDTH × NEW-HEIGHT in place, preserving the
+   overlapping top-left rectangle of content.  Resets the scroll region to
+   the full new height and clamps the cursor into bounds.
+
+   Callers that share the screen with a reader thread must hold SCREEN's
+   lock; this function does no locking of its own."
+  (when (and (= new-width  (screen-width  screen))
+             (= new-height (screen-height screen)))
+    (return-from screen-resize screen))
+  (let* ((old-width  (screen-width  screen))
+         (old-height (screen-height screen))
+         (old-cells  (screen-cells  screen))
+         (n          (* new-width new-height))
+         (new-cells  (make-array n :initial-element nil)))
+    (dotimes (i n) (setf (aref new-cells i) (blank-cell)))
+    (dotimes (y (min old-height new-height))
+      (dotimes (x (min old-width new-width))
+        (setf (aref new-cells (+ (* y new-width)  x))
+              (aref old-cells (+ (* y old-width)  x)))))
+    (setf (screen-cells  screen)         new-cells
+          (screen-width  screen)         new-width
+          (screen-height screen)         new-height
+          (screen-scroll-top    screen)  0
+          (screen-scroll-bottom screen)  (1- new-height)
+          (screen-cx     screen)         (clamp (screen-cx screen) 0 (1- new-width))
+          (screen-cy     screen)         (clamp (screen-cy screen) 0 (1- new-height))
+          (screen-dirty-p screen)        t)
+    screen))
 
 ;;; Exported cursor accessors (the struct slots use cx/cy internally)
 (defun screen-cursor-x (s) (screen-cx s))
@@ -81,8 +122,6 @@
 
 (defun screen-clear-dirty (screen)
   (setf (screen-dirty-p screen) nil))
-
-(defun clamp (v lo hi) (max lo (min hi v)))
 
 (defun set-cursor (s x y)
   (setf (screen-cx s) (clamp x 0 (1- (screen-width  s)))
@@ -266,8 +305,28 @@
                 ((= b #x7F) nil)                    ; DEL — ignore
                 ((and (>= b #x20) (< b #x7F))
                  (write-char-at-cursor screen (code-char b)))
-                ((>= b #xC0)                        ; UTF-8 multi-byte lead
-                 (write-char-at-cursor screen #\?))))  ; replace; continuations skipped
+                ((< b #xC0) nil)                    ; stray UTF-8 continuation — drop
+                (t                                  ; UTF-8 multi-byte lead
+                 (multiple-value-bind (init left)
+                     (cond ((< b #xE0) (values (logand b #x1F) 1))   ; 2-byte
+                           ((< b #xF0) (values (logand b #x0F) 2))   ; 3-byte
+                           (t          (values (logand b #x07) 3)))  ; 4-byte
+                   (setf (screen-utf8-acc  screen) init
+                         (screen-utf8-left screen) left
+                         (screen-state     screen) :utf8)))))
+
+             (:utf8
+              (cond
+                ((<= #x80 b #xBF)                   ; valid continuation byte
+                 (setf (screen-utf8-acc screen)
+                       (logior (ash (screen-utf8-acc screen) 6) (logand b #x3F)))
+                 (when (zerop (decf (screen-utf8-left screen)))
+                   (write-char-at-cursor screen
+                                         (safe-code-char (screen-utf8-acc screen)))
+                   (setf (screen-state screen) :ground)))
+                (t                                  ; malformed: emit U+FFFD, drop byte
+                 (write-char-at-cursor screen (code-char #xFFFD))
+                 (setf (screen-state screen) :ground))))
 
              (:escape
               (cond

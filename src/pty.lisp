@@ -255,8 +255,13 @@
 
 ;;; ── Public: terminal geometry ──────────────────────────────────────────────
 
+(defconstant +max-sane-rows+ 1000)
+(defconstant +max-sane-cols+ 1000)
+
 (defun terminal-size ()
-  "Return (values rows cols) of the terminal attached to stdout."
+  "Return (values rows cols) of the terminal attached to stdout.
+   Falls back to 24×80 if ioctl fails or reports an out-of-range size
+   (a transient 0×0 or garbage read must not drive a resize)."
   (cffi:with-foreign-object (ws '(:struct winsize))
     (let ((r (cffi:foreign-funcall "ioctl"
                                    :int 1               ; stdout
@@ -264,6 +269,10 @@
                                    :pointer ws
                                    :int)))
       (if (zerop r)
-          (values (cffi:foreign-slot-value ws '(:struct winsize) 'ws-row)
-                  (cffi:foreign-slot-value ws '(:struct winsize) 'ws-col))
+          (let ((rows (cffi:foreign-slot-value ws '(:struct winsize) 'ws-row))
+                (cols (cffi:foreign-slot-value ws '(:struct winsize) 'ws-col)))
+            (if (and (<= 1 rows +max-sane-rows+)
+                     (<= 1 cols +max-sane-cols+))
+                (values rows cols)
+                (values 24 80)))
           (values 24 80)))))          ; safe fallback if ioctl fails

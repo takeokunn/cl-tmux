@@ -43,6 +43,8 @@
    #:screen-clear-dirty
    ;; Lock (for renderer ↔ reader-thread synchronisation)
    #:screen-lock
+   ;; Resize the grid in place
+   #:screen-resize
    ;; Feed raw PTY bytes into the emulator
    #:screen-process-bytes
    ;; Grid access
@@ -74,9 +76,13 @@
    #:window-name
    #:window-width #:window-height
    #:window-panes
+   #:window-layout
    #:window-active-pane
    #:window-select-pane
    #:window-split
+   #:window-relayout
+   #:ensure-window-fits
+   #:pane-reposition
    ;; Session
    #:session
    #:make-session

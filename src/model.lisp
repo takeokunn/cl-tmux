@@ -29,6 +29,19 @@
     (with-lock-held ((screen-lock screen))
       (screen-process-bytes screen bytes))))
 
+(defun pane-reposition (pane x y width height)
+  "Move and resize PANE to X,Y with WIDTH×HEIGHT.
+   Resizes the PTY and the virtual screen (the latter under the screen lock,
+   since a reader thread may be writing to it concurrently)."
+  (setf (pane-x pane) x
+        (pane-y pane) y
+        (pane-width  pane) width
+        (pane-height pane) height)
+  (set-pty-size (pane-fd pane) height width)
+  (let ((screen (pane-screen pane)))
+    (with-lock-held ((screen-lock screen))
+      (screen-resize screen width height))))
+
 ;;; ── Window ─────────────────────────────────────────────────────────────────
 
 (defstruct window
@@ -38,7 +51,10 @@
   (width   80   :type fixnum)
   (height  24   :type fixnum)
   (panes   nil  :type list)   ; ordered list of all panes
-  (active  nil))              ; the currently focused pane
+  (active  nil)               ; the currently focused pane
+  ;; Layout of the panes: :vertical (side by side), :horizontal (stacked),
+  ;; or nil for a single full-window pane.  Drives separator rendering.
+  (layout  nil))
 
 (defun window-active-pane (window)
   (or (window-active window)
@@ -61,9 +77,7 @@
     (loop for pane in existing
           for layout in layouts
           do (destructuring-bind (px py pw ph) layout
-               (setf (pane-x pane) px (pane-y pane) py
-                     (pane-width pane) pw (pane-height pane) ph)
-               (set-pty-size (pane-fd pane) ph pw)))
+               (pane-reposition pane px py pw ph)))
     ;; Create the new pane using the last layout slot.
     (destructuring-bind (px py pw ph) (car (last layouts))
       (multiple-value-bind (fd pid)
@@ -74,19 +88,53 @@
                          :fd fd :pid pid
                          :screen (make-screen pw ph)))))
     (setf (window-panes  window) (append existing (list new-pane))
-          (window-active window) new-pane)
+          (window-active window) new-pane
+          (window-layout window) direction)
     new-pane))
 
-;;; Divide a rows×cols area into N equal slots.
-;;; Returns a list of (x y width height) plists.
+(defun window-relayout (window rows cols)
+  "Re-fit WINDOW's panes into a new ROWS×COLS area, preserving the split layout.
+   Resizes each pane's PTY and screen."
+  (setf (window-width  window) cols
+        (window-height window) rows)
+  (let* ((panes   (window-panes window))
+         (n       (length panes))
+         (layouts (if (window-layout window)
+                      (divide-window (window-layout window) n rows cols)
+                      (list (list 0 0 cols rows)))))
+    (loop for pane in panes
+          for layout in layouts
+          do (destructuring-bind (px py pw ph) layout
+               (pane-reposition pane px py pw ph)))))
+
+(defun ensure-window-fits (window rows cols)
+  "Relayout WINDOW only if its stored size differs from ROWS×COLS.
+   Cheap to call every frame; does work only when the geometry changed
+   (terminal resize, or switching to a window laid out at a different size)."
+  (when (or (/= (window-width  window) cols)
+            (/= (window-height window) rows))
+    (window-relayout window rows cols)))
+
+;;; Divide a ROWS×COLS area into N slots, reserving one row/column between
+;;; adjacent panes for a separator so panes never overlap.  The final pane
+;;; absorbs any rounding remainder.  Returns a list of (x y width height).
 (defun divide-window (direction n rows cols)
   (case direction
-    (:horizontal
-     (let ((h (floor rows n)))
-       (loop for i below n collect (list 0 (* i h) cols h))))
-    (:vertical
-     (let ((w (floor cols n)))
-       (loop for i below n collect (list (* i w) 0 w rows))))
+    (:vertical    ; side by side; vertical separator columns between panes
+     (let* ((avail (- cols (1- n)))
+            (w     (max 1 (floor avail n))))
+       (loop for i below n
+             for x = (* i (1+ w))
+             collect (list x 0
+                           (if (= i (1- n)) (max 1 (- cols x)) w)
+                           rows))))
+    (:horizontal  ; stacked; horizontal separator rows between panes
+     (let* ((avail (- rows (1- n)))
+            (h     (max 1 (floor avail n))))
+       (loop for i below n
+             for y = (* i (1+ h))
+             collect (list 0 y cols
+                           (if (= i (1- n)) (max 1 (- rows y)) h)))))
     (otherwise
      (list (list 0 0 cols rows)))))
 

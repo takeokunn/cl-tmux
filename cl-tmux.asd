@@ -22,4 +22,21 @@
   ;; Build a standalone binary: (asdf:make :cl-tmux)
   :build-operation "program-op"
   :build-pathname "cl-tmux"
-  :entry-point "cl-tmux:main")
+  :entry-point "cl-tmux:main"
+  :in-order-to ((test-op (test-op "cl-tmux/test"))))
+
+(defsystem "cl-tmux/test"
+  :description "Test suite for cl-tmux"
+  :depends-on (:cl-tmux :fiveam)
+  :components
+  ((:module "test"
+    :serial t
+    :components
+    ((:file "package")
+     (:file "terminal-tests")
+     (:file "layout-tests")
+     (:file "pty-tests")
+     (:file "suite"))))
+  ;; Run with: (asdf:test-system :cl-tmux)
+  :perform (test-op (op c)
+             (symbol-call :cl-tmux/test :run-tests)))
