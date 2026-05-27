@@ -37,7 +37,6 @@
             ${sbclWithDeps}/bin/sbcl \
               --no-sysinit \
               --no-userinit \
-              --noinform \
               --eval "(require :asdf)" \
               --eval "(push (truename \".\") asdf:*central-registry*)" \
               --eval "(asdf:load-system :cl-tmux)" \
@@ -55,8 +54,10 @@
             cp cl-tmux.core $out/lib/cl-tmux/
 
             # Wrap sbcl so users just call "cl-tmux".
+            # --noinform is a C-runtime option; it must precede --core.
+            # --no-sysinit/userinit are Lisp options; they follow --core.
             makeWrapper ${sbclWithDeps}/bin/sbcl $out/bin/cl-tmux \
-              --add-flags "--noinform --no-sysinit --no-userinit --core $out/lib/cl-tmux/cl-tmux.core"
+              --add-flags "--noinform --core $out/lib/cl-tmux/cl-tmux.core --no-sysinit --no-userinit"
           '';
         };
       in
