@@ -1,0 +1,4 @@
+# SBCL compiled binary (name matches :build-pathname in cl-tmux.asd)
+/cl-tmux
+
+# ASDF fasls go to ~/.cache by default; nothing to ignore here
