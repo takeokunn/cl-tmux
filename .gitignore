@@ -1,4 +1,11 @@
 # SBCL compiled binary (name matches :build-pathname in cl-tmux.asd)
 /cl-tmux
+/cl-tmux.core
+
+# Nix build output symlink
+/result
+
+# Claude Code harness internals
+/.claude/
 
 # ASDF fasls go to ~/.cache by default; nothing to ignore here
