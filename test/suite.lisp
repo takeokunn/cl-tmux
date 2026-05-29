@@ -11,6 +11,7 @@
   (let ((results (append
                   (run 'terminal-suite)
                   (run 'layout-suite)
+                  (run 'layout-tree-suite)
                   (run 'model-suite)
                   (run 'config-suite)
                   (run 'renderer-suite)

@@ -44,10 +44,13 @@
     (when next (window-select-pane win next))))
 
 (defun %cmd-split (session direction)
-  "Split the active window in SESSION in DIRECTION (:horizontal or :vertical)."
+  "Split the active pane of SESSION's active window in DIRECTION (:horizontal =
+   top/bottom, :vertical = left/right).  When the active pane is too small to
+   split, WINDOW-SPLIT returns NIL (\"pane too small\") and no shell is forked."
   (let* ((win (session-active-window session))
          (new (window-split win direction)))
-    (start-reader-thread new)))
+    (when new
+      (start-reader-thread new))))
 
 (defun %passthrough-prefix (session byte)
   "Send the raw prefix byte followed by BYTE to the active pane."

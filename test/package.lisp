@@ -35,6 +35,17 @@
                 #:window-select-pane
                 #:window-split
                 #:window-relayout
+                #:window-remove-pane
+                #:window-resize-active
+                #:window-refresh-panes
+                #:window-tree
+                #:make-layout-leaf
+                #:make-layout-split
+                #:layout-leaf-pane
+                #:layout-leaves
+                #:layout-find-leaf
+                #:layout-find-parent
+                #:split-orientation
                 #:all-panes
                 #:make-pane
                 #:make-window

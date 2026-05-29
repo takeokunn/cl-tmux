@@ -87,6 +87,57 @@
     (move-to stream border-row ox)
     (loop repeat pw do (write-char #\─ stream))))
 
+;;; ── Split-tree separators ───────────────────────────────────────────────────
+
+(defun render-tree-borders (stream node active-pane terminal-cols)
+  "Walk the split-tree NODE, drawing one separator per internal node at the
+   boundary between its two children.  A vertical (:h) split draws a │ column
+   just right of its first subtree; a horizontal (:v) split draws a ─ row just
+   below its first subtree.  The border directly adjacent to ACTIVE-PANE is
+   highlighted (green for the vertical bar, matching RENDER-VERTICAL-BORDER)."
+  (when (layout-split-p node)
+    (let ((a (layout-split-first  node))
+          (b (layout-split-second node)))
+      (ecase (layout-split-orientation node)
+        (:h                             ; left | right → vertical bar
+         (let* ((rect (layout-subtree-rect a))
+                (border-col (+ (getf rect :x) (getf rect :w)))
+                ;; Highlight when either side abutting the bar is the active pane.
+                (activep (or (subtree-contains-p a active-pane)
+                             (subtree-contains-p b active-pane))))
+           (when (< border-col terminal-cols)
+             (if activep
+                 (format stream "~C[32m" +esc+)
+                 (reset-attrs stream))
+             (loop for row from (getf rect :y) below (+ (getf rect :y) (getf rect :h))
+                   do (move-to stream row border-col)
+                      (write-char #\│ stream))
+             (reset-attrs stream))))
+        (:v                             ; top / bottom → horizontal bar
+         (let* ((rect (layout-subtree-rect a))
+                (border-row (+ (getf rect :y) (getf rect :h)))
+                (x (getf rect :x))
+                (w (min (getf rect :w) (- terminal-cols x))))
+           (reset-attrs stream)
+           (move-to stream border-row x)
+           (loop repeat (max 0 w) do (write-char #\─ stream)))))
+      (render-tree-borders stream a active-pane terminal-cols)
+      (render-tree-borders stream b active-pane terminal-cols))))
+
+(defun layout-subtree-rect (node)
+  "Bounding rectangle of NODE's leaves as a plist (:x :y :w :h), derived from the
+   already-laid-out pane geometry."
+  (let ((panes (layout-leaves node)))
+    (let ((min-x (reduce #'min panes :key #'pane-x))
+          (min-y (reduce #'min panes :key #'pane-y))
+          (max-x (reduce #'max panes :key (lambda (p) (+ (pane-x p) (pane-width p)))))
+          (max-y (reduce #'max panes :key (lambda (p) (+ (pane-y p) (pane-height p))))))
+      (list :x min-x :y min-y :w (- max-x min-x) :h (- max-y min-y)))))
+
+(defun subtree-contains-p (node pane)
+  "True when PANE is a leaf of NODE's subtree."
+  (and pane (member pane (layout-leaves node))))
+
 ;;; ── Status bar ─────────────────────────────────────────────────────────────
 
 (defun render-status-bar (stream session terminal-rows terminal-cols)
@@ -157,19 +208,24 @@
       ;; Render pane contents
       (dolist (p panes)
         (render-pane buf p))
-      ;; Separators between adjacent panes (direction set by the split).
-      (when (> (length panes) 1)
-        (ecase (window-layout win)
-          (:vertical
-           (loop for p in (butlast panes)
-                 ;; Highlight the border to the right of the active pane.
-                 for activep = (eq p ap)
-                 when (< (+ (pane-x p) (pane-width p)) terminal-cols)
-                   do (render-vertical-border buf p activep)))
-          (:horizontal
-           (loop for p in (butlast panes)
-                 do (render-horizontal-border buf p terminal-cols)))
-          ((nil) nil)))
+      ;; Separators.  With a split tree, draw one separator per internal node,
+      ;; placed at the boundary between its two children.  Without a tree, fall
+      ;; back to the legacy flat scheme (one separator per non-last pane).
+      (cond
+        ((and win (window-tree win))
+         (render-tree-borders buf (window-tree win) ap terminal-cols))
+        ((> (length panes) 1)
+         (ecase (window-layout win)
+           (:vertical
+            (loop for p in (butlast panes)
+                  ;; Highlight the border to the right of the active pane.
+                  for activep = (eq p ap)
+                  when (< (+ (pane-x p) (pane-width p)) terminal-cols)
+                    do (render-vertical-border buf p activep)))
+           (:horizontal
+            (loop for p in (butlast panes)
+                  do (render-horizontal-border buf p terminal-cols)))
+           ((nil) nil))))
       ;; A help overlay covers the top rows; otherwise move the cursor to the
       ;; active pane's cursor position (visible only for the active pane).
       (if (overlay-active-p)

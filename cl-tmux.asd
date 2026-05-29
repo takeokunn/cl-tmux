@@ -52,6 +52,7 @@
      (:file "helpers")
      (:file "terminal-tests")
      (:file "layout-tests")
+     (:file "layout-tree-tests")
      (:file "model-tests")
      (:file "config-tests")
      (:file "renderer-tests")

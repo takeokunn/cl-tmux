@@ -279,13 +279,24 @@
    #:window-width #:window-height
    #:window-panes
    #:window-layout
+   #:window-tree
    #:window-active-pane
    #:window-select-pane
    #:window-split
    #:window-relayout
+   #:window-remove-pane
+   #:window-resize-active
+   #:window-refresh-panes
    #:divide-window
    #:ensure-window-fits
    #:pane-reposition
+   ;; Layout split-tree
+   #:layout-leaf #:make-layout-leaf #:layout-leaf-p #:layout-leaf-pane
+   #:layout-split #:make-layout-split #:layout-split-p
+   #:layout-split-orientation #:layout-split-first #:layout-split-second
+   #:layout-split-ratio
+   #:layout-leaves #:layout-find-leaf #:layout-find-parent
+   #:split-orientation
    ;; Session
    #:session
    #:make-session

@@ -8,20 +8,20 @@
 (defun kill-pane (session &optional pane)
   "Close PANE (default: active pane of SESSION).
    Sends SIGHUP to its child process and closes the PTY fd.
-   If the owning window becomes empty, also calls KILL-WINDOW.
+   Removes the pane from the window's split tree, collapsing its parent so the
+   sibling reclaims the freed rectangle.  If the owning window becomes empty,
+   also calls KILL-WINDOW.
    Returns :quit if no windows remain, nil otherwise."
-  (let* ((win       (session-active-window session))
-         (target    (or pane (window-active-pane win)))
-         (remaining (remove target (window-panes win))))
+  (let* ((win    (session-active-window session))
+         (target (or pane (window-active-pane win))))
     (when target
       (ignore-errors (pty-close (pane-fd target) (pane-pid target))))
-    (setf (window-panes win) remaining)
-    (if (null remaining)
-        (kill-window session win)
-        (progn
-          (window-select-pane win (first remaining))
-          (window-relayout win (window-height win) (window-width win))
-          nil))))
+    (let ((survivor (window-remove-pane win target)))
+      (if (null (window-panes win))
+          (kill-window session win)
+          (progn
+            (window-select-pane win (or survivor (first (window-panes win))))
+            nil)))))
 
 (defun kill-window (session &optional window)
   "Destroy WINDOW (default: active window of SESSION).
@@ -57,22 +57,32 @@
 ;;; ── Pane resize ────────────────────────────────────────────────────────────
 
 (defun resize-pane (window direction &optional (amount 5))
-  "Resize the active pane of WINDOW by AMOUNT cells in DIRECTION.
-   :left / :right adjust a vertical split; :up / :down adjust a horizontal one.
-   A direction that does not match the window's split orientation is a no-op.
-   Returns the active pane when a resize was attempted, NIL otherwise."
+  "Resize the active pane of WINDOW by AMOUNT cells in DIRECTION (:left/:right/
+   :up/:down).
+
+   With a split TREE the border between the active pane and a neighbour in
+   DIRECTION is resolved from the tree and moved in ANY direction that has a
+   neighbour, reflowing every affected pane (no gaps/overlaps with 3+ panes).
+   Without a tree (legacy flat fixtures) the old single-orientation behaviour is
+   used: :left/:right adjust a vertical split, :up/:down a horizontal one, and
+   an off-axis direction is a no-op.
+
+   Returns the active pane when a resize happened, NIL otherwise."
   (let ((pane (and window (window-active-pane window))))
     (when pane
-      (ecase (window-layout window)
-        (:vertical
-         (when (member direction '(:left :right))
-           (%resize-vertical window pane direction amount)
-           pane))
-        (:horizontal
-         (when (member direction '(:up :down))
-           (%resize-horizontal window pane direction amount)
-           pane))
-        ((nil) nil)))))           ; single pane: nothing to resize against
+      (if (window-tree window)
+          (window-resize-active window direction amount)
+          ;; Legacy flat path (no tree).
+          (ecase (window-layout window)
+            (:vertical
+             (when (member direction '(:left :right))
+               (%resize-vertical window pane direction amount)
+               pane))
+            (:horizontal
+             (when (member direction '(:up :down))
+               (%resize-horizontal window pane direction amount)
+               pane))
+            ((nil) nil))))))         ; single pane: nothing to resize against
 
 (defun %resize-vertical (win pane direction delta)
   "Adjust PANE width and its neighbour within a vertical split of WIN."
