@@ -7,6 +7,7 @@
                 #:screen-resize
                 #:screen-process-bytes
                 #:screen-cell
+                #:screen-display-cell
                 #:screen-cursor-x
                 #:screen-cursor-y
                 #:screen-width
@@ -14,23 +15,83 @@
                 #:cell-char
                 #:cell-fg
                 #:cell-bg
-                #:cell-attrs)
+                #:cell-attrs
+                #:cell-width)
+  (:import-from #:cl-tmux/terminal/types
+                #:screen-copy-mode-p
+                #:screen-copy-offset
+                #:screen-scrollback
+                #:char-width)
   (:import-from #:cl-tmux/model
                 #:divide-window
                 #:create-initial-session
+                #:session-windows
                 #:session-active-window
+                #:session-select-window
+                #:session-new-window
+                #:session-active-pane
                 #:window-panes
+                #:window-active-pane
+                #:window-select-pane
                 #:window-split
                 #:window-relayout
                 #:all-panes
+                #:make-pane
+                #:make-window
+                #:make-session
+                #:pane-screen
+                #:window-layout
+                #:window-name
+                #:window-width #:window-height
+                #:session-name
                 #:pane-x #:pane-y #:pane-width #:pane-height #:pane-fd #:pane-pid)
+  (:import-from #:cl-tmux/renderer
+                #:render-session-to-string
+                #:render-session
+                #:clear-display)
+  (:import-from #:cl-tmux/protocol
+                #:+msg-attach+ #:+msg-key+ #:+msg-resize+
+                #:+msg-detach+ #:+msg-frame+ #:+msg-bye+ #:+header-size+
+                #:encode-frame #:decode-frame
+                #:msg-attach #:msg-key #:msg-resize #:msg-detach #:msg-frame #:msg-bye
+                #:decode-size #:decode-text #:to-octets)
+  (:import-from #:cl-tmux/transport
+                #:send-frame #:read-frame)
+  (:import-from #:cl-tmux/net
+                #:make-listener #:accept-connection #:connect-to
+                #:socket-stream #:socket-fd #:close-socket
+                #:unix-socket-available-p)
   (:import-from #:cl-tmux/config
-                #:*status-height*)
+                #:*status-height*
+                #:lookup-key-binding)
+  (:import-from #:cl-tmux/commands
+                #:kill-pane
+                #:kill-window
+                #:rename-window
+                #:resize-pane
+                #:select-window-by-number)
+  (:import-from #:cl-tmux/prompt
+                #:*prompt*
+                #:prompt-active-p
+                #:prompt-start
+                #:prompt-input
+                #:prompt-backspace
+                #:prompt-clear
+                #:prompt-text
+                #:*overlay*
+                #:overlay-active-p
+                #:show-overlay
+                #:clear-overlay
+                #:overlay-lines
+                #:prompt-label
+                #:prompt-buffer
+                #:prompt-on-submit)
   (:import-from #:cl-tmux/pty
                 #:forkpty-with-shell
                 #:pty-write
                 #:pty-read-blocking
                 #:pty-close
-                #:select-fds)
+                #:select-fds
+                #:pty-available-p)
   (:export #:run-tests
            #:cl-tmux-suite))

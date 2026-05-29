@@ -8,17 +8,33 @@
                :babel)           ; string↔octet encoding
   :components
   ((:module "src"
-    :serial nil
+    :serial t
     :components
     ((:file "package")
-     (:file "config"   :depends-on ("package"))
-     (:file "pty"      :depends-on ("package" "config"))
-     (:file "terminal" :depends-on ("package"))
-     (:file "model"    :depends-on ("package" "config" "terminal" "pty"))
-     (:file "renderer" :depends-on ("package" "model" "terminal"))
-     (:file "input"    :depends-on ("package" "config" "pty"))
-     (:file "main"     :depends-on ("package" "config" "pty" "terminal"
-                                    "model" "renderer" "input")))))
+     (:file "config")
+     (:file "pty")
+     (:file "protocol")
+     (:file "transport")
+     (:file "net")
+     (:module "terminal"
+      :serial t
+      :components
+      ((:file "types")
+       (:file "actions")
+       (:file "sgr")
+       (:file "csi")
+       (:file "parser")
+       (:file "emulator")))
+     (:file "model")
+     (:file "prompt")
+     (:file "commands")
+     (:file "renderer")
+     (:file "input")
+     (:file "runtime")
+     (:file "events")
+     (:file "server")
+     (:file "client")
+     (:file "main"))))
   ;; Build a standalone binary: (asdf:make :cl-tmux)
   :build-operation "program-op"
   :build-pathname "cl-tmux"
@@ -33,9 +49,22 @@
     :serial t
     :components
     ((:file "package")
+     (:file "helpers")
      (:file "terminal-tests")
      (:file "layout-tests")
+     (:file "model-tests")
+     (:file "config-tests")
+     (:file "renderer-tests")
+     (:file "events-tests")
+     (:file "commands-tests")    ; after events-tests (shares its no-PTY fixtures idiom)
+     (:file "prompt-tests")
+     (:file "protocol-tests")
+     (:file "transport-tests")
+     (:file "net-tests")
+     (:file "server-tests")
      (:file "pty-tests")
+     (:file "input-tests")
+     (:file "main-tests")
      (:file "suite"))))
   ;; Run with: (asdf:test-system :cl-tmux)
   :perform (test-op (op c)

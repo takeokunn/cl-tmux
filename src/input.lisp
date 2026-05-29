@@ -8,8 +8,12 @@
 ;;; ── Raw-mode convenience macro ─────────────────────────────────────────────
 
 (defmacro with-raw-mode (&body body)
-  "Execute BODY with stdin in raw mode, restoring the terminal on exit."
-  `(progn
+  "Execute BODY with stdin in raw mode, restoring the terminal on exit.
+   A condition handler ensures raw mode is disabled even if an error is
+   signalled before the unwind-protect cleanup runs."
+  `(handler-bind ((error (lambda (c)
+                           (declare (ignore c))
+                           (disable-raw-mode! 0))))
      (enable-raw-mode! 0)        ; fd 0 = stdin
      (unwind-protect
           (progn ,@body)
@@ -23,6 +27,7 @@
 (defun read-byte-nonblock (&optional (timeout-us 50000))
   "Return a byte from stdin if one arrives within TIMEOUT-US microseconds,
    or NIL if the timeout elapses.  TIMEOUT-US = 0 is purely non-blocking."
+  (declare (type fixnum timeout-us))
   (let ((ready (cl-tmux/pty:select-fds (list 0) timeout-us)))
     (when ready
       ;; Read exactly one byte from fd 0 directly (bypasses Lisp buffering).

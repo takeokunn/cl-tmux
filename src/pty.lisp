@@ -3,9 +3,9 @@
 ;;;; PTY management, terminal raw mode, and multiplexed I/O.
 ;;;;
 ;;;; Implemented in pure Common Lisp using:
-;;;;   • sb-posix  — fork, setsid, dup2, execv, tcgetattr/tcsetattr
+;;;;   • sb-posix  — fork, setsid, dup2, tcgetattr/tcsetattr
 ;;;;   • CFFI      — posix_openpt, grantpt, unlockpt, ptsname,
-;;;;                 ioctl, select (all from libc — no custom C)
+;;;;                 ioctl, execv, select (all from libc — no custom C)
 
 ;;; ── Load sb-posix ──────────────────────────────────────────────────────────
 
@@ -72,17 +72,24 @@
 
 (defconstant +fd-set-words+ 32)
 
+(declaim (inline fd-zero! fd-set! fd-isset-p))
+
 (defun fd-zero! (ptr)
+  (declare (type cffi:foreign-pointer ptr))
   (dotimes (i +fd-set-words+)
     (setf (cffi:mem-aref ptr :int32 i) 0)))
 
 (defun fd-set! (fd ptr)
+  (declare (type fixnum fd)
+           (type cffi:foreign-pointer ptr))
   (let ((word (floor fd 32))
         (bit  (mod   fd 32)))
     (setf (cffi:mem-aref ptr :int32 word)
           (logior (cffi:mem-aref ptr :int32 word) (ash 1 bit)))))
 
 (defun fd-isset-p (fd ptr)
+  (declare (type fixnum fd)
+           (type cffi:foreign-pointer ptr))
   (let ((word (floor fd 32))
         (bit  (mod   fd 32)))
     (not (zerop (logand (cffi:mem-aref ptr :int32 word) (ash 1 bit))))))
@@ -154,6 +161,7 @@
   "Fork a child shell process on a fresh PTY of size ROWS×COLS.
    Parent: returns (values master-fd child-pid).
    Child:  execs *default-shell* and never returns to Lisp."
+  (declare (type fixnum rows cols))
   (multiple-value-bind (master slave-path)
       (open-pty rows cols)
     (let ((pid (sb-posix:fork)))
@@ -178,8 +186,7 @@
            (sb-posix:close slave))
          ;; Parent's master fd is not needed in the child.
          (sb-posix:close master)
-         ;; Replace this image with the shell.
-         ;; sb-posix:execv is absent on macOS SBCL, so call libc execv via CFFI.
+         ;; Replace this image with the shell via libc execv.
          ;; On error, _exit immediately to avoid running parent-image atexit hooks.
          (let ((shell cl-tmux/config:*default-shell*))
            (cffi:with-foreign-string (path-ptr shell)
@@ -225,10 +232,16 @@
           result)))))
 
 (defun pty-close (master-fd child-pid)
-  "Send SIGHUP to the child process and close the PTY master."
+  "Send SIGHUP to the child process and close the PTY master.
+
+   A non-positive CHILD-PID is ignored: kill(-1)/kill(0) broadcast the signal to
+   the whole process group (including this process), which must never happen.
+   Likewise a negative MASTER-FD is not closed."
   (ignore-errors
-    (cffi:foreign-funcall "kill"  :int child-pid :int 1 :int)  ; SIGHUP = 1
-    (sb-posix:close master-fd)))
+    (when (> child-pid 0)
+      (cffi:foreign-funcall "kill" :int child-pid :int 1 :int))  ; SIGHUP = 1
+    (when (>= master-fd 0)
+      (sb-posix:close master-fd))))
 
 ;;; ── Public: select-based I/O multiplexing ─────────────────────────────────
 
@@ -276,3 +289,13 @@
                 (values rows cols)
                 (values 24 80)))
           (values 24 80)))))          ; safe fallback if ioctl fails
+
+;;; ── Public: availability probe ────────────────────────────────────────────
+
+(defun pty-available-p ()
+  "Return T if a PTY can be opened and forked on this system, NIL otherwise."
+  (handler-case
+      (multiple-value-bind (fd pid) (forkpty-with-shell 8 20)
+        (pty-close fd pid)
+        t)
+    (error () nil)))

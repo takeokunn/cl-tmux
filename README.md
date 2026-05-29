@@ -25,11 +25,14 @@ Built on top of:
 | Terminal resize handling (SIGWINCH → relayout) | ✅ |
 | Status bar with window list & clock | ✅ |
 | Test suite (unit + PTY integration + e2e) | ✅ |
-| Double-width (CJK) cell rendering | 🔜 |
-| Scrollback buffer | 🔜 |
-| Copy mode | 🔜 |
-| Config file | 🔜 |
-| Client-server detach/attach | 🔜 |
+| Scrollback buffer (1000 lines) | ✅ |
+| Copy mode (scroll back through history) | ✅ |
+| Alternate screen (`?1049h`/`?1049l`) | ✅ |
+| Cursor save/restore (`ESC 7`/`ESC 8`, DECSC/DECRC) | ✅ |
+| Double-width (CJK) cell rendering | ✅ |
+| Pane resize (`H`/`J`/`K`/`L`) | ✅ |
+| Config file (XDG: `~/.config/cl-tmux/cl-tmux.conf`) | ✅ |
+| Client-server detach/attach (Unix socket) | ✅ |
 
 ## Key bindings
 
@@ -43,8 +46,51 @@ All commands require the prefix key **`Ctrl-B`** first.
 | `"` | Split pane horizontally (top/bottom) |
 | `%` | Split pane vertically (left/right) |
 | `o` | Focus next pane |
+| `,` | Rename current window (opens a status-bar prompt: type, Enter applies, Esc cancels, Backspace edits) |
+| `H` / `J` / `K` / `L` | Resize active pane left / down / up / right |
+| `[` | Enter copy mode (then arrows / `[` `]` scroll, `q` exits) |
+| `x` | Kill active pane |
+| `&` | Kill active window |
 | `d` | Detach (exit) |
 | `?` | List keys |
+
+## Configuration
+
+On startup cl-tmux reads an optional config file (if present) and applies its
+directives before the first session is created. The path follows the XDG Base
+Directory spec:
+
+1. `$CL_TMUX_CONF` if that environment variable is set, otherwise
+2. `$XDG_CONFIG_HOME/cl-tmux/cl-tmux.conf` (with `$XDG_CONFIG_HOME` defaulting to
+   `~/.config`), i.e. `~/.config/cl-tmux/cl-tmux.conf`.
+
+A missing file is not an error — cl-tmux starts with its defaults.
+
+One directive per line; blank lines and lines beginning with `#` are ignored.
+Tokens are whitespace-separated (no quoting).
+
+| Directive | Arguments | Effect |
+|---|---|---|
+| `bind` | `<key> <command>` | Bind a prefix key to a command |
+| `unbind` | `<key>` | Remove a prefix-key binding |
+| `set-shell` | `<path>` | Shell launched for new panes (default `$SHELL`, else `/bin/sh`) |
+| `set-status-height` | `<n>` | Rows reserved for the status bar (default `1`) |
+
+`<key>` is a single character (e.g. `c`, `"`) or a multi-character token such as
+`M-1`. `<command>` is one of the command names from the Key bindings table
+(e.g. `new-window`, `split-vertical`, `resize-left`); an unrecognized command is
+ignored.
+
+```conf
+# ~/.config/cl-tmux/cl-tmux.conf — rebind splits to be more mnemonic
+bind | split-vertical
+bind - split-horizontal
+unbind "
+
+# use fish for new panes, and a taller status bar
+set-shell /run/current-system/sw/bin/fish
+set-status-height 2
+```
 
 ## Building with Nix
 
@@ -62,6 +108,23 @@ sbcl --load cl-tmux.asd \
      --eval "(asdf:load-system :cl-tmux)" \
      --eval "(cl-tmux:main)"
 ```
+
+## Client-server (detach / attach)
+
+By default `cl-tmux` runs standalone (in-process). It can also run as a headless
+server that a thin client attaches to over a Unix socket, so the session
+survives detaching:
+
+```bash
+cl-tmux server work     # headless server owning session "work"
+cl-tmux attach work     # attach a client; C-b d detaches (server keeps running)
+cl-tmux attach work     # …re-attach later
+```
+
+The socket lives at `$TMPDIR/cl-tmux-<name>.sock`. The client forwards keystrokes
+and resizes as length-prefixed protocol frames and paints the frames the server
+renders back; all prefix/copy-mode/prompt handling happens server-side through
+the same `process-byte` pipeline the standalone loop uses.
 
 ## Testing
 
@@ -90,19 +153,39 @@ cl-tmux/
 ├── cl-tmux.asd        # ASDF system + test system
 ├── src/
 │   ├── package.lisp   # All defpackage declarations
-│   ├── config.lisp    # Prefix key, default shell, key bindings
+│   ├── config.lisp    # Prefix key, key bindings, config-file loading
 │   ├── pty.lisp       # PTY + raw-mode (CFFI/sb-posix, no custom C)
-│   ├── terminal.lisp  # VT100/ANSI emulator state machine (+ UTF-8, resize)
+│   ├── protocol.lisp  # Client/server wire protocol (length-prefixed frames)
+│   ├── transport.lisp # Frame send/read over a binary stream
+│   ├── net.lisp       # Unix-domain socket primitives (sb-bsd-sockets)
+│   ├── terminal/      # VT100/ANSI emulator, split into data + logic layers
+│   │   ├── types.lisp    # cell/screen structs + accessors (data)
+│   │   ├── actions.lisp  # cursor/erase/scroll/edit primitives (logic)
+│   │   ├── sgr.lisp      # SGR colour/attribute dispatch (defmacro table)
+│   │   ├── csi.lisp      # CSI sequence dispatch (defmacro table)
+│   │   ├── parser.lisp   # CPS byte-at-a-time state machine
+│   │   └── emulator.lisp # screen-process-bytes entry point
 │   ├── model.lisp     # Session → Window → Pane model (+ split/relayout)
-│   ├── renderer.lisp  # Escape-code renderer (no curses)
+│   ├── prompt.lisp    # Single-line input-prompt state (interactive rename, …)
+│   ├── commands.lisp  # High-level tmux commands (kill/rename/copy-mode)
+│   ├── renderer.lisp  # Escape-code renderer (no curses; pure frame composer + writer)
 │   ├── input.lisp     # Non-blocking stdin reader
-│   └── main.lisp      # Entry point + event loop (+ SIGWINCH handling)
+│   ├── runtime.lisp   # Shared state, SIGWINCH handler, per-pane reader thread
+│   ├── events.lisp    # process-byte keystroke pipeline + event loop + dispatch
+│   ├── server.lisp    # Detach-attach server (owns session, serves clients)
+│   ├── client.lisp    # Detach-attach client (thin terminal over a socket)
+│   └── main.lisp      # Binary entry point (standalone / server / attach)
 └── test/
-    ├── terminal-tests.lisp  # VT100/ANSI + UTF-8 unit tests
-    ├── layout-tests.lisp    # pane geometry invariants
-    ├── pty-tests.lisp       # live PTY/shell integration
-    ├── suite.lisp           # aggregate runner
-    └── e2e-smoke.lisp       # drives the real binary in a PTY
+    ├── package.lisp        # test package + imports
+    ├── helpers.lisp        # screen-builder DSL, table-driven + layout helpers
+    ├── terminal-tests.lisp # VT100/ANSI + UTF-8 + double-width unit tests
+    ├── layout-tests.lisp   # pane geometry invariants
+    ├── model-tests.lisp    # session/window/pane lifecycle + resize
+    ├── config-tests.lisp   # key bindings + config-file loading
+    ├── renderer-tests.lisp # escape-code renderer output
+    ├── pty-tests.lisp      # live PTY/shell integration
+    ├── suite.lisp          # aggregate runner
+    └── e2e-smoke.lisp      # drives the real binary in a PTY
 ```
 
 ## Architecture

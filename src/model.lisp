@@ -1,40 +1,29 @@
 (in-package #:cl-tmux/model)
 
-;;;; Session → Window → Pane data model.
-;;;;
-;;;; A session owns an ordered list of windows.  Each window contains one or
-;;;; more panes arranged side-by-side (vertical split) or top-to-bottom
-;;;; (horizontal split).  Every pane owns a PTY file descriptor, a child PID,
-;;;; and a virtual screen (terminal emulator state).
-
 ;;; ── Pane ───────────────────────────────────────────────────────────────────
 
 (defstruct pane
   "One terminal pane: a PTY fd + virtual screen + position within its window."
   (id     0   :type fixnum)
-  ;; Origin (column, row) within the window, 0-based
   (x      0   :type fixnum)
   (y      0   :type fixnum)
   (width  80  :type fixnum)
   (height 24  :type fixnum)
-  ;; PTY master fd and child process PID
   (fd     -1  :type fixnum)
   (pid    -1  :type fixnum)
-  ;; Virtual terminal emulator state
   (screen nil))
 
 (defun pane-feed (pane bytes)
-  "Feed raw PTY bytes into the pane's screen, holding the screen lock."
+  "Feed raw PTY bytes into PANE's screen, holding the screen lock."
   (let ((screen (pane-screen pane)))
     (with-lock-held ((screen-lock screen))
       (screen-process-bytes screen bytes))))
 
 (defun pane-reposition (pane x y width height)
-  "Move and resize PANE to X,Y with WIDTH×HEIGHT.
-   Resizes the PTY and the virtual screen (the latter under the screen lock,
-   since a reader thread may be writing to it concurrently)."
-  (setf (pane-x pane) x
-        (pane-y pane) y
+  "Move and resize PANE to X,Y with WIDTH x HEIGHT.
+   Resizes the underlying PTY and virtual screen."
+  (setf (pane-x pane)      x
+        (pane-y pane)      y
         (pane-width  pane) width
         (pane-height pane) height)
   (set-pty-size (pane-fd pane) height width)
@@ -46,14 +35,12 @@
 
 (defstruct window
   "A named collection of panes with one active (focused) pane."
-  (id      0    :type fixnum)
-  (name    ""   :type string)
-  (width   80   :type fixnum)
-  (height  24   :type fixnum)
-  (panes   nil  :type list)   ; ordered list of all panes
-  (active  nil)               ; the currently focused pane
-  ;; Layout of the panes: :vertical (side by side), :horizontal (stacked),
-  ;; or nil for a single full-window pane.  Drives separator rendering.
+  (id      0   :type fixnum)
+  (name    ""  :type string)
+  (width   80  :type fixnum)
+  (height  24  :type fixnum)
+  (panes   nil :type list)
+  (active  nil)
   (layout  nil))
 
 (defun window-active-pane (window)
@@ -64,21 +51,19 @@
   (setf (window-active window) pane))
 
 (defun window-split (window direction)
-  "Add a new pane to WINDOW by splitting the available space.
-   DIRECTION :horizontal → top/bottom stacking; :vertical → side by side.
-   Resizes existing panes, forks a shell for the new pane, and returns it."
-  (let* ((rows (window-height window))
-         (cols (window-width  window))
-         (existing (window-panes window))
+  "Add a new pane to WINDOW by splitting the available space in DIRECTION.
+   :horizontal stacks panes top/bottom; :vertical places them side by side.
+   Returns the new pane."
+  (let* ((rows     (window-height window))
+         (cols     (window-width  window))
+         (existing (window-panes  window))
          (n        (1+ (length existing)))
          (layouts  (divide-window direction n rows cols))
          (new-pane nil))
-    ;; Reposition and resize existing panes according to the new layout.
     (loop for pane in existing
           for layout in layouts
           do (destructuring-bind (px py pw ph) layout
                (pane-reposition pane px py pw ph)))
-    ;; Create the new pane using the last layout slot.
     (destructuring-bind (px py pw ph) (car (last layouts))
       (multiple-value-bind (fd pid)
           (forkpty-with-shell ph pw)
@@ -93,8 +78,7 @@
     new-pane))
 
 (defun window-relayout (window rows cols)
-  "Re-fit WINDOW's panes into a new ROWS×COLS area, preserving the split layout.
-   Resizes each pane's PTY and screen."
+  "Re-fit WINDOW's panes into ROWS x COLS, preserving the split layout."
   (setf (window-width  window) cols
         (window-height window) rows)
   (let* ((panes   (window-panes window))
@@ -108,19 +92,17 @@
                (pane-reposition pane px py pw ph)))))
 
 (defun ensure-window-fits (window rows cols)
-  "Relayout WINDOW only if its stored size differs from ROWS×COLS.
-   Cheap to call every frame; does work only when the geometry changed
-   (terminal resize, or switching to a window laid out at a different size)."
+  "Relayout WINDOW only when its stored size differs from ROWS x COLS."
   (when (or (/= (window-width  window) cols)
             (/= (window-height window) rows))
     (window-relayout window rows cols)))
 
-;;; Divide a ROWS×COLS area into N slots, reserving one row/column between
-;;; adjacent panes for a separator so panes never overlap.  The final pane
-;;; absorbs any rounding remainder.  Returns a list of (x y width height).
 (defun divide-window (direction n rows cols)
+  "Divide ROWS x COLS into N layout slots for DIRECTION (:vertical/:horizontal).
+   Reserves one row/column between adjacent panes for a separator.
+   Returns a list of (x y width height)."
   (case direction
-    (:vertical    ; side by side; vertical separator columns between panes
+    (:vertical
      (let* ((avail (- cols (1- n)))
             (w     (max 1 (floor avail n))))
        (loop for i below n
@@ -128,7 +110,7 @@
              collect (list x 0
                            (if (= i (1- n)) (max 1 (- cols x)) w)
                            rows))))
-    (:horizontal  ; stacked; horizontal separator rows between panes
+    (:horizontal
      (let* ((avail (- rows (1- n)))
             (h     (max 1 (floor avail n))))
        (loop for i below n
@@ -159,8 +141,7 @@
     (when w (window-active-pane w))))
 
 (defun session-new-window (session name rows cols)
-  "Create a new window with one full-size pane, add it to SESSION.
-   Pane height is (rows − *status-height*) to leave room for the status bar."
+  "Create a new window with one full-size pane and add it to SESSION."
   (let* ((id  (1+ (length (session-windows session))))
          (win (make-window :id id :name name
                            :width cols :height rows)))
@@ -178,14 +159,11 @@
 
 ;;; ── Global state & initialisation ─────────────────────────────────────────
 
-(defvar *current-session* nil)
-
 (defun create-initial-session (rows cols)
   "Bootstrap: one session, one window, one full-screen pane."
-  (let ((session (make-session :id 1 :name "0"))
+  (let ((session   (make-session :id 1 :name "0"))
         (pane-rows (- rows *status-height*)))
     (session-new-window session "1" pane-rows cols)
-    (setf *current-session* session)
     session))
 
 (defun all-panes (session)

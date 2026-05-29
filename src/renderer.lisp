@@ -14,8 +14,9 @@
   "ESC[row;colH — cursor absolute position, 1-based."
   (format stream "~C[~D;~DH" +esc+ (1+ row) (1+ col)))
 
-(defun set-attrs (stream fg bg attrs)
-  "Emit SGR (Select Graphic Rendition) codes for the given cell attributes."
+(defun render-cell-attrs (stream fg bg attrs)
+  "Emit SGR (Select Graphic Rendition) codes for the given cell attributes.
+   Writes only SGR escape codes to STREAM; performs no other side effects."
   (format stream "~C[0" +esc+)                           ; reset first
   (when (logbitp 0 attrs) (write-string ";1" stream))    ; bold
   (when (logbitp 1 attrs) (write-string ";2" stream))    ; dim
@@ -49,25 +50,33 @@
         (loop for row below ph do
           (move-to stream (+ oy row) ox)
           (loop for col below pw
-                for cell  = (screen-cell screen col row)
-                for fg    = (cell-fg    cell)
-                for bg    = (cell-bg    cell)
-                for attrs = (cell-attrs cell)
-                do (unless (and (= fg prev-fg) (= bg prev-bg) (= attrs prev-attrs))
-                     (set-attrs stream fg bg attrs)
-                     (setf prev-fg fg prev-bg bg prev-attrs attrs))
-                   (write-char (cell-char cell) stream))))
+                for cell  = (screen-display-cell screen col row)
+                ;; A continuation cell (width 0) is the right half of a
+                ;; double-width glyph the terminal already drew — emit nothing.
+                unless (zerop (cell-width cell))
+                  do (let ((fg    (cell-fg    cell))
+                           (bg    (cell-bg    cell))
+                           (attrs (cell-attrs cell)))
+                       (unless (and (= fg prev-fg) (= bg prev-bg) (= attrs prev-attrs))
+                         (render-cell-attrs stream fg bg attrs)
+                         (setf prev-fg fg prev-bg bg prev-attrs attrs))
+                       (write-char (cell-char cell) stream)))))
       (screen-clear-dirty screen))))
 
-(defun render-vertical-border (stream pane)
-  "Draw a vertical separator bar in the reserved column to PANE's right."
-  (reset-attrs stream)
+(defun render-vertical-border (stream pane activep)
+  "Draw a vertical separator bar in the reserved column to PANE's right.
+   When ACTIVEP is true, highlight the border in bright green (ESC[32m);
+   otherwise use the default attribute reset."
   (let ((border-col (+ (pane-x pane) (pane-width pane)))
         (oy         (pane-y    pane))
         (ph         (pane-height pane)))
+    (if activep
+        (format stream "~C[32m" +esc+)   ; bright green for active pane border
+        (reset-attrs stream))
     (loop for row below ph do
       (move-to stream (+ oy row) border-col)
-      (write-char #\│ stream))))
+      (write-char #\│ stream))
+    (reset-attrs stream)))
 
 (defun render-horizontal-border (stream pane terminal-cols)
   "Draw a horizontal separator bar in the reserved row below PANE."
@@ -81,21 +90,37 @@
 ;;; ── Status bar ─────────────────────────────────────────────────────────────
 
 (defun render-status-bar (stream session terminal-rows terminal-cols)
-  "Draw the bottom status bar showing session name, window list, and time."
+  "Draw the bottom status bar showing session name, window list, active pane
+   number, copy-mode indicator, and time."
   (let* ((active-win (session-active-window session))
+         (ap         (session-active-pane session))
          (time-str
-          (multiple-value-bind (s m h) (get-decoded-time)
-            (declare (ignore s))
-            (format nil "~2,'0D:~2,'0D" h m)))
-         (win-list
-          (with-output-to-string (ws)
-            (dolist (w (session-windows session))
-              (if (eq w active-win)
-                  (format ws " [~A]" (window-name w))
-                  (format ws "  ~A " (window-name w)))))))
+          (multiple-value-bind (sec min hour) (get-decoded-time)
+            (declare (ignore sec))
+            (format nil "~2,'0D:~2,'0D" hour min))))
     (move-to stream (1- terminal-rows) 0)
     (format stream "~C[44;97m" +esc+)          ; bright white on blue
-    (let* ((left  (format nil " ~A~A" (session-name session) win-list))
+    (let* ((pane-indicator
+            (if ap (format nil " #~D" (pane-id ap)) ""))
+           (copy-indicator
+            (if (and ap
+                     (screen-copy-mode-p (pane-screen ap))
+                     (> (screen-copy-offset (pane-screen ap)) 0))
+                (format nil " [COPY +~D]" (screen-copy-offset (pane-screen ap)))
+                ""))
+           (left  (if (prompt-active-p)
+                      (prompt-text)
+                      (let ((win-list
+                             (with-output-to-string (ws)
+                               (dolist (w (session-windows session))
+                                 (if (eq w active-win)
+                                     (format ws " [~A]" (window-name w))
+                                     (format ws "  ~A " (window-name w)))))))
+                        (format nil " ~A~A~A~A"
+                                (session-name session)
+                                win-list
+                                pane-indicator
+                                copy-indicator))))
            (gap   (max 0 (- terminal-cols (length left) (length time-str) 1)))
            (line  (format nil "~A~A ~A"
                           left
@@ -104,15 +129,31 @@
       (write-string (subseq line 0 (min (length line) terminal-cols)) stream))
     (reset-attrs stream)))
 
+;;; ── Overlay (list-keys help) ────────────────────────────────────────────────
+
+(defun render-overlay (stream cols)
+  "Draw the active overlay's lines over the top rows of the screen, each
+   truncated to COLS columns, on default attributes."
+  (reset-attrs stream)
+  (loop for line in (overlay-lines)
+        for row from 0
+        do (move-to stream row 0)
+           (write-string (subseq line 0 (min (length line) cols)) stream)))
+
 ;;; ── Full-session render ────────────────────────────────────────────────────
 
-(defun render-session (session terminal-rows terminal-cols)
-  "Repaint all panes and the status bar; flush to *standard-output* in one write."
+(defun render-session-to-string (session terminal-rows terminal-cols)
+  "Compose a full frame for SESSION as an escape-sequence string.
+
+   Does not touch *standard-output*; it only reads pane screens (under their
+   locks) and returns the string that RENDER-SESSION writes.  Exposed so the
+   renderer can be exercised without a real terminal."
   (let ((buf (make-string-output-stream)))
     (cursor-invisible buf)
 
-    (let* ((win   (session-active-window session))
-           (panes (when win (window-panes win))))
+    (let* ((win    (session-active-window session))
+           (panes  (when win (window-panes win)))
+           (ap     (session-active-pane session)))
       ;; Render pane contents
       (dolist (p panes)
         (render-pane buf p))
@@ -121,27 +162,34 @@
         (ecase (window-layout win)
           (:vertical
            (loop for p in (butlast panes)
+                 ;; Highlight the border to the right of the active pane.
+                 for activep = (eq p ap)
                  when (< (+ (pane-x p) (pane-width p)) terminal-cols)
-                   do (render-vertical-border buf p)))
+                   do (render-vertical-border buf p activep)))
           (:horizontal
            (loop for p in (butlast panes)
                  do (render-horizontal-border buf p terminal-cols)))
           ((nil) nil)))
-      ;; Move cursor to the active pane's cursor position
-      (let ((ap (session-active-pane session)))
-        (when ap
-          (let ((screen (pane-screen ap)))
-            (with-lock-held ((screen-lock screen))
-              (move-to buf
-                       (+ (pane-y ap) (screen-cursor-y screen))
-                       (+ (pane-x ap) (screen-cursor-x screen))))))))
+      ;; A help overlay covers the top rows; otherwise move the cursor to the
+      ;; active pane's cursor position (visible only for the active pane).
+      (if (overlay-active-p)
+          (render-overlay buf terminal-cols)
+          (when ap
+            (let ((screen (pane-screen ap)))
+              (with-lock-held ((screen-lock screen))
+                (move-to buf
+                         (+ (pane-y ap) (screen-cursor-y screen))
+                         (+ (pane-x ap) (screen-cursor-x screen))))))))
 
     (render-status-bar buf session terminal-rows terminal-cols)
     (cursor-visible buf)
+    (get-output-stream-string buf)))
 
-    ;; Single atomic write keeps flicker minimal
-    (write-string (get-output-stream-string buf))
-    (force-output)))
+(defun render-session (session terminal-rows terminal-cols)
+  "Repaint all panes and the status bar; flush to *standard-output* in one write."
+  ;; Single atomic write keeps flicker minimal.
+  (write-string (render-session-to-string session terminal-rows terminal-cols))
+  (force-output))
 
 (defun clear-display ()
   "Erase the entire terminal and move cursor home."

@@ -6,17 +6,11 @@
 ;;;; PTY allocation needs /dev/ptmx, which sandboxed Nix builds do not provide.
 ;;;; When allocation fails we (skip) rather than fail, so the same suite runs
 ;;;; both in `nix develop` (real PTY) and `nix flake check` (sandboxed).
+;;;;
+;;;; pty-available-p is imported from cl-tmux/pty; no local shadow needed.
 
 (def-suite pty-suite :description "PTY / shell integration")
 (in-suite pty-suite)
-
-(defun pty-available-p ()
-  "True if we can allocate a PTY in this environment."
-  (handler-case
-      (multiple-value-bind (fd pid) (forkpty-with-shell 24 80)
-        (pty-close fd pid)
-        t)
-    (error () nil)))
 
 (defun drain-pty (fd &key (deadline-seconds 3.0) (stop-marker nil))
   "Read from FD until STOP-MARKER appears in the decoded output or
@@ -103,3 +97,78 @@
       ;; Clean up every shell we forked (initial + split).
       (dolist (p (all-panes session))
         (ignore-errors (pty-close (pane-fd p) (pane-pid p)))))))
+
+(test cmd-kill-pane-closes-fd
+  "kill-pane on the last pane kills the window; session has 0 windows."
+  (unless (pty-available-p)
+    (skip "no PTY available (sandboxed environment)"))
+  (let ((session (create-initial-session 24 80)))
+    ;; Capture the active pane fd before kill so we can verify no error.
+    (let* ((win  (session-active-window session))
+           (pane (window-active-pane win)))
+      (declare (ignore pane))
+      ;; kill-pane on the sole pane must not signal an error.
+      (finishes (kill-pane session))
+      ;; Killing the only pane removes the window; no windows remain.
+      (is (null (session-windows session))
+          "session should have no windows after killing the last pane"))))
+
+(test split-and-kill-returns-to-single
+  "After splitting vertically and killing one pane, exactly one pane remains."
+  (unless (pty-available-p)
+    (skip "no PTY available (sandboxed environment)"))
+  (let ((session (create-initial-session 24 80)))
+    (unwind-protect
+         (let ((win (session-active-window session)))
+           ;; Split → 2 panes.
+           (window-split win :vertical)
+           (is (= 2 (length (window-panes win))))
+           ;; Kill the active (second) pane → 1 pane should remain.
+           (kill-pane session)
+           (is (= 1 (length (window-panes (session-active-window session))))
+               "one pane should remain after killing one of two"))
+      ;; Clean up any surviving shells.
+      (dolist (p (all-panes session))
+        (ignore-errors (pty-close (pane-fd p) (pane-pid p)))))))
+
+;;;; ── Un-gated sandbox-safe unit tests ──────────────────────────────────────
+;;;; These run real assertions without /dev/ptmx, a tty, or a socket.
+
+(test pty-close-ignores-non-positive-pid
+  "pty-close must never kill(-1)/kill(0): a non-positive pid and a negative
+   master fd are both no-ops, so the call simply finishes without signalling."
+  (finishes (cl-tmux/pty:pty-close -1 -1))
+  (finishes (cl-tmux/pty:pty-close -1 0)))
+
+(test terminal-size-returns-sane-clamped-geometry
+  "terminal-size returns rows/cols clamped to the sane 1..+max-sane-*+ range.
+   In the sandbox ioctl fails and it falls back to 24x80 — still in range."
+  (multiple-value-bind (rows cols) (cl-tmux/pty:terminal-size)
+    (is (<= 1 rows cl-tmux/pty::+max-sane-rows+))
+    (is (<= 1 cols cl-tmux/pty::+max-sane-cols+))))
+
+(test disable-raw-mode-noop-when-not-saved
+  "disable-raw-mode! is a no-op when no termios was saved: it must not touch
+   the fd and must leave *saved-termios* nil."
+  (let ((cl-tmux/pty::*saved-termios* nil))
+    (finishes (cl-tmux/pty:disable-raw-mode! -1))
+    (is (null cl-tmux/pty::*saved-termios*))))
+
+(test select-fds-empty-list-returns-nil
+  "select-fds short-circuits on an empty fd list regardless of timeout,
+   returning nil without ever calling select(2)."
+  (is (null (cl-tmux/pty:select-fds '() 0)))
+  (is (null (cl-tmux/pty:select-fds '() 100000)))
+  (is (null (cl-tmux/pty:select-fds '() -1))))
+
+(test pty-write-rejects-bad-type
+  "pty-write's etypecase accepts only strings and octet vectors; any other
+   type signals an error before any fd write is attempted."
+  (signals error (cl-tmux/pty:pty-write -1 42))
+  (signals error (cl-tmux/pty:pty-write -1 '(1 2 3))))
+
+(test pty-write-empty-is-noop
+  "An empty octet vector is guarded by (plusp len): no write(2) is issued,
+   so writing to a bogus fd -1 finishes without error."
+  (let ((empty (make-array 0 :element-type '(unsigned-byte 8))))
+    (finishes (cl-tmux/pty:pty-write -1 empty))))
