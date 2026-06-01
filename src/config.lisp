@@ -49,6 +49,19 @@
       (setf (gethash name *key-tables*)
             (make-hash-table :test #'equal))))
 
+;;; Alias used by callers that prefer the tmux-manual naming convention.
+(defun get-key-table (name)
+  "Return or create the named key table (alias for ensure-key-table)."
+  (ensure-key-table name))
+
+(defun set-key-binding-in-table (table key cmd)
+  "Bind KEY → CMD in the named TABLE (creating the table if absent)."
+  (setf (gethash key (ensure-key-table table)) (cons cmd '(:repeatable nil))))
+
+(defun lookup-key-in-table (table key)
+  "Return the (cmd . flags) entry for KEY in TABLE, or NIL."
+  (key-table-lookup table key))
+
 (defun key-table-bind (table key command &key repeatable)
   "Add a binding for KEY → COMMAND in TABLE (a table-name string).
    :REPEATABLE T marks the binding so the prefix table stays active after dispatch."

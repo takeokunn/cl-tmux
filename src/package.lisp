@@ -22,6 +22,9 @@
    #:*key-tables*
    #:*current-key-table*
    #:ensure-key-table
+   #:get-key-table
+   #:set-key-binding-in-table
+   #:lookup-key-in-table
    #:key-table-bind
    #:key-table-lookup
    #:key-table-command
@@ -160,6 +163,12 @@
    #:screen-last-char
    ;; DECSCUSR cursor shape
    #:screen-cursor-shape
+   ;; BEL pending flag
+   #:screen-bell-pending
+   ;; Copy-mode search term (/ ? n N)
+   #:screen-copy-search-term
+   ;; Copy-mode line-selection flag (V)
+   #:screen-copy-line-selection-p
    ;; Bracketed paste mode
    #:screen-bracketed-paste
    ;; Application cursor keys
@@ -206,6 +215,7 @@
    ;; Scroll
    #:scroll-up-one
    #:scroll-down-one
+   #:trim-scroll-history
    ;; Erase
    #:erase-region
    #:erase-display
@@ -337,7 +347,13 @@
    ;; Response queue
    #:screen-response-queue
    ;; Combining char predicate
-   #:combining-char-p))
+   #:combining-char-p
+   ;; BEL pending flag
+   #:screen-bell-pending
+   ;; Copy-mode search term
+   #:screen-copy-search-term
+   ;; Copy-mode line-selection flag
+   #:screen-copy-line-selection-p))
 
 (defpackage #:cl-tmux/prompt
   (:use #:cl)
@@ -383,6 +399,7 @@
    #:pane-feed
    #:pane-pipe-fd
    #:pane-window
+   #:pane-marked
    #:respawn-pane
    ;; Window
    #:window
@@ -425,6 +442,8 @@
    #:window-last-active-time
    ;; Automatic-rename (OSC 0/2 updates window-name)
    #:window-automatic-rename-p
+   ;; Layout cycle index (for C-b Space next-layout)
+   #:window-layout-cycle-index
    ;; Rotate-window
    #:window-rotate
    ;; Session
@@ -465,7 +484,7 @@
 
 (defpackage #:cl-tmux/format
   (:use #:cl #:cl-tmux/model)
-  (:export #:expand-format #:format-context-from-session))
+  (:export #:expand-format #:format-context-from-session #:format-context-from-window))
 
 (defpackage #:cl-tmux/buffer
   (:use #:cl)
@@ -519,7 +538,11 @@
   (:export
    #:render-session            ; (session rows cols) → write a frame to stdout
    #:render-session-to-string  ; (session rows cols) → frame string (server uses this)
-   #:clear-display))
+   #:clear-display
+   #:enable-mouse-reporting    ; () → emit ?1000h/?1002h/?1006h to outer terminal
+   #:disable-mouse-reporting   ; () → emit ?1000l/?1002l/?1006l to outer terminal
+   #:parse-style-string        ; (style-str) → plist :fg :bg :bold :reverse etc.
+   #:style-to-sgr))            ; (parsed-style) → escape-sequence string
 
 (defpackage #:cl-tmux/input
   (:use #:cl #:cffi
@@ -550,6 +573,37 @@
    #:copy-mode-begin-selection
    #:copy-mode-cancel-selection
    #:copy-mode-yank
+   ;; Word navigation
+   #:copy-mode-word-forward
+   #:copy-mode-word-backward
+   #:copy-mode-word-end
+   ;; Line navigation
+   #:copy-mode-line-start
+   #:copy-mode-line-end
+   ;; Jump to top/bottom
+   #:copy-mode-top
+   #:copy-mode-bottom
+   ;; Screen position jumps
+   #:copy-mode-high
+   #:copy-mode-middle
+   #:copy-mode-low
+   ;; Page scrolling
+   #:copy-mode-page-up
+   #:copy-mode-page-down
+   #:copy-mode-half-page-up
+   #:copy-mode-half-page-down
+   #:copy-mode-scroll-up-line
+   #:copy-mode-scroll-down-line
+   ;; Line selection (V)
+   #:copy-mode-begin-line-selection
+   ;; Copy variants
+   #:copy-mode-copy-end-of-line
+   #:copy-mode-copy-line
+   ;; Search
+   #:copy-mode-search-forward
+   #:copy-mode-search-backward
+   #:copy-mode-search-next
+   #:copy-mode-search-prev
    #:rename-session
    #:run-shell
    #:if-shell
@@ -560,7 +614,9 @@
    #:join-pane
    #:pipe-pane-open
    #:pipe-pane-close
-   #:pipe-pane-write))
+   #:pipe-pane-write
+   ;; send-keys
+   #:send-keys-to-pane))
 
 ;;; ── Top-level entry point ────────────────────────────────────────────────
 
@@ -603,4 +659,13 @@
    #:wait-for-channel
    #:signal-channel
    #:lock-channel
-   #:unlock-channel))
+   #:unlock-channel
+   ;; Message log (for :show-messages)
+   #:*message-log*
+   #:add-message-log
+   ;; Clock mode (for :clock-mode)
+   #:*clock-mode-pane-id*
+   ;; Status-bar timer
+   #:*status-dirty*
+   #:*status-timer-thread*
+   #:start-status-timer))

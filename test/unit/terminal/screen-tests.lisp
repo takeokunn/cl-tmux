@@ -50,3 +50,26 @@
     (screen-clear-dirty s)
     (is-false (cl-tmux/terminal/types:screen-dirty-p s)
               "dirty flag must be NIL after screen-clear-dirty")))
+
+;;; ── bell-pending slot ────────────────────────────────────────────────────────
+
+(def-suite bell-pending-suite
+  :description "screen-bell-pending slot: default value, set/clear"
+  :in terminal-suite)
+(in-suite bell-pending-suite)
+
+(test bell-pending-default-is-nil
+  "A fresh screen has bell-pending NIL."
+  (with-screen (s 10 5)
+    (is-false (cl-tmux/terminal/types:screen-bell-pending s)
+              "bell-pending must be NIL on a fresh screen")))
+
+(test bell-pending-can-be-set-and-cleared
+  "screen-bell-pending can be toggled via setf."
+  (with-screen (s 10 5)
+    (setf (cl-tmux/terminal/types:screen-bell-pending s) t)
+    (is (cl-tmux/terminal/types:screen-bell-pending s)
+        "bell-pending must be T after setf t")
+    (setf (cl-tmux/terminal/types:screen-bell-pending s) nil)
+    (is-false (cl-tmux/terminal/types:screen-bell-pending s)
+              "bell-pending must be NIL after setf nil")))

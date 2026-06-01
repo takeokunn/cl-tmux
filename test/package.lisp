@@ -80,6 +80,7 @@
                 ;; New pane slots
                 #:pane-pipe-fd
                 #:pane-window
+                #:pane-marked
                 ;; New session slots
                 #:session-locked-p
                 #:session-group
@@ -119,7 +120,10 @@
                 #:*status-height*
                 #:+max-scrollback-lines+
                 #:lookup-key-binding
-                #:define-initial-key-bindings)
+                #:define-initial-key-bindings
+                #:key-table-bind
+                #:key-table-command
+                #:*key-tables*)
   (:import-from #:cl-tmux/commands
                 #:kill-pane
                 #:kill-window

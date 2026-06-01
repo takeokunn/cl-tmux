@@ -91,6 +91,8 @@
    #:screen-cur-attrs2
    ;; Response queue (DA1/DA2 and similar replies)
    #:screen-response-queue
+   ;; BEL pending flag
+   #:screen-bell-pending
    ;; Cursor wrappers + grid helpers
    #:screen-cursor-x
    #:screen-cursor-y

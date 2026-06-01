@@ -131,7 +131,8 @@
   (#x0C  (cursor-lf screen) #'ground-state)        ; FF treated as LF
   (#x08  (cursor-bs screen) #'ground-state)
   (#x09  (cursor-ht screen) #'ground-state)
-  (#x07  #'ground-state)                           ; BEL — ignore
+  (#x07  (setf (screen-bell-pending screen) t)
+         #'ground-state)                           ; BEL — set pending flag
   (#x7F  #'ground-state)                           ; DEL — ignore
   (#x0E  #'ground-state)                           ; SO  — charset shift out (ignore)
   (#x0F  #'ground-state)                           ; SI  — charset shift in  (ignore)

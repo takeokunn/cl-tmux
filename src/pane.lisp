@@ -13,7 +13,8 @@
   (pid      -1  :type fixnum)
   (screen   nil)
   (pipe-fd  nil)    ; NIL or file-descriptor for pipe-pane output tee
-  (window   nil))   ; back-pointer to the owning window (set on attach)
+  (window   nil)    ; back-pointer to the owning window (set on attach)
+  (marked   nil))                 ; T when this pane is the marked pane (C-b m)
 
 (defun pane-feed (pane bytes)
   "Feed raw PTY bytes into PANE's screen, holding the screen lock."

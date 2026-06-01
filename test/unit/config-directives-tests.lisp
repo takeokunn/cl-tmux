@@ -217,10 +217,12 @@
           "exactly 1 directive should be applied, got ~A" applied)
       (is (eq :next-window (lookup-key-binding "M-z"))
           "the multi-char token M-z should bind the STRING key \"M-z\"")
-      ;; #\z is unbound in the default table, so the multi-char token must not
-      ;; have bound the trailing character on its own.
-      (is (null (lookup-key-binding #\z))
-          "the single character #\\z must not be bound by the M-z token"))))
+      ;; The multi-char token M-z must bind only the STRING "M-z", not the
+      ;; single character #\z.  #\z is now bound to :zoom-toggle by default,
+      ;; so we verify it still has its default binding (not overwritten to
+      ;; :next-window by the M-z token).
+      (is (eq :zoom-toggle (lookup-key-binding #\z))
+          "the single character #\\z must still be :zoom-toggle (not modified by M-z token)"))))
 
 ;;; ── load-config-from-stream ────────────────────────────────────────────────
 
@@ -462,3 +464,88 @@
     (apply-config-directive '("setw" "status-interval" "5"))
     (is (= 5 (cl-tmux/options:get-option "status-interval"))
         "setw must store the option value")))
+
+;;; ── bind-key directive alias ─────────────────────────────────────────────────
+
+(test bind-key-alias-accepted
+  "\"bind-key\" is accepted as an alias for \"bind\" and creates a prefix binding."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (with-isolated-config
+      (is (eq t (apply-config-directive '("bind-key" "z" "new-window")))
+          "bind-key directive should return T")
+      (is (eq :new-window (lookup-key-binding #\z))
+          "#\\z should be bound to :new-window via bind-key"))))
+
+(test bind-key-alias-n-flag
+  "\"bind-key -n\" binds in the root table (no prefix required)."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (with-isolated-config
+      (apply-config-directive '("bind-key" "-n" "F" "new-window"))
+      (let ((entry (cl-tmux/config:key-table-lookup "root" #\F)))
+        (is (not (null entry))
+            "bind-key -n must add a binding to the root table")
+        (is (eq :new-window (cl-tmux/config:key-table-command entry))
+            "root table binding must be :new-window")))))
+
+;;; ── unbind-key directive alias ───────────────────────────────────────────────
+
+(test unbind-key-alias-removes-binding
+  "\"unbind-key\" is accepted as an alias for \"unbind\" and removes a binding."
+  (with-isolated-config
+    (is (eq :new-window (lookup-key-binding #\c))
+        "#\\c should be bound to :new-window before unbind-key")
+    (is (eq t (apply-config-directive '("unbind-key" "c")))
+        "a valid unbind-key directive should return T")
+    (is (null (lookup-key-binding #\c))
+        "#\\c should be unbound after the unbind-key directive")))
+
+;;; ── unbind with -n flag ──────────────────────────────────────────────────────
+
+(test unbind-with-n-flag-removes-root-binding
+  "unbind -n removes a binding from the root table."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (with-isolated-config
+      ;; First bind in root table
+      (apply-config-directive '("bind" "-n" "X" "new-window"))
+      (let ((entry (cl-tmux/config:key-table-lookup "root" #\X)))
+        (is (not (null entry)) "binding must exist before unbind -n"))
+      ;; Now unbind from root table
+      (is (eq t (apply-config-directive '("unbind" "-n" "X")))
+          "unbind -n must return T")
+      (is (null (cl-tmux/config:key-table-lookup "root" #\X))
+          "root binding must be removed after unbind -n"))))
+
+;;; ── unbind with -T flag ──────────────────────────────────────────────────────
+
+(test unbind-with-T-flag-removes-named-table-binding
+  "unbind -T copy-mode removes a binding from the named table."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (with-isolated-config
+      ;; First bind in copy-mode table
+      (apply-config-directive '("bind" "-T" "copy-mode" "q" "copy-mode-enter"))
+      (let ((entry (cl-tmux/config:key-table-lookup "copy-mode" #\q)))
+        (is (not (null entry)) "binding must exist before unbind -T"))
+      ;; Now unbind from copy-mode table
+      (is (eq t (apply-config-directive '("unbind" "-T" "copy-mode" "q")))
+          "unbind -T copy-mode must return T")
+      (is (null (cl-tmux/config:key-table-lookup "copy-mode" #\q))
+          "copy-mode binding must be removed after unbind -T"))))
+
+;;; ── get-key-table / set-key-binding-in-table / lookup-key-in-table helpers ───
+
+(test get-key-table-returns-hash-table
+  "get-key-table returns a hash-table for the named table, creating it if absent."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (let ((tbl (cl-tmux/config:get-key-table "my-table")))
+      (is (hash-table-p tbl) "get-key-table must return a hash-table")
+      (is (eq tbl (cl-tmux/config:get-key-table "my-table"))
+          "get-key-table must return the SAME table on repeated calls"))))
+
+(test set-key-binding-in-table-and-lookup
+  "set-key-binding-in-table stores a binding; lookup-key-in-table retrieves it."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (cl-tmux/config:set-key-binding-in-table "test-table" #\x :new-window)
+    (let ((entry (cl-tmux/config:lookup-key-in-table "test-table" #\x)))
+      (is (not (null entry)) "lookup-key-in-table must find the stored entry")
+      (is (eq :new-window (cl-tmux/config:key-table-command entry))
+          "stored command must be :new-window"))))

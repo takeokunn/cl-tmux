@@ -24,28 +24,38 @@
 
 ;;; ── Scroll operations ───────────────────────────────────────────────────────
 
+;;; ── Scrollback trimming ────────────────────────────────────────────────────
+
+(defun trim-scroll-history (screen)
+  "Cap the scrollback buffer of SCREEN to the current history-limit option.
+   Reads the 'history-limit' option from cl-tmux/options when available,
+   falling back to +max-scrollback-lines+.  Called after every scroll-up to
+   honour runtime configuration changes."
+  (let ((cap (if (find-package '#:cl-tmux/options)
+                 (let ((fn (find-symbol "GET-OPTION" '#:cl-tmux/options)))
+                   (if fn
+                       (or (funcall fn "history-limit") cl-tmux/config:+max-scrollback-lines+)
+                       cl-tmux/config:+max-scrollback-lines+))
+                 cl-tmux/config:+max-scrollback-lines+)))
+    (when (> (length (screen-scrollback screen)) cap)
+      (let ((tail (nthcdr (1- cap) (screen-scrollback screen))))
+        (when tail (setf (cdr tail) nil))))))
+
 (defun scroll-up-one (screen)
   "Scroll the scroll region up one line; the displaced top row is pushed onto
-   the scrollback buffer (capped at +max-scrollback-lines+) and the new
+   the scrollback buffer (capped by the history-limit option) and the new
    bottom line is cleared to blank cells.
 
-   Scrollback cap note: the cap is enforced by splicing off the tail cons
-   of the list once the limit is reached, keeping the operation O(limit)
-   rather than O(n) per-scroll.  The list is maintained newest-first so
-   the tail is always the oldest entry."
+   Scrollback cap note: the cap is enforced by trim-scroll-history which
+   splices off the tail cons of the list, keeping the operation O(limit).
+   The list is maintained newest-first so the tail is always the oldest entry."
   (let* ((top       (screen-scroll-top    screen))
          (bottom    (screen-scroll-bottom screen))
          (w         (screen-width         screen))
          (saved-row (make-array w)))
     (dotimes (col w) (setf (aref saved-row col) (screen-cell screen col top)))
     (push saved-row (screen-scrollback screen))
-    ;; Cap the scrollback list at +max-scrollback-lines+.
-    ;; We walk to the (limit-1)th cons and set its cdr to nil, which is O(limit)
-    ;; but avoids the full O(n) traversal that nbutlast performs every call.
-    (let ((cap cl-tmux/config:+max-scrollback-lines+))
-      (when (> (length (screen-scrollback screen)) cap)
-        (let ((tail (nthcdr (1- cap) (screen-scrollback screen))))
-          (when tail (setf (cdr tail) nil)))))
+    (trim-scroll-history screen)
     (loop for row from top below bottom
           do (%copy-row screen row (1+ row)))
     (%clear-row screen bottom)))

@@ -42,6 +42,12 @@
     (handler-case
         (with-raw-mode
           (clear-display)
+          ;; Enable mouse reporting on the outer terminal when the "mouse"
+          ;; session option is true.  The render pipeline re-emits these
+          ;; sequences on every repaint; this call covers the very first frame
+          ;; before the first render fires.
+          (when (cl-tmux/options:get-option "mouse")
+            (cl-tmux/renderer:enable-mouse-reporting))
           (setf *running* t *dirty* t *resize-pending* nil)
           (event-loop session))
       (sb-posix:syscall-error (c)

@@ -202,6 +202,89 @@
     (is (<= (screen-cursor-x s) 9)
         "cursor must not exceed screen width-1")))
 
+;;; ── SUITE: su-sd ─────────────────────────────────────────────────────────────
+
+(def-suite su-sd
+  :description "SU/SD scroll up/down — CSI N S and CSI N T"
+  :in terminal-suite)
+(in-suite su-sd)
+
+(test su-scrolls-content-up
+  "CSI 1 S scrolls the screen up by 1: row 0 moves to scrollback, row 1 becomes row 0."
+  (with-screen (s 10 3)
+    (feed s "row0")
+    (feed s (format nil "~C~C" #\Return #\Linefeed))
+    (feed s "row1")
+    (feed s (esc "[H"))          ; home cursor
+    (feed s (esc "[S"))          ; SU 1 — scroll up
+    ;; row 0 should now contain what was row 1
+    (is (string= "row1" (row-string s 0 :end 4))
+        "after SU 1 row 0 must contain old row 1 content")))
+
+(test su-2-scrolls-two-lines
+  "CSI 2 S scrolls up by 2 lines."
+  (with-screen (s 10 4)
+    (feed s "aaa") (feed s (format nil "~C~C" #\Return #\Linefeed))
+    (feed s "bbb") (feed s (format nil "~C~C" #\Return #\Linefeed))
+    (feed s "ccc") (feed s (format nil "~C~C" #\Return #\Linefeed))
+    (feed s "ddd")
+    (feed s (esc "[H"))       ; home
+    (feed s (esc "[2S"))      ; SU 2
+    (is (string= "ccc" (row-string s 0 :end 3))
+        "after SU 2 row 0 must contain old row 2 content")))
+
+(test sd-scrolls-content-down
+  "CSI 1 T scrolls the screen down by 1: row 0 becomes blank, old row 0 moves to row 1."
+  (with-screen (s 10 3)
+    (feed s "row0")
+    (feed s (esc "[H"))
+    (feed s (esc "[T"))          ; SD 1 — scroll down
+    ;; New top row must be blank
+    (is (row-blank-p s 0)
+        "after SD 1 row 0 must be blank")
+    ;; Old row 0 content must be on row 1
+    (is (string= "row0" (row-string s 1 :end 4))
+        "after SD 1 old row 0 content must be on row 1")))
+
+;;; ── SUITE: rep ───────────────────────────────────────────────────────────────
+
+(def-suite rep
+  :description "REP (CSI b) — repeat preceding character"
+  :in terminal-suite)
+(in-suite rep)
+
+(test rep-repeats-last-char
+  "CSI 3 b repeats the last printed character 3 times."
+  (with-screen (s 20 5)
+    (feed s "A")             ; writes 'A' at col 0, cursor at col 1
+    (feed s (esc "[3b"))     ; REP 3: writes 'A' 3 more times
+    (is (char= #\A (char-at s 0 0)) "col 0 must be A")
+    (is (char= #\A (char-at s 1 0)) "col 1 must be A (first REP)")
+    (is (char= #\A (char-at s 2 0)) "col 2 must be A (second REP)")
+    (is (char= #\A (char-at s 3 0)) "col 3 must be A (third REP)")
+    (check-cursor s 4 0)))
+
+(test rep-noop-when-no-last-char
+  "CSI N b is a no-op when no character has been written yet (screen-last-char is NIL)."
+  (with-screen (s 20 5)
+    ;; No characters written — last-char is NIL.
+    (is (null (cl-tmux/terminal/types:screen-last-char s))
+        "screen-last-char must be NIL on a fresh screen")
+    (feed s (esc "[3b"))     ; REP 3 — no-op
+    ;; Cursor must be at origin and screen must be blank.
+    (check-cursor s 0 0)
+    (is (row-blank-p s 0) "row 0 must remain blank after REP with no prior char")))
+
+(test rep-uses-last-printed-char
+  "screen-last-char is updated on each write; REP always uses the most recent."
+  (with-screen (s 20 5)
+    (feed s "AB")            ; writes A at 0, B at 1; last-char = B
+    (is (char= #\B (cl-tmux/terminal/types:screen-last-char s))
+        "screen-last-char must be B after writing AB")
+    (feed s (esc "[2b"))     ; REP 2: writes B twice more
+    (is (char= #\B (char-at s 2 0)) "col 2 must be B")
+    (is (char= #\B (char-at s 3 0)) "col 3 must be B")))
+
 ;;; ── SUITE: da-response ───────────────────────────────────────────────────────
 
 (def-suite da-response

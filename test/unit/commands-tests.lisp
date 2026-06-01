@@ -428,15 +428,22 @@
     (is (= 4 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
         "row must clamp at height-1")))
 
-(test copy-mode-move-cursor-initialises-nil-cursor
-  "When copy-cursor is NIL, the cursor is initialised to (0 . 0) before moving."
+(test copy-mode-enter-places-cursor-at-bottom-left
+  "copy-mode-enter initialises the cursor at the bottom-left of the viewport (row height-1, col 0)."
   (let ((s (make-screen 20 5)))
     (cl-tmux/commands::copy-mode-enter s)
-    ;; cursor starts as NIL — verify the initialisation path
-    (is (null (cl-tmux/terminal/types:screen-copy-cursor s)) "precondition: cursor is nil")
+    (is (equal (cons 4 0) (cl-tmux/terminal/types:screen-copy-cursor s))
+        "cursor must start at (height-1 . 0) — bottom-left of the viewport")))
+
+(test copy-mode-move-cursor-nil-fallback
+  "If copy-cursor is manually reset to NIL, move-cursor falls back to (height-1 . 0) before moving."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    ;; Force cursor to NIL to exercise the fallback path inside move-cursor.
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) nil)
     (cl-tmux/commands::copy-mode-move-cursor s :right)
-    (is (equal (cons 0 1) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "nil cursor must be treated as (0 . 0) before the move")))
+    (is (equal (cons 4 1) (cl-tmux/terminal/types:screen-copy-cursor s))
+        "nil cursor falls back to (height-1 . 0) then moves right to (height-1 . 1)")))
 
 (test copy-mode-move-cursor-sets-mark-anchor-when-selecting-and-mark-nil
   "When copy-selecting is T and mark is NIL, the first move sets the mark anchor."
@@ -799,3 +806,349 @@
     (is (= 3 lines)
         "capture-pane must emit exactly height (~D) newline characters (got ~D)"
         3 lines)))
+
+;;; ── copy-mode-line-start / copy-mode-line-end ────────────────────────────────
+
+(test copy-mode-line-start-moves-to-col-0
+  "copy-mode-line-start sets the cursor column to 0."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 10))
+    (cl-tmux/commands::copy-mode-line-start s)
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "copy-mode-line-start must set col to 0")))
+
+(test copy-mode-line-end-moves-to-last-col
+  "copy-mode-line-end sets the cursor column to width-1."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 3))
+    (cl-tmux/commands::copy-mode-line-end s)
+    (is (= 19 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "copy-mode-line-end must set col to width-1 (19 for width=20)")))
+
+(test copy-mode-line-start-noop-outside-copy-mode
+  "copy-mode-line-start is a no-op when not in copy mode."
+  (let ((s (make-screen 20 5)))
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 10))
+    (cl-tmux/commands::copy-mode-line-start s)
+    (is (= 10 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "column must be unchanged when not in copy mode")))
+
+;;; ── copy-mode-high / copy-mode-middle / copy-mode-low ───────────────────────
+
+(test copy-mode-high-moves-cursor-to-row-0
+  "copy-mode-high sets the cursor row to 0, keeping column."
+  (let ((s (make-screen 20 10)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 7 5))
+    (cl-tmux/commands::copy-mode-high s)
+    (is (= 0 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "copy-mode-high must move cursor to row 0")
+    (is (= 5 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "copy-mode-high must preserve column")))
+
+(test copy-mode-middle-moves-cursor-to-mid-row
+  "copy-mode-middle sets the cursor row to floor(height/2), keeping column."
+  (let ((s (make-screen 20 10)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
+    (cl-tmux/commands::copy-mode-middle s)
+    (is (= 5 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "copy-mode-middle must move cursor to floor(10/2)=5 for height=10")))
+
+(test copy-mode-low-moves-cursor-to-last-row
+  "copy-mode-low sets the cursor row to height-1, keeping column."
+  (let ((s (make-screen 20 10)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
+    (cl-tmux/commands::copy-mode-low s)
+    (is (= 9 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "copy-mode-low must move cursor to height-1=9 for height=10")))
+
+;;; ── copy-mode-page-up / copy-mode-page-down ─────────────────────────────────
+
+(test copy-mode-page-up-scrolls-by-full-height
+  "copy-mode-page-up scrolls back by screen-height lines."
+  (let ((s (%screen-with-scrollback 30)))
+    (cl-tmux/commands::copy-mode-page-up s)
+    (is (= 5 (screen-copy-offset s))
+        "copy-mode-page-up must scroll by screen-height=5")))
+
+(test copy-mode-page-down-scrolls-forward-by-full-height
+  "copy-mode-page-down scrolls forward by screen-height lines."
+  (let ((s (%screen-with-scrollback 30)))
+    ;; First scroll back enough to allow scrolling forward
+    (setf (cl-tmux/terminal/types:screen-copy-offset s) 20)
+    (cl-tmux/commands::copy-mode-page-down s)
+    (is (= 15 (screen-copy-offset s))
+        "copy-mode-page-down must reduce offset by screen-height=5")))
+
+(test copy-mode-half-page-up-scrolls-by-half-height
+  "copy-mode-half-page-up scrolls back by floor(screen-height/2) lines."
+  (let ((s (%screen-with-scrollback 30)))
+    (cl-tmux/commands::copy-mode-half-page-up s)
+    (is (= 2 (screen-copy-offset s))
+        "copy-mode-half-page-up must scroll by floor(5/2)=2 for height=5")))
+
+(test copy-mode-scroll-up-line-scrolls-by-one
+  "copy-mode-scroll-up-line scrolls back by exactly 1 line."
+  (let ((s (%screen-with-scrollback 10)))
+    (cl-tmux/commands::copy-mode-scroll-up-line s)
+    (is (= 1 (screen-copy-offset s))
+        "copy-mode-scroll-up-line must scroll back by 1")))
+
+(test copy-mode-scroll-down-line-scrolls-forward-by-one
+  "copy-mode-scroll-down-line scrolls forward by exactly 1 line."
+  (let ((s (%screen-with-scrollback 10)))
+    (setf (cl-tmux/terminal/types:screen-copy-offset s) 5)
+    (cl-tmux/commands::copy-mode-scroll-down-line s)
+    (is (= 4 (screen-copy-offset s))
+        "copy-mode-scroll-down-line must reduce offset by 1")))
+
+;;; ── copy-mode-word-forward / word-backward / word-end ──────────────────────
+
+(defun %copy-mode-screen-with-text (text &key (w 40) (h 5))
+  "Return a copy-mode screen with TEXT fed at row 0."
+  (let ((s (make-screen w h)))
+    (feed s text)
+    (cl-tmux/commands::copy-mode-enter s)
+    s))
+
+(test copy-mode-word-forward-jumps-to-next-word
+  "copy-mode-word-forward moves the cursor to the start of the next word."
+  (let ((s (%copy-mode-screen-with-text "hello world")))
+    ;; Cursor at col 0 (start of "hello")
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-word-forward s)
+    ;; Should land at col 6 (start of "world")
+    (is (= 6 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "word-forward must jump to col 6 (start of 'world') from col 0 (got ~D)"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+
+(test copy-mode-word-backward-jumps-to-prev-word-start
+  "copy-mode-word-backward moves the cursor to the start of the previous word."
+  (let ((s (%copy-mode-screen-with-text "hello world")))
+    ;; Cursor in the middle of "world" at col 8
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 8))
+    (cl-tmux/commands::copy-mode-word-backward s)
+    ;; Should land at col 6 (start of "world")
+    (is (= 6 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "word-backward from col 8 must jump to start of 'world' at col 6 (got ~D)"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+
+(test copy-mode-word-forward-noop-outside-copy-mode
+  "copy-mode-word-forward is a no-op when not in copy mode."
+  (let ((s (make-screen 20 5)))
+    (feed s "hello world")
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-word-forward s)
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "column must not change outside copy mode")))
+
+
+(test copy-mode-word-end-jumps-to-end-of-word
+  "copy-mode-word-end moves the cursor to the last character of the current or next word."
+  (let ((s (%copy-mode-screen-with-text "hello world")))
+    ;; Cursor at col 0 (start of "hello")
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-word-end s)
+    ;; Should land at col 4 (last char of "hello")
+    (is (= 4 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "word-end from col 0 must jump to col 4 (end of 'hello') (got ~D)"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+
+(test copy-mode-word-end-noop-outside-copy-mode
+  "copy-mode-word-end is a no-op when not in copy mode."
+  (let ((s (make-screen 20 5)))
+    (feed s "hello world")
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-word-end s)
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "column must not change outside copy mode")))
+
+;;; ── copy-mode-top / copy-mode-bottom ────────────────────────────────────────
+
+(test copy-mode-top-jumps-to-max-scrollback
+  "copy-mode-top scrolls the viewport to the oldest scrollback line."
+  (let ((s (%screen-with-scrollback 10)))
+    (cl-tmux/commands::copy-mode-top s)
+    (is (= 10 (screen-copy-offset s))
+        "copy-mode-top must set offset to the scrollback length (10)")))
+
+(test copy-mode-bottom-returns-to-live-view
+  "copy-mode-bottom scrolls back to offset 0 (live view)."
+  (let ((s (%screen-with-scrollback 10)))
+    ;; First scroll to top
+    (cl-tmux/commands::copy-mode-top s)
+    (is (= 10 (screen-copy-offset s)) "precondition: at top after copy-mode-top")
+    ;; Then jump to bottom
+    (cl-tmux/commands::copy-mode-bottom s)
+    (is (= 0 (screen-copy-offset s))
+        "copy-mode-bottom must reset offset to 0 (live view)")))
+
+(test copy-mode-top-noop-outside-copy-mode
+  "copy-mode-top is a no-op when not in copy mode."
+  (let ((s (make-screen 20 5)))
+    (setf (cl-tmux/terminal/types:screen-scrollback s)
+          (loop repeat 5 collect (make-array 0)))
+    (cl-tmux/commands::copy-mode-top s)
+    (is (= 0 (screen-copy-offset s))
+        "offset must remain 0 when not in copy mode")))
+
+;;; ── copy-mode-begin-line-selection ──────────────────────────────────────────
+
+(test copy-mode-begin-line-selection-sets-line-selection-p
+  "copy-mode-begin-line-selection sets line-selection-p and activates the selection."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 5))
+    (cl-tmux/commands::copy-mode-begin-line-selection s)
+    (is-true (cl-tmux/terminal/types:screen-copy-line-selection-p s)
+             "copy-line-selection-p must be T after begin-line-selection")
+    (is-true (cl-tmux/terminal/types:screen-copy-selecting s)
+             "copy-selecting must be T after begin-line-selection")
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-mark s)))
+        "mark col must be 0 for line selection")
+    (is (= 19 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "cursor col must be width-1 for line selection")))
+
+;;; ── copy-mode-copy-end-of-line (D) ──────────────────────────────────────────
+
+(test copy-mode-copy-end-of-line-yanks-from-cursor
+  "copy-mode-copy-end-of-line copies text from cursor to end of row and exits."
+  (let ((cl-tmux/buffer:*paste-buffers* nil))
+    (let ((s (make-screen 20 5)))
+      (feed s "hello world")
+      (cl-tmux/commands::copy-mode-enter s)
+      (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 6))
+      (cl-tmux/commands::copy-mode-copy-end-of-line s)
+      (is-false (screen-copy-mode-p s)
+                "copy mode must exit after D command")
+      (let ((yanked (cl-tmux/buffer:get-paste-buffer 0)))
+        (is (and yanked (string= "world" yanked))
+            "D command must copy from col 6 to end (got ~S)" yanked)))))
+
+;;; ── copy-mode-copy-line (Y) ──────────────────────────────────────────────────
+
+(test copy-mode-copy-line-yanks-full-row
+  "copy-mode-copy-line copies the full current row content and exits."
+  (let ((cl-tmux/buffer:*paste-buffers* nil))
+    (let ((s (make-screen 20 5)))
+      (feed s "hello")
+      (cl-tmux/commands::copy-mode-enter s)
+      (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 10))
+      (cl-tmux/commands::copy-mode-copy-line s)
+      (is-false (screen-copy-mode-p s)
+                "copy mode must exit after Y command")
+      (let ((yanked (cl-tmux/buffer:get-paste-buffer 0)))
+        (is (and yanked (search "hello" yanked))
+            "Y command must copy the full row containing 'hello' (got ~S)" yanked)))))
+
+;;; ── copy-mode-search-forward / search-backward ──────────────────────────────
+
+(test copy-mode-search-forward-finds-term
+  "copy-mode-search-forward moves cursor to the first match after current position."
+  (let ((s (make-screen 30 5)))
+    (feed s "abc def abc")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-search-forward s "abc")
+    ;; First search from col 1 onward should find "abc" at col 8
+    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "search-forward must find second 'abc' at col 8 (got ~D)"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+
+(test copy-mode-search-forward-saves-term
+  "copy-mode-search-forward saves the search term for n/N repeats."
+  (let ((s (make-screen 30 5)))
+    (feed s "foo bar foo")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-search-forward s "foo")
+    (is (string= "foo" (cl-tmux/terminal/types:screen-copy-search-term s))
+        "search term must be saved after search-forward")))
+
+(test copy-mode-search-backward-finds-term
+  "copy-mode-search-backward moves cursor to the nearest match before current position."
+  (let ((s (make-screen 30 5)))
+    (feed s "abc def abc")
+    (cl-tmux/commands::copy-mode-enter s)
+    ;; Start cursor at col 11 (past the end of second "abc" at cols 8-10).
+    ;; The backward scan uses end-col=11 for row 0, so positions 0..10 are
+    ;; eligible.  The rightmost match before col 11 is the second "abc" at col 8.
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 11))
+    (cl-tmux/commands::copy-mode-search-backward s "abc")
+    ;; Search backward should find second "abc" at col 8 (nearest match before col 11)
+    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "search-backward must find 'abc' at col 8 (nearest before col 11) (got ~D)"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+
+(test copy-mode-search-next-repeats-forward
+  "copy-mode-search-next uses the saved term to repeat forward search."
+  (let ((s (make-screen 30 5)))
+    (feed s "abc def abc")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    ;; Save a term and jump to position 8
+    (cl-tmux/commands::copy-mode-search-forward s "abc")
+    ;; Cursor should now be at 8
+    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s))))
+    ;; search-next with cursor at 8 should not find another match (no more "abc" on row 0)
+    (cl-tmux/commands::copy-mode-search-next s)
+    ;; Cursor stays at 8 if no further match found
+    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "search-next must stay at current position when no further match")))
+
+(test copy-mode-search-prev-noop-without-term
+  "copy-mode-search-prev does nothing when no search term is saved."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5)
+          (cl-tmux/terminal/types:screen-copy-search-term s) nil)
+    (cl-tmux/commands::copy-mode-search-prev s)
+    (is (= 5 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "search-prev must not move cursor when no term is saved")))
+
+;;; ── send-keys-to-pane ────────────────────────────────────────────────────────
+
+(test send-keys-to-pane-noop-with-negative-fd
+  "send-keys-to-pane is a no-op (no error) when the pane has fd=-1."
+  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                         :fd -1 :pid -1 :screen (make-screen 20 5))))
+    (finishes (cl-tmux/commands:send-keys-to-pane pane "hello")
+              "send-keys-to-pane with fd=-1 must not signal an error")))
+
+(test send-keys-to-pane-noop-with-nil-pane
+  "send-keys-to-pane with NIL pane does not signal an error."
+  (finishes (cl-tmux/commands:send-keys-to-pane nil "hello")
+            "send-keys-to-pane with nil pane must not signal an error"))
+
+;;; ── add-message-log ──────────────────────────────────────────────────────────
+
+(test add-message-log-prepends-entry
+  "add-message-log prepends a (timestamp . text) cons to *message-log*."
+  (let ((cl-tmux::*message-log* nil))
+    (cl-tmux::add-message-log "first-message")
+    (is (not (null cl-tmux::*message-log*))
+        "*message-log* must be non-nil after add-message-log")
+    (is (string= "first-message" (cdr (first cl-tmux::*message-log*)))
+        "message text must be in cdr of first entry (got ~S)"
+        (cdr (first cl-tmux::*message-log*)))))
+
+(test add-message-log-caps-at-100
+  "add-message-log caps *message-log* at 100 entries."
+  (let ((cl-tmux::*message-log* nil))
+    ;; Add 105 entries.
+    (loop repeat 105 do (cl-tmux::add-message-log "x"))
+    (is (= 100 (length cl-tmux::*message-log*))
+        "*message-log* must be capped at 100 entries (got ~D)"
+        (length cl-tmux::*message-log*))))
+
+(test add-message-log-ordering
+  "add-message-log puts newest entry first."
+  (let ((cl-tmux::*message-log* nil))
+    (cl-tmux::add-message-log "first")
+    (cl-tmux::add-message-log "second")
+    (is (string= "second" (cdr (first cl-tmux::*message-log*)))
+        "second (most recent) message must be at the head of *message-log*")))

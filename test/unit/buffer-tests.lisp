@@ -76,3 +76,50 @@
       (setf (car lst) "mutated")
       (is (string= "x" (cl-tmux/buffer:get-paste-buffer 0))
           "mutation of list must not affect internal buffer"))))
+
+;;; ── buffer-limit enforcement ─────────────────────────────────────────────────
+
+(test buffer-limit-enforced-via-option
+  "add-paste-buffer trims the ring to the buffer-limit option."
+  (with-empty-buffers
+    ;; Temporarily override the option to a small limit.
+    (let ((saved (cl-tmux/options:get-option "buffer-limit")))
+      (cl-tmux/options:set-option "buffer-limit" 3)
+      (unwind-protect
+           (progn
+             (cl-tmux/buffer:add-paste-buffer "a")
+             (cl-tmux/buffer:add-paste-buffer "b")
+             (cl-tmux/buffer:add-paste-buffer "c")
+             (cl-tmux/buffer:add-paste-buffer "d")  ; should evict "a"
+             (is (= 3 (length (cl-tmux/buffer:list-paste-buffers)))
+                 "ring must not grow beyond buffer-limit")
+             (is (string= "d" (cl-tmux/buffer:get-paste-buffer 0)))
+             (is (string= "c" (cl-tmux/buffer:get-paste-buffer 1)))
+             (is (string= "b" (cl-tmux/buffer:get-paste-buffer 2)))
+             (is (null (cl-tmux/buffer:get-paste-buffer 3))
+                 "oldest buffer must have been evicted"))
+        (cl-tmux/options:set-option "buffer-limit" saved)))))
+
+(test buffer-limit-default-50
+  "Without a configured limit, at most 50 entries are kept."
+  (with-empty-buffers
+    (dotimes (i 55)
+      (cl-tmux/buffer:add-paste-buffer (format nil "buf~D" i)))
+    (is (<= (length (cl-tmux/buffer:list-paste-buffers)) 50)
+        "default limit must cap ring at 50 entries")))
+
+(test buffer-delete-middle-index
+  "delete-paste-buffer at a non-zero index removes the correct entry."
+  (with-empty-buffers
+    (cl-tmux/buffer:add-paste-buffer "a")
+    (cl-tmux/buffer:add-paste-buffer "b")
+    (cl-tmux/buffer:add-paste-buffer "c")  ; c=0, b=1, a=2
+    (cl-tmux/buffer:delete-paste-buffer 1)  ; remove b
+    (is (= 2 (length (cl-tmux/buffer:list-paste-buffers))))
+    (is (string= "c" (cl-tmux/buffer:get-paste-buffer 0)))
+    (is (string= "a" (cl-tmux/buffer:get-paste-buffer 1)))))
+
+(test buffer-add-returns-text
+  "add-paste-buffer returns the inserted text."
+  (with-empty-buffers
+    (is (string= "hello" (cl-tmux/buffer:add-paste-buffer "hello")))))

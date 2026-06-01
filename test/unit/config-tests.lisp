@@ -43,9 +43,10 @@
       "#\\d should be bound to :detach"))
 
 (test lookup-unknown-returns-nil
-  "An unbound key returns NIL."
-  (is (null (lookup-key-binding #\z))
-      "#\\z should return NIL (unbound)"))
+  "An unbound key returns NIL.  #\\z is now bound to :zoom-toggle, so we
+   use #\\@ (ASCII 64) which has no default binding."
+  (is (null (lookup-key-binding #\@))
+      "#\\@ should return NIL (unbound)"))
 
 ;;; ── Structural invariants of *key-bindings* ───────────────────────────────
 
@@ -84,13 +85,14 @@
 ;;; ── set-key-binding / remove-key-binding ──────────────────────────────────
 
 (test set-key-binding-adds-new
-  "set-key-binding adds a brand-new binding that lookup-key-binding finds."
+  "set-key-binding adds a brand-new binding that lookup-key-binding finds.
+   Uses #\\@ (ASCII 64) which has no default binding."
   (with-isolated-config
-    (is (null (lookup-key-binding #\z))
-        "#\\z should start unbound")
-    (set-key-binding #\z :new-window)
-    (is (eq :new-window (lookup-key-binding #\z))
-        "#\\z should be bound to :new-window after set-key-binding")))
+    (is (null (lookup-key-binding #\@))
+        "#\\@ should start unbound")
+    (set-key-binding #\@ :new-window)
+    (is (eq :new-window (lookup-key-binding #\@))
+        "#\\@ should be bound to :new-window after set-key-binding")))
 
 (test set-key-binding-replaces-existing
   "set-key-binding on an existing key replaces the command without duplicating."

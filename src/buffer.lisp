@@ -3,11 +3,17 @@
 (defvar *paste-buffers* nil
   "List of paste buffer strings, most recent first.")
 
+(defun %buffer-limit ()
+  "Return the configured buffer-limit, defaulting to 50 when options are not yet initialised."
+  (or (ignore-errors (cl-tmux/options:get-option "buffer-limit"))
+      50))
+
 (defun add-paste-buffer (text)
-  "Push TEXT onto *paste-buffers*, keeping at most 50 entries. Return TEXT."
+  "Push TEXT onto *paste-buffers*, keeping at most buffer-limit entries. Return TEXT."
   (push text *paste-buffers*)
-  (when (> (length *paste-buffers*) 50)
-    (setf *paste-buffers* (subseq *paste-buffers* 0 50)))
+  (let ((limit (max 1 (%buffer-limit))))
+    (when (> (length *paste-buffers*) limit)
+      (setf *paste-buffers* (subseq *paste-buffers* 0 limit))))
   text)
 
 (defun get-paste-buffer (&optional (index 0))

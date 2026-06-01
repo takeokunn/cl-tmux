@@ -107,7 +107,7 @@
   "Command keywords a config-file `bind` directive may target.  This is the
    user-bindable subset of the commands cl-tmux:dispatch-command handles — it
    deliberately EXCLUDES the copy-mode-internal commands (:copy-mode-exit,
-   :copy-mode-up, :copy-mode-down), which are produced by copy-mode
+   :copy-mode-begin-selection, :copy-mode-yank), which are produced by copy-mode
    interception, not by key lookup.")
 
 (defun %command-keyword (name)
@@ -191,9 +191,6 @@
 ;;; The macro-generated apply-config-directive handles the simple 2-arg form.
 
 (define-config-directives
-  ("unbind" 1 (key)
-    (remove-key-binding (%parse-key-token key))
-    t)
   ("set-shell" 1 (path)
     (setf *default-shell* path)
     t)
@@ -207,25 +204,64 @@
     ;; set option value — stores in global options hash.
     (cl-tmux/options:set-option name value)
     t)
+  ("set-option" 2 (name value)
+    ;; set-option: canonical long form of set.
+    (cl-tmux/options:set-option name value)
+    t)
   ("setw" 2 (name value)
     ;; setw / set-window-option: same as set for now (global scope).
     (cl-tmux/options:set-option name value)
     t)
   ("set-window-option" 2 (name value)
     (cl-tmux/options:set-option name value)
+    t)
+  ("sets" 2 (name value)
+    ;; sets / set-session-option: alias of set for session-scoped options.
+    (cl-tmux/options:set-option name value)
+    t)
+  ("set-session-option" 2 (name value)
+    ;; set-session-option: canonical long form of sets.
+    (cl-tmux/options:set-option name value)
     t))
+
+;;; ── unbind-key flag parsing ──────────────────────────────────────────────────
+;;;
+;;; Parse optional [-n] [-T table] flags before the key argument.
+;;; Returns (values table key) or (values nil nil) on parse failure.
+
+(defun %parse-unbind-key-args (args)
+  "Parse the ARGS list for an unbind directive (excludes the verb itself).
+   Returns (values table key) where TABLE is \"prefix\" by default,
+   or (values nil nil) on parse failure."
+  (let ((table "prefix")
+        (rest args))
+    (loop
+      (cond
+        ((null rest) (return (values nil nil)))
+        ((string= (first rest) "-n")
+         (setf table "root")
+         (setf rest (rest rest)))
+        ((string= (first rest) "-T")
+         (setf rest (rest rest))
+         (when (null rest) (return (values nil nil)))
+         (setf table (first rest))
+         (setf rest (rest rest)))
+        (t
+         ;; Next arg must be exactly: key (no extra args allowed)
+         (unless (= (length rest) 1) (return (values nil nil)))
+         (return (values table (%parse-key-token (first rest)))))))))
 
 (defun apply-config-directive (tokens)
   "Apply one parsed config directive (list of string TOKENS) to live state.
    Returns T when applied, NIL for an unknown/invalid directive.
-   Handles bind [-n] [-r] [-T table] key command in addition to
-   simple fixed-arity directives."
+   Handles bind [-n] [-r] [-T table] key command and
+   unbind/unbind-key [-n] [-T table] key, in addition to simple directives."
   (when tokens
     (let ((cmd (first tokens))
           (args (rest tokens)))
       (cond
-        ;; \"bind\" with any number of args — handle flags
-        ((string= cmd "bind")
+        ;; \"bind\" / \"bind-key\" with any number of args — handle flags
+        ((or (string= cmd "bind") (string= cmd "bind-key"))
          (multiple-value-bind (table key kw repeatable)
              (%parse-bind-key-args args)
            (when kw
@@ -236,6 +272,28 @@
              ;; Update the key-tables system
              (key-table-bind table key kw :repeatable repeatable)
              t)))
+        ;; \"unbind\" / \"unbind-key\" with optional flag args — handle -n / -T
+        ((or (string= cmd "unbind") (string= cmd "unbind-key"))
+         ;; Fast path: single arg with no flags (most common case)
+         (if (= (length args) 1)
+             (progn
+               (remove-key-binding (%parse-key-token (first args)))
+               ;; Also remove from prefix key-table
+               (let ((k (%parse-key-token (first args)))
+                     (tbl (gethash "prefix" *key-tables*)))
+                 (when tbl (remhash k tbl)))
+               t)
+             ;; Flag-aware path: -n, -T table
+             (multiple-value-bind (table key)
+                 (%parse-unbind-key-args args)
+               (when (and table key)
+                 ;; Remove from named table
+                 (let ((tbl (gethash table *key-tables*)))
+                   (when tbl (remhash key tbl)))
+                 ;; Also remove from legacy alist if prefix table
+                 (when (string= table "prefix")
+                   (remove-key-binding key))
+                 t))))
         ;; Delegate everything else to the inner directive handler
         (t (%apply-config-directive-inner tokens))))))
 

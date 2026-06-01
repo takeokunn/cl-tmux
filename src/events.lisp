@@ -14,6 +14,12 @@
 ;;; byte-dispatch table, matching the Prolog-like rule style used throughout
 ;;; the codebase (define-command-handlers, define-csi-rules, define-state).
 
+;;; UTF-8 accumulation state for the prompt (module-level; main-thread-only).
+(defvar *prompt-utf8-acc* 0
+  "Accumulated code-point bits from UTF-8 lead byte processing.")
+(defvar *prompt-utf8-left* 0
+  "Number of UTF-8 continuation bytes still expected (0 when idle).")
+
 (defmacro define-prompt-key-rules (&rest rules)
   "Build HANDLE-PROMPT-KEY from a byte-dispatch table.
    Each RULE is (PATTERN &rest BODY) where PATTERN is:
@@ -23,7 +29,8 @@
    Always marks *dirty* after dispatching."
   `(defun handle-prompt-key (byte)
      "Route one input BYTE to the active prompt.
-      Multibyte/UTF-8 input is not yet supported (non-ASCII bytes are ignored)."
+      UTF-8 multi-byte sequences are decoded via *prompt-utf8-acc* /
+      *prompt-utf8-left* before the dispatch table is consulted."
      (cond
        ,@(mapcar
           (lambda (rule)
@@ -38,12 +45,13 @@
 
 (define-prompt-key-rules
   (13                                       ; Enter — submit and dismiss
+   (setf *prompt-utf8-acc* 0 *prompt-utf8-left* 0)
    (let ((p *prompt*))
      (when (and p (prompt-on-submit p))
        (funcall (prompt-on-submit p) (prompt-buffer p)))
      (prompt-clear)))
-  (27  (prompt-clear))                      ; Esc — cancel
-  (3   (prompt-clear))                      ; C-c — cancel (same as Esc)
+  (27  (setf *prompt-utf8-acc* 0 *prompt-utf8-left* 0) (prompt-clear)) ; Esc — cancel
+  (3   (setf *prompt-utf8-acc* 0 *prompt-utf8-left* 0) (prompt-clear)) ; C-c — cancel
   (1   (prompt-cursor-bol))                 ; C-a — beginning of line
   (5   (prompt-cursor-eol))                 ; C-e — end of line
   (2   (prompt-cursor-back))                ; C-b — cursor left
@@ -55,7 +63,26 @@
    (prompt-backspace))                      ; Backspace / DEL
   ((and (>= byte 32) (< byte 127))
    (prompt-input (code-char byte)))         ; printable ASCII — insert
-  (t nil))                                  ; non-ASCII — ignore
+  ;; UTF-8 continuation byte: fold into accumulator
+  ((= (logand byte #xC0) #x80)
+   (when (plusp *prompt-utf8-left*)
+     (setf *prompt-utf8-acc*  (logior (ash *prompt-utf8-acc* 6)
+                                       (logand byte #x3F)))
+     (decf *prompt-utf8-left*)
+     (when (zerop *prompt-utf8-left*)
+       (let ((cp *prompt-utf8-acc*))
+         (setf *prompt-utf8-acc* 0)
+         (let ((ch (ignore-errors (code-char cp))))
+           (when ch (prompt-input ch)))))))
+  ;; UTF-8 lead byte: begin multi-byte decode
+  ((and (>= byte #xC0) (/= byte #xFF))
+   (multiple-value-bind (acc left)
+       (cond ((< byte #xE0) (values (logand byte #x1F) 1))
+             ((< byte #xF0) (values (logand byte #x0F) 2))
+             (t             (values (logand byte #x07) 3)))
+     (setf *prompt-utf8-acc*  acc
+           *prompt-utf8-left* left)))
+  (t nil))                                  ; other control bytes — ignore
 
 ;;; ── VT100 escape-sequence byte constants ───────────────────────────────────
 (defconstant +byte-esc+         27  "ASCII ESC (0x1B)")
@@ -96,8 +123,8 @@
            (t nil))))))
 
 (define-copy-mode-escape-table
-  ((+byte-esc+ +byte-csi-bracket+ +byte-arrow-up+)    (copy-mode-scroll screen  3))
-  ((+byte-esc+ +byte-csi-bracket+ +byte-arrow-down+)  (copy-mode-scroll screen -3))
+  ((+byte-esc+ +byte-csi-bracket+ +byte-arrow-up+)    (copy-mode-move-cursor screen :up))
+  ((+byte-esc+ +byte-csi-bracket+ +byte-arrow-down+)  (copy-mode-move-cursor screen :down))
   ((+byte-esc+ +byte-csi-bracket+ +byte-arrow-left+)  (copy-mode-move-cursor screen :left))
   ((+byte-esc+ +byte-csi-bracket+ +byte-arrow-right+) (copy-mode-move-cursor screen :right))
   ((+byte-q+)                                          (copy-mode-exit  screen)))
@@ -134,6 +161,14 @@
   "Forward raw OCTETS to SESSION's active-pane PTY."
   (with-active-pane (ap session)
     (pty-write (pane-fd ap) octets)))
+
+(defun %arrow-final-to-ss3-bytes (final-byte)
+  "Given a CSI arrow-key final byte (65=A/66=B/67=C/68=D), return the
+   corresponding SS3 sequence bytes (ESC O A/B/C/D) as an octet vector,
+   or NIL if the final byte is not an arrow key."
+  (when (member final-byte '(65 66 67 68))
+    (make-array 3 :element-type '(unsigned-byte 8)
+                  :initial-contents (list 27 79 final-byte)))) ; ESC O <final>
 
 ;;; ── Mouse event dispatch ─────────────────────────────────────────────────────
 ;;;
@@ -322,10 +357,46 @@
       (t nil))
     (setf *dirty* t)))
 
+;;; ── Overlay pager escape-sequence handler ────────────────────────────────────
+;;;
+;;; When the overlay pager is active and ESC is received, we accumulate the byte
+;;; sequence.  ESC [ A (Up) scrolls -1 and ESC [ B (Down) scrolls +1.  Any other
+;;; sequence (including bare ESC) dismisses the overlay.
+
+(defun make-overlay-escape-k (buf)
+  "CPS continuation: finish an ESC sequence while the overlay pager is active.
+   Handles ESC [ A (Up) → scroll -1, ESC [ B (Down) → scroll +1.
+   Any other sequence dismisses the overlay."
+  (lambda (session-ignored byte)
+    (declare (ignore session-ignored))
+    (vector-push-extend byte buf)
+    (let ((len (fill-pointer buf)))
+      (cond
+        ;; ESC [ — keep accumulating for the final byte
+        ((and (= len 2) (= byte +byte-csi-bracket+))
+         (values nil (make-overlay-escape-k buf)))
+        ;; ESC [ A — Up arrow: scroll up
+        ((and (= len 3) (= (aref buf 1) +byte-csi-bracket+)
+              (= byte +byte-arrow-up+))
+         (overlay-scroll -1)
+         (setf *dirty* t)
+         (values nil #'%ground-input-state))
+        ;; ESC [ B — Down arrow: scroll down
+        ((and (= len 3) (= (aref buf 1) +byte-csi-bracket+)
+              (= byte +byte-arrow-down+))
+         (overlay-scroll 1)
+         (setf *dirty* t)
+         (values nil #'%ground-input-state))
+        ;; Bare ESC (2-byte non-CSI) or unrecognised sequence: dismiss
+        (t
+         (clear-overlay)
+         (setf *dirty* t)
+         (values nil #'%ground-input-state))))))
+
 ;;; ── Named CPS state functions ────────────────────────────────────────────────
 ;;;
 ;;; Rules read like Prolog clauses:
-;;;   ground_state(_, _)  :- overlay_active, !, clear_overlay.
+;;;   ground_state(_, _)  :- overlay_active, !, dispatch_overlay_key.
 ;;;   ground_state(_, _)  :- prompt_active,  !, handle_prompt_key.
 ;;;   ground_state(_, 2)  :- !, transition(after_prefix_state).
 ;;;   ground_state(S, 27) :- copy_mode_active(S), !, start_escape_accumulation.
@@ -338,13 +409,39 @@
    (setf *dirty* t)
    (values nil #'%ground-input-state))
   ;; ── Global overlays take priority ─────────────────────────────────────────
+  ;; j/k scroll; q/Esc dismiss; Up/Down arrows accumulate as ESC sequences and
+  ;; are routed to overlay-scroll inside make-escape-input-k; all other keys
+  ;; are swallowed so the pager stays open until explicitly dismissed.
   ((overlay-active-p)
-   (clear-overlay)
-   (setf *dirty* t)
+   (cond
+     ;; scroll down one line
+     ((= byte 106)  (overlay-scroll 1)  (setf *dirty* t))   ; j
+     ;; scroll up one line
+     ((= byte 107)  (overlay-scroll -1) (setf *dirty* t))   ; k
+     ;; dismiss
+     ((= byte 113)  (clear-overlay)     (setf *dirty* t))   ; q
+     ((= byte 27)                                            ; Esc — may be arrow
+      (let ((buf (make-array 8 :element-type '(unsigned-byte 8)
+                               :fill-pointer 0 :adjustable t)))
+        (vector-push-extend byte buf)
+        (setf *dirty* t)
+        (return-from %ground-input-state
+          (values nil (make-overlay-escape-k buf)))))
+     ;; all other keys: swallow (keep overlay open)
+     (t nil))
    (values nil #'%ground-input-state))
   ;; ── Active prompt captures all input ──────────────────────────────────────
   ((prompt-active-p)
    (handle-prompt-key byte)
+   (values nil #'%ground-input-state))
+  ;; ── Root key-table: check for bindings that fire without any prefix ────────
+  ;; Looked up before the prefix-key check so that -n bindings can intercept
+  ;; keys that would otherwise be forwarded to the pane.
+  ((let ((entry (key-table-lookup "root" (code-char byte))))
+     (when entry
+       (dispatch-command session (key-table-command entry) byte)
+       (setf *dirty* t)
+       t))
    (values nil #'%ground-input-state))
   ;; ── Prefix key: arm command dispatcher ────────────────────────────────────
   ((= byte +prefix-key-code+)
@@ -366,24 +463,63 @@
    (let ((sc (%active-screen session)))
      (when sc
        (case byte
-         ;; q / Q — exit copy mode
+         ;; q / i — exit copy mode
          (#.+byte-q+ (copy-mode-exit sc))
-         ;; j / C-n (14) / Down arrow handled via escape below → scroll down 1
-         ((106 14)  (copy-mode-scroll sc -1))  ; j, C-n
-         ;; k / C-p (16) / Up arrow handled via escape → scroll up 1
-         ((107 16)  (copy-mode-scroll sc 1))   ; k, C-p
-         ;; C-d (4) — scroll down half page
-         (4         (copy-mode-scroll sc (- (floor (screen-height sc) 2))))
-         ;; C-u (21) — scroll up half page
-         (21        (copy-mode-scroll sc (floor (screen-height sc) 2)))
+         (105        (copy-mode-exit sc))               ; i
+         ;; h — move cursor left
+         (104        (copy-mode-move-cursor sc :left))  ; h
+         ;; l — move cursor right
+         (108        (copy-mode-move-cursor sc :right)) ; l
+         ;; j / C-n (14) — move cursor down (viewport follows at edge)
+         ((106 14)   (copy-mode-move-cursor sc :down))  ; j, C-n
+         ;; k / C-p (16) — move cursor up (viewport follows at edge)
+         ((107 16)   (copy-mode-move-cursor sc :up))    ; k, C-p
+         ;; w — word forward
+         (119        (copy-mode-word-forward sc))        ; w
+         ;; b — word backward
+         (98         (copy-mode-word-backward sc))       ; b
+         ;; e — word end
+         (101        (copy-mode-word-end sc))            ; e
+         ;; 0 — line start
+         (48         (copy-mode-line-start sc))          ; 0
+         ;; $ — line end
+         (36         (copy-mode-line-end sc))            ; $
          ;; g — jump to top (maximum scrollback)
-         (103       (copy-mode-scroll sc most-positive-fixnum))
+         (103        (copy-mode-top sc))
          ;; G — jump to bottom (offset = 0, live view)
-         (71        (copy-mode-scroll sc (- most-positive-fixnum)))
+         (71         (copy-mode-bottom sc))
+         ;; H — cursor to top of screen
+         (72         (copy-mode-high sc))                ; H
+         ;; M — cursor to middle of screen
+         (#.(char-code #\M) (copy-mode-middle sc))      ; M
+         ;; L — cursor to bottom of screen
+         (76         (copy-mode-low sc))                 ; L
+         ;; C-f (6) — page down
+         (6          (copy-mode-page-down sc))
+         ;; C-b (2) — page up
+         (2          (copy-mode-page-up sc))
+         ;; C-u (21) — scroll up half page
+         (21         (copy-mode-half-page-up sc))
+         ;; C-d (4) — scroll down half page
+         (4          (copy-mode-half-page-down sc))
+         ;; C-e (5) — scroll down one line
+         (5          (copy-mode-scroll-down-line sc))
+         ;; C-y (25) — scroll up one line
+         (25         (copy-mode-scroll-up-line sc))
+         ;; V — begin line selection
+         (86         (copy-mode-begin-line-selection sc)) ; V
+         ;; D — copy to end of line
+         (68         (copy-mode-copy-end-of-line sc))    ; D
+         ;; Y — copy current line
+         (89         (copy-mode-copy-line sc))           ; Y
          ;; Space / v — begin selection
-         ((32 118)  (copy-mode-begin-selection sc))
+         ((32 118)   (copy-mode-begin-selection sc))
          ;; y — yank selection
-         (121       (copy-mode-yank sc))
+         (121        (copy-mode-yank sc))
+         ;; n — search next
+         (110        (copy-mode-search-next sc))         ; n
+         ;; N — search prev
+         (78         (copy-mode-search-prev sc))         ; N
          ;; Any other byte is consumed without forwarding (no passthrough in copy mode)
          (otherwise nil)))
      (setf *dirty* t))
@@ -610,9 +746,16 @@
                (values nil (make-escape-input-k session buf))
                (progn
                  (unless (handle-copy-mode-escape session buf)
-                   ;; Not in copy mode (or unrecognised): forward raw bytes to pane
+                   ;; Not in copy mode (or unrecognised): forward raw bytes to pane.
+                   ;; When application cursor keys mode is active (DEC ?1h), remap
+                   ;; ESC [ A/B/C/D (CSI) to ESC O A/B/C/D (SS3) before forwarding.
                    (unless (copy-mode-active-p session)
-                     (%forward-octets session (subseq buf 0 len))))
+                     (let* ((sc       (%active-screen session))
+                            (app-keys (and sc (screen-app-cursor-keys sc)))
+                            (ss3-seq  (and app-keys (%arrow-final-to-ss3-bytes third))))
+                       (if ss3-seq
+                           (%forward-octets session ss3-seq)
+                           (%forward-octets session (subseq buf 0 len))))))
                  (values nil #'%ground-input-state)))))
         ;; ── 4-byte function key: ESC [ N ~ ────────────────────────────────
         ;; PageUp = ESC [ 5 ~ (53 126), PageDown = ESC [ 6 ~ (54 126).
@@ -664,10 +807,34 @@
 
 ;;; ── Additional key bindings ─────────────────────────────────────────────────
 
-;; C-b w — choose-window (interactive overlay listing all windows)
-(set-key-binding #\w :choose-window)
+;;; Session management
 ;; C-b s — choose-session (interactive overlay listing all sessions)
 (set-key-binding #\s :choose-session)
+;; C-b ( / C-b ) — switch to prev/next session
+(set-key-binding #\( :switch-client-prev)
+(set-key-binding #\) :switch-client-next)
+;; C-b L — last-session (switch to most recently active previous session)
+(set-key-binding #\L :last-session)
+;; C-b D — choose-client (show overlay with client info)
+(set-key-binding #\D :choose-client)
+
+;;; Window management
+;; C-b w — choose-window (interactive menu listing all windows)
+(set-key-binding #\w :choose-window)
+;; C-b l — last-window (switch to previously active window)
+(set-key-binding #\l :last-window)
+;; C-b f — find-window (search window names and pane titles)
+(set-key-binding #\f :find-window)
+;; C-b . — move-window-prompt (prompt for target index and move active window)
+(set-key-binding #\. :move-window-prompt)
+;; C-b ' — select-window-prompt (prompt for window index or name)
+(set-key-binding #\' :select-window-prompt)
+;; C-b E — select-layout-spread (even-horizontal layout alias)
+(set-key-binding #\E :select-layout-spread)
+;; C-b Space — next-layout (cycle through layouts)
+(set-key-binding (code-char 32) :next-layout)
+
+;;; Pane management
 ;; C-b ! — break-pane (move active pane to a new window)
 (set-key-binding #\! :break-pane)
 ;; C-b { / C-b } — swap-pane backward / forward
@@ -677,17 +844,32 @@
 (set-key-binding #\; :last-pane)
 ;; C-b q — display-panes (show pane numbers)
 (set-key-binding #\q :display-panes)
-;; C-b ( / C-b ) — switch to prev/next session
-(set-key-binding #\( :switch-client-prev)
-(set-key-binding #\) :switch-client-next)
-;; C-b L — last-session (switch to most recently active previous session)
-(set-key-binding #\L :last-session)
-;; C-b l — last-window (switch to previously active window)
-(set-key-binding #\l :last-window)
-;; C-b f — find-window (search window names and pane titles)
-(set-key-binding #\f :find-window)
+;; C-b z — zoom-toggle (zoom in/out on active pane) — standard lowercase tmux binding
+(set-key-binding #\z :zoom-toggle)
+;; C-b m — mark-pane (set the marked pane)
+(set-key-binding #\m :mark-pane)
+;; C-b M — clear-mark (clear the marked pane)
+(set-key-binding (code-char 77) :clear-mark)
+
+;;; Copy/paste/buffers
 ;; C-b C-b — send-prefix (forward one literal C-b byte to the active pane)
 (set-key-binding (code-char 2) :send-prefix)
+;; C-b # — list-buffers (show all paste buffers)
+(set-key-binding (code-char 35) :list-buffers)
+;; C-b = — choose-buffer (interactively pick a paste buffer)
+(set-key-binding (code-char 61) :choose-buffer)
+;; C-b - — delete-buffer (delete most recent paste buffer)
+(set-key-binding (code-char 45) :delete-buffer)
+
+;;; Misc
+;; C-b : — command-prompt (open interactive command line)
+(set-key-binding #\: :command-prompt)
+;; C-b t — clock-mode (toggle digital clock overlay on active pane)
+(set-key-binding #\t :clock-mode)
+;; C-b i — display-info (show session/window/pane info summary)
+(set-key-binding #\i :display-info)
+;; C-b ~ — show-messages (show recent display-message log)
+(set-key-binding (code-char 126) :show-messages)
 
 (defstruct input-state
   "Opaque CPS keystroke-processing state. Holds the current continuation."

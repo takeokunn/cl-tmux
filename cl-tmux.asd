@@ -42,8 +42,8 @@
      (:file "session")  ; session management (uses window)
      (:file "format")   ; tmux-style format string expansion
      (:file "target")   ; session/window/pane target resolution (-t flag)
-     (:file "buffer")   ; paste-buffer ring
      (:file "options")  ; global option registry
+     (:file "buffer")   ; paste-buffer ring (uses options for buffer-limit)
      (:file "hooks")    ; user-defined hook registry
      (:file "prompt")
      (:file "commands")

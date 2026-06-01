@@ -18,6 +18,7 @@
   (last-active nil)               ; previously active pane (for C-b ;)
   (last-active-time 0 :type integer)  ; universal-time when this window was last focused
   (automatic-rename-p t :type boolean) ; when T, OSC 0/2 title updates window-name
+  (layout-cycle-index 0 :type fixnum) ; index into the layouts cycle for C-b Space
   (lock (make-lock "window") :read-only t))
 
 (defun window-refresh-panes (window)

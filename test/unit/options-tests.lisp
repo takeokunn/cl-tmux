@@ -178,7 +178,7 @@
       (is (search "escape-time" out)
           "show-options :server must include escape-time (got ~S)" out))))
 
-;;; ── New options: status-style, status-justify, window-status-current-style ──
+;;; ── Existing options: status-style, status-justify, window-status-current-style ──
 
 (test status-style-option-registered
   "\"status-style\" is a registered option."
@@ -194,3 +194,133 @@
   "\"window-status-current-style\" is a registered option."
   (is (cl-tmux/options:option-defined-p "window-status-current-style")
       "\"window-status-current-style\" must be a registered option"))
+
+;;; ── New options: default values and set/get round-trips ──────────────────────
+
+(test pane-base-index-default
+  "\"pane-base-index\" default is 0."
+  (is (= 0 (cl-tmux/options:get-option "pane-base-index"))
+      "pane-base-index default must be 0"))
+
+(test pane-base-index-set-get
+  "pane-base-index set/get round-trip."
+  (with-fresh-global-options
+    (is (= 1 (cl-tmux/options:set-option "pane-base-index" "1")))
+    (is (= 1 (cl-tmux/options:get-option "pane-base-index")))))
+
+(test default-command-option-registered
+  "\"default-command\" is a registered option with default empty string."
+  (is (cl-tmux/options:option-defined-p "default-command"))
+  (is (string= "" (cl-tmux/options:get-option "default-command"))))
+
+(test status-left-length-default
+  "\"status-left-length\" default is 40."
+  (is (= 40 (cl-tmux/options:get-option "status-left-length"))))
+
+(test status-right-length-default
+  "\"status-right-length\" default is 40."
+  (is (= 40 (cl-tmux/options:get-option "status-right-length"))))
+
+(test window-status-format-default
+  "\"window-status-format\" is registered with correct default."
+  (is (cl-tmux/options:option-defined-p "window-status-format"))
+  (is (stringp (cl-tmux/options:get-option "window-status-format"))))
+
+(test window-status-current-format-default
+  "\"window-status-current-format\" is registered with correct default."
+  (is (cl-tmux/options:option-defined-p "window-status-current-format"))
+  (is (stringp (cl-tmux/options:get-option "window-status-current-format"))))
+
+(test window-status-style-default
+  "\"window-status-style\" is registered."
+  (is (cl-tmux/options:option-defined-p "window-status-style")))
+
+(test window-status-separator-default
+  "\"window-status-separator\" default is a space."
+  (is (cl-tmux/options:option-defined-p "window-status-separator"))
+  (is (string= " " (cl-tmux/options:get-option "window-status-separator"))))
+
+(test word-separators-default
+  "\"word-separators\" default is \" -_@\"."
+  (is (string= " -_@" (cl-tmux/options:get-option "word-separators"))))
+
+(test automatic-rename-default
+  "\"automatic-rename\" default is T."
+  (is (eq t (cl-tmux/options:get-option "automatic-rename"))))
+
+(test automatic-rename-format-default
+  "\"automatic-rename-format\" is registered."
+  (is (cl-tmux/options:option-defined-p "automatic-rename-format")))
+
+(test bell-action-default
+  "\"bell-action\" default is \"any\"."
+  (is (string= "any" (cl-tmux/options:get-option "bell-action"))))
+
+(test visual-bell-default
+  "\"visual-bell\" default is NIL."
+  (is (null (cl-tmux/options:get-option "visual-bell"))))
+
+(test visual-activity-default
+  "\"visual-activity\" default is NIL."
+  (is (null (cl-tmux/options:get-option "visual-activity"))))
+
+(test monitor-activity-default
+  "\"monitor-activity\" default is NIL."
+  (is (null (cl-tmux/options:get-option "monitor-activity"))))
+
+(test buffer-limit-default
+  "\"buffer-limit\" default is 50."
+  (is (= 50 (cl-tmux/options:get-option "buffer-limit"))))
+
+(test focus-events-default
+  "\"focus-events\" default is NIL."
+  (is (null (cl-tmux/options:get-option "focus-events"))))
+
+(test copy-command-default
+  "\"copy-command\" default is empty string."
+  (is (string= "" (cl-tmux/options:get-option "copy-command"))))
+
+(test set-titles-default
+  "\"set-titles\" default is NIL."
+  (is (null (cl-tmux/options:get-option "set-titles"))))
+
+(test set-titles-string-default
+  "\"set-titles-string\" default is \"#W\"."
+  (is (string= "#W" (cl-tmux/options:get-option "set-titles-string"))))
+
+(test remain-on-exit-default
+  "\"remain-on-exit\" default is NIL."
+  (is (null (cl-tmux/options:get-option "remain-on-exit"))))
+
+(test renumber-windows-default
+  "\"renumber-windows\" default is NIL."
+  (is (null (cl-tmux/options:get-option "renumber-windows"))))
+
+(test message-style-default
+  "\"message-style\" default is empty string."
+  (is (string= "" (cl-tmux/options:get-option "message-style"))))
+
+(test update-environment-default
+  "\"update-environment\" default contains expected variable names."
+  (let ((val (cl-tmux/options:get-option "update-environment")))
+    (is (stringp val))
+    (is (search "DISPLAY" val))
+    (is (search "SSH_AUTH_SOCK" val))))
+
+(test set-option-boolean-set-titles
+  "set-titles boolean set/get round-trip."
+  (with-fresh-global-options
+    (is (eq t (cl-tmux/options:set-option "set-titles" "on")))
+    (is (eq t (cl-tmux/options:get-option "set-titles")))
+    (is (null (cl-tmux/options:set-option "set-titles" "off")))
+    (is (null (cl-tmux/options:get-option "set-titles")))))
+
+(test set-option-integer-status-left-length
+  "status-left-length integer set/get round-trip."
+  (with-fresh-global-options
+    (is (= 80 (cl-tmux/options:set-option "status-left-length" "80")))
+    (is (= 80 (cl-tmux/options:get-option "status-left-length")))))
+
+(test exit-unattached-default
+  "\"exit-unattached\" global option default is NIL."
+  (is (null (cl-tmux/options:get-option "exit-unattached"))))

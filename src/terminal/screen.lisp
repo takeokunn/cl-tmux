@@ -79,7 +79,14 @@
   ;; to the PTY (e.g. DA1/DA2 device attribute responses).  The PTY loop drains
   ;; this and writes the bytes to the master fd.  A list is used as a simple
   ;; FIFO: new entries are pushed to the front (nreverse to drain in order).
-  (response-queue nil :type list))
+  (response-queue nil :type list)
+  ;; BEL (0x07) pending: set to T when the emulator receives a BEL byte.
+  ;; The renderer emits an outer-terminal BEL on the next frame and clears the flag.
+  (bell-pending nil :type boolean)
+  ;; Copy-mode search state: the last search term entered via / or ?
+  (copy-search-term nil :type (or null string))
+  ;; Copy-mode line-selection flag: T when V (line-select) mode is active
+  (copy-line-selection-p nil :type boolean))
 
 (defun %make-blank-cells (n)
   "Allocate a simple vector of N blank cells (space, default colour, no attrs)."

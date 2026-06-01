@@ -150,29 +150,61 @@
 
 ;;; ── Context builder ─────────────────────────────────────────────────────────
 
+(defun %current-time-string ()
+  "Return HH:MM string from the system clock."
+  (multiple-value-bind (sec min hour) (get-decoded-time)
+    (declare (ignore sec))
+    (format nil "~2,'0D:~2,'0D" hour min)))
+
+(defun %short-hostname (h)
+  "Return the hostname up to the first dot, or the full string if no dot."
+  (subseq h 0 (or (position #\. h) (length h))))
+
 (defun format-context-from-session (session window pane)
   "Build a context plist for EXPAND-FORMAT from SESSION, WINDOW, and PANE.
    Any argument may be NIL; missing slots default to safe empty values.
 
    Keys: :session-name :window-index :window-name :window-count
-         :pane-index :hostname"
+         :pane-index :hostname :time :host :host-short"
   (let* ((session-name  (if session (cl-tmux/model:session-name session) ""))
          (session-wins  (if session (cl-tmux/model:session-windows session) nil))
+         (active-win    (if session (cl-tmux/model:session-active-window session) nil))
          (window-count  (length session-wins))
          (window-index  (if (and window session-wins)
                             (let ((pos (position window session-wins)))
                               (if pos (1+ pos) 0))
                             0))
          (window-name   (if window (cl-tmux/model:window-name window) ""))
+         (window-active (if (and window active-win (eq window active-win)) "1" "0"))
+         (window-flags  (cond ((and window active-win (eq window active-win)) "*")
+                              (t " ")))
          (window-panes  (if window (cl-tmux/model:window-panes window) nil))
          (pane-index    (if (and pane window-panes)
                             (let ((pos (position pane window-panes)))
                               (if pos (1+ pos) 0))
                             0))
-         (hostname      (machine-instance)))
+         (hostname      (machine-instance))
+         (time-str      (%current-time-string))
+         (host-short    (%short-hostname hostname)))
     (list :session-name  session-name
           :window-index  window-index
           :window-name   window-name
           :window-count  window-count
+          :window-active window-active
+          :window-flags  window-flags
           :pane-index    pane-index
-          :hostname      hostname)))
+          :hostname      hostname
+          :host          hostname
+          :host-short    host-short
+          :time          time-str)))
+
+(defun format-context-from-window (session window)
+  "Build a context plist for per-window format strings (e.g. window-status-format).
+   Like FORMAT-CONTEXT-FROM-SESSION but specialised for a single window.
+   Any argument may be NIL.
+
+   Keys: :session-name :window-index :window-name :window-count
+         :window-active :window-flags :pane-index :hostname :time :host :host-short"
+  (format-context-from-session session window
+                               (when window
+                                 (first (cl-tmux/model:window-panes window)))))

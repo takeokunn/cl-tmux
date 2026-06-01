@@ -119,14 +119,15 @@
     (cl-tmux::handle-prompt-key 8)
     (is (string= "a" (prompt-buffer *prompt*)))))
 
-(test handle-prompt-key-enter-empty-submits-empty
-  "Enter on an empty buffer submits the empty string (window renamed to \"\")
-   and dismisses the prompt."
+(test handle-prompt-key-enter-empty-is-noop-for-rename
+  "Enter on an empty buffer dismisses the prompt but does NOT rename the window
+   because rename-window ignores empty strings (matching real tmux behaviour)."
   (let ((win (make-rename-window)))
     (with-clean-prompt
       (prompt-start "rename-window" "" (lambda (name) (rename-window win name)))
       (cl-tmux::handle-prompt-key 13)
-      (is (string= "" (window-name win)) "Enter on empty buffer submits the empty string")
+      (is (string= "old" (window-name win))
+          "Empty input must not rename the window — original name preserved")
       (is (null (prompt-active-p)) "Enter should dismiss the prompt"))))
 
 ;;; ── Status-bar display ──────────────────────────────────────────────────────

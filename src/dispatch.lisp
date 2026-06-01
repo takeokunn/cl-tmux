@@ -159,7 +159,7 @@
 
 ;;; -- Copy-mode dispatch helper --------------------------------------------
 ;;;
-;;; The six copy-mode command handlers share the pattern:
+;;; The copy-mode command handlers share the pattern:
 ;;; obtain the active screen and invoke a copy-mode function when present.
 
 (defun %copy-mode-call (session fn)
@@ -203,12 +203,29 @@
        (t (and ch (lookup-key-binding ch))))))
 
 (define-copy-mode-key-overrides
-  (#\[ :copy-mode-up)
-  (#\] :copy-mode-down)
   (#\q :copy-mode-exit)
+  (#\i :copy-mode-exit)
   (#\Space :copy-mode-begin-selection)
   (#\v :copy-mode-begin-selection)
-  (#\y :copy-mode-yank))
+  (#\V :copy-mode-begin-line-selection)
+  (#\y :copy-mode-yank)
+  (#\w :copy-mode-word-forward)
+  (#\b :copy-mode-word-backward)
+  (#\e :copy-mode-word-end)
+  (#\0 :copy-mode-line-start)
+  (#\$ :copy-mode-line-end)
+  (#\g :copy-mode-top)
+  (#\G :copy-mode-bottom)
+  (#\H :copy-mode-high)
+  (#\M :copy-mode-middle)
+  (#\L :copy-mode-low)
+  (#\D :copy-mode-copy-end-of-line)
+  (#\Y :copy-mode-copy-line)
+  (#\n :copy-mode-search-next)
+  (#\N :copy-mode-search-prev)
+  (#\/ :copy-mode-search-forward-prompt)
+  (#\? :copy-mode-search-backward-prompt)
+  (#\= :copy-mode-choose-buffer))
 
 ;;; -- Menu formatter helper ---------------------------------------------------
 
@@ -240,6 +257,67 @@
       (start-reader-thread pane))
     (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-created+ session)
     session))
+
+;;; -- %dispatch-named-command -------------------------------------------------
+;;;
+;;; Maps a string command name (as typed in the command-prompt) to a keyword
+;;; dispatch tag, then calls dispatch-command.  Unknown names show an overlay.
+
+(defun %dispatch-named-command (session cmd-name)
+  "Map CMD-NAME (a string) to a dispatch keyword and execute it on SESSION.
+   Shows an error overlay for unknown command names."
+  (let ((kw (cond
+               ((string-equal cmd-name "new-window")    :new-window)
+               ((string-equal cmd-name "new-session")   :new-session)
+               ((string-equal cmd-name "kill-pane")     :kill-pane)
+               ((string-equal cmd-name "kill-window")   :kill-window)
+               ((string-equal cmd-name "kill-session")  :kill-session)
+               ((string-equal cmd-name "detach")        :detach)
+               ((string-equal cmd-name "detach-client") :detach)
+               ((string-equal cmd-name "next-window")   :next-window)
+               ((string-equal cmd-name "prev-window")   :prev-window)
+               ((string-equal cmd-name "split-window")  :split-horizontal)
+               ((string-equal cmd-name "rename-window") :rename-window)
+               ((string-equal cmd-name "rename-session"):rename-session)
+               ((string-equal cmd-name "list-windows")  :list-windows)
+               ((string-equal cmd-name "list-sessions") :list-sessions)
+               ((string-equal cmd-name "list-keys")     :list-keys)
+               ((string-equal cmd-name "copy-mode")     :copy-mode-enter)
+               ((string-equal cmd-name "paste-buffer")  :paste-buffer)
+               ((string-equal cmd-name "list-buffers")  :list-buffers)
+               ((string-equal cmd-name "show-buffer")   :show-buffer)
+               ((string-equal cmd-name "choose-buffer") :choose-buffer)
+               ((string-equal cmd-name "delete-buffer") :delete-buffer)
+               ((string-equal cmd-name "save-buffer")   :save-buffer)
+               ((string-equal cmd-name "load-buffer")   :load-buffer)
+               ((string-equal cmd-name "zoom-toggle")   :zoom-toggle)
+               ((string-equal cmd-name "choose-tree")   :choose-tree)
+               ((string-equal cmd-name "choose-session"):choose-session)
+               ((string-equal cmd-name "choose-window") :choose-window)
+               ((string-equal cmd-name "display-panes") :display-panes)
+               ((string-equal cmd-name "show-messages") :show-messages)
+               ((string-equal cmd-name "capture-pane")  :capture-pane)
+               ((string-equal cmd-name "respawn-pane")  :respawn-pane)
+               ((string-equal cmd-name "send-keys")     :send-keys)
+               ((string-equal cmd-name "clock-mode")    :clock-mode)
+               ((string-equal cmd-name "source-file")   :source-file)
+               ((string-equal cmd-name "run-shell")     :run-shell)
+               ((string-equal cmd-name "if-shell")      :if-shell)
+               ((string-equal cmd-name "set-option")    :show-option)
+               ((string-equal cmd-name "show-options")  :show-options)
+               ((string-equal cmd-name "show-option")   :show-option)
+               ((string-equal cmd-name "display-info")  :display-info)
+               ((string-equal cmd-name "mark-pane")     :mark-pane)
+               ((string-equal cmd-name "clear-mark")    :clear-mark)
+               ((string-equal cmd-name "next-layout")   :next-layout)
+               ((string-equal cmd-name "bind-key")      :bind-key)
+               ((string-equal cmd-name "unbind-key")    :unbind-key)
+               ((string-equal cmd-name "choose-client") :choose-client)
+               ((string-equal cmd-name "move-window")   :move-window-prompt)
+               (t nil))))
+    (if kw
+        (dispatch-command session kw nil)
+        (show-overlay (format nil "unknown command: ~A" cmd-name)))))
 
 ;;; -- dispatch-prefix-command -----------------------------------------------
 
@@ -280,8 +358,8 @@
   (:prev-pane (%cmd-cycle-pane session #'prev-cyclic))
   (:split-horizontal (%cmd-split session :v))        ; C-b " adds a horizontal bar → :v stacking
   (:split-vertical   (%cmd-split session :h))        ; C-b % adds a vertical bar   → :h side-by-side
-  (:split-horizontal-no-focus (%cmd-split session :v :no-focus t))  ; split without changing focus
-  (:split-vertical-no-focus   (%cmd-split session :h :no-focus t))  ; split without changing focus
+  (:split-horizontal-no-focus (%cmd-split session :v :no-focus t))
+  (:split-vertical-no-focus   (%cmd-split session :h :no-focus t))
   (:kill-pane   (%handle-kill-result (kill-pane session)))
   (:kill-window (%handle-kill-result (kill-window session (session-active-window session))))
   (:kill-pane-confirm
@@ -319,10 +397,63 @@
   (:list-keys (show-overlay (describe-key-bindings)))
   (:copy-mode-enter            (%copy-mode-call session #'copy-mode-enter))
   (:copy-mode-exit             (%copy-mode-call session #'copy-mode-exit))
-  (:copy-mode-up               (%copy-mode-call session (lambda (s) (copy-mode-scroll s 3))))
-  (:copy-mode-down             (%copy-mode-call session (lambda (s) (copy-mode-scroll s -3))))
   (:copy-mode-begin-selection  (%copy-mode-call session #'copy-mode-begin-selection))
   (:copy-mode-yank             (%copy-mode-call session #'copy-mode-yank))
+  ;; Word navigation
+  (:copy-mode-word-forward     (%copy-mode-call session #'copy-mode-word-forward))
+  (:copy-mode-word-backward    (%copy-mode-call session #'copy-mode-word-backward))
+  (:copy-mode-word-end         (%copy-mode-call session #'copy-mode-word-end))
+  ;; Line navigation
+  (:copy-mode-line-start       (%copy-mode-call session #'copy-mode-line-start))
+  (:copy-mode-line-end         (%copy-mode-call session #'copy-mode-line-end))
+  ;; Top / bottom jump
+  (:copy-mode-top              (%copy-mode-call session #'copy-mode-top))
+  (:copy-mode-bottom           (%copy-mode-call session #'copy-mode-bottom))
+  ;; Screen position
+  (:copy-mode-high             (%copy-mode-call session #'copy-mode-high))
+  (:copy-mode-middle           (%copy-mode-call session #'copy-mode-middle))
+  (:copy-mode-low              (%copy-mode-call session #'copy-mode-low))
+  ;; Page up/down
+  (:copy-mode-page-up          (%copy-mode-call session #'copy-mode-page-up))
+  (:copy-mode-page-down        (%copy-mode-call session #'copy-mode-page-down))
+  (:copy-mode-half-page-up     (%copy-mode-call session #'copy-mode-half-page-up))
+  (:copy-mode-half-page-down   (%copy-mode-call session #'copy-mode-half-page-down))
+  (:copy-mode-scroll-up-line   (%copy-mode-call session #'copy-mode-scroll-up-line))
+  (:copy-mode-scroll-down-line (%copy-mode-call session #'copy-mode-scroll-down-line))
+  ;; Line selection (V)
+  (:copy-mode-begin-line-selection (%copy-mode-call session #'copy-mode-begin-line-selection))
+  ;; Copy variants
+  (:copy-mode-copy-end-of-line (%copy-mode-call session #'copy-mode-copy-end-of-line))
+  (:copy-mode-copy-line        (%copy-mode-call session #'copy-mode-copy-line))
+  ;; Search
+  (:copy-mode-search-next      (%copy-mode-call session #'copy-mode-search-next))
+  (:copy-mode-search-prev      (%copy-mode-call session #'copy-mode-search-prev))
+  (:copy-mode-search-forward-prompt
+   ;; / — prompt for a forward search term, then jump to first match
+   (let ((s (%active-screen session)))
+     (when s
+       (prompt-start "/" ""
+                     (lambda (term)
+                       (unless (string= term "")
+                         (copy-mode-search-forward s term)))))))
+  (:copy-mode-search-backward-prompt
+   ;; ? — prompt for a backward search term, then jump to first match
+   (let ((s (%active-screen session)))
+     (when s
+       (prompt-start "?" ""
+                     (lambda (term)
+                       (unless (string= term "")
+                         (copy-mode-search-backward s term)))))))
+  (:copy-mode-choose-buffer
+   ;; = — list paste buffers as overlay
+   (show-overlay
+    (with-output-to-string (s)
+      (let ((bufs (cl-tmux/buffer:list-paste-buffers)))
+        (if bufs
+            (loop for buf in bufs
+                  for i from 0
+                  do (format s "~D: ~A~%" i (subseq buf 0 (min 40 (length buf)))))
+            (format s "(no paste buffers)~%"))))))
   (:resize-left   (resize-pane (session-active-window session) :left))
   (:resize-right  (resize-pane (session-active-window session) :right))
   (:resize-up     (resize-pane (session-active-window session) :up))
@@ -333,7 +464,15 @@
           (win  (session-active-window session))
           (ap   (and win (window-active-pane win))))
      (when (and text ap (> (pane-fd ap) 0))
-       (pty-write (pane-fd ap) (babel:string-to-octets text :encoding :utf-8)))))
+       (let* ((screen (pane-screen ap))
+              (bracketed (screen-bracketed-paste screen))
+              (prefix (when bracketed (format nil "~C[200~~" #\Escape)))
+              (suffix (when bracketed (format nil "~C[201~~" #\Escape))))
+         (when prefix
+           (pty-write (pane-fd ap) (babel:string-to-octets prefix :encoding :utf-8)))
+         (pty-write (pane-fd ap) (babel:string-to-octets text :encoding :utf-8))
+         (when suffix
+           (pty-write (pane-fd ap) (babel:string-to-octets suffix :encoding :utf-8)))))))
   (:send-prefix
    ;; Send exactly one literal prefix byte (0x02) to the active pane's PTY.
    ;; This is the C-b C-b → literal C-b passthrough, matching real tmux behaviour.
@@ -427,9 +566,26 @@
                      (show-overlay (if found "yes" "no"))))))
   (:list-windows (show-overlay (%format-window-list session)))
   (:choose-window
-   ;; C-b w — show interactive window list overlay (same as list-windows for now;
-   ;; full interactive selection requires an overlay navigation layer)
-   (show-overlay (%format-window-list session)))
+   ;; C-b w — show interactive window menu; each entry is "N: name".
+   ;; Selecting an entry calls select-window-by-number on that window's id.
+   (let* ((wins  (session-windows session))
+          (items (mapcar (lambda (w)
+                           (cons (format nil "~A: ~A" (window-id w) (window-name w))
+                                 (window-id w)))
+                         wins)))
+     (if items
+         (progn
+           (setf *active-menu*
+                 (make-menu :title "choose-window" :items items :selected-index 0))
+           (show-overlay (%format-menu *active-menu*))
+           ;; Use a prompt so the user can type the index or navigate with Enter.
+           (prompt-start "window: " ""
+                         (lambda (s)
+                           (let ((n (ignore-errors (parse-integer s))))
+                             (when n (select-window-by-number session n)))
+                           (setf *active-menu* nil)
+                           (clear-overlay))))
+         (show-overlay "(no windows)"))))
   (:last-window
    ;; C-b l — switch to the previously active window (second-highest last-active-time)
    (let ((prev (session-last-window session)))
@@ -527,10 +683,12 @@
        (session-touch second)
        (setf *dirty* t))))
   (:display-message
-   ;; Prompt for a message and display it as a transient overlay.
+   ;; Prompt for a message, display it as a transient overlay, and log it.
    (prompt-start "display-message" ""
                  (lambda (msg)
-                   (show-overlay msg))))
+                   (unless (string= msg "")
+                     (add-message-log msg)
+                     (show-overlay msg)))))
   (:source-file
    ;; Prompt for a config file path and load it.
    (prompt-start "source-file" ""
@@ -684,5 +842,269 @@
                            (if (string= name (session-name session)) "*" " ")
                            i name
                            (length (session-windows sess))))
-          (format s " 0: ~A (1 window)~%" (session-name session)))))))
+          (format s " 0: ~A (1 window)~%" (session-name session))))))
+  ;; ── New commands ──────────────────────────────────────────────────────────
+  (:command-prompt
+   ;; C-b : — open a command-line prompt; execute the entered command.
+   (prompt-start ": " ""
+                 (lambda (input)
+                   (unless (string= input "")
+                     (let* ((trimmed  (string-trim '(#\Space #\Tab) input))
+                            (parts    (uiop:split-string trimmed :separator " "))
+                            (cmd-name (first parts)))
+                       (%dispatch-named-command session cmd-name))))))
+  (:send-keys
+   ;; Prompt for a string and send it to the active pane's PTY.
+   (with-active-pane (ap session)
+     (prompt-start "send-keys" ""
+                   (lambda (input)
+                     (unless (string= input "")
+                       (send-keys-to-pane ap input))))))
+  (:clock-mode
+   ;; Toggle a digital clock overlay on the active pane.
+   (with-active-pane (ap session)
+     (setf *clock-mode-pane-id*
+           (if (eql *clock-mode-pane-id* (pane-id ap))
+               nil
+               (pane-id ap)))))
+  (:show-messages
+   ;; Show recent display-message entries as an overlay.
+   (show-overlay
+    (if *message-log*
+        (format nil "~{~A~%~}"
+                (mapcar #'cdr *message-log*))
+        "(no messages)")))
+  (:capture-pane
+   ;; Dump active pane content as an overlay.
+   (with-active-pane (ap session)
+     (show-overlay (capture-pane ap))))
+  (:choose-tree
+   ;; Show a tree overview of all sessions and their windows.
+   (show-overlay
+    (with-output-to-string (s)
+      (if *server-sessions*
+          (loop for (name . sess) in *server-sessions*
+                do (format s "~A~A~%"
+                           (if (string= name (session-name session)) "* " "  ")
+                           name)
+                   (loop for win in (session-windows sess)
+                         do (format s "    ~A~A: ~A~%"
+                                    (if (eq win (session-active-window sess)) "*" " ")
+                                    (window-id win)
+                                    (window-name win))))
+          (progn
+            (format s "* ~A~%" (session-name session))
+            (loop for win in (session-windows session)
+                  do (format s "    ~A~A: ~A~%"
+                             (if (eq win (session-active-window session)) "*" " ")
+                             (window-id win)
+                             (window-name win))))))))
+  (:set-window-option
+   ;; Alias for :set-option (window-scope options are in the same registry).
+   (prompt-start "set-window-option" ""
+                 (lambda (input)
+                   (unless (string= input "")
+                     (let* ((parts (uiop:split-string input :separator " "))
+                            (name  (first parts))
+                            (value (second parts)))
+                       (when (and name value)
+                         (cl-tmux/options:set-option name value)))))))
+  (:set-session-option
+   ;; Alias for :set-option (session-scope options are in the same registry).
+   (prompt-start "set-session-option" ""
+                 (lambda (input)
+                   (unless (string= input "")
+                     (let* ((parts (uiop:split-string input :separator " "))
+                            (name  (first parts))
+                            (value (second parts)))
+                       (when (and name value)
+                         (cl-tmux/options:set-option name value)))))))
+  (:list-buffers
+   ;; C-b # — show all paste buffers as an overlay.
+   (show-overlay
+    (with-output-to-string (s)
+      (let ((bufs (cl-tmux/buffer:list-paste-buffers)))
+        (if bufs
+            (loop for buf in bufs
+                  for i from 0
+                  do (format s "~D: [~D] ~A~%"
+                             i
+                             (length buf)
+                             (subseq buf 0 (min 40 (length buf)))))
+            (format s "(no paste buffers)~%"))))))
+  (:show-buffer
+   ;; Show the content of the most recent paste buffer (index 0).
+   (let ((buf (cl-tmux/buffer:get-paste-buffer 0)))
+     (show-overlay (or buf "(no paste buffers)"))))
+  (:choose-buffer
+   ;; C-b = — prompt user for buffer index, then paste that buffer.
+   (let ((bufs (cl-tmux/buffer:list-paste-buffers)))
+     (if bufs
+         (let ((listing
+                 (with-output-to-string (s)
+                   (loop for buf in bufs
+                         for i from 0
+                         do (format s "~D: ~A~%"
+                                    i
+                                    (subseq buf 0 (min 40 (length buf))))))))
+           (show-overlay listing)
+           (prompt-start "choose buffer (index)" "0"
+                         (lambda (idx-str)
+                           (let ((idx (ignore-errors (parse-integer idx-str))))
+                             (when idx
+                               (let* ((text (cl-tmux/buffer:get-paste-buffer idx))
+                                      (win  (session-active-window session))
+                                      (ap   (and win (window-active-pane win))))
+                                 (when (and text ap (> (pane-fd ap) 0))
+                                   (pty-write (pane-fd ap)
+                                              (babel:string-to-octets
+                                               text :encoding :utf-8)))))))))
+         (show-overlay "(no paste buffers)"))))
+  (:delete-buffer
+   ;; C-b - — delete the most recent paste buffer (index 0) with confirmation.
+   (let ((buf (cl-tmux/buffer:get-paste-buffer 0)))
+     (if buf
+         (progn
+           (cl-tmux/buffer:delete-paste-buffer 0)
+           (show-overlay "buffer 0 deleted"))
+         (show-overlay "(no paste buffers to delete)"))))
+  (:save-buffer
+   ;; Prompt for a file path and write buffer 0 content to that file.
+   (let ((buf (cl-tmux/buffer:get-paste-buffer 0)))
+     (if buf
+         (prompt-start "save-buffer to file" ""
+                       (lambda (path)
+                         (unless (string= path "")
+                           (handler-case
+                               (progn
+                                 (with-open-file (f path
+                                                   :direction :output
+                                                   :if-exists :supersede
+                                                   :if-does-not-exist :create)
+                                   (write-string buf f))
+                                 (show-overlay (format nil "saved to ~A" path)))
+                             (error (e)
+                               (show-overlay (format nil "save-buffer error: ~A" e)))))))
+         (show-overlay "(no paste buffers to save)"))))
+  (:load-buffer
+   ;; Prompt for a file path and push its content as a new paste buffer.
+   (prompt-start "load-buffer from file" ""
+                 (lambda (path)
+                   (unless (string= path "")
+                     (handler-case
+                         (let ((content
+                                 (with-open-file (f path
+                                                   :direction :input
+                                                   :if-does-not-exist :error)
+                                   (let ((s (make-string (file-length f))))
+                                     (read-sequence s f)
+                                     s))))
+                           (cl-tmux/buffer:add-paste-buffer content)
+                           (show-overlay (format nil "loaded ~D bytes from ~A"
+                                                 (length content) path)))
+                       (error (e)
+                         (show-overlay (format nil "load-buffer error: ~A" e))))))))
+  (:mark-pane
+   ;; C-b m — set the marked pane (toggle: if already marked, unmark it).
+   (with-active-pane (ap session)
+     (if (pane-marked ap)
+         (setf (pane-marked ap) nil)
+         (progn
+           ;; Clear any existing marked pane in this window first.
+           (with-active-window (win session)
+             (dolist (p (window-panes win))
+               (setf (pane-marked p) nil)))
+           (setf (pane-marked ap) t)))))
+  (:clear-mark
+   ;; C-b M — clear the marked pane in the current window.
+   (with-active-window (win session)
+     (dolist (p (window-panes win))
+       (setf (pane-marked p) nil))))
+  (:select-layout-spread
+   ;; C-b E — apply the even-horizontal layout (spread panes evenly).
+   (%apply-named-layout-to-session session :even-horizontal))
+  (:next-layout
+   ;; C-b Space — cycle through layouts in order.
+   (with-active-window (win session)
+     (let* ((layouts #(:even-horizontal :even-vertical :tiled
+                       :main-horizontal :main-vertical))
+            (current (cl-tmux/model:window-layout-cycle-index win))
+            (next    (mod (1+ current) (length layouts)))
+            (name    (aref layouts next)))
+       (setf (cl-tmux/model:window-layout-cycle-index win) next)
+       (%apply-named-layout-to-session session name))))
+  (:choose-client
+   ;; C-b D — show overlay with attached client info (stub for single-client mode).
+   (show-overlay
+    (with-output-to-string (s)
+      (format s "Clients:~%")
+      (format s "  0: local  ~A  ~Dx~D~%"
+              (session-name session)
+              *term-cols*
+              *term-rows*))))
+  (:display-info
+   ;; C-b i — show session/window/pane info summary overlay.
+   (with-active-pane (ap session)
+     (let* ((win (session-active-window session))
+            (sc  (pane-screen ap)))
+       (show-overlay
+        (format nil "Session: ~A~%Window: ~A (~Dx~D) [~D pane~:P]~%Pane: ~D at (~D,~D) ~Dx~D~A"
+                (session-name session)
+                (if win (window-name win) "none")
+                (if win (window-width  win) 0)
+                (if win (window-height win) 0)
+                (if win (length (window-panes win)) 0)
+                (pane-id ap)
+                (pane-x ap) (pane-y ap)
+                (pane-width ap) (pane-height ap)
+                (if (and sc (screen-copy-mode-p sc)) " [copy]" ""))))))
+  (:move-window-prompt
+   ;; C-b . — prompt for a target index and move the active window there.
+   (with-active-window (win session)
+     (prompt-start "move-window to index" ""
+                   (lambda (idx-str)
+                     (let ((idx (ignore-errors (parse-integer idx-str))))
+                       (when idx
+                         (session-move-window session win idx)))))))
+  (:bind-key
+   ;; Runtime bind-key: prompt for "key command" and bind in the prefix table.
+   (prompt-start "bind key: " ""
+                 (lambda (input)
+                   (unless (string= input "")
+                     (let* ((parts (uiop:split-string input :separator " "))
+                            (key-tok (and (first parts)
+                                         (cl-tmux/config::%parse-key-token (first parts))))
+                            (cmd-str (second parts))
+                            (kw      (and cmd-str
+                                          (cl-tmux/config::%command-keyword cmd-str))))
+                       (if kw
+                           (progn
+                             (set-key-binding key-tok kw)
+                             (key-table-bind "prefix" key-tok kw)
+                             (show-overlay (format nil "bound ~A -> ~(~A~)" key-tok kw)))
+                           (show-overlay (format nil "unknown command: ~A"
+                                                 (or cmd-str input)))))))))
+  (:unbind-key
+   ;; Runtime unbind-key: prompt for a key and remove its prefix binding.
+   (prompt-start "unbind key: " ""
+                 (lambda (input)
+                   (unless (string= input "")
+                     (let ((k (cl-tmux/config::%parse-key-token input)))
+                       (remove-key-binding k)
+                       (let ((tbl (gethash "prefix" *key-tables*)))
+                         (when tbl (remhash k tbl)))
+                       (show-overlay (format nil "unbound ~A" k)))))))
+  (:select-window-prompt
+   ;; Prompt for a window name or number and select it.
+   (prompt-start "select window (name or number): " ""
+                 (lambda (input)
+                   (unless (string= input "")
+                     (let* ((idx (ignore-errors (parse-integer input)))
+                            (win (or (and idx (nth idx (session-windows session)))
+                                     (find input (session-windows session)
+                                           :key #'window-name
+                                           :test #'string-equal))))
+                       (if win
+                           (session-select-window session win)
+                           (show-overlay (format nil "no window: ~A" input)))))))))
 

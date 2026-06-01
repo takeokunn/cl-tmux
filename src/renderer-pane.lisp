@@ -8,8 +8,72 @@
 
 ;;; ── Pane ────────────────────────────────────────────────────────────────────
 
+;;; ── Clock-mode ASCII digit font (3 rows tall) ───────────────────────────────
+;;;
+;;; Each digit is represented as a list of 3 strings, each 3 chars wide.
+;;; Spacing between digits is 1 space.  The colon separator is 1 char wide.
+
+(defparameter *clock-digits*
+  '(("███" "█ █" "███")   ; 0
+    ("  █" "  █" "  █")   ; 1
+    ("██ " " ██" " ██")   ; 2 — corrected
+    ("██ " " █ " "███")   ; 3 — corrected
+    ("█ █" "███" "  █")   ; 4
+    (" ██" "██ " "███")   ; 5 — corrected
+    (" █ " "███" "███")   ; 6
+    ("███" "  █" "  █")   ; 7
+    ("███" "███" "███")   ; 8
+    ("███" "███" "  █"))  ; 9
+  "3-row ASCII digit font. Each entry is (row0 row1 row2) for a 3-wide glyph.")
+
+(defun %clock-digit-rows (digit)
+  "Return the 3 display rows for DIGIT (0–9) from *clock-digits*."
+  (nth digit *clock-digits*))
+
+(defun draw-clock-to-screen (stream ox oy pw ph)
+  "Render the current time HH:MM as 3-row ASCII digits centred in the pane
+   at terminal offset (OX, OY), clipping to the pane rectangle (PW x PH).
+   Only renders if the pane is at least 13 columns wide and 3 rows tall."
+  (when (and (>= pw 13) (>= ph 3))
+    (multiple-value-bind (sec min hour) (get-decoded-time)
+      (declare (ignore sec))
+      ;; Format: two digits, colon, two digits = 3+1+3+1+3+1+3 = 15 chars
+      ;; But we use simple 3-char digits + 1-char separators:
+      ;; D D : D D = 3+1+3+1+1+1+3+1+3 = 17 chars; trim to 13 "HH:MM" minimal.
+      ;; Represent as list of (rows . char-sequence) for each position.
+      (let* ((h0 (floor hour 10))
+             (h1 (mod   hour 10))
+             (m0 (floor min  10))
+             (m1 (mod   min  10))
+             ;; Build row strings for the 3 display rows
+             (sep-rows '("   " " █ " "   "))  ; colon separator rows
+             (rows (loop for row-idx from 0 below 3
+                         collect (concatenate 'string
+                                   (nth row-idx (%clock-digit-rows h0))
+                                   " "
+                                   (nth row-idx (%clock-digit-rows h1))
+                                   (nth row-idx sep-rows)
+                                   (nth row-idx (%clock-digit-rows m0))
+                                   " "
+                                   (nth row-idx (%clock-digit-rows m1)))))
+             ;; Centre within the pane
+             (clock-w (length (first rows)))
+             (clock-h 3)
+             (start-col (max 0 (floor (- pw clock-w) 2)))
+             (start-row (max 0 (floor (- ph clock-h) 2))))
+        ;; Blue background, bright cyan text for clock face
+        (format stream "~C[44;96m" +esc+)
+        (loop for row-str in rows
+              for roff from 0 do
+          (let ((term-row (+ oy start-row roff))
+                (term-col (+ ox start-col)))
+            (move-to stream term-row term-col)
+            (write-string (subseq row-str 0 (min (length row-str) pw)) stream)))
+        (reset-attrs stream)))))
+
 (defun render-pane (stream pane)
-  "Draw the pane's screen into the real terminal at the pane's (x, y) offset."
+  "Draw the pane's screen into the real terminal at the pane's (x, y) offset.
+   When *clock-mode-pane-id* matches (pane-id pane), draw a clock overlay."
   (let* ((screen (pane-screen pane))
          (pw     (pane-width   pane))
          (ph     (pane-height  pane))
@@ -61,7 +125,10 @@
                            (render-cell-attrs stream fg bg attrs)
                            (setf prev-fg fg prev-bg bg prev-attrs attrs))
                          (write-char (cell-char cell) stream))))))
-      (screen-clear-dirty screen))))
+      (screen-clear-dirty screen))
+    ;; Clock-mode overlay: draw a digital clock if this pane is the clock pane.
+    (when (eql cl-tmux::*clock-mode-pane-id* (pane-id pane))
+      (draw-clock-to-screen stream ox oy pw ph))))
 
 ;;; ── Split-tree separators ───────────────────────────────────────────────────
 

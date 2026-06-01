@@ -768,3 +768,222 @@
           "unknown command must return NIL")
       (is-true cl-tmux::*dirty*
                "dispatch must mark *dirty* even for unknown commands"))))
+
+;;; ── :paste-buffer bracketed-paste wrapping ───────────────────────────────────
+
+(test dispatch-paste-buffer-no-crash-without-buffer
+  ":paste-buffer with an empty paste buffer is a no-op (no error, marks dirty)."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (finishes (cl-tmux::dispatch-command s :paste-buffer nil))
+      (is-true cl-tmux::*dirty* ":paste-buffer must mark *dirty*"))))
+
+;;; ── :command-prompt dispatch ─────────────────────────────────────────────────
+
+(test dispatch-command-prompt-opens-prompt
+  ":command-prompt opens a prompt with label \": \"."
+  (let ((s (make-fake-session)))
+    (let ((*prompt* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command s :command-prompt nil)
+      (is (prompt-active-p) ":command-prompt must open a prompt")
+      (is (string= ": " (prompt-label *prompt*))
+          ":command-prompt prompt label must be \": \""))))
+
+(test dispatch-command-prompt-empty-input-is-noop
+  ":command-prompt with empty input does not crash."
+  (let ((s (make-fake-session)))
+    (let ((*prompt* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command s :command-prompt nil)
+      (is (prompt-active-p) "prompt must be open")
+      (finishes (funcall (prompt-on-submit *prompt*) "")
+                "empty input must not signal an error"))))
+
+(test dispatch-command-prompt-unknown-command-shows-overlay
+  ":command-prompt with an unknown command name shows an error overlay."
+  (let ((s (make-fake-session)))
+    (let ((*prompt* nil) (*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command s :command-prompt nil)
+      (funcall (prompt-on-submit *prompt*) "no-such-command-xyz")
+      (is (overlay-active-p) "unknown command must open an error overlay")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "unknown command" text)
+            "overlay must contain the 'unknown command' error message")))))
+
+(test dispatch-command-prompt-known-command-executes
+  ":command-prompt with 'list-windows' executes that command (opens overlay)."
+  (let ((s (make-fake-session :nwindows 1)))
+    (let ((*prompt* nil) (*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command s :command-prompt nil)
+      (funcall (prompt-on-submit *prompt*) "list-windows")
+      (is (overlay-active-p) "list-windows via command-prompt must open an overlay"))))
+
+;;; ── %dispatch-named-command helper ──────────────────────────────────────────
+
+(test dispatch-named-command-new-window
+  "%dispatch-named-command \"next-window\" selects the next window."
+  ;; Use next-window (no fork/no thread) to avoid leaking reader threads
+  ;; that would prevent later PTY tests from forking.
+  (let ((s (make-fake-session :nwindows 2)))
+    (let ((*overlay* nil) (cl-tmux::*running* t) (cl-tmux::*dirty* nil))
+      (cl-tmux::%dispatch-named-command s "next-window")
+      (is-true cl-tmux::*dirty*
+               "%dispatch-named-command 'next-window' must mark *dirty*")
+      (is (eq (second (session-windows s)) (session-active-window s))
+          "next-window must switch to the second window"))))
+
+(test dispatch-named-command-unknown-shows-overlay
+  "%dispatch-named-command with an unrecognized name shows an overlay."
+  (let ((s (make-fake-session)))
+    (let ((*overlay* nil) (cl-tmux::*running* t) (cl-tmux::*dirty* nil))
+      (cl-tmux::%dispatch-named-command s "totally-unknown-xyz")
+      (is (overlay-active-p) "unknown command must open an error overlay")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "unknown command" text) "overlay must mention 'unknown command'")
+        (is (search "totally-unknown-xyz" text)
+            "overlay must include the bad command name")))))
+
+;;; ── :show-messages dispatch ──────────────────────────────────────────────────
+
+(test dispatch-show-messages-empty-log-shows-overlay
+  ":show-messages with empty *message-log* opens an overlay saying '(no messages)'."
+  (let ((s (make-fake-session)))
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t)
+          (cl-tmux::*message-log* nil))
+      (cl-tmux::dispatch-command s :show-messages nil)
+      (is (overlay-active-p) ":show-messages must open an overlay")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "no messages" text)
+            "overlay must say '(no messages)' when log is empty")))))
+
+(test dispatch-show-messages-populated-log-shows-entries
+  ":show-messages with entries in *message-log* lists them."
+  (let ((s (make-fake-session)))
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t)
+          (cl-tmux::*message-log* (list (cons 0 "hello") (cons 1 "world"))))
+      (cl-tmux::dispatch-command s :show-messages nil)
+      (is (overlay-active-p) ":show-messages must open an overlay")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "hello" text) "overlay must contain 'hello'")
+        (is (search "world" text) "overlay must contain 'world'")))))
+
+;;; ── :display-message logs to *message-log* ───────────────────────────────────
+
+(test dispatch-display-message-logs-to-message-log
+  ":display-message on-submit calls add-message-log, appending the message."
+  (let ((s (make-fake-session)))
+    (let ((*prompt* nil) (*overlay* nil)
+          (cl-tmux::*dirty* nil) (cl-tmux::*running* t)
+          (cl-tmux::*message-log* nil))
+      (cl-tmux::dispatch-command s :display-message nil)
+      (is (prompt-active-p) ":display-message must open a prompt")
+      ;; Submit a non-empty message.
+      (funcall (prompt-on-submit *prompt*) "test-log-entry")
+      (is (not (null cl-tmux::*message-log*))
+          "*message-log* must be non-nil after submitting a message")
+      (let ((last-msg (cdr (first cl-tmux::*message-log*))))
+        (is (string= "test-log-entry" last-msg)
+            "first message-log entry must be the submitted message (got ~S)" last-msg)))))
+
+;;; ── :clock-mode dispatch ─────────────────────────────────────────────────────
+
+(test dispatch-clock-mode-toggles-pane-id
+  ":clock-mode sets *clock-mode-pane-id* to the active pane's id."
+  (let ((s (make-fake-session)))
+    (let ((cl-tmux::*dirty* nil) (cl-tmux::*running* t)
+          (cl-tmux::*clock-mode-pane-id* nil))
+      (cl-tmux::dispatch-command s :clock-mode nil)
+      (let ((ap (session-active-pane s)))
+        (is (eql (pane-id ap) cl-tmux::*clock-mode-pane-id*)
+            "*clock-mode-pane-id* must be set to active pane id after first :clock-mode")
+        ;; Toggle off
+        (cl-tmux::dispatch-command s :clock-mode nil)
+        (is (null cl-tmux::*clock-mode-pane-id*)
+            "*clock-mode-pane-id* must be nil after second :clock-mode (toggle off)")))))
+
+;;; ── :capture-pane dispatch ───────────────────────────────────────────────────
+
+(test dispatch-capture-pane-shows-overlay
+  ":capture-pane opens an overlay containing the pane content."
+  (let ((s (make-fake-session)))
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      ;; Feed some text into the active pane's screen.
+      (let ((ap (session-active-pane s)))
+        (when ap
+          (feed (pane-screen ap) "CAPTEST")))
+      (cl-tmux::dispatch-command s :capture-pane nil)
+      (is (overlay-active-p) ":capture-pane must open an overlay")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "CAPTEST" text)
+            "capture-pane overlay must contain the pane's fed content")))))
+
+;;; ── :send-keys dispatch ──────────────────────────────────────────────────────
+
+(test dispatch-send-keys-opens-prompt
+  ":send-keys opens a prompt for the keys string."
+  (let ((s (make-fake-session)))
+    (let ((*prompt* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command s :send-keys nil)
+      (is (prompt-active-p) ":send-keys must open a prompt")
+      (is (string= "send-keys" (prompt-label *prompt*))
+          ":send-keys prompt label must be \"send-keys\""))))
+
+(test dispatch-send-keys-no-crash-with-no-pty
+  ":send-keys on-submit with a no-PTY pane (fd=-1) does not signal an error."
+  (let ((s (make-fake-session)))
+    (let ((*prompt* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command s :send-keys nil)
+      (is (prompt-active-p) "prompt must be open")
+      ;; Submitting keys to fd=-1 pane must not error.
+      (finishes (funcall (prompt-on-submit *prompt*) "hello")
+                "send-keys on-submit must not error with fd=-1 pane"))))
+
+;;; ── :choose-tree dispatch ────────────────────────────────────────────────────
+
+(test dispatch-choose-tree-shows-overlay
+  ":choose-tree opens an overlay with session and window entries."
+  (let ((s (make-fake-session :nwindows 2)))
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t)
+          (cl-tmux::*server-sessions* nil))
+      (cl-tmux::dispatch-command s :choose-tree nil)
+      (is (overlay-active-p) ":choose-tree must open an overlay")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search (session-name s) text)
+            "overlay must contain the session name")))))
+
+(test dispatch-choose-tree-with-server-sessions
+  ":choose-tree with multiple server sessions lists them all."
+  (let* ((s1 (make-fake-session :nwindows 1))
+         (s2 (make-fake-session :nwindows 2))
+         (reg (list (cons (session-name s1) s1)
+                    (cons (session-name s2) s2))))
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t)
+          (cl-tmux::*server-sessions* reg))
+      (cl-tmux::dispatch-command s1 :choose-tree nil)
+      (is (overlay-active-p) ":choose-tree must open an overlay with server sessions")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search (session-name s1) text)
+            "overlay must contain session 1 name")
+        (is (search (session-name s2) text)
+            "overlay must contain session 2 name")))))
+
+;;; ── :set-window-option dispatch ──────────────────────────────────────────────
+
+(test dispatch-set-window-option-opens-prompt
+  ":set-window-option opens a prompt."
+  (let ((s (make-fake-session)))
+    (let ((*prompt* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command s :set-window-option nil)
+      (is (prompt-active-p) ":set-window-option must open a prompt")
+      (is (string= "set-window-option" (prompt-label *prompt*))
+          ":set-window-option prompt label must be \"set-window-option\""))))
+
+;;; ── :set-session-option dispatch ─────────────────────────────────────────────
+
+(test dispatch-set-session-option-opens-prompt
+  ":set-session-option opens a prompt."
+  (let ((s (make-fake-session)))
+    (let ((*prompt* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command s :set-session-option nil)
+      (is (prompt-active-p) ":set-session-option must open a prompt")
+      (is (string= "set-session-option" (prompt-label *prompt*))
+          ":set-session-option prompt label must be \"set-session-option\""))))

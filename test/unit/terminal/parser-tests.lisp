@@ -76,18 +76,43 @@
   :in terminal-suite)
 (in-suite special)
 
-(test bel-ignored
-  "BEL (byte #x07) does not alter the screen or cursor."
+(test bel-sets-bell-pending
+  "BEL (byte #x07) sets screen-bell-pending to T without altering the screen or cursor."
   (with-screen (s 10 2)
     (feed s "ab")
+    (is-false (cl-tmux/terminal/types:screen-bell-pending s)
+              "bell-pending must be NIL before BEL")
     (screen-process-bytes s (make-array 1 :element-type '(unsigned-byte 8)
                                           :initial-contents '(#x07)))
     ;; Screen content and cursor must be unchanged.
     (is (char= #\a (char-at s 0 0)))
     (is (char= #\b (char-at s 1 0)))
-    (check-cursor s 2 0)))
+    (check-cursor s 2 0)
+    ;; bell-pending must now be set.
+    (is (cl-tmux/terminal/types:screen-bell-pending s)
+        "bell-pending must be T after BEL byte")))
 
-(test osc-bel-ignored
+(test osc-0-sets-screen-title
+  "OSC 0 ; title BEL sets screen-title to the title string."
+  (with-screen (s 20 5)
+    (screen-process-bytes s
+      (babel:string-to-octets
+        (format nil "~C]0;my-window~C" #\Escape #\Bel)
+        :encoding :utf-8))
+    (is (string= "my-window" (cl-tmux/terminal/types:screen-title s))
+        "screen-title must be set to 'my-window' after OSC 0")))
+
+(test osc-2-sets-screen-title
+  "OSC 2 ; title BEL also sets screen-title (same as OSC 0)."
+  (with-screen (s 20 5)
+    (screen-process-bytes s
+      (babel:string-to-octets
+        (format nil "~C]2;xterm-title~C" #\Escape #\Bel)
+        :encoding :utf-8))
+    (is (string= "xterm-title" (cl-tmux/terminal/types:screen-title s))
+        "screen-title must be set to 'xterm-title' after OSC 2")))
+
+(test osc-bel-no-crash
   "An OSC sequence terminated by BEL is consumed without crashing."
   (with-screen (s 10 2)
     (feed s "a")
