@@ -99,7 +99,7 @@
     (let ((*prompt* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
       (cl-tmux::dispatch-command s :rename-window nil)
       (is (prompt-active-p) "rename should open a prompt")
-      (is (string= "1" (prompt-buffer *prompt*))
+      (is (string= "0" (prompt-buffer *prompt*))
           "prompt seeded with current window name")
       (is (functionp (prompt-on-submit *prompt*))
           "prompt should carry an on-submit closure")
@@ -662,3 +662,109 @@
       (cl-tmux::dispatch-command sess :swap-pane-backward nil)
       (is-true cl-tmux::*dirty*
                ":swap-pane-backward must mark *dirty*"))))
+
+;;; ── :kill-pane-confirm dispatch ──────────────────────────────────────────────
+
+(test dispatch-kill-pane-confirm-opens-prompt
+  ":kill-pane-confirm opens a y/n prompt and does NOT kill immediately."
+  (let ((s (make-fake-session :nwindows 1 :npanes 2)))
+    (let ((*prompt* nil) (cl-tmux::*running* t) (cl-tmux::*dirty* nil))
+      (cl-tmux::dispatch-command s :kill-pane-confirm nil)
+      (is (prompt-active-p)
+          ":kill-pane-confirm must open a prompt")
+      ;; Window should still have both panes (no kill yet).
+      (is (= 2 (length (window-panes (session-active-window s))))
+          ":kill-pane-confirm must not kill the pane before confirmation"))))
+
+(test dispatch-kill-pane-confirm-kills-on-y
+  ":kill-pane-confirm kills the pane when the user submits \"y\"."
+  (let ((s (make-fake-session :nwindows 1 :npanes 2)))
+    (let ((*prompt* nil) (cl-tmux::*running* t) (cl-tmux::*dirty* nil))
+      (cl-tmux::dispatch-command s :kill-pane-confirm nil)
+      (is (prompt-active-p) "prompt must be open")
+      ;; Submit "y" — should kill the active pane.
+      (funcall (prompt-on-submit *prompt*) "y")
+      (is (= 1 (length (window-panes (session-active-window s))))
+          "submitting \"y\" must kill the active pane"))))
+
+(test dispatch-kill-pane-confirm-no-kill-on-n
+  ":kill-pane-confirm does NOT kill when the user submits \"n\"."
+  (let ((s (make-fake-session :nwindows 1 :npanes 2)))
+    (let ((*prompt* nil) (cl-tmux::*running* t) (cl-tmux::*dirty* nil))
+      (cl-tmux::dispatch-command s :kill-pane-confirm nil)
+      (is (prompt-active-p) "prompt must be open")
+      ;; Submit "n" — should NOT kill.
+      (funcall (prompt-on-submit *prompt*) "n")
+      (is (= 2 (length (window-panes (session-active-window s))))
+          "submitting \"n\" must NOT kill the pane"))))
+
+;;; ── :kill-window-confirm dispatch ────────────────────────────────────────────
+
+(test dispatch-kill-window-confirm-opens-prompt
+  ":kill-window-confirm opens a y/n prompt and does NOT kill immediately."
+  (let ((s (make-fake-session :nwindows 2)))
+    (let ((*prompt* nil) (cl-tmux::*running* t) (cl-tmux::*dirty* nil))
+      (cl-tmux::dispatch-command s :kill-window-confirm nil)
+      (is (prompt-active-p)
+          ":kill-window-confirm must open a prompt")
+      ;; Both windows should still be present.
+      (is (= 2 (length (session-windows s)))
+          ":kill-window-confirm must not kill the window before confirmation"))))
+
+(test dispatch-kill-window-confirm-kills-on-y
+  ":kill-window-confirm kills the window when the user submits \"y\"."
+  (let ((s (make-fake-session :nwindows 2)))
+    (let ((*prompt* nil) (cl-tmux::*running* t) (cl-tmux::*dirty* nil))
+      (cl-tmux::dispatch-command s :kill-window-confirm nil)
+      (is (prompt-active-p) "prompt must be open")
+      ;; Submit "y" — should kill the active window.
+      (funcall (prompt-on-submit *prompt*) "y")
+      (is (= 1 (length (session-windows s)))
+          "submitting \"y\" must kill the active window"))))
+
+(test dispatch-kill-window-confirm-no-kill-on-n
+  ":kill-window-confirm does NOT kill when the user submits \"n\"."
+  (let ((s (make-fake-session :nwindows 2)))
+    (let ((*prompt* nil) (cl-tmux::*running* t) (cl-tmux::*dirty* nil))
+      (cl-tmux::dispatch-command s :kill-window-confirm nil)
+      (is (prompt-active-p) "prompt must be open")
+      ;; Submit "n" — should NOT kill.
+      (funcall (prompt-on-submit *prompt*) "n")
+      (is (= 2 (length (session-windows s)))
+          "submitting \"n\" must NOT kill the window"))))
+
+(test dispatch-kill-window-confirm-prompt-includes-window-name
+  ":kill-window-confirm prompt label includes the current window name."
+  (let ((s (make-fake-session :nwindows 1)))
+    (let ((*prompt* nil) (cl-tmux::*running* t) (cl-tmux::*dirty* nil))
+      (let ((wname (window-name (session-active-window s))))
+        (cl-tmux::dispatch-command s :kill-window-confirm nil)
+        (is (prompt-active-p) "prompt must be open")
+        (is (search wname (prompt-label *prompt*))
+            "prompt label must contain the window name")))))
+
+;;; ── :send-prefix dispatch ────────────────────────────────────────────────────
+
+(test dispatch-send-prefix-command-is-defined
+  ":send-prefix command is registered in dispatch-command without error."
+  ;; We cannot test actual PTY writes in unit tests (fd=-1), but we verify
+  ;; that dispatching :send-prefix does not signal any error and marks dirty.
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      ;; Should not error even with fd=-1 (the guard (> fd 0) protects the write).
+      (finishes (cl-tmux::dispatch-command s :send-prefix nil))
+      (is-true cl-tmux::*dirty* ":send-prefix must mark *dirty*"))))
+
+;;; ── unbound prefix key no-op ─────────────────────────────────────────────────
+
+(test dispatch-unknown-command-is-noop
+  "An unrecognized prefix key is silently discarded (no passthrough corruption)."
+  ;; Previously the otherwise clause called %passthrough-prefix, injecting
+  ;; raw bytes into the pane.  After the fix it must be a silent no-op.
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      ;; Dispatching an unknown command must return NIL and must not error.
+      (is (null (cl-tmux::dispatch-command s :no-such-command-xyz nil))
+          "unknown command must return NIL")
+      (is-true cl-tmux::*dirty*
+               "dispatch must mark *dirty* even for unknown commands"))))

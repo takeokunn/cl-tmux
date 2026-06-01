@@ -74,10 +74,12 @@
 ;;; -- Private command helpers ------------------------------------------------
 
 (defun %cmd-new-window (session)
-  "Create a new window in SESSION and start a reader thread for it."
+  "Create a new window in SESSION and start a reader thread for it.
+   The window name defaults to the shell basename (e.g. \"bash\"), matching
+   real tmux; the id is assigned by session-new-window as the lowest free slot."
   (let* ((rows (- *term-rows* *status-height*))
          (cols *term-cols*)
-         (name (format nil "~D" (1+ (length (session-windows session)))))
+         (name (%shell-basename))
          (win  (session-new-window session name rows cols)))
     (start-reader-thread (window-active-pane win))
     (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+ win)))
@@ -169,14 +171,15 @@
 
 (defun %format-window-list (session)
   "Return a formatted string listing all windows in SESSION.
-   Format: INDEX: NAME (WxH) [active marker]"
+   Format: INDEX: NAME (WxH) [active marker]
+   INDEX is the window's stored id, not its 0-based list position."
   (let* ((win  (session-active-window session))
          (wins (session-windows session)))
     (with-output-to-string (s)
       (dolist (w wins)
         (format s "~A~A: ~A (~Dx~D) [~D pane~:P]~A~%"
                 (if (eq w win) "*" " ")
-                (position w wins)
+                (window-id w)
                 (window-name w)
                 (window-width w)
                 (window-height w)
@@ -263,7 +266,7 @@
                            (destructuring-bind (kw &rest body) rule
                              `(,kw (progn ,@body))))
                          rules)
-               (otherwise (%passthrough-prefix session byte) nil))))
+               (otherwise nil))))
        (case outcome
          ((:quit :detach) outcome)
          (otherwise (setf *dirty* t) nil)))))
@@ -281,6 +284,28 @@
   (:split-vertical-no-focus   (%cmd-split session :h :no-focus t))  ; split without changing focus
   (:kill-pane   (%handle-kill-result (kill-pane session)))
   (:kill-window (%handle-kill-result (kill-window session (session-active-window session))))
+  (:kill-pane-confirm
+   ;; Show a y/n prompt; call kill-pane only when the user enters "y"/"Y".
+   ;; Mirrors tmux's default "C-b x: kill-pane? (y/n)" behaviour.
+   (with-active-window (win session)
+     (let* ((ap  (window-active-pane win))
+            (msg (if ap
+                     (format nil "kill-pane ~D? (y/n)" (pane-id ap))
+                     "kill-pane? (y/n)")))
+       (prompt-start msg ""
+                     (lambda (input)
+                       (when (string-equal input "y")
+                         (%handle-kill-result (kill-pane session))))))))
+  (:kill-window-confirm
+   ;; Show a y/n prompt; call kill-window only when the user enters "y"/"Y".
+   ;; Mirrors tmux's default "C-b &: kill-window #W? (y/n)" behaviour.
+   (with-active-window (win session)
+     (let ((msg (format nil "kill-window ~A? (y/n)" (window-name win))))
+       (prompt-start msg ""
+                     (lambda (input)
+                       (when (string-equal input "y")
+                         (%handle-kill-result
+                          (kill-window session (session-active-window session)))))))))
   (:respawn-pane
    (with-active-window (win session)
      (let ((ap (window-active-pane win)))
@@ -309,6 +334,14 @@
           (ap   (and win (window-active-pane win))))
      (when (and text ap (> (pane-fd ap) 0))
        (pty-write (pane-fd ap) (babel:string-to-octets text :encoding :utf-8)))))
+  (:send-prefix
+   ;; Send exactly one literal prefix byte (0x02) to the active pane's PTY.
+   ;; This is the C-b C-b → literal C-b passthrough, matching real tmux behaviour.
+   (flet ((byte-vec (b)
+            (make-array 1 :element-type '(unsigned-byte 8) :initial-element b)))
+     (with-active-pane (ap session)
+       (when (> (pane-fd ap) 0)
+         (pty-write (pane-fd ap) (byte-vec +prefix-key-code+))))))
   (:select-layout-even-h  (%apply-named-layout-to-session session :even-horizontal))
   (:select-layout-even-v  (%apply-named-layout-to-session session :even-vertical))
   (:select-layout-tiled   (%apply-named-layout-to-session session :tiled))

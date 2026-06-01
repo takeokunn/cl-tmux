@@ -194,6 +194,65 @@
     (is (eq before (session-active-window s))
         "out-of-range index must not change the active window")))
 
+(test select-window-by-id-stable-after-kill
+  "After killing a middle window, select-window-by-number still finds the
+   window by its stored id, not by list position."
+  (let* ((w0 (make-window :id 0 :name "a" :width 20 :height 5
+                          :panes (list (make-pane :id 1 :x 0 :y 0
+                                                  :width 20 :height 5
+                                                  :fd -1 :pid -1
+                                                  :screen (make-screen 20 5)))))
+         (w1 (make-window :id 1 :name "b" :width 20 :height 5
+                          :panes (list (make-pane :id 2 :x 0 :y 0
+                                                  :width 20 :height 5
+                                                  :fd -1 :pid -1
+                                                  :screen (make-screen 20 5)))))
+         (w2 (make-window :id 2 :name "c" :width 20 :height 5
+                          :panes (list (make-pane :id 3 :x 0 :y 0
+                                                  :width 20 :height 5
+                                                  :fd -1 :pid -1
+                                                  :screen (make-screen 20 5)))))
+         (sess (make-session :id 1 :name "0" :windows (list w0 w1 w2))))
+    (session-select-window sess w0)
+    ;; Kill the middle window (id=1).
+    (kill-window sess w1)
+    ;; List is now [w0, w2].  select-window-by-number 2 must still find w2
+    ;; (id=2 is at list-position 1 after the kill).
+    (select-window-by-number sess 2)
+    (is (eq w2 (session-active-window sess))
+        "select-window-by-number must find w2 by id=2 even after w1 was killed")))
+
+(test kill-pane-nonactive-does-not-reselect
+  "Killing a non-active pane does not change the active pane."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window sess win)
+    ;; Make p0 active, then kill p1 (non-active).
+    (window-select-pane win p0)
+    (kill-pane sess p1)
+    ;; p0 must remain active.
+    (is (eq p0 (window-active-pane win))
+        "active pane must remain p0 when a non-active pane is killed")))
+
+(test kill-pane-active-selects-mru-pane
+  "When the active pane is killed, the last-active pane is selected if present."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window sess win)
+    ;; Visit p1 first, then switch back to p0 so p1 is last-active.
+    (window-select-pane win p1)
+    (window-select-pane win p0)
+    ;; Now last-active should be p1.
+    (is (eq p1 (window-last-active win)) "precondition: last-active is p1")
+    ;; Kill p0 (active) — should reselect p1 (last-active).
+    (kill-pane sess p0)
+    (is (eq p1 (window-active-pane win))
+        "last-active pane (p1) must be selected after active pane (p0) is killed")))
+
 ;;; ── rename-session ──────────────────────────────────────────────────────────
 
 (test rename-session-changes-session-name

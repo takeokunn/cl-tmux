@@ -213,9 +213,10 @@
     win))
 
 (defun make-fake-session (&key (nwindows 1) (npanes 1))
-  "A session of NWINDOWS fake windows (each with NPANES fake panes), no PTYs."
+  "A session of NWINDOWS fake windows (each with NPANES fake panes), no PTYs.
+   Window ids start at 0 (base-index), matching the real session-new-window behaviour."
   (let* ((windows (loop for i below nwindows
-                        collect (make-fake-window (1+ i) (format nil "~D" (1+ i))
+                        collect (make-fake-window i (format nil "~D" i)
                                                   :npanes npanes)))
          (sess    (make-session :id 1 :name "0" :windows windows)))
     (session-select-window sess (first windows))

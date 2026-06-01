@@ -96,8 +96,8 @@
     (#\? :list-keys)
     (#\[ :copy-mode-enter)
     (#\] :paste-buffer)
-    (#\x :kill-pane)
-    (#\& :kill-window)
+    (#\x :kill-pane-confirm)
+    (#\& :kill-window-confirm)
     (#\, :rename-window)
     (#\H :resize-left)
     (#\J :resize-down)
@@ -155,6 +155,12 @@
   ;; Ensure "root" and "copy-mode" tables exist
   (ensure-key-table "root")
   (ensure-key-table "copy-mode"))
+
+;;; Bind C-b C-b (prefix then byte 2) to :send-prefix so the user can send
+;;; a literal prefix byte to the running program.  This cannot be expressed
+;;; as a character literal in define-initial-key-bindings because the
+;;; character has code 2 (STX / Control-B), so we push it at load time.
+(push (cons (code-char +prefix-key-code+) :send-prefix) *key-bindings*)
 
 ;;; Initialise tables at load time.
 (sync-key-tables-from-bindings)

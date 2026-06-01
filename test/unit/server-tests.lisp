@@ -57,17 +57,20 @@
                  "a detach must not clear *running* (session survives)")))))
 
 (test process-client-keys-quit-keystroke-returns-quit
-  "A prefix+kill-window key payload (^B &) on the last window returns :quit and
-   clears *running* — the session itself ends."
+  "A prefix+kill-window key payload (^B &) now shows a confirm-before prompt
+   instead of killing immediately.  The session is NOT ended until the user
+   confirms with 'y'; *running* stays T and the prompt is active after the keystroke."
   (let ((s (make-fake-session :nwindows 1 :npanes 1)))
-    (let ((cl-tmux::*running* t) (cl-tmux::*dirty* nil))
+    (let ((cl-tmux::*running* t) (cl-tmux::*dirty* nil) (*prompt* nil))
       (let ((state   (cl-tmux::make-input-state))
             (payload (make-array 2 :element-type '(unsigned-byte 8)
                                    :initial-contents (list 2 (char-code #\&)))))
-        (is (eq :quit (cl-tmux::process-client-keys s payload state))
-            "^B & on the last window should yield the :quit disposition")
-        (is-false cl-tmux::*running*
-                  ":quit must clear *running* so the server stops")))))
+        ;; ^B & now shows a confirm-before prompt; session is NOT killed yet.
+        (cl-tmux::process-client-keys s payload state)
+        (is (prompt-active-p)
+            "^B & on the last window should open a confirm-before prompt")
+        (is-true cl-tmux::*running*
+                 "*running* must stay T before the user confirms the kill")))))
 
 (test process-client-keys-empty-payload-returns-nil
   "An empty key payload runs the byte loop zero times: returns NIL (keep serving)

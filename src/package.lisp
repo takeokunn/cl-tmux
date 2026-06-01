@@ -445,6 +445,11 @@
    #:session-swap-windows
    #:session-last-window
    ;; Global state
+   ;; Shell basename helper (used by dispatch and commands/break-pane)
+   #:%shell-basename
+   ;; Lowest-free window-id helper (used by commands/break-pane)
+   #:%next-window-id
+   ;; Global state
    #:create-initial-session
    #:all-panes
    ;; update-environment

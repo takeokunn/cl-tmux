@@ -757,9 +757,10 @@
 ;;; ── list-windows-format ──────────────────────────────────────────────────────
 
 (test list-windows-format
-  "%format-window-list includes index, name, dimensions, and active marker."
+  "%format-window-list includes the window's stored id, name, dimensions, and active marker."
   (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
-         (w0  (make-window :id 1 :name "main" :width 80 :height 24
+         ;; Use id=0 so that the listing shows "0:" as the index prefix.
+         (w0  (make-window :id 0 :name "main" :width 80 :height 24
                            :panes (list p0)))
          (sess (make-session :id 1 :name "s" :windows (list w0))))
     (session-select-window sess w0)
@@ -767,7 +768,7 @@
       (is (search "main"    listing) "listing must include window name")
       (is (search "80x24"   listing) "listing must include dimensions")
       (is (search "[active]" listing) "active window must be marked [active]")
-      (is (search "0:"      listing) "listing must include 0: index prefix"))))
+      (is (search "0:"      listing) "listing must include the window-id (0) as prefix"))))
 
 ;;; ── auto-rename-from-osc ─────────────────────────────────────────────────────
 

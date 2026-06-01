@@ -44,13 +44,23 @@
           (window-active window) pane
           (window-tree   window) (make-layout-leaf pane))))
 
-(defun session-new-window (session name rows cols)
-  "Create a new window with one full-screen pane, attach it to SESSION."
-  (let ((win (make-window :id (1+ (length (session-windows session)))
-                          :name name :width cols :height rows)))
+(defun %next-window-id (session &optional (base-index 0))
+  "Return the smallest integer >= BASE-INDEX not already used by any window in SESSION.
+   BASE-INDEX defaults to 0 (tmux default)."
+  (let ((used (mapcar #'window-id (session-windows session))))
+    (loop for i from base-index
+          unless (member i used) return i)))
+
+(defun session-new-window (session name rows cols &optional (base-index 0))
+  "Create a new window with one full-screen pane, attach it to SESSION.
+   The new window receives the lowest free id >= BASE-INDEX (default 0).
+   The window list is kept sorted by window-id after insertion."
+  (let* ((new-id (%next-window-id session base-index))
+         (win (make-window :id new-id :name name :width cols :height rows)))
     (%attach-full-screen-pane win rows cols)
-    (setf (session-windows session) (append (session-windows session) (list win))
-          (session-active  session) win)
+    (setf (session-windows session)
+          (sort (cons win (session-windows session)) #'< :key #'window-id))
+    (setf (session-active session) win)
     win))
 
 ;;; ── Global state & initialisation ─────────────────────────────────────────
@@ -60,13 +70,23 @@
   (setf (session-last-active session) (get-universal-time))
   session)
 
+(defun %shell-basename ()
+  "Return the basename component of *default-shell*, or \"window\" as fallback."
+  (let* ((shell (or *default-shell* "window"))
+         (slash-pos (position #\/ shell :from-end t)))
+    (if slash-pos
+        (subseq shell (1+ slash-pos))
+        shell)))
+
 (defun create-initial-session (rows cols)
-  "Bootstrap: one session, one window, one full-screen pane."
+  "Bootstrap: one session, one window, one full-screen pane.
+   The first window index is base-index (default 0) and its name is the
+   shell basename (e.g. \"bash\", \"zsh\")."
   (let ((session   (make-session :id (incf *session-id-counter*)
                                  :name "0"
                                  :last-active (get-universal-time)))
         (pane-rows (- rows *status-height*)))
-    (session-new-window session "1" pane-rows cols)
+    (session-new-window session (%shell-basename) pane-rows cols)
     session))
 
 (defun all-panes (session)

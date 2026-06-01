@@ -17,9 +17,11 @@
    Removes the pane from the window's split tree, collapsing its parent so the
    sibling reclaims the freed rectangle.  If the owning window becomes empty,
    also calls KILL-WINDOW.
+   Only re-selects a new active pane when the killed pane was the active one.
    Returns :quit if no windows remain, nil otherwise."
-  (let* ((win    (session-active-window session))
-         (target (or pane (window-active-pane win))))
+  (let* ((win        (session-active-window session))
+         (target     (or pane (window-active-pane win)))
+         (was-active (eq target (window-active-pane win))))
     (when target
       (ignore-errors (pty-close (pane-fd target) (pane-pid target))))
     (let ((survivor (window-remove-pane win target)))
@@ -27,14 +29,36 @@
       (if (null (window-panes win))
           (kill-window session win)
           (progn
-            (window-select-pane win (or survivor (first (window-panes win))))
+            (when was-active
+              (let* ((remaining (window-panes win))
+                     (last-act  (window-last-active win))
+                     (chosen    (or (and last-act (find last-act remaining))
+                                    survivor
+                                    (first remaining))))
+                (window-select-pane win chosen)))
             nil)))))
+
+(defun %nearest-window (windows killed-id)
+  "Return the window from WINDOWS whose id is numerically closest to KILLED-ID.
+   When two windows are equidistant, the one with the larger id (next neighbour)
+   is preferred.  Falls back to (first windows) when the list is empty."
+  (reduce (lambda (best w)
+            (let ((d-best (abs (- killed-id (window-id best))))
+                  (d-w    (abs (- killed-id (window-id w)))))
+              (cond ((< d-w d-best) w)
+                    ((and (= d-w d-best) (> (window-id w) killed-id)) w)
+                    (t best))))
+          (rest windows)
+          :initial-value (first windows)))
 
 (defun kill-window (session &optional window)
   "Destroy WINDOW (default: active window of SESSION).
    Kills all panes in it and removes the window from SESSION.
+   After killing the active window, selects the numerically nearest remaining
+   window (next higher id if available, otherwise next lower).
    Returns :quit if no windows remain, NIL otherwise."
   (let* ((target    (or window (session-active-window session)))
+         (killed-id (window-id target))
          (remaining (remove target (session-windows session))))
     (dolist (pane (window-panes target))
       (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
@@ -42,7 +66,7 @@
     (run-hooks +hook-after-kill-window+ target)
     (unless remaining (return-from kill-window :quit))
     (when (eq (session-active-window session) target)
-      (session-select-window session (first remaining)))
+      (session-select-window session (%nearest-window remaining killed-id)))
     nil))
 
 ;;; ── Rename / Select ────────────────────────────────────────────────────────
@@ -63,8 +87,10 @@
     (setf (session-name session) name)))
 
 (defun select-window-by-number (session n)
-  "Select the Nth window (0-based) of SESSION if it exists."
-  (let ((win (nth n (session-windows session))))
+  "Select the window in SESSION whose stored id equals N.
+   Looks up by window-id, not by 0-based list position, so the digit pressed
+   always matches the window label even after kills leave gaps in the list."
+  (let ((win (find n (session-windows session) :key #'window-id)))
     (when win
       (session-select-window session win))))
 
@@ -286,20 +312,21 @@
     (when (window-panes src-win)
       (window-select-pane src-win (first (window-panes src-win))))
     ;; Create a new window with the pane as the sole full-screen occupant.
-    (let* ((rows (window-height src-win))
-           (cols (window-width  src-win))
-           (name (format nil "~D" (1+ (length (session-windows session)))))
-           (new-win (make-window :id (1+ (length (session-windows session)))
-                                 :name name :width cols :height rows)))
+    ;; Use the lowest free window id (same rule as session-new-window).
+    (let* ((rows   (window-height src-win))
+           (cols   (window-width  src-win))
+           (new-id (%next-window-id session))
+           (name   (%shell-basename))
+           (new-win (make-window :id new-id :name name :width cols :height rows)))
       ;; Install the pane as the sole leaf in the new window's tree.
       (setf (window-panes new-win) (list pane)
             (window-tree  new-win) (make-layout-leaf pane))
       (window-select-pane new-win pane)
       ;; Reposition the pane to fill the new window.
       (pane-reposition pane 0 0 cols rows)
-      ;; Attach the new window to the session.
+      ;; Attach the new window to the session, keeping list sorted by id.
       (setf (session-windows session)
-            (append (session-windows session) (list new-win)))
+            (sort (cons new-win (session-windows session)) #'< :key #'window-id))
       (session-select-window session new-win)
       (run-hooks +hook-after-new-window+ new-win)
       new-win)))

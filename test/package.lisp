@@ -57,6 +57,7 @@
                 #:make-session
                 #:pane-feed
                 #:pane-screen
+                #:window-id
                 #:window-name
                 #:window-width #:window-height
                 #:session-name
