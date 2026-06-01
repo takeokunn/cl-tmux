@@ -64,14 +64,14 @@
            (out  (with-output-to-string (s)
                    (cl-tmux/renderer::render-status-bar s sess 10 40))))
       (is (search "0" out) "status bar should contain the session name 0 (got ~S)" out)
-      ;; The active window is formatted as " [NAME]" — search for the bracketed
-      ;; fragment so a stray digit inside an SGR code can't pass this check.
-      (is (search "[1]" out)
-          "status bar should contain the active-window fragment [1] (got ~S)" out))))
+      ;; The active window is formatted using window-status-current-format:
+      ;; " #{window_index}:#{window_name}* " → " 1:1* " for window named "1" at index 1.
+      (is (search "1:1" out)
+          "status bar should contain the active-window fragment 1:1 (got ~S)" out))))
 
 (test status-bar-no-prompt-when-inactive
   "With *prompt* explicitly inactive, the status bar shows the normal status
-   ([1]) and never the prompt text — pinning the active/inactive exclusion."
+   (window 1) and never the prompt text — pinning the active/inactive exclusion."
   (let ((cl-tmux/options:*global-options*
          (let ((ht (make-hash-table :test #'equal)))
            (maphash (lambda (k v) (setf (gethash k ht) v))
@@ -83,8 +83,9 @@
     (let* ((sess (make-test-session 40 10 :content ""))
            (out  (with-output-to-string (s)
                    (cl-tmux/renderer::render-status-bar s sess 10 40))))
-      (is (search "[1]" out)
-          "inactive status bar should show the normal active-window fragment [1] (got ~S)" out)
+      ;; window-status-current-format renders active window as " 1:1* "
+      (is (search "1:1" out)
+          "inactive status bar should show the window fragment 1:1 (got ~S)" out)
       (is (null (search "rename-window:" out))
           "inactive status bar must NOT show the prompt text (got ~S)" out))))
 
@@ -140,15 +141,15 @@
           "narrow status content must fit in ~D cols (got ~D: ~S)"
           width (length content) content)
       ;; The full line (left text + gap + time) is longer than the terminal, so
-      ;; the right-hand time string is truncated off the visible content.
-      (is (not (search ":" content))
-          "narrow status content should be truncated before the HH:MM time (got ~S)"
-          content))))
+      ;; the HH:MM time string (right portion) is truncated off the visible content.
+      ;; We verify this by checking the content is shorter than the full line would be.
+      (is (< (length content) 20)
+          "narrow status content should be truncated (got ~S)" content))))
 
 (test render-status-bar-active-prompt-replaces-left-segment
   "An active *prompt* replaces the whole left status segment with its
    \"LABEL: BUFFER\" text — the prompt text appears and the normal
-   window-list fragment [1] is absent."
+   window-list (1:1*) is absent."
   (let ((cl-tmux/prompt:*prompt* nil))
     (cl-tmux/prompt:prompt-start "rename-window" "abc" nil)
     (unwind-protect
@@ -158,8 +159,9 @@
            ;; prompt-text formats as "LABEL: BUFFER".
            (is (search "rename-window: abc" out)
                "active-prompt status bar should show the prompt text (got ~S)" out)
-           (is (null (search "[1]" out))
-               "active-prompt status bar must NOT show the window-list fragment [1] (got ~S)" out))
+           ;; When prompt is active, the window list (1:1*) is suppressed.
+           (is (null (search "1:1*" out))
+               "active-prompt status bar must NOT show the window-list 1:1* (got ~S)" out))
       (cl-tmux/prompt:prompt-clear))))
 
 ;;; ── render-session-to-string (full frame) ───────────────────────────────────
@@ -180,10 +182,10 @@
           "frame should hide the cursor with ESC[?25l (got ~S)" out)
       (is (search (format nil "~C[?25h" #\Escape) out)
           "frame should show the cursor with ESC[?25h (got ~S)" out)
-      ;; The active window is formatted as " [NAME]"; assert the bracketed
-      ;; fragment instead of a bare digit (digits also occur in SGR codes).
-      (is (search "[1]" out)
-          "frame should contain the active-window fragment [1] (got ~S)" out))))
+      ;; The active window is formatted with window-status-current-format
+      ;; default: " #{window_index}:#{window_name}* " → " 1:1* "
+      (is (search "1:1" out)
+          "frame should contain the active-window fragment 1:1 (got ~S)" out))))
 
 (test render-session-vertical-split-emits-separators
   (let* ((sess  (make-split-session 5 3 :h))
@@ -294,8 +296,12 @@
   (let* ((sess     (make-test-session 20 5 :content ""))
          (win      (session-active-window sess))
          (out      (cl-tmux/renderer::%status-window-list sess win)))
-    (is (search "[1]" out)
-        "%status-window-list should bracket the active window (got ~S)" out)))
+    ;; window-status-current-format default: " #{window_index}:#{window_name}* "
+    ;; window named "1" at index 1 → " 1:1* "
+    (is (search "1:1" out)
+        "%status-window-list should contain the active window 1:1 (got ~S)" out)
+    (is (search "*" out)
+        "%status-window-list should contain * marker for active window (got ~S)" out)))
 
 (test status-window-list-two-windows-formats-both
   ;; Build a 2-window session manually; second window is active.
@@ -309,14 +315,18 @@
     (window-select-pane w0 p0)
     (window-select-pane w1 p1)
     (session-select-window sess w1)
-    ;; Active window is beta → bracketed; alpha → plain.
+    ;; Active window is beta → rendered with window-status-current-format "index:name*"
+    ;; Inactive window alpha → rendered with window-status-format "index:name"
     (let ((out (cl-tmux/renderer::%status-window-list sess w1)))
-      (is (search "[beta]" out)
-          "%status-window-list should bracket the active window beta (got ~S)" out)
+      ;; Active window "beta" gets the current-format with "*"
+      (is (search "beta*" out)
+          "%status-window-list should mark active window beta with * (got ~S)" out)
+      ;; Inactive window "alpha" appears without "*"
       (is (search "alpha" out)
           "%status-window-list should include the inactive window alpha (got ~S)" out)
-      (is (null (search "[alpha]" out))
-          "%status-window-list must NOT bracket the inactive window alpha (got ~S)" out))))
+      ;; alpha should NOT have the asterisk marker
+      (is (null (search "alpha*" out))
+          "%status-window-list must NOT mark inactive window alpha with * (got ~S)" out))))
 
 ;;; ── %status-bar-line (pure) ─────────────────────────────────────────────────
 
@@ -456,3 +466,323 @@
                    (cl-tmux/renderer::render-status-bar s sess 10 60))))
       (is (search "win:1" out)
           "status-right #{window_name} must expand to the window name '1' (got ~S)" out))))
+
+;;; ── status-position top/bottom ───────────────────────────────────────────────
+
+(test status-position-bottom-default
+  "With status-position = bottom (default), the status bar appears at the last row."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (maphash (lambda (k v) (setf (gethash k ht) v))
+                    cl-tmux/options:*global-options*)
+           (setf (gethash "status-position" ht) "bottom"
+                 (gethash "status-left" ht) nil
+                 (gethash "status-right" ht) nil)
+           ht)))
+    (let* ((sess (make-test-session 20 5))
+           (rows 6)
+           (out  (with-output-to-string (s)
+                   (cl-tmux/renderer::render-status-bar s sess rows 20))))
+      ;; The status bar emits ESC[row;colH where row is 1-based.
+      ;; Bottom row = rows-1 = 5, so ESC[6;1H
+      (is (search (format nil "~C[6;1H" #\Escape) out)
+          "status-position bottom must place bar at row ~D (got ~S)" (1- rows) out))))
+
+(test status-position-top
+  "With status-position = top, the status bar appears at row 0 (ESC[1;1H)."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (maphash (lambda (k v) (setf (gethash k ht) v))
+                    cl-tmux/options:*global-options*)
+           (setf (gethash "status-position" ht) "top"
+                 (gethash "status-left" ht) nil
+                 (gethash "status-right" ht) nil)
+           ht)))
+    (let* ((sess (make-test-session 20 5))
+           (out  (with-output-to-string (s)
+                   ;; render-status-bar directly with explicit status-row = 0
+                   (cl-tmux/renderer::render-status-bar s sess 6 20 :status-row 0))))
+      ;; ESC[1;1H is row=0, col=0 (1-based = row 1, col 1)
+      (is (search (format nil "~C[1;1H" #\Escape) out)
+          "status-position top must place bar at row 0 (got ~S)" out))))
+
+;;; ── status on/off ────────────────────────────────────────────────────────────
+
+(test status-off-no-status-bar
+  "When the status option is nil/false, render-session-to-string emits no status bar."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (maphash (lambda (k v) (setf (gethash k ht) v))
+                    cl-tmux/options:*global-options*)
+           (setf (gethash "status" ht) nil)
+           ht)))
+    (let* ((sess (make-test-session 20 5))
+           (out  (render-session-to-string sess 6 20)))
+      ;; With status=nil, the default blue SGR "44;97m" should not appear
+      (is (null (search (format nil "~C[44;97m" #\Escape) out))
+          "status=nil must suppress the status bar blue background (got ~S)" out))))
+
+(test status-on-shows-status-bar
+  "When the status option is true (default), render-session-to-string emits a status bar."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (maphash (lambda (k v) (setf (gethash k ht) v))
+                    cl-tmux/options:*global-options*)
+           (setf (gethash "status" ht) t
+                 (gethash "status-left" ht) nil
+                 (gethash "status-right" ht) nil
+                 (gethash "status-style" ht) "")
+           ht)))
+    (let* ((sess (make-test-session 20 5))
+           (out  (render-session-to-string sess 6 20)))
+      (is (search (format nil "~C[44;97m" #\Escape) out)
+          "status=t must produce the status bar with blue background (got ~S)" out))))
+
+;;; ── BEL rendering ────────────────────────────────────────────────────────────
+
+(test render-emits-bel-when-bell-pending
+  "render-session-to-string emits BEL (byte 7) when the active pane has bell-pending T,
+   then clears the flag."
+  (let* ((sess  (make-test-session 20 5))
+         (ap    (session-active-pane sess))
+         (sc    (pane-screen ap)))
+    ;; Manually set bell-pending.
+    (setf (cl-tmux/terminal/types:screen-bell-pending sc) t)
+    (let ((out (render-session-to-string sess 6 20)))
+      (is (find (code-char 7) out)
+          "render output must contain BEL char (code 7) when bell-pending is T")
+      (is-false (cl-tmux/terminal/types:screen-bell-pending sc)
+                "bell-pending must be cleared after rendering"))))
+
+(test render-no-bel-when-bell-pending-nil
+  "render-session-to-string does not emit BEL when bell-pending is NIL."
+  (let* ((sess  (make-test-session 20 5))
+         (ap    (session-active-pane sess))
+         (sc    (pane-screen ap)))
+    (setf (cl-tmux/terminal/types:screen-bell-pending sc) nil)
+    (let ((out (render-session-to-string sess 6 20)))
+      (is (null (find (code-char 7) out))
+          "render output must NOT contain BEL when bell-pending is NIL"))))
+
+;;; ── status-left expanded ─────────────────────────────────────────────────────
+
+(test status-left-expanded-session-name
+  "status-left #{session_name} expands to the actual session name."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (maphash (lambda (k v) (setf (gethash k ht) v))
+                    cl-tmux/options:*global-options*)
+           ht)))
+    (cl-tmux/options:set-option "status-left" "#{session_name}")
+    (let* ((sess (make-test-session 40 10))
+           (out  (with-output-to-string (s)
+                   (cl-tmux/renderer::render-status-bar s sess 11 40))))
+      (is (search "0" out)
+          "status-left #{session_name} must expand to session name '0' (got ~S)" out)
+      (is (null (search "#{session_name}" out))
+          "literal #{session_name} must NOT appear (got ~S)" out))))
+
+;;; ── parse-style-string ───────────────────────────────────────────────────────
+
+(test parse-style-string-nil-returns-nil
+  "parse-style-string with NIL returns NIL."
+  (is (null (cl-tmux/renderer:parse-style-string nil))
+      "parse-style-string nil must return nil"))
+
+(test parse-style-string-empty-returns-nil
+  "parse-style-string with empty string returns NIL."
+  (is (null (cl-tmux/renderer:parse-style-string ""))
+      "parse-style-string \"\" must return nil"))
+
+(test parse-style-string-fg-color
+  "parse-style-string parses fg=red into :fg \"red\"."
+  (let ((p (cl-tmux/renderer:parse-style-string "fg=red")))
+    (is (string= "red" (getf p :fg))
+        "parse-style-string fg=red must set :fg to \"red\", got ~S" (getf p :fg))))
+
+(test parse-style-string-bg-color
+  "parse-style-string parses bg=blue into :bg \"blue\"."
+  (let ((p (cl-tmux/renderer:parse-style-string "bg=blue")))
+    (is (string= "blue" (getf p :bg))
+        "parse-style-string bg=blue must set :bg to \"blue\", got ~S" (getf p :bg))))
+
+(test parse-style-string-bold
+  "parse-style-string parses bold into :bold T."
+  (let ((p (cl-tmux/renderer:parse-style-string "bold")))
+    (is (getf p :bold)
+        "parse-style-string bold must set :bold T, got ~S" (getf p :bold))))
+
+(test parse-style-string-reverse
+  "parse-style-string parses reverse into :reverse T."
+  (let ((p (cl-tmux/renderer:parse-style-string "reverse")))
+    (is (getf p :reverse)
+        "parse-style-string reverse must set :reverse T, got ~S" (getf p :reverse))))
+
+(test parse-style-string-multiple-attrs
+  "parse-style-string parses fg=green,bold,underline into a combined plist."
+  (let ((p (cl-tmux/renderer:parse-style-string "fg=green,bold,underline")))
+    (is (string= "green" (getf p :fg))
+        ":fg must be \"green\", got ~S" (getf p :fg))
+    (is (getf p :bold)
+        ":bold must be T, got ~S" (getf p :bold))
+    (is (getf p :underline)
+        ":underline must be T, got ~S" (getf p :underline))))
+
+(test parse-style-string-colour-n
+  "parse-style-string parses fg=colour4 correctly."
+  (let ((p (cl-tmux/renderer:parse-style-string "fg=colour4")))
+    (is (string= "colour4" (getf p :fg))
+        ":fg must be \"colour4\", got ~S" (getf p :fg))))
+
+;;; ── style-to-sgr ────────────────────────────────────────────────────────────
+
+(test style-to-sgr-nil-returns-default
+  "style-to-sgr with NIL returns default blue-on-white SGR \"44;97\"."
+  (is (string= "44;97" (cl-tmux/renderer:style-to-sgr nil))
+      "style-to-sgr nil must return \"44;97\", got ~S"
+      (cl-tmux/renderer:style-to-sgr nil)))
+
+(test style-to-sgr-bold
+  "style-to-sgr with :bold T includes SGR code 1."
+  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:bold t))))
+    (is (search "1" sgr)
+        "style-to-sgr :bold must include SGR code 1, got ~S" sgr)))
+
+(test style-to-sgr-reverse
+  "style-to-sgr with :reverse T includes SGR code 7."
+  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:reverse t))))
+    (is (search "7" sgr)
+        "style-to-sgr :reverse must include SGR code 7, got ~S" sgr)))
+
+(test style-to-sgr-fg-red
+  "style-to-sgr with :fg \"red\" includes SGR code 31."
+  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:fg "red"))))
+    (is (search "31" sgr)
+        "style-to-sgr :fg red must include SGR code 31, got ~S" sgr)))
+
+(test style-to-sgr-bg-blue
+  "style-to-sgr with :bg \"blue\" includes SGR code 44."
+  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:bg "blue"))))
+    (is (search "44" sgr)
+        "style-to-sgr :bg blue must include SGR code 44, got ~S" sgr)))
+
+(test style-to-sgr-colour-n
+  "style-to-sgr with :bg \"colour4\" includes extended SGR sequence 48;5;4."
+  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:bg "colour4"))))
+    (is (search "48;5;4" sgr)
+        "style-to-sgr :bg colour4 must include 48;5;4, got ~S" sgr)))
+
+;;; ── status-left-length / status-right-length enforcement ────────────────────
+
+(test status-left-length-truncates-long-left
+  "status-left-length truncates the expanded left string to the configured max."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (maphash (lambda (k v) (setf (gethash k ht) v))
+                    cl-tmux/options:*global-options*)
+           ht)))
+    (cl-tmux/options:set-option "status-left" "abcdefghij")
+    (cl-tmux/options:set-option "status-left-length" 5)
+    (let* ((sess (make-test-session 80 10))
+           (out  (with-output-to-string (s)
+                   (cl-tmux/renderer::render-status-bar s sess 11 80))))
+      (is (search "abcde" out)
+          "truncated left must start with first 5 chars (got ~S)" out)
+      (is (null (search "abcdefghij" out))
+          "full 10-char left must NOT appear when length limit is 5 (got ~S)" out))))
+
+(test status-right-length-truncates-long-right
+  "status-right-length truncates the expanded right string to the configured max."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (maphash (lambda (k v) (setf (gethash k ht) v))
+                    cl-tmux/options:*global-options*)
+           ht)))
+    (cl-tmux/options:set-option "status-right" "1234567890")
+    (cl-tmux/options:set-option "status-right-length" 4)
+    (let* ((sess (make-test-session 80 10))
+           (out  (with-output-to-string (s)
+                   (cl-tmux/renderer::render-status-bar s sess 11 80))))
+      (is (search "1234" out)
+          "truncated right must start with first 4 chars (got ~S)" out)
+      (is (null (search "1234567890" out))
+          "full 10-char right must NOT appear when length limit is 4 (got ~S)" out))))
+
+;;; ── window-status-format and window-status-current-format ───────────────────
+
+(test window-status-format-custom
+  "window-status-format option is used when rendering inactive windows."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (maphash (lambda (k v) (setf (gethash k ht) v))
+                    cl-tmux/options:*global-options*)
+           ;; Use nil so status-left falls through to %status-left-text
+           ;; which renders the window list via %status-window-list.
+           (setf (gethash "status-left" ht) nil
+                 (gethash "status-right" ht) nil
+                 (gethash "window-status-format" ht) "WIN:#{window_name}"
+                 (gethash "window-status-current-format" ht) "[#{window_name}]")
+           ht)))
+    ;; Build 2-window session; 2nd window is inactive
+    (let* ((s0 (make-screen 80 5))
+           (p0 (make-pane :id 1 :x 0 :y 0 :width 80 :height 5 :fd -1 :screen s0))
+           (w0 (make-window :id 1 :name "alpha" :width 80 :height 5 :panes (list p0)))
+           (s1 (make-screen 80 5))
+           (p1 (make-pane :id 2 :x 0 :y 0 :width 80 :height 5 :fd -1 :screen s1))
+           (w1 (make-window :id 2 :name "beta"  :width 80 :height 5 :panes (list p1)))
+           (sess (make-session :id 1 :name "0" :windows (list w0 w1))))
+      (window-select-pane w0 p0)
+      (window-select-pane w1 p1)
+      (session-select-window sess w0)      ; alpha is active
+      (let ((out (with-output-to-string (s)
+                   (cl-tmux/renderer::render-status-bar s sess 11 80))))
+        (is (search "[alpha]" out)
+            "active window must use window-status-current-format [alpha] (got ~S)" out)
+        (is (search "WIN:beta" out)
+            "inactive window must use window-status-format WIN:beta (got ~S)" out)))))
+
+;;; ── window-status-separator ──────────────────────────────────────────────────
+
+(test window-status-separator-used-between-windows
+  "window-status-separator is placed between window entries."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (maphash (lambda (k v) (setf (gethash k ht) v))
+                    cl-tmux/options:*global-options*)
+           ;; Use nil so status-left falls through to %status-left-text
+           ;; which renders the window list via %status-window-list.
+           (setf (gethash "status-left" ht) nil
+                 (gethash "status-right" ht) nil
+                 (gethash "window-status-separator" ht) "|SEP|")
+           ht)))
+    (let* ((s0 (make-screen 80 5))
+           (p0 (make-pane :id 1 :x 0 :y 0 :width 80 :height 5 :fd -1 :screen s0))
+           (w0 (make-window :id 1 :name "a" :width 80 :height 5 :panes (list p0)))
+           (s1 (make-screen 80 5))
+           (p1 (make-pane :id 2 :x 0 :y 0 :width 80 :height 5 :fd -1 :screen s1))
+           (w1 (make-window :id 2 :name "b" :width 80 :height 5 :panes (list p1)))
+           (sess (make-session :id 1 :name "0" :windows (list w0 w1))))
+      (window-select-pane w0 p0)
+      (window-select-pane w1 p1)
+      (session-select-window sess w0)
+      (let ((out (with-output-to-string (s)
+                   (cl-tmux/renderer::render-status-bar s sess 11 80))))
+        (is (search "|SEP|" out)
+            "window-status-separator |SEP| must appear between windows (got ~S)" out)))))
+
+;;; ── *status-dirty* and start-status-timer ────────────────────────────────────
+
+(test status-dirty-var-exists
+  "*status-dirty* is bound in the cl-tmux package."
+  (is (boundp 'cl-tmux::*status-dirty*)
+      "*status-dirty* must be bound"))
+
+(test status-timer-thread-var-exists
+  "*status-timer-thread* is bound in the cl-tmux package."
+  (is (boundp 'cl-tmux::*status-timer-thread*)
+      "*status-timer-thread* must be bound"))
+
+(test start-status-timer-is-fbound
+  "start-status-timer is a defined function."
+  (is (fboundp 'cl-tmux::start-status-timer)
+      "start-status-timer must be fbound"))

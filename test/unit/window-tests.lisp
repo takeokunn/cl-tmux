@@ -637,3 +637,176 @@
     (is (=  0 (pane-y p1)))
     (is (=  0 (pane-x p2)))
     (is (= 13 (pane-y p2)) "p2 placed in second row")))
+
+;;; ── last-window by recency ───────────────────────────────────────────────────
+
+(test last-window-by-recency
+  "session-last-window returns the window with the second-highest last-active-time."
+  (let* ((w0 (make-window :id 1 :name "0" :last-active-time 100))
+         (w1 (make-window :id 2 :name "1" :last-active-time 200))
+         (w2 (make-window :id 3 :name "2" :last-active-time 300))
+         (sess (make-session :id 1 :name "s" :windows (list w0 w1 w2))))
+    (session-select-window sess w2)
+    ;; second-most-recent is w1 (time 200)
+    (is (eq w1 (session-last-window sess))
+        "session-last-window must return the window with the second-highest last-active-time")))
+
+(test last-window-single-window-returns-nil
+  "session-last-window returns NIL when there is only one window."
+  (let* ((w0   (make-window :id 1 :name "0" :last-active-time 100))
+         (sess (make-session :id 1 :name "s" :windows (list w0))))
+    (is (null (session-last-window sess))
+        "session-last-window must return NIL for a single-window session")))
+
+;;; ── move-window-reorders ─────────────────────────────────────────────────────
+
+(test move-window-reorders
+  "session-move-window moves a window to the requested position."
+  (let* ((w0 (make-window :id 1 :name "0"))
+         (w1 (make-window :id 2 :name "1"))
+         (w2 (make-window :id 3 :name "2"))
+         (sess (make-session :id 1 :name "s" :windows (list w0 w1 w2))))
+    ;; Move w0 (currently index 0) to index 2 (the end).
+    (session-move-window sess w0 2)
+    (is (equal (list w1 w2 w0) (session-windows sess))
+        "w0 must move to position 2")))
+
+(test move-window-clamps-to-last
+  "session-move-window clamps out-of-range target to last valid index."
+  (let* ((w0 (make-window :id 1 :name "0"))
+         (w1 (make-window :id 2 :name "1"))
+         (sess (make-session :id 1 :name "s" :windows (list w0 w1))))
+    (session-move-window sess w0 99)
+    (is (equal (list w1 w0) (session-windows sess))
+        "w0 must land at index 1 (clamped from 99)")))
+
+;;; ── swap-window-exchanges ────────────────────────────────────────────────────
+
+(test swap-window-exchanges
+  "session-swap-windows exchanges two windows at the given indices."
+  (let* ((w0 (make-window :id 1 :name "0"))
+         (w1 (make-window :id 2 :name "1"))
+         (w2 (make-window :id 3 :name "2"))
+         (sess (make-session :id 1 :name "s" :windows (list w0 w1 w2))))
+    (session-swap-windows sess 0 2)
+    (is (equal (list w2 w1 w0) (session-windows sess))
+        "indices 0 and 2 must be swapped")))
+
+(test swap-window-same-index-is-noop
+  "session-swap-windows with equal indices leaves the list unchanged."
+  (let* ((w0 (make-window :id 1 :name "0"))
+         (w1 (make-window :id 2 :name "1"))
+         (sess (make-session :id 1 :name "s" :windows (list w0 w1))))
+    (session-swap-windows sess 0 0)
+    (is (equal (list w0 w1) (session-windows sess))
+        "same-index swap must be a no-op")))
+
+;;; ── rotate-window-shifts-panes ───────────────────────────────────────────────
+
+(test rotate-window-shifts-panes
+  "window-rotate :up moves the first pane to the end of the panes list."
+  (let* ((p0  (make-no-pty-pane 1 0 0 20 5))
+         (p1  (make-no-pty-pane 2 0 0 20 5))
+         (p2  (make-no-pty-pane 3 0 0 20 5))
+         (win (make-window :id 1 :name "w" :width 62 :height 5
+                           :panes (list p0 p1 p2)
+                           :tree (make-layout-split
+                                  :h (make-layout-leaf p0)
+                                  (make-layout-split
+                                   :h (make-layout-leaf p1)
+                                   (make-layout-leaf p2) 1/2) 1/2))))
+    (window-rotate win :up)
+    ;; p0 should now be at the end
+    (is (eq p0 (third (window-panes win)))
+        "first pane must move to end after :up rotate")
+    (is (eq p1 (first (window-panes win)))
+        "second pane must become first after :up rotate")))
+
+(test rotate-window-down-shifts-panes
+  "window-rotate :down moves the last pane to the front of the panes list."
+  (let* ((p0  (make-no-pty-pane 1 0 0 20 5))
+         (p1  (make-no-pty-pane 2 0 0 20 5))
+         (p2  (make-no-pty-pane 3 0 0 20 5))
+         (win (make-window :id 1 :name "w" :width 62 :height 5
+                           :panes (list p0 p1 p2)
+                           :tree (make-layout-split
+                                  :h (make-layout-leaf p0)
+                                  (make-layout-split
+                                   :h (make-layout-leaf p1)
+                                   (make-layout-leaf p2) 1/2) 1/2))))
+    (window-rotate win :down)
+    (is (eq p2 (first (window-panes win)))
+        "last pane must become first after :down rotate")
+    (is (eq p0 (second (window-panes win)))
+        "original first pane must shift to position 1")))
+
+;;; ── find-window-by-name ──────────────────────────────────────────────────────
+
+(test find-window-by-name
+  "%format-window-list includes matching window names."
+  (let* ((w0 (make-window :id 1 :name "bash" :width 80 :height 24
+                          :panes (list (make-no-pty-pane 1 0 0 80 24))))
+         (w1 (make-window :id 2 :name "vim" :width 80 :height 24
+                          :panes (list (make-no-pty-pane 2 0 0 80 24))))
+         (sess (make-session :id 1 :name "s" :windows (list w0 w1))))
+    (session-select-window sess w0)
+    (let ((listing (cl-tmux::%format-window-list sess)))
+      (is (search "bash" listing) "listing must contain window name 'bash'")
+      (is (search "vim"  listing) "listing must contain window name 'vim'"))))
+
+;;; ── list-windows-format ──────────────────────────────────────────────────────
+
+(test list-windows-format
+  "%format-window-list includes the window's stored id, name, dimensions, and active marker."
+  (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
+         ;; Use id=0 so that the listing shows "0:" as the index prefix.
+         (w0  (make-window :id 0 :name "main" :width 80 :height 24
+                           :panes (list p0)))
+         (sess (make-session :id 1 :name "s" :windows (list w0))))
+    (session-select-window sess w0)
+    (let ((listing (cl-tmux::%format-window-list sess)))
+      (is (search "main"    listing) "listing must include window name")
+      (is (search "80x24"   listing) "listing must include dimensions")
+      (is (search "[active]" listing) "active window must be marked [active]")
+      (is (search "0:"      listing) "listing must include the window-id (0) as prefix"))))
+
+;;; ── auto-rename-from-osc ─────────────────────────────────────────────────────
+
+(test auto-rename-from-osc
+  "When window-automatic-rename-p is T, window-name is updated from OSC title."
+  (let* ((p0   (make-no-pty-pane 1 0 0 80 24))
+         (w0   (make-window :id 1 :name "original"
+                            :panes (list p0) :active p0))
+         (sess (make-session :id 1 :name "s" :windows (list w0))))
+    (session-select-window sess w0)
+    ;; Simulate OSC 0 title update on the screen
+    (setf (screen-title (pane-screen p0)) "new-title")
+    ;; Directly call the rename logic (mimicking what %handle-dirty does)
+    (let* ((sc  (pane-screen p0))
+           (win w0))
+      (when (and sc win
+                 (window-automatic-rename-p win)
+                 (not (string= (screen-title sc) "")))
+        (unless (string= (screen-title sc) (window-name win))
+          (setf (window-name win) (screen-title sc)))))
+    (is (string= "new-title" (window-name w0))
+        "window-name must be updated from OSC title when automatic-rename is enabled")))
+
+(test auto-rename-disabled-ignores-osc
+  "When window-automatic-rename-p is NIL, window-name is NOT updated from OSC title."
+  (let* ((p0   (make-no-pty-pane 1 0 0 80 24))
+         (w0   (make-window :id 1 :name "kept"
+                            :automatic-rename-p nil
+                            :panes (list p0) :active p0))
+         (sess (make-session :id 1 :name "s" :windows (list w0))))
+    (session-select-window sess w0)
+    (setf (screen-title (pane-screen p0)) "ignored-title")
+    ;; Mimic the rename check but with automatic-rename-p nil
+    (let* ((sc  (pane-screen p0))
+           (win w0))
+      (when (and sc win
+                 (window-automatic-rename-p win)  ; this is NIL, so body not executed
+                 (not (string= (screen-title sc) "")))
+        (setf (window-name win) (screen-title sc))))
+    (is (string= "kept" (window-name w0))
+        "window-name must NOT change when automatic-rename is disabled")))

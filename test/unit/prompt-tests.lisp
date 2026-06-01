@@ -27,7 +27,7 @@
     (is (string= "old" (prompt-buffer *prompt*)))
     (is (string= "rename-window" (prompt-label *prompt*)))
     (is (functionp (prompt-on-submit *prompt*)))
-    (is (string= "rename-window: old" (prompt-text)))))
+    (is (string= "rename-window: old|" (prompt-text)))))
 
 (test prompt-input-appends
   "prompt-input appends a character; successive inserts accumulate."
@@ -119,14 +119,15 @@
     (cl-tmux::handle-prompt-key 8)
     (is (string= "a" (prompt-buffer *prompt*)))))
 
-(test handle-prompt-key-enter-empty-submits-empty
-  "Enter on an empty buffer submits the empty string (window renamed to \"\")
-   and dismisses the prompt."
+(test handle-prompt-key-enter-empty-is-noop-for-rename
+  "Enter on an empty buffer dismisses the prompt but does NOT rename the window
+   because rename-window ignores empty strings (matching real tmux behaviour)."
   (let ((win (make-rename-window)))
     (with-clean-prompt
       (prompt-start "rename-window" "" (lambda (name) (rename-window win name)))
       (cl-tmux::handle-prompt-key 13)
-      (is (string= "" (window-name win)) "Enter on empty buffer submits the empty string")
+      (is (string= "old" (window-name win))
+          "Empty input must not rename the window — original name preserved")
       (is (null (prompt-active-p)) "Enter should dismiss the prompt"))))
 
 ;;; ── Status-bar display ──────────────────────────────────────────────────────
@@ -168,12 +169,11 @@
 ;;; ── Low-severity edges (new coverage) ───────────────────────────────────────
 
 (test prompt-text-active-empty-buffer
-  "prompt-text on an active prompt with an empty buffer is \"LABEL: \" with a
-   trailing space (the format separator), not just the label."
+  "prompt-text on an active prompt with an empty buffer shows the cursor '|' at the end."
   (let ((*prompt* nil))
     (prompt-start "rename-window" "" (lambda (s) (declare (ignore s)) nil))
-    (is (string= "rename-window: " (prompt-text))
-        "empty buffer still renders the label, colon, and trailing space")))
+    (is (string= "rename-window: |" (prompt-text))
+        "empty buffer shows label, colon, space, and cursor indicator")))
 
 (test prompt-input-multibyte-char
   "prompt-input appends a high/multibyte character verbatim to the buffer."
@@ -185,6 +185,103 @@
     (is (char= (code-char #x3042)
                (char (prompt-buffer *prompt*) 1))
         "the appended character keeps its full code point")))
+
+;;; ── Prompt cursor navigation ────────────────────────────────────────────────
+
+(test prompt-cursor-bol-moves-to-start
+  "C-a (prompt-cursor-bol) moves cursor to index 0."
+  (let ((*prompt* nil))
+    (prompt-start "p" "abc" (lambda (s) (declare (ignore s)) nil))
+    (is (= 3 (prompt-cursor-index *prompt*)) "cursor starts at end")
+    (prompt-cursor-bol)
+    (is (= 0 (prompt-cursor-index *prompt*)) "C-a brings cursor to start")))
+
+(test prompt-cursor-eol-moves-to-end
+  "C-e (prompt-cursor-eol) moves cursor to end of buffer."
+  (let ((*prompt* nil))
+    (prompt-start "p" "abc" (lambda (s) (declare (ignore s)) nil))
+    (prompt-cursor-bol)
+    (is (= 0 (prompt-cursor-index *prompt*)))
+    (prompt-cursor-eol)
+    (is (= 3 (prompt-cursor-index *prompt*)) "C-e brings cursor to end")))
+
+(test prompt-cursor-back-and-forward
+  "C-b / C-f move cursor one position; clamp at boundaries."
+  (let ((*prompt* nil))
+    (prompt-start "p" "ab" (lambda (s) (declare (ignore s)) nil))
+    (is (= 2 (prompt-cursor-index *prompt*)))
+    (prompt-cursor-back)
+    (is (= 1 (prompt-cursor-index *prompt*)))
+    (prompt-cursor-back)
+    (is (= 0 (prompt-cursor-index *prompt*)))
+    (prompt-cursor-back)
+    (is (= 0 (prompt-cursor-index *prompt*)) "C-b clamped at start")
+    (prompt-cursor-forward)
+    (is (= 1 (prompt-cursor-index *prompt*)))
+    (prompt-cursor-forward)
+    (prompt-cursor-forward)
+    (is (= 2 (prompt-cursor-index *prompt*)) "C-f clamped at end")))
+
+(test prompt-insert-at-cursor-position
+  "Characters insert at cursor-index, not always at the end."
+  (let ((*prompt* nil))
+    (prompt-start "p" "ac" (lambda (s) (declare (ignore s)) nil))
+    (prompt-cursor-bol)
+    (prompt-cursor-forward)          ; cursor now at index 1
+    (prompt-input #\b)               ; insert 'b' between 'a' and 'c'
+    (is (string= "abc" (prompt-buffer *prompt*)))
+    (is (= 2 (prompt-cursor-index *prompt*)) "cursor advances after insert")))
+
+(test prompt-backspace-at-cursor
+  "Backspace deletes the char before the cursor, not always the last char."
+  (let ((*prompt* nil))
+    (prompt-start "p" "abc" (lambda (s) (declare (ignore s)) nil))
+    (prompt-cursor-bol)
+    (prompt-cursor-forward)          ; cursor at index 1, between 'a' and 'b'
+    (prompt-cursor-forward)          ; cursor at index 2, between 'b' and 'c'
+    (prompt-backspace)               ; delete 'b'
+    (is (string= "ac" (prompt-buffer *prompt*)))
+    (is (= 1 (prompt-cursor-index *prompt*)) "cursor moves back after backspace")))
+
+(test prompt-kill-to-end
+  "C-k deletes from cursor to end."
+  (let ((*prompt* nil))
+    (prompt-start "p" "hello" (lambda (s) (declare (ignore s)) nil))
+    (prompt-cursor-bol)
+    (prompt-cursor-forward)
+    (prompt-cursor-forward)          ; cursor at 2
+    (prompt-kill-to-end)
+    (is (string= "he" (prompt-buffer *prompt*)))
+    (is (= 2 (prompt-cursor-index *prompt*)))))
+
+(test prompt-kill-to-start
+  "C-u deletes from start to cursor."
+  (let ((*prompt* nil))
+    (prompt-start "p" "hello" (lambda (s) (declare (ignore s)) nil))
+    (prompt-cursor-bol)
+    (prompt-cursor-forward)
+    (prompt-cursor-forward)          ; cursor at 2
+    (prompt-kill-to-start)
+    (is (string= "llo" (prompt-buffer *prompt*)))
+    (is (= 0 (prompt-cursor-index *prompt*)))))
+
+(test prompt-kill-word-back
+  "C-w deletes the previous word."
+  (let ((*prompt* nil))
+    (prompt-start "p" "foo bar" (lambda (s) (declare (ignore s)) nil))
+    ;; cursor is at end (index 7)
+    (prompt-kill-word-back)
+    (is (string= "foo " (prompt-buffer *prompt*)))
+    (prompt-kill-word-back)
+    (is (string= "" (prompt-buffer *prompt*)))))
+
+(test prompt-cc-cancels
+  "C-c (byte 3) cancels the prompt, same as Escape."
+  (let ((*prompt* nil) (*dirty* nil))
+    (prompt-start "p" "hello" (lambda (s) (declare (ignore s)) nil))
+    (is (prompt-active-p))
+    (cl-tmux::handle-prompt-key 3)   ; byte 3 = C-c
+    (is (not (prompt-active-p)) "C-c must clear the prompt")))
 
 (test overlay-lines-trailing-newline
   "A trailing newline yields a final empty line: overlay-lines collects the

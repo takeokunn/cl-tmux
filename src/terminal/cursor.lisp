@@ -58,6 +58,20 @@
     (setf (screen-cx screen)
           (min nx (1- (screen-width screen))))))
 
+(defun cursor-cht (screen n)
+  "CHT — cursor forward N tab stops (CSI N I).
+   Advance the cursor to the Nth next 8-column tab stop, clamping to width-1."
+  (dotimes (_ (max 1 n))
+    (cursor-ht screen)))
+
+(defun cursor-cbt (screen n)
+  "CBT — cursor backward N tab stops (CSI N Z).
+   Move the cursor back to the Nth previous 8-column tab stop, stopping at column 0."
+  (let ((stops (max 1 n)))
+    (dotimes (_ stops)
+      (let ((prev (* 8 (floor (max 0 (1- (screen-cx screen))) 8))))
+        (setf (screen-cx screen) prev)))))
+
 (defun cursor-bs (screen)
   "Backspace: move cursor left one column if not already at column 0."
   (when (> (screen-cx screen) 0)
@@ -77,31 +91,89 @@
 
 (defun %advance-cursor (screen n)
   "Advance the cursor N columns, wrapping to the next line (and scrolling the
-   scroll region if needed) when it would pass the right edge."
+   scroll region if needed) when it would pass the right edge.
+   Respects the screen-autowrap flag: when autowrap is NIL and the cursor is at
+   the right edge, the cursor stays in place (the write overwrites the last cell)."
   (let ((nx (+ (screen-cx screen) n)))
     (if (< nx (screen-width screen))
         (setf (screen-cx screen) nx)
-        (progn (setf (screen-cx screen) 0)
-               (cursor-down/scroll screen)))))
+        (if (screen-autowrap screen)
+            (progn (setf (screen-cx screen) 0)
+                   (cursor-down/scroll screen))
+            ;; No-wrap: clamp to last column
+            (setf (screen-cx screen) (1- (screen-width screen)))))))
 
-(defun %place-wide-char (screen x y ch fg bg at)
+(defun %place-wide-char (screen x y ch fg bg at at2 ulc)
   "Place a double-width character at (X,Y) and write its continuation cell.
    The continuation cell is written only if (1+ X) is within the screen."
   (setf (screen-cell screen x y)
-        (make-cell :char ch :fg fg :bg bg :attrs at :width 2))
+        (make-cell :char ch :fg fg :bg bg :attrs at :attrs2 at2 :ul-color ulc :width 2))
   (when (< (1+ x) (screen-width screen))
     (setf (screen-cell screen (1+ x) y)
-          (make-cell :char #\Space :fg fg :bg bg :attrs at :width 0))))
+          (make-cell :char #\Space :fg fg :bg bg :attrs at :attrs2 at2 :ul-color ulc :width 0))))
+
+;;; DEC special graphics character set (G1; activated by ESC ( 0).
+;;; Maps ASCII code points (in the range used by line-drawing apps) to the
+;;; corresponding Unicode box-drawing characters.
+
+(defun %dec-graphics-char (ch)
+  "Remap CH from the DEC special graphics set to the corresponding Unicode
+   box-drawing character.  Returns CH unchanged for unmapped code points."
+  (case ch
+    (#\j #\┘) (#\k #\┐) (#\l #\┌) (#\m #\└) (#\n #\┼)
+    (#\q #\─) (#\t #\├) (#\u #\┤) (#\v #\┴) (#\w #\┬) (#\x #\│)
+    (#\a #\▒) (#\` #\◆) (#\f #\°) (#\g #\±) (#\o #\─) ; tilde
+    (#\p #\─) (#\r #\─) (#\s #\─) ; various dashes
+    (t ch)))
+
+;;; Unicode combining character ranges (Category M*: combining marks).
+;;; These code points have zero display width and should be appended to the
+;;; previous cell rather than placed in a new cell.
+
+(defun combining-char-p (ch)
+  "Return T if CH is a Unicode combining character (zero-width mark)."
+  (let ((cp (char-code ch)))
+    (or (<= #x0300 cp #x036F)   ; Combining Diacritical Marks
+        (<= #x1AB0 cp #x1AFF)   ; Combining Diacritical Marks Extended
+        (<= #x1DC0 cp #x1DFF)   ; Combining Diacritical Marks Supplement
+        (<= #x20D0 cp #x20FF)   ; Combining Diacritical Marks for Symbols
+        (<= #xFE20 cp #xFE2F)))) ; Combining Half Marks
 
 (defun write-char-at-cursor (screen ch)
   "Write CH at the cursor, then advance.  Double-width (CJK) characters occupy
    a lead cell plus a continuation placeholder and advance the cursor by two;
    a wide char that will not fit at the right edge wraps to the next line first.
-   Records CH as the screen's LAST-CHAR for use by CSI REP sequences."
-  (let ((w  (char-width ch))
-        (fg (screen-cur-fg    screen))
-        (bg (screen-cur-bg    screen))
-        (at (screen-cur-attrs screen)))
+   Records CH as the screen's LAST-CHAR for use by CSI REP sequences.
+
+   When CH is a Unicode combining character, it is appended to the previous cell
+   and the cursor is NOT advanced.
+
+   When the screen's charset is :dec-graphics, CH is remapped through the DEC
+   special graphics table before being written."
+  ;; Combining character: append to the previous cell, no cursor advance.
+  (when (combining-char-p ch)
+    (let* ((prev-x (if (> (screen-cx screen) 0) (1- (screen-cx screen)) 0))
+           (prev-y (screen-cy screen))
+           (prev-cell (screen-cell screen prev-x prev-y)))
+      (setf (screen-cell screen prev-x prev-y)
+            (make-cell :char      (cell-char prev-cell)
+                       :fg        (cell-fg prev-cell)
+                       :bg        (cell-bg prev-cell)
+                       :attrs     (cell-attrs prev-cell)
+                       :attrs2    (cell-attrs2 prev-cell)
+                       :ul-color  (cell-ul-color prev-cell)
+                       :combining (append (cell-combining prev-cell) (list ch))
+                       :width     (cell-width prev-cell))))
+    (return-from write-char-at-cursor))
+  ;; Apply DEC special graphics remapping when active.
+  (when (eq (screen-charset screen) :dec-graphics)
+    (setf ch (%dec-graphics-char ch)))
+  (let ((w   (char-width ch))
+        (fg  (screen-cur-fg       screen))
+        (bg  (screen-cur-bg       screen))
+        (at  (screen-cur-attrs    screen))
+        (at2 (screen-cur-attrs2   screen))
+        (ulc (screen-cur-ul-color screen)))
     (when (and (= w 2) (>= (1+ (screen-cx screen)) (screen-width screen)))
       (setf (screen-cell screen (screen-cx screen) (screen-cy screen)) (blank-cell))
       (setf (screen-cx screen) 0)
@@ -109,9 +181,9 @@
     (let ((x (screen-cx screen))
           (y (screen-cy screen)))
       (if (= w 2)
-          (%place-wide-char screen x y ch fg bg at)
+          (%place-wide-char screen x y ch fg bg at at2 ulc)
           (setf (screen-cell screen x y)
-                (make-cell :char ch :fg fg :bg bg :attrs at :width w)))
+                (make-cell :char ch :fg fg :bg bg :attrs at :attrs2 at2 :ul-color ulc :width w)))
       (setf (screen-last-char screen) ch)
       (%advance-cursor screen w))))
 

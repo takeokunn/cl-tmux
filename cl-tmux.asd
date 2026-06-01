@@ -41,8 +41,9 @@
      (:file "window-layout")   ; named layouts (apply-named-layout, uses window accessors)
      (:file "session")  ; session management (uses window)
      (:file "format")   ; tmux-style format string expansion
-     (:file "buffer")   ; paste-buffer ring
+     (:file "target")   ; session/window/pane target resolution (-t flag)
      (:file "options")  ; global option registry
+     (:file "buffer")   ; paste-buffer ring (uses options for buffer-limit)
      (:file "hooks")    ; user-defined hook registry
      (:file "prompt")
      (:file "commands")
@@ -92,6 +93,7 @@
        (:file "window-tests")
        (:file "session-tests")
        (:file "format-tests")
+       (:file "target-tests")
        (:file "buffer-tests")
        (:file "options-tests")
        (:file "hooks-tests")
@@ -102,6 +104,7 @@
        (:file "renderer-tests")
        (:file "dispatch-tests")
        (:file "events-tests")
+       (:file "mouse-tests")
        (:file "commands-tests")
        (:file "prompt-tests")
        (:file "protocol-tests")
@@ -114,7 +117,8 @@
        (:file "input-tests")
        (:file "runtime-tests")
        (:file "client-tests")
-       (:file "main-tests")))
+       (:file "main-tests")
+       (:file "advanced-tests")))
      (:file "suite"))))
   ;; Run with: (asdf:test-system :cl-tmux)
   :perform (test-op (op c)

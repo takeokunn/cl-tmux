@@ -18,6 +18,18 @@
    #:describe-key-bindings
    #:set-key-binding
    #:remove-key-binding
+   ;; Key-table system
+   #:*key-tables*
+   #:*current-key-table*
+   #:ensure-key-table
+   #:get-key-table
+   #:set-key-binding-in-table
+   #:lookup-key-in-table
+   #:key-table-bind
+   #:key-table-lookup
+   #:key-table-command
+   #:key-table-repeatable-p
+   #:sync-key-tables-from-bindings
    #:load-config-file
    #:load-config-from-stream
    #:load-config-from-string
@@ -50,11 +62,15 @@
   (:export
    ;; Message type tags + header size
    #:+msg-attach+ #:+msg-key+ #:+msg-resize+ #:+msg-detach+ #:+msg-frame+ #:+msg-bye+
+   #:+msg-command+
    #:+header-size+
    ;; Frame codec
    #:encode-frame #:decode-frame
    ;; Typed message constructors
    #:msg-attach #:msg-key #:msg-resize #:msg-detach #:msg-frame #:msg-bye
+   #:msg-command
+   ;; Command message codec
+   #:encode-command-payload #:decode-command-payload
    ;; Payload decoders + octet helpers
    #:decode-size #:decode-text #:to-octets #:read-u32))
 
@@ -87,6 +103,9 @@
    #:+attr-italic+
    #:+attr-conceal+
    #:+attr-strikethrough+
+   ;; Extended attribute bits (attrs2 slot: double-underline, overline)
+   #:+attr2-double-underline+
+   #:+attr2-overline+
    ;; Grid allocation helper
    #:%make-blank-cells
    ;; Cell struct + helpers
@@ -96,6 +115,9 @@
    #:cell-fg
    #:cell-bg
    #:cell-attrs
+   #:cell-attrs2
+   #:cell-ul-color
+   #:cell-combining
    #:cell-width
    #:blank-cell
    #:clamp
@@ -114,6 +136,8 @@
    #:screen-cur-fg
    #:screen-cur-bg
    #:screen-cur-attrs
+   #:screen-cur-attrs2
+   #:screen-cur-ul-color
    #:screen-scroll-top
    #:screen-scroll-bottom
    #:screen-parser
@@ -139,6 +163,12 @@
    #:screen-last-char
    ;; DECSCUSR cursor shape
    #:screen-cursor-shape
+   ;; BEL pending flag
+   #:screen-bell-pending
+   ;; Copy-mode search term (/ ? n N)
+   #:screen-copy-search-term
+   ;; Copy-mode line-selection flag (V)
+   #:screen-copy-line-selection-p
    ;; Bracketed paste mode
    #:screen-bracketed-paste
    ;; Application cursor keys
@@ -148,6 +178,12 @@
    ;; Mouse reporting mode
    #:screen-mouse-mode
    #:screen-mouse-sgr-mode
+   ;; Auto-wrap mode (?7h / ?7l)
+   #:screen-autowrap
+   ;; Active character set (:ascii / :dec-graphics)
+   #:screen-charset
+   ;; Response queue for DA1/DA2 and similar replies
+   #:screen-response-queue
    ;; Cursor wrappers + grid helpers
    #:screen-cursor-x
    #:screen-cursor-y
@@ -166,6 +202,8 @@
    #:set-cursor
    #:cursor-lf
    #:cursor-ht
+   #:cursor-cht
+   #:cursor-cbt
    #:cursor-bs
    #:cursor-ri
    #:cursor-cr
@@ -173,9 +211,11 @@
    ;; Character writing
    #:write-char-at-cursor
    #:write-codepoint
+   #:combining-char-p
    ;; Scroll
    #:scroll-up-one
    #:scroll-down-one
+   #:trim-scroll-history
    ;; Erase
    #:erase-region
    #:erase-display
@@ -217,13 +257,17 @@
         #:cl-tmux/terminal/types
         #:cl-tmux/terminal/actions
         #:cl-tmux/terminal/csi)
+  ;; cl-tmux/buffer is used for OSC 52 clipboard paste storage.
+  ;; We reference it by qualified name to avoid circular deps.
   (:export
    #:ground-state
    #:escape-state
    #:make-csi-k
    #:make-utf8-k
+   #:make-dcs-k
    #:osc-state
-   #:charset-state))
+   #:charset-state
+   #:*osc52-handler*))
 
 (defpackage #:cl-tmux/terminal/emulator
   (:use #:cl
@@ -289,17 +333,53 @@
    #:cell-fg
    #:cell-bg
    #:cell-attrs
-   #:cell-width))
+   #:cell-attrs2
+   #:cell-ul-color
+   #:cell-combining
+   #:cell-width
+   ;; Auto-wrap mode
+   #:screen-autowrap
+   ;; Active character set
+   #:screen-charset
+   ;; SGR pen extras
+   #:screen-cur-attrs2
+   #:screen-cur-ul-color
+   ;; Response queue
+   #:screen-response-queue
+   ;; Combining char predicate
+   #:combining-char-p
+   ;; BEL pending flag
+   #:screen-bell-pending
+   ;; Copy-mode search term
+   #:screen-copy-search-term
+   ;; Copy-mode line-selection flag
+   #:screen-copy-line-selection-p))
 
 (defpackage #:cl-tmux/prompt
   (:use #:cl)
   (:export
    #:prompt #:make-prompt #:prompt-p
-   #:prompt-label #:prompt-buffer #:prompt-on-submit
+   #:prompt-label #:prompt-buffer #:prompt-cursor-index #:prompt-on-submit
    #:*prompt* #:prompt-active-p #:prompt-start
    #:prompt-input #:prompt-backspace #:prompt-clear #:prompt-text
+   ;; Cursor navigation
+   #:prompt-cursor-bol #:prompt-cursor-eol
+   #:prompt-cursor-back #:prompt-cursor-forward
+   ;; Kill commands
+   #:prompt-kill-to-end #:prompt-kill-to-start #:prompt-kill-word-back
    ;; Dismissible overlay (list-keys help, …)
-   #:*overlay* #:overlay-active-p #:show-overlay #:clear-overlay #:overlay-lines))
+   #:*overlay* #:*overlay-scroll-offset*
+   #:overlay-active-p #:show-overlay #:clear-overlay #:overlay-lines
+   #:overlay-scroll
+   ;; Popup overlay
+   #:popup #:make-popup #:popup-p
+   #:popup-x #:popup-y #:popup-width #:popup-height
+   #:popup-screen #:popup-pane #:popup-title #:popup-close-on-exit
+   #:*active-popup*
+   ;; Menu overlay
+   #:menu #:make-menu #:menu-p
+   #:menu-title #:menu-items #:menu-selected-index
+   #:*active-menu*))
 
 ;;; ── Model / renderer / input ─────────────────────────────────────────────
 
@@ -317,6 +397,10 @@
    #:pane-fd
    #:pane-pid
    #:pane-feed
+   #:pane-pipe-fd
+   #:pane-window
+   #:pane-marked
+   #:respawn-pane
    ;; Window
    #:window
    #:make-window
@@ -345,6 +429,8 @@
    #:resize-find-split #:resize-direction-orientation
    #:split-child-geometry #:next-pane-id
    #:pane-neighbor
+   ;; Layout persistence
+   #:layout->string #:string->layout
    ;; Zoom
    #:window-zoom-p
    #:window-zoom-tree
@@ -352,6 +438,14 @@
    #:window-lock
    ;; Last-active pane (for C-b ;)
    #:window-last-active
+   ;; Last-active time (for C-b l last-window)
+   #:window-last-active-time
+   ;; Automatic-rename (OSC 0/2 updates window-name)
+   #:window-automatic-rename-p
+   ;; Layout cycle index (for C-b Space next-layout)
+   #:window-layout-cycle-index
+   ;; Rotate-window
+   #:window-rotate
    ;; Session
    #:session
    #:make-session
@@ -362,17 +456,35 @@
    #:session-select-window
    #:session-new-window
    #:session-active-pane
+   #:session-last-active
+   #:session-clients
+   #:session-locked-p
+   #:session-group
+   #:session-touch
+   #:*session-id-counter*
    ;; Pane hit testing
    #:pane-at-position
    ;; Named layouts
    #:apply-named-layout
+   ;; Window reordering
+   #:session-move-window
+   #:session-swap-windows
+   #:session-last-window
+   ;; Global state
+   ;; Shell basename helper (used by dispatch and commands/break-pane)
+   #:%shell-basename
+   ;; Lowest-free window-id helper (used by commands/break-pane)
+   #:%next-window-id
    ;; Global state
    #:create-initial-session
-   #:all-panes))
+   #:all-panes
+   ;; update-environment
+   #:*update-environment*
+   #:get-update-environment-vars))
 
 (defpackage #:cl-tmux/format
   (:use #:cl #:cl-tmux/model)
-  (:export #:expand-format #:format-context-from-session))
+  (:export #:expand-format #:format-context-from-session #:format-context-from-window))
 
 (defpackage #:cl-tmux/buffer
   (:use #:cl)
@@ -382,6 +494,23 @@
 (defpackage #:cl-tmux/hooks
   (:use #:cl)
   (:export
+   ;; Event string constants
+   #:+hook-after-new-window+
+   #:+hook-after-new-pane+
+   #:+hook-pane-exited+
+   #:+hook-after-rename-window+
+   #:+hook-session-created+
+   #:+hook-after-kill-pane+
+   #:+hook-after-kill-window+
+   #:+hook-client-attached+
+   #:+hook-client-detached+
+   #:+hook-after-new-session+
+   #:+hook-after-kill-session+
+   #:+hook-after-split-window+
+   #:+hook-window-layout-changed+
+   ;; Macro
+   #:define-hook-events
+   ;; Registry and dispatch
    #:*hook-registry*
    #:add-hook
    #:remove-hook
@@ -395,7 +524,13 @@
            #:option-spec #:make-option-spec
            #:option-spec-name #:option-spec-type #:option-spec-default
            #:define-tmux-options #:get-option #:set-option
-           #:option-defined-p #:all-options))
+           #:option-defined-p #:all-options
+           ;; Server options
+           #:*server-options* #:*server-option-registry*
+           #:define-server-options
+           #:get-server-option #:set-server-option
+           ;; show-options helpers
+           #:show-options #:show-option))
 
 (defpackage #:cl-tmux/renderer
   (:use #:cl #:bordeaux-threads
@@ -403,7 +538,11 @@
   (:export
    #:render-session            ; (session rows cols) → write a frame to stdout
    #:render-session-to-string  ; (session rows cols) → frame string (server uses this)
-   #:clear-display))
+   #:clear-display
+   #:enable-mouse-reporting    ; () → emit ?1000h/?1002h/?1006h to outer terminal
+   #:disable-mouse-reporting   ; () → emit ?1000l/?1002l/?1006l to outer terminal
+   #:parse-style-string        ; (style-str) → plist :fg :bg :bold :reverse etc.
+   #:style-to-sgr))            ; (parsed-style) → escape-sequence string
 
 (defpackage #:cl-tmux/input
   (:use #:cl #:cffi
@@ -419,7 +558,8 @@
         #:cl-tmux/config
         #:cl-tmux/pty
         #:cl-tmux/terminal
-        #:cl-tmux/model)
+        #:cl-tmux/model
+        #:cl-tmux/hooks)
   (:export
    #:kill-pane
    #:kill-window
@@ -433,11 +573,50 @@
    #:copy-mode-begin-selection
    #:copy-mode-cancel-selection
    #:copy-mode-yank
+   ;; Word navigation
+   #:copy-mode-word-forward
+   #:copy-mode-word-backward
+   #:copy-mode-word-end
+   ;; Line navigation
+   #:copy-mode-line-start
+   #:copy-mode-line-end
+   ;; Jump to top/bottom
+   #:copy-mode-top
+   #:copy-mode-bottom
+   ;; Screen position jumps
+   #:copy-mode-high
+   #:copy-mode-middle
+   #:copy-mode-low
+   ;; Page scrolling
+   #:copy-mode-page-up
+   #:copy-mode-page-down
+   #:copy-mode-half-page-up
+   #:copy-mode-half-page-down
+   #:copy-mode-scroll-up-line
+   #:copy-mode-scroll-down-line
+   ;; Line selection (V)
+   #:copy-mode-begin-line-selection
+   ;; Copy variants
+   #:copy-mode-copy-end-of-line
+   #:copy-mode-copy-line
+   ;; Search
+   #:copy-mode-search-forward
+   #:copy-mode-search-backward
+   #:copy-mode-search-next
+   #:copy-mode-search-prev
    #:rename-session
    #:run-shell
    #:if-shell
    #:swap-pane
-   #:capture-pane))
+   #:capture-pane
+   ;; Advanced pane commands
+   #:break-pane
+   #:join-pane
+   #:pipe-pane-open
+   #:pipe-pane-close
+   #:pipe-pane-write
+   ;; send-keys
+   #:send-keys-to-pane))
 
 ;;; ── Top-level entry point ────────────────────────────────────────────────
 
@@ -462,5 +641,31 @@
    #:server-find-session
    #:server-remove-session
    #:server-all-sessions
+   #:server-current-session
+   ;; Session groups
+   #:*session-groups*
+   #:server-new-session-in-group
+   #:server-sessions-in-group
    ;; Multi-session commands
-   #:new-session))
+   #:new-session
+   ;; Session/window/pane targeting (-t flag)
+   #:resolve-target
+   #:find-session-by-target
+   #:find-window-by-target
+   #:find-pane-by-target
+   ;; Wait-for channel synchronization
+   #:*wait-channels*
+   #:%ensure-channel
+   #:wait-for-channel
+   #:signal-channel
+   #:lock-channel
+   #:unlock-channel
+   ;; Message log (for :show-messages)
+   #:*message-log*
+   #:add-message-log
+   ;; Clock mode (for :clock-mode)
+   #:*clock-mode-pane-id*
+   ;; Status-bar timer
+   #:*status-dirty*
+   #:*status-timer-thread*
+   #:start-status-timer))

@@ -258,3 +258,59 @@
     (cl-tmux/terminal/actions:dec-pm-reset s '(1000))
     (is (= 0 (cl-tmux/terminal/types:screen-mouse-mode s))
         "dec-pm-reset 1000 must set mouse-mode to 0")))
+
+;;; ── Bracketed paste mode (?2004h / ?2004l) ───────────────────────────────────
+
+(test bracketed-paste-mode-toggle
+  "ESC[?2004h sets bracketed-paste to T; ESC[?2004l resets it to NIL."
+  (with-screen (s 20 5)
+    (is-false (cl-tmux/terminal/types:screen-bracketed-paste s)
+              "bracketed-paste must be NIL by default")
+    (feed s (esc "[?2004h"))
+    (is (cl-tmux/terminal/types:screen-bracketed-paste s)
+        "bracketed-paste must be T after ESC[?2004h")
+    (feed s (esc "[?2004l"))
+    (is-false (cl-tmux/terminal/types:screen-bracketed-paste s)
+              "bracketed-paste must be NIL after ESC[?2004l")))
+
+(test bracketed-paste-direct-set-reset
+  "dec-pm-set/reset with param 2004 toggles bracketed-paste directly."
+  (with-screen (s 20 5)
+    (cl-tmux/terminal/actions:dec-pm-set s '(2004))
+    (is (cl-tmux/terminal/types:screen-bracketed-paste s)
+        "dec-pm-set 2004 must set bracketed-paste to T")
+    (cl-tmux/terminal/actions:dec-pm-reset s '(2004))
+    (is-false (cl-tmux/terminal/types:screen-bracketed-paste s)
+              "dec-pm-reset 2004 must set bracketed-paste to NIL")))
+
+;;; ── Application cursor keys (?1h / ?1l) ─────────────────────────────────────
+
+(test app-cursor-keys-toggle
+  "ESC[?1h sets app-cursor-keys to T; ESC[?1l resets it to NIL."
+  (with-screen (s 20 5)
+    (is-false (cl-tmux/terminal/types:screen-app-cursor-keys s)
+              "app-cursor-keys must be NIL by default")
+    (feed s (esc "[?1h"))
+    (is (cl-tmux/terminal/types:screen-app-cursor-keys s)
+        "app-cursor-keys must be T after ESC[?1h")
+    (feed s (esc "[?1l"))
+    (is-false (cl-tmux/terminal/types:screen-app-cursor-keys s)
+              "app-cursor-keys must be NIL after ESC[?1l")))
+
+;;; ── Auto-wrap mode (?7h / ?7l) ───────────────────────────────────────────────
+
+(test autowrap-default-is-on
+  "auto-wrap is enabled by default (screen-autowrap = T)."
+  (with-screen (s 10 5)
+    (is (cl-tmux/terminal/types:screen-autowrap s)
+        "autowrap must be T by default")))
+
+(test autowrap-disable-toggle
+  "ESC[?7l disables auto-wrap; ESC[?7h re-enables it."
+  (with-screen (s 10 5)
+    (feed s (esc "[?7l"))
+    (is-false (cl-tmux/terminal/types:screen-autowrap s)
+              "autowrap must be NIL after ESC[?7l")
+    (feed s (esc "[?7h"))
+    (is (cl-tmux/terminal/types:screen-autowrap s)
+        "autowrap must be T after ESC[?7h")))

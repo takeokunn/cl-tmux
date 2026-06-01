@@ -27,6 +27,7 @@
                 #:screen-copy-cursor
                 #:screen-mouse-mode
                 #:screen-mouse-sgr-mode
+                #:screen-title
                 #:char-width)
   (:import-from #:cl-tmux/model
                 #:create-initial-session
@@ -56,6 +57,7 @@
                 #:make-session
                 #:pane-feed
                 #:pane-screen
+                #:window-id
                 #:window-name
                 #:window-width #:window-height
                 #:session-name
@@ -64,7 +66,40 @@
                 #:pane-neighbor
                 #:pane-at-position
                 #:apply-named-layout
-                #:window-lock)
+                #:window-lock
+                ;; New window management
+                #:window-last-active-time
+                #:window-automatic-rename-p
+                #:window-rotate
+                #:session-last-window
+                #:session-move-window
+                #:session-swap-windows
+                ;; Pane management
+                #:window-last-active
+                #:respawn-pane
+                ;; New pane slots
+                #:pane-pipe-fd
+                #:pane-window
+                #:pane-marked
+                ;; New session slots
+                #:session-locked-p
+                #:session-group
+                ;; Layout persistence
+                #:layout->string
+                #:string->layout
+                ;; update-environment
+                #:*update-environment*
+                #:get-update-environment-vars
+                ;; Session name / id
+                #:session-id
+                #:session-last-active
+                #:session-touch)
+  (:import-from #:cl-tmux
+                ;; Session groups
+                #:*session-groups*
+                #:server-new-session-in-group
+                ;; Runtime state (needed by tests)
+                #:*server-sessions*)
   (:import-from #:cl-tmux/renderer
                 #:render-session-to-string
                 #:render-session
@@ -85,13 +120,24 @@
                 #:*status-height*
                 #:+max-scrollback-lines+
                 #:lookup-key-binding
-                #:define-initial-key-bindings)
+                #:define-initial-key-bindings
+                #:key-table-bind
+                #:key-table-command
+                #:*key-tables*)
   (:import-from #:cl-tmux/commands
                 #:kill-pane
                 #:kill-window
                 #:rename-window
                 #:resize-pane
-                #:select-window-by-number)
+                #:select-window-by-number
+                #:swap-pane
+                #:capture-pane
+                ;; Advanced pane commands
+                #:break-pane
+                #:join-pane
+                #:pipe-pane-open
+                #:pipe-pane-close
+                #:pipe-pane-write)
   (:import-from #:cl-tmux/prompt
                 #:*prompt*
                 #:prompt-active-p
@@ -107,7 +153,15 @@
                 #:overlay-lines
                 #:prompt-label
                 #:prompt-buffer
-                #:prompt-on-submit)
+                #:prompt-on-submit
+                #:prompt-cursor-index
+                #:prompt-cursor-bol
+                #:prompt-cursor-eol
+                #:prompt-cursor-back
+                #:prompt-cursor-forward
+                #:prompt-kill-to-end
+                #:prompt-kill-to-start
+                #:prompt-kill-word-back)
   (:import-from #:cl-tmux/pty
                 #:forkpty-with-shell
                 #:pty-write

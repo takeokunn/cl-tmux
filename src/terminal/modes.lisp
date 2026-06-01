@@ -85,6 +85,14 @@
    ;; Reset (?1006l): disable SGR extended mouse encoding
    ((setf (screen-mouse-sgr-mode screen) nil)))
 
+  ;; Mode 7 — auto-wrap mode (?7h = wrap on, ?7l = wrap off)
+  ;; Default is wrap-on (VT100 default).
+  (7
+   ;; Set (?7h): enable auto-wrap
+   ((setf (screen-autowrap screen) t))
+   ;; Reset (?7l): disable auto-wrap
+   ((setf (screen-autowrap screen) nil)))
+
   ;; Mode 1049 — alternate screen (?1049h enters, ?1049l exits)
   (1049
    ;; Set: save current grid + cursor, replace with a fresh blank grid.
@@ -137,12 +145,16 @@
                 (1- (screen-width  screen))
                 (1- (screen-height screen)))
   (set-cursor screen 0 0)
-  (setf (screen-cur-fg      screen) 7
-        (screen-cur-bg      screen) 0
-        (screen-cur-attrs   screen) 0
+  (setf (screen-cur-fg         screen) 7
+        (screen-cur-bg         screen) 0
+        (screen-cur-attrs      screen) 0
+        (screen-cur-attrs2     screen) 0
+        (screen-cur-ul-color   screen) 0
         (screen-cursor-visible screen) t
-        (screen-scroll-top    screen) 0
-        (screen-scroll-bottom screen) (1- (screen-height screen))))
+        (screen-scroll-top     screen) 0
+        (screen-scroll-bottom  screen) (1- (screen-height screen))
+        (screen-charset        screen) :ascii
+        (screen-autowrap       screen) t))
 
 ;;; ── Display projection (copy-mode scrollback) ──────────────────────────────
 

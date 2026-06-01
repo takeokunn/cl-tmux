@@ -194,6 +194,65 @@
     (is (eq before (session-active-window s))
         "out-of-range index must not change the active window")))
 
+(test select-window-by-id-stable-after-kill
+  "After killing a middle window, select-window-by-number still finds the
+   window by its stored id, not by list position."
+  (let* ((w0 (make-window :id 0 :name "a" :width 20 :height 5
+                          :panes (list (make-pane :id 1 :x 0 :y 0
+                                                  :width 20 :height 5
+                                                  :fd -1 :pid -1
+                                                  :screen (make-screen 20 5)))))
+         (w1 (make-window :id 1 :name "b" :width 20 :height 5
+                          :panes (list (make-pane :id 2 :x 0 :y 0
+                                                  :width 20 :height 5
+                                                  :fd -1 :pid -1
+                                                  :screen (make-screen 20 5)))))
+         (w2 (make-window :id 2 :name "c" :width 20 :height 5
+                          :panes (list (make-pane :id 3 :x 0 :y 0
+                                                  :width 20 :height 5
+                                                  :fd -1 :pid -1
+                                                  :screen (make-screen 20 5)))))
+         (sess (make-session :id 1 :name "0" :windows (list w0 w1 w2))))
+    (session-select-window sess w0)
+    ;; Kill the middle window (id=1).
+    (kill-window sess w1)
+    ;; List is now [w0, w2].  select-window-by-number 2 must still find w2
+    ;; (id=2 is at list-position 1 after the kill).
+    (select-window-by-number sess 2)
+    (is (eq w2 (session-active-window sess))
+        "select-window-by-number must find w2 by id=2 even after w1 was killed")))
+
+(test kill-pane-nonactive-does-not-reselect
+  "Killing a non-active pane does not change the active pane."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window sess win)
+    ;; Make p0 active, then kill p1 (non-active).
+    (window-select-pane win p0)
+    (kill-pane sess p1)
+    ;; p0 must remain active.
+    (is (eq p0 (window-active-pane win))
+        "active pane must remain p0 when a non-active pane is killed")))
+
+(test kill-pane-active-selects-mru-pane
+  "When the active pane is killed, the last-active pane is selected if present."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window sess win)
+    ;; Visit p1 first, then switch back to p0 so p1 is last-active.
+    (window-select-pane win p1)
+    (window-select-pane win p0)
+    ;; Now last-active should be p1.
+    (is (eq p1 (window-last-active win)) "precondition: last-active is p1")
+    ;; Kill p0 (active) — should reselect p1 (last-active).
+    (kill-pane sess p0)
+    (is (eq p1 (window-active-pane win))
+        "last-active pane (p1) must be selected after active pane (p0) is killed")))
+
 ;;; ── rename-session ──────────────────────────────────────────────────────────
 
 (test rename-session-changes-session-name
@@ -369,15 +428,22 @@
     (is (= 4 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
         "row must clamp at height-1")))
 
-(test copy-mode-move-cursor-initialises-nil-cursor
-  "When copy-cursor is NIL, the cursor is initialised to (0 . 0) before moving."
+(test copy-mode-enter-places-cursor-at-bottom-left
+  "copy-mode-enter initialises the cursor at the bottom-left of the viewport (row height-1, col 0)."
   (let ((s (make-screen 20 5)))
     (cl-tmux/commands::copy-mode-enter s)
-    ;; cursor starts as NIL — verify the initialisation path
-    (is (null (cl-tmux/terminal/types:screen-copy-cursor s)) "precondition: cursor is nil")
+    (is (equal (cons 4 0) (cl-tmux/terminal/types:screen-copy-cursor s))
+        "cursor must start at (height-1 . 0) — bottom-left of the viewport")))
+
+(test copy-mode-move-cursor-nil-fallback
+  "If copy-cursor is manually reset to NIL, move-cursor falls back to (height-1 . 0) before moving."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    ;; Force cursor to NIL to exercise the fallback path inside move-cursor.
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) nil)
     (cl-tmux/commands::copy-mode-move-cursor s :right)
-    (is (equal (cons 0 1) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "nil cursor must be treated as (0 . 0) before the move")))
+    (is (equal (cons 4 1) (cl-tmux/terminal/types:screen-copy-cursor s))
+        "nil cursor falls back to (height-1 . 0) then moves right to (height-1 . 1)")))
 
 (test copy-mode-move-cursor-sets-mark-anchor-when-selecting-and-mark-nil
   "When copy-selecting is T and mark is NIL, the first move sets the mark anchor."
@@ -586,3 +652,503 @@
       (is (stringp text) "%selection-text must return a string even when mark > cursor")
       (is (string= "hello" text)
           "%selection-text must normalise reversed mark/cursor (got ~S)" text))))
+
+;;; ── swap-pane ────────────────────────────────────────────────────────────────
+
+(test swap-pane-right-cycles-panes-forward
+  "swap-pane :right on a two-pane window moves the active pane to index 1 and
+   swaps the positions (pane-x) of the two panes."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win)))
+         (x0-before (pane-x p0))
+         (x1-before (pane-x p1)))
+    ;; p0 is active (index 0); swap :right -> p0 moves to index 1
+    (let ((result (swap-pane win :right)))
+      (is (eq p0 result)
+          "swap-pane must return the active pane")
+      (is (eq p1 (first  (window-panes win)))
+          "after :right swap, the former neighbour occupies index 0")
+      (is (eq p0 (second (window-panes win)))
+          "after :right swap, the active pane occupies index 1")
+      ;; Geometry must be exchanged
+      (is (= x1-before (pane-x p0))
+          "active pane x must equal former neighbour's x after swap")
+      (is (= x0-before (pane-x p1))
+          "former neighbour x must equal active pane's former x after swap"))))
+
+(test swap-pane-left-cycles-panes-backward
+  "swap-pane :left wraps the active pane modularly backward in the panes list."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win))))
+    ;; p0 is active at index 0; :left -> mod(-1, 2) = 1 -> swaps with p1
+    (swap-pane win :left)
+    (is (eq p1 (first  (window-panes win)))
+        "after :left wrap from index 0, neighbour at (mod -1 n) occupies index 0")
+    (is (eq p0 (second (window-panes win)))
+        "active pane wraps to index 1 on :left from index 0")))
+
+(test swap-pane-right-from-last-wraps-to-first
+  "swap-pane :right from the last-index pane wraps modularly to index 0."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win))))
+    ;; Make p1 (index 1, last) the active pane, then swap :right
+    (window-select-pane win p1)
+    (swap-pane win :right)
+    ;; mod(1+1, 2) = 0 => p1 and p0 swap
+    (is (eq p0 (second (window-panes win)))
+        "p0 moves to index 1 after :right wrap from index 1")
+    (is (eq p1 (first  (window-panes win)))
+        "p1 wraps to index 0 after :right from the last slot")))
+
+(test swap-pane-single-pane-returns-nil
+  "swap-pane on a window with exactly one pane returns NIL (no neighbour to swap)."
+  (let* ((p0  (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                         :fd -1 :pid -1 :screen (make-screen 20 5)))
+         (win (make-window :id 1 :name "w" :width 20 :height 5
+                           :tree (make-layout-leaf p0)
+                           :panes (list p0))))
+    (window-select-pane win p0)
+    (is (null (swap-pane win :right))
+        "swap-pane on a single-pane window must return NIL")))
+
+(test swap-pane-geometry-exchanged
+  "The x/y/width/height of both panes are exchanged by swap-pane."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win)))
+         (p0-x (pane-x p0)) (p0-y (pane-y p0))
+         (p0-w (pane-width p0)) (p0-h (pane-height p0))
+         (p1-x (pane-x p1)) (p1-y (pane-y p1))
+         (p1-w (pane-width p1)) (p1-h (pane-height p1)))
+    (swap-pane win :right)
+    (is (= p1-x (pane-x p0)) "active pane x must be former neighbour x")
+    (is (= p1-y (pane-y p0)) "active pane y must be former neighbour y")
+    (is (= p1-w (pane-width  p0)) "active pane width must be former neighbour width")
+    (is (= p1-h (pane-height p0)) "active pane height must be former neighbour height")
+    (is (= p0-x (pane-x p1)) "former neighbour x must be original active pane x")
+    (is (= p0-y (pane-y p1)) "former neighbour y must be original active pane y")
+    (is (= p0-w (pane-width  p1)) "former neighbour width must be original active width")
+    (is (= p0-h (pane-height p1)) "former neighbour height must be original active height")))
+
+;;; ── capture-pane ─────────────────────────────────────────────────────────────
+
+(defun %make-pane-with-content (content &key (w 20) (h 5))
+  "Build a no-PTY pane whose screen has been fed CONTENT."
+  (let* ((screen (make-screen w h))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width w :height h
+                            :fd -1 :pid -1 :screen screen)))
+    (unless (string= content "")
+      (feed screen content))
+    pane))
+
+(test capture-pane-returns-string
+  "capture-pane always returns a string (even on an empty pane)."
+  (let* ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                          :fd -1 :pid -1 :screen (make-screen 20 5)))
+         (result (capture-pane pane)))
+    (is (stringp result) "capture-pane must return a string")))
+
+(test capture-pane-visible-content-contains-fed-text
+  "capture-pane returns the visible screen content including text fed to the pane."
+  (let* ((pane   (%make-pane-with-content "ABC"))
+         (result (capture-pane pane)))
+    (is (stringp result) "capture-pane result must be a string")
+    (is (not (null (search "ABC" result)))
+        "capture-pane output must contain the fed text \"ABC\" (got ~S)" result)))
+
+(test capture-pane-visible-only-excludes-scrollback
+  "capture-pane without :include-scrollback only dumps visible rows, not scrollback."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                            :fd -1 :pid -1 :screen screen)))
+    ;; Manually inject a distinguishable scrollback row
+    (let ((sb-row (make-array 20 :initial-element
+                              (cl-tmux/terminal/types:make-cell
+                               :char #\X :fg 7 :bg 0 :attrs 0 :width 1))))
+      (setf (cl-tmux/terminal/types:screen-scrollback screen) (list sb-row)))
+    (feed screen "visible")
+    (let ((result (capture-pane pane)))
+      (is (not (null (search "visible" result)))
+          "visible content must appear in capture-pane output")
+      (is (null (search "XXXXXXXXXXXXXXXXX" result))
+          "scrollback content must NOT appear when include-scrollback is nil"))))
+
+(test capture-pane-with-scrollback-prepends-history
+  "capture-pane with :include-scrollback T prepends scrollback rows before visible rows."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                            :fd -1 :pid -1 :screen screen)))
+    ;; Manually inject a scrollback row containing 'Q' characters
+    (let ((sb-row (make-array 20 :initial-element
+                              (cl-tmux/terminal/types:make-cell
+                               :char #\Q :fg 7 :bg 0 :attrs 0 :width 1))))
+      (setf (cl-tmux/terminal/types:screen-scrollback screen) (list sb-row)))
+    (feed screen "visible")
+    (let ((result (capture-pane pane :include-scrollback t)))
+      (is (not (null (search "QQ" result)))
+          "scrollback content must appear when include-scrollback is T")
+      (is (not (null (search "visible" result)))
+          "visible content must also appear when include-scrollback is T")
+      ;; Scrollback should come before visible content in the output
+      (let ((q-pos       (search "QQ"      result))
+            (visible-pos (search "visible" result)))
+        (is (< q-pos visible-pos)
+            "scrollback rows must precede visible rows in the output")))))
+
+(test capture-pane-height-rows-newlines
+  "capture-pane emits exactly (screen-height) newline-terminated rows."
+  (let* ((pane   (%make-pane-with-content "" :w 10 :h 3))
+         (result (capture-pane pane))
+         (lines  (count #\Newline result)))
+    (is (= 3 lines)
+        "capture-pane must emit exactly height (~D) newline characters (got ~D)"
+        3 lines)))
+
+;;; ── copy-mode-line-start / copy-mode-line-end ────────────────────────────────
+
+(test copy-mode-line-start-moves-to-col-0
+  "copy-mode-line-start sets the cursor column to 0."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 10))
+    (cl-tmux/commands::copy-mode-line-start s)
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "copy-mode-line-start must set col to 0")))
+
+(test copy-mode-line-end-moves-to-last-col
+  "copy-mode-line-end sets the cursor column to width-1."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 3))
+    (cl-tmux/commands::copy-mode-line-end s)
+    (is (= 19 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "copy-mode-line-end must set col to width-1 (19 for width=20)")))
+
+(test copy-mode-line-start-noop-outside-copy-mode
+  "copy-mode-line-start is a no-op when not in copy mode."
+  (let ((s (make-screen 20 5)))
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 10))
+    (cl-tmux/commands::copy-mode-line-start s)
+    (is (= 10 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "column must be unchanged when not in copy mode")))
+
+;;; ── copy-mode-high / copy-mode-middle / copy-mode-low ───────────────────────
+
+(test copy-mode-high-moves-cursor-to-row-0
+  "copy-mode-high sets the cursor row to 0, keeping column."
+  (let ((s (make-screen 20 10)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 7 5))
+    (cl-tmux/commands::copy-mode-high s)
+    (is (= 0 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "copy-mode-high must move cursor to row 0")
+    (is (= 5 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "copy-mode-high must preserve column")))
+
+(test copy-mode-middle-moves-cursor-to-mid-row
+  "copy-mode-middle sets the cursor row to floor(height/2), keeping column."
+  (let ((s (make-screen 20 10)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
+    (cl-tmux/commands::copy-mode-middle s)
+    (is (= 5 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "copy-mode-middle must move cursor to floor(10/2)=5 for height=10")))
+
+(test copy-mode-low-moves-cursor-to-last-row
+  "copy-mode-low sets the cursor row to height-1, keeping column."
+  (let ((s (make-screen 20 10)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
+    (cl-tmux/commands::copy-mode-low s)
+    (is (= 9 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "copy-mode-low must move cursor to height-1=9 for height=10")))
+
+;;; ── copy-mode-page-up / copy-mode-page-down ─────────────────────────────────
+
+(test copy-mode-page-up-scrolls-by-full-height
+  "copy-mode-page-up scrolls back by screen-height lines."
+  (let ((s (%screen-with-scrollback 30)))
+    (cl-tmux/commands::copy-mode-page-up s)
+    (is (= 5 (screen-copy-offset s))
+        "copy-mode-page-up must scroll by screen-height=5")))
+
+(test copy-mode-page-down-scrolls-forward-by-full-height
+  "copy-mode-page-down scrolls forward by screen-height lines."
+  (let ((s (%screen-with-scrollback 30)))
+    ;; First scroll back enough to allow scrolling forward
+    (setf (cl-tmux/terminal/types:screen-copy-offset s) 20)
+    (cl-tmux/commands::copy-mode-page-down s)
+    (is (= 15 (screen-copy-offset s))
+        "copy-mode-page-down must reduce offset by screen-height=5")))
+
+(test copy-mode-half-page-up-scrolls-by-half-height
+  "copy-mode-half-page-up scrolls back by floor(screen-height/2) lines."
+  (let ((s (%screen-with-scrollback 30)))
+    (cl-tmux/commands::copy-mode-half-page-up s)
+    (is (= 2 (screen-copy-offset s))
+        "copy-mode-half-page-up must scroll by floor(5/2)=2 for height=5")))
+
+(test copy-mode-scroll-up-line-scrolls-by-one
+  "copy-mode-scroll-up-line scrolls back by exactly 1 line."
+  (let ((s (%screen-with-scrollback 10)))
+    (cl-tmux/commands::copy-mode-scroll-up-line s)
+    (is (= 1 (screen-copy-offset s))
+        "copy-mode-scroll-up-line must scroll back by 1")))
+
+(test copy-mode-scroll-down-line-scrolls-forward-by-one
+  "copy-mode-scroll-down-line scrolls forward by exactly 1 line."
+  (let ((s (%screen-with-scrollback 10)))
+    (setf (cl-tmux/terminal/types:screen-copy-offset s) 5)
+    (cl-tmux/commands::copy-mode-scroll-down-line s)
+    (is (= 4 (screen-copy-offset s))
+        "copy-mode-scroll-down-line must reduce offset by 1")))
+
+;;; ── copy-mode-word-forward / word-backward / word-end ──────────────────────
+
+(defun %copy-mode-screen-with-text (text &key (w 40) (h 5))
+  "Return a copy-mode screen with TEXT fed at row 0."
+  (let ((s (make-screen w h)))
+    (feed s text)
+    (cl-tmux/commands::copy-mode-enter s)
+    s))
+
+(test copy-mode-word-forward-jumps-to-next-word
+  "copy-mode-word-forward moves the cursor to the start of the next word."
+  (let ((s (%copy-mode-screen-with-text "hello world")))
+    ;; Cursor at col 0 (start of "hello")
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-word-forward s)
+    ;; Should land at col 6 (start of "world")
+    (is (= 6 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "word-forward must jump to col 6 (start of 'world') from col 0 (got ~D)"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+
+(test copy-mode-word-backward-jumps-to-prev-word-start
+  "copy-mode-word-backward moves the cursor to the start of the previous word."
+  (let ((s (%copy-mode-screen-with-text "hello world")))
+    ;; Cursor in the middle of "world" at col 8
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 8))
+    (cl-tmux/commands::copy-mode-word-backward s)
+    ;; Should land at col 6 (start of "world")
+    (is (= 6 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "word-backward from col 8 must jump to start of 'world' at col 6 (got ~D)"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+
+(test copy-mode-word-forward-noop-outside-copy-mode
+  "copy-mode-word-forward is a no-op when not in copy mode."
+  (let ((s (make-screen 20 5)))
+    (feed s "hello world")
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-word-forward s)
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "column must not change outside copy mode")))
+
+
+(test copy-mode-word-end-jumps-to-end-of-word
+  "copy-mode-word-end moves the cursor to the last character of the current or next word."
+  (let ((s (%copy-mode-screen-with-text "hello world")))
+    ;; Cursor at col 0 (start of "hello")
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-word-end s)
+    ;; Should land at col 4 (last char of "hello")
+    (is (= 4 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "word-end from col 0 must jump to col 4 (end of 'hello') (got ~D)"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+
+(test copy-mode-word-end-noop-outside-copy-mode
+  "copy-mode-word-end is a no-op when not in copy mode."
+  (let ((s (make-screen 20 5)))
+    (feed s "hello world")
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-word-end s)
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "column must not change outside copy mode")))
+
+;;; ── copy-mode-top / copy-mode-bottom ────────────────────────────────────────
+
+(test copy-mode-top-jumps-to-max-scrollback
+  "copy-mode-top scrolls the viewport to the oldest scrollback line."
+  (let ((s (%screen-with-scrollback 10)))
+    (cl-tmux/commands::copy-mode-top s)
+    (is (= 10 (screen-copy-offset s))
+        "copy-mode-top must set offset to the scrollback length (10)")))
+
+(test copy-mode-bottom-returns-to-live-view
+  "copy-mode-bottom scrolls back to offset 0 (live view)."
+  (let ((s (%screen-with-scrollback 10)))
+    ;; First scroll to top
+    (cl-tmux/commands::copy-mode-top s)
+    (is (= 10 (screen-copy-offset s)) "precondition: at top after copy-mode-top")
+    ;; Then jump to bottom
+    (cl-tmux/commands::copy-mode-bottom s)
+    (is (= 0 (screen-copy-offset s))
+        "copy-mode-bottom must reset offset to 0 (live view)")))
+
+(test copy-mode-top-noop-outside-copy-mode
+  "copy-mode-top is a no-op when not in copy mode."
+  (let ((s (make-screen 20 5)))
+    (setf (cl-tmux/terminal/types:screen-scrollback s)
+          (loop repeat 5 collect (make-array 0)))
+    (cl-tmux/commands::copy-mode-top s)
+    (is (= 0 (screen-copy-offset s))
+        "offset must remain 0 when not in copy mode")))
+
+;;; ── copy-mode-begin-line-selection ──────────────────────────────────────────
+
+(test copy-mode-begin-line-selection-sets-line-selection-p
+  "copy-mode-begin-line-selection sets line-selection-p and activates the selection."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 5))
+    (cl-tmux/commands::copy-mode-begin-line-selection s)
+    (is-true (cl-tmux/terminal/types:screen-copy-line-selection-p s)
+             "copy-line-selection-p must be T after begin-line-selection")
+    (is-true (cl-tmux/terminal/types:screen-copy-selecting s)
+             "copy-selecting must be T after begin-line-selection")
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-mark s)))
+        "mark col must be 0 for line selection")
+    (is (= 19 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "cursor col must be width-1 for line selection")))
+
+;;; ── copy-mode-copy-end-of-line (D) ──────────────────────────────────────────
+
+(test copy-mode-copy-end-of-line-yanks-from-cursor
+  "copy-mode-copy-end-of-line copies text from cursor to end of row and exits."
+  (let ((cl-tmux/buffer:*paste-buffers* nil))
+    (let ((s (make-screen 20 5)))
+      (feed s "hello world")
+      (cl-tmux/commands::copy-mode-enter s)
+      (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 6))
+      (cl-tmux/commands::copy-mode-copy-end-of-line s)
+      (is-false (screen-copy-mode-p s)
+                "copy mode must exit after D command")
+      (let ((yanked (cl-tmux/buffer:get-paste-buffer 0)))
+        (is (and yanked (string= "world" yanked))
+            "D command must copy from col 6 to end (got ~S)" yanked)))))
+
+;;; ── copy-mode-copy-line (Y) ──────────────────────────────────────────────────
+
+(test copy-mode-copy-line-yanks-full-row
+  "copy-mode-copy-line copies the full current row content and exits."
+  (let ((cl-tmux/buffer:*paste-buffers* nil))
+    (let ((s (make-screen 20 5)))
+      (feed s "hello")
+      (cl-tmux/commands::copy-mode-enter s)
+      (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 10))
+      (cl-tmux/commands::copy-mode-copy-line s)
+      (is-false (screen-copy-mode-p s)
+                "copy mode must exit after Y command")
+      (let ((yanked (cl-tmux/buffer:get-paste-buffer 0)))
+        (is (and yanked (search "hello" yanked))
+            "Y command must copy the full row containing 'hello' (got ~S)" yanked)))))
+
+;;; ── copy-mode-search-forward / search-backward ──────────────────────────────
+
+(test copy-mode-search-forward-finds-term
+  "copy-mode-search-forward moves cursor to the first match after current position."
+  (let ((s (make-screen 30 5)))
+    (feed s "abc def abc")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-search-forward s "abc")
+    ;; First search from col 1 onward should find "abc" at col 8
+    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "search-forward must find second 'abc' at col 8 (got ~D)"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+
+(test copy-mode-search-forward-saves-term
+  "copy-mode-search-forward saves the search term for n/N repeats."
+  (let ((s (make-screen 30 5)))
+    (feed s "foo bar foo")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-search-forward s "foo")
+    (is (string= "foo" (cl-tmux/terminal/types:screen-copy-search-term s))
+        "search term must be saved after search-forward")))
+
+(test copy-mode-search-backward-finds-term
+  "copy-mode-search-backward moves cursor to the nearest match before current position."
+  (let ((s (make-screen 30 5)))
+    (feed s "abc def abc")
+    (cl-tmux/commands::copy-mode-enter s)
+    ;; Start cursor at col 11 (past the end of second "abc" at cols 8-10).
+    ;; The backward scan uses end-col=11 for row 0, so positions 0..10 are
+    ;; eligible.  The rightmost match before col 11 is the second "abc" at col 8.
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 11))
+    (cl-tmux/commands::copy-mode-search-backward s "abc")
+    ;; Search backward should find second "abc" at col 8 (nearest match before col 11)
+    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "search-backward must find 'abc' at col 8 (nearest before col 11) (got ~D)"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+
+(test copy-mode-search-next-repeats-forward
+  "copy-mode-search-next uses the saved term to repeat forward search."
+  (let ((s (make-screen 30 5)))
+    (feed s "abc def abc")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    ;; Save a term and jump to position 8
+    (cl-tmux/commands::copy-mode-search-forward s "abc")
+    ;; Cursor should now be at 8
+    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s))))
+    ;; search-next with cursor at 8 should not find another match (no more "abc" on row 0)
+    (cl-tmux/commands::copy-mode-search-next s)
+    ;; Cursor stays at 8 if no further match found
+    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "search-next must stay at current position when no further match")))
+
+(test copy-mode-search-prev-noop-without-term
+  "copy-mode-search-prev does nothing when no search term is saved."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5)
+          (cl-tmux/terminal/types:screen-copy-search-term s) nil)
+    (cl-tmux/commands::copy-mode-search-prev s)
+    (is (= 5 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "search-prev must not move cursor when no term is saved")))
+
+;;; ── send-keys-to-pane ────────────────────────────────────────────────────────
+
+(test send-keys-to-pane-noop-with-negative-fd
+  "send-keys-to-pane is a no-op (no error) when the pane has fd=-1."
+  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                         :fd -1 :pid -1 :screen (make-screen 20 5))))
+    (finishes (cl-tmux/commands:send-keys-to-pane pane "hello")
+              "send-keys-to-pane with fd=-1 must not signal an error")))
+
+(test send-keys-to-pane-noop-with-nil-pane
+  "send-keys-to-pane with NIL pane does not signal an error."
+  (finishes (cl-tmux/commands:send-keys-to-pane nil "hello")
+            "send-keys-to-pane with nil pane must not signal an error"))
+
+;;; ── add-message-log ──────────────────────────────────────────────────────────
+
+(test add-message-log-prepends-entry
+  "add-message-log prepends a (timestamp . text) cons to *message-log*."
+  (let ((cl-tmux::*message-log* nil))
+    (cl-tmux::add-message-log "first-message")
+    (is (not (null cl-tmux::*message-log*))
+        "*message-log* must be non-nil after add-message-log")
+    (is (string= "first-message" (cdr (first cl-tmux::*message-log*)))
+        "message text must be in cdr of first entry (got ~S)"
+        (cdr (first cl-tmux::*message-log*)))))
+
+(test add-message-log-caps-at-100
+  "add-message-log caps *message-log* at 100 entries."
+  (let ((cl-tmux::*message-log* nil))
+    ;; Add 105 entries.
+    (loop repeat 105 do (cl-tmux::add-message-log "x"))
+    (is (= 100 (length cl-tmux::*message-log*))
+        "*message-log* must be capped at 100 entries (got ~D)"
+        (length cl-tmux::*message-log*))))
+
+(test add-message-log-ordering
+  "add-message-log puts newest entry first."
+  (let ((cl-tmux::*message-log* nil))
+    (cl-tmux::add-message-log "first")
+    (cl-tmux::add-message-log "second")
+    (is (string= "second" (cdr (first cl-tmux::*message-log*)))
+        "second (most recent) message must be at the head of *message-log*")))

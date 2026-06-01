@@ -11,13 +11,15 @@
 ;;; These three inline functions separate the HOW (bit manipulation) from the
 ;;; WHAT (which SGR code means what), keeping the rule table below readable.
 
-(declaim (inline reset-sgr attr-on attr-off))
+(declaim (inline reset-sgr attr-on attr-off attr2-on attr2-off))
 
 (defun reset-sgr (screen)
   "Reset all SGR attributes to their default values."
-  (setf (screen-cur-fg    screen) 7
-        (screen-cur-bg    screen) 0
-        (screen-cur-attrs screen) 0))
+  (setf (screen-cur-fg       screen) 7
+        (screen-cur-bg       screen) 0
+        (screen-cur-attrs    screen) 0
+        (screen-cur-attrs2   screen) 0
+        (screen-cur-ul-color screen) 0))
 
 (defun attr-on (screen bit)
   "Enable SGR attribute BIT on SCREEN."
@@ -28,6 +30,16 @@
   "Disable SGR attribute BIT on SCREEN."
   (setf (screen-cur-attrs screen)
         (logand (screen-cur-attrs screen) (lognot bit))))
+
+(defun attr2-on (screen bit)
+  "Enable extended SGR attribute BIT (in cur-attrs2) on SCREEN."
+  (setf (screen-cur-attrs2 screen)
+        (logior (screen-cur-attrs2 screen) bit)))
+
+(defun attr2-off (screen bit)
+  "Disable extended SGR attribute BIT (in cur-attrs2) on SCREEN."
+  (setf (screen-cur-attrs2 screen)
+        (logand (screen-cur-attrs2 screen) (lognot bit))))
 
 ;;; ── Macro (logic layer) ─────────────────────────────────────────────────────
 
@@ -66,23 +78,26 @@
   ((= p 7)   (attr-on screen +attr-reverse+))
   ((= p 8)   (attr-on screen +attr-conceal+))
   ((= p 9)   (attr-on screen +attr-strikethrough+))
-  ((= p 21)  (attr-on screen +attr-underline+))   ; doubly underlined — mapped to underline bit
+  ((= p 21)  (attr2-on screen +attr2-double-underline+))  ; doubly underlined
 
-  ;; ── Framed / encircled / overlined (51-55) — silently accepted ────────────
-  ;; xterm-256color programs may emit these; mapping to no visible attribute
-  ;; prevents them from corrupting other state (they previously fell through
-  ;; to the default no-op, which is equivalent, but listing them explicitly
-  ;; documents the intentional choice and silences future audit warnings).
-  ((<= 51 p 55) (values))
+  ;; ── Framed / encircled / overlined (51-55) ────────────────────────────────
+  ;; SGR 53 = overline on, SGR 55 = overline off.
+  ;; SGR 51 (framed) and 52 (encircled) are silently accepted.
+  ((= p 53)  (attr2-on  screen +attr2-overline+))
+  ((= p 55)  (attr2-off screen +attr2-overline+))
+  ((<= 51 p 52) (values))
 
   ;; ── Attributes off ────────────────────────────────────────────────────────
   ((= p 22)  (attr-off screen (logior +attr-bold+ +attr-dim+)))
   ((= p 23)  (attr-off screen +attr-italic+))
-  ((= p 24)  (attr-off screen +attr-underline+))
+  ((= p 24)  (progn (attr-off  screen +attr-underline+)
+                    (attr2-off screen +attr2-double-underline+)))
   ((= p 25)  (attr-off screen +attr-blink+))
   ((= p 27)  (attr-off screen +attr-reverse+))
   ((= p 28)  (attr-off screen +attr-conceal+))
   ((= p 29)  (attr-off screen +attr-strikethrough+))
+  ;; SGR 59: reset underline color to default
+  ((= p 59)  (setf (screen-cur-ul-color screen) 0))
 
   ;; ── Standard foreground (30-37) + default (39) ────────────────────────────
   ((<= 30 p 37)  (setf (screen-cur-fg screen) (- p 30)))
@@ -153,6 +168,13 @@
                    ;; True-color background: 48;2;R;G;B → store as #x1RRGGBB
                    ((and (= p 48) (eql (second ps) 2) (cddr ps))
                     (consume (%set-truecolor screen #'(setf screen-cur-bg) ps)))
+                   ;; Underline-color 256: 58;5;N
+                   ((and (= p 58) (eql (second ps) 5) (third ps))
+                    (setf (screen-cur-ul-color screen) (clamp (third ps) 0 255))
+                    (consume (cdddr ps)))
+                   ;; Underline-color true-color: 58;2;R;G;B
+                   ((and (= p 58) (eql (second ps) 2) (cddr ps))
+                    (consume (%set-truecolor screen #'(setf screen-cur-ul-color) ps)))
                    (t
                     (%dispatch-sgr-code screen p)
                     (consume (rest ps))))))))

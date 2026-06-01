@@ -8,6 +8,40 @@
 ;;;   "pane-exited"         — when a pane's process exits
 ;;;   "after-rename-window" — after rename-window is called
 ;;;   "session-created"     — when the session starts
+;;;   "after-kill-pane"     — after a pane is killed
+;;;   "after-kill-window"   — after a window is killed
+
+;;; ── Hook event constant table ────────────────────────────────────────────
+
+(defmacro define-hook-events (&rest specs)
+  "Declare known hook events as a fact table.
+Each SPEC is (constant-name event-string description-string).
+Generates a DEFCONSTANT for each event-string constant.
+Uses the safe SBCL idiom to avoid string-constant redefinition errors."
+  `(progn
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (constant-name event-string description-string) spec
+                   (declare (ignore description-string))
+                   `(defconstant ,constant-name
+                      (if (boundp ',constant-name)
+                          (symbol-value ',constant-name)
+                          ,event-string))))
+               specs)))
+
+(define-hook-events
+  (+hook-after-new-window+       "after-new-window"       "Fired after a new window is created")
+  (+hook-after-new-pane+         "after-new-pane"         "Fired after a pane is split")
+  (+hook-pane-exited+            "pane-exited"            "Fired when a pane's process exits")
+  (+hook-after-rename-window+    "after-rename-window"    "Fired after rename-window is called")
+  (+hook-session-created+        "session-created"        "Fired when a session is first created")
+  (+hook-after-kill-pane+        "after-kill-pane"        "Fired after a pane is killed")
+  (+hook-after-kill-window+      "after-kill-window"      "Fired after a window is killed")
+  (+hook-client-attached+        "client-attached"        "Fired when a client attaches to a session")
+  (+hook-client-detached+        "client-detached"        "Fired when a client detaches from a session")
+  (+hook-after-new-session+      "after-new-session"      "Fired after a new session is created")
+  (+hook-after-kill-session+     "after-kill-session"     "Fired after a session is killed")
+  (+hook-after-split-window+     "after-split-window"     "Fired after a window is split")
+  (+hook-window-layout-changed+  "window-layout-changed"  "Fired when a window layout changes"))
 
 (defvar *hook-registry* (make-hash-table :test #'equal)
   "Maps event-name (string) to a list of callback functions.

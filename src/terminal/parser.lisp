@@ -63,7 +63,11 @@
 ;;; ── Parameterized state constructors ───────────────────────────────────────
 
 (defun make-csi-k (&optional (params '()) (cur-param nil) (intermed nil))
-  "Return a continuation that collects CSI parameters then dispatches."
+  "Return a continuation that collects CSI parameters then dispatches.
+   Handles the standard VT/ECMA-48 CSI parameter syntax:
+     param bytes   0x30-0x3F  (digits, semicolon, ?, >)
+     intermediate  0x20-0x2F  (e.g. SPACE for DECSCUSR)
+     final byte    0x40-0x7E"
   (lambda (screen byte)
     (declare (type screen screen) (type (unsigned-byte 8) byte))
     (cond
@@ -75,12 +79,16 @@
       ;; Semicolon: end current param, start next
       ((= byte #x3B)
        (make-csi-k (cons (or cur-param 0) params) nil intermed))
-      ;; ? : DEC private marker
+      ;; ? : DEC private marker (param byte)
       ((= byte #x3F)
        (make-csi-k params cur-param #\?))
-      ;; > : secondary DA marker
+      ;; > : secondary DA marker (param byte)
       ((= byte #x3E)
        (make-csi-k params cur-param #\>))
+      ;; Intermediate bytes (0x20-0x2F): record as intermed.
+      ;; SPACE (#x20) is the most common (used by DECSCUSR "CSI N SP q").
+      ((and (>= byte #x20) (<= byte #x2F))
+       (make-csi-k params cur-param (code-char byte)))
       ;; Final byte (0x40-0x7E): dispatch
       ((and (>= byte #x40) (<= byte #x7E))
        (let ((all-params (nreverse (if cur-param
@@ -123,7 +131,8 @@
   (#x0C  (cursor-lf screen) #'ground-state)        ; FF treated as LF
   (#x08  (cursor-bs screen) #'ground-state)
   (#x09  (cursor-ht screen) #'ground-state)
-  (#x07  #'ground-state)                           ; BEL — ignore
+  (#x07  (setf (screen-bell-pending screen) t)
+         #'ground-state)                           ; BEL — set pending flag
   (#x7F  #'ground-state)                           ; DEL — ignore
   (#x0E  #'ground-state)                           ; SO  — charset shift out (ignore)
   (#x0F  #'ground-state)                           ; SI  — charset shift in  (ignore)
@@ -146,6 +155,7 @@
   ;; ── Standard ESC sequences ───────────────────────────────────────────────
   (#x5B  (make-csi-k '() nil nil))                ; ESC [ → CSI
   (#x5D  #'osc-state)                              ; ESC ] → OSC
+  (#x50  (make-dcs-k))                             ; ESC P → DCS (consume silently)
   (#x4D  (cursor-ri screen)    #'ground-state)    ; ESC M → RI
   (#x63  (ris-action screen)   #'ground-state)    ; ESC c → RIS
   (#x37  (save-cursor screen)    #'ground-state)  ; ESC 7 → DECSC
@@ -159,16 +169,62 @@
 ;;; OSC payload accumulator: captures bytes into a buffer, then dispatches
 ;;; on BEL (#x07) or ST (ESC \) termination.
 
+;;; OSC 52 clipboard callback.  Set by the higher-level code (buffer.lisp or
+;;; main) after the terminal module is loaded.  NIL means clipboard writes are
+;;; silently dropped (safe default for unit tests that don't need the buffer).
+(defvar *osc52-handler* nil
+  "A function of one argument (text string) called when OSC 52 clipboard data
+   is received.  Install cl-tmux/buffer:add-paste-buffer here at startup.")
+
+;;; Base64 decoder (used for OSC 52 clipboard payloads).
+;;; We use a simple table-driven approach rather than depending on an external library.
+
+(defun %base64-decode (str)
+  "Decode a Base64-encoded string STR into a byte vector.
+   Returns NIL on decoding errors."
+  (let ((table "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+        (len    (length str)))
+    (ignore-errors
+      (let* ((out-len (floor (* 3 (ceiling len 4)) 1))
+             (out     (make-array out-len :element-type '(unsigned-byte 8)
+                                          :fill-pointer 0 :adjustable t)))
+        (loop for i from 0 below len by 4
+              do (let* ((c0 (position (char str i)      table))
+                        (c1 (and (< (+ i 1) len) (position (char str (+ i 1)) table)))
+                        (c2 (and (< (+ i 2) len) (position (char str (+ i 2)) table)))
+                        (c3 (and (< (+ i 3) len) (position (char str (+ i 3)) table)))
+                        (b0 (and c0 c1 (logior (ash c0 2) (ash c1 -4))))
+                        (b1 (and c1 c2 (logand #xFF (logior (ash (logand c1 #xF) 4) (ash c2 -2)))))
+                        (b2 (and c2 c3 (logand #xFF (logior (ash (logand c2 #x3) 6) c3)))))
+                   (when b0 (vector-push-extend b0 out))
+                   (when b1 (vector-push-extend b1 out))
+                   (when b2 (vector-push-extend b2 out))))
+        out))))
+
 (defun %dispatch-osc (screen buf)
   "Parse accumulated OSC payload BUF and apply side-effects to SCREEN.
-   Handles OSC 0 and OSC 2 (set window title)."
+   Handles OSC 0 and OSC 2 (set window title) and OSC 52 (clipboard)."
   (let* ((payload (babel:octets-to-string buf :encoding :utf-8 :errorp nil))
          (semi    (position #\; payload)))
     (when semi
       (let ((cmd  (ignore-errors (parse-integer (subseq payload 0 semi))))
             (text (subseq payload (1+ semi))))
-        (when (member cmd '(0 2))
-          (setf (screen-title screen) text))))))
+        (cond
+          ((member cmd '(0 2))
+           (setf (screen-title screen) text))
+          ((eql cmd 52)
+           ;; OSC 52: clipboard read/write.
+           ;; Format: 52 ; Pc ; Pd  where Pc is clipboard target (often "c")
+           ;; and Pd is the Base64-encoded payload, or "?" for a read request.
+           (let* ((semi2 (position #\; text))
+                  (pd    (if semi2 (subseq text (1+ semi2)) nil)))
+             (when (and pd (not (string= pd "?")))
+               (let* ((decoded (ignore-errors (%base64-decode pd)))
+                      (text-str (and decoded
+                                     (ignore-errors
+                                       (babel:octets-to-string decoded :encoding :utf-8)))))
+                 (when (and text-str *osc52-handler*)
+                   (funcall *osc52-handler* text-str)))))))))))
 
 (defun make-osc-st-k (screen buf)
   "Continuation waiting for the backslash of ESC \\ ST."
@@ -210,6 +266,33 @@
   (#x5C  #'ground-state)                           ; \ → ST confirmed (empty payload)
   (t     #'osc-state))
 
+;;; DCS (Device Control String) accumulator.
+;;; ESC P introduces a DCS; collect bytes until ESC \ (ST).
+;;; For now: consume silently (pass-through no-op).
+
+(defun make-dcs-k ()
+  "Return a continuation that consumes DCS payload bytes until ST (ESC \\)."
+  (lambda (screen byte)
+    (declare (type screen screen) (type (unsigned-byte 8) byte))
+    (cond
+      ((= byte #x1B)
+       ;; Possible ESC \ ST — wait for backslash
+       (lambda (screen2 byte2)
+         (declare (type screen screen2) (type (unsigned-byte 8) byte2))
+         (declare (ignore screen2))
+         (if (= byte2 #x5C)      ; backslash = ST confirmed
+             #'ground-state
+             ;; Not ST — keep consuming
+             (funcall (make-dcs-k) screen2 byte2))))
+      (t
+       ;; Continue consuming
+       (make-dcs-k)))))
+
 (define-state charset-state (screen byte)
-  ;; Consume one designator byte and return to ground; both args unused.
-  (t #'ground-state))
+  ;; Consume the designator byte.
+  ;; #x30 = '0' → switch to DEC special graphics
+  ;; #x42 = 'B' → switch to US ASCII
+  ;; All other designators are accepted silently.
+  (#x30  (setf (screen-charset screen) :dec-graphics) #'ground-state)
+  (#x42  (setf (screen-charset screen) :ascii)        #'ground-state)
+  (t     (setf (screen-charset screen) :ascii)        #'ground-state))

@@ -42,6 +42,12 @@
     (handler-case
         (with-raw-mode
           (clear-display)
+          ;; Enable mouse reporting on the outer terminal when the "mouse"
+          ;; session option is true.  The render pipeline re-emits these
+          ;; sequences on every repaint; this call covers the very first frame
+          ;; before the first render fires.
+          (when (cl-tmux/options:get-option "mouse")
+            (cl-tmux/renderer:enable-mouse-reporting))
           (setf *running* t *dirty* t *resize-pending* nil)
           (event-loop session))
       (sb-posix:syscall-error (c)
@@ -65,6 +71,10 @@
 ;;; functions.  main is the LOGIC: it looks up the mode and dispatches.
 ;;; Adding a new mode only requires adding an entry to the alist, not changing
 ;;; the dispatch logic.
+;;;
+;;; "attach-session" is a flag-aware variant of "attach": it parses -d/-r/-t
+;;; before delegating to run-client.  "attach" keeps its simple (name-only)
+;;; interface so existing tests and users are unaffected.
 
 (defparameter *startup-modes*
   '(("server" . run-server)
@@ -95,18 +105,58 @@
             until (probe-file socket-path)
             do (sleep 0.1)))))
 
+(defun %parse-attach-flags (args)
+  "Parse attach-session flags from ARGS (a list of strings after the mode).
+   Returns (values session-name detach-p readonly-p).
+   Supported flags: -d (detach other clients), -r (read-only), -t <name>.
+   The session name defaults to \"0\" when no -t is given."
+  (let ((name    "0")
+        (detach  nil)
+        (ro      nil)
+        (i       0))
+    (loop while (< i (length args)) do
+      (let ((a (nth i args)))
+        (cond
+          ((string= a "-d") (setf detach t) (incf i))
+          ((string= a "-r") (setf ro    t) (incf i))
+          ((string= a "-t")
+           (incf i)
+           (when (< i (length args))
+             (setf name (nth i args))
+             (incf i)))
+          ((and (> (length a) 0) (char/= (char a 0) #\-))
+           ;; Positional session name (backward compat)
+           (setf name a) (incf i))
+          (t (incf i)))))
+    (values name detach ro)))
+
 (defun run-client-with-autostart (name)
   "Auto-start a server for NAME if not running, then attach as a client."
   (%ensure-server-running name)
   (run-client name))
 
+(defun run-attach-with-flags (raw-args)
+  "Parse attach flags from RAW-ARGS and attach to the named session."
+  (multiple-value-bind (name detach-p _ro) (%parse-attach-flags raw-args)
+    (declare (ignore _ro))
+    (%ensure-server-running name)
+    (run-client name :detach-others detach-p)))
+
 (defun main ()
   "Binary entry point — dispatches on the first argv item.
-   Unrecognized or absent modes fall through to run-standalone."
+   \"attach-session\" (the full tmux command name) is handled with flag parsing;
+   \"attach\" and \"server\" use the *startup-modes* table for stub-friendly dispatch;
+   unrecognized or absent modes fall through to run-standalone."
   (let* ((args    (rest sb-ext:*posix-argv*))
          (mode    (first args))
-         (name    (or (second args) "0"))
-         (handler (cdr (assoc mode *startup-modes* :test #'equal))))
-    (if handler
-        (funcall handler name)
-        (run-standalone))))
+         (rest    (rest args)))
+    (cond
+      ;; attach-session: full flag-aware path (-d/-r/-t <name>)
+      ((string= mode "attach-session")
+       (run-attach-with-flags rest))
+      ;; server / attach: use the *startup-modes* table so test stubs work
+      (t
+       (let ((handler (cdr (assoc mode *startup-modes* :test #'equal))))
+         (if handler
+             (funcall handler (or (first rest) "0"))
+             (run-standalone)))))))

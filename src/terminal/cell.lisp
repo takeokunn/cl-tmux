@@ -12,7 +12,8 @@
 ;;;
 ;;; Prolog-like fact table — each constant is one named bit in the attrs byte.
 ;;; Bit layout (LSB first): bold dim reverse underline blink italic conceal
-;;; strikethrough (bits 0-7).
+;;; strikethrough (bits 0-7).  Double-underline and overline are stored in
+;;; a separate 16-bit word in the cell struct (see below).
 
 (defconstant +attr-bold+          #b00000001)
 (defconstant +attr-dim+           #b00000010)
@@ -22,6 +23,11 @@
 (defconstant +attr-italic+        #b00100000)
 (defconstant +attr-conceal+       #b01000000)
 (defconstant +attr-strikethrough+ #b10000000)
+
+;;; Extended attribute bits stored in the cell's attrs2 slot (16-bit).
+;;; These are less common and placed in a second word to keep attrs as (unsigned-byte 8).
+(defconstant +attr2-double-underline+ #b00000001)  ; SGR 21
+(defconstant +attr2-overline+         #b00000010)  ; SGR 53
 
 ;;; ── Cell ───────────────────────────────────────────────────────────────────
 
@@ -39,6 +45,13 @@
   (fg    7       :type (unsigned-byte 25))
   (bg    0       :type (unsigned-byte 25))
   (attrs 0       :type (unsigned-byte 8))   ; bit-field: see +attr-* constants
+  ;; Extended attributes: double-underline (bit 0), overline (bit 1)
+  (attrs2 0      :type (unsigned-byte 8))
+  ;; Underline color (SGR 58): same encoding as fg/bg. 0 = default (use fg).
+  (ul-color 0   :type (unsigned-byte 25))
+  ;; Combining characters appended after the base char (zero-width marks).
+  ;; NIL when no combining chars are present; a list of characters otherwise.
+  (combining nil :type list)
   (width 1       :type (integer 0 2)))      ; 1 normal, 2 wide lead, 0 continuation
 
 (defun blank-cell ()

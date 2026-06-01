@@ -24,16 +24,19 @@
           "scrollback row 0 should start with 'h'"))))
 
 (test scroll-up-one-caps-at-max-scrollback
-  "scroll-up-one never grows the scrollback list beyond +max-scrollback-lines+."
-  (with-screen (s 5 3)
-    (setf (cl-tmux/terminal/types:screen-scrollback s)
-          (loop repeat cl-tmux/config:+max-scrollback-lines+
-                collect (make-array 5 :initial-element
-                                    (cl-tmux/terminal/types:blank-cell))))
-    (cl-tmux/terminal/actions:scroll-up-one s)
-    (is (<= (length (cl-tmux/terminal/types:screen-scrollback s))
-            cl-tmux/config:+max-scrollback-lines+)
-        "scrollback must not exceed +max-scrollback-lines+")))
+  "scroll-up-one trims the scrollback to the effective history-limit.
+   trim-scroll-history honours the 'history-limit' option (default 2000)
+   which supersedes +max-scrollback-lines+ (1000) at runtime."
+  (let* ((cap (or (cl-tmux/options:get-option "history-limit")
+                  cl-tmux/config:+max-scrollback-lines+)))
+    (with-screen (s 5 3)
+      (setf (cl-tmux/terminal/types:screen-scrollback s)
+            (loop repeat cap
+                  collect (make-array 5 :initial-element
+                                      (cl-tmux/terminal/types:blank-cell))))
+      (cl-tmux/terminal/actions:scroll-up-one s)
+      (is (<= (length (cl-tmux/terminal/types:screen-scrollback s)) cap)
+          "scrollback must not exceed the effective history-limit (~D)" cap))))
 
 (test scroll-down-one-inserts-blank-top-row
   "scroll-down-one moves content down; the new top row is blank."
