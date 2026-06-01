@@ -34,14 +34,22 @@
            *dirty*           t))))
 
 ;;; -- PTY reader thread ------------------------------------------------------
+;;;
+;;; Data/logic separation: %pane-reader-loop is the pure logic (testable);
+;;; start-reader-thread is the threading mechanism (the effect).
+
+(defun %pane-reader-loop (pane)
+  "Feed PTY output into PANE's screen until EOF or *running* becomes NIL.
+   Polls with +pty-poll-timeout-us+ so the loop observes *running* even when
+   the shell is silent, avoiding an eternal block on pty-read-blocking."
+  (loop while *running* do
+    (when (select-fds (list (pane-fd pane)) +pty-poll-timeout-us+)
+      (let ((bytes (pty-read-blocking (pane-fd pane) +pty-buf-size+)))
+        (unless bytes (return))   ; EOF — shell exited
+        (pane-feed pane bytes)
+        (setf *dirty* t)))))
 
 (defun start-reader-thread (pane)
-  "Spawn a thread that feeds PTY output into PANE's screen until EOF."
-  (make-thread
-   (lambda ()
-     (loop while *running*
-           for bytes = (pty-read-blocking (pane-fd pane) +pty-buf-size+)
-           while bytes        ; nil = EOF (shell exited)
-           do (pane-feed pane bytes)
-              (setf *dirty* t)))
-   :name (format nil "pty-reader-~D" (pane-id pane))))
+  "Spawn a thread running %pane-reader-loop for PANE."
+  (make-thread (lambda () (%pane-reader-loop pane))
+               :name (format nil "pty-reader-~D" (pane-id pane))))

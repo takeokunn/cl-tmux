@@ -1,0 +1,336 @@
+(in-package #:cl-tmux/model)
+
+;;; ── Window ─────────────────────────────────────────────────────────────────
+
+(defstruct window
+  "A named collection of panes with one active (focused) pane.
+   TREE is the binary split-tree layout. PANES is the derived flat list of leaves,
+   kept in tree order via window-refresh-panes."
+  (id   0  :type fixnum)
+  (name "" :type string)
+  (width  80 :type fixnum)
+  (height 24 :type fixnum)
+  (panes nil :type list)
+  (active nil)
+  (tree  nil))
+
+(defun window-refresh-panes (window)
+  "Recompute WINDOW's derived PANES list from its TREE (when present)."
+  (when (window-tree window)
+    (setf (window-panes window) (layout-leaves (window-tree window))))
+  (window-panes window))
+
+(defun window-active-pane (window)
+  (or (window-active window)
+      (first (window-panes window))))
+
+(defun window-select-pane (window pane)
+  (setf (window-active window) pane))
+
+;;; ── Orientation-aware pane extent ──────────────────────────────────────────
+;;;
+;;; The :v/:h naming is tmux-style:
+;;;   :v split stacks children vertically → extent measured in ROWS (height)
+;;;   :h split places children side-by-side → extent measured in COLS (width)
+;;; Both helpers use ecase for exhaustive, readable dispatch (Prolog-style fact).
+
+(defun %orient-pane-extent (pane orient)
+  "Current extent of PANE along ORIENT's split axis."
+  (ecase orient
+    (:v (pane-height pane))
+    (:h (pane-width  pane))))
+
+(defun %split-fits-p (pane orient)
+  "T when PANE is wide/tall enough to split along ORIENT (needs 2×min + 1 separator)."
+  (let ((avail  (%orient-pane-extent pane orient))
+        (floor* (%axis-floor orient)))
+    (>= avail (+ floor* 1 floor*))))
+
+;;; ── Window-level pane ID allocation ────────────────────────────────────────
+
+(defun next-pane-id (window)
+  "Smallest positive pane id not already used in WINDOW.
+   Window-level concern: queries pane membership, not geometry."
+  (let ((used (mapcar #'pane-id (window-panes window))))
+    (loop for i from 1
+          unless (member i used) return i)))
+
+;;; ── Tree-link mutation macro ────────────────────────────────────────────────
+;;;
+;;; Both %replace-in-tree and %collapse-parent share the same pattern:
+;;;   set_tree_link(Window, Node, New) :-
+;;;     find_parent(Window.tree, Node, Parent, Side), !,
+;;;     set_child(Parent, Side, New).
+;;;   set_tree_link(Window, _Node, New) :-
+;;;     Window.tree := New.
+;;;
+;;; define-tree-link-setter generates this Prolog-like dispatch once.
+
+(defmacro %set-tree-link (window node new-value)
+  "Replace NODE's position in WINDOW's tree with NEW-VALUE.
+   If NODE has a parent, updates that parent's child link (preserving side);
+   if NODE is the root, replaces the root directly."
+  (let ((p  (gensym "PARENT"))
+        (w  (gensym "WHICH")))
+    `(multiple-value-bind (,p ,w)
+         (layout-find-parent (window-tree ,window) ,node)
+       (if ,p
+           (ecase ,w
+             (:first  (setf (layout-split-first  ,p) ,new-value))
+             (:second (setf (layout-split-second ,p) ,new-value)))
+           (setf (window-tree ,window) ,new-value)))))
+
+(defun %replace-in-tree (window leaf replacement)
+  "Splice REPLACEMENT in place of LEAF in WINDOW's split tree."
+  (%set-tree-link window leaf replacement))
+
+(defun %collapse-parent (window parent which)
+  "Remove the WHICH child of PARENT, replacing PARENT with the surviving sibling.
+   Returns the sibling node."
+  (let ((sibling (if (eq which :first)
+                     (layout-split-second parent)
+                     (layout-split-first  parent))))
+    (%set-tree-link window parent sibling)
+    sibling))
+
+(defun window-split (window direction)
+  "Split the active pane of WINDOW along DIRECTION (:h left/right, :v top/bottom).
+   Returns the new pane, or NIL when the active pane is too small."
+  (let ((active (window-active-pane window))
+        (tree   (window-tree window)))
+    (unless (and active tree) (return-from window-split nil))
+    (let ((leaf (layout-find-leaf tree active)))
+      (unless (and leaf (%split-fits-p active direction))
+        (return-from window-split nil))
+      (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
+        (let* ((new-pane (%fork-pane (next-pane-id window) px py pw ph))
+               (split    (make-layout-split direction leaf
+                                            (make-layout-leaf new-pane) 1/2)))
+          (%replace-in-tree window leaf split)
+          (window-relayout window (window-height window) (window-width window))
+          (setf (window-active window) new-pane)
+          new-pane)))))
+
+(defun window-relayout (window rows cols)
+  "Re-fit WINDOW's panes into ROWS x COLS using the binary split tree."
+  (setf (window-width  window) cols
+        (window-height window) rows)
+  (when (window-tree window)
+    (layout-assign (window-tree window) 0 0 cols rows)
+    (window-refresh-panes window)))
+
+(defun ensure-window-fits (window rows cols)
+  "Relayout WINDOW only when its stored size differs from ROWS x COLS."
+  (when (or (/= (window-width  window) cols)
+            (/= (window-height window) rows))
+    (window-relayout window rows cols)))
+
+(defun window-remove-pane (window pane)
+  "Remove PANE from WINDOW's tree, collapsing its parent so the sibling reclaims
+   the freed rectangle, then relayout.  Returns the surviving sibling pane
+   (for MRU-style reselection), or NIL when WINDOW becomes empty."
+  (let* ((tree (window-tree window))
+         (leaf (layout-find-leaf tree pane)))
+    (unless leaf
+      (return-from window-remove-pane (first (window-panes window))))
+    (multiple-value-bind (parent which) (layout-find-parent tree leaf)
+      (cond
+        ;; LEAF was the sole root — window becomes empty.
+        ((null parent)
+         (setf (window-tree window) nil
+               (window-panes window) nil)
+         nil)
+        ;; Normal case: collapse the parent split and relayout.
+        (t
+         (let ((sibling (%collapse-parent window parent which)))
+           (window-relayout window (window-height window) (window-width window))
+           (first (layout-leaves sibling))))))))
+
+;;; ── Resize via the tree ──────────────────────────────────────────────────
+
+(defun %new-split-ratio (orient avail cur-ratio delta grow-first)
+  "Compute the ratio after moving the split border by DELTA cells.
+   Returns the new ratio as a rational, or NIL when the move would violate
+   the minimum pane size on either side."
+  (let* ((floor*    (%axis-floor orient))
+         (cur-first (round (* avail cur-ratio)))
+         (sign      (if grow-first 1 -1))
+         (new-first (+ cur-first (* sign delta))))
+    (when (and (<= floor* new-first) (<= new-first (- avail floor*)))
+      (/ new-first avail))))
+
+(defun window-resize-active (window direction delta)
+  "Move the split border between the active pane and its neighbour in DIRECTION
+   by DELTA cells, then relayout.  Returns ACTIVE on success, NIL when there is
+   no neighbour in DIRECTION or the move is too small."
+  (let* ((tree   (window-tree window))
+         (active (window-active-pane window))
+         (orient (resize-direction-orientation direction)))
+    (unless (and tree active) (return-from window-resize-active nil))
+    (let ((leaf (layout-find-leaf tree active)))
+      (unless leaf (return-from window-resize-active nil))
+      (multiple-value-bind (split side) (resize-find-split tree leaf orient)
+        (unless split (return-from window-resize-active nil))
+        (let* ((avail      (max 1 (- (layout-split-axis-extent split orient) 1)))
+               (grow-first (if (eq side :first)
+                               (member direction '(:right :down))
+                               (member direction '(:left :up))))
+               (new-ratio  (%new-split-ratio orient avail
+                                             (layout-split-ratio split)
+                                             delta grow-first)))
+          (when new-ratio
+            (setf (layout-split-ratio split) new-ratio)
+            (window-relayout window (window-height window) (window-width window))
+            active))))))
+
+;;; ── Pane neighbor lookup ─────────────────────────────────────────────────────
+;;;
+;;; Directional pane navigation: given a pane and a direction, find the
+;;; geometrically adjacent pane.  Lives here (not layout-geometry.lisp) because
+;;; it uses WINDOW-PANES (a WINDOW struct accessor, defined above).
+;;;
+;;; Prolog analogy:
+;;;   neighbor(right, Pane, Cands) :- edge_touching_right(Pane, Cands).
+;;;   neighbor(left,  Pane, Cands) :- edge_touching_left(Pane, Cands).
+;;;   neighbor(down,  Pane, Cands) :- edge_touching_below(Pane, Cands).
+;;;   neighbor(up,    Pane, Cands) :- edge_touching_above(Pane, Cands).
+;;; Among candidates: pick the one whose center is closest perpendicularly.
+
+(defun %ranges-overlap-p (start1 len1 start2 len2)
+  "T when [START1, START1+LEN1) and [START2, START2+LEN2) share at least one integer."
+  (and (< start1 (+ start2 len2))
+       (< start2 (+ start1 len1))))
+
+(defun %pane-center-x (pane) (+ (pane-x pane) (ash (pane-width  pane) -1)))
+(defun %pane-center-y (pane) (+ (pane-y pane) (ash (pane-height pane) -1)))
+
+(defmacro define-neighbor-finders (&rest specs)
+  "Build the per-direction candidate-filter lambdas from a Prolog-like fact table.
+   Each SPEC is (direction edge-expr overlap-start1 overlap-len1 overlap-start2 overlap-len2)."
+  `(list
+     ,@(mapcar
+        (lambda (spec)
+          (destructuring-bind (dir edge-expr os1 ol1 os2 ol2) spec
+            `(cons ,dir (lambda (p pane)
+                          (and (<= (abs ,edge-expr) 2)
+                               (%ranges-overlap-p ,os1 ,ol1 ,os2 ,ol2))))))
+        specs)))
+
+(defparameter *neighbor-filters*
+  (define-neighbor-finders
+    (:right (- (pane-x p) (+ (pane-x pane) (pane-width  pane)))
+            (pane-y pane) (pane-height pane) (pane-y p) (pane-height p))
+    (:left  (- (+ (pane-x p) (pane-width p)) (pane-x pane))
+            (pane-y pane) (pane-height pane) (pane-y p) (pane-height p))
+    (:down  (- (pane-y p) (+ (pane-y pane) (pane-height pane)))
+            (pane-x pane) (pane-width pane)  (pane-x p) (pane-width  p))
+    (:up    (- (+ (pane-y p) (pane-height p)) (pane-y pane))
+            (pane-x pane) (pane-width pane)  (pane-x p) (pane-width  p)))
+  "Association list of (direction . filter-fn) for pane-neighbor.")
+
+(defun pane-neighbor (window pane direction)
+  "Return the pane adjacent to PANE in DIRECTION (:left :right :up :down), or NIL.
+   Among edge-touching candidates, returns the one whose center is closest to
+   PANE's center along the perpendicular axis."
+  (let* ((filter     (cdr (assoc direction *neighbor-filters*)))
+         (candidates (remove pane (window-panes window)))
+         (matching   (remove-if-not (lambda (p) (funcall filter p pane)) candidates)))
+    (when matching
+      (ecase direction
+        ((:left :right)
+         (reduce (lambda (a b)
+                   (if (<= (abs (- (%pane-center-y a) (%pane-center-y pane)))
+                           (abs (- (%pane-center-y b) (%pane-center-y pane))))
+                       a b))
+                 matching))
+        ((:up :down)
+         (reduce (lambda (a b)
+                   (if (<= (abs (- (%pane-center-x a) (%pane-center-x pane)))
+                           (abs (- (%pane-center-x b) (%pane-center-x pane))))
+                       a b))
+                 matching))))))
+
+;;; ── Named layouts ───────────────────────────────────────────────────────────
+;;;
+;;; apply-named-layout lives here (not in layout.lisp) because it accesses
+;;; WINDOW struct slots.  layout.lisp defines %build-flat-tree (pure tree
+;;; construction), which we call here.
+;;;
+;;; Prolog-like fact table — each ecase clause is one named layout rule:
+;;;   layout(even_horizontal, Window) :- n_equal_columns(Window).
+;;;   layout(even_vertical,   Window) :- n_equal_rows(Window).
+;;;   layout(main_horizontal, Window) :- main_top_rest_bottom(Window).
+;;;   layout(main_vertical,   Window) :- main_left_rest_right(Window).
+;;;   layout(tiled,           Window) :- near_square_grid(Window).
+
+(defun apply-named-layout (window layout-name)
+  "Reposition all panes in WINDOW according to LAYOUT-NAME, one of:
+     :even-horizontal  :even-vertical  :main-horizontal
+     :main-vertical    :tiled
+   Rebuilds the window tree and calls layout-assign to sync all rectangles."
+  (let* ((panes (window-panes window))
+         (n     (length panes))
+         (w     (window-width  window))
+         (h     (window-height window)))
+    (when (zerop n) (return-from apply-named-layout nil))
+    (ecase layout-name
+
+      (:even-horizontal
+       (let* ((avail-w (- w (1- n)))
+              (each-w  (floor avail-w n)))
+         (loop for pane in panes for i from 0
+               do (pane-reposition pane (* i (1+ each-w)) 0 each-w h))
+         (setf (window-tree window) (%build-flat-tree panes :h))))
+
+      (:even-vertical
+       (let* ((avail-h (- h (1- n)))
+              (each-h  (floor avail-h n)))
+         (loop for pane in panes for i from 0
+               do (pane-reposition pane 0 (* i (1+ each-h)) w each-h))
+         (setf (window-tree window) (%build-flat-tree panes :v))))
+
+      (:main-horizontal
+       (let* ((main-h  (floor h 2))
+              (rest-h  (- h main-h 1))
+              (rest-ps (rest panes))
+              (m       (length rest-ps)))
+         (pane-reposition (first panes) 0 0 w main-h)
+         (when (plusp m)
+           (let* ((avail-w (- w (1- m)))
+                  (each-w  (floor avail-w m)))
+             (loop for pane in rest-ps for i from 0
+                   do (pane-reposition pane (* i (1+ each-w)) (1+ main-h) each-w rest-h))))
+         (setf (window-tree window)
+               (if rest-ps
+                   (make-layout-split :v (make-layout-leaf (first panes))
+                                         (%build-flat-tree rest-ps :h))
+                   (make-layout-leaf (first panes))))))
+
+      (:main-vertical
+       (let* ((main-w  (floor w 2))
+              (rest-w  (- w main-w 1))
+              (rest-ps (rest panes))
+              (m       (length rest-ps)))
+         (pane-reposition (first panes) 0 0 main-w h)
+         (when (plusp m)
+           (let* ((avail-h (- h (1- m)))
+                  (each-h  (floor avail-h m)))
+             (loop for pane in rest-ps for i from 0
+                   do (pane-reposition pane (1+ main-w) (* i (1+ each-h)) rest-w each-h))))
+         (setf (window-tree window)
+               (if rest-ps
+                   (make-layout-split :h (make-layout-leaf (first panes))
+                                         (%build-flat-tree rest-ps :v))
+                   (make-layout-leaf (first panes))))))
+
+      (:tiled
+       (let* ((cols  (ceiling (sqrt n)))
+              (rows  (ceiling n cols))
+              (col-w (floor (- w (1- cols)) cols))
+              (row-h (floor (- h (1- rows)) rows)))
+         (loop for pane in panes for i from 0
+               for col = (mod i cols) for row = (floor i cols)
+               do (pane-reposition pane (* col (1+ col-w)) (* row (1+ row-h)) col-w row-h))
+         (setf (window-tree window) (%build-flat-tree panes :h)))))
+
+    (layout-assign (window-tree window) 0 0 w h)))

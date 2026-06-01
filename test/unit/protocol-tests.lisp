@@ -1,0 +1,214 @@
+(in-package #:cl-tmux/test)
+
+;;;; Client/server wire-protocol codec tests (src/protocol.lisp).
+;;;;
+;;;; Pure octet-level tests: encode a message, decode it back, and assert the
+;;;; type, payload, and consumed-byte count.  Also covers streaming concerns:
+;;;; partial buffers (incomplete header / payload) and several frames packed
+;;;; back-to-back in one buffer.
+
+(def-suite protocol-suite :description "Client/server wire protocol codec")
+(in-suite protocol-suite)
+
+;;; ── Octet encoding/decoding helpers ─────────────────────────────────────────
+
+(test u16-octets-big-endian
+  "u16-octets encodes a 16-bit value as two big-endian bytes."
+  (is (equalp #(0 0)     (cl-tmux/protocol::u16-octets 0)))
+  (is (equalp #(0 1)     (cl-tmux/protocol::u16-octets 1)))
+  (is (equalp #(1 0)     (cl-tmux/protocol::u16-octets 256)))
+  (is (equalp #(255 255) (cl-tmux/protocol::u16-octets 65535))))
+
+(test u32-octets-big-endian
+  "u32-octets encodes a 32-bit value as four big-endian bytes."
+  (is (equalp #(0 0 0 0)   (cl-tmux/protocol::u32-octets 0)))
+  (is (equalp #(0 0 0 1)   (cl-tmux/protocol::u32-octets 1)))
+  (is (equalp #(0 1 0 0)   (cl-tmux/protocol::u32-octets 65536)))
+  (is (equalp #(255 255 255 255) (cl-tmux/protocol::u32-octets #xFFFFFFFF))))
+
+(test u16-octets-pair-concatenates-two-u16s
+  "u16-octets-pair concatenates two u16 values as 4 big-endian bytes."
+  (is (equalp #(0 24 0 80) (cl-tmux/protocol::u16-octets-pair 24 80)))
+  (is (equalp #(0 0 0 0)   (cl-tmux/protocol::u16-octets-pair 0 0))))
+
+(test read-u16-decodes-big-endian
+  "read-u16 reads two bytes at START as a big-endian u16."
+  (let ((buf (make-array 6 :element-type '(unsigned-byte 8)
+                           :initial-contents '(0 0 0 24 0 80))))
+    (is (= 0  (cl-tmux/protocol::read-u16 buf 0)))
+    (is (= 24 (cl-tmux/protocol::read-u16 buf 2)))
+    (is (= 80 (cl-tmux/protocol::read-u16 buf 4)))))
+
+;;; ── Helpers ─────────────────────────────────────────────────────────────────
+
+(defun cat-octets (&rest frames)
+  "Concatenate octet vectors into one simple octet buffer (a wire stream)."
+  (apply #'concatenate '(simple-array (unsigned-byte 8) (*)) frames))
+
+;;; ── Frame header format ─────────────────────────────────────────────────────
+
+(test frame-header-layout
+  "A frame is [type][len u32-be][payload]; header is 5 bytes."
+  (let ((frame (encode-frame +msg-key+ (to-octets #(7 8 9)))))
+    (is (= +header-size+ 5))
+    (is (= +msg-key+ (aref frame 0))     "type byte first")
+    ;; length = 3, big-endian in bytes 1..4
+    (is (equalp #(0 0 0 3) (subseq frame 1 5)) "u32-be length")
+    (is (= 8 (length frame)) "header + 3 payload bytes")))
+
+;;; ── Round-trips per message type ────────────────────────────────────────────
+
+(test attach-roundtrip
+  "msg-attach carries rows,cols, decodable via decode-size."
+  (let ((frame (msg-attach 24 80)))
+    (multiple-value-bind (type payload next) (decode-frame frame)
+      (is (= +msg-attach+ type))
+      (is (= (length frame) next) "consumed the whole frame")
+      (multiple-value-bind (rows cols) (decode-size payload)
+        (is (= 24 rows))
+        (is (= 80 cols))))))
+
+(test resize-roundtrip
+  "msg-resize round-trips rows,cols including large values."
+  (multiple-value-bind (type payload) (decode-frame (msg-resize 300 1000))
+    (is (= +msg-resize+ type))
+    (multiple-value-bind (rows cols) (decode-size payload)
+      (is (= 300 rows))
+      (is (= 1000 cols)))))
+
+(test key-roundtrip
+  "msg-key carries raw input bytes verbatim."
+  (multiple-value-bind (type payload) (decode-frame (msg-key #(27 91 65)))
+    (is (= +msg-key+ type))
+    (is (equalp #(27 91 65) payload))))
+
+(test detach-and-bye-are-empty
+  "msg-detach and msg-bye carry no payload."
+  (multiple-value-bind (type payload next) (decode-frame (msg-detach))
+    (is (= +msg-detach+ type))
+    (is (= 0 (length payload)))
+    (is (= +header-size+ next) "empty payload ⇒ next is just past the header"))
+  (multiple-value-bind (type payload) (decode-frame (msg-bye))
+    (is (= +msg-bye+ type))
+    (is (= 0 (length payload)))))
+
+(test frame-text-roundtrip
+  "msg-frame carries a UTF-8 string, including multibyte CJK."
+  (let ((text "hello あ 中 │"))
+    (multiple-value-bind (type payload) (decode-frame (msg-frame text))
+      (is (= +msg-frame+ type))
+      (is (string= text (decode-text payload))))))
+
+;;; ── Streaming: partial buffers ──────────────────────────────────────────────
+
+(test decode-incomplete-header-returns-nil
+  "A buffer shorter than the 5-byte header yields no frame."
+  (let ((frame (msg-resize 10 20)))
+    (multiple-value-bind (type payload next) (decode-frame frame 0 3)
+      (is (null type))
+      (is (null payload))
+      (is (= 0 next) "start index returned unchanged when incomplete"))))
+
+(test decode-incomplete-payload-returns-nil
+  "A complete header but truncated payload yields no frame."
+  (let ((frame (msg-key #(1 2 3 4 5 6))))   ; header(5) + 6 payload = 11 bytes
+    ;; Cut one payload byte short.
+    (is (null (decode-frame frame 0 (1- (length frame)))))))
+
+;;; ── Streaming: several frames in one buffer ─────────────────────────────────
+
+(test decode-back-to-back-frames
+  "decode-frame consumes exactly one frame and reports the next offset, so a
+   stream of concatenated frames decodes sequentially."
+  (let* ((buffer (cat-octets (msg-detach)
+                             (msg-key #(65 66))
+                             (msg-resize 5 9))))
+    ;; Frame 1 — detach
+    (multiple-value-bind (type payload next1) (decode-frame buffer)
+      (declare (ignore payload))
+      (is (= +msg-detach+ type))
+      ;; Frame 2 — key
+      (multiple-value-bind (type2 payload2 next2) (decode-frame buffer next1)
+        (is (= +msg-key+ type2))
+        (is (equalp #(65 66) payload2))
+        ;; Frame 3 — resize
+        (multiple-value-bind (type3 payload3 next3) (decode-frame buffer next2)
+          (is (= +msg-resize+ type3))
+          (multiple-value-bind (rows cols) (decode-size payload3)
+            (is (= 5 rows))
+            (is (= 9 cols)))
+          (is (= (length buffer) next3) "consumed the entire stream"))))))
+
+;;; ── Large payloads: u32 length bytes exercised ──────────────────────────────
+
+(test frame-codec-large-payload-roundtrip
+  "Frames whose payloads span the upper u32 length bytes encode/decode cleanly.
+   For 256, 1000 and 65536-byte payloads the u32-be length field (read-u32 at
+   offset 1) must equal the payload length, and the payload round-trips equalp."
+  (dolist (n (list 256 1000 65536))
+    (let* ((payload (make-array n :element-type '(unsigned-byte 8))))
+      ;; Fill with a recognizable, position-dependent pattern.
+      (dotimes (i n)
+        (setf (aref payload i) (logand i #xFF)))
+      (let ((frame (encode-frame +msg-frame+ payload)))
+        (is (= (+ +header-size+ n) (length frame))
+            "frame is header + payload bytes")
+        ;; Length field stored big-endian at offset 1.
+        (is (= n (cl-tmux/protocol::read-u32 frame 1))
+            "u32-be length field equals payload length")
+        (multiple-value-bind (type decoded next) (decode-frame frame)
+          (is (= +msg-frame+ type))
+          (is (= n (length decoded)) "decoded payload length matches")
+          (is (equalp payload decoded) "payload round-trips")
+          (is (= (length frame) next) "consumed the whole frame"))))))
+
+(test frame-codec-two-large-frames-next-index
+  "Two large frames packed back-to-back decode sequentially with the right
+   next-index offsets, exercising u32 lengths > 255."
+  (let* ((p1 (make-array 1000  :element-type '(unsigned-byte 8)))
+         (p2 (make-array 65536 :element-type '(unsigned-byte 8))))
+    (dotimes (i 1000)  (setf (aref p1 i) (logand i #xFF)))
+    (dotimes (i 65536) (setf (aref p2 i) (logand (* 3 i) #xFF)))
+    (let* ((f1 (encode-frame +msg-key+ p1))
+           (f2 (encode-frame +msg-frame+ p2))
+           (buffer (cat-octets f1 f2)))
+      ;; Frame 1
+      (multiple-value-bind (type1 payload1 next1) (decode-frame buffer)
+        (is (= +msg-key+ type1))
+        (is (equalp p1 payload1))
+        (is (= (length f1) next1) "next-index is exactly past the first frame")
+        ;; Frame 2 — decode starting at the reported offset.
+        (multiple-value-bind (type2 payload2 next2) (decode-frame buffer next1)
+          (is (= +msg-frame+ type2))
+          (is (equalp p2 payload2))
+          (is (= (+ (length f1) (length f2)) next2) "consumed both frames")
+          (is (= (length buffer) next2) "consumed the entire stream"))))))
+
+(test define-uint-decoders-generated-functions-decode-correctly
+  "define-uint-decoders generates decoder functions symmetric to the encoders.
+   Round-tripping through encode → decode must recover the original value."
+  (dolist (n '(0 1 255 256 65535))
+    (is (= n (cl-tmux/protocol::read-u16 (cl-tmux/protocol::u16-octets n) 0))
+        "u16 round-trip failed for ~D" n))
+  (dolist (n '(0 1 65536 #xFFFFFF #xFFFFFFFF))
+    (is (= n (cl-tmux/protocol::read-u32 (cl-tmux/protocol::u32-octets n) 0))
+        "u32 round-trip failed for ~D" n)))
+
+(test define-uint-encoders-generated-functions-have-correct-sizes
+  "define-uint-encoders generates big-endian encoder functions of exactly BITS/8 bytes.
+   This verifies the macro expansion — u16-octets always yields 2 bytes and
+   u32-octets always yields 4 bytes, regardless of the value encoded."
+  (is (= 2 (length (cl-tmux/protocol::u16-octets 0)))        "u16(0) = 2 bytes")
+  (is (= 2 (length (cl-tmux/protocol::u16-octets 65535)))    "u16(max) = 2 bytes")
+  (is (= 4 (length (cl-tmux/protocol::u32-octets 0)))        "u32(0) = 4 bytes")
+  (is (= 4 (length (cl-tmux/protocol::u32-octets #xFFFFFFFF))) "u32(max) = 4 bytes"))
+
+(test define-wire-messages-generates-all-message-constructors
+  "define-wire-messages generates one constructor per spec entry.
+   Verify all six constructors are bound and callable."
+  (is (fboundp 'cl-tmux/protocol::msg-attach)  "msg-attach must be fbound")
+  (is (fboundp 'cl-tmux/protocol::msg-key)     "msg-key must be fbound")
+  (is (fboundp 'cl-tmux/protocol::msg-resize)  "msg-resize must be fbound")
+  (is (fboundp 'cl-tmux/protocol::msg-detach)  "msg-detach must be fbound")
+  (is (fboundp 'cl-tmux/protocol::msg-frame)   "msg-frame must be fbound")
+  (is (fboundp 'cl-tmux/protocol::msg-bye)     "msg-bye must be fbound"))

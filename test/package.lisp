@@ -12,6 +12,7 @@
                 #:screen-cursor-y
                 #:screen-width
                 #:screen-height
+                #:screen-clear-dirty
                 #:cell-char
                 #:cell-fg
                 #:cell-bg
@@ -23,7 +24,6 @@
                 #:screen-scrollback
                 #:char-width)
   (:import-from #:cl-tmux/model
-                #:divide-window
                 #:create-initial-session
                 #:session-windows
                 #:session-active-window
@@ -45,17 +45,19 @@
                 #:layout-leaves
                 #:layout-find-leaf
                 #:layout-find-parent
-                #:split-orientation
                 #:all-panes
                 #:make-pane
                 #:make-window
                 #:make-session
+                #:pane-feed
                 #:pane-screen
-                #:window-layout
                 #:window-name
                 #:window-width #:window-height
                 #:session-name
-                #:pane-x #:pane-y #:pane-width #:pane-height #:pane-fd #:pane-pid)
+                #:pane-id
+                #:pane-x #:pane-y #:pane-width #:pane-height #:pane-fd #:pane-pid
+                #:pane-neighbor
+                #:apply-named-layout)
   (:import-from #:cl-tmux/renderer
                 #:render-session-to-string
                 #:render-session
@@ -74,7 +76,9 @@
                 #:unix-socket-available-p)
   (:import-from #:cl-tmux/config
                 #:*status-height*
-                #:lookup-key-binding)
+                #:+max-scrollback-lines+
+                #:lookup-key-binding
+                #:define-initial-key-bindings)
   (:import-from #:cl-tmux/commands
                 #:kill-pane
                 #:kill-window

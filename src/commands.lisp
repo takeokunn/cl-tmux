@@ -26,18 +26,16 @@
 (defun kill-window (session &optional window)
   "Destroy WINDOW (default: active window of SESSION).
    Kills all panes in it and removes the window from SESSION.
-   Returns :quit if no windows remain, nil otherwise."
+   Returns :quit if no windows remain, NIL otherwise."
   (let* ((target    (or window (session-active-window session)))
          (remaining (remove target (session-windows session))))
     (dolist (pane (window-panes target))
       (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
     (setf (session-windows session) remaining)
-    (if (null remaining)
-        :quit
-        (progn
-          (when (eq (session-active-window session) target)
-            (session-select-window session (first remaining)))
-          nil))))
+    (unless remaining (return-from kill-window :quit))
+    (when (eq (session-active-window session) target)
+      (session-select-window session (first remaining)))
+    nil))
 
 ;;; ── Rename ─────────────────────────────────────────────────────────────────
 
@@ -57,90 +55,33 @@
 ;;; ── Pane resize ────────────────────────────────────────────────────────────
 
 (defun resize-pane (window direction &optional (amount 5))
-  "Resize the active pane of WINDOW by AMOUNT cells in DIRECTION (:left/:right/
-   :up/:down).
+  "Resize the active pane via the split tree. Returns the active pane on success, NIL otherwise."
+  (when (and window (window-tree window))
+    (window-resize-active window direction amount)))
 
-   With a split TREE the border between the active pane and a neighbour in
-   DIRECTION is resolved from the tree and moved in ANY direction that has a
-   neighbour, reflowing every affected pane (no gaps/overlaps with 3+ panes).
-   Without a tree (legacy flat fixtures) the old single-orientation behaviour is
-   used: :left/:right adjust a vertical split, :up/:down a horizontal one, and
-   an off-axis direction is a no-op.
+;;; ── Copy mode transitions ──────────────────────────────────────────────────
+;;;
+;;; Enter and exit are symmetric facts:
+;;;   copy_mode(enter, Screen) :- copy_mode_p(Screen) := true,  offset := 0.
+;;;   copy_mode(exit,  Screen) :- copy_mode_p(Screen) := false, offset := 0.
 
-   Returns the active pane when a resize happened, NIL otherwise."
-  (let ((pane (and window (window-active-pane window))))
-    (when pane
-      (if (window-tree window)
-          (window-resize-active window direction amount)
-          ;; Legacy flat path (no tree).
-          (ecase (window-layout window)
-            (:vertical
-             (when (member direction '(:left :right))
-               (%resize-vertical window pane direction amount)
-               pane))
-            (:horizontal
-             (when (member direction '(:up :down))
-               (%resize-horizontal window pane direction amount)
-               pane))
-            ((nil) nil))))))         ; single pane: nothing to resize against
+(defmacro define-copy-mode-transitions (&rest specs)
+  "Build copy-mode transition functions from a Prolog-like fact table.
+   Each SPEC is (name active-p docstring): active-p is T or NIL."
+  `(progn
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (name active-p docstring) spec
+                   `(defun ,name (screen)
+                      ,docstring
+                      (setf (screen-copy-mode-p screen) ,active-p
+                            (screen-copy-offset  screen) 0))))
+               specs)))
 
-(defun %resize-vertical (win pane direction delta)
-  "Adjust PANE width and its neighbour within a vertical split of WIN."
-  (let* ((panes (window-panes win))
-         (idx   (position pane panes))
-         (adj   (when idx
-                  (if (eq direction :right)
-                      (nth (min (1+ idx) (1- (length panes))) panes)
-                      (when (> idx 0) (nth (1- idx) panes))))))
-    (when (and adj (not (eq adj pane)))
-      (let ((d (if (eq direction :right) delta (- delta))))
-        (when (and (> (+ (pane-width pane) d) 2)
-                   (> (- (pane-width adj)  d) 2))
-          (setf (pane-width pane) (+ (pane-width pane) d)
-                (pane-width adj)  (- (pane-width adj)  d))
-          (setf (pane-x adj)
-                (+ (pane-x pane) (pane-width pane) 1))
-          (pane-reposition pane
-                           (pane-x pane) (pane-y pane)
-                           (pane-width pane) (pane-height pane))
-          (pane-reposition adj
-                           (pane-x adj) (pane-y adj)
-                           (pane-width adj) (pane-height adj)))))))
-
-(defun %resize-horizontal (win pane direction delta)
-  "Adjust PANE height and its neighbour within a horizontal split of WIN."
-  (let* ((panes (window-panes win))
-         (idx   (position pane panes))
-         (adj   (when idx
-                  (if (eq direction :down)
-                      (nth (min (1+ idx) (1- (length panes))) panes)
-                      (when (> idx 0) (nth (1- idx) panes))))))
-    (when (and adj (not (eq adj pane)))
-      (let ((d (if (eq direction :down) delta (- delta))))
-        (when (and (> (+ (pane-height pane) d) 2)
-                   (> (- (pane-height adj)  d) 2))
-          (setf (pane-height pane) (+ (pane-height pane) d)
-                (pane-height adj)  (- (pane-height adj)  d))
-          (setf (pane-y adj)
-                (+ (pane-y pane) (pane-height pane) 1))
-          (pane-reposition pane
-                           (pane-x pane) (pane-y pane)
-                           (pane-width pane) (pane-height pane))
-          (pane-reposition adj
-                           (pane-x adj) (pane-y adj)
-                           (pane-width adj) (pane-height adj)))))))
-
-;;; ── Copy mode ──────────────────────────────────────────────────────────────
-
-(defun copy-mode-enter (screen)
-  "Enter copy/scroll mode on SCREEN: freeze the viewport at the live position."
-  (setf (screen-copy-mode-p screen) t
-        (screen-copy-offset  screen) 0))
-
-(defun copy-mode-exit (screen)
-  "Exit copy mode: resume live PTY output display."
-  (setf (screen-copy-mode-p screen) nil
-        (screen-copy-offset  screen) 0))
+(define-copy-mode-transitions
+  (copy-mode-enter t
+   "Enter copy/scroll mode on SCREEN: freeze the viewport at the live position.")
+  (copy-mode-exit nil
+   "Exit copy mode: resume live PTY output display."))
 
 (defun copy-mode-scroll (screen delta)
   "Adjust SCREEN's copy-offset by DELTA lines.

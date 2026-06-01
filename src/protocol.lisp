@@ -28,35 +28,61 @@
 (defconstant +header-size+ 5 "1 type byte + 4 length bytes.")
 
 ;;; ── Octet helpers (data) ────────────────────────────────────────────────────
+;;;
+;;; define-uint-encoders is a Prolog-like macro: each spec (name bits doc)
+;;; is a fact that generates a big-endian encoder defun.  The byte-extraction
+;;; forms are derived mechanically from the bit-width at macro-expansion time.
 
-(defun make-octets (n)
-  "A fresh zero-filled octet vector of length N."
-  (make-array n :element-type '(unsigned-byte 8)))
+(defmacro define-uint-encoders (&rest specs)
+  "Build big-endian integer encoder functions from a declarative table.
+   Each SPEC is (name bits docstring).  Generates one DEFUN per entry:
+   (name N) → a fresh vector of BITS/8 bytes, most-significant first."
+  `(progn
+     ,@(mapcar
+        (lambda (spec)
+          (destructuring-bind (name bits docstring) spec
+            `(defun ,name (n)
+               ,docstring
+               (vector ,@(loop for shift from (- bits 8) downto 0 by 8
+                               collect `(ldb (byte 8 ,shift) n))))))
+        specs)))
 
-(defun u16-octets (n)
-  "N (0..65535) as two big-endian octets."
-  (vector (ldb (byte 8 8) n) (ldb (byte 8 0) n)))
-
-(defun u32-octets (n)
-  "N (0..2^32-1) as four big-endian octets."
-  (vector (ldb (byte 8 24) n) (ldb (byte 8 16) n)
-          (ldb (byte 8 8) n)  (ldb (byte 8 0) n)))
+(define-uint-encoders
+  (u16-octets 16 "N (0..65535) as two big-endian octets.")
+  (u32-octets 32 "N (0..2^32-1) as four big-endian octets."))
 
 (defun u16-octets-pair (a b)
   "A,B (each 0..65535) as four big-endian octets (two u16s)."
   (concatenate '(simple-array (unsigned-byte 8) (*))
                (u16-octets a) (u16-octets b)))
 
-(defun read-u16 (buffer start)
-  "Decode a big-endian u16 from BUFFER at START."
-  (logior (ash (aref buffer start) 8) (aref buffer (1+ start))))
+;;; ── Big-endian integer decoders (data) ─────────────────────────────────────
+;;;
+;;; define-uint-decoders is the symmetric counterpart to define-uint-encoders.
+;;; Each spec (name bits doc) generates a DEFUN that reads BITS/8 bytes from
+;;; BUFFER at START, assembling them most-significant byte first via LOGIOR/ASH.
 
-(defun read-u32 (buffer start)
-  "Decode a big-endian u32 from BUFFER at START."
-  (logior (ash (aref buffer start)        24)
-          (ash (aref buffer (+ start 1))  16)
-          (ash (aref buffer (+ start 2))   8)
-          (aref buffer (+ start 3))))
+(defmacro define-uint-decoders (&rest specs)
+  "Build big-endian integer decoder functions from a declarative table.
+   Each SPEC is (name bits docstring). Generates one DEFUN per entry:
+   (name buffer start) → integer decoded from BITS/8 bytes."
+  `(progn
+     ,@(mapcar
+        (lambda (spec)
+          (destructuring-bind (name bits docstring) spec
+            (let ((bytes (/ bits 8)))
+              `(defun ,name (buffer start)
+                 ,docstring
+                 (logior ,@(loop for i from 0 below bytes
+                                 for shift from (- bits 8) downto 0 by 8
+                                 collect (if (zerop shift)
+                                             `(aref buffer (+ start ,i))
+                                             `(ash (aref buffer (+ start ,i)) ,shift))))))))
+        specs)))
+
+(define-uint-decoders
+  (read-u16 16 "Decode a big-endian u16 from BUFFER at START.")
+  (read-u32 32 "Decode a big-endian u32 from BUFFER at START."))
 
 (defun to-octets (sequence)
   "Coerce SEQUENCE of (unsigned-byte 8) into a simple octet vector."
@@ -68,7 +94,7 @@
   "Encode one frame of TYPE carrying PAYLOAD (a sequence of octets) into a fresh
    octet vector: [TYPE][LENGTH u32-be][PAYLOAD]."
   (let* ((len   (length payload))
-         (frame (make-octets (+ +header-size+ len))))
+         (frame (make-array (+ +header-size+ len) :element-type '(unsigned-byte 8))))
     (setf (aref frame 0) type)
     (replace frame (u32-octets len) :start1 1)
     (replace frame payload :start1 +header-size+)
@@ -91,31 +117,36 @@
                     (subseq buffer payload-start next)
                     next)))))
 
-;;; ── Typed message constructors (data) ───────────────────────────────────────
+;;; ── Wire message definition macro ────────────────────────────────────────────
 
-(defun msg-attach (rows cols)
-  "client→server attach frame carrying the initial terminal size."
-  (encode-frame +msg-attach+ (u16-octets-pair rows cols)))
+(defmacro define-wire-messages (&rest specs)
+  "Build typed frame constructor functions from a declarative table.
+   Each SPEC is (name type-constant lambda-list payload-expr docstring).
+   Generates one DEFUN per entry: (name lambda-list) → (encode-frame type payload)."
+  `(progn
+     ,@(mapcar
+        (lambda (spec)
+          (destructuring-bind (name type-const lambda-list payload-expr docstring) spec
+            `(defun ,name ,lambda-list
+               ,docstring
+               (encode-frame ,type-const ,payload-expr))))
+        specs)))
 
-(defun msg-key (octets)
-  "client→server frame carrying raw input OCTETS for the active pane."
-  (encode-frame +msg-key+ (to-octets octets)))
+;;; ── Typed message constructors (data) ────────────────────────────────────────
 
-(defun msg-resize (rows cols)
-  "client→server frame announcing a new terminal size."
-  (encode-frame +msg-resize+ (u16-octets-pair rows cols)))
-
-(defun msg-detach ()
-  "client→server detach frame."
-  (encode-frame +msg-detach+ #()))
-
-(defun msg-frame (string)
-  "server→client frame carrying a rendered screen STRING (UTF-8 encoded)."
-  (encode-frame +msg-frame+ (babel:string-to-octets string :encoding :utf-8)))
-
-(defun msg-bye ()
-  "server→client frame announcing the server is closing."
-  (encode-frame +msg-bye+ #()))
+(define-wire-messages
+  (msg-attach  +msg-attach+  (rows cols)  (u16-octets-pair rows cols)
+   "client→server attach frame carrying the initial terminal size.")
+  (msg-key     +msg-key+     (octets)     (to-octets octets)
+   "client→server frame carrying raw input OCTETS for the active pane.")
+  (msg-resize  +msg-resize+  (rows cols)  (u16-octets-pair rows cols)
+   "client→server frame announcing a new terminal size.")
+  (msg-detach  +msg-detach+  ()           #()
+   "client→server detach frame.")
+  (msg-frame   +msg-frame+   (string)     (babel:string-to-octets string :encoding :utf-8)
+   "server→client frame carrying a rendered screen STRING (UTF-8 encoded).")
+  (msg-bye     +msg-bye+     ()           #()
+   "server→client frame announcing the server is closing."))
 
 ;;; ── Payload decoders (logic) ────────────────────────────────────────────────
 

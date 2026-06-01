@@ -6,130 +6,8 @@
 ;;;;   • sb-posix  — fork, setsid, dup2, tcgetattr/tcsetattr
 ;;;;   • CFFI      — posix_openpt, grantpt, unlockpt, ptsname,
 ;;;;                 ioctl, execv, select (all from libc — no custom C)
-
-;;; ── Load sb-posix ──────────────────────────────────────────────────────────
-
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (require :sb-posix))
-
-;;; ── CFFI: libc surface (no extra library needed) ───────────────────────────
-
-(cffi:defcfun ("posix_openpt" %posix-openpt) :int (oflag :int))
-(cffi:defcfun ("grantpt"      %grantpt)      :int (fd :int))
-(cffi:defcfun ("unlockpt"     %unlockpt)     :int (fd :int))
-;;; ptsname returns a pointer to a static string — copy it immediately
-(cffi:defcfun ("ptsname"      %ptsname)      :string (fd :int))
-
-;;; Raw fd read / write
-(cffi:defcfun ("read"  %read)  :long
-  (fd :int) (buf :pointer) (count :unsigned-long))
-(cffi:defcfun ("write" %write) :long
-  (fd :int) (buf :pointer) (count :unsigned-long))
-
-;;; select(2)
-(cffi:defcfun ("select" %select) :int
-  (nfds      :int)
-  (readfds   :pointer)
-  (writefds  :pointer)
-  (exceptfds :pointer)
-  (timeout   :pointer))
-
-;;; ── Platform constants ─────────────────────────────────────────────────────
-
-;;; open(2) flags
-(defconstant +o-rdwr+
-  #+darwin #x0002
-  #-darwin #o000002)
-
-(defconstant +o-noctty+
-  #+darwin  #x20000
-  #-darwin  #o000400)
-
-;;; ioctl request codes (TIOC*)
-(defconstant +tiocsctty+
-  #+darwin #x20007461
-  #-darwin #x540E)
-
-(defconstant +tiocgwinsz+
-  #+darwin #x40087468
-  #-darwin #x5413)
-
-(defconstant +tiocswinsz+
-  #+darwin #x80087467
-  #-darwin #x5414)
-
-;;; struct winsize — 4 × uint16, layout identical on every platform
-(cffi:defcstruct winsize
-  (ws-row    :uint16)
-  (ws-col    :uint16)
-  (ws-xpixel :uint16)
-  (ws-ypixel :uint16))
-
-;;; ── fd_set helpers for select(2) ───────────────────────────────────────────
-;;;
-;;; FD_SET / FD_ZERO / FD_ISSET are C macros; we implement them in Lisp.
-;;; An fd_set is 128 bytes (32 int32 words) on 64-bit Linux and macOS.
-
-(defconstant +fd-set-words+ 32)
-
-(declaim (inline fd-zero! fd-set! fd-isset-p))
-
-(defun fd-zero! (ptr)
-  (declare (type cffi:foreign-pointer ptr))
-  (dotimes (i +fd-set-words+)
-    (setf (cffi:mem-aref ptr :int32 i) 0)))
-
-(defun fd-set! (fd ptr)
-  (declare (type fixnum fd)
-           (type cffi:foreign-pointer ptr))
-  (let ((word (floor fd 32))
-        (bit  (mod   fd 32)))
-    (setf (cffi:mem-aref ptr :int32 word)
-          (logior (cffi:mem-aref ptr :int32 word) (ash 1 bit)))))
-
-(defun fd-isset-p (fd ptr)
-  (declare (type fixnum fd)
-           (type cffi:foreign-pointer ptr))
-  (let ((word (floor fd 32))
-        (bit  (mod   fd 32)))
-    (not (zerop (logand (cffi:mem-aref ptr :int32 word) (ash 1 bit))))))
-
-;;; ── Public: terminal raw mode ──────────────────────────────────────────────
-
-(defvar *saved-termios* nil)
-
-(defun enable-raw-mode! (fd)
-  "Switch FD to raw (unbuffered, no-echo) mode; save old settings."
-  (let ((termios (sb-posix:tcgetattr fd)))
-    (setf *saved-termios* termios)
-    ;; cfmakeraw equivalent built from individual flag bits
-    (setf (sb-posix:termios-iflag termios)
-          (logand (sb-posix:termios-iflag termios)
-                  (lognot (logior sb-posix:ignbrk sb-posix:brkint
-                                  sb-posix:parmrk sb-posix:istrip
-                                  sb-posix:inlcr  sb-posix:igncr
-                                  sb-posix:icrnl  sb-posix:ixon))))
-    (setf (sb-posix:termios-oflag termios)
-          (logand (sb-posix:termios-oflag termios)
-                  (lognot sb-posix:opost)))
-    (setf (sb-posix:termios-cflag termios)
-          (logior (logand (sb-posix:termios-cflag termios)
-                          (lognot (logior sb-posix:csize sb-posix:parenb)))
-                  sb-posix:cs8))
-    (setf (sb-posix:termios-lflag termios)
-          (logand (sb-posix:termios-lflag termios)
-                  (lognot (logior sb-posix:echo   sb-posix:echonl
-                                  sb-posix:icanon sb-posix:isig
-                                  sb-posix:iexten))))
-    (setf (aref (sb-posix:termios-cc termios) sb-posix:vmin)  1
-          (aref (sb-posix:termios-cc termios) sb-posix:vtime) 0)
-    (sb-posix:tcsetattr fd sb-posix:tcsaflush termios)))
-
-(defun disable-raw-mode! (fd)
-  "Restore terminal settings saved by enable-raw-mode!."
-  (when *saved-termios*
-    (sb-posix:tcsetattr fd sb-posix:tcsaflush *saved-termios*)
-    (setf *saved-termios* nil)))
+;;;;
+;;;; FFI declarations and platform constants live in pty-ffi.lisp.
 
 ;;; ── Public: PTY creation ───────────────────────────────────────────────────
 
@@ -157,53 +35,70 @@
                           :pointer ws
                           :int)))
 
+;;; ── Private: forkpty helpers ───────────────────────────────────────────────
+
+(defun %child-setup-tty (slave-path master-fd)
+  "Set up the slave PTY as the controlling terminal for a new child process.
+   Becomes session leader, opens the slave, installs it as the controlling
+   terminal, wires it to stdin/stdout/stderr, and closes the now-unneeded fds."
+  (sb-posix:setsid)
+  (let ((slave (sb-posix:open slave-path (logior +o-rdwr+ +o-noctty+) 0)))
+    (cffi:foreign-funcall "ioctl"
+                          :int slave :unsigned-long +tiocsctty+ :int 0 :int)
+    (sb-posix:dup2 slave 0)
+    (sb-posix:dup2 slave 1)
+    (sb-posix:dup2 slave 2)
+    (sb-posix:close slave))
+  (sb-posix:close master-fd))
+
+(defun %child-exec-shell ()
+  "Replace the current process image with *DEFAULT-SHELL*.
+   Calls _exit(1) if execv fails — never returns normally."
+  (let ((shell cl-tmux/config:*default-shell*))
+    (cffi:with-foreign-string (path-ptr shell)
+      (cffi:with-foreign-string (arg0-ptr shell)
+        (cffi:with-foreign-object (argv :pointer 2)
+          (setf (cffi:mem-aref argv :pointer 0) arg0-ptr
+                (cffi:mem-aref argv :pointer 1) (cffi:null-pointer))
+          (cffi:foreign-funcall "execv" :pointer path-ptr :pointer argv :int)))))
+  (cffi:foreign-funcall "_exit" :int 1 :void))
+
 (defun forkpty-with-shell (rows cols)
   "Fork a child shell process on a fresh PTY of size ROWS×COLS.
-   Parent: returns (values master-fd child-pid).
-   Child:  execs *default-shell* and never returns to Lisp."
+   Parent returns (values master-fd child-pid).
+   Child execs *default-shell* and never returns to Lisp."
   (declare (type fixnum rows cols))
-  (multiple-value-bind (master slave-path)
-      (open-pty rows cols)
+  (multiple-value-bind (master slave-path) (open-pty rows cols)
     (let ((pid (sb-posix:fork)))
       (cond
         ((< pid 0) (error "fork failed"))
-
-        ;; ── Child ──────────────────────────────────────────────────────────
-        ((= pid 0)
-         ;; Become session leader → PTY becomes our controlling terminal.
-         (sb-posix:setsid)
-         (let ((slave (sb-posix:open slave-path (logior +o-rdwr+ +o-noctty+) 0)))
-           ;; TIOCSCTTY makes this PTY the controlling terminal.
-           (cffi:foreign-funcall "ioctl"
-                                 :int slave
-                                 :unsigned-long +tiocsctty+
-                                 :int 0
-                                 :int)
-           ;; Wire slave as stdin/stdout/stderr.
-           (sb-posix:dup2 slave 0)
-           (sb-posix:dup2 slave 1)
-           (sb-posix:dup2 slave 2)
-           (sb-posix:close slave))
-         ;; Parent's master fd is not needed in the child.
-         (sb-posix:close master)
-         ;; Replace this image with the shell via libc execv.
-         ;; On error, _exit immediately to avoid running parent-image atexit hooks.
-         (let ((shell cl-tmux/config:*default-shell*))
-           (cffi:with-foreign-string (path-ptr shell)
-             (cffi:with-foreign-string (arg0-ptr shell)
-               (cffi:with-foreign-object (argv :pointer 2)
-                 (setf (cffi:mem-aref argv :pointer 0) arg0-ptr
-                       (cffi:mem-aref argv :pointer 1) (cffi:null-pointer))
-                 (cffi:foreign-funcall "execv"
-                                       :pointer path-ptr
-                                       :pointer argv
-                                       :int)))))
-         ;; If execv returned, exec failed.
-         (cffi:foreign-funcall "_exit" :int 1 :void))
-
-        ;; ── Parent ─────────────────────────────────────────────────────────
-        (t
+        ((= pid 0)                             ; child
+         (%child-setup-tty slave-path master)
+         (%child-exec-shell))
+        (t                                     ; parent
          (values master pid))))))
+
+;;; ── FFI memory transfer helpers (data layer) ────────────────────────────────
+;;;
+;;; Prolog-like facts mapping the transfer direction:
+;;;   copy_to_foreign(octets, ptr, len) :- for_each(i, 0, len, set_byte(ptr, i, octets[i])).
+;;;   copy_from_foreign(ptr, n) → result :- for_each(i, 0, n, result[i] = byte(ptr, i)).
+
+(declaim (inline %octets-to-foreign %foreign-to-octets))
+
+(defun %octets-to-foreign (octets ptr len)
+  "Copy LEN bytes from Lisp OCTETS vector into foreign memory PTR."
+  (declare (type (simple-array (unsigned-byte 8) (*)) octets)
+           (type fixnum len))
+  (dotimes (i len)
+    (setf (cffi:mem-aref ptr :uint8 i) (aref octets i))))
+
+(defun %foreign-to-octets (ptr n)
+  "Copy N bytes from foreign memory PTR into a fresh Lisp octet vector."
+  (declare (type fixnum n))
+  (let ((result (make-array n :element-type '(unsigned-byte 8))))
+    (dotimes (i n) (setf (aref result i) (cffi:mem-aref ptr :uint8 i)))
+    result))
 
 ;;; ── Public: PTY I/O ────────────────────────────────────────────────────────
 
@@ -216,8 +111,7 @@
      (let ((len (length data)))
        (when (plusp len)
          (cffi:with-foreign-object (buf :uint8 len)
-           (loop for i below len
-                 do (setf (cffi:mem-aref buf :uint8 i) (aref data i)))
+           (%octets-to-foreign data buf len)
            (%write fd buf len)))))))
 
 (defun pty-read-blocking (fd buf-size)
@@ -226,10 +120,7 @@
   (cffi:with-foreign-object (raw :uint8 buf-size)
     (let ((n (%read fd raw buf-size)))
       (when (plusp n)
-        (let ((result (make-array n :element-type '(unsigned-byte 8))))
-          (loop for i below n
-                do (setf (aref result i) (cffi:mem-aref raw :uint8 i)))
-          result)))))
+        (%foreign-to-octets raw n)))))
 
 (defun pty-close (master-fd child-pid)
   "Send SIGHUP to the child process and close the PTY master.

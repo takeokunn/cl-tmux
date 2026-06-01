@@ -8,6 +8,11 @@
    #:*default-shell*
    #:*status-height*
    #:+pty-buf-size+
+   #:+max-scrollback-lines+
+   #:+poll-timeout-us+
+   #:+accept-timeout-us+
+   #:+pty-poll-timeout-us+
+   #:define-initial-key-bindings
    #:*key-bindings*
    #:lookup-key-binding
    #:describe-key-bindings
@@ -73,12 +78,17 @@
 (defpackage #:cl-tmux/terminal/types
   (:use #:cl #:bordeaux-threads)
   (:export
-   ;; Attribute bit constants
+   ;; Attribute bit constants (LSB first, matching bit layout in cell.lisp)
    #:+attr-bold+
    #:+attr-dim+
    #:+attr-reverse+
    #:+attr-underline+
    #:+attr-blink+
+   #:+attr-italic+
+   #:+attr-conceal+
+   #:+attr-strikethrough+
+   ;; Grid allocation helper
+   #:%make-blank-cells
    ;; Cell struct + helpers
    #:cell
    #:make-cell
@@ -115,6 +125,8 @@
    #:screen-alt-cy
    ;; DECSC/DECRC saved cursor
    #:screen-saved-cursor
+   ;; DECTCEM cursor visibility
+   #:screen-cursor-visible
    ;; Copy / scrollback mode
    #:screen-copy-mode-p
    #:screen-copy-offset
@@ -224,6 +236,8 @@
    ;; Dirty flag
    #:screen-dirty-p
    #:screen-clear-dirty
+   ;; DECTCEM cursor visibility
+   #:screen-cursor-visible
    ;; Lock (for renderer <-> reader-thread synchronisation)
    #:screen-lock
    ;; Resize the grid in place
@@ -278,7 +292,6 @@
    #:window-name
    #:window-width #:window-height
    #:window-panes
-   #:window-layout
    #:window-tree
    #:window-active-pane
    #:window-select-pane
@@ -287,16 +300,19 @@
    #:window-remove-pane
    #:window-resize-active
    #:window-refresh-panes
-   #:divide-window
    #:ensure-window-fits
    #:pane-reposition
    ;; Layout split-tree
+   #:+pane-min-width+ #:+pane-min-height+
    #:layout-leaf #:make-layout-leaf #:layout-leaf-p #:layout-leaf-pane
    #:layout-split #:make-layout-split #:layout-split-p
    #:layout-split-orientation #:layout-split-first #:layout-split-second
    #:layout-split-ratio
    #:layout-leaves #:layout-find-leaf #:layout-find-parent
-   #:split-orientation
+   #:layout-min-extent #:layout-assign #:layout-split-axis-extent
+   #:resize-find-split #:resize-direction-orientation
+   #:split-child-geometry #:next-pane-id
+   #:pane-neighbor
    ;; Session
    #:session
    #:make-session
@@ -307,9 +323,28 @@
    #:session-select-window
    #:session-new-window
    #:session-active-pane
+   ;; Named layouts
+   #:apply-named-layout
    ;; Global state
    #:create-initial-session
    #:all-panes))
+
+(defpackage #:cl-tmux/format
+  (:use #:cl #:cl-tmux/model)
+  (:export #:expand-format #:format-context-from-session))
+
+(defpackage #:cl-tmux/buffer
+  (:use #:cl)
+  (:export #:*paste-buffers* #:add-paste-buffer #:get-paste-buffer
+           #:list-paste-buffers #:delete-paste-buffer #:clear-paste-buffers))
+
+(defpackage #:cl-tmux/options
+  (:use #:cl)
+  (:export #:*global-options* #:*option-registry*
+           #:option-spec #:make-option-spec
+           #:option-spec-name #:option-spec-type #:option-spec-default
+           #:define-tmux-options #:get-option #:set-option
+           #:option-defined-p #:all-options))
 
 (defpackage #:cl-tmux/renderer
   (:use #:cl #:bordeaux-threads

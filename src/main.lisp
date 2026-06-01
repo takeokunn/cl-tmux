@@ -59,13 +59,27 @@
     (dolist (pane (all-panes session))
       (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))))
 
+;;; ── Startup mode dispatch (data / logic separation) ─────────────────────────
+;;;
+;;; *startup-modes* is the DATA: a map from mode-name strings to handler
+;;; functions.  main is the LOGIC: it looks up the mode and dispatches.
+;;; Adding a new mode only requires adding an entry to the alist, not changing
+;;; the dispatch logic.
+
+(defparameter *startup-modes*
+  '(("server" . run-server)
+    ("attach" . run-client))
+  "Mode-name → function-name (symbol) dispatch table for the binary entry point.
+   Storing symbols (not function objects) means test stubs that rebind the
+   function cell with SETF FDEFINITION are honoured at dispatch time.")
+
 (defun main ()
-  "Binary entry point -- invoked by the image built via (asdf:make :cl-tmux).
-   Dispatches on the command-line arguments (see file header)."
-  (let* ((args (rest sb-ext:*posix-argv*))
-         (mode (first args))
-         (name (or (second args) "0")))
-    (cond
-      ((equal mode "server") (run-server name))
-      ((equal mode "attach") (run-client name))
-      (t                     (run-standalone)))))
+  "Binary entry point — dispatches on the first argv item.
+   Unrecognized or absent modes fall through to run-standalone."
+  (let* ((args    (rest sb-ext:*posix-argv*))
+         (mode    (first args))
+         (name    (or (second args) "0"))
+         (handler (cdr (assoc mode *startup-modes* :test #'equal))))
+    (if handler
+        (funcall handler name)
+        (run-standalone))))

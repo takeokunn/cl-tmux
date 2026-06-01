@@ -12,25 +12,43 @@
     :components
     ((:file "package")
      (:file "config")
-     (:file "pty")
+     (:file "config-directives")   ; config-file parsing + directive processing
+     (:file "pty-ffi")       ; FFI declarations and platform constants
+     (:file "pty-rawmode")   ; terminal raw mode management
+     (:file "pty")           ; PTY lifecycle, I/O, multiplexing
      (:file "protocol")
      (:file "transport")
      (:file "net")
      (:module "terminal"
       :serial t
       :components
-      ((:file "types")
-       (:file "actions")
+      ((:file "cell")      ; immutable cell type, char-width table
+       (:file "screen")    ; mutable screen struct and grid operations
+       (:file "scroll")    ; row helpers + scroll-up/down + decstbm (loads before cursor/erase/edit)
+       (:file "erase")     ; erase-region, erase-display, erase-line rule tables
+       (:file "edit")      ; delete/insert chars+lines (uses %copy-row, %clear-row from scroll)
+       (:file "cursor")    ; cursor movement, character writing (uses scroll-up-one)
+       (:file "modes")     ; DEC modes, cursor save/restore, display projection
        (:file "sgr")
        (:file "csi")
        (:file "parser")
        (:file "emulator")))
-     (:file "model")
+     (:file "pane")             ; leaf PTY data and wiring (loaded first: layout needs pane-reposition)
+     (:file "layout")           ; tree structure + traversal (uses pane-reposition)
+     (:file "layout-geometry")  ; rectangle assignment + resize helpers (uses pane-id, pane-x/y/w/h)
+     (:file "window")   ; window tree logic (uses pane + layout)
+     (:file "session")  ; session management (uses window)
+     (:file "format")   ; tmux-style format string expansion
+     (:file "buffer")   ; paste-buffer ring
+     (:file "options")  ; global option registry
      (:file "prompt")
      (:file "commands")
-     (:file "renderer")
+     (:file "renderer-format")  ; ANSI primitives
+     (:file "renderer-pane")    ; pane + border rendering
+     (:file "renderer")         ; status bar + session compositing
      (:file "input")
      (:file "runtime")
+     (:file "dispatch") ; declarative command dispatch (in cl-tmux)
      (:file "events")
      (:file "server")
      (:file "client")
@@ -50,22 +68,49 @@
     :components
     ((:file "package")
      (:file "helpers")
-     (:file "terminal-tests")
-     (:file "layout-tests")
-     (:file "layout-tree-tests")
-     (:file "model-tests")
-     (:file "config-tests")
-     (:file "renderer-tests")
-     (:file "events-tests")
-     (:file "commands-tests")    ; after events-tests (shares its no-PTY fixtures idiom)
-     (:file "prompt-tests")
-     (:file "protocol-tests")
-     (:file "transport-tests")
-     (:file "net-tests")
-     (:file "server-tests")
-     (:file "pty-tests")
-     (:file "input-tests")
-     (:file "main-tests")
+     (:module "unit"
+      :serial t
+      :components
+      ((:module "terminal"
+        :serial t
+        :components
+        ((:file "cell-tests")     ; declares terminal-suite parent; double-width sub-suite
+         (:file "screen-tests")   ; resize sub-suite
+         (:file "cursor-tests")
+         (:file "scroll-tests")
+         (:file "modes-tests")
+         (:file "sgr-tests")
+         (:file "csi-tests")
+         (:file "parser-tests")
+         (:file "emulator-tests")))
+       (:file "layout-tests")
+       (:file "layout-geometry-tests")
+       (:file "pane-tests")
+       (:file "window-tests")
+       (:file "session-tests")
+       (:file "format-tests")
+       (:file "buffer-tests")
+       (:file "options-tests")
+       (:file "config-tests")
+       (:file "config-directives-tests")
+       (:file "renderer-format-tests")
+       (:file "renderer-pane-tests")
+       (:file "renderer-tests")
+       (:file "dispatch-tests")
+       (:file "events-tests")
+       (:file "commands-tests")
+       (:file "prompt-tests")
+       (:file "protocol-tests")
+       (:file "transport-tests")
+       (:file "net-tests")
+       (:file "server-tests")
+       (:file "pty-ffi-tests")
+       (:file "pty-rawmode-tests")
+       (:file "pty-tests")
+       (:file "input-tests")
+       (:file "runtime-tests")
+       (:file "client-tests")
+       (:file "main-tests")))
      (:file "suite"))))
   ;; Run with: (asdf:test-system :cl-tmux)
   :perform (test-op (op c)

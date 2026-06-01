@@ -5,6 +5,16 @@
 
 (in-package #:cl-tmux/test)
 
+;;; ── Config isolation ────────────────────────────────────────────────────────
+
+(defmacro with-isolated-config (&body body)
+  "Run BODY with the mutable config specials dynamically rebound to copies,
+   so directives applied in a test never leak into other suites."
+  `(let ((cl-tmux/config:*key-bindings*  (copy-alist cl-tmux/config:*key-bindings*))
+         (cl-tmux/config:*default-shell* cl-tmux/config:*default-shell*)
+         (cl-tmux/config:*status-height* cl-tmux/config:*status-height*))
+     ,@body))
+
 ;;; ── Screen builder ──────────────────────────────────────────────────────────
 
 (defmacro with-screen ((var w h) &body body)
@@ -118,39 +128,158 @@
                      expected-row
                      (row-string s 0 :end (length expected-row)))))))))))
 
-;;; ── Layout invariant checker ────────────────────────────────────────────────
+;;; ── Terminal emulator helpers ───────────────────────────────────────────────
 
-(defun check-layout-invariants (slots direction rows cols &key test-name)
-  "Assert the three geometric invariants for any divide-window result.
+(defmacro check-cursor (screen cx cy)
+  "Assert that SCREEN's cursor is at column CX, row CY."
+  `(progn
+     (is (= ,cx (screen-cursor-x ,screen))
+         "cursor-x: expected ~D got ~D" ,cx (screen-cursor-x ,screen))
+     (is (= ,cy (screen-cursor-y ,screen))
+         "cursor-y: expected ~D got ~D" ,cy (screen-cursor-y ,screen))))
 
-   SLOTS is a list of (X Y W H) rectangles.  DIRECTION is :vertical or
-   :horizontal.  ROWS and COLS are the enclosing grid dimensions.
-   TEST-NAME is used in failure messages.
+(defun row-blank-p (screen y)
+  "Return T when every cell in row Y of SCREEN contains a space."
+  (every (lambda (c) (char= #\Space c))
+         (coerce (row-string screen y) 'list)))
 
-   Invariants checked:
-     1. Each slot fits within the grid (x>=0, y>=0, w>=1, h>=1,
-        x+w<=cols, y+h<=rows).
-     2. No two slots overlap along the split axis:
-        :vertical   -- adjacent slots do not overlap in X
-        :horizontal -- adjacent slots do not overlap in Y"
-  (let ((name (or test-name "layout")))
-    (dolist (slot slots)
-      (destructuring-bind (x y w h) slot
-        (is (>= x 0)          "~A: x >= 0 (got ~D)" name x)
-        (is (>= y 0)          "~A: y >= 0 (got ~D)" name y)
-        (is (>= w 1)          "~A: w >= 1 (got ~D)" name w)
-        (is (>= h 1)          "~A: h >= 1 (got ~D)" name h)
-        (is (<= (+ x w) cols) "~A: x+w <= cols (~D+~D > ~D)" name x w cols)
-        (is (<= (+ y h) rows) "~A: y+h <= rows (~D+~D > ~D)" name y h rows)))
-    ;; No pairwise overlap along the split axis.
-    (loop for (a . rest) on slots
-          do (dolist (b rest)
-               (destructuring-bind (ax ay aw ah) a
-                 (destructuring-bind (bx by bw bh) b
-                   (ecase direction
-                     (:vertical
-                      (is (or (<= (+ ax aw) bx) (<= (+ bx bw) ax))
-                          "~A: vertical overlap between ~A and ~A" name a b))
-                     (:horizontal
-                      (is (or (<= (+ ay ah) by) (<= (+ by bh) ay))
-                          "~A: horizontal overlap between ~A and ~A" name a b)))))))))
+(defun utf8-feed (screen lisp-string)
+  "Encode LISP-STRING as UTF-8 and feed the bytes to SCREEN."
+  (screen-process-bytes screen
+                        (babel:string-to-octets lisp-string :encoding :utf-8))
+  screen)
+
+(defun feed-lines (screen &rest lines)
+  "Feed LINES to SCREEN separated by CR/LF, scrolling as needed.  Returns SCREEN."
+  (loop for (line . more) on lines
+        do (feed screen line)
+        when more do (feed screen (format nil "~C~C" #\Return #\Linefeed)))
+  screen)
+
+(defun display-row-string (screen y &key end)
+  "Characters of viewport row Y via screen-display-cell (honors copy-offset)."
+  (let ((end (or end (screen-width screen))))
+    (with-output-to-string (s)
+      (loop for x below end
+            do (write-char (cell-char (screen-display-cell screen x y)) s)))))
+
+;;; ── No-PTY pane builder ─────────────────────────────────────────────────────
+
+(defun make-no-pty-pane (id x y w h)
+  "Build a pane with no real PTY and a matching virtual screen."
+  (make-pane :id id :x x :y y :width w :height h
+             :fd -1 :pid -1
+             :screen (make-screen w h)))
+
+;;; ── Session fixture ─────────────────────────────────────────────────────────
+
+(defmacro with-session ((var rows cols) &body body)
+  "Bind VAR to a fresh session of ROWS x COLS, run BODY, then close all PTYs."
+  `(let ((,var (create-initial-session ,rows ,cols)))
+     (unwind-protect
+          (progn ,@body)
+       (dolist (p (all-panes ,var))
+         (ignore-errors (pty-close (pane-fd p) (pane-pid p)))))))
+
+;;; ── Event-dispatch fixtures ─────────────────────────────────────────────────
+
+(defun make-fake-window (id name &key (npanes 1))
+  "A window with NPANES fake panes (fd -1) and a matching tree; the first pane is active."
+  (let* ((panes (loop for i below npanes
+                      collect (make-pane :id (1+ i) :x 0 :y 0 :width 20 :height 5
+                                         :fd -1 :pid -1 :screen (make-screen 20 5))))
+         ;; Build a balanced left-spine tree: each pane wrapped in a leaf.
+         ;; For 1 pane: just a leaf. For 2+: chain of :h splits.
+         (tree  (labels ((build (ps)
+                           (if (null (rest ps))
+                               (make-layout-leaf (first ps))
+                               (make-layout-split :h
+                                  (make-layout-leaf (first ps))
+                                  (build (rest ps))
+                                  1/2))))
+                  (build panes)))
+         (win   (make-window :id id :name name :width 20 :height 5
+                             :panes panes :tree tree)))
+    (window-select-pane win (first panes))
+    win))
+
+(defun make-fake-session (&key (nwindows 1) (npanes 1))
+  "A session of NWINDOWS fake windows (each with NPANES fake panes), no PTYs."
+  (let* ((windows (loop for i below nwindows
+                        collect (make-fake-window (1+ i) (format nil "~D" (1+ i))
+                                                  :npanes npanes)))
+         (sess    (make-session :id 1 :name "0" :windows windows)))
+    (session-select-window sess (first windows))
+    sess))
+
+(defun active-screen (session)
+  (pane-screen (window-active-pane (session-active-window session))))
+
+(defmacro with-loop-state (&body body)
+  "Dynamically bind the event-loop specials so dispatch side effects are isolated."
+  `(let ((cl-tmux::*running* t) (cl-tmux::*dirty* nil)) ,@body))
+
+(defun seed-scrollback (screen n)
+  "Give SCREEN N dummy scrollback rows so copy-mode-scroll has room to move."
+  (setf (cl-tmux/terminal/types::screen-scrollback screen)
+        (loop repeat n collect (vector))))
+
+;;; ── Higher-level screen assertion DSL ──────────────────────────────────────
+;;;
+;;; These macros raise the abstraction level for common screen assertions,
+;;; making test intent visible and reducing boilerplate IS calls.
+
+(defmacro check-row (screen y expected-string)
+  "Assert that row Y of SCREEN starts with EXPECTED-STRING."
+  `(is (string= ,expected-string
+                (row-string ,screen ,y :end (length ,expected-string)))
+       "row ~D: expected ~S got ~S"
+       ,y ,expected-string
+       (row-string ,screen ,y :end (length ,expected-string))))
+
+(defmacro check-cell (screen x y &key char fg bg attrs)
+  "Assert cell attributes at column X, row Y of SCREEN.
+   Only non-NIL keyword arguments are checked."
+  (let ((forms '()))
+    (when char
+      (push `(is (char= ,char (char-at ,screen ,x ,y))
+                 "char at (~D,~D): expected ~C got ~C" ,x ,y ,char
+                 (char-at ,screen ,x ,y))
+            forms))
+    (when fg
+      (push `(is (= ,fg (fg-at ,screen ,x ,y))
+                 "fg at (~D,~D): expected ~D got ~D" ,x ,y ,fg
+                 (fg-at ,screen ,x ,y))
+            forms))
+    (when bg
+      (push `(is (= ,bg (bg-at ,screen ,x ,y))
+                 "bg at (~D,~D): expected ~D got ~D" ,x ,y ,bg
+                 (bg-at ,screen ,x ,y))
+            forms))
+    (when attrs
+      (push `(is (= ,attrs (attrs-at ,screen ,x ,y))
+                 "attrs at (~D,~D): expected #x~X got #x~X" ,x ,y ,attrs
+                 (attrs-at ,screen ,x ,y))
+            forms))
+    `(progn ,@(nreverse forms))))
+
+(defmacro check-sgr-state (screen &key (fg 7) (bg 0) (attrs 0))
+  "Assert the current SGR pen state (foreground, background, attribute bitmask)."
+  `(progn
+     (is (= ,fg (cl-tmux/terminal/types:screen-cur-fg ,screen))
+         "cur-fg: expected ~D got ~D" ,fg
+         (cl-tmux/terminal/types:screen-cur-fg ,screen))
+     (is (= ,bg (cl-tmux/terminal/types:screen-cur-bg ,screen))
+         "cur-bg: expected ~D got ~D" ,bg
+         (cl-tmux/terminal/types:screen-cur-bg ,screen))
+     (is (= ,attrs (cl-tmux/terminal/types:screen-cur-attrs ,screen))
+         "cur-attrs: expected #x~X got #x~X" ,attrs
+         (cl-tmux/terminal/types:screen-cur-attrs ,screen))))
+
+(defmacro with-filled-screen ((var w h fill-char) &body body)
+  "Bind VAR to a W×H screen pre-filled with FILL-CHAR, then run BODY."
+  `(let ((,var (make-screen ,w ,h)))
+     (dotimes (row ,h)
+       (dotimes (col ,w)
+         (feed ,var (string ,fill-char))))
+     ,@body))

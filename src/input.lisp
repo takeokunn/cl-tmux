@@ -24,7 +24,7 @@
 
 ;;; ── Non-blocking byte read ─────────────────────────────────────────────────
 
-(defun read-byte-nonblock (&optional (timeout-us 50000))
+(defun read-byte-nonblock (&optional (timeout-us +poll-timeout-us+))
   "Return a byte from stdin if one arrives within TIMEOUT-US microseconds,
    or NIL if the timeout elapses.  TIMEOUT-US = 0 is purely non-blocking."
   (declare (type fixnum timeout-us))

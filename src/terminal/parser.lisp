@@ -5,6 +5,11 @@
 ;;;; Each parser state is a function: (screen byte) → next-state-function
 ;;;; The screen's (parser) slot holds the current continuation.
 ;;;; There is no mutable parser state outside of the CPS closures themselves.
+;;;;
+;;;; States are defined with DEFINE-STATE, a Prolog-like macro that maps
+;;;; byte patterns to actions and their continuation (next state).  Each
+;;;; rule reads as a Prolog clause: "given this byte, take this action,
+;;;; transition to this state."
 
 ;;; ── Inline helpers ─────────────────────────────────────────────────────────
 
@@ -25,10 +30,35 @@
         ((< byte #xF0) (values (logand byte #x0F) 2))
         (t             (values (logand byte #x07) 3))))
 
-;;; All cursor / write / scroll / reset side effects live in
-;;; cl-tmux/terminal/actions (the logic layer) and are used here unqualified:
-;;; write-codepoint, write-char-at-cursor, cursor-lf, cursor-cr, cursor-bs, cursor-ht,
-;;; cursor-ri, save-cursor, restore-cursor, ris-action.
+;;; ── Prolog-like state definition macro ─────────────────────────────────────
+;;;
+;;; (define-state NAME (SCREEN BYTE) rule...)
+;;; Each rule is (PATTERN &rest BODY) where PATTERN is:
+;;;   integer  → exact byte match:   (= BYTE integer)
+;;;   symbol   → predicate match:    (symbol BYTE)
+;;;   t        → default clause
+;;;   list     → verbatim condition
+;;; The BODY forms are evaluated in order; the last form is the next state.
+;;; Both SCREEN and BYTE are declared ignorable so state functions that
+;;; discard their arguments (e.g. osc-state, charset-state) compile cleanly.
+
+(defmacro define-state (name (screen-var byte-var) &rest rules)
+  "Prolog-like CPS state definition: one rule per parser state clause."
+  `(defun ,name (,screen-var ,byte-var)
+     (declare (type screen ,screen-var)
+              (type (unsigned-byte 8) ,byte-var)
+              (ignorable ,screen-var ,byte-var))
+     (cond
+       ,@(mapcar
+          (lambda (rule)
+            (destructuring-bind (pattern &rest body) rule
+              `(,(cond
+                   ((eq pattern 't)    't)
+                   ((integerp pattern) `(= ,byte-var ,pattern))
+                   ((symbolp pattern)  `(,pattern ,byte-var))
+                   (t                   pattern))
+                ,@body)))
+          rules))))
 
 ;;; ── Parameterized state constructors ───────────────────────────────────────
 
@@ -79,67 +109,63 @@
           (ground-state screen byte)))))
 
 ;;; ── Named (non-parameterized) state functions ──────────────────────────────
+;;;
+;;; Each define-state call reads like Prolog clauses:
+;;;   ground-state(Screen, 0x1B) :- next_state(escape_state).
+;;;   ground-state(Screen, 0x0D) :- cursor_cr(Screen), next_state(ground_state).
 
-(defun ground-state (screen byte)
-  "Ground (normal) state: process one byte and return the next state."
-  (declare (type screen screen) (type (unsigned-byte 8) byte))
-  (cond
-    ((= byte #x1B)  #'escape-state)
-    ((= byte #x0D)  (cursor-cr screen) #'ground-state)
-    ((= byte #x0A)  (cursor-lf screen) #'ground-state)
-    ((= byte #x0B)  (cursor-lf screen) #'ground-state)
-    ((= byte #x0C)  (cursor-lf screen) #'ground-state)
-    ((= byte #x08)  (cursor-bs screen) #'ground-state)
-    ((= byte #x09)  (cursor-ht screen) #'ground-state)
-    ((= byte #x07)  #'ground-state)    ; BEL — ignore
-    ((= byte #x7F)  #'ground-state)    ; DEL — ignore
-    ((= byte #x0E)  #'ground-state)    ; SO — charset shift out (ignore)
-    ((= byte #x0F)  #'ground-state)    ; SI — charset shift in  (ignore)
-    ((printable-ascii-p byte)
-     (write-char-at-cursor screen (code-char byte))
-     #'ground-state)
-    ((utf8-lead-p byte)
-     (multiple-value-bind (acc left) (utf8-lead-decode byte)
-       (make-utf8-k acc left)))
-    ((>= byte #x80)                    ; stray continuation byte / #xFF: invalid UTF-8
-     (write-codepoint screen #xFFFD)
-     #'ground-state)
-    (t #'ground-state)))               ; unhandled C0 control byte: ignore
+(define-state ground-state (screen byte)
+  ;; ── Escape and control ──────────────────────────────────────────────────
+  (#x1B  #'escape-state)
+  (#x0D  (cursor-cr screen) #'ground-state)
+  (#x0A  (cursor-lf screen) #'ground-state)
+  (#x0B  (cursor-lf screen) #'ground-state)        ; VT treated as LF
+  (#x0C  (cursor-lf screen) #'ground-state)        ; FF treated as LF
+  (#x08  (cursor-bs screen) #'ground-state)
+  (#x09  (cursor-ht screen) #'ground-state)
+  (#x07  #'ground-state)                           ; BEL — ignore
+  (#x7F  #'ground-state)                           ; DEL — ignore
+  (#x0E  #'ground-state)                           ; SO  — charset shift out (ignore)
+  (#x0F  #'ground-state)                           ; SI  — charset shift in  (ignore)
+  ;; ── Printable ASCII ─────────────────────────────────────────────────────
+  (printable-ascii-p
+   (write-char-at-cursor screen (code-char byte))
+   #'ground-state)
+  ;; ── Multi-byte UTF-8 ────────────────────────────────────────────────────
+  (utf8-lead-p
+   (multiple-value-bind (acc left) (utf8-lead-decode byte)
+     (make-utf8-k acc left)))
+  ;; ── Invalid / stray continuation byte ───────────────────────────────────
+  ((>= byte #x80)
+   (write-codepoint screen #xFFFD)
+   #'ground-state)
+  ;; ── Unhandled C0 control byte ────────────────────────────────────────────
+  (t #'ground-state))
 
-(defun escape-state (screen byte)
-  "ESC received; dispatch on next byte."
-  (declare (type screen screen) (type (unsigned-byte 8) byte))
-  (cond
-    ((= byte #x5B)  (make-csi-k '() nil nil))          ; ESC [ → CSI
-    ((= byte #x5D)  #'osc-state)                        ; ESC ] → OSC
-    ((= byte #x4D)  (cursor-ri screen) #'ground-state)  ; ESC M → RI
-    ((= byte #x63)  (ris-action screen) #'ground-state) ; ESC c → RIS
-    ((= byte #x28)  #'charset-state) ; ESC ( → G0 charset designate
-    ((= byte #x29)  #'charset-state) ; ESC ) → G1 charset designate
-    ((= byte #x3D)  #'ground-state)  ; ESC = → DECKPAM (ignore)
-    ((= byte #x3E)  #'ground-state)  ; ESC > → DECKPNM (ignore)
-    ((= byte #x37)  (save-cursor screen)    #'ground-state) ; ESC 7 → DECSC
-    ((= byte #x38)  (restore-cursor screen) #'ground-state) ; ESC 8 → DECRC
-    (t              #'ground-state)))                    ; unknown ESC sequence
+(define-state escape-state (screen byte)
+  ;; ── Standard ESC sequences ───────────────────────────────────────────────
+  (#x5B  (make-csi-k '() nil nil))                ; ESC [ → CSI
+  (#x5D  #'osc-state)                              ; ESC ] → OSC
+  (#x4D  (cursor-ri screen)    #'ground-state)    ; ESC M → RI
+  (#x63  (ris-action screen)   #'ground-state)    ; ESC c → RIS
+  (#x37  (save-cursor screen)    #'ground-state)  ; ESC 7 → DECSC
+  (#x38  (restore-cursor screen) #'ground-state)  ; ESC 8 → DECRC
+  ;; ── Charset designators ──────────────────────────────────────────────────
+  (#x28  #'charset-state)                          ; ESC ( → G0
+  (#x29  #'charset-state)                          ; ESC ) → G1
+  ;; ── All unrecognized ESC sequences → ground (including DECKPAM #x3D, DECKPNM #x3E)
+  (t     #'ground-state))
 
-(defun osc-state (screen byte)
-  "Inside an OSC sequence; discard payload and watch for terminator."
-  (declare (type screen screen) (type (unsigned-byte 8) byte)
-           (ignore screen))
-  (cond
-    ((= byte #x07) #'ground-state)   ; BEL terminates OSC
-    ((= byte #x1B) #'osc-st-state)  ; might be ST = ESC backslash
-    (t             #'osc-state)))
+(define-state osc-state (screen byte)
+  ;; OSC payload is discarded; screen is unused throughout.
+  (#x07  #'ground-state)                           ; BEL terminates OSC
+  (#x1B  #'osc-st-state)                           ; possible ST = ESC \
+  (t     #'osc-state))
 
-(defun osc-st-state (screen byte)
-  "Possible ST terminator inside OSC (ESC already consumed)."
-  (declare (type screen screen) (ignore screen))
-  (if (= byte #x5C)                  ; \ → ST confirmed
-      #'ground-state
-      #'osc-state))
+(define-state osc-st-state (screen byte)
+  (#x5C  #'ground-state)                           ; \ → ST confirmed
+  (t     #'osc-state))
 
-(defun charset-state (screen byte)
-  "Consume one charset designator byte and return to ground."
-  (declare (type screen screen) (type (unsigned-byte 8) byte)
-           (ignore screen byte))
-  #'ground-state)
+(define-state charset-state (screen byte)
+  ;; Consume one designator byte and return to ground; both args unused.
+  (t #'ground-state))

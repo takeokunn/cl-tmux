@@ -10,6 +10,27 @@
 ;;;; the server only exits when the last window is killed (:quit) or *running*
 ;;;; is cleared.
 
+;;; ── Frame dispatch macro ────────────────────────────────────────────────────
+;;;
+;;; Both serve-client (server) and run-client (client) read one frame then
+;;; dispatch on its type.  The Prolog-like table makes each handler a named
+;;; clause that reads independently of the others.
+;;;
+;;;   handle_frame(nil, _)           :- disconnect.    % EOF
+;;;   handle_frame(msg_detach, _)    :- disconnect.    % explicit detach
+;;;   handle_frame(msg_attach|msg_resize, payload) :- apply_size(session, payload).
+;;;   handle_frame(msg_key, payload) :- process_keys(session, payload).
+
+(defmacro with-incoming-frame ((type-var payload-var stream) &rest rules)
+  "Read one frame from STREAM, bind TYPE-VAR and PAYLOAD-VAR, then dispatch
+   through the Prolog-like rule table RULES.  Each RULE is (condition &rest body).
+   NIL type (EOF) must be handled by the caller if no rule matches."
+  `(multiple-value-bind (,type-var ,payload-var) (read-frame ,stream)
+     (cond ,@(mapcar (lambda (rule)
+                       (destructuring-bind (condition &rest body) rule
+                         `(,condition ,@body)))
+                     rules))))
+
 (defun socket-path (name)
   "Filesystem path of the Unix socket for the server session named NAME."
   (format nil "~A/cl-tmux-~A.sock"
@@ -60,18 +81,19 @@
                            (msg-frame (render-session-to-string
                                        session *term-rows* *term-cols*))))
              ;; Wait briefly for an incoming client message.
-             (when (select-fds (list fd) 50000)
-               (multiple-value-bind (type payload) (read-frame stream)
-                 (cond
-                   ((null type) (return-from serve))                 ; client disconnected
-                   ((= type +msg-detach+) (return-from serve))       ; explicit detach
-                   ((or (= type +msg-attach+) (= type +msg-resize+))
-                    (apply-client-size session payload))
-                   ((= type +msg-key+)
-                    (case (process-client-keys session payload state)
-                      (:quit   (setf outcome :quit) (return-from serve))
-                      (:detach (return-from serve))    ; keystroke-driven detach
-                      (t       (setf *dirty* t)))))))))
+             (when (select-fds (list fd) +poll-timeout-us+)
+               (with-incoming-frame (type payload stream)
+                 ((null type)
+                  (return-from serve))
+                 ((= type +msg-detach+)
+                  (return-from serve))
+                 ((or (= type +msg-attach+) (= type +msg-resize+))
+                  (apply-client-size session payload))
+                 ((= type +msg-key+)
+                  (case (process-client-keys session payload state)
+                    (:quit   (setf outcome :quit) (return-from serve))
+                    (:detach (return-from serve))
+                    (t       (setf *dirty* t))))))))
       (ignore-errors (send-frame stream (msg-bye)))
       (close-socket socket))
     outcome))
@@ -92,8 +114,9 @@
       (install-sigwinch-handler)
       (unwind-protect
            (loop while *running*
-                 do (let ((client (accept-connection listener)))
-                      (when (eq :quit (serve-client session client))
+                 ;; Poll with timeout so *running* is checked between accepts.
+                 do (when (select-fds (list (socket-fd listener)) +accept-timeout-us+)
+                      (when (eq :quit (serve-client session (accept-connection listener)))
                         (setf *running* nil))))
         (close-socket listener)
         (ignore-errors (delete-file path))

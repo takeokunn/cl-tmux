@@ -22,25 +22,19 @@
              (clear-display)
              (send-frame stream (msg-attach *term-rows* *term-cols*))
              (loop
-               ;; A SIGWINCH since last frame → tell the server the new size.
                (when *resize-pending*
                  (setf *resize-pending* nil)
                  (multiple-value-setq (*term-rows* *term-cols*) (terminal-size))
                  (send-frame stream (msg-resize *term-rows* *term-cols*)))
-               (let ((ready (select-fds (list 0 sfd) 50000)))
-                 ;; stdin → forward one keystroke to the server.
+               (let ((ready (select-fds (list 0 sfd) +poll-timeout-us+)))
                  (when (member 0 ready)
-                   ;; NB: arg is a µs timeout (the fn always reads stdin); 0 = non-blocking grab.
                    (let ((b (read-byte-nonblock 0)))
-                     (when b
-                       (send-frame stream (msg-key (vector b))))))
-                 ;; server → paint a frame, or exit on bye/EOF.
+                     (when b (send-frame stream (msg-key (vector b))))))
                  (when (member sfd ready)
-                   (multiple-value-bind (type payload) (read-frame stream)
-                     (cond
-                       ((null type)           (return))   ; server gone
-                       ((= type +msg-bye+)    (return))   ; detached / closed
-                       ((= type +msg-frame+)
-                        (write-string (decode-text payload))
-                        (force-output)))))))))
+                   (with-incoming-frame (type payload stream)
+                     ((null type)        (return))
+                     ((= type +msg-bye+) (return))
+                     ((= type +msg-frame+)
+                      (write-string (decode-text payload))
+                      (force-output))))))))
       (close-socket socket))))

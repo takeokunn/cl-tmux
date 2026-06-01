@@ -24,8 +24,6 @@
              (frame  (make-array (+ +header-size+ length)
                                  :element-type '(unsigned-byte 8))))
         (replace frame header)
-        (when (= (length frame)
-                 (read-sequence frame stream :start +header-size+))
-          ;; Buffer now holds exactly one frame; let the codec parse it.
+        (when (= (length frame) (read-sequence frame stream :start +header-size+))
           (multiple-value-bind (type payload) (decode-frame frame)
             (values type payload)))))))

@@ -6,7 +6,30 @@
 ;;;; (condition &body forms) clauses.  The public entry point apply-sgr
 ;;;; iterates over a params list and calls %dispatch-sgr-code for each value.
 
-;;; ── Macro ──────────────────────────────────────────────────────────────────
+;;; ── Attribute mutation helpers (data layer) ────────────────────────────────
+;;;
+;;; These three inline functions separate the HOW (bit manipulation) from the
+;;; WHAT (which SGR code means what), keeping the rule table below readable.
+
+(declaim (inline reset-sgr attr-on attr-off))
+
+(defun reset-sgr (screen)
+  "Reset all SGR attributes to their default values."
+  (setf (screen-cur-fg    screen) 7
+        (screen-cur-bg    screen) 0
+        (screen-cur-attrs screen) 0))
+
+(defun attr-on (screen bit)
+  "Enable SGR attribute BIT on SCREEN."
+  (setf (screen-cur-attrs screen)
+        (logior (screen-cur-attrs screen) bit)))
+
+(defun attr-off (screen bit)
+  "Disable SGR attribute BIT on SCREEN."
+  (setf (screen-cur-attrs screen)
+        (logand (screen-cur-attrs screen) (lognot bit))))
+
+;;; ── Macro (logic layer) ─────────────────────────────────────────────────────
 
 (defmacro define-sgr-rules (&rest rules)
   "Each RULE is (condition-form &body forms).
@@ -23,94 +46,99 @@
        (t (values)))))
 
 ;;; ── SGR rule table ─────────────────────────────────────────────────────────
+;;;
+;;; Each rule reads as a Prolog clause:
+;;;   sgr(0, Screen)   :- reset_sgr(Screen).
+;;;   sgr(3, Screen)   :- attr_on(Screen, italic).
+;;;   ...
 
 (define-sgr-rules
-  ;; SGR 0 – reset all attributes to defaults
-  ((= p 0)
-   (setf (screen-cur-fg    screen) 7
-         (screen-cur-bg    screen) 0
-         (screen-cur-attrs screen) 0))
+  ;; ── Reset ─────────────────────────────────────────────────────────────────
+  ((= p 0)   (reset-sgr screen))
 
-  ;; SGR 1 – bold on
-  ((= p 1)
-   (setf (screen-cur-attrs screen)
-         (logior (screen-cur-attrs screen) +attr-bold+)))
+  ;; ── Attributes on ─────────────────────────────────────────────────────────
+  ((= p 1)   (attr-on screen +attr-bold+))
+  ((= p 2)   (attr-on screen +attr-dim+))
+  ((= p 3)   (attr-on screen +attr-italic+))
+  ((= p 4)   (attr-on screen +attr-underline+))
+  ((= p 5)   (attr-on screen +attr-blink+))
+  ((= p 7)   (attr-on screen +attr-reverse+))
+  ((= p 8)   (attr-on screen +attr-conceal+))
+  ((= p 9)   (attr-on screen +attr-strikethrough+))
 
-  ;; SGR 2 – dim on
-  ((= p 2)
-   (setf (screen-cur-attrs screen)
-         (logior (screen-cur-attrs screen) +attr-dim+)))
+  ;; ── Attributes off ────────────────────────────────────────────────────────
+  ((= p 22)  (attr-off screen (logior +attr-bold+ +attr-dim+)))
+  ((= p 23)  (attr-off screen +attr-italic+))
+  ((= p 24)  (attr-off screen +attr-underline+))
+  ((= p 25)  (attr-off screen +attr-blink+))
+  ((= p 27)  (attr-off screen +attr-reverse+))
+  ((= p 28)  (attr-off screen +attr-conceal+))
+  ((= p 29)  (attr-off screen +attr-strikethrough+))
 
-  ;; SGR 3 – italic (treated as dim for compatibility)
-  ((= p 3)
-   (setf (screen-cur-attrs screen)
-         (logior (screen-cur-attrs screen) +attr-dim+)))
+  ;; ── Standard foreground (30-37) + default (39) ────────────────────────────
+  ((<= 30 p 37)  (setf (screen-cur-fg screen) (- p 30)))
+  ((= p 39)      (setf (screen-cur-fg screen) 7))
 
-  ;; SGR 4 – underline on
-  ((= p 4)
-   (setf (screen-cur-attrs screen)
-         (logior (screen-cur-attrs screen) +attr-underline+)))
+  ;; ── Standard background (40-47) + default (49) ────────────────────────────
+  ((<= 40 p 47)  (setf (screen-cur-bg screen) (- p 40)))
+  ((= p 49)      (setf (screen-cur-bg screen) 0))
 
-  ;; SGR 5 – blink on
-  ((= p 5)
-   (setf (screen-cur-attrs screen)
-         (logior (screen-cur-attrs screen) +attr-blink+)))
+  ;; ── Bright foreground (90-97) ─────────────────────────────────────────────
+  ((<= 90 p 97)    (setf (screen-cur-fg screen) (+ 8 (- p 90))))
 
-  ;; SGR 7 – reverse video on
-  ((= p 7)
-   (setf (screen-cur-attrs screen)
-         (logior (screen-cur-attrs screen) +attr-reverse+)))
-
-  ;; SGR 22 – bold + dim off
-  ((= p 22)
-   (setf (screen-cur-attrs screen)
-         (logand (screen-cur-attrs screen)
-                 (lognot (logior +attr-bold+ +attr-dim+)))))
-
-  ;; SGR 24 – underline off
-  ((= p 24)
-   (setf (screen-cur-attrs screen)
-         (logand (screen-cur-attrs screen) (lognot +attr-underline+))))
-
-  ;; SGR 25 – blink off
-  ((= p 25)
-   (setf (screen-cur-attrs screen)
-         (logand (screen-cur-attrs screen) (lognot +attr-blink+))))
-
-  ;; SGR 27 – reverse video off
-  ((= p 27)
-   (setf (screen-cur-attrs screen)
-         (logand (screen-cur-attrs screen) (lognot +attr-reverse+))))
-
-  ;; SGR 30-37 – standard foreground colours 0-7
-  ((<= 30 p 37)
-   (setf (screen-cur-fg screen) (- p 30)))
-
-  ;; SGR 39 – default foreground colour
-  ((= p 39)
-   (setf (screen-cur-fg screen) 7))
-
-  ;; SGR 40-47 – standard background colours 0-7
-  ((<= 40 p 47)
-   (setf (screen-cur-bg screen) (- p 40)))
-
-  ;; SGR 49 – default background colour
-  ((= p 49)
-   (setf (screen-cur-bg screen) 0))
-
-  ;; SGR 90-97 – bright (high-intensity) foreground colours 8-15
-  ((<= 90 p 97)
-   (setf (screen-cur-fg screen) (+ 8 (- p 90))))
-
-  ;; SGR 100-107 – bright (high-intensity) background colours 8-15
-  ((<= 100 p 107)
-   (setf (screen-cur-bg screen) (+ 8 (- p 100)))))
+  ;; ── Bright background (100-107) ───────────────────────────────────────────
+  ((<= 100 p 107)  (setf (screen-cur-bg screen) (+ 8 (- p 100)))))
 
 ;;; ── Public entry point ─────────────────────────────────────────────────────
+;;;
+;;; apply-sgr handles compound multi-parameter codes by consuming params ahead
+;;; of the single-code dispatcher.  The recursive labels form is a CPS-like
+;;; left-fold over the parameter list:
+;;;   apply_sgr([], Screen)         :- true.
+;;;   apply_sgr([38,5,N|T], S)      :- set_fg_256(S, N),        apply_sgr(T, S).
+;;;   apply_sgr([38,2,R,G,B|T], S)  :- set_fg_truecolor(S,R,G,B), apply_sgr(T, S).
+;;;   apply_sgr([48,5,N|T], S)      :- set_bg_256(S, N),        apply_sgr(T, S).
+;;;   apply_sgr([48,2,R,G,B|T], S)  :- set_bg_truecolor(S,R,G,B), apply_sgr(T, S).
+;;;   apply_sgr([P|T], S)           :- dispatch_sgr(S, P),      apply_sgr(T, S).
 
 (defun apply-sgr (screen params)
   "Apply a sequence of SGR codes to SCREEN.
    PARAMS is a list of fixnum SGR parameter values; an empty or nil list is
-   treated as (0) (i.e. a plain SGR reset)."
-  (dolist (p (or params '(0)))
-    (%dispatch-sgr-code screen p)))
+   treated as (0) (i.e. a plain SGR reset).
+   Multi-parameter codes handled as a unit:
+     38;5;N / 48;5;N   — 256-color fg/bg (N clamped to 0-255)
+     38;2;R;G;B / 48;2;R;G;B — true-color fg/bg (stored as #x1RRGGBB;
+                                bit 24 is the true-color flag)"
+  (labels ((consume (ps)
+             (when ps
+               (let ((p (first ps)))
+                 (cond
+                   ;; 256-color foreground: 38;5;N
+                   ((and (= p 38) (eql (second ps) 5) (third ps))
+                    (setf (screen-cur-fg screen) (clamp (third ps) 0 255))
+                    (consume (cdddr ps)))
+                   ;; True-color foreground: 38;2;R;G;B → store as #x1RRGGBB
+                   ;; Each component is clamped to 0-255 to stay within (unsigned-byte 25).
+                   ((and (= p 38) (eql (second ps) 2) (cddr ps))
+                    (let* ((r (clamp (or (third  ps) 0) 0 255))
+                           (g (clamp (or (fourth ps) 0) 0 255))
+                           (b (clamp (or (fifth  ps) 0) 0 255)))
+                      (setf (screen-cur-fg screen)
+                            (logior #x1000000 (ash r 16) (ash g 8) b)))
+                    (consume (nthcdr 5 ps)))
+                   ;; 256-color background: 48;5;N
+                   ((and (= p 48) (eql (second ps) 5) (third ps))
+                    (setf (screen-cur-bg screen) (clamp (third ps) 0 255))
+                    (consume (cdddr ps)))
+                   ;; True-color background: 48;2;R;G;B → store as #x1RRGGBB
+                   ((and (= p 48) (eql (second ps) 2) (cddr ps))
+                    (let* ((r (clamp (or (third  ps) 0) 0 255))
+                           (g (clamp (or (fourth ps) 0) 0 255))
+                           (b (clamp (or (fifth  ps) 0) 0 255)))
+                      (setf (screen-cur-bg screen)
+                            (logior #x1000000 (ash r 16) (ash g 8) b)))
+                    (consume (nthcdr 5 ps)))
+                   (t
+                    (%dispatch-sgr-code screen p)
+                    (consume (rest ps))))))))
+    (consume (or params '(0)))))

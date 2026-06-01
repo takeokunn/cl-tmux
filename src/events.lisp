@@ -1,340 +1,225 @@
 (in-package #:cl-tmux)
 
-;;;; Event loop and prefix-key command dispatch.
+;;;; Event loop and keystroke processing.
+
+;;; ── Additional key bindings ──────────────────────────────────────────────────
+;;;
+;;; C-b ] → paste the top paste buffer into the active pane.
+;;; This supplements the table in config.lisp (which sets C-b [ for copy-mode-enter).
+
+(set-key-binding #\] :paste-buffer)
 ;;;;
 ;;;; The main thread reads stdin one byte at a time (50 ms select), routes the
 ;;;; prefix key (C-b) and its follow-up through the binding table, handles
 ;;;; copy-mode escape sequences, and forwards everything else to the active
 ;;;; pane's PTY.  Runtime state (*running*, *dirty*, …) lives in runtime.lisp.
+;;;; Command dispatch lives in dispatch.lisp.
 
-;;; -- Cyclic helpers ---------------------------------------------------------
+;;; ── Prompt key handler ──────────────────────────────────────────────────────
+;;;
+;;; define-prompt-key-rules generates HANDLE-PROMPT-KEY from a declarative
+;;; byte-dispatch table, matching the Prolog-like rule style used throughout
+;;; the codebase (define-command-handlers, define-csi-rules, define-state).
 
-(defun next-cyclic (list current)
-  "Element after CURRENT in LIST, wrapping around."
-  (let ((idx (or (position current list) 0)))
-    (nth (mod (1+ idx) (length list)) list)))
+(defmacro define-prompt-key-rules (&rest rules)
+  "Build HANDLE-PROMPT-KEY from a byte-dispatch table.
+   Each RULE is (PATTERN &rest BODY) where PATTERN is:
+     integer  → exact byte match
+     list     → verbatim condition
+     t        → default clause
+   Always marks *dirty* after dispatching."
+  `(defun handle-prompt-key (byte)
+     "Route one input BYTE to the active prompt.
+      Multibyte/UTF-8 input is not yet supported (non-ASCII bytes are ignored)."
+     (cond
+       ,@(mapcar
+          (lambda (rule)
+            (destructuring-bind (pattern &rest body) rule
+              `(,(cond
+                   ((eq pattern 't)    't)
+                   ((integerp pattern) `(= byte ,pattern))
+                   (t                   pattern))
+                ,@body)))
+          rules))
+     (setf *dirty* t)))
 
-(defun prev-cyclic (list current)
-  "Element before CURRENT in LIST, wrapping around."
-  (let ((idx (or (position current list) 0)))
-    (nth (mod (1- idx) (length list)) list)))
+(define-prompt-key-rules
+  (13                                       ; Enter — submit and dismiss
+   (let ((p *prompt*))
+     (when (and p (prompt-on-submit p))
+       (funcall (prompt-on-submit p) (prompt-buffer p)))
+     (prompt-clear)))
+  (27  (prompt-clear))                      ; Esc — cancel
+  ((or (= byte 127) (= byte 8))
+   (prompt-backspace))                      ; Backspace / DEL
+  ((and (>= byte 32) (< byte 127))
+   (prompt-input (code-char byte)))         ; printable ASCII — insert
+  (t nil))                                  ; non-ASCII — ignore
 
-;;; -- Private command helpers ------------------------------------------------
+;;; ── VT100 escape-sequence byte constants ───────────────────────────────────
+(defconstant +byte-esc+         27  "ASCII ESC (0x1B)")
+(defconstant +byte-csi-bracket+ 91  "CSI introducer '[' (0x5B)")
+(defconstant +byte-arrow-up+    65  "CUU final byte 'A' (0x41)")
+(defconstant +byte-arrow-down+  66  "CUD final byte 'B' (0x42)")
+(defconstant +byte-q+          113  "Lowercase 'q' for copy-mode exit (0x71)")
 
-(defun %cmd-new-window (session)
-  "Create a new window in SESSION and start a reader thread for it."
-  (let* ((rows (- *term-rows* *status-height*))
-         (cols *term-cols*)
-         (name (format nil "~D" (1+ (length (session-windows session)))))
-         (win  (session-new-window session name rows cols)))
-    (start-reader-thread (window-active-pane win))))
+;;; ── Escape sequence dispatch macro ─────────────────────────────────────────
 
-(defun %cmd-cycle-window (session cycler)
-  "Switch the active window using CYCLER (next-cyclic or prev-cyclic)."
-  (let ((w (funcall cycler
-                    (session-windows session)
-                    (session-active-window session))))
-    (when w (session-select-window session w))))
+(defmacro define-copy-mode-escape-table (&rest rules)
+  "Build HANDLE-COPY-MODE-ESCAPE from a declarative table.
+   Each RULE is (byte-list &body forms).
+   byte-list is a list of constant symbols or integers specifying the sequence.
+   The generated function returns T when a sequence is consumed, NIL otherwise."
+  `(defun handle-copy-mode-escape (session bytes)
+     "Match BYTES against the copy-mode escape table; dispatch and mark dirty.
+      Returns T if consumed, NIL otherwise."
+     (let ((screen (%active-screen session)))
+       (when (and screen (copy-mode-active-p session))
+         (cond
+           ,@(mapcar
+              (lambda (rule)
+                (destructuring-bind (pattern &rest body) rule
+                  `((and (= (length bytes) ,(length pattern))
+                         ,@(loop for byte in pattern
+                                 for i from 0
+                                 collect `(= (aref bytes ,i) ,byte)))
+                    ,@body
+                    (setf *dirty* t)
+                    t)))
+              rules)
+           (t nil))))))
 
-(defun %cmd-cycle-pane (session cycler)
-  "Switch the active pane within the active window using CYCLER."
-  (let* ((win   (session-active-window session))
-         (panes (window-panes win))
-         (next  (funcall cycler panes (window-active-pane win))))
-    (when next (window-select-pane win next))))
+(define-copy-mode-escape-table
+  ((+byte-esc+ +byte-csi-bracket+ +byte-arrow-up+)   (copy-mode-scroll screen  3))
+  ((+byte-esc+ +byte-csi-bracket+ +byte-arrow-down+) (copy-mode-scroll screen -3))
+  ((+byte-q+)                                         (copy-mode-exit  screen)))
 
-(defun %cmd-split (session direction)
-  "Split the active pane of SESSION's active window in DIRECTION (:horizontal =
-   top/bottom, :vertical = left/right).  When the active pane is too small to
-   split, WINDOW-SPLIT returns NIL (\"pane too small\") and no shell is forked."
-  (let* ((win (session-active-window session))
-         (new (window-split win direction)))
-    (when new
-      (start-reader-thread new))))
+;;; ── CPS keystroke processing ─────────────────────────────────────────────────
+;;;
+;;; Each state is a function (SESSION BYTE) → (values OUTCOME NEXT-STATE)
+;;; where OUTCOME is :QUIT, :DETACH, or NIL, and NEXT-STATE is the next state
+;;; function (or NIL meaning "return to ground state").
+;;;
+;;; define-cps-state is the session-level analogue of define-state in
+;;; terminal/parser.lisp: both express dispatch as Prolog-like ordered clauses.
 
-(defun %passthrough-prefix (session byte)
-  "Send the raw prefix byte followed by BYTE to the active pane."
-  (let ((ap (session-active-pane session)))
-    (when ap
-      (pty-write (pane-fd ap)
-                 (make-array 1 :element-type '(unsigned-byte 8)
-                               :initial-element +prefix-key-code+))
-      (when byte
-        (pty-write (pane-fd ap)
-                   (make-array 1 :element-type '(unsigned-byte 8)
-                                 :initial-element byte))))))
+;;; ── Prolog-like CPS state definition macro ───────────────────────────────────
 
-(defun %active-screen (session)
-  "Return SESSION's active-pane screen, or NIL when there is no active pane.
-   Copy-mode commands operate on a screen, not a session, so they are routed
-   through here."
-  (let ((ap (session-active-pane session)))
-    (and ap (pane-screen ap))))
+(defmacro define-cps-state (name (session-var byte-var) &rest rules)
+  "Build a (SESSION BYTE) → (values OUTCOME NEXT-STATE) function from
+   ordered Prolog-like clauses.  Each RULE is (CONDITION &rest BODY);
+   the first matching condition wins (ordered-cut semantics, like cond).
+   Both SESSION and BYTE are declared ignorable so rules that need only
+   one compile cleanly."
+  `(defun ,name (,session-var ,byte-var)
+     (declare (ignorable ,session-var ,byte-var))
+     (cond
+       ,@(mapcar
+          (lambda (rule)
+            (destructuring-bind (condition &rest body) rule
+              `(,condition ,@body)))
+          rules))))
 
-(defun handle-prompt-key (byte)
-  "Route one input BYTE to the active prompt: Enter runs the prompt's on-submit
-   closure with the buffer then dismisses it, Esc cancels, Backspace deletes,
-   printable ASCII (32-126) inserts.  Multibyte/UTF-8 input is not yet supported
-   (non-ASCII bytes are ignored).  Always marks the screen dirty so the
-   status-bar prompt repaints."
-  (cond
-    ((= byte 13)                            ; Enter — submit and dismiss
-     (let ((p *prompt*))
-       (when (and p (prompt-on-submit p))
-         (funcall (prompt-on-submit p) (prompt-buffer p)))
-       (prompt-clear)))
-    ((= byte 27) (prompt-clear))            ; Esc — cancel
-    ((or (= byte 127) (= byte 8)) (prompt-backspace))   ; Backspace/DEL
-    ((and (>= byte 32) (< byte 127)) (prompt-input (code-char byte))))
-  (setf *dirty* t))
-
-;;; -- Command dispatch -------------------------------------------------------
-
-(defun dispatch-command (session cmd byte)
-  "Execute CMD on SESSION.  Returns :quit when the session should end."
-  (case cmd
-    (:detach
-     ;; Distinct from :quit — standalone treats both as "stop", but a server
-     ;; detaches the client (keeping the session) on :detach and only dies on
-     ;; :quit (last window killed).
-     (return-from dispatch-command :detach))
-
-    (:new-window
-     (%cmd-new-window session))
-
-    (:next-window
-     (%cmd-cycle-window session #'next-cyclic))
-
-    (:prev-window
-     (%cmd-cycle-window session #'prev-cyclic))
-
-    (:next-pane
-     (%cmd-cycle-pane session #'next-cyclic))
-
-    (:prev-pane
-     (%cmd-cycle-pane session #'prev-cyclic))
-
-    (:split-horizontal
-     (%cmd-split session :horizontal))
-
-    (:split-vertical
-     (%cmd-split session :vertical))
-
-    (:kill-pane
-     (let ((result (kill-pane session)))
-       (when (eq result :quit)
-         (setf *running* nil)
-         (return-from dispatch-command :quit))))
-
-    (:kill-window
-     (let* ((win    (session-active-window session))
-            (result (kill-window session win)))
-       (when (eq result :quit)
-         (setf *running* nil)
-         (return-from dispatch-command :quit))))
-
-    (:rename-window
-     ;; Open an interactive prompt seeded with the current name; on Enter the
-     ;; closure renames this window (handle-prompt-key drives the editing).
-     (let ((win (session-active-window session)))
-       (when win
-         (prompt-start "rename-window" (window-name win)
-                       (lambda (name) (rename-window win name))))))
-
-    (:list-keys
-     ;; Show the key-binding help as an overlay; any key dismisses it.
-     (show-overlay (describe-key-bindings)))
-
-    (:copy-mode-enter
-     (let ((s (%active-screen session))) (when s (copy-mode-enter s))))
-
-    (:copy-mode-exit
-     (let ((s (%active-screen session))) (when s (copy-mode-exit s))))
-
-    (:copy-mode-up
-     (let ((s (%active-screen session))) (when s (copy-mode-scroll s 3))))
-
-    (:copy-mode-down
-     (let ((s (%active-screen session))) (when s (copy-mode-scroll s -3))))
-
-    (:resize-left   (resize-pane (session-active-window session) :left))
-    (:resize-right  (resize-pane (session-active-window session) :right))
-    (:resize-up     (resize-pane (session-active-window session) :up))
-    (:resize-down   (resize-pane (session-active-window session) :down))
-
-    ;; The digit pressed after the prefix selects that window (0-based).
-    (:select-window
-     (when byte
-       (select-window-by-number session (- byte (char-code #\0)))))
-
-    (otherwise
-     ;; Unknown command: pass raw prefix + key through to the active pane.
-     (%passthrough-prefix session byte)))
-
-  (setf *dirty* t)
-  nil)
-
-;;; -- Prefix-key dispatch ----------------------------------------------------
-
-(defun copy-mode-active-p (session)
-  "Return T when the active pane's screen is in copy mode."
-  (let* ((win (session-active-window session))
-         (ap  (and win (window-active-pane win))))
-    (and ap
-         (screen-copy-mode-p (pane-screen ap)))))
-
-(defun dispatch-prefix-command (session byte)
-  "Handle one byte received after the prefix key.
-   When the active pane is in copy mode, a small set of keys are
-   redirected to copy-mode scrolling instead of the normal prefix table.
-   Returns :quit when the session should end, NIL otherwise."
-  (let* ((ch  (and byte (code-char byte)))
-         ;; Inside copy mode, intercept [, ], and q before the normal lookup.
-         (cmd (cond
-                ((copy-mode-active-p session)
-                 (cond ((and ch (char= ch #\[)) :copy-mode-up)
-                       ((and ch (char= ch #\])) :copy-mode-down)
-                       ((and ch (char= ch #\q)) :copy-mode-exit)
-                       (t (and ch (lookup-key-binding ch)))))
-                (t
-                 (and ch (lookup-key-binding ch))))))
-    (dispatch-command session cmd byte)))
-
-;;; -- Copy-mode escape-sequence handling -------------------------------------
-
-(defun handle-copy-mode-escape (session bytes)
-  "Check whether BYTES is an ANSI escape sequence for an arrow key while
-   copy mode is active and dispatch the corresponding scroll command.
-   Returns T if the sequence was consumed, NIL otherwise.
-   Sequences handled:
-     ESC [ A  (up-arrow)   -> scroll up 3 lines
-     ESC [ B  (down-arrow) -> scroll down 3 lines
-     q (plain)             -> exit copy mode"
-  (let ((screen (%active-screen session)))
-    (when (and screen (copy-mode-active-p session))
-      (cond
-        ;; ESC [ A = up-arrow
-        ((and (= (length bytes) 3)
-              (= (aref bytes 0) 27)
-              (= (aref bytes 1) 91)
-              (= (aref bytes 2) 65))
-         (copy-mode-scroll screen 3)
-         (setf *dirty* t)
-         t)
-        ;; ESC [ B = down-arrow
-        ((and (= (length bytes) 3)
-              (= (aref bytes 0) 27)
-              (= (aref bytes 1) 91)
-              (= (aref bytes 2) 66))
-         (copy-mode-scroll screen -3)
-         (setf *dirty* t)
-         t)
-        ;; Plain 'q' exits copy mode
-        ((and (= (length bytes) 1)
-              (= (aref bytes 0) (char-code #\q)))
-         (copy-mode-exit screen)
-         (setf *dirty* t)
-         t)
-        (t nil)))))
-
-;;; -- Keystroke processing (shared by event loop and client/server attach) ---
-
-(defstruct input-state
-  "Per-connection keystroke-processing state for PROCESS-BYTE: whether the prefix
-   key was just seen, and the in-progress escape-sequence accumulator."
-  (prefix-pending nil :type boolean)
-  (escape-pending nil :type boolean)
-  (escape-buf (make-array 4 :element-type '(unsigned-byte 8) :fill-pointer 0)))
+;;; ── PTY forwarding helpers ───────────────────────────────────────────────────
 
 (defun %forward-octets (session octets)
   "Forward raw OCTETS to SESSION's active-pane PTY."
-  (let ((ap (session-active-pane session)))
-    (when ap (pty-write (pane-fd ap) octets))))
+  (with-active-pane (ap session)
+    (pty-write (pane-fd ap) octets)))
 
-(defun %forward-byte (session byte)
-  "Forward one raw BYTE to SESSION's active-pane PTY."
-  (%forward-octets session
-                   (make-array 1 :element-type '(unsigned-byte 8)
-                                 :initial-element byte)))
+;;; ── Named CPS state functions ────────────────────────────────────────────────
+;;;
+;;; Rules read like Prolog clauses:
+;;;   ground_state(_, _)  :- overlay_active, !, clear_overlay.
+;;;   ground_state(_, _)  :- prompt_active,  !, handle_prompt_key.
+;;;   ground_state(_, 2)  :- !, transition(after_prefix_state).
+;;;   ground_state(S, 27) :- copy_mode_active(S), !, start_escape_accumulation.
+;;;   ground_state(S, B)  :- forward_octets(S, [B]).
 
-(defun %process-escape-byte (session byte state)
-  "Accumulate BYTE into STATE's escape buffer; once a sequence completes, either
-   dispatch a copy-mode arrow or flush the raw bytes through to the pane."
-  (let ((buf (input-state-escape-buf state)))
+(define-cps-state %ground-input-state (session byte)
+  ;; ── Global overlays take priority ─────────────────────────────────────────
+  ((overlay-active-p)
+   (clear-overlay)
+   (setf *dirty* t)
+   (values nil #'%ground-input-state))
+  ;; ── Active prompt captures all input ──────────────────────────────────────
+  ((prompt-active-p)
+   (handle-prompt-key byte)
+   (values nil #'%ground-input-state))
+  ;; ── Prefix key: arm command dispatcher ────────────────────────────────────
+  ((= byte +prefix-key-code+)
+   (values nil #'%after-prefix-input-state))
+  ;; ── ESC in copy mode: start escape-sequence accumulation ─────────────────
+  ((and (= byte +byte-esc+) (copy-mode-active-p session))
+   (let ((buf (make-array 4 :element-type '(unsigned-byte 8) :fill-pointer 0)))
+     (vector-push byte buf)
+     (values nil (make-escape-input-k session buf))))
+  ;; ── Default: forward raw byte to active pane ─────────────────────────────
+  (t
+   (%forward-octets session
+                    (make-array 1 :element-type '(unsigned-byte 8)
+                                  :initial-element byte))
+   (values nil #'%ground-input-state)))
+
+(define-cps-state %after-prefix-input-state (session byte)
+  ;; One rule: dispatch the command table and return to ground.
+  (t (values (dispatch-prefix-command session byte) #'%ground-input-state)))
+
+(defun make-escape-input-k (session buf)
+  "CPS continuation: accumulate an ESC [... sequence one byte at a time.
+   On a complete 3-byte CSI-like sequence: try copy-mode dispatch or flush.
+   On a 2-byte non-CSI sequence: flush directly.
+   While still accumulating: recurse with the same buffer."
+  (lambda (session-ignored byte)
+    (declare (ignore session-ignored))
     (vector-push byte buf)
-    (cond
-      ;; Completed ESC [ X sequence.
-      ((and (= (fill-pointer buf) 3) (= (aref buf 1) 91))
-       (setf (input-state-escape-pending state) nil)
-       (unless (handle-copy-mode-escape session buf)
-         (%forward-octets session (subseq buf 0 (fill-pointer buf))))
-       (setf (fill-pointer buf) 0))
-      ;; ESC not followed by '[' — flush immediately.
-      ((and (= (fill-pointer buf) 2) (/= (aref buf 1) 91))
-       (setf (input-state-escape-pending state) nil)
-       (%forward-octets session (subseq buf 0 (fill-pointer buf)))
-       (setf (fill-pointer buf) 0)))))
+    (let ((len (fill-pointer buf)))
+      (cond
+        ((and (= len 3) (= (aref buf 1) +byte-csi-bracket+))
+         (unless (handle-copy-mode-escape session buf)
+           (%forward-octets session (subseq buf 0 len)))
+         (values nil #'%ground-input-state))
+        ((and (= len 2) (/= (aref buf 1) +byte-csi-bracket+))
+         (%forward-octets session (subseq buf 0 len))
+         (values nil #'%ground-input-state))
+        (t (values nil (make-escape-input-k session buf)))))))
+
+(defstruct input-state
+  "Opaque CPS keystroke-processing state. Holds the current continuation."
+  (continuation #'%ground-input-state :type function))
 
 (defun process-byte (session byte state)
-  "Process one input BYTE for SESSION, updating keystroke STATE and performing
-   the resulting effect: prompt editing, copy-mode escape handling, prefix
-   command dispatch, or forwarding the byte to the active pane.  Returns :QUIT
-   when the session should end, :DETACH when the user requested detach (the
-   standalone loop stops on either; a server disconnects the client on :DETACH
-   but keeps the session alive, and only dies on :QUIT), or NIL otherwise.  This
-   is the single keystroke pipeline shared by the in-process event loop and the
-   attach (client/server) path, so both behave identically."
-  (cond
-    ;; A help/overlay is modal: any key dismisses it and is consumed.
-    ((overlay-active-p) (clear-overlay) (setf *dirty* t) nil)
-    ;; An active input prompt (e.g. rename) captures every key.
-    ((prompt-active-p) (handle-prompt-key byte) nil)
-    ;; Mid escape-sequence (arrow keys in copy mode).
-    ((input-state-escape-pending state)
-     (%process-escape-byte session byte state) nil)
-    ;; The byte after the prefix key selects a command.
-    ((input-state-prefix-pending state)
-     (setf (input-state-prefix-pending state) nil)
-     (dispatch-prefix-command session byte))            ; → :quit or nil
-    ;; The prefix key itself (C-b): arm prefix dispatch.
-    ((= byte +prefix-key-code+)
-     (setf (input-state-prefix-pending state) t) nil)
-    ;; ESC while in copy mode: start accumulating an escape sequence.
-    ((and (= byte 27) (copy-mode-active-p session))
-     (setf (input-state-escape-pending state) t
-           (fill-pointer (input-state-escape-buf state)) 0)
-     (vector-push byte (input-state-escape-buf state))
-     nil)
-    ;; Ordinary keystroke: hand it to the shell.
-    (t (%forward-byte session byte) nil)))
+  "Feed BYTE to SESSION through the CPS keystroke pipeline STATE.
+   Returns :QUIT, :DETACH, or NIL. Mutates STATE's continuation in place."
+  (multiple-value-bind (outcome next)
+      (funcall (input-state-continuation state) session byte)
+    (setf (input-state-continuation state) (or next #'%ground-input-state))
+    outcome))
 
 ;;; -- Main event loop --------------------------------------------------------
 
+(defun %handle-resize (session)
+  "Re-read terminal geometry and relayout the active window after SIGWINCH."
+  (setf *resize-pending* nil)
+  (multiple-value-setq (*term-rows* *term-cols*) (terminal-size))
+  (let ((win (session-active-window session)))
+    (when win
+      (window-relayout win (- *term-rows* *status-height*) *term-cols*))))
+
+(defun %handle-dirty (session)
+  "Fit the active window to current terminal size and repaint."
+  (setf *dirty* nil)
+  (let ((win (session-active-window session)))
+    (when win
+      (ensure-window-fits win (- *term-rows* *status-height*) *term-cols*)))
+  (render-session session *term-rows* *term-cols*))
+
 (defun event-loop (session)
-  "In-process event loop: read stdin, run each byte through PROCESS-BYTE, and
-   repaint *standard-output* when the session is dirty."
+  "In-process event loop: read stdin, route keystrokes, repaint on dirty."
   (let ((state (make-input-state)))
     (loop while *running* do
-      ;; 50 ms select on stdin keeps render rate <= 20 fps when idle.
-      (let ((b (read-byte-nonblock 50000)))
+      (let ((b (read-byte-nonblock +poll-timeout-us+)))
         (when (and b (member (process-byte session b state) '(:quit :detach)))
           (setf *running* nil)))
-
-      ;; Re-read geometry and relayout only when SIGWINCH fired -- never per
-      ;; frame.  This keeps a transient bad terminal-size read from driving a
-      ;; resize storm, and matches how real multiplexers handle resizing.
-      (when *resize-pending*
-        (setf *resize-pending* nil)
-        (multiple-value-setq (*term-rows* *term-cols*) (terminal-size))
-        (let ((win (session-active-window session)))
-          (when win
-            (window-relayout win (- *term-rows* *status-height*) *term-cols*))))
-
-      (when *dirty*
-        (setf *dirty* nil)
-        ;; A freshly selected window may have been laid out at a different
-        ;; size; fit it (cheap no-op when already correct).
-        (let ((win (session-active-window session)))
-          (when win
-            (ensure-window-fits win (- *term-rows* *status-height*) *term-cols*)))
-        (render-session session *term-rows* *term-cols*)))))
+      (when *resize-pending* (%handle-resize session))
+      (when *dirty*           (%handle-dirty session)))))
