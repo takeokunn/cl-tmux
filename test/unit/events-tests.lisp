@@ -338,3 +338,186 @@
   (with-screen (s 20 5)
     (is-false (screen-mouse-sgr-mode s)
               "mouse-sgr-mode must default to NIL")))
+
+;;; ── Unbound prefix key discard ───────────────────────────────────────────────
+
+(test unbound-prefix-key-is-discarded
+  "An unbound key after prefix (C-b) is silently discarded; no bytes forwarded,
+   no crash, and process-byte returns NIL."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((state (cl-tmux::make-input-state)))
+        ;; C-b (prefix)
+        (is (null (cl-tmux::process-byte s 2 state)))
+        ;; Unbound key: '@' (64) — not in *key-bindings*
+        (is (null (cl-tmux::process-byte s (char-code #\@) state))
+            "unbound prefix key must return NIL (discarded, not forwarded)")
+        ;; State must be back to ground: next ordinary byte is forwarded cleanly.
+        (is (null (cl-tmux::process-byte s (char-code #\a) state))
+            "state returned to ground after discarding unbound prefix key")))))
+
+;;; ── Copy-mode plain 'q' exits ────────────────────────────────────────────────
+
+(test copy-mode-plain-q-exits
+  "Plain 'q' (byte 113) exits copy mode without needing C-b prefix."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (is (screen-copy-mode-p screen) "copy mode entered")
+        ;; Feed plain 'q' without any prefix
+        (cl-tmux::process-byte s (char-code #\q) state)
+        (is (not (screen-copy-mode-p screen))
+            "plain q must exit copy mode")))))
+
+(test copy-mode-plain-esc-exits
+  "ESC followed by a non-CSI byte exits copy mode."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (is (screen-copy-mode-p screen) "copy mode entered")
+        ;; Feed ESC then a non-CSI byte (not '[')
+        (cl-tmux::process-byte s 27 state)
+        (cl-tmux::process-byte s (char-code #\x) state)
+        (is (not (screen-copy-mode-p screen))
+            "ESC + non-CSI must exit copy mode")))))
+
+;;; ── Copy-mode unprefixed vi navigation ───────────────────────────────────────
+
+(test copy-mode-j-scrolls-down
+  "Plain 'j' (byte 106) scrolls down 1 line in copy mode."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 10)
+        ;; Scroll up 5 first so there's room to scroll back down.
+        (cl-tmux/commands::copy-mode-scroll screen 5)
+        (is (= 5 (screen-copy-offset screen)))
+        (cl-tmux::process-byte s (char-code #\j) state)
+        (is (= 4 (screen-copy-offset screen))
+            "j must scroll copy offset down by 1")))))
+
+(test copy-mode-k-scrolls-up
+  "Plain 'k' (byte 107) scrolls up 1 line in copy mode."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 10)
+        (is (zerop (screen-copy-offset screen)))
+        (cl-tmux::process-byte s (char-code #\k) state)
+        (is (= 1 (screen-copy-offset screen))
+            "k must scroll copy offset up by 1")))))
+
+(test copy-mode-g-jumps-to-top
+  "Plain 'g' (byte 103) jumps to top of scrollback in copy mode."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 10)
+        (cl-tmux::process-byte s (char-code #\g) state)
+        (is (= 10 (screen-copy-offset screen))
+            "g must jump to top (max scrollback offset)")))))
+
+(test copy-mode-G-jumps-to-bottom
+  "Plain 'G' (byte 71) jumps to bottom (live view) in copy mode."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 10)
+        ;; Scroll up first
+        (cl-tmux/commands::copy-mode-scroll screen 8)
+        (is (= 8 (screen-copy-offset screen)))
+        (cl-tmux::process-byte s (char-code #\G) state)
+        (is (zerop (screen-copy-offset screen))
+            "G must jump to bottom (offset = 0)")))))
+
+;;; ── Copy-mode PageUp / PageDown via escape sequence ─────────────────────────
+
+(test copy-mode-pageup-scrolls-one-page
+  "ESC [ 5 ~ (PageUp) fed one byte at a time scrolls up by screen-height lines."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 30)
+        (is (zerop (screen-copy-offset screen)))
+        ;; ESC [ 5 ~  = 27 91 53 126
+        (cl-tmux::process-byte s 27  state)
+        (cl-tmux::process-byte s 91  state)
+        (cl-tmux::process-byte s 53  state)
+        (cl-tmux::process-byte s 126 state)
+        (let ((h (screen-height screen)))
+          (is (= (min h 30) (screen-copy-offset screen))
+              "PageUp must scroll copy-offset by screen-height lines"))))))
+
+(test copy-mode-pagedown-scrolls-one-page
+  "ESC [ 6 ~ (PageDown) fed one byte at a time scrolls down by screen-height lines."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 30)
+        ;; Pre-scroll up by 2*screen-height (clamped to scrollback length = 30)
+        (let* ((h     (screen-height screen))
+               (start (min (* 2 h) 30)))
+          (cl-tmux/commands::copy-mode-scroll screen start)
+          (is (= start (screen-copy-offset screen)) "pre-scroll verified")
+          ;; ESC [ 6 ~  = 27 91 54 126
+          (cl-tmux::process-byte s 27  state)
+          (cl-tmux::process-byte s 91  state)
+          (cl-tmux::process-byte s 54  state)
+          (cl-tmux::process-byte s 126 state)
+          ;; After PageDown the offset decreases by h (clamped to 0).
+          (let ((expected (max 0 (- start h))))
+            (is (= expected (screen-copy-offset screen))
+                "PageDown must scroll copy-offset down by screen-height lines")))))))
+
+;;; ── Prefix arrow keys select pane ────────────────────────────────────────────
+
+(test prefix-arrow-up-selects-pane-up
+  "C-b Up (prefix then ESC [ A) dispatches :select-pane-up."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((state (cl-tmux::make-input-state)))
+        ;; Feed C-b (prefix) then ESC [ A
+        (cl-tmux::process-byte s 2   state)
+        (cl-tmux::process-byte s 27  state)
+        (cl-tmux::process-byte s 91  state)
+        ;; Final byte — returns to ground state, no crash.
+        (is (null (cl-tmux::process-byte s 65 state))
+            "C-b Up arrow must return NIL (no quit/detach)")))))
+
+(test prefix-arrow-down-selects-pane-down
+  "C-b Down (prefix then ESC [ B) dispatches :select-pane-down."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((state (cl-tmux::make-input-state)))
+        (cl-tmux::process-byte s 2   state)
+        (cl-tmux::process-byte s 27  state)
+        (cl-tmux::process-byte s 91  state)
+        (is (null (cl-tmux::process-byte s 66 state))
+            "C-b Down arrow must return NIL (no quit/detach)")))))
+
+;;; ── C-b C-b send-prefix ──────────────────────────────────────────────────────
+
+(test prefix-then-prefix-byte-sends-send-prefix
+  "C-b C-b (byte 2 twice) dispatches :send-prefix (no crash, returns NIL)."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((state (cl-tmux::make-input-state)))
+        (cl-tmux::process-byte s 2 state)  ; prefix
+        (is (null (cl-tmux::process-byte s 2 state))
+            "C-b C-b must dispatch :send-prefix and return NIL")))))

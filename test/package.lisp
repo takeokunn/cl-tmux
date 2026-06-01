@@ -149,7 +149,15 @@
                 #:overlay-lines
                 #:prompt-label
                 #:prompt-buffer
-                #:prompt-on-submit)
+                #:prompt-on-submit
+                #:prompt-cursor-index
+                #:prompt-cursor-bol
+                #:prompt-cursor-eol
+                #:prompt-cursor-back
+                #:prompt-cursor-forward
+                #:prompt-kill-to-end
+                #:prompt-kill-to-start
+                #:prompt-kill-word-back)
   (:import-from #:cl-tmux/pty
                 #:forkpty-with-shell
                 #:pty-write

@@ -343,11 +343,18 @@
   (:use #:cl)
   (:export
    #:prompt #:make-prompt #:prompt-p
-   #:prompt-label #:prompt-buffer #:prompt-on-submit
+   #:prompt-label #:prompt-buffer #:prompt-cursor-index #:prompt-on-submit
    #:*prompt* #:prompt-active-p #:prompt-start
    #:prompt-input #:prompt-backspace #:prompt-clear #:prompt-text
+   ;; Cursor navigation
+   #:prompt-cursor-bol #:prompt-cursor-eol
+   #:prompt-cursor-back #:prompt-cursor-forward
+   ;; Kill commands
+   #:prompt-kill-to-end #:prompt-kill-to-start #:prompt-kill-word-back
    ;; Dismissible overlay (list-keys help, …)
-   #:*overlay* #:overlay-active-p #:show-overlay #:clear-overlay #:overlay-lines
+   #:*overlay* #:*overlay-scroll-offset*
+   #:overlay-active-p #:show-overlay #:clear-overlay #:overlay-lines
+   #:overlay-scroll
    ;; Popup overlay
    #:popup #:make-popup #:popup-p
    #:popup-x #:popup-y #:popup-width #:popup-height

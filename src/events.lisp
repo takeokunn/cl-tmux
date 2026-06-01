@@ -43,6 +43,14 @@
        (funcall (prompt-on-submit p) (prompt-buffer p)))
      (prompt-clear)))
   (27  (prompt-clear))                      ; Esc — cancel
+  (3   (prompt-clear))                      ; C-c — cancel (same as Esc)
+  (1   (prompt-cursor-bol))                 ; C-a — beginning of line
+  (5   (prompt-cursor-eol))                 ; C-e — end of line
+  (2   (prompt-cursor-back))                ; C-b — cursor left
+  (6   (prompt-cursor-forward))             ; C-f — cursor right
+  (11  (prompt-kill-to-end))                ; C-k — kill to end
+  (21  (prompt-kill-to-start))              ; C-u — kill to start
+  (23  (prompt-kill-word-back))             ; C-w — kill previous word
   ((or (= byte 127) (= byte 8))
    (prompt-backspace))                      ; Backspace / DEL
   ((and (>= byte 32) (< byte 127))
@@ -678,6 +686,8 @@
 (set-key-binding #\l :last-window)
 ;; C-b f — find-window (search window names and pane titles)
 (set-key-binding #\f :find-window)
+;; C-b C-b — send-prefix (forward one literal C-b byte to the active pane)
+(set-key-binding (code-char 2) :send-prefix)
 
 (defstruct input-state
   "Opaque CPS keystroke-processing state. Holds the current continuation."
