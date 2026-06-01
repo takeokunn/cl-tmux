@@ -5,6 +5,15 @@
 
 (in-package #:cl-tmux/test)
 
+;;; ── Hooks isolation ─────────────────────────────────────────────────────────
+
+(defmacro with-isolated-hooks (&body body)
+  "Run BODY with a fresh *hook-registry* so hook registrations do not leak."
+  (let ((registry (gensym "REGISTRY")))
+    `(let ((,registry (make-hash-table :test #'equal)))
+       (let ((cl-tmux/hooks::*hook-registry* ,registry))
+         (progn ,@body)))))
+
 ;;; ── Config isolation ────────────────────────────────────────────────────────
 
 (defmacro with-isolated-config (&body body)

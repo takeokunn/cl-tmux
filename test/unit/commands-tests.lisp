@@ -586,3 +586,157 @@
       (is (stringp text) "%selection-text must return a string even when mark > cursor")
       (is (string= "hello" text)
           "%selection-text must normalise reversed mark/cursor (got ~S)" text))))
+
+;;; ── swap-pane ────────────────────────────────────────────────────────────────
+
+(test swap-pane-right-cycles-panes-forward
+  "swap-pane :right on a two-pane window moves the active pane to index 1 and
+   swaps the positions (pane-x) of the two panes."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win)))
+         (x0-before (pane-x p0))
+         (x1-before (pane-x p1)))
+    ;; p0 is active (index 0); swap :right -> p0 moves to index 1
+    (let ((result (swap-pane win :right)))
+      (is (eq p0 result)
+          "swap-pane must return the active pane")
+      (is (eq p1 (first  (window-panes win)))
+          "after :right swap, the former neighbour occupies index 0")
+      (is (eq p0 (second (window-panes win)))
+          "after :right swap, the active pane occupies index 1")
+      ;; Geometry must be exchanged
+      (is (= x1-before (pane-x p0))
+          "active pane x must equal former neighbour's x after swap")
+      (is (= x0-before (pane-x p1))
+          "former neighbour x must equal active pane's former x after swap"))))
+
+(test swap-pane-left-cycles-panes-backward
+  "swap-pane :left wraps the active pane modularly backward in the panes list."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win))))
+    ;; p0 is active at index 0; :left -> mod(-1, 2) = 1 -> swaps with p1
+    (swap-pane win :left)
+    (is (eq p1 (first  (window-panes win)))
+        "after :left wrap from index 0, neighbour at (mod -1 n) occupies index 0")
+    (is (eq p0 (second (window-panes win)))
+        "active pane wraps to index 1 on :left from index 0")))
+
+(test swap-pane-right-from-last-wraps-to-first
+  "swap-pane :right from the last-index pane wraps modularly to index 0."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win))))
+    ;; Make p1 (index 1, last) the active pane, then swap :right
+    (window-select-pane win p1)
+    (swap-pane win :right)
+    ;; mod(1+1, 2) = 0 => p1 and p0 swap
+    (is (eq p0 (second (window-panes win)))
+        "p0 moves to index 1 after :right wrap from index 1")
+    (is (eq p1 (first  (window-panes win)))
+        "p1 wraps to index 0 after :right from the last slot")))
+
+(test swap-pane-single-pane-returns-nil
+  "swap-pane on a window with exactly one pane returns NIL (no neighbour to swap)."
+  (let* ((p0  (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                         :fd -1 :pid -1 :screen (make-screen 20 5)))
+         (win (make-window :id 1 :name "w" :width 20 :height 5
+                           :tree (make-layout-leaf p0)
+                           :panes (list p0))))
+    (window-select-pane win p0)
+    (is (null (swap-pane win :right))
+        "swap-pane on a single-pane window must return NIL")))
+
+(test swap-pane-geometry-exchanged
+  "The x/y/width/height of both panes are exchanged by swap-pane."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win)))
+         (p0-x (pane-x p0)) (p0-y (pane-y p0))
+         (p0-w (pane-width p0)) (p0-h (pane-height p0))
+         (p1-x (pane-x p1)) (p1-y (pane-y p1))
+         (p1-w (pane-width p1)) (p1-h (pane-height p1)))
+    (swap-pane win :right)
+    (is (= p1-x (pane-x p0)) "active pane x must be former neighbour x")
+    (is (= p1-y (pane-y p0)) "active pane y must be former neighbour y")
+    (is (= p1-w (pane-width  p0)) "active pane width must be former neighbour width")
+    (is (= p1-h (pane-height p0)) "active pane height must be former neighbour height")
+    (is (= p0-x (pane-x p1)) "former neighbour x must be original active pane x")
+    (is (= p0-y (pane-y p1)) "former neighbour y must be original active pane y")
+    (is (= p0-w (pane-width  p1)) "former neighbour width must be original active width")
+    (is (= p0-h (pane-height p1)) "former neighbour height must be original active height")))
+
+;;; ── capture-pane ─────────────────────────────────────────────────────────────
+
+(defun %make-pane-with-content (content &key (w 20) (h 5))
+  "Build a no-PTY pane whose screen has been fed CONTENT."
+  (let* ((screen (make-screen w h))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width w :height h
+                            :fd -1 :pid -1 :screen screen)))
+    (unless (string= content "")
+      (feed screen content))
+    pane))
+
+(test capture-pane-returns-string
+  "capture-pane always returns a string (even on an empty pane)."
+  (let* ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                          :fd -1 :pid -1 :screen (make-screen 20 5)))
+         (result (capture-pane pane)))
+    (is (stringp result) "capture-pane must return a string")))
+
+(test capture-pane-visible-content-contains-fed-text
+  "capture-pane returns the visible screen content including text fed to the pane."
+  (let* ((pane   (%make-pane-with-content "ABC"))
+         (result (capture-pane pane)))
+    (is (stringp result) "capture-pane result must be a string")
+    (is (not (null (search "ABC" result)))
+        "capture-pane output must contain the fed text \"ABC\" (got ~S)" result)))
+
+(test capture-pane-visible-only-excludes-scrollback
+  "capture-pane without :include-scrollback only dumps visible rows, not scrollback."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                            :fd -1 :pid -1 :screen screen)))
+    ;; Manually inject a distinguishable scrollback row
+    (let ((sb-row (make-array 20 :initial-element
+                              (cl-tmux/terminal/types:make-cell
+                               :char #\X :fg 7 :bg 0 :attrs 0 :width 1))))
+      (setf (cl-tmux/terminal/types:screen-scrollback screen) (list sb-row)))
+    (feed screen "visible")
+    (let ((result (capture-pane pane)))
+      (is (not (null (search "visible" result)))
+          "visible content must appear in capture-pane output")
+      (is (null (search "XXXXXXXXXXXXXXXXX" result))
+          "scrollback content must NOT appear when include-scrollback is nil"))))
+
+(test capture-pane-with-scrollback-prepends-history
+  "capture-pane with :include-scrollback T prepends scrollback rows before visible rows."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                            :fd -1 :pid -1 :screen screen)))
+    ;; Manually inject a scrollback row containing 'Q' characters
+    (let ((sb-row (make-array 20 :initial-element
+                              (cl-tmux/terminal/types:make-cell
+                               :char #\Q :fg 7 :bg 0 :attrs 0 :width 1))))
+      (setf (cl-tmux/terminal/types:screen-scrollback screen) (list sb-row)))
+    (feed screen "visible")
+    (let ((result (capture-pane pane :include-scrollback t)))
+      (is (not (null (search "QQ" result)))
+          "scrollback content must appear when include-scrollback is T")
+      (is (not (null (search "visible" result)))
+          "visible content must also appear when include-scrollback is T")
+      ;; Scrollback should come before visible content in the output
+      (let ((q-pos       (search "QQ"      result))
+            (visible-pos (search "visible" result)))
+        (is (< q-pos visible-pos)
+            "scrollback rows must precede visible rows in the output")))))
+
+(test capture-pane-height-rows-newlines
+  "capture-pane emits exactly (screen-height) newline-terminated rows."
+  (let* ((pane   (%make-pane-with-content "" :w 10 :h 3))
+         (result (capture-pane pane))
+         (lines  (count #\Newline result)))
+    (is (= 3 lines)
+        "capture-pane must emit exactly height (~D) newline characters (got ~D)"
+        3 lines)))

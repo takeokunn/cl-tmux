@@ -4,6 +4,12 @@
 ;;; Each exported function is the CL analogue of a tmux command-line command.
 
 ;;; ── Kill ───────────────────────────────────────────────────────────────────
+;;;
+;;; kill_pane(Session)  :- close_pty(Pane), remove_pane(Window, Pane),
+;;;                         (empty(Window) -> kill_window(Session, Window) ; true).
+;;; kill_window(Session, Window) :- forall(pane(P, Window), close_pty(P)),
+;;;                                  remove_window(Session, Window),
+;;;                                  (empty(Session) -> quit ; select_next(Session)).
 
 (defun kill-pane (session &optional pane)
   "Close PANE (default: active pane of SESSION).
@@ -17,6 +23,7 @@
     (when target
       (ignore-errors (pty-close (pane-fd target) (pane-pid target))))
     (let ((survivor (window-remove-pane win target)))
+      (run-hooks +hook-after-kill-pane+ target)
       (if (null (window-panes win))
           (kill-window session win)
           (progn
@@ -32,19 +39,28 @@
     (dolist (pane (window-panes target))
       (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
     (setf (session-windows session) remaining)
+    (run-hooks +hook-after-kill-window+ target)
     (unless remaining (return-from kill-window :quit))
     (when (eq (session-active-window session) target)
       (session-select-window session (first remaining)))
     nil))
 
-;;; ── Rename ─────────────────────────────────────────────────────────────────
+;;; ── Rename / Select ────────────────────────────────────────────────────────
+;;;
+;;; rename_window(Window, Name)   :- set(window-name, Name), run_hooks(after-rename-window).
+;;; rename_session(Session, Name) :- nonempty(Name), set(session-name, Name).
+;;; select_window(Session, N)     :- nth(N, windows(Session), W), activate(W).
 
 (defun rename-window (window name)
   "Set WINDOW's name to NAME."
   (when window
-    (setf (window-name window) name)))
+    (setf (window-name window) name)
+    (run-hooks +hook-after-rename-window+ window name)))
 
-;;; ── Window selection ───────────────────────────────────────────────────────
+(defun rename-session (session name)
+  "Set SESSION's name to NAME."
+  (when (and session name (not (string= name "")))
+    (setf (session-name session) name)))
 
 (defun select-window-by-number (session n)
   "Select the Nth window (0-based) of SESSION if it exists."
@@ -52,18 +68,29 @@
     (when win
       (session-select-window session win))))
 
-;;; ── Pane resize ────────────────────────────────────────────────────────────
+;;; ── Resize ─────────────────────────────────────────────────────────────────
+;;;
+;;; resize_pane(Window, Dir, Amount) :- active_pane(Window, P),
+;;;                                     adjust_split_tree(Window, P, Dir, Amount).
 
 (defun resize-pane (window direction &optional (amount 5))
   "Resize the active pane via the split tree. Returns the active pane on success, NIL otherwise."
   (when (and window (window-tree window))
     (window-resize-active window direction amount)))
 
-;;; ── Copy mode transitions ──────────────────────────────────────────────────
+;;; ── Copy mode ──────────────────────────────────────────────────────────────
 ;;;
-;;; Enter and exit are symmetric facts:
-;;;   copy_mode(enter, Screen) :- copy_mode_p(Screen) := true,  offset := 0.
-;;;   copy_mode(exit,  Screen) :- copy_mode_p(Screen) := false, offset := 0.
+;;; copy_mode(enter, Screen) :- set(copy-mode-p, true), set(copy-offset, 0).
+;;; copy_mode(exit, Screen)  :- set(copy-mode-p, false), set(copy-offset, 0).
+;;; copy_mode(scroll, Screen, Delta) :- copy-mode-p(Screen),
+;;;                                     new_offset(clamp(offset+Delta, 0, len(scrollback))).
+;;; copy_mode(move_cursor, Screen, Dir) :- copy-mode-p(Screen),
+;;;                                        new_cursor(clamp(cursor+Dir, bounds)).
+;;; copy_mode(begin_selection, Screen) :- copy-mode-p(Screen),
+;;;                                       set(mark, cursor), set(selecting, true).
+;;; copy_mode(cancel, Screen) :- set(mark, nil), set(cursor, nil), set(selecting, false).
+;;; copy_mode(yank, Screen)   :- selection_text(Screen, T), add_paste_buffer(T),
+;;;                               copy_mode(cancel, Screen), copy_mode(exit, Screen).
 
 (defmacro define-copy-mode-transitions (&rest specs)
   "Build copy-mode transition functions from a Prolog-like fact table.
@@ -96,14 +123,6 @@
       (setf (screen-copy-offset screen)
             (max 0 (min max-offset (+ (screen-copy-offset screen) delta))))
       (setf (screen-dirty-p screen) t))))
-
-(defun rename-session (session name)
-  "Set SESSION's name to NAME."
-  (when (and session name (not (string= name "")))
-    (setf (session-name session) name)))
-
-
-;;; ── Copy-mode cursor and selection ────────────────────────────────────────
 
 (defun copy-mode-move-cursor (screen direction)
   "Move SCREEN's copy-mode cursor in DIRECTION (:left :right :up :down).
@@ -141,8 +160,6 @@
         (screen-copy-selecting screen) nil
         (screen-dirty-p        screen) t))
 
-;;; ── Copy-mode yank helpers ────────────────────────────────────────────────
-;;;
 ;;; %selection-bounds extracts the canonical (start-row end-row start-col end-col)
 ;;; rectangle from the mark and cursor positions — independent of which end the
 ;;; user anchored first.  %selection-text builds the string from that rectangle.
@@ -196,7 +213,13 @@
   (copy-mode-cancel-selection screen)
   (copy-mode-exit screen))
 
-;;; ── Swap-pane ─────────────────────────────────────────────────────────────
+;;; ── Pane operations ────────────────────────────────────────────────────────
+;;;
+;;; swap_pane(Window, Dir)   :- active(Window, AP), neighbor(AP, Dir, Other),
+;;;                              swap_positions(AP, Other), swap_list_order(AP, Other).
+;;; capture_pane(Pane, Opts) :- lock(screen(Pane)),
+;;;                              (scrollback(Opts) -> emit_scrollback ; true),
+;;;                              emit_visible_rows.
 
 (defun swap-pane (window direction)
   "Swap the active pane with the next (:right) or previous (:left) pane in WINDOW.
@@ -220,8 +243,6 @@
           (pane-reposition other ax ay aw ah))
         ap))))
 
-;;; ── Capture-pane ──────────────────────────────────────────────────────────
-
 (defun capture-pane (pane &key (include-scrollback nil))
   "Dump the visible content of PANE as a string.
    When INCLUDE-SCROLLBACK is T, also include scrollback history above the visible area."
@@ -238,43 +259,64 @@
             (write-char (cell-char (screen-cell screen col row)) out))
           (terpri out))))))
 
-;;; ── Shell execution commands ───────────────────────────────────────────────
+;;; ── Shell ──────────────────────────────────────────────────────────────────
+;;;
+;;; run_shell(cmd)            :- subprocess(cmd, timeout=30, output=string).
+;;; if_shell(cmd, then, else) :- subprocess(cmd), exit_code=0 -> then ; else.
 ;;;
 ;;; Both run-shell and if-shell accept an optional :timeout keyword (seconds).
-;;; When supplied it is forwarded to sb-ext:run-program so a hung command cannot
-;;; block the event thread indefinitely.  The foreground (synchronous) paths are
-;;; the only ones that honour the timeout; background tasks are fire-and-forget.
+;;; The foreground (synchronous) paths honour the timeout via a bordeaux-threads
+;;; helper; background tasks are fire-and-forget.
+;;;
+;;; uiop:run-program is used instead of sb-ext:run-program so the code is
+;;; portable across all ASDF-supported implementations.
 ;;;
 ;;; if-shell is exported and wired to the :if-shell dispatch key in dispatch.lisp
 ;;; so it is reachable from the prefix-key handler.
 
-(defun run-shell (command &key background (timeout nil))
+(defun %run-with-timeout (thunk timeout-seconds)
+  "Run THUNK in a fresh thread; join it up to TIMEOUT-SECONDS.
+   Returns (funcall thunk) result or NIL if the timeout expires."
+  (handler-case
+      (bt:with-timeout (timeout-seconds)
+        (funcall thunk))
+    (bt:timeout () nil)))
+
+(defun run-shell (command &key background (timeout 30))
   "Run COMMAND in a subshell.  Returns the output string (stdout) when BACKGROUND
    is nil, or T immediately when BACKGROUND is T.
    Uses *default-shell* for the shell binary.
-   TIMEOUT (seconds, optional) limits how long a synchronous command may run;
-   when the limit is exceeded sb-ext:run-program signals an error."
+   TIMEOUT (seconds, default 30) limits how long a synchronous command may run;
+   when the limit is exceeded NIL is returned."
   (let ((shell (or *default-shell* "/bin/sh")))
     (if background
         (progn
-          (sb-ext:run-program shell (list "-c" command)
-                              :wait nil :output nil :error nil)
+          (bt:make-thread
+            (lambda ()
+              (uiop:run-program (list shell "-c" command)
+                                :output nil :ignore-error-status t))
+            :name "shell-bg")
           t)
-        (with-output-to-string (out)
-          (apply #'sb-ext:run-program shell (list "-c" command)
-                 :wait t :output out :error nil
-                 (when timeout (list :timeout timeout)))))))
+        (%run-with-timeout
+          (lambda ()
+            (uiop:run-program (list shell "-c" command)
+                              :output :string :ignore-error-status t))
+          timeout))))
 
-(defun if-shell (command then-fn &optional else-fn &key (timeout nil))
+(defun if-shell (command then-fn &optional else-fn &key (timeout 30))
   "Run COMMAND; call THEN-FN if exit code is 0, ELSE-FN otherwise.
    THEN-FN and ELSE-FN are zero-argument functions.
-   TIMEOUT (seconds, optional) is forwarded to sb-ext:run-program so a hung
-   command cannot block the event thread indefinitely."
+   TIMEOUT (seconds, default 30) limits how long the command may run;
+   when the limit is exceeded ELSE-FN is called."
   (let* ((shell (or *default-shell* "/bin/sh"))
-         (proc  (apply #'sb-ext:run-program shell (list "-c" command)
-                       :wait t :output nil :error nil
-                       (when timeout (list :timeout timeout))))
-         (exit  (sb-ext:process-exit-code proc)))
-    (if (zerop exit)
+         (exit-code (%run-with-timeout
+                      (lambda ()
+                        (multiple-value-bind (_ __ code)
+                            (uiop:run-program (list shell "-c" command)
+                                              :output nil :ignore-error-status t)
+                          (declare (ignore _ __))
+                          code))
+                      timeout)))
+    (if (and exit-code (zerop exit-code))
         (when then-fn (funcall then-fn))
         (when else-fn (funcall else-fn)))))

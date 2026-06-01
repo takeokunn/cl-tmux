@@ -42,6 +42,35 @@
   `(let ((,pane-var (session-active-pane ,session)))
      (when ,pane-var ,@body)))
 
+;;; -- Kill-result helper -------------------------------------------------------
+;;;
+;;; Both :kill-pane and :kill-window check the result and set *running* nil on
+;;; :quit.  %handle-kill-result centralises that one-liner.
+
+(defun %handle-kill-result (result)
+  "Set *running* nil when RESULT is :quit, then return RESULT."
+  (when (eq result :quit) (setf *running* nil))
+  result)
+
+;;; -- Active-window guard macro ------------------------------------------------
+;;;
+;;; Several handlers obtain the active window and do nothing when it is NIL.
+;;; with-active-window names that guard directly.
+
+(defmacro with-active-window ((win-var session) &body body)
+  "Bind WIN-VAR to SESSION's active window and evaluate BODY only when present."
+  `(let ((,win-var (session-active-window ,session)))
+     (when ,win-var ,@body)))
+
+;;; -- Swap-active-pane helper --------------------------------------------------
+;;;
+;;; :swap-pane-forward and :swap-pane-backward share the same shape.
+
+(defun %swap-active-pane (session direction)
+  "Swap the active pane of SESSION in DIRECTION (:left or :right)."
+  (with-active-window (win session)
+    (swap-pane win direction)))
+
 ;;; -- Private command helpers ------------------------------------------------
 
 (defun %cmd-new-window (session)
@@ -222,19 +251,12 @@
   (:prev-pane (%cmd-cycle-pane session #'prev-cyclic))
   (:split-horizontal (%cmd-split session :v))   ; C-b " adds a horizontal bar → :v stacking
   (:split-vertical   (%cmd-split session :h))   ; C-b % adds a vertical bar   → :h side-by-side
-  (:kill-pane
-   (let ((result (kill-pane session)))
-     (when (eq result :quit) (setf *running* nil))
-     result))
-  (:kill-window
-   (let ((result (kill-window session (session-active-window session))))
-     (when (eq result :quit) (setf *running* nil))
-     result))
+  (:kill-pane   (%handle-kill-result (kill-pane session)))
+  (:kill-window (%handle-kill-result (kill-window session (session-active-window session))))
   (:rename-window
-   (let ((win (session-active-window session)))
-     (when win
-       (prompt-start "rename-window" (window-name win)
-                     (lambda (name) (rename-window win name))))))
+   (with-active-window (win session)
+     (prompt-start "rename-window" (window-name win)
+                   (lambda (name) (rename-window win name)))))
   (:list-keys (show-overlay (describe-key-bindings)))
   (:copy-mode-enter            (%copy-mode-call session #'copy-mode-enter))
   (:copy-mode-exit             (%copy-mode-call session #'copy-mode-exit))
@@ -261,8 +283,8 @@
   (:select-pane-up     (%select-pane-in-direction session :up))
   (:select-pane-down   (%select-pane-in-direction session :down))
   (:zoom-toggle
-   (let ((win (session-active-window session)))
-     (when win (window-zoom-toggle win))))
+   (with-active-window (win session)
+     (window-zoom-toggle win)))
   (:rename-session
    (prompt-start "rename-session" (session-name session)
                  (lambda (name) (rename-session session name))))
@@ -325,25 +347,22 @@
                      (setf (session-name session) name)
                      (server-add-session session)))))
   (:list-windows (show-overlay (%format-window-list session)))
-  (:swap-pane-forward
-   (let ((win (session-active-window session)))
-     (when win (swap-pane win :right))))
-  (:swap-pane-backward
-   (let ((win (session-active-window session)))
-     (when win (swap-pane win :left))))
+  (:swap-pane-forward  (%swap-active-pane session :right))
+  (:swap-pane-backward (%swap-active-pane session :left))
   (:last-pane
    (let* ((win  (session-active-window session))
           (last (and win (window-last-active win))))
      (when last (window-select-pane win last))))
   (:display-panes
-   (let* ((win   (session-active-window session))
-          (panes (and win (window-panes win))))
-     (when panes
-       (show-overlay
-         (with-output-to-string (s)
-           (dolist (p panes)
-             (format s "Pane ~D: ~Dx~D at (~D,~D)~A~%"
-                     (pane-id p) (pane-width p) (pane-height p)
-                     (pane-x p) (pane-y p)
-                     (if (eq p (window-active-pane win)) " [active]" ""))))))
-     (setf *dirty* t))))
+   (with-active-window (win session)
+     (let ((panes (window-panes win)))
+       (when panes
+         (show-overlay
+           (with-output-to-string (s)
+             (dolist (p panes)
+               (format s "Pane ~D: ~Dx~D at (~D,~D)~A~%"
+                       (pane-id p) (pane-width p) (pane-height p)
+                       (pane-x p) (pane-y p)
+                       (if (eq p (window-active-pane win)) " [active]" "")))))
+         (setf *dirty* t))))))
+

@@ -382,6 +382,17 @@
 (defpackage #:cl-tmux/hooks
   (:use #:cl)
   (:export
+   ;; Event string constants
+   #:+hook-after-new-window+
+   #:+hook-after-new-pane+
+   #:+hook-pane-exited+
+   #:+hook-after-rename-window+
+   #:+hook-session-created+
+   #:+hook-after-kill-pane+
+   #:+hook-after-kill-window+
+   ;; Macro
+   #:define-hook-events
+   ;; Registry and dispatch
    #:*hook-registry*
    #:add-hook
    #:remove-hook
@@ -419,7 +430,8 @@
         #:cl-tmux/config
         #:cl-tmux/pty
         #:cl-tmux/terminal
-        #:cl-tmux/model)
+        #:cl-tmux/model
+        #:cl-tmux/hooks)
   (:export
    #:kill-pane
    #:kill-window

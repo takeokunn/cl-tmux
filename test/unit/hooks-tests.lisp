@@ -5,56 +5,96 @@
 (def-suite hooks-suite :description "Hooks registry: add, remove, run, clear, list")
 (in-suite hooks-suite)
 
-;;; All tests isolate themselves by rebinding *hook-registry* to a fresh table.
+;;; All tests isolate themselves via with-isolated-hooks, which rebinds
+;;; *hook-registry* to a fresh table so registrations never leak.
 
 (test add-and-run-hook
   "add-hook registers a callback; run-hooks calls it."
-  (let ((cl-tmux/hooks:*hook-registry* (make-hash-table :test #'equal)))
+  (with-isolated-hooks
     (let ((called nil))
       (cl-tmux/hooks:add-hook "after-new-window" (lambda () (setf called t)))
       (cl-tmux/hooks:run-hooks "after-new-window")
       (is-true called "hook must be called after run-hooks"))))
 
-(test hooks-receive-args
-  "run-hooks passes its extra arguments to each registered hook."
-  (let ((cl-tmux/hooks:*hook-registry* (make-hash-table :test #'equal)))
+(test hooks-newest-first
+  "Two add-hooks run newest-first (front-push order)."
+  (with-isolated-hooks
+    (let ((order '()))
+      (cl-tmux/hooks:add-hook "after-new-window" (lambda () (push :first order)))
+      (cl-tmux/hooks:add-hook "after-new-window" (lambda () (push :second order)))
+      (cl-tmux/hooks:run-hooks "after-new-window")
+      ;; :second was added last so it runs first; push prepends, so result is (:first :second)
+      (is (equal '(:first :second) order)
+          "hooks must run newest-first (got ~S)" order))))
+
+(test remove-hook-by-identity
+  "remove-hook removes by eq identity; other callbacks still run."
+  (with-isolated-hooks
+    (let* ((call-count-a 0)
+           (call-count-b 0)
+           (cb-a (lambda () (incf call-count-a)))
+           (cb-b (lambda () (incf call-count-b))))
+      (cl-tmux/hooks:add-hook "after-new-pane" cb-a)
+      (cl-tmux/hooks:add-hook "after-new-pane" cb-b)
+      ;; Both run before removal
+      (cl-tmux/hooks:run-hooks "after-new-pane")
+      (is (= 1 call-count-a) "cb-a called once before removal")
+      (is (= 1 call-count-b) "cb-b called once before removal")
+      ;; Remove only cb-b
+      (cl-tmux/hooks:remove-hook "after-new-pane" cb-b)
+      (cl-tmux/hooks:run-hooks "after-new-pane")
+      (is (= 2 call-count-a) "cb-a must still be called after cb-b removed")
+      (is (= 1 call-count-b) "cb-b must NOT be called after remove-hook"))))
+
+(test run-hooks-ignores-errors
+  "A hook that signals an error does not propagate and does not stop other hooks."
+  (with-isolated-hooks
+    (let ((second-called nil))
+      ;; Register the good hook first (it will run second/newest-last)
+      (cl-tmux/hooks:add-hook "session-created"
+                               (lambda () (setf second-called t)))
+      ;; Register the bad hook second (newest-first, so it runs first)
+      (cl-tmux/hooks:add-hook "session-created"
+                               (lambda () (error "deliberate hook error")))
+      ;; run-hooks must not signal an error to the caller
+      (finishes (cl-tmux/hooks:run-hooks "session-created"))
+      ;; The older (good) hook must still have been called
+      (is-true second-called
+               "subsequent hooks must run even after an earlier hook signals an error"))))
+
+(test run-hooks-passes-args
+  "run-hooks passes its extra arguments to each registered callback."
+  (with-isolated-hooks
     (let ((received nil))
       (cl-tmux/hooks:add-hook "pane-exited"
                                (lambda (arg) (setf received arg)))
       (cl-tmux/hooks:run-hooks "pane-exited" 42)
       (is (eql 42 received) "hook must receive the argument passed to run-hooks"))))
 
-(test remove-hook
-  "add-hook then remove-hook: the hook is not called after removal."
-  (let ((cl-tmux/hooks:*hook-registry* (make-hash-table :test #'equal)))
-    (let* ((call-count 0)
-           (cb (lambda () (incf call-count))))
-      (cl-tmux/hooks:add-hook "after-new-pane" cb)
-      (cl-tmux/hooks:run-hooks "after-new-pane")
-      (is (= 1 call-count) "hook called once before removal")
-      (cl-tmux/hooks:remove-hook "after-new-pane" cb)
-      (cl-tmux/hooks:run-hooks "after-new-pane")
-      (is (= 1 call-count) "hook must NOT be called after remove-hook"))))
+(test clear-hooks-removes-all
+  "clear-hooks removes every callback; run-hooks becomes a no-op and list-hooks drops the entry."
+  (with-isolated-hooks
+    (let ((called nil))
+      (cl-tmux/hooks:add-hook "after-kill-pane" (lambda () (setf called :first)))
+      (cl-tmux/hooks:add-hook "after-kill-pane" (lambda () (setf called :second)))
+      ;; Sanity: hooks present before clearing
+      (let ((before (cl-tmux/hooks:list-hooks)))
+        (is (= 2 (cdr (assoc "after-kill-pane" before :test #'string=)))
+            "expect 2 hooks before clear"))
+      ;; Clear
+      (cl-tmux/hooks:clear-hooks "after-kill-pane")
+      ;; run-hooks must be a no-op: called stays NIL
+      (setf called nil)
+      (cl-tmux/hooks:run-hooks "after-kill-pane")
+      (is (null called) "no hook must run after clear-hooks")
+      ;; list-hooks must no longer include the entry
+      (let ((after (cl-tmux/hooks:list-hooks)))
+        (is (null (assoc "after-kill-pane" after :test #'string=))
+            "list-hooks must not include cleared event")))))
 
-(test run-hooks-ignores-errors
-  "A hook that signals an error does not propagate to the caller."
-  (let ((cl-tmux/hooks:*hook-registry* (make-hash-table :test #'equal)))
-    (let ((second-called nil))
-      (cl-tmux/hooks:add-hook "session-created"
-                               (lambda () (setf second-called t)))
-      (cl-tmux/hooks:add-hook "session-created"
-                               (lambda () (error "deliberate hook error")))
-      ;; The error from the first-to-run (newest) hook must be silently eaten.
-      (is (not (nth-value 0 (ignore-errors
-                               (cl-tmux/hooks:run-hooks "session-created"))))
-          "run-hooks must not signal an error when a hook fails")
-      ;; However, the older (second) hook must still have been called.
-      (is-true second-called
-               "subsequent hooks must run even after an earlier hook signals an error"))))
-
-(test list-hooks
-  "list-hooks returns an alist with the correct counts for each event."
-  (let ((cl-tmux/hooks:*hook-registry* (make-hash-table :test #'equal)))
+(test list-hooks-returns-alist
+  "list-hooks returns an alist of (event-name . count) for all registered events."
+  (with-isolated-hooks
     (cl-tmux/hooks:add-hook "after-new-window" (lambda () nil))
     (cl-tmux/hooks:add-hook "after-new-window" (lambda () nil))
     (cl-tmux/hooks:add-hook "pane-exited"      (lambda () nil))
@@ -64,3 +104,13 @@
             (pe-count (cdr (assoc "pane-exited"      alist :test #'string=))))
         (is (= 2 nw-count) "after-new-window must show count 2")
         (is (= 1 pe-count) "pane-exited must show count 1")))))
+
+(test hook-event-constants
+  "Hook event constants defined via define-hook-events have the expected string values."
+  (is (string= "after-new-window"    cl-tmux/hooks:+hook-after-new-window+))
+  (is (string= "after-new-pane"      cl-tmux/hooks:+hook-after-new-pane+))
+  (is (string= "pane-exited"         cl-tmux/hooks:+hook-pane-exited+))
+  (is (string= "after-rename-window" cl-tmux/hooks:+hook-after-rename-window+))
+  (is (string= "session-created"     cl-tmux/hooks:+hook-session-created+))
+  (is (string= "after-kill-pane"     cl-tmux/hooks:+hook-after-kill-pane+))
+  (is (string= "after-kill-window"   cl-tmux/hooks:+hook-after-kill-window+)))

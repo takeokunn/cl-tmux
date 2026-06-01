@@ -481,3 +481,184 @@
     (with-loop-state
       (finishes (cl-tmux::%apply-named-layout-to-session sess :even-horizontal))
       "calling with no active window must not signal an error")))
+
+;;; ── :list-windows dispatch ───────────────────────────────────────────────────
+
+(test dispatch-list-windows-shows-overlay
+  ":list-windows opens an overlay containing the window name and marks *dirty*."
+  (let ((s (make-fake-session :nwindows 1)))
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command s :list-windows nil)
+      (is (overlay-active-p)
+          ":list-windows must open the overlay")
+      (is-true cl-tmux::*dirty*
+               ":list-windows must mark *dirty*"))))
+
+(test dispatch-list-windows-overlay-contains-window-name
+  ":list-windows overlay text includes the active window name."
+  (let ((s (make-fake-session :nwindows 2)))
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command s :list-windows nil)
+      (is (overlay-active-p) "overlay must be open")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "1" text)
+            "overlay must contain the first window entry")))))
+
+;;; ── :list-sessions dispatch ──────────────────────────────────────────────────
+
+(test dispatch-list-sessions-empty-registry-shows-overlay
+  ":list-sessions with empty *server-sessions* falls back to the session-name
+   single-line format and still opens an overlay."
+  (let ((s (make-fake-session :nwindows 1)))
+    (let ((*overlay* nil)
+          (cl-tmux::*dirty* nil)
+          (cl-tmux::*running* t)
+          (cl-tmux::*server-sessions* nil))
+      (cl-tmux::dispatch-command s :list-sessions nil)
+      (is (overlay-active-p)
+          ":list-sessions must open an overlay even when *server-sessions* is nil")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search (session-name s) text)
+            "fallback overlay must contain the session name")))))
+
+(test dispatch-list-sessions-populated-registry-shows-all-sessions
+  ":list-sessions with *server-sessions* populated lists every registered
+   session and marks the current one with an asterisk."
+  (let* ((s    (make-fake-session :nwindows 1))
+         (name (session-name s)))
+    (let ((*overlay* nil)
+          (cl-tmux::*dirty* nil)
+          (cl-tmux::*running* t)
+          (cl-tmux::*server-sessions* (list (cons name s))))
+      (cl-tmux::dispatch-command s :list-sessions nil)
+      (is (overlay-active-p)
+          ":list-sessions must open an overlay")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search name text)
+            "overlay must contain the session name")
+        (is (search "*" text)
+            "current session must be marked with an asterisk")))))
+
+;;; ── :display-panes dispatch ──────────────────────────────────────────────────
+
+(test dispatch-display-panes-shows-overlay-with-pane-entries
+  ":display-panes with a 2-pane session opens an overlay whose text contains
+   two pane entries and marks the active pane as [active]."
+  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command sess :display-panes nil)
+      (is (overlay-active-p)
+          ":display-panes must open an overlay")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "Pane 1" text)
+            "overlay must mention pane 1")
+        (is (search "Pane 2" text)
+            "overlay must mention pane 2")
+        (is (search "[active]" text)
+            "overlay must mark the active pane with [active]")))))
+
+(test dispatch-display-panes-marks-dirty
+  ":display-panes sets *dirty* to T."
+  (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
+         (win (make-window :id 1 :name "w" :width 80 :height 24
+                           :panes (list p0)
+                           :tree (make-layout-leaf p0)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command sess :display-panes nil)
+      (is-true cl-tmux::*dirty*
+               ":display-panes must mark *dirty*"))))
+
+;;; ── :swap-pane-forward dispatch ──────────────────────────────────────────────
+
+(test dispatch-swap-pane-forward-changes-pane-order
+  ":swap-pane-forward swaps the active pane with the next pane in the list."
+  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (with-loop-state
+      ;; p0 is active and at index 0; forward swap puts p1 at index 0.
+      (cl-tmux::dispatch-command sess :swap-pane-forward nil)
+      (is (eq p1 (first (window-panes win)))
+          "after :swap-pane-forward, p1 must be first in the panes list")
+      (is (eq p0 (second (window-panes win)))
+          "after :swap-pane-forward, p0 must be second in the panes list"))))
+
+(test dispatch-swap-pane-forward-marks-dirty
+  ":swap-pane-forward marks *dirty*."
+  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (let ((cl-tmux::*running* t) (cl-tmux::*dirty* nil))
+      (cl-tmux::dispatch-command sess :swap-pane-forward nil)
+      (is-true cl-tmux::*dirty*
+               ":swap-pane-forward must mark *dirty*"))))
+
+;;; ── :swap-pane-backward dispatch ─────────────────────────────────────────────
+
+(test dispatch-swap-pane-backward-changes-pane-order
+  ":swap-pane-backward swaps the active pane with the previous pane (wrapping)."
+  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    ;; Start with p1 active so that backward swap moves it to index 0.
+    (window-select-pane win p1)
+    (session-select-window sess win)
+    (with-loop-state
+      (cl-tmux::dispatch-command sess :swap-pane-backward nil)
+      (is (eq p1 (first (window-panes win)))
+          "after :swap-pane-backward from p1, p1 must be first in the panes list")
+      (is (eq p0 (second (window-panes win)))
+          "after :swap-pane-backward from p1, p0 must be second in the panes list"))))
+
+(test dispatch-swap-pane-backward-marks-dirty
+  ":swap-pane-backward marks *dirty*."
+  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p1)
+    (session-select-window sess win)
+    (let ((cl-tmux::*running* t) (cl-tmux::*dirty* nil))
+      (cl-tmux::dispatch-command sess :swap-pane-backward nil)
+      (is-true cl-tmux::*dirty*
+               ":swap-pane-backward must mark *dirty*"))))

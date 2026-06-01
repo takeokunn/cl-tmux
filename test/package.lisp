@@ -91,7 +91,9 @@
                 #:kill-window
                 #:rename-window
                 #:resize-pane
-                #:select-window-by-number)
+                #:select-window-by-number
+                #:swap-pane
+                #:capture-pane)
   (:import-from #:cl-tmux/prompt
                 #:*prompt*
                 #:prompt-active-p
