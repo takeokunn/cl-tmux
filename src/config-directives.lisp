@@ -34,11 +34,16 @@
 (defparameter *bindable-commands*
   '(:new-window :next-window :prev-window :next-pane :prev-pane
     :split-horizontal :split-vertical :detach :kill-pane :kill-window
-    :rename-window :list-keys :copy-mode-enter
+    :rename-window :rename-session :list-keys :copy-mode-enter
     :resize-left :resize-right :resize-up :resize-down
     :select-window   ; the pressed digit chooses the window
     :paste-buffer
-    :select-layout-even-h :select-layout-even-v :select-layout-tiled)
+    :zoom-toggle
+    :select-layout-even-h :select-layout-even-v :select-layout-tiled
+    :run-shell :list-sessions :list-sessions-full :list-windows
+    :swap-pane-forward :swap-pane-backward
+    :last-pane :display-panes
+    :new-session :kill-session :rename-session-prompt)
   "Command keywords a config-file `bind` directive may target.  This is the
    user-bindable subset of the commands cl-tmux:dispatch-command handles — it
    deliberately EXCLUDES the copy-mode-internal commands (:copy-mode-exit,

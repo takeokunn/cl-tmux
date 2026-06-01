@@ -62,9 +62,18 @@
   ((= p 3)   (attr-on screen +attr-italic+))
   ((= p 4)   (attr-on screen +attr-underline+))
   ((= p 5)   (attr-on screen +attr-blink+))
+  ((= p 6)   (attr-on screen +attr-blink+))       ; rapid blink — mapped to blink bit
   ((= p 7)   (attr-on screen +attr-reverse+))
   ((= p 8)   (attr-on screen +attr-conceal+))
   ((= p 9)   (attr-on screen +attr-strikethrough+))
+  ((= p 21)  (attr-on screen +attr-underline+))   ; doubly underlined — mapped to underline bit
+
+  ;; ── Framed / encircled / overlined (51-55) — silently accepted ────────────
+  ;; xterm-256color programs may emit these; mapping to no visible attribute
+  ;; prevents them from corrupting other state (they previously fell through
+  ;; to the default no-op, which is equivalent, but listing them explicitly
+  ;; documents the intentional choice and silences future audit warnings).
+  ((<= 51 p 55) (values))
 
   ;; ── Attributes off ────────────────────────────────────────────────────────
   ((= p 22)  (attr-off screen (logior +attr-bold+ +attr-dim+)))
@@ -101,6 +110,22 @@
 ;;;   apply_sgr([48,2,R,G,B|T], S)  :- set_bg_truecolor(S,R,G,B), apply_sgr(T, S).
 ;;;   apply_sgr([P|T], S)           :- dispatch_sgr(S, P),      apply_sgr(T, S).
 
+;;; %set-truecolor encodes a 38;2;R;G;B or 48;2;R;G;B run into #x1RRGGBB and
+;;; stores it via the supplied SETTER closure.  Using a closure avoids
+;;; duplicating the clamp/logior arithmetic for the fg and bg arms.
+
+(declaim (inline %set-truecolor))
+(defun %set-truecolor (screen setter ps)
+  "Encode the R;G;B triple at positions 3-5 of PS as #x1RRGGBB and call
+   SETTER with (SCREEN value) to store the result.  SETTER should be one of
+   #'(setf screen-cur-fg) or #'(setf screen-cur-bg).
+   Returns the tail of PS after the five consumed parameters."
+  (let* ((r (clamp (or (third  ps) 0) 0 255))
+         (g (clamp (or (fourth ps) 0) 0 255))
+         (b (clamp (or (fifth  ps) 0) 0 255)))
+    (funcall setter (logior #x1000000 (ash r 16) (ash g 8) b) screen))
+  (nthcdr 5 ps))
+
 (defun apply-sgr (screen params)
   "Apply a sequence of SGR codes to SCREEN.
    PARAMS is a list of fixnum SGR parameter values; an empty or nil list is
@@ -120,24 +145,14 @@
                    ;; True-color foreground: 38;2;R;G;B → store as #x1RRGGBB
                    ;; Each component is clamped to 0-255 to stay within (unsigned-byte 25).
                    ((and (= p 38) (eql (second ps) 2) (cddr ps))
-                    (let* ((r (clamp (or (third  ps) 0) 0 255))
-                           (g (clamp (or (fourth ps) 0) 0 255))
-                           (b (clamp (or (fifth  ps) 0) 0 255)))
-                      (setf (screen-cur-fg screen)
-                            (logior #x1000000 (ash r 16) (ash g 8) b)))
-                    (consume (nthcdr 5 ps)))
+                    (consume (%set-truecolor screen #'(setf screen-cur-fg) ps)))
                    ;; 256-color background: 48;5;N
                    ((and (= p 48) (eql (second ps) 5) (third ps))
                     (setf (screen-cur-bg screen) (clamp (third ps) 0 255))
                     (consume (cdddr ps)))
                    ;; True-color background: 48;2;R;G;B → store as #x1RRGGBB
                    ((and (= p 48) (eql (second ps) 2) (cddr ps))
-                    (let* ((r (clamp (or (third  ps) 0) 0 255))
-                           (g (clamp (or (fourth ps) 0) 0 255))
-                           (b (clamp (or (fifth  ps) 0) 0 255)))
-                      (setf (screen-cur-bg screen)
-                            (logior #x1000000 (ash r 16) (ash g 8) b)))
-                    (consume (nthcdr 5 ps)))
+                    (consume (%set-truecolor screen #'(setf screen-cur-bg) ps)))
                    (t
                     (%dispatch-sgr-code screen p)
                     (consume (rest ps))))))))

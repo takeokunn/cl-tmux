@@ -86,3 +86,73 @@
     (is (= 0 (getf ctx :window-index)))
     (is (string= "" (getf ctx :window-name)))
     (is (= 0 (getf ctx :pane-index)))))
+
+;;; ── format-context-from-session with real objects ────────────────────────────
+
+(test format-context-window-count-reflects-session-windows
+  "format-context-from-session :window-count equals the number of windows in the session."
+  (let* ((sess (make-fake-session :nwindows 3))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (is (= 3 (getf ctx :window-count))
+        ":window-count expected 3 got ~D" (getf ctx :window-count))))
+
+(test format-context-window-index-is-1-based
+  "format-context-from-session :window-index is 1-based (first window → 1)."
+  (let* ((sess (make-fake-session :nwindows 2))
+         (wins (cl-tmux/model:session-windows sess))
+         (win1 (first wins))
+         (win2 (second wins))
+         (pane (first (cl-tmux/model:window-panes win1))))
+    (let ((ctx1 (cl-tmux/format:format-context-from-session sess win1 pane)))
+      (is (= 1 (getf ctx1 :window-index))
+          "first window: expected :window-index 1 got ~D" (getf ctx1 :window-index)))
+    (let* ((pane2 (first (cl-tmux/model:window-panes win2)))
+           (ctx2  (cl-tmux/format:format-context-from-session sess win2 pane2)))
+      (is (= 2 (getf ctx2 :window-index))
+          "second window: expected :window-index 2 got ~D" (getf ctx2 :window-index)))))
+
+(test format-context-pane-index-is-1-based
+  "format-context-from-session :pane-index is 1-based (first pane → 1)."
+  (let* ((sess  (make-fake-session :nwindows 1 :npanes 2))
+         (win   (first (cl-tmux/model:session-windows sess)))
+         (panes (cl-tmux/model:window-panes win))
+         (ctx1  (cl-tmux/format:format-context-from-session sess win (first panes)))
+         (ctx2  (cl-tmux/format:format-context-from-session sess win (second panes))))
+    (is (= 1 (getf ctx1 :pane-index))
+        "first pane: expected :pane-index 1 got ~D" (getf ctx1 :pane-index))
+    (is (= 2 (getf ctx2 :pane-index))
+        "second pane: expected :pane-index 2 got ~D" (getf ctx2 :pane-index))))
+
+(test format-context-session-name-propagated
+  "format-context-from-session :session-name matches the session's name field."
+  (let* ((sess (make-fake-session :nwindows 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (is (string= (cl-tmux/model:session-name sess) (getf ctx :session-name))
+        ":session-name mismatch: expected ~S got ~S"
+        (cl-tmux/model:session-name sess) (getf ctx :session-name))))
+
+(test format-context-window-name-propagated
+  "format-context-from-session :window-name matches the window's name field."
+  (let* ((sess (make-fake-session :nwindows 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (is (string= (cl-tmux/model:window-name win) (getf ctx :window-name))
+        ":window-name mismatch: expected ~S got ~S"
+        (cl-tmux/model:window-name win) (getf ctx :window-name))))
+
+;;; ── expand-format round-trips through format-context-from-session ────────────
+
+(test expand-format-uses-window-count-from-context
+  "#{window_count} expands to the window count injected via format-context-from-session."
+  (let* ((sess (make-fake-session :nwindows 4))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (is (string= "4" (cl-tmux/format:expand-format "#{window_count}" ctx))
+        "#{window_count}: expected \"4\" got ~S"
+        (cl-tmux/format:expand-format "#{window_count}" ctx))))

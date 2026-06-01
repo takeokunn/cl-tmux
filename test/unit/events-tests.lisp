@@ -194,7 +194,7 @@
 (test handle-prompt-key-enter-submits-and-dismisses
   "Enter (13) runs the prompt's on-submit closure with the buffer, then dismisses
    the prompt."
-  (let ((*prompt* nil) (cl-tmux::*dirty* nil))
+  (with-clean-prompt
     (let ((submitted nil))
       (prompt-start "rename-window" "hello"
                     (lambda (buf) (setf submitted buf)))
@@ -206,7 +206,7 @@
 
 (test handle-prompt-key-esc-cancels
   "Esc (27) cancels the prompt without running on-submit."
-  (let ((*prompt* nil) (cl-tmux::*dirty* nil))
+  (with-clean-prompt
     (let ((submitted nil))
       (prompt-start "rename-window" "abc"
                     (lambda (buf) (setf submitted buf)))
@@ -216,7 +216,7 @@
 
 (test handle-prompt-key-backspace-deletes-last-char
   "Backspace (127) and BS (8) delete the last character of the prompt buffer."
-  (let ((*prompt* nil) (cl-tmux::*dirty* nil))
+  (with-clean-prompt
     (prompt-start "rename-window" "abc"
                   (lambda (buf) (declare (ignore buf)) nil))
     (cl-tmux::handle-prompt-key 127)
@@ -235,3 +235,93 @@
 (test define-prompt-key-rules-macro-is-defined
   "define-prompt-key-rules is a defined macro."
   (is (macro-function 'cl-tmux::define-prompt-key-rules)))
+
+;;; ── Mouse event dispatch tests ───────────────────────────────────────────────
+
+(test dispatch-mouse-event-left-click-selects-pane
+  "%dispatch-mouse-event with btn=0 release=NIL selects the pane at the given coordinates."
+  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
+                          :x 0 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (p1  (make-pane :id 2 :fd -1 :pid -1
+                          :x 41 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree  (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2)
+                           :active p0))
+         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
+    (with-loop-state
+      ;; Click in the right pane (col 50, row 5)
+      (cl-tmux::%dispatch-mouse-event sess 0 50 5 nil)
+      (is (eq p1 (window-active-pane win))
+          "left click in right half should focus p1"))))
+
+(test dispatch-mouse-event-release-does-not-select
+  "%dispatch-mouse-event with release-p=T does not switch the active pane."
+  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
+                          :x 0 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (p1  (make-pane :id 2 :fd -1 :pid -1
+                          :x 41 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree  (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2)
+                           :active p0))
+         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
+    (with-loop-state
+      ;; Release event (btn=0, release-p=T) — must not change active pane
+      (cl-tmux::%dispatch-mouse-event sess 0 50 5 t)
+      (is (eq p0 (window-active-pane win))
+          "button release should not change the active pane"))))
+
+(test x10-mouse-sequence-via-process-byte
+  "X10 mouse press ESC [ M <btn+32> <col+33> <row+33> fed one byte at a time
+   selects the pane at the encoded coordinates."
+  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
+                          :x 0 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (p1  (make-pane :id 2 :fd -1 :pid -1
+                          :x 41 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree  (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2)
+                           :active p0))
+         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
+    ;; Enable mouse mode on the active pane's screen
+    (setf (screen-mouse-mode (pane-screen p0)) 1)
+    (with-loop-state
+      (let ((state (cl-tmux::make-input-state)))
+        ;; X10: btn=0 → 0+32=32; col=50 → 50+33=83; row=5 → 5+33=38
+        ;; Sequence: ESC(27) [(91) M(77) 32 83 38
+        (cl-tmux::process-byte sess 27 state)
+        (cl-tmux::process-byte sess 91 state)
+        (cl-tmux::process-byte sess 77 state)
+        (cl-tmux::process-byte sess 32 state)
+        (cl-tmux::process-byte sess 83 state)
+        (cl-tmux::process-byte sess 38 state)
+        (is (eq p1 (window-active-pane win))
+            "X10 left-click in right pane must focus p1")))))
+
+(test mouse-mode-default-is-off
+  "screen-mouse-mode defaults to 0 (off) on a fresh screen."
+  (with-screen (s 20 5)
+    (is (= 0 (screen-mouse-mode s))
+        "mouse-mode must default to 0")))
+
+(test mouse-sgr-mode-default-is-nil
+  "screen-mouse-sgr-mode defaults to NIL on a fresh screen."
+  (with-screen (s 20 5)
+    (is-false (screen-mouse-sgr-mode s)
+              "mouse-sgr-mode must default to NIL")))

@@ -97,6 +97,55 @@
     (and ap
          (screen-copy-mode-p (pane-screen ap)))))
 
+;;; -- Directional pane selection helper ------------------------------------
+;;;
+;;; The four :select-pane-left/right/up/down handlers share the same shape:
+;;; obtain the active window and pane, then walk to the neighbor in DIRECTION.
+
+(defun %select-pane-in-direction (session direction)
+  "Select the pane adjacent to the active pane in DIRECTION."
+  (let* ((win (session-active-window session))
+         (ap  (and win (window-active-pane win))))
+    (when (and win ap)
+      (let ((nb (pane-neighbor win ap direction)))
+        (when nb (window-select-pane win nb))))))
+
+;;; -- Named-layout application helper --------------------------------------
+;;;
+;;; The three :select-layout-* handlers share the same shape: apply a named
+;;; layout to the active window and recompute geometry.
+
+(defun %apply-named-layout-to-session (session layout-name)
+  "Apply LAYOUT-NAME to SESSION's active window and reassign geometry."
+  (let ((win (session-active-window session)))
+    (when win
+      (cl-tmux/model:apply-named-layout win layout-name)
+      (layout-assign (window-tree win) 0 0 (window-width win) (window-height win)))))
+
+;;; -- Copy-mode dispatch helper --------------------------------------------
+;;;
+;;; The six copy-mode command handlers share the pattern:
+;;; obtain the active screen and invoke a copy-mode function when present.
+
+(defun %copy-mode-call (session fn)
+  "Call FN on SESSION's active screen when one exists and is in copy mode."
+  (let ((s (%active-screen session)))
+    (when s (funcall fn s))))
+
+;;; -- Window list formatter ------------------------------------------------
+
+(defun %format-window-list (session)
+  "Return a formatted string listing all windows in SESSION."
+  (let* ((win  (session-active-window session))
+         (wins (session-windows session)))
+    (with-output-to-string (s)
+      (dolist (w wins)
+        (format s "  ~A~A: ~A (~D pane~:P)~%"
+                (if (eq w win) "*" " ")
+                (position w wins)
+                (window-name w)
+                (length (window-panes w)))))))
+
 ;;; ── Copy-mode key overrides macro ────────────────────────────────────────────
 
 (defmacro define-copy-mode-key-overrides (&rest rules)
@@ -116,7 +165,23 @@
 (define-copy-mode-key-overrides
   (#\[ :copy-mode-up)
   (#\] :copy-mode-down)
-  (#\q :copy-mode-exit))
+  (#\q :copy-mode-exit)
+  (#\Space :copy-mode-begin-selection)
+  (#\v :copy-mode-begin-selection)
+  (#\y :copy-mode-yank))
+
+;;; -- new-session -------------------------------------------------------------
+
+(defun new-session (name rows cols)
+  "Create a new session named NAME with a full-screen window of ROWS x COLS.
+   Registers the session in *server-sessions* and starts reader threads."
+  (let ((session (create-initial-session rows cols)))
+    (setf (session-name session) name
+          (session-id   session) (1+ (length *server-sessions*)))
+    (server-add-session session)
+    (dolist (pane (all-panes session))
+      (start-reader-thread pane))
+    session))
 
 ;;; -- dispatch-prefix-command -----------------------------------------------
 
@@ -171,10 +236,12 @@
        (prompt-start "rename-window" (window-name win)
                      (lambda (name) (rename-window win name))))))
   (:list-keys (show-overlay (describe-key-bindings)))
-  (:copy-mode-enter (let ((s (%active-screen session))) (when s (copy-mode-enter s))))
-  (:copy-mode-exit  (let ((s (%active-screen session))) (when s (copy-mode-exit s))))
-  (:copy-mode-up    (let ((s (%active-screen session))) (when s (copy-mode-scroll s 3))))
-  (:copy-mode-down  (let ((s (%active-screen session))) (when s (copy-mode-scroll s -3))))
+  (:copy-mode-enter            (%copy-mode-call session #'copy-mode-enter))
+  (:copy-mode-exit             (%copy-mode-call session #'copy-mode-exit))
+  (:copy-mode-up               (%copy-mode-call session (lambda (s) (copy-mode-scroll s 3))))
+  (:copy-mode-down             (%copy-mode-call session (lambda (s) (copy-mode-scroll s -3))))
+  (:copy-mode-begin-selection  (%copy-mode-call session #'copy-mode-begin-selection))
+  (:copy-mode-yank             (%copy-mode-call session #'copy-mode-yank))
   (:resize-left   (resize-pane (session-active-window session) :left))
   (:resize-right  (resize-pane (session-active-window session) :right))
   (:resize-up     (resize-pane (session-active-window session) :up))
@@ -186,18 +253,97 @@
           (ap   (and win (window-active-pane win))))
      (when (and text ap (> (pane-fd ap) 0))
        (pty-write (pane-fd ap) (babel:string-to-octets text :encoding :utf-8)))))
-  (:select-layout-even-h
+  (:select-layout-even-h  (%apply-named-layout-to-session session :even-horizontal))
+  (:select-layout-even-v  (%apply-named-layout-to-session session :even-vertical))
+  (:select-layout-tiled   (%apply-named-layout-to-session session :tiled))
+  (:select-pane-left   (%select-pane-in-direction session :left))
+  (:select-pane-right  (%select-pane-in-direction session :right))
+  (:select-pane-up     (%select-pane-in-direction session :up))
+  (:select-pane-down   (%select-pane-in-direction session :down))
+  (:zoom-toggle
    (let ((win (session-active-window session)))
-     (when win
-       (cl-tmux/model:apply-named-layout win :even-horizontal)
-       (layout-assign (window-tree win) 0 0 (window-width win) (window-height win)))))
-  (:select-layout-even-v
+     (when win (window-zoom-toggle win))))
+  (:rename-session
+   (prompt-start "rename-session" (session-name session)
+                 (lambda (name) (rename-session session name))))
+  (:run-shell
+   ;; Run the command in a prompt if no command is already queued.
+   (prompt-start "run-shell" ""
+                 (lambda (cmd)
+                   (unless (string= cmd "")
+                     (let ((out (run-shell cmd)))
+                       (show-overlay out))))))
+  (:if-shell
+   ;; Prompt for a shell command; run it and display a success/failure overlay.
+   (prompt-start "if-shell" ""
+                 (lambda (cmd)
+                   (unless (string= cmd "")
+                     (if-shell cmd
+                               (lambda () (show-overlay (format nil "[if-shell] ~A: ok" cmd)))
+                               (lambda () (show-overlay (format nil "[if-shell] ~A: non-zero exit" cmd))))))))
+  (:list-sessions
+   (show-overlay
+    (with-output-to-string (s)
+      (if *server-sessions*
+          (loop for (name . sess) in *server-sessions*
+                for i from 0
+                do (format s "~A~A: ~A (~D window~:P)~%"
+                           (if (string= name (session-name session)) "*" " ")
+                           i name
+                           (length (session-windows sess))))
+          (format s "  0: ~A (1 window)~%" (session-name session))))))
+  (:new-session
+   (let* ((rows (- *term-rows* *status-height*))
+          (cols *term-cols*)
+          (n    (1+ (length *server-sessions*)))
+          (name (format nil "~D" n)))
+     (new-session name rows cols)))
+  (:kill-session
+   ;; Kill all panes in current session, remove from registry.
+   (let ((name (session-name session)))
+     (dolist (pane (all-panes session))
+       (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
+     (server-remove-session name)
+     ;; If no sessions remain, quit. Otherwise continue.
+     (if (null *server-sessions*)
+         (progn (setf *running* nil) :quit)
+         nil)))
+  (:list-sessions-full
+   (show-overlay
+    (with-output-to-string (s)
+      (loop for (name . sess) in *server-sessions*
+            for i from 0
+            do (format s "~A~A: ~A (~D window~:P)~%"
+                       (if (string= name (session-name session)) "*" " ")
+                       i name
+                       (length (session-windows sess)))))))
+  (:rename-session-prompt
+   (prompt-start "rename-session" (session-name session)
+                 (lambda (name)
+                   (unless (string= name "")
+                     (server-remove-session (session-name session))
+                     (setf (session-name session) name)
+                     (server-add-session session)))))
+  (:list-windows (show-overlay (%format-window-list session)))
+  (:swap-pane-forward
    (let ((win (session-active-window session)))
-     (when win
-       (cl-tmux/model:apply-named-layout win :even-vertical)
-       (layout-assign (window-tree win) 0 0 (window-width win) (window-height win)))))
-  (:select-layout-tiled
+     (when win (swap-pane win :right))))
+  (:swap-pane-backward
    (let ((win (session-active-window session)))
-     (when win
-       (cl-tmux/model:apply-named-layout win :tiled)
-       (layout-assign (window-tree win) 0 0 (window-width win) (window-height win))))))
+     (when win (swap-pane win :left))))
+  (:last-pane
+   (let* ((win  (session-active-window session))
+          (last (and win (window-last-active win))))
+     (when last (window-select-pane win last))))
+  (:display-panes
+   (let* ((win   (session-active-window session))
+          (panes (and win (window-panes win))))
+     (when panes
+       (show-overlay
+         (with-output-to-string (s)
+           (dolist (p panes)
+             (format s "Pane ~D: ~Dx~D at (~D,~D)~A~%"
+                     (pane-id p) (pane-width p) (pane-height p)
+                     (pane-x p) (pane-y p)
+                     (if (eq p (window-active-pane win)) " [active]" ""))))))
+     (setf *dirty* t))))

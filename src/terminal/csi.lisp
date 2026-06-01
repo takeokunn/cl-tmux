@@ -117,6 +117,15 @@
                       (1- (screen-width screen)))
                  (screen-cy screen)))
 
+  ;; REP – Repeat Preceding Character (CSI Ps b)
+  ;; Repeats the last printed character P1* times.  The preceding character is
+  ;; tracked via the SCREEN-LAST-CHAR slot; if nothing has been written yet
+  ;; the sequence is a no-op, which matches xterm behaviour.
+  ((and (null intermed) (char= final #\b))
+   (let ((ch (screen-last-char screen)))
+     (when ch
+       (dotimes (_ p1*) (write-char-at-cursor screen ch)))))
+
   ;; VPA – Vertical Position Absolute (1-based row)
   ((and (null intermed) (char= final #\d))
    (set-cursor screen (screen-cx screen) (1- p1*)))
@@ -150,4 +159,8 @@
 
   ;; DEC Private Mode Reset (?...l) — e.g. ?1049l exits the alternate screen
   ((and (eql intermed #\?) (char= final #\l))
-   (dec-pm-reset screen params)))
+   (dec-pm-reset screen params))
+
+  ;; DECSCUSR — cursor shape: CSI N SP q (intermediate = space, final = q)
+  ((and (eql intermed #\Space) (char= final #\q))
+   (setf (screen-cursor-shape screen) (clamp p1 0 6))))

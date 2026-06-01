@@ -21,6 +21,8 @@
    triggers a spurious resize storm), so geometry is re-read only on signal.")
 (defvar *term-rows* 24)
 (defvar *term-cols* 80)
+(defvar *server-sessions* nil
+  "Alist mapping session-name (string) to session object for the running server.")
 
 ;;; -- SIGWINCH ---------------------------------------------------------------
 

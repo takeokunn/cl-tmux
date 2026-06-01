@@ -115,6 +115,10 @@
 (defun cursor-visible (stream)
   (format stream "~C[?25h" +esc+))
 
+(defun set-cursor-shape (stream shape)
+  "Emit DECSCUSR CSI sequence to set cursor shape in the outer terminal."
+  (format stream "~C[~D q" +esc+ shape))
+
 ;;; ── Attribute reset ─────────────────────────────────────────────────────────
 
 (defun reset-attrs (stream)

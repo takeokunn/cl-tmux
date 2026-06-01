@@ -36,11 +36,14 @@
      (:file "pane")             ; leaf PTY data and wiring (loaded first: layout needs pane-reposition)
      (:file "layout")           ; tree structure + traversal (uses pane-reposition)
      (:file "layout-geometry")  ; rectangle assignment + resize helpers (uses pane-id, pane-x/y/w/h)
-     (:file "window")   ; window tree logic (uses pane + layout)
+     (:file "window")          ; window struct + core operations (split/relayout/resize)
+     (:file "window-neighbor") ; directional pane navigation (uses window-panes)
+     (:file "window-layout")   ; named layouts (apply-named-layout, uses window accessors)
      (:file "session")  ; session management (uses window)
      (:file "format")   ; tmux-style format string expansion
      (:file "buffer")   ; paste-buffer ring
      (:file "options")  ; global option registry
+     (:file "hooks")    ; user-defined hook registry
      (:file "prompt")
      (:file "commands")
      (:file "renderer-format")  ; ANSI primitives
@@ -91,6 +94,7 @@
        (:file "format-tests")
        (:file "buffer-tests")
        (:file "options-tests")
+       (:file "hooks-tests")
        (:file "config-tests")
        (:file "config-directives-tests")
        (:file "renderer-format-tests")

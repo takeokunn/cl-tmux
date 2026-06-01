@@ -156,14 +156,58 @@
   ;; ── All unrecognized ESC sequences → ground (including DECKPAM #x3D, DECKPNM #x3E)
   (t     #'ground-state))
 
+;;; OSC payload accumulator: captures bytes into a buffer, then dispatches
+;;; on BEL (#x07) or ST (ESC \) termination.
+
+(defun %dispatch-osc (screen buf)
+  "Parse accumulated OSC payload BUF and apply side-effects to SCREEN.
+   Handles OSC 0 and OSC 2 (set window title)."
+  (let* ((payload (babel:octets-to-string buf :encoding :utf-8 :errorp nil))
+         (semi    (position #\; payload)))
+    (when semi
+      (let ((cmd  (ignore-errors (parse-integer (subseq payload 0 semi))))
+            (text (subseq payload (1+ semi))))
+        (when (member cmd '(0 2))
+          (setf (screen-title screen) text))))))
+
+(defun make-osc-st-k (screen buf)
+  "Continuation waiting for the backslash of ESC \\ ST."
+  (lambda (screen-arg byte)
+    (declare (type screen screen-arg) (type (unsigned-byte 8) byte))
+    (when (= byte #x5C)
+      (%dispatch-osc screen-arg buf))
+    #'ground-state))
+
+(defun make-osc-k (screen buf)
+  "Return a continuation that accumulates OSC payload bytes.
+   Dispatches to %DISPATCH-OSC on BEL or ESC termination."
+  (lambda (screen-arg byte)
+    (declare (type screen screen-arg) (type (unsigned-byte 8) byte))
+    (cond
+      ((= byte #x07)
+       ;; BEL: terminate and dispatch
+       (%dispatch-osc screen-arg buf)
+       #'ground-state)
+      ((= byte #x1B)
+       ;; possible ESC \ ST — save screen reference for the ST continuation
+       (make-osc-st-k screen-arg buf))
+      (t
+       (vector-push-extend byte buf)
+       (make-osc-k screen-arg buf)))))
+
 (define-state osc-state (screen byte)
-  ;; OSC payload is discarded; screen is unused throughout.
-  (#x07  #'ground-state)                           ; BEL terminates OSC
-  (#x1B  #'osc-st-state)                           ; possible ST = ESC \
-  (t     #'osc-state))
+  ;; OSC payload: start accumulating
+  (#x07  #'ground-state)                           ; bare BEL with empty payload
+  (#x1B  #'osc-st-state)                           ; possible ST = ESC \ with empty payload
+  (t     (let ((buf (make-array 64
+                                :element-type '(unsigned-byte 8)
+                                :fill-pointer 0
+                                :adjustable t)))
+           (vector-push-extend byte buf)
+           (make-osc-k screen buf))))
 
 (define-state osc-st-state (screen byte)
-  (#x5C  #'ground-state)                           ; \ → ST confirmed
+  (#x5C  #'ground-state)                           ; \ → ST confirmed (empty payload)
   (t     #'osc-state))
 
 (define-state charset-state (screen byte)

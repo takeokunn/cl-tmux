@@ -2,6 +2,32 @@
 
 ;;;; Detach-attach server.
 ;;;;
+;;;; *server-sessions* is the authoritative registry of all live sessions (defvar
+;;;; lives in runtime.lisp so dispatch.lisp can reference it before server loads).
+;;;; run-server initialises it with the single initial session; new-session
+;;;; (in dispatch.lisp) adds further sessions; kill-session removes them.
+
+(defun server-add-session (session)
+  "Register SESSION in *server-sessions* keyed by (session-name session).
+   If a session with the same name already exists it is replaced."
+  (setf *server-sessions*
+        (cons (cons (session-name session) session)
+              (remove (session-name session) *server-sessions*
+                      :key #'car :test #'string=))))
+
+(defun server-find-session (name)
+  "Find a session by NAME in *server-sessions*. Returns the session or NIL."
+  (cdr (assoc name *server-sessions* :test #'string=)))
+
+(defun server-remove-session (name)
+  "Remove the session named NAME from *server-sessions*."
+  (setf *server-sessions*
+        (remove name *server-sessions* :key #'car :test #'string=)))
+
+(defun server-all-sessions ()
+  "Return a list of all active sessions."
+  (mapcar #'cdr *server-sessions*))
+
 ;;;; The server owns the session, PTYs, and per-pane reader threads, and serves
 ;;;; one attached client at a time over a Unix socket.  Client keystrokes are
 ;;;; run through the SAME process-byte pipeline the in-process loop uses, so
@@ -107,6 +133,8 @@
   (setf *running* t *dirty* t *resize-pending* nil)
   (let* ((session (create-initial-session *term-rows* *term-cols*))
          (path    (socket-path name)))
+    (setf *server-sessions* nil)
+    (server-add-session session)
     (ignore-errors (delete-file path))
     (let ((listener (make-listener path)))
       (dolist (pane (all-panes session))

@@ -22,6 +22,11 @@
                 #:screen-copy-mode-p
                 #:screen-copy-offset
                 #:screen-scrollback
+                #:screen-copy-selecting
+                #:screen-copy-mark
+                #:screen-copy-cursor
+                #:screen-mouse-mode
+                #:screen-mouse-sgr-mode
                 #:char-width)
   (:import-from #:cl-tmux/model
                 #:create-initial-session
@@ -57,7 +62,9 @@
                 #:pane-id
                 #:pane-x #:pane-y #:pane-width #:pane-height #:pane-fd #:pane-pid
                 #:pane-neighbor
-                #:apply-named-layout)
+                #:pane-at-position
+                #:apply-named-layout
+                #:window-lock)
   (:import-from #:cl-tmux/renderer
                 #:render-session-to-string
                 #:render-session

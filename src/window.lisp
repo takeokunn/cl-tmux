@@ -12,7 +12,11 @@
   (height 24 :type fixnum)
   (panes nil :type list)
   (active nil)
-  (tree  nil))
+  (tree  nil)
+  (zoom-p      nil :type boolean)  ; T when this window's active pane is zoomed
+  (zoom-tree   nil)               ; saved layout tree before zooming, NIL when not zoomed
+  (last-active nil)               ; previously active pane (for C-b ;)
+  (lock (make-lock "window") :read-only t))
 
 (defun window-refresh-panes (window)
   "Recompute WINDOW's derived PANES list from its TREE (when present)."
@@ -25,7 +29,10 @@
       (first (window-panes window))))
 
 (defun window-select-pane (window pane)
-  (setf (window-active window) pane))
+  (let ((current (window-active window)))
+    (when (and current (not (eq current pane)))
+      (setf (window-last-active window) current))
+    (setf (window-active window) pane)))
 
 ;;; ── Orientation-aware pane extent ──────────────────────────────────────────
 ;;;
@@ -183,154 +190,27 @@
             (window-relayout window (window-height window) (window-width window))
             active))))))
 
-;;; ── Pane neighbor lookup ─────────────────────────────────────────────────────
-;;;
-;;; Directional pane navigation: given a pane and a direction, find the
-;;; geometrically adjacent pane.  Lives here (not layout-geometry.lisp) because
-;;; it uses WINDOW-PANES (a WINDOW struct accessor, defined above).
-;;;
-;;; Prolog analogy:
-;;;   neighbor(right, Pane, Cands) :- edge_touching_right(Pane, Cands).
-;;;   neighbor(left,  Pane, Cands) :- edge_touching_left(Pane, Cands).
-;;;   neighbor(down,  Pane, Cands) :- edge_touching_below(Pane, Cands).
-;;;   neighbor(up,    Pane, Cands) :- edge_touching_above(Pane, Cands).
-;;; Among candidates: pick the one whose center is closest perpendicularly.
+(defun window-zoom-toggle (window)
+  "Toggle zoom on WINDOW's active pane. When zooming in, saves the current tree
+   and replaces it with a single-leaf tree. When zooming out, restores the saved tree.
+   All slot mutations are protected by the window lock to prevent renderer races."
+  (with-lock-held ((window-lock window))
+    (if (window-zoom-p window)
+      ;; Zoom out: restore saved tree, then relayout canonically.
+      ;; Guard against corrupted state where zoom-tree is nil.
+      (when (window-zoom-tree window)
+        (setf (window-tree window) (window-zoom-tree window)
+              (window-zoom-tree window) nil
+              (window-zoom-p window) nil)
+        (window-relayout window (window-height window) (window-width window)))
+      ;; Zoom in: save tree, replace with single leaf.
+      ;; Guard against empty windows (no active pane).
+      (let ((pane (window-active-pane window)))
+        (when pane
+          (let ((new-tree (make-layout-leaf pane)))
+            (setf (window-zoom-tree window) (window-tree window)
+                  (window-tree window) new-tree
+                  (window-zoom-p window) t)
+            (window-refresh-panes window)
+            (pane-reposition pane 0 0 (window-width window) (window-height window))))))))
 
-(defun %ranges-overlap-p (start1 len1 start2 len2)
-  "T when [START1, START1+LEN1) and [START2, START2+LEN2) share at least one integer."
-  (and (< start1 (+ start2 len2))
-       (< start2 (+ start1 len1))))
-
-(defun %pane-center-x (pane) (+ (pane-x pane) (ash (pane-width  pane) -1)))
-(defun %pane-center-y (pane) (+ (pane-y pane) (ash (pane-height pane) -1)))
-
-(defmacro define-neighbor-finders (&rest specs)
-  "Build the per-direction candidate-filter lambdas from a Prolog-like fact table.
-   Each SPEC is (direction edge-expr overlap-start1 overlap-len1 overlap-start2 overlap-len2)."
-  `(list
-     ,@(mapcar
-        (lambda (spec)
-          (destructuring-bind (dir edge-expr os1 ol1 os2 ol2) spec
-            `(cons ,dir (lambda (p pane)
-                          (and (<= (abs ,edge-expr) 2)
-                               (%ranges-overlap-p ,os1 ,ol1 ,os2 ,ol2))))))
-        specs)))
-
-(defparameter *neighbor-filters*
-  (define-neighbor-finders
-    (:right (- (pane-x p) (+ (pane-x pane) (pane-width  pane)))
-            (pane-y pane) (pane-height pane) (pane-y p) (pane-height p))
-    (:left  (- (+ (pane-x p) (pane-width p)) (pane-x pane))
-            (pane-y pane) (pane-height pane) (pane-y p) (pane-height p))
-    (:down  (- (pane-y p) (+ (pane-y pane) (pane-height pane)))
-            (pane-x pane) (pane-width pane)  (pane-x p) (pane-width  p))
-    (:up    (- (+ (pane-y p) (pane-height p)) (pane-y pane))
-            (pane-x pane) (pane-width pane)  (pane-x p) (pane-width  p)))
-  "Association list of (direction . filter-fn) for pane-neighbor.")
-
-(defun pane-neighbor (window pane direction)
-  "Return the pane adjacent to PANE in DIRECTION (:left :right :up :down), or NIL.
-   Among edge-touching candidates, returns the one whose center is closest to
-   PANE's center along the perpendicular axis."
-  (let* ((filter     (cdr (assoc direction *neighbor-filters*)))
-         (candidates (remove pane (window-panes window)))
-         (matching   (remove-if-not (lambda (p) (funcall filter p pane)) candidates)))
-    (when matching
-      (ecase direction
-        ((:left :right)
-         (reduce (lambda (a b)
-                   (if (<= (abs (- (%pane-center-y a) (%pane-center-y pane)))
-                           (abs (- (%pane-center-y b) (%pane-center-y pane))))
-                       a b))
-                 matching))
-        ((:up :down)
-         (reduce (lambda (a b)
-                   (if (<= (abs (- (%pane-center-x a) (%pane-center-x pane)))
-                           (abs (- (%pane-center-x b) (%pane-center-x pane))))
-                       a b))
-                 matching))))))
-
-;;; ── Named layouts ───────────────────────────────────────────────────────────
-;;;
-;;; apply-named-layout lives here (not in layout.lisp) because it accesses
-;;; WINDOW struct slots.  layout.lisp defines %build-flat-tree (pure tree
-;;; construction), which we call here.
-;;;
-;;; Prolog-like fact table — each ecase clause is one named layout rule:
-;;;   layout(even_horizontal, Window) :- n_equal_columns(Window).
-;;;   layout(even_vertical,   Window) :- n_equal_rows(Window).
-;;;   layout(main_horizontal, Window) :- main_top_rest_bottom(Window).
-;;;   layout(main_vertical,   Window) :- main_left_rest_right(Window).
-;;;   layout(tiled,           Window) :- near_square_grid(Window).
-
-(defun apply-named-layout (window layout-name)
-  "Reposition all panes in WINDOW according to LAYOUT-NAME, one of:
-     :even-horizontal  :even-vertical  :main-horizontal
-     :main-vertical    :tiled
-   Rebuilds the window tree and calls layout-assign to sync all rectangles."
-  (let* ((panes (window-panes window))
-         (n     (length panes))
-         (w     (window-width  window))
-         (h     (window-height window)))
-    (when (zerop n) (return-from apply-named-layout nil))
-    (ecase layout-name
-
-      (:even-horizontal
-       (let* ((avail-w (- w (1- n)))
-              (each-w  (floor avail-w n)))
-         (loop for pane in panes for i from 0
-               do (pane-reposition pane (* i (1+ each-w)) 0 each-w h))
-         (setf (window-tree window) (%build-flat-tree panes :h))))
-
-      (:even-vertical
-       (let* ((avail-h (- h (1- n)))
-              (each-h  (floor avail-h n)))
-         (loop for pane in panes for i from 0
-               do (pane-reposition pane 0 (* i (1+ each-h)) w each-h))
-         (setf (window-tree window) (%build-flat-tree panes :v))))
-
-      (:main-horizontal
-       (let* ((main-h  (floor h 2))
-              (rest-h  (- h main-h 1))
-              (rest-ps (rest panes))
-              (m       (length rest-ps)))
-         (pane-reposition (first panes) 0 0 w main-h)
-         (when (plusp m)
-           (let* ((avail-w (- w (1- m)))
-                  (each-w  (floor avail-w m)))
-             (loop for pane in rest-ps for i from 0
-                   do (pane-reposition pane (* i (1+ each-w)) (1+ main-h) each-w rest-h))))
-         (setf (window-tree window)
-               (if rest-ps
-                   (make-layout-split :v (make-layout-leaf (first panes))
-                                         (%build-flat-tree rest-ps :h))
-                   (make-layout-leaf (first panes))))))
-
-      (:main-vertical
-       (let* ((main-w  (floor w 2))
-              (rest-w  (- w main-w 1))
-              (rest-ps (rest panes))
-              (m       (length rest-ps)))
-         (pane-reposition (first panes) 0 0 main-w h)
-         (when (plusp m)
-           (let* ((avail-h (- h (1- m)))
-                  (each-h  (floor avail-h m)))
-             (loop for pane in rest-ps for i from 0
-                   do (pane-reposition pane (1+ main-w) (* i (1+ each-h)) rest-w each-h))))
-         (setf (window-tree window)
-               (if rest-ps
-                   (make-layout-split :h (make-layout-leaf (first panes))
-                                         (%build-flat-tree rest-ps :v))
-                   (make-layout-leaf (first panes))))))
-
-      (:tiled
-       (let* ((cols  (ceiling (sqrt n)))
-              (rows  (ceiling n cols))
-              (col-w (floor (- w (1- cols)) cols))
-              (row-h (floor (- h (1- rows)) rows)))
-         (loop for pane in panes for i from 0
-               for col = (mod i cols) for row = (floor i cols)
-               do (pane-reposition pane (* col (1+ col-w)) (* row (1+ row-h)) col-w row-h))
-         (setf (window-tree window) (%build-flat-tree panes :h)))))
-
-    (layout-assign (window-tree window) 0 0 w h)))

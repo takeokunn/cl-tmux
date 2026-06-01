@@ -385,3 +385,255 @@
     (is (= 12 (pane-height p0)) "p0 height must be 12")
     (is (= 13 (pane-y p1)) "p1 must start at row 13")
     (is (= 12 (pane-height p1)) "p1 height must be 12")))
+
+;;; ── window-zoom-toggle ────────────────────────────────────────────────────────
+
+(test window-zoom-toggle-zoom-in-fills-window
+  "Zooming a 2-pane window replaces the tree with a single-leaf tree so the
+   active pane receives the full window dimensions, and window-zoom-p becomes T."
+  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2))))
+    (window-select-pane win p0)
+    (cl-tmux/model:window-zoom-toggle win)
+    ;; Zoom flag is set.
+    (is-true  (cl-tmux/model:window-zoom-p win) "window-zoom-p must be T after zoom-in")
+    ;; Pane list now contains only the zoomed pane.
+    (is (equal (list p0) (window-panes win))
+        "zoomed window must have only the active pane in its panes list")
+    ;; Active pane fills the full window dimensions.
+    (is (= 81 (pane-width  p0)) "zoomed pane must fill the full window width")
+    (is (= 24 (pane-height p0)) "zoomed pane must fill the full window height")
+    (is (= 0  (pane-x p0)) "zoomed pane must start at column 0")
+    (is (= 0  (pane-y p0)) "zoomed pane must start at row 0")))
+
+(test window-zoom-toggle-zoom-out-restores-layout
+  "Unzooming restores the saved tree, the panes list, and window-zoom-p goes back to NIL."
+  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2))))
+    (window-select-pane win p0)
+    ;; Capture geometry before zoom
+    (let ((w0-before (pane-width p0))
+          (w1-before (pane-width p1)))
+      ;; Zoom in then zoom out.
+      (cl-tmux/model:window-zoom-toggle win)
+      (cl-tmux/model:window-zoom-toggle win)
+      ;; Zoom flag cleared.
+      (is-false (cl-tmux/model:window-zoom-p win) "window-zoom-p must be NIL after zoom-out")
+      ;; Both panes restored in the list.
+      (is (= 2 (length (window-panes win))) "both panes must be back after zoom-out")
+      ;; Original widths restored.
+      (is (= w0-before (pane-width p0)) "p0 width must be restored to pre-zoom value")
+      (is (= w1-before (pane-width p1)) "p1 width must be restored to pre-zoom value"))))
+
+(test window-zoom-toggle-single-pane-zooms-and-unzooms
+  "Zoom on a single-pane window succeeds: the pane fills the window, then
+   unzoom restores it (same geometry since there was only one pane)."
+  (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
+         (win (make-window :id 1 :name "w" :width 80 :height 24
+                           :panes (list p0)
+                           :tree (make-layout-leaf p0))))
+    (window-select-pane win p0)
+    ;; Zoom in on a single pane — must not error.
+    (cl-tmux/model:window-zoom-toggle win)
+    (is-true  (cl-tmux/model:window-zoom-p win) "single-pane window must accept zoom-in")
+    (is (= 1 (length (window-panes win))) "single-pane list unchanged after zoom-in")
+    (is (= 80 (pane-width  p0)) "single pane must still fill full window width")
+    (is (= 24 (pane-height p0)) "single pane must still fill full window height")
+    ;; Zoom out — zoom flag cleared, pane count unchanged.
+    (cl-tmux/model:window-zoom-toggle win)
+    (is-false (cl-tmux/model:window-zoom-p win) "single-pane window must accept zoom-out")
+    (is (= 1 (length (window-panes win))) "single-pane list still 1 after zoom-out")))
+
+;;; ── window-lock slot ─────────────────────────────────────────────────────────
+
+(test window-lock-slot-accessible
+  "window-lock returns the lock object created at make-window time (not NIL and
+   not an error)."
+  (let ((win (make-window :id 1 :name "w")))
+    (is-true (window-lock win)
+             "window-lock must return a non-NIL lock object")))
+
+;;; ── apply-named-layout — remaining three named layouts ─────────────────────
+;;;
+;;; :main-horizontal, :main-vertical, and :tiled all contain substantively
+;;; different geometry logic (floor-halving, secondary-pane subdivision,
+;;; sqrt-based grid).  The tests below exercise each of these branches
+;;; using make-no-pty-pane and make-fake-window from helpers.lisp.
+
+(test apply-named-layout-main-horizontal-two-panes
+  ":main-horizontal with 2 panes places the first across the top half and
+   the second across the bottom half."
+  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
+         (p1  (make-no-pty-pane 2 0 0 1 1))
+         (win (make-window :id 1 :name "w" :width 80 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-leaf p0))))
+    (apply-named-layout win :main-horizontal)
+    ;; main-h = floor(24/2) = 12; rest-h = 24 - 12 - 1 = 11
+    (is (= 0  (pane-x p0))      "main pane starts at column 0")
+    (is (= 0  (pane-y p0))      "main pane starts at row 0")
+    (is (= 80 (pane-width p0))  "main pane spans full width")
+    (is (= 12 (pane-height p0)) "main pane height = floor(h/2)")
+    ;; Secondary pane fills the bottom portion.
+    (is (= 0  (pane-x p1))      "secondary pane starts at column 0")
+    (is (= 13 (pane-y p1))      "secondary pane y = main-h + 1 separator")
+    (is (= 80 (pane-width p1))  "secondary pane spans full width (1 pane below)")
+    (is (= 11 (pane-height p1)) "secondary pane height = h - main-h - 1")))
+
+(test apply-named-layout-main-horizontal-three-panes
+  ":main-horizontal with 3 panes: main spans top half; two panes share the
+   bottom half side by side with equal widths."
+  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
+         (p1  (make-no-pty-pane 2 0 0 1 1))
+         (p2  (make-no-pty-pane 3 0 0 1 1))
+         (win (make-window :id 1 :name "w" :width 81 :height 25
+                           :panes (list p0 p1 p2)
+                           :tree (make-layout-leaf p0))))
+    (apply-named-layout win :main-horizontal)
+    ;; main-h = floor(25/2) = 12; rest-h = 25 - 12 - 1 = 12
+    (is (= 12 (pane-height p0)) "main pane height = floor(h/2)")
+    (is (= 12 (pane-height p1)) "secondary panes share the rest row equally")
+    (is (= 12 (pane-height p2)) "secondary panes share the rest row equally")
+    ;; Two secondary panes in a row: 81 cols - 1 separator = 80, floor(80/2) = 40 each
+    (is (= 0  (pane-x p1))     "left secondary pane starts at column 0")
+    (is (= 40 (pane-width p1)) "left secondary width = floor(avail/2)")
+    (is (= 41 (pane-x p2))    "right secondary pane starts at column 41")
+    (is (= 40 (pane-width p2)) "right secondary width = avail - left-w")))
+
+(test apply-named-layout-main-horizontal-single-pane
+  ":main-horizontal with a single pane: pane takes the full window rectangle."
+  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
+         (win (make-window :id 1 :name "w" :width 80 :height 24
+                           :panes (list p0)
+                           :tree (make-layout-leaf p0))))
+    (apply-named-layout win :main-horizontal)
+    (is (= 0  (pane-x p0)))
+    (is (= 0  (pane-y p0)))
+    (is (= 80 (pane-width  p0)))
+    (is (= 24 (pane-height p0)))))
+
+(test apply-named-layout-main-vertical-two-panes
+  ":main-vertical with 2 panes places the first in the left half and the
+   second in the right half (stacked — but as a single pane it spans all rows)."
+  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
+         (p1  (make-no-pty-pane 2 0 0 1 1))
+         (win (make-window :id 1 :name "w" :width 80 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-leaf p0))))
+    (apply-named-layout win :main-vertical)
+    ;; main-w = floor(80/2) = 40; rest-w = 80 - 40 - 1 = 39
+    (is (= 0  (pane-x p0))      "main pane starts at column 0")
+    (is (= 0  (pane-y p0))      "main pane starts at row 0")
+    (is (= 40 (pane-width p0))  "main pane width = floor(w/2)")
+    (is (= 24 (pane-height p0)) "main pane spans full height")
+    ;; Secondary pane fills the right column.
+    (is (= 41 (pane-x p1))      "secondary pane x = main-w + 1 separator")
+    (is (= 0  (pane-y p1))      "secondary pane starts at row 0")
+    (is (= 39 (pane-width p1))  "secondary pane width = w - main-w - 1")
+    (is (= 24 (pane-height p1)) "secondary pane spans full height (1 pane in column)")))
+
+(test apply-named-layout-main-vertical-three-panes
+  ":main-vertical with 3 panes: main spans the left half; two panes share
+   the right half stacked equally."
+  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
+         (p1  (make-no-pty-pane 2 0 0 1 1))
+         (p2  (make-no-pty-pane 3 0 0 1 1))
+         (win (make-window :id 1 :name "w" :width 81 :height 25
+                           :panes (list p0 p1 p2)
+                           :tree (make-layout-leaf p0))))
+    (apply-named-layout win :main-vertical)
+    ;; main-w = floor(81/2) = 40; rest-w = 81 - 40 - 1 = 40
+    (is (= 40 (pane-width p0))  "main pane width = floor(w/2)")
+    (is (= 25 (pane-height p0)) "main pane spans full height")
+    ;; Two secondary panes stacked: 25 rows - 1 separator = 24, floor(24/2) = 12 each
+    (is (= 41 (pane-x p1))     "top secondary pane x = main-w + 1")
+    (is (= 0  (pane-y p1))     "top secondary pane starts at row 0")
+    (is (= 12 (pane-height p1)) "top secondary height = floor(avail/2)")
+    (is (= 41 (pane-x p2))     "bottom secondary pane in the same column")
+    (is (= 13 (pane-y p2))     "bottom secondary pane y = top-h + 1 separator")
+    (is (= 12 (pane-height p2)) "bottom secondary height = avail - top-h")))
+
+(test apply-named-layout-main-vertical-single-pane
+  ":main-vertical with a single pane: pane takes the full window rectangle."
+  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
+         (win (make-window :id 1 :name "w" :width 80 :height 24
+                           :panes (list p0)
+                           :tree (make-layout-leaf p0))))
+    (apply-named-layout win :main-vertical)
+    (is (= 0  (pane-x p0)))
+    (is (= 0  (pane-y p0)))
+    (is (= 80 (pane-width  p0)))
+    (is (= 24 (pane-height p0)))))
+
+(test apply-named-layout-tiled-single-pane
+  ":tiled with 1 pane fills the whole window (1×1 grid)."
+  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
+         (win (make-window :id 1 :name "w" :width 80 :height 24
+                           :panes (list p0)
+                           :tree (make-layout-leaf p0))))
+    (apply-named-layout win :tiled)
+    ;; ceil(sqrt(1)) = 1 col; ceil(1/1) = 1 row; col-w = 80; row-h = 24
+    (is (= 0  (pane-x p0)))
+    (is (= 0  (pane-y p0)))
+    (is (= 80 (pane-width  p0)))
+    (is (= 24 (pane-height p0)))))
+
+(test apply-named-layout-tiled-four-panes
+  ":tiled with 4 panes produces a 2×2 grid with equal cell sizes."
+  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
+         (p1  (make-no-pty-pane 2 0 0 1 1))
+         (p2  (make-no-pty-pane 3 0 0 1 1))
+         (p3  (make-no-pty-pane 4 0 0 1 1))
+         (win (make-window :id 1 :name "w" :width 81 :height 25
+                           :panes (list p0 p1 p2 p3)
+                           :tree (make-layout-leaf p0))))
+    (apply-named-layout win :tiled)
+    ;; ceil(sqrt(4)) = 2 cols; ceil(4/2) = 2 rows
+    ;; col-w = floor((81 - 1) / 2) = 40; row-h = floor((25 - 1) / 2) = 12
+    (is (=  0 (pane-x p0)) "p0 col 0")
+    (is (=  0 (pane-y p0)) "p0 row 0")
+    (is (= 40 (pane-width  p0)))
+    (is (= 12 (pane-height p0)))
+    (is (= 41 (pane-x p1)) "p1 col 1: x = 1*(40+1)")
+    (is (=  0 (pane-y p1)) "p1 row 0")
+    (is (= 40 (pane-width  p1)))
+    (is (= 12 (pane-height p1)))
+    (is (=  0 (pane-x p2)) "p2 col 0")
+    (is (= 13 (pane-y p2)) "p2 row 1: y = 1*(12+1)")
+    (is (= 40 (pane-width  p2)))
+    (is (= 12 (pane-height p2)))
+    (is (= 41 (pane-x p3)) "p3 col 1")
+    (is (= 13 (pane-y p3)) "p3 row 1")
+    (is (= 40 (pane-width  p3)))
+    (is (= 12 (pane-height p3)))))
+
+(test apply-named-layout-tiled-three-panes
+  ":tiled with 3 panes produces a 2-column grid (2×2 with one empty cell)."
+  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
+         (p1  (make-no-pty-pane 2 0 0 1 1))
+         (p2  (make-no-pty-pane 3 0 0 1 1))
+         (win (make-window :id 1 :name "w" :width 81 :height 25
+                           :panes (list p0 p1 p2)
+                           :tree (make-layout-leaf p0))))
+    (apply-named-layout win :tiled)
+    ;; ceil(sqrt(3)) = 2 cols; ceil(3/2) = 2 rows
+    ;; col-w = floor((81-1)/2) = 40; row-h = floor((25-1)/2) = 12
+    ;; p0 at (col=0,row=0) p1 at (col=1,row=0) p2 at (col=0,row=1)
+    (is (=  0 (pane-x p0)))
+    (is (=  0 (pane-y p0)))
+    (is (= 41 (pane-x p1)))
+    (is (=  0 (pane-y p1)))
+    (is (=  0 (pane-x p2)))
+    (is (= 13 (pane-y p2)) "p2 placed in second row")))

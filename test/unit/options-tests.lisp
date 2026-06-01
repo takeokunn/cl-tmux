@@ -62,6 +62,14 @@
   "Setting a :integer option with a numeric string coerces correctly."
   (is (= 5000 (cl-tmux/options:set-option "history-limit" "5000"))))
 
+(test integer-coercion-500
+  "Setting history-limit with \"500\" coerces to the integer 500."
+  (is (= 500 (cl-tmux/options:set-option "history-limit" "500"))))
+
+(test string-coercion-from-non-string
+  "Setting a :string option with a non-string value coerces via format ~A."
+  (is (string= "42" (cl-tmux/options:set-option "status-left" 42))))
+
 ;;; ── all-options ──────────────────────────────────────────────────────────────
 
 (test all-options-returns-alist

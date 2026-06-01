@@ -41,6 +41,50 @@
    ;; Reset (?25l): hide the cursor
    ((setf (screen-cursor-visible screen) nil)))
 
+  ;; Mode 1 — application cursor keys (?1h / ?1l)
+  ;; When set, pane expects ESC O A-D instead of ESC [ A-D for arrow keys.
+  (1
+   ;; Set (?1h): application cursor keys on
+   ((setf (screen-app-cursor-keys screen) t))
+   ;; Reset (?1l): application cursor keys off
+   ((setf (screen-app-cursor-keys screen) nil)))
+
+  ;; Mode 2004 — bracketed paste mode (?2004h / ?2004l)
+  ;; Modern shells (bash, zsh, fish) and editors (vim, neovim) toggle this mode.
+  (2004
+   ;; Set (?2004h): enable bracketed paste
+   ((setf (screen-bracketed-paste screen) t))
+   ;; Reset (?2004l): disable bracketed paste
+   ((setf (screen-bracketed-paste screen) nil)))
+
+  ;; Mode 1000 — basic mouse tracking (X10 button press/release)
+  (1000
+   ;; Set (?1000h): enable basic mouse tracking
+   ((setf (screen-mouse-mode screen) 1))
+   ;; Reset (?1000l): disable mouse tracking
+   ((setf (screen-mouse-mode screen) 0)))
+
+  ;; Mode 1002 — button-event mouse tracking
+  (1002
+   ;; Set (?1002h): enable button-event mouse tracking
+   ((setf (screen-mouse-mode screen) 2))
+   ;; Reset (?1002l): disable mouse tracking
+   ((setf (screen-mouse-mode screen) 0)))
+
+  ;; Mode 1003 — all-motion mouse tracking
+  (1003
+   ;; Set (?1003h): enable all-motion mouse tracking
+   ((setf (screen-mouse-mode screen) 3))
+   ;; Reset (?1003l): disable mouse tracking
+   ((setf (screen-mouse-mode screen) 0)))
+
+  ;; Mode 1006 — SGR extended mouse encoding
+  (1006
+   ;; Set (?1006h): enable SGR extended mouse encoding
+   ((setf (screen-mouse-sgr-mode screen) t))
+   ;; Reset (?1006l): disable SGR extended mouse encoding
+   ((setf (screen-mouse-sgr-mode screen) nil)))
+
   ;; Mode 1049 — alternate screen (?1049h enters, ?1049l exits)
   (1049
    ;; Set: save current grid + cursor, replace with a fresh blank grid.

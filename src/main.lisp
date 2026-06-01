@@ -68,10 +68,37 @@
 
 (defparameter *startup-modes*
   '(("server" . run-server)
-    ("attach" . run-client))
+    ("attach" . run-client-with-autostart))
   "Mode-name → function-name (symbol) dispatch table for the binary entry point.
    Storing symbols (not function objects) means test stubs that rebind the
    function cell with SETF FDEFINITION are honoured at dispatch time.")
+
+(defun %ensure-server-running (session-name)
+  "Start a background server for SESSION-NAME if no socket exists.
+   Uses sb-ext:run-program with *posix-argv* to spawn a separate process safely.
+   Polls every 100 ms for up to 3 seconds for the socket to appear.
+   SBCL-only: on other implementations emits a warning and returns nil."
+  (let ((socket-path (socket-path session-name)))
+    (unless (probe-file socket-path)
+      #+sbcl
+      (let ((exe  (first sb-ext:*posix-argv*))
+            (args (list "server" session-name)))
+        ;; Guard: run-program may fail in test environments or when the binary
+        ;; is not yet on PATH. In that case we proceed and run-client will fail
+        ;; gracefully with a connection error.
+        (ignore-errors
+          (sb-ext:run-program exe args :wait nil :output nil :error nil)))
+      #-sbcl
+      (warn "Cannot auto-start server: not running on SBCL")
+      ;; Poll for the socket to appear (up to 3 seconds, 100 ms intervals)
+      (loop for i from 0 to 30
+            until (probe-file socket-path)
+            do (sleep 0.1)))))
+
+(defun run-client-with-autostart (name)
+  "Auto-start a server for NAME if not running, then attach as a client."
+  (%ensure-server-running name)
+  (run-client name))
 
 (defun main ()
   "Binary entry point — dispatches on the first argv item.

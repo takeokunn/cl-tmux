@@ -327,12 +327,19 @@
             (cl-tmux/terminal/parser:osc-state s #x07)))))
 
 (test osc-state-other-bytes-stay-in-osc
-  "osc-state on non-terminator bytes returns osc-state (still inside OSC)."
+  "osc-state on non-terminator bytes returns a function (OSC payload accumulator)."
   (let ((s (make-screen 10 5)))
-    (is (eq #'cl-tmux/terminal/parser:osc-state
-            (cl-tmux/terminal/parser:osc-state s 65)))    ; 'A'
-    (is (eq #'cl-tmux/terminal/parser:osc-state
-            (cl-tmux/terminal/parser:osc-state s 59)))))  ; ';'
+    ;; The new accumulator-based implementation returns a closure (not #'osc-state)
+    ;; that continues collecting OSC payload bytes.  We verify it is a FUNCTION
+    ;; that will eventually transition to ground-state on BEL or ST.
+    (let ((k65 (cl-tmux/terminal/parser:osc-state s 65)))   ; 'A'
+      (is (functionp k65) "osc-state on 'A' must return a function"))
+    (let ((k59 (cl-tmux/terminal/parser:osc-state s 59)))   ; ';'
+      (is (functionp k59) "osc-state on ';' must return a function")
+      ;; Verify that sending BEL to the accumulator transitions to ground-state.
+      (is (eq #'cl-tmux/terminal/parser:ground-state
+              (funcall k59 s #x07))
+          "accumulator on BEL must return ground-state"))))
 
 ;; osc-st-state ─────────────────────────────────────────────────────────────────
 

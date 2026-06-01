@@ -80,3 +80,38 @@
             "an empty payload yields NIL (no quit, no detach)")
         (is-true cl-tmux::*running*
                  "no quit keystroke means *running* stays T")))))
+
+;;; ── Session registry tests ───────────────────────────────────────────────────
+
+(test server-add-and-find-session
+  "server-add-session registers a session; server-find-session retrieves it."
+  (let ((cl-tmux::*server-sessions* nil))
+    (let ((sess (make-session :id 1 :name "alpha" :windows nil)))
+      (cl-tmux::server-add-session sess)
+      (let ((found (cl-tmux::server-find-session "alpha")))
+        (is (eq sess found)
+            "server-find-session should return the exact session object added")))))
+
+(test server-remove-session
+  "server-remove-session removes a previously added session from the registry."
+  (let ((cl-tmux::*server-sessions* nil))
+    (let ((sess (make-session :id 1 :name "beta" :windows nil)))
+      (cl-tmux::server-add-session sess)
+      (cl-tmux::server-remove-session "beta")
+      (is (null (cl-tmux::server-find-session "beta"))
+          "after removal, server-find-session should return NIL"))))
+
+(test server-all-sessions
+  "server-all-sessions returns one entry per registered session."
+  (let ((cl-tmux::*server-sessions* nil))
+    (let ((s1 (make-session :id 1 :name "one" :windows nil))
+          (s2 (make-session :id 2 :name "two" :windows nil)))
+      (cl-tmux::server-add-session s1)
+      (cl-tmux::server-add-session s2)
+      (let ((all (cl-tmux::server-all-sessions)))
+        (is (= 2 (length all))
+            "server-all-sessions should return 2 entries, got ~D" (length all))
+        (is-true (member s1 all)
+                 "session s1 should appear in server-all-sessions")
+        (is-true (member s2 all)
+                 "session s2 should appear in server-all-sessions")))))

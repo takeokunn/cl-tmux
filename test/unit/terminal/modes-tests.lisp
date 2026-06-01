@@ -197,3 +197,64 @@
     (is (= 6 (length cells)) "vector length must equal N")
     (is (every (lambda (c) (char= #\Space (cell-char c))) cells)
         "every cell must be a blank space cell")))
+
+;;; ── Mouse reporting DEC private mode tests (1000/1002/1003/1006) ────────────
+
+(test mouse-mode-1000-set-and-reset
+  "ESC[?1000h sets mouse-mode to 1; ESC[?1000l resets it to 0."
+  (with-screen (s 20 5)
+    (is (= 0 (cl-tmux/terminal/types:screen-mouse-mode s))
+        "mouse-mode must be 0 by default")
+    (feed s (esc "[?1000h"))
+    (is (= 1 (cl-tmux/terminal/types:screen-mouse-mode s))
+        "mouse-mode must be 1 after ESC[?1000h")
+    (feed s (esc "[?1000l"))
+    (is (= 0 (cl-tmux/terminal/types:screen-mouse-mode s))
+        "mouse-mode must be 0 after ESC[?1000l")))
+
+(test mouse-mode-1002-set-and-reset
+  "ESC[?1002h sets mouse-mode to 2; ESC[?1002l resets it to 0."
+  (with-screen (s 20 5)
+    (feed s (esc "[?1002h"))
+    (is (= 2 (cl-tmux/terminal/types:screen-mouse-mode s))
+        "mouse-mode must be 2 after ESC[?1002h")
+    (feed s (esc "[?1002l"))
+    (is (= 0 (cl-tmux/terminal/types:screen-mouse-mode s))
+        "mouse-mode must be 0 after ESC[?1002l")))
+
+(test mouse-mode-1003-set-and-reset
+  "ESC[?1003h sets mouse-mode to 3; ESC[?1003l resets it to 0."
+  (with-screen (s 20 5)
+    (feed s (esc "[?1003h"))
+    (is (= 3 (cl-tmux/terminal/types:screen-mouse-mode s))
+        "mouse-mode must be 3 after ESC[?1003h")
+    (feed s (esc "[?1003l"))
+    (is (= 0 (cl-tmux/terminal/types:screen-mouse-mode s))
+        "mouse-mode must be 0 after ESC[?1003l")))
+
+(test mouse-sgr-mode-1006-set-and-reset
+  "ESC[?1006h sets mouse-sgr-mode to T; ESC[?1006l resets it to NIL."
+  (with-screen (s 20 5)
+    (is-false (cl-tmux/terminal/types:screen-mouse-sgr-mode s)
+              "mouse-sgr-mode must be NIL by default")
+    (feed s (esc "[?1006h"))
+    (is (cl-tmux/terminal/types:screen-mouse-sgr-mode s)
+        "mouse-sgr-mode must be T after ESC[?1006h")
+    (feed s (esc "[?1006l"))
+    (is-false (cl-tmux/terminal/types:screen-mouse-sgr-mode s)
+              "mouse-sgr-mode must be NIL after ESC[?1006l")))
+
+(test dec-pm-set-1000-directly
+  "dec-pm-set with param 1000 sets mouse-mode to 1."
+  (with-screen (s 20 5)
+    (cl-tmux/terminal/actions:dec-pm-set s '(1000))
+    (is (= 1 (cl-tmux/terminal/types:screen-mouse-mode s))
+        "dec-pm-set 1000 must set mouse-mode to 1")))
+
+(test dec-pm-reset-1000-directly
+  "dec-pm-reset with param 1000 resets mouse-mode to 0."
+  (with-screen (s 20 5)
+    (cl-tmux/terminal/actions:dec-pm-set   s '(1000))
+    (cl-tmux/terminal/actions:dec-pm-reset s '(1000))
+    (is (= 0 (cl-tmux/terminal/types:screen-mouse-mode s))
+        "dec-pm-reset 1000 must set mouse-mode to 0")))

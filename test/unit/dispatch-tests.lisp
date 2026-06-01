@@ -230,3 +230,254 @@
 (test define-copy-mode-key-overrides-macro-is-defined
   "define-copy-mode-key-overrides is a defined macro."
   (is (macro-function 'cl-tmux::define-copy-mode-key-overrides)))
+
+;;; ── select-pane-left/right/up/down dispatch ─────────────────────────────────
+
+(defun %two-pane-h-session ()
+  "A session with a 2-pane horizontal split: p0 (x=0 w=40) | p1 (x=41 w=40),
+   total window 81 wide, 24 tall.  First pane is active."
+  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (values sess win p0 p1)))
+
+(test dispatch-select-pane-right-moves-active-pane
+  ":select-pane-right moves the active pane to the right neighbour."
+  (multiple-value-bind (sess win p0 p1) (%two-pane-h-session)
+    (declare (ignore p0))
+    (with-loop-state
+      (cl-tmux::dispatch-command sess :select-pane-right nil)
+      (is (eq p1 (window-active-pane win))
+          "active pane must be p1 after :select-pane-right"))))
+
+(test dispatch-select-pane-left-moves-active-pane
+  ":select-pane-left moves the active pane to the left neighbour."
+  (multiple-value-bind (sess win p0 p1) (%two-pane-h-session)
+    (with-loop-state
+      ;; Start on p1, then go left.
+      (window-select-pane win p1)
+      (cl-tmux::dispatch-command sess :select-pane-left nil)
+      (is (eq p0 (window-active-pane win))
+          "active pane must be p0 after :select-pane-left"))))
+
+(test dispatch-select-pane-right-noop-at-rightmost
+  ":select-pane-right is a no-op when the active pane has no right neighbour."
+  (multiple-value-bind (sess win p0 p1) (%two-pane-h-session)
+    (with-loop-state
+      ;; Make p1 (rightmost) active, then try to go further right.
+      (window-select-pane win p1)
+      (cl-tmux::dispatch-command sess :select-pane-right nil)
+      (is (eq p1 (window-active-pane win))
+          "active pane must remain p1 when no right neighbour exists"))))
+
+(defun %two-pane-v-session ()
+  "A session with a 2-pane vertical split: p0 (y=0 h=10) above p1 (y=11 h=10),
+   total window 80 wide, 21 tall.  First pane (top) is active."
+  (let* ((p0   (make-no-pty-pane 1 0  0 80 10))
+         (p1   (make-no-pty-pane 2 0 11 80 10))
+         (win  (make-window :id 1 :name "w" :width 80 :height 21
+                            :panes (list p0 p1)
+                            :tree (make-layout-split :v
+                                     (make-layout-leaf p0)
+                                     (make-layout-leaf p1)
+                                     1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (values sess win p0 p1)))
+
+(test dispatch-select-pane-down-moves-active-pane
+  ":select-pane-down moves the active pane to the pane below."
+  (multiple-value-bind (sess win p0 p1) (%two-pane-v-session)
+    (declare (ignore p0))
+    (with-loop-state
+      (cl-tmux::dispatch-command sess :select-pane-down nil)
+      (is (eq p1 (window-active-pane win))
+          "active pane must be p1 after :select-pane-down"))))
+
+(test dispatch-select-pane-up-moves-active-pane
+  ":select-pane-up moves the active pane to the pane above."
+  (multiple-value-bind (sess win p0 p1) (%two-pane-v-session)
+    (with-loop-state
+      ;; Start on p1 (bottom), then go up.
+      (window-select-pane win p1)
+      (cl-tmux::dispatch-command sess :select-pane-up nil)
+      (is (eq p0 (window-active-pane win))
+          "active pane must be p0 after :select-pane-up"))))
+
+;;; ── zoom-toggle dispatch ────────────────────────────────────────────────────
+
+(test dispatch-zoom-toggle-sets-zoom-flag
+  ":zoom-toggle zooms the active pane in and marks window-zoom-p as T."
+  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (with-loop-state
+      (cl-tmux::dispatch-command sess :zoom-toggle nil)
+      (is-true (cl-tmux/model:window-zoom-p win)
+               "window-zoom-p must be T after :zoom-toggle dispatch")
+      ;; Toggle back off.
+      (cl-tmux::dispatch-command sess :zoom-toggle nil)
+      (is-false (cl-tmux/model:window-zoom-p win)
+                "window-zoom-p must be NIL after second :zoom-toggle dispatch"))))
+
+;;; ── rename-session dispatch ─────────────────────────────────────────────────
+
+(test dispatch-rename-session-opens-prompt
+  ":rename-session opens a prompt seeded with the current session name, and
+   its on-submit closure renames the session."
+  (let ((s (make-fake-session :nwindows 1)))
+    (let ((*prompt* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command s :rename-session nil)
+      (is (prompt-active-p) "rename-session must open a prompt")
+      (is (string= "0" (prompt-buffer *prompt*))
+          "prompt must be seeded with the current session name \"0\"")
+      (funcall (prompt-on-submit *prompt*) "newsess")
+      (is (string= "newsess" (session-name s))
+          "on-submit must rename the session to the supplied name"))))
+
+;;; ── %select-pane-in-direction ───────────────────────────────────────────────
+
+(test select-pane-in-direction-right-selects-right-pane
+  "%select-pane-in-direction :right from the left pane selects the right pane."
+  (let* ((p0   (make-no-pty-pane 1  0 0 40 24))
+         (p1   (make-no-pty-pane 2 41 0 40 24))
+         (win  (make-window :id 1 :name "w" :width 81 :height 24
+                            :panes (list p0 p1)
+                            :tree (make-layout-split :h
+                                     (make-layout-leaf p0)
+                                     (make-layout-leaf p1)
+                                     1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (with-loop-state
+      (cl-tmux::%select-pane-in-direction sess :right)
+      (is (eq p1 (window-active-pane win))
+          "active pane must be p1 after %select-pane-in-direction :right"))))
+
+(test select-pane-in-direction-left-selects-left-pane
+  "%select-pane-in-direction :left from the right pane selects the left pane."
+  (let* ((p0   (make-no-pty-pane 1  0 0 40 24))
+         (p1   (make-no-pty-pane 2 41 0 40 24))
+         (win  (make-window :id 1 :name "w" :width 81 :height 24
+                            :panes (list p0 p1)
+                            :tree (make-layout-split :h
+                                     (make-layout-leaf p0)
+                                     (make-layout-leaf p1)
+                                     1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p1)
+    (session-select-window sess win)
+    (with-loop-state
+      (cl-tmux::%select-pane-in-direction sess :left)
+      (is (eq p0 (window-active-pane win))
+          "active pane must be p0 after %select-pane-in-direction :left"))))
+
+(test select-pane-in-direction-noop-when-no-neighbor
+  "%select-pane-in-direction is a no-op when the active pane has no neighbor
+   in the requested direction."
+  (let* ((p0   (make-no-pty-pane 1  0 0 40 24))
+         (p1   (make-no-pty-pane 2 41 0 40 24))
+         (win  (make-window :id 1 :name "w" :width 81 :height 24
+                            :panes (list p0 p1)
+                            :tree (make-layout-split :h
+                                     (make-layout-leaf p0)
+                                     (make-layout-leaf p1)
+                                     1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p1)          ; start at the rightmost pane
+    (session-select-window sess win)
+    (with-loop-state
+      (cl-tmux::%select-pane-in-direction sess :right)
+      (is (eq p1 (window-active-pane win))
+          "active pane must remain p1 when no right neighbor exists"))))
+
+(test select-pane-in-direction-vertical-down-selects-lower-pane
+  "%select-pane-in-direction :down from the top pane selects the bottom pane."
+  (let* ((p0   (make-no-pty-pane 1 0  0 80 10))
+         (p1   (make-no-pty-pane 2 0 11 80 10))
+         (win  (make-window :id 1 :name "w" :width 80 :height 21
+                            :panes (list p0 p1)
+                            :tree (make-layout-split :v
+                                     (make-layout-leaf p0)
+                                     (make-layout-leaf p1)
+                                     1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (with-loop-state
+      (cl-tmux::%select-pane-in-direction sess :down)
+      (is (eq p1 (window-active-pane win))
+          "active pane must be p1 after %select-pane-in-direction :down"))))
+
+;;; ── %apply-named-layout-to-session ──────────────────────────────────────────
+
+(test apply-named-layout-even-horizontal-repositions-panes
+  "%apply-named-layout-to-session :even-horizontal repositions two panes into
+   equal-width columns and rebuilds the window tree."
+  (let* ((p0   (make-no-pty-pane 1  0 0 10 24))
+         (p1   (make-no-pty-pane 2 11 0 10 24))
+         (win  (make-window :id 1 :name "w" :width 81 :height 24
+                            :panes (list p0 p1)
+                            :tree (make-layout-split :h
+                                     (make-layout-leaf p0)
+                                     (make-layout-leaf p1)
+                                     1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (with-loop-state
+      (cl-tmux::%apply-named-layout-to-session sess :even-horizontal)
+      ;; After even-horizontal: avail-w = 81 - 1 = 80, each-w = 40.
+      ;; p0 should be at x=0, p1 at x=41, both width=40.
+      (is (= 0  (pane-x p0)) "p0 x must be 0 after even-horizontal layout")
+      (is (= 40 (pane-width p0)) "p0 width must be 40 after even-horizontal layout")
+      (is (= 41 (pane-x p1)) "p1 x must be 41 after even-horizontal layout")
+      (is (= 40 (pane-width p1)) "p1 width must be 40 after even-horizontal layout"))))
+
+(test apply-named-layout-even-vertical-repositions-panes
+  "%apply-named-layout-to-session :even-vertical repositions two panes into
+   equal-height rows and rebuilds the window tree."
+  (let* ((p0   (make-no-pty-pane 1 0  0 80 10))
+         (p1   (make-no-pty-pane 2 0 11 80 10))
+         (win  (make-window :id 1 :name "w" :width 80 :height 21
+                            :panes (list p0 p1)
+                            :tree (make-layout-split :v
+                                     (make-layout-leaf p0)
+                                     (make-layout-leaf p1)
+                                     1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (with-loop-state
+      (cl-tmux::%apply-named-layout-to-session sess :even-vertical)
+      ;; After even-vertical: avail-h = 21 - 1 = 20, each-h = 10.
+      ;; p0 should be at y=0, p1 at y=11, both height=10.
+      (is (= 0  (pane-y p0)) "p0 y must be 0 after even-vertical layout")
+      (is (= 10 (pane-height p0)) "p0 height must be 10 after even-vertical layout")
+      (is (= 11 (pane-y p1)) "p1 y must be 11 after even-vertical layout")
+      (is (= 10 (pane-height p1)) "p1 height must be 10 after even-vertical layout"))))
+
+(test apply-named-layout-noop-for-empty-session
+  "%apply-named-layout-to-session with no active window is a no-op."
+  (let ((sess (make-session :id 1 :name "0" :windows nil)))
+    (with-loop-state
+      (finishes (cl-tmux::%apply-named-layout-to-session sess :even-horizontal))
+      "calling with no active window must not signal an error")))

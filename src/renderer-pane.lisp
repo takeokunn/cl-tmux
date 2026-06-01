@@ -16,21 +16,51 @@
          (ox     (pane-x      pane))
          (oy     (pane-y      pane)))
     (with-lock-held ((screen-lock screen))
-      (let ((prev-fg -1) (prev-bg -1) (prev-attrs -1))
-        (loop for row below ph do
-          (move-to stream (+ oy row) ox)
-          (loop for col below pw
-                for cell  = (screen-display-cell screen col row)
-                ;; A continuation cell (width 0) is the right half of a
-                ;; double-width glyph the terminal already drew — emit nothing.
-                unless (zerop (cell-width cell))
-                  do (let ((fg    (cell-fg    cell))
-                           (bg    (cell-bg    cell))
-                           (attrs (cell-attrs cell)))
-                       (unless (and (= fg prev-fg) (= bg prev-bg) (= attrs prev-attrs))
-                         (render-cell-attrs stream fg bg attrs)
-                         (setf prev-fg fg prev-bg bg prev-attrs attrs))
-                       (write-char (cell-char cell) stream)))))
+      ;; Hoist selection boundary computation outside the cell loop so it is
+      ;; computed once per frame instead of once per cell (~1920 times).
+      (let* ((sel-active (and (screen-copy-selecting screen)
+                              (consp (screen-copy-mark   screen))
+                              (consp (screen-copy-cursor screen))))
+             (sel-start-r 0) (sel-end-r 0) (sel-start-c 0) (sel-end-c 0))
+        (when sel-active
+          (let* ((mark   (screen-copy-mark   screen))
+                 (cursor (screen-copy-cursor screen))
+                 (mr (car mark))   (mc (cdr mark))
+                 (cr (car cursor)) (cc (cdr cursor))
+                 ;; mark/cursor are live-grid rows (0..height-1).
+                 ;; Viewport row = live-grid row + copy-offset, so add the offset
+                 ;; here so that the in-sel check below uses viewport coordinates,
+                 ;; matching the row variable in the render loop.
+                 (offset (screen-copy-offset screen)))
+            (setf sel-start-r (+ (min mr cr) offset)
+                  sel-end-r   (+ (max mr cr) offset)
+                  sel-start-c (if (< mr cr) mc (if (> mr cr) cc (min mc cc)))
+                  sel-end-c   (if (< mr cr) cc (if (> mr cr) mc (max mc cc))))))
+        (let ((prev-fg -1) (prev-bg -1) (prev-attrs -1))
+          (loop for row below ph do
+            (move-to stream (+ oy row) ox)
+            (loop for col below pw
+                  for cell  = (screen-display-cell screen col row)
+                  ;; A continuation cell (width 0) is the right half of a
+                  ;; double-width glyph the terminal already drew — emit nothing.
+                  unless (zerop (cell-width cell))
+                    do (let* ((fg    (cell-fg    cell))
+                              (bg    (cell-bg    cell))
+                              (in-sel (and sel-active
+                                           (cond
+                                             ((= sel-start-r sel-end-r row)
+                                              (and (<= sel-start-c col) (< col sel-end-c)))
+                                             ((= row sel-start-r) (>= col sel-start-c))
+                                             ((= row sel-end-r)   (< col sel-end-c))
+                                             (t (and (> row sel-start-r)
+                                                     (< row sel-end-r))))))
+                              (attrs (if in-sel
+                                         (logxor (cell-attrs cell) cl-tmux/terminal/types:+attr-reverse+)
+                                         (cell-attrs cell))))
+                         (unless (and (= fg prev-fg) (= bg prev-bg) (= attrs prev-attrs))
+                           (render-cell-attrs stream fg bg attrs)
+                           (setf prev-fg fg prev-bg bg prev-attrs attrs))
+                         (write-char (cell-char cell) stream))))))
       (screen-clear-dirty screen))))
 
 ;;; ── Split-tree separators ───────────────────────────────────────────────────

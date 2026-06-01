@@ -39,8 +39,8 @@ or :string."
   ("status"           :boolean t)
   ("status-position"  :string  "bottom")
   ("status-interval"  :integer 15)
-  ("status-left"      :string  " #{session_name} ")
-  ("status-right"     :string  "%H:%M")
+  ("status-left"      :string  nil)
+  ("status-right"     :string  nil)
   ("history-limit"    :integer 2000)
   ("escape-time"      :integer 500)
   ("base-index"       :integer 0)
@@ -49,28 +49,34 @@ or :string."
 
 ;;; ── Coercion helpers ─────────────────────────────────────────────────────
 
-(defun %coerce-boolean (value)
-  "Coerce VALUE to a boolean.
-If VALUE is a string, \"on\", \"true\", and \"1\" map to T; anything else NIL.
-If VALUE is already a boolean, it is returned unchanged."
-  (cond
-    ((stringp value)
-     (if (member value '("on" "true" "1") :test #'equal) t nil))
-    (t (if value t nil))))
+(defmacro define-type-coercions (&rest specs)
+  "Generate a %COERCE-VALUE (type value) function from a declarative fact table.
+Each SPEC has the form (TYPE-KEYWORD &rest BODY) where BODY is evaluated with
+VALUE bound to the argument.  The generated function dispatches via ECASE."
+  `(defun %coerce-value (type value)
+     "Coerce VALUE to the Lisp type indicated by the TYPE keyword.
+Dispatch is generated from the DEFINE-TYPE-COERCIONS fact table."
+     (ecase type
+       ,@(mapcar (lambda (spec)
+                   (destructuring-bind (type-keyword &rest body) spec
+                     `(,type-keyword (progn ,@body))))
+                 specs))))
 
-(defun %coerce-integer (value)
-  "Coerce VALUE to an integer.
-Strings are parsed with PARSE-INTEGER (junk allowed).  Numbers are truncated."
-  (cond
-    ((stringp value)
-     (or (parse-integer value :junk-allowed t) 0))
-    ((numberp value)
-     (truncate value))
-    (t 0)))
-
-(defun %coerce-string (value)
-  "Coerce VALUE to a string via FORMAT."
-  (format nil "~A" value))
+(define-type-coercions
+  (:boolean
+   (cond
+     ((stringp value)
+      (if (member value '("on" "true" "1") :test #'equal) t nil))
+     (t (if value t nil))))
+  (:integer
+   (cond
+     ((stringp value)
+      (or (parse-integer value :junk-allowed t) 0))
+     ((numberp value)
+      (truncate value))
+     (t 0)))
+  (:string
+   (format nil "~A" value)))
 
 ;;; ── Public API ───────────────────────────────────────────────────────────
 
@@ -87,10 +93,7 @@ Returns the coerced value.  If NAME is not in *OPTION-REGISTRY* the value is
 stored as-is (no coercion)."
   (let ((spec (gethash name *option-registry*)))
     (let ((coerced (if spec
-                       (ecase (option-spec-type spec)
-                         (:boolean (%coerce-boolean value))
-                         (:integer (%coerce-integer value))
-                         (:string  (%coerce-string  value)))
+                       (%coerce-value (option-spec-type spec) value)
                        value)))
       (setf (gethash name *global-options*) coerced)
       coerced)))

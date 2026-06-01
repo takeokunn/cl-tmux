@@ -219,6 +219,11 @@
   "Dynamically bind the event-loop specials so dispatch side effects are isolated."
   `(let ((cl-tmux::*running* t) (cl-tmux::*dirty* nil)) ,@body))
 
+(defmacro with-clean-prompt (&body body)
+  "Dynamically bind *prompt* to NIL and cl-tmux::*dirty* to NIL so prompt
+   state never leaks between tests and dirty flags start clean."
+  `(let ((*prompt* nil) (cl-tmux::*dirty* nil)) ,@body))
+
 (defun seed-scrollback (screen n)
   "Give SCREEN N dummy scrollback rows so copy-mode-scroll has room to move."
   (setf (cl-tmux/terminal/types::screen-scrollback screen)

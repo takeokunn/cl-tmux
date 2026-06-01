@@ -74,7 +74,7 @@
 (test handle-prompt-key-types-and-applies
   "Typing characters then Enter renames the target window and dismisses the prompt."
   (let ((win (make-rename-window)))
-    (let ((*prompt* nil) (cl-tmux::*dirty* nil))
+    (with-clean-prompt
       (prompt-start "rename-window" "" (lambda (name) (rename-window win name)))
       (cl-tmux::handle-prompt-key (char-code #\n))
       (cl-tmux::handle-prompt-key (char-code #\e))
@@ -86,7 +86,7 @@
 (test handle-prompt-key-escape-cancels
   "Esc cancels the prompt and leaves the target window's name unchanged."
   (let ((win (make-rename-window)))
-    (let ((*prompt* nil) (cl-tmux::*dirty* nil))
+    (with-clean-prompt
       (prompt-start "rename-window" "old" (lambda (name) (rename-window win name)))
       (cl-tmux::handle-prompt-key (char-code #\x))
       (cl-tmux::handle-prompt-key 27)            ; Esc
@@ -95,7 +95,7 @@
 
 (test handle-prompt-key-backspace
   "Backspace (127) deletes the last buffered character."
-  (let ((*prompt* nil) (cl-tmux::*dirty* nil))
+  (with-clean-prompt
     (prompt-start "rename-window" "ab" (lambda (s) (declare (ignore s)) nil))
     (cl-tmux::handle-prompt-key 127)
     (is (string= "a" (prompt-buffer *prompt*)))))
@@ -105,7 +105,7 @@
 (test handle-prompt-key-ignores-control-byte
   "A control byte that matches no clause (Tab, 9) is ignored: it must not insert,
    clear, or submit — the buffer and active prompt are untouched."
-  (let ((*prompt* nil) (cl-tmux::*dirty* nil))
+  (with-clean-prompt
     (prompt-start "rename-window" "ab" (lambda (s) (declare (ignore s)) nil))
     (cl-tmux::handle-prompt-key 9)              ; Tab — matches no clause
     (is (string= "ab" (prompt-buffer *prompt*)) "control byte must not edit the buffer")
@@ -114,7 +114,7 @@
 
 (test handle-prompt-key-backspace-byte-8
   "Byte 8 (Ctrl-H) is the alternate backspace and deletes the last character."
-  (let ((*prompt* nil) (cl-tmux::*dirty* nil))
+  (with-clean-prompt
     (prompt-start "rename-window" "ab" (lambda (s) (declare (ignore s)) nil))
     (cl-tmux::handle-prompt-key 8)
     (is (string= "a" (prompt-buffer *prompt*)))))
@@ -123,7 +123,7 @@
   "Enter on an empty buffer submits the empty string (window renamed to \"\")
    and dismisses the prompt."
   (let ((win (make-rename-window)))
-    (let ((*prompt* nil) (cl-tmux::*dirty* nil))
+    (with-clean-prompt
       (prompt-start "rename-window" "" (lambda (name) (rename-window win name)))
       (cl-tmux::handle-prompt-key 13)
       (is (string= "" (window-name win)) "Enter on empty buffer submits the empty string")

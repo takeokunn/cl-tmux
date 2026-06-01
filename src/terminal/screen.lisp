@@ -46,7 +46,27 @@
   ;; Copy / scroll-back mode
   (copy-mode-p  nil  :type boolean)
   (copy-offset  0    :type fixnum)          ; lines scrolled back (0 = live view)
-  (scrollback   nil  :type list))           ; list of row-vectors, newest first
+  (scrollback   nil  :type list)            ; list of row-vectors, newest first
+  ;; Copy-mode selection state (nil when no selection is active)
+  (copy-mark    nil  :type list)            ; (row . col) mark position, NIL = no selection
+  (copy-cursor  nil  :type list)            ; (row . col) cursor position in copy mode, NIL = not in copy mode
+  (copy-selecting nil :type boolean)        ; T when selection is being built
+  ;; Last printed character — used by CSI REP (repeat preceding char, final byte 'b').
+  ;; NIL until the first character has been written to the screen.
+  (last-char nil :type (or null character))
+  ;; DECSCUSR cursor shape: 0/1=block blink, 2=block steady, 3=underline blink,
+  ;; 4=underline steady, 5=bar blink, 6=bar steady
+  (cursor-shape 1 :type (unsigned-byte 8))
+  ;; Bracketed paste mode (?2004h = on, ?2004l = off)
+  (bracketed-paste nil :type boolean)
+  ;; Application cursor keys (?1h = on, ?1l = off)
+  (app-cursor-keys nil :type boolean)
+  ;; OSC 0/2 window title
+  (title "" :type string)
+  ;; Mouse reporting mode: 0=off, 1=basic-1000, 2=button-1002, 3=all-motion-1003
+  (mouse-mode 0 :type (unsigned-byte 8))
+  ;; SGR extended mouse encoding: T when ?1006h is set
+  (mouse-sgr-mode nil :type boolean))
 
 (defun %make-blank-cells (n)
   "Allocate a simple vector of N blank cells (space, default colour, no attrs)."
@@ -60,6 +80,14 @@
                 :scroll-bottom (1- height)))
 
 ;;; ── Cursor wrappers ────────────────────────────────────────────────────────
+;;;
+;;; These are thin aliases over the struct accessors screen-cx / screen-cy.
+;;; They form the stable public API consumed by renderer.lisp, tests, and any
+;;; external code that imports cl-tmux/terminal.  The internal terminal
+;;; subsystem uses screen-cx / screen-cy directly.  Declaring them inline
+;;; ensures there is no overhead at the call sites.
+
+(declaim (inline screen-cursor-x screen-cursor-y))
 
 (defun screen-cursor-x (screen)
   "Return the current cursor column of SCREEN."

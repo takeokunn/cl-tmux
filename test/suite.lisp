@@ -16,6 +16,7 @@
                   (run 'format-suite)
                   (run 'buffer-suite)
                   (run 'options-suite)
+                  (run 'hooks-suite)
                   (run 'config-suite)
                   (run 'config-directives-suite)
                   (run 'renderer-suite)

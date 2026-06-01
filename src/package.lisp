@@ -131,6 +131,23 @@
    #:screen-copy-mode-p
    #:screen-copy-offset
    #:screen-scrollback
+   ;; Copy-mode selection state
+   #:screen-copy-mark
+   #:screen-copy-cursor
+   #:screen-copy-selecting
+   ;; REP (repeat preceding char) support
+   #:screen-last-char
+   ;; DECSCUSR cursor shape
+   #:screen-cursor-shape
+   ;; Bracketed paste mode
+   #:screen-bracketed-paste
+   ;; Application cursor keys
+   #:screen-app-cursor-keys
+   ;; OSC 0/2 window title
+   #:screen-title
+   ;; Mouse reporting mode
+   #:screen-mouse-mode
+   #:screen-mouse-sgr-mode
    ;; Cursor wrappers + grid helpers
    #:screen-cursor-x
    #:screen-cursor-y
@@ -238,6 +255,17 @@
    #:screen-clear-dirty
    ;; DECTCEM cursor visibility
    #:screen-cursor-visible
+   ;; DECSCUSR cursor shape
+   #:screen-cursor-shape
+   ;; Bracketed paste mode
+   #:screen-bracketed-paste
+   ;; Application cursor keys
+   #:screen-app-cursor-keys
+   ;; OSC 0/2 window title
+   #:screen-title
+   ;; Mouse reporting mode
+   #:screen-mouse-mode
+   #:screen-mouse-sgr-mode
    ;; Lock (for renderer <-> reader-thread synchronisation)
    #:screen-lock
    ;; Resize the grid in place
@@ -252,6 +280,10 @@
    #:screen-copy-mode-p
    #:screen-copy-offset
    #:screen-scrollback
+   ;; Copy-mode selection state
+   #:screen-copy-mark
+   #:screen-copy-cursor
+   #:screen-copy-selecting
    ;; Cell accessors
    #:cell-char
    #:cell-fg
@@ -313,6 +345,13 @@
    #:resize-find-split #:resize-direction-orientation
    #:split-child-geometry #:next-pane-id
    #:pane-neighbor
+   ;; Zoom
+   #:window-zoom-p
+   #:window-zoom-tree
+   #:window-zoom-toggle
+   #:window-lock
+   ;; Last-active pane (for C-b ;)
+   #:window-last-active
    ;; Session
    #:session
    #:make-session
@@ -323,6 +362,8 @@
    #:session-select-window
    #:session-new-window
    #:session-active-pane
+   ;; Pane hit testing
+   #:pane-at-position
    ;; Named layouts
    #:apply-named-layout
    ;; Global state
@@ -337,6 +378,16 @@
   (:use #:cl)
   (:export #:*paste-buffers* #:add-paste-buffer #:get-paste-buffer
            #:list-paste-buffers #:delete-paste-buffer #:clear-paste-buffers))
+
+(defpackage #:cl-tmux/hooks
+  (:use #:cl)
+  (:export
+   #:*hook-registry*
+   #:add-hook
+   #:remove-hook
+   #:run-hooks
+   #:clear-hooks
+   #:list-hooks))
 
 (defpackage #:cl-tmux/options
   (:use #:cl)
@@ -377,7 +428,16 @@
    #:select-window-by-number
    #:copy-mode-enter
    #:copy-mode-exit
-   #:copy-mode-scroll))
+   #:copy-mode-scroll
+   #:copy-mode-move-cursor
+   #:copy-mode-begin-selection
+   #:copy-mode-cancel-selection
+   #:copy-mode-yank
+   #:rename-session
+   #:run-shell
+   #:if-shell
+   #:swap-pane
+   #:capture-pane))
 
 ;;; ── Top-level entry point ────────────────────────────────────────────────
 
@@ -395,4 +455,12 @@
         #:cl-tmux/transport
         #:cl-tmux/net)
   (:export
-   #:main))
+   #:main
+   ;; Session registry (server)
+   #:*server-sessions*
+   #:server-add-session
+   #:server-find-session
+   #:server-remove-session
+   #:server-all-sessions
+   ;; Multi-session commands
+   #:new-session))

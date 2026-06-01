@@ -55,6 +55,7 @@
     (#\d :detach)
     (#\? :list-keys)
     (#\[ :copy-mode-enter)
+    (#\] :paste-buffer)
     (#\x :kill-pane)
     (#\& :kill-window)
     (#\, :rename-window)
@@ -62,6 +63,9 @@
     (#\J :resize-down)
     (#\K :resize-up)
     (#\L :resize-right)
+    (#\Z :zoom-toggle)
+    (#\$ :rename-session)
+    (#\! :if-shell)
     (:digits :select-window))
   "Prefix-key dispatch alist of (char-or-string . keyword).
    Built from the table above; mutated at runtime by set-key-binding.")

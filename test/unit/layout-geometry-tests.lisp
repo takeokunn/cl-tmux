@@ -153,3 +153,72 @@
     (is (null (pane-neighbor win p0 :left))   "No left neighbor when alone")
     (is (null (pane-neighbor win p0 :up))     "No up neighbor when alone")
     (is (null (pane-neighbor win p0 :down))   "No down neighbor when alone")))
+
+;;; ── pane-at-position tests ───────────────────────────────────────────────────
+
+(test pane-at-position-finds-pane-in-left-half
+  "pane-at-position returns the left pane when clicking in its column range."
+  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
+                          :x 0 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (p1  (make-pane :id 2 :fd -1 :pid -1
+                          :x 41 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree  (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2))))
+    (is (eq p0 (cl-tmux/model:pane-at-position win 0 0))
+        "Top-left corner must be in p0")
+    (is (eq p0 (cl-tmux/model:pane-at-position win 39 23))
+        "Bottom-right corner of p0 must be in p0")))
+
+(test pane-at-position-finds-pane-in-right-half
+  "pane-at-position returns the right pane when clicking in its column range."
+  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
+                          :x 0 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (p1  (make-pane :id 2 :fd -1 :pid -1
+                          :x 41 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree  (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2))))
+    (is (eq p1 (cl-tmux/model:pane-at-position win 41 0))
+        "Start of right pane must be in p1")
+    (is (eq p1 (cl-tmux/model:pane-at-position win 80 23))
+        "Bottom-right of right pane must be in p1")))
+
+(test pane-at-position-separator-returns-nil
+  "pane-at-position returns NIL for the separator column between panes."
+  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
+                          :x 0 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (p1  (make-pane :id 2 :fd -1 :pid -1
+                          :x 41 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree  (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2))))
+    (is (null (cl-tmux/model:pane-at-position win 40 0))
+        "Separator column 40 must not be in any pane")))
+
+(test pane-at-position-single-pane
+  "pane-at-position with a single full-screen pane returns it for any in-bounds coord."
+  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
+                          :x 0 :y 0 :width 80 :height 24
+                          :screen (make-screen 80 24)))
+         (win (make-window :id 1 :name "w" :width 80 :height 24
+                           :panes (list p0)
+                           :tree  (make-layout-leaf p0))))
+    (is (eq p0 (cl-tmux/model:pane-at-position win 0 0))   "origin")
+    (is (eq p0 (cl-tmux/model:pane-at-position win 79 23)) "max corner")
+    (is (null (cl-tmux/model:pane-at-position win 80 0))   "out-of-bounds col")))

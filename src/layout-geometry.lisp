@@ -79,3 +79,11 @@
           (values (+ (pane-x pane) fw 1) (pane-y pane)
                   (- avail fw) (pane-height pane))))))
 
+(defun pane-at-position (window col row)
+  "Return the pane in WINDOW that contains column COL and row ROW (0-based screen coordinates).
+   Returns NIL when no pane contains the position."
+  (find-if (lambda (p)
+             (and (<= (pane-x p) col) (< col (+ (pane-x p) (pane-width p)))
+                  (<= (pane-y p) row) (< row (+ (pane-y p) (pane-height p)))))
+           (window-panes window)))
+

@@ -96,7 +96,8 @@
 (defun write-char-at-cursor (screen ch)
   "Write CH at the cursor, then advance.  Double-width (CJK) characters occupy
    a lead cell plus a continuation placeholder and advance the cursor by two;
-   a wide char that will not fit at the right edge wraps to the next line first."
+   a wide char that will not fit at the right edge wraps to the next line first.
+   Records CH as the screen's LAST-CHAR for use by CSI REP sequences."
   (let ((w  (char-width ch))
         (fg (screen-cur-fg    screen))
         (bg (screen-cur-bg    screen))
@@ -111,6 +112,7 @@
           (%place-wide-char screen x y ch fg bg at)
           (setf (screen-cell screen x y)
                 (make-cell :char ch :fg fg :bg bg :attrs at :width w)))
+      (setf (screen-last-char screen) ch)
       (%advance-cursor screen w))))
 
 (defun write-codepoint (screen cp)
