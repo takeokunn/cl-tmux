@@ -16,8 +16,40 @@
                       :key #'car :test #'string=))))
 
 (defun server-find-session (name)
-  "Find a session by NAME in *server-sessions*. Returns the session or NIL."
-  (cdr (assoc name *server-sessions* :test #'string=)))
+  "Find a session by NAME in *server-sessions*.
+   Match order:
+     1. Exact name match
+     2. $N notation (session id)
+     3. Name prefix match (first matching session wins)
+   Returns the session or NIL."
+  (unless (and name (plusp (length name))) (return-from server-find-session nil))
+  ;; 1. Exact name match
+  (let ((exact (cdr (assoc name *server-sessions* :test #'string=))))
+    (when exact (return-from server-find-session exact)))
+  ;; 2. $N: match by session id
+  (when (char= (char name 0) #\$)
+    (let ((id (ignore-errors (parse-integer (subseq name 1)))))
+      (when id
+        (let ((by-id (find id (mapcar #'cdr *server-sessions*)
+                           :key #'session-id)))
+          (when by-id (return-from server-find-session by-id))))))
+  ;; 3. Name prefix match
+  (dolist (pair *server-sessions*)
+    (when (and (stringp (car pair))
+               (>= (length (car pair)) (length name))
+               (string= name (car pair)
+                         :end2 (min (length name) (length (car pair)))))
+      (return-from server-find-session (cdr pair))))
+  nil)
+
+(defun server-current-session ()
+  "Return the most recently active session (highest session-last-active).
+   Returns NIL when no sessions are registered."
+  (let ((sessions (mapcar #'cdr *server-sessions*)))
+    (when sessions
+      (reduce (lambda (a b)
+                (if (> (session-last-active b) (session-last-active a)) b a))
+              sessions))))
 
 (defun server-remove-session (name)
   "Remove the session named NAME from *server-sessions*."
@@ -27,6 +59,44 @@
 (defun server-all-sessions ()
   "Return a list of all active sessions."
   (mapcar #'cdr *server-sessions*))
+
+;;; ── Session groups ────────────────────────────────────────────────────────────
+;;;
+;;; A session group is a set of sessions that share the same window list.
+;;; Sessions in the same group see the same windows; switching window in one
+;;; automatically switches all others in the group.
+
+(defparameter *session-groups* nil
+  "Alist mapping group-id → list of sessions in that group.")
+
+(defun %next-group-id ()
+  "Allocate a fresh group-id (simple integer counter)."
+  (1+ (length *session-groups*)))
+
+(defun server-new-session-in-group (new-session existing-session)
+  "Add NEW-SESSION to the same session group as EXISTING-SESSION.
+   If EXISTING-SESSION is not yet in a group, a new group is created.
+   Both sessions will share the same window list."
+  (let ((gid (or (session-group existing-session)
+                 (%next-group-id))))
+    ;; Ensure the existing session has a group id.
+    (setf (session-group existing-session) gid)
+    ;; Share the windows list and set active window.
+    (setf (session-windows new-session) (session-windows existing-session)
+          (session-group   new-session) gid)
+    ;; Use session-select-window to set the active window in the new session.
+    (let ((aw (session-active-window existing-session)))
+      (when aw
+        (session-select-window new-session aw)))
+    ;; Register in the group alist.
+    (let ((entry (assoc gid *session-groups*)))
+      (if entry
+          (pushnew new-session (cdr entry))
+          (push (list gid existing-session new-session) *session-groups*)))))
+
+(defun server-sessions-in-group (group-id)
+  "Return the list of sessions sharing GROUP-ID."
+  (cdr (assoc group-id *session-groups*)))
 
 ;;;; The server owns the session, PTYs, and per-pane reader threads, and serves
 ;;;; one attached client at a time over a Unix socket.  Client keystrokes are

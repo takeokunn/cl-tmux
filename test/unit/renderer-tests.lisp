@@ -456,3 +456,92 @@
                    (cl-tmux/renderer::render-status-bar s sess 10 60))))
       (is (search "win:1" out)
           "status-right #{window_name} must expand to the window name '1' (got ~S)" out))))
+
+;;; ── status-position top/bottom ───────────────────────────────────────────────
+
+(test status-position-bottom-default
+  "With status-position = bottom (default), the status bar appears at the last row."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (maphash (lambda (k v) (setf (gethash k ht) v))
+                    cl-tmux/options:*global-options*)
+           (setf (gethash "status-position" ht) "bottom"
+                 (gethash "status-left" ht) nil
+                 (gethash "status-right" ht) nil)
+           ht)))
+    (let* ((sess (make-test-session 20 5))
+           (rows 6)
+           (out  (with-output-to-string (s)
+                   (cl-tmux/renderer::render-status-bar s sess rows 20))))
+      ;; The status bar emits ESC[row;colH where row is 1-based.
+      ;; Bottom row = rows-1 = 5, so ESC[6;1H
+      (is (search (format nil "~C[6;1H" #\Escape) out)
+          "status-position bottom must place bar at row ~D (got ~S)" (1- rows) out))))
+
+(test status-position-top
+  "With status-position = top, the status bar appears at row 0 (ESC[1;1H)."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (maphash (lambda (k v) (setf (gethash k ht) v))
+                    cl-tmux/options:*global-options*)
+           (setf (gethash "status-position" ht) "top"
+                 (gethash "status-left" ht) nil
+                 (gethash "status-right" ht) nil)
+           ht)))
+    (let* ((sess (make-test-session 20 5))
+           (out  (with-output-to-string (s)
+                   ;; render-status-bar directly with explicit status-row = 0
+                   (cl-tmux/renderer::render-status-bar s sess 6 20 :status-row 0))))
+      ;; ESC[1;1H is row=0, col=0 (1-based = row 1, col 1)
+      (is (search (format nil "~C[1;1H" #\Escape) out)
+          "status-position top must place bar at row 0 (got ~S)" out))))
+
+;;; ── status on/off ────────────────────────────────────────────────────────────
+
+(test status-off-no-status-bar
+  "When the status option is nil/false, render-session-to-string emits no status bar."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (maphash (lambda (k v) (setf (gethash k ht) v))
+                    cl-tmux/options:*global-options*)
+           (setf (gethash "status" ht) nil)
+           ht)))
+    (let* ((sess (make-test-session 20 5))
+           (out  (render-session-to-string sess 6 20)))
+      ;; With status=nil, the default blue SGR "44;97m" should not appear
+      (is (null (search (format nil "~C[44;97m" #\Escape) out))
+          "status=nil must suppress the status bar blue background (got ~S)" out))))
+
+(test status-on-shows-status-bar
+  "When the status option is true (default), render-session-to-string emits a status bar."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (maphash (lambda (k v) (setf (gethash k ht) v))
+                    cl-tmux/options:*global-options*)
+           (setf (gethash "status" ht) t
+                 (gethash "status-left" ht) nil
+                 (gethash "status-right" ht) nil
+                 (gethash "status-style" ht) "")
+           ht)))
+    (let* ((sess (make-test-session 20 5))
+           (out  (render-session-to-string sess 6 20)))
+      (is (search (format nil "~C[44;97m" #\Escape) out)
+          "status=t must produce the status bar with blue background (got ~S)" out))))
+
+;;; ── status-left expanded ─────────────────────────────────────────────────────
+
+(test status-left-expanded-session-name
+  "status-left #{session_name} expands to the actual session name."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (maphash (lambda (k v) (setf (gethash k ht) v))
+                    cl-tmux/options:*global-options*)
+           ht)))
+    (cl-tmux/options:set-option "status-left" "#{session_name}")
+    (let* ((sess (make-test-session 40 10))
+           (out  (with-output-to-string (s)
+                   (cl-tmux/renderer::render-status-bar s sess 11 40))))
+      (is (search "0" out)
+          "status-left #{session_name} must expand to session name '0' (got ~S)" out)
+      (is (null (search "#{session_name}" out))
+          "literal #{session_name} must NOT appear (got ~S)" out))))

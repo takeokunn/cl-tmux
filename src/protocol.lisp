@@ -18,12 +18,13 @@
 
 ;;; ── Message type tags ───────────────────────────────────────────────────────
 
-(defconstant +msg-attach+ 1 "client→server: attach; payload = rows,cols (u16,u16)")
-(defconstant +msg-key+    2 "client→server: raw input bytes for the active pane")
-(defconstant +msg-resize+ 3 "client→server: terminal resized; payload = rows,cols")
-(defconstant +msg-detach+ 4 "client→server: detach (empty payload)")
-(defconstant +msg-frame+  5 "server→client: a rendered frame (UTF-8 payload)")
-(defconstant +msg-bye+    6 "server→client: server is closing (empty payload)")
+(defconstant +msg-attach+  1 "client→server: attach; payload = rows,cols (u16,u16)")
+(defconstant +msg-key+     2 "client→server: raw input bytes for the active pane")
+(defconstant +msg-resize+  3 "client→server: terminal resized; payload = rows,cols")
+(defconstant +msg-detach+  4 "client→server: detach (empty payload)")
+(defconstant +msg-frame+   5 "server→client: a rendered frame (UTF-8 payload)")
+(defconstant +msg-bye+     6 "server→client: server is closing (empty payload)")
+(defconstant +msg-command+ 7 "client→server: a named command with optional -t target; payload = NUL-delimited [target NUL] command-name NUL [args...]")
 
 (defconstant +header-size+ 5 "1 type byte + 4 length bytes.")
 
@@ -148,6 +149,15 @@
   (msg-bye     +msg-bye+     ()           #()
    "server→client frame announcing the server is closing."))
 
+;;; ── Typed command message constructor ────────────────────────────────────────
+
+(defun msg-command (command-name target args)
+  "Build a +msg-command+ frame.
+   COMMAND-NAME is a keyword or string.  TARGET is a target string or NIL.
+   ARGS is a list of argument strings or NIL."
+  (encode-frame +msg-command+
+                (encode-command-payload command-name :target target :args args)))
+
 ;;; ── Payload decoders (logic) ────────────────────────────────────────────────
 
 (defun decode-size (payload)
@@ -157,3 +167,70 @@
 (defun decode-text (payload)
   "Decode a UTF-8 frame PAYLOAD into a string."
   (babel:octets-to-string (to-octets payload) :encoding :utf-8))
+
+;;; ── +msg-command+ encoder/decoder ──────────────────────────────────────────
+;;;
+;;; Payload format: NUL-delimited fields.
+;;;   [target NUL] command-keyword-name NUL [arg NUL ...]
+;;; When target is NIL the target field is omitted entirely.
+;;; The command keyword name is encoded without the leading colon.
+
+(defun encode-command-payload (command-name &key target args)
+  "Encode a command message payload.
+   COMMAND-NAME is a keyword or string naming the command.
+   TARGET is an optional -t target string (NIL = current session).
+   ARGS is an optional list of argument strings.
+   Returns a fresh octet vector."
+  (let* ((name-str  (if (keywordp command-name)
+                        (string-downcase (symbol-name command-name))
+                        command-name))
+         (parts     (append (when target (list target))
+                            (list name-str)
+                            (or args nil)))
+         (strings   (mapcar (lambda (s) (babel:string-to-octets s :encoding :utf-8))
+                            parts))
+         ;; Each field followed by NUL byte (0); compute total length
+         (total-len (reduce #'+ strings :key #'length :initial-value (length strings))))
+    (let ((buf (make-array total-len :element-type '(unsigned-byte 8)))
+          (pos 0))
+      (dolist (s strings)
+        (replace buf s :start1 pos)
+        (incf pos (length s))
+        (setf (aref buf pos) 0)
+        (incf pos))
+      buf)))
+
+(defun decode-command-payload (payload)
+  "Decode a +msg-command+ PAYLOAD into (values command-keyword target args).
+   COMMAND-KEYWORD is a keyword symbol of the command name.
+   TARGET is a string or NIL when absent.
+   ARGS is a list of argument strings (may be nil).
+   The first NUL-delimited field that starts with '$' or a session-name prefix
+   is treated as the target; all remaining fields after the command name are args."
+  (let ((octets (to-octets payload))
+        (fields nil)
+        (start  0))
+    ;; Split payload on NUL bytes
+    (loop for i from 0 below (length octets)
+          when (zerop (aref octets i))
+          do (push (babel:octets-to-string octets :start start :end i :encoding :utf-8)
+                   fields)
+             (setf start (1+ i)))
+    (setf fields (nreverse fields))
+    ;; The payload format: [target] command-name [args...]
+    ;; Determine whether the first field is a target or the command name.
+    ;; A target field is present when there are at least 2 fields AND the
+    ;; second field is not empty (it would be the command name).
+    ;; We stored target first when it was non-NIL, so check heuristically:
+    ;; if first field contains ':' or starts with '$' it is a target.
+    (if (and (>= (length fields) 2)
+             (let ((f (first fields)))
+               (or (and (plusp (length f)) (char= (char f 0) #\$))
+                   (find #\: f)
+                   (find #\. f))))
+        (values (intern (string-upcase (second fields)) :keyword)
+                (first fields)
+                (cddr fields))
+        (values (intern (string-upcase (first fields)) :keyword)
+                nil
+                (rest fields)))))

@@ -7,9 +7,11 @@
 ;;;; the server sends back.  It holds no session state — all prefix handling and
 ;;;; rendering happen server-side, so the client is the same for any session.
 
-(defun run-client (name)
+(defun run-client (name &key detach-others)
   "Attach to the server at (socket-path NAME): forward stdin + resizes, render
-   the frames the server returns, and exit on detach / server close."
+   the frames the server returns, and exit on detach / server close.
+   When DETACH-OTHERS is T, send a detach-others command before attaching so
+   the server disconnects any currently attached clients."
   (require :sb-posix)
   (let ((socket (connect-to (socket-path name))))
     (unwind-protect
@@ -20,6 +22,10 @@
            (install-sigwinch-handler)
            (with-raw-mode
              (clear-display)
+             ;; -d flag: ask the server to detach any existing clients first.
+             (when detach-others
+               (send-frame stream
+                           (msg-command :detach-other-clients nil nil)))
              (send-frame stream (msg-attach *term-rows* *term-cols*))
              (loop
                (when *resize-pending*

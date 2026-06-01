@@ -271,3 +271,61 @@
     (cl-tmux/terminal/sgr::attr-off s cl-tmux/terminal/types:+attr-dim+)
     (is      (logbitp 0 (cl-tmux/terminal/types:screen-cur-attrs s)) "bold must remain")
     (is-false (logbitp 1 (cl-tmux/terminal/types:screen-cur-attrs s)) "dim must be cleared")))
+
+;;; ── SGR 21 double-underline ───────────────────────────────────────────────────
+
+(def-suite sgr-extended
+  :description "Extended SGR attributes: double-underline, overline, underline-color"
+  :in terminal-suite)
+(in-suite sgr-extended)
+
+(test sgr-21-double-underline
+  "SGR 21 sets the +attr2-double-underline+ bit in cur-attrs2."
+  (with-screen (s 10 2)
+    (feed s (esc "[21mX"))
+    (is (not (zerop (logand (cl-tmux/terminal/types:screen-cur-attrs2 s)
+                            cl-tmux/terminal/types:+attr2-double-underline+)))
+        "double-underline bit must be set in cur-attrs2 after SGR 21")))
+
+(test sgr-21-double-underline-cleared-by-24
+  "SGR 24 clears both the underline bit and the double-underline bit."
+  (with-screen (s 10 2)
+    (feed s (esc "[4;21mX"))   ; underline + double-underline on
+    (feed s (esc "[24mY"))     ; underline off
+    (is-false (logbitp 3 (cl-tmux/terminal/types:screen-cur-attrs s))
+              "underline bit must be cleared by SGR 24")
+    (is (zerop (logand (cl-tmux/terminal/types:screen-cur-attrs2 s)
+                       cl-tmux/terminal/types:+attr2-double-underline+))
+        "double-underline bit must be cleared by SGR 24")))
+
+(test sgr-53-overline-sets-bit
+  "SGR 53 sets the +attr2-overline+ bit in cur-attrs2."
+  (with-screen (s 10 2)
+    (feed s (esc "[53mX"))
+    (is (not (zerop (logand (cl-tmux/terminal/types:screen-cur-attrs2 s)
+                            cl-tmux/terminal/types:+attr2-overline+)))
+        "overline bit must be set in cur-attrs2 after SGR 53")))
+
+(test sgr-55-overline-off
+  "SGR 55 clears the +attr2-overline+ bit in cur-attrs2."
+  (with-screen (s 10 2)
+    (feed s (esc "[53mX"))    ; overline on
+    (feed s (esc "[55mY"))    ; overline off
+    (is (zerop (logand (cl-tmux/terminal/types:screen-cur-attrs2 s)
+                       cl-tmux/terminal/types:+attr2-overline+))
+        "overline bit must be cleared by SGR 55")))
+
+(test sgr-58-underline-color-256
+  "SGR 58;5;42 sets cur-ul-color to 42 (256-color palette index)."
+  (with-screen (s 10 2)
+    (cl-tmux/terminal/sgr:apply-sgr s '(58 5 42))
+    (is (= 42 (cl-tmux/terminal/types:screen-cur-ul-color s))
+        "cur-ul-color must be 42 after SGR 58;5;42")))
+
+(test sgr-59-resets-underline-color
+  "SGR 59 resets the underline color to default (0)."
+  (with-screen (s 10 2)
+    (cl-tmux/terminal/sgr:apply-sgr s '(58 5 42))
+    (cl-tmux/terminal/sgr:apply-sgr s '(59))
+    (is (= 0 (cl-tmux/terminal/types:screen-cur-ul-color s))
+        "cur-ul-color must be 0 after SGR 59")))

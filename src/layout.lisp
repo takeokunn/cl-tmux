@@ -175,4 +175,145 @@
                          (make-layout-leaf (first panes))
                          (%build-flat-tree (rest panes) orientation))))
 
+;;; ── Layout persistence (layout string serialization) ──────────────────────────
+;;;
+;;; Encode/decode the layout tree in tmux's WxH,X,Y format.
+;;; Full tmux format: checksum,WxH,X,Y[node1,node2]  or  checksum,WxH,X,Y,pane-id
+;;;
+;;; For cl-tmux we use a simplified but compatible subset:
+;;;   Leaf:  "WxH,X,Y,pane-id"
+;;;   H-split: "WxH,X,Y{first,second}"
+;;;   V-split: "WxH,X,Y[first,second]"
+;;; The 4-hex-digit checksum prefix is computed from the string.
 
+(defun %layout-checksum (str)
+  "Compute the tmux-style 16-bit checksum of STR.
+   Algorithm: rolling multiply-add on character codes.
+   Returns a 4-hex-digit string."
+  (let ((csum 0))
+    (loop for ch across str
+          do (setf csum (logand #xFFFF (+ (* csum 61) (char-code ch)))))
+    (format nil "~4,'0X" csum)))
+
+(defun %node->string (node)
+  "Serialize a layout node (leaf or split) to a layout string fragment.
+   Does not include the checksum prefix."
+  (etypecase node
+    (layout-leaf
+     (let ((p (layout-leaf-pane node)))
+       (format nil "~Dx~D,~D,~D,~D"
+               (pane-width p) (pane-height p)
+               (pane-x p) (pane-y p)
+               (pane-id p))))
+    (layout-split
+     (let* ((first  (layout-split-first  node))
+            (second (layout-split-second node))
+            (orient (layout-split-orientation node))
+            ;; Compute the bounding box from the leaves.
+            (leaves (layout-leaves node))
+            (min-x  (reduce #'min leaves :key #'pane-x))
+            (min-y  (reduce #'min leaves :key #'pane-y))
+            (max-rx (reduce #'max leaves :key (lambda (p) (+ (pane-x p) (pane-width p)))))
+            (max-ry (reduce #'max leaves :key (lambda (p) (+ (pane-y p) (pane-height p)))))
+            (w      (- max-rx min-x))
+            (h      (- max-ry min-y))
+            (open   (if (eq orient :v) #\[ #\{))
+            (close  (if (eq orient :v) #\] #\})))
+       (format nil "~Dx~D,~D,~D~C~A,~A~C"
+               w h min-x min-y
+               open
+               (%node->string first)
+               (%node->string second)
+               close)))))
+
+(defun layout->string (window)
+  "Serialize WINDOW's layout tree to a tmux-format layout string with checksum.
+   Returns NIL when the window has no tree."
+  (let ((tree (window-tree window)))
+    (unless tree (return-from layout->string nil))
+    (let* ((body     (%node->string tree))
+           (checksum (%layout-checksum body)))
+      (format nil "~A,~A" checksum body))))
+
+;;; ── String → layout decoder ──────────────────────────────────────────────────
+;;;
+;;; Parse a layout string (optionally with a leading checksum) back into
+;;; a layout tree, matching existing panes by id from PANES-LIST.
+;;;
+;;; The encoded format produced by %node->string:
+;;;   Leaf:    "WxH,X,Y,pane-id"
+;;;   H-split: "WxH,X,Y{child1,child2}"
+;;;   V-split: "WxH,X,Y[child1,child2]"
+
+(defun %skip-checksum (str)
+  "If STR starts with a 4-char hex checksum followed by a comma, skip it.
+   Returns the remaining string."
+  (if (and (>= (length str) 5)
+           (char= (char str 4) #\,)
+           (every (lambda (ch) (digit-char-p ch 16)) (subseq str 0 4)))
+      (subseq str 5)
+      str))
+
+(defun %read-digits (str pos)
+  "Read decimal digits from STR starting at POS.
+   Returns (values integer end-pos) where end-pos is past the last digit."
+  (let ((start pos))
+    (loop while (and (< pos (length str))
+                     (digit-char-p (char str pos)))
+          do (incf pos))
+    (values (parse-integer str :start start :end pos) pos)))
+
+;;; %parse-node uses forward-reference to %parse-split-body.
+;;; We declare it here so the compiler accepts the mutual recursion.
+(declaim (ftype (function (string list fixnum) (values t fixnum)) %parse-node))
+
+(defun %parse-split-body (str panes pos close-ch orient)
+  "Parse two child nodes starting at POS, expecting CLOSE-CH (} or ]) after second.
+   Returns (values split-node end-pos)."
+  (multiple-value-bind (c1 p8)
+      (%parse-node str panes pos)
+    (let ((p9 (if (and (< p8 (length str)) (char= (char str p8) #\,))
+                  (1+ p8)
+                  p8)))
+      (multiple-value-bind (c2 p10)
+          (%parse-node str panes p9)
+        (let ((p11 (if (and (< p10 (length str)) (char= (char str p10) close-ch))
+                       (1+ p10)
+                       p10)))
+          (values (make-layout-split orient c1 c2) p11))))))
+
+(defun %parse-node (str panes pos)
+  "Parse one layout node starting at POS in STR.
+   Returns (values node end-pos)."
+  ;; Format: WxH,X,Y then one of: { (h-split), [ (v-split), , pane-id (leaf).
+  ;; Scan past W digits and 'x'
+  (let* ((xp  (or (position #\x str :start pos) (length str)))
+         (c1p (or (position #\, str :start (1+ xp)) (length str)))
+         (c2p (or (position #\, str :start (1+ c1p)) (length str)))
+         ;; Y value ends at the first {, [, , or end of string
+         (p7  (or (position-if (lambda (c) (or (char= c #\{) (char= c #\[) (char= c #\,)))
+                               str :start (1+ c2p))
+                  (length str))))
+    (if (>= p7 (length str))
+        (values nil p7)
+        (let ((next (char str p7)))
+          (cond
+            ((char= next #\{) (%parse-split-body str panes (1+ p7) #\} :h))
+            ((char= next #\[) (%parse-split-body str panes (1+ p7) #\] :v))
+            ((char= next #\,)
+             (multiple-value-bind (pid p8) (%read-digits str (1+ p7))
+               (let ((found-pane (find pid panes :key #'pane-id)))
+                 (values (when found-pane (make-layout-leaf found-pane)) p8))))
+            (t (values nil p7)))))))
+
+(defun string->layout (layout-string panes)
+  "Decode LAYOUT-STRING (tmux format, checksum optional) and rebuild the layout
+   tree.  PANES is a list of existing pane objects matched by pane-id.
+   Returns the root layout node, or NIL on parse failure."
+  (handler-case
+      (let ((str (%skip-checksum layout-string)))
+        (multiple-value-bind (node _end)
+            (%parse-node str panes 0)
+          (declare (ignore _end))
+          node))
+    (error () nil)))

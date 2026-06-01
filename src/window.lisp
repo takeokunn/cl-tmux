@@ -16,6 +16,8 @@
   (zoom-p      nil :type boolean)  ; T when this window's active pane is zoomed
   (zoom-tree   nil)               ; saved layout tree before zooming, NIL when not zoomed
   (last-active nil)               ; previously active pane (for C-b ;)
+  (last-active-time 0 :type integer)  ; universal-time when this window was last focused
+  (automatic-rename-p t :type boolean) ; when T, OSC 0/2 title updates window-name
   (lock (make-lock "window") :read-only t))
 
 (defun window-refresh-panes (window)
@@ -31,8 +33,9 @@
 (defun window-select-pane (window pane)
   (let ((current (window-active window)))
     (when (and current (not (eq current pane)))
-      (setf (window-last-active window) current))
-    (setf (window-active window) pane)))
+      (setf (window-last-active window) current)))
+  (setf (window-active window) pane)
+  (setf (window-last-active-time window) (get-universal-time)))
 
 ;;; ── Orientation-aware pane extent ──────────────────────────────────────────
 ;;;
@@ -100,9 +103,26 @@
     (%set-tree-link window parent sibling)
     sibling))
 
-(defun window-split (window direction)
+(defun %ratio-from-size-hint (hint avail orient)
+  "Convert a size HINT (integer cells or real percentage) to a split ratio for
+   the new (second) child given AVAIL total cells and ORIENT.
+   Returns a ratio in (0,1) clamped to leave at least MIN cells on each side."
+  (let* ((floor* (%axis-floor orient))
+         (cells  (cond
+                   ((and (integerp hint) (> hint 0)) hint)
+                   ((and (realp hint) (< 0.0 hint 1.0)) (round (* avail hint)))
+                   (t (floor avail 2)))))
+    ;; clamp so both halves stay above the minimum
+    (let ((clamped (max floor* (min (- avail floor* 1) cells))))
+      ;; ratio is the fraction for the FIRST child; new pane is second.
+      (/ (- avail clamped 1) avail))))
+
+(defun window-split (window direction &key no-focus size)
   "Split the active pane of WINDOW along DIRECTION (:h left/right, :v top/bottom).
-   Returns the new pane, or NIL when the active pane is too small."
+   Returns the new pane, or NIL when the active pane is too small.
+   NO-FOCUS T keeps the current active pane selected (the new pane is created
+   but not focused).  SIZE is an integer (cells) or real (fraction 0..1) that
+   controls the new pane's initial size along the split axis."
   (let ((active (window-active-pane window))
         (tree   (window-tree window)))
     (unless (and active tree) (return-from window-split nil))
@@ -111,11 +131,19 @@
         (return-from window-split nil))
       (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
         (let* ((new-pane (%fork-pane (next-pane-id window) px py pw ph))
+               ;; Compute initial ratio; if SIZE given, derive from it.
+               (avail    (1- (ecase direction
+                               (:h (pane-width  active))
+                               (:v (pane-height active)))))
+               (ratio    (if size
+                             (%ratio-from-size-hint size avail direction)
+                             1/2))
                (split    (make-layout-split direction leaf
-                                            (make-layout-leaf new-pane) 1/2)))
+                                            (make-layout-leaf new-pane) ratio)))
           (%replace-in-tree window leaf split)
           (window-relayout window (window-height window) (window-width window))
-          (setf (window-active window) new-pane)
+          (unless no-focus
+            (setf (window-active window) new-pane))
           new-pane)))))
 
 (defun window-relayout (window rows cols)
@@ -189,6 +217,38 @@
             (setf (layout-split-ratio split) new-ratio)
             (window-relayout window (window-height window) (window-width window))
             active))))))
+
+;;; ── Rotate-window ────────────────────────────────────────────────────────────
+;;;
+;;; rotate_window(Window, :up)   :- move first pane to end of panes list, relayout.
+;;; rotate_window(Window, :down) :- move last  pane to front of panes list, relayout.
+
+(defun window-rotate (window &optional (direction :up))
+  "Rotate pane ordering within WINDOW.
+   :UP moves the first pane to the end (forward rotation, tmux default).
+   :DOWN moves the last pane to the front (reverse rotation).
+   After rotation, the tree is rebuilt from the new panes order and relayouted."
+  (let ((panes (window-panes window)))
+    (when (> (length panes) 1)
+      (let ((new-panes
+             (ecase direction
+               (:up   (append (rest panes) (list (first panes))))
+               (:down (cons (car (last panes))
+                            (butlast panes))))))
+        ;; Rebuild the split tree in the new panes order using equal splits.
+        ;; Build a right-spine binary tree: each step pairs the next pane with
+        ;; a sub-tree of the remaining panes, all at ratio 1/2.
+        (let ((tree (labels ((build (ps)
+                               (if (null (rest ps))
+                                   (make-layout-leaf (first ps))
+                                   (make-layout-split :h
+                                      (make-layout-leaf (first ps))
+                                      (build (rest ps))
+                                      1/2))))
+                      (build new-panes))))
+          (setf (window-panes window) new-panes
+                (window-tree  window) tree)
+          (window-relayout window (window-height window) (window-width window)))))))
 
 (defun window-zoom-toggle (window)
   "Toggle zoom on WINDOW's active pane. When zooming in, saves the current tree

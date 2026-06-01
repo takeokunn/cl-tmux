@@ -66,7 +66,20 @@
   ;; Mouse reporting mode: 0=off, 1=basic-1000, 2=button-1002, 3=all-motion-1003
   (mouse-mode 0 :type (unsigned-byte 8))
   ;; SGR extended mouse encoding: T when ?1006h is set
-  (mouse-sgr-mode nil :type boolean))
+  (mouse-sgr-mode nil :type boolean)
+  ;; Auto-wrap mode: T = wrap at right margin (?7h default), NIL = no wrap (?7l)
+  (autowrap t :type boolean)
+  ;; Active character set: :ascii (G0 default) or :dec-graphics (ESC ( 0)
+  (charset :ascii :type (member :ascii :dec-graphics))
+  ;; Current underline color pen (same encoding as fg/bg; 0 = default)
+  (cur-ul-color 0 :type (unsigned-byte 25))
+  ;; Current extended attribute pen (attrs2 bits: double-underline, overline)
+  (cur-attrs2 0 :type (unsigned-byte 8))
+  ;; Response buffer: a list of strings that the emulator wants to write back
+  ;; to the PTY (e.g. DA1/DA2 device attribute responses).  The PTY loop drains
+  ;; this and writes the bytes to the master fd.  A list is used as a simple
+  ;; FIFO: new entries are pushed to the front (nreverse to drain in order).
+  (response-queue nil :type list))
 
 (defun %make-blank-cells (n)
   "Allocate a simple vector of N blank cells (space, default colour, no attrs)."

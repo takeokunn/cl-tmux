@@ -419,3 +419,128 @@
   "define-state is a defined macro in the parser package."
   (is (macro-function 'cl-tmux/terminal/parser::define-state)
       "define-state must be a macro"))
+
+;;; ── SUITE: combining-chars ───────────────────────────────────────────────────
+
+(def-suite combining-chars
+  :description "Unicode combining character handling in the emulator"
+  :in terminal-suite)
+(in-suite combining-chars)
+
+(test combining-char-predicate-ranges
+  "combining-char-p is T for code points in combining ranges, NIL otherwise."
+  (is (cl-tmux/terminal/actions:combining-char-p (code-char #x0300))
+      "U+0300 (combining grave) must be detected as combining")
+  (is (cl-tmux/terminal/actions:combining-char-p (code-char #x036F))
+      "U+036F (last combining diacritical) must be detected")
+  (is-false (cl-tmux/terminal/actions:combining-char-p #\a)
+            "ASCII 'a' must NOT be combining")
+  (is-false (cl-tmux/terminal/actions:combining-char-p #\Space)
+            "Space must NOT be combining"))
+
+(test combining-char-appended-to-cell
+  "A combining character appended after a base char is stored in the previous
+   cell's combining list without advancing the cursor."
+  (when (< #x0301 char-code-limit)   ; U+0301 = combining acute accent
+    (with-screen (s 20 5)
+      (feed s "e")                   ; base character 'e' at (0,0)
+      (check-cursor s 1 0)
+      ;; Feed U+0301 (combining acute) as UTF-8: C3 B4 → no, U+0301 = 0xCC 0x81
+      (screen-process-bytes s (make-array 2 :element-type '(unsigned-byte 8)
+                                            :initial-contents '(#xCC #x81)))
+      ;; Cursor should NOT have advanced
+      (check-cursor s 1 0)
+      ;; The combining char must be in the previous cell's combining list
+      (let ((cell (screen-cell s 0 0)))
+        (is (member (code-char #x0301) (cl-tmux/terminal/types:cell-combining cell))
+            "U+0301 must be in the cell's combining list")))))
+
+;;; ── SUITE: acs-line-drawing ──────────────────────────────────────────────────
+
+(def-suite acs-line-drawing
+  :description "ACS / DEC special graphics character set switching"
+  :in terminal-suite)
+(in-suite acs-line-drawing)
+
+(test acs-charset-switch
+  "ESC ( 0 switches to DEC graphics; ESC ( B switches back to ASCII."
+  (with-screen (s 20 5)
+    (is (eq :ascii (cl-tmux/terminal/types:screen-charset s))
+        "charset must default to :ascii")
+    ;; ESC ( 0
+    (feed s (format nil "~C(0" #\Escape))
+    (is (eq :dec-graphics (cl-tmux/terminal/types:screen-charset s))
+        "charset must be :dec-graphics after ESC ( 0")
+    ;; ESC ( B
+    (feed s (format nil "~C(B" #\Escape))
+    (is (eq :ascii (cl-tmux/terminal/types:screen-charset s))
+        "charset must return to :ascii after ESC ( B")))
+
+(test acs-line-drawing-maps-q-to-horizontal-bar
+  "In DEC graphics mode, writing 'q' places the horizontal bar character U+2500 (─)."
+  (with-screen (s 20 5)
+    ;; Switch to DEC graphics
+    (feed s (format nil "~C(0" #\Escape))
+    (feed s "q")
+    ;; Should have written ─ (U+2500 = horizontal bar)
+    (is (char= #\─ (char-at s 0 0))
+        "DEC graphics 'q' must map to ─ (U+2500)")))
+
+(test acs-line-drawing-maps-x-to-vertical-bar
+  "In DEC graphics mode, writing 'x' places the vertical bar character U+2502 (│)."
+  (with-screen (s 20 5)
+    (feed s (format nil "~C(0" #\Escape))
+    (feed s "x")
+    (is (char= #\│ (char-at s 0 0))
+        "DEC graphics 'x' must map to │ (U+2502)")))
+
+(test acs-ascii-mode-unaffected
+  "In ASCII mode (default), 'q' writes literal 'q'."
+  (with-screen (s 20 5)
+    ;; Ensure we are in ASCII mode
+    (feed s (format nil "~C(B" #\Escape))
+    (feed s "q")
+    (is (char= #\q (char-at s 0 0))
+        "ASCII mode: 'q' must write literal 'q', not a box-drawing char")))
+
+;;; ── SUITE: dcs-parsing ───────────────────────────────────────────────────────
+
+(def-suite dcs-parsing
+  :description "DCS (Device Control String) sequence pass-through"
+  :in terminal-suite)
+(in-suite dcs-parsing)
+
+(test dcs-consumed-silently
+  "ESC P ... ESC \\ DCS sequence is consumed without crashing or corrupting output."
+  (with-screen (s 20 5)
+    (feed s "a")
+    ;; ESC P (DCS) ... payload "1$p" ... ESC \ (ST)
+    ;; ESC P = #x1B #x50, payload "1$p", ESC \ = #x1B #x5C
+    (screen-process-bytes s
+      (make-array 7 :element-type '(unsigned-byte 8)
+                    :initial-contents (list #x1B #x50
+                                           (char-code #\1)
+                                           (char-code #\$)
+                                           (char-code #\p)
+                                           #x1B #x5C)))
+    (feed s "b")
+    (is (char= #\a (char-at s 0 0)) "char before DCS must be unaffected")
+    (is (char= #\b (char-at s 1 0)) "char after DCS must appear at column 1")))
+
+(test dcs-parser-returns-ground-state-after-st
+  "After an ESC P ... ESC \\ sequence, the parser is back in ground state."
+  (with-screen (s 20 5)
+    ;; Feed a DCS then a printable char
+    ;; ESC P = #x1B #x50, payload "Hello", ESC \ = #x1B #x5C
+    (screen-process-bytes s
+      (make-array 9 :element-type '(unsigned-byte 8)
+                    :initial-contents (list #x1B #x50
+                                           (char-code #\H) (char-code #\e)
+                                           (char-code #\l) (char-code #\l)
+                                           (char-code #\o)
+                                           #x1B #x5C)))
+    ;; If parser ended up in ground state, feeding printable bytes works.
+    (feed s "X")
+    ;; X must land at column 0 (nothing was written by the DCS body)
+    (is (char= #\X (char-at s 0 0))
+        "printable after DCS-ST must be placed at column 0")))

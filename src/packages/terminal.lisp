@@ -14,6 +14,9 @@
    #:+attr-italic+
    #:+attr-conceal+
    #:+attr-strikethrough+
+   ;; Extended attribute bits (attrs2 slot)
+   #:+attr2-double-underline+
+   #:+attr2-overline+
    ;; Grid allocation helper
    #:%make-blank-cells
    ;; Cell struct + helpers
@@ -23,6 +26,9 @@
    #:cell-fg
    #:cell-bg
    #:cell-attrs
+   #:cell-attrs2
+   #:cell-ul-color
+   #:cell-combining
    #:cell-width
    #:blank-cell
    #:clamp
@@ -75,6 +81,16 @@
    ;; Mouse reporting mode
    #:screen-mouse-mode
    #:screen-mouse-sgr-mode
+   ;; Auto-wrap mode (?7h / ?7l)
+   #:screen-autowrap
+   ;; Active character set (:ascii / :dec-graphics)
+   #:screen-charset
+   ;; Underline color pen
+   #:screen-cur-ul-color
+   ;; Extended attribute pen
+   #:screen-cur-attrs2
+   ;; Response queue (DA1/DA2 and similar replies)
+   #:screen-response-queue
    ;; Cursor wrappers + grid helpers
    #:screen-cursor-x
    #:screen-cursor-y
@@ -93,6 +109,8 @@
    #:set-cursor
    #:cursor-lf
    #:cursor-ht
+   #:cursor-cht
+   #:cursor-cbt
    #:cursor-bs
    #:cursor-ri
    #:cursor-cr
@@ -100,6 +118,7 @@
    ;; Character writing
    #:write-char-at-cursor
    #:write-codepoint
+   #:combining-char-p
    ;; Scroll
    #:scroll-up-one
    #:scroll-down-one
@@ -193,6 +212,16 @@
    ;; Mouse reporting mode
    #:screen-mouse-mode
    #:screen-mouse-sgr-mode
+   ;; Auto-wrap mode
+   #:screen-autowrap
+   ;; Active character set
+   #:screen-charset
+   ;; Underline color pen
+   #:screen-cur-ul-color
+   ;; Extended attribute pen
+   #:screen-cur-attrs2
+   ;; Response queue (DA1/DA2 etc.)
+   #:screen-response-queue
    ;; Lock (for renderer <-> reader-thread synchronisation)
    #:screen-lock
    ;; Resize the grid in place
@@ -216,4 +245,7 @@
    #:cell-fg
    #:cell-bg
    #:cell-attrs
+   #:cell-attrs2
+   #:cell-ul-color
+   #:cell-combining
    #:cell-width))

@@ -120,3 +120,111 @@
     (feed s (esc "[3;1H"))     ; move to row 3 (0-based: row 2)
     (feed s (esc "[A"))        ; CUU no params → up 1
     (check-cursor s 0 1)))
+
+;;; ── SUITE: decscusr ──────────────────────────────────────────────────────────
+
+(def-suite decscusr
+  :description "DECSCUSR cursor shape — CSI N SP q"
+  :in terminal-suite)
+(in-suite decscusr)
+
+(test decscusr-shape-5
+  "CSI 5 SP q sets cursor-shape to 5 (blinking bar)."
+  (with-screen (s 20 5)
+    ;; Default is 1 (block blink)
+    (is (= 1 (cl-tmux/terminal/types:screen-cursor-shape s))
+        "default cursor-shape must be 1")
+    ;; ESC [ 5 SP q
+    (feed s (esc "[5 q"))
+    (is (= 5 (cl-tmux/terminal/types:screen-cursor-shape s))
+        "cursor-shape must be 5 after ESC[5 q")))
+
+(test decscusr-shape-2
+  "CSI 2 SP q sets cursor-shape to 2 (steady block)."
+  (with-screen (s 20 5)
+    (feed s (esc "[2 q"))
+    (is (= 2 (cl-tmux/terminal/types:screen-cursor-shape s))
+        "cursor-shape must be 2 after ESC[2 q")))
+
+(test decscusr-shape-0-is-clamped
+  "CSI 0 SP q sets cursor-shape to 0 (default blink block)."
+  (with-screen (s 20 5)
+    (feed s (esc "[0 q"))
+    (is (= 0 (cl-tmux/terminal/types:screen-cursor-shape s))
+        "cursor-shape must be 0 after ESC[0 q")))
+
+;;; ── SUITE: cbt-cht ───────────────────────────────────────────────────────────
+
+(def-suite cbt-cht
+  :description "CBT / CHT tab stop sequences — CSI Z and CSI I"
+  :in terminal-suite)
+(in-suite cbt-cht)
+
+(test cbt-moves-backward-tab
+  "CSI 1 Z from column 12 moves cursor backward to column 8."
+  (with-screen (s 40 5)
+    (feed s (esc "[1;13H"))    ; move to col 12 (1-based 13)
+    (check-cursor s 12 0)
+    (feed s (esc "[Z"))        ; CBT 1 stop backward
+    (check-cursor s 8 0)))
+
+(test cbt-moves-backward-two-stops
+  "CSI 2 Z from column 18 moves cursor back two tab stops to column 8."
+  (with-screen (s 40 5)
+    (feed s (esc "[1;19H"))    ; move to col 18
+    (feed s (esc "[2Z"))       ; CBT 2 stops backward
+    (check-cursor s 8 0)))
+
+(test cbt-clamps-to-column-zero
+  "CSI 5 Z from column 3 clamps cursor to column 0."
+  (with-screen (s 40 5)
+    (feed s (esc "[1;4H"))     ; col 3
+    (feed s (esc "[5Z"))       ; backward 5 stops
+    (check-cursor s 0 0)))
+
+(test cht-moves-forward-tab
+  "CSI 1 I from column 0 advances cursor to column 8."
+  (with-screen (s 40 5)
+    (check-cursor s 0 0)
+    (feed s (esc "[I"))        ; CHT 1 stop forward
+    (check-cursor s 8 0)))
+
+(test cht-moves-forward-two-stops
+  "CSI 2 I from column 0 advances cursor to column 16."
+  (with-screen (s 40 5)
+    (feed s (esc "[2I"))       ; CHT 2 stops forward
+    (check-cursor s 16 0)))
+
+(test cht-clamps-to-right-edge
+  "CSI 10 I from column 0 on a narrow screen clamps to the right edge."
+  (with-screen (s 10 5)
+    (feed s (esc "[10I"))      ; far forward
+    (is (<= (screen-cursor-x s) 9)
+        "cursor must not exceed screen width-1")))
+
+;;; ── SUITE: da-response ───────────────────────────────────────────────────────
+
+(def-suite da-response
+  :description "DA1/DA2 device attribute responses"
+  :in terminal-suite)
+(in-suite da-response)
+
+(test da1-response
+  "CSI c (DA1) queues the VT100 response string ESC[?1;2c."
+  (with-screen (s 20 5)
+    (is (null (cl-tmux/terminal/types:screen-response-queue s))
+        "response-queue must be empty initially")
+    (feed s (esc "[c"))        ; DA1
+    (let ((q (cl-tmux/terminal/types:screen-response-queue s)))
+      (is (consp q) "response-queue must be non-empty after CSI c")
+      (is (some (lambda (r) (search "?1;2c" r)) q)
+          "DA1 response must contain ?1;2c"))))
+
+(test da2-response
+  "CSI > c (DA2) queues the secondary device attribute response."
+  (with-screen (s 20 5)
+    (feed s (esc "[>c"))       ; DA2
+    (let ((q (cl-tmux/terminal/types:screen-response-queue s)))
+      (is (consp q) "response-queue must be non-empty after CSI >c")
+      (is (some (lambda (r) (search ">1;" r)) q)
+          "DA2 response must contain >1;"))))

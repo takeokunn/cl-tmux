@@ -259,6 +259,129 @@
             (write-char (cell-char (screen-cell screen col row)) out))
           (terpri out))))))
 
+;;; ── break-pane ─────────────────────────────────────────────────────────────
+;;;
+;;; break_pane(Session) :-
+;;;   active_window(Session, Win),
+;;;   active_pane(Win, Pane),
+;;;   (sole_pane(Win) -> no_op ; true),
+;;;   remove_pane(Win, Pane),
+;;;   new_window(Session, NewWin),
+;;;   set_sole_pane(NewWin, Pane),
+;;;   select_window(Session, NewWin).
+
+(defun break-pane (session)
+  "Remove the active pane from its window and place it as the sole pane
+   of a new window.  When the source window has only one pane, break-pane
+   is a no-op (nothing to break out).  Returns the new window, or NIL."
+  (let* ((src-win (session-active-window session))
+         (pane    (and src-win (window-active-pane src-win))))
+    (unless (and src-win pane) (return-from break-pane nil))
+    ;; Must have at least 2 panes to break one out.
+    (when (< (length (window-panes src-win)) 2)
+      (return-from break-pane nil))
+    ;; Remove pane from its current window (collapses the tree).
+    (window-remove-pane src-win pane)
+    ;; After removal, re-select a pane in the source window.
+    (when (window-panes src-win)
+      (window-select-pane src-win (first (window-panes src-win))))
+    ;; Create a new window with the pane as the sole full-screen occupant.
+    (let* ((rows (window-height src-win))
+           (cols (window-width  src-win))
+           (name (format nil "~D" (1+ (length (session-windows session)))))
+           (new-win (make-window :id (1+ (length (session-windows session)))
+                                 :name name :width cols :height rows)))
+      ;; Install the pane as the sole leaf in the new window's tree.
+      (setf (window-panes new-win) (list pane)
+            (window-tree  new-win) (make-layout-leaf pane))
+      (window-select-pane new-win pane)
+      ;; Reposition the pane to fill the new window.
+      (pane-reposition pane 0 0 cols rows)
+      ;; Attach the new window to the session.
+      (setf (session-windows session)
+            (append (session-windows session) (list new-win)))
+      (session-select-window session new-win)
+      (run-hooks +hook-after-new-window+ new-win)
+      new-win)))
+
+;;; ── join-pane / move-pane ───────────────────────────────────────────────────
+;;;
+;;; join_pane(Session, SrcWin, SrcPane, DstWin, Dir) :-
+;;;   remove_pane(SrcWin, SrcPane),
+;;;   (empty(SrcWin) -> kill_window(Session, SrcWin) ; true),
+;;;   insert_by_split(DstWin, SrcPane, Dir).
+
+(defun join-pane (session src-window src-pane dst-window direction)
+  "Move SRC-PANE from SRC-WINDOW into DST-WINDOW as a split in DIRECTION.
+   DIRECTION is :h (left/right) or :v (top/bottom).
+   If SRC-WINDOW becomes empty after removal, it is killed.
+   Returns SRC-PANE on success, NIL on failure."
+  (unless (and src-window src-pane dst-window) (return-from join-pane nil))
+  ;; Remove from source window.
+  (window-remove-pane src-window src-pane)
+  ;; Kill src window if now empty.
+  (when (null (window-panes src-window))
+    (let ((remaining (remove src-window (session-windows session))))
+      (setf (session-windows session) remaining)
+      (when (eq (session-active-window session) src-window)
+        (session-select-window session (first remaining)))))
+  ;; Insert into dst window as a split on the active pane.
+  (let* ((active (window-active-pane dst-window))
+         (tree   (window-tree dst-window)))
+    (unless (and active tree) (return-from join-pane nil))
+    (let ((active-leaf (layout-find-leaf tree active)))
+      (unless active-leaf (return-from join-pane nil))
+      ;; Compute geometry for the joined pane.
+      (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
+        ;; Reposition the incoming pane to the new geometry.
+        (pane-reposition src-pane px py pw ph)
+        ;; Wire into the tree: replace the active leaf with a split.
+        (let ((new-split (make-layout-split direction active-leaf
+                                            (make-layout-leaf src-pane) 1/2)))
+          (%replace-in-tree dst-window active-leaf new-split)
+          (setf (window-panes dst-window)
+                (layout-leaves (window-tree dst-window)))
+          (window-relayout dst-window (window-height dst-window) (window-width dst-window))
+          src-pane)))))
+
+;;; ── pipe-pane ───────────────────────────────────────────────────────────────
+;;;
+;;; pipe_pane(Pane, Cmd) :-
+;;;   (existing_pipe(Pane) -> close_pipe(Pane) ; true),
+;;;   (Cmd \= nil -> open_pipe(Pane, Cmd) ; true).
+
+(defun pipe-pane-open (pane command)
+  "Tee PANE's PTY output to a pipe connected to COMMAND.
+   If PANE already has an open pipe, it is closed first.
+   Returns the pipe write-fd on success, NIL on failure."
+  ;; Close any existing pipe.
+  (when (pane-pipe-fd pane)
+    (pipe-pane-close pane))
+  ;; Open a new pipe to the command.
+  (handler-case
+      (let* ((shell cl-tmux/config:*default-shell*)
+             (proc  (uiop:launch-program (list shell "-c" command)
+                                         :input :stream :output nil
+                                         :error-output nil))
+             (stream (uiop:process-info-input proc)))
+        (setf (pane-pipe-fd pane) stream)
+        stream)
+    (error () nil)))
+
+(defun pipe-pane-close (pane)
+  "Close PANE's output pipe if one is open."
+  (when (pane-pipe-fd pane)
+    (ignore-errors (close (pane-pipe-fd pane)))
+    (setf (pane-pipe-fd pane) nil)))
+
+(defun pipe-pane-write (pane bytes)
+  "Write BYTES to PANE's output pipe if one is active.
+   Silently ignores write errors (pipe may have closed on the other end)."
+  (when (pane-pipe-fd pane)
+    (ignore-errors
+      (write-sequence bytes (pane-pipe-fd pane))
+      (force-output (pane-pipe-fd pane)))))
+
 ;;; ── Shell ──────────────────────────────────────────────────────────────────
 ;;;
 ;;; run_shell(cmd)            :- subprocess(cmd, timeout=30, output=string).

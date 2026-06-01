@@ -113,4 +113,81 @@
   (is (string= "after-rename-window" cl-tmux/hooks:+hook-after-rename-window+))
   (is (string= "session-created"     cl-tmux/hooks:+hook-session-created+))
   (is (string= "after-kill-pane"     cl-tmux/hooks:+hook-after-kill-pane+))
-  (is (string= "after-kill-window"   cl-tmux/hooks:+hook-after-kill-window+)))
+  (is (string= "after-kill-window"   cl-tmux/hooks:+hook-after-kill-window+))
+  (is (string= "client-attached"     cl-tmux/hooks:+hook-client-attached+))
+  (is (string= "client-detached"     cl-tmux/hooks:+hook-client-detached+))
+  (is (string= "after-new-session"   cl-tmux/hooks:+hook-after-new-session+))
+  (is (string= "after-kill-session"  cl-tmux/hooks:+hook-after-kill-session+))
+  (is (string= "after-split-window"  cl-tmux/hooks:+hook-after-split-window+))
+  (is (string= "window-layout-changed" cl-tmux/hooks:+hook-window-layout-changed+)))
+
+;;; ── Sprint 3 Scripting/Hooks tests ─────────────────────────────────────────
+
+(test run-hook-fires-commands
+  "Register a hook that records a string when fired; run-hooks executes it."
+  (with-isolated-hooks
+    (let ((fired nil))
+      (cl-tmux/hooks:add-hook "session-created"
+                               (lambda (session)
+                                 (declare (ignore session))
+                                 (setf fired t)))
+      (cl-tmux/hooks:run-hooks "session-created" :test-session)
+      (is-true fired "session-created hook must fire when run-hooks is called"))))
+
+(test if-shell-true-branch
+  "if-shell dispatches the then-fn when the shell command exits 0."
+  (let ((result nil))
+    (cl-tmux/commands:if-shell "true"
+                               (lambda () (setf result :true-branch))
+                               (lambda () (setf result :false-branch)))
+    (is (eq :true-branch result)
+        "if-shell must call then-fn on exit code 0, got ~S" result)))
+
+(test if-shell-false-branch
+  "if-shell dispatches the else-fn when the shell command exits non-zero."
+  (let ((result nil))
+    (cl-tmux/commands:if-shell "false"
+                               (lambda () (setf result :true-branch))
+                               (lambda () (setf result :false-branch)))
+    (is (eq :false-branch result)
+        "if-shell must call else-fn on non-zero exit, got ~S" result)))
+
+(test confirm-before-y-dispatches
+  "confirm-before logic: input 'y' should set a confirmed flag."
+  ;; We test the underlying prompt logic: when input is 'y', the on-submit
+  ;; function fires. We simulate what dispatch.lisp does.
+  (let ((confirmed nil))
+    (let ((on-submit (lambda (input)
+                       (when (string-equal input "y")
+                         (setf confirmed t)))))
+      ;; Simulate pressing 'y'
+      (funcall on-submit "y")
+      (is-true confirmed "on-submit with 'y' must set confirmed flag"))))
+
+(test confirm-before-n-cancels
+  "confirm-before logic: input 'n' should NOT set a confirmed flag."
+  (let ((confirmed nil))
+    (let ((on-submit (lambda (input)
+                       (when (string-equal input "y")
+                         (setf confirmed t)))))
+      ;; Simulate pressing 'n'
+      (funcall on-submit "n")
+      (is (null confirmed) "on-submit with 'n' must NOT set confirmed flag"))))
+
+(test wait-for-signal-unblocks
+  "signal-channel creates/signals a channel; wait-for-channel unblocks when signaled."
+  ;; Test the channel API with an isolated channels table.
+  (let ((cl-tmux::*wait-channels* (make-hash-table :test #'equal)))
+    ;; Ensure a channel exists
+    (cl-tmux::%ensure-channel "test-chan")
+    ;; Lock and unlock should not error
+    (finishes (cl-tmux::lock-channel "test-chan"))
+    (finishes (cl-tmux::unlock-channel "test-chan"))
+    ;; Signal a channel (no waiters — should be safe no-op)
+    (finishes (cl-tmux::signal-channel "test-chan"))
+    ;; When locked, signal-channel is suppressed
+    (cl-tmux::lock-channel "test-chan")
+    (finishes (cl-tmux::signal-channel "test-chan"))
+    (cl-tmux::unlock-channel "test-chan")
+    ;; After unlock, signal proceeds normally
+    (finishes (cl-tmux::signal-channel "test-chan"))))

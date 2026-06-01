@@ -18,6 +18,15 @@
    #:describe-key-bindings
    #:set-key-binding
    #:remove-key-binding
+   ;; Key-table system
+   #:*key-tables*
+   #:*current-key-table*
+   #:ensure-key-table
+   #:key-table-bind
+   #:key-table-lookup
+   #:key-table-command
+   #:key-table-repeatable-p
+   #:sync-key-tables-from-bindings
    #:load-config-file
    #:load-config-from-stream
    #:load-config-from-string
@@ -50,11 +59,15 @@
   (:export
    ;; Message type tags + header size
    #:+msg-attach+ #:+msg-key+ #:+msg-resize+ #:+msg-detach+ #:+msg-frame+ #:+msg-bye+
+   #:+msg-command+
    #:+header-size+
    ;; Frame codec
    #:encode-frame #:decode-frame
    ;; Typed message constructors
    #:msg-attach #:msg-key #:msg-resize #:msg-detach #:msg-frame #:msg-bye
+   #:msg-command
+   ;; Command message codec
+   #:encode-command-payload #:decode-command-payload
    ;; Payload decoders + octet helpers
    #:decode-size #:decode-text #:to-octets #:read-u32))
 
@@ -87,6 +100,9 @@
    #:+attr-italic+
    #:+attr-conceal+
    #:+attr-strikethrough+
+   ;; Extended attribute bits (attrs2 slot: double-underline, overline)
+   #:+attr2-double-underline+
+   #:+attr2-overline+
    ;; Grid allocation helper
    #:%make-blank-cells
    ;; Cell struct + helpers
@@ -96,6 +112,9 @@
    #:cell-fg
    #:cell-bg
    #:cell-attrs
+   #:cell-attrs2
+   #:cell-ul-color
+   #:cell-combining
    #:cell-width
    #:blank-cell
    #:clamp
@@ -114,6 +133,8 @@
    #:screen-cur-fg
    #:screen-cur-bg
    #:screen-cur-attrs
+   #:screen-cur-attrs2
+   #:screen-cur-ul-color
    #:screen-scroll-top
    #:screen-scroll-bottom
    #:screen-parser
@@ -148,6 +169,12 @@
    ;; Mouse reporting mode
    #:screen-mouse-mode
    #:screen-mouse-sgr-mode
+   ;; Auto-wrap mode (?7h / ?7l)
+   #:screen-autowrap
+   ;; Active character set (:ascii / :dec-graphics)
+   #:screen-charset
+   ;; Response queue for DA1/DA2 and similar replies
+   #:screen-response-queue
    ;; Cursor wrappers + grid helpers
    #:screen-cursor-x
    #:screen-cursor-y
@@ -166,6 +193,8 @@
    #:set-cursor
    #:cursor-lf
    #:cursor-ht
+   #:cursor-cht
+   #:cursor-cbt
    #:cursor-bs
    #:cursor-ri
    #:cursor-cr
@@ -173,6 +202,7 @@
    ;; Character writing
    #:write-char-at-cursor
    #:write-codepoint
+   #:combining-char-p
    ;; Scroll
    #:scroll-up-one
    #:scroll-down-one
@@ -217,13 +247,17 @@
         #:cl-tmux/terminal/types
         #:cl-tmux/terminal/actions
         #:cl-tmux/terminal/csi)
+  ;; cl-tmux/buffer is used for OSC 52 clipboard paste storage.
+  ;; We reference it by qualified name to avoid circular deps.
   (:export
    #:ground-state
    #:escape-state
    #:make-csi-k
    #:make-utf8-k
+   #:make-dcs-k
    #:osc-state
-   #:charset-state))
+   #:charset-state
+   #:*osc52-handler*))
 
 (defpackage #:cl-tmux/terminal/emulator
   (:use #:cl
@@ -289,7 +323,21 @@
    #:cell-fg
    #:cell-bg
    #:cell-attrs
-   #:cell-width))
+   #:cell-attrs2
+   #:cell-ul-color
+   #:cell-combining
+   #:cell-width
+   ;; Auto-wrap mode
+   #:screen-autowrap
+   ;; Active character set
+   #:screen-charset
+   ;; SGR pen extras
+   #:screen-cur-attrs2
+   #:screen-cur-ul-color
+   ;; Response queue
+   #:screen-response-queue
+   ;; Combining char predicate
+   #:combining-char-p))
 
 (defpackage #:cl-tmux/prompt
   (:use #:cl)
@@ -299,7 +347,16 @@
    #:*prompt* #:prompt-active-p #:prompt-start
    #:prompt-input #:prompt-backspace #:prompt-clear #:prompt-text
    ;; Dismissible overlay (list-keys help, …)
-   #:*overlay* #:overlay-active-p #:show-overlay #:clear-overlay #:overlay-lines))
+   #:*overlay* #:overlay-active-p #:show-overlay #:clear-overlay #:overlay-lines
+   ;; Popup overlay
+   #:popup #:make-popup #:popup-p
+   #:popup-x #:popup-y #:popup-width #:popup-height
+   #:popup-screen #:popup-pane #:popup-title #:popup-close-on-exit
+   #:*active-popup*
+   ;; Menu overlay
+   #:menu #:make-menu #:menu-p
+   #:menu-title #:menu-items #:menu-selected-index
+   #:*active-menu*))
 
 ;;; ── Model / renderer / input ─────────────────────────────────────────────
 
@@ -317,6 +374,9 @@
    #:pane-fd
    #:pane-pid
    #:pane-feed
+   #:pane-pipe-fd
+   #:pane-window
+   #:respawn-pane
    ;; Window
    #:window
    #:make-window
@@ -345,6 +405,8 @@
    #:resize-find-split #:resize-direction-orientation
    #:split-child-geometry #:next-pane-id
    #:pane-neighbor
+   ;; Layout persistence
+   #:layout->string #:string->layout
    ;; Zoom
    #:window-zoom-p
    #:window-zoom-tree
@@ -352,6 +414,12 @@
    #:window-lock
    ;; Last-active pane (for C-b ;)
    #:window-last-active
+   ;; Last-active time (for C-b l last-window)
+   #:window-last-active-time
+   ;; Automatic-rename (OSC 0/2 updates window-name)
+   #:window-automatic-rename-p
+   ;; Rotate-window
+   #:window-rotate
    ;; Session
    #:session
    #:make-session
@@ -362,13 +430,26 @@
    #:session-select-window
    #:session-new-window
    #:session-active-pane
+   #:session-last-active
+   #:session-clients
+   #:session-locked-p
+   #:session-group
+   #:session-touch
+   #:*session-id-counter*
    ;; Pane hit testing
    #:pane-at-position
    ;; Named layouts
    #:apply-named-layout
+   ;; Window reordering
+   #:session-move-window
+   #:session-swap-windows
+   #:session-last-window
    ;; Global state
    #:create-initial-session
-   #:all-panes))
+   #:all-panes
+   ;; update-environment
+   #:*update-environment*
+   #:get-update-environment-vars))
 
 (defpackage #:cl-tmux/format
   (:use #:cl #:cl-tmux/model)
@@ -390,6 +471,12 @@
    #:+hook-session-created+
    #:+hook-after-kill-pane+
    #:+hook-after-kill-window+
+   #:+hook-client-attached+
+   #:+hook-client-detached+
+   #:+hook-after-new-session+
+   #:+hook-after-kill-session+
+   #:+hook-after-split-window+
+   #:+hook-window-layout-changed+
    ;; Macro
    #:define-hook-events
    ;; Registry and dispatch
@@ -406,7 +493,13 @@
            #:option-spec #:make-option-spec
            #:option-spec-name #:option-spec-type #:option-spec-default
            #:define-tmux-options #:get-option #:set-option
-           #:option-defined-p #:all-options))
+           #:option-defined-p #:all-options
+           ;; Server options
+           #:*server-options* #:*server-option-registry*
+           #:define-server-options
+           #:get-server-option #:set-server-option
+           ;; show-options helpers
+           #:show-options #:show-option))
 
 (defpackage #:cl-tmux/renderer
   (:use #:cl #:bordeaux-threads
@@ -449,7 +542,13 @@
    #:run-shell
    #:if-shell
    #:swap-pane
-   #:capture-pane))
+   #:capture-pane
+   ;; Advanced pane commands
+   #:break-pane
+   #:join-pane
+   #:pipe-pane-open
+   #:pipe-pane-close
+   #:pipe-pane-write))
 
 ;;; ── Top-level entry point ────────────────────────────────────────────────
 
@@ -474,5 +573,22 @@
    #:server-find-session
    #:server-remove-session
    #:server-all-sessions
+   #:server-current-session
+   ;; Session groups
+   #:*session-groups*
+   #:server-new-session-in-group
+   #:server-sessions-in-group
    ;; Multi-session commands
-   #:new-session))
+   #:new-session
+   ;; Session/window/pane targeting (-t flag)
+   #:resolve-target
+   #:find-session-by-target
+   #:find-window-by-target
+   #:find-pane-by-target
+   ;; Wait-for channel synchronization
+   #:*wait-channels*
+   #:%ensure-channel
+   #:wait-for-channel
+   #:signal-channel
+   #:lock-channel
+   #:unlock-channel))

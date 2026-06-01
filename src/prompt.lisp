@@ -77,3 +77,30 @@
           for nl = (position #\Newline text :start start)
           collect (subseq text start (or nl (length text)))
           while nl)))
+
+;;; ── Popup overlay ───────────────────────────────────────────────────────────
+
+(defstruct popup
+  "A floating overlay window with its own PTY and screen."
+  (x 0 :type fixnum)
+  (y 0 :type fixnum)
+  (width 40 :type fixnum)
+  (height 10 :type fixnum)
+  (screen nil)             ; screen struct for the popup (or NIL for text-only)
+  (pane   nil)             ; pane struct for the popup (or NIL for text-only)
+  (title  "" :type string)
+  (close-on-exit t :type boolean))
+
+(defparameter *active-popup* nil
+  "The currently displayed POPUP overlay, or NIL.")
+
+;;; ── Menu overlay ────────────────────────────────────────────────────────────
+
+(defstruct menu
+  "An interactive text menu overlay."
+  (title "" :type string)
+  (items '() :type list)          ; list of (label . keyword) pairs
+  (selected-index 0 :type fixnum))
+
+(defparameter *active-menu* nil
+  "The currently displayed MENU overlay, or NIL.")

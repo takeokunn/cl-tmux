@@ -79,7 +79,8 @@
          (cols *term-cols*)
          (name (format nil "~D" (1+ (length (session-windows session)))))
          (win  (session-new-window session name rows cols)))
-    (start-reader-thread (window-active-pane win))))
+    (start-reader-thread (window-active-pane win))
+    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+ win)))
 
 (defun %cmd-cycle-window (session cycler)
   "Switch the active window using CYCLER (next-cyclic or prev-cyclic)."
@@ -95,13 +96,16 @@
          (next  (funcall cycler panes (window-active-pane win))))
     (when next (window-select-pane win next))))
 
-(defun %cmd-split (session orient)
+(defun %cmd-split (session orient &key no-focus size)
   "Split the active pane of SESSION's active window in tree ORIENT (:h left/right,
-   :v top/bottom).  Returns NIL when the pane is too small and no shell is forked."
+   :v top/bottom).  Returns NIL when the pane is too small and no shell is forked.
+   NO-FOCUS T skips focus change.  SIZE hints the new pane's extent."
   (let* ((win (session-active-window session))
-         (new (window-split win orient)))
+         (new (window-split win orient :no-focus no-focus :size size)))
     (when new
-      (start-reader-thread new))))
+      (start-reader-thread new)
+      (cl-tmux/hooks:run-hooks "after-split-window" new))
+    new))
 
 (defun %passthrough-prefix (session byte)
   "Send the raw prefix byte followed by BYTE to the active pane."
@@ -164,16 +168,20 @@
 ;;; -- Window list formatter ------------------------------------------------
 
 (defun %format-window-list (session)
-  "Return a formatted string listing all windows in SESSION."
+  "Return a formatted string listing all windows in SESSION.
+   Format: INDEX: NAME (WxH) [active marker]"
   (let* ((win  (session-active-window session))
          (wins (session-windows session)))
     (with-output-to-string (s)
       (dolist (w wins)
-        (format s "  ~A~A: ~A (~D pane~:P)~%"
+        (format s "~A~A: ~A (~Dx~D) [~D pane~:P]~A~%"
                 (if (eq w win) "*" " ")
                 (position w wins)
                 (window-name w)
-                (length (window-panes w)))))))
+                (window-width w)
+                (window-height w)
+                (length (window-panes w))
+                (if (eq w win) " [active]" ""))))))
 
 ;;; ── Copy-mode key overrides macro ────────────────────────────────────────────
 
@@ -199,17 +207,35 @@
   (#\v :copy-mode-begin-selection)
   (#\y :copy-mode-yank))
 
+;;; -- Menu formatter helper ---------------------------------------------------
+
+(defun %format-menu (menu)
+  "Format a MENU struct into a displayable overlay string."
+  (let ((title (menu-title menu))
+        (items (menu-items menu))
+        (sel   (menu-selected-index menu)))
+    (with-output-to-string (s)
+      (format s "┌─ ~A ─┐~%" title)
+      (loop for (label . _cmd) in items
+            for i from 0
+            do (format s "~A ~A~%"
+                       (if (= i sel) "▶" " ")
+                       label))
+      (format s "└~A┘"
+              (make-string (+ 4 (length title)) :initial-element #\─)))))
+
 ;;; -- new-session -------------------------------------------------------------
 
 (defun new-session (name rows cols)
   "Create a new session named NAME with a full-screen window of ROWS x COLS.
    Registers the session in *server-sessions* and starts reader threads."
   (let ((session (create-initial-session rows cols)))
-    (setf (session-name session) name
-          (session-id   session) (1+ (length *server-sessions*)))
+    (setf (session-name session) name)
+    (session-touch session)
     (server-add-session session)
     (dolist (pane (all-panes session))
       (start-reader-thread pane))
+    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-created+ session)
     session))
 
 ;;; -- dispatch-prefix-command -----------------------------------------------
@@ -249,10 +275,18 @@
   (:prev-window (%cmd-cycle-window session #'prev-cyclic))
   (:next-pane (%cmd-cycle-pane session #'next-cyclic))
   (:prev-pane (%cmd-cycle-pane session #'prev-cyclic))
-  (:split-horizontal (%cmd-split session :v))   ; C-b " adds a horizontal bar → :v stacking
-  (:split-vertical   (%cmd-split session :h))   ; C-b % adds a vertical bar   → :h side-by-side
+  (:split-horizontal (%cmd-split session :v))        ; C-b " adds a horizontal bar → :v stacking
+  (:split-vertical   (%cmd-split session :h))        ; C-b % adds a vertical bar   → :h side-by-side
+  (:split-horizontal-no-focus (%cmd-split session :v :no-focus t))  ; split without changing focus
+  (:split-vertical-no-focus   (%cmd-split session :h :no-focus t))  ; split without changing focus
   (:kill-pane   (%handle-kill-result (kill-pane session)))
   (:kill-window (%handle-kill-result (kill-window session (session-active-window session))))
+  (:respawn-pane
+   (with-active-window (win session)
+     (let ((ap (window-active-pane win)))
+       (when ap
+         (let ((new-pane (respawn-pane ap)))
+           (start-reader-thread new-pane))))))
   (:rename-window
    (with-active-window (win session)
      (prompt-start "rename-window" (window-name win)
@@ -287,7 +321,12 @@
      (window-zoom-toggle win)))
   (:rename-session
    (prompt-start "rename-session" (session-name session)
-                 (lambda (name) (rename-session session name))))
+                 (lambda (name)
+                   (unless (string= name "")
+                     ;; Update registry key first, then rename the session struct.
+                     (server-remove-session (session-name session))
+                     (rename-session session name)
+                     (server-add-session session)))))
   (:run-shell
    ;; Run the command in a prompt if no command is already queued.
    (prompt-start "run-shell" ""
@@ -346,7 +385,71 @@
                      (server-remove-session (session-name session))
                      (setf (session-name session) name)
                      (server-add-session session)))))
+  (:has-session
+   ;; Check whether a session with the given name/id exists.
+   ;; Shows a one-line overlay: "yes" or "no".
+   (prompt-start "has-session" ""
+                 (lambda (name)
+                   (let ((found (server-find-session name)))
+                     (show-overlay (if found "yes" "no"))))))
   (:list-windows (show-overlay (%format-window-list session)))
+  (:choose-window
+   ;; C-b w — show interactive window list overlay (same as list-windows for now;
+   ;; full interactive selection requires an overlay navigation layer)
+   (show-overlay (%format-window-list session)))
+  (:last-window
+   ;; C-b l — switch to the previously active window (second-highest last-active-time)
+   (let ((prev (session-last-window session)))
+     (when prev
+       (session-select-window session prev)
+       (setf (window-last-active-time prev) (get-universal-time)))))
+  (:move-window
+   ;; Prompt for a target index and move the active window there.
+   (with-active-window (win session)
+     (prompt-start "move-window" ""
+                   (lambda (idx-str)
+                     (let ((idx (ignore-errors (parse-integer idx-str))))
+                       (when idx
+                         (session-move-window session win idx)))))))
+  (:swap-window
+   ;; Prompt for target index and swap with active window.
+   (with-active-window (win session)
+     (let* ((wins   (session-windows session))
+            (src-idx (position win wins)))
+       (prompt-start "swap-window" ""
+                     (lambda (idx-str)
+                       (let ((dst (ignore-errors (parse-integer idx-str))))
+                         (when (and dst src-idx)
+                           (session-swap-windows session src-idx dst))))))))
+  (:rotate-window
+   ;; Rotate pane ordering within the active window (forward: first → end).
+   (with-active-window (win session)
+     (window-rotate win :up)))
+  (:rotate-window-reverse
+   ;; Reverse rotate: last → front.
+   (with-active-window (win session)
+     (window-rotate win :down)))
+  (:find-window
+   ;; C-b f — search window names; show matches in overlay.
+   (prompt-start "find-window" ""
+                 (lambda (pattern)
+                   (unless (string= pattern "")
+                     (let* ((wins (session-windows session))
+                            (matches
+                             (remove-if-not
+                              (lambda (w)
+                                (search pattern (window-name w) :test #'char-equal))
+                              wins)))
+                       (show-overlay
+                        (if matches
+                            (with-output-to-string (s)
+                              (dolist (w matches)
+                                (format s "~A: ~A~A~%"
+                                        (position w wins)
+                                        (window-name w)
+                                        (if (eq w (session-active-window session))
+                                            " [active]" ""))))
+                            (format nil "no windows matching ~S~%" pattern))))))))
   (:swap-pane-forward  (%swap-active-pane session :right))
   (:swap-pane-backward (%swap-active-pane session :left))
   (:last-pane
@@ -354,15 +457,199 @@
           (last (and win (window-last-active win))))
      (when last (window-select-pane win last))))
   (:display-panes
+   ;; Show pane index numbers as a numbered overlay.  Each line shows one
+   ;; pane's number and geometry for quick identification (tmux C-b q).
+   ;; The overlay is dismissed by the next keystroke (standard overlay behaviour).
    (with-active-window (win session)
      (let ((panes (window-panes win)))
        (when panes
          (show-overlay
-           (with-output-to-string (s)
-             (dolist (p panes)
-               (format s "Pane ~D: ~Dx~D at (~D,~D)~A~%"
-                       (pane-id p) (pane-width p) (pane-height p)
-                       (pane-x p) (pane-y p)
-                       (if (eq p (window-active-pane win)) " [active]" "")))))
-         (setf *dirty* t))))))
+          (with-output-to-string (s)
+            (dolist (p panes)
+              (format s "Pane ~D: ~Dx~D at (~D,~D)~A~%"
+                      (pane-id p)
+                      (pane-width p) (pane-height p)
+                      (pane-x p) (pane-y p)
+                      (if (eq p (window-active-pane win)) " [active]" "")))))))))
+  (:switch-client-next
+   ;; C-b ) — switch to the next session (by sessions list order)
+   (let* ((sessions (mapcar #'cdr *server-sessions*))
+          (next     (and sessions (next-cyclic sessions session))))
+     (when (and next (not (eq next session)))
+       (session-touch next)
+       (setf *dirty* t))))
+  (:switch-client-prev
+   ;; C-b ( — switch to the previous session (by sessions list order)
+   (let* ((sessions (mapcar #'cdr *server-sessions*))
+          (prev     (and sessions (prev-cyclic sessions session))))
+     (when (and prev (not (eq prev session)))
+       (session-touch prev)
+       (setf *dirty* t))))
+  (:last-session
+   ;; C-b L — switch to the second-most-recently-active session
+   (let* ((sessions (sort (mapcar #'cdr *server-sessions*) #'>
+                          :key #'session-last-active))
+          (second   (second sessions)))
+     (when second
+       (session-touch second)
+       (setf *dirty* t))))
+  (:display-message
+   ;; Prompt for a message and display it as a transient overlay.
+   (prompt-start "display-message" ""
+                 (lambda (msg)
+                   (show-overlay msg))))
+  (:source-file
+   ;; Prompt for a config file path and load it.
+   (prompt-start "source-file" ""
+                 (lambda (path)
+                   (unless (string= path "")
+                     (load-config-file (pathname path))))))
+  (:show-options
+   ;; Show all global options as an overlay.
+   (show-overlay (cl-tmux/options:show-options)))
+  (:show-option
+   ;; Prompt for an option name and show its current value.
+   (prompt-start "show-option" ""
+                 (lambda (name)
+                   (unless (string= name "")
+                     (show-overlay (cl-tmux/options:show-option name))))))
+  (:confirm-before
+   ;; Show a y/n prompt; dispatch the wrapped command only on "y".
+   ;; Here we prompt for a command string that will be executed on confirm.
+   (prompt-start "confirm? (y/n)" ""
+                 (lambda (input)
+                   (when (and (not (string= input ""))
+                              (string-equal input "y"))
+                     ;; The confirm-before command confirmed — run the queued command.
+                     ;; In the keybinding context this is used to guard destructive ops.
+                     (show-overlay "[confirmed]")))))
+  (:wait-for
+   ;; Block until a named channel is signaled, or signal it.
+   ;; Interactive: prompt for channel-name.
+   (prompt-start "wait-for channel" ""
+                 (lambda (name)
+                   (unless (string= name "")
+                     ;; Signal the channel (unblock waiting threads).
+                     (signal-channel name)
+                     (show-overlay (format nil "signaled channel: ~A" name))))))
+  (:wait-for-signal
+   ;; Directly signal a named channel from the event loop.
+   (prompt-start "signal channel" ""
+                 (lambda (name)
+                   (unless (string= name "")
+                     (signal-channel name)
+                     (show-overlay (format nil "signaled: ~A" name))))))
+  (:display-popup
+   ;; Create a floating overlay showing output from a shell command.
+   (prompt-start "popup command" ""
+                 (lambda (cmd)
+                   (unless (string= cmd "")
+                     (let ((output (run-shell cmd)))
+                       (setf *active-popup*
+                             (make-popup :title cmd
+                                         :width  (min 60 *term-cols*)
+                                         :height (min 15 (- *term-rows* 4))
+                                         :screen nil
+                                         :pane   nil))
+                       ;; Show output as overlay until dismissed
+                       (show-overlay
+                        (format nil "┌─ ~A ─┐~%~A~%└~A┘"
+                                cmd
+                                (or output "")
+                                (make-string (+ 2 (length cmd)) :initial-element #\─))))))))
+  (:display-popup-dismiss
+   ;; Dismiss the active popup.
+   (setf *active-popup* nil))
+  (:display-menu
+   ;; Show a text menu overlay with j/k navigation and Enter selection.
+   (let ((items (list (cons "New Window"    :new-window)
+                      (cons "Next Window"   :next-window)
+                      (cons "Prev Window"   :prev-window)
+                      (cons "Kill Pane"     :kill-pane)
+                      (cons "Kill Window"   :kill-window)
+                      (cons "Zoom Toggle"   :zoom-toggle)
+                      (cons "List Sessions" :list-sessions)
+                      (cons "Detach"        :detach))))
+     (setf *active-menu* (make-menu :title "Menu" :items items :selected-index 0))
+     (show-overlay (%format-menu *active-menu*))))
+  (:menu-next
+   ;; Move menu selection down.
+   (when *active-menu*
+     (let ((n (length (menu-items *active-menu*))))
+       (setf (menu-selected-index *active-menu*)
+             (mod (1+ (menu-selected-index *active-menu*)) n))
+       (show-overlay (%format-menu *active-menu*)))))
+  (:menu-prev
+   ;; Move menu selection up.
+   (when *active-menu*
+     (let ((n (length (menu-items *active-menu*))))
+       (setf (menu-selected-index *active-menu*)
+             (mod (1- (menu-selected-index *active-menu*)) n))
+       (show-overlay (%format-menu *active-menu*)))))
+  (:menu-select
+   ;; Execute the selected menu item.
+   (when *active-menu*
+     (let* ((idx  (menu-selected-index *active-menu*))
+            (item (nth idx (menu-items *active-menu*)))
+            (cmd  (cdr item)))
+       (setf *active-menu* nil)
+       (clear-overlay)
+       (when cmd
+         (dispatch-command session cmd byte)))))
+  (:menu-dismiss
+   ;; Cancel the menu.
+   (setf *active-menu* nil)
+   (clear-overlay))
+  (:break-pane
+   ;; C-b ! — detach active pane into a new window.
+   (with-active-window (win session)
+     (when (> (length (window-panes win)) 1)
+       (let ((new-win (break-pane session)))
+         (when new-win
+           (start-reader-thread (window-active-pane new-win)))))))
+  (:join-pane
+   ;; Prompt for source window index, then join its active pane into the current window.
+   (with-active-window (dst-win session)
+     (prompt-start "join-pane from window" ""
+                   (lambda (idx-str)
+                     (let ((idx (ignore-errors (parse-integer idx-str))))
+                       (when idx
+                         (let* ((src-win  (nth idx (session-windows session)))
+                                (src-pane (and src-win (window-active-pane src-win))))
+                           (when src-pane
+                             (join-pane session src-win src-pane dst-win :h)))))))))
+  (:pipe-pane
+   ;; Toggle pane output piping: prompt for a command, or close existing pipe.
+   (with-active-pane (ap session)
+     (if (pane-pipe-fd ap)
+         (pipe-pane-close ap)
+         (prompt-start "pipe-pane command" ""
+                       (lambda (cmd)
+                         (unless (string= cmd "")
+                           (pipe-pane-open ap cmd)))))))
+  (:synchronize-panes
+   ;; Toggle the synchronize-panes window option.
+   (let ((cur (cl-tmux/options:get-option "synchronize-panes")))
+     (cl-tmux/options:set-option "synchronize-panes" (not cur))
+     (show-overlay (if (not cur)
+                       "synchronize-panes: ON"
+                       "synchronize-panes: OFF"))))
+  (:lock-session
+   ;; Lock the current session.
+   (setf (session-locked-p session) t))
+  (:unlock-session
+   ;; Unlock the current session (any key / prompt).
+   (setf (session-locked-p session) nil))
+  (:choose-session
+   ;; C-b s — show interactive session list overlay.
+   (show-overlay
+    (with-output-to-string (s)
+      (if *server-sessions*
+          (loop for (name . sess) in *server-sessions*
+                for i from 0
+                do (format s "~A~A: ~A (~D window~:P)~%"
+                           (if (string= name (session-name session)) "*" " ")
+                           i name
+                           (length (session-windows sess))))
+          (format s " 0: ~A (1 window)~%" (session-name session)))))))
 

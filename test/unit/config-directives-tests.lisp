@@ -358,3 +358,107 @@
   (is-true  (cl-tmux/config::%env-set-p "x")           "single-char string is set")
   (is-false (cl-tmux/config::%env-set-p nil)            "nil is not set")
   (is-false (cl-tmux/config::%env-set-p "")             "empty string is not set"))
+
+;;; ── Tokenizer with quote/escape support ─────────────────────────────────────
+
+(test config-tokenizer-quoted-double-quotes
+  "%config-tokens with a double-quoted string produces a single token preserving spaces."
+  (let ((tokens (cl-tmux/config::%config-tokens "bind n \"foo bar\"")))
+    (is (equal '("bind" "n" "foo bar") tokens)
+        "double-quoted string must yield a single token with spaces: got ~S" tokens)))
+
+(test config-tokenizer-single-quotes
+  "%config-tokens with a single-quoted string produces a single token."
+  (let ((tokens (cl-tmux/config::%config-tokens "set-shell '/usr/bin/my shell'")))
+    (is (= 2 (length tokens))
+        "single-quoted path must produce 2 tokens, got ~D: ~S" (length tokens) tokens)
+    (is (string= "/usr/bin/my shell" (second tokens))
+        "second token must be the single-quoted value, got ~S" (second tokens))))
+
+(test config-tokenizer-backslash-escape
+  "%config-tokens: backslash outside quotes escapes the next character."
+  (let ((tokens (cl-tmux/config::%config-tokens "foo\\ bar")))
+    (is (= 1 (length tokens))
+        "backslash-escaped space must yield a single token, got ~S" tokens)
+    (is (string= "foo bar" (first tokens))
+        "token must be \"foo bar\" after backslash-space, got ~S" (first tokens))))
+
+(test config-tokenizer-empty-double-quotes
+  "%config-tokens: \"\" produces an empty string token."
+  (let ((tokens (cl-tmux/config::%config-tokens "cmd \"\"")))
+    (is (= 2 (length tokens))
+        "empty double-quotes must yield 2 tokens, got ~S" tokens)
+    (is (string= "" (second tokens))
+        "second token must be the empty string, got ~S" (second tokens))))
+
+(test config-tokenizer-mixed
+  "%config-tokens: mix of plain tokens, quoted tokens, and backslash escapes."
+  (let ((tokens (cl-tmux/config::%config-tokens "a \"b c\" d\\ e")))
+    (is (= 3 (length tokens))
+        "must have 3 tokens, got ~S" tokens)
+    (is (string= "a" (first tokens)) "first token is a")
+    (is (string= "b c" (second tokens)) "second token is \"b c\"")
+    (is (string= "d e" (third tokens)) "third token is d e (backslash-space)")))
+
+;;; ── bind-key with flags ─────────────────────────────────────────────────────
+
+(test bind-key-no-prefix-n-flag
+  "bind -n binds in the root key-table (no prefix required)."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (with-isolated-config
+      (apply-config-directive '("bind" "-n" "C" "new-window"))
+      (let ((entry (cl-tmux/config:key-table-lookup "root" #\C)))
+        (is (not (null entry))
+            "bind -n must add a binding to the root table")
+        (is (eq :new-window (cl-tmux/config:key-table-command entry))
+            "root binding must be :new-window")))))
+
+(test bind-key-repeatable-r-flag
+  "bind -r marks the binding as repeatable."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (with-isolated-config
+      (apply-config-directive '("bind" "-r" "H" "resize-left"))
+      (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\H)))
+        (is (not (null entry))
+            "bind -r must add a binding to the prefix table")
+        (is (cl-tmux/config:key-table-repeatable-p entry)
+            "binding must be marked repeatable with -r flag")))))
+
+(test bind-key-custom-table-T-flag
+  "bind -T table-name binds in the named key-table."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (with-isolated-config
+      (apply-config-directive '("bind" "-T" "copy-mode" "q" "copy-mode-enter"))
+      ;; copy-mode-enter is in *bindable-commands*
+      (let ((entry (cl-tmux/config:key-table-lookup "copy-mode" #\q)))
+        (is (not (null entry))
+            "bind -T copy-mode must add a binding to the copy-mode table")
+        (is (eq :copy-mode-enter (cl-tmux/config:key-table-command entry))
+            "copy-mode binding must be :copy-mode-enter")))))
+
+(test bind-key-simple-also-updates-key-table
+  "Simple bind (no flags) also updates the \"prefix\" key-table."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (with-isolated-config
+      (apply-config-directive '("bind" "z" "new-window"))
+      (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\z)))
+        (is (not (null entry))
+            "simple bind must also add to the prefix key-table")
+        (is (eq :new-window (cl-tmux/config:key-table-command entry))
+            "prefix binding must be :new-window")))))
+
+;;; ── set directive ──────────────────────────────────────────────────────────
+
+(test set-directive-stores-option
+  "The \"set\" directive stores a value in the global options table."
+  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+    (apply-config-directive '("set" "status-interval" "30"))
+    (is (= 30 (cl-tmux/options:get-option "status-interval"))
+        "set must store status-interval = 30 in global options")))
+
+(test setw-directive-stores-option
+  "The \"setw\" directive stores a value in the global options table."
+  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+    (apply-config-directive '("setw" "status-interval" "5"))
+    (is (= 5 (cl-tmux/options:get-option "status-interval"))
+        "setw must store the option value")))

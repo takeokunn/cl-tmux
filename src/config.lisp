@@ -28,6 +28,46 @@
   "Select timeout in microseconds for per-pane PTY reader threads (50 ms).
    Allows the reader loop to observe *running* even when the shell is silent.")
 
+;;; ── Key-table system ──────────────────────────────────────────────────────
+;;;
+;;; *key-tables* maps table-name (string) → hash-table of chord → (keyword . flags).
+;;; Flags is a plist; :repeatable T means the prefix stays active after dispatch.
+;;; Standard table names: "prefix", "root", "copy-mode".
+;;;
+;;; *current-key-table* tracks which table is active during input processing.
+
+(defparameter *key-tables*
+  (make-hash-table :test #'equal)
+  "Hash-table mapping table-name string → inner hash-table of chord → (keyword . flags).")
+
+(defparameter *current-key-table* "root"
+  "Name of the active key-table for input dispatch (dynamic variable).")
+
+(defun ensure-key-table (name)
+  "Return the inner hash-table for key-table NAME, creating it if absent."
+  (or (gethash name *key-tables*)
+      (setf (gethash name *key-tables*)
+            (make-hash-table :test #'equal))))
+
+(defun key-table-bind (table key command &key repeatable)
+  "Add a binding for KEY → COMMAND in TABLE (a table-name string).
+   :REPEATABLE T marks the binding so the prefix table stays active after dispatch."
+  (let ((inner (ensure-key-table table)))
+    (setf (gethash key inner) (cons command (list :repeatable repeatable)))))
+
+(defun key-table-lookup (table key)
+  "Return the (command . flags) cons for KEY in TABLE, or NIL."
+  (let ((inner (gethash table *key-tables*)))
+    (when inner (gethash key inner))))
+
+(defun key-table-command (entry)
+  "Extract the command keyword from a key-table entry (car)."
+  (car entry))
+
+(defun key-table-repeatable-p (entry)
+  "Return T if the key-table entry is marked repeatable."
+  (and entry (getf (cdr entry) :repeatable)))
+
 ;;; After receiving the prefix key, the next keystroke (a character or a
 ;;; multi-character string like \"M-1\") is looked up here.
 ;;; Each entry is (char-or-string . keyword).
@@ -97,4 +137,25 @@
 (defun remove-key-binding (key)
   "Remove any binding for KEY (a character or string) from *KEY-BINDINGS*."
   (setf *key-bindings* (remove key *key-bindings* :key #'car :test #'equal)))
+
+;;; ── Populate key-tables from *key-bindings* ───────────────────────────────
+;;;
+;;; Called once at load time; also called from config-directives when bind/unbind
+;;; is processed.  Copies the prefix-table alist into *key-tables* "prefix".
+
+(defun sync-key-tables-from-bindings ()
+  "Copy current *key-bindings* alist into the \"prefix\" key-table, replacing it."
+  (let ((prefix-table (ensure-key-table "prefix")))
+    ;; Clear existing entries
+    (clrhash prefix-table)
+    ;; Populate from *key-bindings* alist
+    (dolist (binding *key-bindings*)
+      (setf (gethash (car binding) prefix-table)
+            (cons (cdr binding) '(:repeatable nil)))))
+  ;; Ensure "root" and "copy-mode" tables exist
+  (ensure-key-table "root")
+  (ensure-key-table "copy-mode"))
+
+;;; Initialise tables at load time.
+(sync-key-tables-from-bindings)
 

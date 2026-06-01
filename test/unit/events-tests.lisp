@@ -254,11 +254,15 @@
                                     1/2)
                            :active p0))
          (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
-    (with-loop-state
-      ;; Click in the right pane (col 50, row 5)
-      (cl-tmux::%dispatch-mouse-event sess 0 50 5 nil)
-      (is (eq p1 (window-active-pane win))
-          "left click in right half should focus p1"))))
+    (cl-tmux/options:set-option "mouse" t)
+    (unwind-protect
+         (with-loop-state
+           (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 81))
+             ;; Click in the right pane (col 50, row 5)
+             (cl-tmux::%dispatch-mouse-event sess 0 50 5 nil)
+             (is (eq p1 (window-active-pane win))
+                 "left click in right half should focus p1")))
+      (cl-tmux/options:set-option "mouse" nil))))
 
 (test dispatch-mouse-event-release-does-not-select
   "%dispatch-mouse-event with release-p=T does not switch the active pane."
@@ -276,11 +280,15 @@
                                     1/2)
                            :active p0))
          (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
-    (with-loop-state
-      ;; Release event (btn=0, release-p=T) — must not change active pane
-      (cl-tmux::%dispatch-mouse-event sess 0 50 5 t)
-      (is (eq p0 (window-active-pane win))
-          "button release should not change the active pane"))))
+    (cl-tmux/options:set-option "mouse" t)
+    (unwind-protect
+         (with-loop-state
+           (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 81))
+             ;; Release event (btn=0, release-p=T) — must not change active pane
+             (cl-tmux::%dispatch-mouse-event sess 0 50 5 t)
+             (is (eq p0 (window-active-pane win))
+                 "button release should not change the active pane")))
+      (cl-tmux/options:set-option "mouse" nil))))
 
 (test x10-mouse-sequence-via-process-byte
   "X10 mouse press ESC [ M <btn+32> <col+33> <row+33> fed one byte at a time
@@ -299,20 +307,25 @@
                                     1/2)
                            :active p0))
          (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
-    ;; Enable mouse mode on the active pane's screen
+    ;; Enable both per-screen mouse mode and the session mouse option
     (setf (screen-mouse-mode (pane-screen p0)) 1)
-    (with-loop-state
-      (let ((state (cl-tmux::make-input-state)))
-        ;; X10: btn=0 → 0+32=32; col=50 → 50+33=83; row=5 → 5+33=38
-        ;; Sequence: ESC(27) [(91) M(77) 32 83 38
-        (cl-tmux::process-byte sess 27 state)
-        (cl-tmux::process-byte sess 91 state)
-        (cl-tmux::process-byte sess 77 state)
-        (cl-tmux::process-byte sess 32 state)
-        (cl-tmux::process-byte sess 83 state)
-        (cl-tmux::process-byte sess 38 state)
-        (is (eq p1 (window-active-pane win))
-            "X10 left-click in right pane must focus p1")))))
+    (cl-tmux/options:set-option "mouse" t)
+    (unwind-protect
+         (with-loop-state
+           (let ((state (cl-tmux::make-input-state))
+                 (cl-tmux::*term-rows* 25)
+                 (cl-tmux::*term-cols* 81))
+             ;; X10: btn=0 → 0+32=32; col=50 → 50+33=83; row=5 → 5+33=38
+             ;; Sequence: ESC(27) [(91) M(77) 32 83 38
+             (cl-tmux::process-byte sess 27 state)
+             (cl-tmux::process-byte sess 91 state)
+             (cl-tmux::process-byte sess 77 state)
+             (cl-tmux::process-byte sess 32 state)
+             (cl-tmux::process-byte sess 83 state)
+             (cl-tmux::process-byte sess 38 state)
+             (is (eq p1 (window-active-pane win))
+                 "X10 left-click in right pane must focus p1")))
+      (cl-tmux/options:set-option "mouse" nil))))
 
 (test mouse-mode-default-is-off
   "screen-mouse-mode defaults to 0 (off) on a fresh screen."

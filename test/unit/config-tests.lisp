@@ -140,3 +140,67 @@
       "+poll-timeout-us+ should be 50000, got ~A" +poll-timeout-us+)
   (is (plusp +poll-timeout-us+)
       "+poll-timeout-us+ must be positive"))
+
+;;; ── Key-table system tests ────────────────────────────────────────────────
+
+(test key-tables-initialized
+  "*key-tables* is populated after load."
+  (is (hash-table-p cl-tmux/config:*key-tables*)
+      "*key-tables* must be a hash-table"))
+
+(test key-tables-prefix-table-exists
+  "The \"prefix\" key-table is created by sync-key-tables-from-bindings."
+  (is (not (null (gethash "prefix" cl-tmux/config:*key-tables*)))
+      "\"prefix\" table must exist in *key-tables*"))
+
+(test key-tables-root-table-exists
+  "The \"root\" key-table exists."
+  (is (not (null (gethash "root" cl-tmux/config:*key-tables*)))
+      "\"root\" table must exist in *key-tables*"))
+
+(test key-table-bind-root-no-prefix
+  "key-table-bind to \"root\" stores a binding retrievable by key-table-lookup."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (cl-tmux/config:key-table-bind "root" #\a :new-window)
+    (let ((entry (cl-tmux/config:key-table-lookup "root" #\a)))
+      (is (not (null entry)) "binding must be found in root table")
+      (is (eq :new-window (cl-tmux/config:key-table-command entry))
+          "command must be :new-window"))))
+
+(test key-table-bind-prefix-table
+  "key-table-bind to \"prefix\" stores a binding retrievable by key-table-lookup."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (cl-tmux/config:key-table-bind "prefix" #\c :new-window)
+    (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\c)))
+      (is (not (null entry)) "binding must be found in prefix table")
+      (is (eq :new-window (cl-tmux/config:key-table-command entry))
+          "command must be :new-window"))))
+
+(test key-table-repeatable-flag
+  "key-table-bind with :repeatable T marks the entry as repeatable."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (cl-tmux/config:key-table-bind "prefix" #\r :resize-left :repeatable t)
+    (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\r)))
+      (is (not (null entry)) "binding must be found")
+      (is (cl-tmux/config:key-table-repeatable-p entry)
+          "entry must be repeatable"))))
+
+(test key-table-not-repeatable-by-default
+  "key-table-bind without :repeatable does not mark the entry as repeatable."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (cl-tmux/config:key-table-bind "prefix" #\c :new-window)
+    (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\c)))
+      (is (not (cl-tmux/config:key-table-repeatable-p entry))
+          "entry must not be repeatable by default"))))
+
+(test key-table-lookup-missing-returns-nil
+  "key-table-lookup returns NIL for an absent key."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (is (null (cl-tmux/config:key-table-lookup "prefix" #\z))
+        "absent key must return NIL")))
+
+(test key-table-lookup-missing-table-returns-nil
+  "key-table-lookup on a non-existent table returns NIL."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (is (null (cl-tmux/config:key-table-lookup "nonexistent" #\a))
+        "lookup in absent table must return NIL")))

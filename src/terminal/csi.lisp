@@ -149,9 +149,25 @@
             (1- (max 1 p1))
             (if (zerop p2) (1- (screen-height screen)) (1- p2))))
 
-  ;; DA – Device Attributes; ignore
+  ;; CHT – Cursor Forward Tabulation (CSI N I)
+  ((and (null intermed) (char= final #\I))
+   (cursor-cht screen p1*))
+
+  ;; CBT – Cursor Backward Tabulation (CSI N Z)
+  ((and (null intermed) (char= final #\Z))
+   (cursor-cbt screen p1*))
+
+  ;; DA1 – Primary Device Attributes (CSI c or CSI 0 c)
+  ;; Response: ESC [ ? 1 ; 2 c  (VT100 with AVO)
   ((and (null intermed) (char= final #\c))
-   (values))
+   (push (format nil "~C[?1;2c" #\Escape)
+         (screen-response-queue screen)))
+
+  ;; DA2 – Secondary Device Attributes (CSI > c or CSI > 0 c)
+  ;; Response: ESC [ > 1 ; 10 ; 0 c
+  ((and (eql intermed #\>) (char= final #\c))
+   (push (format nil "~C[>1;10;0c" #\Escape)
+         (screen-response-queue screen)))
 
   ;; DEC Private Mode Set (?...h) — e.g. ?1049h enters the alternate screen
   ((and (eql intermed #\?) (char= final #\h))

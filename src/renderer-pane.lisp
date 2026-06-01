@@ -79,21 +79,52 @@
   "True when PANE is a leaf of NODE's subtree."
   (and pane (member pane (layout-leaves node))))
 
+;;; ── Border style SGR helpers ────────────────────────────────────────────────
+
+(defun %apply-border-style (stream style-string activep)
+  "Emit the SGR code(s) for a pane border.
+   ACTIVEP selects the active vs. inactive style option string.
+   Supported format: \"default\" → reset, \"fg=COLOR\" → foreground colour only."
+  (declare (ignore activep))
+  (cond
+    ((or (null style-string)
+         (string-equal style-string "default"))
+     (reset-attrs stream))
+    ((and (>= (length style-string) 3)
+          (string-equal (subseq style-string 0 3) "fg="))
+     (let ((color-name (subseq style-string 3)))
+       (reset-attrs stream)
+       ;; Map named ANSI colours and the "green" shorthand used as default.
+       (let ((code (cond
+                     ((string-equal color-name "black")   30)
+                     ((string-equal color-name "red")     31)
+                     ((string-equal color-name "green")   32)
+                     ((string-equal color-name "yellow")  33)
+                     ((string-equal color-name "blue")    34)
+                     ((string-equal color-name "magenta") 35)
+                     ((string-equal color-name "cyan")    36)
+                     ((string-equal color-name "white")   37)
+                     (t nil))))
+         (when code
+           (format stream "~C[~Dm" +esc+ code)))))
+    (t (reset-attrs stream))))
+
 ;;; ── Separator renderers (data layer — what each orientation draws) ──────────
 
 (defun %render-h-separator (stream node active-pane terminal-cols)
   "Draw the │ column between the left and right children of an :h split.
-   Highlights green when either neighbouring pane is ACTIVE-PANE."
+   Applies the pane-border-style / pane-active-border-style option."
   (let* ((a          (layout-split-first  node))
          (b          (layout-split-second node))
          (rect       (layout-subtree-rect a))
          (border-col (+ (getf rect :x) (getf rect :w)))
          (activep    (or (subtree-contains-p a active-pane)
-                         (subtree-contains-p b active-pane))))
+                         (subtree-contains-p b active-pane)))
+         (style      (if activep
+                         (cl-tmux/options:get-option "pane-active-border-style" "fg=green")
+                         (cl-tmux/options:get-option "pane-border-style" "default"))))
     (when (< border-col terminal-cols)
-      (if activep
-          (format stream "~C[32m" +esc+)
-          (reset-attrs stream))
+      (%apply-border-style stream style activep)
       (loop for row from (getf rect :y) below (+ (getf rect :y) (getf rect :h))
             do (move-to stream row border-col)
                (write-char #\│ stream))

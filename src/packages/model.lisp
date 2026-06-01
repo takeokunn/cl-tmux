@@ -8,7 +8,16 @@
    #:*prompt* #:prompt-active-p #:prompt-start
    #:prompt-input #:prompt-backspace #:prompt-clear #:prompt-text
    ;; Dismissible overlay (list-keys help, …)
-   #:*overlay* #:overlay-active-p #:show-overlay #:clear-overlay #:overlay-lines))
+   #:*overlay* #:overlay-active-p #:show-overlay #:clear-overlay #:overlay-lines
+   ;; Popup overlay
+   #:popup #:make-popup #:popup-p
+   #:popup-x #:popup-y #:popup-width #:popup-height
+   #:popup-screen #:popup-pane #:popup-title #:popup-close-on-exit
+   #:*active-popup*
+   ;; Menu overlay
+   #:menu #:make-menu #:menu-p
+   #:menu-title #:menu-items #:menu-selected-index
+   #:*active-menu*))
 
 ;;; ── Model / renderer / input ─────────────────────────────────────────────
 
@@ -26,6 +35,7 @@
    #:pane-fd
    #:pane-pid
    #:pane-feed
+   #:respawn-pane
    ;; Window
    #:window
    #:make-window
@@ -61,6 +71,12 @@
    #:window-lock
    ;; Last-active pane (for C-b ;)
    #:window-last-active
+   ;; Last-active time (for C-b l last-window)
+   #:window-last-active-time
+   ;; Automatic-rename (OSC 0/2 updates window-name)
+   #:window-automatic-rename-p
+   ;; Rotate-window
+   #:window-rotate
    ;; Session
    #:session
    #:make-session
@@ -71,10 +87,18 @@
    #:session-select-window
    #:session-new-window
    #:session-active-pane
+   #:session-last-active
+   #:session-clients
+   #:session-touch
+   #:*session-id-counter*
    ;; Pane hit testing
    #:pane-at-position
    ;; Named layouts
    #:apply-named-layout
+   ;; Window reordering
+   #:session-move-window
+   #:session-swap-windows
+   #:session-last-window
    ;; Global state
    #:create-initial-session
    #:all-panes))
@@ -99,6 +123,12 @@
    #:+hook-session-created+
    #:+hook-after-kill-pane+
    #:+hook-after-kill-window+
+   #:+hook-client-attached+
+   #:+hook-client-detached+
+   #:+hook-after-new-session+
+   #:+hook-after-kill-session+
+   #:+hook-after-split-window+
+   #:+hook-window-layout-changed+
    ;; Macro
    #:define-hook-events
    ;; Registry and dispatch

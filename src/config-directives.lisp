@@ -11,20 +11,77 @@
   (or (char= ch #\Space) (char= ch #\Tab)))
 
 (defun %config-tokens (line)
-  "Split LINE into whitespace-separated tokens (no quoting support).
-   Uses a functional loop: each iteration either starts or ends a token."
-  (loop with start = nil
-        for i from 0 below (length line)
-        for wsp = (%whitespace-p (char line i))
-        when (and wsp start)
-          collect (subseq line start i) into tokens
-          and do (setf start nil)
-        when (and (not wsp) (null start))
-          do (setf start i)
-        finally
-          (return (if start
-                      (append tokens (list (subseq line start)))
-                      tokens))))
+  "Tokenize LINE into a list of strings, handling:
+   - unquoted whitespace as delimiter
+   - \"double quoted\" strings (spaces preserved, \\x escapes processed)
+   - 'single quoted' strings (literal content, no escapes)
+   - \\ (backslash) escaping of the next character outside quotes
+   Returns a list of token strings."
+  (let ((tokens '())
+        (current (make-array 0 :element-type 'character :adjustable t :fill-pointer 0))
+        (in-token nil)
+        (i 0)
+        (len (length line)))
+    (flet ((push-char (ch)
+             (vector-push-extend ch current)
+             (setf in-token t))
+           (finish-token ()
+             (when in-token
+               (push (copy-seq current) tokens)
+               (setf (fill-pointer current) 0)
+               (setf in-token nil))))
+      (loop while (< i len) do
+        (let ((ch (char line i)))
+          (cond
+            ;; Backslash escape outside quotes
+            ((char= ch #\\)
+             (incf i)
+             (when (< i len)
+               (push-char (char line i))
+               (incf i)))
+            ;; Double-quoted string: only treat as quoted if there's a closing ".
+            ;; If no closing " is found before EOL, treat the " as a literal char.
+            ((char= ch #\")
+             (let ((close-pos (position #\" line :start (1+ i))))
+               (if close-pos
+                   ;; Found closing quote — process as quoted string
+                   (progn
+                     (setf in-token t)
+                     (incf i)  ; skip opening "
+                     (loop while (and (< i len) (char/= (char line i) #\"))
+                           do (let ((qch (char line i)))
+                                (cond
+                                  ((and (char= qch #\\) (< (1+ i) len))
+                                   (incf i)
+                                   (push-char (char line i)))
+                                  (t
+                                   (push-char qch))))
+                              (incf i))
+                     ;; Skip closing "
+                     (when (< i len) (incf i)))
+                   ;; No closing quote — treat " as a literal character
+                   (progn
+                     (push-char ch)
+                     (incf i)))))
+            ;; Single-quoted string
+            ((char= ch #\')
+             (setf in-token t)
+             (incf i)
+             (loop while (and (< i len) (char/= (char line i) #\'))
+                   do (push-char (char line i))
+                      (incf i))
+             ;; Skip closing '
+             (when (< i len) (incf i)))
+            ;; Whitespace outside quotes
+            ((%whitespace-p ch)
+             (finish-token)
+             (incf i))
+            ;; Regular character
+            (t
+             (push-char ch)
+             (incf i)))))
+      (finish-token))
+    (nreverse tokens)))
 
 (defun %parse-key-token (token)
   "A single-character TOKEN denotes that character; a longer token (e.g. M-1)
@@ -43,7 +100,10 @@
     :run-shell :list-sessions :list-sessions-full :list-windows
     :swap-pane-forward :swap-pane-backward
     :last-pane :display-panes
-    :new-session :kill-session :rename-session-prompt)
+    :new-session :kill-session :rename-session-prompt
+    :switch-client-next :switch-client-prev :last-session
+    :display-message :source-file
+    :show-options :show-option)
   "Command keywords a config-file `bind` directive may target.  This is the
    user-bindable subset of the commands cl-tmux:dispatch-command handles — it
    deliberately EXCLUDES the copy-mode-internal commands (:copy-mode-exit,
@@ -58,21 +118,19 @@
     (and kw (member kw *bindable-commands*) kw)))
 
 (defmacro define-config-directives (&rest rules)
-  "Build APPLY-CONFIG-DIRECTIVE from a declarative table of directive RULES.
+  "Build %APPLY-CONFIG-DIRECTIVE-INNER from a declarative table of directive RULES.
 
    Each RULE is (NAME ARITY (ARG...) &body BODY):
-     NAME   – the directive keyword as a string (e.g. \"bind\")
+     NAME   – the directive keyword as a string (e.g. \"set-shell\")
      ARITY  – the exact number of arguments the directive takes
      (ARG…) – symbols bound to those arguments inside BODY
      BODY   – forms run when NAME matches with the right ARITY; their value is
               returned (non-NIL ⇒ the directive was applied).
 
-   APPLY-CONFIG-DIRECTIVE takes a list of string TOKENS, dispatches on the
-   leading command token and argument count, and returns T when a directive was
-   applied or NIL for an unknown command, wrong arity, or invalid argument — so
-   a single bad line never aborts the rest of the config."
-  `(defun apply-config-directive (tokens)
-     "Apply one parsed config directive (list of string TOKENS) to live state.
+   The outer APPLY-CONFIG-DIRECTIVE function wraps this inner dispatcher and
+   handles 'bind' with variable-arity flags separately."
+  `(defun %apply-config-directive-inner (tokens)
+     "Apply one non-bind config directive (list of string TOKENS) to live state.
       Returns T when applied, NIL for an unknown/invalid directive."
      (when tokens
        (let ((cmd (first tokens)) (args (rest tokens)))
@@ -88,13 +146,51 @@
               rules)
            (t nil))))))
 
+;;; ── bind-key flag parsing ────────────────────────────────────────────────
+;;;
+;;; parse-bind-key-args handles the optional flags before key and command:
+;;;   bind [-n] [-r] [-T table] key command
+;;; Returns (values table key command repeatable) or NIL on parse failure.
+
+(defun %parse-bind-key-args (args)
+  "Parse the ARGS list for a bind directive (excludes the \"bind\" verb itself).
+   Returns (values table key command repeatable) where TABLE is \"prefix\" by
+   default, or NIL when ARGS do not form a valid binding."
+  (let ((table "prefix")
+        (repeatable nil)
+        (rest args))
+    (loop
+      (cond
+        ((null rest) (return nil))             ; ran out of args without key+cmd
+        ((string= (first rest) "-n")
+         ;; -n: bind in the root table (no prefix required)
+         (setf table "root")
+         (setf rest (rest rest)))
+        ((string= (first rest) "-r")
+         ;; -r: mark binding as repeatable
+         (setf repeatable t)
+         (setf rest (rest rest)))
+        ((string= (first rest) "-T")
+         ;; -T table-name
+         (setf rest (rest rest))
+         (when (null rest) (return nil))
+         (setf table (first rest))
+         (setf rest (rest rest)))
+        (t
+         ;; Next args should be exactly: key command (no extra args allowed)
+         (unless (= (length rest) 2) (return nil))
+         (let* ((key-tok  (%parse-key-token (first rest)))
+                (cmd-name (second rest))
+                (kw       (%command-keyword cmd-name)))
+           (if kw
+               (return (values table key-tok kw repeatable))
+               (return nil))))))))
+
+;;; Note: "bind" with flags (-n, -r, -T) uses variable-arity dispatch which is
+;;; handled separately in %apply-bind-with-flags below.
+;;; The macro-generated apply-config-directive handles the simple 2-arg form.
+
 (define-config-directives
-  ("bind" 2 (key command)
-    ;; Bind KEY to COMMAND only when COMMAND names a recognized command.
-    (let ((kw (%command-keyword command)))
-      (when kw
-        (set-key-binding (%parse-key-token key) kw)
-        t)))
   ("unbind" 1 (key)
     (remove-key-binding (%parse-key-token key))
     t)
@@ -106,7 +202,42 @@
     (let ((height (parse-integer n :junk-allowed t)))
       (when (and height (plusp height))
         (setf *status-height* height)
-        t))))
+        t)))
+  ("set" 2 (name value)
+    ;; set option value — stores in global options hash.
+    (cl-tmux/options:set-option name value)
+    t)
+  ("setw" 2 (name value)
+    ;; setw / set-window-option: same as set for now (global scope).
+    (cl-tmux/options:set-option name value)
+    t)
+  ("set-window-option" 2 (name value)
+    (cl-tmux/options:set-option name value)
+    t))
+
+(defun apply-config-directive (tokens)
+  "Apply one parsed config directive (list of string TOKENS) to live state.
+   Returns T when applied, NIL for an unknown/invalid directive.
+   Handles bind [-n] [-r] [-T table] key command in addition to
+   simple fixed-arity directives."
+  (when tokens
+    (let ((cmd (first tokens))
+          (args (rest tokens)))
+      (cond
+        ;; \"bind\" with any number of args — handle flags
+        ((string= cmd "bind")
+         (multiple-value-bind (table key kw repeatable)
+             (%parse-bind-key-args args)
+           (when kw
+             ;; Update legacy *key-bindings* alist for backward compat
+             ;; (only for the \"prefix\" table)
+             (when (string= table "prefix")
+               (set-key-binding key kw))
+             ;; Update the key-tables system
+             (key-table-bind table key kw :repeatable repeatable)
+             t)))
+        ;; Delegate everything else to the inner directive handler
+        (t (%apply-config-directive-inner tokens))))))
 
 (defun apply-config-line (line)
   "Apply a single config LINE.  Blank lines and #-comments are ignored.

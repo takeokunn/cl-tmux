@@ -4,14 +4,16 @@
 
 (defstruct pane
   "One terminal pane: a PTY fd + virtual screen + position within its window."
-  (id     0   :type fixnum)
-  (x      0   :type fixnum)
-  (y      0   :type fixnum)
-  (width  80  :type fixnum)
-  (height 24  :type fixnum)
-  (fd     -1  :type fixnum)
-  (pid    -1  :type fixnum)
-  (screen nil))
+  (id       0   :type fixnum)
+  (x        0   :type fixnum)
+  (y        0   :type fixnum)
+  (width    80  :type fixnum)
+  (height   24  :type fixnum)
+  (fd       -1  :type fixnum)
+  (pid      -1  :type fixnum)
+  (screen   nil)
+  (pipe-fd  nil)    ; NIL or file-descriptor for pipe-pane output tee
+  (window   nil))   ; back-pointer to the owning window (set on attach)
 
 (defun pane-feed (pane bytes)
   "Feed raw PTY bytes into PANE's screen, holding the screen lock."
@@ -32,6 +34,24 @@
   (multiple-value-bind (fd pid) (forkpty-with-shell h w)
     (make-pane :id id :x x :y y :width w :height h
                :fd fd :pid pid :screen (make-screen w h))))
+
+(defun respawn-pane (pane)
+  "Restart PANE's PTY process, keeping geometry and screen intact.
+   Closes the old PTY fd (sending SIGHUP to the child), forks a fresh shell on
+   a new PTY, and updates the pane's FD and PID.  The existing screen is
+   preserved so the renderer can continue without a layout change.
+   Returns the updated pane."
+  (let ((old-fd  (pane-fd  pane))
+        (old-pid (pane-pid pane))
+        (w       (pane-width  pane))
+        (h       (pane-height pane)))
+    ;; Close the old PTY; ignore errors (process may have already exited).
+    (ignore-errors (pty-close old-fd old-pid))
+    ;; Open a fresh PTY-backed shell at the same geometry.
+    (multiple-value-bind (new-fd new-pid) (forkpty-with-shell h w)
+      (setf (pane-fd  pane) new-fd
+            (pane-pid pane) new-pid))
+    pane))
 
 (defun pane-reposition (pane x y width height)
   "Move and resize PANE to X,Y with WIDTH x HEIGHT.

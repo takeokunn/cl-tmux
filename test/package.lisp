@@ -27,6 +27,7 @@
                 #:screen-copy-cursor
                 #:screen-mouse-mode
                 #:screen-mouse-sgr-mode
+                #:screen-title
                 #:char-width)
   (:import-from #:cl-tmux/model
                 #:create-initial-session
@@ -64,7 +65,39 @@
                 #:pane-neighbor
                 #:pane-at-position
                 #:apply-named-layout
-                #:window-lock)
+                #:window-lock
+                ;; New window management
+                #:window-last-active-time
+                #:window-automatic-rename-p
+                #:window-rotate
+                #:session-last-window
+                #:session-move-window
+                #:session-swap-windows
+                ;; Pane management
+                #:window-last-active
+                #:respawn-pane
+                ;; New pane slots
+                #:pane-pipe-fd
+                #:pane-window
+                ;; New session slots
+                #:session-locked-p
+                #:session-group
+                ;; Layout persistence
+                #:layout->string
+                #:string->layout
+                ;; update-environment
+                #:*update-environment*
+                #:get-update-environment-vars
+                ;; Session name / id
+                #:session-id
+                #:session-last-active
+                #:session-touch)
+  (:import-from #:cl-tmux
+                ;; Session groups
+                #:*session-groups*
+                #:server-new-session-in-group
+                ;; Runtime state (needed by tests)
+                #:*server-sessions*)
   (:import-from #:cl-tmux/renderer
                 #:render-session-to-string
                 #:render-session
@@ -93,7 +126,13 @@
                 #:resize-pane
                 #:select-window-by-number
                 #:swap-pane
-                #:capture-pane)
+                #:capture-pane
+                ;; Advanced pane commands
+                #:break-pane
+                #:join-pane
+                #:pipe-pane-open
+                #:pipe-pane-close
+                #:pipe-pane-write)
   (:import-from #:cl-tmux/prompt
                 #:*prompt*
                 #:prompt-active-p
