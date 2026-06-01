@@ -341,12 +341,45 @@
   ;; ── Prefix key: arm command dispatcher ────────────────────────────────────
   ((= byte +prefix-key-code+)
    (values nil #'%after-prefix-input-state))
-  ;; ── ESC: always accumulate for mouse events + copy mode ──────────────────
+  ;; ── ESC: always accumulate for mouse events, arrows, copy mode ───────────
+  ;; Even in copy mode we accumulate: arrow keys arrive as ESC [ FINAL and are
+  ;; handled by handle-copy-mode-escape inside make-escape-input-k.  A lone ESC
+  ;; (2-byte non-CSI) or unrecognised sequence exits copy mode instead of
+  ;; forwarding to the pane (handled in make-escape-input-k).
   ((= byte +byte-esc+)
    (let ((buf (make-array 8 :element-type '(unsigned-byte 8)
                             :fill-pointer 0 :adjustable t)))
      (vector-push-extend byte buf)
      (values nil (make-escape-input-k session buf))))
+  ;; ── Copy-mode single-byte navigation (unprefixed) ─────────────────────────
+  ;; These keys are intercepted ONLY when copy mode is active; they are never
+  ;; forwarded to the pane.  The check comes before the default forward branch.
+  ((copy-mode-active-p session)
+   (let ((sc (%active-screen session)))
+     (when sc
+       (case byte
+         ;; q / Q — exit copy mode
+         (#.+byte-q+ (copy-mode-exit sc))
+         ;; j / C-n (14) / Down arrow handled via escape below → scroll down 1
+         ((106 14)  (copy-mode-scroll sc -1))  ; j, C-n
+         ;; k / C-p (16) / Up arrow handled via escape → scroll up 1
+         ((107 16)  (copy-mode-scroll sc 1))   ; k, C-p
+         ;; C-d (4) — scroll down half page
+         (4         (copy-mode-scroll sc (- (floor (screen-height sc) 2))))
+         ;; C-u (21) — scroll up half page
+         (21        (copy-mode-scroll sc (floor (screen-height sc) 2)))
+         ;; g — jump to top (maximum scrollback)
+         (103       (copy-mode-scroll sc most-positive-fixnum))
+         ;; G — jump to bottom (offset = 0, live view)
+         (71        (copy-mode-scroll sc (- most-positive-fixnum)))
+         ;; Space / v — begin selection
+         ((32 118)  (copy-mode-begin-selection sc))
+         ;; y — yank selection
+         (121       (copy-mode-yank sc))
+         ;; Any other byte is consumed without forwarding (no passthrough in copy mode)
+         (otherwise nil)))
+     (setf *dirty* t))
+   (values nil #'%ground-input-state))
   ;; ── Default: forward raw byte to active pane (+ synchronize-panes broadcast) ─
   (t
    (%forward-octets-synchronized session
@@ -356,41 +389,101 @@
 
 (defun %make-prefix-csi-k (session buf)
   "CPS continuation: accumulate ESC [ FINAL for post-prefix arrow key sequences.
-   Dispatches :select-pane-up/down/left/right on ESC [ A/B/D/C respectively."
+   Dispatches :select-pane-up/down/left/right on ESC [ A/B/D/C (3-byte CSI).
+   Dispatches C-arrow (ESC [ 1 ; 5 FINAL, 8 bytes) to :resize-{dir} (1 cell).
+   Dispatches M-arrow (ESC [ 1 ; 3 FINAL, 8 bytes) to :resize-{dir} (5 cells).
+   Unrecognised sequences are silently discarded (no passthrough-prefix)."
   (lambda (session-arg byte)
     (declare (ignore session-arg))
-    (vector-push byte buf)
+    (vector-push-extend byte buf)
     (let ((len (fill-pointer buf)))
       (cond
         ;; Complete 3-byte CSI sequence: ESC [ FINAL
         ((and (= len 3) (= (aref buf 1) +byte-csi-bracket+))
-         (let ((cmd (case (aref buf 2)
-                      (65 :select-pane-up)
-                      (66 :select-pane-down)
-                      (67 :select-pane-right)
-                      (68 :select-pane-left)
-                      (otherwise nil))))
-           (values (if cmd
-                       (dispatch-command session cmd nil)
-                       (%passthrough-prefix session (subseq buf 0 len)))
-                   #'%ground-input-state)))
-        ;; 2-byte non-CSI: pass through
+         (let* ((final (aref buf 2))
+                ;; Detect whether this is the start of a longer modifier sequence:
+                ;; ESC [ 1 — intermediate, not a final CSI byte yet.
+                (is-param-1 (= final 49))) ; '1' = 49
+           (cond
+             ;; ESC [ 1 may be start of ESC [ 1 ; MOD FINAL — keep accumulating
+             (is-param-1
+              (values nil (%make-prefix-csi-k session buf)))
+             (t
+              (let ((cmd (case final
+                           (65 :select-pane-up)
+                           (66 :select-pane-down)
+                           (67 :select-pane-right)
+                           (68 :select-pane-left)
+                           (otherwise nil))))
+                ;; Unrecognised 3-byte CSI: silently discard (no passthrough).
+                (values (when cmd (dispatch-command session cmd nil))
+                        #'%ground-input-state))))))
+        ;; 4-byte sequence starting ESC [ 1 ; — keep accumulating
+        ((and (= len 4) (= (aref buf 1) +byte-csi-bracket+)
+              (= (aref buf 2) 49)  ; '1'
+              (= (aref buf 3) 59)) ; ';'
+         (values nil (%make-prefix-csi-k session buf)))
+        ;; 5-byte: ESC [ 1 ; MOD — keep accumulating for the final letter
+        ((and (= len 5) (= (aref buf 1) +byte-csi-bracket+)
+              (= (aref buf 2) 49) (= (aref buf 3) 59))
+         (values nil (%make-prefix-csi-k session buf)))
+        ;; Complete 6-byte modifier CSI: ESC [ 1 ; MOD FINAL
+        ;; (where MOD=53='5' for Ctrl, MOD=51='3' for Meta)
+        ((and (= len 6) (= (aref buf 1) +byte-csi-bracket+)
+              (= (aref buf 2) 49) (= (aref buf 3) 59))
+         (let* ((mod   (aref buf 4))
+                (final (aref buf 5))
+                (cmd
+                  (cond
+                    ;; C-arrow: ESC [ 1 ; 5 FINAL  (mod=53='5') → resize 1 cell
+                    ((= mod 53)
+                     (case final
+                       (65 :c-arrow-up)    ; A
+                       (66 :c-arrow-down)  ; B
+                       (67 :c-arrow-right) ; C
+                       (68 :c-arrow-left)  ; D
+                       (otherwise nil)))
+                    ;; M-arrow: ESC [ 1 ; 3 FINAL  (mod=51='3') → resize 5 cells
+                    ((= mod 51)
+                     (case final
+                       (65 :resize-up)    ; A
+                       (66 :resize-down)  ; B
+                       (67 :resize-right) ; C
+                       (68 :resize-left)  ; D
+                       (otherwise nil)))
+                    (t nil))))
+           ;; C-arrow bindings dispatch resize-pane with amount=1 directly.
+           ;; M-arrow bindings use the standard :resize-* commands (amount=5).
+           ;; Unrecognised modifier sequence: silently discard.
+           (let ((win (session-active-window session)))
+             (when win
+               (case cmd
+                 (:c-arrow-up    (resize-pane win :up    1))
+                 (:c-arrow-down  (resize-pane win :down  1))
+                 (:c-arrow-right (resize-pane win :right 1))
+                 (:c-arrow-left  (resize-pane win :left  1))
+                 (otherwise
+                  (when cmd (dispatch-command session cmd nil))))))
+           (setf *dirty* t)
+           (values nil #'%ground-input-state)))
+        ;; 2-byte non-CSI: silently discard after prefix (no passthrough)
         ((and (= len 2) (/= (aref buf 1) +byte-csi-bracket+))
-         (%forward-octets session (subseq buf 0 len))
          (values nil #'%ground-input-state))
-        ;; Buffer at capacity (>= 3 bytes but unrecognised) — flush and return
+        ;; Buffer at capacity (>= 6 bytes but unrecognised) — discard and return
         ;; to ground to avoid permanent stuck-state on malformed CSI sequences.
-        ((>= len 3)
-         (%forward-octets session (subseq buf 0 len))
+        ((>= len 6)
          (values nil #'%ground-input-state))
-        ;; Still accumulating (1 or 2 bytes so far)
+        ;; Still accumulating (1-5 bytes so far)
         (t (values nil (%make-prefix-csi-k session buf)))))))
 
 (define-cps-state %after-prefix-input-state (session byte)
-  ;; ESC introduces a multi-byte prefix sequence (C-b arrow keys).
+  ;; ESC introduces a multi-byte prefix sequence (C-b arrow/modifier key sequences).
+  ;; The buffer needs to be adjustable so %make-prefix-csi-k can vector-push-extend
+  ;; up to 6 bytes for modifier sequences like ESC [ 1 ; 5 A (C-Up).
   ((= byte +byte-esc+)
-   (let ((buf (make-array 4 :element-type '(unsigned-byte 8) :fill-pointer 0)))
-     (vector-push byte buf)
+   (let ((buf (make-array 8 :element-type '(unsigned-byte 8)
+                            :fill-pointer 0 :adjustable t)))
+     (vector-push-extend byte buf)
      (values nil (%make-prefix-csi-k session buf))))
   ;; Single-byte: dispatch the command table and return to ground.
   (t (values (dispatch-prefix-command session byte) #'%ground-input-state)))
@@ -499,15 +592,59 @@
         ((and (= len 3) (= (aref buf 1) +byte-csi-bracket+)
               (/= (aref buf 2) +byte-mouse-intro+)
               (/= (aref buf 2) 60))          ; not SGR '<'
-         (unless (handle-copy-mode-escape session buf)
-           ;; Not in copy mode (or unrecognised): forward raw bytes to pane
-           (unless (copy-mode-active-p session)
-             (%forward-octets session (subseq buf 0 len))))
+         ;; Check whether this is the start of a 4-byte ESC [ N ~ sequence
+         ;; (function key / PageUp / PageDown): parameter digit followed by '~'.
+         ;; Digits 5 and 6 (53='5', 54='6') indicate PageUp/PageDown.
+         ;; If so, keep accumulating; otherwise dispatch or forward.
+         (let ((third (aref buf 2)))
+           (if (and (>= third 48) (<= third 57))  ; '0'..'9' — possible N~ seq
+               ;; Could be ESC [ N ~ (4-byte); keep accumulating
+               (values nil (make-escape-input-k session buf))
+               (progn
+                 (unless (handle-copy-mode-escape session buf)
+                   ;; Not in copy mode (or unrecognised): forward raw bytes to pane
+                   (unless (copy-mode-active-p session)
+                     (%forward-octets session (subseq buf 0 len))))
+                 (values nil #'%ground-input-state)))))
+        ;; ── 4-byte function key: ESC [ N ~ ────────────────────────────────
+        ;; PageUp = ESC [ 5 ~ (53 126), PageDown = ESC [ 6 ~ (54 126).
+        ((and (= len 4) (= (aref buf 1) +byte-csi-bracket+)
+              (= (aref buf 3) 126))           ; '~' = 126
+         (let ((n (aref buf 2)))
+           (cond
+             ;; PageUp in copy mode
+             ((and (= n 53) (copy-mode-active-p session))
+              (let ((sc (%active-screen session)))
+                (when sc
+                  (copy-mode-scroll sc (screen-height sc))
+                  (setf *dirty* t))))
+             ;; PageDown in copy mode
+             ((and (= n 54) (copy-mode-active-p session))
+              (let ((sc (%active-screen session)))
+                (when sc
+                  (copy-mode-scroll sc (- (screen-height sc)))
+                  (setf *dirty* t))))
+             ;; Outside copy mode: forward raw bytes to pane
+             (t
+              (unless (copy-mode-active-p session)
+                (%forward-octets session (subseq buf 0 len))))))
          (values nil #'%ground-input-state))
-        ;; ── 2-byte non-CSI sequence: ESC X ────────────────────────────────
-        ((and (= len 2) (/= (aref buf 1) +byte-csi-bracket+))
+        ;; ── 4-byte accumulation: ESC [ N (not yet '~') — keep buffering ───
+        ((and (= len 4) (= (aref buf 1) +byte-csi-bracket+)
+              (/= (aref buf 3) 126))
+         ;; Forward if no terminating ~ and not copy mode, return to ground
          (unless (copy-mode-active-p session)
            (%forward-octets session (subseq buf 0 len)))
+         (values nil #'%ground-input-state))
+        ;; ── 2-byte non-CSI sequence: ESC X ────────────────────────────────
+        ;; In copy mode, a lone ESC (or ESC + non-CSI byte) exits copy mode.
+        ;; Outside copy mode, forward the raw bytes to the pane.
+        ((and (= len 2) (/= (aref buf 1) +byte-csi-bracket+))
+         (if (copy-mode-active-p session)
+             (let ((sc (%active-screen session)))
+               (when sc (copy-mode-exit sc))
+               (setf *dirty* t))
+             (%forward-octets session (subseq buf 0 len)))
          (values nil #'%ground-input-state))
         ;; ── Buffer overflow guard (> 32 unrecognised bytes) ───────────────
         ((> len 32)
