@@ -569,7 +569,7 @@
             ":kill-pane-confirm must open a prompt")
         ;; Window should still have both panes (no kill yet).
         (is (= 2 (length (window-panes (session-active-window s))))
-            ":kill-pane-confirm must not kill the pane before confirmation"))))
+            ":kill-pane-confirm must not kill the pane before confirmation")))))
 
 (test dispatch-kill-pane-confirm-kills-on-y
   ":kill-pane-confirm kills the pane when the user submits \"y\"."
@@ -581,7 +581,7 @@
         ;; Submit "y" — should kill the active pane.
         (funcall (prompt-on-submit *prompt*) "y")
         (is (= 1 (length (window-panes (session-active-window s))))
-            "submitting \"y\" must kill the active pane"))))
+            "submitting \"y\" must kill the active pane")))))
 
 (test dispatch-kill-pane-confirm-no-kill-on-n
   ":kill-pane-confirm does NOT kill when the user submits \"n\"."
@@ -593,7 +593,7 @@
         ;; Submit "n" — should NOT kill.
         (funcall (prompt-on-submit *prompt*) "n")
         (is (= 2 (length (window-panes (session-active-window s))))
-            "submitting \"n\" must NOT kill the pane"))))
+            "submitting \"n\" must NOT kill the pane"))))))
 
 ;;; ── :kill-window-confirm dispatch ────────────────────────────────────────────
 
