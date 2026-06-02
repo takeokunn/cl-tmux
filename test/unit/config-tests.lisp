@@ -19,6 +19,9 @@
              cl-tmux/config:+prefix-key-code+
             cl-tmux/config:+max-scrollback-lines+
             cl-tmux/config:+poll-timeout-us+
+            cl-tmux/config:+accept-timeout-us+
+            cl-tmux/config:+pty-buf-size+
+            cl-tmux/config:+pty-poll-timeout-us+
             cl-tmux/config:set-key-binding
             cl-tmux/config:remove-key-binding)))
 
@@ -238,6 +241,71 @@
       (is (null absent) "absent key must return NIL")
       (is (null (cl-tmux/config:key-table-repeatable-p absent))
           "key-table-repeatable-p on NIL must return NIL"))))
+
+;;; ── Additional compile-time constants ────────────────────────────────────
+
+(test accept-timeout-constant
+  "+accept-timeout-us+ equals 100000 µs (100 ms)."
+  (is (= 100000 +accept-timeout-us+)
+      "+accept-timeout-us+ should be 100000, got ~A" +accept-timeout-us+)
+  (is (plusp +accept-timeout-us+)
+      "+accept-timeout-us+ must be positive"))
+
+(test pty-buf-size-constant
+  "+pty-buf-size+ equals 4096 bytes."
+  (is (= 4096 +pty-buf-size+)
+      "+pty-buf-size+ should be 4096, got ~A" +pty-buf-size+)
+  (is (plusp +pty-buf-size+)
+      "+pty-buf-size+ must be positive"))
+
+(test pty-poll-timeout-constant
+  "+pty-poll-timeout-us+ equals 50000 µs (50 ms)."
+  (is (= 50000 +pty-poll-timeout-us+)
+      "+pty-poll-timeout-us+ should be 50000, got ~A" +pty-poll-timeout-us+)
+  (is (plusp +pty-poll-timeout-us+)
+      "+pty-poll-timeout-us+ must be positive"))
+
+;;; ── ensure-key-table side effects ────────────────────────────────────────
+
+(test ensure-key-table-creates-new-table
+  "ensure-key-table creates a fresh hash-table for a previously unknown name."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (let ((tbl (cl-tmux/config:ensure-key-table "my-table")))
+      (is (hash-table-p tbl)
+          "ensure-key-table must return a hash-table")
+      (is (eq tbl (gethash "my-table" cl-tmux/config:*key-tables*))
+          "the returned table must be stored in *key-tables*"))))
+
+(test ensure-key-table-returns-existing-table
+  "ensure-key-table returns the same table on repeated calls."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (let* ((tbl1 (cl-tmux/config:ensure-key-table "my-table"))
+           (tbl2 (cl-tmux/config:ensure-key-table "my-table")))
+      (is (eq tbl1 tbl2)
+          "ensure-key-table must return the same object on repeated calls"))))
+
+;;; ── lookup-key-binding on digit keys ────────────────────────────────────
+
+(test lookup-digit-keys-bind-select-window
+  "The digit characters 0-9 all bind :select-window in the default prefix table."
+  (dolist (d '(#\0 #\1 #\2 #\3 #\4 #\5 #\6 #\7 #\8 #\9))
+    (is (eq :select-window (lookup-key-binding d))
+        "digit ~C must be bound to :select-window" d)))
+
+;;; ── send-prefix binding ──────────────────────────────────────────────────
+
+(test send-prefix-binding
+  "The prefix key itself (code-char 2 = C-b) is bound to :send-prefix."
+  (is (eq :send-prefix (lookup-key-binding (code-char +prefix-key-code+)))
+      "C-b (prefix key) must be bound to :send-prefix"))
+
+;;; ── describe-key-bindings header ────────────────────────────────────────
+
+(test describe-key-bindings-has-header
+  "describe-key-bindings output starts with the 'key bindings' header line."
+  (let ((text (describe-key-bindings)))
+    (is (search "key bindings" text)
+        "header must contain 'key bindings'")))
 
 ;;; ── initialize-default-key-tables idempotency ─────────────────────────────
 

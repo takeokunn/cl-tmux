@@ -131,6 +131,20 @@
     (is (<= 1 rows cl-tmux/pty::+max-sane-rows+))
     (is (<= 1 cols cl-tmux/pty::+max-sane-cols+))))
 
+(test terminal-size-fallback-values-are-sane
+  "The fallback 24x80 values used when ioctl fails are themselves sane."
+  (is (<= 1 24 cl-tmux/pty::+max-sane-rows+)
+      "fallback rows (24) must be within sane range")
+  (is (<= 1 80 cl-tmux/pty::+max-sane-cols+)
+      "fallback cols (80) must be within sane range"))
+
+(test max-sane-bounds-are-reasonable
+  "+max-sane-rows+ and +max-sane-cols+ are positive and at least 80/24."
+  (is (>= cl-tmux/pty::+max-sane-rows+ 24)
+      "+max-sane-rows+ must accommodate typical 24-row terminal")
+  (is (>= cl-tmux/pty::+max-sane-cols+ 80)
+      "+max-sane-cols+ must accommodate typical 80-col terminal"))
+
 (test select-fds-empty-list-returns-nil
   "select-fds short-circuits on an empty fd list regardless of timeout,
    returning nil without ever calling select(2)."
@@ -149,3 +163,57 @@
    so writing to a bogus fd -1 finishes without error."
   (let ((empty (make-array 0 :element-type '(unsigned-byte 8))))
     (finishes (cl-tmux/pty:pty-write -1 empty))))
+
+;;; ── Internal helper round-trips ─────────────────────────────────────────────
+
+(test octets-to-foreign-and-back-round-trip
+  "%octets-to-foreign + %foreign-to-octets forms a lossless round-trip."
+  (let* ((original (make-array 5 :element-type '(unsigned-byte 8)
+                                 :initial-contents '(0 1 127 128 255))))
+    (cffi:with-foreign-object (buf :uint8 5)
+      (cl-tmux/pty::%octets-to-foreign original buf 5)
+      (let ((recovered (cl-tmux/pty::%foreign-to-octets buf 5)))
+        (is (equalp original recovered)
+            "round-trip through foreign memory must preserve all byte values")))))
+
+(test octets-to-foreign-partial-copy
+  "%octets-to-foreign copies exactly LEN bytes; only those bytes are written."
+  (let ((src (make-array 4 :element-type '(unsigned-byte 8)
+                           :initial-contents '(10 20 30 40))))
+    (cffi:with-foreign-object (buf :uint8 4)
+      ;; Zero the buffer first so we can check untouched bytes.
+      (dotimes (i 4) (setf (cffi:mem-aref buf :uint8 i) 0))
+      ;; Copy only 2 bytes.
+      (cl-tmux/pty::%octets-to-foreign src buf 2)
+      (is (= 10 (cffi:mem-aref buf :uint8 0)) "byte 0 must be 10")
+      (is (= 20 (cffi:mem-aref buf :uint8 1)) "byte 1 must be 20")
+      (is (= 0  (cffi:mem-aref buf :uint8 2)) "byte 2 must remain 0 (not written)")
+      (is (= 0  (cffi:mem-aref buf :uint8 3)) "byte 3 must remain 0 (not written)"))))
+
+(test foreign-to-octets-produces-correct-element-type
+  "%foreign-to-octets returns a simple-array of (unsigned-byte 8)."
+  (cffi:with-foreign-object (buf :uint8 3)
+    (setf (cffi:mem-aref buf :uint8 0) 1
+          (cffi:mem-aref buf :uint8 1) 2
+          (cffi:mem-aref buf :uint8 2) 3)
+    (let ((result (cl-tmux/pty::%foreign-to-octets buf 3)))
+      (is (= 3 (length result)) "result must have length 3")
+      (is (= 1 (aref result 0)) "element 0 must be 1")
+      (is (= 2 (aref result 1)) "element 1 must be 2")
+      (is (= 3 (aref result 2)) "element 2 must be 3"))))
+
+(test pty-read-blocking-returns-nil-on-closed-fd
+  "pty-read-blocking returns NIL when read(2) returns 0 (EOF) or negative."
+  ;; A pipe whose write end is closed immediately delivers EOF on the read end.
+  ;; with-pipe-fds is defined in test/helpers.lisp.
+  (with-pipe-fds (rfd wfd)
+    ;; Close the write end so the read end gets EOF.
+    (sb-posix:close wfd)
+    ;; wfd is now closed; with-pipe-fds will call ignore-errors on the second close.
+    (let ((result (cl-tmux/pty:pty-read-blocking rfd 1)))
+      (is (null result) "read on EOF pipe must return NIL"))))
+
+(test select-fds-returns-list-type
+  "select-fds always returns a list (possibly nil), never another type."
+  (let ((result (cl-tmux/pty:select-fds '() 0)))
+    (is (listp result) "empty-fd result must be a list")))

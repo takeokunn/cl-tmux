@@ -424,8 +424,8 @@
          (called nil)
          (result (cl-tmux/renderer::%status-format-or-default
                   "status-left" ctx (lambda () (setf called t) "from-default"))))
-    (is called
-        "%status-format-or-default must invoke default-fn when option is unset")
+    (is-true called
+             "%status-format-or-default must invoke default-fn when option is unset")
     (is (string= "from-default" result)
         "%status-format-or-default must return the default-fn result (got ~S)" result)))
 
@@ -850,7 +850,7 @@
 (test enable-mouse-reporting-emits-dec-sequences
   "enable-mouse-reporting writes ?1000h, ?1002h, and ?1006h to *standard-output*."
   (let ((out (let ((*standard-output* (make-string-output-stream)))
-               (enable-mouse-reporting)
+               (cl-tmux/renderer::enable-mouse-reporting)
                (get-output-stream-string *standard-output*))))
     (is (search (format nil "~C[?1000h" #\Escape) out)
         "enable-mouse-reporting must emit ?1000h (got ~S)" out)
@@ -862,7 +862,7 @@
 (test disable-mouse-reporting-emits-dec-sequences
   "disable-mouse-reporting writes ?1006l, ?1002l, and ?1000l to *standard-output*."
   (let ((out (let ((*standard-output* (make-string-output-stream)))
-               (disable-mouse-reporting)
+               (cl-tmux/renderer::disable-mouse-reporting)
                (get-output-stream-string *standard-output*))))
     (is (search (format nil "~C[?1006l" #\Escape) out)
         "disable-mouse-reporting must emit ?1006l (got ~S)" out)
@@ -870,6 +870,74 @@
         "disable-mouse-reporting must emit ?1002l (got ~S)" out)
     (is (search (format nil "~C[?1000l" #\Escape) out)
         "disable-mouse-reporting must emit ?1000l (got ~S)" out)))
+
+;;; ── render-lock-screen ───────────────────────────────────────────────────────
+
+(test render-lock-screen-fills-with-lock-message
+  "render-lock-screen fills the terminal with a blue background and the 'locked' message."
+  (let ((out (with-output-to-string (s)
+               (cl-tmux/renderer::render-lock-screen s 24 80))))
+    (is (plusp (length out))
+        "render-lock-screen must produce non-empty output")
+    (is (search "locked" out)
+        "render-lock-screen must include 'locked' in the output (got ~S)" out)))
+
+(test render-lock-screen-emits-blue-background
+  "render-lock-screen emits the blue-background SGR sequence."
+  (let ((out (with-output-to-string (s)
+               (cl-tmux/renderer::render-lock-screen s 24 80))))
+    (is (search (format nil "~C[44;97m" #\Escape) out)
+        "render-lock-screen must emit ESC[44;97m (got ~S)" out)))
+
+(test render-session-locked-shows-lock-overlay
+  "When session-locked-p is T, render-session-to-string emits the lock overlay."
+  (let* ((sess (make-test-session 40 10)))
+    (setf (session-locked-p sess) t)
+    (unwind-protect
+         (let ((out (render-session-to-string sess 11 40)))
+           (is (search "locked" out)
+               "locked session must show 'locked' message in frame (got ~S)" out))
+      ;; Restore so other tests are not affected.
+      (setf (session-locked-p sess) nil))))
+
+;;; ── %status-copy-indicator edge cases ───────────────────────────────────────
+
+(test status-copy-indicator-in-copy-mode-zero-offset-returns-empty
+  "%status-copy-indicator in copy-mode with offset 0 returns empty string."
+  (let* ((screen (make-screen 10 5))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 5 :fd -1 :screen screen)))
+    (setf (screen-copy-mode-p screen) t
+          (screen-copy-offset screen) 0)
+    (is (string= "" (cl-tmux/renderer::%status-copy-indicator pane))
+        "%status-copy-indicator with offset 0 must return empty string")))
+
+;;; ── %status-pane-indicator with non-nil pane ─────────────────────────────────
+
+(test status-pane-indicator-formats-pane-id
+  "%status-pane-indicator with pane id 99 returns a string containing '#99'."
+  (let* ((screen (make-screen 10 5))
+         (pane   (make-pane :id 99 :x 0 :y 0 :width 10 :height 5 :fd -1 :screen screen)))
+    (let ((out (cl-tmux/renderer::%status-pane-indicator pane)))
+      (is (search "#99" out)
+          "%status-pane-indicator must contain '#99' (got ~S)" out))))
+
+;;; ── %status-left-text with copy mode ─────────────────────────────────────────
+
+(test status-left-text-copy-mode-shows-indicator
+  "%status-left-text with copy mode active includes the copy indicator."
+  (let ((cl-tmux/prompt:*prompt* nil))
+    (let* ((sess   (make-fake-session :nwindows 1))
+           (win    (session-active-window sess))
+           (ap     (session-active-pane  sess))
+           (screen (pane-screen ap)))
+      ;; Enable copy mode with a non-zero offset.
+      (setf (screen-copy-mode-p   screen) t
+            (screen-copy-offset   screen) 2)
+      (let ((left (cl-tmux/renderer::%status-left-text sess win ap)))
+        (is (search "COPY" left)
+            "%status-left-text in copy mode must contain 'COPY' (got ~S)" left)
+        (is (search "+2" left)
+            "%status-left-text in copy mode must show offset '+2' (got ~S)" left)))))
 
 ;;; ── %render-mouse-sequences (internal — three-way dispatch) ──────────────────
 ;;;

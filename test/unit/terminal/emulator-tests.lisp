@@ -1,7 +1,8 @@
 (in-package #:cl-tmux/test)
 
-;;;; Emulator tests (src/terminal/emulator.lisp).
-;;;; Tests: copy-mode suite.
+;;;; Emulator tests (src/terminal/emulator.lisp and scroll helpers).
+;;;; Tests: copy-mode scrollback projection, screen-display-cell OOB,
+;;;;        screen-process-bytes keyword arguments, and trim-scroll-history.
 
 ;;; ── SUITE: copy-mode scrollback projection ──────────────────────────────────
 
@@ -90,3 +91,137 @@
     (let ((cell (cl-tmux/terminal/actions:screen-display-cell s 0 3)))
       (is (char= #\Space (cl-tmux/terminal/types:cell-char cell))
           "live-row beyond screen-height must return a blank cell"))))
+
+(test display-cell-scrollback-nil-row-returns-blank
+  :description "screen-display-cell returns blank when the scrollback row vector is NIL."
+  (with-screen (s 5 3)
+    ;; Push a NIL (corrupted) scrollback entry
+    (setf (cl-tmux/terminal/types:screen-scrollback s) (list nil))
+    (setf (cl-tmux/terminal/types:screen-copy-mode-p s) t
+          (cl-tmux/terminal/types:screen-copy-offset  s) 1)
+    (let ((cell (cl-tmux/terminal/actions:screen-display-cell s 0 0)))
+      (is (char= #\Space (cl-tmux/terminal/types:cell-char cell))
+          "NIL scrollback row must return a blank cell"))))
+
+;;; ── SUITE: screen-process-bytes keyword arguments ────────────────────────────
+
+(def-suite screen-process-bytes-suite
+  :description "screen-process-bytes start/end keyword arguments"
+  :in terminal-suite)
+(in-suite screen-process-bytes-suite)
+
+(test screen-process-bytes-start-end-slice
+  :description "screen-process-bytes :start/:end process only the specified byte slice."
+  (with-screen (s 10 5)
+    ;; Buffer: A B C D E  — process only bytes 1..2 (B C)
+    (let ((buf (map '(simple-array (unsigned-byte 8) (*)) #'char-code "ABCDE")))
+      (screen-process-bytes s buf :start 1 :end 3))
+    ;; Only B and C should appear on the screen
+    (is (char= #\B (char-at s 0 0)) "first written char must be B")
+    (is (char= #\C (char-at s 1 0)) "second written char must be C")
+    ;; A, D, E must not have been written
+    (is (char= #\Space (char-at s 2 0)) "third cell must remain blank")))
+
+(test screen-process-bytes-empty-slice-is-noop
+  :description "screen-process-bytes with start=end processes no bytes (no-op)."
+  (with-screen (s 10 5)
+    (screen-clear-dirty s)
+    (let ((buf (map '(simple-array (unsigned-byte 8) (*)) #'char-code "XYZ")))
+      (screen-process-bytes s buf :start 0 :end 0))
+    ;; No cell should change — screen stays at initial state
+    (is (char= #\Space (char-at s 0 0))
+        "no bytes processed: cell (0,0) must remain blank")))
+
+(test screen-process-bytes-processes-full-buffer-by-default
+  :description "Without :start/:end, screen-process-bytes processes all bytes."
+  (with-screen (s 10 5)
+    (let ((buf (map '(simple-array (unsigned-byte 8) (*)) #'char-code "HELLO")))
+      (screen-process-bytes s buf))
+    (is (string= "HELLO" (row-string s 0 :end 5))
+        "entire buffer must be processed by default")))
+
+;;; ── SUITE: trim-scroll-history ───────────────────────────────────────────────
+
+(def-suite trim-scroll-history-suite
+  :description "trim-scroll-history caps the scrollback buffer"
+  :in terminal-suite)
+(in-suite trim-scroll-history-suite)
+
+(test trim-scroll-history-caps-at-effective-limit
+  :description "trim-scroll-history truncates the scrollback list when it exceeds the cap."
+  (with-screen (s 5 3)
+    ;; Install 5 dummy rows
+    (setf (cl-tmux/terminal/types:screen-scrollback s)
+          (loop repeat 5 collect (make-array 5 :initial-element
+                                               (cl-tmux/terminal/types:blank-cell))))
+    ;; Override the limit function to return 3
+    (let ((cl-tmux/terminal/actions:*history-limit-fn* (lambda () 3)))
+      (cl-tmux/terminal/actions:trim-scroll-history s))
+    (is (<= (length (cl-tmux/terminal/types:screen-scrollback s)) 3)
+        "scrollback must be capped at 3 entries after trim")))
+
+(test trim-scroll-history-noop-when-within-limit
+  :description "trim-scroll-history does nothing when scrollback is within the limit."
+  (with-screen (s 5 3)
+    (setf (cl-tmux/terminal/types:screen-scrollback s)
+          (loop repeat 2 collect (make-array 5 :initial-element
+                                               (cl-tmux/terminal/types:blank-cell))))
+    (let ((cl-tmux/terminal/actions:*history-limit-fn* (lambda () 100)))
+      (cl-tmux/terminal/actions:trim-scroll-history s))
+    (is (= 2 (length (cl-tmux/terminal/types:screen-scrollback s)))
+        "scrollback with 2 entries under limit of 100 must remain at 2")))
+
+(test scroll-enforces-history-cap-during-feed
+  :description "Scrolling a full screen through many lines caps scrollback at the default limit."
+  (with-screen (s 5 3)
+    ;; Feed enough lines to cause many scrolls (default cap is +max-scrollback-lines+)
+    ;; We use a small cap via *history-limit-fn* to keep the test fast
+    (let ((cl-tmux/terminal/actions:*history-limit-fn* (lambda () 5)))
+      (loop for i below 20
+            do (feed s (format nil "L~D" i))
+            do (feed s (format nil "~C~C" #\Return #\Linefeed))))
+    (is (<= (length (cl-tmux/terminal/types:screen-scrollback s)) 5)
+        "scrollback must not exceed the cap of 5 even after many scrolls")))
+
+;;; ── SUITE: decstbm (set scroll region) ──────────────────────────────────────
+
+(def-suite decstbm-suite
+  :description "decstbm sets and homes the scroll region"
+  :in terminal-suite)
+(in-suite decstbm-suite)
+
+(test decstbm-sets-scroll-region
+  :description "decstbm installs the specified scroll region (0-based)."
+  (with-screen (s 10 10)
+    (cl-tmux/terminal/actions:decstbm s 2 7)
+    (is (= 2 (cl-tmux/terminal/types:screen-scroll-top    s)) "scroll-top must be 2")
+    (is (= 7 (cl-tmux/terminal/types:screen-scroll-bottom s)) "scroll-bottom must be 7")))
+
+(test decstbm-homes-cursor-to-origin
+  :description "After decstbm, the cursor is at (0, 0)."
+  (with-screen (s 10 10)
+    (setf (cl-tmux/terminal/types::screen-cx s) 5
+          (cl-tmux/terminal/types::screen-cy s) 5)
+    (cl-tmux/terminal/actions:decstbm s 2 7)
+    (check-cursor s 0 0)))
+
+(test decstbm-rejects-invalid-region
+  :description "decstbm ignores a region where top >= bottom."
+  (with-screen (s 10 10)
+    ;; Pre-condition: default scroll region (0..9)
+    (let ((old-top    (cl-tmux/terminal/types:screen-scroll-top    s))
+          (old-bottom (cl-tmux/terminal/types:screen-scroll-bottom s)))
+      ;; top=5, bottom=5 is invalid (not strictly less than)
+      (cl-tmux/terminal/actions:decstbm s 5 5)
+      ;; Region should be unchanged
+      (is (= old-top    (cl-tmux/terminal/types:screen-scroll-top    s))
+          "scroll-top must be unchanged for invalid region top=bottom")
+      (is (= old-bottom (cl-tmux/terminal/types:screen-scroll-bottom s))
+          "scroll-bottom must be unchanged for invalid region top=bottom"))))
+
+(test decstbm-clamps-bottom-to-height-minus-one
+  :description "decstbm clamps bottom to height-1 when given a value >= height."
+  (with-screen (s 10 10)
+    (cl-tmux/terminal/actions:decstbm s 0 99)
+    (is (= 9 (cl-tmux/terminal/types:screen-scroll-bottom s))
+        "scroll-bottom must be clamped to height-1 (9)")))

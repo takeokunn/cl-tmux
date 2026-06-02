@@ -5,6 +5,27 @@
 (def-suite layout-geometry-suite :description "Rectangle assignment and resize helpers")
 (in-suite layout-geometry-suite)
 
+;;; ── Table-driven helper: pane-at-position lookup ─────────────────────────
+;;;
+;;; pane-at-position-cases parameterizes the repeated inline 81×24 setup to
+;;; eliminate ~120 lines of identical pane/window construction.
+
+(defmacro with-h-split-81-24 ((p0-var p1-var win-var) &body body)
+  "A shared 2-pane horizontal split window: 81×24, p0 x=0 w=40, p1 x=41 w=40."
+  `(let* ((,p0-var (make-pane :id 1 :fd -1 :pid -1
+                               :x 0 :y 0 :width 40 :height 24
+                               :screen (make-screen 40 24)))
+           (,p1-var (make-pane :id 2 :fd -1 :pid -1
+                               :x 41 :y 0 :width 40 :height 24
+                               :screen (make-screen 40 24)))
+           (,win-var (make-window :id 1 :name "w" :width 81 :height 24
+                                  :panes (list ,p0-var ,p1-var)
+                                  :tree  (make-layout-split :h
+                                           (make-layout-leaf ,p0-var)
+                                           (make-layout-leaf ,p1-var)
+                                           1/2))))
+     ,@body))
+
 ;;; ── Orientation helpers (%axis-floor, %orient-pane-extent) ──────────────────
 
 (test axis-floor-returns-correct-minimum
@@ -149,21 +170,13 @@
         "Up neighbor of bottom pane (p1) must be the top pane (p0)")))
 
 ;;; ── pane-at-position tests ───────────────────────────────────────────────────
+;;;
+;;; All three tests share with-h-split-81-24 to avoid repeating the fixture.
 
 (test pane-at-position-finds-pane-in-left-half
   "pane-at-position returns the left pane when clicking in its column range."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (p1  (make-pane :id 2 :fd -1 :pid -1
-                          :x 41 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree  (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2))))
+  (with-h-split-81-24 (p0 p1 win)
+    (declare (ignore p1))
     (is (eq p0 (cl-tmux/model:pane-at-position win 0 0))
         "Top-left corner must be in p0")
     (is (eq p0 (cl-tmux/model:pane-at-position win 39 23))
@@ -171,18 +184,8 @@
 
 (test pane-at-position-finds-pane-in-right-half
   "pane-at-position returns the right pane when clicking in its column range."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (p1  (make-pane :id 2 :fd -1 :pid -1
-                          :x 41 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree  (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2))))
+  (with-h-split-81-24 (p0 p1 win)
+    (declare (ignore p0))
     (is (eq p1 (cl-tmux/model:pane-at-position win 41 0))
         "Start of right pane must be in p1")
     (is (eq p1 (cl-tmux/model:pane-at-position win 80 23))
@@ -190,18 +193,8 @@
 
 (test pane-at-position-separator-returns-nil
   "pane-at-position returns NIL for the separator column between panes."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (p1  (make-pane :id 2 :fd -1 :pid -1
-                          :x 41 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree  (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2))))
+  (with-h-split-81-24 (p0 p1 win)
+    (declare (ignore p0 p1))
     (is (null (cl-tmux/model:pane-at-position win 40 0))
         "Separator column 40 must not be in any pane")))
 
@@ -216,3 +209,117 @@
     (is (eq p0 (cl-tmux/model:pane-at-position win 0 0))   "origin")
     (is (eq p0 (cl-tmux/model:pane-at-position win 79 23)) "max corner")
     (is (null (cl-tmux/model:pane-at-position win 80 0))   "out-of-bounds col")))
+
+;;; ── orient-case macro ────────────────────────────────────────────────────────
+
+(test orient-case-dispatches-on-h
+  "orient-case evaluates the :h branch for orientation :h."
+  (is (eq :horizontal
+          (cl-tmux/model::orient-case :h :h :horizontal :v :vertical))
+      ":h orientation must evaluate the :h branch")
+  (is (= 40
+         (cl-tmux/model::orient-case :h :h 40 :v 20))
+      ":h orientation must return the :h value (40)"))
+
+(test orient-case-dispatches-on-v
+  "orient-case evaluates the :v branch for orientation :v."
+  (is (eq :vertical
+          (cl-tmux/model::orient-case :v :h :horizontal :v :vertical))
+      ":v orientation must evaluate the :v branch")
+  (is (= 20
+         (cl-tmux/model::orient-case :v :h 40 :v 20))
+      ":v orientation must return the :v value (20)"))
+
+;;; ── split-child-geometry tests ──────────────────────────────────────────────
+;;;
+;;; split-child-geometry returns provisional x,y,w,h for the NEW child pane.
+;;; The geometry is recomputed by window-relayout; this only seeds a sensible size.
+
+(test split-child-geometry-vertical-split-dimensions
+  "Vertical split: new child gets roughly half the height below the divider."
+  (let ((pane (make-pane :id 1 :fd -1 :pid -1
+                          :x 0 :y 0 :width 80 :height 21
+                          :screen (make-screen 80 21))))
+    (multiple-value-bind (nx ny nw nh)
+        (cl-tmux/model::split-child-geometry pane :v)
+      ;; avail = 21 - 1 = 20; fh = floor(20/2) = 10 → child starts at y=11, h=10
+      (is (= 0  nx) ":v split: new child x must equal parent x")
+      (is (= 11 ny) ":v split: new child y must be pane-y + fh + 1")
+      (is (= 80 nw) ":v split: new child width must equal parent width")
+      (is (= 10 nh) ":v split: new child height must be avail - fh"))))
+
+(test split-child-geometry-horizontal-split-dimensions
+  "Horizontal split: new child gets roughly half the width to the right of the divider."
+  (let ((pane (make-pane :id 1 :fd -1 :pid -1
+                          :x 0 :y 0 :width 81 :height 24
+                          :screen (make-screen 81 24))))
+    (multiple-value-bind (nx ny nw nh)
+        (cl-tmux/model::split-child-geometry pane :h)
+      ;; avail = 81 - 1 = 80; fw = floor(80/2) = 40 → child starts at x=41, w=40
+      (is (= 41 nx) ":h split: new child x must be pane-x + fw + 1")
+      (is (= 0  ny) ":h split: new child y must equal parent y")
+      (is (= 40 nw) ":h split: new child width must be avail - fw")
+      (is (= 24 nh) ":h split: new child height must equal parent height"))))
+
+;;; ── layout-min-extent tests ──────────────────────────────────────────────────
+
+(test layout-min-extent-single-leaf-v
+  "A single leaf has minimum vertical extent of +pane-min-height+."
+  (let* ((p    (make-pane :id 1 :fd -1 :pid -1 :width 40 :height 15
+                          :screen (make-screen 40 15)))
+         (leaf (make-layout-leaf p)))
+    (is (= cl-tmux/model::+pane-min-height+
+           (cl-tmux/model::layout-min-extent leaf :v))
+        "leaf :v extent must equal +pane-min-height+")))
+
+(test layout-min-extent-single-leaf-h
+  "A single leaf has minimum horizontal extent of +pane-min-width+."
+  (let* ((p    (make-pane :id 1 :fd -1 :pid -1 :width 40 :height 15
+                          :screen (make-screen 40 15)))
+         (leaf (make-layout-leaf p)))
+    (is (= cl-tmux/model::+pane-min-width+
+           (cl-tmux/model::layout-min-extent leaf :h))
+        "leaf :h extent must equal +pane-min-width+")))
+
+(test layout-min-extent-h-split-same-axis
+  "A :h split's minimum :h extent = sum of children's :h extents + 1 separator."
+  (let* ((l0   (tl-leaf 1 1 1))
+         (l1   (tl-leaf 2 1 1))
+         (tree (make-layout-split :h l0 l1)))
+    (let ((expected (+ cl-tmux/model::+pane-min-width+
+                       1
+                       cl-tmux/model::+pane-min-width+)))
+      (is (= expected (cl-tmux/model::layout-min-extent tree :h))
+          ":h split :h extent must be min-width + 1 + min-width"))))
+
+(test layout-min-extent-h-split-cross-axis
+  "A :h split's minimum :v extent = max of children's :v extents (no separator)."
+  (let* ((l0   (tl-leaf 1 1 1))
+         (l1   (tl-leaf 2 1 1))
+         (tree (make-layout-split :h l0 l1)))
+    (is (= cl-tmux/model::+pane-min-height+
+           (cl-tmux/model::layout-min-extent tree :v))
+        ":h split :v extent must be max of children's :v extents")))
+
+(test layout-min-extent-nil-node
+  "layout-min-extent on NIL returns 0."
+  (is (= 0 (cl-tmux/model::layout-min-extent nil :h))
+      "nil node :h extent must be 0")
+  (is (= 0 (cl-tmux/model::layout-min-extent nil :v))
+      "nil node :v extent must be 0"))
+
+;;; ── layout-assign v-split geometry ──────────────────────────────────────────
+
+(test layout-assign-v-split-divides-height
+  "A :v split divides height: top gets ratio share, bottom gets remainder, one separator."
+  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :width 1 :height 1 :screen (make-screen 1 1)))
+         (p1   (make-pane :id 2 :fd -1 :pid -1 :width 1 :height 1 :screen (make-screen 1 1)))
+         (tree (make-layout-split :v (make-layout-leaf p0) (make-layout-leaf p1) 1/2)))
+    (cl-tmux/model::layout-assign tree 0 0 80 21)
+    ;; 21 rows - 1 separator = 20, split 50/50 → 10 each
+    (is (= 0  (pane-y p0)))
+    (is (= 10 (pane-height p0)))
+    (is (= 11 (pane-y p1)))
+    (is (= 10 (pane-height p1)))
+    (is (= 80 (pane-width p0)))
+    (is (= 80 (pane-width p1)))))

@@ -976,7 +976,7 @@
       (is (= 0 btn)    "SGR btn must be 0")
       (is (= 9 col)    "SGR col 0-based")
       (is (= 4 row)    "SGR row 0-based")
-      (is release-p    "release sequence (final 'm') must set release-p=T"))))
+      (is-true release-p "release sequence (final 'm') must set release-p=T"))))
 
 (test sgr-mouse-sequence-p-detects-sgr-intro
   "%sgr-mouse-sequence-p returns T for ESC [ < prefix."
@@ -1011,3 +1011,123 @@
         (state (cl-tmux::make-input-state)))
     (is (null (cl-tmux::process-byte s 0 state))
         "NUL byte must return NIL (forwarded, no quit)")))
+
+;;; ── Overlay arrow-key scrolling via escape sequence ─────────────────────────
+;;;
+;;; When the overlay is active and ESC [ A arrives, make-overlay-escape-k
+;;; scrolls the overlay up; ESC [ B scrolls it down.
+
+(test overlay-escape-up-scrolls-overlay
+  "ESC [ A while an overlay is open scrolls the overlay up (offset -1)."
+  (let ((s (make-fake-session)))
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil))
+      (show-overlay (format nil "~{line~A~%~}" (loop for i from 1 to 20 collect i)))
+      (let ((state (cl-tmux::make-input-state)))
+        ;; Feed ESC [ A one byte at a time.
+        (cl-tmux::process-byte s 27 state)
+        (cl-tmux::process-byte s 91 state)
+        (cl-tmux::process-byte s 65 state))
+      ;; After the sequence the overlay should still be open.
+      (is (overlay-active-p)
+          "overlay must remain open after ESC [ A (up arrow)"))))
+
+(test overlay-escape-down-scrolls-overlay
+  "ESC [ B while an overlay is open scrolls the overlay down (offset +1)."
+  (let ((s (make-fake-session)))
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil))
+      (show-overlay (format nil "~{line~A~%~}" (loop for i from 1 to 20 collect i)))
+      (let ((state (cl-tmux::make-input-state)))
+        (cl-tmux::process-byte s 27 state)
+        (cl-tmux::process-byte s 91 state)
+        (cl-tmux::process-byte s 66 state))
+      (is (overlay-active-p)
+          "overlay must remain open after ESC [ B (down arrow)"))))
+
+(test overlay-bare-esc-dismisses-overlay
+  "A lone ESC (ESC + non-'[' byte) while an overlay is open dismisses it."
+  (let ((s (make-fake-session)))
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil))
+      (show-overlay "some text")
+      (let ((state (cl-tmux::make-input-state)))
+        ;; ESC then 'x' — not a CSI sequence → dismiss
+        (cl-tmux::process-byte s 27 state)
+        (cl-tmux::process-byte s (char-code #\x) state))
+      (is (not (overlay-active-p))
+          "overlay must be dismissed by bare ESC"))))
+
+;;; ── handle-prompt-key: additional editing keys ────────────────────────────────
+
+(test handle-prompt-key-ctrl-a-moves-to-bol
+  "C-a (byte 1) moves the cursor to the beginning of the prompt line."
+  (with-clean-prompt
+    (prompt-start "test" "hello"
+                  (lambda (buf) (declare (ignore buf)) nil))
+    ;; Move cursor to end first (EOL)
+    (prompt-cursor-eol)
+    (is (= 5 (prompt-cursor-index *prompt*)) "cursor at end")
+    (cl-tmux::handle-prompt-key 1)  ; C-a
+    (is (= 0 (prompt-cursor-index *prompt*))
+        "C-a must move cursor to position 0")))
+
+(test handle-prompt-key-ctrl-e-moves-to-eol
+  "C-e (byte 5) moves the cursor to the end of the prompt line."
+  (with-clean-prompt
+    (prompt-start "test" "hello"
+                  (lambda (buf) (declare (ignore buf)) nil))
+    ;; Cursor starts at end; move to BOL first
+    (prompt-cursor-bol)
+    (is (= 0 (prompt-cursor-index *prompt*)) "cursor at start")
+    (cl-tmux::handle-prompt-key 5)  ; C-e
+    (is (= 5 (prompt-cursor-index *prompt*))
+        "C-e must move cursor to end of buffer")))
+
+(test handle-prompt-key-ctrl-c-cancels
+  "C-c (byte 3) cancels the prompt without running on-submit."
+  (with-clean-prompt
+    (let ((submitted nil))
+      (prompt-start "test" "abc"
+                    (lambda (buf) (setf submitted buf)))
+      (cl-tmux::handle-prompt-key 3)  ; C-c
+      (is (not (prompt-active-p)) "C-c must dismiss the prompt")
+      (is (null submitted) "C-c must not call on-submit"))))
+
+(test handle-prompt-key-printable-inserts-char
+  "A printable ASCII byte inserts the corresponding character into the buffer."
+  (with-clean-prompt
+    (prompt-start "test" ""
+                  (lambda (buf) (declare (ignore buf)) nil))
+    (cl-tmux::handle-prompt-key (char-code #\A))
+    (is (string= "A" (prompt-buffer *prompt*))
+        "printable key 'A' must be inserted into buffer")))
+
+;;; ── process-byte with locked session ──────────────────────────────────────────
+
+(test process-byte-unlocks-locked-session
+  "Any byte unlocks a locked session; subsequent bytes are processed normally."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (setf (session-locked-p s) t)
+      (let ((state (cl-tmux::make-input-state)))
+        (is (null (cl-tmux::process-byte s (char-code #\a) state))
+            "first byte on locked session returns NIL (unlocks)")
+        (is-false (session-locked-p s)
+                  "session must be unlocked after any byte")))))
+
+;;; ── %sgr-mouse-sequence-p edge cases ────────────────────────────────────────
+
+(test sgr-mouse-sequence-p-returns-nil-for-short-buffer
+  "%sgr-mouse-sequence-p returns NIL for a buffer shorter than 3 bytes."
+  (flet ((mk-buf (s)
+           (make-array (length s) :element-type '(unsigned-byte 8)
+                       :initial-contents (map 'list #'char-code s))))
+    (let* ((short (mk-buf (format nil "~C[" #\Escape)))  ; only 2 bytes
+           (len   (length short)))
+      (is (null (cl-tmux::%sgr-mouse-sequence-p short len))
+          "2-byte buffer must return NIL (need at least 3)"))))
+
+(test sgr-mouse-terminated-p-returns-nil-for-short-buffer
+  "%sgr-mouse-terminated-p returns NIL for a buffer of 3 or fewer bytes."
+  (let ((buf (make-array 3 :element-type '(unsigned-byte 8)
+                           :initial-contents '(27 91 60))))
+    (is (null (cl-tmux::%sgr-mouse-terminated-p buf 3))
+        "3-byte buffer must return NIL (need more than 3)")))

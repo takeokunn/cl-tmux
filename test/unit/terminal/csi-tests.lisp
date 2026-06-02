@@ -89,6 +89,61 @@
 ;;; named tests provides clearer failure messages; the table version is omitted
 ;;; to avoid redundancy (audit finding: test_abstraction_issues).
 
+;;; ── Boundary / clamp edge cases ──────────────────────────────────────────────
+
+(test cuu-clamps-to-row-zero
+  "CUU ESC[100A from row 3 clamps to row 0 (cannot go above top)."
+  :description "cursor-up large count clamps to row 0"
+  (with-screen (s 20 10)
+    (feed s (esc "[4;1H"))   ; row 4 (1-based) → 0-based row 3
+    (feed s (esc "[100A"))   ; up 100 — must clamp to row 0
+    (check-cursor s 0 0)))
+
+(test cud-clamps-to-last-row
+  "CUD ESC[100B from row 0 clamps to the last row (cannot go below bottom)."
+  :description "cursor-down large count clamps to last row"
+  (with-screen (s 20 10)
+    (feed s (esc "[100B"))   ; down 100 — must clamp to row 9
+    (is (<= (screen-cursor-y s) 9)
+        "cursor-y must not exceed screen height-1")))
+
+(test cuf-clamps-to-last-col
+  "CUF ESC[100C from col 0 clamps to the last column."
+  :description "cursor-right large count clamps to last col"
+  (with-screen (s 20 10)
+    (feed s (esc "[100C"))   ; right 100 — must clamp to col 19
+    (is (<= (screen-cursor-x s) 19)
+        "cursor-x must not exceed screen width-1")))
+
+(test cub-clamps-to-col-zero
+  "CUB ESC[100D from any column clamps to col 0."
+  :description "cursor-left large count clamps to col 0"
+  (with-screen (s 20 10)
+    (feed s (esc "[1;10H"))  ; col 9
+    (feed s (esc "[100D"))   ; left 100 — must clamp to col 0
+    (check-cursor s 0 0)))
+
+;;; ── Cursor movement table: many sequences, one test ─────────────────────────
+;;;
+;;; We capture the natural tabular shape of these tests rather than repeating
+;;; setup four more times.  Each entry is:
+;;;   (initial-seq move-seq expected-cx expected-cy)
+
+(test cursor-movement-table
+  "CUU/CUD/CUF/CUB with explicit counts moves the cursor by the specified amount."
+  :description "parameterized cursor-movement checks"
+  (dolist (entry
+           ;; (setup           move      ex-x ex-y)
+           '(((esc "[3;3H") (esc "[1A")   2    1)   ; CUU 1 from (2,2) → y=1
+             ((esc "[3;3H") (esc "[1B")   2    3)   ; CUD 1 from (2,2) → y=3
+             ((esc "[3;3H") (esc "[1C")   3    2)   ; CUF 1 from (2,2) → x=3
+             ((esc "[3;3H") (esc "[1D")   1    2))) ; CUB 1 from (2,2) → x=1
+    (destructuring-bind (setup move expected-cx expected-cy) entry
+      (with-screen (s 20 10)
+        (feed s setup)
+        (feed s move)
+        (check-cursor s expected-cx expected-cy)))))
+
 (test csi-cursor-home-no-params-goes-to-origin
   "ESC[H with no parameters uses p1*/p2* = (max 1 0) = 1 (1-based), so 1-1 = 0,0.
    Verifies that define-csi-rules generates the correct default-parameter binding."
@@ -112,30 +167,22 @@
   :in terminal-suite)
 (in-suite decscusr)
 
-(test decscusr-shape-5
-  "CSI 5 SP q sets cursor-shape to 5 (blinking bar)."
+;;; The three DECSCUSR shapes share the same test shape (feed + check), so we
+;;; express them as a single table-driven test.  Each entry is (sequence expected-shape).
+
+(test decscusr-shape-table
+  "CSI N SP q sets cursor-shape to N (0=default-blink-block, 2=steady-block, 5=blink-bar)."
+  (dolist (entry '(("0" 0) ("2" 2) ("5" 5)))
+    (let ((param  (first  entry))
+          (expect (second entry)))
+      (with-screen (s 20 5)
+        (feed s (esc (format nil "[~A q" param)))
+        (is (= expect (cl-tmux/terminal/types:screen-cursor-shape s))
+            "cursor-shape must be ~D after ESC[~A q" expect param))))
+  ;; Verify default shape on a fresh screen is 1 (block blink).
   (with-screen (s 20 5)
-    ;; Default is 1 (block blink)
     (is (= 1 (cl-tmux/terminal/types:screen-cursor-shape s))
-        "default cursor-shape must be 1")
-    ;; ESC [ 5 SP q
-    (feed s (esc "[5 q"))
-    (is (= 5 (cl-tmux/terminal/types:screen-cursor-shape s))
-        "cursor-shape must be 5 after ESC[5 q")))
-
-(test decscusr-shape-2
-  "CSI 2 SP q sets cursor-shape to 2 (steady block)."
-  (with-screen (s 20 5)
-    (feed s (esc "[2 q"))
-    (is (= 2 (cl-tmux/terminal/types:screen-cursor-shape s))
-        "cursor-shape must be 2 after ESC[2 q")))
-
-(test decscusr-shape-0-is-clamped
-  "CSI 0 SP q sets cursor-shape to 0 (default blink block)."
-  (with-screen (s 20 5)
-    (feed s (esc "[0 q"))
-    (is (= 0 (cl-tmux/terminal/types:screen-cursor-shape s))
-        "cursor-shape must be 0 after ESC[0 q")))
+        "default cursor-shape on fresh screen must be 1")))
 
 ;;; ── SUITE: cbt-cht ───────────────────────────────────────────────────────────
 
@@ -295,3 +342,37 @@
       (is (consp q) "response-queue must be non-empty after CSI >c")
       (is (some (lambda (r) (search ">1;" r)) q)
           "DA2 response must contain >1;"))))
+
+;;; ── DA response table: both responses enqueue without error ──────────────────
+;;;
+;;; The two DA variants (DA1/DA2) both follow the same pattern: feed the
+;;; sequence, assert the queue is non-empty, assert a signature string.
+;;; The table condenses the two individual tests into a loop so adding a new
+;;; DA variant only requires a new row.
+
+(test da-response-table
+  "DA1 and DA2 both enqueue a response string with the expected signature."
+  :description "parameterized DA1/DA2 response checks"
+  (dolist (entry '(("[c"  "?1;2c")    ; DA1 signature
+                   ("[>c" ">1;")))     ; DA2 signature
+    (let ((seq (first entry))
+          (sig (second entry)))
+      (with-screen (s 20 5)
+        (feed s (esc seq))
+        (let ((q (cl-tmux/terminal/types:screen-response-queue s)))
+          (is (consp q) "response-queue must be non-empty after ~A" seq)
+          (is (some (lambda (r) (search sig r)) q)
+              "response must contain ~S" sig))))))
+
+;;; ── REP count=0 is a no-op ───────────────────────────────────────────────────
+
+(test rep-count-zero-is-noop
+  "CSI 0 b (REP 0) is effectively a no-op: no additional cells written."
+  :description "REP with count=0 writes nothing extra"
+  (with-screen (s 20 5)
+    (feed s "X")
+    (let ((cx (screen-cursor-x s)))
+      (feed s (esc "[0b"))
+      ;; Cursor should stay at col cx (no writes for count=0).
+      (is (= cx (screen-cursor-x s))
+          "REP 0 must not advance the cursor"))))

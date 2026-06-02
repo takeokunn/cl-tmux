@@ -317,3 +317,80 @@
     (feed s (esc "[?7h"))
     (is (cl-tmux/terminal/types:screen-autowrap s)
         "autowrap must be T after ESC[?7h")))
+
+;;; ── %reset-sgr-pen direct tests ──────────────────────────────────────────────
+
+(test reset-sgr-pen-clears-all-slots
+  "%reset-sgr-pen sets fg=7, bg=0, attrs=0, attrs2=0, ul-color=0."
+  (with-screen (s 10 5)
+    ;; Mutate all five slots to non-default values.
+    (setf (cl-tmux/terminal/types:screen-cur-fg       s) 3
+          (cl-tmux/terminal/types:screen-cur-bg       s) 5
+          (cl-tmux/terminal/types:screen-cur-attrs    s) #xFF
+          (cl-tmux/terminal/types:screen-cur-attrs2   s) #xFF
+          (cl-tmux/terminal/types:screen-cur-ul-color s) 42)
+    (cl-tmux/terminal/actions::%reset-sgr-pen s)
+    (is (= 7 (cl-tmux/terminal/types:screen-cur-fg s))
+        "fg must be 7 after %reset-sgr-pen")
+    (is (= 0 (cl-tmux/terminal/types:screen-cur-bg s))
+        "bg must be 0 after %reset-sgr-pen")
+    (is (= 0 (cl-tmux/terminal/types:screen-cur-attrs s))
+        "attrs must be 0 after %reset-sgr-pen")
+    (is (= 0 (cl-tmux/terminal/types:screen-cur-attrs2 s))
+        "attrs2 must be 0 after %reset-sgr-pen")
+    (is (= 0 (cl-tmux/terminal/types:screen-cur-ul-color s))
+        "ul-color must be 0 after %reset-sgr-pen")))
+
+;;; ── screen-display-cell tests ────────────────────────────────────────────────
+
+(def-suite display-cell-suite
+  :description "screen-display-cell projection with copy-mode scrollback"
+  :in terminal-suite)
+(in-suite display-cell-suite)
+
+(test display-cell-live-grid-when-no-copy-mode
+  "screen-display-cell returns the live grid cell when copy-mode is off."
+  (with-screen (s 5 3)
+    (feed s "abcde")
+    ;; copy-mode is off: display cell == live cell.
+    (is (char= #\a (cell-char (cl-tmux/terminal/actions:screen-display-cell s 0 0)))
+        "col 0 must be 'a' from the live grid")
+    (is (char= #\e (cell-char (cl-tmux/terminal/actions:screen-display-cell s 4 0)))
+        "col 4 must be 'e' from the live grid")))
+
+(test display-cell-returns-blank-for-out-of-range-row
+  "screen-display-cell returns a blank cell when the row exceeds screen height."
+  (with-screen (s 5 3)
+    (feed s "hello")
+    ;; Row 99 is beyond the screen; expect the shared blank cell.
+    (let ((cell (cl-tmux/terminal/actions:screen-display-cell s 0 99)))
+      (is (char= #\Space (cell-char cell))
+          "out-of-range row must return a blank cell"))))
+
+(test display-cell-scrollback-when-copy-mode-offset
+  "screen-display-cell reads from scrollback when copy-offset > 0."
+  (with-screen (s 5 3)
+    ;; Force a scrollback row: feed two full-screen-height worth of lines.
+    (feed s (format nil "AAAAA~C~CBBBBB~C~CCCCCC" #\Return #\Linefeed
+                                                   #\Return #\Linefeed))
+    ;; scrollback must have at least one row now.
+    (let ((sb-len (length (cl-tmux/terminal/types:screen-scrollback s))))
+      (when (> sb-len 0)
+        ;; Enter copy-mode-like state by manipulating the screen slots directly.
+        (setf (cl-tmux/terminal/types:screen-copy-mode-p s) t
+              (cl-tmux/terminal/types:screen-copy-offset s) 1)
+        (let ((cell (cl-tmux/terminal/actions:screen-display-cell s 0 0)))
+          (is (characterp (cell-char cell))
+              "copy-mode row-0 must return a character from scrollback"))))))
+
+(test display-cell-copy-mode-blank-for-empty-scrollback-entry
+  "screen-display-cell returns blank when the scrollback vector is shorter than the column."
+  (with-screen (s 5 3)
+    ;; Directly install a zero-length scrollback row.
+    (setf (cl-tmux/terminal/types:screen-scrollback s) (list (vector))
+          (cl-tmux/terminal/types:screen-copy-mode-p s) t
+          (cl-tmux/terminal/types:screen-copy-offset s) 1)
+    ;; Column 0 of row 0 should be the display-blank-cell (Space).
+    (let ((cell (cl-tmux/terminal/actions:screen-display-cell s 0 0)))
+      (is (char= #\Space (cell-char cell))
+          "empty scrollback entry must yield a blank cell"))))

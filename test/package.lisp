@@ -84,6 +84,9 @@
                 ;; New session slots
                 #:session-locked-p
                 #:session-group
+                #:session-clients
+                ;; Window layout-cycle-index slot
+                #:window-layout-cycle-index
                 ;; Layout persistence
                 #:layout->string
                 #:string->layout

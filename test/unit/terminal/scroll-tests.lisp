@@ -397,3 +397,107 @@
     (is (char= #\e (char-at s 1 0)) "col 1 must be preserved")
     (is (char= #\Space (char-at s 2 0)) "col 2 must be erased")
     (is (char= #\Space (char-at s 4 0)) "col 4 must be erased")))
+
+;;; ── SUITE: direct-decstbm ─────────────────────────────────────────────────────
+;;;
+;;; Direct tests for the decstbm function, covering boundary conditions
+;;; that the CSI parser integration tests do not exercise explicitly.
+
+(def-suite direct-decstbm
+  :description "Direct calls to decstbm scroll-region setter"
+  :in terminal-suite)
+(in-suite direct-decstbm)
+
+(test decstbm-valid-region-sets-scroll-boundaries
+  "decstbm with a valid top < bottom sets scroll-top and scroll-bottom."
+  (with-screen (s 5 5)
+    (cl-tmux/terminal/actions:decstbm s 1 3)
+    (is (= 1 (cl-tmux/terminal/types:screen-scroll-top s))
+        "scroll-top must be 1 after decstbm 1 3")
+    (is (= 3 (cl-tmux/terminal/types:screen-scroll-bottom s))
+        "scroll-bottom must be 3 after decstbm 1 3")))
+
+(test decstbm-valid-region-homes-cursor
+  "decstbm with a valid region homes the cursor to (0,0)."
+  (with-screen (s 5 5)
+    (cl-tmux/terminal/actions:set-cursor s 3 3)
+    (cl-tmux/terminal/actions:decstbm s 0 4)
+    (check-cursor s 0 0)))
+
+(test decstbm-equal-top-bottom-is-rejected
+  "decstbm with top == bottom does not change the scroll region."
+  (with-screen (s 5 5)
+    ;; Default scroll region is 0..4.
+    (let ((orig-top    (cl-tmux/terminal/types:screen-scroll-top s))
+          (orig-bottom (cl-tmux/terminal/types:screen-scroll-bottom s)))
+      (cl-tmux/terminal/actions:decstbm s 2 2)  ; top = bottom = 2
+      (is (= orig-top    (cl-tmux/terminal/types:screen-scroll-top s))
+          "scroll-top must not change when top == bottom")
+      (is (= orig-bottom (cl-tmux/terminal/types:screen-scroll-bottom s))
+          "scroll-bottom must not change when top == bottom"))))
+
+(test decstbm-inverted-region-is-rejected
+  "decstbm with top > bottom does not change the scroll region."
+  (with-screen (s 5 5)
+    (let ((orig-top    (cl-tmux/terminal/types:screen-scroll-top s))
+          (orig-bottom (cl-tmux/terminal/types:screen-scroll-bottom s)))
+      (cl-tmux/terminal/actions:decstbm s 4 1)  ; top > bottom — invalid
+      (is (= orig-top    (cl-tmux/terminal/types:screen-scroll-top s))
+          "scroll-top must not change for inverted region")
+      (is (= orig-bottom (cl-tmux/terminal/types:screen-scroll-bottom s))
+          "scroll-bottom must not change for inverted region"))))
+
+(test decstbm-out-of-range-clamped-to-screen
+  "decstbm clamps out-of-range values to the screen height."
+  (with-screen (s 5 5)
+    ;; Negative top → clamped to 0; bottom beyond height-1 → clamped to 4.
+    (cl-tmux/terminal/actions:decstbm s -5 99)
+    (is (= 0 (cl-tmux/terminal/types:screen-scroll-top s))
+        "negative top must be clamped to 0")
+    (is (= 4 (cl-tmux/terminal/types:screen-scroll-bottom s))
+        "bottom beyond height-1 must be clamped to 4")))
+
+;;; ── SUITE: constrained-scroll ─────────────────────────────────────────────────
+;;;
+;;; Tests that scroll-up-one and scroll-down-one respect an active scroll region
+;;; set by decstbm and leave rows outside the region untouched.
+
+(def-suite constrained-scroll
+  :description "Scroll operations respect a restricted scroll region"
+  :in terminal-suite)
+(in-suite constrained-scroll)
+
+(test scroll-up-one-respects-scroll-region
+  "scroll-up-one moves only the rows within the active scroll region."
+  (with-screen (s 5 5)
+    ;; Fill rows 0-4 with identifiable content.
+    (feed s (format nil "R0~C~CR1~C~CR2~C~CR3~C~CR4"
+                    #\Return #\Linefeed
+                    #\Return #\Linefeed
+                    #\Return #\Linefeed
+                    #\Return #\Linefeed))
+    ;; Restrict scrolling to rows 1-3 only.
+    (cl-tmux/terminal/actions:decstbm s 1 3)
+    (cl-tmux/terminal/actions:scroll-up-one s)
+    ;; Row 0 must be untouched (outside the scroll region).
+    (check-row s 0 "R0")
+    ;; Row 4 must also be untouched.
+    (check-row s 4 "R4")))
+
+(test scroll-down-one-respects-scroll-region
+  "scroll-down-one moves only the rows within the active scroll region."
+  (with-screen (s 5 5)
+    (feed s (format nil "R0~C~CR1~C~CR2~C~CR3~C~CR4"
+                    #\Return #\Linefeed
+                    #\Return #\Linefeed
+                    #\Return #\Linefeed
+                    #\Return #\Linefeed))
+    ;; Restrict scrolling to rows 1-3.
+    (cl-tmux/terminal/actions:decstbm s 1 3)
+    (cl-tmux/terminal/actions:scroll-down-one s)
+    ;; Row 0 must be untouched.
+    (check-row s 0 "R0")
+    ;; Row 4 must be untouched.
+    (check-row s 4 "R4")
+    ;; Row 1 (the new top of the region) must be blank.
+    (is (row-blank-p s 1) "row 1 (top of scroll region) must be blank after scroll-down-one")))

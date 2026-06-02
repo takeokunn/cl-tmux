@@ -123,10 +123,10 @@
                             right-str)))
          (subseq line 0 (min (length line) cols))))
       (:centre
-       ;; Centre: pad left of window list
-       (let* ((total (+ llen rlen))
+       ;; Centre: pad before left text; account for the separator space before right-str.
+       (let* ((total (+ llen 1 rlen))   ; 1 = the separator space
               (pad-l (max 0 (floor (- cols total) 2)))
-              (gap   (max 0 (- cols llen pad-l rlen)))
+              (gap   (max 0 (- cols llen pad-l 1 rlen)))
               (line  (format nil "~A~A~A ~A"
                              (make-string pad-l :initial-element #\Space)
                              left

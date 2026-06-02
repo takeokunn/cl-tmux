@@ -254,3 +254,95 @@
         ":window-name must be a string")
     (is (member (getf ctx :window-active) '("0" "1") :test #'string=)
         ":window-active must be \"0\" or \"1\"")))
+
+;;; ── Internal helper unit tests ───────────────────────────────────────────────
+
+(test truthy-p-non-empty-string-is-true
+  "%truthy-p returns T for any non-empty, non-zero, non-false string."
+  (is-true  (cl-tmux/format::%truthy-p "1")     "\"1\" is truthy")
+  (is-true  (cl-tmux/format::%truthy-p "yes")   "\"yes\" is truthy")
+  (is-true  (cl-tmux/format::%truthy-p "hello") "arbitrary non-empty string is truthy"))
+
+(test truthy-p-falsy-strings
+  "%truthy-p returns NIL for empty string, \"0\", and \"false\" (case-insensitive)."
+  (is-false (cl-tmux/format::%truthy-p "")      "empty string is not truthy")
+  (is-false (cl-tmux/format::%truthy-p "0")     "\"0\" is not truthy")
+  (is-false (cl-tmux/format::%truthy-p "false") "\"false\" is not truthy")
+  (is-false (cl-tmux/format::%truthy-p "FALSE") "\"FALSE\" is not truthy (case-insensitive)"))
+
+(test variable-to-keyword-converts-underscores
+  "%variable-to-keyword converts underscored names to hyphenated keywords."
+  (is (eq :session-name (cl-tmux/format::%variable-to-keyword "session_name"))
+      "session_name → :session-name")
+  (is (eq :window-index (cl-tmux/format::%variable-to-keyword "window_index"))
+      "window_index → :window-index")
+  (is (eq :pane-index   (cl-tmux/format::%variable-to-keyword "pane_index"))
+      "pane_index → :pane-index"))
+
+(test variable-to-keyword-no-underscore-passes-through
+  "%variable-to-keyword upcases a name with no underscores into a plain keyword."
+  (is (eq :time (cl-tmux/format::%variable-to-keyword "time"))
+      "time → :time")
+  (is (eq :host (cl-tmux/format::%variable-to-keyword "host"))
+      "host → :host"))
+
+(test split-conditional-both-branches
+  "%split-conditional parses ?cond,true,false into three parts."
+  (multiple-value-bind (cond-str true-str false-str)
+      (cl-tmux/format::%split-conditional "1,yes,no")
+    (is (string= "1"   cond-str)  "condition part")
+    (is (string= "yes" true-str)  "true branch")
+    (is (string= "no"  false-str) "false branch")))
+
+(test split-conditional-missing-false-branch
+  "%split-conditional returns empty string for missing false branch."
+  (multiple-value-bind (cond-str true-str false-str)
+      (cl-tmux/format::%split-conditional "1,yes")
+    (is (string= "1"   cond-str)  "condition part")
+    (is (string= "yes" true-str)  "true branch")
+    (is (string= ""    false-str) "false branch defaults to empty string")))
+
+(test split-conditional-no-commas-returns-condition-only
+  "%split-conditional with no commas returns the whole string as condition."
+  (multiple-value-bind (cond-str true-str false-str)
+      (cl-tmux/format::%split-conditional "something")
+    (is (string= "something" cond-str) "whole input is condition")
+    (is (string= ""          true-str) "true branch empty")
+    (is (string= ""          false-str) "false branch empty")))
+
+(test lookup-returns-empty-for-missing-key
+  "%lookup returns an empty string when the key is absent from the context."
+  (is (string= "" (cl-tmux/format::%lookup '() :missing-key))
+      "%lookup must return \"\" when key is absent"))
+
+(test lookup-returns-string-value
+  "%lookup returns the princ-to-string representation of the stored value."
+  (let ((ctx (list :count 42 :label "hello")))
+    (is (string= "42"    (cl-tmux/format::%lookup ctx :count)) ":count → \"42\"")
+    (is (string= "hello" (cl-tmux/format::%lookup ctx :label)) ":label → \"hello\"")))
+
+(test short-hostname-strips-domain
+  "%short-hostname returns the part before the first dot."
+  (is (string= "myhost" (cl-tmux/format::%short-hostname "myhost.example.com"))
+      "full FQDN → short host part"))
+
+(test short-hostname-no-dot-returns-full-string
+  "%short-hostname returns the full string when there is no dot."
+  (is (string= "myhost" (cl-tmux/format::%short-hostname "myhost"))
+      "no dot → full string unchanged"))
+
+;;; ── Table-driven shorthand expansion ─────────────────────────────────────────
+
+(test expand-format-all-shorthands-table
+  "All single-character shorthands expand to the correct context value."
+  (let ((cases '(("#S" :session-name "sess1" "sess1")
+                 ("#I" :window-index "3"     "3")
+                 ("#W" :window-name  "bash"  "bash")
+                 ("#P" :pane-index   "2"     "2")
+                 ("#H" :hostname     "box"   "box")
+                 ("##" nil           nil     "#"))))
+    (dolist (c cases)
+      (destructuring-bind (tmpl key val expected) c
+        (let ((ctx (if key (list key val) '())))
+          (is (string= expected (cl-tmux/format:expand-format tmpl ctx))
+              "shorthand ~S: expected ~S" tmpl expected))))))

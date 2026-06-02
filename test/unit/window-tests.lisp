@@ -347,6 +347,27 @@
     (is (null (cl-tmux/model::pane-neighbor win p0 :up)))
     (is (null (cl-tmux/model::pane-neighbor win p0 :down)))))
 
+(test pane-neighbor-down-in-v-split
+  "Down neighbor of the top pane in a v-split is the bottom pane."
+  (with-v-split-window (win p0 p1)
+    (is (eq p1 (cl-tmux/model::pane-neighbor win p0 :down))
+        "down neighbor of top pane must be the bottom pane")))
+
+(test pane-neighbor-up-in-v-split
+  "Up neighbor of the bottom pane in a v-split is the top pane."
+  (with-v-split-window (win p0 p1)
+    (is (eq p0 (cl-tmux/model::pane-neighbor win p1 :up))
+        "up neighbor of bottom pane must be the top pane")))
+
+(test pane-neighbor-nil-outside-split-axis
+  "A pane in an h-split has no up or down neighbor."
+  (multiple-value-bind (win p0 p1) (make-two-pane-h-window)
+    (declare (ignore p1))
+    (is (null (cl-tmux/model::pane-neighbor win p0 :up))
+        "left pane in h-split must have no up neighbor")
+    (is (null (cl-tmux/model::pane-neighbor win p0 :down))
+        "left pane in h-split must have no down neighbor")))
+
 ;;; ── apply-named-layout ───────────────────────────────────────────────────────
 
 (test apply-named-layout-even-horizontal-positions-panes
@@ -798,3 +819,70 @@
       (cl-tmux::%maybe-rename-window-from-title sess)
       (is (string= "kept" (window-name w0))
           "window-name must NOT change when automatic-rename is disabled"))))
+
+;;; ── window-remove-pane (no PTY) ──────────────────────────────────────────────
+
+(test window-remove-pane-empties-single-pane-window
+  "window-remove-pane on a single-pane window returns NIL and clears the tree."
+  (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
+         (win (make-window :id 1 :name "w" :width 80 :height 24
+                           :panes (list p0)
+                           :tree (make-layout-leaf p0))))
+    (window-select-pane win p0)
+    (let ((result (window-remove-pane win p0)))
+      (is (null result)
+          "window-remove-pane on a sole pane must return NIL (no survivor)")
+      (is (null (window-panes win))
+          "window panes list must be empty after removing the sole pane")
+      (is (null (window-tree win))
+          "window tree must be NIL after removing the sole pane"))))
+
+(test window-remove-pane-returns-sibling
+  "window-remove-pane returns the surviving sibling pane after removing one of two."
+  (with-h-split-window (win p0 p1)
+    (let ((survivor (window-remove-pane win p0)))
+      (is (not (null survivor))
+          "window-remove-pane must return the surviving pane")
+      (is (= 1 (length (window-panes win)))
+          "one pane must remain after removing one of two"))))
+
+;;; ── window-last-active-time slot ─────────────────────────────────────────────
+
+(test window-last-active-time-updated-on-select
+  "window-select-pane updates window-last-active-time to a recent value."
+  (let* ((p0  (make-no-pty-pane 1 0 0 20 5))
+         (win (make-window :id 1 :name "w" :width 20 :height 5
+                           :panes (list p0) :last-active-time 0)))
+    (let ((before (get-universal-time)))
+      (window-select-pane win p0)
+      (is (>= (window-last-active-time win) before)
+          "window-last-active-time must be updated when a pane is selected"))))
+
+;;; ── window-layout-cycle-index slot ──────────────────────────────────────────
+
+(test window-layout-cycle-index-defaults-zero
+  "window-layout-cycle-index defaults to 0 for a freshly created window."
+  (let ((win (make-window :id 1 :name "w")))
+    (is (= 0 (window-layout-cycle-index win))
+        "window-layout-cycle-index must default to 0")))
+
+;;; ── ensure-window-fits with matching size ────────────────────────────────────
+;;;
+;;; This test is identical in structure to window-tests.lisp's existing
+;;; ensure-window-fits-noop-when-size-matches but targets the update of
+;;; window-width/height as the observable: if size differs, relayout runs;
+;;; if same, dimensions stay untouched.
+
+(test ensure-window-fits-does-not-mutate-on-matching-size
+  "ensure-window-fits leaves pane geometry untouched when size already matches."
+  (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
+         (win (make-window :id 1 :name "w" :width 80 :height 24
+                           :tree (make-layout-leaf p0)
+                           :panes (list p0) :active p0)))
+    (let ((x0-before (pane-x p0))
+          (y0-before (pane-y p0)))
+      (cl-tmux/model::ensure-window-fits win 24 80)
+      (is (= x0-before (pane-x p0))
+          "pane-x must not change when size already matches")
+      (is (= y0-before (pane-y p0))
+          "pane-y must not change when size already matches"))))

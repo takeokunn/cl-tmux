@@ -232,35 +232,23 @@
   (is (macro-function 'cl-tmux::define-copy-mode-key-overrides)))
 
 ;;; ── select-pane-left/right/up/down dispatch ─────────────────────────────────
-
-(defun %two-pane-h-session ()
-  "A session with a 2-pane horizontal split: p0 (x=0 w=40) | p1 (x=41 w=40),
-   total window 81 wide, 24 tall.  First pane is active."
-  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
-         (p1  (make-no-pty-pane 2 41 0 40 24))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
-    (window-select-pane win p0)
-    (session-select-window sess win)
-    (values sess win p0 p1)))
+;;;
+;;; These tests use the shared fixture macros from helpers.lisp instead of
+;;; duplicating the setup inline.  with-two-pane-h-session and
+;;; with-two-pane-v-session already encode the exact same geometry.
 
 (test dispatch-select-pane-right-moves-active-pane
   ":select-pane-right moves the active pane to the right neighbour."
-  (multiple-value-bind (sess win p0 p1) (%two-pane-h-session)
-    (declare (ignore p0))
+  (with-two-pane-h-session (sess win p0 p1)
     (with-loop-state
+      (is (eq p0 (window-active-pane win)) "p0 is active initially")
       (cl-tmux::dispatch-command sess :select-pane-right nil)
       (is (eq p1 (window-active-pane win))
           "active pane must be p1 after :select-pane-right"))))
 
 (test dispatch-select-pane-left-moves-active-pane
   ":select-pane-left moves the active pane to the left neighbour."
-  (multiple-value-bind (sess win p0 p1) (%two-pane-h-session)
+  (with-two-pane-h-session (sess win p0 p1)
     (with-loop-state
       ;; Start on p1, then go left.
       (window-select-pane win p1)
@@ -270,42 +258,27 @@
 
 (test dispatch-select-pane-right-noop-at-rightmost
   ":select-pane-right is a no-op when the active pane has no right neighbour."
-  (multiple-value-bind (sess win p0 p1) (%two-pane-h-session)
+  (with-two-pane-h-session (sess win p0 p1)
     (with-loop-state
       ;; Make p1 (rightmost) active, then try to go further right.
+      (is (eq p0 (window-active-pane win)) "p0 is active initially")
       (window-select-pane win p1)
       (cl-tmux::dispatch-command sess :select-pane-right nil)
       (is (eq p1 (window-active-pane win))
           "active pane must remain p1 when no right neighbour exists"))))
 
-(defun %two-pane-v-session ()
-  "A session with a 2-pane vertical split: p0 (y=0 h=10) above p1 (y=11 h=10),
-   total window 80 wide, 21 tall.  First pane (top) is active."
-  (let* ((p0   (make-no-pty-pane 1 0  0 80 10))
-         (p1   (make-no-pty-pane 2 0 11 80 10))
-         (win  (make-window :id 1 :name "w" :width 80 :height 21
-                            :panes (list p0 p1)
-                            :tree (make-layout-split :v
-                                     (make-layout-leaf p0)
-                                     (make-layout-leaf p1)
-                                     1/2)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
-    (window-select-pane win p0)
-    (session-select-window sess win)
-    (values sess win p0 p1)))
-
 (test dispatch-select-pane-down-moves-active-pane
   ":select-pane-down moves the active pane to the pane below."
-  (multiple-value-bind (sess win p0 p1) (%two-pane-v-session)
-    (declare (ignore p0))
+  (with-two-pane-v-session (sess win p0 p1)
     (with-loop-state
+      (is (eq p0 (window-active-pane win)) "p0 is active initially")
       (cl-tmux::dispatch-command sess :select-pane-down nil)
       (is (eq p1 (window-active-pane win))
           "active pane must be p1 after :select-pane-down"))))
 
 (test dispatch-select-pane-up-moves-active-pane
   ":select-pane-up moves the active pane to the pane above."
-  (multiple-value-bind (sess win p0 p1) (%two-pane-v-session)
+  (with-two-pane-v-session (sess win p0 p1)
     (with-loop-state
       ;; Start on p1 (bottom), then go up.
       (window-select-pane win p1)
@@ -317,18 +290,9 @@
 
 (test dispatch-zoom-toggle-sets-zoom-flag
   ":zoom-toggle zooms the active pane in and marks window-zoom-p as T."
-  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
-         (p1  (make-no-pty-pane 2 41 0 40 24))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
-    (window-select-pane win p0)
-    (session-select-window sess win)
+  (with-two-pane-h-session (sess win p0 p1)
     (with-loop-state
+      (is (and p0 p1) "both panes exist")
       (cl-tmux::dispatch-command sess :zoom-toggle nil)
       (is-true (cl-tmux/model:window-zoom-p win)
                "window-zoom-p must be T after :zoom-toggle dispatch")
@@ -353,39 +317,23 @@
           "on-submit must rename the session to the supplied name"))))
 
 ;;; ── %select-pane-in-direction ───────────────────────────────────────────────
+;;;
+;;; Use the shared fixture macros to avoid repeating pane/window/session setup.
 
 (test select-pane-in-direction-right-selects-right-pane
   "%select-pane-in-direction :right from the left pane selects the right pane."
-  (let* ((p0   (make-no-pty-pane 1  0 0 40 24))
-         (p1   (make-no-pty-pane 2 41 0 40 24))
-         (win  (make-window :id 1 :name "w" :width 81 :height 24
-                            :panes (list p0 p1)
-                            :tree (make-layout-split :h
-                                     (make-layout-leaf p0)
-                                     (make-layout-leaf p1)
-                                     1/2)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
-    (window-select-pane win p0)
-    (session-select-window sess win)
+  (with-two-pane-h-session (sess win p0 p1)
     (with-loop-state
+      (is (eq p0 (window-active-pane win)) "p0 is active initially")
       (cl-tmux::%select-pane-in-direction sess :right)
       (is (eq p1 (window-active-pane win))
           "active pane must be p1 after %select-pane-in-direction :right"))))
 
 (test select-pane-in-direction-left-selects-left-pane
   "%select-pane-in-direction :left from the right pane selects the left pane."
-  (let* ((p0   (make-no-pty-pane 1  0 0 40 24))
-         (p1   (make-no-pty-pane 2 41 0 40 24))
-         (win  (make-window :id 1 :name "w" :width 81 :height 24
-                            :panes (list p0 p1)
-                            :tree (make-layout-split :h
-                                     (make-layout-leaf p0)
-                                     (make-layout-leaf p1)
-                                     1/2)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
-    (window-select-pane win p1)
-    (session-select-window sess win)
+  (with-two-pane-h-session (sess win p0 p1)
     (with-loop-state
+      (window-select-pane win p1)
       (cl-tmux::%select-pane-in-direction sess :left)
       (is (eq p0 (window-active-pane win))
           "active pane must be p0 after %select-pane-in-direction :left"))))
@@ -393,17 +341,9 @@
 (test select-pane-in-direction-noop-when-no-neighbor
   "%select-pane-in-direction is a no-op when the active pane has no neighbor
    in the requested direction."
-  (let* ((p0   (make-no-pty-pane 1  0 0 40 24))
-         (p1   (make-no-pty-pane 2 41 0 40 24))
-         (win  (make-window :id 1 :name "w" :width 81 :height 24
-                            :panes (list p0 p1)
-                            :tree (make-layout-split :h
-                                     (make-layout-leaf p0)
-                                     (make-layout-leaf p1)
-                                     1/2)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
+  (with-two-pane-h-session (sess win p0 p1)
+    (is (not (null p0)) "fixture created")
     (window-select-pane win p1)          ; start at the rightmost pane
-    (session-select-window sess win)
     (with-loop-state
       (cl-tmux::%select-pane-in-direction sess :right)
       (is (eq p1 (window-active-pane win))
@@ -411,18 +351,9 @@
 
 (test select-pane-in-direction-vertical-down-selects-lower-pane
   "%select-pane-in-direction :down from the top pane selects the bottom pane."
-  (let* ((p0   (make-no-pty-pane 1 0  0 80 10))
-         (p1   (make-no-pty-pane 2 0 11 80 10))
-         (win  (make-window :id 1 :name "w" :width 80 :height 21
-                            :panes (list p0 p1)
-                            :tree (make-layout-split :v
-                                     (make-layout-leaf p0)
-                                     (make-layout-leaf p1)
-                                     1/2)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
-    (window-select-pane win p0)
-    (session-select-window sess win)
+  (with-two-pane-v-session (sess win p0 p1)
     (with-loop-state
+      (is (eq p0 (window-active-pane win)) "p0 is active initially")
       (cl-tmux::%select-pane-in-direction sess :down)
       (is (eq p1 (window-active-pane win))
           "active pane must be p1 after %select-pane-in-direction :down"))))
@@ -544,17 +475,8 @@
 (test dispatch-display-panes-shows-overlay-with-pane-entries
   ":display-panes with a 2-pane session opens an overlay whose text contains
    two pane entries and marks the active pane as [active]."
-  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
-         (p1  (make-no-pty-pane 2 41 0 40 24))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
-    (window-select-pane win p0)
-    (session-select-window sess win)
+  (with-two-pane-h-session (sess win p0 p1)
+    (is (and win p0 p1) "session with 2 panes")
     (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
       (cl-tmux::dispatch-command sess :display-panes nil)
       (is (overlay-active-p)
@@ -582,20 +504,12 @@
                ":display-panes must mark *dirty*"))))
 
 ;;; ── :swap-pane-forward dispatch ──────────────────────────────────────────────
+;;;
+;;; Use the shared fixture macro to avoid repeating pane/window/session setup.
 
 (test dispatch-swap-pane-forward-changes-pane-order
   ":swap-pane-forward swaps the active pane with the next pane in the list."
-  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
-         (p1  (make-no-pty-pane 2 41 0 40 24))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
-    (window-select-pane win p0)
-    (session-select-window sess win)
+  (with-two-pane-h-session (sess win p0 p1)
     (with-loop-state
       ;; p0 is active and at index 0; forward swap puts p1 at index 0.
       (cl-tmux::dispatch-command sess :swap-pane-forward nil)
@@ -606,17 +520,8 @@
 
 (test dispatch-swap-pane-forward-marks-dirty
   ":swap-pane-forward marks *dirty*."
-  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
-         (p1  (make-no-pty-pane 2 41 0 40 24))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
-    (window-select-pane win p0)
-    (session-select-window sess win)
+  (with-two-pane-h-session (sess win p0 p1)
+    (is (and win p0 p1) "fixture created")
     (let ((cl-tmux::*running* t) (cl-tmux::*dirty* nil))
       (cl-tmux::dispatch-command sess :swap-pane-forward nil)
       (is-true cl-tmux::*dirty*
@@ -626,18 +531,9 @@
 
 (test dispatch-swap-pane-backward-changes-pane-order
   ":swap-pane-backward swaps the active pane with the previous pane (wrapping)."
-  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
-         (p1  (make-no-pty-pane 2 41 0 40 24))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
+  (with-two-pane-h-session (sess win p0 p1)
     ;; Start with p1 active so that backward swap moves it to index 0.
     (window-select-pane win p1)
-    (session-select-window sess win)
     (with-loop-state
       (cl-tmux::dispatch-command sess :swap-pane-backward nil)
       (is (eq p1 (first (window-panes win)))
@@ -647,17 +543,9 @@
 
 (test dispatch-swap-pane-backward-marks-dirty
   ":swap-pane-backward marks *dirty*."
-  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
-         (p1  (make-no-pty-pane 2 41 0 40 24))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
+  (with-two-pane-h-session (sess win p0 p1)
+    (is (not (null p0)) "fixture created")
     (window-select-pane win p1)
-    (session-select-window sess win)
     (let ((cl-tmux::*running* t) (cl-tmux::*dirty* nil))
       (cl-tmux::dispatch-command sess :swap-pane-backward nil)
       (is-true cl-tmux::*dirty*
@@ -1237,10 +1125,10 @@
       (handler-case
           (progn
             (cl-tmux::dispatch-command s :respawn-pane nil)
-            (is t ":respawn-pane dispatched without error"))
+            (is-true t ":respawn-pane dispatched without error"))
         (error (e)
           (declare (ignore e))
-          (is t ":respawn-pane signalled at PTY level (expected in sandbox)"))))))
+          (is-true t ":respawn-pane signalled at PTY level (expected in sandbox)"))))))
 
 ;;; ── :pipe-pane dispatch ──────────────────────────────────────────────────────
 
@@ -1267,3 +1155,88 @@
       (cl-tmux::dispatch-command s :last-pane nil)
       (is (eq p1 (window-active-pane win))
           ":last-pane must select the previously active pane"))))
+
+;;; ── %format-window-list helper ───────────────────────────────────────────────
+
+(test format-window-list-includes-active-marker
+  "%format-window-list includes an asterisk on the active window line and
+   lists each window by id and name."
+  (let ((s (make-fake-session :nwindows 2)))
+    (let* ((text (cl-tmux::%format-window-list s))
+           (aw   (session-active-window s)))
+      (is (stringp text) "%format-window-list must return a string")
+      (is (search (window-name aw) text)
+          "output must mention the active window name")
+      (is (search "*" text)
+          "output must mark the active window with an asterisk"))))
+
+(test format-window-list-shows-pane-count
+  "%format-window-list includes the pane count for each window."
+  (let ((s (make-fake-session :nwindows 1 :npanes 2)))
+    (let ((text (cl-tmux::%format-window-list s)))
+      ;; The format string ends each line with "[N pane(s)]".
+      (is (search "pane" text)
+          "output must include the word 'pane'"))))
+
+;;; ── %format-session-list helper ──────────────────────────────────────────────
+
+(test format-session-list-fallback-uses-session-name
+  "%format-session-list with empty *server-sessions* falls back to the
+   session-name one-line entry."
+  (let ((s (make-fake-session :nwindows 1)))
+    (let ((cl-tmux::*server-sessions* nil))
+      (let ((text (cl-tmux::%format-session-list s)))
+        (is (stringp text) "%format-session-list must return a string")
+        (is (search (session-name s) text)
+            "fallback output must contain the session name")))))
+
+(test format-session-list-marks-current-session
+  "%format-session-list with a populated *server-sessions* marks the current
+   session with an asterisk."
+  (let* ((s    (make-fake-session :nwindows 1))
+         (name (session-name s)))
+    (let ((cl-tmux::*server-sessions* (list (cons name s))))
+      (let ((text (cl-tmux::%format-session-list s)))
+        (is (search "*" text) "current session must be marked with an asterisk")
+        (is (search name text) "output must contain the session name")))))
+
+;;; ── %copy-mode-call helper ────────────────────────────────────────────────────
+
+(test copy-mode-call-invokes-fn-on-active-screen
+  "%copy-mode-call invokes FN on the active screen when copy mode is on."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (cl-tmux::dispatch-command s :copy-mode-enter nil)
+      (let ((called-with nil))
+        (cl-tmux::%copy-mode-call s (lambda (sc) (setf called-with sc)))
+        (is (eq (active-screen s) called-with)
+            "%copy-mode-call must pass the active screen to FN")))))
+
+(test copy-mode-call-skips-when-no-session-has-no-screen
+  "%copy-mode-call on a windowless session is a no-op (no error)."
+  (let ((s (make-session :id 1 :name "0" :windows nil)))
+    (with-loop-state
+      (finishes (cl-tmux::%copy-mode-call s (lambda (sc) (declare (ignore sc)) nil))
+                "%copy-mode-call must not error when there is no active screen"))))
+
+;;; ── %handle-kill-result helper ────────────────────────────────────────────────
+
+(test handle-kill-result-sets-running-nil-on-quit
+  "%handle-kill-result clears *running* when RESULT is :quit."
+  (let ((cl-tmux::*running* t))
+    (cl-tmux::%handle-kill-result :quit)
+    (is-false cl-tmux::*running*
+              "*running* must be NIL after :quit")))
+
+(test handle-kill-result-preserves-running-for-nil
+  "%handle-kill-result does NOT clear *running* for a NIL result."
+  (let ((cl-tmux::*running* t))
+    (cl-tmux::%handle-kill-result nil)
+    (is-true cl-tmux::*running*
+             "*running* must remain T for nil result")))
+
+(test handle-kill-result-returns-its-argument
+  "%handle-kill-result returns its argument unchanged."
+  (let ((cl-tmux::*running* t))
+    (is (eq :quit (cl-tmux::%handle-kill-result :quit)))
+    (is (null (cl-tmux::%handle-kill-result nil)))))

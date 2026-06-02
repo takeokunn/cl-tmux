@@ -210,3 +210,80 @@
         (is (>= (pane-fd pane) 0)
             "pane-fd must be a non-negative open fd after respawn")
         (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))))
+
+;;; ── Pane slot defaults ───────────────────────────────────────────────────────
+
+(test pane-pipe-fd-defaults-nil
+  "pane-pipe-fd defaults to NIL for a freshly created pane."
+  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                         :fd -1 :pid -1 :screen (make-screen 20 5))))
+    (is (null (pane-pipe-fd pane))
+        "pane-pipe-fd must default to NIL")))
+
+(test pane-window-defaults-nil
+  "pane-window defaults to NIL (back-pointer not set until attach)."
+  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                         :fd -1 :pid -1 :screen (make-screen 20 5))))
+    (is (null (pane-window pane))
+        "pane-window must default to NIL before attach")))
+
+(test pane-marked-defaults-nil
+  "pane-marked defaults to NIL for a freshly created pane."
+  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                         :fd -1 :pid -1 :screen (make-screen 20 5))))
+    (is (null (pane-marked pane))
+        "pane-marked must default to NIL")))
+
+(test pane-marked-settable
+  "pane-marked can be set to T and read back."
+  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                         :fd -1 :pid -1 :screen (make-screen 20 5))))
+    (setf (pane-marked pane) t)
+    (is-true (pane-marked pane)
+             "pane-marked must return T after being set")))
+
+;;; ── next-pane-id consecutive allocation ──────────────────────────────────────
+
+(test next-pane-id-consecutive-when-no-gaps
+  "next-pane-id returns (1+ highest-id) when ids are consecutive from 1."
+  (let* ((p1  (make-pane :id 1 :fd -1 :pid -1 :screen (make-screen 10 5)))
+         (p2  (make-pane :id 2 :fd -1 :pid -1 :screen (make-screen 10 5)))
+         (win (make-window :id 1 :name "w" :panes (list p1 p2))))
+    (is (= 3 (cl-tmux/model::next-pane-id win))
+        "next-pane-id must return 3 when ids 1 and 2 are used")))
+
+;;; ── pane-reposition preserves screen content metadata ────────────────────────
+
+(test pane-reposition-is-idempotent
+  "Calling pane-reposition twice with the same arguments leaves geometry unchanged."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                            :fd -1 :pid -1 :screen screen)))
+    (pane-reposition pane 5 3 40 10)
+    (pane-reposition pane 5 3 40 10)
+    (is (= 5  (pane-x      pane)) "pane-x must be stable after double call")
+    (is (= 3  (pane-y      pane)) "pane-y must be stable after double call")
+    (is (= 40 (pane-width  pane)) "pane-width must be stable after double call")
+    (is (= 10 (pane-height pane)) "pane-height must be stable after double call")))
+
+;;; ── Table-driven pane-reposition edge cases ──────────────────────────────────
+;;;
+;;; The reposition tests share the same structure — verify slot values after a
+;;; single call.  A table reduces repetition without obscuring the assertions.
+
+(test pane-reposition-table
+  "Table-driven: pane-reposition correctly updates x/y/width/height in multiple cases."
+  ;; Each case: (x y w h description)
+  (dolist (entry
+           '((0  0  80 24 "full-screen origin case")
+             (5  3  40 10 "offset non-zero case")
+             (1  1   2  1 "minimum-size case")))
+    (destructuring-bind (x y w h desc) entry
+      (let* ((screen (make-screen 10 5))
+             (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 5
+                                :fd -1 :pid -1 :screen screen)))
+        (pane-reposition pane x y w h)
+        (is (= x (pane-x      pane)) desc)
+        (is (= y (pane-y      pane)) desc)
+        (is (= w (pane-width  pane)) desc)
+        (is (= h (pane-height pane)) desc)))))

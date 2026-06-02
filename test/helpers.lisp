@@ -504,3 +504,29 @@
 (defun make-test-session (w h &key (content ""))
   "Convenience alias for make-renderer-test-session; available to all test files."
   (make-renderer-test-session w h :content content))
+
+;;; ── Buffer test helpers ──────────────────────────────────────────────────────
+
+(defmacro with-empty-buffers (&body body)
+  "Run BODY with an empty paste buffer ring.
+   Isolates buffer state so tests cannot contaminate each other."
+  `(let ((cl-tmux/buffer:*paste-buffers* nil)) ,@body))
+
+
+;;; ── POSIX pipe fixture ───────────────────────────────────────────────────────
+;;;
+;;; Several test suites (input-tests, pty-tests, pty-rawmode-tests) open pipe
+;;; pairs to exercise select/read mechanics without a real TTY.  This macro
+;;; consolidates the pattern in one place.
+
+(defmacro with-pipe-fds ((read-fd write-fd) &body body)
+  "Open a POSIX pipe; bind READ-FD and WRITE-FD; close both on exit.
+   Shared by input-tests.lisp, pty-tests.lisp, and pty-rawmode-tests.lisp."
+  (let ((pair-sym (gensym "PAIR")))
+    `(let* ((,pair-sym (multiple-value-list (sb-posix:pipe)))
+            (,read-fd  (first  ,pair-sym))
+            (,write-fd (second ,pair-sym)))
+       (unwind-protect
+            (progn ,@body)
+         (ignore-errors (sb-posix:close ,read-fd))
+         (ignore-errors (sb-posix:close ,write-fd))))))

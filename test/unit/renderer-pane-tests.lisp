@@ -93,7 +93,7 @@
 (defun %border-style-output (style)
   "Return the string emitted by %apply-border-style for STYLE."
   (with-output-to-string (s)
-    (cl-tmux/renderer::%apply-border-style s style)))
+    (cl-tmux/renderer::%apply-border-style s style nil)))
 
 (test apply-border-style-nil-resets
   "NIL style emits only reset attributes (ESC[0m)."
@@ -291,3 +291,87 @@
     (let ((out (%render-pane-string pane)))
       (is (null (%reverse-video-p out))
           "nil mark must suppress reverse-video (got ~S)" out))))
+
+;;; -- %clock-digit-rows -------------------------------------------------------
+
+(test clock-digit-rows-zero
+  "%clock-digit-rows returns 3 row strings for digit 0."
+  (let ((rows (cl-tmux/renderer::%clock-digit-rows 0)))
+    (is (= 3 (length rows))
+        "%clock-digit-rows 0 must return 3 rows (got ~D)" (length rows))
+    (is (every #'stringp rows)
+        "%clock-digit-rows 0 must return strings")))
+
+(test clock-digit-rows-nine
+  "%clock-digit-rows returns non-empty strings for digit 9."
+  (let ((rows (cl-tmux/renderer::%clock-digit-rows 9)))
+    (is (= 3 (length rows))
+        "%clock-digit-rows 9 must return 3 rows (got ~D)" (length rows))
+    (is (every (lambda (r) (plusp (length r))) rows)
+        "%clock-digit-rows 9 rows must be non-empty")))
+
+(test clock-digit-rows-all-digits-present
+  "*clock-digits* has entries for all 10 digits (0..9)."
+  (is (= 10 (length cl-tmux/renderer::*clock-digits*))
+      "*clock-digits* must contain exactly 10 entries (got ~D)"
+      (length cl-tmux/renderer::*clock-digits*)))
+
+;;; -- %render-v-separator branch coverage ------------------------------------
+
+(test render-v-separator-draws-horizontal-bar
+  "%render-v-separator draws ─ characters between top and bottom children."
+  (let* ((l0   (tl-leaf 1 1 1))
+         (l1   (tl-leaf 2 1 1))
+         (tree (make-layout-split :v l0 l1)))
+    (cl-tmux/model::layout-assign tree 0 0 80 21)
+    (let ((buf (make-string-output-stream)))
+      (cl-tmux/renderer::%render-v-separator buf tree 80)
+      (let ((out (get-output-stream-string buf)))
+        (is (plusp (length out)) "%render-v-separator must produce output")
+        (is (find #\─ out)
+            "horizontal separator must contain ─ character")))))
+
+;;; -- render-tree-borders with :v split --------------------------------------
+
+(test render-tree-borders-draws-horizontal-bar-for-v-split
+  "render-tree-borders draws ─ separators for a :v split."
+  (let* ((l0   (tl-leaf 1 1 1))
+         (l1   (tl-leaf 2 1 1))
+         (tree (make-layout-split :v l0 l1)))
+    (cl-tmux/model::layout-assign tree 0 0 80 21)
+    (let* ((ap  (layout-leaf-pane l0))
+           (buf (make-string-output-stream)))
+      (cl-tmux/renderer::render-tree-borders buf tree ap 80)
+      (let ((out (get-output-stream-string buf)))
+        (is (plusp (length out)) "render-tree-borders must produce output for :v split")
+        (is (find #\─ out) "horizontal bar character must be present for :v split")))))
+
+;;; -- layout-subtree-rect single-leaf edge case ------------------------------
+
+(test layout-subtree-rect-single-leaf
+  "layout-subtree-rect on a single leaf returns the leaf pane geometry."
+  (let* ((pane (tl-pane 7 40 20))
+         (leaf (make-layout-leaf pane)))
+    (cl-tmux/model::layout-assign leaf 5 3 40 20)
+    (let ((rect (cl-tmux/renderer::layout-subtree-rect leaf)))
+      (is (= 5  (getf rect :x)) ":x must match pane-x (got ~D)" (getf rect :x))
+      (is (= 3  (getf rect :y)) ":y must match pane-y (got ~D)" (getf rect :y))
+      (is (= 40 (getf rect :w)) ":w must match pane-width (got ~D)" (getf rect :w))
+      (is (= 20 (getf rect :h)) ":h must match pane-height (got ~D)" (getf rect :h)))))
+
+;;; -- subtree-contains-p nil pane corner case --------------------------------
+
+(test subtree-contains-p-leaf-node-with-matching-pane
+  "subtree-contains-p returns T when the subtree is a leaf containing the pane."
+  (let* ((p    (tl-pane 1 10 5))
+         (leaf (make-layout-leaf p)))
+    (is-true (cl-tmux/renderer::subtree-contains-p leaf p)
+             "subtree-contains-p must return T for matching leaf pane")))
+
+(test subtree-contains-p-leaf-node-with-nonmatching-pane
+  "subtree-contains-p returns NIL when the subtree is a leaf for a different pane."
+  (let* ((p1   (tl-pane 1 10 5))
+         (p2   (tl-pane 2 10 5))
+         (leaf (make-layout-leaf p1)))
+    (is-false (cl-tmux/renderer::subtree-contains-p leaf p2)
+              "subtree-contains-p must return NIL for non-member pane")))

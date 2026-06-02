@@ -221,3 +221,86 @@
     ;; nearest to id=1 among {0,3}: w0 (distance=1) wins over w3 (distance=2)
     (is (eq w0 (session-active-window sess))
         "after killing id=1, id=0 (nearest) must become active")))
+
+;;; ── Table-driven shell-basename tests ────────────────────────────────────────
+;;;
+;;; The four shell-basename tests share identical structure; this table-driven
+;;; helper eliminates the repetition.
+
+(test shell-basename-table
+  "Table-driven: %shell-basename returns correct result for diverse shell paths."
+  ;; Each entry: (default-shell expected description)
+  (dolist (entry
+           '(("/bin/bash"  "bash"   "%shell-basename strips /bin/ prefix")
+             ("zsh"        "zsh"    "%shell-basename returns bare name when no slash")
+             (nil          "window" "%shell-basename returns \"window\" when shell is NIL")))
+    (destructuring-bind (shell expected desc) entry
+      (let ((cl-tmux/config:*default-shell* shell))
+        (is (string= expected (cl-tmux/model::%shell-basename)) desc)))))
+
+;;; ── session-touch ────────────────────────────────────────────────────────────
+
+(test session-touch-updates-last-active
+  "session-touch sets session-last-active to a recent universal time and returns the session."
+  (let ((sess (make-session :id 42 :name "t" :last-active 0)))
+    (let ((before (get-universal-time)))
+      (let ((result (session-touch sess)))
+        (is (eq sess result)
+            "session-touch must return the session")
+        (is (>= (session-last-active sess) before)
+            "last-active must be updated to at least the time before the call")))))
+
+;;; ── all-panes ────────────────────────────────────────────────────────────────
+
+(test all-panes-returns-flat-list-of-panes
+  "all-panes returns a flat list of every pane across all windows."
+  (let* ((p0  (make-no-pty-pane 1 0 0 20 5))
+         (p1  (make-no-pty-pane 2 0 0 20 5))
+         (w0  (make-window :id 0 :name "w0" :panes (list p0)))
+         (w1  (make-window :id 1 :name "w1" :panes (list p1)))
+         (sess (make-session :id 1 :name "s" :windows (list w0 w1))))
+    (let ((panes (all-panes sess)))
+      (is (= 2 (length panes))
+          "all-panes must return all panes across both windows")
+      (is-true (member p0 panes) "all-panes must include pane p0")
+      (is-true (member p1 panes) "all-panes must include pane p1"))))
+
+(test all-panes-empty-session
+  "all-panes returns NIL for a session with no windows."
+  (let ((sess (make-session :id 1 :name "s" :windows nil)))
+    (is (null (all-panes sess))
+        "all-panes must return NIL for a windowless session")))
+
+;;; ── session-id ────────────────────────────────────────────────────────────────
+
+(test session-id-slot-accessible
+  "session-id returns the id passed to make-session."
+  (let ((sess (make-session :id 99 :name "test")))
+    (is (= 99 (session-id sess))
+        "session-id must return the id set at construction")))
+
+;;; ── session-name ─────────────────────────────────────────────────────────────
+
+(test session-name-slot-accessible
+  "session-name returns the name passed to make-session."
+  (let ((sess (make-session :id 1 :name "my-session")))
+    (is (string= "my-session" (session-name sess))
+        "session-name must return the name set at construction")))
+
+;;; ── session-clients slot ─────────────────────────────────────────────────────
+
+(test session-clients-defaults-nil
+  "session-clients defaults to NIL for a freshly created session."
+  (let ((sess (make-session :id 1 :name "c")))
+    (is (null (session-clients sess))
+        "session-clients must default to NIL")))
+
+;;; ── %next-window-id gap-filling ──────────────────────────────────────────────
+
+(test next-window-id-fills-lowest-gap
+  "%next-window-id returns the lowest id not yet used, starting from base-index."
+  (let* ((w0  (make-window :id 0 :name "a"))
+         (w2  (make-window :id 2 :name "c"))
+         (sess (make-session :id 1 :name "s" :windows (list w0 w2))))
+    (is (= 1 (cl-tmux/model::%next-window-id sess 0))
+        "%next-window-id must return 1 (the lowest unused id)")))

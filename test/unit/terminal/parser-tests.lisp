@@ -627,3 +627,164 @@
     ;; X must land at column 0 (nothing was written by the DCS body)
     (is (char= #\X (char-at s 0 0))
         "printable after DCS-ST must be placed at column 0")))
+
+;;; ── ground-state control-byte coverage ──────────────────────────────────────
+
+(def-suite ground-state-control-bytes
+  :description "ground-state handling of DEL, SO, SI, stray continuation bytes, and unhandled C0"
+  :in terminal-suite)
+(in-suite ground-state-control-bytes)
+
+(test ground-state-del-is-ignored
+  "ground-state on DEL (#x7F) does not write a character and returns ground-state."
+  (let ((s (make-screen 10 5)))
+    (let ((next (cl-tmux/terminal/parser:ground-state s #x7F)))
+      (is (eq #'cl-tmux/terminal/parser:ground-state next)
+          "ground-state must return ground-state for DEL")
+      (is (char= #\Space (char-at s 0 0))
+          "DEL must not write a visible character"))))
+
+(test ground-state-so-is-ignored
+  "ground-state on SO (#x0E, charset shift-out) returns ground-state without writing."
+  (let ((s (make-screen 10 5)))
+    (let ((next (cl-tmux/terminal/parser:ground-state s #x0E)))
+      (is (eq #'cl-tmux/terminal/parser:ground-state next)
+          "SO must return ground-state")
+      (is (char= #\Space (char-at s 0 0))
+          "SO must not write a visible character"))))
+
+(test ground-state-si-is-ignored
+  "ground-state on SI (#x0F, charset shift-in) returns ground-state without writing."
+  (let ((s (make-screen 10 5)))
+    (let ((next (cl-tmux/terminal/parser:ground-state s #x0F)))
+      (is (eq #'cl-tmux/terminal/parser:ground-state next)
+          "SI must return ground-state")
+      (is (char= #\Space (char-at s 0 0))
+          "SI must not write a visible character"))))
+
+(test ground-state-stray-continuation-byte-emits-replacement
+  "ground-state on a stray UTF-8 continuation byte (#x80) writes U+FFFD."
+  (let ((s (make-screen 10 5)))
+    (cl-tmux/terminal/parser:ground-state s #x80)
+    (is (char= (code-char #xFFFD) (char-at s 0 0))
+        "stray continuation byte must produce U+FFFD replacement character")))
+
+(test ground-state-unhandled-c0-is-ignored
+  "ground-state on unhandled C0 bytes (e.g. #x01, #x02) returns ground-state silently."
+  (let ((s (make-screen 10 5)))
+    (let ((next (cl-tmux/terminal/parser:ground-state s #x01)))
+      (is (eq #'cl-tmux/terminal/parser:ground-state next)
+          "unhandled C0 (#x01) must return ground-state"))
+    (let ((next2 (cl-tmux/terminal/parser:ground-state s #x02)))
+      (is (eq #'cl-tmux/terminal/parser:ground-state next2)
+          "unhandled C0 (#x02) must return ground-state"))))
+
+(test escape-state-unrecognized-byte-returns-ground
+  "escape-state on an unrecognized byte (e.g. #x40 = '@') returns ground-state."
+  (let ((s (make-screen 10 5)))
+    (let ((next (cl-tmux/terminal/parser:escape-state s #x40)))
+      (is (eq #'cl-tmux/terminal/parser:ground-state next)
+          "unrecognized ESC byte must return ground-state"))))
+
+;;; ── make-dcs-k direct tests ──────────────────────────────────────────────────
+
+(def-suite direct-dcs-suite
+  :description "Direct calls to make-dcs-k DCS accumulator"
+  :in terminal-suite)
+(in-suite direct-dcs-suite)
+
+(test make-dcs-k-consumes-payload-bytes
+  "make-dcs-k continuation consumes non-ESC payload bytes and returns a continuation."
+  (let* ((s  (make-screen 10 5))
+         (k0 (cl-tmux/terminal/parser::make-dcs-k))
+         ;; Feed a non-ESC payload byte
+         (k1 (funcall k0 s (char-code #\H))))
+    (is (functionp k1)
+        "make-dcs-k must return a function after consuming a payload byte")))
+
+(test make-dcs-k-terminates-on-esc-backslash
+  "make-dcs-k returns ground-state after receiving ESC (#x1B) then backslash (#x5C)."
+  (let* ((s   (make-screen 10 5))
+         (k0  (cl-tmux/terminal/parser::make-dcs-k))
+         ;; Feed some payload
+         (k1  (funcall k0 s (char-code #\X)))
+         ;; Feed ESC → waiting for backslash
+         (k2  (funcall k1 s #x1B))
+         ;; Feed backslash = ST confirmed
+         (result (funcall k2 s #x5C)))
+    (is (eq #'cl-tmux/terminal/parser:ground-state result)
+        "make-dcs-k must return ground-state after ESC+backslash ST")))
+
+(test make-dcs-k-non-backslash-after-esc-continues
+  "make-dcs-k after ESC followed by a non-backslash keeps consuming."
+  (let* ((s   (make-screen 10 5))
+         (k0  (cl-tmux/terminal/parser::make-dcs-k))
+         (k1  (funcall k0 s #x1B))     ; ESC → waiting for backslash
+         ;; Feed a non-backslash byte — should continue consuming DCS
+         (k2  (funcall k1 s (char-code #\A))))
+    (is (functionp k2)
+        "non-backslash after ESC inside DCS must return a continuation, not ground-state")))
+
+;;; ── make-osc-k / make-osc-st-k direct tests ──────────────────────────────────
+
+(def-suite direct-osc-continuations
+  :description "Direct calls to make-osc-k and make-osc-st-k"
+  :in terminal-suite)
+(in-suite direct-osc-continuations)
+
+(test make-osc-k-accumulates-and-dispatches-on-bel
+  "make-osc-k accumulates payload bytes and dispatches to %dispatch-osc on BEL."
+  (let ((s   (make-screen 20 5))
+        (buf (make-array 16 :element-type '(unsigned-byte 8)
+                            :fill-pointer 0 :adjustable t)))
+    ;; Simulate: OSC 0 ; title (bytes for "0;hello")
+    (dolist (ch (coerce "0;hello" 'list))
+      (vector-push-extend (char-code ch) buf))
+    (let ((k (cl-tmux/terminal/parser::make-osc-k buf)))
+      ;; Feed BEL to terminate
+      (let ((result (funcall k s #x07)))
+        (is (eq #'cl-tmux/terminal/parser:ground-state result)
+            "make-osc-k must return ground-state after BEL")
+        (is (string= "hello" (cl-tmux/terminal/types:screen-title s))
+            "make-osc-k BEL must dispatch OSC 0 and set screen-title")))))
+
+(test make-osc-k-esc-transitions-to-st-state
+  "make-osc-k on ESC (#x1B) returns a continuation waiting for backslash."
+  (let ((s   (make-screen 10 5))
+        (buf (make-array 8 :element-type '(unsigned-byte 8)
+                           :fill-pointer 0 :adjustable t)))
+    (let ((k  (cl-tmux/terminal/parser::make-osc-k buf)))
+      (let ((k2 (funcall k s #x1B)))
+        (is (functionp k2)
+            "make-osc-k on ESC must return a function (bridge continuation)")))))
+
+(test make-osc-st-k-backslash-dispatches-and-grounds
+  "make-osc-st-k on backslash dispatches and returns ground-state."
+  (let ((s   (make-screen 20 5))
+        (buf (make-array 16 :element-type '(unsigned-byte 8)
+                            :fill-pointer 0 :adjustable t)))
+    ;; Payload: "2;xterm-st-title"
+    (dolist (ch (coerce "2;xterm-st-title" 'list))
+      (vector-push-extend (char-code ch) buf))
+    (let ((k (cl-tmux/terminal/parser::make-osc-st-k buf)))
+      (let ((result (funcall k s #x5C)))      ; backslash = ST confirmed
+        (is (eq #'cl-tmux/terminal/parser:ground-state result)
+            "make-osc-st-k on backslash must return ground-state")
+        (is (string= "xterm-st-title" (cl-tmux/terminal/types:screen-title s))
+            "make-osc-st-k must dispatch OSC 2 and set screen-title")))))
+
+(test make-osc-st-k-non-backslash-returns-ground
+  "make-osc-st-k on a non-backslash byte returns ground-state without dispatching."
+  (let ((s   (make-screen 20 5))
+        (buf (make-array 8 :element-type '(unsigned-byte 8)
+                           :fill-pointer 0 :adjustable t)))
+    (dolist (ch (coerce "0;title" 'list))
+      (vector-push-extend (char-code ch) buf))
+    (let ((k (cl-tmux/terminal/parser::make-osc-st-k buf)))
+      ;; A byte that is not backslash (#x5C)
+      (let ((result (funcall k s (char-code #\X))))
+        (is (eq #'cl-tmux/terminal/parser:ground-state result)
+            "make-osc-st-k on non-backslash must still return ground-state")
+        ;; Title must NOT have been set (malformed ST discarded)
+        (is (not (string= "title" (cl-tmux/terminal/types:screen-title s)))
+            "make-osc-st-k non-backslash must not dispatch the OSC")))))

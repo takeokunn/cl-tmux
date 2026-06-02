@@ -36,6 +36,34 @@
      (setf (prompt-cursor-index *prompt*) ,position)
      ,@body))
 
+;;; -- Prompt struct constructors and predicates --------------------------------
+
+(test make-prompt-defaults
+  "make-prompt with no keyword arguments fills slots to documented defaults."
+  (let ((p (make-prompt)))
+    (is (string= "" (prompt-label p))         "default label is empty string")
+    (is (string= "" (prompt-buffer p))        "default buffer is empty string")
+    (is (= 0 (prompt-cursor-index p))         "default cursor-index is 0")
+    (is (null (prompt-on-submit p))           "default on-submit is NIL")))
+
+(test make-prompt-keyword-args
+  "make-prompt keyword arguments override all defaults."
+  (let ((fn (lambda (s) s)))
+    (let ((p (make-prompt :label "lbl" :buffer "buf"
+                          :cursor-index 3 :on-submit fn)))
+      (is (string= "lbl" (prompt-label p)))
+      (is (string= "buf" (prompt-buffer p)))
+      (is (= 3 (prompt-cursor-index p)))
+      (is (eq fn (prompt-on-submit p))))))
+
+(test prompt-p-recognises-prompt-struct
+  "prompt-p returns T for a PROMPT and NIL for any other value."
+  (let ((p (make-prompt)))
+    (is (prompt-p p)         "prompt-p must return T for a make-prompt result")
+    (is (not (prompt-p nil)) "prompt-p must return NIL for NIL")
+    (is (not (prompt-p 42))  "prompt-p must return NIL for a non-prompt value")
+    (is (not (prompt-p ""))  "prompt-p must return NIL for a string")))
+
 ;;; -- Pure prompt state -------------------------------------------------------
 
 (test prompt-inactive-by-default
@@ -53,6 +81,30 @@
     (is (string= "rename-window" (prompt-label *prompt*)))
     (is (functionp (prompt-on-submit *prompt*)))
     (is (string= "rename-window: old|" (prompt-text)))))
+
+(test prompt-start-cursor-index-at-end
+  "prompt-start sets cursor-index to the length of the initial buffer."
+  (with-clean-prompt
+    (prompt-start "p" "hello" (make-noop-submit))
+    (is (= 5 (prompt-cursor-index *prompt*))
+        "cursor must start at end of initial buffer")))
+
+(test prompt-start-empty-buffer-cursor-at-zero
+  "prompt-start with an empty initial buffer places cursor at index 0."
+  (with-clean-prompt
+    (prompt-start "p" "" (make-noop-submit))
+    (is (= 0 (prompt-cursor-index *prompt*))
+        "cursor must be at 0 for empty initial buffer")))
+
+(test prompt-on-submit-accessor
+  "prompt-on-submit stores and returns the callback supplied to prompt-start."
+  (with-clean-prompt
+    (let ((cb (lambda (s) (format nil "got:~A" s))))
+      (prompt-start "p" "text" cb)
+      (is (eq cb (prompt-on-submit *prompt*))
+          "prompt-on-submit must return the exact function passed to prompt-start"))))
+
+;;; -- Buffer editing ----------------------------------------------------------
 
 (test prompt-input-appends
   "prompt-input appends a character; successive inserts accumulate."
@@ -88,6 +140,274 @@
   (with-clean-prompt
     (finishes (prompt-input #\x))
     (is (null (prompt-active-p)))))
+
+(test prompt-backspace-inactive-noop
+  "prompt-backspace with no active prompt does nothing and does not error."
+  (with-clean-prompt
+    (finishes (prompt-backspace))
+    (is (null (prompt-active-p)))))
+
+(test prompt-clear-inactive-noop
+  "prompt-clear with no active prompt is a safe no-op."
+  (with-clean-prompt
+    (finishes (prompt-clear))
+    (is (null (prompt-active-p)))))
+
+;;; -- prompt-text display variants --------------------------------------------
+
+(test prompt-text-active-empty-buffer
+  "prompt-text on an active prompt with an empty buffer shows the cursor '|' at the end."
+  (with-clean-prompt
+    (prompt-start "rename-window" "" (make-noop-submit))
+    (is (string= "rename-window: |" (prompt-text))
+        "empty buffer shows label, colon, space, and cursor indicator")))
+
+(test prompt-text-cursor-in-middle
+  "prompt-text renders the cursor '|' at the correct interior position.
+   'he|llo' when cursor-index is 2 and buffer is 'hello'."
+  (with-clean-prompt
+    (prompt-start "p" "hello" (make-noop-submit))
+    (setf (prompt-cursor-index *prompt*) 2)
+    (is (string= "p: he|llo" (prompt-text))
+        "cursor at index 2 must split the buffer into prefix 'he' and suffix 'llo'")))
+
+(test prompt-text-cursor-at-start
+  "prompt-text shows cursor '|' at position 0 when cursor-index is 0."
+  (with-clean-prompt
+    (prompt-start "p" "abc" (make-noop-submit))
+    (setf (prompt-cursor-index *prompt*) 0)
+    (is (string= "p: |abc" (prompt-text))
+        "cursor at index 0 must prefix all buffer text")))
+
+(test prompt-text-cursor-at-end
+  "prompt-text shows cursor '|' after all text when cursor-index equals buffer length."
+  (with-clean-prompt
+    (prompt-start "p" "end" (make-noop-submit))
+    ;; cursor is at 3 (= length of "end") by default from prompt-start
+    (is (string= "p: end|" (prompt-text))
+        "cursor at end must append '|' after all buffer text")))
+
+(test prompt-input-multibyte-char
+  "prompt-input appends a high/multibyte character verbatim to the buffer."
+  (with-clean-prompt
+    (prompt-start "rename-window" "a" (make-noop-submit))
+    (prompt-input (code-char #x3042))            ; HIRAGANA LETTER A
+    (is (string= (concatenate 'string "a" (string (code-char #x3042)))
+                 (prompt-buffer *prompt*)))
+    (is (char= (code-char #x3042)
+               (char (prompt-buffer *prompt*) 1))
+        "the appended character keeps its full code point")))
+
+;;; -- Prompt cursor navigation ------------------------------------------------
+
+(test prompt-cursor-bol-moves-to-start
+  "C-a (prompt-cursor-bol) moves cursor to index 0."
+  (with-clean-prompt
+    (prompt-start "p" "abc" (make-noop-submit))
+    (is (= 3 (prompt-cursor-index *prompt*)) "cursor starts at end")
+    (prompt-cursor-bol)
+    (is (= 0 (prompt-cursor-index *prompt*)) "C-a brings cursor to start")))
+
+(test prompt-cursor-bol-already-at-start-is-noop
+  "prompt-cursor-bol when already at index 0 is a no-op."
+  (with-clean-prompt
+    (prompt-start "p" "abc" (make-noop-submit))
+    (prompt-cursor-bol)
+    (is (= 0 (prompt-cursor-index *prompt*)))
+    (prompt-cursor-bol)
+    (is (= 0 (prompt-cursor-index *prompt*))
+        "C-a when already at start must leave cursor at 0")))
+
+(test prompt-cursor-eol-moves-to-end
+  "C-e (prompt-cursor-eol) moves cursor to end of buffer."
+  (with-clean-prompt
+    (prompt-start "p" "abc" (make-noop-submit))
+    (prompt-cursor-bol)
+    (is (= 0 (prompt-cursor-index *prompt*)))
+    (prompt-cursor-eol)
+    (is (= 3 (prompt-cursor-index *prompt*)) "C-e brings cursor to end")))
+
+(test prompt-cursor-eol-already-at-end-is-noop
+  "prompt-cursor-eol when already at the buffer end is a no-op."
+  (with-clean-prompt
+    (prompt-start "p" "abc" (make-noop-submit))
+    ;; cursor already at 3 from prompt-start
+    (prompt-cursor-eol)
+    (is (= 3 (prompt-cursor-index *prompt*))
+        "C-e when already at end must leave cursor at 3")))
+
+(test prompt-cursor-back-and-forward
+  "C-b / C-f move cursor one position; clamp at boundaries."
+  (with-clean-prompt
+    (prompt-start "p" "ab" (make-noop-submit))
+    (is (= 2 (prompt-cursor-index *prompt*)))
+    (prompt-cursor-back)
+    (is (= 1 (prompt-cursor-index *prompt*)))
+    (prompt-cursor-back)
+    (is (= 0 (prompt-cursor-index *prompt*)))
+    (prompt-cursor-back)
+    (is (= 0 (prompt-cursor-index *prompt*)) "C-b clamped at start")
+    (prompt-cursor-forward)
+    (is (= 1 (prompt-cursor-index *prompt*)))
+    (prompt-cursor-forward)
+    (prompt-cursor-forward)
+    (is (= 2 (prompt-cursor-index *prompt*)) "C-f clamped at end")))
+
+(test prompt-cursor-back-inactive-noop
+  "prompt-cursor-back with no active prompt does not error."
+  (with-clean-prompt
+    (finishes (prompt-cursor-back))))
+
+(test prompt-cursor-forward-inactive-noop
+  "prompt-cursor-forward with no active prompt does not error."
+  (with-clean-prompt
+    (finishes (prompt-cursor-forward))))
+
+(test prompt-cursor-bol-inactive-noop
+  "prompt-cursor-bol with no active prompt does not error."
+  (with-clean-prompt
+    (finishes (prompt-cursor-bol))))
+
+(test prompt-cursor-eol-inactive-noop
+  "prompt-cursor-eol with no active prompt does not error."
+  (with-clean-prompt
+    (finishes (prompt-cursor-eol))))
+
+(test prompt-insert-at-cursor-position
+  "Characters insert at cursor-index, not always at the end."
+  (with-clean-prompt
+    (prompt-start "p" "ac" (make-noop-submit))
+    (prompt-cursor-bol)
+    (prompt-cursor-forward)          ; cursor now at index 1
+    (prompt-input #\b)               ; insert 'b' between 'a' and 'c'
+    (is (string= "abc" (prompt-buffer *prompt*)))
+    (is (= 2 (prompt-cursor-index *prompt*)) "cursor advances after insert")))
+
+(test prompt-backspace-at-cursor
+  "Backspace deletes the char before the cursor, not always the last char."
+  (with-clean-prompt
+    (prompt-start "p" "abc" (make-noop-submit))
+    (prompt-cursor-bol)
+    (prompt-cursor-forward)          ; cursor at index 1, between 'a' and 'b'
+    (prompt-cursor-forward)          ; cursor at index 2, between 'b' and 'c'
+    (prompt-backspace)               ; delete 'b'
+    (is (string= "ac" (prompt-buffer *prompt*)))
+    (is (= 1 (prompt-cursor-index *prompt*)) "cursor moves back after backspace")))
+
+;;; -- Kill commands -----------------------------------------------------------
+
+(test prompt-kill-to-end
+  "C-k deletes from cursor to end."
+  (with-clean-prompt
+    (prompt-start "p" "hello" (make-noop-submit))
+    (prompt-cursor-bol)
+    (prompt-cursor-forward)
+    (prompt-cursor-forward)          ; cursor at 2
+    (prompt-kill-to-end)
+    (is (string= "he" (prompt-buffer *prompt*)))
+    (is (= 2 (prompt-cursor-index *prompt*)))))
+
+(test prompt-kill-to-end-at-end-is-noop
+  "C-k at the end of the buffer is a no-op (nothing to kill)."
+  (with-clean-prompt
+    (prompt-start "p" "hello" (make-noop-submit))
+    ;; cursor is at 5 (end) from prompt-start
+    (prompt-kill-to-end)
+    (is (string= "hello" (prompt-buffer *prompt*))
+        "kill-to-end at end must leave buffer unchanged")
+    (is (= 5 (prompt-cursor-index *prompt*))
+        "cursor must remain at end")))
+
+(test prompt-kill-to-end-inactive-noop
+  "prompt-kill-to-end with no active prompt does not error."
+  (with-clean-prompt
+    (finishes (prompt-kill-to-end))))
+
+(test prompt-kill-to-start
+  "C-u deletes from start to cursor."
+  (with-clean-prompt
+    (prompt-start "p" "hello" (make-noop-submit))
+    (prompt-cursor-bol)
+    (prompt-cursor-forward)
+    (prompt-cursor-forward)          ; cursor at 2
+    (prompt-kill-to-start)
+    (is (string= "llo" (prompt-buffer *prompt*)))
+    (is (= 0 (prompt-cursor-index *prompt*)))))
+
+(test prompt-kill-to-start-at-start-is-noop
+  "C-u at the beginning of the buffer is a no-op (nothing to kill)."
+  (with-clean-prompt
+    (prompt-start "p" "hello" (make-noop-submit))
+    (prompt-cursor-bol)
+    (prompt-kill-to-start)
+    (is (string= "hello" (prompt-buffer *prompt*))
+        "kill-to-start at start must leave buffer unchanged")
+    (is (= 0 (prompt-cursor-index *prompt*))
+        "cursor must remain at 0")))
+
+(test prompt-kill-to-start-inactive-noop
+  "prompt-kill-to-start with no active prompt does not error."
+  (with-clean-prompt
+    (finishes (prompt-kill-to-start))))
+
+(test prompt-kill-word-back
+  "C-w deletes the previous word."
+  (with-clean-prompt
+    (prompt-start "p" "foo bar" (make-noop-submit))
+    ;; cursor is at end (index 7)
+    (prompt-kill-word-back)
+    (is (string= "foo " (prompt-buffer *prompt*)))
+    (prompt-kill-word-back)
+    (is (string= "" (prompt-buffer *prompt*)))))
+
+(test prompt-kill-word-back-trailing-spaces
+  "C-w skips trailing spaces before the word, then removes the word."
+  (with-clean-prompt
+    (prompt-start "p" "foo   " (make-noop-submit))
+    ;; cursor at end (index 6); there are trailing spaces, then the word 'foo'
+    (prompt-kill-word-back)
+    (is (string= "" (prompt-buffer *prompt*))
+        "C-w on trailing-space-only text must clear the entire buffer")))
+
+(test prompt-kill-word-back-at-start
+  "C-w at position 0 is a no-op (nothing to kill)."
+  (with-clean-prompt
+    (prompt-start "p" "hello" (make-noop-submit))
+    (prompt-cursor-bol)
+    (prompt-kill-word-back)
+    (is (string= "hello" (prompt-buffer *prompt*))
+        "C-w at start of buffer must leave buffer unchanged")
+    (is (= 0 (prompt-cursor-index *prompt*))
+        "cursor must remain at 0")))
+
+(test prompt-kill-word-back-middle-cursor
+  "C-w at a mid-word position deletes only the portion before the cursor."
+  (with-clean-prompt
+    (prompt-start "p" "hello" (make-noop-submit))
+    (setf (prompt-cursor-index *prompt*) 3)  ; cursor between 'l' and 'l'
+    (prompt-kill-word-back)
+    (is (string= "lo" (prompt-buffer *prompt*))
+        "C-w from mid-word must delete from word start to cursor")
+    (is (= 0 (prompt-cursor-index *prompt*))
+        "cursor must move to where the kill started")))
+
+(test prompt-kill-word-back-multiple-spaces-between-words
+  "C-w with multiple spaces between words skips all spaces then kills the word."
+  (with-clean-prompt
+    (prompt-start "p" "one   two   " (make-noop-submit))
+    ;; cursor at end (index 12); trailing spaces then "two" then spaces then "one"
+    (prompt-kill-word-back)  ; kills "   two" (spaces + word)
+    ;; "one   " remains (6 chars), cursor at 6
+    (is (= 6 (prompt-cursor-index *prompt*))
+        "cursor must move to after the remaining text")
+    (prompt-kill-word-back)  ; kills "one   " (word + trailing spaces)
+    (is (string= "" (prompt-buffer *prompt*))
+        "second C-w must clear the entire buffer")))
+
+(test prompt-kill-word-back-inactive-noop
+  "prompt-kill-word-back with no active prompt does not error."
+  (with-clean-prompt
+    (finishes (prompt-kill-word-back))))
 
 ;;; -- handle-prompt-key wiring (real window, no PTY) --------------------------
 
@@ -147,6 +467,14 @@
         "Empty input must not rename the window -- original name preserved")
     (is (null (prompt-active-p)) "Enter should dismiss the prompt")))
 
+(test handle-prompt-key-cc-cancels
+  "C-c (byte 3) cancels the prompt, same as Escape."
+  (with-clean-prompt
+    (prompt-start "p" "hello" (make-noop-submit))
+    (is (prompt-active-p))
+    (cl-tmux::handle-prompt-key 3)   ; byte 3 = C-c
+    (is (not (prompt-active-p)) "C-c must clear the prompt")))
+
 ;;; -- Status-bar display ------------------------------------------------------
 
 (test status-bar-shows-prompt
@@ -157,149 +485,3 @@
       (let ((out (with-output-to-string (s)
                    (cl-tmux/renderer::render-status-bar s sess 10 40))))
         (is (search "rename-window: foo" out))))))
-
-;;; -- Low-severity edges (existing coverage) ----------------------------------
-
-(test prompt-text-active-empty-buffer
-  "prompt-text on an active prompt with an empty buffer shows the cursor '|' at the end."
-  (with-clean-prompt
-    (prompt-start "rename-window" "" (make-noop-submit))
-    (is (string= "rename-window: |" (prompt-text))
-        "empty buffer shows label, colon, space, and cursor indicator")))
-
-(test prompt-text-cursor-in-middle
-  "prompt-text renders the cursor '|' at the correct interior position.
-   'he|llo' when cursor-index is 2 and buffer is 'hello'."
-  (with-clean-prompt
-    (prompt-start "p" "hello" (make-noop-submit))
-    (setf (prompt-cursor-index *prompt*) 2)
-    (is (string= "p: he|llo" (prompt-text))
-        "cursor at index 2 must split the buffer into prefix 'he' and suffix 'llo'")))
-
-(test prompt-input-multibyte-char
-  "prompt-input appends a high/multibyte character verbatim to the buffer."
-  (with-clean-prompt
-    (prompt-start "rename-window" "a" (make-noop-submit))
-    (prompt-input (code-char #x3042))            ; HIRAGANA LETTER A
-    (is (string= (concatenate 'string "a" (string (code-char #x3042)))
-                 (prompt-buffer *prompt*)))
-    (is (char= (code-char #x3042)
-               (char (prompt-buffer *prompt*) 1))
-        "the appended character keeps its full code point")))
-
-;;; -- Prompt cursor navigation ------------------------------------------------
-
-(test prompt-cursor-bol-moves-to-start
-  "C-a (prompt-cursor-bol) moves cursor to index 0."
-  (with-clean-prompt
-    (prompt-start "p" "abc" (make-noop-submit))
-    (is (= 3 (prompt-cursor-index *prompt*)) "cursor starts at end")
-    (prompt-cursor-bol)
-    (is (= 0 (prompt-cursor-index *prompt*)) "C-a brings cursor to start")))
-
-(test prompt-cursor-eol-moves-to-end
-  "C-e (prompt-cursor-eol) moves cursor to end of buffer."
-  (with-clean-prompt
-    (prompt-start "p" "abc" (make-noop-submit))
-    (prompt-cursor-bol)
-    (is (= 0 (prompt-cursor-index *prompt*)))
-    (prompt-cursor-eol)
-    (is (= 3 (prompt-cursor-index *prompt*)) "C-e brings cursor to end")))
-
-(test prompt-cursor-back-and-forward
-  "C-b / C-f move cursor one position; clamp at boundaries."
-  (with-clean-prompt
-    (prompt-start "p" "ab" (make-noop-submit))
-    (is (= 2 (prompt-cursor-index *prompt*)))
-    (prompt-cursor-back)
-    (is (= 1 (prompt-cursor-index *prompt*)))
-    (prompt-cursor-back)
-    (is (= 0 (prompt-cursor-index *prompt*)))
-    (prompt-cursor-back)
-    (is (= 0 (prompt-cursor-index *prompt*)) "C-b clamped at start")
-    (prompt-cursor-forward)
-    (is (= 1 (prompt-cursor-index *prompt*)))
-    (prompt-cursor-forward)
-    (prompt-cursor-forward)
-    (is (= 2 (prompt-cursor-index *prompt*)) "C-f clamped at end")))
-
-(test prompt-insert-at-cursor-position
-  "Characters insert at cursor-index, not always at the end."
-  (with-clean-prompt
-    (prompt-start "p" "ac" (make-noop-submit))
-    (prompt-cursor-bol)
-    (prompt-cursor-forward)          ; cursor now at index 1
-    (prompt-input #\b)               ; insert 'b' between 'a' and 'c'
-    (is (string= "abc" (prompt-buffer *prompt*)))
-    (is (= 2 (prompt-cursor-index *prompt*)) "cursor advances after insert")))
-
-(test prompt-backspace-at-cursor
-  "Backspace deletes the char before the cursor, not always the last char."
-  (with-clean-prompt
-    (prompt-start "p" "abc" (make-noop-submit))
-    (prompt-cursor-bol)
-    (prompt-cursor-forward)          ; cursor at index 1, between 'a' and 'b'
-    (prompt-cursor-forward)          ; cursor at index 2, between 'b' and 'c'
-    (prompt-backspace)               ; delete 'b'
-    (is (string= "ac" (prompt-buffer *prompt*)))
-    (is (= 1 (prompt-cursor-index *prompt*)) "cursor moves back after backspace")))
-
-(test prompt-kill-to-end
-  "C-k deletes from cursor to end."
-  (with-clean-prompt
-    (prompt-start "p" "hello" (make-noop-submit))
-    (prompt-cursor-bol)
-    (prompt-cursor-forward)
-    (prompt-cursor-forward)          ; cursor at 2
-    (prompt-kill-to-end)
-    (is (string= "he" (prompt-buffer *prompt*)))
-    (is (= 2 (prompt-cursor-index *prompt*)))))
-
-(test prompt-kill-to-start
-  "C-u deletes from start to cursor."
-  (with-clean-prompt
-    (prompt-start "p" "hello" (make-noop-submit))
-    (prompt-cursor-bol)
-    (prompt-cursor-forward)
-    (prompt-cursor-forward)          ; cursor at 2
-    (prompt-kill-to-start)
-    (is (string= "llo" (prompt-buffer *prompt*)))
-    (is (= 0 (prompt-cursor-index *prompt*)))))
-
-(test prompt-kill-word-back
-  "C-w deletes the previous word."
-  (with-clean-prompt
-    (prompt-start "p" "foo bar" (make-noop-submit))
-    ;; cursor is at end (index 7)
-    (prompt-kill-word-back)
-    (is (string= "foo " (prompt-buffer *prompt*)))
-    (prompt-kill-word-back)
-    (is (string= "" (prompt-buffer *prompt*)))))
-
-(test prompt-kill-word-back-trailing-spaces
-  "C-w skips trailing spaces before the word, then removes the word."
-  (with-clean-prompt
-    (prompt-start "p" "foo   " (make-noop-submit))
-    ;; cursor at end (index 6); there are trailing spaces, then the word 'foo'
-    (prompt-kill-word-back)
-    (is (string= "" (prompt-buffer *prompt*))
-        "C-w on trailing-space-only text must clear the entire buffer")))
-
-(test prompt-kill-word-back-at-start
-  "C-w at position 0 is a no-op (nothing to kill)."
-  (with-clean-prompt
-    (prompt-start "p" "hello" (make-noop-submit))
-    (prompt-cursor-bol)
-    (prompt-kill-word-back)
-    (is (string= "hello" (prompt-buffer *prompt*))
-        "C-w at start of buffer must leave buffer unchanged")
-    (is (= 0 (prompt-cursor-index *prompt*))
-        "cursor must remain at 0")))
-
-(test prompt-cc-cancels
-  "C-c (byte 3) cancels the prompt, same as Escape."
-  (with-clean-prompt
-    (prompt-start "p" "hello" (make-noop-submit))
-    (is (prompt-active-p))
-    (cl-tmux::handle-prompt-key 3)   ; byte 3 = C-c
-    (is (not (prompt-active-p)) "C-c must clear the prompt")))

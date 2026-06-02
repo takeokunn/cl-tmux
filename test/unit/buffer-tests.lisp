@@ -1,15 +1,12 @@
 (in-package #:cl-tmux/test)
 
 ;;;; Tests for cl-tmux/buffer: paste-buffer ring operations.
+;;;;
+;;;; Uses with-empty-buffers from test/helpers.lisp (shared DSL) to isolate
+;;;; *paste-buffers* state between tests.
 
 (def-suite buffer-suite :description "Paste buffer ring")
 (in-suite buffer-suite)
-
-;;; ── Helpers ─────────────────────────────────────────────────────────────────
-
-(defmacro with-empty-buffers (&body body)
-  "Run BODY with an empty paste buffer ring."
-  `(let ((cl-tmux/buffer:*paste-buffers* nil)) ,@body))
 
 ;;; ── add + get round-trip ─────────────────────────────────────────────────────
 

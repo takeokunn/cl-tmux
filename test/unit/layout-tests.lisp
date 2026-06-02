@@ -327,3 +327,137 @@
       "nil node returns 0 extent")
   (is (= 0 (cl-tmux/model::layout-min-extent nil :v))
       "nil node returns 0 extent for :v"))
+
+;;; ── Layout persistence: layout->string / string->layout ─────────────────────
+;;;
+;;; These tests cover the encode/decode round-trip, the checksum computation,
+;;; the %skip-checksum helper, and the %build-flat-tree constructor.
+
+(test layout-to-string-single-leaf
+  "layout->string on a single-pane window returns a checksum,WxH,X,Y,pane-id string."
+  (let* ((p    (tl-pane 7 20 10))
+         (win  (tl-window (make-layout-leaf p) 10 20 :active p)))
+    (let ((s (layout->string win)))
+      (is (stringp s) "layout->string must return a string")
+      ;; Format: 4-hex-checksum , WxH,X,Y,pane-id
+      (is (>= (length s) 5) "string must be long enough to include checksum")
+      (is (char= #\, (char s 4)) "checksum must be followed by a comma")
+      (is (search "20x10" s) "string must contain width×height")
+      (is (search "7" s) "string must contain the pane id"))))
+
+(test layout-to-string-nil-tree-returns-nil
+  "layout->string on a window with no tree returns NIL."
+  (let ((win (make-window :id 1 :name "w" :width 80 :height 24 :tree nil)))
+    (is (null (layout->string win))
+        "layout->string on nil tree must return NIL")))
+
+(test layout-to-string-h-split-uses-braces
+  "layout->string serializes an :h split using {child1,child2} notation."
+  (let* ((l0  (tl-leaf 1 1 1))
+         (l1  (tl-leaf 2 1 1))
+         (win (tl-window (make-layout-split :h l0 l1) 24 81)))
+    (let ((s (layout->string win)))
+      (is (find #\{ (coerce s 'list))
+          "H-split serialization must use '{' brackets")
+      (is (find #\} (coerce s 'list))
+          "H-split serialization must use '}' brackets"))))
+
+(test layout-to-string-v-split-uses-brackets
+  "layout->string serializes a :v split using [child1,child2] notation."
+  (let* ((l0  (tl-leaf 1 1 1))
+         (l1  (tl-leaf 2 1 1))
+         (win (tl-window (make-layout-split :v l0 l1) 24 80)))
+    (let ((s (layout->string win)))
+      (is (find #\[ (coerce s 'list))
+          "V-split serialization must use '[' brackets")
+      (is (find #\] (coerce s 'list))
+          "V-split serialization must use ']' brackets"))))
+
+(test string-to-layout-round-trips-single-leaf
+  "string->layout decodes a layout->string-encoded string back to an equivalent tree."
+  (let* ((p   (tl-pane 3 40 20))
+         (win (tl-window (make-layout-leaf p) 20 40 :active p)))
+    (let* ((s    (layout->string win))
+           (tree (string->layout s (list p))))
+      (is (not (null tree)) "string->layout must return a non-NIL tree")
+      (is (cl-tmux/model::layout-leaf-p tree) "decoded single-leaf must be a layout-leaf")
+      (is (eq p (layout-leaf-pane tree))
+          "decoded leaf must reference the same pane object"))))
+
+(test string-to-layout-round-trips-h-split
+  "string->layout decodes an H-split tree encoded by layout->string."
+  (let* ((l0  (tl-leaf 1 1 1))
+         (l1  (tl-leaf 2 1 1))
+         (win (tl-window (make-layout-split :h l0 l1) 24 81))
+         (p0  (layout-leaf-pane l0))
+         (p1  (layout-leaf-pane l1)))
+    (let* ((s    (layout->string win))
+           (tree (string->layout s (list p0 p1))))
+      (is (not (null tree)) "decoded tree must be non-NIL")
+      (is (cl-tmux/model::layout-split-p tree) "decoded node must be a layout-split")
+      (is (eq :h (cl-tmux/model::layout-split-orientation tree))
+          "decoded split must have :h orientation"))))
+
+(test string-to-layout-nil-on-garbage
+  "string->layout returns NIL for a garbage string."
+  (is (null (string->layout "not-a-layout" nil))
+      "string->layout must return NIL for unrecognizable input"))
+
+(test layout-checksum-is-reproducible
+  "%layout-checksum returns the same 4-char hex string for the same input."
+  (let ((s "%layout-checksum determinism check"))
+    (is (string= (cl-tmux/model::%layout-checksum s)
+                 (cl-tmux/model::%layout-checksum s))
+        "%layout-checksum must be deterministic")
+    (is (= 4 (length (cl-tmux/model::%layout-checksum s)))
+        "checksum must always be exactly 4 hex digits")))
+
+(test layout-checksum-empty-string
+  "%layout-checksum on the empty string returns a 4-digit hex string."
+  (let ((cs (cl-tmux/model::%layout-checksum "")))
+    (is (= 4 (length cs)) "empty string checksum must be 4 chars")
+    (is (every (lambda (c) (digit-char-p c 16)) cs)
+        "checksum must consist of hex digits")))
+
+(test skip-checksum-strips-leading-checksum
+  "%skip-checksum removes a well-formed 4-hex-digit comma prefix."
+  (is (string= "rest" (cl-tmux/model::%skip-checksum "ABCD,rest"))
+      "%skip-checksum must strip the 4+1 char checksum prefix")
+  (is (string= "rest" (cl-tmux/model::%skip-checksum "0000,rest"))
+      "%skip-checksum must work with all-zero checksum"))
+
+(test skip-checksum-passthrough-without-checksum
+  "%skip-checksum returns the input unchanged when there is no checksum prefix."
+  (is (string= "no-checksum" (cl-tmux/model::%skip-checksum "no-checksum"))
+      "%skip-checksum must not strip non-checksum input")
+  (is (string= "ABCDE" (cl-tmux/model::%skip-checksum "ABCDE"))
+      "%skip-checksum must leave strings without comma-at-5 unchanged"))
+
+(test build-flat-tree-single-pane
+  "%build-flat-tree with one pane returns a bare layout-leaf."
+  (let* ((p    (tl-pane 1 10 5))
+         (tree (cl-tmux/model::%build-flat-tree (list p) :h)))
+    (is (cl-tmux/model::layout-leaf-p tree) "single pane must produce a layout-leaf")
+    (is (eq p (layout-leaf-pane tree)) "leaf must hold the sole pane")))
+
+(test build-flat-tree-two-panes
+  "%build-flat-tree with two panes returns a layout-split."
+  (let* ((p0   (tl-pane 1 10 5))
+         (p1   (tl-pane 2 10 5))
+         (tree (cl-tmux/model::%build-flat-tree (list p0 p1) :h)))
+    (is (cl-tmux/model::layout-split-p tree) "two panes must produce a layout-split")
+    (is (eq :h (cl-tmux/model::layout-split-orientation tree)) "orientation must match")
+    (is (eq p0 (layout-leaf-pane (cl-tmux/model::layout-split-first tree)))
+        "first child must hold p0")
+    (is (cl-tmux/model::layout-leaf-p (cl-tmux/model::layout-split-second tree))
+        "second child must be a leaf (for 2-pane flat tree)")))
+
+(test build-flat-tree-three-panes-is-right-leaning
+  "%build-flat-tree with three panes produces a right-leaning chain."
+  (let* ((panes (loop for i from 1 to 3 collect (tl-pane i 10 5)))
+         (tree  (cl-tmux/model::%build-flat-tree panes :v)))
+    (is (cl-tmux/model::layout-split-p tree) "three panes must produce a split")
+    (is (cl-tmux/model::layout-split-p (cl-tmux/model::layout-split-second tree))
+        "right-leaning chain: second child is also a split")
+    (is (cl-tmux/model::layout-leaf-p (cl-tmux/model::layout-split-first tree))
+        "right-leaning chain: first child is a leaf")))

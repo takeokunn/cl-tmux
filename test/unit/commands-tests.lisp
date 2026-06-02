@@ -470,6 +470,20 @@
   "rename-window with NIL window does not signal an error."
   (finishes (cl-tmux/commands:rename-window nil "irrelevant")))
 
+(test rename-window-empty-string-is-noop
+  "rename-window with an empty name leaves the window name unchanged."
+  (let ((win (make-window :id 1 :name "original" :width 20 :height 5 :panes nil)))
+    (cl-tmux/commands:rename-window win "")
+    (is (string= "original" (window-name win))
+        "empty-string rename must not change the window name")))
+
+(test rename-window-nil-name-is-noop
+  "rename-window with a NIL name leaves the window name unchanged."
+  (let ((win (make-window :id 1 :name "keep" :width 20 :height 5 :panes nil)))
+    (cl-tmux/commands:rename-window win nil)
+    (is (string= "keep" (window-name win))
+        "nil rename must not change the window name")))
+
 ;;; ── kill-window (direct path) ────────────────────────────────────────────────
 
 (test kill-window-explicit-window-arg-removes-that-window
@@ -1493,3 +1507,27 @@
     (cl-tmux/commands::copy-mode-enter s)
     (is (= 20 (length (cl-tmux/commands::%copy-mode-row-string s 0)))
         "%copy-mode-row-string length must equal screen-width")))
+
+;;; ── %run-with-timeout ────────────────────────────────────────────────────────
+
+(test run-with-timeout-returns-thunk-result
+  "%run-with-timeout returns the result of the thunk when it completes within time."
+  (let ((result (cl-tmux/commands::%run-with-timeout (lambda () 42) 10)))
+    (is (= 42 result)
+        "%run-with-timeout must return the thunk result when no timeout occurs")))
+
+(test run-with-timeout-returns-nil-on-timeout
+  "%run-with-timeout returns NIL when the thunk exceeds the timeout."
+  (let ((result (cl-tmux/commands::%run-with-timeout
+                 (lambda () (sleep 60)) 1/1000)))
+    (is (null result)
+        "%run-with-timeout must return NIL when the thunk times out")))
+
+;;; ── run-shell timeout ────────────────────────────────────────────────────────
+
+(test run-shell-returns-nil-on-timeout
+  "run-shell returns NIL when the command exceeds the given timeout."
+  ;; Use a very short timeout (1ms) with a sleep command.
+  (let ((result (cl-tmux/commands:run-shell "sleep 60" :timeout 1/1000)))
+    (is (null result)
+        "run-shell must return NIL when the command times out")))

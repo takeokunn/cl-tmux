@@ -510,3 +510,121 @@
         "unbind -T copy-mode must return T")
     (is (null (cl-tmux/config:key-table-lookup "copy-mode" #\q))
         "copy-mode binding must be removed after unbind -T")))
+
+;;; set-option directive alias
+
+(test set-option-directive-stores-option
+  "The set-option directive (long form of set) stores a value in global options."
+  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+    (apply-config-directive '("set-option" "status-interval" "20"))
+    (is (= 20 (cl-tmux/options:get-option "status-interval"))
+        "set-option must store status-interval = 20")))
+
+(test set-window-option-directive-stores-option
+  "The setw/set-window-option directive stores a value in global options."
+  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+    (apply-config-directive '("set-window-option" "history-limit" "3000"))
+    (is (= 3000 (cl-tmux/options:get-option "history-limit"))
+        "set-window-option must store history-limit = 3000")))
+
+(test sets-directive-stores-option
+  "The sets directive (session-scoped alias) stores a value in global options."
+  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+    (apply-config-directive '("sets" "status-interval" "10"))
+    (is (= 10 (cl-tmux/options:get-option "status-interval"))
+        "sets must store status-interval = 10")))
+
+(test set-session-option-directive-stores-option
+  "The set-session-option directive stores a value in global options."
+  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+    (apply-config-directive '("set-session-option" "history-limit" "1500"))
+    (is (= 1500 (cl-tmux/options:get-option "history-limit"))
+        "set-session-option must store history-limit = 1500")))
+
+;;; %whitespace-p
+
+(test whitespace-p-recognizes-space-and-tab
+  "%whitespace-p returns T for space and tab, NIL for other chars."
+  (is-true  (cl-tmux/config::%whitespace-p #\Space) "space is whitespace")
+  (is-true  (cl-tmux/config::%whitespace-p #\Tab)   "tab is whitespace")
+  (is-false (cl-tmux/config::%whitespace-p #\a)     "letter is not whitespace")
+  (is-false (cl-tmux/config::%whitespace-p #\Newline) "newline is not whitespace"))
+
+;;; %parse-bind-key-args edge cases
+
+(test parse-bind-key-args-empty-returns-nil
+  "%parse-bind-key-args with empty args list returns NIL."
+  (is (null (cl-tmux/config::%parse-bind-key-args '()))
+      "empty args must return NIL"))
+
+(test parse-bind-key-args-T-flag-missing-table-returns-nil
+  "%parse-bind-key-args with -T and no table name returns NIL."
+  (is (null (cl-tmux/config::%parse-bind-key-args '("-T")))
+      "-T with no following table name must return NIL"))
+
+(test parse-bind-key-args-unknown-command-returns-nil
+  "%parse-bind-key-args with an unknown command returns NIL."
+  (is (null (cl-tmux/config::%parse-bind-key-args '("z" "unknown-bogus-command")))
+      "unknown command must cause %parse-bind-key-args to return NIL"))
+
+(test parse-bind-key-args-n-and-r-flags-combined
+  "%parse-bind-key-args with -n -r binds in root table with repeatable."
+  (multiple-value-bind (table key kw repeatable)
+      (cl-tmux/config::%parse-bind-key-args '("-n" "-r" "z" "new-window"))
+    (is (string= "root" table) "table must be root for -n flag")
+    (is (char= #\z key)        "key must be #\\z")
+    (is (eq :new-window kw)    "command must be :new-window")
+    (is repeatable             "repeatable must be T for -r flag")))
+
+;;; %parse-unbind-key-args edge cases
+
+(test parse-unbind-key-args-empty-returns-nil-nil
+  "%parse-unbind-key-args with empty args returns (values nil nil)."
+  (multiple-value-bind (table key)
+      (cl-tmux/config::%parse-unbind-key-args '())
+    (is (null table) "table must be NIL for empty args")
+    (is (null key)   "key must be NIL for empty args")))
+
+(test parse-unbind-key-args-extra-arg-returns-nil-nil
+  "%parse-unbind-key-args with extra trailing arg returns (values nil nil)."
+  (multiple-value-bind (table key)
+      (cl-tmux/config::%parse-unbind-key-args '("z" "extra"))
+    (is (null table) "table must be NIL when extra arg present")
+    (is (null key)   "key must be NIL when extra arg present")))
+
+(test parse-unbind-key-args-T-flag-missing-table-returns-nil
+  "%parse-unbind-key-args with -T and no table name returns (values nil nil)."
+  (multiple-value-bind (table key)
+      (cl-tmux/config::%parse-unbind-key-args '("-T"))
+    (is (null table) "table must be NIL when -T has no table name")
+    (is (null key)   "key must be NIL when -T has no table name")))
+
+;;; Backslash-escape edge case: backslash at end of string
+
+(test config-tokenizer-backslash-at-end-of-string
+  "%config-tokens: backslash at the end of string does not signal an error."
+  (finishes (cl-tmux/config::%config-tokens "token\\")))
+
+;;; load-config-from-string: all-blank and all-comment input
+
+(test load-from-string-blank-input-returns-zero
+  "load-config-from-string with only blanks and comments returns 0."
+  (with-isolated-config
+    (let ((applied (load-config-from-string
+                    (format nil "# comment~%~%   ~%# another~%"))))
+      (is (= 0 applied)
+          "blank/comment-only input must apply 0 directives, got ~A" applied))))
+
+;;; bind -r -n combined (order-independent flags)
+
+(test bind-key-r-then-n-flag
+  "bind -r -n binds in root table and marks repeatable (flag order insensitive)."
+  (with-isolated-key-tables
+    (apply-config-directive '("bind" "-r" "-n" "G" "new-window"))
+    (let ((entry (cl-tmux/config:key-table-lookup "root" #\G)))
+      (is (not (null entry))
+          "bind -r -n must add a binding to the root table")
+      (is (eq :new-window (cl-tmux/config:key-table-command entry))
+          "root table binding must be :new-window")
+      (is (cl-tmux/config:key-table-repeatable-p entry)
+          "binding must be repeatable when -r flag is present"))))

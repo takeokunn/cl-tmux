@@ -95,3 +95,61 @@
         (is (= +msg-bye+ type))
         (is (zerop (length payload)) "bye carries no payload"))
       (is (null (read-frame in)) "stream exhausted → NIL"))))
+
+;;; ── with-incoming-frame ──────────────────────────────────────────────────────
+
+(test with-incoming-frame-dispatches-on-type
+  "with-incoming-frame reads one frame and dispatches on its type constant."
+  (with-temp-octet-file (path)
+    (write-frames-to-file path (msg-detach))
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      (let ((dispatched nil))
+        (with-incoming-frame (type payload in)
+          ((= type +msg-detach+) (setf dispatched :detach))
+          (t (setf dispatched :other)))
+        (is (eq :detach dispatched)
+            "with-incoming-frame must dispatch to the detach clause")))))
+
+(test with-incoming-frame-binds-payload
+  "with-incoming-frame binds the payload variable for the matching clause."
+  (with-temp-octet-file (path)
+    (write-frames-to-file path (msg-key #(65 66 67)))
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      (let ((captured nil))
+        (with-incoming-frame (type payload in)
+          ((= type +msg-key+) (setf captured payload))
+          (t nil))
+        (is (equalp #(65 66 67) captured)
+            "with-incoming-frame must expose the frame payload in the matching clause")))))
+
+(test with-incoming-frame-eof-falls-through-to-nil-type
+  "At EOF, with-incoming-frame delivers NIL type; a nil-check rule can handle it."
+  (with-temp-octet-file (path)
+    ;; Write nothing — the stream is immediately at EOF.
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      (let ((hit-eof nil))
+        (with-incoming-frame (type payload in)
+          ((null type) (setf hit-eof t))
+          (t nil))
+        (is-true hit-eof
+                 "with-incoming-frame must reach the nil-type clause at EOF")))))
+
+;;; ── Table-driven round-trip: all typed constructors ─────────────────────────
+
+(test transport-all-typed-constructors-roundtrip
+  "Every typed message constructor survives a send-frame / read-frame round-trip."
+  (flet ((round-trip (frame expected-type)
+           (with-temp-octet-file (path)
+             (write-frames-to-file path frame)
+             (with-open-file (in path :element-type '(unsigned-byte 8))
+               (multiple-value-bind (type payload) (read-frame in)
+                 (declare (ignore payload))
+                 (is (= expected-type type)
+                     "round-trip type mismatch: expected ~D got ~S"
+                     expected-type type))))))
+    (round-trip (msg-attach  24 80)    +msg-attach+)
+    (round-trip (msg-key     #(27 65)) +msg-key+)
+    (round-trip (msg-resize  30 100)   +msg-resize+)
+    (round-trip (msg-detach)           +msg-detach+)
+    (round-trip (msg-frame   "hi")     +msg-frame+)
+    (round-trip (msg-bye)              +msg-bye+)))

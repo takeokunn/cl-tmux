@@ -146,3 +146,155 @@
          (out (cell-attrs-string 0 bg 0)))
     (is (search ";48;2;0;128;255" out)
         "truecolor bg must emit ;48;2;0;128;255 (got ~S)" out)))
+
+;;; ── %split-style-tokens ─────────────────────────────────────────────────────
+
+(test split-style-tokens-single-token
+  "%split-style-tokens with a single token returns a one-element list."
+  (is (equal '("bold") (cl-tmux/renderer::%split-style-tokens "bold"))
+      "single token must return one-element list"))
+
+(test split-style-tokens-multiple-tokens
+  "%split-style-tokens splits on commas."
+  (is (equal '("fg=red" "bold" "underline")
+             (cl-tmux/renderer::%split-style-tokens "fg=red,bold,underline"))
+      "multiple tokens must be split on commas"))
+
+(test split-style-tokens-empty-string
+  "%split-style-tokens with an empty string returns a list with one empty string."
+  (let ((result (cl-tmux/renderer::%split-style-tokens "")))
+    (is (= 1 (length result)) "empty string produces one element")
+    (is (string= "" (first result)) "that element must be the empty string")))
+
+;;; ── %dispatch-style-token ───────────────────────────────────────────────────
+
+(test dispatch-style-token-bold
+  "%dispatch-style-token 'bold' sets :bold T in result-cell."
+  (let ((cell (list nil)))
+    (is-true (cl-tmux/renderer::%dispatch-style-token "bold" cell)
+             "%dispatch-style-token must return T on match")
+    (is-true (getf (car cell) :bold)
+             ":bold must be T after dispatch")))
+
+(test dispatch-style-token-nobold
+  "%dispatch-style-token 'nobold' sets :bold NIL in result-cell."
+  (let ((cell (list (list :bold t))))
+    (cl-tmux/renderer::%dispatch-style-token "nobold" cell)
+    (is (null (getf (car cell) :bold))
+        ":bold must be NIL after 'nobold' dispatch")))
+
+(test dispatch-style-token-reverse
+  "%dispatch-style-token 'reverse' sets :reverse T."
+  (let ((cell (list nil)))
+    (cl-tmux/renderer::%dispatch-style-token "reverse" cell)
+    (is-true (getf (car cell) :reverse) ":reverse must be T")))
+
+(test dispatch-style-token-underline
+  "%dispatch-style-token 'underline' sets :underline T."
+  (let ((cell (list nil)))
+    (cl-tmux/renderer::%dispatch-style-token "underline" cell)
+    (is-true (getf (car cell) :underline) ":underline must be T")))
+
+(test dispatch-style-token-unknown-returns-nil
+  "%dispatch-style-token returns NIL for an unknown token."
+  (let ((cell (list nil)))
+    (is (null (cl-tmux/renderer::%dispatch-style-token "completely-unknown" cell))
+        "%dispatch-style-token must return NIL for unknown tokens")))
+
+;;; ── %emit-style-attrs ───────────────────────────────────────────────────────
+
+(test emit-style-attrs-bold
+  "%emit-style-attrs with :bold T pushes \"1\" onto parts."
+  (let ((parts (cl-tmux/renderer::%emit-style-attrs '(:bold t) nil)))
+    (is (member "1" parts :test #'string=)
+        ":bold T must push \"1\" into parts")))
+
+(test emit-style-attrs-reverse-and-underline
+  "%emit-style-attrs pushes codes for all set attributes."
+  (let ((parts (cl-tmux/renderer::%emit-style-attrs '(:reverse t :underline t) nil)))
+    (is (member "7" parts :test #'string=) ":reverse T must push \"7\"")
+    (is (member "4" parts :test #'string=) ":underline T must push \"4\"")))
+
+(test emit-style-attrs-empty-style-returns-nil-parts
+  "%emit-style-attrs with an empty style plist returns the unchanged parts."
+  (let ((parts (cl-tmux/renderer::%emit-style-attrs nil nil)))
+    (is (null parts) "empty style must leave parts as NIL")))
+
+;;; ── %border-color-sgr ───────────────────────────────────────────────────────
+
+(test border-color-sgr-known-color
+  "%border-color-sgr returns the integer SGR code for a known colour name."
+  (is (= 32 (cl-tmux/renderer::%border-color-sgr "green"))
+      "%border-color-sgr 'green' must return 32")
+  (is (= 31 (cl-tmux/renderer::%border-color-sgr "red"))
+      "%border-color-sgr 'red' must return 31"))
+
+(test border-color-sgr-unknown-returns-nil
+  "%border-color-sgr returns NIL for an unrecognised colour name."
+  (is (null (cl-tmux/renderer::%border-color-sgr "notacolor"))
+      "%border-color-sgr must return NIL for unknown colour"))
+
+(test border-color-sgr-case-insensitive
+  "%border-color-sgr accepts mixed-case colour names."
+  (is (= 34 (cl-tmux/renderer::%border-color-sgr "Blue"))
+      "%border-color-sgr 'Blue' must return 34"))
+
+;;; ── %color-name-to-sgr-number ───────────────────────────────────────────────
+
+(test color-name-to-sgr-number-fg-named
+  "%color-name-to-sgr-number with is-bg NIL returns foreground SGR fragment."
+  (is (string= "31" (cl-tmux/renderer::%color-name-to-sgr-number "red" nil))
+      "fg 'red' must produce \"31\""))
+
+(test color-name-to-sgr-number-bg-named
+  "%color-name-to-sgr-number with is-bg T returns background SGR fragment."
+  (is (string= "41" (cl-tmux/renderer::%color-name-to-sgr-number "red" t))
+      "bg 'red' must produce \"41\""))
+
+(test color-name-to-sgr-number-colour-n-fg
+  "%color-name-to-sgr-number for 'colour4' with is-bg NIL returns '38;5;4'."
+  (is (string= "38;5;4" (cl-tmux/renderer::%color-name-to-sgr-number "colour4" nil))
+      "fg 'colour4' must produce \"38;5;4\""))
+
+(test color-name-to-sgr-number-colour-n-bg
+  "%color-name-to-sgr-number for 'colour4' with is-bg T returns '48;5;4'."
+  (is (string= "48;5;4" (cl-tmux/renderer::%color-name-to-sgr-number "colour4" t))
+      "bg 'colour4' must produce \"48;5;4\""))
+
+(test color-name-to-sgr-number-default-fg
+  "%color-name-to-sgr-number for 'default' with is-bg NIL returns '39'."
+  (is (string= "39" (cl-tmux/renderer::%color-name-to-sgr-number "default" nil))
+      "fg 'default' must produce \"39\""))
+
+(test color-name-to-sgr-number-default-bg
+  "%color-name-to-sgr-number for 'default' with is-bg T returns '49'."
+  (is (string= "49" (cl-tmux/renderer::%color-name-to-sgr-number "default" t))
+      "bg 'default' must produce \"49\""))
+
+(test color-name-to-sgr-number-unknown-fg
+  "%color-name-to-sgr-number for unknown colour with is-bg NIL returns '39'."
+  (is (string= "39" (cl-tmux/renderer::%color-name-to-sgr-number "notacolor" nil))
+      "fg unknown must fall back to \"39\""))
+
+(test color-name-to-sgr-number-unknown-bg
+  "%color-name-to-sgr-number for unknown colour with is-bg T returns '49'."
+  (is (string= "49" (cl-tmux/renderer::%color-name-to-sgr-number "notacolor" t))
+      "bg unknown must fall back to \"49\""))
+
+;;; ── %status-sgr-from-style ───────────────────────────────────────────────────
+
+(test status-sgr-from-style-nil-returns-default
+  "%status-sgr-from-style with NIL returns the default blue-on-white SGR."
+  (is (string= "44;97" (cl-tmux/renderer::%status-sgr-from-style nil))
+      "%status-sgr-from-style nil must return \"44;97\""))
+
+(test status-sgr-from-style-empty-returns-default
+  "%status-sgr-from-style with empty string returns the default SGR."
+  (is (string= "44;97" (cl-tmux/renderer::%status-sgr-from-style ""))
+      "%status-sgr-from-style \"\" must return \"44;97\""))
+
+(test status-sgr-from-style-bold
+  "%status-sgr-from-style with 'bold' includes SGR code 1."
+  (let ((sgr (cl-tmux/renderer::%status-sgr-from-style "bold")))
+    (is (search "1" sgr)
+        "%status-sgr-from-style 'bold' must include \"1\" (got ~S)" sgr)))

@@ -1,7 +1,9 @@
 (in-package #:cl-tmux/test)
 
-;;;; Cursor movement clamping tests (src/terminal/cursor.lisp).
-;;;; Tests: scroll-region-clamp suite.
+;;;; Cursor movement and character-writing tests (src/terminal/cursor.lisp).
+;;;; Tests: scroll-region clamping, direct action functions, %advance-cursor
+;;;;        autowrap behaviour, set-cursor, cursor-ri, cursor-cht/cbt,
+;;;;        combining-char handling, DEC-graphics remapping, and %place-wide-char.
 
 ;;; ── SUITE: scroll-region cursor clamping ────────────────────────────────────
 ;;;
@@ -74,6 +76,39 @@
     (cl-tmux/terminal/actions::cursor-down s 4)
     (is (= 7 (screen-cursor-y s)) "cursor-down 4 from row 3 -> row 7")))
 
+;;; ── SUITE: set-cursor ────────────────────────────────────────────────────────
+
+(def-suite set-cursor-suite
+  :description "set-cursor: clamping to screen bounds"
+  :in terminal-suite)
+(in-suite set-cursor-suite)
+
+(test set-cursor-places-cursor-at-exact-position
+  :description "set-cursor moves cursor to the specified (x, y) within bounds."
+  (with-screen (s 10 10)
+    (cl-tmux/terminal/actions:set-cursor s 3 7)
+    (check-cursor s 3 7)))
+
+(test set-cursor-clamps-x-to-width-minus-one
+  :description "set-cursor clamps x to width-1 when x >= width."
+  (with-screen (s 10 10)
+    (cl-tmux/terminal/actions:set-cursor s 99 0)
+    (is (= 9 (screen-cursor-x s))
+        "cursor-x must be clamped to 9 (width-1)")))
+
+(test set-cursor-clamps-y-to-height-minus-one
+  :description "set-cursor clamps y to height-1 when y >= height."
+  (with-screen (s 10 10)
+    (cl-tmux/terminal/actions:set-cursor s 0 99)
+    (is (= 9 (screen-cursor-y s))
+        "cursor-y must be clamped to 9 (height-1)")))
+
+(test set-cursor-clamps-negative-x-to-zero
+  :description "set-cursor clamps a negative x to 0."
+  (with-screen (s 10 10)
+    (cl-tmux/terminal/actions:set-cursor s -5 3)
+    (is (= 0 (screen-cursor-x s)) "cursor-x must be clamped to 0 for negative input")))
+
 ;;; ── SUITE: direct-action-cursor ─────────────────────────────────────────────
 ;;;
 ;;; These tests call action functions directly rather than through
@@ -81,7 +116,7 @@
 ;;; may not hit explicitly.
 
 (def-suite direct-action-cursor
-  :description "Direct calls to cursor-bs/cr/lf/ht, write-codepoint, scroll helpers"
+  :description "Direct calls to cursor-bs/cr/lf/ht/ri, write-codepoint, scroll helpers"
   :in terminal-suite)
 (in-suite direct-action-cursor)
 
@@ -127,6 +162,92 @@
     ;; From col 16 -> next stop would be 24, but screen is 20 wide -> clamp to 19
     (cl-tmux/terminal/actions:cursor-ht s)
     (check-cursor s 19 0)))
+
+;;; ── cursor-cht (CHT — cursor forward tab stops) ──────────────────────────────
+
+(test cursor-cht-advances-n-tab-stops
+  :description "cursor-cht N advances the cursor by N tab stops."
+  (with-screen (s 40 5)
+    ;; From col 0, 2 tab stops → col 16
+    (cl-tmux/terminal/actions:cursor-cht s 2)
+    (check-cursor s 16 0)))
+
+(test cursor-cht-one-is-same-as-cursor-ht
+  :description "cursor-cht 1 behaves identically to cursor-ht."
+  (let ((s1 (make-screen 20 5))
+        (s2 (make-screen 20 5)))
+    (cl-tmux/terminal/actions:cursor-ht  s1)
+    (cl-tmux/terminal/actions:cursor-cht s2 1)
+    (is (= (screen-cursor-x s1) (screen-cursor-x s2))
+        "cursor-cht 1 must give same result as cursor-ht")))
+
+(test cursor-cht-zero-treated-as-one
+  :description "cursor-cht 0 advances one tab stop (n is treated as max 1)."
+  (with-screen (s 20 5)
+    (cl-tmux/terminal/actions:cursor-cht s 0)
+    (is (= 8 (screen-cursor-x s))
+        "cursor-cht 0 must advance one tab stop to col 8")))
+
+;;; ── cursor-cbt (CBT — cursor backward tab stops) ─────────────────────────────
+
+(test cursor-cbt-moves-back-n-tab-stops
+  :description "cursor-cbt N moves the cursor back by N 8-column tab stops."
+  (with-screen (s 40 5)
+    (setf (cl-tmux/terminal/types::screen-cx s) 16)
+    ;; Back 2 stops: 16 → 8 → 0
+    (cl-tmux/terminal/actions:cursor-cbt s 2)
+    (is (= 0 (screen-cursor-x s))
+        "cursor-cbt 2 from col 16 must reach col 0")))
+
+(test cursor-cbt-clamps-at-column-zero
+  :description "cursor-cbt with a large count stops at column 0."
+  (with-screen (s 40 5)
+    (setf (cl-tmux/terminal/types::screen-cx s) 5)
+    (cl-tmux/terminal/actions:cursor-cbt s 99)
+    (is (= 0 (screen-cursor-x s))
+        "cursor-cbt must not go past column 0")))
+
+(test cursor-cbt-zero-treated-as-one
+  :description "cursor-cbt 0 moves back one tab stop."
+  (with-screen (s 40 5)
+    (setf (cl-tmux/terminal/types::screen-cx s) 16)
+    (cl-tmux/terminal/actions:cursor-cbt s 0)
+    (is (= 8 (screen-cursor-x s))
+        "cursor-cbt 0 must move back one tab stop")))
+
+;;; ── cursor-ri (ESC M — reverse index) ───────────────────────────────────────
+
+(test cursor-ri-moves-up-within-region
+  :description "cursor-ri moves the cursor up one row when not at the scroll-top."
+  (with-screen (s 10 10)
+    (setf (cl-tmux/terminal/types::screen-cy s) 5)
+    (cl-tmux/terminal/actions:cursor-ri s)
+    (is (= 4 (screen-cursor-y s))
+        "cursor-ri from row 5 must move to row 4")))
+
+(test cursor-ri-at-scroll-top-scrolls-down
+  :description "cursor-ri at the scroll-top scrolls the region down instead of moving up."
+  (with-screen (s 5 5)
+    ;; Write a recognisable line at the top, then move to top and reverse-index
+    (feed s "LINE0")
+    (cl-tmux/terminal/actions:set-cursor s 0 0)
+    (cl-tmux/terminal/actions:cursor-ri s)
+    ;; The old row 0 should now be at row 1, and row 0 should be blank
+    (is (row-blank-p s 0) "row 0 must be blank after reverse index scroll")
+    (check-row s 1 "LINE0")))
+
+(test cursor-ri-at-scroll-top-non-default-region
+  :description "cursor-ri at a custom scroll-top scrolls that region only."
+  (with-screen (s 10 10)
+    (setf (cl-tmux/terminal/types::screen-scroll-top    s) 3
+          (cl-tmux/terminal/types::screen-scroll-bottom s) 7)
+    (setf (cl-tmux/terminal/types::screen-cy s) 3)   ; at scroll-top
+    (cl-tmux/terminal/actions:cursor-ri s)
+    ;; cursor stays at scroll-top (scroll happened, not cursor move)
+    (is (= 3 (screen-cursor-y s))
+        "cursor-ri at scroll-top must stay at scroll-top after scrolling down")))
+
+;;; ── write-char-at-cursor wide char ───────────────────────────────────────────
 
 (test write-char-at-cursor-wide-char-wraps-at-right-edge
   "A double-width character that cannot fit in the last column wraps to the next row."
@@ -226,3 +347,62 @@
   (is (fboundp 'cl-tmux/terminal/actions:cursor-down)  "cursor-down must be fbound")
   (is (fboundp 'cl-tmux/terminal/actions:cursor-right) "cursor-right must be fbound")
   (is (fboundp 'cl-tmux/terminal/actions:cursor-left)  "cursor-left must be fbound"))
+
+;;; ── SUITE: %place-wide-char ──────────────────────────────────────────────────
+
+(def-suite place-wide-char-suite
+  :description "%place-wide-char lead and continuation cell layout"
+  :in terminal-suite)
+(in-suite place-wide-char-suite)
+
+(test place-wide-char-writes-lead-and-continuation
+  :description "%place-wide-char writes a width-2 lead cell and width-0 continuation."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/actions::%place-wide-char s 0 0 #\中 7 0 0 0 0)
+    (let ((lead (screen-cell s 0 0))
+          (cont (screen-cell s 1 0)))
+      (is (char= #\中 (cell-char lead)) "lead cell char must be 中")
+      (is (= 2 (cell-width lead))       "lead cell width must be 2")
+      (is (= 0 (cell-width cont))       "continuation cell width must be 0"))))
+
+(test place-wide-char-at-last-column-no-continuation
+  :description "%place-wide-char at the last column skips writing the continuation cell."
+  (with-screen (s 5 5)
+    ;; Place a wide char at x=4 (last column); x+1=5 >= width, so no continuation
+    (cl-tmux/terminal/actions::%place-wide-char s 4 0 #\中 7 0 0 0 0)
+    (let ((lead (screen-cell s 4 0)))
+      (is (char= #\中 (cell-char lead)) "lead cell must be 中 even at last column")
+      (is (= 2 (cell-width lead))       "lead cell width must be 2"))))
+
+;;; ── SUITE: table-driven cursor movement ──────────────────────────────────────
+;;;
+;;; Repeated cursor-up/down/left/right cases at count=1 form a natural table.
+
+(def-suite cursor-movement-table
+  :description "Table-driven single-step cursor movement"
+  :in terminal-suite)
+(in-suite cursor-movement-table)
+
+(test cursor-movements-single-step-table
+  :description "Each direction moves by 1 from a known starting position."
+  ;; Table: (start-x start-y direction count expected-x expected-y)
+  (let ((cases '((5 5 up    1 5 4)
+                 (5 5 down  1 5 6)
+                 (5 5 left  1 4 5)
+                 (5 5 right 1 6 5))))
+    (dolist (c cases)
+      (destructuring-bind (sx sy dir n ex ey) c
+        (with-screen (s 10 10)
+          (setf (cl-tmux/terminal/types::screen-cx s) sx
+                (cl-tmux/terminal/types::screen-cy s) sy)
+          (ecase dir
+            (up    (cl-tmux/terminal/actions:cursor-up    s n))
+            (down  (cl-tmux/terminal/actions:cursor-down  s n))
+            (left  (cl-tmux/terminal/actions:cursor-left  s n))
+            (right (cl-tmux/terminal/actions:cursor-right s n)))
+          (is (= ex (screen-cursor-x s))
+              "cursor-x after ~A from (~D,~D) expected ~D got ~D"
+              dir sx sy ex (screen-cursor-x s))
+          (is (= ey (screen-cursor-y s))
+              "cursor-y after ~A from (~D,~D) expected ~D got ~D"
+              dir sx sy ey (screen-cursor-y s)))))))

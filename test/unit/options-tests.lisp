@@ -353,3 +353,141 @@
 (test define-option-table-macro-is-defined
   "define-option-table is a registered macro."
   (is (macro-function 'cl-tmux/options:define-option-table)))
+
+;;; ── option-spec accessors ─────────────────────────────────────────────────
+
+(test option-spec-accessors
+  "option-spec-name, option-spec-type, option-spec-default return the correct fields."
+  (let ((spec (gethash "status" cl-tmux/options:*option-registry*)))
+    (is (not (null spec))
+        "status must be a registered option")
+    (is (string= "status" (cl-tmux/options:option-spec-name spec))
+        "option-spec-name must return \"status\"")
+    (is (eq :boolean (cl-tmux/options:option-spec-type spec))
+        "option-spec-type for status must be :boolean")
+    (is (eq t (cl-tmux/options:option-spec-default spec))
+        "option-spec-default for status must be T")))
+
+(test option-spec-integer-type
+  "option-spec-type for an integer option is :integer."
+  (let ((spec (gethash "history-limit" cl-tmux/options:*option-registry*)))
+    (is (not (null spec))
+        "history-limit must be a registered option")
+    (is (eq :integer (cl-tmux/options:option-spec-type spec))
+        "option-spec-type for history-limit must be :integer")))
+
+(test option-spec-string-type
+  "option-spec-type for a string option is :string."
+  (let ((spec (gethash "default-command" cl-tmux/options:*option-registry*)))
+    (is (not (null spec))
+        "default-command must be a registered option")
+    (is (eq :string (cl-tmux/options:option-spec-type spec))
+        "option-spec-type for default-command must be :string")))
+
+;;; ── get-server-option with default ───────────────────────────────────────
+
+(test get-server-option-returns-default-when-absent
+  "get-server-option returns the supplied default when the key is absent."
+  (let ((cl-tmux/options:*server-options* (make-hash-table :test #'equal)))
+    (is (= 99 (cl-tmux/options:get-server-option "nonexistent-server-opt" 99))
+        "get-server-option must return the default for an absent key")))
+
+(test get-server-option-returns-nil-when-absent-no-default
+  "get-server-option returns NIL for an absent key when no default is given."
+  (let ((cl-tmux/options:*server-options* (make-hash-table :test #'equal)))
+    (is (null (cl-tmux/options:get-server-option "nonexistent-server-opt"))
+        "get-server-option must return NIL when absent and no default supplied")))
+
+;;; ── set-server-option for unknown option (passthrough) ───────────────────
+
+(test set-server-option-unknown-stores-as-is
+  "set-server-option for an unregistered option stores the value without coercion."
+  (let ((cl-tmux/options:*server-options*          (make-hash-table :test #'equal))
+        (cl-tmux/options:*server-option-registry*  cl-tmux/options:*server-option-registry*))
+    (cl-tmux/options:set-server-option "custom-server-opt" "raw-value")
+    (is (string= "raw-value"
+                 (cl-tmux/options:get-server-option "custom-server-opt"))
+        "unregistered server option must be stored as-is")))
+
+;;; ── show-option with :server scope ──────────────────────────────────────
+
+(test show-option-server-scope
+  "show-option with :server scope returns the value from *server-options*."
+  (with-single-server-option ("escape-time" 250)
+    (let ((out (cl-tmux/options:show-option "escape-time" :server)))
+      (is (search "escape-time" out)
+          "show-option :server must include option name (got ~S)" out)
+      (is (search "250" out)
+          "show-option :server must include the value 250 (got ~S)" out))))
+
+;;; ── show-options returns sorted output ───────────────────────────────────
+
+(test show-options-is-sorted
+  "show-options output has options in alphabetical order."
+  (let ((cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (setf (gethash "zebra-option" ht) "z")
+           (setf (gethash "alpha-option" ht) "a")
+           ht)))
+    (let ((out (cl-tmux/options:show-options)))
+      (let ((pos-alpha (search "alpha-option" out))
+            (pos-zebra (search "zebra-option" out)))
+        (is (and pos-alpha pos-zebra)
+            "both options must appear in show-options output")
+        (is (< pos-alpha pos-zebra)
+            "alpha-option must appear before zebra-option (sorted output)")))))
+
+;;; ── define-server-options macro ──────────────────────────────────────────
+
+(test define-server-options-macro-is-defined
+  "define-server-options is a registered macro."
+  (is (macro-function 'cl-tmux/options:define-server-options)))
+
+;;; ── status-position default value ───────────────────────────────────────
+
+(test status-position-default
+  "status-position defaults to \"bottom\"."
+  (is (string= "bottom" (cl-tmux/options:get-option "status-position"))
+      "status-position default must be \"bottom\""))
+
+;;; ── base-index default value ─────────────────────────────────────────────
+
+(test base-index-default
+  "base-index defaults to 0."
+  (is (= 0 (cl-tmux/options:get-option "base-index"))
+      "base-index default must be 0"))
+
+;;; ── mouse option default ─────────────────────────────────────────────────
+
+(test mouse-option-default-nil
+  "mouse option defaults to NIL (disabled)."
+  (is (null (cl-tmux/options:get-option "mouse"))
+      "mouse default must be NIL"))
+
+;;; ── synchronize-panes default ────────────────────────────────────────────
+
+(test synchronize-panes-default-nil
+  "synchronize-panes option defaults to NIL."
+  (is (null (cl-tmux/options:get-option "synchronize-panes"))
+      "synchronize-panes default must be NIL"))
+
+;;; ── status-interval default ──────────────────────────────────────────────
+
+(test status-interval-default
+  "status-interval defaults to 15."
+  (is (= 15 (cl-tmux/options:get-option "status-interval"))
+      "status-interval default must be 15"))
+
+;;; ── history-limit default ────────────────────────────────────────────────
+
+(test history-limit-default
+  "history-limit defaults to 2000."
+  (is (= 2000 (cl-tmux/options:get-option "history-limit"))
+      "history-limit default must be 2000"))
+
+;;; ── set-option and get-option for boolean status defaults ────────────────
+
+(test status-boolean-default-true
+  "The status option defaults to T (enabled)."
+  (is (eq t (cl-tmux/options:get-option "status"))
+      "status default must be T"))

@@ -63,17 +63,7 @@
 ;;;
 ;;; We use a POSIX pipe pair (sb-posix:pipe) so we can inject a known byte into
 ;;; the read end without needing stdin to be a TTY.
-
-(defmacro with-pipe-fds ((read-fd write-fd) &body body)
-  "Open a POSIX pipe; bind READ-FD and WRITE-FD; close both on exit."
-  (let ((pair-sym (gensym "PAIR")))
-    `(let* ((,pair-sym (multiple-value-list (sb-posix:pipe)))
-            (,read-fd  (first  ,pair-sym))
-            (,write-fd (second ,pair-sym)))
-       (unwind-protect
-            (progn ,@body)
-         (ignore-errors (sb-posix:close ,read-fd))
-         (ignore-errors (sb-posix:close ,write-fd))))))
+;;; with-pipe-fds is defined in test/helpers.lisp.
 
 (test read-byte-nonblock-returns-byte-when-data-available
   "read-byte-nonblock's select+read pipeline returns a byte when data is ready.
@@ -103,3 +93,58 @@
     ;; The pipe has no data; select with a short timeout must return NIL.
     (let ((ready (cl-tmux/pty:select-fds (list rfd) 10000)))  ; 10 ms
       (is (null ready) "empty pipe must not be readable"))))
+
+;;; ── Package / constant coverage ─────────────────────────────────────────────
+
+(test poll-timeout-us-constant-is-positive
+  "+poll-timeout-us+ is a positive fixnum used as the default select timeout."
+  (let ((timeout (symbol-value
+                  (find-symbol "+POLL-TIMEOUT-US+" '#:cl-tmux/config))))
+    (is (integerp timeout)
+        "+poll-timeout-us+ must be an integer")
+    (is (plusp timeout)
+        "+poll-timeout-us+ must be positive (non-zero timeout)")))
+
+(test read-byte-nonblock-is-exported-function
+  "read-byte-nonblock resolves as an :external symbol of cl-tmux/input and is fbound."
+  (multiple-value-bind (sym status)
+      (find-symbol "READ-BYTE-NONBLOCK" '#:cl-tmux/input)
+    (is (eq :external status)
+        "read-byte-nonblock must be an exported symbol")
+    (is (fboundp sym)
+        "read-byte-nonblock must be fbound")))
+
+(test with-raw-mode-is-exported-macro
+  "with-raw-mode resolves as an :external symbol of cl-tmux/input and is a macro."
+  (multiple-value-bind (sym status)
+      (find-symbol "WITH-RAW-MODE" '#:cl-tmux/input)
+    (is (eq :external status)
+        "with-raw-mode must be an exported symbol")
+    (is (macro-function sym)
+        "with-raw-mode must be a macro")))
+
+(test with-raw-mode-expansion-contains-format-newline
+  "The expansion emits a format newline after restoring raw mode for clean output."
+  (let* ((form (macroexpand-1 '(cl-tmux/input::with-raw-mode :body-marker)))
+         (text (prin1-to-string form)))
+    (is-true (or (search "FORMAT" text) (search "format" text))
+             "expansion must contain FORMAT for cleanup newline")))
+
+(test read-byte-nonblock-roundtrip-via-pipe
+  "read-byte-nonblock mechanics: select-fds + CFFI read gives the written byte value."
+  ;; This is a whitebox test of the same logic that read-byte-nonblock uses,
+  ;; exercised through a pipe instead of stdin (no TTY required).
+  (with-pipe-fds (rfd wfd)
+    (cffi:with-foreign-object (wbuf :uint8)
+      (setf (cffi:mem-ref wbuf :uint8) 99)
+      (cffi:foreign-funcall "write" :int wfd :pointer wbuf :unsigned-long 1 :long))
+    (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))
+      (is-true ready "written byte must make pipe readable")
+      (when ready
+        (cffi:with-foreign-object (rbuf :uint8)
+          (let ((n (cffi:foreign-funcall "read"
+                                         :int rfd :pointer rbuf :unsigned-long 1
+                                         :long)))
+            (is (= 1 n)  "read must return 1 byte")
+            (is (= 99 (cffi:mem-ref rbuf :uint8))
+                "byte value must be 99")))))))
