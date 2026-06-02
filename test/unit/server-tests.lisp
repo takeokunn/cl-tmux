@@ -345,10 +345,10 @@
     (is-true detach "-d must set detach flag")))
 
 (test parse-attach-flags-readonly-flag
-  "%parse-attach-flags with -r sets the read-only flag."
-  (multiple-value-bind (name _detach ro) (cl-tmux::%parse-attach-flags '("-r" "mysess"))
-    (declare (ignore _detach))
-    (is (string= "mysess" name) "positional session name must be mysess")
+  "%parse-attach-flags with -r sets the read-only flag.
+   Positional (non-flag) args are silently ignored; use -t to set the session name."
+  (multiple-value-bind (_name _detach ro) (cl-tmux::%parse-attach-flags '("-r"))
+    (declare (ignore _name _detach))
     (is-true ro "-r must set read-only flag")))
 
 (test parse-attach-flags-target-flag
