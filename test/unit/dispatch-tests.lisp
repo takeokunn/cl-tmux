@@ -492,7 +492,7 @@
           (is (search "Pane 2" text)
               "overlay must mention pane 2")
           (is (search "[active]" text)
-              "overlay must mark the active pane with [active]")))))
+              "overlay must mark the active pane with [active]"))))))
 
 (test dispatch-display-panes-marks-dirty
   ":display-panes sets *dirty* to T."
