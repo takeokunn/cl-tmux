@@ -114,6 +114,7 @@
    ;; Cell struct + helpers
    #:cell
    #:make-cell
+   #:cell-p
    #:cell-char
    #:cell-fg
    #:cell-bg
@@ -131,6 +132,7 @@
    #:screen
    #:%make-screen
    #:make-screen
+   #:screen-p
    ;; Geometry / cursor / SGR-state accessors
    #:screen-width
    #:screen-height
