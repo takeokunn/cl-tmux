@@ -617,7 +617,7 @@
     ;; The erase-display mode 2 fallback should have cleared all cells
     (dotimes (y 5)
       (is (row-blank-p s y)
-          "row ~D must be blank after exit-alt-screen with no saved grid" y)))))
+          "row ~D must be blank after exit-alt-screen with no saved grid" y))))
 
 ;;; ── SUITE: enter/exit alt-screen direct content verification ─────────────────
 
