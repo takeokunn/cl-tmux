@@ -275,7 +275,7 @@
               (row (parse-integer (third  parts) :junk-allowed t)))
           (when (and (integerp btn) (integerp col) (integerp row))
             ;; SGR coords are 1-based; convert to 0-based
-            (values btn (1- col) (1- row) release-p))))))))
+            (values btn (1- col) (1- row) release-p)))))))
 
 (defun %sgr-mouse-sequence-p (buf len)
   "True when BUF looks like the start of an SGR mouse sequence: ESC [ <."
