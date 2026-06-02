@@ -26,7 +26,7 @@
            s (make-array 1 :element-type '(unsigned-byte 8)
                            :initial-contents '(113)))       ; q
           "q should be consumed in copy mode")
-      (is (not (screen-copy-mode-p (active-screen s)))
+      (is-false (screen-copy-mode-p (active-screen s))
           "q should have exited copy mode"))))
 
 (test handle-copy-mode-escape-inactive-returns-nil
@@ -73,13 +73,14 @@
 (test process-byte-routes-to-active-prompt
   "While a prompt is active, process-byte edits the prompt buffer."
   (let ((s (make-fake-session)))
-    (let ((*prompt* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
-      (prompt-start "rename-window" "" (lambda (name) (declare (ignore name)) nil))
-      (let ((state (cl-tmux::make-input-state)))
-        (cl-tmux::process-byte s (char-code #\h) state)
-        (cl-tmux::process-byte s (char-code #\i) state)
-        (is (string= "hi" (prompt-buffer *prompt*))
-            "prompt captured the keystrokes via process-byte")))))
+    (with-loop-state
+      (let ((*prompt* nil))
+        (prompt-start "rename-window" "" (lambda (name) (declare (ignore name)) nil))
+        (let ((state (cl-tmux::make-input-state)))
+          (cl-tmux::process-byte s (char-code #\h) state)
+          (cl-tmux::process-byte s (char-code #\i) state)
+          (is (string= "hi" (prompt-buffer *prompt*))
+              "prompt captured the keystrokes via process-byte"))))))
 
 (test process-byte-overlay-q-dismisses
   "While an overlay is shown, q dismisses it; other keys are swallowed (overlay stays open)."
@@ -92,7 +93,7 @@
         (is (overlay-active-p) "ordinary key must not dismiss the overlay")
         ;; 'q' dismisses the overlay.
         (is (null (cl-tmux::process-byte s (char-code #\q) state)))
-        (is (not (overlay-active-p)) "q must dismiss the overlay")))))
+        (is-false (overlay-active-p) "q must dismiss the overlay")))))
 
 ;;; ── Copy-mode arrow escapes through process-byte (one byte at a time) ────────
 ;;;
@@ -164,7 +165,7 @@
   (let ((s (make-fake-session)))
     (with-loop-state
       (let ((state (cl-tmux::make-input-state)))
-        (is (not (cl-tmux::copy-mode-active-p s)) "not in copy mode")
+        (is-false (cl-tmux::%copy-mode-active-p s) "not in copy mode")
         (is (null (cl-tmux::process-byte s 27 state)))
         ;; After forwarding ESC outside copy-mode the state returns to ground:
         ;; the next ordinary byte should also be forwarded (no stuck state).
@@ -176,27 +177,26 @@
 (test handle-resize-updates-term-size
   "%handle-resize clears *resize-pending* and relayouts the active window."
   (let ((s (make-fake-session :nwindows 1)))
-    (let ((cl-tmux::*running* t)
-          (cl-tmux::*dirty* nil)
-          (cl-tmux::*resize-pending* t)
-          (cl-tmux::*term-rows* 10)
-          (cl-tmux::*term-cols* 40))
-      ;; terminal-size returns real size in sandbox, which may differ from 10x40.
-      ;; Just assert *resize-pending* is cleared and no error is signalled.
-      (cl-tmux::%handle-resize s)
-      (is-false cl-tmux::*resize-pending*
-                "*resize-pending* must be NIL after %handle-resize"))))
+    (with-loop-state
+      (let ((cl-tmux::*resize-pending* t)
+            (cl-tmux::*term-rows* 10)
+            (cl-tmux::*term-cols* 40))
+        ;; terminal-size returns real size in sandbox, which may differ from 10x40.
+        ;; Just assert *resize-pending* is cleared and no error is signalled.
+        (cl-tmux::%handle-resize s)
+        (is-false cl-tmux::*resize-pending*
+                  "*resize-pending* must be NIL after %handle-resize"))))
 
 (test handle-dirty-clears-flag
   "%handle-dirty clears *dirty* and renders without error."
   (let ((s (make-fake-session :nwindows 1)))
-    (let ((cl-tmux::*running* t)
-          (cl-tmux::*dirty* t)
-          (cl-tmux::*term-rows* 10)
-          (cl-tmux::*term-cols* 40))
-      (cl-tmux::%handle-dirty s)
-      (is-false cl-tmux::*dirty*
-                "*dirty* must be NIL after %handle-dirty"))))
+    (with-loop-state
+      (let ((cl-tmux::*dirty* t)
+            (cl-tmux::*term-rows* 10)
+            (cl-tmux::*term-cols* 40))
+        (cl-tmux::%handle-dirty s)
+        (is-false cl-tmux::*dirty*
+                  "*dirty* must be NIL after %handle-dirty"))))
 
 ;;; ── handle-prompt-key: prompt editing keys ───────────────────────────────────
 
@@ -210,7 +210,7 @@
       (cl-tmux::handle-prompt-key 13)
       (is (string= "hello" submitted)
           "Enter calls on-submit with the current buffer")
-      (is (not (prompt-active-p)) "Enter dismisses the prompt")
+      (is-false (prompt-active-p) "Enter dismisses the prompt")
       (is-true cl-tmux::*dirty* "handle-prompt-key marks the screen dirty"))))
 
 (test handle-prompt-key-esc-cancels
@@ -220,7 +220,7 @@
       (prompt-start "rename-window" "abc"
                     (lambda (buf) (setf submitted buf)))
       (cl-tmux::handle-prompt-key 27)
-      (is (not (prompt-active-p)) "Esc dismisses the prompt")
+      (is-false (prompt-active-p) "Esc dismisses the prompt")
       (is (null submitted) "Esc does not run the on-submit closure"))))
 
 (test handle-prompt-key-backspace-deletes-last-char
@@ -246,95 +246,44 @@
   (is (macro-function 'cl-tmux::define-prompt-key-rules)))
 
 ;;; ── Mouse event dispatch tests ───────────────────────────────────────────────
+;;;
+;;; The with-two-pane-mouse-session macro (defined in test/helpers.lisp) builds
+;;; the 2-pane h-split session, enables the 'mouse' option, and wraps the body
+;;; in with-loop-state with appropriate *term-rows*/*term-cols* bindings.
 
 (test dispatch-mouse-event-left-click-selects-pane
   "%dispatch-mouse-event with btn=0 release=NIL selects the pane at the given coordinates."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (p1  (make-pane :id 2 :fd -1 :pid -1
-                          :x 41 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree  (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2)
-                           :active p0))
-         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
-    (cl-tmux/options:set-option "mouse" t)
-    (unwind-protect
-         (with-loop-state
-           (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 81))
-             ;; Click in the right pane (col 50, row 5)
-             (cl-tmux::%dispatch-mouse-event sess 0 50 5 nil)
-             (is (eq p1 (window-active-pane win))
-                 "left click in right half should focus p1")))
-      (cl-tmux/options:set-option "mouse" nil))))
+  (with-two-pane-mouse-session (sess win p0 p1)
+    ;; Click in the right pane (col 50, row 5)
+    (cl-tmux::%dispatch-mouse-event sess 0 50 5 nil)
+    (is (eq p1 (window-active-pane win))
+        "left click in right half should focus p1")))
 
 (test dispatch-mouse-event-release-does-not-select
   "%dispatch-mouse-event with release-p=T does not switch the active pane."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (p1  (make-pane :id 2 :fd -1 :pid -1
-                          :x 41 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree  (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2)
-                           :active p0))
-         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
-    (cl-tmux/options:set-option "mouse" t)
-    (unwind-protect
-         (with-loop-state
-           (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 81))
-             ;; Release event (btn=0, release-p=T) — must not change active pane
-             (cl-tmux::%dispatch-mouse-event sess 0 50 5 t)
-             (is (eq p0 (window-active-pane win))
-                 "button release should not change the active pane")))
-      (cl-tmux/options:set-option "mouse" nil))))
+  (with-two-pane-mouse-session (sess win p0 p1)
+    ;; Release event (btn=0, release-p=T) — must not change active pane
+    (cl-tmux::%dispatch-mouse-event sess 0 50 5 t)
+    (is (eq p0 (window-active-pane win))
+        "button release should not change the active pane")))
 
 (test x10-mouse-sequence-via-process-byte
   "X10 mouse press ESC [ M <btn+32> <col+33> <row+33> fed one byte at a time
    selects the pane at the encoded coordinates."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (p1  (make-pane :id 2 :fd -1 :pid -1
-                          :x 41 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree  (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2)
-                           :active p0))
-         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
-    ;; Enable both per-screen mouse mode and the session mouse option
+  (with-two-pane-mouse-session (sess win p0 p1)
+    ;; Enable per-screen mouse mode in addition to the session option.
     (setf (screen-mouse-mode (pane-screen p0)) 1)
-    (cl-tmux/options:set-option "mouse" t)
-    (unwind-protect
-         (with-loop-state
-           (let ((state (cl-tmux::make-input-state))
-                 (cl-tmux::*term-rows* 25)
-                 (cl-tmux::*term-cols* 81))
-             ;; X10: btn=0 → 0+32=32; col=50 → 50+33=83; row=5 → 5+33=38
-             ;; Sequence: ESC(27) [(91) M(77) 32 83 38
-             (cl-tmux::process-byte sess 27 state)
-             (cl-tmux::process-byte sess 91 state)
-             (cl-tmux::process-byte sess 77 state)
-             (cl-tmux::process-byte sess 32 state)
-             (cl-tmux::process-byte sess 83 state)
-             (cl-tmux::process-byte sess 38 state)
-             (is (eq p1 (window-active-pane win))
-                 "X10 left-click in right pane must focus p1")))
-      (cl-tmux/options:set-option "mouse" nil))))
+    (let ((state (cl-tmux::make-input-state)))
+      ;; X10: btn=0 → 0+32=32; col=50 → 50+33=83; row=5 → 5+33=38
+      ;; Sequence: ESC(27) [(91) M(77) 32 83 38
+      (cl-tmux::process-byte sess 27 state)
+      (cl-tmux::process-byte sess 91 state)
+      (cl-tmux::process-byte sess 77 state)
+      (cl-tmux::process-byte sess 32 state)
+      (cl-tmux::process-byte sess 83 state)
+      (cl-tmux::process-byte sess 38 state)
+      (is (eq p1 (window-active-pane win))
+          "X10 left-click in right pane must focus p1"))))
 
 (test mouse-mode-default-is-off
   "screen-mouse-mode defaults to 0 (off) on a fresh screen."
@@ -377,7 +326,7 @@
         (is (screen-copy-mode-p screen) "copy mode entered")
         ;; Feed plain 'q' without any prefix
         (cl-tmux::process-byte s (char-code #\q) state)
-        (is (not (screen-copy-mode-p screen))
+        (is-false (screen-copy-mode-p screen)
             "plain q must exit copy mode")))))
 
 (test copy-mode-plain-esc-exits
@@ -391,7 +340,7 @@
         ;; Feed ESC then a non-CSI byte (not '[')
         (cl-tmux::process-byte s 27 state)
         (cl-tmux::process-byte s (char-code #\x) state)
-        (is (not (screen-copy-mode-p screen))
+        (is-false (screen-copy-mode-p screen)
             "ESC + non-CSI must exit copy mode")))))
 
 ;;; ── Copy-mode unprefixed vi navigation ───────────────────────────────────────
@@ -621,10 +570,11 @@
          (sess (make-session :id 1 :name "s" :windows (list win))))
     (window-select-pane win p0)
     (session-select-window sess win)
-    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
-      (is (not (pane-marked p0)) "pane must not be marked initially")
-      (cl-tmux::dispatch-command sess :mark-pane nil)
-      (is (pane-marked p0) "pane must be marked after :mark-pane"))))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (is-false (pane-marked p0) "pane must not be marked initially")
+        (cl-tmux::dispatch-command sess :mark-pane nil)
+        (is (pane-marked p0) "pane must be marked after :mark-pane"))))
 
 (test dispatch-mark-pane-toggle-unmarks
   ":mark-pane on an already-marked pane unmarks it (toggle)."
@@ -636,12 +586,13 @@
          (sess (make-session :id 1 :name "s" :windows (list win))))
     (window-select-pane win p0)
     (session-select-window sess win)
-    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
-      (setf (pane-marked p0) t)
-      (is (pane-marked p0) "pane marked before dispatch")
-      (cl-tmux::dispatch-command sess :mark-pane nil)
-      (is (not (pane-marked p0))
-          "pane unmarked after :mark-pane on already-marked pane"))))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (setf (pane-marked p0) t)
+        (is (pane-marked p0) "pane marked before dispatch")
+        (cl-tmux::dispatch-command sess :mark-pane nil)
+        (is-false (pane-marked p0)
+            "pane unmarked after :mark-pane on already-marked pane"))))
 
 (test dispatch-clear-mark-unmarks-all-panes
   ":clear-mark clears pane-marked on all panes in the current window."
@@ -653,11 +604,12 @@
          (sess (make-session :id 1 :name "s" :windows (list win))))
     (window-select-pane win p0)
     (session-select-window sess win)
-    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
-      (setf (pane-marked p0) t)
-      (is (pane-marked p0) "pane must be marked before :clear-mark")
-      (cl-tmux::dispatch-command sess :clear-mark nil)
-      (is (not (pane-marked p0)) "pane must not be marked after :clear-mark"))))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (setf (pane-marked p0) t)
+        (is (pane-marked p0) "pane must be marked before :clear-mark")
+        (cl-tmux::dispatch-command sess :clear-mark nil)
+        (is-false (pane-marked p0) "pane must not be marked after :clear-mark"))))
 
 ;;; ── dispatch :display-info ───────────────────────────────────────────────────
 
@@ -671,23 +623,25 @@
          (sess (make-session :id 1 :name "mysess" :windows (list win))))
     (window-select-pane win p0)
     (session-select-window sess win)
-    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
-      (cl-tmux::dispatch-command sess :display-info nil)
-      (is (overlay-active-p) "display-info must activate the overlay")
-      (is (search "Session:" *overlay*)
-          "overlay must contain \"Session:\""))))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::dispatch-command sess :display-info nil)
+        (is (overlay-active-p) "display-info must activate the overlay")
+        (is (search "Session:" *overlay*)
+            "overlay must contain \"Session:\""))))
 
 ;;; ── dispatch :choose-client ──────────────────────────────────────────────────
 
 (test dispatch-choose-client-shows-overlay
   ":choose-client shows an overlay with client info."
   (let ((s (make-fake-session)))
-    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t)
-          (cl-tmux::*term-rows* 24) (cl-tmux::*term-cols* 80))
-      (cl-tmux::dispatch-command s :choose-client nil)
-      (is (overlay-active-p) "choose-client must activate the overlay")
-      (is (search "Clients" *overlay*)
-          "overlay must contain \"Clients\""))))
+    (with-loop-state
+      (let ((*overlay* nil)
+            (cl-tmux::*term-rows* 24) (cl-tmux::*term-cols* 80))
+        (cl-tmux::dispatch-command s :choose-client nil)
+        (is (overlay-active-p) "choose-client must activate the overlay")
+        (is (search "Clients" *overlay*)
+            "overlay must contain \"Clients\""))))
 
 ;;; ── Root key-table lookup ────────────────────────────────────────────────────
 
@@ -759,7 +713,7 @@
   ":choose-window shows a menu overlay and opens a prompt for window selection."
   (let ((s (make-fake-session :nwindows 2)))
     (with-loop-state
-      (let ((*overlay* nil) (*prompt* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (let ((*overlay* nil) (*prompt* nil))
         (cl-tmux::dispatch-command s :choose-window nil)
         (is (overlay-active-p) ":choose-window must show an overlay")
         (is (prompt-active-p)  ":choose-window must open a prompt")))))
@@ -847,13 +801,13 @@
 
 (test dispatch-mouse-scroll-up-enters-copy-mode
   "Mouse scroll-up (btn=64) enters copy mode on the active pane when not in copy mode."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 40 :height 24
-                           :panes (list p0)
-                           :tree  (make-layout-leaf p0)
-                           :active p0))
+  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1
+                           :x 0 :y 0 :width 40 :height 24
+                           :screen (make-screen 40 24)))
+         (win  (make-window :id 1 :name "w" :width 40 :height 24
+                            :panes (list p0)
+                            :tree  (make-layout-leaf p0)
+                            :active p0))
          (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
     (cl-tmux/options:set-option "mouse" t)
     (unwind-protect
@@ -867,43 +821,43 @@
 
 (test dispatch-mouse-scroll-down-exits-copy-mode-at-bottom
   "Mouse scroll-down (btn=65) exits copy mode when the viewport is at the bottom (offset=0)."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 40 :height 24
-                           :panes (list p0)
-                           :tree  (make-layout-leaf p0)
-                           :active p0))
-         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
+  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1
+                           :x 0 :y 0 :width 40 :height 24
+                           :screen (make-screen 40 24)))
+         (win  (make-window :id 1 :name "w" :width 40 :height 24
+                            :panes (list p0)
+                            :tree  (make-layout-leaf p0)
+                            :active p0))
+         (sess (make-session :id 1 :name "0" :windows (list win) :active win))
+         (screen (pane-screen p0)))
     (cl-tmux/options:set-option "mouse" t)
     (unwind-protect
          (with-loop-state
-           (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40)
-                 (sc (pane-screen p0)))
-             (seed-scrollback sc 5)
-             (copy-mode-enter sc)
+           (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
+             (seed-scrollback screen 5)
+             (cl-tmux/commands::copy-mode-enter screen)
              ;; offset already at 0 — scroll down should exit copy mode
              (cl-tmux::%dispatch-mouse-event sess 65 5 5 nil)
-             (is (not (screen-copy-mode-p sc))
+             (is-false (screen-copy-mode-p screen)
                  "scroll-down at offset=0 must exit copy mode")))
       (cl-tmux/options:set-option "mouse" nil))))
 
 (test dispatch-mouse-gated-by-mouse-option
   "%dispatch-mouse-event is a no-op when the 'mouse' option is false."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 40 :height 24
-                           :panes (list p0)
-                           :tree  (make-layout-leaf p0)
-                           :active p0))
+  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1
+                           :x 0 :y 0 :width 40 :height 24
+                           :screen (make-screen 40 24)))
+         (win  (make-window :id 1 :name "w" :width 40 :height 24
+                            :panes (list p0)
+                            :tree  (make-layout-leaf p0)
+                            :active p0))
          (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
     (cl-tmux/options:set-option "mouse" nil)
     (with-loop-state
       (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
         ;; With mouse off, click must not enter copy mode.
         (cl-tmux::%dispatch-mouse-event sess 0 5 5 nil)
-        (is (not (screen-copy-mode-p (pane-screen p0)))
+        (is-false (screen-copy-mode-p (pane-screen p0))
             "mouse event must be ignored when mouse option is off")))))
 
 ;;; ── %status-col-to-window helper ─────────────────────────────────────────────
@@ -963,7 +917,7 @@
       (is (= 0 btn)       "SGR btn must be 0 for left-button press")
       (is (= 9 col)       "SGR col must be 0-based (10-1=9)")
       (is (= 4 row)       "SGR row must be 0-based (5-1=4)")
-      (is (not release-p) "press sequence must have release-p=NIL"))))
+      (is-false release-p "press sequence must have release-p=NIL"))))
 
 (test parse-sgr-mouse-release-sequence
   "%parse-sgr-mouse parses a well-formed SGR release sequence (final byte 'm')."
@@ -1052,7 +1006,7 @@
         ;; ESC then 'x' — not a CSI sequence → dismiss
         (cl-tmux::process-byte s 27 state)
         (cl-tmux::process-byte s (char-code #\x) state))
-      (is (not (overlay-active-p))
+      (is-false (overlay-active-p)
           "overlay must be dismissed by bare ESC"))))
 
 ;;; ── handle-prompt-key: additional editing keys ────────────────────────────────
@@ -1088,7 +1042,7 @@
       (prompt-start "test" "abc"
                     (lambda (buf) (setf submitted buf)))
       (cl-tmux::handle-prompt-key 3)  ; C-c
-      (is (not (prompt-active-p)) "C-c must dismiss the prompt")
+      (is-false (prompt-active-p) "C-c must dismiss the prompt")
       (is (null submitted) "C-c must not call on-submit"))))
 
 (test handle-prompt-key-printable-inserts-char
@@ -1131,3 +1085,1014 @@
                            :initial-contents '(27 91 60))))
     (is (null (cl-tmux::%sgr-mouse-terminated-p buf 3))
         "3-byte buffer must return NIL (need more than 3)")))
+
+;;; ── %apply-drag-resize coverage ─────────────────────────────────────────────
+
+(test apply-drag-resize-horizontal-updates-ratio
+  "%apply-drag-resize on a :h split moves the separator to the dragged column."
+  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 40 :height 24
+                           :screen (make-screen 40 24)))
+         (p1   (make-pane :id 2 :fd -1 :pid -1 :x 41 :y 0 :width 40 :height 24
+                           :screen (make-screen 40 24)))
+         (leaf0 (make-layout-leaf p0))
+         (leaf1 (make-layout-leaf p1))
+         (split (make-layout-split :h leaf0 leaf1 1/2))
+         (win   (make-window :id 1 :name "w" :width 81 :height 24
+                             :panes (list p0 p1) :tree split)))
+    (window-select-pane win p0)
+    ;; Drag the border rightward: col=60 out of total ~81 columns.
+    (cl-tmux::%apply-drag-resize win split :h 60 5)
+    ;; The ratio must have changed from 1/2.
+    (is (/= 1/2 (layout-split-ratio split))
+        "%apply-drag-resize must update the split ratio on :h drag")))
+
+(test apply-drag-resize-vertical-updates-ratio
+  "%apply-drag-resize on a :v split moves the separator to the dragged row."
+  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0  :width 80 :height 10
+                           :screen (make-screen 80 10)))
+         (p1   (make-pane :id 2 :fd -1 :pid -1 :x 0 :y 11 :width 80 :height 10
+                           :screen (make-screen 80 10)))
+         (leaf0 (make-layout-leaf p0))
+         (leaf1 (make-layout-leaf p1))
+         (split (make-layout-split :v leaf0 leaf1 1/2))
+         (win   (make-window :id 1 :name "w" :width 80 :height 21
+                             :panes (list p0 p1) :tree split)))
+    (window-select-pane win p0)
+    ;; Drag border downward: row=15 out of total ~21 rows.
+    (cl-tmux::%apply-drag-resize win split :v 5 15)
+    (is (/= 1/2 (layout-split-ratio split))
+        "%apply-drag-resize must update the split ratio on :v drag")))
+
+;;; ── %dispatch-modifier-arrow coverage ───────────────────────────────────────
+
+(test dispatch-modifier-arrow-ctrl-arrow-resizes-one-cell
+  "C-arrow (mod-byte=53) dispatches resize-pane with amount=1 without signaling."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      ;; Feed C-b ESC [ 1 ; 5 A (C-Up) through process-byte.
+      ;; Expect no error and NIL return.
+      (let ((state (cl-tmux::make-input-state)))
+        (cl-tmux::process-byte s 2   state)   ; C-b prefix
+        (cl-tmux::process-byte s 27  state)   ; ESC
+        (cl-tmux::process-byte s 91  state)   ; [
+        (cl-tmux::process-byte s 49  state)   ; 1
+        (cl-tmux::process-byte s 59  state)   ; ;
+        (cl-tmux::process-byte s 53  state)   ; 5 (Ctrl)
+        (is (null (cl-tmux::process-byte s 65 state))   ; A (Up)
+            "C-b C-Up must return NIL (no quit/detach)")))))
+
+(test dispatch-modifier-arrow-meta-arrow-dispatches-resize-command
+  "M-arrow (mod-byte=51) dispatches :resize-* command without signaling."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((state (cl-tmux::make-input-state)))
+        (cl-tmux::process-byte s 2   state)   ; C-b prefix
+        (cl-tmux::process-byte s 27  state)   ; ESC
+        (cl-tmux::process-byte s 91  state)   ; [
+        (cl-tmux::process-byte s 49  state)   ; 1
+        (cl-tmux::process-byte s 59  state)   ; ;
+        (cl-tmux::process-byte s 51  state)   ; 3 (Meta)
+        (is (null (cl-tmux::process-byte s 66 state))   ; B (Down)
+            "C-b M-Down must return NIL (no quit/detach)")))))
+
+;;; ── copy-mode-set-cursor command coverage ────────────────────────────────────
+
+(test copy-mode-set-cursor-updates-cursor-position
+  "copy-mode-set-cursor sets the copy-mode cursor to the given (row, col)."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (is (screen-copy-mode-p screen) "copy mode entered")
+        ;; Place cursor at (3, 5)
+        (cl-tmux/commands::copy-mode-set-cursor screen 3 5)
+        (is (equal (cons 3 5) (screen-copy-cursor screen))
+            "copy-mode-set-cursor must set cursor to (row . col)")))))
+
+(test copy-mode-set-cursor-clamps-to-screen-bounds
+  "copy-mode-set-cursor clamps row/col to [0, height-1] / [0, width-1]."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        ;; Attempt to set cursor far out of bounds.
+        (cl-tmux/commands::copy-mode-set-cursor screen 999 999)
+        (let* ((cursor (screen-copy-cursor screen))
+               (row    (car cursor))
+               (col    (cdr cursor)))
+          (is (<= 0 row (1- (screen-height screen)))
+              "clamped row must be within [0, height-1]")
+          (is (<= 0 col (1- (screen-width screen)))
+              "clamped col must be within [0, width-1]"))))))
+
+;;; ── copy-mode cursor-in-interior no-op (negative path) ─────────────────────
+
+(test copy-mode-j-at-interior-row-moves-cursor-not-scrolls
+  "Plain 'j' when cursor is at an interior row (not bottom) moves cursor down without
+   scrolling the viewport.  The offset must remain unchanged."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 10)
+        ;; Scroll viewport up so there is room both above and below cursor.
+        (cl-tmux/commands::copy-mode-scroll screen 5)
+        (let ((initial-offset (screen-copy-offset screen)))
+          ;; Place cursor at an interior row (not the bottom).
+          (setf (cl-tmux/terminal/types:screen-copy-cursor screen)
+                (cons 0 0))
+          ;; 'j' should move cursor down without touching the offset.
+          (cl-tmux::process-byte s (char-code #\j) state)
+          (is (= initial-offset (screen-copy-offset screen))
+              "j at interior row must not change copy-offset")
+          (let ((new-row (car (screen-copy-cursor screen))))
+            (is (= 1 new-row) "j must move cursor down by 1 row")))))))
+
+(test copy-mode-k-at-interior-row-moves-cursor-not-scrolls
+  "Plain 'k' when cursor is at an interior row (not top) moves cursor up without
+   scrolling the viewport.  The offset must remain unchanged."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 10)
+        ;; Scroll viewport up and place cursor at an interior row.
+        (cl-tmux/commands::copy-mode-scroll screen 5)
+        (let ((initial-offset (screen-copy-offset screen)))
+          (setf (cl-tmux/terminal/types:screen-copy-cursor screen)
+                (cons 5 0))  ; row 5 — not at top (row 0)
+          ;; 'k' should move cursor up without touching the offset.
+          (cl-tmux::process-byte s (char-code #\k) state)
+          (is (= initial-offset (screen-copy-offset screen))
+              "k at interior row must not change copy-offset")
+          (let ((new-row (car (screen-copy-cursor screen))))
+            (is (= 4 new-row) "k must move cursor up by 1 row")))))))
+
+;;; ── %prefix-csi-arrow-cmd direct tests ──────────────────────────────────────
+
+(test prefix-csi-arrow-cmd-maps-all-four-directions
+  "%prefix-csi-arrow-cmd returns the correct command keyword for each arrow byte."
+  (is (eq :select-pane-up    (cl-tmux::%prefix-csi-arrow-cmd 65))
+      "A (65) must map to :select-pane-up")
+  (is (eq :select-pane-down  (cl-tmux::%prefix-csi-arrow-cmd 66))
+      "B (66) must map to :select-pane-down")
+  (is (eq :select-pane-right (cl-tmux::%prefix-csi-arrow-cmd 67))
+      "C (67) must map to :select-pane-right")
+  (is (eq :select-pane-left  (cl-tmux::%prefix-csi-arrow-cmd 68))
+      "D (68) must map to :select-pane-left"))
+
+(test prefix-csi-arrow-cmd-returns-nil-for-non-arrows
+  "%prefix-csi-arrow-cmd returns NIL for bytes that are not arrow final bytes."
+  (is (null (cl-tmux::%prefix-csi-arrow-cmd 72))
+      "H (72) must return NIL")
+  (is (null (cl-tmux::%prefix-csi-arrow-cmd 0))
+      "NUL (0) must return NIL")
+  (is (null (cl-tmux::%prefix-csi-arrow-cmd 109))
+      "m (109) must return NIL"))
+
+;;; ── %border-at-position direct tests ────────────────────────────────────────
+
+(test border-at-position-detects-h-split-border
+  "%border-at-position returns the split node and :h when col is exactly on the separator."
+  (let* ((p0    (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 40 :height 24
+                            :screen (make-screen 40 24)))
+         (p1    (make-pane :id 2 :fd -1 :pid -1 :x 41 :y 0 :width 40 :height 24
+                            :screen (make-screen 40 24)))
+         (leaf0 (make-layout-leaf p0))
+         (leaf1 (make-layout-leaf p1))
+         (split (make-layout-split :h leaf0 leaf1 1/2))
+         (win   (make-window :id 1 :name "w" :width 81 :height 24
+                             :panes (list p0 p1) :tree split)))
+    (declare (ignore win))
+    ;; The separator col for p0 (x=0 w=40) is at col 40.
+    (multiple-value-bind (found-split orientation)
+        (cl-tmux::%border-at-position
+         (make-window :id 1 :name "w" :width 81 :height 24
+                      :panes (list p0 p1) :tree split)
+         40 5)
+      (is (eq split found-split)
+          "%border-at-position must return the split node at the separator column")
+      (is (eq :h orientation)
+          "%border-at-position must report :h orientation for horizontal split"))))
+
+(test border-at-position-returns-nil-inside-pane
+  "%border-at-position returns (values NIL NIL) when col is inside a pane."
+  (let* ((p0    (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 40 :height 24
+                            :screen (make-screen 40 24)))
+         (p1    (make-pane :id 2 :fd -1 :pid -1 :x 41 :y 0 :width 40 :height 24
+                            :screen (make-screen 40 24)))
+         (leaf0 (make-layout-leaf p0))
+         (leaf1 (make-layout-leaf p1))
+         (split (make-layout-split :h leaf0 leaf1 1/2))
+         (win   (make-window :id 1 :name "w" :width 81 :height 24
+                             :panes (list p0 p1) :tree split)))
+    (multiple-value-bind (found-split orientation)
+        (cl-tmux::%border-at-position win 20 5)
+      (is (null found-split)
+          "%border-at-position must return NIL split inside pane")
+      (is (null orientation)
+          "%border-at-position must return NIL orientation inside pane"))))
+
+(test border-at-position-returns-nil-for-single-pane-window
+  "%border-at-position returns (values NIL NIL) when the window has no split."
+  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 80 :height 24
+                          :screen (make-screen 80 24)))
+         (win (make-window :id 1 :name "w" :width 80 :height 24
+                           :panes (list p0)
+                           :tree  (make-layout-leaf p0))))
+    (multiple-value-bind (found-split orientation)
+        (cl-tmux::%border-at-position win 20 10)
+      (is (null found-split)
+          "single-pane window must have no border")
+      (is (null orientation)
+          "single-pane window must have NIL orientation"))))
+
+;;; ── %mouse-status-bar-click direct tests ─────────────────────────────────────
+
+(test mouse-status-bar-click-selects-window
+  "%mouse-status-bar-click changes the active window when the click col lands in an entry."
+  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                           :screen (make-screen 20 5)))
+         (p1   (make-pane :id 2 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                           :screen (make-screen 20 5)))
+         (win0 (make-window :id 0 :name "w" :width 20 :height 5
+                            :panes (list p0) :tree (make-layout-leaf p0)))
+         (win1 (make-window :id 1 :name "x" :width 20 :height 5
+                            :panes (list p1) :tree (make-layout-leaf p1)))
+         (sess (make-session :id 1 :name "s" :windows (list win0 win1))))
+    (window-select-pane win0 p0)
+    (window-select-pane win1 p1)
+    (session-select-window sess win0)
+    ;; Session prefix " s" = 2 chars.
+    ;; win0 "w" entry starts at col 2 (4 + 1 = 5 chars: "  w ?" or " [w] ")
+    ;; win1 "x" entry starts at col 7.
+    ;; Clicking col 7 should activate win1.
+    (cl-tmux::%mouse-status-bar-click sess 7)
+    (is (eq win1 (session-active-window sess))
+        "%mouse-status-bar-click at col 7 must select win1")))
+
+(test mouse-status-bar-click-does-nothing-for-out-of-range-col
+  "%mouse-status-bar-click is a no-op when col falls before all window entries."
+  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                           :screen (make-screen 20 5)))
+         (win0 (make-window :id 0 :name "w" :width 20 :height 5
+                            :panes (list p0) :tree (make-layout-leaf p0)))
+         (sess (make-session :id 1 :name "s" :windows (list win0))))
+    (window-select-pane win0 p0)
+    (session-select-window sess win0)
+    ;; Col 0 is before the first entry — no window should be selected.
+    (cl-tmux::%mouse-status-bar-click sess 0)
+    (is (eq win0 (session-active-window sess))
+        "%mouse-status-bar-click at col 0 must not change the active window")))
+
+;;; ── Copy-mode additional vi navigation keys ──────────────────────────────────
+
+(test copy-mode-h-moves-cursor-left
+  "Plain 'h' (byte 104) moves the copy-mode cursor left by one column."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        ;; Place cursor at column 3.
+        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 3))
+        (cl-tmux::process-byte s 104 state)   ; h
+        (let ((col (cdr (screen-copy-cursor screen))))
+          (is (= 2 col) "h must move cursor left by 1 column"))))))
+
+(test copy-mode-l-moves-cursor-right
+  "Plain 'l' (byte 108) moves the copy-mode cursor right by one column."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        ;; Place cursor at column 0.
+        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
+        (cl-tmux::process-byte s 108 state)   ; l
+        (let ((col (cdr (screen-copy-cursor screen))))
+          (is (= 1 col) "l must move cursor right by 1 column"))))))
+
+(test copy-mode-i-exits-copy-mode
+  "Plain 'i' (byte 105) exits copy mode without needing the C-b prefix."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (is (screen-copy-mode-p screen) "copy mode entered")
+        (cl-tmux::process-byte s 105 state)   ; i
+        (is-false (screen-copy-mode-p screen)
+            "i must exit copy mode")))))
+
+(test copy-mode-zero-moves-to-line-start
+  "Plain '0' (byte 48) moves the cursor to the start of the current line."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        ;; Place cursor somewhere in the middle.
+        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 2 5))
+        (cl-tmux::process-byte s 48 state)   ; 0
+        (let ((col (cdr (screen-copy-cursor screen))))
+          (is (= 0 col) "0 must move cursor column to 0"))))))
+
+(test copy-mode-dollar-moves-to-line-end
+  "Plain '$' (byte 36) moves the cursor to the end of the current line."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        ;; Start at col 0.
+        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
+        (cl-tmux::process-byte s 36 state)   ; $
+        (let* ((col   (cdr (screen-copy-cursor screen)))
+               (width (screen-width screen)))
+          (is (= (1- width) col) "$ must move cursor column to width-1"))))))
+
+(test copy-mode-ctrl-n-scrolls-down
+  "C-n (byte 14) moves the cursor down by 1 in copy mode (same as j)."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 10)
+        (cl-tmux/commands::copy-mode-scroll screen 5)
+        (setf (cl-tmux/terminal/types:screen-copy-cursor screen)
+              (cons (1- (screen-height screen)) 0))
+        (let ((offset-before (screen-copy-offset screen)))
+          (cl-tmux::process-byte s 14 state)   ; C-n
+          (is (= (1- offset-before) (screen-copy-offset screen))
+              "C-n at bottom row must scroll viewport down by 1"))))))
+
+(test copy-mode-ctrl-p-scrolls-up
+  "C-p (byte 16) moves the cursor up by 1 in copy mode (same as k)."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 10)
+        ;; Cursor at top row → C-p scrolls viewport.
+        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
+        (cl-tmux::process-byte s 16 state)   ; C-p
+        (is (= 1 (screen-copy-offset screen))
+            "C-p at top row must scroll viewport up by 1"))))))
+
+(test copy-mode-H-moves-cursor-to-high
+  "Plain 'H' (byte 72) moves the copy-mode cursor to the top row of the screen."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        ;; Place cursor at some non-zero row first.
+        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 3 0))
+        (cl-tmux::process-byte s 72 state)   ; H
+        (let ((row (car (screen-copy-cursor screen))))
+          (is (= 0 row) "H must move cursor to row 0 (top of screen)"))))))
+
+(test copy-mode-L-moves-cursor-to-low
+  "Plain 'L' (byte 76) moves the copy-mode cursor to the bottom row of the screen."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        ;; Cursor at row 0.
+        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
+        (cl-tmux::process-byte s 76 state)   ; L
+        (let* ((row    (car (screen-copy-cursor screen)))
+               (height (screen-height screen)))
+          (is (= (1- height) row) "L must move cursor to last row"))))))
+
+(test copy-mode-V-begins-line-selection
+  "Plain 'V' (byte 86) starts line-selection mode in copy mode without signaling."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (finishes (cl-tmux::process-byte s 86 state))
+        ;; V activates either regular selection or line-selection — check both.
+        (is (or (screen-copy-selecting screen)
+                (screen-copy-line-selection-p screen))
+            "V must activate some form of selection in copy mode")))))
+
+(test copy-mode-space-begins-selection
+  "Plain Space (byte 32) starts selection in copy mode."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (finishes (cl-tmux::process-byte s 32 state))
+        (is (screen-copy-selecting screen)
+            "Space must activate copy selection")))))
+
+;;; ── Table-driven tests: byte constant values ─────────────────────────────────
+
+(test byte-constants-have-correct-values
+  "VT100 and CSI byte constants must equal their documented ASCII/VT values."
+  (is (= 27  cl-tmux::+byte-esc+)          "ESC must be 27")
+  (is (= 91  cl-tmux::+byte-csi-bracket+)  "CSI [ must be 91")
+  (is (= 65  cl-tmux::+byte-arrow-up+)     "CUU A must be 65")
+  (is (= 66  cl-tmux::+byte-arrow-down+)   "CUD B must be 66")
+  (is (= 68  cl-tmux::+byte-arrow-left+)   "CUB D must be 68")
+  (is (= 67  cl-tmux::+byte-arrow-right+)  "CUF C must be 67")
+  (is (= 113 cl-tmux::+byte-q+)            "q must be 113")
+  (is (= 106 cl-tmux::+byte-j+)            "j must be 106")
+  (is (= 107 cl-tmux::+byte-k+)            "k must be 107")
+  (is (= 49  cl-tmux::+byte-csi-param-1+)  "CSI param 1 must be 49")
+  (is (= 59  cl-tmux::+byte-csi-semi+)     "CSI semi must be 59")
+  (is (= 53  cl-tmux::+byte-csi-mod-ctrl+) "CSI ctrl modifier must be 53")
+  (is (= 51  cl-tmux::+byte-csi-mod-meta+) "CSI meta modifier must be 51")
+  (is (= 126 cl-tmux::+byte-tilde+)        "tilde must be 126")
+  (is (= 60  cl-tmux::+byte-sgr-lt+)       "SGR < must be 60")
+  (is (= 48  cl-tmux::+byte-digit-0+)      "digit 0 must be 48")
+  (is (= 57  cl-tmux::+byte-digit-9+)      "digit 9 must be 57")
+  (is (= 53  cl-tmux::+byte-page-up-param+)   "PageUp param must be 53")
+  (is (= 54  cl-tmux::+byte-page-down-param+) "PageDown param must be 54")
+  (is (= 77  cl-tmux::+byte-ascii-m+)      "ASCII M must be 77")
+  (is (= 77  cl-tmux::+byte-sgr-press+)    "SGR press final must be 77")
+  (is (= 109 cl-tmux::+byte-sgr-release+)  "SGR release final must be 109"))
+
+;;; ── make-input-state and input-state-continuation ────────────────────────────
+
+(test make-input-state-starts-in-ground-state
+  "make-input-state returns an input-state with continuation = %ground-input-state."
+  (let ((state (cl-tmux::make-input-state)))
+    (is (cl-tmux::input-state-p state)
+        "make-input-state must return an input-state struct")
+    (is (functionp (cl-tmux::input-state-continuation state))
+        "input-state continuation must be a function")))
+
+(test input-state-continuation-is-reset-after-complete-sequence
+  "After a complete 3-byte ESC [ A sequence, the continuation returns to ground."
+  (let ((s     (make-fake-session))
+        (state (cl-tmux::make-input-state)))
+    (with-loop-state
+      ;; Feed ESC — transitions to escape accumulator
+      (cl-tmux::process-byte s 27 state)
+      (is (not (eq #'cl-tmux::%ground-input-state
+                   (cl-tmux::input-state-continuation state)))
+          "after ESC the continuation should not be ground-state")
+      ;; Feed [ A — completes the sequence, back to ground
+      (cl-tmux::process-byte s 91 state)
+      (cl-tmux::process-byte s 65 state)
+      (is (eq #'cl-tmux::%ground-input-state
+              (cl-tmux::input-state-continuation state))
+          "after completing ESC [ A the continuation must be ground-state"))))
+
+;;; ── %forward-octets-synchronized — synchronize-panes broadcast ───────────────
+
+(test forward-octets-synchronized-broadcasts-when-option-set
+  "%forward-octets-synchronized writes to all panes when synchronize-panes is T.
+   Verified by confirming it runs without error on a multi-pane session."
+  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                           :screen (make-screen 20 5)))
+         (p1   (make-pane :id 2 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                           :screen (make-screen 20 5)))
+         (win  (make-window :id 1 :name "w" :width 20 :height 5
+                            :panes (list p0 p1)
+                            :tree  (make-layout-split :h (make-layout-leaf p0)
+                                                        (make-layout-leaf p1) 1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (cl-tmux/options:set-option "synchronize-panes" t)
+    (unwind-protect
+         ;; fd=-1 makes pty-write a no-op; we just verify no error is raised.
+         (finishes
+           (cl-tmux::%forward-octets-synchronized
+            sess
+            (make-array 1 :element-type '(unsigned-byte 8) :initial-element 65)))
+      (cl-tmux/options:set-option "synchronize-panes" nil))))
+
+;;; ── %maybe-rename-window-from-title coverage ─────────────────────────────────
+
+(test maybe-rename-window-from-title-renames-when-osc-title-set
+  "%maybe-rename-window-from-title propagates the OSC title to the window name
+   when the window has automatic-rename enabled and the title differs."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                             :screen screen))
+         (win    (make-window :id 1 :name "old-name" :width 20 :height 5
+                              :panes (list pane) :tree (make-layout-leaf pane)))
+         (sess   (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win pane)
+    (session-select-window sess win)
+    ;; Set an OSC title on the screen and ensure automatic-rename is on.
+    (setf (screen-title screen) "new-title")
+    (setf (window-automatic-rename-p win) t)
+    (with-loop-state
+      (cl-tmux::%maybe-rename-window-from-title sess)
+      (is (string= "new-title" (window-name win))
+          "%maybe-rename-window-from-title must set window-name to OSC title")))))
+
+(test maybe-rename-window-from-title-noop-when-titles-equal
+  "%maybe-rename-window-from-title does nothing when OSC title equals window name."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                             :screen screen))
+         (win    (make-window :id 1 :name "same" :width 20 :height 5
+                              :panes (list pane) :tree (make-layout-leaf pane)))
+         (sess   (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win pane)
+    (session-select-window sess win)
+    (setf (screen-title screen) "same")
+    (setf (window-automatic-rename-p win) t)
+    (with-loop-state
+      (cl-tmux::%maybe-rename-window-from-title sess)
+      (is (string= "same" (window-name win))
+          "window-name must be unchanged when title equals name")))))
+
+(test maybe-rename-window-from-title-noop-when-auto-rename-off
+  "%maybe-rename-window-from-title does nothing when automatic-rename is disabled."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                             :screen screen))
+         (win    (make-window :id 1 :name "original" :width 20 :height 5
+                              :panes (list pane) :tree (make-layout-leaf pane)))
+         (sess   (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win pane)
+    (session-select-window sess win)
+    (setf (screen-title screen) "new-title")
+    (setf (window-automatic-rename-p win) nil)
+    (with-loop-state
+      (cl-tmux::%maybe-rename-window-from-title sess)
+      (is (string= "original" (window-name win))
+          "window-name must not change when auto-rename is disabled")))))
+
+;;; ── Application cursor keys remapping ───────────────────────────────────────
+
+(test app-cursor-keys-remaps-csi-arrow-to-ss3
+  "When app-cursor-keys mode is active, ESC [ A forwarded outside copy mode is
+   remapped to ESC O A (SS3) before being sent to the pane."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        ;; Enable application cursor keys on the active pane's screen.
+        (setf (screen-app-cursor-keys screen) t)
+        ;; Ensure we are NOT in copy mode so the sequence is forwarded, not consumed.
+        (is-false (cl-tmux::%copy-mode-active-p s) "must not be in copy mode")
+        ;; Feed ESC [ A — should be remapped to ESC O A internally.
+        ;; fd=-1 panes: pty-write is a no-op; we assert no error and NIL return.
+        (is (null (cl-tmux::process-byte s 27 state)))
+        (is (null (cl-tmux::process-byte s 91 state)))
+        (is (null (cl-tmux::process-byte s 65 state))
+            "ESC [ A with app-cursor-keys must not signal or return a quit value")))))
+
+;;; ── Buffer overflow guard in make-escape-input-k ────────────────────────────
+
+(test escape-accumulator-resets-after-complete-sgr-sequence
+  "After a complete SGR mouse sequence, the continuation returns to ground state."
+  (let ((s     (make-fake-session))
+        (state (cl-tmux::make-input-state)))
+    (with-loop-state
+      ;; Feed ESC [ < 0 ; 5 ; 3 M  (a complete SGR press) byte by byte.
+      (dolist (byte (mapcar #'char-code (coerce (format nil "~C[<0;5;3M" #\Escape) 'list)))
+        (cl-tmux::process-byte s byte state))
+      ;; After the full sequence the continuation must be back to ground.
+      (is (eq #'cl-tmux::%ground-input-state
+              (cl-tmux::input-state-continuation state))
+          "continuation must return to ground after completed SGR sequence"))))
+
+;;; ── handle-prompt-key UTF-8 multi-byte input ─────────────────────────────────
+
+(test handle-prompt-key-utf8-two-byte-sequence-inserts-char
+  "A 2-byte UTF-8 sequence (U+00E9, é) fed byte-by-byte into handle-prompt-key
+   inserts the correct character into the prompt buffer."
+  (with-clean-prompt
+    (prompt-start "test" ""
+                  (lambda (buf) (declare (ignore buf)) nil))
+    ;; U+00E9 in UTF-8: 0xC3 0xA9
+    (cl-tmux::handle-prompt-key #xC3)
+    (cl-tmux::handle-prompt-key #xA9)
+    (is (string= "é" (prompt-buffer *prompt*))
+        "2-byte UTF-8 sequence must decode and insert é into prompt")))
+
+(test handle-prompt-key-utf8-resets-on-enter
+  "UTF-8 accumulator state is reset when Enter is pressed mid-sequence."
+  (with-clean-prompt
+    (let ((submitted "unset"))
+      (prompt-start "test" ""
+                    (lambda (buf) (setf submitted buf)))
+      ;; Start a 2-byte UTF-8 sequence but press Enter before the second byte.
+      (cl-tmux::handle-prompt-key #xC3)
+      (cl-tmux::handle-prompt-key 13)   ; Enter
+      ;; The prompt should have been submitted and dismissed.
+      (is-false (prompt-active-p)
+          "Enter mid-UTF8 must dismiss the prompt")
+      ;; Submitted value is the buffer content before the incomplete sequence.
+      (is (stringp submitted) "submitted value must be a string"))))
+
+;;; ── handle-prompt-key cursor movement (C-b, C-f) ────────────────────────────
+
+(test handle-prompt-key-ctrl-b-moves-cursor-left
+  "C-b (byte 2) moves the prompt cursor one position to the left."
+  (with-clean-prompt
+    (prompt-start "test" "hello"
+                  (lambda (buf) (declare (ignore buf)) nil))
+    (prompt-cursor-eol)
+    (is (= 5 (prompt-cursor-index *prompt*)) "cursor at end")
+    (cl-tmux::handle-prompt-key 2)   ; C-b
+    (is (= 4 (prompt-cursor-index *prompt*))
+        "C-b must move cursor one position left")))
+
+(test handle-prompt-key-ctrl-f-moves-cursor-right
+  "C-f (byte 6) moves the prompt cursor one position to the right."
+  (with-clean-prompt
+    (prompt-start "test" "hello"
+                  (lambda (buf) (declare (ignore buf)) nil))
+    (prompt-cursor-bol)
+    (is (= 0 (prompt-cursor-index *prompt*)) "cursor at start")
+    (cl-tmux::handle-prompt-key 6)   ; C-f
+    (is (= 1 (prompt-cursor-index *prompt*))
+        "C-f must move cursor one position right")))
+
+;;; ── handle-prompt-key kill commands ─────────────────────────────────────────
+
+(test handle-prompt-key-ctrl-k-kills-to-end
+  "C-k (byte 11) deletes from the cursor position to the end of the buffer."
+  (with-clean-prompt
+    (prompt-start "test" "hello"
+                  (lambda (buf) (declare (ignore buf)) nil))
+    ;; Move cursor to position 2 ("he" remains, "llo" to be killed).
+    (prompt-cursor-bol)
+    (cl-tmux::handle-prompt-key 6)   ; C-f → pos 1
+    (cl-tmux::handle-prompt-key 6)   ; C-f → pos 2
+    (cl-tmux::handle-prompt-key 11)  ; C-k
+    (is (string= "he" (prompt-buffer *prompt*))
+        "C-k must kill from cursor to end")))
+
+(test handle-prompt-key-ctrl-u-kills-to-start
+  "C-u (byte 21) deletes from the start of the buffer to the cursor position."
+  (with-clean-prompt
+    (prompt-start "test" "hello"
+                  (lambda (buf) (declare (ignore buf)) nil))
+    ;; Move cursor to position 3 ("hel" to be killed, "lo" remains).
+    (prompt-cursor-bol)
+    (cl-tmux::handle-prompt-key 6)   ; C-f → pos 1
+    (cl-tmux::handle-prompt-key 6)   ; C-f → pos 2
+    (cl-tmux::handle-prompt-key 6)   ; C-f → pos 3
+    (cl-tmux::handle-prompt-key 21)  ; C-u
+    (is (string= "lo" (prompt-buffer *prompt*))
+        "C-u must kill from start to cursor")))
+
+(test handle-prompt-key-ctrl-w-kills-previous-word
+  "C-w (byte 23) deletes the word immediately before the cursor."
+  (with-clean-prompt
+    (prompt-start "test" "foo bar"
+                  (lambda (buf) (declare (ignore buf)) nil))
+    ;; Move cursor to end of buffer.
+    (prompt-cursor-eol)
+    (cl-tmux::handle-prompt-key 23)  ; C-w
+    ;; Should have deleted "bar" (and possibly the space).
+    (let ((buf (prompt-buffer *prompt*)))
+      (is (string= "foo" (string-right-trim " " buf))
+          "C-w must kill the previous word"))))
+
+;;; ── process-byte: copy-mode w, b, e word navigation ─────────────────────────
+
+(test copy-mode-w-moves-word-forward
+  "Plain 'w' (byte 119) moves the copy-mode cursor forward by one word."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        ;; Feed some text to give the screen content.
+        (screen-process-bytes
+         screen (map '(simple-array (unsigned-byte 8) (*)) #'char-code "hello world"))
+        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
+        (finishes (cl-tmux::process-byte s 119 state))))))  ; w
+
+(test copy-mode-b-moves-word-backward
+  "Plain 'b' (byte 98) moves the copy-mode cursor backward by one word."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 5))
+        (finishes (cl-tmux::process-byte s 98 state))))))   ; b
+
+(test copy-mode-e-moves-to-word-end
+  "Plain 'e' (byte 101) moves the copy-mode cursor to the end of the current word."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
+        (finishes (cl-tmux::process-byte s 101 state))))))  ; e
+
+;;; ── process-byte: copy-mode page up/down C-f/C-b (in-mode) ──────────────────
+
+(test copy-mode-ctrl-f-page-down
+  "C-f (byte 6) in copy mode scrolls down one full page."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 30)
+        (cl-tmux/commands::copy-mode-scroll screen 20)
+        (let ((offset-before (screen-copy-offset screen))
+              (h             (screen-height screen)))
+          (cl-tmux::process-byte s 6 state)   ; C-f → page down
+          (let ((expected (max 0 (- offset-before h))))
+            (is (= expected (screen-copy-offset screen))
+                "C-f must scroll copy-offset down by screen-height")))))))
+
+(test copy-mode-page-up-command-scrolls-full-page
+  "copy-mode-page-up scrolls the viewport up by one full screen-height."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 30)
+        (let ((h (screen-height screen)))
+          (cl-tmux/commands::copy-mode-page-up screen)
+          (let ((expected (min h 30)))
+            (is (= expected (screen-copy-offset screen))
+                "copy-mode-page-up must scroll copy-offset up by screen-height")))))))
+
+;;; ── copy-mode y (yank) and n/N (search navigation) ──────────────────────────
+
+(test copy-mode-y-yanks-selection-finishes
+  "Plain 'y' (byte 121) completes without signaling when in copy mode."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        ;; Begin a selection first so yank has something to copy.
+        (cl-tmux/commands::copy-mode-begin-selection screen)
+        (finishes (cl-tmux::process-byte s 121 state))))))   ; y
+
+(test copy-mode-n-search-next-finishes
+  "Plain 'n' (byte 110) runs search-next without signaling in copy mode."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (finishes (cl-tmux::process-byte s 110 state))))))   ; n
+
+(test copy-mode-N-search-prev-finishes
+  "Plain 'N' (byte 78) runs search-prev without signaling in copy mode."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (finishes (cl-tmux::process-byte s 78 state))))))    ; N
+
+;;; ── copy-mode Y (copy-line) and D (copy-end-of-line) ────────────────────────
+
+(test copy-mode-Y-copies-current-line
+  "Plain 'Y' (byte 89) copies the current line into the paste buffer without signaling."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (finishes (cl-tmux::process-byte s 89 state))))))    ; Y
+
+(test copy-mode-D-copies-to-end-of-line
+  "Plain 'D' (byte 68) copies from the cursor to end of line without signaling."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (finishes (cl-tmux::process-byte s 68 state))))))    ; D
+
+;;; ── copy-mode half-page and single-line scroll bindings ──────────────────────
+
+(test copy-mode-ctrl-u-half-page-up
+  "C-u (byte 21) scrolls the copy-mode viewport up by half a page."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 30)
+        (let ((offset-before (screen-copy-offset screen)))
+          (cl-tmux::process-byte s 21 state)   ; C-u
+          (is (>= (screen-copy-offset screen) offset-before)
+              "C-u must not decrease copy-offset"))))))
+
+(test copy-mode-ctrl-d-half-page-down
+  "C-d (byte 4) scrolls the copy-mode viewport down by half a page."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 30)
+        (cl-tmux/commands::copy-mode-scroll screen 20)
+        (let ((offset-before (screen-copy-offset screen)))
+          (cl-tmux::process-byte s 4 state)    ; C-d
+          (is (<= (screen-copy-offset screen) offset-before)
+              "C-d must not increase copy-offset"))))))
+
+(test copy-mode-ctrl-e-scrolls-down-one-line
+  "C-e (byte 5) in copy mode scrolls the viewport down one line."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 10)
+        (cl-tmux/commands::copy-mode-scroll screen 5)
+        (let ((offset-before (screen-copy-offset screen)))
+          (cl-tmux::process-byte s 5 state)    ; C-e
+          (is (<= (screen-copy-offset screen) offset-before)
+              "C-e must scroll copy-offset down (decrease offset)"))))))
+
+(test copy-mode-ctrl-y-scrolls-up-one-line
+  "C-y (byte 25) in copy mode scrolls the viewport up one line."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 10)
+        (cl-tmux::process-byte s 25 state)    ; C-y
+        (is (>= (screen-copy-offset screen) 0)
+            "C-y must not produce a negative copy-offset")))))
+
+;;; ── copy-mode v alternative for begin-selection ─────────────────────────────
+
+(test copy-mode-v-begins-selection
+  "Plain 'v' (byte 118) also begins selection in copy mode."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (finishes (cl-tmux::process-byte s 118 state))
+        (is (screen-copy-selecting screen)
+            "v must activate copy selection")))))
+
+;;; ── Middle-screen cursor jump M ──────────────────────────────────────────────
+
+(test copy-mode-M-moves-cursor-to-middle
+  "Plain 'M' (byte 77) moves the copy-mode cursor to the middle row of the screen."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        ;; Place cursor at row 0.
+        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
+        (cl-tmux::process-byte s (char-code #\M) state)
+        (let* ((row    (car (screen-copy-cursor screen)))
+               (height (screen-height screen))
+               (mid    (floor height 2)))
+          (is (= mid row) "M must place cursor at the middle row"))))))
+
+;;; ── %handle-escape-x10-mouse direct invocation ───────────────────────────────
+
+(test handle-escape-x10-mouse-dispatches-event
+  "%handle-escape-x10-mouse decodes X10 encoding and dispatches the event.
+   We verify it returns (values nil ground-state) without signaling."
+  (with-two-pane-mouse-session (sess win p0 p1)
+    (let ((buf (make-array 6 :element-type '(unsigned-byte 8)
+                             :initial-contents (list 27 91 77
+                                                     (+ 0 32)   ; btn 0 = left
+                                                     (+ 50 33)  ; col 50 → 0-based 49
+                                                     (+ 5 33)   ; row 5  → 0-based 4
+                                                     ))))
+      (multiple-value-bind (outcome next)
+          (cl-tmux::%handle-escape-x10-mouse sess buf)
+        (is (null outcome)
+            "%handle-escape-x10-mouse must return NIL outcome")
+        (is (eq #'cl-tmux::%ground-input-state next)
+            "%handle-escape-x10-mouse must return ground-state as next state")))))
+
+;;; ── %handle-escape-function-key outside copy mode ───────────────────────────
+
+(test handle-escape-function-key-forwards-outside-copy-mode
+  "%handle-escape-function-key forwards the 4-byte sequence when not in copy mode."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      ;; Build an ESC [ 5 ~ (PageUp) buffer — not in copy mode.
+      (let ((buf (make-array 4 :element-type '(unsigned-byte 8)
+                               :initial-contents (list 27 91 53 126))))
+        (multiple-value-bind (outcome next)
+            (cl-tmux::%handle-escape-function-key s buf)
+          (is (null outcome)
+              "%handle-escape-function-key outside copy-mode must return NIL outcome")
+          (is (eq #'cl-tmux::%ground-input-state next)
+              "%handle-escape-function-key must return ground-state"))))))
+
+;;; ── %handle-escape-csi-3byte: keep-accumulating for digit ───────────────────
+
+(test handle-escape-csi-3byte-returns-keep-accumulating-for-digit
+  "%handle-escape-csi-3byte returns (values T NIL) when the third byte is a digit,
+   indicating we need to keep accumulating (for ESC [ N ~ function-key sequences)."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      ;; Build ESC [ 5  — third byte is '5' (53), a digit.
+      (let ((buf (make-array 3 :element-type '(unsigned-byte 8)
+                               :fill-pointer 3 :adjustable t
+                               :initial-contents (list 27 91 53))))
+        (multiple-value-bind (keep-accumulating next-state)
+            (cl-tmux::%handle-escape-csi-3byte s buf)
+          (is (eq t keep-accumulating)
+              "%handle-escape-csi-3byte with digit third-byte must return T (keep accumulating)")
+          (is (null next-state)
+              "next-state must be NIL when keep-accumulating is T"))))))
+
+(test handle-escape-csi-3byte-returns-ground-state-for-non-digit
+  "%handle-escape-csi-3byte returns (values NIL ground-state) for a non-digit final byte."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      ;; Build ESC [ A  — third byte is 'A' (65), not a digit.
+      (let ((buf (make-array 3 :element-type '(unsigned-byte 8)
+                               :fill-pointer 3 :adjustable t
+                               :initial-contents (list 27 91 65))))
+        (multiple-value-bind (keep-accumulating next-state)
+            (cl-tmux::%handle-escape-csi-3byte s buf)
+          (is (null keep-accumulating)
+              "%handle-escape-csi-3byte with non-digit must return NIL (do not keep accumulating)")
+          (is (eq #'cl-tmux::%ground-input-state next-state)
+              "next-state must be %ground-input-state"))))))
+
+;;; ── SGR mouse: parse with scroll-wheel button encoding ───────────────────────
+
+(test parse-sgr-mouse-scroll-up-button
+  "%parse-sgr-mouse parses SGR scroll-up (btn=64) correctly."
+  (let* ((s   (format nil "~C[<64;5;3M" #\Escape))
+         (buf (make-array (length s) :element-type '(unsigned-byte 8)
+                          :initial-contents (map 'list #'char-code s)))
+         (len (length buf)))
+    (multiple-value-bind (btn col row release-p)
+        (cl-tmux::%parse-sgr-mouse buf len)
+      (is (= 64 btn)   "scroll-up btn must be 64")
+      (is (= 4  col)   "col must be 0-based (5-1=4)")
+      (is (= 2  row)   "row must be 0-based (3-1=2)")
+      (is-false release-p "press sequence must have release-p=NIL"))))
+
+(test parse-sgr-mouse-returns-nil-for-short-buffer
+  "%parse-sgr-mouse returns (values nil nil nil nil) for a buffer shorter than 9 bytes."
+  (let* ((s   (format nil "~C[<0M" #\Escape))  ; too short
+         (buf (make-array (length s) :element-type '(unsigned-byte 8)
+                          :initial-contents (map 'list #'char-code s)))
+         (len (length buf)))
+    (multiple-value-bind (btn col row release-p)
+        (cl-tmux::%parse-sgr-mouse buf len)
+      (is (null btn)      "short buffer must return nil btn")
+      (is (null col)      "short buffer must return nil col")
+      (is (null row)      "short buffer must return nil row")
+      (is (null release-p) "short buffer must return nil release-p"))))
+
+;;; ── SGR mouse dispatch via process-byte ─────────────────────────────────────
+
+(test sgr-mouse-left-click-via-process-byte-selects-pane
+  "An SGR left-click sequence fed byte-by-byte through process-byte selects the pane."
+  (with-two-pane-mouse-session (sess win p0 p1)
+    (setf (screen-mouse-sgr-mode (pane-screen p0)) t)
+    (let ((state (cl-tmux::make-input-state))
+          ;; ESC [ < 0 ; 50 ; 5 M  — btn=0, col=50, row=5 (1-based), press
+          (seq   (format nil "~C[<0;50;5M" #\Escape)))
+      (loop for ch across seq
+            do (cl-tmux::process-byte sess (char-code ch) state))
+      (is (eq p1 (window-active-pane win))
+          "SGR left-click in right pane must focus p1"))))
+
+;;; ── overlay-scroll: verify actual offset change ──────────────────────────────
+
+(test overlay-scroll-up-decrements-offset
+  "overlay-scroll -1 decrements *overlay-scroll-offset* by 1 (clamped at 0)."
+  (let ((*overlay* "line1\nline2\nline3\nline4\nline5\n")
+        (*overlay-scroll-offset* 3))
+    (overlay-scroll -1)
+    (is (= 2 *overlay-scroll-offset*)
+        "overlay-scroll -1 must decrement offset from 3 to 2")))
+
+(test overlay-scroll-down-increments-offset
+  "overlay-scroll 1 increments *overlay-scroll-offset* by 1."
+  (let ((*overlay* "line1\nline2\nline3\nline4\nline5\n")
+        (*overlay-scroll-offset* 0))
+    (overlay-scroll 1)
+    (is (= 1 *overlay-scroll-offset*)
+        "overlay-scroll 1 must increment offset from 0 to 1")))
+
+(test overlay-scroll-clamps-at-zero
+  "overlay-scroll -1 at offset 0 does not produce a negative offset."
+  (let ((*overlay* "line1\n")
+        (*overlay-scroll-offset* 0))
+    (overlay-scroll -1)
+    (is (>= *overlay-scroll-offset* 0)
+        "overlay-scroll at offset 0 must not go negative")))

@@ -52,15 +52,18 @@
      (:file "commands-core")
      (:file "commands-copy-mode")
      (:file "commands")
-     (:file "renderer-format")   ; ANSI primitives
-     (:file "renderer-style")   ; style-string parsing + SGR dispatch tables
-     (:file "renderer-pane")    ; pane + border rendering
-     (:file "renderer-overlay") ; popup and menu box-drawing
-     (:file "renderer")         ; status bar + session compositing
+     (:file "renderer-format")     ; ANSI primitives
+     (:file "renderer-style")     ; style-string parsing + SGR dispatch tables
+     (:file "renderer-pane")      ; pane + border rendering
+     (:file "renderer-overlay")   ; popup and menu box-drawing
+     (:file "renderer-statusbar") ; status bar composition
+     (:file "renderer-compose")   ; session frame compositing + entry points
+     (:file "renderer")           ; documentation stub (intentionally empty)
      (:file "input")
      (:file "runtime")
-     (:file "dispatch-core")     ; dispatch macros, helpers, and core logic
-     (:file "dispatch-handlers") ; command handler rule table (define-command-handlers)
+     (:file "dispatch-core")            ; dispatch macros, helpers, and core logic
+     (:file "dispatch-handlers")        ; command handler rule table (define-command-handlers)
+     (:file "dispatch-handlers-buffer") ; paste-buffer command handler helpers
      (:file "events-core")
      (:file "events-keystroke")
      (:file "events-loop")

@@ -59,7 +59,7 @@
     (dotimes (x (screen-width screen))
       (feed screen "X"))))
 
-(test ed-0
+(test erase-display-erases-to-end-of-screen
   "ESC[J erases from the cursor position to the end of the display."
   (with-screen (s 5 3)
     (fill-screen s)
@@ -73,7 +73,7 @@
     ;; row 2 must be fully blank
     (is (row-blank-p s 2))))
 
-(test ed-1
+(test erase-display-erases-from-start-to-cursor
   "ESC[1J erases from the start of the display to the cursor (inclusive)."
   (with-screen (s 5 3)
     (fill-screen s)
@@ -87,7 +87,7 @@
     ;; cell after cursor on row 1 is still filled
     (is (char= #\X (char-at s 3 1)))))
 
-(test ed-2
+(test erase-display-clears-entire-screen
   "ESC[2J erases the entire display."
   (with-screen (s 5 3)
     (fill-screen s)
@@ -95,7 +95,7 @@
     (dotimes (y 3)
       (is (row-blank-p s y) "row ~D not blank after ED 2" y))))
 
-(test el-0
+(test erase-line-erases-to-end-of-line
   "ESC[K erases from the cursor to the end of the current line."
   (with-screen (s 10 2)
     (feed s "abcdefghij")        ; fill row 0
@@ -105,7 +105,7 @@
     (is (char= #\Space (char-at s 4 0)))
     (is (char= #\Space (char-at s 9 0)))))
 
-(test el-1
+(test erase-line-erases-from-start-to-cursor
   "ESC[1K erases from the start of the line to the cursor (inclusive)."
   (with-screen (s 10 2)
     (feed s "abcdefghij")
@@ -115,7 +115,7 @@
     (is (char= #\Space (char-at s 3 0)))
     (is (char= #\e (char-at s 4 0)))))
 
-(test el-2
+(test erase-line-clears-entire-line
   "ESC[2K erases the entire current line."
   (with-screen (s 10 2)
     (feed s "abcdefghij")
@@ -124,6 +124,71 @@
     (is (row-blank-p s 0))
     ;; cursor y unchanged
     (is (= 0 (screen-cursor-y s)))))
+
+;;; ── Direct erase-display tests covering guarded edge cases ──────────────────
+;;;
+;;; These call erase-display directly to exercise the edge at cy=0 for mode 1
+;;; (the when guard in erase.lisp) and other paths not clearly covered by the
+;;; high-level CSI path above.
+
+(test erase-display-direct-mode-0-from-cy-zero
+  "erase-display mode 0 with cursor at (0,0) erases the full screen."
+  (with-screen (s 5 3)
+    (fill-screen s)
+    ;; Explicitly home cursor so mode 0 erases the entire screen.
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 0
+          (cl-tmux/terminal/types:screen-cursor-y s) 0)
+    (cl-tmux/terminal/actions:erase-display s 0)
+    (dotimes (y 3)
+      (is (row-blank-p s y)
+          "row ~D must be blank after erase-display mode 0 from (0,0)" y))))
+
+(test erase-display-direct-mode-1-at-cy-zero-skips-above-rows
+  "erase-display mode 1 with cy=0 erases only from (0,0) to cursor on row 0.
+   The 'when (> cy 0)' guard in erase.lisp means no above-rows erase is attempted."
+  (with-screen (s 5 3)
+    (fill-screen s)
+    ;; cursor at (2,0): mode 1 should blank cols 0-2 of row 0, leave rows 1-2 intact
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 2
+          (cl-tmux/terminal/types:screen-cursor-y s) 0)
+    (cl-tmux/terminal/actions:erase-display s 1)
+    (is (char= #\Space (char-at s 0 0)) "col 0 row 0 must be erased")
+    (is (char= #\Space (char-at s 2 0)) "col 2 row 0 must be erased")
+    (is (char= #\X     (char-at s 3 0)) "col 3 row 0 must be preserved")
+    (is (string= "XXXXX" (row-string s 1)) "row 1 must be untouched")))
+
+(test erase-display-direct-mode-2-clears-all-rows
+  "erase-display mode 2 called directly blanks every row."
+  (with-screen (s 5 3)
+    (fill-screen s)
+    (cl-tmux/terminal/actions:erase-display s 2)
+    (dotimes (y 3)
+      (is (row-blank-p s y) "row ~D must be blank after direct erase-display mode 2" y))))
+
+;;; ── Direct erase-line tests for modes 1 and 2 ───────────────────────────────
+;;;
+;;; Coverage gap: modes 1 and 2 were only exercised through the CSI path.
+;;; These call erase-line directly to give each mode an isolated assertion.
+
+(test erase-line-direct-mode-1-erases-start-to-cursor
+  "erase-line mode 1 called directly blanks from col 0 to the cursor (inclusive)."
+  (with-screen (s 10 5)
+    (feed s "hello")
+    ;; cursor at col 3
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 3
+          (cl-tmux/terminal/types:screen-cursor-y s) 0)
+    (cl-tmux/terminal/actions:erase-line s 1)
+    (is (char= #\Space (char-at s 0 0)) "col 0 must be erased")
+    (is (char= #\Space (char-at s 3 0)) "col 3 (cursor) must be erased")
+    (is (char= #\o     (char-at s 4 0)) "col 4 must be preserved")))
+
+(test erase-line-direct-mode-2-erases-entire-line
+  "erase-line mode 2 called directly blanks the entire current line."
+  (with-screen (s 10 5)
+    (feed s "hello")
+    (setf (cl-tmux/terminal/types:screen-cursor-y s) 0)
+    (cl-tmux/terminal/actions:erase-line s 2)
+    (is (row-blank-p s 0) "row 0 must be fully blank after erase-line mode 2")))
 
 ;;; ── SUITE: scroll-region ────────────────────────────────────────────────────
 
@@ -135,39 +200,30 @@
 (test scroll-auto
   "Writing a 4th line into a 3-row screen scrolls the content up."
   (with-screen (s 5 3)
-    (feed s (format nil "L1~C~CL2~C~CL3~C~CL4"
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed))
+    (feed-lines s "L1" "L2" "L3" "L4")
     ;; After one scroll: row 0 = old row 1 = "L2", row 2 = "L4".
     (check-row s 0 "L2")
     (check-row s 2 "L4")))
 
-(test decstbm
+(test decstbm-restricts-scroll-to-region
   "DECSTBM restricts scrolling to the specified region (rows 2-3 of 5)."
   (with-screen (s 5 5)
     ;; Write one identifiable line per row.
-    (feed s (format nil "R0~C~CR1~C~CR2~C~CR3~C~CR4"
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed))
+    (feed-lines s "R0" "R1" "R2" "R3" "R4")
     ;; Set scroll region to rows 2-4 (1-based: ESC[2;4r).
     (feed s (esc "[2;4r"))      ; scroll region = rows 1-3 (0-based)
     ;; Now move into the region and force a scroll.
     (feed s (esc "[4;1H"))      ; cursor to row 4 (0-based 3), col 1
-    (feed s (format nil "~C~CNR" #\Return #\Linefeed))
+    (feed-lines s "" "NR")
     ;; Row 0 must be untouched.
     (is (string= "R0" (row-string s 0 :end 2))
         "row 0 should be untouched, got ~S" (row-string s 0 :end 2))))
 
-(test reverse-index
+(test reverse-index-scrolls-region-down
   "ESC M at the top of the scroll region scrolls the region down."
   (with-screen (s 5 3)
     ;; Fill rows with identifiable content.
-    (feed s (format nil "AA~C~CBB~C~CCC"
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed))
+    (feed-lines s "AA" "BB" "CC")
     ;; Move cursor to row 0 (top) and send RI.
     (feed s (esc "[1;1H"))   ; cursor home
     (feed s (esc "M"))       ; ESC M = RI
@@ -177,13 +233,10 @@
     ;; New row 0 should be blank.
     (is (row-blank-p s 0) "new row 0 should be blank after RI")))
 
-(test il-insert-lines
+(test il-insert-lines-pushes-content-down
   "ESC[2L (insert 2 lines) pushes existing content down."
   (with-screen (s 5 4)
-    (feed s (format nil "AA~C~CBB~C~CCC~C~CDD"
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed))
+    (feed-lines s "AA" "BB" "CC" "DD")
     ;; Move to row 1 and insert 2 lines.
     (feed s (esc "[2;1H"))   ; cursor to row 2 (0-based 1)
     (feed s (esc "[2L"))     ; insert 2 lines
@@ -193,13 +246,10 @@
     (is (row-blank-p s 2))
     (check-row s 3 "BB")))
 
-(test dl-delete-lines
+(test dl-delete-lines-pulls-content-up
   "ESC[2M (delete 2 lines) pulls content up."
   (with-screen (s 5 4)
-    (feed s (format nil "AA~C~CBB~C~CCC~C~CDD"
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed))
+    (feed-lines s "AA" "BB" "CC" "DD")
     ;; Move to row 1 and delete 2 lines.
     (feed s (esc "[2;1H"))
     (feed s (esc "[2M"))
@@ -376,9 +426,7 @@
   "erase-display mode 3 (ED 3) also clears the scrollback buffer."
   (with-screen (s 5 3)
     ;; Build up some scrollback by feeding lines that force scrolling.
-    (feed s (format nil "L0~C~CL1~C~CL2~C~CL3" #\Return #\Linefeed
-                                                  #\Return #\Linefeed
-                                                  #\Return #\Linefeed))
+    (feed-lines s "L0" "L1" "L2" "L3")
     (is (plusp (length (cl-tmux/terminal/types:screen-scrollback s)))
         "scrollback must be non-empty after filling the screen")
     ;; Mode 3 = clear screen + clear scrollback
@@ -461,23 +509,26 @@
 ;;;
 ;;; Tests that scroll-up-one and scroll-down-one respect an active scroll region
 ;;; set by decstbm and leave rows outside the region untouched.
+;;;
+;;; The shared with-5-row-scroll-region fixture eliminates the repeated inline
+;;; 5-row fill + decstbm setup pattern from both tests.
 
 (def-suite constrained-scroll
   :description "Scroll operations respect a restricted scroll region"
   :in terminal-suite)
 (in-suite constrained-scroll)
 
+(defmacro with-5-row-scroll-region ((screen-var) &body body)
+  "Bind SCREEN-VAR to a 5-row screen with rows labeled R0-R4 and scroll
+   region restricted to rows 1-3.  Used by constrained-scroll tests."
+  `(with-screen (,screen-var 5 5)
+     (feed-lines ,screen-var "R0" "R1" "R2" "R3" "R4")
+     (cl-tmux/terminal/actions:decstbm ,screen-var 1 3)
+     ,@body))
+
 (test scroll-up-one-respects-scroll-region
   "scroll-up-one moves only the rows within the active scroll region."
-  (with-screen (s 5 5)
-    ;; Fill rows 0-4 with identifiable content.
-    (feed s (format nil "R0~C~CR1~C~CR2~C~CR3~C~CR4"
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed))
-    ;; Restrict scrolling to rows 1-3 only.
-    (cl-tmux/terminal/actions:decstbm s 1 3)
+  (with-5-row-scroll-region (s)
     (cl-tmux/terminal/actions:scroll-up-one s)
     ;; Row 0 must be untouched (outside the scroll region).
     (check-row s 0 "R0")
@@ -486,14 +537,7 @@
 
 (test scroll-down-one-respects-scroll-region
   "scroll-down-one moves only the rows within the active scroll region."
-  (with-screen (s 5 5)
-    (feed s (format nil "R0~C~CR1~C~CR2~C~CR3~C~CR4"
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed
-                    #\Return #\Linefeed))
-    ;; Restrict scrolling to rows 1-3.
-    (cl-tmux/terminal/actions:decstbm s 1 3)
+  (with-5-row-scroll-region (s)
     (cl-tmux/terminal/actions:scroll-down-one s)
     ;; Row 0 must be untouched.
     (check-row s 0 "R0")
@@ -501,3 +545,125 @@
     (check-row s 4 "R4")
     ;; Row 1 (the new top of the region) must be blank.
     (is (row-blank-p s 1) "row 1 (top of scroll region) must be blank after scroll-down-one")))
+
+;;; ── SUITE: scroll-dirty-flag ─────────────────────────────────────────────────
+;;;
+;;; Both scroll-up-one and scroll-down-one must mark screen-dirty-p after they
+;;; operate, so the renderer knows a repaint is needed.
+
+(def-suite scroll-dirty-flag
+  :description "scroll-up-one and scroll-down-one set screen-dirty-p"
+  :in terminal-suite)
+(in-suite scroll-dirty-flag)
+
+(test scroll-up-one-marks-screen-dirty
+  "scroll-up-one sets screen-dirty-p to T."
+  (with-screen (s 5 3)
+    (screen-clear-dirty s)
+    (is-false (cl-tmux/terminal/types:screen-dirty-p s)
+              "dirty flag must be NIL before scroll-up-one")
+    (cl-tmux/terminal/actions:scroll-up-one s)
+    (is (cl-tmux/terminal/types:screen-dirty-p s)
+        "screen must be marked dirty after scroll-up-one")))
+
+(test scroll-down-one-marks-screen-dirty
+  "scroll-down-one sets screen-dirty-p to T."
+  (with-screen (s 5 3)
+    (screen-clear-dirty s)
+    (is-false (cl-tmux/terminal/types:screen-dirty-p s)
+              "dirty flag must be NIL before scroll-down-one")
+    (cl-tmux/terminal/actions:scroll-down-one s)
+    (is (cl-tmux/terminal/types:screen-dirty-p s)
+        "screen must be marked dirty after scroll-down-one")))
+
+;;; ── SUITE: history-limit-fn nil path ─────────────────────────────────────────
+;;;
+;;; When *history-limit-fn* is NIL, trim-scroll-history falls back to
+;;; +max-scrollback-lines+.  %effective-history-limit must return a positive
+;;; integer in this case.
+
+(def-suite history-limit-fn-nil
+  :description "*history-limit-fn* NIL falls back to +max-scrollback-lines+"
+  :in terminal-suite)
+(in-suite history-limit-fn-nil)
+
+(test history-limit-fn-nil-falls-back-to-constant
+  "*history-limit-fn* = NIL causes trim-scroll-history to use +max-scrollback-lines+."
+  (with-screen (s 5 3)
+    (let ((cap cl-tmux/config:+max-scrollback-lines+))
+      ;; Pre-populate scrollback at the cap
+      (setf (cl-tmux/terminal/types:screen-scrollback s)
+            (loop repeat cap
+                  collect (make-array 5 :initial-element
+                                        (cl-tmux/terminal/types:blank-cell))))
+      ;; With *history-limit-fn* bound to NIL, push one more row
+      (let ((cl-tmux/terminal/actions:*history-limit-fn* nil))
+        (cl-tmux/terminal/actions:scroll-up-one s))
+      ;; Scrollback must not exceed the constant cap
+      (is (<= (length (cl-tmux/terminal/types:screen-scrollback s)) cap)
+          "scrollback must not exceed +max-scrollback-lines+ (~D) when fn is NIL"
+          cap))))
+
+(test history-limit-fn-callback-overrides-constant
+  "When *history-limit-fn* returns a value, it overrides +max-scrollback-lines+."
+  (with-screen (s 5 3)
+    (let* ((custom-cap 3)
+           (cl-tmux/terminal/actions:*history-limit-fn* (lambda () custom-cap)))
+      ;; Scroll enough to exceed the custom cap
+      (dotimes (_ (+ custom-cap 5))
+        (cl-tmux/terminal/actions:scroll-up-one s))
+      (is (<= (length (cl-tmux/terminal/types:screen-scrollback s)) custom-cap)
+          "scrollback must be capped at custom-cap (~D)" custom-cap))))
+
+;;; ── SUITE: insert-lines / delete-lines direct calls ─────────────────────────
+;;;
+;;; insert-lines and delete-lines are generated by define-line-edit-rules and
+;;; were previously only tested via the CSI path.  These direct-call tests
+;;; cover edge cases: n=0, n > region-size.
+
+(def-suite direct-line-edit
+  :description "Direct calls to insert-lines and delete-lines"
+  :in terminal-suite)
+(in-suite direct-line-edit)
+
+(test insert-lines-at-row-zero-pushes-content-down
+  "insert-lines 1 at row 0 pushes all existing rows down."
+  (with-screen (s 5 4)
+    (feed-lines s "AA" "BB" "CC")
+    (cl-tmux/terminal/actions:set-cursor s 0 0)
+    (cl-tmux/terminal/actions:insert-lines s 1)
+    ;; Row 0 must be blank (newly inserted); old row 0 moves to row 1.
+    (is (row-blank-p s 0) "row 0 must be blank after insert-lines 1 at row 0")
+    (check-row s 1 "AA")))
+
+(test delete-lines-at-row-zero-pulls-content-up
+  "delete-lines 1 at row 0 pulls all rows up; the bottom row becomes blank."
+  (with-screen (s 5 4)
+    (feed-lines s "AA" "BB" "CC" "DD")
+    (cl-tmux/terminal/actions:set-cursor s 0 0)
+    (cl-tmux/terminal/actions:delete-lines s 1)
+    ;; Old row 1 ("BB") becomes row 0; bottom row becomes blank.
+    (check-row s 0 "BB")
+    (is (row-blank-p s 3) "bottom row must be blank after delete-lines 1 at row 0")))
+
+(test delete-lines-n-larger-than-region-blanks-all-region-rows
+  "delete-lines with n >= region size blanks every row in the region."
+  (with-screen (s 5 4)
+    (feed-lines s "AA" "BB" "CC" "DD")
+    (cl-tmux/terminal/actions:set-cursor s 0 0)
+    (cl-tmux/terminal/actions:delete-lines s 99)
+    ;; Every row must be blank
+    (dotimes (y 4)
+      (is (row-blank-p s y)
+          "row ~D must be blank after oversized delete-lines" y))))
+
+(test insert-lines-n-larger-than-region-blanks-all-region-rows
+  "insert-lines with n >= region size blanks every row in the region."
+  (with-screen (s 5 4)
+    (feed-lines s "AA" "BB" "CC" "DD")
+    (cl-tmux/terminal/actions:set-cursor s 0 0)
+    (cl-tmux/terminal/actions:insert-lines s 99)
+    ;; Every row must be blank
+    (dotimes (y 4)
+      (is (row-blank-p s y)
+          "row ~D must be blank after oversized insert-lines" y))))

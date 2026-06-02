@@ -19,8 +19,16 @@
      P2       – second parameter or 0
      P1*      – (max 1 p1)
      P2*      – (max 1 p2)
-   Expands into a DEFUN for EXECUTE-CSI that dispatches via COND."
+   Expands into a DEFUN for EXECUTE-CSI that dispatches via COND.
+   Unknown final bytes or unrecognized (INTERMED, FINAL) combinations are
+   silently ignored and return (values), matching real-terminal behaviour."
   `(defun execute-csi (screen final intermed params)
+     "Dispatch one complete CSI escape sequence to its terminal action.
+      SCREEN is the target screen struct.  FINAL is the sequence's final byte as
+      a character.  INTERMED is the optional intermediate byte (e.g. #\\Space for
+      DECSCUSR, #\\? for DEC private sequences, #\\> for secondary DA), or NIL.
+      PARAMS is the list of integer parameters (possibly empty).
+      Unknown sequences are silently ignored; no error is signalled."
      (declare (type screen screen)
               (type character final)
               (ignorable intermed))
@@ -41,37 +49,45 @@
 ;;; directly.  DECSTBM parameters arrive 1-based, so they are converted to the
 ;;; 0-based inclusive margins that ACTIONS:DECSTBM expects at the call site.
 
+(declaim (inline %csi-decstbm-params))
+(defun %csi-decstbm-params (screen p1 p2)
+  "Convert 1-based DECSTBM CSI parameters P1 and P2 to the 0-based inclusive
+   (top bottom) pair expected by ACTIONS:DECSTBM.
+   P2 = 0 means 'full screen': the bottom margin defaults to height-1."
+  (values (1- (max 1 p1))
+          (if (zerop p2) (1- (screen-height screen)) (1- p2))))
+
 ;;; ── CSI rule table ─────────────────────────────────────────────────────────
 
 (define-csi-rules
 
   ;; CUU – Cursor Up
   ((and (null intermed) (char= final #\A))
-   (set-cursor screen (screen-cx screen) (- (screen-cy screen) p1*)))
+   (set-cursor screen (screen-cursor-x screen) (- (screen-cursor-y screen) p1*)))
 
   ;; CUD – Cursor Down
   ((and (null intermed) (char= final #\B))
-   (set-cursor screen (screen-cx screen) (+ (screen-cy screen) p1*)))
+   (set-cursor screen (screen-cursor-x screen) (+ (screen-cursor-y screen) p1*)))
 
   ;; CUF – Cursor Forward (right)
   ((and (null intermed) (char= final #\C))
-   (set-cursor screen (+ (screen-cx screen) p1*) (screen-cy screen)))
+   (set-cursor screen (+ (screen-cursor-x screen) p1*) (screen-cursor-y screen)))
 
   ;; CUB – Cursor Back (left)
   ((and (null intermed) (char= final #\D))
-   (set-cursor screen (- (screen-cx screen) p1*) (screen-cy screen)))
+   (set-cursor screen (- (screen-cursor-x screen) p1*) (screen-cursor-y screen)))
 
   ;; CNL – Cursor Next Line
   ((and (null intermed) (char= final #\E))
-   (set-cursor screen 0 (+ (screen-cy screen) p1*)))
+   (set-cursor screen 0 (+ (screen-cursor-y screen) p1*)))
 
   ;; CPL – Cursor Preceding Line
   ((and (null intermed) (char= final #\F))
-   (set-cursor screen 0 (- (screen-cy screen) p1*)))
+   (set-cursor screen 0 (- (screen-cursor-y screen) p1*)))
 
   ;; CHA – Cursor Horizontal Absolute (1-based column)
   ((and (null intermed) (char= final #\G))
-   (set-cursor screen (1- p1*) (screen-cy screen)))
+   (set-cursor screen (1- p1*) (screen-cursor-y screen)))
 
   ;; CUP – Cursor Position (row P1, col P2, 1-based)
   ((and (null intermed) (char= final #\H))
@@ -112,10 +128,10 @@
   ;; ECH – Erase Characters (fill with blanks, no shift)
   ((and (null intermed) (char= final #\X))
    (erase-region screen
-                 (screen-cx screen) (screen-cy screen)
-                 (min (+ (screen-cx screen) p1* -1)
+                 (screen-cursor-x screen) (screen-cursor-y screen)
+                 (min (+ (screen-cursor-x screen) p1* -1)
                       (1- (screen-width screen)))
-                 (screen-cy screen)))
+                 (screen-cursor-y screen)))
 
   ;; REP – Repeat Preceding Character (CSI Ps b)
   ;; Repeats the last printed character P1* times.  The preceding character is
@@ -128,7 +144,7 @@
 
   ;; VPA – Vertical Position Absolute (1-based row)
   ((and (null intermed) (char= final #\d))
-   (set-cursor screen (screen-cx screen) (1- p1*)))
+   (set-cursor screen (screen-cursor-x screen) (1- p1*)))
 
   ;; HVP – Horizontal and Vertical Position (same as CUP)
   ((and (null intermed) (char= final #\f))
@@ -145,9 +161,7 @@
   ;; DECSTBM – Set Top and Bottom Margins.  Params are 1-based; an omitted
   ;; bottom (p2 = 0) means "full screen", matching real-terminal ESC[r reset.
   ((and (null intermed) (char= final #\r))
-   (decstbm screen
-            (1- (max 1 p1))
-            (if (zerop p2) (1- (screen-height screen)) (1- p2))))
+   (multiple-value-call #'decstbm screen (%csi-decstbm-params screen p1 p2)))
 
   ;; CHT – Cursor Forward Tabulation (CSI N I)
   ((and (null intermed) (char= final #\I))
@@ -179,4 +193,4 @@
 
   ;; DECSCUSR — cursor shape: CSI N SP q (intermediate = space, final = q)
   ((and (eql intermed #\Space) (char= final #\q))
-   (setf (screen-cursor-shape screen) (clamp p1 0 6))))
+   (set-cursor-shape screen p1)))

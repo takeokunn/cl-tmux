@@ -25,8 +25,10 @@
 ;;; ── Non-blocking byte read ─────────────────────────────────────────────────
 
 (defun read-byte-nonblock (&optional (timeout-us +poll-timeout-us+))
-  "Return a byte from stdin if one arrives within TIMEOUT-US microseconds,
-   or NIL if the timeout elapses.  TIMEOUT-US = 0 is purely non-blocking."
+  "Return a byte (0–255) from stdin within TIMEOUT-US microseconds, or NIL.
+   NIL means the timeout elapsed with no data — it does NOT mean EOF.
+   EOF on stdin is indistinguishable from a zero-byte read at this layer;
+   both return NIL.  TIMEOUT-US = 0 is a purely non-blocking poll."
   (declare (type fixnum timeout-us))
   (let ((ready (cl-tmux/pty:select-fds (list 0) timeout-us)))
     (when ready

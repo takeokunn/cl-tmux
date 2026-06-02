@@ -89,9 +89,9 @@
     (setf (session-name session) name)))
 
 (defun select-window-by-number (session n)
-  "Select the window in SESSION whose stored id equals N.
-   Looks up by window-id, not by 0-based list position, so the digit pressed
-   always matches the window label even after kills leave gaps in the list."
+  "Select the window in SESSION whose window-id equals N.
+   The lookup is by stored window-id, not by list position, so the digit pressed
+   matches the window label even after kills leave gaps in the list."
   (let ((win (find n (session-windows session) :key #'window-id)))
     (when win
       (session-select-window session win))))

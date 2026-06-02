@@ -3,10 +3,37 @@
 ;;; ASCII 2 = ^B.  tmux uses C-b as the default prefix.
 (defconstant +prefix-key-code+ 2)
 
-(defparameter *default-shell*
-  (or (sb-ext:posix-getenv "SHELL")
-      "/bin/sh")
+;;; ── Key-table name constants ──────────────────────────────────────────────
+;;;
+;;; All references to the standard table names use these constants so a typo
+;;; is caught at compile time and a rename touches only one place.
+
+(defconstant +table-prefix+
+  (if (boundp '+table-prefix+) +table-prefix+ "prefix")
+  "Name of the default key-table (requires prefix key).")
+(defconstant +table-root+
+  (if (boundp '+table-root+) +table-root+ "root")
+  "Name of the root key-table (no prefix required).")
+(defconstant +table-copy-mode+
+  (if (boundp '+table-copy-mode+) +table-copy-mode+ "copy-mode")
+  "Name of the copy-mode key-table.")
+
+;;; ── Deferred shell default ────────────────────────────────────────────────
+;;;
+;;; *default-shell* is initialised at module load time via init-default-shell
+;;; rather than at defparameter expansion, to avoid I/O at macro-expand time.
+
+(defparameter *default-shell* "/bin/sh"
   "Shell binary launched for new panes.")
+
+(defun init-default-shell ()
+  "Set *DEFAULT-SHELL* from $SHELL if that variable is set and non-empty."
+  (let ((shell (sb-ext:posix-getenv "SHELL")))
+    (when (and shell (plusp (length shell)))
+      (setf *default-shell* shell))))
+
+;;; Perform the I/O side-effect exactly once at load time.
+(init-default-shell)
 
 (defparameter *status-height* 1
   "Number of rows reserved for the status bar at the bottom.")
@@ -32,17 +59,18 @@
 ;;;
 ;;; *key-tables* maps table-name (string) → hash-table of chord → (keyword . flags).
 ;;; Flags is a plist; :repeatable T means the prefix stays active after dispatch.
-;;; Standard table names: "prefix", "root", "copy-mode".
+;;; Standard table names: +table-prefix+, +table-root+, +table-copy-mode+.
 ;;;
 ;;; set-key-binding / remove-key-binding are thin wrappers around key-table-bind
-;;; for the "prefix" table — the only table that matters for the main dispatch path.
+;;; for the prefix table — the only table that matters for the main dispatch path.
 
 (defparameter *key-tables*
   (make-hash-table :test #'equal)
   "Hash-table mapping table-name string → inner hash-table of chord → (keyword . flags).")
 
 (defun ensure-key-table (name)
-  "Return the inner hash-table for key-table NAME, creating it if absent."
+  "Return the inner hash-table for key-table NAME, creating it if absent.
+   Idempotent: repeated calls with the same NAME return the same object."
   (or (gethash name *key-tables*)
       (setf (gethash name *key-tables*)
             (make-hash-table :test #'equal))))
@@ -63,7 +91,8 @@
   (car entry))
 
 (defun key-table-repeatable-p (entry)
-  "Return T if the key-table entry is marked repeatable."
+  "Return T if the key-table entry is marked repeatable.
+   Safe to call with NIL (returns NIL without signaling)."
   (and entry (getf (cdr entry) :repeatable)))
 
 ;;; ── Initial key-binding data (declarative) ────────────────────────────────
@@ -83,8 +112,8 @@
         (lambda (pair)
           (if (eq (first pair) :digits)
               (loop for d from 0 to 9
-                    collect `(key-table-bind "prefix" (digit-char ,d) ,(second pair)))
-              `((key-table-bind "prefix" ,(first pair) ,(second pair)))))
+                    collect `(key-table-bind +table-prefix+ (digit-char ,d) ,(second pair)))
+              `((key-table-bind +table-prefix+ ,(first pair) ,(second pair)))))
         pairs)))
 
 (define-initial-key-bindings
@@ -114,47 +143,48 @@
 
 (defun lookup-key-binding (key)
   "Return the command keyword bound to KEY (a character or string), or NIL.
-   Looks up the \"prefix\" table."
-  (let ((entry (key-table-lookup "prefix" key)))
+   Looks up the prefix key-table."
+  (let ((entry (key-table-lookup +table-prefix+ key)))
     (and entry (key-table-command entry))))
 
+(defun key-label (key)
+  "Return a display string for KEY: characters become single-character strings,
+   strings are returned as-is."
+  (if (characterp key) (string key) key))
+
 (defun describe-key-bindings ()
-  "A newline-separated, key-sorted listing of the current prefix bindings
+  "Return a newline-separated, key-sorted listing of the current prefix bindings
    (\"<key>  <command>\" per line) for the list-keys help overlay.
-   Reads from the \"prefix\" key-table."
-  (flet ((key-label (k) (if (characterp k) (string k) k)))
-    (let ((alist (loop for k being the hash-keys of
-                            (ensure-key-table "prefix")
-                            using (hash-value v)
-                       collect (cons k (car v)))))
-      (with-output-to-string (out)
-        (write-string "key bindings — press prefix (C-b) then:" out)
-        (dolist (binding (sort alist #'string<
-                               :key (lambda (b) (key-label (car b)))))
-          (format out "~%  ~A  ~(~A~)" (key-label (car binding)) (cdr binding)))))))
+   Reads from the prefix key-table."
+  (let ((alist (loop for k being the hash-keys of
+                          (ensure-key-table +table-prefix+)
+                          using (hash-value v)
+                     collect (cons k (car v)))))
+    (with-output-to-string (out)
+      (write-string "key bindings — press prefix (C-b) then:" out)
+      (dolist (binding (sort alist #'string<
+                             :key (lambda (b) (key-label (car b)))))
+        (format out "~%  ~A  ~(~A~)" (key-label (car binding)) (cdr binding))))))
 
 (defun set-key-binding (key command)
   "Bind KEY (a character or string) to COMMAND (a keyword) in the prefix table.
    Returns COMMAND."
-  (key-table-bind "prefix" key command)
+  (key-table-bind +table-prefix+ key command)
   command)
 
 (defun remove-key-binding (key)
   "Remove any binding for KEY (a character or string) from the prefix table."
-  (let ((tbl (gethash "prefix" *key-tables*)))
+  (let ((tbl (gethash +table-prefix+ *key-tables*)))
     (when tbl (remhash key tbl))))
 
 ;;; ── Initialisation ────────────────────────────────────────────────────────
-;;;
-;;; initialize-default-key-tables is called from with-isolated-config in the
-;;; test helpers, so it must remain a named defun rather than an inline progn.
 
 (defun initialize-default-key-tables ()
   "Install the C-b C-b → :send-prefix binding and ensure root/copy-mode tables exist.
-   Called once at load time.  Safe to call again (idempotent)."
+   Called once at load time and by test isolation helpers (idempotent)."
   (set-key-binding (code-char +prefix-key-code+) :send-prefix)
-  (ensure-key-table "root")
-  (ensure-key-table "copy-mode"))
+  (ensure-key-table +table-root+)
+  (ensure-key-table +table-copy-mode+))
 
 ;;; Initialise tables at load time.
 (initialize-default-key-tables)

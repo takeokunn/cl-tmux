@@ -71,6 +71,32 @@
 (defun bg-at    (screen x y) (cell-bg     (screen-cell screen x y)))
 (defun attrs-at (screen x y) (cell-attrs  (screen-cell screen x y)))
 
+;;; ── Generic table-driven test generator ────────────────────────────────────
+;;;
+;;; define-table-tests generates one (test …) form per row from a declarative
+;;; input/expected table.  Reusable across test files; belongs in helpers so
+;;; any suite can import it.
+
+(defmacro define-table-tests (suite test-prefix fn &rest cases)
+  "Generate one FiveAM test per CASE from a declarative table.
+   SUITE       — suite name symbol (informational; tests join the current in-suite).
+   TEST-PREFIX — a symbol whose print-name is used as the test-name prefix;
+                 each test is named <PREFIX>-1, <PREFIX>-2, …
+   FN          — a function designator called via FUNCALL with each input.
+   CASES       — each case is (INPUT EXPECTED) or (INPUT EXPECTED DESCRIPTION-STRING).
+   Emits one (test <PREFIX>-N …) form per case at macroexpansion time."
+  (declare (ignore suite))
+  (loop for (input expected . rest) in cases
+        for i from 1
+        for desc = (if rest (car rest) "")
+        for test-name = (intern (format nil "~A-~A" test-prefix i)
+                                (find-package :cl-tmux/test))
+        collect `(test ,test-name
+                   ,desc
+                   (is (equal ,expected (funcall ,fn ,input))))
+        into forms
+        finally (return `(progn ,@forms))))
+
 ;;; ── Table-driven test macro ─────────────────────────────────────────────────
 
 (defmacro test-table (test-name description &rest cases)
@@ -387,6 +413,30 @@
      (window-select-pane ,win-var ,p0-var)
      ,@body))
 
+;;; ── Concrete-geometry 2-pane fixtures ───────────────────────────────────────
+;;;
+;;; These macros mirror with-h-split-window / with-v-split-window but pre-set
+;;; concrete pane geometry (x/y/width/height) without relying on layout-assign.
+;;; They are shared across layout-geometry-tests.lisp, window-neighbor tests, and
+;;; any future test that needs exact pre-positioned panes.
+
+(defmacro with-h-split-81-24 ((p0-var p1-var win-var) &body body)
+  "A shared 2-pane horizontal split window: 81×24, p0 x=0 w=40, p1 x=41 w=40.
+   Geometry is pre-set; no relayout is performed."
+  `(let* ((,p0-var (make-pane :id 1 :fd -1 :pid -1
+                               :x 0 :y 0 :width 40 :height 24
+                               :screen (make-screen 40 24)))
+           (,p1-var (make-pane :id 2 :fd -1 :pid -1
+                               :x 41 :y 0 :width 40 :height 24
+                               :screen (make-screen 40 24)))
+           (,win-var (make-window :id 1 :name "w" :width 81 :height 24
+                                  :panes (list ,p0-var ,p1-var)
+                                  :tree  (make-layout-split :h
+                                           (make-layout-leaf ,p0-var)
+                                           (make-layout-leaf ,p1-var)
+                                           1/2))))
+     ,@body))
+
 (defmacro with-v-split-window ((win-var p0-var p1-var) &body body)
   "Bind WIN-VAR P0-VAR P1-VAR to a 2-pane vertical split window:
    p0 (y=0 h=10) above p1 (y=11 h=10), window 80x21, p0 active.
@@ -436,6 +486,71 @@
      (session-select-window ,sess-var ,win-var)
      ,@body))
 
+(defmacro with-two-pane-mouse-session ((sess-var win-var p0-var p1-var) &body body)
+  "Bind SESS-VAR WIN-VAR P0-VAR P1-VAR to a 2-pane horizontal split session
+   suitable for mouse event tests: p0 (x=0 w=40) | p1 (x=41 w=40), window 81x24.
+   Enables the 'mouse' session option for the duration of BODY, then restores it.
+   BODY runs inside WITH-LOOP-STATE with *term-rows*=25 and *term-cols*=81."
+  `(let* ((,p0-var  (make-pane :id 1 :fd -1 :pid -1
+                                :x 0 :y 0 :width 40 :height 24
+                                :screen (make-screen 40 24)))
+          (,p1-var  (make-pane :id 2 :fd -1 :pid -1
+                                :x 41 :y 0 :width 40 :height 24
+                                :screen (make-screen 40 24)))
+          (,win-var (make-window :id 1 :name "w" :width 81 :height 24
+                                 :panes (list ,p0-var ,p1-var)
+                                 :tree  (make-layout-split :h
+                                           (make-layout-leaf ,p0-var)
+                                           (make-layout-leaf ,p1-var)
+                                           1/2)
+                                 :active ,p0-var))
+          (,sess-var (make-session :id 1 :name "0"
+                                   :windows (list ,win-var) :active ,win-var)))
+     (cl-tmux/options:set-option "mouse" t)
+     (unwind-protect
+          (with-loop-state
+            (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 81))
+              ,@body))
+       (cl-tmux/options:set-option "mouse" nil))))
+
+;;; ---- Options fixture macros --------------------------------------------------
+;;;
+;;; These macros are defined here (not in options-tests.lisp) so that
+;;; config-directives-tests and any future test file can reuse them without
+;;; a fragile cross-file dependency.
+
+(defmacro with-fresh-options (&body body)
+  "Run BODY with empty, isolated option hash tables (no registered specs).
+   Neither *global-options* nor *option-registry* carry state from load time."
+  `(let ((cl-tmux/options:*global-options*   (make-hash-table :test #'equal))
+         (cl-tmux/options:*option-registry*  (make-hash-table :test #'equal)))
+     ,@body))
+
+(defmacro with-fresh-global-options (&body body)
+  "Run BODY with a copy of *global-options* so mutations do not leak.
+   *option-registry* is shared so type coercion continues to work."
+  `(let ((cl-tmux/options:*global-options*
+          (let ((ht (make-hash-table :test #'equal)))
+            (maphash (lambda (k v) (setf (gethash k ht) v))
+                     cl-tmux/options:*global-options*)
+            ht)))
+     ,@body))
+
+(defmacro with-single-option ((name value) &body body)
+  "Run BODY with *global-options* bound to a hash-table containing only NAME → VALUE."
+  `(let ((cl-tmux/options:*global-options*
+          (let ((ht (make-hash-table :test #'equal)))
+            (setf (gethash ,name ht) ,value)
+            ht)))
+     ,@body))
+
+(defmacro with-single-server-option ((name value) &body body)
+  "Run BODY with *server-options* bound to a hash-table containing only NAME → VALUE."
+  `(let ((cl-tmux/options:*server-options*
+          (let ((ht (make-hash-table :test #'equal)))
+            (setf (gethash ,name ht) ,value)
+            ht)))
+     ,@body))
 
 ;;; ---- Options isolation --------------------------------------------------------
 
@@ -501,9 +616,55 @@
        (unwind-protect (progn ,@body)
          (ignore-errors (delete-file ,path-var))))))
 
+(defmacro with-connected-sockets ((path listener-var client-var conn-var) &body body)
+  "Establish a Unix-domain listener at PATH, connect a client, accept the
+   connection.  Binds LISTENER-VAR, CLIENT-VAR, and CONN-VAR.  Closes all
+   three sockets on exit, ignoring errors, eliminating the repeated
+   listener→connect→accept→unwind-protect scaffold in the net test suite."
+  `(let ((,listener-var (cl-tmux/net:make-listener ,path)))
+     (unwind-protect
+          (let* ((,client-var (cl-tmux/net:connect-to ,path))
+                 (,conn-var   (cl-tmux/net:accept-connection ,listener-var)))
+            (unwind-protect
+                 (progn ,@body)
+              (ignore-errors (cl-tmux/net:close-socket ,client-var))
+              (ignore-errors (cl-tmux/net:close-socket ,conn-var))))
+       (ignore-errors (cl-tmux/net:close-socket ,listener-var)))))
+
 (defun make-test-session (w h &key (content ""))
   "Convenience alias for make-renderer-test-session; available to all test files."
   (make-renderer-test-session w h :content content))
+
+(defun make-two-window-session (w h &key (w0-content "") (w1-content ""))
+  "Build a 2-window session.  Each window has one pane of W x H with no PTY.
+   W0-CONTENT / W1-CONTENT are fed into the respective pane screens.
+   The first window is selected on return.
+   Returns (values session window0 pane0 window1 pane1)."
+  (let* ((screen0 (make-screen w h))
+         (pane0   (make-pane :id 1 :x 0 :y 0 :width w :height h :fd -1 :screen screen0))
+         (win0    (make-window :id 1 :name "alpha" :width w :height h :panes (list pane0)))
+         (screen1 (make-screen w h))
+         (pane1   (make-pane :id 2 :x 0 :y 0 :width w :height h :fd -1 :screen screen1))
+         (win1    (make-window :id 2 :name "beta"  :width w :height h :panes (list pane1)))
+         (sess    (make-session :id 1 :name "0" :windows (list win0 win1))))
+    (window-select-pane win0 pane0)
+    (window-select-pane win1 pane1)
+    (session-select-window sess win0)
+    (unless (string= w0-content "") (feed screen0 w0-content))
+    (unless (string= w1-content "") (feed screen1 w1-content))
+    (values sess win0 pane0 win1 pane1)))
+
+;;; ── Empty-session fixture ────────────────────────────────────────────────────
+;;;
+;;; The pattern (make-session :id 1 :name "0" :windows nil) appears verbatim
+;;; in several dispatch tests.  with-empty-session encodes the intent once and
+;;; makes the fixture contract explicit.
+
+(defmacro with-empty-session ((var) &body body)
+  "Bind VAR to a windowless session suitable for empty-state guard tests.
+   The session has id 1, name \"0\", and an empty window list."
+  `(let ((,var (make-session :id 1 :name "0" :windows nil)))
+     ,@body))
 
 ;;; ── Buffer test helpers ──────────────────────────────────────────────────────
 

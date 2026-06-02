@@ -23,10 +23,10 @@
 ;;; Prolog-like factual table — each clause maps one mode value to its action.
 ;;; Parallel structure with define-erase-line-rules.
 ;;;
-;;;   erase_display(0, S) :- erase_region(S, cx, cy, w-1, cy),
-;;;                          when(cy+1 < h, erase_region(S, 0, cy+1, w-1, h-1)).
-;;;   erase_display(1, S) :- when(cy > 0, erase_region(S, 0, 0, w-1, cy-1)),
-;;;                          erase_region(S, 0, cy, cx, cy).
+;;;   erase_display(0, S) :- erase_region(S, cursor-x, cursor-y, w-1, cursor-y),
+;;;                          when(cursor-y+1 < h, erase_region(S, 0, cursor-y+1, w-1, h-1)).
+;;;   erase_display(1, S) :- when(cursor-y > 0, erase_region(S, 0, 0, w-1, cursor-y-1)),
+;;;                          erase_region(S, 0, cursor-y, cursor-x, cursor-y).
 ;;;   erase_display(2, S) :- erase_region(S, 0, 0, w-1, h-1).
 ;;;   erase_display(3, S) :- erase_region(S, 0, 0, w-1, h-1), clear_scrollback(S).
 
@@ -42,9 +42,9 @@
      ;; cx/cy/w/h are used in rules 0 and 1; declared ignorable so rules
      ;; that don't use them (rules 2 and 3) compile without unused-var warnings.
      ;; mode is a function parameter used in the case dispatch — not ignorable.
-     (let ((cx (screen-cx screen)) (cy (screen-cy screen))
-           (w  (screen-width  screen))
-           (h  (screen-height screen)))
+     (let ((cx (screen-cursor-x screen)) (cy (screen-cursor-y screen))
+           (w  (screen-width    screen))
+           (h  (screen-height   screen)))
        (declare (ignorable cx cy w h))
        (case mode
          ,@(mapcar (lambda (spec)
@@ -70,17 +70,17 @@
 ;;; ── EL (erase-line) rule table ─────────────────────────────────────────────
 ;;;
 ;;; Prolog-like table: each row maps a mode number to the x-extent of the erase.
-;;;   erase_line(0, Screen) :- erase_region(Screen, cx, cy, w-1, cy).
-;;;   erase_line(1, Screen) :- erase_region(Screen, 0,  cy, cx,  cy).
-;;;   erase_line(2, Screen) :- erase_region(Screen, 0,  cy, w-1, cy).
+;;;   erase_line(0, Screen) :- erase_region(Screen, cursor-x, cursor-y, w-1, cursor-y).
+;;;   erase_line(1, Screen) :- erase_region(Screen, 0,  cursor-y, cursor-x, cursor-y).
+;;;   erase_line(2, Screen) :- erase_region(Screen, 0,  cursor-y, w-1, cursor-y).
 
 (defmacro define-erase-line-rules (&rest specs)
   "Build ERASE-LINE from a declarative range table.
-   Each SPEC is (mode x0-expr x1-expr); CX, CY, W are bound."
+   Each SPEC is (mode x0-expr x1-expr); CX (cursor-x), CY (cursor-y), W are bound."
   `(defun erase-line (screen mode)
      "Erase part or all of the current line (EL: ESC[Kn).
       Mode 0: cursor to end.  Mode 1: start to cursor.  Mode 2: entire line."
-     (let ((cx (screen-cx screen)) (cy (screen-cy screen)) (w (screen-width screen)))
+     (let ((cx (screen-cursor-x screen)) (cy (screen-cursor-y screen)) (w (screen-width screen)))
        (declare (ignorable cx cy w))
        (case mode
          ,@(mapcar (lambda (s) `(,(first s) (erase-region screen ,(second s) cy ,(third s) cy)))

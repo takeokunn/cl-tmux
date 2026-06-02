@@ -7,7 +7,7 @@
 ;;; (*key-tables*, *default-shell*, *status-height*).
 
 (defun %whitespace-p (ch)
-  "True when CH is a configuration whitespace character."
+  "True when CH is a configuration whitespace character (space or tab)."
   (or (char= ch #\Space) (char= ch #\Tab)))
 
 ;;; ── Tokenizer phase helpers ──────────────────────────────────────────────
@@ -36,13 +36,13 @@
         ;; Found a closing quote — process quoted content.
         (let ((j (1+ i)))            ; skip opening \"
           (loop while (and (< j len) (char/= (char line j) #\"))
-                do (let ((qch (char line j)))
+                do (let ((quoted-char (char line j)))
                      (cond
-                       ((and (char= qch #\\) (< (1+ j) len))
+                       ((and (char= quoted-char #\\) (< (1+ j) len))
                         (incf j)
                         (funcall push-char (char line j)))
                        (t
-                        (funcall push-char qch))))
+                        (funcall push-char quoted-char))))
                    (incf j))
           (when (< j len) (incf j))  ; skip closing \"
           j))))
@@ -64,10 +64,10 @@
    - 'single quoted' strings (literal content, no escapes)
    - \\ (backslash) escaping of the next character outside quotes
    Returns a list of token strings."
-  (let* ((tokens  '())
-         (current (make-array 0 :element-type 'character :adjustable t :fill-pointer 0))
+  (let* ((tokens   '())
+         (current  (make-array 0 :element-type 'character :adjustable t :fill-pointer 0))
          (in-token nil)
-         (len     (length line)))
+         (len      (length line)))
     (flet ((push-char (ch)
              (vector-push-extend ch current)
              (setf in-token t))
@@ -118,18 +118,20 @@
     :switch-client-next :switch-client-prev :last-session
     :display-message :source-file
     :show-options :show-option)
-  "Command keywords a config-file `bind` directive may target.  This is the
-   user-bindable subset of the commands cl-tmux:dispatch-command handles — it
-   deliberately EXCLUDES the copy-mode-internal commands (:copy-mode-exit,
+  "Command keywords a config-file bind directive may target.
+   Type: list of keyword symbols.
+   This is the user-bindable subset of commands cl-tmux:dispatch-command handles.
+   It deliberately EXCLUDES copy-mode-internal commands (:copy-mode-exit,
    :copy-mode-begin-selection, :copy-mode-yank), which are produced by copy-mode
-   interception, not by key lookup.")
+   interception rather than by key lookup.
+   Updated whenever a new dispatchable command is added to dispatch-handlers.")
 
 (defun %command-keyword (name)
   "Return the bindable command keyword named by NAME (case-insensitive), or NIL
    if NAME is not a recognized command.  Uses FIND-SYMBOL so unknown command
    names are never interned into the keyword package."
-  (let ((kw (find-symbol (string-upcase name) :keyword)))
-    (and kw (member kw *bindable-commands*) kw)))
+  (let ((keyword (find-symbol (string-upcase name) :keyword)))
+    (and keyword (member keyword *bindable-commands*) keyword)))
 
 ;;; ── Declarative directive dispatch macro ──────────────────────────────────
 
@@ -170,32 +172,32 @@
 
 (defun %parse-bind-key-args (args)
   "Parse the ARGS list for a bind directive (excludes the \"bind\" verb itself).
-   Returns (values table key command repeatable) where TABLE is \"prefix\" by
+   Returns (values table key command repeatable) where TABLE is +TABLE-PREFIX+ by
    default, or NIL when ARGS do not form a valid binding."
-  (let ((table "prefix")
+  (let ((table      +table-prefix+)
         (repeatable nil)
-        (rest args))
+        (remaining  args))
     (loop
       (cond
-        ((null rest) (return nil))
-        ((string= (first rest) "-n")
-         (setf table "root")
-         (setf rest (rest rest)))
-        ((string= (first rest) "-r")
+        ((null remaining) (return nil))
+        ((string= (first remaining) "-n")
+         (setf table     +table-root+)
+         (setf remaining (rest remaining)))
+        ((string= (first remaining) "-r")
          (setf repeatable t)
-         (setf rest (rest rest)))
-        ((string= (first rest) "-T")
-         (setf rest (rest rest))
-         (when (null rest) (return nil))
-         (setf table (first rest))
-         (setf rest (rest rest)))
+         (setf remaining  (rest remaining)))
+        ((string= (first remaining) "-T")
+         (setf remaining (rest remaining))
+         (when (null remaining) (return nil))
+         (setf table     (first remaining))
+         (setf remaining (rest remaining)))
         (t
-         (unless (= (length rest) 2) (return nil))
-         (let* ((key-token (%parse-key-token (first rest)))
-                (cmd-name  (second rest))
-                (kw        (%command-keyword cmd-name)))
-           (if kw
-               (return (values table key-token kw repeatable))
+         (unless (= (length remaining) 2) (return nil))
+         (let* ((key-token (%parse-key-token (first remaining)))
+                (cmd-name  (second remaining))
+                (keyword   (%command-keyword cmd-name)))
+           (if keyword
+               (return (values table key-token keyword repeatable))
                (return nil))))))))
 
 ;;; ── unbind-key flag parsing ──────────────────────────────────────────────
@@ -205,24 +207,24 @@
 
 (defun %parse-unbind-key-args (args)
   "Parse the ARGS list for an unbind directive (excludes the verb itself).
-   Returns (values table key) where TABLE is \"prefix\" by default,
+   Returns (values table key) where TABLE is +TABLE-PREFIX+ by default,
    or (values nil nil) on parse failure."
-  (let ((table "prefix")
-        (rest args))
+  (let ((table     +table-prefix+)
+        (remaining args))
     (loop
       (cond
-        ((null rest) (return (values nil nil)))
-        ((string= (first rest) "-n")
-         (setf table "root")
-         (setf rest (rest rest)))
-        ((string= (first rest) "-T")
-         (setf rest (rest rest))
-         (when (null rest) (return (values nil nil)))
-         (setf table (first rest))
-         (setf rest (rest rest)))
+        ((null remaining) (return (values nil nil)))
+        ((string= (first remaining) "-n")
+         (setf table     +table-root+)
+         (setf remaining (rest remaining)))
+        ((string= (first remaining) "-T")
+         (setf remaining (rest remaining))
+         (when (null remaining) (return (values nil nil)))
+         (setf table     (first remaining))
+         (setf remaining (rest remaining)))
         (t
-         (unless (= (length rest) 1) (return (values nil nil)))
-         (return (values table (%parse-key-token (first rest)))))))))
+         (unless (= (length remaining) 1) (return (values nil nil)))
+         (return (values table (%parse-key-token (first remaining)))))))))
 
 ;;; ── Declarative bind/unbind verb dispatch ────────────────────────────────
 
@@ -243,10 +245,10 @@
 
 (define-key-directive-handlers
   (("bind" "bind-key")
-   (multiple-value-bind (table key kw repeatable)
+   (multiple-value-bind (table key keyword repeatable)
        (%parse-bind-key-args args)
-     (when kw
-       (key-table-bind table key kw :repeatable repeatable)
+     (when keyword
+       (key-table-bind table key keyword :repeatable repeatable)
        t)))
   (("unbind" "unbind-key")
    (multiple-value-bind (table key)
@@ -257,6 +259,13 @@
        t))))
 
 ;;; ── Simple directive definitions ─────────────────────────────────────────
+;;;
+;;; The six set-option variants (set, set-option, setw, set-window-option,
+;;; sets, set-session-option) all forward identically to cl-tmux/options:set-option.
+;;; The per-scope variants exist for tmux config-file compatibility only — cl-tmux
+;;; treats them as permanent global-scope aliases with no scope differentiation.
+;;; This is an intentional permanent shim: setw/sets/set-window-option/set-session-option
+;;; have no scope-differentiation planned; they exist purely for config-file compatibility.
 
 (define-config-directives
   ("set-shell" 1 (path)
@@ -268,28 +277,23 @@
       (when (and height (plusp height))
         (setf *status-height* height)
         t)))
-  ("set" 2 (name value)
-    ;; set option value — stores in global options hash.
-    (cl-tmux/options:set-option name value)
+  ("set" 2 (option-name option-value)
+    (cl-tmux/options:set-option option-name option-value)
     t)
-  ("set-option" 2 (name value)
-    ;; set-option: canonical long form of set.
-    (cl-tmux/options:set-option name value)
+  ("set-option" 2 (option-name option-value)
+    (cl-tmux/options:set-option option-name option-value)
     t)
-  ("setw" 2 (name value)
-    ;; setw / set-window-option: same as set for now (global scope).
-    (cl-tmux/options:set-option name value)
+  ("setw" 2 (option-name option-value)
+    (cl-tmux/options:set-option option-name option-value)
     t)
-  ("set-window-option" 2 (name value)
-    (cl-tmux/options:set-option name value)
+  ("set-window-option" 2 (option-name option-value)
+    (cl-tmux/options:set-option option-name option-value)
     t)
-  ("sets" 2 (name value)
-    ;; sets / set-session-option: alias of set for session-scoped options.
-    (cl-tmux/options:set-option name value)
+  ("sets" 2 (option-name option-value)
+    (cl-tmux/options:set-option option-name option-value)
     t)
-  ("set-session-option" 2 (name value)
-    ;; set-session-option: canonical long form of sets.
-    (cl-tmux/options:set-option name value)
+  ("set-session-option" 2 (option-name option-value)
+    (cl-tmux/options:set-option option-name option-value)
     t))
 
 (defun apply-config-directive (tokens)

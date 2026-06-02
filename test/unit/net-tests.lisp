@@ -9,8 +9,8 @@
 ;;;; availability probe so it self-skips where a sandbox forbids socket bind
 ;;;; (mirroring the PTY tests).
 ;;;;
-;;;; with-temp-socket-path and write-frames-to-file are defined in
-;;;; test/helpers.lisp and shared with transport-tests.lisp.
+;;;; with-temp-socket-path, with-connected-sockets, and write-frames-to-file
+;;;; are defined in test/helpers.lisp and shared with transport-tests.lisp.
 
 (def-suite net-suite :description "Unix-domain socket transport (sb-bsd-sockets)")
 (in-suite net-suite)
@@ -69,17 +69,11 @@
     (skip "Unix-domain socket bind unavailable (sandbox)"))
   (sb-ext:with-timeout 10
     (with-temp-socket-path (path)
-      (let ((listener (make-listener path)))
-        (unwind-protect
-             (let* ((client (connect-to path))
-                    (conn   (accept-connection listener))
-                    (cstream (socket-stream client))
-                    (sstream (socket-stream conn)))
-               (is (streamp cstream) "socket-stream must return a stream (client side)")
-               (is (streamp sstream) "socket-stream must return a stream (server side)")
-               (ignore-errors (close-socket client))
-               (ignore-errors (close-socket conn)))
-          (ignore-errors (close-socket listener)))))))
+      (with-connected-sockets (path listener client conn)
+        (let ((client-stream (socket-stream client))
+              (server-stream (socket-stream conn)))
+          (is (streamp client-stream) "socket-stream must return a stream (client side)")
+          (is (streamp server-stream) "socket-stream must return a stream (server side)"))))))
 
 ;;; ── accept-connection / make-listener roundtrip ──────────────────────────────
 
@@ -89,14 +83,9 @@
     (skip "Unix-domain socket bind unavailable (sandbox)"))
   (sb-ext:with-timeout 10
     (with-temp-socket-path (path)
-      (let ((listener (make-listener path)))
-        (unwind-protect
-             (let* ((client (connect-to path))
-                    (conn   (accept-connection listener)))
-               (is-true conn "accept-connection must return a socket")
-               (ignore-errors (close-socket client))
-               (ignore-errors (close-socket conn)))
-          (ignore-errors (close-socket listener)))))))
+      (with-connected-sockets (path listener client conn)
+        (declare (ignore listener client))
+        (is-true conn "accept-connection must return a socket")))))
 
 ;;; ── Table-driven: multiple message types roundtrip ───────────────────────────
 ;;;
@@ -110,34 +99,29 @@
     (skip "Unix-domain socket bind unavailable (sandbox)"))
   (sb-ext:with-timeout 10
     (with-temp-socket-path (path)
-      (let ((listener (make-listener path)))
-        (unwind-protect
-             (let* ((client (connect-to path))            ; queued in the backlog
-                    (conn   (accept-connection listener))  ; dequeues it
-                    (client-stream (socket-stream client))
-                    (server-stream (socket-stream conn)))
-               ;; client → server: a key frame, then a detach frame
-               (send-frame client-stream (msg-key #(65 66)))
-               (send-frame client-stream (msg-detach))
-               (multiple-value-bind (type payload) (read-frame server-stream)
-                 (is (= +msg-key+ type)
-                     "msg-key type tag must survive roundtrip")
-                 (is (equalp #(65 66) payload)
-                     "msg-key payload must survive roundtrip"))
-               (multiple-value-bind (type payload) (read-frame server-stream)
-                 (declare (ignore payload))
-                 (is (= +msg-detach+ type)
-                     "msg-detach type tag must survive roundtrip"))
-               ;; server → client: a rendered frame with Unicode content
-               (send-frame server-stream (msg-frame "あ"))
-               (multiple-value-bind (type payload) (read-frame client-stream)
-                 (is (= +msg-frame+ type)
-                     "msg-frame type tag must survive roundtrip")
-                 (is (string= "あ" (decode-text payload))
-                     "msg-frame Unicode payload must round-trip correctly"))
-               (close-socket client)
-               (close-socket conn))
-          (close-socket listener))))))
+      (with-connected-sockets (path listener client conn)
+        (declare (ignore listener))
+        (let ((client-stream (socket-stream client))
+              (server-stream (socket-stream conn)))
+          ;; client → server: a key frame, then a detach frame
+          (send-frame client-stream (msg-key #(65 66)))
+          (send-frame client-stream (msg-detach))
+          (multiple-value-bind (type payload) (read-frame server-stream)
+            (is (= +msg-key+ type)
+                "msg-key type tag must survive roundtrip")
+            (is (equalp #(65 66) payload)
+                "msg-key payload must survive roundtrip"))
+          (multiple-value-bind (type payload) (read-frame server-stream)
+            (declare (ignore payload))
+            (is (= +msg-detach+ type)
+                "msg-detach type tag must survive roundtrip"))
+          ;; server → client: a rendered frame with Unicode content
+          (send-frame server-stream (msg-frame "あ"))
+          (multiple-value-bind (type payload) (read-frame client-stream)
+            (is (= +msg-frame+ type)
+                "msg-frame type tag must survive roundtrip")
+            (is (string= "あ" (decode-text payload))
+                "msg-frame Unicode payload must round-trip correctly")))))))
 
 (test socket-multiple-frames-in-order
   :description "Multiple frames queued by the sender are consumed in send order."
@@ -145,27 +129,22 @@
     (skip "Unix-domain socket bind unavailable (sandbox)"))
   (sb-ext:with-timeout 10
     (with-temp-socket-path (path)
-      (let ((listener (make-listener path)))
-        (unwind-protect
-             (let* ((client (connect-to path))
-                    (conn   (accept-connection listener))
-                    (cs (socket-stream client))
-                    (ss (socket-stream conn)))
-               ;; Send three distinct frames
-               (send-frame cs (msg-frame "first"))
-               (send-frame cs (msg-frame "second"))
-               (send-frame cs (msg-frame "third"))
-               (let ((results
-                      (loop repeat 3
-                            collect (multiple-value-bind (type payload)
-                                        (read-frame ss)
-                                      (declare (ignore type))
-                                      (decode-text payload)))))
-                 (is (equal '("first" "second" "third") results)
-                     "frames must arrive in send order: ~S" results))
-               (ignore-errors (close-socket client))
-               (ignore-errors (close-socket conn)))
-          (ignore-errors (close-socket listener)))))))
+      (with-connected-sockets (path listener client conn)
+        (declare (ignore listener))
+        (let ((client-stream (socket-stream client))
+              (server-stream (socket-stream conn)))
+          ;; Send three distinct frames
+          (send-frame client-stream (msg-frame "first"))
+          (send-frame client-stream (msg-frame "second"))
+          (send-frame client-stream (msg-frame "third"))
+          (let ((results
+                 (loop repeat 3
+                       collect (multiple-value-bind (type payload)
+                                   (read-frame server-stream)
+                                 (declare (ignore type))
+                                 (decode-text payload)))))
+            (is (equal '("first" "second" "third") results)
+                "frames must arrive in send order: ~S" results)))))))
 
 (test socket-listener-fd-distinct-from-client-fd
   :description "The listener fd and the client fd must be distinct (different kernel fds)."
@@ -173,14 +152,117 @@
     (skip "Unix-domain socket bind unavailable (sandbox)"))
   (sb-ext:with-timeout 10
     (with-temp-socket-path (path)
-      (let ((listener (make-listener path)))
-        (unwind-protect
-             (let* ((client (connect-to path))
-                    (conn   (accept-connection listener)))
-               (is (/= (socket-fd listener) (socket-fd client))
-                   "listener fd must differ from client fd")
-               (is (/= (socket-fd listener) (socket-fd conn))
-                   "listener fd must differ from accepted-conn fd")
-               (ignore-errors (close-socket client))
-               (ignore-errors (close-socket conn)))
-          (ignore-errors (close-socket listener)))))))
+      (with-connected-sockets (path listener client conn)
+        (is (/= (socket-fd listener) (socket-fd client))
+            "listener fd must differ from client fd")
+        (is (/= (socket-fd listener) (socket-fd conn))
+            "listener fd must differ from accepted-conn fd")))))
+
+;;; ── Net constant values ──────────────────────────────────────────────────────
+
+(test accept-timeout-constant-is-positive-integer
+  :description "+accept-timeout-seconds+ must be a positive integer for sb-ext:with-timeout."
+  (is (integerp cl-tmux/net::+accept-timeout-seconds+)
+      "+accept-timeout-seconds+ must be an integer")
+  (is (plusp cl-tmux/net::+accept-timeout-seconds+)
+      "+accept-timeout-seconds+ must be positive"))
+
+(test socket-stream-timeout-constant-is-positive-integer
+  :description "+socket-stream-timeout-seconds+ must be a positive integer for socket-make-stream."
+  (is (integerp cl-tmux/net::+socket-stream-timeout-seconds+)
+      "+socket-stream-timeout-seconds+ must be an integer")
+  (is (plusp cl-tmux/net::+socket-stream-timeout-seconds+)
+      "+socket-stream-timeout-seconds+ must be positive"))
+
+;;; ── Socket stream element type ───────────────────────────────────────────────
+
+(test socket-stream-has-binary-element-type
+  :description "socket-stream must produce a stream whose element-type is (unsigned-byte 8)."
+  (unless (unix-socket-available-p)
+    (skip "Unix-domain socket bind unavailable (sandbox)"))
+  (sb-ext:with-timeout 10
+    (with-temp-socket-path (path)
+      (with-connected-sockets (path listener client conn)
+        (declare (ignore listener conn))
+        (let ((s (socket-stream client)))
+          (is (subtypep (stream-element-type s) '(unsigned-byte 8))
+              "socket-stream element-type must be a subtype of (unsigned-byte 8)"))))))
+
+;;; ── msg-command frame through real socket ────────────────────────────────────
+
+(test socket-msg-command-roundtrip
+  :description "A msg-command frame survives a real Unix-domain socket send→receive cycle."
+  (unless (unix-socket-available-p)
+    (skip "Unix-domain socket bind unavailable (sandbox)"))
+  (sb-ext:with-timeout 10
+    (with-temp-socket-path (path)
+      (with-connected-sockets (path listener client conn)
+        (declare (ignore listener))
+        (let ((client-stream (socket-stream client))
+              (server-stream (socket-stream conn)))
+          (send-frame client-stream
+                      (msg-command :rename-window "1:alpha" '("new-name")))
+          (multiple-value-bind (type payload) (read-frame server-stream)
+            (is (= +msg-command+ type)
+                "msg-command type tag must survive socket roundtrip")
+            (multiple-value-bind (command target args)
+                (cl-tmux/protocol:decode-command-payload payload)
+              (is (eq :rename-window command)
+                  "command keyword must survive socket roundtrip")
+              (is (string= "1:alpha" target)
+                  "target string must survive socket roundtrip")
+              (is (equal '("new-name") args)
+                  "args must survive socket roundtrip"))))))))
+
+;;; ── Bidirectional socket I/O ─────────────────────────────────────────────────
+
+(test socket-bidirectional-frame-exchange
+  :description "Client and server can both send and receive frames on the same socket pair."
+  (unless (unix-socket-available-p)
+    (skip "Unix-domain socket bind unavailable (sandbox)"))
+  (sb-ext:with-timeout 10
+    (with-temp-socket-path (path)
+      (with-connected-sockets (path listener client conn)
+        (declare (ignore listener))
+        (let ((client-stream (socket-stream client))
+              (server-stream (socket-stream conn)))
+          ;; client → server
+          (send-frame client-stream (msg-attach 24 80))
+          (multiple-value-bind (type payload) (read-frame server-stream)
+            (is (= +msg-attach+ type) "server must receive the attach frame")
+            (multiple-value-bind (rows cols)
+                (cl-tmux/protocol:decode-size payload)
+              (is (= 24 rows) "attach rows must arrive at server")
+              (is (= 80 cols) "attach cols must arrive at server")))
+          ;; server → client
+          (send-frame server-stream (msg-frame "rendered output"))
+          (multiple-value-bind (type payload) (read-frame client-stream)
+            (is (= +msg-frame+ type) "client must receive the frame message")
+            (is (string= "rendered output"
+                         (cl-tmux/protocol:decode-text payload))
+                "frame text must survive the server→client direction")))))))
+
+;;; ── make-listener / connect-to produce usable sockets ───────────────────────
+
+(test make-listener-binds-at-given-path
+  :description "make-listener creates a socket that connect-to can reach at the bound path."
+  (unless (unix-socket-available-p)
+    (skip "Unix-domain socket bind unavailable (sandbox)"))
+  (sb-ext:with-timeout 10
+    (with-temp-socket-path (path)
+      ;; The with-connected-sockets macro drives make-listener + connect-to + accept.
+      ;; If any of these fail the test will signal before reaching the IS forms.
+      (with-connected-sockets (path listener client conn)
+        (is-true listener "make-listener must return a socket")
+        (is-true client   "connect-to must return a socket")
+        (is-true conn     "accept-connection must return a socket")))))
+
+;;; ── close-socket on never-used socket ────────────────────────────────────────
+
+(test close-socket-on-fresh-socket-does-not-signal
+  :description "close-socket on a freshly created socket (never bound) must not signal."
+  (unless (unix-socket-available-p)
+    (skip "Unix-domain socket bind unavailable (sandbox)"))
+  (let ((socket (make-instance 'sb-bsd-sockets:local-socket :type :stream)))
+    (finishes (close-socket socket)
+              "close-socket on a freshly created (unbound) socket must not signal")))

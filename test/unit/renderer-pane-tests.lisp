@@ -93,7 +93,7 @@
 (defun %border-style-output (style)
   "Return the string emitted by %apply-border-style for STYLE."
   (with-output-to-string (s)
-    (cl-tmux/renderer::%apply-border-style s style nil)))
+    (cl-tmux/renderer::%apply-border-style s style)))
 
 (test apply-border-style-nil-resets
   "NIL style emits only reset attributes (ESC[0m)."
@@ -220,60 +220,36 @@
 
 (test in-sel-branch-single-row
   "Single-row selection: only cells in [sel-start-c, sel-end-c) are highlighted."
-  (let* ((pane (make-pane :id 1 :x 0 :y 0 :width 8 :height 4 :fd -1
-                          :screen (make-screen 8 4))))
-    (feed (pane-screen pane) "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567")
-    (let ((screen (pane-screen pane)))
-      (setf (screen-copy-mode-p    screen) t
-            (screen-copy-selecting screen) t
-            (screen-copy-offset    screen) 0
-            (screen-copy-mark      screen) (cons 0 2)
-            (screen-copy-cursor    screen) (cons 0 5)))
+  (let* ((pane (%make-selecting-pane 8 4
+                                     "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
+                                     0 2 0 5)))
     (let ((out (%render-pane-string pane)))
       (is (%reverse-video-p out)
           "single-row selection: reverse-video SGR must appear (got ~S)" out))))
 
 (test in-sel-branch-first-row
   "First row of a multi-row selection: cols >= sel-start-c are highlighted."
-  (let* ((pane (make-pane :id 1 :x 0 :y 0 :width 8 :height 4 :fd -1
-                          :screen (make-screen 8 4))))
-    (feed (pane-screen pane) "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567")
-    (let ((screen (pane-screen pane)))
-      (setf (screen-copy-mode-p    screen) t
-            (screen-copy-selecting screen) t
-            (screen-copy-offset    screen) 0
-            (screen-copy-mark      screen) (cons 0 3)
-            (screen-copy-cursor    screen) (cons 2 0)))
+  (let* ((pane (%make-selecting-pane 8 4
+                                     "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
+                                     0 3 2 0)))
     (let ((out (%render-pane-string pane)))
       (is (%reverse-video-p out)
           "first-row branch: reverse-video SGR must appear (got ~S)" out))))
 
 (test in-sel-branch-last-row
   "Last row of a multi-row selection: cols < sel-end-c are highlighted."
-  (let* ((pane (make-pane :id 1 :x 0 :y 0 :width 8 :height 4 :fd -1
-                          :screen (make-screen 8 4))))
-    (feed (pane-screen pane) "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567")
-    (let ((screen (pane-screen pane)))
-      (setf (screen-copy-mode-p    screen) t
-            (screen-copy-selecting screen) t
-            (screen-copy-offset    screen) 0
-            (screen-copy-mark      screen) (cons 0 0)
-            (screen-copy-cursor    screen) (cons 2 5)))
+  (let* ((pane (%make-selecting-pane 8 4
+                                     "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
+                                     0 0 2 5)))
     (let ((out (%render-pane-string pane)))
       (is (%reverse-video-p out)
           "last-row branch: reverse-video SGR must appear (got ~S)" out))))
 
 (test in-sel-branch-middle-row
   "Middle rows of a multi-row selection are fully highlighted."
-  (let* ((pane (make-pane :id 1 :x 0 :y 0 :width 8 :height 4 :fd -1
-                          :screen (make-screen 8 4))))
-    (feed (pane-screen pane) "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567")
-    (let ((screen (pane-screen pane)))
-      (setf (screen-copy-mode-p    screen) t
-            (screen-copy-selecting screen) t
-            (screen-copy-offset    screen) 0
-            (screen-copy-mark      screen) (cons 0 0)
-            (screen-copy-cursor    screen) (cons 3 0)))
+  (let* ((pane (%make-selecting-pane 8 4
+                                     "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
+                                     0 0 3 0)))
     (let ((out (%render-pane-string pane)))
       (is (%reverse-video-p out)
           "middle-row branch: reverse-video SGR must appear (got ~S)" out))))
@@ -375,3 +351,142 @@
          (leaf (make-layout-leaf p1)))
     (is-false (cl-tmux/renderer::subtree-contains-p leaf p2)
               "subtree-contains-p must return NIL for non-member pane")))
+
+;;; -- in-selection-p direct unit tests ----------------------------------------
+;;;
+;;; in-selection-p is the innermost hot path: test all 4 cond branches directly.
+
+(defun %in-sel (row col sr er sc ec)
+  "Call in-selection-p with positional args in a more readable order."
+  (cl-tmux/renderer::in-selection-p row col sr er sc ec))
+
+(test in-selection-p-single-row-inside-range
+  "Single-row selection: cell within [sel-start-c, sel-end-c) is included."
+  (is-true (%in-sel 2 3 2 2 1 5)
+           "row=2 col=3 in single-row selection [1,5) must be T"))
+
+(test in-selection-p-single-row-left-boundary
+  "Single-row selection: cell at sel-start-c is included (inclusive lower bound)."
+  (is-true (%in-sel 2 1 2 2 1 5)
+           "col at sel-start-c must be included"))
+
+(test in-selection-p-single-row-right-boundary-exclusive
+  "Single-row selection: cell at sel-end-c is excluded (exclusive upper bound)."
+  (is-false (%in-sel 2 5 2 2 1 5)
+            "col at sel-end-c must be excluded"))
+
+(test in-selection-p-single-row-outside-left
+  "Single-row selection: cell before sel-start-c is excluded."
+  (is-false (%in-sel 2 0 2 2 1 5)
+            "col before sel-start-c must be excluded"))
+
+(test in-selection-p-first-row-of-multirow
+  "First row of multi-row selection: cols >= sel-start-c are included."
+  (is-true  (%in-sel 0 3 0 2 2 4) "col >= sel-start-c on first row must be T")
+  (is-false (%in-sel 0 1 0 2 2 4) "col < sel-start-c on first row must be F"))
+
+(test in-selection-p-last-row-of-multirow
+  "Last row of multi-row selection: cols < sel-end-c are included."
+  (is-true  (%in-sel 2 3 0 2 2 4) "col < sel-end-c on last row must be T")
+  (is-false (%in-sel 2 4 0 2 2 4) "col = sel-end-c on last row must be F (exclusive)"))
+
+(test in-selection-p-middle-row-of-multirow
+  "Middle rows of multi-row selection: all cells are included."
+  (is-true (%in-sel 1 0 0 2 2 4) "col 0 in middle row must be T (full row)")
+  (is-true (%in-sel 1 7 0 2 2 4) "col 7 in middle row must be T (full row)"))
+
+(test in-selection-p-row-before-selection-excluded
+  "Row before selection start is not included."
+  (is-false (%in-sel 0 0 1 3 0 5)
+            "row before sel-start-r must be excluded"))
+
+(test in-selection-p-row-after-selection-excluded
+  "Row after selection end is not included."
+  (is-false (%in-sel 4 0 1 3 0 5)
+            "row after sel-end-r must be excluded"))
+
+;;; -- %compute-selection-bounds unit tests ------------------------------------
+
+(test compute-selection-bounds-active-selection
+  "%compute-selection-bounds returns sel-active=T when all prerequisites are present."
+  (let ((screen (make-screen 10 5)))
+    (setf (cl-tmux/terminal/types:screen-copy-selecting screen) t
+          (cl-tmux/terminal/types:screen-copy-mark     screen) (cons 1 2)
+          (cl-tmux/terminal/types:screen-copy-cursor   screen) (cons 3 4)
+          (cl-tmux/terminal/types:screen-copy-offset   screen) 0)
+    (multiple-value-bind (active sr er sc ec)
+        (cl-tmux/renderer::%compute-selection-bounds screen)
+      (is-true active "sel-active must be T when all prerequisites present")
+      (is (= 1 sr) "start row must be min(mark-row, cursor-row)")
+      (is (= 3 er) "end row must be max(mark-row, cursor-row)")
+      (is (= 2 sc) "start col: mark-col when mark-row < cursor-row")
+      (is (= 4 ec) "end col: cursor-col when mark-row < cursor-row"))))
+
+(test compute-selection-bounds-no-selecting
+  "%compute-selection-bounds returns sel-active=NIL when copy-selecting is NIL."
+  (let ((screen (make-screen 10 5)))
+    (setf (cl-tmux/terminal/types:screen-copy-selecting screen) nil
+          (cl-tmux/terminal/types:screen-copy-mark     screen) (cons 0 0)
+          (cl-tmux/terminal/types:screen-copy-cursor   screen) (cons 1 1))
+    (multiple-value-bind (active sr er sc ec)
+        (cl-tmux/renderer::%compute-selection-bounds screen)
+      (declare (ignore sr er sc ec))
+      (is-false active "sel-active must be NIL when copy-selecting is NIL"))))
+
+(test compute-selection-bounds-nil-mark
+  "%compute-selection-bounds returns sel-active=NIL when mark is NIL."
+  (let ((screen (make-screen 10 5)))
+    (setf (cl-tmux/terminal/types:screen-copy-selecting screen) t
+          (cl-tmux/terminal/types:screen-copy-mark     screen) nil
+          (cl-tmux/terminal/types:screen-copy-cursor   screen) (cons 1 1))
+    (multiple-value-bind (active sr er sc ec)
+        (cl-tmux/renderer::%compute-selection-bounds screen)
+      (declare (ignore sr er sc ec))
+      (is-false active "sel-active must be NIL when mark is NIL"))))
+
+(test compute-selection-bounds-reversed-rows-normalised
+  "%compute-selection-bounds normalises row order so start <= end."
+  (let ((screen (make-screen 10 5)))
+    ;; cursor above mark — rows should be swapped in the output
+    (setf (cl-tmux/terminal/types:screen-copy-selecting screen) t
+          (cl-tmux/terminal/types:screen-copy-mark     screen) (cons 3 5)
+          (cl-tmux/terminal/types:screen-copy-cursor   screen) (cons 1 2)
+          (cl-tmux/terminal/types:screen-copy-offset   screen) 0)
+    (multiple-value-bind (active sr er sc ec)
+        (cl-tmux/renderer::%compute-selection-bounds screen)
+      (is-true active "sel-active must be T")
+      (is (<= sr er) "start row (~D) must be <= end row (~D)" sr er)
+      (is (= 1 sr) "start row must be min(mark-row=3, cursor-row=1)=1")
+      (is (= 3 er) "end row must be max(mark-row=3, cursor-row=1)=3")
+      ;; cursor-row < mark-row: start-col = cursor-col, end-col = mark-col
+      (is (= 2 sc) "start col = cursor-col when cursor-row < mark-row")
+      (is (= 5 ec) "end col = mark-col when cursor-row < mark-row"))))
+
+(test compute-selection-bounds-same-row-cols-normalised
+  "%compute-selection-bounds normalises col order for same-row selections."
+  (let ((screen (make-screen 10 5)))
+    (setf (cl-tmux/terminal/types:screen-copy-selecting screen) t
+          (cl-tmux/terminal/types:screen-copy-mark     screen) (cons 2 7)
+          (cl-tmux/terminal/types:screen-copy-cursor   screen) (cons 2 3)
+          (cl-tmux/terminal/types:screen-copy-offset   screen) 0)
+    (multiple-value-bind (active sr er sc ec)
+        (cl-tmux/renderer::%compute-selection-bounds screen)
+      (is-true active "sel-active must be T")
+      (is (= 2 sr) "both rows are 2")
+      (is (= 2 er) "both rows are 2")
+      (is (= 3 sc) "start col = min(mark-col=7, cursor-col=3)=3")
+      (is (= 7 ec) "end col = max(mark-col=7, cursor-col=3)=7"))))
+
+(test compute-selection-bounds-copy-offset-applied
+  "%compute-selection-bounds adds copy-offset to both row values."
+  (let ((screen (make-screen 10 5)))
+    (setf (cl-tmux/terminal/types:screen-copy-selecting screen) t
+          (cl-tmux/terminal/types:screen-copy-mark     screen) (cons 0 0)
+          (cl-tmux/terminal/types:screen-copy-cursor   screen) (cons 1 0)
+          (cl-tmux/terminal/types:screen-copy-offset   screen) 5)
+    (multiple-value-bind (active sr er sc ec)
+        (cl-tmux/renderer::%compute-selection-bounds screen)
+      (declare (ignore sc ec))
+      (is-true active "sel-active must be T")
+      (is (= 5 sr) "start row must be min(0,1) + offset(5) = 5")
+      (is (= 6 er) "end row must be max(0,1) + offset(5) = 6"))))

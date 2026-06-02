@@ -35,6 +35,7 @@
   "A zero-argument function returning the current history-limit integer, or NIL.
    Install (lambda () (cl-tmux/options:get-option \"history-limit\")) at startup.")
 
+(declaim (inline %effective-history-limit))
 (defun %effective-history-limit ()
   "Return the history-limit in effect: callback result if available, else +max-scrollback-lines+."
   (or (and *history-limit-fn* (funcall *history-limit-fn*))

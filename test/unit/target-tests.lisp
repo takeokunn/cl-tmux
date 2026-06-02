@@ -8,6 +8,39 @@
 (def-suite target-suite :description "Session/window/pane target resolution")
 (in-suite target-suite)
 
+;;; ── %parse-session-component direct tests ───────────────────────────────────
+;;;
+;;; %parse-session-component has non-trivial logic for the colon/dot cases.
+;;; Testing it directly gives coverage independent of %parse-target's full path.
+
+(test parse-session-component-with-colon
+  "%parse-session-component returns text before the colon when colon is present."
+  (is (string= "sess"
+               (cl-tmux::%parse-session-component "sess:win" 4 nil))
+      "session component must be 'sess' when colon is at position 4"))
+
+(test parse-session-component-no-colon-with-dot
+  "%parse-session-component returns text before the dot when no colon is present."
+  (is (string= "sess"
+               (cl-tmux::%parse-session-component "sess.2" nil 4))
+      "session component must be 'sess' when no colon but dot is at position 4"))
+
+(test parse-session-component-no-colon-no-dot
+  "%parse-session-component returns the whole string when neither colon nor dot."
+  (is (string= "mysession"
+               (cl-tmux::%parse-session-component "mysession" nil nil))
+      "session component must be the whole string when no colon or dot"))
+
+(test parse-session-component-empty-before-colon-returns-nil
+  "%parse-session-component returns NIL when the text before the colon is empty."
+  (is (null (cl-tmux::%parse-session-component ":win" 0 nil))
+      "session component must be NIL when colon is at position 0"))
+
+(test parse-session-component-empty-string-returns-nil
+  "%parse-session-component returns NIL for the empty string."
+  (is (null (cl-tmux::%parse-session-component "" nil nil))
+      "session component must be NIL for empty input"))
+
 ;;; ── %parse-target ────────────────────────────────────────────────────────────
 
 (test parse-target-nil-returns-all-nil
@@ -400,3 +433,101 @@
       (declare (ignore _rw _rp))
       (is (eq s2 rs)
           "resolve-target 'two' must select session s2 (got ~S)" rs))))
+
+;;; ── %non-empty pure helper ───────────────────────────────────────────────────
+
+(test non-empty-returns-non-empty-string
+  "%non-empty returns the string when it is non-empty."
+  (is (string= "hello" (cl-tmux::%non-empty "hello"))
+      "%non-empty must return the string when non-empty"))
+
+(test non-empty-returns-nil-for-empty-string
+  "%non-empty returns NIL when the string is empty."
+  (is (null (cl-tmux::%non-empty ""))
+      "%non-empty must return NIL for an empty string"))
+
+(test non-empty-returns-nil-for-nil
+  "%non-empty returns NIL when the input is NIL."
+  (is (null (cl-tmux::%non-empty nil))
+      "%non-empty must return NIL for NIL input"))
+
+;;; ── Table-driven %parse-target cases ────────────────────────────────────────
+
+(test parse-target-table
+  "Table-driven: %parse-target decomposes various target strings correctly."
+  ;; Each entry: (target-string expected-sess expected-win expected-pane description)
+  (dolist (entry
+           '(("sess:win.3" "sess" "win" "3" "full path")
+             ("sess:win"   "sess" "win" nil "session and window only")
+             ("sess.2"     "sess" nil   "2" "session and pane no window")
+             (":win"       nil    "win" nil "window only via colon prefix")
+             ("mysess"     "mysess" nil nil "bare session name")))
+    (destructuring-bind (target-str exp-sess exp-win exp-pane desc) entry
+      (multiple-value-bind (s w p) (cl-tmux::%parse-target target-str)
+        (is (equal exp-sess s) "session component of ~S: ~S" target-str desc)
+        (is (equal exp-win  w) "window  component of ~S: ~S" target-str desc)
+        (is (equal exp-pane p) "pane    component of ~S: ~S" target-str desc)))))
+
+;;; ── resolve-target with pane specified as numeric index ─────────────────────
+
+(test resolve-target-pane-by-numeric-index
+  "resolve-target resolves a pane by its 0-based numeric index."
+  (let* ((p1   (make-no-pty-pane 1  0 0 40 24))
+         (p2   (make-no-pty-pane 2 41 0 40 24))
+         (win  (make-window :id 1 :name "w" :width 81 :height 24
+                            :panes (list p1 p2)))
+         (sess (make-session :id 1 :name "s" :windows (list win))))
+    (window-select-pane win p1)
+    (session-select-window sess win)
+    (let ((registry (list (cons "s" sess))))
+      (multiple-value-bind (_rs _rw rp)
+          (cl-tmux::resolve-target registry "s:w.1")
+        (declare (ignore _rs _rw))
+        (is (eq p2 rp) "pane at index 1 must be p2")))))
+
+;;; ── find-session-by-target: id higher than 9 ────────────────────────────────
+
+(test find-session-by-target-multi-digit-id
+  "find-session-by-target parses $N with multi-digit N correctly."
+  (let* ((sess (make-session :id 42 :name "big" :windows nil))
+         (registry (list (cons "big" sess))))
+    (is (eq sess (cl-tmux::find-session-by-target registry "$42"))
+        "find-session-by-target must resolve $42 to the session with id 42")))
+
+;;; ── find-window-by-target: @N with multi-digit id ────────────────────────────
+
+(test find-window-by-target-multi-digit-at-id
+  "find-window-by-target parses @N with multi-digit N correctly."
+  (let* ((w1   (make-window :id 99 :name "bigwin" :width 80 :height 24))
+         (sess (make-session :id 1 :name "s" :windows (list w1))))
+    (is (eq w1 (cl-tmux::find-window-by-target sess "@99"))
+        "find-window-by-target must resolve @99 to the window with id 99")))
+
+;;; ── find-pane-by-target: %N with multi-digit id ──────────────────────────────
+
+(test find-pane-by-target-multi-digit-percent-id
+  "find-pane-by-target parses %N with multi-digit N correctly."
+  (let* ((p1  (make-no-pty-pane 15 0 0 80 24))
+         (win (make-window :id 1 :name "w" :width 80 :height 24
+                           :panes (list p1))))
+    (is (eq p1 (cl-tmux::find-pane-by-target win "%15"))
+        "find-pane-by-target must resolve %15 to the pane with id 15")))
+
+;;; ── resolve-target: empty string is same as NIL ─────────────────────────────
+
+(test resolve-target-empty-string-uses-current-defaults
+  "resolve-target with an empty string behaves identically to NIL target."
+  (let* ((p1   (make-no-pty-pane 1 0 0 80 24))
+         (win  (make-window :id 1 :name "w" :width 80 :height 24
+                            :panes (list p1)))
+         (sess (make-session :id 1 :name "s" :windows (list win))))
+    (window-select-pane win p1)
+    (session-select-window sess win)
+    (multiple-value-bind (rs rw rp)
+        (cl-tmux::resolve-target nil ""
+                                 :current-session sess
+                                 :current-window  win
+                                 :current-pane    p1)
+      (is (eq sess rs) "empty-string target must use current-session")
+      (is (eq win  rw) "empty-string target must use current-window")
+      (is (eq p1   rp) "empty-string target must use current-pane"))))

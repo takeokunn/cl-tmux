@@ -28,6 +28,8 @@
                 #:screen-mouse-mode
                 #:screen-mouse-sgr-mode
                 #:screen-title
+                #:screen-copy-line-selection-p
+                #:screen-app-cursor-keys
                 #:char-width)
   (:import-from #:cl-tmux/model
                 #:create-initial-session
@@ -117,6 +119,8 @@
                 #:encode-frame #:decode-frame
                 #:msg-attach #:msg-key #:msg-resize #:msg-detach #:msg-frame #:msg-bye
                 #:msg-command
+                #:encode-command-payload #:decode-command-payload
+                #:u16-octets-pair
                 #:decode-size #:decode-text #:to-octets)
   (:import-from #:cl-tmux/transport
                 #:send-frame #:read-frame #:with-incoming-frame)
@@ -147,6 +151,7 @@
                 #:pipe-pane-close
                 #:pipe-pane-write)
   (:import-from #:cl-tmux/prompt
+                #:prompt #:make-prompt #:prompt-p
                 #:*prompt*
                 #:prompt-active-p
                 #:prompt-start
@@ -161,6 +166,7 @@
                 #:clear-overlay
                 #:overlay-lines
                 #:overlay-scroll
+                #:+default-popup-width+ #:+default-popup-height+
                 #:popup #:make-popup #:popup-p
                 #:popup-x #:popup-y #:popup-width #:popup-height
                 #:popup-screen #:popup-pane #:popup-title #:popup-close-on-exit

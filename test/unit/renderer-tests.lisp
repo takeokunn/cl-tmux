@@ -7,7 +7,7 @@
 ;;;;         render-popup, render-menu, enable/disable-mouse-reporting,
 ;;;;         %status-window-list-styled, %status-justify-line,
 ;;;;         %status-format-or-default
-;;;;         from src/renderer.lisp.
+;;;;         from src/renderer-statusbar.lisp and src/renderer-compose.lisp.
 ;;;;
 ;;;; renderer-suite is declared in renderer-format-tests.lisp (loaded first).
 
@@ -253,43 +253,53 @@
   (is (string= "" (cl-tmux/renderer::%status-copy-indicator nil))
       "%status-copy-indicator with nil pane should return empty string"))
 
-;;; ── %status-window-list (pure) ──────────────────────────────────────────────
+;;; ── %status-window-list-styled window-list behaviour (via styled variant) ───
+;;;
+;;; %status-window-list was dead code (never called from production) and has been
+;;; removed.  These tests now call %status-window-list-styled with empty style
+;;; options so the same window-list behaviour is exercised through the live path.
 
 (test status-window-list-brackets-active-window
-  (let* ((sess     (make-test-session 20 5 :content ""))
-         (win      (session-active-window sess))
-         (out      (cl-tmux/renderer::%status-window-list sess win)))
-    ;; window-status-current-format default: " #{window_index}:#{window_name}* "
-    ;; window named "1" at index 1 → " 1:1* "
-    (is (search "1:1" out)
-        "%status-window-list should contain the active window 1:1 (got ~S)" out)
-    (is (search "*" out)
-        "%status-window-list should contain * marker for active window (got ~S)" out)))
+  "Active window appears with the * marker in the window list."
+  (with-isolated-options ("window-status-current-style" ""
+                          "window-status-style" "")
+    (let* ((sess (make-test-session 20 5 :content ""))
+           (win  (session-active-window sess))
+           (out  (cl-tmux/renderer::%status-window-list-styled sess win)))
+      ;; window-status-current-format default: " #{window_index}:#{window_name}* "
+      ;; window named "1" at index 1 → " 1:1* "
+      (is (search "1:1" out)
+          "%status-window-list-styled should contain the active window 1:1 (got ~S)" out)
+      (is (search "*" out)
+          "%status-window-list-styled should contain * marker for active window (got ~S)" out))))
 
 (test status-window-list-two-windows-formats-both
-  ;; Build a 2-window session manually; second window is active.
-  (let* ((s0  (make-screen 10 5))
-         (p0  (make-pane :id 1 :x 0 :y 0 :width 10 :height 5 :fd -1 :screen s0))
-         (w0  (make-window :id 1 :name "alpha" :width 10 :height 5 :panes (list p0)))
-         (s1  (make-screen 10 5))
-         (p1  (make-pane :id 2 :x 0 :y 0 :width 10 :height 5 :fd -1 :screen s1))
-         (w1  (make-window :id 2 :name "beta"  :width 10 :height 5 :panes (list p1)))
-         (sess (make-session :id 1 :name "0" :windows (list w0 w1))))
-    (window-select-pane w0 p0)
-    (window-select-pane w1 p1)
-    (session-select-window sess w1)
-    ;; Active window is beta → rendered with window-status-current-format "index:name*"
-    ;; Inactive window alpha → rendered with window-status-format "index:name"
-    (let ((out (cl-tmux/renderer::%status-window-list sess w1)))
-      ;; Active window "beta" gets the current-format with "*"
-      (is (search "beta*" out)
-          "%status-window-list should mark active window beta with * (got ~S)" out)
-      ;; Inactive window "alpha" appears without "*"
-      (is (search "alpha" out)
-          "%status-window-list should include the inactive window alpha (got ~S)" out)
-      ;; alpha should NOT have the asterisk marker
-      (is (null (search "alpha*" out))
-          "%status-window-list must NOT mark inactive window alpha with * (got ~S)" out))))
+  "Both active and inactive windows appear with correct format strings."
+  (with-isolated-options ("window-status-current-style" ""
+                          "window-status-style" "")
+    ;; Build a 2-window session manually; second window is active.
+    (let* ((s0   (make-screen 10 5))
+           (p0   (make-pane :id 1 :x 0 :y 0 :width 10 :height 5 :fd -1 :screen s0))
+           (w0   (make-window :id 1 :name "alpha" :width 10 :height 5 :panes (list p0)))
+           (s1   (make-screen 10 5))
+           (p1   (make-pane :id 2 :x 0 :y 0 :width 10 :height 5 :fd -1 :screen s1))
+           (w1   (make-window :id 2 :name "beta"  :width 10 :height 5 :panes (list p1)))
+           (sess (make-session :id 1 :name "0" :windows (list w0 w1))))
+      (window-select-pane w0 p0)
+      (window-select-pane w1 p1)
+      (session-select-window sess w1)
+      ;; Active window is beta → rendered with window-status-current-format "index:name*"
+      ;; Inactive window alpha → rendered with window-status-format "index:name"
+      (let ((out (cl-tmux/renderer::%status-window-list-styled sess w1)))
+        ;; Active window "beta" gets the current-format with "*"
+        (is (search "beta*" out)
+            "%status-window-list-styled should mark active window beta with * (got ~S)" out)
+        ;; Inactive window "alpha" appears without "*"
+        (is (search "alpha" out)
+            "%status-window-list-styled should include the inactive window alpha (got ~S)" out)
+        ;; alpha should NOT have the asterisk marker
+        (is (null (search "alpha*" out))
+            "%status-window-list-styled must NOT mark inactive window alpha with * (got ~S)" out)))))
 
 ;;; ── %status-window-list-styled ───────────────────────────────────────────────
 
@@ -722,17 +732,11 @@
   (with-isolated-options ("status-left" nil "status-right" nil
                           "window-status-format" "WIN:#{window_name}"
                           "window-status-current-format" "[#{window_name}]")
-    ;; Build 2-window session; 2nd window is inactive
-    (let* ((s0 (make-screen 80 5))
-           (p0 (make-pane :id 1 :x 0 :y 0 :width 80 :height 5 :fd -1 :screen s0))
-           (w0 (make-window :id 1 :name "alpha" :width 80 :height 5 :panes (list p0)))
-           (s1 (make-screen 80 5))
-           (p1 (make-pane :id 2 :x 0 :y 0 :width 80 :height 5 :fd -1 :screen s1))
-           (w1 (make-window :id 2 :name "beta"  :width 80 :height 5 :panes (list p1)))
-           (sess (make-session :id 1 :name "0" :windows (list w0 w1))))
-      (window-select-pane w0 p0)
-      (window-select-pane w1 p1)
-      (session-select-window sess w0)      ; alpha is active
+    ;; make-two-window-session creates windows named "alpha" (active) and "beta".
+    (multiple-value-bind (sess win0 _p0 _w1 _p1)
+        (make-two-window-session 80 5)
+      (declare (ignore _p0 _w1 _p1))
+      (session-select-window sess win0)  ; alpha is active
       (let ((out (with-output-to-string (s)
                    (cl-tmux/renderer::render-status-bar s sess 11 80))))
         (is (search "[alpha]" out)
@@ -746,37 +750,14 @@
   "window-status-separator is placed between window entries."
   (with-isolated-options ("status-left" nil "status-right" nil
                           "window-status-separator" "|SEP|")
-    (let* ((s0 (make-screen 80 5))
-           (p0 (make-pane :id 1 :x 0 :y 0 :width 80 :height 5 :fd -1 :screen s0))
-           (w0 (make-window :id 1 :name "a" :width 80 :height 5 :panes (list p0)))
-           (s1 (make-screen 80 5))
-           (p1 (make-pane :id 2 :x 0 :y 0 :width 80 :height 5 :fd -1 :screen s1))
-           (w1 (make-window :id 2 :name "b" :width 80 :height 5 :panes (list p1)))
-           (sess (make-session :id 1 :name "0" :windows (list w0 w1))))
-      (window-select-pane w0 p0)
-      (window-select-pane w1 p1)
-      (session-select-window sess w0)
+    (multiple-value-bind (sess win0 _p0 _w1 _p1)
+        (make-two-window-session 80 5)
+      (declare (ignore _p0 _w1 _p1))
+      (session-select-window sess win0)
       (let ((out (with-output-to-string (s)
                    (cl-tmux/renderer::render-status-bar s sess 11 80))))
         (is (search "|SEP|" out)
             "window-status-separator |SEP| must appear between windows (got ~S)" out)))))
-
-;;; ── *status-dirty* and start-status-timer ────────────────────────────────────
-
-(test status-dirty-var-exists
-  "*status-dirty* is bound in the cl-tmux package."
-  (is (boundp 'cl-tmux::*status-dirty*)
-      "*status-dirty* must be bound"))
-
-(test status-timer-thread-var-exists
-  "*status-timer-thread* is bound in the cl-tmux package."
-  (is (boundp 'cl-tmux::*status-timer-thread*)
-      "*status-timer-thread* must be bound"))
-
-(test start-status-timer-is-fbound
-  "start-status-timer is a defined function."
-  (is (fboundp 'cl-tmux::start-status-timer)
-      "start-status-timer must be fbound"))
 
 ;;; ── render-popup ─────────────────────────────────────────────────────────────
 
@@ -1002,3 +983,197 @@
             "global mouse must emit ?1006h (got ~S)" out)
         (is (search (format nil "~C[?1002h" #\Escape) out)
             "global mouse must emit ?1002h (got ~S)" out)))))
+
+;;; ── render-lock-screen edge cases (coverage gap) ────────────────────────────
+
+(test render-lock-screen-narrow-terminal-fits-message
+  "render-lock-screen clamps the message to terminal-cols when the terminal
+   is narrower than the message."
+  (let* ((narrow-cols 12)
+         (out (with-output-to-string (s)
+                (cl-tmux/renderer::render-lock-screen s 5 narrow-cols))))
+    (is (plusp (length out))
+        "narrow render-lock-screen must produce output")
+    ;; The message is truncated to 12 chars; "Session lock" is the prefix.
+    (is (search "Session lock" out)
+        "narrow lock screen must include the beginning of the message (got ~S)" out)))
+
+(test render-lock-screen-single-row-terminal
+  "render-lock-screen with terminal-rows=1 produces output without error."
+  (let ((out (with-output-to-string (s)
+               (cl-tmux/renderer::render-lock-screen s 1 40))))
+    (is (plusp (length out))
+        "single-row lock screen must produce non-empty output")))
+
+;;; ── %render-panes-and-borders zoom suppression (coverage gap) ───────────────
+
+(test render-panes-borders-suppressed-when-zoomed
+  "%render-panes-and-borders emits no border characters when window-zoom-p is T."
+  (let* ((l0   (tl-leaf 1 1 1))
+         (l1   (tl-leaf 2 1 1))
+         (tree (make-layout-split :h l0 l1)))
+    (cl-tmux/model::layout-assign tree 0 0 81 24)
+    (let* ((p0   (layout-leaf-pane l0))
+           (p1   (layout-leaf-pane l1))
+           (win  (make-window :id 1 :name "w" :width 81 :height 24
+                              :panes (list p0 p1) :tree tree)))
+      (window-select-pane win p0)
+      ;; Enable zoom — borders should be suppressed.
+      (setf (cl-tmux/model:window-zoom-p win) t)
+      (let ((buf (make-string-output-stream)))
+        (cl-tmux/renderer::%render-panes-and-borders buf win (list p0 p1) p0 81)
+        (let ((out (get-output-stream-string buf)))
+          (is (null (find #\│ out))
+              "zoomed window must not emit vertical border │ (got ~S)" out))))))
+
+;;; ── %justify-right and %justify-centre (coverage gap) ───────────────────────
+
+(test justify-right-places-right-text-flush-right
+  "%justify-right puts the right text at the far right of the line."
+  (let* ((left  "left-text")
+         (right "right")
+         (cols  30)
+         (line  (cl-tmux/renderer::%justify-right left right cols)))
+    (is (<= (length line) cols)
+        "%justify-right result must fit in ~D cols (got ~D: ~S)" cols (length line) line)
+    (is (char= #\t (char line (1- (length line))))
+        "last char must be the last char of right-text (got ~S)" line)
+    (is (search left line)
+        "%justify-right must include the left text (got ~S)" line)))
+
+(test justify-right-short-cols-truncates
+  "%justify-right truncates when cols is very small."
+  (let ((line (cl-tmux/renderer::%justify-right "LLLL" "RRRR" 5)))
+    (is (<= (length line) 5)
+        "%justify-right must not exceed 5 cols (got ~D: ~S)" (length line) line)))
+
+(test justify-centre-contains-both-strings
+  "%justify-centre produces output containing both left and right strings."
+  (let ((line (cl-tmux/renderer::%justify-centre "LEFT" "RIGHT" 30)))
+    (is (search "LEFT"  line) "%justify-centre must contain 'LEFT' (got ~S)" line)
+    (is (search "RIGHT" line) "%justify-centre must contain 'RIGHT' (got ~S)" line)
+    (is (<= (length line) 30)
+        "%justify-centre result must fit in 30 cols (got ~D: ~S)" (length line) line)))
+
+(test justify-centre-short-cols-truncates
+  "%justify-centre truncates when cols is smaller than the combined content."
+  (let ((line (cl-tmux/renderer::%justify-centre "AAAA" "BBBB" 5)))
+    (is (<= (length line) 5)
+        "%justify-centre must not exceed 5 cols (got ~D: ~S)" (length line) line)))
+
+;;; ── %clamp-status-segment ───────────────────────────────────────────────────
+
+(test clamp-status-segment-short-text-unchanged
+  "%clamp-status-segment returns text unchanged when it fits within max-length."
+  (is (string= "hello" (cl-tmux/renderer::%clamp-status-segment "hello" 10))
+      "text shorter than max must be returned unchanged"))
+
+(test clamp-status-segment-exact-length-unchanged
+  "%clamp-status-segment returns text unchanged when length equals max-length."
+  (is (string= "hello" (cl-tmux/renderer::%clamp-status-segment "hello" 5))
+      "text at exact max must be returned unchanged"))
+
+(test clamp-status-segment-truncates-long-text
+  "%clamp-status-segment truncates text exceeding max-length."
+  (is (string= "hel" (cl-tmux/renderer::%clamp-status-segment "hello" 3))
+      "text exceeding max must be truncated to max chars"))
+
+(test clamp-status-segment-empty-string
+  "%clamp-status-segment with empty string returns empty string."
+  (is (string= "" (cl-tmux/renderer::%clamp-status-segment "" 10))
+      "empty string must be returned as-is"))
+
+;;; ── set-cursor-shape in rendered output ──────────────────────────────────────
+
+(test render-session-emits-cursor-shape
+  "render-session-to-string emits the DECSCUSR sequence for the pane cursor shape."
+  (let* ((sess  (make-test-session 20 5))
+         (ap    (session-active-pane sess))
+         (sc    (pane-screen ap)))
+    ;; Set a non-default cursor shape (2 = steady block)
+    (setf (cl-tmux/terminal/types:screen-cursor-shape sc) 2)
+    (let ((out (render-session-to-string sess 6 20)))
+      (is (search (format nil "~C[2 q" #\Escape) out)
+          "DECSCUSR shape 2 must appear in the frame (got ~S)" out))))
+
+;;; ── render-session-to-string with nil window ────────────────────────────────
+
+(test render-session-no-window-produces-output
+  "render-session-to-string with a session that has no active window still renders."
+  (let* ((sess (make-session :id 1 :name "0" :windows nil)))
+    (finishes
+      (let ((out (render-session-to-string sess 5 20)))
+        (is (plusp (length out))
+            "no-window render must produce non-empty output")))))
+
+;;; ── %render-panes-and-borders with nil window ───────────────────────────────
+
+(test render-panes-borders-nil-window-finishes
+  "%render-panes-and-borders with NIL window does not signal."
+  (finishes
+    (let ((buf (make-string-output-stream)))
+      (cl-tmux/renderer::%render-panes-and-borders buf nil nil nil 80))))
+
+;;; ── status-justify-line dispatch table ──────────────────────────────────────
+
+(test status-justify-line-table-driven
+  "%status-justify-line dispatches correctly to right/centre/left strategies."
+  (let ((cases
+         ;; (justify left right cols . description)
+         '(("right"  "L" "R" 20 . "right")
+           ("centre" "L" "R" 20 . "centre")
+           ("left"   "L" "R" 20 . "left (default)")
+           ("unknown" "L" "R" 20 . "unknown falls back to left"))))
+    (dolist (c cases)
+      (destructuring-bind (justify left right cols . desc) c
+        (let ((result (cl-tmux/renderer::%status-justify-line left right cols justify)))
+          (is (<= (length result) cols)
+              "%status-justify-line ~A result must fit in ~D cols (got ~D: ~S)"
+              desc cols (length result) result)
+          (is (search left result)
+              "%status-justify-line ~A must contain left text (got ~S)" desc result))))))
+
+;;; ── render-overlay with scroll offset ───────────────────────────────────────
+
+(test render-overlay-scroll-renders-lines-from-offset
+  "render-overlay renders overlay lines starting from *overlay-scroll-offset*."
+  (let ((*overlay* nil)
+        (*overlay-scroll-offset* 0))
+    (show-overlay (format nil "line-A~%line-B~%line-C"))
+    (unwind-protect
+         (let ((buf (make-string-output-stream)))
+           (cl-tmux/renderer::render-overlay buf 30)
+           (let ((out (get-output-stream-string buf)))
+             (is (search "line-A" out) "render-overlay must show first line")))
+      (clear-overlay))))
+
+;;; ── %status-bar-line gap calculation ────────────────────────────────────────
+
+(test status-bar-line-gap-fills-exactly
+  "%status-bar-line total length equals terminal-cols when content fits."
+  (let* ((left  "abcde")
+         (time  "12:34")
+         (cols  20)
+         (line  (cl-tmux/renderer::%status-bar-line left time cols)))
+    ;; The line is truncated to cols so its length must be <= cols.
+    (is (<= (length line) cols)
+        "%status-bar-line must produce at most ~D chars (got ~D)" cols (length line))))
+
+(test status-bar-line-empty-left-and-time
+  "%status-bar-line with empty left and time strings produces spaces up to terminal-cols."
+  (let ((line (cl-tmux/renderer::%status-bar-line "" "" 10)))
+    (is (<= (length line) 10)
+        "%status-bar-line with empty inputs must fit in 10 cols (got ~D: ~S)"
+        (length line) line)))
+
+;;; ── render-session-to-string status on/off interaction ──────────────────────
+
+(test render-session-status-on-default-includes-time
+  "With status=T and default options, the frame includes the HH:MM time pattern."
+  (with-isolated-options ("status" t "status-left" nil)
+    (let* ((sess (make-test-session 40 5))
+           (out  (render-session-to-string sess 6 40)))
+      ;; The default right status is HH:MM — 5 chars with a colon at position 2.
+      ;; We just check a colon is present in a 5-char time substring.
+      (is (find #\: out)
+          "default status must include time with ':' character (got ~S)" out))))

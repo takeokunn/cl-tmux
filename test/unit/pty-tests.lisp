@@ -217,3 +217,60 @@
   "select-fds always returns a list (possibly nil), never another type."
   (let ((result (cl-tmux/pty:select-fds '() 0)))
     (is (listp result) "empty-fd result must be a list")))
+
+(test select-fds-with-pipe-data-returns-ready-fd
+  "select-fds returns the readable fd in a list when data is available on a pipe."
+  (with-pipe-fds (rfd wfd)
+    (cffi:with-foreign-object (buf :uint8)
+      (setf (cffi:mem-ref buf :uint8) 99)
+      (cffi:foreign-funcall "write" :int wfd :pointer buf :unsigned-long 1 :long))
+    (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))
+      (is (equal (list rfd) ready)
+          "ready list must contain exactly rfd after write"))))
+
+(test select-fds-zero-timeout-is-non-blocking
+  "select-fds with timeout-us=0 returns NIL immediately on an idle fd."
+  (with-pipe-fds (rfd _wfd)
+    (let ((ready (cl-tmux/pty:select-fds (list rfd) 0)))
+      (is (null ready)
+          "non-blocking select on idle pipe must return NIL"))))
+
+(test pty-read-blocking-returns-octet-vector-when-data-available
+  "pty-read-blocking returns an (unsigned-byte 8) vector containing the written bytes."
+  (with-pipe-fds (rfd wfd)
+    (cffi:with-foreign-object (buf :uint8 3)
+      (setf (cffi:mem-aref buf :uint8 0) 1
+            (cffi:mem-aref buf :uint8 1) 2
+            (cffi:mem-aref buf :uint8 2) 3)
+      (cffi:foreign-funcall "write" :int wfd :pointer buf :unsigned-long 3 :long))
+    (let ((result (cl-tmux/pty:pty-read-blocking rfd 4096)))
+      (is-true result "pty-read-blocking must return non-NIL when data is present")
+      (is (= 3 (length result)) "must return exactly 3 bytes")
+      (is (= 1 (aref result 0)) "byte 0 must be 1")
+      (is (= 2 (aref result 1)) "byte 1 must be 2")
+      (is (= 3 (aref result 2)) "byte 2 must be 3"))))
+
+(test pty-close-positive-pid-negative-fd-is-noop
+  "pty-close with a valid positive pid but negative fd sends SIGHUP but skips close."
+  ;; We can't test the kill call directly without a real process, but pty-close
+  ;; with a bogus high pid should not error (kill may fail with ESRCH, ignored).
+  (finishes (cl-tmux/pty:pty-close -1 99999999)
+            "pty-close with negative fd and unknown pid must not signal"))
+
+(test octets-to-foreign-zero-len-is-noop
+  "%octets-to-foreign with len=0 writes nothing and finishes without error."
+  (let ((src (make-array 0 :element-type '(unsigned-byte 8))))
+    (cffi:with-foreign-object (buf :uint8 1)
+      (setf (cffi:mem-aref buf :uint8 0) 0)
+      (finishes (cl-tmux/pty::%octets-to-foreign src buf 0)
+                "%octets-to-foreign len=0 must not error")
+      (is (= 0 (cffi:mem-aref buf :uint8 0))
+          "zero-len copy must not touch the buffer"))))
+
+(test foreign-to-octets-zero-len-returns-empty-vector
+  "%foreign-to-octets with byte-count=0 returns an empty octet vector."
+  (cffi:with-foreign-object (buf :uint8 1)
+    (let ((result (cl-tmux/pty::%foreign-to-octets buf 0)))
+      (is (= 0 (length result)) "zero-len result must be empty")
+      (is (typep result '(simple-array (unsigned-byte 8) (*)))
+          "result must be an octet vector"))))

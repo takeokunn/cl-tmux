@@ -122,9 +122,13 @@
   (with-active-pane (ap session)
     (pane-screen ap)))
 
-;;; -- copy-mode-active-p ----------------------------------------------------
+;;; -- %copy-mode-active-p ---------------------------------------------------
+;;;
+;;; Internal predicate — not part of the public API.  Tests access it via the
+;;; double-colon path.  The % prefix signals that callers outside this file
+;;; should treat it as an implementation detail.
 
-(defun copy-mode-active-p (session)
+(defun %copy-mode-active-p (session)
   "Return T when the active pane's screen is in copy mode."
   (let* ((win (session-active-window session))
          (ap  (and win (window-active-pane win))))
@@ -160,11 +164,16 @@
 ;;;
 ;;; The copy-mode command handlers share the pattern:
 ;;; obtain the active screen and invoke a copy-mode function when present.
+;;; NOTE: This helper guards only on the presence of an active screen, not
+;;; on whether copy mode is currently on.  The caller is responsible for
+;;; gating on copy-mode state when required.
 
 (defun %copy-mode-call (session fn)
-  "Call FN on SESSION's active screen when one exists and is in copy mode."
-  (let ((s (%active-screen session)))
-    (when s (funcall fn s))))
+  "Call FN on SESSION's active screen when one exists.
+   Does NOT check whether copy mode is currently active; the caller must
+   guard on that separately if needed."
+  (let ((screen (%active-screen session)))
+    (when screen (funcall fn screen))))
 
 ;;; -- Window list formatter ------------------------------------------------
 
@@ -295,6 +304,35 @@
     (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-created+ session)
     session))
 
+;;; -- Signal-channel prompt helper --------------------------------------------
+;;;
+;;; :wait-for and :wait-for-signal had identical bodies; %signal-channel-prompt
+;;; factors out the common logic so a single form removes the duplication.
+
+(defun %signal-channel-prompt (prompt-label)
+  "Open a prompt labelled PROMPT-LABEL; on submit signal the named channel
+   and show a confirmation overlay."
+  (prompt-start prompt-label ""
+                (lambda (name)
+                  (unless (string= name "")
+                    (signal-channel name)
+                    (show-overlay (format nil "signaled channel: ~A" name))))))
+
+;;; -- Toggle-synchronize-panes helper -----------------------------------------
+;;;
+;;; The :synchronize-panes handler mutates an option and shows an overlay.
+;;; Extracting it as a named function keeps the handler table declarative and
+;;; places the option-mutation logic where it belongs (a named function),
+;;; separating it from the dispatch-layer rule.
+
+(defun %toggle-synchronize-panes ()
+  "Toggle the 'synchronize-panes' option and show a status overlay."
+  (let ((current (cl-tmux/options:get-option "synchronize-panes")))
+    (cl-tmux/options:set-option "synchronize-panes" (not current))
+    (show-overlay (if (not current)
+                      "synchronize-panes: ON"
+                      "synchronize-panes: OFF"))))
+
 ;;; -- Option prompt helper -----------------------------------------------------
 ;;;
 ;;; :set-window-option and :set-session-option share the exact same body.
@@ -389,7 +427,6 @@
   ("source-file"   :source-file)
   ("run-shell"     :run-shell)
   ("if-shell"      :if-shell)
-  ("set-option"    :show-option)
   ("show-options"  :show-options)
   ("show-option"   :show-option)
   ("display-info"  :display-info)
@@ -407,7 +444,7 @@
   "Handle one byte received after the prefix key.
    Copy mode intercepts [ ] q before the normal binding table."
   (let* ((ch  (and byte (code-char byte)))
-         (cmd (if (copy-mode-active-p session)
+         (cmd (if (%copy-mode-active-p session)
                   (%copy-mode-cmd ch)
                   (and ch (lookup-key-binding ch)))))
     (dispatch-command session cmd byte)))

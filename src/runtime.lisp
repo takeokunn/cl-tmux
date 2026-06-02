@@ -28,37 +28,14 @@
   "Maximum number of entries retained in *message-log*.")
 
 (defconstant +reader-thread-join-timeout+ 10
-  "Seconds to wait for a PTY reader thread to terminate before giving up.")
+  "Seconds (real number) to wait for a PTY reader thread to terminate before
+   giving up.  Passed directly to bordeaux-threads:join-thread :timeout, which
+   expects a real number of seconds on SBCL.")
 
-;;; -- Status-bar timer -------------------------------------------------------
-
-(defparameter *status-dirty* nil
-  "Set by the status-bar timer thread to trigger a status-bar repaint.")
-
-(defvar *status-timer-thread* nil
-  "Thread object for the status-bar interval timer, or NIL if not started.")
-
-(defun %mark-status-dirty! ()
-  "Named action: mark both the status bar and the frame as needing a repaint."
-  (setf *status-dirty* t
-        *dirty*        t))
-
-(defun start-status-timer ()
-  "Start a background thread that sets *STATUS-DIRTY* every STATUS-INTERVAL seconds.
-   Only one timer thread runs at a time; calling this when one is already
-   running is a no-op.  Returns the thread object."
-  (when (and *status-timer-thread*
-             (bordeaux-threads:thread-alive-p *status-timer-thread*))
-    (return-from start-status-timer *status-timer-thread*))
-  (setf *status-timer-thread*
-        (make-thread
-         (lambda ()
-           (loop while *running* do
-             (let ((interval (cl-tmux/options:get-option "status-interval" 15)))
-               (sleep (max 1 interval)))
-             (%mark-status-dirty!)))
-         :name "cl-tmux-status-timer"))
-  *status-timer-thread*)
+(defconstant +wait-for-channel-timeout+ 30
+  "Seconds before wait-for-channel gives up waiting for a signal.
+   A bounded wait prevents indefinite blocking when signal-channel is
+   never called (e.g., after an unexpected server shutdown).")
 
 ;;; -- Wait-for channel synchronization ----------------------------------------
 
@@ -75,12 +52,15 @@
         ch)))
 
 (defun wait-for-channel (name)
-  "Block the calling thread until channel NAME is signaled."
+  "Block the calling thread until channel NAME is signaled, or until
+   +wait-for-channel-timeout+ seconds elapse.  Returns T if signaled, NIL
+   on timeout.  A bounded wait prevents indefinite blocking when the
+   corresponding signal-channel is never called."
   (let* ((ch (%ensure-channel name))
          (lk (getf ch :lock))
          (cv (getf ch :cv)))
     (with-lock-held (lk)
-      (condition-wait cv lk))))
+      (condition-wait cv lk :timeout +wait-for-channel-timeout+))))
 
 (defun signal-channel (name)
   "Signal all threads blocked on channel NAME."

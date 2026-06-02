@@ -1,5 +1,11 @@
 (in-package #:cl-tmux/commands)
 
+;;; Named scroll-extent sentinels — used by copy-mode-top and copy-mode-bottom.
+(defconstant +scroll-to-oldest+ most-positive-fixnum
+  "Sentinel delta that clamps to the maximum scrollback offset (oldest content).")
+(defconstant +scroll-to-newest+ (- most-positive-fixnum)
+  "Sentinel delta that clamps to offset 0 (live view / newest content).")
+
 ;;; ── Copy mode ──────────────────────────────────────────────────────────────
 ;;;
 ;;; copy_mode(enter, Screen) :- set(copy-mode-p, true), set(copy-offset, 0).
@@ -37,11 +43,12 @@
 
 (defun %copy-mode-clamp-cursor (screen)
   "Clamp the copy-mode cursor row into [0, height-1] and col into [0, width-1].
-   Called after the viewport offset changes so the cursor stays visible."
-  (let ((cur (screen-copy-cursor screen)))
-    (when cur
-      (let ((row (max 0 (min (1- (screen-height screen)) (car cur))))
-            (col (max 0 (min (1- (screen-width  screen)) (cdr cur)))))
+   Called after the viewport offset changes so the cursor stays visible.
+   Operates on the cursor cons directly; no-op when cursor is NIL."
+  (let ((cursor (screen-copy-cursor screen)))
+    (when cursor
+      (let ((row (max 0 (min (1- (screen-height screen)) (car cursor))))
+            (col (max 0 (min (1- (screen-width  screen)) (cdr cursor)))))
         (setf (screen-copy-cursor screen) (cons row col))))))
 
 (defun copy-mode-scroll (screen delta)
@@ -55,6 +62,46 @@
             (max 0 (min max-offset (+ (screen-copy-offset screen) delta))))
       (%copy-mode-clamp-cursor screen)
       (setf (screen-dirty-p screen) t))))
+
+;;; These top-level helpers are called from copy-mode-move-cursor for :up / :down.
+;;; Keeping them at top level eliminates the flet nesting and makes each path
+;;; independently readable.
+
+(defun %scroll-up-one-line (screen row col max-offset)
+  "Move cursor up one line in copy-mode viewport for SCREEN.
+   ROW/COL is the current cursor position; MAX-OFFSET is the scrollback length.
+   When the cursor is at row 0 and scrollback remains, scrolls the viewport
+   back one line, keeping the cursor pinned at row 0.
+   At the oldest scrollback line the call is a no-op."
+  (let ((new-row (1- row)))
+    (cond
+      ((>= new-row 0)
+       ;; Cursor still within viewport — move it up.
+       (setf (screen-copy-cursor screen) (cons new-row col)))
+      ((< (screen-copy-offset screen) max-offset)
+       ;; Cursor at top edge — scroll viewport back (older), hold cursor at row 0.
+       (incf (screen-copy-offset screen))
+       (setf (screen-copy-cursor screen) (cons 0 col)))
+      ;; Already at the oldest scrollback line — do not move.
+      (t nil))))
+
+(defun %scroll-down-one-line (screen row col h)
+  "Move cursor down one line in copy-mode viewport for SCREEN.
+   ROW/COL is the current cursor position; H is the viewport height.
+   When the cursor is at row H-1 and offset > 0, scrolls the viewport
+   forward one line, keeping the cursor pinned at row H-1.
+   At the live view bottom the call is a no-op."
+  (let ((new-row (1+ row)))
+    (cond
+      ((< new-row h)
+       ;; Cursor still within viewport — move it down.
+       (setf (screen-copy-cursor screen) (cons new-row col)))
+      ((> (screen-copy-offset screen) 0)
+       ;; Cursor at bottom edge — scroll viewport forward (newer), hold cursor at h-1.
+       (decf (screen-copy-offset screen))
+       (setf (screen-copy-cursor screen) (cons (1- h) col)))
+      ;; Already at live view bottom — do not move.
+      (t nil))))
 
 (defun copy-mode-move-cursor (screen direction)
   "Move SCREEN's copy-mode cursor in DIRECTION (:left :right :up :down).
@@ -70,41 +117,15 @@
            (row        (car cur))
            (col        (cdr cur))
            (max-offset (length (screen-scrollback screen))))
-      (flet ((%scroll-up-one-line ()
-               ;; Three cases: viewport-interior, scroll-and-clamp, already-at-limit.
-               (let ((new-row (1- row)))
-                 (cond
-                   ((>= new-row 0)
-                    ;; Cursor still within viewport — move it up.
-                    (setf (screen-copy-cursor screen) (cons new-row col)))
-                   ((< (screen-copy-offset screen) max-offset)
-                    ;; Cursor at top edge — scroll viewport back (older), hold cursor at row 0.
-                    (incf (screen-copy-offset screen))
-                    (setf (screen-copy-cursor screen) (cons 0 col)))
-                   ;; Already at the oldest scrollback line — do not move.
-                   (t nil))))
-             (%scroll-down-one-line ()
-               ;; Three cases: viewport-interior, scroll-and-clamp, already-at-limit.
-               (let ((new-row (1+ row)))
-                 (cond
-                   ((< new-row h)
-                    ;; Cursor still within viewport — move it down.
-                    (setf (screen-copy-cursor screen) (cons new-row col)))
-                   ((> (screen-copy-offset screen) 0)
-                    ;; Cursor at bottom edge — scroll viewport forward (newer), hold cursor at h-1.
-                    (decf (screen-copy-offset screen))
-                    (setf (screen-copy-cursor screen) (cons (1- h) col)))
-                   ;; Already at live view bottom — do not move.
-                   (t nil)))))
-        (ecase direction
-          (:left  (setf (screen-copy-cursor screen) (cons row (max 0      (1- col)))))
-          (:right (setf (screen-copy-cursor screen) (cons row (min (1- w) (1+ col)))))
-          (:up    (%scroll-up-one-line))
-          (:down  (%scroll-down-one-line)))
-        ;; When selecting, ensure mark is placed if not yet set.
-        (when (and (screen-copy-selecting screen) (null (screen-copy-mark screen)))
-          (setf (screen-copy-mark screen) (screen-copy-cursor screen)))
-        (setf (screen-dirty-p screen) t)))))
+      (ecase direction
+        (:left  (setf (screen-copy-cursor screen) (cons row (max 0      (1- col)))))
+        (:right (setf (screen-copy-cursor screen) (cons row (min (1- w) (1+ col)))))
+        (:up    (%scroll-up-one-line   screen row col max-offset))
+        (:down  (%scroll-down-one-line screen row col h)))
+      ;; When selecting, ensure mark is placed if not yet set.
+      (when (and (screen-copy-selecting screen) (null (screen-copy-mark screen)))
+        (setf (screen-copy-mark screen) (screen-copy-cursor screen)))
+      (setf (screen-dirty-p screen) t))))
 
 (defun copy-mode-begin-selection (screen)
   "Begin a text selection at the current copy-mode cursor position."
@@ -128,43 +149,65 @@
 ;;; Both are private (percent-prefixed) and independently testable.
 
 (defun %selection-bounds (screen)
-  "Return (values start-r end-r start-c end-c) for the current copy-mode
-   selection in SCREEN, normalising mark and cursor order.
+  "Return (values start-row end-row start-col end-col) for the current copy-mode
+   selection in SCREEN, normalising mark and cursor order so start <= end.
    Assumes mark and cursor are already set."
-  (let* ((mark   (screen-copy-mark   screen))
-         (cursor (screen-copy-cursor screen))
-         (mr (car mark))   (mc (cdr mark))
-         (cr (car cursor)) (cc (cdr cursor))
-         (start-r (min mr cr))
-         (end-r   (max mr cr))
-         (start-c (if (< mr cr) mc (if (> mr cr) cc (min mc cc))))
-         (end-c   (if (< mr cr) cc (if (> mr cr) mc (max mc cc)))))
-    (values start-r end-r start-c end-c)))
+  (let* ((mark       (screen-copy-mark   screen))
+         (cursor     (screen-copy-cursor screen))
+         (mark-row   (car mark))
+         (mark-col   (cdr mark))
+         (cursor-row (car cursor))
+         (cursor-col (cdr cursor))
+         (start-row  (min mark-row cursor-row))
+         (end-row    (max mark-row cursor-row))
+         (start-col  (if (< mark-row cursor-row)
+                         mark-col
+                         (if (> mark-row cursor-row)
+                             cursor-col
+                             (min mark-col cursor-col))))
+         (end-col    (if (< mark-row cursor-row)
+                         cursor-col
+                         (if (> mark-row cursor-row)
+                             mark-col
+                             (max mark-col cursor-col)))))
+    (values start-row end-row start-col end-col)))
+
+;;; %extract-row-chars reads characters from a rectangular range as a string.
+;;; Pure data extraction — no I/O side effects.
+
+(defun %extract-row-chars (screen row from-col to-col)
+  "Return a string of characters from SCREEN at ROW, columns FROM-COL to TO-COL (exclusive).
+   Reads the live grid (not viewport-projected); pure data extraction."
+  (let* ((n      (- to-col from-col))
+         (result (make-string n)))
+    (dotimes (i n result)
+      (setf (char result i)
+            (cell-char (screen-cell screen (+ from-col i) row))))))
 
 (defun %selection-text (screen)
   "Compute the text selected by copy-mode in SCREEN.
    Returns a string, or NIL when no valid selection exists.
-   Intermediate rows (not the last) are right-trimmed of trailing spaces."
+   Intermediate rows (not the last) are right-trimmed of trailing spaces.
+   Pure data extraction: no lock held, no I/O."
   (unless (and (screen-copy-selecting screen)
                (screen-copy-mark   screen)
                (screen-copy-cursor screen))
     (return-from %selection-text nil))
-  (multiple-value-bind (start-r end-r start-c end-c)
+  (multiple-value-bind (start-row end-row start-col end-col)
       (%selection-bounds screen)
     (let* ((w    (screen-width screen))
            (text (with-output-to-string (out)
-                   (loop for row from start-r to end-r do
-                     (let ((c0 (if (= row start-r) start-c 0))
-                           (c1 (if (= row end-r)   end-c   w)))
-                       (let ((row-str (with-output-to-string (rs)
-                                        (loop for col from c0 below c1 do
-                                          (write-char (cell-char (screen-cell screen col row)) rs)))))
-                         ;; Trim trailing spaces from intermediate rows.
-                         (write-string (if (< row end-r)
-                                           (string-right-trim " " row-str)
-                                           row-str)
-                                       out))
-                       (when (< row end-r) (write-char #\Newline out)))))))
+                   (loop for row from start-row to end-row do
+                     (let* ((col-from (if (= row start-row) start-col 0))
+                            (col-to   (if (= row end-row)   end-col   w))
+                            (row-str  (%extract-row-chars screen row col-from col-to)))
+                       ;; Trim trailing spaces from intermediate rows.
+                       (write-string (if (< row end-row)
+                                         (string-right-trim " " row-str)
+                                         row-str)
+                                     out)
+                       (when (< row end-row)
+                         (write-char #\Newline out)))))))
       (if (plusp (length text)) text nil))))
 
 (defun copy-mode-yank (screen)
@@ -189,73 +232,77 @@
 ;;; copy_mode_half_page_up/down     :- scroll by floor(screen-height/2) lines.
 ;;; copy_mode_scroll_up/down_line   :- scroll 1 line keeping cursor fixed if possible.
 
-(defun %copy-mode-row-cells (screen row)
-  "Return a list of characters on ROW of SCREEN in viewport projection.
-   Uses the scrollback offset so word navigation works correctly in copy mode."
-  (loop for col from 0 below (screen-width screen)
-        collect (cell-char (screen-display-cell screen col row))))
+(defun %copy-mode-row-chars (screen row)
+  "Return a simple-vector of characters on ROW of SCREEN in viewport projection.
+   Uses the scrollback offset so word navigation works correctly in copy mode.
+   Returns a simple-vector for O(1) indexed access in word-motion loops."
+  (let* ((w      (screen-width screen))
+         (result (make-array w :element-type 'character)))
+    (dotimes (col w result)
+      (setf (aref result col)
+            (cell-char (screen-display-cell screen col row))))))
 
 (defun copy-mode-word-forward (screen)
   "Move cursor forward to the start of the next word (non-space run).
    A word is any run of non-space characters.  Space is #\\Space."
   (when (screen-copy-mode-p screen)
-    (let* ((row  (car (screen-copy-cursor screen)))
-           (col  (cdr (screen-copy-cursor screen)))
-           (w    (screen-width screen))
-           (chars (%copy-mode-row-cells screen row))
+    (let* ((row     (car (screen-copy-cursor screen)))
+           (col     (cdr (screen-copy-cursor screen)))
+           (w       (screen-width screen))
+           (chars   (%copy-mode-row-chars screen row))
            (new-col col))
-      ;; Step over the current word
+      ;; Step over the current word.
       (loop while (and (< new-col w)
-                       (char/= (nth new-col chars) #\Space))
+                       (char/= (aref chars new-col) #\Space))
             do (incf new-col))
-      ;; Step over spaces
+      ;; Step over spaces.
       (loop while (and (< new-col w)
-                       (char= (nth new-col chars) #\Space))
+                       (char= (aref chars new-col) #\Space))
             do (incf new-col))
-      (setf (screen-copy-cursor screen) (cons row (min (1- w) new-col)))
-      (setf (screen-dirty-p screen) t))))
+      (setf (screen-copy-cursor screen) (cons row (min (1- w) new-col))
+            (screen-dirty-p screen) t))))
 
 (defun copy-mode-word-backward (screen)
   "Move cursor backward to the start of the previous or current word."
   (when (screen-copy-mode-p screen)
-    (let* ((row  (car (screen-copy-cursor screen)))
-           (col  (cdr (screen-copy-cursor screen)))
-           (chars (%copy-mode-row-cells screen row))
+    (let* ((row     (car (screen-copy-cursor screen)))
+           (col     (cdr (screen-copy-cursor screen)))
+           (chars   (%copy-mode-row-chars screen row))
            (new-col col))
-      ;; Step back over spaces
+      ;; Step back over spaces.
       (loop while (and (> new-col 0)
-                       (char= (nth (1- new-col) chars) #\Space))
+                       (char= (aref chars (1- new-col)) #\Space))
             do (decf new-col))
-      ;; Step back over word characters
+      ;; Step back over word characters.
       (loop while (and (> new-col 0)
-                       (char/= (nth (1- new-col) chars) #\Space))
+                       (char/= (aref chars (1- new-col)) #\Space))
             do (decf new-col))
-      (setf (screen-copy-cursor screen) (cons row (max 0 new-col)))
-      (setf (screen-dirty-p screen) t))))
+      (setf (screen-copy-cursor screen) (cons row (max 0 new-col))
+            (screen-dirty-p screen) t))))
 
 (defun copy-mode-word-end (screen)
   "Move cursor to the last character of the current or next word."
   (when (screen-copy-mode-p screen)
-    (let* ((row  (car (screen-copy-cursor screen)))
-           (col  (cdr (screen-copy-cursor screen)))
-           (w    (screen-width screen))
-           (chars (%copy-mode-row-cells screen row))
+    (let* ((row     (car (screen-copy-cursor screen)))
+           (col     (cdr (screen-copy-cursor screen)))
+           (w       (screen-width screen))
+           (chars   (%copy-mode-row-chars screen row))
            (new-col col))
-      ;; If already at end of a word, skip one space to enter the next word
+      ;; If already at end of a word, skip one space to enter the next word.
       (when (and (< new-col (1- w))
-                 (char/= (nth new-col chars) #\Space)
-                 (char= (nth (1+ new-col) chars) #\Space))
+                 (char/= (aref chars new-col) #\Space)
+                 (char= (aref chars (1+ new-col)) #\Space))
         (incf new-col))
-      ;; Skip over spaces
+      ;; Skip over spaces.
       (loop while (and (< new-col (1- w))
-                       (char= (nth new-col chars) #\Space))
+                       (char= (aref chars new-col) #\Space))
             do (incf new-col))
-      ;; Advance to end of word
+      ;; Advance to end of word.
       (loop while (and (< new-col (1- w))
-                       (char/= (nth (1+ new-col) chars) #\Space))
+                       (char/= (aref chars (1+ new-col)) #\Space))
             do (incf new-col))
-      (setf (screen-copy-cursor screen) (cons row (min (1- w) new-col)))
-      (setf (screen-dirty-p screen) t))))
+      (setf (screen-copy-cursor screen) (cons row (min (1- w) new-col))
+            (screen-dirty-p screen) t))))
 
 (defun copy-mode-line-start (screen)
   "Move cursor to column 0 of the current row."
@@ -347,10 +394,10 @@
    -1)
   (copy-mode-top
    "Jump to the oldest scrollback line (maximum scroll-back offset)."
-   most-positive-fixnum)
+   +scroll-to-oldest+)
   (copy-mode-bottom
    "Jump to the live view bottom (scroll-offset = 0)."
-   (- most-positive-fixnum)))
+   +scroll-to-newest+))
 
 ;;; ── Copy-mode selection: line-select (V) ────────────────────────────────────
 
@@ -358,28 +405,24 @@
   "Begin a full-line selection at the current row (tmux V binding).
    Sets copy-line-selection-p and activates the selection."
   (when (screen-copy-mode-p screen)
-    (let* ((cur (or (screen-copy-cursor screen) (cons 0 0)))
-           (row (car cur))
-           ;; Mark at col 0, cursor at col width-1 to select full row
+    (let* ((cur    (or (screen-copy-cursor screen) (cons 0 0)))
+           (row    (car cur))
+           ;; Mark at col 0, cursor at col width-1 to select full row.
            (mark   (cons row 0))
            (cursor (cons row (1- (screen-width screen)))))
-      (setf (screen-copy-mark           screen) mark
-            (screen-copy-cursor         screen) cursor
-            (screen-copy-selecting      screen) t
+      (setf (screen-copy-mark             screen) mark
+            (screen-copy-cursor           screen) cursor
+            (screen-copy-selecting        screen) t
             (screen-copy-line-selection-p screen) t
-            (screen-dirty-p             screen) t))))
+            (screen-dirty-p               screen) t))))
 
 ;;; ── Copy-mode yank variants (D and Y) ───────────────────────────────────────
 
 (defun %copy-row-range-to-paste-buffer (screen row from-col to-col)
   "Extract characters from SCREEN at ROW between FROM-COL (inclusive) and
    TO-COL (exclusive), right-trim trailing spaces, and push to the paste buffer.
-   Does nothing when the trimmed result is empty.
-   Separates data extraction from the dispatch logic in the D and Y commands."
-  (let* ((text (with-output-to-string (out)
-                 (loop for col from from-col below to-col do
-                   (write-char (cell-char (screen-cell screen col row)) out))))
-         (trimmed (string-right-trim " " text)))
+   Does nothing when the trimmed result is empty."
+  (let ((trimmed (string-right-trim " " (%extract-row-chars screen row from-col to-col))))
     (when (plusp (length trimmed))
       (cl-tmux/buffer:add-paste-buffer trimmed))))
 

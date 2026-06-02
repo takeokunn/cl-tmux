@@ -98,12 +98,13 @@
         (cl-tmux/options:set-option "buffer-limit" saved)))))
 
 (test buffer-limit-default-50
-  "Without a configured limit, at most 50 entries are kept."
+  "Without a configured limit, at most +default-buffer-limit+ (50) entries are kept."
   (with-empty-buffers
-    (dotimes (i 55)
-      (cl-tmux/buffer:add-paste-buffer (format nil "buf~D" i)))
-    (is (<= (length (cl-tmux/buffer:list-paste-buffers)) 50)
-        "default limit must cap ring at 50 entries")))
+    (let ((limit cl-tmux/buffer:+default-buffer-limit+))
+      (dotimes (i (+ limit 5))
+        (cl-tmux/buffer:add-paste-buffer (format nil "buf~D" i)))
+      (is (<= (length (cl-tmux/buffer:list-paste-buffers)) limit)
+          "default limit must cap ring at +default-buffer-limit+ entries"))))
 
 (test buffer-delete-middle-index
   "delete-paste-buffer at a non-zero index removes the correct entry."
@@ -124,16 +125,70 @@
 ;;; ── %buffer-limit fallback (ignore-errors path) ─────────────────────────────
 
 (test buffer-limit-fallback-when-options-error
-  "When get-option signals a condition, %buffer-limit falls back to 50."
+  "When get-option signals a condition, %buffer-limit falls back to +default-buffer-limit+."
   ;; Verify the fallback by shadowing *global-options* with a hash table that
   ;; causes get-option to return NIL (unregistered option name), which exercises
-  ;; the (or (ignore-errors ...) 50) fallback in %buffer-limit.
+  ;; the (or (ignore-errors ...) +default-buffer-limit+) fallback in %buffer-limit.
   ;; We use with-isolated-options with an intentionally wrong type value so that
   ;; the coercion does not signal; instead we temporarily remove buffer-limit
   ;; from the options hash so get-option returns NIL.
   (let ((empty-ht (make-hash-table :test #'equal)))
     (let ((cl-tmux/options:*global-options* empty-ht))
       ;; With no buffer-limit key in *global-options*, get-option returns NIL.
-      ;; %buffer-limit must then return 50 (the hardcoded default).
-      (is (= 50 (cl-tmux/buffer::%buffer-limit))
-          "%buffer-limit must return 50 when get-option returns NIL"))))
+      ;; %buffer-limit must then return +default-buffer-limit+ (the named constant).
+      (is (= cl-tmux/buffer:+default-buffer-limit+ (cl-tmux/buffer::%buffer-limit))
+          "%buffer-limit must return +default-buffer-limit+ when get-option returns NIL"))))
+
+;;; ── Table-driven add-paste-buffer cases ──────────────────────────────────────
+
+(test add-paste-buffer-table
+  "Table-driven: add-paste-buffer handles varied text lengths correctly."
+  (dolist (entry
+           '(("" "empty string is stored as index 0")
+             ("x" "single character is stored")
+             ("hello world" "multi-word string is stored")
+             ("line1\nline2" "multi-line string is stored")))
+    (destructuring-bind (text desc) entry
+      (with-empty-buffers
+        (cl-tmux/buffer:add-paste-buffer text)
+        (is (string= text (cl-tmux/buffer:get-paste-buffer 0)) desc)))))
+
+;;; ── +default-buffer-limit+ constant ─────────────────────────────────────────
+
+(test default-buffer-limit-is-positive-integer
+  "+default-buffer-limit+ is a positive integer."
+  (is (and (integerp cl-tmux/buffer:+default-buffer-limit+)
+           (plusp cl-tmux/buffer:+default-buffer-limit+))
+      "+default-buffer-limit+ must be a positive integer"))
+
+;;; ── list-paste-buffers order ─────────────────────────────────────────────────
+
+(test list-paste-buffers-most-recent-first
+  "list-paste-buffers returns buffers in most-recently-added order."
+  (with-empty-buffers
+    (cl-tmux/buffer:add-paste-buffer "first")
+    (cl-tmux/buffer:add-paste-buffer "second")
+    (cl-tmux/buffer:add-paste-buffer "third")
+    (let ((lst (cl-tmux/buffer:list-paste-buffers)))
+      (is (string= "third"  (first  lst)) "most recent must be first in list")
+      (is (string= "second" (second lst)) "second most recent must be second in list")
+      (is (string= "first"  (third  lst)) "oldest must be last in list"))))
+
+;;; ── delete-paste-buffer on non-empty then empty ──────────────────────────────
+
+(test delete-paste-buffer-last-entry-empties-ring
+  "delete-paste-buffer on the only entry leaves an empty ring."
+  (with-empty-buffers
+    (cl-tmux/buffer:add-paste-buffer "only-one")
+    (cl-tmux/buffer:delete-paste-buffer 0)
+    (is (null (cl-tmux/buffer:list-paste-buffers))
+        "ring must be empty after deleting the sole entry")))
+
+;;; ── clear-paste-buffers with empty ring is safe ──────────────────────────────
+
+(test clear-paste-buffers-idempotent-on-empty-ring
+  "clear-paste-buffers on an already-empty ring is a no-op (does not signal)."
+  (with-empty-buffers
+    (finishes (cl-tmux/buffer:clear-paste-buffers))
+    (is (null (cl-tmux/buffer:list-paste-buffers))
+        "ring must remain NIL after clearing an empty ring")))

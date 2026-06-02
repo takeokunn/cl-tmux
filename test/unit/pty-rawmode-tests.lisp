@@ -61,24 +61,10 @@
 ;;; ── disable-raw-mode! — no saved state ──────────────────────────────────────
 
 (test disable-raw-mode-noop-when-not-saved
-  "disable-raw-mode! is a no-op when no termios was saved: it must not touch
-   the fd and must leave *saved-termios* nil."
-  (let ((cl-tmux/pty::*saved-termios* nil))
-    (finishes (cl-tmux/pty:disable-raw-mode! -1))
-    (is (null cl-tmux/pty::*saved-termios*)
-        "*saved-termios* must remain NIL after disable-raw-mode! with no saved state")))
-
-(test disable-raw-mode-clears-saved-termios-on-success
-  "After disable-raw-mode! successfully restores settings, *saved-termios* is NIL.
-   We use a real TTY (stdout fd=1) if available; skip otherwise."
-  (let* ((is-tty (handler-case (progn (sb-posix:tcgetattr 1) t) (error () nil)))
-         (cl-tmux/pty::*saved-termios* nil))
-    (when is-tty
-      ;; Save current settings into *saved-termios* first.
-      (setf cl-tmux/pty::*saved-termios* (sb-posix:tcgetattr 1))
-      (cl-tmux/pty:disable-raw-mode! 1)
-      (is (null cl-tmux/pty::*saved-termios*)
-          "*saved-termios* must be set to NIL after a successful disable-raw-mode!"))))
+  "disable-raw-mode! is a no-op when no termios was saved for the fd."
+  ;; Use a fresh table with no entry for fd -1 to verify no-op behaviour.
+  (let ((cl-tmux/pty::*saved-termios-table* (make-hash-table :test #'eql)))
+    (finishes (cl-tmux/pty:disable-raw-mode! -1))))
 
 ;;; ── enable-raw-mode! — reachability test ────────────────────────────────────
 ;;;
@@ -96,13 +82,18 @@
       (ignore-errors (sb-posix:close wfd)))))
 
 (test disable-raw-mode-attempts-restore-when-saved
-  "disable-raw-mode! calls tcsetattr when *saved-termios* is non-nil.
-   On a non-TTY fd tcsetattr fails, confirming the code path was entered."
+  "disable-raw-mode! calls tcsetattr when an entry exists in *saved-termios-table*.
+   On a non-TTY fd tcsetattr fails with ENOTTY, confirming the code path was entered."
   (multiple-value-bind (rfd wfd) (sb-posix:pipe)
     (unwind-protect
-         (let ((cl-tmux/pty::*saved-termios* :fake-termios))
+         ;; Inject a fake saved entry for rfd in an isolated table so the
+         ;; disable-raw-mode! 'when saved' branch is actually entered.
+         (let ((cl-tmux/pty::*saved-termios-table*
+                (let ((tbl (make-hash-table :test #'eql)))
+                  (setf (gethash rfd tbl) :fake-termios)
+                  tbl)))
            ;; tcsetattr on a pipe will signal a POSIX error — that is expected.
-           ;; The important thing is that disable-raw-mode! did NOT short-circuit.
+           ;; The key assertion is that disable-raw-mode! entered the restore branch.
            (handler-case
                (cl-tmux/pty:disable-raw-mode! rfd)
              (error ()
@@ -111,28 +102,96 @@
       (ignore-errors (sb-posix:close rfd))
       (ignore-errors (sb-posix:close wfd)))))
 
-;;; ── *saved-termios* isolation ────────────────────────────────────────────────
+;;; ── *saved-termios-table* isolation ─────────────────────────────────────────
 
-(test saved-termios-initial-value-is-nil
-  "*saved-termios* starts as NIL (nothing to restore before any raw-mode call)."
-  ;; We re-bind so the global is not perturbed.
-  (let ((cl-tmux/pty::*saved-termios* nil))
-    (is (null cl-tmux/pty::*saved-termios*)
-        "*saved-termios* must be NIL before any enable-raw-mode! call")))
+(test saved-termios-table-empty-initially
+  "*saved-termios-table* has no entry for a fresh fd before any enable-raw-mode! call."
+  (let ((cl-tmux/pty::*saved-termios-table* (make-hash-table :test #'eql)))
+    (is (null (gethash 99 cl-tmux/pty::*saved-termios-table*))
+        "fresh table must have no entry for an unused fd")))
 
-(test saved-termios-set-by-enable-raw-mode-on-tty
-  "enable-raw-mode! sets *saved-termios* when tcgetattr succeeds.
-   This test is skipped when stdout is not a TTY (e.g., batch test runs)."
-  ;; Use stdout (fd 1) only if it is actually a TTY; otherwise skip.
-  (let* ((is-tty (handler-case
-                     (progn (sb-posix:tcgetattr 1) t)
-                   (error () nil)))
-         (cl-tmux/pty::*saved-termios* nil))
+(test saved-termios-table-populated-by-enable-raw-mode-on-tty
+  "enable-raw-mode! stores termios in *saved-termios-table* keyed by fd.
+   Skipped when stdout is not a TTY (e.g., sandboxed Nix builds)."
+  (let* ((is-tty (handler-case (progn (sb-posix:tcgetattr 1) t) (error () nil)))
+         (cl-tmux/pty::*saved-termios-table* (make-hash-table :test #'eql)))
     (when is-tty
       (unwind-protect
            (progn
              (cl-tmux/pty:enable-raw-mode! 1)
-             (is-true cl-tmux/pty::*saved-termios*
-                      "enable-raw-mode! must populate *saved-termios* on a real TTY"))
-        ;; Restore whatever we saved.
+             (is-true (gethash 1 cl-tmux/pty::*saved-termios-table*)
+                      "enable-raw-mode! must store termios in *saved-termios-table*"))
         (ignore-errors (cl-tmux/pty:disable-raw-mode! 1))))))
+
+;;; ── *termios-table-lock* concurrency primitive ───────────────────────────────
+
+(test termios-table-lock-is-defined
+  "*termios-table-lock* is a defined variable holding a lock object."
+  (is (boundp 'cl-tmux/pty::*termios-table-lock*)
+      "*termios-table-lock* must be bound")
+  (is-true cl-tmux/pty::*termios-table-lock*
+           "*termios-table-lock* must be non-NIL"))
+
+(test termios-table-lock-can-be-acquired
+  "The termios table lock can be acquired and released without error."
+  (finishes
+    (bordeaux-threads:with-lock-held (cl-tmux/pty::*termios-table-lock*)
+      t)
+    "*termios-table-lock* must be acquirable"))
+
+;;; ── disable-raw-mode! removes entry from table ───────────────────────────────
+
+(test disable-raw-mode-removes-entry-from-table
+  "disable-raw-mode! removes the fd entry from *saved-termios-table* after
+   attempting to restore, even when tcsetattr fails (e.g., on a pipe fd)."
+  (multiple-value-bind (rfd wfd) (sb-posix:pipe)
+    (unwind-protect
+         (let ((cl-tmux/pty::*saved-termios-table*
+                (let ((tbl (make-hash-table :test #'eql)))
+                  (setf (gethash rfd tbl) :fake-termios)
+                  tbl)))
+           ;; tcsetattr on a pipe signals ENOTTY — we ignore that.
+           (handler-case
+               (cl-tmux/pty:disable-raw-mode! rfd)
+             (error () nil))
+           ;; The entry must be gone regardless of tcsetattr outcome.
+           (is (null (gethash rfd cl-tmux/pty::*saved-termios-table*))
+               "disable-raw-mode! must remove the fd entry from *saved-termios-table*"))
+      (ignore-errors (sb-posix:close rfd))
+      (ignore-errors (sb-posix:close wfd)))))
+
+;;; ── enable-raw-mode! / disable-raw-mode! are fbound ─────────────────────────
+
+(test enable-raw-mode-is-fbound
+  "enable-raw-mode! is an exported function in cl-tmux/pty."
+  (is (fboundp 'cl-tmux/pty:enable-raw-mode!)
+      "enable-raw-mode! must be fbound"))
+
+(test disable-raw-mode-is-fbound
+  "disable-raw-mode! is an exported function in cl-tmux/pty."
+  (is (fboundp 'cl-tmux/pty:disable-raw-mode!)
+      "disable-raw-mode! must be fbound"))
+
+;;; ── with-raw-termios-flags :clear spec flag combination ─────────────────────
+
+(test with-raw-termios-flags-clear-multiple-flags-in-one-spec
+  "A :clear spec with multiple flags emits one LOGIOR wrapping all flags."
+  (let* ((form (macroexpand-1
+                '(cl-tmux/pty::with-raw-termios-flags (t1)
+                   (:clear my-acc f1 f2 f3))))
+         (text (prin1-to-string form))
+         ;; Count F1, F2, F3 occurrences (they appear in the LOGIOR argument list).
+         (f1-count (let ((n 0) (s 0))
+                     (loop for p = (search "F1" text :start2 s)
+                           while p do (incf n) (setf s (+ p 2)))
+                     n)))
+    (is (>= f1-count 1) "F1 must appear in the expansion")))
+
+(test with-raw-termios-flags-replace-spec-has-both-sublists
+  "The :replace spec expansion mentions both the clear-list and the set-list symbols."
+  (let* ((form (macroexpand-1
+                '(cl-tmux/pty::with-raw-termios-flags (t1)
+                   (:replace acc (clear1 clear2) (set1)))))
+         (text (prin1-to-string form)))
+    (is-true (search "CLEAR1" text) "clear flag must appear in :replace expansion")
+    (is-true (search "SET1"   text) "set flag must appear in :replace expansion")))

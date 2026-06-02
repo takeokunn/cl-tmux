@@ -301,33 +301,33 @@
 
 (test ground-state-printable-writes-and-stays-ground
   "ground-state processes a printable byte, writes the character, and returns ground-state."
-  (let* ((s (make-screen 10 5))
-         (next (cl-tmux/terminal/parser:ground-state s 65))) ; 65 = #\A
-    (is (eq #'cl-tmux/terminal/parser:ground-state next)
-        "ground-state must return ground-state for printable ASCII")
-    (is (char= #\A (char-at s 0 0))
-        "character must be written to the screen")))
+  (with-screen (s 10 5)
+    (let ((next (cl-tmux/terminal/parser:ground-state s 65))) ; 65 = #\A
+      (is (eq #'cl-tmux/terminal/parser:ground-state next)
+          "ground-state must return ground-state for printable ASCII")
+      (is (char= #\A (char-at s 0 0))
+          "character must be written to the screen"))))
 
 (test ground-state-escape-returns-escape-state
   "ground-state on ESC (#x1B) returns escape-state without writing a char."
-  (let* ((s (make-screen 10 5))
-         (next (cl-tmux/terminal/parser:ground-state s #x1B)))
-    (is (eq #'cl-tmux/terminal/parser:escape-state next)
-        "ground-state must return escape-state on ESC byte")
-    (is (char= #\Space (char-at s 0 0))
-        "ESC must not write a visible character")))
+  (with-screen (s 10 5)
+    (let ((next (cl-tmux/terminal/parser:ground-state s #x1B)))
+      (is (eq #'cl-tmux/terminal/parser:escape-state next)
+          "ground-state must return escape-state on ESC byte")
+      (is (char= #\Space (char-at s 0 0))
+          "ESC must not write a visible character"))))
 
 ;; escape-state ─────────────────────────────────────────────────────────────────
 
 (test escape-state-bracket-returns-csi-k
   "escape-state on #x5B (\"[\") returns a CSI accumulator continuation."
-  (let* ((s    (make-screen 10 5))
-         (next (cl-tmux/terminal/parser:escape-state s #x5B)))
-    (is (functionp next) "ESC [ must return a CSI continuation function (not a named state)")))
+  (with-screen (s 10 5)
+    (let ((next (cl-tmux/terminal/parser:escape-state s #x5B)))
+      (is (functionp next) "ESC [ must return a CSI continuation function (not a named state)"))))
 
 (test escape-state-c-returns-ground-and-resets
   "escape-state on #x63 (\"c\" = RIS) resets the screen and returns ground-state."
-  (let* ((s    (make-screen 10 5)))
+  (with-screen (s 10 5)
     (feed s "hello")
     (let ((next (cl-tmux/terminal/parser:escape-state s #x63)))
       (is (eq #'cl-tmux/terminal/parser:ground-state next))
@@ -337,7 +337,7 @@
 
 (test charset-state-always-returns-ground-state
   "charset-state consumes any designator byte and always returns ground-state."
-  (let ((s (make-screen 10 5)))
+  (with-screen (s 10 5)
     (is (eq #'cl-tmux/terminal/parser:ground-state
             (cl-tmux/terminal/parser:charset-state s 66)))  ; B = ASCII
     (is (eq #'cl-tmux/terminal/parser:ground-state
@@ -347,13 +347,13 @@
 
 (test osc-state-bel-terminates-to-ground
   "osc-state on BEL (#x07) returns ground-state (OSC terminated)."
-  (let ((s (make-screen 10 5)))
+  (with-screen (s 10 5)
     (is (eq #'cl-tmux/terminal/parser:ground-state
             (cl-tmux/terminal/parser:osc-state s #x07)))))
 
 (test osc-state-other-bytes-stay-in-osc
   "osc-state on non-terminator bytes returns a function (OSC payload accumulator)."
-  (let ((s (make-screen 10 5)))
+  (with-screen (s 10 5)
     ;; The new accumulator-based implementation returns a closure (not #'osc-state)
     ;; that continues collecting OSC payload bytes.  We verify it is a FUNCTION
     ;; that will eventually transition to ground-state on BEL or ST.
@@ -370,13 +370,13 @@
 
 (test osc-st-state-backslash-returns-ground
   "osc-st-state on #x5C (backslash = ST) returns ground-state."
-  (let ((s (make-screen 10 5)))
+  (with-screen (s 10 5)
     (is (eq #'cl-tmux/terminal/parser:ground-state
             (cl-tmux/terminal/parser::osc-st-state s #x5C)))))
 
 (test osc-st-state-non-backslash-returns-to-osc
   "osc-st-state on a non-backslash byte returns osc-state (ST not confirmed)."
-  (let ((s (make-screen 10 5)))
+  (with-screen (s 10 5)
     (is (eq #'cl-tmux/terminal/parser:osc-state
             (cl-tmux/terminal/parser::osc-st-state s 65)))))
 
@@ -384,7 +384,7 @@
 
 (test make-csi-k-accumulates-digits-and-dispatches
   "make-csi-k closure collects digit bytes into params and dispatches on final byte."
-  (let ((s (make-screen 10 5)))
+  (with-screen (s 10 5)
     ;; Build: CSI 31 m (SGR red foreground)
     ;; make-csi-k starts with empty params
     (let* ((k0 (cl-tmux/terminal/parser:make-csi-k))
@@ -398,7 +398,7 @@
 
 (test make-csi-k-semicolon-separates-params
   "A semicolon inside a CSI sequence separates parameters."
-  (let ((s (make-screen 10 5)))
+  (with-screen (s 10 5)
     ;; Build: CSI 1;31 m (bold + red foreground)
     (let* ((k0 (cl-tmux/terminal/parser:make-csi-k))
            (k1 (funcall k0 s 49))    ; '1'
@@ -412,11 +412,63 @@
       (is (logbitp 0 (cl-tmux/terminal/types:screen-cur-attrs s))
           "bold bit must be set after CSI 1;31 m"))))
 
+(test make-csi-k-dec-marker-question-sets-intermed
+  "make-csi-k on '?' (#x3F) stores #\\? as the intermediate byte."
+  (with-screen (s 10 5)
+    ;; Build CSI ? 25 h (DEC PM set 25 = show cursor)
+    ;; First hide cursor so we can verify the set flips it.
+    (setf (cl-tmux/terminal/types:screen-cursor-visible s) nil)
+    (let* ((k0 (cl-tmux/terminal/parser:make-csi-k))
+           (k1 (funcall k0 s #x3F))    ; '?'
+           (k2 (funcall k1 s 50))      ; '2'
+           (k3 (funcall k2 s 53))      ; '5'
+           (result (funcall k3 s #x68))) ; 'h' = ?25h
+      (is (eq #'cl-tmux/terminal/parser:ground-state result)
+          "CSI ?25h must dispatch and return ground-state")
+      (is (cl-tmux/terminal/types:screen-cursor-visible s)
+          "?25h must set cursor-visible to T"))))
+
+(test make-csi-k-sec-da-marker-sets-intermed
+  "make-csi-k on '>' (#x3E) stores #\\> as the intermediate byte for secondary DA."
+  (with-screen (s 10 5)
+    ;; Build CSI > c (DA2)
+    (let* ((k0 (cl-tmux/terminal/parser:make-csi-k))
+           (k1 (funcall k0 s #x3E))    ; '>'
+           (result (funcall k1 s #x63))) ; 'c' = DA2
+      (is (eq #'cl-tmux/terminal/parser:ground-state result)
+          "CSI >c must dispatch and return ground-state")
+      ;; DA2 response must have been queued.
+      (is (consp (cl-tmux/terminal/types:screen-response-queue s))
+          "CSI >c must enqueue a DA2 response"))))
+
+(test make-csi-k-intermediate-byte-space-sets-intermed
+  "make-csi-k on SPACE (#x20, an intermediate byte) stores #\\Space."
+  (with-screen (s 10 5)
+    ;; Build CSI 2 SP q (DECSCUSR: steady block = 2)
+    ;; Use shape 2 (non-default) so the assertion is distinct from the default (1).
+    (let* ((k0 (cl-tmux/terminal/parser:make-csi-k))
+           (k1 (funcall k0 s 50))    ; '2' = param 2
+           (k2 (funcall k1 s #x20))  ; SPACE = intermediate
+           (result (funcall k2 s #x71))) ; 'q' = DECSCUSR final
+      (is (eq #'cl-tmux/terminal/parser:ground-state result)
+          "CSI 2 SP q must dispatch and return ground-state")
+      (is (= 2 (cl-tmux/terminal/types:screen-cursor-shape s))
+          "DECSCUSR CSI 2 SP q must set cursor-shape to 2 (steady block)"))))
+
+(test make-csi-k-non-final-invalid-byte-aborts-to-ground
+  "make-csi-k on a byte below #x40 (not a digit, semicolon, or marker) aborts to ground-state."
+  (with-screen (s 10 5)
+    ;; #x01 is below the CSI final range and not a recognised parameter byte.
+    (let* ((k0 (cl-tmux/terminal/parser:make-csi-k))
+           (result (funcall k0 s #x01)))
+      (is (eq #'cl-tmux/terminal/parser:ground-state result)
+          "invalid byte inside CSI must abort to ground-state"))))
+
 ;; make-utf8-k ──────────────────────────────────────────────────────────────────
 
 (test make-utf8-k-assembles-two-byte-sequence
   "make-utf8-k with remaining=1 writes the character on the final continuation byte."
-  (let ((s (make-screen 10 5)))
+  (with-screen (s 10 5)
     ;; U+00E9 (é) = C3 A9 in UTF-8
     ;; Lead byte C3: acc = (C3 & 1F) = 3, remaining = 1
     (let* ((k0 (cl-tmux/terminal/parser:make-utf8-k 3 1))
@@ -428,7 +480,7 @@
 
 (test make-utf8-k-assembles-three-byte-sequence
   "make-utf8-k with remaining=2 collects two continuation bytes."
-  (let ((s (make-screen 10 5)))
+  (with-screen (s 10 5)
     ;; U+3042 (あ) = E3 81 82 in UTF-8
     ;; Lead byte E3: acc = (E3 & 0F) = 3, remaining = 2
     (let* ((k0 (cl-tmux/terminal/parser:make-utf8-k 3 2))
@@ -437,6 +489,20 @@
       (is (eq #'cl-tmux/terminal/parser:ground-state result))
       (is (char= #\あ (char-at s 0 0))
           "U+3042 (あ) must be written after two continuation bytes"))))
+
+(test make-utf8-k-malformed-non-continuation-emits-fffd
+  "make-utf8-k on a non-continuation byte emits U+FFFD and reprocesses the byte in ground-state."
+  (with-screen (s 10 5)
+    ;; Start a 2-byte sequence (remaining=1) then feed an ASCII byte (not a continuation).
+    ;; The #\A byte (#x41) is not a continuation (0xC0 & 0x41 != 0x80), so:
+    ;;   - U+FFFD is written at col 0
+    ;;   - #\A is reprocessed in ground-state and written at col 1
+    (let* ((k0 (cl-tmux/terminal/parser:make-utf8-k 2 1)))
+      (funcall k0 s #x41))   ; ASCII 'A' — not a continuation byte
+    (is (char= (code-char #xFFFD) (char-at s 0 0))
+        "malformed UTF-8 must emit U+FFFD at col 0")
+    (is (char= #\A (char-at s 1 0))
+        "reprocessed ASCII byte must be written at col 1")))
 
 ;;; ── define-state macro ───────────────────────────────────────────────────────
 
@@ -686,6 +752,61 @@
       (is (eq #'cl-tmux/terminal/parser:ground-state next)
           "unrecognized ESC byte must return ground-state"))))
 
+(test escape-state-m-reverse-index-returns-ground
+  "escape-state on #x4D ('M' = RI / reverse index) moves cursor up and returns ground-state."
+  (with-screen (s 10 5)
+    (feed s (esc "[3;1H"))    ; move to row 2 (0-based)
+    (let ((next (cl-tmux/terminal/parser:escape-state s #x4D)))
+      (is (eq #'cl-tmux/terminal/parser:ground-state next)
+          "ESC M must return ground-state")
+      ;; Cursor should have moved up one row (from 2 to 1).
+      (is (= 1 (screen-cursor-y s))
+          "ESC M (RI) must move cursor up one row"))))
+
+(test escape-state-7-saves-cursor
+  "escape-state on #x37 ('7' = DECSC) saves cursor and returns ground-state."
+  (with-screen (s 10 5)
+    (feed s (esc "[3;6H"))    ; cursor → (5, 2)
+    (let ((next (cl-tmux/terminal/parser:escape-state s #x37)))
+      (is (eq #'cl-tmux/terminal/parser:ground-state next)
+          "ESC 7 must return ground-state")
+      ;; Saved cursor should be non-nil.
+      (is (not (null (cl-tmux/terminal/types:screen-saved-cursor s)))
+          "ESC 7 must have saved the cursor"))))
+
+(test escape-state-8-restores-cursor
+  "escape-state on #x38 ('8' = DECRC) restores cursor and returns ground-state."
+  (with-screen (s 10 5)
+    (feed s (esc "[3;6H"))    ; cursor → (5, 2)
+    (feed s (esc "7"))        ; ESC 7 — save
+    (feed s (esc "[1;1H"))    ; move to origin
+    (let ((next (cl-tmux/terminal/parser:escape-state s #x38)))
+      (is (eq #'cl-tmux/terminal/parser:ground-state next)
+          "ESC 8 must return ground-state")
+      ;; Cursor should be restored to (5, 2).
+      (check-cursor s 5 2))))
+
+(test escape-state-P-dcs-returns-continuation
+  "escape-state on #x50 ('P' = DCS introducer) returns a DCS accumulator function."
+  (with-screen (s 10 5)
+    (let ((next (cl-tmux/terminal/parser:escape-state s #x50)))
+      (is (functionp next)
+          "ESC P must return a DCS accumulator continuation function"))))
+
+(test escape-state-open-paren-returns-charset-state
+  "escape-state on #x28 ('(' = G0 designator introducer) returns charset-state."
+  (with-screen (s 10 5)
+    (let ((next (cl-tmux/terminal/parser:escape-state s #x28)))
+      (is (eq #'cl-tmux/terminal/parser:charset-state next)
+          "ESC ( must return charset-state"))))
+
+(test escape-state-close-bracket-returns-osc-state
+  "escape-state on #x5D (']' = OSC introducer) returns osc-state."
+  (with-screen (s 10 5)
+    (let ((next (cl-tmux/terminal/parser:escape-state s #x5D)))
+      (is (eq #'cl-tmux/terminal/parser:osc-state next)
+          "ESC ] must return osc-state"))))
+
 ;;; ── make-dcs-k direct tests ──────────────────────────────────────────────────
 
 (def-suite direct-dcs-suite
@@ -732,15 +853,26 @@
   :in terminal-suite)
 (in-suite direct-osc-continuations)
 
+;;; Helper: build an adjustable byte vector pre-filled with STRING.
+;;; Eliminates the repeated 3-line buffer-construction pattern.
+(defun make-osc-payload-buf (string)
+  "Return a fresh adjustable (unsigned-byte 8) buffer pre-filled with the
+   bytes of STRING (one byte per character, Latin-1 encoded)."
+  (let ((buf (make-array (length string)
+                         :element-type '(unsigned-byte 8)
+                         :fill-pointer 0
+                         :adjustable   t)))
+    (loop for ch across string
+          do (vector-push-extend (char-code ch) buf))
+    buf))
+
 (test make-osc-k-accumulates-and-dispatches-on-bel
   "make-osc-k accumulates payload bytes and dispatches to %dispatch-osc on BEL."
-  (let ((s   (make-screen 20 5))
-        (buf (make-array 16 :element-type '(unsigned-byte 8)
-                            :fill-pointer 0 :adjustable t)))
+  (with-screen (s 20 5)
     ;; Simulate: OSC 0 ; title (bytes for "0;hello")
-    (dolist (ch (coerce "0;hello" 'list))
-      (vector-push-extend (char-code ch) buf))
-    (let ((k (cl-tmux/terminal/parser::make-osc-k buf)))
+    (let ((buf (make-osc-payload-buf "0;hello"))
+          (k   nil))
+      (setf k (cl-tmux/terminal/parser::make-osc-k buf))
       ;; Feed BEL to terminate
       (let ((result (funcall k s #x07)))
         (is (eq #'cl-tmux/terminal/parser:ground-state result)
@@ -750,41 +882,127 @@
 
 (test make-osc-k-esc-transitions-to-st-state
   "make-osc-k on ESC (#x1B) returns a continuation waiting for backslash."
-  (let ((s   (make-screen 10 5))
-        (buf (make-array 8 :element-type '(unsigned-byte 8)
-                           :fill-pointer 0 :adjustable t)))
-    (let ((k  (cl-tmux/terminal/parser::make-osc-k buf)))
-      (let ((k2 (funcall k s #x1B)))
-        (is (functionp k2)
-            "make-osc-k on ESC must return a function (bridge continuation)")))))
+  (with-screen (s 10 5)
+    (let* ((buf (make-osc-payload-buf ""))
+           (k   (cl-tmux/terminal/parser::make-osc-k buf))
+           (k2  (funcall k s #x1B)))
+      (is (functionp k2)
+          "make-osc-k on ESC must return a function (bridge continuation)"))))
 
 (test make-osc-st-k-backslash-dispatches-and-grounds
   "make-osc-st-k on backslash dispatches and returns ground-state."
-  (let ((s   (make-screen 20 5))
-        (buf (make-array 16 :element-type '(unsigned-byte 8)
-                            :fill-pointer 0 :adjustable t)))
+  (with-screen (s 20 5)
     ;; Payload: "2;xterm-st-title"
-    (dolist (ch (coerce "2;xterm-st-title" 'list))
-      (vector-push-extend (char-code ch) buf))
-    (let ((k (cl-tmux/terminal/parser::make-osc-st-k buf)))
-      (let ((result (funcall k s #x5C)))      ; backslash = ST confirmed
-        (is (eq #'cl-tmux/terminal/parser:ground-state result)
-            "make-osc-st-k on backslash must return ground-state")
-        (is (string= "xterm-st-title" (cl-tmux/terminal/types:screen-title s))
-            "make-osc-st-k must dispatch OSC 2 and set screen-title")))))
+    (let* ((buf    (make-osc-payload-buf "2;xterm-st-title"))
+           (k      (cl-tmux/terminal/parser::make-osc-st-k buf))
+           (result (funcall k s #x5C)))      ; backslash = ST confirmed
+      (is (eq #'cl-tmux/terminal/parser:ground-state result)
+          "make-osc-st-k on backslash must return ground-state")
+      (is (string= "xterm-st-title" (cl-tmux/terminal/types:screen-title s))
+          "make-osc-st-k must dispatch OSC 2 and set screen-title"))))
 
 (test make-osc-st-k-non-backslash-returns-ground
   "make-osc-st-k on a non-backslash byte returns ground-state without dispatching."
-  (let ((s   (make-screen 20 5))
-        (buf (make-array 8 :element-type '(unsigned-byte 8)
-                           :fill-pointer 0 :adjustable t)))
-    (dolist (ch (coerce "0;title" 'list))
-      (vector-push-extend (char-code ch) buf))
-    (let ((k (cl-tmux/terminal/parser::make-osc-st-k buf)))
-      ;; A byte that is not backslash (#x5C)
-      (let ((result (funcall k s (char-code #\X))))
-        (is (eq #'cl-tmux/terminal/parser:ground-state result)
-            "make-osc-st-k on non-backslash must still return ground-state")
-        ;; Title must NOT have been set (malformed ST discarded)
-        (is (not (string= "title" (cl-tmux/terminal/types:screen-title s)))
-            "make-osc-st-k non-backslash must not dispatch the OSC")))))
+  (with-screen (s 20 5)
+    (let* ((buf    (make-osc-payload-buf "0;title"))
+           (k      (cl-tmux/terminal/parser::make-osc-st-k buf))
+           (result (funcall k s (char-code #\X)))) ; not a backslash
+      (is (eq #'cl-tmux/terminal/parser:ground-state result)
+          "make-osc-st-k on non-backslash must still return ground-state")
+      ;; Title must NOT have been set (malformed ST discarded)
+      (is (not (string= "title" (cl-tmux/terminal/types:screen-title s)))
+          "make-osc-st-k non-backslash must not dispatch the OSC"))))
+
+;;; ── SUITE: osc-dispatch-edge-cases ──────────────────────────────────────────
+
+(def-suite osc-dispatch-edge-cases
+  :description "OSC dispatch edge cases: no-semicolon payload, unknown command"
+  :in terminal-suite)
+(in-suite osc-dispatch-edge-cases)
+
+(test osc-payload-no-semicolon-is-noop
+  "An OSC payload with no semicolon is silently discarded (no command to dispatch)."
+  (with-screen (s 20 5)
+    ;; Feed OSC with no semicolon: just the command number, BEL terminated.
+    ;; This should not crash and must not set screen-title.
+    (finishes
+      (screen-process-bytes s
+        (babel:string-to-octets
+          (format nil "~C]notanumber~C" #\Escape #\Bel)
+          :encoding :utf-8)))
+    ;; screen-title must remain at its default (NIL or empty string).
+    (let ((title (cl-tmux/terminal/types:screen-title s)))
+      (is (or (null title) (string= "" title))
+          "screen-title must be unset after invalid OSC payload"))))
+
+(test osc-unknown-command-is-silently-ignored
+  "An OSC payload with a valid integer command but no matching rule is silently ignored."
+  (with-screen (s 20 5)
+    ;; OSC 99 is not handled — must not crash.
+    (finishes
+      (screen-process-bytes s
+        (babel:string-to-octets
+          (format nil "~C]99;some-data~C" #\Escape #\Bel)
+          :encoding :utf-8)))
+    ;; screen-title must remain unset (OSC 99 has no handler).
+    (let ((title (cl-tmux/terminal/types:screen-title s)))
+      (is (or (null title) (string= "" title))
+          "unknown OSC command must not alter screen-title"))))
+
+(test osc-empty-payload-bel-is-noop
+  "An OSC terminated immediately by BEL (empty payload) is consumed without error."
+  (with-screen (s 20 5)
+    (feed s "A")
+    ;; ESC ] BEL — empty payload
+    (screen-process-bytes s
+      (make-array 3 :element-type '(unsigned-byte 8)
+                    :initial-contents (list #x1B #x5D #x07)))
+    (feed s "B")
+    (is (char= #\A (char-at s 0 0)) "char before empty OSC must survive")
+    (is (char= #\B (char-at s 1 0)) "char after empty OSC must be written")))
+
+;;; ── SUITE: osc52-coverage ────────────────────────────────────────────────────
+
+(def-suite osc52-coverage
+  :description "OSC 52 clipboard handler: callback path and nil handler (silently dropped)"
+  :in terminal-suite)
+(in-suite osc52-coverage)
+
+(test osc52-handler-invoked-with-decoded-text
+  "When *osc52-handler* is set, OSC 52 with a valid Base64 payload invokes it
+   with the decoded text string."
+  (with-screen (s 20 5)
+    ;; Base64-encode \"hello\" → SGVsbG8=
+    (let* ((received nil)
+           (cl-tmux/terminal/parser:*osc52-handler*
+             (lambda (text) (setf received text))))
+      ;; Feed OSC 52 ; c ; SGVsbG8= BEL  (c = clipboard target, ignored)
+      (screen-process-bytes s
+        (babel:string-to-octets
+          (format nil "~C]52;c;SGVsbG8=~C" #\Escape #\Bel)
+          :encoding :utf-8))
+      (is (string= "hello" received)
+          "osc52-handler must be called with decoded text 'hello'"))))
+
+(test osc52-nil-handler-silently-dropped
+  "When *osc52-handler* is NIL, an OSC 52 sequence is consumed without error."
+  (with-screen (s 20 5)
+    (let ((cl-tmux/terminal/parser:*osc52-handler* nil))
+      (finishes
+        (screen-process-bytes s
+          (babel:string-to-octets
+            (format nil "~C]52;c;SGVsbG8=~C" #\Escape #\Bel)
+            :encoding :utf-8))))))
+
+(test osc52-read-request-silently-ignored
+  "OSC 52 with payload '?' (clipboard read request) is silently ignored."
+  (with-screen (s 20 5)
+    (let* ((received :not-called)
+           (cl-tmux/terminal/parser:*osc52-handler*
+             (lambda (text) (setf received text))))
+      (screen-process-bytes s
+        (babel:string-to-octets
+          (format nil "~C]52;c;?~C" #\Escape #\Bel)
+          :encoding :utf-8))
+      (is (eq :not-called received)
+          "handler must NOT be invoked for a clipboard read request ('?')"))))

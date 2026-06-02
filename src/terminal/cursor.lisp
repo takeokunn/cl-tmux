@@ -7,10 +7,10 @@
 ;;; ── Cursor movement ────────────────────────────────────────────────────────
 ;;;
 ;;; define-cursor-movements is a Prolog-like table:
-;;;   cursor_move(up,    Screen, N) :- cy(Screen) := clamp(cy - N, scroll_top).
-;;;   cursor_move(down,  Screen, N) :- cy(Screen) := clamp(cy + N, scroll_bottom).
-;;;   cursor_move(right, Screen, N) :- cx(Screen) := clamp(cx + N, width-1).
-;;;   cursor_move(left,  Screen, N) :- cx(Screen) := clamp(cx - N, 0).
+;;;   cursor_move(up,    Screen, N) :- cursor-y(Screen) := clamp(cursor-y - N, scroll_top).
+;;;   cursor_move(down,  Screen, N) :- cursor-y(Screen) := clamp(cursor-y + N, scroll_bottom).
+;;;   cursor_move(right, Screen, N) :- cursor-x(Screen) := clamp(cursor-x + N, width-1).
+;;;   cursor_move(left,  Screen, N) :- cursor-x(Screen) := clamp(cursor-x - N, 0).
 ;;;
 ;;; Each spec: (name docstring accessor clamped-expression)
 
@@ -28,24 +28,24 @@
 
 (defun set-cursor (screen x y)
   "Move the cursor to (X, Y), clamping both coordinates into bounds."
-  (setf (screen-cx screen) (clamp x 0 (1- (screen-width  screen)))
-        (screen-cy screen) (clamp y 0 (1- (screen-height screen)))))
+  (setf (screen-cursor-x screen) (clamp x 0 (1- (screen-width  screen)))
+        (screen-cursor-y screen) (clamp y 0 (1- (screen-height screen)))))
 
 (define-cursor-movements
   (cursor-up    "Move the cursor up N rows, clamping to the scroll-top boundary."
-   screen-cy  (max (screen-scroll-top    screen) (- (screen-cy screen) n)))
+   screen-cursor-y  (max (screen-scroll-top    screen) (- (screen-cursor-y screen) n)))
   (cursor-down  "Move the cursor down N rows, clamping to the scroll-bottom boundary."
-   screen-cy  (min (screen-scroll-bottom screen) (+ (screen-cy screen) n)))
+   screen-cursor-y  (min (screen-scroll-bottom screen) (+ (screen-cursor-y screen) n)))
   (cursor-right "Move the cursor right N columns, clamping to width-1."
-   screen-cx  (min (1- (screen-width     screen)) (+ (screen-cx screen) n)))
+   screen-cursor-x  (min (1- (screen-width     screen)) (+ (screen-cursor-x screen) n)))
   (cursor-left  "Move the cursor left N columns, clamping to column 0."
-   screen-cx  (max 0                              (- (screen-cx screen) n))))
+   screen-cursor-x  (max 0                              (- (screen-cursor-x screen) n))))
 
 (defun cursor-down/scroll (screen)
   "Move cursor down one line, scrolling when at the bottom of the scroll region.
    This is the internal helper used by write-char-at-cursor and the LF handler."
-  (if (< (screen-cy screen) (screen-scroll-bottom screen))
-      (incf (screen-cy screen))
+  (if (< (screen-cursor-y screen) (screen-scroll-bottom screen))
+      (incf (screen-cursor-y screen))
       (scroll-up-one screen)))
 
 (defun cursor-lf (screen)
@@ -54,8 +54,8 @@
 
 (defun cursor-ht (screen)
   "Horizontal tab: advance cursor to the next 8-column tab stop."
-  (let ((nx (* 8 (ceiling (1+ (screen-cx screen)) 8))))
-    (setf (screen-cx screen)
+  (let ((nx (* 8 (ceiling (1+ (screen-cursor-x screen)) 8))))
+    (setf (screen-cursor-x screen)
           (min nx (1- (screen-width screen))))))
 
 (defun cursor-cht (screen n)
@@ -67,25 +67,25 @@
 (defun cursor-cbt (screen n)
   "CBT — cursor backward N tab stops (CSI N Z).
    Move the cursor back to the Nth previous 8-column tab stop, stopping at column 0."
-  (let ((stops (max 1 n)))
-    (dotimes (_ stops)
-      (let ((prev (* 8 (floor (max 0 (1- (screen-cx screen))) 8))))
-        (setf (screen-cx screen) prev)))))
+  (dotimes (_ (max 1 n))
+    (let* ((col-before (max 0 (1- (screen-cursor-x screen))))
+           (prev-stop  (* 8 (floor col-before 8))))
+      (setf (screen-cursor-x screen) prev-stop))))
 
 (defun cursor-bs (screen)
   "Backspace: move cursor left one column if not already at column 0."
-  (when (> (screen-cx screen) 0)
-    (decf (screen-cx screen))))
+  (when (> (screen-cursor-x screen) 0)
+    (decf (screen-cursor-x screen))))
 
 (defun cursor-ri (screen)
   "Reverse index (ESC M): move cursor up one line, scrolling down if at top."
-  (if (= (screen-cy screen) (screen-scroll-top screen))
+  (if (= (screen-cursor-y screen) (screen-scroll-top screen))
       (scroll-down-one screen)
-      (decf (screen-cy screen))))
+      (decf (screen-cursor-y screen))))
 
 (defun cursor-cr (screen)
   "Carriage return: move the cursor to column 0."
-  (setf (screen-cx screen) 0))
+  (setf (screen-cursor-x screen) 0))
 
 ;;; ── Character writing ──────────────────────────────────────────────────────
 
@@ -99,23 +99,29 @@
    scroll region if needed) when it would pass the right edge.
    Respects the screen-autowrap flag: when autowrap is NIL and the cursor is at
    the right edge, the cursor stays in place (the write overwrites the last cell)."
-  (let ((nx (+ (screen-cx screen) n)))
-    (if (< nx (screen-width screen))
-        (setf (screen-cx screen) nx)
-        (if (screen-autowrap screen)
-            (progn (setf (screen-cx screen) 0)
-                   (cursor-down/scroll screen))
-            ;; No-wrap: clamp to last column
-            (setf (screen-cx screen) (1- (screen-width screen)))))))
+  (let ((next-x (+ (screen-cursor-x screen) n)))
+    (cond
+      ;; Advance: fits within the current row.
+      ((< next-x (screen-width screen))
+       (setf (screen-cursor-x screen) next-x))
+      ;; Wrap: reached the right margin and autowrap is on.
+      ((screen-autowrap screen)
+       (setf (screen-cursor-x screen) 0)
+       (cursor-down/scroll screen))
+      ;; Clamp: reached the right margin and autowrap is off.
+      (t
+       (setf (screen-cursor-x screen) (1- (screen-width screen)))))))
 
-(defun %place-wide-char (screen x y ch fg bg at at2 ulc)
+(defun %place-wide-char (screen x y char fg bg attrs attrs2 ul-color)
   "Place a double-width character at (X,Y) and write its continuation cell.
    The continuation cell is written only if (1+ X) is within the screen."
   (setf (screen-cell screen x y)
-        (make-cell :char ch :fg fg :bg bg :attrs at :attrs2 at2 :ul-color ulc :width 2))
+        (make-cell :char char :fg fg :bg bg :attrs attrs :attrs2 attrs2
+                   :ul-color ul-color :width 2))
   (when (< (1+ x) (screen-width screen))
     (setf (screen-cell screen (1+ x) y)
-          (make-cell :char #\Space :fg fg :bg bg :attrs at :attrs2 at2 :ul-color ulc :width 0))))
+          (make-cell :char #\Space :fg fg :bg bg :attrs attrs :attrs2 attrs2
+                     :ul-color ul-color :width 0))))
 
 ;;; DEC special graphics character set (G1; activated by ESC ( 0).
 ;;; Maps ASCII code points (in the range used by line-drawing apps) to the
@@ -179,8 +185,8 @@
   "Append combining character CH to the cell immediately left of the cursor.
    The cursor is NOT advanced.  If the cursor is at column 0, the combining
    char is appended to column 0 (the only cell available on that row)."
-  (let* ((prev-x    (if (> (screen-cx screen) 0) (1- (screen-cx screen)) 0))
-         (prev-y    (screen-cy screen))
+  (let* ((prev-x    (if (> (screen-cursor-x screen) 0) (1- (screen-cursor-x screen)) 0))
+         (prev-y    (screen-cursor-y screen))
          (prev-cell (screen-cell screen prev-x prev-y)))
     (setf (screen-cell screen prev-x prev-y)
           (make-cell :char      (cell-char     prev-cell)
@@ -204,34 +210,34 @@
   "Write double-width character CH at the cursor.
    Wraps to the next row first if the character does not fit in the last column.
    Advances the cursor by 2 after placing the lead + continuation cells."
-  (let ((fg  (screen-cur-fg       screen))
-        (bg  (screen-cur-bg       screen))
-        (at  (screen-cur-attrs    screen))
-        (at2 (screen-cur-attrs2   screen))
-        (ulc (screen-cur-ul-color screen)))
+  (let ((fg       (screen-cur-fg       screen))
+        (bg       (screen-cur-bg       screen))
+        (attrs    (screen-cur-attrs    screen))
+        (attrs2   (screen-cur-attrs2   screen))
+        (ul-color (screen-cur-ul-color screen)))
     ;; If the wide char cannot fit (only one column remains), blank the last
     ;; column and wrap to the next row before placing it.
-    (when (>= (1+ (screen-cx screen)) (screen-width screen))
-      (setf (screen-cell screen (screen-cx screen) (screen-cy screen)) (blank-cell))
-      (setf (screen-cx screen) 0)
+    (when (>= (1+ (screen-cursor-x screen)) (screen-width screen))
+      (setf (screen-cell screen (screen-cursor-x screen) (screen-cursor-y screen)) (blank-cell))
+      (setf (screen-cursor-x screen) 0)
       (cursor-down/scroll screen))
-    (%place-wide-char screen (screen-cx screen) (screen-cy screen)
-                      ch fg bg at at2 ulc)
+    (%place-wide-char screen (screen-cursor-x screen) (screen-cursor-y screen)
+                      ch fg bg attrs attrs2 ul-color)
     (%mark-dirty screen)
     (%advance-cursor screen 2)))
 
 (defun %write-normal-cell (screen ch)
   "Write single-width character CH at the cursor and advance by 1."
-  (let ((x   (screen-cx screen))
-        (y   (screen-cy screen))
-        (fg  (screen-cur-fg       screen))
-        (bg  (screen-cur-bg       screen))
-        (at  (screen-cur-attrs    screen))
-        (at2 (screen-cur-attrs2   screen))
-        (ulc (screen-cur-ul-color screen)))
+  (let ((x        (screen-cursor-x    screen))
+        (y        (screen-cursor-y    screen))
+        (fg       (screen-cur-fg      screen))
+        (bg       (screen-cur-bg      screen))
+        (attrs    (screen-cur-attrs   screen))
+        (attrs2   (screen-cur-attrs2  screen))
+        (ul-color (screen-cur-ul-color screen)))
     (setf (screen-cell screen x y)
-          (make-cell :char ch :fg fg :bg bg :attrs at :attrs2 at2
-                     :ul-color ulc :width 1))
+          (make-cell :char ch :fg fg :bg bg :attrs attrs :attrs2 attrs2
+                     :ul-color ul-color :width 1))
     (%mark-dirty screen)
     (%advance-cursor screen 1)))
 

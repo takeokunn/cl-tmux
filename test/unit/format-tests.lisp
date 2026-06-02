@@ -346,3 +346,114 @@
         (let ((ctx (if key (list key val) '())))
           (is (string= expected (cl-tmux/format:expand-format tmpl ctx))
               "shorthand ~S: expected ~S" tmpl expected))))))
+
+;;; ── %expand-brace edge cases ──────────────────────────────────────────────────
+
+(test expand-format-brace-no-closing-brace-emits-literal-hash
+  "%expand-brace emits a literal '#' when there is no closing brace."
+  ;; The '#' at the end of the template has no following character → plain char.
+  ;; The string "#{no_close" has '#' + '{' but no '}'; the function returns '#' literally.
+  (let ((result (cl-tmux/format:expand-format "#{no_close" '())))
+    (is (char= #\# (char result 0))
+        "missing closing brace must emit literal '#' (got ~S)" result)))
+
+(test expand-format-bracket-no-closing-bracket-emits-literal-hash
+  "%expand-bracket emits a literal '#' when there is no closing bracket."
+  (let ((result (cl-tmux/format:expand-format "#[no_close" '())))
+    (is (char= #\# (char result 0))
+        "missing closing bracket must emit literal '#' (got ~S)" result)))
+
+(test expand-format-bracket-passthrough-preserves-content
+  "#[attrs] passes the full bracketed text through unchanged."
+  (is (string= "#[fg=red,bold]" (fmt "#[fg=red,bold]"))
+      "#[fg=red,bold] must pass through unchanged"))
+
+(test expand-format-conditional-context-variable-resolution
+  "#{?window_active,YES,NO} resolves window_active from the context plist."
+  ;; When :window-active is \"1\" in the context, the true branch is returned.
+  (is (string= "YES"
+               (cl-tmux/format:expand-format "#{?window_active,YES,NO}"
+                                             '(:window-active "1")))
+      "truthy context variable must select true branch")
+  (is (string= "NO"
+               (cl-tmux/format:expand-format "#{?window_active,YES,NO}"
+                                             '(:window-active "0")))
+      "falsy context variable must select false branch"))
+
+(test expand-format-conditional-literal-true-zero
+  "#{?1,yes,no} / #{?0,yes,no} work without any context."
+  (is (string= "yes" (fmt "#{?1,yes,no}")) "literal 1 → yes")
+  (is (string= "no"  (fmt "#{?0,yes,no}")) "literal 0 → no"))
+
+(test expand-format-brace-missing-key-uses-empty
+  "#{window_name} with no matching context key emits an empty string."
+  (is (string= "" (cl-tmux/format:expand-format "#{window_name}" '()))
+      "missing context key must produce empty string"))
+
+(test expand-format-mixed-template
+  "A template mixing shorthands, brace vars, and plain text expands correctly."
+  (let ((ctx '(:session-name "main" :window-name "bash")))
+    (is (string= "session=main window=bash"
+                 (cl-tmux/format:expand-format "session=#{session_name} window=#W" ctx))
+        "mixed template must expand all specifiers")))
+
+;;; ── %expand-shorthand unknown returns nil ────────────────────────────────────
+
+(test expand-shorthand-unknown-char-emits-both-chars
+  "An unknown shorthand #X emits both '#' and 'X' literally."
+  (is (string= "#Z" (fmt "#Z")) "#Z must pass through as two literal chars")
+  (is (string= "#?" (fmt "#?")) "#? must pass through as two literal chars"))
+
+;;; ── format-context-from-window nil window ────────────────────────────────────
+
+(test format-context-from-window-nil-window
+  "format-context-from-window with NIL window returns safe defaults."
+  (let* ((sess (make-fake-session :nwindows 1))
+         (ctx  (cl-tmux/format:format-context-from-window sess nil)))
+    (is (stringp (getf ctx :session-name))
+        ":session-name must be a string when window is nil")
+    (is (string= "" (getf ctx :window-name))
+        ":window-name must be empty when window is nil")
+    (is (= 0 (getf ctx :window-index))
+        ":window-index must be 0 when window is nil")))
+
+;;; ── %lookup integer value ────────────────────────────────────────────────────
+
+(test lookup-integer-value-converted-to-string
+  "%lookup converts integer values to strings via princ-to-string."
+  (is (string= "42" (cl-tmux/format::%lookup (list :count 42) :count))
+      ":count 42 must stringify to \"42\""))
+
+;;; ── Table-driven %truthy-p boundary tests ────────────────────────────────────
+
+(test truthy-p-table-driven
+  "%truthy-p boundary table: various inputs and expected truthiness."
+  (let ((cases '(("1"     . t)
+                 ("yes"   . t)
+                 ("true"  . t)
+                 (""      . nil)
+                 ("0"     . nil)
+                 ("false" . nil)
+                 ("FALSE" . nil))))
+    (dolist (c cases)
+      (let ((input    (car c))
+            (expected (cdr c)))
+        (if expected
+            (is-true  (cl-tmux/format::%truthy-p input)
+                      "%truthy-p ~S must be truthy" input)
+            (is-false (cl-tmux/format::%truthy-p input)
+                      "%truthy-p ~S must be falsy" input))))))
+
+;;; ── %variable-to-keyword table-driven ────────────────────────────────────────
+
+(test variable-to-keyword-table-driven
+  "%variable-to-keyword converts multiple names correctly."
+  (let ((cases '(("session_name"  . :session-name)
+                 ("window_index"  . :window-index)
+                 ("pane_index"    . :pane-index)
+                 ("host_short"    . :host-short)
+                 ("window_active" . :window-active)
+                 ("time"          . :time))))
+    (dolist (c cases)
+      (is (eq (cdr c) (cl-tmux/format::%variable-to-keyword (car c)))
+          "%variable-to-keyword ~S → ~S" (car c) (cdr c)))))

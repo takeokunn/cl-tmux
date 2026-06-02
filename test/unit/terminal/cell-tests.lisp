@@ -111,6 +111,28 @@
   (let ((c (cl-tmux/terminal/types:make-cell :char #\Space :width 0)))
     (is (= 0 (cell-width c)) "continuation cell width must be 0")))
 
+(test cell-p-returns-true-for-cell
+  :description "cell-p returns T for a struct produced by make-cell."
+  (let ((c (cl-tmux/terminal/types:make-cell)))
+    (is-true (cl-tmux/terminal/types:cell-p c)
+             "cell-p must return T for a make-cell instance")))
+
+(test cell-p-returns-false-for-non-cell
+  :description "cell-p returns NIL for non-cell objects."
+  (is-false (cl-tmux/terminal/types:cell-p 42)
+            "cell-p must return NIL for an integer")
+  (is-false (cl-tmux/terminal/types:cell-p "hello")
+            "cell-p must return NIL for a string")
+  (is-false (cl-tmux/terminal/types:cell-p nil)
+            "cell-p must return NIL for NIL"))
+
+(test make-cell-combining-slot
+  :description "make-cell :combining with a list stores the combining characters."
+  (let ((c (cl-tmux/terminal/types:make-cell
+            :combining (list (code-char #x0300) (code-char #x0301)))))
+    (is (= 2 (length (cl-tmux/terminal/types:cell-combining c)))
+        "combining list must hold the two supplied marks")))
+
 ;;; ── blank-cell ───────────────────────────────────────────────────────────────
 
 (test blank-cell-returns-default-cell
@@ -128,12 +150,63 @@
         (c2 (cl-tmux/terminal/types:blank-cell)))
     (is (not (eq c1 c2)) "blank-cell must return a fresh struct each call")))
 
+;;; ── %make-blank-cells ────────────────────────────────────────────────────────
+
+(def-suite make-blank-cells-suite
+  :description "%make-blank-cells: vector allocation and cell defaults"
+  :in terminal-suite)
+(in-suite make-blank-cells-suite)
+
+(test make-blank-cells-returns-simple-vector-of-correct-length
+  :description "%make-blank-cells returns a simple-vector of the requested length."
+  (let ((v (cl-tmux/terminal/types:%make-blank-cells 10)))
+    (is (simple-vector-p v) "%make-blank-cells must return a simple-vector")
+    (is (= 10 (length v))   "vector length must equal the requested count")))
+
+(test make-blank-cells-all-elements-are-blank
+  :description "Every element returned by %make-blank-cells is a default space cell."
+  (let ((v (cl-tmux/terminal/types:%make-blank-cells 5)))
+    (dotimes (i 5)
+      (let ((c (aref v i)))
+        (is (cl-tmux/terminal/types:cell-p c)
+            "element ~D must be a cell" i)
+        (is (char= #\Space (cell-char c))
+            "element ~D char must be space" i)
+        (is (= 7 (cell-fg c))
+            "element ~D fg must be 7" i)
+        (is (= 0 (cell-bg c))
+            "element ~D bg must be 0" i)
+        (is (= 1 (cell-width c))
+            "element ~D width must be 1" i)))))
+
+(test make-blank-cells-zero-length-returns-empty-vector
+  :description "%make-blank-cells with n=0 returns an empty simple-vector."
+  (let ((v (cl-tmux/terminal/types:%make-blank-cells 0)))
+    (is (simple-vector-p v) "result must be a simple-vector")
+    (is (= 0 (length v))    "empty vector must have length 0")))
+
 ;;; ── clamp ────────────────────────────────────────────────────────────────────
 
 (def-suite clamp-suite
   :description "clamp utility: boundary and interior behaviour"
   :in terminal-suite)
 (in-suite clamp-suite)
+
+;;; Table-driven clamp tests: (v lo hi expected)
+(test clamp-table
+  :description "clamp correctly handles below, above, at, and within bounds."
+  (dolist (case '((-5  0 10  0  "below lo clamps to lo")
+                  ( 1  3  9  3  "below lo clamps to lo (3..9)")
+                  (99  0 10 10  "above hi clamps to hi")
+                  (20  3  9  9  "above hi clamps to hi (3..9)")
+                  ( 5  0 10  5  "within range returned unchanged")
+                  ( 0  0 10  0  "at lo boundary returned unchanged")
+                  (10  0 10 10  "at hi boundary returned unchanged")
+                  ( 0  7  7  7  "lo=hi, v below: always returns lo/hi")
+                  ( 7  7  7  7  "lo=hi, v equal: always returns lo/hi")
+                  (99  7  7  7  "lo=hi, v above: always returns lo/hi")))
+    (destructuring-bind (v lo hi expected desc) case
+      (is (= expected (cl-tmux/terminal/types:clamp v lo hi)) desc))))
 
 (test clamp-value-below-lo-returns-lo
   :description "clamp returns LO when V < LO."
@@ -159,6 +232,11 @@
 
 ;;; ── safe-code-char ───────────────────────────────────────────────────────────
 
+(def-suite safe-code-char-suite
+  :description "safe-code-char: valid, boundary, and invalid code-point handling"
+  :in terminal-suite)
+(in-suite safe-code-char-suite)
+
 (test safe-code-char-valid-codepoint
   "safe-code-char returns the character for a valid code point."
   (is (char= #\A (cl-tmux/terminal/types:safe-code-char 65)))
@@ -176,6 +254,16 @@
                       (+ char-code-limit 1))))
     (is (= #xFFFD (char-code replacement))
         "out-of-range code point must return U+FFFD")))
+
+;;; Table-driven safe-code-char tests: (cp expected-char)
+(test safe-code-char-table
+  :description "safe-code-char table: well-known code-points map to expected characters."
+  (dolist (case '((65  #\A    "U+0041 = LATIN CAPITAL LETTER A")
+                  (97  #\a    "U+0061 = LATIN SMALL LETTER A")
+                  (32  #\Space "U+0020 = SPACE")
+                  (10  #\Newline "U+000A = LINE FEED")))
+    (destructuring-bind (cp expected-char desc) case
+      (is (char= expected-char (cl-tmux/terminal/types:safe-code-char cp)) desc))))
 
 ;;; ── SUITE: char-width / double-width ─────────────────────────────────────────
 
@@ -208,8 +296,52 @@
                (code-char cp) cp)))
 
 (test define-wide-char-ranges-macro-is-defined
-  "define-wide-char-ranges is a defined macro."
-  (is (macro-function 'cl-tmux/terminal/types::define-wide-char-ranges)))
+  "define-wide-char-ranges is a defined macro accessible via single-colon export."
+  (is (macro-function 'cl-tmux/terminal/types:define-wide-char-ranges)))
+
+(test char-width-emoji-block-start-boundary
+  :description "U+1F300 (first code point of Emoji/pictograph block) has width 2."
+  (is (= 2 (char-width (code-char #x1F300)))
+      "U+1F300 must be wide (start of Emoji block)"))
+
+(test char-width-emoji-block-end-boundary
+  :description "U+1FAFF (last code point of Emoji/pictograph block) has width 2."
+  (is (= 2 (char-width (code-char #x1FAFF)))
+      "U+1FAFF must be wide (end of Emoji block)"))
+
+(test char-width-cjk-ext-b-start-boundary
+  :description "U+20000 (first code point of CJK Extension B range) has width 2."
+  (is (= 2 (char-width (code-char #x20000)))
+      "U+20000 must be wide (start of CJK Extension B range)"))
+
+(test char-width-adjacent-below-emoji-block
+  :description "U+1F2FF (one below the Emoji block start) is not in the range."
+  ;; U+1F2FF is below #x1F300; should not be in any wide range.
+  (is (= 1 (char-width (code-char #x1F2FF)))
+      "U+1F2FF is outside all wide ranges and must have width 1"))
+
+;;; Table-driven char-width boundary tests: (cp expected-width description)
+(test char-width-range-boundaries-table
+  :description "char-width returns the correct width at all range boundaries."
+  (dolist (case `((#x1100 2 "U+1100 Hangul Jamo start")
+                  (#x115F 2 "U+115F Hangul Jamo end")
+                  (#x2E80 2 "U+2E80 CJK Radicals start")
+                  (#x303E 2 "U+303E CJK Radicals end")
+                  (#x3041 2 "U+3041 Hiragana start")
+                  (#x33FF 2 "U+33FF CJK compat end")
+                  (#x3400 2 "U+3400 CJK Extension A start")
+                  (#x4DBF 2 "U+4DBF CJK Extension A end")
+                  (#x4E00 2 "U+4E00 CJK Unified start")
+                  (#x9FFF 2 "U+9FFF CJK Unified end")
+                  (#xAC00 2 "U+AC00 Hangul syllables start")
+                  (#xD7A3 2 "U+D7A3 Hangul syllables end")
+                  (#xFF00 2 "U+FF00 Fullwidth ASCII start")
+                  (#xFF60 2 "U+FF60 Fullwidth ASCII end")
+                  (#xFFE0 2 "U+FFE0 Fullwidth signs start")
+                  (#xFFE6 2 "U+FFE6 Fullwidth signs end")))
+    (destructuring-bind (cp expected-width desc) case
+      (when (< cp char-code-limit)
+        (is (= expected-width (char-width (code-char cp))) desc)))))
 
 ;;; ── wide-char layout ─────────────────────────────────────────────────────────
 
@@ -226,7 +358,7 @@
   "A wide char that cannot fit in the last column wraps to the next row."
   (with-screen (s 3 2)
     (feed s "ab")            ; cursor at column 2 (last column of a 3-wide screen)
-    (utf8-feed s "あ")       ; cannot fit one column → wraps to row 1
+    (utf8-feed s "あ")       ; cannot fit one column -> wraps to row 1
     (is (char= #\a  (char-at s 0 0)))
     (is (char= #\b  (char-at s 1 0)))
     (is (char= #\Space (char-at s 2 0)) "vacated last column is blank")
@@ -275,7 +407,7 @@
           "U+0300 must be in the combining list of the base cell"))))
 
 (test write-char-at-cursor-combining-at-col-zero-appended-to-col-zero
-  :description "A combining char at column 0 is appended to cell (0,0) — no underflow."
+  :description "A combining char at column 0 is appended to cell (0,0) -- no underflow."
   (with-screen (s 10 5)
     ;; cursor starts at col 0; write a combining char without first writing a base
     (cl-tmux/terminal/actions:write-char-at-cursor s (code-char #x0301))
@@ -300,21 +432,21 @@
   :description "With charset :dec-graphics, ASCII j/k/l/m map to box-drawing Unicode."
   (with-screen (s 10 5)
     (setf (cl-tmux/terminal/types:screen-charset s) :dec-graphics)
-    ;; 'j' -> lower-right corner ┘
+    ;; 'j' -> lower-right corner
     (cl-tmux/terminal/actions:write-char-at-cursor s #\j)
-    (is (char= #\┘ (char-at s 0 0)) "j should map to lower-right corner ┘")
-    ;; 'q' -> horizontal line ─
+    (is (char= #\┘ (char-at s 0 0)) "j should map to lower-right corner")
+    ;; 'q' -> horizontal line
     (cl-tmux/terminal/actions:write-char-at-cursor s #\q)
-    (is (char= #\─ (char-at s 1 0)) "q should map to horizontal line ─")
-    ;; 'x' -> vertical line │
+    (is (char= #\─ (char-at s 1 0)) "q should map to horizontal line")
+    ;; 'x' -> vertical line
     (cl-tmux/terminal/actions:write-char-at-cursor s #\x)
-    (is (char= #\│ (char-at s 2 0)) "x should map to vertical line │")))
+    (is (char= #\│ (char-at s 2 0)) "x should map to vertical line")))
 
 (test dec-graphics-unmapped-char-passes-through
   :description "A character not in the DEC table passes through unchanged."
   (with-screen (s 10 5)
     (setf (cl-tmux/terminal/types:screen-charset s) :dec-graphics)
-    ;; 'A' has no entry in the DEC table → should write as-is
+    ;; 'A' has no entry in the DEC table -> should write as-is
     (cl-tmux/terminal/actions:write-char-at-cursor s #\A)
     (is (char= #\A (char-at s 0 0)) "unmapped ASCII should be written unchanged")))
 
@@ -327,9 +459,9 @@
         "In :ascii mode, 'j' must not be remapped")))
 
 (test remap-charset-char-dec-graphics-remaps-j
-  :description "%remap-charset-char with charset :dec-graphics remaps j to ┘."
+  :description "%remap-charset-char with charset :dec-graphics remaps j to lower-right corner."
   (with-screen (s 10 5)
     (setf (cl-tmux/terminal/types:screen-charset s) :dec-graphics)
     (is (char= #\┘
                (cl-tmux/terminal/actions::%remap-charset-char s #\j))
-        "In :dec-graphics mode, 'j' must map to lower-right corner ┘")))
+        "In :dec-graphics mode, 'j' must map to lower-right corner")))

@@ -33,8 +33,8 @@
     (declare (ignore p1))
     ;; Break the active pane (p0) out.
     (let ((new-win (cl-tmux/commands:break-pane sess)))
-      (is (not (null new-win))
-          "break-pane must return the new window")
+      (is-true new-win
+               "break-pane must return the new window")
       (is (= 2 (length (session-windows sess)))
           "session must now have 2 windows")
       ;; The new window contains only the broken-out pane.
@@ -80,7 +80,7 @@
 (test synchronize-panes-option-registered
   "synchronize-panes is a registered option with boolean type and default nil."
   (let ((spec (gethash "synchronize-panes" cl-tmux/options:*option-registry*)))
-    (is (not (null spec)) "synchronize-panes must be in the option registry")
+    (is-true spec "synchronize-panes must be in the option registry")
     (is (eq :boolean (cl-tmux/options:option-spec-type spec))
         "synchronize-panes type must be :boolean")
     (is (null (cl-tmux/options:option-spec-default spec))
@@ -93,8 +93,8 @@
   (multiple-value-bind (sess win p0 p1) (%two-pane-session)
     (declare (ignore sess p0 p1))
     (let ((str (cl-tmux/model:layout->string win)))
-      (is (not (null str))
-          "layout->string must return a string for a window with a tree")
+      (is-true str
+               "layout->string must return a string for a window with a tree")
       (is (stringp str)
           "layout->string must return a string")
       (is (plusp (length str))
@@ -114,8 +114,8 @@
     (declare (ignore _sess))
     (let* ((str  (cl-tmux/model:layout->string win))
            (tree (cl-tmux/model:string->layout str (list p0 p1))))
-      (is (not (null tree))
-          "string->layout must return a non-NIL tree")
+      (is-true tree
+               "string->layout must return a non-NIL tree")
       ;; The decoded tree should have both panes.
       (let ((leaves (cl-tmux/model:layout-leaves tree)))
         (is (= 2 (length leaves))
@@ -154,8 +154,8 @@
 (test lock-session-struct-slot
   "session struct has session-locked-p slot, defaulting to NIL."
   (let ((sess (make-session :id 1 :name "test")))
-    (is (not (session-locked-p sess))
-        "session-locked-p must default to NIL")
+    (is-false (session-locked-p sess)
+              "session-locked-p must default to NIL")
     (setf (session-locked-p sess) t)
     (is (session-locked-p sess)
         "session-locked-p must be settable to T")))
@@ -202,8 +202,8 @@
     ;; Bind sessions into a group.
     (let ((cl-tmux::*session-groups* nil))
       (cl-tmux::server-new-session-in-group s2 s1)
-      (is (not (null (session-group s1)))
-          "existing session must have a group id assigned")
+      (is-true (session-group s1)
+               "existing session must have a group id assigned")
       (is (eql (session-group s1) (session-group s2))
           "both sessions must share the same group id")
       (is (eq (session-windows s1) (session-windows s2))

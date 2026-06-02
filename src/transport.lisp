@@ -9,7 +9,8 @@
 
 (defconstant +read-frame-timeout-seconds+ 30
   "Maximum seconds to wait for a complete frame before aborting.
-   Prevents indefinite blocking on a hung or slow peer.")
+   Prevents indefinite blocking on a hung or slow peer.
+   This budget is shared across both the header and payload read phases.")
 
 (defun send-frame (stream frame)
   "Write FRAME (an octet vector produced by the cl-tmux/protocol msg-* helpers)
@@ -17,30 +18,38 @@
   (write-sequence frame stream)
   (finish-output stream))
 
-(defun %read-sequence-with-timeout (buffer stream start)
-  "Fill BUFFER[START..] from STREAM, returning the number of bytes read.
-   Wraps READ-SEQUENCE in a timeout so a hung peer does not block forever.
-   Returns the number of bytes actually read (< expected ⇒ short read / EOF)."
-  (sb-ext:with-timeout +read-frame-timeout-seconds+
-    (read-sequence buffer stream :start start)))
+(defun %read-exact (buffer stream start end)
+  "Fill BUFFER[START..END) from STREAM; return the actual number of bytes read.
+   A return value less than (- END START) indicates EOF or short-read."
+  (read-sequence buffer stream :start start :end end))
 
 (defun read-frame (stream)
   "Read one complete frame from binary STREAM.
    Returns (values TYPE PAYLOAD), or NIL at end of stream (peer closed,
    mid-frame EOF, or timeout expiry after +read-frame-timeout-seconds+).
-   Assumes a blocking stream: READ-SEQUENCE fills the buffer fully unless
-   EOF or timeout is reached, so a short read means the peer hung up."
+   Uses a two-phase read into a single adjustable buffer: the header bytes are
+   read first (Phase 1), then the buffer is grown with ADJUST-ARRAY and the
+   payload bytes are read directly into the tail (Phase 2).  No intermediate
+   header array is allocated and no REPLACE copy is needed.
+   A single sb-ext:with-timeout wraps both phases so the total wall-clock
+   budget is at most +read-frame-timeout-seconds+ seconds."
   (handler-case
-      (let ((header (make-array +header-size+ :element-type '(unsigned-byte 8))))
-        (when (= +header-size+ (%read-sequence-with-timeout header stream 0))
-          (let* ((payload-length (read-u32 header 1))
-                 (frame          (make-array (+ +header-size+ payload-length)
-                                             :element-type '(unsigned-byte 8))))
-            (replace frame header)
-            (when (= (length frame)
-                     (%read-sequence-with-timeout frame stream +header-size+))
-              (multiple-value-bind (type payload) (decode-frame frame)
-                (values type payload))))))
+      (sb-ext:with-timeout +read-frame-timeout-seconds+
+        (let ((frame (make-array +header-size+
+                                 :element-type '(unsigned-byte 8)
+                                 :adjustable t
+                                 :fill-pointer +header-size+)))
+          ;; Phase 1: fill the header region [0 .. +header-size+).
+          (when (= +header-size+ (%read-exact frame stream 0 +header-size+))
+            (let* ((payload-length (read-u32 frame 1))
+                   (total-length   (+ +header-size+ payload-length)))
+              ;; Grow the buffer in-place; header bytes at [0 .. +header-size+) are preserved.
+              (adjust-array frame total-length :fill-pointer total-length)
+              ;; Phase 2: read payload bytes directly into the tail [+header-size+ .. total-length).
+              (when (= total-length
+                       (%read-exact frame stream +header-size+ total-length))
+                (multiple-value-bind (type payload) (decode-frame frame)
+                  (values type payload)))))))
     (sb-ext:timeout () nil)))
 
 (defmacro with-incoming-frame ((type-var payload-var stream) &rest rules)

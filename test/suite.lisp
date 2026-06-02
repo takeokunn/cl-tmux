@@ -7,39 +7,38 @@
 (def-suite cl-tmux-suite :description "All cl-tmux tests")
 
 (defun run-tests ()
-  "Run every suite.  Signals an error (non-zero exit under Nix) on failure."
-  (let ((results (append
-                  (run 'terminal-suite)
-                  (run 'layout-tree-suite)
-                  (run 'layout-geometry-suite)
-                  (run 'model-suite)
-                  (run 'format-suite)
-                  (run 'target-suite)
-                  (run 'buffer-suite)
-                  (run 'options-suite)
-                  (run 'hooks-suite)
-                  (run 'config-suite)
-                  (run 'config-directives-suite)
-                  (run 'renderer-suite)
-                  (run 'dispatch-suite)
-                  (run 'events-suite)
-                  (run 'mouse-suite)
-                  (run 'commands-suite)
-                  (run 'overlay-suite)
-                  (run 'prompt-suite)
-                  (run 'protocol-suite)
-                  (run 'transport-suite)
-                  (run 'net-suite)
-                  (run 'server-suite)
-                  (run 'pty-ffi-suite)
-                  (run 'pty-rawmode-suite)
-                  (run 'pty-suite)
-                  (run 'input-suite)
-                  (run 'runtime-suite)
-                  (run 'client-suite)
-                  (run 'main-suite)
-                  (run 'advanced-suite))))
-    (explain! results)
-    (unless (results-status results)
+  "Run every suite in parallel using bordeaux-threads.
+Each group of ~4 suites runs in its own thread; results are collected
+into a shared list protected by a lock, then explained together.
+Signals an error (non-zero exit under Nix) on any failure."
+  (let* ((all-results '())
+         (lock (bordeaux-threads:make-lock "run-tests-lock"))
+         (suite-groups
+           '((terminal-suite layout-tree-suite layout-geometry-suite model-suite)
+             (format-suite target-suite buffer-suite options-suite)
+             (hooks-suite config-suite config-directives-suite renderer-suite)
+             (dispatch-suite events-suite mouse-suite commands-suite)
+             (overlay-suite prompt-suite protocol-suite transport-suite)
+             (net-suite server-suite pty-ffi-suite pty-rawmode-suite)
+             (pty-suite input-suite runtime-suite client-suite)
+             (main-suite advanced-suite)))
+         (threads
+           (mapcar (lambda (group)
+                     (bordeaux-threads:make-thread
+                      (lambda ()
+                        (let ((group-results
+                               (reduce #'append
+                                       (mapcar (lambda (suite) (run suite))
+                                               group)
+                                       :initial-value '())))
+                          (bordeaux-threads:with-lock-held (lock)
+                            (setf all-results
+                                  (append all-results group-results)))))
+                      :name (format nil "test-group-~A" (first group))))
+                   suite-groups)))
+    (dolist (thread threads)
+      (bordeaux-threads:join-thread thread))
+    (explain! all-results)
+    (unless (results-status all-results)
       (error "cl-tmux test suite failed"))
     t))

@@ -298,3 +298,265 @@
   (let ((sgr (cl-tmux/renderer::%status-sgr-from-style "bold")))
     (is (search "1" sgr)
         "%status-sgr-from-style 'bold' must include \"1\" (got ~S)" sgr)))
+
+;;; ── set-cursor-shape ─────────────────────────────────────────────────────────
+
+(test set-cursor-shape-emits-decscusr
+  "set-cursor-shape emits the DECSCUSR sequence ESC[Nq to the stream."
+  (let ((out (with-output-to-string (s)
+               (cl-tmux/renderer::set-cursor-shape s 2))))
+    (is (search (format nil "~C[2 q" #\Escape) out)
+        "set-cursor-shape 2 must emit ESC[2 q (got ~S)" out)))
+
+(test set-cursor-shape-block-cursor
+  "set-cursor-shape with shape 1 emits ESC[1 q (blinking block)."
+  (let ((out (with-output-to-string (s)
+               (cl-tmux/renderer::set-cursor-shape s 1))))
+    (is (search (format nil "~C[1 q" #\Escape) out)
+        "set-cursor-shape 1 must emit ESC[1 q (got ~S)" out)))
+
+;;; ── %emit-fg / %emit-bg palette boundaries ────────────────────────────────────
+
+(test emit-fg-palette-lower-boundary
+  "%emit-fg with fg index 16 (first 256-color palette entry) emits ;38;5;16."
+  (let ((out (cell-attrs-string 16 0 0)))
+    (is (search ";38;5;16" out)
+        "fg 16 must emit ;38;5;16 (got ~S)" out)))
+
+(test emit-fg-palette-upper-boundary
+  "%emit-fg with fg index 255 (last 256-color palette entry) emits ;38;5;255."
+  (let ((out (cell-attrs-string 255 0 0)))
+    (is (search ";38;5;255" out)
+        "fg 255 must emit ;38;5;255 (got ~S)" out)))
+
+(test emit-bg-palette-lower-boundary
+  "%emit-bg with bg index 16 (first 256-color palette entry) emits ;48;5;16."
+  (let ((out (cell-attrs-string 0 16 0)))
+    (is (search ";48;5;16" out)
+        "bg 16 must emit ;48;5;16 (got ~S)" out)))
+
+(test emit-bg-palette-upper-boundary
+  "%emit-bg with bg index 255 (last 256-color palette entry) emits ;48;5;255."
+  (let ((out (cell-attrs-string 0 255 0)))
+    (is (search ";48;5;255" out)
+        "bg 255 must emit ;48;5;255 (got ~S)" out)))
+
+(test emit-fg-bright-lower-boundary
+  "%emit-fg with fg index 8 (first bright colour) emits ;90."
+  (let ((out (cell-attrs-string 8 0 0)))
+    (is (search ";90" out)
+        "fg 8 must emit ;90 (got ~S)" out)))
+
+(test emit-fg-bright-upper-boundary
+  "%emit-fg with fg index 15 (last bright colour) emits ;97."
+  (let ((out (cell-attrs-string 15 0 0)))
+    (is (search ";97" out)
+        "fg 15 must emit ;97 (got ~S)" out)))
+
+(test emit-bg-standard-color-0
+  "%emit-bg with bg index 0 (black) emits ;40."
+  (let ((out (cell-attrs-string 0 0 0)))
+    ;; fg=0 emits ;30, bg=0 emits ;40 — both present in a single reset+emit
+    (is (search ";40" out)
+        "bg 0 must emit ;40 (got ~S)" out)))
+
+(test emit-fg-standard-color-7
+  "%emit-fg with fg index 7 (white) emits ;37."
+  (let ((out (cell-attrs-string 7 0 0)))
+    (is (search ";37" out)
+        "fg 7 must emit ;37 (got ~S)" out)))
+
+;;; ── render-cell-attrs all attributes table ───────────────────────────────────
+
+(test render-cell-attrs-all-attributes-table
+  "Table-driven test: each attribute bit produces the expected SGR code."
+  (let ((cases
+         ;; (attr-bits expected-sgr-substr description)
+         `((1   ";1"  "bold")
+           (2   ";2"  "dim")
+           (4   ";7"  "reverse")
+           (8   ";4"  "underline")
+           (16  ";5"  "blink")
+           (32  ";3"  "italic")
+           (64  ";8"  "conceal")
+           (128 ";9"  "strikethrough"))))
+    (dolist (c cases)
+      (destructuring-bind (attrs expected desc) c
+        (let ((out (cell-attrs-string 0 0 attrs)))
+          (is (search expected out)
+              "~A (attrs ~D) must emit ~S (got ~S)" desc attrs expected out))))))
+
+;;; ── move-to additional positions ─────────────────────────────────────────────
+
+(test move-to-large-coordinates
+  "move-to with large row and col values produces the correct 1-based sequence."
+  (is (string= (format nil "~C[100;200H" #\Escape)
+               (with-output-to-string (s)
+                 (cl-tmux/renderer::move-to s 99 199)))
+      "move-to 99,199 should emit ESC[100;200H"))
+
+;;; ── %dispatch-style-token remaining tokens ───────────────────────────────────
+
+(test dispatch-style-token-dim
+  "%dispatch-style-token 'dim' sets :dim T."
+  (let ((cell (list nil)))
+    (is-true (cl-tmux/renderer::%dispatch-style-token "dim" cell)
+             "%dispatch-style-token must return T for 'dim'")
+    (is-true (getf (car cell) :dim) ":dim must be T after dispatch")))
+
+(test dispatch-style-token-italics
+  "%dispatch-style-token 'italics' sets :italics T."
+  (let ((cell (list nil)))
+    (cl-tmux/renderer::%dispatch-style-token "italics" cell)
+    (is-true (getf (car cell) :italics) ":italics must be T after dispatch")))
+
+(test dispatch-style-token-blink
+  "%dispatch-style-token 'blink' sets :blink T."
+  (let ((cell (list nil)))
+    (cl-tmux/renderer::%dispatch-style-token "blink" cell)
+    (is-true (getf (car cell) :blink) ":blink must be T after dispatch")))
+
+(test dispatch-style-token-conceal
+  "%dispatch-style-token 'conceal' sets :conceal T."
+  (let ((cell (list nil)))
+    (cl-tmux/renderer::%dispatch-style-token "conceal" cell)
+    (is-true (getf (car cell) :conceal) ":conceal must be T after dispatch")))
+
+(test dispatch-style-token-strikethrough
+  "%dispatch-style-token 'strikethrough' sets :strikethrough T."
+  (let ((cell (list nil)))
+    (cl-tmux/renderer::%dispatch-style-token "strikethrough" cell)
+    (is-true (getf (car cell) :strikethrough) ":strikethrough must be T after dispatch")))
+
+(test dispatch-style-token-nodim
+  "%dispatch-style-token 'nodim' sets :dim NIL."
+  (let ((cell (list (list :dim t))))
+    (cl-tmux/renderer::%dispatch-style-token "nodim" cell)
+    (is (null (getf (car cell) :dim)) ":dim must be NIL after 'nodim'")))
+
+(test dispatch-style-token-noreverse
+  "%dispatch-style-token 'noreverse' sets :reverse NIL."
+  (let ((cell (list (list :reverse t))))
+    (cl-tmux/renderer::%dispatch-style-token "noreverse" cell)
+    (is (null (getf (car cell) :reverse)) ":reverse must be NIL after 'noreverse'")))
+
+(test dispatch-style-token-nounderline
+  "%dispatch-style-token 'nounderline' sets :underline NIL."
+  (let ((cell (list (list :underline t))))
+    (cl-tmux/renderer::%dispatch-style-token "nounderline" cell)
+    (is (null (getf (car cell) :underline)) ":underline must be NIL after 'nounderline'")))
+
+(test dispatch-style-token-noitalics
+  "%dispatch-style-token 'noitalics' sets :italics NIL."
+  (let ((cell (list (list :italics t))))
+    (cl-tmux/renderer::%dispatch-style-token "noitalics" cell)
+    (is (null (getf (car cell) :italics)) ":italics must be NIL after 'noitalics'")))
+
+;;; ── %emit-style-attrs remaining attributes ───────────────────────────────────
+
+(test emit-style-attrs-all-attributes-table
+  "%emit-style-attrs table: each attribute key produces the expected SGR code string."
+  (let ((cases '((:bold          "1")
+                 (:dim           "2")
+                 (:italics       "3")
+                 (:underline     "4")
+                 (:blink         "5")
+                 (:reverse       "7")
+                 (:conceal       "8")
+                 (:strikethrough "9"))))
+    (dolist (c cases)
+      (destructuring-bind (key code) c
+        (let ((parts (cl-tmux/renderer::%emit-style-attrs (list key t) nil)))
+          (is (member code parts :test #'string=)
+              "%emit-style-attrs ~S must push ~S (got ~S)" key code parts))))))
+
+;;; ── parse-style-string remaining attributes ──────────────────────────────────
+
+(test parse-style-string-dim
+  "parse-style-string parses 'dim' into :dim T."
+  (let ((p (cl-tmux/renderer:parse-style-string "dim")))
+    (is (getf p :dim) "parse-style-string dim must set :dim T")))
+
+(test parse-style-string-italics
+  "parse-style-string parses 'italics' into :italics T."
+  (let ((p (cl-tmux/renderer:parse-style-string "italics")))
+    (is (getf p :italics) "parse-style-string italics must set :italics T")))
+
+(test parse-style-string-blink
+  "parse-style-string parses 'blink' into :blink T."
+  (let ((p (cl-tmux/renderer:parse-style-string "blink")))
+    (is (getf p :blink) "parse-style-string blink must set :blink T")))
+
+(test parse-style-string-conceal
+  "parse-style-string parses 'conceal' into :conceal T."
+  (let ((p (cl-tmux/renderer:parse-style-string "conceal")))
+    (is (getf p :conceal) "parse-style-string conceal must set :conceal T")))
+
+(test parse-style-string-strikethrough
+  "parse-style-string parses 'strikethrough' into :strikethrough T."
+  (let ((p (cl-tmux/renderer:parse-style-string "strikethrough")))
+    (is (getf p :strikethrough)
+        "parse-style-string strikethrough must set :strikethrough T")))
+
+(test parse-style-string-fg-and-bg-combined
+  "parse-style-string parses both fg= and bg= in a combined style string."
+  (let ((p (cl-tmux/renderer:parse-style-string "fg=green,bg=blue")))
+    (is (string= "green" (getf p :fg)) ":fg must be 'green' (got ~S)" (getf p :fg))
+    (is (string= "blue"  (getf p :bg)) ":bg must be 'blue' (got ~S)"  (getf p :bg))))
+
+(test parse-style-string-whitespace-trimmed-around-tokens
+  "parse-style-string trims whitespace from each token before dispatching."
+  (let ((p (cl-tmux/renderer:parse-style-string " bold , reverse ")))
+    (is (getf p :bold)    ":bold must be T after whitespace trimming")
+    (is (getf p :reverse) ":reverse must be T after whitespace trimming")))
+
+;;; ── style-to-sgr remaining attributes ───────────────────────────────────────
+
+(test style-to-sgr-dim
+  "style-to-sgr with :dim T includes SGR code 2."
+  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:dim t))))
+    (is (search "2" sgr) "style-to-sgr :dim must include \"2\" (got ~S)" sgr)))
+
+(test style-to-sgr-underline
+  "style-to-sgr with :underline T includes SGR code 4."
+  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:underline t))))
+    (is (search "4" sgr) "style-to-sgr :underline must include \"4\" (got ~S)" sgr)))
+
+(test style-to-sgr-italics
+  "style-to-sgr with :italics T includes SGR code 3."
+  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:italics t))))
+    (is (search "3" sgr) "style-to-sgr :italics must include \"3\" (got ~S)" sgr)))
+
+(test style-to-sgr-fg-colour-n
+  "style-to-sgr with :fg \"colour200\" includes 38;5;200."
+  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:fg "colour200"))))
+    (is (search "38;5;200" sgr)
+        "style-to-sgr :fg colour200 must include 38;5;200 (got ~S)" sgr)))
+
+(test style-to-sgr-empty-plist-returns-default
+  "style-to-sgr with an empty plist (no keys set) returns the default SGR."
+  (is (string= "44;97" (cl-tmux/renderer:style-to-sgr '()))
+      "style-to-sgr empty plist must return default \"44;97\""))
+
+;;; ── %color-name-to-sgr-number brightblack / brightwhite ─────────────────────
+
+(test color-name-to-sgr-number-brightblack-fg
+  "%color-name-to-sgr-number for 'brightblack' (fg) returns the bright ANSI code."
+  (is (string= "90" (cl-tmux/renderer::%color-name-to-sgr-number "brightblack" nil))
+      "fg 'brightblack' must produce \"90\""))
+
+(test color-name-to-sgr-number-brightwhite-bg
+  "%color-name-to-sgr-number for 'brightwhite' (bg) returns the bright background code."
+  (is (string= "107" (cl-tmux/renderer::%color-name-to-sgr-number "brightwhite" t))
+      "bg 'brightwhite' must produce \"107\""))
+
+;;; ── %border-color-sgr all named colours table ────────────────────────────────
+
+(test border-color-sgr-all-named-colors
+  "%border-color-sgr returns the expected SGR code for each named colour."
+  (let ((cases '(("black"   . 30) ("red"     . 31) ("green"  . 32)
+                 ("yellow"  . 33) ("blue"    . 34) ("magenta". 35)
+                 ("cyan"    . 36) ("white"   . 37))))
+    (dolist (c cases)
+      (is (= (cdr c) (cl-tmux/renderer::%border-color-sgr (car c)))
+          "%border-color-sgr ~S must return ~D" (car c) (cdr c)))))

@@ -21,42 +21,8 @@
   :description "run-client is a defined function (integration tested via e2e-smoke)."
   (is (fboundp 'cl-tmux::run-client) "run-client must be defined"))
 
-;;; ── socket-path naming ───────────────────────────────────────────────────────
-
-(test client-socket-path-format
-  :description "The socket path for session '0' includes the session name."
-  (is (search "0" (cl-tmux::socket-path "0"))
-      "socket path must contain the session name"))
-
-(test client-socket-path-includes-cl-tmux-prefix
-  :description "socket-path always produces a path that includes 'cl-tmux'."
-  (let ((path (cl-tmux::socket-path "mysess")))
-    (is (search "cl-tmux" path)
-        "socket path must contain the cl-tmux prefix, got ~S" path)))
-
-(test client-socket-path-ends-with-sock
-  :description "socket-path produces a path that ends with '.sock'."
-  (let ((path (cl-tmux::socket-path "any")))
-    (is (search ".sock" path)
-        "socket path must contain '.sock', got ~S" path)))
-
-(test client-socket-path-embeds-session-name
-  :description "socket-path embeds the session name in the path string."
-  (let* ((name "mysession-42")
-         (path (cl-tmux::socket-path name)))
-    (is (search name path)
-        "socket path must embed session name ~S, got ~S" name path)))
-
-;;; ── socket-path is a table of name variations ────────────────────────────────
-;;;
-;;; All of these must produce distinct paths that all embed the session name.
-
-(test client-socket-path-distinct-for-different-names
-  :description "socket-path returns distinct paths for distinct session names."
-  (let ((p1 (cl-tmux::socket-path "alpha"))
-        (p2 (cl-tmux::socket-path "beta")))
-    (is (string/= p1 p2)
-        "socket-path must produce distinct strings for distinct names")))
+;;; socket-path naming is tested canonically in server-tests.lisp since
+;;; socket-path is defined in server.lisp.  No duplicate tests here.
 
 ;;; ── with-incoming-frame dispatch (socket roundtrip) ─────────────────────────
 ;;;
@@ -182,37 +148,168 @@ cleanly — this is the frame run-client sends when :detach-others is T."
   (is (fboundp 'cl-tmux::%ensure-server-running)
       "%ensure-server-running must be fbound"))
 
-;;; ── run-client-with-autostart existence ─────────────────────────────────────
+;;; ── run-attach-simple existence ──────────────────────────────────────────────
 
-(test client-run-client-with-autostart-is-fbound
-  :description "run-client-with-autostart is a defined function."
-  (is (fboundp 'cl-tmux::run-client-with-autostart)
-      "run-client-with-autostart must be fbound"))
+(test client-run-attach-simple-is-fbound
+  :description "run-attach-simple is a defined function (replaces the former run-client-with-autostart wrapper)."
+  (is (fboundp 'cl-tmux::run-attach-simple)
+      "run-attach-simple must be fbound"))
 
 ;;; ── *startup-modes* dispatch table ──────────────────────────────────────────
 
 (test startup-modes-has-server-entry
-  :description "*startup-modes* contains a 'server' entry mapping to run-server."
+  :description "*startup-modes* contains a 'server' entry whose handler is run-server."
   (let ((entry (assoc "server" cl-tmux::*startup-modes* :test #'equal)))
     (is-true entry "*startup-modes* must have a 'server' entry")
-    (is (eq 'cl-tmux::run-server (cdr entry))
-        "server entry must name run-server")))
+    ;; Entry cdr is a plist: (handler-symbol &key :raw-args-p bool).
+    (is (eq 'cl-tmux::run-server (first (cdr entry)))
+        "server entry handler must be run-server")))
 
-(test startup-modes-has-attach-entry
-  :description "*startup-modes* contains an 'attach' entry."
+;;; startup-modes-has-attach-entry and startup-modes-has-attach-session-entry
+;;; are subsumed by startup-modes-attach-handler-is-run-attach-simple and
+;;; startup-modes-attach-session-handler-is-run-attach-with-flags below.
+
+;;; %startup-mode-raw-args-p is tested canonically in main-tests.lisp.
+
+;;; ── run-client behavioral path tests ────────────────────────────────────────
+;;;
+;;; run-client has three distinct behavioral paths:
+;;;   1. resize-pending: sends a msg-resize frame to the server
+;;;   2. key-forward: sends a msg-key frame for each stdin byte
+;;;   3. detach-others: sends a msg-command :detach-other-clients before msg-attach
+;;;
+;;; These tests verify the message encoding (the pure frame-construction side)
+;;; for each path without requiring a live raw-mode terminal.
+
+(test run-client-resize-frame-encoding
+  :description "The resize path in run-client encodes dimensions into a msg-resize frame.
+   Verified by encoding the frame and round-tripping through decode-frame."
+  (let* ((frame   (msg-resize 30 100))
+         (decoded (multiple-value-list (decode-frame frame))))
+    (is (= +msg-resize+ (first decoded))
+        "msg-resize must encode as +msg-resize+ type")
+    (multiple-value-bind (rows cols)
+        (decode-size (second decoded))
+      (is (= 30 rows)  "decoded rows must be 30")
+      (is (= 100 cols) "decoded cols must be 100"))))
+
+(test run-client-key-frame-encoding
+  :description "The key-forward path in run-client wraps a byte in a msg-key frame.
+   Verified by encoding and round-tripping a single byte."
+  (let* ((byte    65)                   ; ASCII 'A'
+         (frame   (msg-key (vector byte)))
+         (decoded (multiple-value-list (decode-frame frame))))
+    (is (= +msg-key+ (first decoded))
+        "msg-key must encode as +msg-key+ type")
+    (is (= byte (aref (second decoded) 0))
+        "msg-key payload must preserve the original byte")))
+
+(test run-client-detach-others-frame-encoding
+  :description "The detach-others path sends a msg-command :detach-other-clients frame
+   before msg-attach.  Verified by frame type and round-trip."
+  (let* ((frame   (msg-command :detach-other-clients nil nil))
+         (decoded (multiple-value-list (decode-frame frame))))
+    (is (= +msg-command+ (first decoded))
+        "detach-others frame must be of type +msg-command+")))
+
+;;; ── msg-attach encoding ──────────────────────────────────────────────────────
+;;;
+;;; run-client sends a msg-attach frame as its first message after connecting.
+;;; Verify the frame type and round-trip decode.
+
+(test run-client-attach-frame-encoding
+  :description "run-client's initial msg-attach frame encodes as +msg-attach+ and embeds
+   the terminal dimensions.  Verified by round-tripping through decode-frame / decode-size."
+  (let* ((frame   (msg-attach 24 80))
+         (decoded (multiple-value-list (decode-frame frame))))
+    (is (= +msg-attach+ (first decoded))
+        "msg-attach must encode as +msg-attach+ type")
+    (multiple-value-bind (rows cols)
+        (decode-size (second decoded))
+      (is (= 24 rows)  "decoded rows must match the value passed to msg-attach")
+      (is (= 80 cols)  "decoded cols must match the value passed to msg-attach"))))
+
+;;; ── frame encoding table: all client frame types ─────────────────────────────
+;;;
+;;; Consolidate the same-pattern frame-type tests into a table so adding a new
+;;; frame constructor only requires appending a row rather than a new test body.
+
+(test run-client-all-frame-types-encode-correctly
+  :description "All client-side frame constructors produce the expected +msg-*+ type tag.
+   Table-driven: (constructor-call expected-type)."
+  (let ((cases
+         (list (list (msg-bye)                             +msg-bye+)
+               (list (msg-detach)                         +msg-detach+)
+               (list (msg-key (vector 65))                +msg-key+)
+               (list (msg-resize 30 100)                  +msg-resize+)
+               (list (msg-attach 24 80)                   +msg-attach+)
+               (list (msg-frame "text")                   +msg-frame+)
+               (list (msg-command :detach-other-clients nil nil) +msg-command+))))
+    (dolist (c cases)
+      (destructuring-bind (frame expected-type) c
+        (multiple-value-bind (got-type _payload) (decode-frame frame)
+          (declare (ignore _payload))
+          (is (= expected-type got-type)
+              "frame constructor for type ~D must encode as ~D, got ~D"
+              expected-type expected-type got-type))))))
+
+;;; ── run-attach-with-flags existence ─────────────────────────────────────────
+
+(test client-run-attach-with-flags-is-fbound
+  :description "run-attach-with-flags is a defined function (the attach-session mode handler)."
+  (is (fboundp 'cl-tmux::run-attach-with-flags)
+      "run-attach-with-flags must be fbound"))
+
+;;; ── *startup-modes* handler symbols are symbols ──────────────────────────────
+;;;
+;;; Handlers stored as symbols (not function objects) is the key architectural
+;;; property that makes test stubs with SETF FDEFINITION work.
+
+(test startup-modes-all-handlers-are-symbols
+  :description "Every entry in *startup-modes* stores its handler as a symbol, not a
+   function object.  This is required so test stubs with (setf fdefinition) work."
+  (dolist (entry cl-tmux::*startup-modes*)
+    (let ((handler (first (cdr entry))))
+      (is (symbolp handler)
+          "handler for mode ~S must be a symbol, got ~S"
+          (car entry) handler))))
+
+(test startup-modes-attach-handler-is-run-attach-simple
+  :description "*startup-modes* 'attach' entry handler is run-attach-simple."
   (let ((entry (assoc "attach" cl-tmux::*startup-modes* :test #'equal)))
-    (is-true entry "*startup-modes* must have an 'attach' entry")))
+    (is-true entry "*startup-modes* must have an 'attach' entry")
+    (is (eq 'cl-tmux::run-attach-simple (first (cdr entry)))
+        "attach entry handler must be run-attach-simple")))
 
-(test startup-modes-has-attach-session-entry
-  :description "*startup-modes* contains an 'attach-session' entry."
+(test startup-modes-attach-session-handler-is-run-attach-with-flags
+  :description "*startup-modes* 'attach-session' entry handler is run-attach-with-flags
+   and has :raw-args-p T so it receives the full argv tail."
   (let ((entry (assoc "attach-session" cl-tmux::*startup-modes* :test #'equal)))
-    (is-true entry "*startup-modes* must have an 'attach-session' entry")))
+    (is-true entry "*startup-modes* must have an 'attach-session' entry")
+    (is (eq 'cl-tmux::run-attach-with-flags (first (cdr entry)))
+        "attach-session handler must be run-attach-with-flags")
+    (is-true (getf (rest (cdr entry)) :raw-args-p)
+             "attach-session entry must have :raw-args-p T")))
 
-(test startup-mode-raw-args-p-attach-session
-  :description "%startup-mode-raw-args-p returns T only for 'attach-session'."
-  (is-true (cl-tmux::%startup-mode-raw-args-p "attach-session")
-           "'attach-session' must be raw-args mode")
-  (is-false (cl-tmux::%startup-mode-raw-args-p "server")
-            "'server' must NOT be raw-args mode")
-  (is-false (cl-tmux::%startup-mode-raw-args-p "attach")
-            "'attach' must NOT be raw-args mode"))
+;;; ── with-incoming-frame EOF (nil type) arm via empty file stream ─────────────
+;;;
+;;; We test the nil-type (EOF) arm of with-incoming-frame by reading from an
+;;; empty temp file — no socket required.  An empty stream causes read-frame to
+;;; return nil (no complete header), which triggers the (null type) arm.
+
+(test client-with-incoming-frame-eof-dispatches
+  :description "with-incoming-frame dispatches the nil type (EOF) arm when the stream
+is empty — no complete frame header can be read."
+  (with-temp-octet-file (path)
+    ;; Create an empty file, then immediately read it — EOF on first byte.
+    (with-open-file (_out path :direction :output :element-type '(unsigned-byte 8)
+                              :if-exists :supersede)
+      (declare (ignore _out)))
+    (with-open-file (stream path :direction :input
+                                 :element-type '(unsigned-byte 8))
+      (let ((dispatched nil))
+        (with-incoming-frame (type _payload stream)
+          ((null type)        (setf dispatched :eof))
+          ((= type +msg-bye+) (setf dispatched :bye)))
+        (is (eq :eof dispatched)
+            "empty stream must dispatch the nil-type (EOF) arm")))))

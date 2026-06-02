@@ -13,9 +13,9 @@
   (height   24 :type fixnum)
   ;; Row-major grid: index = y*width + x
   (cells    #() :type simple-vector)
-  ;; Cursor position
-  (cx 0 :type fixnum)
-  (cy 0 :type fixnum)
+  ;; Cursor position — screen-cursor-x / screen-cursor-y are the stable public names.
+  (cursor-x 0 :type fixnum)
+  (cursor-y 0 :type fixnum)
   ;; Current SGR state stamped on newly written cells.
   ;; Color encoding matches cell.fg / cell.bg: 0-255 palette, bit-24 = RGB true-color.
   (cur-fg    7 :type (unsigned-byte 25))
@@ -26,10 +26,10 @@
   ;; Scroll region (inclusive 0-based row indices)
   (scroll-top    0  :type fixnum)
   (scroll-bottom 23 :type fixnum)
-  ;; CPS parser: a closure (screen byte) -> function.
-  ;; Replaces the old flat fields: state / params / cur-param / intermediate /
-  ;; utf8-acc / utf8-left.  Initialised to a wrapper so that the package
-  ;; cl-tmux/terminal/parser need not exist at compile time.
+  ;; CPS parser: a closure (screen byte) -> next-state-fn.
+  ;; The slot default is a lambda so that the cl-tmux/terminal/parser package need
+  ;; not be present at compile time.  At load time the package is guaranteed to
+  ;; exist before any screen is constructed (cl-tmux.asd loads parser before emulator).
   (parser (lambda (screen byte)
             (cl-tmux/terminal/parser:ground-state screen byte))
           :type function)
@@ -39,9 +39,9 @@
   (lock (make-lock "screen"))
   ;; Alt-screen support (?1049h / ?1049l)
   (alt-cells nil)                           ; saved normal-screen cell grid, or nil
-  (alt-cx 0 :type fixnum)                   ; cursor column saved on alt-screen entry
-  (alt-cy 0 :type fixnum)                   ; cursor row saved on alt-screen entry
-  ;; DECSC/DECRC saved cursor: (cx cy fg bg attrs) or NIL when nothing saved
+  (alt-cursor-x 0 :type fixnum)            ; cursor column saved on alt-screen entry
+  (alt-cursor-y 0 :type fixnum)            ; cursor row saved on alt-screen entry
+  ;; DECSC/DECRC saved cursor: (cursor-x cursor-y fg bg attrs) or NIL when nothing saved
   (saved-cursor nil :type list)
   ;; Copy / scroll-back mode
   (copy-mode-p  nil  :type boolean)
@@ -99,24 +99,6 @@
                 :cells         (%make-blank-cells (* width height))
                 :scroll-bottom (1- height)))
 
-;;; ── Cursor wrappers ────────────────────────────────────────────────────────
-;;;
-;;; These are thin aliases over the struct accessors screen-cx / screen-cy.
-;;; They form the stable public API consumed by renderer.lisp, tests, and any
-;;; external code that imports cl-tmux/terminal.  The internal terminal
-;;; subsystem uses screen-cx / screen-cy directly.  Declaring them inline
-;;; ensures there is no overhead at the call sites.
-
-(declaim (inline screen-cursor-x screen-cursor-y))
-
-(defun screen-cursor-x (screen)
-  "Return the current cursor column of SCREEN."
-  (screen-cx screen))
-
-(defun screen-cursor-y (screen)
-  "Return the current cursor row of SCREEN."
-  (screen-cy screen))
-
 ;;; ── Grid helpers ───────────────────────────────────────────────────────────
 
 (defun screen-cell (screen x y)
@@ -136,12 +118,41 @@
   "Clear the dirty flag on SCREEN."
   (setf (screen-dirty-p screen) nil))
 
+(defun screen-consume-bell (screen)
+  "Return T and clear the bell-pending flag when a BEL is pending on SCREEN.
+   Returns NIL without side effects when no bell is pending.
+   Belongs to the terminal logic layer so renderers can consume the bell
+   without reaching into the screen struct directly."
+  (when (screen-bell-pending screen)
+    (setf (screen-bell-pending screen) nil)
+    t))
+
+;;; ── SGR pen reset (canonical, data layer) ─────────────────────────────────
+;;;
+;;; Both cl-tmux/terminal/actions (modes.lisp) and cl-tmux/terminal/sgr
+;;; perform an identical five-slot SGR reset.  Placing the canonical version
+;;; here, in the types layer that both packages depend on, removes the
+;;; duplication without creating a load-order circularity.
+
+(declaim (inline reset-sgr-pen))
+(defun reset-sgr-pen (screen)
+  "Reset all five SGR pen slots of SCREEN to their VT100 defaults.
+   Canonical data-layer helper used by both actions and sgr layers."
+  (setf (screen-cur-fg       screen) 7
+        (screen-cur-bg       screen) 0
+        (screen-cur-attrs    screen) 0
+        (screen-cur-attrs2   screen) 0
+        (screen-cur-ul-color screen) 0))
+
 ;;; ── Resize ─────────────────────────────────────────────────────────────────
 
 (defun screen-resize (screen new-width new-height)
   "Resize SCREEN to NEW-WIDTH x NEW-HEIGHT in place, preserving the
    overlapping top-left rectangle of content.  Resets the scroll region to
    the full new height and clamps the cursor into bounds.
+
+   Alt-cells geometry is not resized; callers that need alt-screen consistency
+   should exit alt-screen mode before resizing.
 
    Callers that share the screen with a reader thread must hold SCREEN's
    lock; this function does no locking of its own."
@@ -151,17 +162,22 @@
   (let* ((old-width  (screen-width  screen))
          (old-height (screen-height screen))
          (old-cells  (screen-cells  screen))
-         (new-cells  (%make-blank-cells (* new-width new-height))))
-    (dotimes (y (min old-height new-height))
-      (dotimes (x (min old-width new-width))
-        (setf (aref new-cells (+ (* y new-width) x))
+         (new-cells  (%make-blank-cells (* new-width new-height)))
+         (copy-rows  (min old-height new-height))
+         (copy-cols  (min old-width  new-width)))
+    ;; Install the new grid before using screen-cell so the index arithmetic
+    ;; uses new-width.  Copy the old content via the raw old-cells vector
+    ;; (old-width stride) into the new grid using the screen-cell abstraction.
+    (setf (screen-cells  screen) new-cells
+          (screen-width  screen) new-width
+          (screen-height screen) new-height)
+    (dotimes (y copy-rows)
+      (dotimes (x copy-cols)
+        (setf (screen-cell screen x y)
               (aref old-cells (+ (* y old-width) x)))))
-    (setf (screen-cells         screen) new-cells
-          (screen-width         screen) new-width
-          (screen-height        screen) new-height
-          (screen-scroll-top    screen) 0
+    (setf (screen-scroll-top    screen) 0
           (screen-scroll-bottom screen) (1- new-height)
-          (screen-cx            screen) (clamp (screen-cx screen) 0 (1- new-width))
-          (screen-cy            screen) (clamp (screen-cy screen) 0 (1- new-height))
+          (screen-cursor-x      screen) (clamp (screen-cursor-x screen) 0 (1- new-width))
+          (screen-cursor-y      screen) (clamp (screen-cursor-y screen) 0 (1- new-height))
           (screen-dirty-p       screen) t)
     screen))

@@ -2,6 +2,31 @@
 
 ;;;; DEC private modes, cursor save/restore, hard reset, and display projection.
 
+;;; ── Alt-screen helpers ──────────────────────────────────────────────────────
+
+(defun enter-alt-screen (screen)
+  "Save the current grid and cursor to the alt-screen slots, then install a
+   fresh blank grid.  No-op when the alt screen is already active."
+  (unless (screen-alt-cells screen)
+    (setf (screen-alt-cells  screen) (copy-seq (screen-cells screen))
+          (screen-alt-cursor-x screen) (screen-cursor-x screen)
+          (screen-alt-cursor-y screen) (screen-cursor-y screen))
+    (setf (screen-cells screen)
+          (%make-blank-cells (* (screen-width screen) (screen-height screen))))
+    (set-cursor screen 0 0)
+    (setf (screen-dirty-p screen) t)))
+
+(defun exit-alt-screen (screen)
+  "Restore the saved primary grid and cursor from the alt-screen slots.
+   Falls back to erase-display mode 2 when nothing was saved."
+  (if (screen-alt-cells screen)
+      (setf (screen-cells      screen) (screen-alt-cells    screen)
+            (screen-cursor-x   screen) (screen-alt-cursor-x screen)
+            (screen-cursor-y   screen) (screen-alt-cursor-y screen)
+            (screen-alt-cells  screen) nil)
+      (erase-display screen 2))
+  (setf (screen-dirty-p screen) t))
+
 ;;; ── Prolog-like DEC PM rule table macro ─────────────────────────────────────
 ;;;
 ;;; dec-pm-set and dec-pm-reset are symmetric: for each mode number there is a
@@ -96,46 +121,18 @@
   ;; Mode 1049 — alternate screen (?1049h enters, ?1049l exits)
   (1049
    ;; Set: save current grid + cursor, replace with a fresh blank grid.
-   ((unless (screen-alt-cells screen)
-      (setf (screen-alt-cells screen) (copy-seq (screen-cells screen))
-            (screen-alt-cx    screen) (screen-cx screen)
-            (screen-alt-cy    screen) (screen-cy screen))
-      (setf (screen-cells screen)
-            (%make-blank-cells (* (screen-width screen) (screen-height screen))))
-      (set-cursor screen 0 0)
-      (setf (screen-dirty-p screen) t)))
+   ((enter-alt-screen screen))
    ;; Reset: restore saved grid + cursor, or clear if nothing was saved.
-   ((if (screen-alt-cells screen)
-        (setf (screen-cells     screen) (screen-alt-cells screen)
-              (screen-cx        screen) (screen-alt-cx    screen)
-              (screen-cy        screen) (screen-alt-cy    screen)
-              (screen-alt-cells screen) nil)
-        (erase-display screen 2))
-    (setf (screen-dirty-p screen) t))))
-
-;;; ── SGR pen reset helper ────────────────────────────────────────────────────
-;;;
-;;; Parallel idiom to the attr-on/attr-off inline helpers in sgr.lisp.
-;;; Both restore-cursor (no-save branch) and ris-action perform an identical
-;;; 5-slot SGR reset; this helper deduplicates both sites.
-
-(declaim (inline %reset-sgr-pen))
-(defun %reset-sgr-pen (screen)
-  "Reset all five SGR pen slots of SCREEN to their VT100 defaults."
-  (setf (screen-cur-fg       screen) 7
-        (screen-cur-bg       screen) 0
-        (screen-cur-attrs    screen) 0
-        (screen-cur-attrs2   screen) 0
-        (screen-cur-ul-color screen) 0))
+   ((exit-alt-screen screen))))
 
 ;;; ── DECSC / DECRC (cursor save & restore) ──────────────────────────────────
 
 (defun save-cursor (screen)
   "DECSC (ESC 7): save the cursor position and full SGR pen state.
-   Saves: cx, cy, cur-fg, cur-bg, cur-attrs, cur-attrs2, cur-ul-color."
+   Saves: cursor-x, cursor-y, cur-fg, cur-bg, cur-attrs, cur-attrs2, cur-ul-color."
   (setf (screen-saved-cursor screen)
-        (list (screen-cx           screen)
-              (screen-cy           screen)
+        (list (screen-cursor-x     screen)
+              (screen-cursor-y     screen)
               (screen-cur-fg       screen)
               (screen-cur-bg       screen)
               (screen-cur-attrs    screen)
@@ -148,11 +145,11 @@
   (cond
     ((null (screen-saved-cursor screen))
      (set-cursor screen 0 0)
-     (%reset-sgr-pen screen))
+     (reset-sgr-pen screen))
     (t
-     (destructuring-bind (cx cy fg bg attrs attrs2 ul-color)
+     (destructuring-bind (cursor-x cursor-y fg bg attrs attrs2 ul-color)
          (screen-saved-cursor screen)
-       (set-cursor screen cx cy)
+       (set-cursor screen cursor-x cursor-y)
        (setf (screen-cur-fg       screen) fg
              (screen-cur-bg       screen) bg
              (screen-cur-attrs    screen) attrs
@@ -160,6 +157,15 @@
              (screen-cur-ul-color screen) ul-color)))))
 
 ;;; ── Full reset ─────────────────────────────────────────────────────────────
+
+(defun reset-terminal-modes (screen)
+  "Reset all terminal mode flags and scroll region to their VT100 defaults.
+   Covers: cursor visibility, autowrap, charset, and the scroll region."
+  (setf (screen-cursor-visible screen) t
+        (screen-scroll-top     screen) 0
+        (screen-scroll-bottom  screen) (1- (screen-height screen))
+        (screen-charset        screen) :ascii
+        (screen-autowrap       screen) t))
 
 (defun ris-action (screen)
   "RIS — ESC c: hard terminal reset.
@@ -169,12 +175,8 @@
                 (1- (screen-width  screen))
                 (1- (screen-height screen)))
   (set-cursor screen 0 0)
-  (%reset-sgr-pen screen)
-  (setf (screen-cursor-visible screen) t
-        (screen-scroll-top     screen) 0
-        (screen-scroll-bottom  screen) (1- (screen-height screen))
-        (screen-charset        screen) :ascii
-        (screen-autowrap       screen) t))
+  (reset-sgr-pen screen)
+  (reset-terminal-modes screen))
 
 ;;; ── Display projection (copy-mode scrollback) ──────────────────────────────
 
@@ -182,20 +184,55 @@
   "Shared immutable blank cell for out-of-range display lookups.
    Safe to share because cells are never mutated in place.")
 
+(defun %scrollback-cell (screen col offset-from-top)
+  "Return the cell at COLUMN COL in the scrollback row OFFSET-FROM-TOP rows above
+   the live grid top (1-based: 1 = newest scrollback row).
+   Returns *display-blank-cell* when the row or column is out of range."
+  (let ((vec (nth (1- offset-from-top) (screen-scrollback screen))))
+    (if (and vec (< col (length vec)))
+        (aref vec col)
+        *display-blank-cell*)))
+
+(defun %live-grid-cell (screen col live-row)
+  "Return the live grid cell at COLUMN COL, ROW LIVE-ROW.
+   Returns *display-blank-cell* when LIVE-ROW is beyond the screen height."
+  (if (< live-row (screen-height screen))
+      (screen-cell screen col live-row)
+      *display-blank-cell*))
+
 (defun screen-display-cell (screen col row)
   "Cell shown at viewport position (COL, ROW) for the current scroll state.
    With copy-offset 0 this is the live grid cell.  When scrolled back by N
    lines the top N rows come from the scrollback buffer and the live grid
    is shifted down by N rows.  Out-of-range reads return *display-blank-cell*."
   (let ((offset (if (screen-copy-mode-p screen) (screen-copy-offset screen) 0)))
-    (cond
-      ((< row offset)
-       (let ((vec (nth (- offset 1 row) (screen-scrollback screen))))
-         (if (and vec (< col (length vec)))
-             (aref vec col)
-             *display-blank-cell*)))
-      (t
-       (let ((live-row (- row offset)))
-         (if (< live-row (screen-height screen))
-             (screen-cell screen col live-row)
-             *display-blank-cell*))))))
+    (if (< row offset)
+        (%scrollback-cell screen col (- offset row))
+        (%live-grid-cell  screen col (- row offset)))))
+
+;;; ── DECSCUSR cursor shape ────────────────────────────────────────────────────
+
+(defun set-cursor-shape (screen shape)
+  "DECSCUSR: set the cursor shape to SHAPE (0-6, clamped).
+   0 = default blinking block, 1 = blinking block, 2 = steady block,
+   3 = blinking underline, 4 = steady underline, 5 = blinking bar,
+   6 = steady bar."
+  (setf (screen-cursor-shape screen) (clamp shape 0 6)))
+
+;;; ── BEL pending ──────────────────────────────────────────────────────────────
+
+(defun set-bell-pending (screen)
+  "Mark SCREEN as having a pending BEL (bell event) to be processed by the renderer."
+  (setf (screen-bell-pending screen) t))
+
+;;; ── Charset selection ────────────────────────────────────────────────────────
+
+(defun set-charset (screen charset)
+  "Set the active character set of SCREEN to CHARSET (:ascii or :dec-graphics)."
+  (setf (screen-charset screen) charset))
+
+;;; ── Screen title ─────────────────────────────────────────────────────────────
+
+(defun set-screen-title (screen title)
+  "Set the OSC window title of SCREEN to TITLE string."
+  (setf (screen-title screen) title))

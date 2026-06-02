@@ -1,8 +1,18 @@
 (in-package #:cl-tmux/pty)
 
 ;;; ── Public: terminal raw mode ──────────────────────────────────────────────
+;;;
+;;; Saved termios state is keyed by fd rather than stored in a single global.
+;;; This prevents data races when two threads independently call
+;;; enable-raw-mode! / disable-raw-mode! on different file descriptors.
 
-(defvar *saved-termios* nil)
+(defvar *saved-termios-table* (make-hash-table :test #'eql)
+  "Maps fd (integer) to the termios struct saved before switching to raw mode.
+   Access must be performed with the process-wide lock *termios-table-lock*.")
+
+(defvar *termios-table-lock*
+  (bordeaux-threads:make-lock "termios-table-lock")
+  "Protects concurrent access to *saved-termios-table*.")
 
 (defmacro with-raw-termios-flags ((termios) &body specs)
   "Apply raw-mode termios edits from a declarative spec.
@@ -29,9 +39,11 @@
         specs)))
 
 (defun enable-raw-mode! (fd)
-  "Switch FD to raw (unbuffered, no-echo) mode; save old settings."
+  "Switch FD to raw (unbuffered, no-echo) mode; save old settings in
+   *saved-termios-table* keyed by FD (thread-safe)."
   (let ((termios (sb-posix:tcgetattr fd)))
-    (setf *saved-termios* termios)
+    (bordeaux-threads:with-lock-held (*termios-table-lock*)
+      (setf (gethash fd *saved-termios-table*) termios))
     (with-raw-termios-flags (termios)
       (:clear   sb-posix:termios-iflag
                 sb-posix:ignbrk sb-posix:brkint sb-posix:parmrk sb-posix:istrip
@@ -49,7 +61,10 @@
     (sb-posix:tcsetattr fd sb-posix:tcsaflush termios)))
 
 (defun disable-raw-mode! (fd)
-  "Restore terminal settings saved by enable-raw-mode!."
-  (when *saved-termios*
-    (sb-posix:tcsetattr fd sb-posix:tcsaflush *saved-termios*)
-    (setf *saved-termios* nil)))
+  "Restore terminal settings saved by enable-raw-mode! for FD.
+   Uses *saved-termios-table* (per-fd, thread-safe)."
+  (let ((saved (bordeaux-threads:with-lock-held (*termios-table-lock*)
+                 (prog1 (gethash fd *saved-termios-table*)
+                   (remhash fd *saved-termios-table*)))))
+    (when saved
+      (sb-posix:tcsetattr fd sb-posix:tcsaflush saved))))

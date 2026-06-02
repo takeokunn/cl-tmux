@@ -1,0 +1,197 @@
+(in-package #:cl-tmux/renderer)
+
+;;;; Session-frame compositing for the cl-tmux renderer.
+;;;;
+;;;; This file owns the full-frame pipeline: lock-screen overlay, pane/border
+;;;; rendering, overlay dispatch, mouse sequences, bell emission, cursor
+;;;; restoration, and the render-session / render-session-to-string entry points.
+;;;;
+;;;; Status-bar composition lives in renderer-statusbar.lisp (loaded just before
+;;;; this file).
+;;;;
+;;;; Load order: renderer-format → renderer-style → renderer-pane
+;;;;             → renderer-overlay → renderer-statusbar → renderer-compose
+
+;;; ── Lock-screen overlay ─────────────────────────────────────────────────────
+
+(defun render-lock-screen (stream terminal-rows terminal-cols)
+  "Render a full-screen lock overlay.  Fills the screen with a solid colour
+   and centres a 'Session locked' message."
+  (reset-attrs stream)
+  (format stream "~C[~Am" +esc+ +sgr-default-status+)
+  ;; Fill all rows with spaces.
+  (let ((blank-row (make-string terminal-cols :initial-element #\Space)))
+    (loop for row below (1- terminal-rows)
+          do (move-to stream row 0)
+             (write-string blank-row stream)))
+  ;; Centre the lock message.
+  (let* ((msg     "Session locked — press any key to unlock")
+         (mlen    (min (length msg) terminal-cols))
+         (mid-row (floor terminal-rows 2))
+         (mid-col (max 0 (floor (- terminal-cols mlen) 2))))
+    (move-to stream mid-row mid-col)
+    (write-string (subseq msg 0 mlen) stream))
+  (reset-attrs stream))
+
+;;; ── Overlay (list-keys help) ────────────────────────────────────────────────
+
+(defun render-overlay (stream cols)
+  "Draw the active overlay's lines over the top rows of the screen, each
+   truncated to COLS columns, on default attributes."
+  (reset-attrs stream)
+  (loop for line in (overlay-lines)
+        for row from 0
+        do (move-to stream row 0)
+           (write-string (subseq line 0 (min (length line) cols)) stream)))
+
+;;; ── Mouse-mode DEC private mode dispatch table ──────────────────────────────
+;;;
+;;; define-mouse-mode-sequence maps a screen-mouse-mode integer to the
+;;; DEC private mode number to enable:
+;;;   mouse_mode(1) → ?1000h  (X10: press only)
+;;;   mouse_mode(2) → ?1002h  (button-event: press + release + held motion)
+;;;   mouse_mode(3) → ?1003h  (any-event: all mouse motion, and default fallback)
+;;;
+;;; Pattern matches define-csi-rules style: one declarative rule per mode.
+
+(defmacro define-mouse-mode-sequence (&rest rules)
+  "Build %MOUSE-MODE-DEC-NUMBER from a declarative (mode-integer dec-mode-number) table.
+   The last entry's dec-mode-number is the default for any unmatched mode > 0."
+  (let ((default-dec (second (car (last rules))))
+        (explicit-rules (butlast rules)))
+    `(defun %mouse-mode-dec-number (mode-integer)
+       "Return the DEC private mode number for the given SCREEN-MOUSE-MODE integer."
+       (cond
+         ,@(mapcar (lambda (rule)
+                     (destructuring-bind (mode-val dec-num) rule
+                       `((= mode-integer ,mode-val) ,dec-num)))
+                   explicit-rules)
+         (t ,default-dec)))))
+
+(define-mouse-mode-sequence
+  (1 1000)   ; X10 basic mouse tracking (press only)
+  (2 1002)   ; button-event tracking (press + release + motion while held)
+  (3 1003))  ; any-event tracking (all motion) — also default fallback
+
+(defun %render-mouse-sequences (stream active-pane)
+  "Emit mouse-tracking mode sequences according to session and pane settings.
+   When the session 'mouse' option is enabled, emit SGR + button-event sequences.
+   Otherwise honour ACTIVE-PANE's screen-mouse-mode (X10/button-event/any-event)."
+  (let ((session-mouse (cl-tmux/options:get-option "mouse")))
+    (if session-mouse
+        (progn
+          (format stream "~C[?1006h" +esc+)
+          (format stream "~C[?1002h" +esc+))
+        (when active-pane
+          (let* ((screen     (pane-screen active-pane))
+                 (mouse-mode (screen-mouse-mode screen))
+                 (sgr-mode   (screen-mouse-sgr-mode screen)))
+            (when (> mouse-mode 0)
+              (format stream "~C[?~Dh" +esc+ (%mouse-mode-dec-number mouse-mode))
+              (when sgr-mode (format stream "~C[?1006h" +esc+))))))))
+
+;;; ── Full-session render ────────────────────────────────────────────────────
+
+(defun %render-panes-and-borders (buffer window panes active-pane terminal-cols)
+  "Render all panes and split-tree borders for WINDOW into BUFFER.
+   Snapshots zoom state under the window lock to avoid a race with
+   window-zoom-toggle running on the main thread."
+  (let ((zoomed nil) (tree nil))
+    (when window
+      (with-lock-held ((window-lock window))
+        (setf zoomed (window-zoom-p window)
+              tree   (window-tree   window))))
+    (dolist (pane panes) (render-pane buffer pane))
+    (when (and tree (not zoomed))
+      (render-tree-borders buffer tree active-pane terminal-cols))))
+
+(defun %render-overlay-layer (buffer active-pane terminal-rows terminal-cols)
+  "Render the active overlay layer (popup > menu > overlay > cursor) into BUFFER."
+  (cond
+    (*active-popup*
+     (render-popup buffer *active-popup* terminal-rows terminal-cols))
+    (*active-menu*
+     (render-menu buffer *active-menu* terminal-rows terminal-cols))
+    ((overlay-active-p)
+     (render-overlay buffer terminal-cols))
+    (t
+     (when active-pane
+       (let ((screen (pane-screen active-pane)))
+         (with-lock-held ((screen-lock screen))
+           (move-to buffer
+                    (+ (pane-y active-pane) (screen-cursor-y screen))
+                    (+ (pane-x active-pane) (screen-cursor-x screen)))))))))
+
+(defun %render-bell-and-cursor (buffer active-pane)
+  "Emit a pending BEL from ACTIVE-PANE (if any) and restore cursor visibility.
+   Bell consumption is delegated to screen-consume-bell (terminal logic layer)."
+  (when active-pane
+    (when (screen-consume-bell (pane-screen active-pane))
+      (write-char (code-char 7) buffer)))
+  (when (or (null active-pane)
+            (screen-cursor-visible (pane-screen active-pane)))
+    (cursor-visible buffer)
+    (when active-pane
+      (set-cursor-shape buffer (screen-cursor-shape (pane-screen active-pane))))))
+
+(defun render-session-to-string (session terminal-rows terminal-cols)
+  "Compose a full frame for SESSION as an escape-sequence string.
+   Does not touch *standard-output*; suitable for unit-testing without a TTY."
+  (let* ((buffer      (make-string-output-stream))
+         (window      (session-active-window session))
+         (panes       (when window (window-panes window)))
+         (active-pane (session-active-pane session))
+         (status-on   (cl-tmux/options:get-option "status" t))
+         (status-pos  (cl-tmux/options:get-option "status-position" "bottom"))
+         (status-row  (if (equal status-pos "top") 0 (1- terminal-rows))))
+    (cursor-invisible buffer)
+    (when (session-locked-p session)
+      (render-lock-screen buffer terminal-rows terminal-cols)
+      (return-from render-session-to-string (get-output-stream-string buffer)))
+    (%render-panes-and-borders buffer window panes active-pane terminal-cols)
+    (%render-overlay-layer buffer active-pane terminal-rows terminal-cols)
+    (when status-on
+      (render-status-bar buffer session terminal-rows terminal-cols
+                         :status-row status-row))
+    (%render-mouse-sequences buffer active-pane)
+    (%render-bell-and-cursor buffer active-pane)
+    (get-output-stream-string buffer)))
+
+(defun render-session (session terminal-rows terminal-cols)
+  "Repaint all panes and the status bar; flush to *standard-output* in one write."
+  (write-string (render-session-to-string session terminal-rows terminal-cols))
+  (force-output))
+
+(defun clear-display ()
+  "Erase the entire terminal and move cursor home."
+  (format t "~C[2J~C[H" +esc+ +esc+)
+  (force-output))
+
+;;; ── Mouse reporting control ────────────────────────────────────────────────
+;;;
+;;; enable-mouse-reporting emits the three DEC private mode sequences that
+;;; instruct the outer terminal to send mouse events to cl-tmux's stdin:
+;;;   ?1000h — X10 basic mouse tracking (press only)
+;;;   ?1002h — button-event tracking (press + release + motion with button held)
+;;;   ?1006h — SGR extended coordinate encoding (supports terminals > 223 cols)
+;;;
+;;; disable-mouse-reporting reverses all three with the corresponding ?Nh → ?Nl.
+;;;
+;;; Call enable-mouse-reporting once at startup when (get-option "mouse") is
+;;; true.  The render pipeline also re-emits these sequences on each repaint
+;;; via %render-mouse-sequences, so these helpers are primarily for explicit
+;;; startup/shutdown use.
+
+(defun enable-mouse-reporting ()
+  "Emit DEC private mode sequences to enable mouse reporting on the outer terminal.
+   Enables X10 tracking (?1000h), button-event tracking (?1002h), and SGR
+   extended encoding (?1006h).  Flushes stdout immediately."
+  (format t "~C[?1000h~C[?1002h~C[?1006h" +esc+ +esc+ +esc+)
+  (force-output))
+
+(defun disable-mouse-reporting ()
+  "Emit DEC private mode sequences to disable mouse reporting on the outer terminal.
+   Disables SGR encoding (?1006l), button-event tracking (?1002l), and X10
+   tracking (?1000l).  Flushes stdout immediately."
+  (format t "~C[?1006l~C[?1002l~C[?1000l" +esc+ +esc+ +esc+)
+  (force-output))

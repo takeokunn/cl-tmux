@@ -8,6 +8,16 @@
 
 ;;; ── Pane ────────────────────────────────────────────────────────────────────
 
+(defun in-selection-p (row col sel-start-r sel-end-r sel-start-c sel-end-c)
+  "Return T when (ROW, COL) falls within the rectangular selection defined by
+   SEL-START-R/C and SEL-END-R/C.  Assumes sel-start-r <= sel-end-r."
+  (cond
+    ((= sel-start-r sel-end-r row)
+     (and (<= sel-start-c col) (< col sel-end-c)))
+    ((= row sel-start-r) (>= col sel-start-c))
+    ((= row sel-end-r)   (< col sel-end-c))
+    (t (and (> row sel-start-r) (< row sel-end-r)))))
+
 ;;; ── Clock-mode ASCII digit font (3 rows tall) ───────────────────────────────
 ;;;
 ;;; Each digit is represented as a list of 3 strings, each 3 chars wide.
@@ -61,8 +71,10 @@
              (clock-h 3)
              (start-col (max 0 (floor (- pw clock-w) 2)))
              (start-row (max 0 (floor (- ph clock-h) 2))))
-        ;; Blue background, bright cyan text for clock face
-        (format stream "~C[44;96m" +esc+)
+        ;; Blue background, bright cyan text for clock face.
+        ;; Use a named constant consistent with +sgr-default-status+ (44;97) but with
+        ;; bright cyan (96) instead of bright white to distinguish the clock from the bar.
+        (format stream "~C[~Am" +esc+ +sgr-clock-face+)
         (loop for row-str in rows
               for roff from 0 do
           (let ((term-row (+ oy start-row roff))
@@ -71,76 +83,107 @@
             (write-string (subseq row-str 0 (min (length row-str) pw)) stream)))
         (reset-attrs stream)))))
 
+;;; ── Selection bounds computation ──────────────────────────────────────────────
+
+(defun %compute-selection-bounds (screen)
+  "Compute normalised selection boundary coordinates for SCREEN's copy-mode selection.
+   Returns (values sel-active sel-start-row sel-end-row sel-start-col sel-end-col).
+   sel-active is NIL when the selection prerequisites (selecting flag, mark, cursor)
+   are not all present.  Rows are viewport-relative (live-grid row + copy-offset)."
+  (if (and (screen-copy-selecting screen)
+           (consp (screen-copy-mark   screen))
+           (consp (screen-copy-cursor screen)))
+      (let* ((mark       (screen-copy-mark   screen))
+             (cursor     (screen-copy-cursor screen))
+             (mark-row   (car mark))
+             (mark-col   (cdr mark))
+             (cursor-row (car cursor))
+             (cursor-col (cdr cursor))
+             ;; Viewport row = live-grid row + copy-offset.
+             (offset     (screen-copy-offset screen)))
+        (values t
+                (+ (min mark-row cursor-row) offset)
+                (+ (max mark-row cursor-row) offset)
+                (if (< mark-row cursor-row)
+                    mark-col
+                    (if (> mark-row cursor-row) cursor-col (min mark-col cursor-col)))
+                (if (< mark-row cursor-row)
+                    cursor-col
+                    (if (> mark-row cursor-row) mark-col (max mark-col cursor-col)))))
+      (values nil 0 0 0 0)))
+
+;;; ── Per-row cell rendering ───────────────────────────────────────────────────
+
+(defun %render-cell-row (stream screen pane-col-count row
+                         sel-active sel-start-row sel-end-row sel-start-col sel-end-col
+                         prev-fg-cell prev-bg-cell prev-attrs-cell)
+  "Render one row of cells to STREAM, applying reverse-video for selected cells.
+   PREV-FG-CELL / PREV-BG-CELL / PREV-ATTRS-CELL are single-element lists used
+   as mutable registers for SGR change-detection across the row.
+   Returns nothing; updates the prev-* registers as a side-effect."
+  (loop for col below pane-col-count
+        for cell = (screen-display-cell screen col row)
+        ;; A continuation cell (width 0) is the right half of a double-width
+        ;; glyph the terminal already drew — emit nothing.
+        unless (zerop (cell-width cell))
+          do (let* ((fg    (cell-fg   cell))
+                    (bg    (cell-bg   cell))
+                    (in-sel (and sel-active
+                                 (in-selection-p row col
+                                                 sel-start-row sel-end-row
+                                                 sel-start-col sel-end-col)))
+                    (attrs (if in-sel
+                               (logxor (cell-attrs cell) cl-tmux/terminal/types:+attr-reverse+)
+                               (cell-attrs cell))))
+               (unless (and (= fg  (car prev-fg-cell))
+                            (= bg  (car prev-bg-cell))
+                            (= attrs (car prev-attrs-cell)))
+                 (render-cell-attrs stream fg bg attrs)
+                 (setf (car prev-fg-cell)    fg
+                       (car prev-bg-cell)    bg
+                       (car prev-attrs-cell) attrs))
+               (write-char (cell-char cell) stream))))
+
 (defun render-pane (stream pane)
   "Draw the pane's screen into the real terminal at the pane's (x, y) offset.
    When *clock-mode-pane-id* matches (pane-id pane), draw a clock overlay."
-  (let* ((screen (pane-screen pane))
-         (pw     (pane-width   pane))
-         (ph     (pane-height  pane))
-         (ox     (pane-x      pane))
-         (oy     (pane-y      pane)))
+  (let* ((screen     (pane-screen  pane))
+         (pane-width  (pane-width  pane))
+         (pane-height (pane-height pane))
+         (origin-x    (pane-x     pane))
+         (origin-y    (pane-y     pane)))
     (with-lock-held ((screen-lock screen))
       ;; Hoist selection boundary computation outside the cell loop so it is
       ;; computed once per frame instead of once per cell (~1920 times).
-      (let* ((sel-active (and (screen-copy-selecting screen)
-                              (consp (screen-copy-mark   screen))
-                              (consp (screen-copy-cursor screen))))
-             (sel-start-r 0) (sel-end-r 0) (sel-start-c 0) (sel-end-c 0))
-        (when sel-active
-          (let* ((mark   (screen-copy-mark   screen))
-                 (cursor (screen-copy-cursor screen))
-                 (mr (car mark))   (mc (cdr mark))
-                 (cr (car cursor)) (cc (cdr cursor))
-                 ;; mark/cursor are live-grid rows (0..height-1).
-                 ;; Viewport row = live-grid row + copy-offset, so add the offset
-                 ;; here so that the in-sel check below uses viewport coordinates,
-                 ;; matching the row variable in the render loop.
-                 (offset (screen-copy-offset screen)))
-            (setf sel-start-r (+ (min mr cr) offset)
-                  sel-end-r   (+ (max mr cr) offset)
-                  sel-start-c (if (< mr cr) mc (if (> mr cr) cc (min mc cc)))
-                  sel-end-c   (if (< mr cr) cc (if (> mr cr) mc (max mc cc))))))
-        (let ((prev-fg -1) (prev-bg -1) (prev-attrs -1))
-          (loop for row below ph do
-            (move-to stream (+ oy row) ox)
-            (loop for col below pw
-                  for cell  = (screen-display-cell screen col row)
-                  ;; A continuation cell (width 0) is the right half of a
-                  ;; double-width glyph the terminal already drew — emit nothing.
-                  unless (zerop (cell-width cell))
-                    do (let* ((fg    (cell-fg    cell))
-                              (bg    (cell-bg    cell))
-                              (in-sel (and sel-active
-                                           (cond
-                                             ((= sel-start-r sel-end-r row)
-                                              (and (<= sel-start-c col) (< col sel-end-c)))
-                                             ((= row sel-start-r) (>= col sel-start-c))
-                                             ((= row sel-end-r)   (< col sel-end-c))
-                                             (t (and (> row sel-start-r)
-                                                     (< row sel-end-r))))))
-                              (attrs (if in-sel
-                                         (logxor (cell-attrs cell) cl-tmux/terminal/types:+attr-reverse+)
-                                         (cell-attrs cell))))
-                         (unless (and (= fg prev-fg) (= bg prev-bg) (= attrs prev-attrs))
-                           (render-cell-attrs stream fg bg attrs)
-                           (setf prev-fg fg prev-bg bg prev-attrs attrs))
-                         (write-char (cell-char cell) stream))))))
+      (multiple-value-bind (sel-active sel-start-row sel-end-row sel-start-col sel-end-col)
+          (%compute-selection-bounds screen)
+        ;; Use single-element lists as mutable SGR-state registers so
+        ;; %render-cell-row can update them without returning multiple values.
+        (let ((prev-fg-cell    (list -1))
+              (prev-bg-cell    (list -1))
+              (prev-attrs-cell (list -1)))
+          (loop for row below pane-height do
+            (move-to stream (+ origin-y row) origin-x)
+            (%render-cell-row stream screen pane-width row
+                              sel-active sel-start-row sel-end-row
+                              sel-start-col sel-end-col
+                              prev-fg-cell prev-bg-cell prev-attrs-cell))))
       (screen-clear-dirty screen))
     ;; Clock-mode overlay: draw a digital clock if this pane is the clock pane.
     (when (eql cl-tmux::*clock-mode-pane-id* (pane-id pane))
-      (draw-clock-to-screen stream ox oy pw ph))))
+      (draw-clock-to-screen stream origin-x origin-y pane-width pane-height))))
 
 ;;; ── Split-tree separators ───────────────────────────────────────────────────
 
 (defun layout-subtree-rect (node)
   "Bounding rectangle of NODE's leaves as a plist (:x :y :w :h), derived from the
    already-laid-out pane geometry."
-  (let ((panes (layout-leaves node)))
-    (let ((min-x (reduce #'min panes :key #'pane-x))
-          (min-y (reduce #'min panes :key #'pane-y))
-          (max-x (reduce #'max panes :key (lambda (p) (+ (pane-x p) (pane-width p)))))
-          (max-y (reduce #'max panes :key (lambda (p) (+ (pane-y p) (pane-height p))))))
-      (list :x min-x :y min-y :w (- max-x min-x) :h (- max-y min-y)))))
+  (let* ((panes (layout-leaves node))
+         (min-x (reduce #'min panes :key #'pane-x))
+         (min-y (reduce #'min panes :key #'pane-y))
+         (max-x (reduce #'max panes :key (lambda (p) (+ (pane-x p) (pane-width p)))))
+         (max-y (reduce #'max panes :key (lambda (p) (+ (pane-y p) (pane-height p))))))
+    (list :x min-x :y min-y :w (- max-x min-x) :h (- max-y min-y))))
 
 (defun subtree-contains-p (node pane)
   "True when PANE is a leaf of NODE's subtree."
@@ -148,32 +191,20 @@
 
 ;;; ── Border style SGR helpers ────────────────────────────────────────────────
 
-(defun %apply-border-style (stream style-string activep)
+(defun %apply-border-style (stream style-string)
   "Emit the SGR code(s) for a pane border.
-   ACTIVEP selects the active vs. inactive style option string.
    Supported format: \"default\" → reset, \"fg=COLOR\" → foreground colour only."
-  (declare (ignore activep))
   (cond
     ((or (null style-string)
          (string-equal style-string "default"))
      (reset-attrs stream))
     ((and (>= (length style-string) 3)
           (string-equal (subseq style-string 0 3) "fg="))
-     (let ((color-name (subseq style-string 3)))
+     (let* ((color-name (subseq style-string 3))
+            (code       (%border-color-sgr color-name)))
        (reset-attrs stream)
-       ;; Map named ANSI colours and the "green" shorthand used as default.
-       (let ((code (cond
-                     ((string-equal color-name "black")   30)
-                     ((string-equal color-name "red")     31)
-                     ((string-equal color-name "green")   32)
-                     ((string-equal color-name "yellow")  33)
-                     ((string-equal color-name "blue")    34)
-                     ((string-equal color-name "magenta") 35)
-                     ((string-equal color-name "cyan")    36)
-                     ((string-equal color-name "white")   37)
-                     (t nil))))
-         (when code
-           (format stream "~C[~Dm" +esc+ code)))))
+       (when code
+         (format stream "~C[~Dm" +esc+ code))))
     (t (reset-attrs stream))))
 
 ;;; ── Separator renderers (data layer — what each orientation draws) ──────────
@@ -191,7 +222,7 @@
                          (cl-tmux/options:get-option "pane-active-border-style" "fg=green")
                          (cl-tmux/options:get-option "pane-border-style" "default"))))
     (when (< border-col terminal-cols)
-      (%apply-border-style stream style activep)
+      (%apply-border-style stream style)
       (loop for row from (getf rect :y) below (+ (getf rect :y) (getf rect :h))
             do (move-to stream row border-col)
                (write-char #\│ stream))

@@ -86,10 +86,21 @@
         (let ((content (subseq template start close)))
           (cond
             ;; #{?cond,true,false} — conditional
+            ;; cond-str may be a context variable name ("window_active") or a
+            ;; literal value ("1", "0", "").  Perform a context lookup first: if
+            ;; the keyword key is present in the context plist, use the looked-up
+            ;; value; otherwise treat cond-str as the literal condition.
+            ;; This makes #{?window_active,YES,NO} work for real-world use-cases
+            ;; while preserving #{?1,yes,no} / #{?0,yes,no} / #{?,yes,no}.
             ((and (plusp (length content)) (char= (char content 0) #\?))
              (multiple-value-bind (cond-str true-str false-str)
                  (%split-conditional (subseq content 1))
-               (write-string (if (%truthy-p cond-str) true-str false-str) out)))
+               (let* ((kw       (%variable-to-keyword cond-str))
+                      (ctx-val  (getf context kw))
+                      (resolved (if ctx-val
+                                    (princ-to-string ctx-val)
+                                    cond-str)))
+                 (write-string (if (%truthy-p resolved) true-str false-str) out))))
             ;; #{variable} — context lookup
             (t (write-string (%lookup context (%variable-to-keyword content)) out)))
           (1+ close)))))
@@ -165,27 +176,32 @@
    Any argument may be NIL; missing slots default to safe empty values.
 
    Keys: :session-name :window-index :window-name :window-count
-         :pane-index :hostname :time :host :host-short"
-  (let* ((session-name  (if session (cl-tmux/model:session-name session) ""))
-         (session-wins  (if session (cl-tmux/model:session-windows session) nil))
-         (active-win    (if session (cl-tmux/model:session-active-window session) nil))
-         (window-count  (length session-wins))
-         (window-index  (if (and window session-wins)
-                            (let ((pos (position window session-wins)))
-                              (if pos (1+ pos) 0))
-                            0))
-         (window-name   (if window (cl-tmux/model:window-name window) ""))
-         (window-active (if (and window active-win (eq window active-win)) "1" "0"))
-         (window-flags  (cond ((and window active-win (eq window active-win)) "*")
-                              (t " ")))
-         (window-panes  (if window (cl-tmux/model:window-panes window) nil))
-         (pane-index    (if (and pane window-panes)
-                            (let ((pos (position pane window-panes)))
-                              (if pos (1+ pos) 0))
-                            0))
-         (hostname      (machine-instance))
-         (time-str      (%current-time-string))
-         (host-short    (%short-hostname hostname)))
+         :window-active :window-flags :pane-index
+         :hostname :host :host-short :time"
+  ;; session-active-window is the session's current window — distinct from
+  ;; the WINDOW argument which is the window whose context we are building.
+  ;; Naming it explicitly avoids confusion when both appear in the same binding.
+  (let* ((session-name    (if session (cl-tmux/model:session-name session) ""))
+         (session-wins    (if session (cl-tmux/model:session-windows session) nil))
+         (session-active-window (if session (cl-tmux/model:session-active-window session) nil))
+         (window-count    (length session-wins))
+         (window-index    (if (and window session-wins)
+                              (let ((pos (position window session-wins)))
+                                (if pos (1+ pos) 0))
+                              0))
+         (window-name     (if window (cl-tmux/model:window-name window) ""))
+         (window-active   (if (and window session-active-window
+                                   (eq window session-active-window)) "1" "0"))
+         (window-flags    (if (and window session-active-window
+                                   (eq window session-active-window)) "*" " "))
+         (window-panes    (if window (cl-tmux/model:window-panes window) nil))
+         (pane-index      (if (and pane window-panes)
+                              (let ((pos (position pane window-panes)))
+                                (if pos (1+ pos) 0))
+                              0))
+         (hostname        (machine-instance))
+         (time-str        (%current-time-string))
+         (host-short      (%short-hostname hostname)))
     (list :session-name  session-name
           :window-index  window-index
           :window-name   window-name

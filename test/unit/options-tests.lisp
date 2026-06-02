@@ -1,46 +1,13 @@
 (in-package #:cl-tmux/test)
 
 ;;;; Tests for cl-tmux/options: option registry and get/set/coercion.
+;;;;
+;;;; Isolation helpers (with-fresh-options, with-fresh-global-options,
+;;;; with-single-option, with-single-server-option) are defined in
+;;;; test/helpers.lisp so that config-directives-tests can reuse them.
 
 (def-suite options-suite :description "Global option registry")
 (in-suite options-suite)
-
-;;; Isolation helpers.
-;;; with-fresh-options:       blank hash tables (no specs, no runtime values).
-;;; with-fresh-global-options: copies only *global-options*, preserving *option-registry*.
-;;; with-single-option:       a hash table containing exactly one option name/value pair.
-
-(defmacro with-fresh-options (&body body)
-  "Run BODY with empty, isolated option hash tables (no registered specs)."
-  `(let ((cl-tmux/options:*global-options*   (make-hash-table :test #'equal))
-         (cl-tmux/options:*option-registry*  (make-hash-table :test #'equal)))
-     ,@body))
-
-(defmacro with-fresh-global-options (&body body)
-  "Run BODY with a copy of *global-options* so mutations do not leak.
-   *option-registry* is shared so type coercion continues to work."
-  `(let ((cl-tmux/options:*global-options*
-          (let ((ht (make-hash-table :test #'equal)))
-            (maphash (lambda (k v) (setf (gethash k ht) v))
-                     cl-tmux/options:*global-options*)
-            ht)))
-     ,@body))
-
-(defmacro with-single-option ((name value) &body body)
-  "Run BODY with *global-options* bound to a hash-table containing only NAME → VALUE."
-  `(let ((cl-tmux/options:*global-options*
-          (let ((ht (make-hash-table :test #'equal)))
-            (setf (gethash ,name ht) ,value)
-            ht)))
-     ,@body))
-
-(defmacro with-single-server-option ((name value) &body body)
-  "Run BODY with *server-options* bound to a hash-table containing only NAME → VALUE."
-  `(let ((cl-tmux/options:*server-options*
-          (let ((ht (make-hash-table :test #'equal)))
-            (setf (gethash ,name ht) ,value)
-            ht)))
-     ,@body))
 
 ;;; Table-driven default-value checker.
 ;;; check-option-defaults collapses ~25 near-identical single-assertion tests.
@@ -491,3 +458,137 @@
   "The status option defaults to T (enabled)."
   (is (eq t (cl-tmux/options:get-option "status"))
       "status default must be T"))
+
+;;; ── make-option-spec constructor ─────────────────────────────────────────
+
+(test make-option-spec-creates-spec
+  "make-option-spec constructs an option-spec with the correct slots."
+  (let ((spec (cl-tmux/options:make-option-spec :name "my-opt"
+                                                 :type :boolean
+                                                 :default nil)))
+    (is (not (null spec))
+        "make-option-spec must return a non-nil spec")
+    (is (string= "my-opt" (cl-tmux/options:option-spec-name spec))
+        "option-spec-name must return \"my-opt\"")
+    (is (eq :boolean (cl-tmux/options:option-spec-type spec))
+        "option-spec-type must return :boolean")
+    (is (null (cl-tmux/options:option-spec-default spec))
+        "option-spec-default must return NIL")))
+
+(test make-option-spec-integer-type
+  "make-option-spec stores :integer type and an integer default."
+  (let ((spec (cl-tmux/options:make-option-spec :name "count"
+                                                 :type :integer
+                                                 :default 42)))
+    (is (eq :integer (cl-tmux/options:option-spec-type spec))
+        "option-spec-type must be :integer")
+    (is (= 42 (cl-tmux/options:option-spec-default spec))
+        "option-spec-default must be 42")))
+
+(test make-option-spec-string-type
+  "make-option-spec stores :string type and a string default."
+  (let ((spec (cl-tmux/options:make-option-spec :name "label"
+                                                 :type :string
+                                                 :default "hello")))
+    (is (eq :string (cl-tmux/options:option-spec-type spec))
+        "option-spec-type must be :string")
+    (is (string= "hello" (cl-tmux/options:option-spec-default spec))
+        "option-spec-default must be \"hello\"")))
+
+;;; ── define-option-accessor macro ─────────────────────────────────────────
+
+(test define-option-accessor-macro-is-defined
+  "define-option-accessor is a registered macro."
+  (is (macro-function 'cl-tmux/options::define-option-accessor)))
+
+;;; ── define-type-coercions macro ──────────────────────────────────────────
+
+(test define-type-coercions-macro-is-defined
+  "define-type-coercions is a registered macro."
+  (is (macro-function 'cl-tmux/options::define-type-coercions)))
+
+;;; ── Table-driven coercion checks ─────────────────────────────────────────
+;;;
+;;; Consolidates the repeated %coerce-value assertions into a single
+;;; parameterised block covering all three type branches.
+
+(test coerce-value-table-driven
+  "%coerce-value behaves correctly across all registered type branches."
+  (dolist (entry '(;; :boolean branch
+                   (:boolean "on"    t)
+                   (:boolean "true"  t)
+                   (:boolean "1"     t)
+                   (:boolean "off"   nil)
+                   (:boolean "false" nil)
+                   (:boolean "0"     nil)
+                   (:boolean 42      t)
+                   (:boolean nil     nil)
+                   ;; :integer branch
+                   (:integer "42"       42)
+                   (:integer "0"        0)
+                   (:integer "not-num"  0)
+                   (:integer 3          3)
+                   (:integer nil        0)
+                   ;; :string branch
+                   (:string "hello"  "hello")
+                   (:string 42       "42")
+                   (:string t        "T")))
+    (destructuring-bind (type input expected) entry
+      (let ((result (cl-tmux/options::%coerce-value type input)))
+        (is (equal expected result)
+            "%coerce-value ~S ~S: expected ~S got ~S"
+            type input expected result)))))
+
+;;; ── show-option :server scope when absent ────────────────────────────────
+
+(test show-option-server-scope-absent
+  "show-option :server for an absent server option says 'not set'."
+  (let ((cl-tmux/options:*server-options* (make-hash-table :test #'equal)))
+    (let ((out (cl-tmux/options:show-option "nonexistent-server-opt" :server)))
+      (is (search "nonexistent-server-opt" out)
+          "show-option :server absent must include option name (got ~S)" out))))
+
+;;; ── set-option returns coerced value ─────────────────────────────────────
+
+(test set-option-returns-coerced-value
+  "set-option returns the coerced value, not the input."
+  (with-fresh-global-options
+    (let ((result (cl-tmux/options:set-option "history-limit" "1234")))
+      (is (= 1234 result)
+          "set-option must return the coerced integer 1234, got ~S" result))
+    (let ((result (cl-tmux/options:set-option "status" "on")))
+      (is (eq t result)
+          "set-option must return T for boolean on, got ~S" result))
+    (let ((result (cl-tmux/options:set-option "status-left" "text")))
+      (is (string= "text" result)
+          "set-option must return the string unchanged, got ~S" result))))
+
+;;; ── integer coercion: non-numeric non-nil value falls back to 0 ──────────
+
+(test integer-coercion-non-numeric-falls-back-to-zero
+  "%coerce-value :integer returns 0 for non-numeric non-string non-number input."
+  (is (= 0 (cl-tmux/options::%coerce-value :integer t))
+      ":integer coercion of T must be 0")
+  (is (= 0 (cl-tmux/options::%coerce-value :integer :foo))
+      ":integer coercion of a keyword must be 0"))
+
+;;; ── *server-option-registry* is a hash-table ─────────────────────────────
+
+(test server-option-registry-is-hash-table
+  "*server-option-registry* is a hash-table populated with at least the three
+   standard server options."
+  (is (hash-table-p cl-tmux/options:*server-option-registry*)
+      "*server-option-registry* must be a hash-table")
+  (is (not (null (gethash "escape-time"     cl-tmux/options:*server-option-registry*)))
+      "escape-time must be in *server-option-registry*")
+  (is (not (null (gethash "exit-empty"      cl-tmux/options:*server-option-registry*)))
+      "exit-empty must be in *server-option-registry*")
+  (is (not (null (gethash "exit-unattached" cl-tmux/options:*server-option-registry*)))
+      "exit-unattached must be in *server-option-registry*"))
+
+;;; ── exit-unattached server option default ────────────────────────────────
+
+(test server-options-exit-unattached-default
+  "*server-options* contains exit-unattached = NIL by default."
+  (is (null (cl-tmux/options:get-server-option "exit-unattached"))
+      "default exit-unattached must be NIL"))

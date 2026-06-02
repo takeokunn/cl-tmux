@@ -141,6 +141,9 @@
       (if (member value '("on" "true" "1") :test #'equal) t nil))
      (t (if value t nil))))
   (:integer
+   ;; Non-numeric and non-number inputs (including nil) fall back to 0.
+   ;; Callers that need to distinguish "unset" from "zero" should check
+   ;; option presence via get-option before calling set-option.
    (cond
      ((stringp value)
       (or (parse-integer value :junk-allowed t) 0))
@@ -150,32 +153,59 @@
   (:string
    (format nil "~A" value)))
 
+;;; ── Option accessor generator ─────────────────────────────────────────────
+;;;
+;;; define-option-accessor generates a matched get/set pair for one option
+;;; storage hash-table + registry hash-table, eliminating the structural
+;;; duplication between the global and server option APIs.
+
+(defmacro define-option-accessor (get-name set-name storage-var registry-var
+                                  &key get-docstring set-docstring)
+  "Generate GET-NAME (name &optional default) and SET-NAME (name value) functions
+   operating on STORAGE-VAR (runtime values) and REGISTRY-VAR (type specs).
+   GET-DOCSTRING and SET-DOCSTRING are optional docstring overrides."
+  `(progn
+     (defun ,get-name (name &optional default)
+       ,(or get-docstring
+            (format nil "Return the current value of option NAME from ~A.~%~
+                         Returns DEFAULT (nil if not supplied) when NAME is not present."
+                    storage-var))
+       (multiple-value-bind (value presentp)
+           (gethash name ,storage-var)
+         (if presentp value default)))
+     (defun ,set-name (name value)
+       ,(or set-docstring
+            (format nil "Coerce VALUE to the registered type for NAME and store it in ~A.~%~
+                         Returns the coerced value.  If NAME is not in ~A the value is~%~
+                         stored as-is (no coercion)."
+                    storage-var registry-var))
+       (let* ((spec    (gethash name ,registry-var))
+              (coerced (if spec
+                           (%coerce-value (option-spec-type spec) value)
+                           value)))
+         (setf (gethash name ,storage-var) coerced)
+         coerced))))
+
 ;;; ── Public API ────────────────────────────────────────────────────────────
 
-(defun get-option (name &optional default)
+(define-option-accessor get-option set-option
+  *global-options* *option-registry*
+  :get-docstring
   "Return the current value of option NAME from *GLOBAL-OPTIONS*.
    Returns DEFAULT (nil if not supplied) when NAME is not present."
-  (multiple-value-bind (value presentp)
-      (gethash name *global-options*)
-    (if presentp value default)))
-
-(defun set-option (name value)
+  :set-docstring
   "Coerce VALUE to the registered type for NAME and store it in *GLOBAL-OPTIONS*.
    Returns the coerced value.  If NAME is not in *OPTION-REGISTRY* the value is
-   stored as-is (no coercion)."
-  (let* ((spec    (gethash name *option-registry*))
-         (coerced (if spec
-                      (%coerce-value (option-spec-type spec) value)
-                      value)))
-    (setf (gethash name *global-options*) coerced)
-    coerced))
+   stored as-is (no coercion).")
 
 (defun option-defined-p (name)
   "Return T if NAME is a registered option in *OPTION-REGISTRY*."
   (not (null (gethash name *option-registry*))))
 
 (defun all-options ()
-  "Return an alist of (name . value) for every entry in *GLOBAL-OPTIONS*."
+  "Return an alist of (name . value) for every entry in *GLOBAL-OPTIONS*.
+   Note: iteration order over the hash-table is arbitrary and may differ
+   between runs.  Do not rely on ordering of the returned alist."
   (let (result)
     (maphash (lambda (k v) (push (cons k v) result))
              *global-options*)
@@ -183,22 +213,14 @@
 
 ;;; ── Server option API ─────────────────────────────────────────────────────
 
-(defun get-server-option (name &optional default)
+(define-option-accessor get-server-option set-server-option
+  *server-options* *server-option-registry*
+  :get-docstring
   "Return the current value of server option NAME from *SERVER-OPTIONS*.
    Returns DEFAULT (nil if not supplied) when NAME is not present."
-  (multiple-value-bind (value presentp)
-      (gethash name *server-options*)
-    (if presentp value default)))
-
-(defun set-server-option (name value)
+  :set-docstring
   "Coerce VALUE to the registered type for NAME and store in *SERVER-OPTIONS*.
-   Returns the coerced value."
-  (let* ((spec    (gethash name *server-option-registry*))
-         (coerced (if spec
-                      (%coerce-value (option-spec-type spec) value)
-                      value)))
-    (setf (gethash name *server-options*) coerced)
-    coerced))
+   Returns the coerced value.")
 
 ;;; ── show-options helpers ──────────────────────────────────────────────────
 

@@ -93,16 +93,23 @@
     (when entry
       (parse-integer (cdr entry)))))
 
-;;; ── +sgr-default-status+ ─────────────────────────────────────────────────────
+;;; ── Named SGR constants ──────────────────────────────────────────────────────
 ;;;
-;;; Named constant for the default status-bar SGR string: blue bg (44) + bright
-;;; white text (97).  Used by render-lock-screen and style-to-sgr.
+;;; +sgr-default-status+ : default status-bar and lock-screen style (blue bg / bright white)
+;;; +sgr-clock-face+     : clock overlay style (blue bg / bright cyan) — visually distinct
+;;;                        from the status bar so the clock stands out while sharing bg.
 
 (defconstant +sgr-default-status+
     (if (boundp '+sgr-default-status+)
         (symbol-value '+sgr-default-status+)
         "44;97")
   "Default status-bar SGR string: blue background (44) + bright white text (97).")
+
+(defconstant +sgr-clock-face+
+    (if (boundp '+sgr-clock-face+)
+        (symbol-value '+sgr-clock-face+)
+        "44;96")
+  "Clock overlay SGR string: blue background (44) + bright cyan text (96).")
 
 ;;; ── Colour-name table ───────────────────────────────────────────────────────
 

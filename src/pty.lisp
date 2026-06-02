@@ -48,9 +48,9 @@
   (let ((slave (sb-posix:open slave-path (logior +o-rdwr+ +o-noctty+) 0)))
     (cffi:foreign-funcall "ioctl"
                           :int slave :unsigned-long +tiocsctty+ :int 0 :int)
-    (sb-posix:dup2 slave 0)
-    (sb-posix:dup2 slave 1)
-    (sb-posix:dup2 slave 2)
+    (sb-posix:dup2 slave +stdin-fd+)
+    (sb-posix:dup2 slave +stdout-fd+)
+    (sb-posix:dup2 slave +stderr-fd+)
     (sb-posix:close slave))
   (sb-posix:close master-fd))
 
@@ -101,11 +101,11 @@
   (dotimes (i len)
     (setf (cffi:mem-aref ptr :uint8 i) (aref octets i))))
 
-(defun %foreign-to-octets (ptr n)
-  "Copy N bytes from foreign memory PTR into a fresh Lisp octet vector."
-  (declare (type fixnum n))
-  (let ((result (make-array n :element-type '(unsigned-byte 8))))
-    (dotimes (i n) (setf (aref result i) (cffi:mem-aref ptr :uint8 i)))
+(defun %foreign-to-octets (ptr byte-count)
+  "Copy BYTE-COUNT bytes from foreign memory PTR into a fresh Lisp octet vector."
+  (declare (type fixnum byte-count))
+  (let ((result (make-array byte-count :element-type '(unsigned-byte 8))))
+    (dotimes (i byte-count) (setf (aref result i) (cffi:mem-aref ptr :uint8 i)))
     result))
 
 ;;; ── Public: PTY I/O ────────────────────────────────────────────────────────
@@ -122,13 +122,13 @@
            (%octets-to-foreign data buf len)
            (%write fd buf len)))))))
 
-(defun pty-read-blocking (fd buf-size)
-  "Block until data arrives on FD, then return an octet vector.
+(defun pty-read-blocking (fd buffer-size)
+  "Block until data arrives on FD, then return an octet vector of up to BUFFER-SIZE bytes.
    Returns NIL on EOF or error."
-  (cffi:with-foreign-object (raw :uint8 buf-size)
-    (let ((n (%read fd raw buf-size)))
-      (when (plusp n)
-        (%foreign-to-octets raw n)))))
+  (cffi:with-foreign-object (raw :uint8 buffer-size)
+    (let ((byte-count (%read fd raw buffer-size)))
+      (when (plusp byte-count)
+        (%foreign-to-octets raw byte-count)))))
 
 (defun pty-close (master-fd child-pid)
   "Send SIGHUP to the child process and close the PTY master.
@@ -144,6 +144,12 @@
 
 ;;; ── Public: select-based I/O multiplexing ─────────────────────────────────
 
+(defun %call-select (nfds rset tv-or-null)
+  "Invoke select(2) on NFDS file descriptors with read-set RSET.
+   TV-OR-NULL is a foreign pointer to a struct timeval, or cffi:null-pointer
+   for an indefinite block.  Returns the select(2) return value."
+  (%select nfds rset (cffi:null-pointer) (cffi:null-pointer) tv-or-null))
+
 (defun select-fds (fds timeout-us)
   "Poll FDS for readability with a TIMEOUT-US microsecond timeout.
    timeout-us = 0 → non-blocking; -1 → block indefinitely.
@@ -154,14 +160,12 @@
                                 (tv   :long  2))
       (fd-zero! rset)
       (dolist (fd fds) (fd-set! fd rset))
-      (cond
-        ((>= timeout-us 0)
-         (setf (cffi:mem-aref tv :long 0) (floor timeout-us 1000000)
-               (cffi:mem-aref tv :long 1) (mod   timeout-us 1000000))
-         (%select (1+ maxfd) rset (cffi:null-pointer) (cffi:null-pointer) tv))
-        (t
-         (%select (1+ maxfd) rset (cffi:null-pointer) (cffi:null-pointer)
-                  (cffi:null-pointer))))
+      (if (>= timeout-us 0)
+          (progn
+            (setf (cffi:mem-aref tv :long 0) (floor timeout-us 1000000)
+                  (cffi:mem-aref tv :long 1) (mod   timeout-us 1000000))
+            (%call-select (1+ maxfd) rset tv))
+          (%call-select (1+ maxfd) rset (cffi:null-pointer)))
       ;; Return only the fds that became readable.
       (loop for fd in fds when (fd-isset-p fd rset) collect fd))))
 
@@ -170,8 +174,10 @@
 (defconstant +max-sane-rows+ 1000)
 (defconstant +max-sane-cols+ 1000)
 
-;;; Well-known POSIX file descriptors.
+;;; Well-known POSIX file descriptors (stdin/stdout/stderr).
+(defconstant +stdin-fd+  0 "POSIX file descriptor number for standard input.")
 (defconstant +stdout-fd+ 1 "POSIX file descriptor number for standard output.")
+(defconstant +stderr-fd+ 2 "POSIX file descriptor number for standard error.")
 
 (defun terminal-size ()
   "Return (values rows cols) of the terminal attached to stdout.

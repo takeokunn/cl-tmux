@@ -886,3 +886,127 @@
           "pane-x must not change when size already matches")
       (is (= y0-before (pane-y p0))
           "pane-y must not change when size already matches"))))
+
+;;; ── window struct default slots ─────────────────────────────────────────────
+
+(test window-zoom-p-defaults-nil
+  "window-zoom-p defaults to NIL for a freshly created window."
+  (let ((win (make-window :id 1 :name "w")))
+    (is (null (cl-tmux/model:window-zoom-p win))
+        "window-zoom-p must default to NIL")))
+
+(test window-zoom-tree-defaults-nil
+  "window-zoom-tree defaults to NIL for a freshly created window."
+  (let ((win (make-window :id 1 :name "w")))
+    (is (null (cl-tmux/model:window-zoom-tree win))
+        "window-zoom-tree must default to NIL")))
+
+(test window-last-active-defaults-nil
+  "window-last-active defaults to NIL for a freshly created window."
+  (let ((win (make-window :id 1 :name "w")))
+    (is (null (window-last-active win))
+        "window-last-active must default to NIL")))
+
+(test window-automatic-rename-p-defaults-true
+  "window-automatic-rename-p defaults to T for a freshly created window."
+  (let ((win (make-window :id 1 :name "w")))
+    (is-true (window-automatic-rename-p win)
+             "window-automatic-rename-p must default to T")))
+
+(test window-automatic-rename-p-settable
+  "window-automatic-rename-p can be set to NIL and read back."
+  (let ((win (make-window :id 1 :name "w" :automatic-rename-p nil)))
+    (is (null (window-automatic-rename-p win))
+        "window-automatic-rename-p must reflect the value set at construction")))
+
+;;; ── window-active-pane falls back to first pane ─────────────────────────────
+
+(test window-active-pane-falls-back-to-first-pane
+  "window-active-pane returns the first pane when active slot is NIL."
+  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         ;; No active pane set.
+         (win (make-window :id 1 :name "w" :panes (list p0 p1))))
+    (is (eq p0 (window-active-pane win))
+        "window-active-pane must fall back to the first pane when active is NIL")))
+
+;;; ── window-select-pane records previous active as last-active ──────────────
+
+(test window-select-pane-records-previous-as-last-active
+  "window-select-pane records the previously active pane in window-last-active."
+  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         (win (make-window :id 1 :name "w" :panes (list p0 p1))))
+    (window-select-pane win p0)
+    (is (null (window-last-active win))
+        "last-active must be NIL after first select (no prior pane)")
+    (window-select-pane win p1)
+    (is (eq p0 (window-last-active win))
+        "last-active must be the previously active pane after switching")))
+
+;;; ── window-remove-pane: leaf not in tree ────────────────────────────────────
+
+(test window-remove-pane-absent-pane-returns-first-pane
+  "window-remove-pane returns the first pane when the target leaf is absent from the tree."
+  (let* ((p0  (make-no-pty-pane 1 0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         ;; Build window with p0 in the tree; p1 is not in the tree.
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-leaf p0))))
+    ;; Removing p1 which is absent from the tree should return the first pane.
+    (let ((result (window-remove-pane win p1)))
+      (is-true result "result must be non-NIL (the first pane)")
+      ;; The tree should be unchanged.
+      (is-true (window-tree win) "tree must remain non-NIL"))))
+
+;;; ── Table-driven %new-split-ratio (additional boundary cases) ───────────────
+
+(test new-split-ratio-additional-cases
+  "Table-driven: %new-split-ratio handles boundary and asymmetric ratio cases."
+  ;; Each entry: (orient avail cur-ratio delta grow-first expected description)
+  ;; These cases extend beyond the single tests (basic-grow/shrink/blocked-by-floor).
+  (dolist (entry
+           '((:h 100 3/4 10 t   85/100 "grow :h from 3/4 ratio")
+             (:v 40  1/4  5 t   15/40  "grow :v from 1/4 ratio")
+             (:h 60  2/3  1 nil 39/60  "shrink :h from 2/3 ratio")))
+    (destructuring-bind (orient avail cur-ratio delta grow-first expected desc) entry
+      (let ((result (cl-tmux/model::%new-split-ratio orient avail cur-ratio delta grow-first)))
+        (is (equal expected result) desc)))))
+
+;;; ── window-rotate single-pane is noop ───────────────────────────────────────
+
+(test window-rotate-single-pane-noop
+  "window-rotate on a single-pane window changes nothing."
+  (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
+         (win (make-window :id 1 :name "w" :width 80 :height 24
+                           :panes (list p0)
+                           :tree (make-layout-leaf p0))))
+    (window-rotate win :up)
+    (is (equal (list p0) (window-panes win))
+        "single-pane window panes list unchanged after :up rotate")
+    (window-rotate win :down)
+    (is (equal (list p0) (window-panes win))
+        "single-pane window panes list unchanged after :down rotate")))
+
+;;; ── window-id and window-name accessors ─────────────────────────────────────
+
+(test window-id-slot-accessible
+  "window-id returns the id passed to make-window."
+  (let ((win (make-window :id 42 :name "test")))
+    (is (= 42 (window-id win))
+        "window-id must return the id set at construction")))
+
+(test window-name-slot-accessible
+  "window-name returns the name passed to make-window."
+  (let ((win (make-window :id 1 :name "mywin")))
+    (is (string= "mywin" (window-name win))
+        "window-name must return the name set at construction")))
+
+;;; ── window-width and window-height accessors ────────────────────────────────
+
+(test window-width-height-slot-accessible
+  "window-width and window-height return the geometry set at construction."
+  (let ((win (make-window :id 1 :name "w" :width 120 :height 40)))
+    (is (= 120 (window-width  win)) "window-width must return 120")
+    (is (= 40  (window-height win)) "window-height must return 40")))

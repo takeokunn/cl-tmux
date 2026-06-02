@@ -68,7 +68,9 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
   (remhash event-name *hook-registry*))
 
 (defun list-hooks ()
-  "Return an alist of (event-name . hook-count) for all registered events."
+  "Return an alist of (event-name . hook-count) for all registered events.
+   Note: iteration order over the registry is undefined — callers must not
+   rely on the order of entries in the returned alist."
   (let (result)
     (maphash (lambda (name hooks)
                (push (cons name (length hooks)) result))

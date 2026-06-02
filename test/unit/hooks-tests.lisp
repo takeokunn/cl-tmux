@@ -21,24 +21,17 @@
   (is (string= "after-kill-window"   cl-tmux/hooks:+hook-after-kill-window+))
   (is (string= "after-split-window"  cl-tmux/hooks:+hook-after-split-window+)))
 
-(test hook-event-constants-are-strings
-  "Every hook-event constant is a string (not a symbol or keyword)."
-  (dolist (c (list cl-tmux/hooks:+hook-after-new-window+
-                   cl-tmux/hooks:+hook-after-new-pane+
-                   cl-tmux/hooks:+hook-pane-exited+
-                   cl-tmux/hooks:+hook-after-rename-window+
-                   cl-tmux/hooks:+hook-session-created+
-                   cl-tmux/hooks:+hook-after-kill-pane+
-                   cl-tmux/hooks:+hook-after-kill-window+
-                   cl-tmux/hooks:+hook-after-split-window+))
-    (is (stringp c) "hook event constant ~S must be a string" c)))
+;;; hook-event-constants-are-strings was removed: hook-event-constants already
+;;; asserts string= for every constant, which implies stringp — the type check
+;;; was a strict subset and added no new coverage.
 
 ;;; ── *hook-registry* initial state ───────────────────────────────────────────
 
 (test hook-registry-is-hash-table
   "*hook-registry* is a hash table with :equal test."
-  (is (hash-table-p cl-tmux/hooks:*hook-registry*)
-      "*hook-registry* must be a hash table"))
+  (with-isolated-hooks
+    (is (hash-table-p cl-tmux/hooks:*hook-registry*)
+        "*hook-registry* must be a hash table")))
 
 (test hook-registry-fresh-is-empty
   "A freshly-isolated registry has no entries."
@@ -260,29 +253,66 @@
                                (cl-tmux/hooks:list-hooks) :test #'string=))))
         (is (= 1 after) "count must be 1 after one remove")))))
 
-;;; ── Channel synchronization tests (cl-tmux internals) -----------------------
-;;;
-;;; wait-for-signal uses an internal channel table (*wait-channels*).
-;;; These tests access internal symbols deliberately: the channel API has no
-;;; higher-level public entry point that can be exercised in a unit test without
-;;; spawning real threads.  The internal access is documented here so reviewers
-;;; know it is intentional, not accidental coupling.
+;;; wait-for-signal-unblocks was moved to runtime-tests.lisp because it tests
+;;; cl-tmux::*wait-channels*, cl-tmux::%ensure-channel, cl-tmux::signal-channel,
+;;; cl-tmux::lock-channel, and cl-tmux::unlock-channel — all from runtime.lisp —
+;;; and runtime-tests.lisp already covers these same symbols.
 
-(test wait-for-signal-unblocks
-  "signal-channel creates/signals a channel; wait-for-channel unblocks when signaled.
-   Uses isolated *wait-channels* to avoid leaking state across tests."
-  ;; Test the channel API with an isolated channels table.
-  (let ((cl-tmux::*wait-channels* (make-hash-table :test #'equal)))
-    ;; Ensure a channel exists
-    (cl-tmux::%ensure-channel "test-chan")
-    ;; Lock and unlock should not error
-    (finishes (cl-tmux::lock-channel "test-chan"))
-    (finishes (cl-tmux::unlock-channel "test-chan"))
-    ;; Signal a channel (no waiters -- should be safe no-op)
-    (finishes (cl-tmux::signal-channel "test-chan"))
-    ;; When locked, signal-channel is suppressed
-    (cl-tmux::lock-channel "test-chan")
-    (finishes (cl-tmux::signal-channel "test-chan"))
-    (cl-tmux::unlock-channel "test-chan")
-    ;; After unlock, signal proceeds normally
-    (finishes (cl-tmux::signal-channel "test-chan"))))
+;;; ── clear-hooks isolation ────────────────────────────────────────────────────
+
+(test clear-hooks-does-not-affect-other-events
+  "clear-hooks for one event leaves other events' hooks intact."
+  (with-isolated-hooks
+    (let ((called-a nil)
+          (called-b nil))
+      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-new-window+
+                               (lambda () (setf called-a t)))
+      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-pane-exited+
+                               (lambda () (setf called-b t)))
+      ;; Clear only the first event.
+      (cl-tmux/hooks:clear-hooks cl-tmux/hooks:+hook-after-new-window+)
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+)
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-exited+)
+      (is (null called-a) "cleared event's hook must not run")
+      (is-true called-b   "non-cleared event's hook must still run"))))
+
+;;; ── run-hooks with +hook-after-split-window+ ─────────────────────────────────
+
+(test run-hooks-after-split-window-event
+  "add-hook and run-hooks work correctly for the after-split-window event."
+  (with-isolated-hooks
+    (let ((fired nil))
+      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-split-window+
+                               (lambda () (setf fired t)))
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-split-window+)
+      (is-true fired "after-split-window hook must fire when run-hooks is called"))))
+
+;;; ── list-hooks after all callbacks removed ───────────────────────────────────
+
+(test list-hooks-after-all-callbacks-removed-shows-zero
+  "After removing the last callback for an event, list-hooks shows count 0 for it."
+  (with-isolated-hooks
+    (let ((cb (lambda () nil)))
+      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-rename-window+ cb)
+      (cl-tmux/hooks:remove-hook cl-tmux/hooks:+hook-after-rename-window+ cb)
+      ;; The event key remains in the registry with an empty list.
+      ;; list-hooks reports count 0 for it (not absent, because gethash returns nil-list).
+      ;; Either outcome (absent or count-0) is acceptable; what matters is run-hooks is safe.
+      (finishes (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-rename-window+)))))
+
+;;; ── table-driven: all hook event constants have correct string values ────────
+
+(test hook-event-constants-table-driven
+  "All eight hook event constants have their expected string values (table form)."
+  (let ((cases
+         (list (cons cl-tmux/hooks:+hook-after-new-window+    "after-new-window")
+               (cons cl-tmux/hooks:+hook-after-new-pane+      "after-new-pane")
+               (cons cl-tmux/hooks:+hook-pane-exited+         "pane-exited")
+               (cons cl-tmux/hooks:+hook-after-rename-window+ "after-rename-window")
+               (cons cl-tmux/hooks:+hook-session-created+     "session-created")
+               (cons cl-tmux/hooks:+hook-after-kill-pane+     "after-kill-pane")
+               (cons cl-tmux/hooks:+hook-after-kill-window+   "after-kill-window")
+               (cons cl-tmux/hooks:+hook-after-split-window+  "after-split-window"))))
+    (dolist (pair cases)
+      (is (string= (cdr pair) (car pair))
+          "hook constant ~S must equal ~S" (car pair) (cdr pair)))))

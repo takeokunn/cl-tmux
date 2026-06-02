@@ -78,10 +78,11 @@
 
 ;;; ── Session group helpers (data / logic decomposed) ──────────────────────────
 ;;;
-;;; server-new-session-in-group has three distinct phases:
+;;; server-new-session-in-group has four distinct phases:
 ;;;   1. Allocate/reuse a group-id   (pure: id derivation)
-;;;   2. Link session structs         (mutation: windows + group slot)
-;;;   3. Update the registry alist    (mutation: *session-groups*)
+;;;   2. Link session structs         (mutation: windows + group slot — data only)
+;;;   3. Sync active window           (logic: policy that new session mirrors existing)
+;;;   4. Update the registry alist    (mutation: *session-groups*)
 ;;; Each phase is extracted into a named sub-function so it is independently
 ;;; readable and testable.
 
@@ -93,9 +94,15 @@
         gid)))
 
 (defun %link-session-to-group (new-session existing-session group-id)
-  "Share EXISTING-SESSION's windows into NEW-SESSION and assign GROUP-ID to both."
+  "Share EXISTING-SESSION's windows into NEW-SESSION and assign GROUP-ID.
+   Pure data wiring only — does not select the active window (see %sync-active-window)."
   (setf (session-windows new-session) (session-windows existing-session)
-        (session-group   new-session) group-id)
+        (session-group   new-session) group-id))
+
+(defun %sync-active-window (new-session existing-session)
+  "Mirror EXISTING-SESSION's active window selection into NEW-SESSION.
+   This is the policy step (new session follows existing session's view)
+   and is intentionally separate from the data-linkage in %link-session-to-group."
   (let ((active-window (session-active-window existing-session)))
     (when active-window
       (session-select-window new-session active-window))))
@@ -113,6 +120,7 @@
    Both sessions will share the same window list."
   (let ((group-id (%resolve-group-id existing-session)))
     (%link-session-to-group new-session existing-session group-id)
+    (%sync-active-window new-session existing-session)
     (%register-in-group-alist existing-session group-id)
     (%register-in-group-alist new-session group-id)))
 
@@ -134,16 +142,17 @@
           name))
 
 (defun apply-client-size (session payload)
-  "Apply a client size PAYLOAD (rows,cols) to SESSION and relayout."
+  "Apply a client size PAYLOAD (rows,cols) to SESSION and relayout.
+   Pure resize transform: updates dimensions and relayouts the active window.
+   Does NOT mutate the dirty flag — that is the caller's responsibility."
   (multiple-value-bind (rows cols) (decode-size payload)
     (setf *term-rows* rows *term-cols* cols)
     (let ((win (session-active-window session)))
       (when win
-        (window-relayout win (- rows *status-height*) cols)))
-    (setf *dirty* t)))
+        (window-relayout win (- rows *status-height*) cols)))))
 
 (defun %dispatch-byte-result (result)
-  "CPS state: map a single process-byte RESULT to a serve-loop disposition.
+  "Map a single process-byte RESULT to a serve-loop disposition.
    Returns :quit (also clears *running*), :detach, or NIL (continue).
    This is the continuation passed between bytes in the key-processing stream."
   (cond ((eq result :quit)   (setf *running* nil) :quit)
@@ -174,39 +183,93 @@
    quit/detach decision is unit-testable without a live client connection."
   (%process-bytes-cps session payload state 0))
 
+;;; ── Message-type dispatch macro ──────────────────────────────────────────────
+;;;
+;;; define-msg-dispatch follows the define-csi-rules / with-incoming-frame
+;;; Prolog-dispatch pattern: a declarative rule table whose keys are message-type
+;;; predicates and whose bodies are handler forms.  TYPE and PAYLOAD are bound in
+;;; every rule body.  The generated function returns the serve-loop outcome.
+
+(defmacro define-msg-dispatch (&rest rules)
+  "Build a %handle-client-message function from a declarative message-type rule
+   table.  Each RULE is (condition &rest body).  TYPE, PAYLOAD, SESSION, and
+   STATE are bound in every rule body.  The generated function dispatches via
+   COND and returns whatever the matching arm returns.
+
+   Prolog analogy:
+     handle_msg(nil,         _, _, _) :- disconnect.
+     handle_msg(msg_detach,  _, _, _) :- disconnect.
+     handle_msg(msg_attach,  p, s, _) :- apply_client_size(s, p).
+     handle_msg(msg_key,     p, s, k) :- process_client_keys(s, p, k)."
+  `(defun %handle-client-message (type payload session state)
+     "Dispatch one incoming client message by TYPE.
+      Returns :quit (session ends), :detach (client disconnects cleanly),
+      :disconnect (EOF / unknown-type teardown), or NIL (continue serving).
+      SESSION is the current session; STATE is the per-client keystroke state."
+     (declare (ignorable state))
+     (cond
+       ,@(mapcar (lambda (rule)
+                   (destructuring-bind (condition &rest body) rule
+                     `(,condition ,@body)))
+                 rules))))
+
+(define-msg-dispatch
+  ;; EOF: peer closed the connection.
+  ((null type)
+   :disconnect)
+  ;; Client requested clean detach.
+  ((= type +msg-detach+)
+   :detach)
+  ;; Initial attach or resize: update terminal dimensions and mark dirty.
+  ((or (= type +msg-attach+) (= type +msg-resize+))
+   (apply-client-size session payload)
+   (setf *dirty* t)
+   nil)
+  ;; Keystroke: run through the shared prefix/copy-mode pipeline.
+  ((= type +msg-key+)
+   (case (process-client-keys session payload state)
+     (:quit   :quit)
+     (:detach :detach)
+     (t       (setf *dirty* t) nil)))
+  ;; Unknown message type: treat as a graceful disconnect.
+  (t
+   :disconnect))
+
+(defun %serve-one-poll-iteration (session stream fd state)
+  "Perform one poll iteration: push a dirty frame if needed, then dispatch any
+   incoming client message.  Returns the serve-loop disposition:
+     :quit       — session must end (clears *running*);
+     :disconnect — EOF or unknown message (connection closed);
+     :detach     — client requested clean detach;
+     NIL         — keep serving."
+  ;; Push a fresh frame whenever the session changed.
+  (when *dirty*
+    (setf *dirty* nil)
+    (send-frame stream
+                (msg-frame (render-session-to-string
+                            session *term-rows* *term-cols*))))
+  ;; Wait briefly for an incoming client message.
+  (when (select-fds (list fd) +poll-timeout-us+)
+    (multiple-value-bind (type payload) (read-frame stream)
+      (%handle-client-message type payload session state))))
+
 (defun serve-client (session socket)
   "Serve one attached client on SOCKET until it detaches or disconnects.
 
    Returns :quit when the session itself should end (e.g. last window killed),
    NIL on a plain detach/disconnect (the server keeps the session alive)."
-  (let ((stream (socket-stream socket))
-        (fd     (socket-fd socket))
-        (state  (make-input-state))
+  (let ((stream  (socket-stream socket))
+        (fd      (socket-fd socket))
+        (state   (make-input-state))
         (outcome nil))
     (unwind-protect
          (block serve
            (setf *dirty* t)               ; force an initial paint for the client
            (loop while *running* do
-             ;; Push a fresh frame whenever the session changed.
-             (when *dirty*
-               (setf *dirty* nil)
-               (send-frame stream
-                           (msg-frame (render-session-to-string
-                                       session *term-rows* *term-cols*))))
-             ;; Wait briefly for an incoming client message.
-             (when (select-fds (list fd) +poll-timeout-us+)
-               (with-incoming-frame (type payload stream)
-                 ((null type)
-                  (return-from serve))
-                 ((= type +msg-detach+)
-                  (return-from serve))
-                 ((or (= type +msg-attach+) (= type +msg-resize+))
-                  (apply-client-size session payload))
-                 ((= type +msg-key+)
-                  (case (process-client-keys session payload state)
-                    (:quit   (setf outcome :quit) (return-from serve))
-                    (:detach (return-from serve))
-                    (t       (setf *dirty* t))))))))
+             (case (%serve-one-poll-iteration session stream fd state)
+               (:quit       (setf outcome :quit) (return-from serve))
+               (:disconnect (return-from serve))
+               (:detach     (return-from serve)))))
       (ignore-errors (send-frame stream (msg-bye)))
       (close-socket socket))
     outcome))

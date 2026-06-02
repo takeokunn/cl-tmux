@@ -323,3 +323,88 @@
         "\"root\" table must exist after double initialization")
     (is (not (null (gethash "copy-mode" cl-tmux/config:*key-tables*)))
         "\"copy-mode\" table must exist after double initialization")))
+
+;;; ── Key-table name constants ──────────────────────────────────────────────
+
+(test table-prefix-constant-value
+  "+table-prefix+ has the string value \"prefix\"."
+  (is (string= "prefix" cl-tmux/config:+table-prefix+)
+      "+table-prefix+ must be \"prefix\", got ~S" cl-tmux/config:+table-prefix+))
+
+(test table-root-constant-value
+  "+table-root+ has the string value \"root\"."
+  (is (string= "root" cl-tmux/config:+table-root+)
+      "+table-root+ must be \"root\", got ~S" cl-tmux/config:+table-root+))
+
+(test table-copy-mode-constant-value
+  "+table-copy-mode+ has the string value \"copy-mode\"."
+  (is (string= "copy-mode" cl-tmux/config:+table-copy-mode+)
+      "+table-copy-mode+ must be \"copy-mode\", got ~S" cl-tmux/config:+table-copy-mode+))
+
+;;; ── *default-shell* and *status-height* initial values ───────────────────
+
+(test default-shell-is-string
+  "*default-shell* is a non-empty string (set from $SHELL or /bin/sh)."
+  (is (stringp cl-tmux/config:*default-shell*)
+      "*default-shell* must be a string")
+  (is (plusp (length cl-tmux/config:*default-shell*))
+      "*default-shell* must not be empty"))
+
+(test status-height-positive-integer
+  "*status-height* is a positive integer (default 1)."
+  (is (integerp cl-tmux/config:*status-height*)
+      "*status-height* must be an integer")
+  (is (plusp cl-tmux/config:*status-height*)
+      "*status-height* must be positive"))
+
+;;; ── Table-driven default prefix bindings check ───────────────────────────
+;;;
+;;; The three near-identical lookup-X-binds-Y tests are consolidated here into
+;;; a single table-driven test covering all standard single-char bindings.
+
+(test default-prefix-bindings-table
+  "All standard single-char prefix bindings are registered with the correct commands."
+  (dolist (pair '((#\c :new-window)
+                  (#\n :next-window)
+                  (#\p :prev-window)
+                  (#\o :next-pane)
+                  (#\d :detach)
+                  (#\? :list-keys)
+                  (#\[ :copy-mode-enter)
+                  (#\] :paste-buffer)
+                  (#\x :kill-pane-confirm)
+                  (#\& :kill-window-confirm)
+                  (#\, :rename-window)
+                  (#\H :resize-left)
+                  (#\J :resize-down)
+                  (#\K :resize-up)
+                  (#\L :resize-right)
+                  (#\Z :zoom-toggle)
+                  (#\$ :rename-session)
+                  (#\! :if-shell)))
+    (let ((key (first pair))
+          (expected (second pair)))
+      (is (eq expected (lookup-key-binding key))
+          "key ~C must be bound to ~A (got ~A)"
+          key expected (lookup-key-binding key))))
+  ;; Also verify an unbound key returns NIL
+  (is (null (lookup-key-binding #\@))
+      "#\\@ (unbound) must return NIL"))
+
+;;; ── key-table-command on a valid entry ───────────────────────────────────
+
+(test key-table-command-extracts-car
+  "key-table-command returns the car of a key-table entry (the command keyword)."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (cl-tmux/config:key-table-bind "prefix" #\c :new-window)
+    (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\c)))
+      (is (not (null entry)) "entry must exist")
+      (is (eq :new-window (cl-tmux/config:key-table-command entry))
+          "key-table-command must return :new-window"))))
+
+;;; ── copy-mode table exists after initialize ───────────────────────────────
+
+(test key-tables-copy-mode-table-exists
+  "The \"copy-mode\" key-table is created by initialize-default-key-tables."
+  (is (not (null (gethash "copy-mode" cl-tmux/config:*key-tables*)))
+      "\"copy-mode\" table must exist in *key-tables*"))

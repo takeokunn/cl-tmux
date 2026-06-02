@@ -248,11 +248,11 @@
     (is (= 0 (cl-tmux/terminal/types:screen-cur-bg s))
         "apply-sgr nil (empty) must reset cur-bg to 0")))
 
-(test sgr-reset-sgr-helper
-  "reset-sgr helper sets fg=7, bg=0, attrs=0 directly."
+(test sgr-reset-sgr-pen-helper
+  "reset-sgr-pen sets fg=7, bg=0, attrs=0 directly."
   (with-screen (s 10 2)
     (cl-tmux/terminal/sgr:apply-sgr s '(31 42 1))   ; fg=1, bg=2, bold
-    (cl-tmux/terminal/sgr::reset-sgr s)
+    (cl-tmux/terminal/types:reset-sgr-pen s)
     (check-sgr-state s :fg 7 :bg 0 :attrs 0)))
 
 (test sgr-attr-on-helper

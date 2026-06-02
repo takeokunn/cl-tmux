@@ -4,6 +4,8 @@
 ;;;; Tests: scroll-region clamping, direct action functions, %advance-cursor
 ;;;;        autowrap behaviour, set-cursor, cursor-ri, cursor-cht/cbt,
 ;;;;        combining-char handling, DEC-graphics remapping, and %place-wide-char.
+;;;; Also covers: combining-char-p predicate, DEC graphics charset remapping,
+;;;;              write-char-at-cursor combining-char path, write-codepoint.
 
 ;;; ── SUITE: scroll-region cursor clamping ────────────────────────────────────
 ;;;
@@ -27,7 +29,7 @@
     (setf (cl-tmux/terminal/types::screen-scroll-top s) 3
           (cl-tmux/terminal/types::screen-scroll-bottom s) 7)
     ;; Position cursor inside the region.
-    (setf (cl-tmux/terminal/types::screen-cy s) 6)
+    (setf (cl-tmux/terminal/types:screen-cursor-y s) 6)
     (cl-tmux/terminal/actions::cursor-up s 100)
     (is (= 3 (screen-cursor-y s))
         "cursor-up should clamp to scroll-top 3, got ~D" (screen-cursor-y s))
@@ -40,7 +42,7 @@
   (with-screen (s 10 10)
     (setf (cl-tmux/terminal/types::screen-scroll-top s) 3
           (cl-tmux/terminal/types::screen-scroll-bottom s) 7)
-    (setf (cl-tmux/terminal/types::screen-cy s) 4)
+    (setf (cl-tmux/terminal/types:screen-cursor-y s) 4)
     (cl-tmux/terminal/actions::cursor-down s 100)
     (is (= 7 (screen-cursor-y s))
         "cursor-down should clamp to scroll-bottom 7, got ~D" (screen-cursor-y s))
@@ -51,7 +53,7 @@
 (test cursor-left-clamps-to-column-zero
   "cursor-left with a large count clamps to column 0."
   (with-screen (s 10 10)
-    (setf (cl-tmux/terminal/types::screen-cx s) 5)
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 5)
     (cl-tmux/terminal/actions::cursor-left s 100)
     (is (= 0 (screen-cursor-x s))
         "cursor-left should clamp to column 0, got ~D" (screen-cursor-x s))))
@@ -59,7 +61,7 @@
 (test cursor-right-clamps-to-width-minus-one
   "cursor-right with a large count clamps to width-1."
   (with-screen (s 10 10)
-    (setf (cl-tmux/terminal/types::screen-cx s) 2)
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 2)
     (cl-tmux/terminal/actions::cursor-right s 100)
     (is (= 9 (screen-cursor-x s))
         "cursor-right should clamp to width-1 (9), got ~D" (screen-cursor-x s))))
@@ -70,7 +72,7 @@
   (with-screen (s 10 10)
     (setf (cl-tmux/terminal/types::screen-scroll-top s) 2
           (cl-tmux/terminal/types::screen-scroll-bottom s) 8)
-    (setf (cl-tmux/terminal/types::screen-cy s) 5)
+    (setf (cl-tmux/terminal/types:screen-cursor-y s) 5)
     (cl-tmux/terminal/actions::cursor-up s 2)
     (is (= 3 (screen-cursor-y s)) "cursor-up 2 from row 5 -> row 3")
     (cl-tmux/terminal/actions::cursor-down s 4)
@@ -193,7 +195,7 @@
 (test cursor-cbt-moves-back-n-tab-stops
   :description "cursor-cbt N moves the cursor back by N 8-column tab stops."
   (with-screen (s 40 5)
-    (setf (cl-tmux/terminal/types::screen-cx s) 16)
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 16)
     ;; Back 2 stops: 16 → 8 → 0
     (cl-tmux/terminal/actions:cursor-cbt s 2)
     (is (= 0 (screen-cursor-x s))
@@ -202,7 +204,7 @@
 (test cursor-cbt-clamps-at-column-zero
   :description "cursor-cbt with a large count stops at column 0."
   (with-screen (s 40 5)
-    (setf (cl-tmux/terminal/types::screen-cx s) 5)
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 5)
     (cl-tmux/terminal/actions:cursor-cbt s 99)
     (is (= 0 (screen-cursor-x s))
         "cursor-cbt must not go past column 0")))
@@ -210,7 +212,7 @@
 (test cursor-cbt-zero-treated-as-one
   :description "cursor-cbt 0 moves back one tab stop."
   (with-screen (s 40 5)
-    (setf (cl-tmux/terminal/types::screen-cx s) 16)
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 16)
     (cl-tmux/terminal/actions:cursor-cbt s 0)
     (is (= 8 (screen-cursor-x s))
         "cursor-cbt 0 must move back one tab stop")))
@@ -220,7 +222,7 @@
 (test cursor-ri-moves-up-within-region
   :description "cursor-ri moves the cursor up one row when not at the scroll-top."
   (with-screen (s 10 10)
-    (setf (cl-tmux/terminal/types::screen-cy s) 5)
+    (setf (cl-tmux/terminal/types:screen-cursor-y s) 5)
     (cl-tmux/terminal/actions:cursor-ri s)
     (is (= 4 (screen-cursor-y s))
         "cursor-ri from row 5 must move to row 4")))
@@ -241,7 +243,7 @@
   (with-screen (s 10 10)
     (setf (cl-tmux/terminal/types::screen-scroll-top    s) 3
           (cl-tmux/terminal/types::screen-scroll-bottom s) 7)
-    (setf (cl-tmux/terminal/types::screen-cy s) 3)   ; at scroll-top
+    (setf (cl-tmux/terminal/types:screen-cursor-y s) 3)   ; at scroll-top
     (cl-tmux/terminal/actions:cursor-ri s)
     ;; cursor stays at scroll-top (scroll happened, not cursor move)
     (is (= 3 (screen-cursor-y s))
@@ -335,18 +337,43 @@
     (is (row-blank-p s 1)
         "row 1 must stay blank when autowrap is off")))
 
-;;; ── define-cursor-movements macro ────────────────────────────────────────────
+;;; ── cursor movement behavioral tests ────────────────────────────────────────
+;;;
+;;; These tests verify observable behavior: that cursor-up, cursor-down,
+;;; cursor-left, and cursor-right actually move the cursor as documented.
+;;; They replace implementation-probing tests that only checked fbound status.
 
-(test define-cursor-movements-macro-is-defined
-  "define-cursor-movements is a defined macro in the actions package."
-  (is (macro-function 'cl-tmux/terminal/actions::define-cursor-movements)))
+(test cursor-up-moves-cursor-by-n-rows
+  "cursor-up N decrements the cursor row by N (within the scroll region)."
+  (with-screen (s 10 10)
+    (setf (cl-tmux/terminal/types::screen-cursor-y s) 6)
+    (cl-tmux/terminal/actions:cursor-up s 2)
+    (is (= 4 (screen-cursor-y s))
+        "cursor-up 2 from row 6 must reach row 4, got ~D" (screen-cursor-y s))))
 
-(test define-cursor-movements-generates-all-four-functions
-  "The four cursor movement functions are all fbound (generated by the macro)."
-  (is (fboundp 'cl-tmux/terminal/actions:cursor-up)    "cursor-up must be fbound")
-  (is (fboundp 'cl-tmux/terminal/actions:cursor-down)  "cursor-down must be fbound")
-  (is (fboundp 'cl-tmux/terminal/actions:cursor-right) "cursor-right must be fbound")
-  (is (fboundp 'cl-tmux/terminal/actions:cursor-left)  "cursor-left must be fbound"))
+(test cursor-down-moves-cursor-by-n-rows
+  "cursor-down N increments the cursor row by N (within the scroll region)."
+  (with-screen (s 10 10)
+    (setf (cl-tmux/terminal/types::screen-cursor-y s) 3)
+    (cl-tmux/terminal/actions:cursor-down s 3)
+    (is (= 6 (screen-cursor-y s))
+        "cursor-down 3 from row 3 must reach row 6, got ~D" (screen-cursor-y s))))
+
+(test cursor-left-moves-cursor-by-n-columns
+  "cursor-left N decrements the cursor column by N."
+  (with-screen (s 10 10)
+    (setf (cl-tmux/terminal/types::screen-cursor-x s) 7)
+    (cl-tmux/terminal/actions:cursor-left s 3)
+    (is (= 4 (screen-cursor-x s))
+        "cursor-left 3 from col 7 must reach col 4, got ~D" (screen-cursor-x s))))
+
+(test cursor-right-moves-cursor-by-n-columns
+  "cursor-right N increments the cursor column by N."
+  (with-screen (s 10 10)
+    (setf (cl-tmux/terminal/types::screen-cursor-x s) 2)
+    (cl-tmux/terminal/actions:cursor-right s 4)
+    (is (= 6 (screen-cursor-x s))
+        "cursor-right 4 from col 2 must reach col 6, got ~D" (screen-cursor-x s))))
 
 ;;; ── SUITE: %place-wide-char ──────────────────────────────────────────────────
 
@@ -393,8 +420,8 @@
     (dolist (c cases)
       (destructuring-bind (sx sy dir n ex ey) c
         (with-screen (s 10 10)
-          (setf (cl-tmux/terminal/types::screen-cx s) sx
-                (cl-tmux/terminal/types::screen-cy s) sy)
+          (setf (cl-tmux/terminal/types:screen-cursor-x s) sx
+                (cl-tmux/terminal/types:screen-cursor-y s) sy)
           (ecase dir
             (up    (cl-tmux/terminal/actions:cursor-up    s n))
             (down  (cl-tmux/terminal/actions:cursor-down  s n))
@@ -406,3 +433,199 @@
           (is (= ey (screen-cursor-y s))
               "cursor-y after ~A from (~D,~D) expected ~D got ~D"
               dir sx sy ey (screen-cursor-y s)))))))
+
+;;; ── SUITE: combining-char-p predicate ───────────────────────────────────────
+;;;
+;;; combining-char-p is exported from cl-tmux/terminal/actions and must return
+;;; T only for Unicode combining marks (category M*).
+
+(def-suite combining-char-p-suite
+  :description "combining-char-p predicate: true for combining marks, false otherwise"
+  :in terminal-suite)
+(in-suite combining-char-p-suite)
+
+(test combining-char-p-returns-true-for-combining-diacritical-marks
+  :description "combining-char-p returns T for code points in the Combining Diacritical Marks block (U+0300-U+036F)."
+  (is (cl-tmux/terminal/actions:combining-char-p (code-char #x0300))
+      "U+0300 (combining grave accent) must be a combining character")
+  (is (cl-tmux/terminal/actions:combining-char-p (code-char #x036F))
+      "U+036F (last in block) must be a combining character"))
+
+(test combining-char-p-returns-true-for-combining-half-marks
+  :description "combining-char-p returns T for code points in the Combining Half Marks block (U+FE20-U+FE2F)."
+  (is (cl-tmux/terminal/actions:combining-char-p (code-char #xFE20))
+      "U+FE20 must be a combining character")
+  (is (cl-tmux/terminal/actions:combining-char-p (code-char #xFE2F))
+      "U+FE2F must be a combining character"))
+
+(test combining-char-p-returns-false-for-ascii-printable
+  :description "combining-char-p returns NIL for ordinary ASCII characters."
+  (is-false (cl-tmux/terminal/actions:combining-char-p #\A)
+            "ASCII 'A' must not be a combining character")
+  (is-false (cl-tmux/terminal/actions:combining-char-p #\Space)
+            "ASCII space must not be a combining character")
+  (is-false (cl-tmux/terminal/actions:combining-char-p #\Null)
+            "NUL must not be a combining character"))
+
+(test combining-char-p-table-driven
+  :description "Table-driven test across all five combining ranges."
+  ;; Each entry: (code-point expected-result description)
+  (let ((cases
+         `((#x0300 t   "combining grave accent — Diacritical Marks start")
+           (#x036F t   "combining latin small letter x — Diacritical Marks end")
+           (#x0370 nil "greek capital letter Heta — just after Diacritical Marks")
+           (#x1AB0 t   "combining doubled circumflex accent — Extended start")
+           (#x1AFF t   "last code in Extended block")
+           (#x20D0 t   "combining left harpoon above — Marks for Symbols start")
+           (#x20FF t   "last code in Marks for Symbols block")
+           (#x0041 nil "ASCII A — not a combining character"))))
+    (dolist (c cases)
+      (destructuring-bind (cp expected description) c
+        (let ((ch (code-char cp)))
+          (if expected
+              (is (cl-tmux/terminal/actions:combining-char-p ch)
+                  "U+~4,'0X should be a combining char: ~A" cp description)
+              (is-false (cl-tmux/terminal/actions:combining-char-p ch)
+                        "U+~4,'0X should NOT be a combining char: ~A" cp description)))))))
+
+;;; ── SUITE: write-char-at-cursor combining-char path ─────────────────────────
+;;;
+;;; When write-char-at-cursor receives a combining mark, it must:
+;;;   1. Append the mark to the previous cell's combining slot.
+;;;   2. NOT advance the cursor.
+;;;   3. Mark the screen dirty.
+
+(def-suite write-char-combining-suite
+  :description "write-char-at-cursor: combining character appended to previous cell"
+  :in terminal-suite)
+(in-suite write-char-combining-suite)
+
+(test write-char-at-cursor-combining-does-not-advance-cursor
+  :description "Writing a combining mark does not advance the cursor."
+  (with-screen (s 10 5)
+    (feed s "a")                          ; cursor at col 1
+    ;; Feed a combining acute accent (U+0301) directly
+    (cl-tmux/terminal/actions:write-char-at-cursor s (code-char #x0301))
+    ;; Cursor must not have moved
+    (check-cursor s 1 0)))
+
+(test write-char-at-cursor-combining-appended-to-cell
+  :description "A combining mark is appended to the combining slot of the previous cell."
+  (with-screen (s 10 5)
+    ;; Write 'a', then a combining acute accent
+    (cl-tmux/terminal/actions:write-char-at-cursor s #\a)
+    (cl-tmux/terminal/actions:write-char-at-cursor s (code-char #x0301))
+    (let ((cell (screen-cell s 0 0)))
+      ;; The base char must still be 'a'
+      (is (char= #\a (cell-char cell))
+          "base cell char must remain 'a' after combining mark")
+      ;; The combining slot must contain the diacritic
+      (is (member (code-char #x0301)
+                  (cl-tmux/terminal/types:cell-combining cell))
+          "combining slot must contain the acute accent (U+0301)"))))
+
+(test write-char-at-cursor-combining-at-col-zero-uses-col-zero
+  :description "A combining mark at cursor col 0 is appended to col 0 (no prev cell)."
+  (with-screen (s 10 5)
+    ;; With cursor at col 0, a combining mark attaches to col 0.
+    (cl-tmux/terminal/actions:write-char-at-cursor s (code-char #x0300))
+    ;; Cursor stays at 0
+    (check-cursor s 0 0)
+    ;; No crash and screen is dirty
+    (is (cl-tmux/terminal/types:screen-dirty-p s)
+        "screen must be marked dirty after combining mark write")))
+
+;;; ── SUITE: DEC special graphics charset remapping ────────────────────────────
+;;;
+;;; When screen-charset = :dec-graphics, write-char-at-cursor remaps characters
+;;; through %dec-graphics-char before placing them on the grid.
+
+(def-suite dec-graphics-suite
+  :description "DEC special graphics charset: character remapping via set-charset"
+  :in terminal-suite)
+(in-suite dec-graphics-suite)
+
+(test set-charset-dec-graphics-remaps-box-drawing
+  :description "After set-charset :dec-graphics, writing 'j' places the box-drawing corner U+2518."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/actions:set-charset s :dec-graphics)
+    (cl-tmux/terminal/actions:write-char-at-cursor s #\j)
+    ;; 'j' maps to U+2518 (LOWER RIGHT CORNER ┘)
+    (is (char= #\┘ (char-at s 0 0))
+        "DEC graphics: 'j' must map to '┘' (U+2518), got ~C"
+        (char-at s 0 0))))
+
+(test set-charset-dec-graphics-remaps-horizontal-line
+  :description "After set-charset :dec-graphics, writing 'q' places the horizontal line U+2500."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/actions:set-charset s :dec-graphics)
+    (cl-tmux/terminal/actions:write-char-at-cursor s #\q)
+    ;; 'q' maps to U+2500 (BOX DRAWINGS LIGHT HORIZONTAL ─)
+    (is (char= #\─ (char-at s 0 0))
+        "DEC graphics: 'q' must map to '─' (U+2500), got ~C"
+        (char-at s 0 0))))
+
+(test set-charset-ascii-no-remapping
+  :description "After set-charset :ascii (default), characters are written unchanged."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/actions:set-charset s :ascii)
+    (cl-tmux/terminal/actions:write-char-at-cursor s #\j)
+    ;; In ASCII mode, 'j' is 'j'
+    (is (char= #\j (char-at s 0 0))
+        "ASCII charset: 'j' must remain 'j', got ~C"
+        (char-at s 0 0))))
+
+(test set-charset-dec-graphics-table-driven
+  :description "Table-driven DEC graphics remapping for all documented mappings."
+  ;; Each entry: (input-char expected-char description)
+  (let ((cases '((#\j #\┘ "lower-right corner")
+                 (#\k #\┐ "upper-right corner")
+                 (#\l #\┌ "upper-left corner")
+                 (#\m #\└ "lower-left corner")
+                 (#\n #\┼ "crossing")
+                 (#\t #\├ "left tee")
+                 (#\u #\┤ "right tee")
+                 (#\v #\┴ "bottom tee")
+                 (#\w #\┬ "top tee")
+                 (#\q #\─ "horizontal line")
+                 (#\x #\│ "vertical line")
+                 (#\a #\▒ "checkerboard")
+                 (#\` #\◆ "diamond"))))
+    (dolist (entry cases)
+      (destructuring-bind (in expected desc) entry
+        (with-screen (s 10 5)
+          (cl-tmux/terminal/actions:set-charset s :dec-graphics)
+          (cl-tmux/terminal/actions:write-char-at-cursor s in)
+          (is (char= expected (char-at s 0 0))
+              "DEC graphics ~C: expected ~C got ~C (~A)"
+              in expected (char-at s 0 0) desc))))))
+
+(test set-charset-dec-graphics-unmapped-char-passes-through
+  :description "Characters not in the DEC graphics table pass through unchanged."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/actions:set-charset s :dec-graphics)
+    ;; '#\z' is not in the DEC graphics table
+    (cl-tmux/terminal/actions:write-char-at-cursor s #\z)
+    (is (char= #\z (char-at s 0 0))
+        "unmapped DEC graphics char 'z' must pass through unchanged")))
+
+(test dec-graphics-activated-via-esc-sequence
+  :description "ESC ( 0 activates DEC graphics charset; subsequent chars are remapped."
+  (with-screen (s 10 5)
+    ;; ESC ( 0 = G0 charset select, DEC special graphics
+    (feed s (esc "(0"))
+    ;; Write 'j' — should appear as box-drawing corner
+    (feed s "j")
+    (is (char= #\┘ (char-at s 0 0))
+        "ESC ( 0 + 'j' must render as '┘', got ~C"
+        (char-at s 0 0))))
+
+(test dec-graphics-deactivated-via-esc-sequence
+  :description "ESC ( B restores ASCII charset; characters are no longer remapped."
+  (with-screen (s 10 5)
+    (feed s (esc "(0"))   ; enable DEC graphics
+    (feed s (esc "(B"))   ; restore ASCII
+    (feed s "j")          ; now plain ASCII 'j'
+    (is (char= #\j (char-at s 0 0))
+        "ESC ( B + 'j' must render as 'j', got ~C"
+        (char-at s 0 0))))

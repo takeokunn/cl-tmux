@@ -1,12 +1,15 @@
 (in-package #:cl-tmux/buffer)
 
+(defconstant +default-buffer-limit+ 50
+  "Fallback capacity for the paste-buffer ring when buffer-limit has not been configured.")
+
 (defvar *paste-buffers* nil
   "List of paste buffer strings, most recent first.")
 
 (defun %buffer-limit ()
-  "Return the configured buffer-limit, defaulting to 50 when options are not yet initialised."
+  "Return the configured buffer-limit, defaulting to +default-buffer-limit+ when options are not yet initialised."
   (or (ignore-errors (cl-tmux/options:get-option "buffer-limit"))
-      50))
+      +default-buffer-limit+))
 
 (defun add-paste-buffer (text)
   "Push TEXT onto *paste-buffers*, keeping at most buffer-limit entries. Return TEXT."

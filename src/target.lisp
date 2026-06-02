@@ -15,6 +15,12 @@
 ;;;;   Any component may be absent; absent parts default to the current
 ;;;;   session/window/pane.
 
+;;; ── Pure helper ──────────────────────────────────────────────────────────────
+
+(defun %non-empty (string)
+  "Return STRING when it is a non-empty string, otherwise NIL."
+  (when (and string (plusp (length string))) string))
+
 ;;; ── Pure: parse a raw target string into three string components ─────────────
 
 (defun %parse-session-component (target-string colon-pos dot-pos)
@@ -23,12 +29,11 @@
    When no colon is present, the session is the text before the dot (or the
    whole string when no dot is present either).
    Returns a non-empty string or NIL."
-  (flet ((non-empty (s) (when (and s (plusp (length s))) s)))
-    (if colon-pos
-        (non-empty (subseq target-string 0 colon-pos))
-        (non-empty (if dot-pos
-                       (subseq target-string 0 dot-pos)
-                       target-string)))))
+  (if colon-pos
+      (%non-empty (subseq target-string 0 colon-pos))
+      (%non-empty (if dot-pos
+                      (subseq target-string 0 dot-pos)
+                      target-string))))
 
 (defun %parse-target (target-string)
   "Split TARGET-STRING into (values session-str window-str pane-str).
@@ -40,21 +45,20 @@
   (when (or (null target-string) (string= target-string ""))
     (return-from %parse-target (values nil nil nil)))
   (let* ((colon-pos (position #\: target-string))
-         (dot-pos   (position #\. target-string :start (or colon-pos 0))))
-    (flet ((non-empty (s) (when (and s (plusp (length s))) s)))
-      (let* ((win-raw  (cond
-                         ;; Both colon and dot: window is between them.
-                         ((and colon-pos dot-pos)
-                          (subseq target-string (1+ colon-pos) dot-pos))
-                         ;; Colon but no dot: window is everything after colon.
-                         (colon-pos
-                          (subseq target-string (1+ colon-pos)))
-                         ;; No colon — no window component.
-                         (t nil)))
-             (pane-raw (when dot-pos
-                         (subseq target-string (1+ dot-pos))))
-             (sess-str (%parse-session-component target-string colon-pos dot-pos)))
-        (values sess-str (non-empty win-raw) (non-empty pane-raw))))))
+         (dot-pos   (position #\. target-string :start (or colon-pos 0)))
+         (win-raw   (cond
+                      ;; Both colon and dot: window is between them.
+                      ((and colon-pos dot-pos)
+                       (subseq target-string (1+ colon-pos) dot-pos))
+                      ;; Colon but no dot: window is everything after colon.
+                      (colon-pos
+                       (subseq target-string (1+ colon-pos)))
+                      ;; No colon — no window component.
+                      (t nil)))
+         (pane-raw  (when dot-pos
+                      (subseq target-string (1+ dot-pos))))
+         (sess-str  (%parse-session-component target-string colon-pos dot-pos)))
+    (values sess-str (%non-empty win-raw) (%non-empty pane-raw))))
 
 ;;; ── define-target-lookup — Prolog-style sequential rule dispatch ─────────────
 ;;;
@@ -70,7 +74,7 @@
      (:nil-guard EXPR)  -- return NIL early when EXPR is NIL
      (TEST-EXPR)        -- return TEST-EXPR when it is non-NIL
    Rules are tried in order.  Returns NIL when no rule matches."
-  (let* ((docstring (when (stringp (first rules)) (first rules)))
+  (let* ((docstring    (when (stringp (first rules)) (first rules)))
          (actual-rules (if docstring (rest rules) rules)))
     `(defun ,name ,lambda-list
        ,@(when docstring (list docstring))
@@ -126,9 +130,9 @@
      (when (and idx (>= idx 0) (< idx (length wins)))
        (nth idx wins))))
   ((let ((wins (session-windows session)))
-     (loop for w in wins
-           when (%name-prefix-p target-str (window-name w))
-             return w))))
+     (loop for window in wins
+           when (%name-prefix-p target-str (window-name window))
+             return window))))
 
 ;;; ── Find: pane lookup ────────────────────────────────────────────────────────
 

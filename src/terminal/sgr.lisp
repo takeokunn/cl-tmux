@@ -11,15 +11,7 @@
 ;;; These three inline functions separate the HOW (bit manipulation) from the
 ;;; WHAT (which SGR code means what), keeping the rule table below readable.
 
-(declaim (inline reset-sgr attr-on attr-off attr2-on attr2-off))
-
-(defun reset-sgr (screen)
-  "Reset all SGR attributes to their default values."
-  (setf (screen-cur-fg       screen) 7
-        (screen-cur-bg       screen) 0
-        (screen-cur-attrs    screen) 0
-        (screen-cur-attrs2   screen) 0
-        (screen-cur-ul-color screen) 0))
+(declaim (inline attr-on attr-off attr2-on attr2-off))
 
 (defun attr-on (screen bit)
   "Enable SGR attribute BIT on SCREEN."
@@ -66,7 +58,7 @@
 
 (define-sgr-rules
   ;; ── Reset ─────────────────────────────────────────────────────────────────
-  ((= p 0)   (reset-sgr screen))
+  ((= p 0)   (reset-sgr-pen screen))
 
   ;; ── Attributes on ─────────────────────────────────────────────────────────
   ((= p 1)   (attr-on screen +attr-bold+))
@@ -149,33 +141,33 @@
      38;5;N / 48;5;N   — 256-color fg/bg (N clamped to 0-255)
      38;2;R;G;B / 48;2;R;G;B — true-color fg/bg (stored as #x1RRGGBB;
                                 bit 24 is the true-color flag)"
-  (labels ((consume (ps)
-             (when ps
-               (let ((p (first ps)))
+  (labels ((consume (params-tail)
+             (when params-tail
+               (let ((p (first params-tail)))
                  (cond
                    ;; 256-color foreground: 38;5;N
-                   ((and (= p 38) (eql (second ps) 5) (third ps))
-                    (setf (screen-cur-fg screen) (clamp (third ps) 0 255))
-                    (consume (cdddr ps)))
+                   ((and (= p 38) (eql (second params-tail) 5) (third params-tail))
+                    (setf (screen-cur-fg screen) (clamp (third params-tail) 0 255))
+                    (consume (cdddr params-tail)))
                    ;; True-color foreground: 38;2;R;G;B → store as #x1RRGGBB
                    ;; Each component is clamped to 0-255 to stay within (unsigned-byte 25).
-                   ((and (= p 38) (eql (second ps) 2) (cddr ps))
-                    (consume (%set-truecolor screen #'(setf screen-cur-fg) ps)))
+                   ((and (= p 38) (eql (second params-tail) 2) (cddr params-tail))
+                    (consume (%set-truecolor screen #'(setf screen-cur-fg) params-tail)))
                    ;; 256-color background: 48;5;N
-                   ((and (= p 48) (eql (second ps) 5) (third ps))
-                    (setf (screen-cur-bg screen) (clamp (third ps) 0 255))
-                    (consume (cdddr ps)))
+                   ((and (= p 48) (eql (second params-tail) 5) (third params-tail))
+                    (setf (screen-cur-bg screen) (clamp (third params-tail) 0 255))
+                    (consume (cdddr params-tail)))
                    ;; True-color background: 48;2;R;G;B → store as #x1RRGGBB
-                   ((and (= p 48) (eql (second ps) 2) (cddr ps))
-                    (consume (%set-truecolor screen #'(setf screen-cur-bg) ps)))
+                   ((and (= p 48) (eql (second params-tail) 2) (cddr params-tail))
+                    (consume (%set-truecolor screen #'(setf screen-cur-bg) params-tail)))
                    ;; Underline-color 256: 58;5;N
-                   ((and (= p 58) (eql (second ps) 5) (third ps))
-                    (setf (screen-cur-ul-color screen) (clamp (third ps) 0 255))
-                    (consume (cdddr ps)))
+                   ((and (= p 58) (eql (second params-tail) 5) (third params-tail))
+                    (setf (screen-cur-ul-color screen) (clamp (third params-tail) 0 255))
+                    (consume (cdddr params-tail)))
                    ;; Underline-color true-color: 58;2;R;G;B
-                   ((and (= p 58) (eql (second ps) 2) (cddr ps))
-                    (consume (%set-truecolor screen #'(setf screen-cur-ul-color) ps)))
+                   ((and (= p 58) (eql (second params-tail) 2) (cddr params-tail))
+                    (consume (%set-truecolor screen #'(setf screen-cur-ul-color) params-tail)))
                    (t
                     (%dispatch-sgr-code screen p)
-                    (consume (rest ps))))))))
+                    (consume (rest params-tail))))))))
     (consume (or params '(0)))))

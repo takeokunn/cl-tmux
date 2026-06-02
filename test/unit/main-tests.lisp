@@ -150,16 +150,20 @@
 ;;; ── *startup-modes* data table ───────────────────────────────────────────────
 
 (test startup-modes-contains-server-attach-and-attach-session
-  "*startup-modes* has symbol handler entries for server, attach, and attach-session."
+  "*startup-modes* has handler entries for server, attach, and attach-session."
   (is (assoc "server" cl-tmux::*startup-modes* :test #'equal)
       "*startup-modes* must have a 'server' entry")
   (is (assoc "attach" cl-tmux::*startup-modes* :test #'equal)
       "*startup-modes* must have an 'attach' entry")
   (is (assoc "attach-session" cl-tmux::*startup-modes* :test #'equal)
       "*startup-modes* must have an 'attach-session' entry")
+  ;; Each entry's cdr is a list starting with the handler symbol.
   (dolist (name '("server" "attach" "attach-session"))
-    (is (symbolp (cdr (assoc name cl-tmux::*startup-modes* :test #'equal)))
-        "~A handler must be a symbol (for stub-friendly dispatch)" name)))
+    (let ((entry (cdr (assoc name cl-tmux::*startup-modes* :test #'equal))))
+      (is (consp entry)
+          "~A entry cdr must be a list" name)
+      (is (symbolp (first entry))
+          "~A handler (first of cdr) must be a symbol for stub-friendly dispatch" name))))
 
 ;;; ── %startup-mode-raw-args-p ────────────────────────────────────────────────
 
@@ -214,3 +218,80 @@
         (cl-tmux::%parse-attach-flags '("-t" "sess1" "-d"))
       (is (string= name1 name2) "name must match regardless of flag order")
       (is (eq detach1 detach2)  "detach must match regardless of flag order"))))
+
+;;; ── define-flag-parser macro expansion tests ─────────────────────────────────
+
+(test define-flag-parser-generates-defun
+  "define-flag-parser expands to a DEFUN form."
+  (let* ((expansion (macroexpand-1
+                     '(cl-tmux::define-flag-parser %test-parser
+                          ((myvar nil))
+                        (:bool "-x" myvar))))
+         (text (prin1-to-string expansion)))
+    (is-true (search "DEFUN" text)
+             "define-flag-parser must expand to a DEFUN")))
+
+(test define-flag-parser-value-flag-advances-index
+  "A :value flag parser consumes two arguments (flag + value)."
+  ;; %parse-attach-flags is generated with a :value spec for -t.
+  ;; Passing a vector with -t and a value should consume both.
+  (multiple-value-bind (name _d _r)
+      (cl-tmux::%parse-attach-flags '("-t" "myval"))
+    (is (string= "myval" name)
+        ":value flag must capture the next argument as the variable value")))
+
+(test define-flag-parser-bool-flag-does-not-advance-past-flag
+  "A :bool flag parser consumes only the flag token itself, not the next argument."
+  ;; After -d, the next element is not a flag → it is an unknown flag, silently consumed.
+  (multiple-value-bind (_n detach _r)
+      (cl-tmux::%parse-attach-flags '("-d" "extra"))
+    (is-true detach ":bool flag must set the variable to T")))
+
+(test define-flag-parser-unknown-flag-at-end-does-not-error
+  "An unknown flag appearing as the last argument is silently ignored."
+  (finishes (cl-tmux::%parse-attach-flags '("-z"))
+            "unknown last flag must not error"))
+
+;;; ── *startup-modes* table structure tests ────────────────────────────────────
+
+(test startup-modes-attach-session-has-raw-args-key
+  "The 'attach-session' entry in *startup-modes* carries :raw-args-p T."
+  (let ((entry (cdr (assoc "attach-session" cl-tmux::*startup-modes* :test #'equal))))
+    (is-true (getf (rest entry) :raw-args-p)
+             "attach-session entry must have :raw-args-p T")))
+
+(test startup-modes-server-handler-is-run-server
+  "The 'server' entry in *startup-modes* names run-server as its handler."
+  (let ((entry (cdr (assoc "server" cl-tmux::*startup-modes* :test #'equal))))
+    (is (eq 'cl-tmux::run-server (first entry))
+        "server entry handler must be run-server")))
+
+(test startup-modes-attach-handler-is-run-attach-simple
+  "The 'attach' entry in *startup-modes* names run-attach-simple as its handler."
+  (let ((entry (cdr (assoc "attach" cl-tmux::*startup-modes* :test #'equal))))
+    (is (eq 'cl-tmux::run-attach-simple (first entry))
+        "attach entry handler must be run-attach-simple")))
+
+;;; ── server-socket-poll constants ─────────────────────────────────────────────
+
+(test server-socket-poll-constants-are-positive
+  "+server-socket-poll-interval-seconds+ and +server-socket-poll-max-iterations+
+   are positive numbers used to bound the server-start wait loop."
+  (is (plusp cl-tmux::+server-socket-poll-interval-seconds+)
+      "+server-socket-poll-interval-seconds+ must be positive")
+  (is (plusp cl-tmux::+server-socket-poll-max-iterations+)
+      "+server-socket-poll-max-iterations+ must be positive")
+  (is (integerp cl-tmux::+server-socket-poll-max-iterations+)
+      "+server-socket-poll-max-iterations+ must be an integer"))
+
+;;; ── run-attach-simple and run-attach-with-flags reachability ─────────────────
+
+(test run-attach-simple-is-fbound
+  "run-attach-simple is defined as a function."
+  (is (fboundp 'cl-tmux::run-attach-simple)
+      "run-attach-simple must be fbound"))
+
+(test run-attach-with-flags-is-fbound
+  "run-attach-with-flags is defined as a function."
+  (is (fboundp 'cl-tmux::run-attach-with-flags)
+      "run-attach-with-flags must be fbound"))

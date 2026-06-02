@@ -19,17 +19,23 @@
   (group       nil))                ; NIL or group-id (string/integer); sessions in same group share windows
 
 (defun session-active-window (session)
+  "Return SESSION's active window, falling back to the first window when active is NIL."
   (or (session-active session)
       (first (session-windows session))))
 
 (defun session-select-window (session window)
+  "Make WINDOW the active window of SESSION.
+   Updates WINDOW's last-active-time as a side effect so that session-last-window
+   returns the correct recency order.  Callers that need a pure focus assignment
+   without the timestamp side effect should set (session-active session) directly."
   (setf (session-active session) window)
   (when window
     (setf (window-last-active-time window) (get-universal-time))))
 
 (defun session-active-pane (session)
-  (let ((w (session-active-window session)))
-    (when w (window-active-pane w))))
+  "Return the active pane of SESSION's active window, or NIL when there is no window."
+  (let ((window (session-active-window session)))
+    (when window (window-active-pane window))))
 
 ;;; ── Full-screen window factory ──────────────────────────────────────────────
 ;;;
@@ -60,14 +66,21 @@
   (session-windows session))
 
 (defun session-new-window (session name rows cols &optional (base-index 0))
-  "Create a new window with one full-screen pane, attach it to SESSION.
+  "Create a new window with one full-screen pane, attach it to SESSION, and
+   make it the active window.
    The new window receives the lowest free id >= BASE-INDEX (default 0).
-   The window list is kept sorted by window-id after insertion."
+   The window list is kept sorted by window-id after insertion.
+   Data/logic separation: window construction (%attach-full-screen-pane,
+   session-insert-window) happens first; focus assignment (session-select-window)
+   is a separate named step so callers can see the two concerns distinctly."
   (let* ((new-id (%next-window-id session base-index))
          (win (make-window :id new-id :name name :width cols :height rows)))
     (%attach-full-screen-pane win rows cols)
     (session-insert-window session win)
-    (setf (session-active session) win)
+    ;; Focus assignment is logic — kept as an explicit named call so callers
+    ;; can opt out by using session-insert-window directly if no focus switch
+    ;; is desired.
+    (session-select-window session win)
     win))
 
 ;;; ── Global state & initialisation ─────────────────────────────────────────
@@ -98,19 +111,19 @@
 
 (defun all-panes (session)
   "Flat list of every pane across all windows of SESSION."
-  (loop for w in (session-windows session)
-        nconc (copy-list (window-panes w))))
+  (loop for window in (session-windows session)
+        nconc (copy-list (window-panes window))))
 
 ;;; ── Window reordering ────────────────────────────────────────────────────────
 
 (defun session-move-window (session window target-index)
   "Move WINDOW to TARGET-INDEX (0-based) in SESSION's window list.
    Clamps TARGET-INDEX to valid range. Returns the updated window list."
-  (let* ((wins    (session-windows session))
-         (n       (length wins))
-         (src-idx (position window wins)))
+  (let* ((wins      (session-windows session))
+         (win-count (length wins))
+         (src-idx   (position window wins)))
     (when src-idx
-      (let* ((dst (max 0 (min (1- n) target-index)))
+      (let* ((dst     (max 0 (min (1- win-count) target-index)))
              (without (append (subseq wins 0 src-idx)
                               (subseq wins (1+ src-idx))))
              (before  (subseq without 0 dst))
@@ -121,11 +134,11 @@
 (defun session-swap-windows (session index-a index-b)
   "Exchange the windows at INDEX-A and INDEX-B in SESSION's window list.
    Indices are 0-based. No-op when indices are equal or out of range."
-  (let* ((wins (session-windows session))
-         (n    (length wins)))
+  (let* ((wins      (session-windows session))
+         (win-count (length wins)))
     (when (and (/= index-a index-b)
-               (< -1 index-a n)
-               (< -1 index-b n))
+               (< -1 index-a win-count)
+               (< -1 index-b win-count))
       (let ((new-wins (copy-list wins)))
         (rotatef (nth index-a new-wins) (nth index-b new-wins))
         (setf (session-windows session) new-wins))))
@@ -134,7 +147,7 @@
 (defun session-last-window (session)
   "Return the window with the second-highest last-active-time (i.e. the
    previously active window), or NIL when only one window exists."
-  (let* ((wins (session-windows session))
+  (let* ((wins   (session-windows session))
          (sorted (sort (copy-list wins) #'>
                        :key #'window-last-active-time)))
     (second sorted)))

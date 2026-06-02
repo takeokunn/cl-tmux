@@ -36,10 +36,10 @@
   "The active overlay split into a list of lines, or NIL when inactive."
   (when *overlay*
     (loop with text = *overlay*
-          for start = 0 then (1+ nl)
-          for nl = (position #\Newline text :start start)
-          collect (subseq text start (or nl (length text)))
-          while nl)))
+          for start = 0 then (1+ newline-pos)
+          for newline-pos = (position #\Newline text :start start)
+          collect (subseq text start (or newline-pos (length text)))
+          while newline-pos)))
 
 (defun overlay-scroll (delta)
   "Scroll the active overlay by DELTA lines (positive = down, negative = up).
@@ -52,12 +52,18 @@
 
 ;;; -- Popup overlay -----------------------------------------------------------
 
+(defconstant +default-popup-width+  40
+  "Default width (columns) for a newly created popup overlay.")
+
+(defconstant +default-popup-height+ 10
+  "Default height (rows) for a newly created popup overlay.")
+
 (defstruct popup
   "A floating overlay window with its own PTY and screen."
   (x 0 :type fixnum)
   (y 0 :type fixnum)
-  (width 40 :type fixnum)
-  (height 10 :type fixnum)
+  (width  +default-popup-width+  :type fixnum)
+  (height +default-popup-height+ :type fixnum)
   (screen nil)             ; screen struct for the popup (or NIL for text-only)
   (pane   nil)             ; pane struct for the popup (or NIL for text-only)
   (title  "" :type string)

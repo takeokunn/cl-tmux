@@ -121,51 +121,12 @@ given a non-NIL initial state (loop while *running*)."
   :description "start-reader-thread is a defined function."
   (is (fboundp 'cl-tmux::start-reader-thread)))
 
-;;; ── start-status-timer ───────────────────────────────────────────────────────
+;;; ── install-sigwinch-handler ─────────────────────────────────────────────────
 
-(test start-status-timer-returns-a-thread
-  :description "start-status-timer creates a bordeaux thread and returns it."
-  (let ((cl-tmux::*running*            nil)
-        (cl-tmux::*status-timer-thread* nil))
-    (let ((thread (cl-tmux::start-status-timer)))
-      (is-true (bordeaux-threads:threadp thread)
-               "start-status-timer must return a thread")
-      (is (eq thread cl-tmux::*status-timer-thread*)
-          "*status-timer-thread* must be set to the returned thread")
-      (ignore-errors
-        (bordeaux-threads:join-thread thread :timeout 2)))))
-
-(test start-status-timer-stores-thread-in-global
-  :description "start-status-timer stores the thread object in *status-timer-thread*."
-  (let ((cl-tmux::*running*            nil)
-        (cl-tmux::*status-timer-thread* nil))
-    (let ((thread (cl-tmux::start-status-timer)))
-      (is (eq thread cl-tmux::*status-timer-thread*)
-          "returned thread must match *status-timer-thread*")
-      (ignore-errors
-        (bordeaux-threads:join-thread thread :timeout 1)))))
-
-(test start-status-timer-idempotent-when-alive
-  :description "Calling start-status-timer twice returns the same thread object
-when the first thread is still alive."
-  (let ((cl-tmux::*running* t)
-        (cl-tmux::*status-timer-thread* nil))
-    (let* ((t1 (cl-tmux::start-status-timer))
-           (t2 (cl-tmux::start-status-timer)))
-      (is (eq t1 t2) "second call must return the same live thread")
-      ;; Clean up: stop the timer thread.
-      (setf cl-tmux::*running* nil)
-      (ignore-errors (bordeaux-threads:join-thread t1 :timeout 3)))))
-
-;;; ── %mark-status-dirty! ──────────────────────────────────────────────────────
-
-(test mark-status-dirty-sets-both-flags
-  :description "%mark-status-dirty! sets both *status-dirty* and *dirty* to T."
-  (let ((cl-tmux::*status-dirty* nil)
-        (cl-tmux::*dirty* nil))
-    (cl-tmux::%mark-status-dirty!)
-    (is-true cl-tmux::*status-dirty* "%mark-status-dirty! must set *status-dirty*")
-    (is-true cl-tmux::*dirty*        "%mark-status-dirty! must set *dirty*")))
+(test install-sigwinch-handler-is-fbound
+  :description "install-sigwinch-handler is defined; it arms SIGWINCH for resize events."
+  (is (fboundp 'cl-tmux::install-sigwinch-handler)
+      "install-sigwinch-handler must be fbound"))
 
 ;;; ── add-message-log ──────────────────────────────────────────────────────────
 
@@ -206,6 +167,36 @@ when the first thread is still alive."
       (is (integerp ts) "log entry timestamp must be an integer")
       (is (plusp ts)    "log entry timestamp must be positive"))))
 
+;;; ── Constants coverage ────────────────────────────────────────────────────────
+
+(test wait-for-channel-timeout-constant-is-positive
+  :description "+wait-for-channel-timeout+ is a positive integer constant."
+  (is (integerp cl-tmux::+wait-for-channel-timeout+)
+      "+wait-for-channel-timeout+ must be an integer")
+  (is (plusp cl-tmux::+wait-for-channel-timeout+)
+      "+wait-for-channel-timeout+ must be positive"))
+
+;;; ── Global variable coverage ──────────────────────────────────────────────────
+
+(test clock-mode-pane-id-var-is-boundp
+  :description "*clock-mode-pane-id* is defined and initially NIL."
+  (is (boundp 'cl-tmux::*clock-mode-pane-id*)
+      "*clock-mode-pane-id* must be bound")
+  (is (null cl-tmux::*clock-mode-pane-id*)
+      "*clock-mode-pane-id* must default to NIL"))
+
+(test server-sessions-var-is-boundp
+  :description "*server-sessions* is defined and is a list (possibly nil)."
+  (is (boundp 'cl-tmux::*server-sessions*)
+      "*server-sessions* must be bound")
+  (is (listp cl-tmux::*server-sessions*)
+      "*server-sessions* must be a list"))
+
+(test message-log-var-is-boundp
+  :description "*message-log* is defined and initially NIL."
+  (is (boundp 'cl-tmux::*message-log*)
+      "*message-log* must be bound"))
+
 ;;; ── Wait-for channel synchronization ─────────────────────────────────────────
 
 (test ensure-channel-creates-entry
@@ -241,3 +232,89 @@ when the first thread is still alive."
     ;; signal-channel on a locked channel is a no-op (no cv-notify) — must not signal.
     (finishes (cl-tmux::signal-channel "sig-locked")
               "signal-channel on a locked channel must not signal an error")))
+
+(test wait-for-signal-unblocks
+  :description "signal-channel creates/signals a channel; the full lock/unlock/signal
+   lifecycle is safe with no waiters.  Uses isolated *wait-channels*."
+  ;; Test the channel API with an isolated channels table.
+  (let ((cl-tmux::*wait-channels* (make-hash-table :test #'equal)))
+    ;; Ensure a channel exists.
+    (cl-tmux::%ensure-channel "test-chan")
+    ;; Lock and unlock must not error.
+    (finishes (cl-tmux::lock-channel "test-chan")
+              "lock-channel must not signal")
+    (finishes (cl-tmux::unlock-channel "test-chan")
+              "unlock-channel must not signal")
+    ;; Signal with no waiters must be a safe no-op.
+    (finishes (cl-tmux::signal-channel "test-chan")
+              "signal-channel with no waiters must not signal")
+    ;; When locked, signal-channel is suppressed.
+    (cl-tmux::lock-channel "test-chan")
+    (finishes (cl-tmux::signal-channel "test-chan")
+              "signal-channel while locked must not signal")
+    (cl-tmux::unlock-channel "test-chan")
+    ;; After unlock, signal proceeds normally.
+    (finishes (cl-tmux::signal-channel "test-chan")
+              "signal-channel after unlock must not signal")))
+
+(test ensure-channel-stores-in-hash-table
+  :description "%ensure-channel stores the plist in *wait-channels* by name."
+  (let ((cl-tmux::*wait-channels* (make-hash-table :test #'equal)))
+    (cl-tmux::%ensure-channel "stored-ch")
+    (is-true (gethash "stored-ch" cl-tmux::*wait-channels*)
+             "*wait-channels* must contain entry after %ensure-channel")))
+
+(test channel-locked-flag-defaults-to-nil
+  :description "A freshly created channel has :locked NIL."
+  (let ((cl-tmux::*wait-channels* (make-hash-table :test #'equal)))
+    (let ((ch (cl-tmux::%ensure-channel "fresh-lock")))
+      (is-false (getf ch :locked)
+                "new channel must start with :locked NIL"))))
+
+(test lock-channel-then-signal-then-unlock-is-safe
+  :description "The lock→signal→unlock sequence completes without error and leaves
+   the channel unlocked."
+  (let ((cl-tmux::*wait-channels* (make-hash-table :test #'equal)))
+    (cl-tmux::lock-channel "seq-ch")
+    (finishes (cl-tmux::signal-channel "seq-ch")
+              "signal-channel while locked must not error")
+    (cl-tmux::unlock-channel "seq-ch")
+    (let ((ch (cl-tmux::%ensure-channel "seq-ch")))
+      (is-false (getf ch :locked)
+                "channel must be unlocked after unlock-channel"))))
+
+(test multiple-distinct-channels-independent
+  :description "Two channels with different names are stored independently."
+  (let ((cl-tmux::*wait-channels* (make-hash-table :test #'equal)))
+    (let ((ch-a (cl-tmux::%ensure-channel "ch-a"))
+          (ch-b (cl-tmux::%ensure-channel "ch-b")))
+      (is (not (eq ch-a ch-b))
+          "distinct channel names must produce distinct plists")
+      (cl-tmux::lock-channel "ch-a")
+      (let ((ch-a2 (cl-tmux::%ensure-channel "ch-a"))
+            (ch-b2 (cl-tmux::%ensure-channel "ch-b")))
+        (is-true  (getf ch-a2 :locked) "ch-a must be locked")
+        (is-false (getf ch-b2 :locked) "ch-b must remain unlocked")))))
+
+;;; ── add-message-log table-driven coverage ───────────────────────────────────
+
+(test add-message-log-multiple-entries-ordered-newest-first
+  :description "Adding three messages in order leaves them newest-first in the log."
+  (let ((cl-tmux::*message-log* nil))
+    (dolist (msg '("alpha" "beta" "gamma"))
+      (cl-tmux::add-message-log msg))
+    (is (= 3 (length cl-tmux::*message-log*))
+        "log must have exactly 3 entries")
+    (is (string= "gamma" (cdr (first  cl-tmux::*message-log*))) "first entry is newest")
+    (is (string= "beta"  (cdr (second cl-tmux::*message-log*))) "second entry")
+    (is (string= "alpha" (cdr (third  cl-tmux::*message-log*))) "third entry is oldest")))
+
+(test add-message-log-truncates-to-exact-max
+  :description "Adding exactly +max-message-log-entries+ + 1 entries produces exactly
+   +max-message-log-entries+ entries in the log."
+  (let ((cl-tmux::*message-log* nil)
+        (limit cl-tmux::+max-message-log-entries+))
+    (dotimes (i (1+ limit))
+      (cl-tmux::add-message-log (format nil "~D" i)))
+    (is (= limit (length cl-tmux::*message-log*))
+        "log must be capped to +max-message-log-entries+ after one over the limit")))

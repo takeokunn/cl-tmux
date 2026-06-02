@@ -110,9 +110,11 @@
 ;;; ── Cursor visibility ───────────────────────────────────────────────────────
 
 (defun cursor-invisible (stream)
+  "Emit DECTCEM hide-cursor sequence ESC[?25l to STREAM."
   (format stream "~C[?25l" +esc+))
 
 (defun cursor-visible (stream)
+  "Emit DECTCEM show-cursor sequence ESC[?25h to STREAM."
   (format stream "~C[?25h" +esc+))
 
 (defun set-cursor-shape (stream shape)
@@ -122,4 +124,5 @@
 ;;; ── Attribute reset ─────────────────────────────────────────────────────────
 
 (defun reset-attrs (stream)
+  "Emit SGR reset sequence ESC[0m to STREAM, clearing all attributes and colours."
   (format stream "~C[0m" +esc+))

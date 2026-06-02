@@ -28,10 +28,14 @@
   (window-panes window))
 
 (defun window-active-pane (window)
+  "Return WINDOW's active pane, falling back to the first pane when active is NIL."
   (or (window-active window)
       (first (window-panes window))))
 
 (defun window-select-pane (window pane)
+  "Make PANE the active pane of WINDOW.
+   Records the previously active pane in window-last-active and updates
+   window-last-active-time."
   (let ((current (window-active window)))
     (when (and current (not (eq current pane)))
       (setf (window-last-active window) current)))
@@ -86,7 +90,7 @@
     (loop for i from 1
           unless (member i used) return i)))
 
-;;; ── Tree-link mutation macro ────────────────────────────────────────────────
+;;; ── Tree-link mutation ──────────────────────────────────────────────────────
 ;;;
 ;;; Both %replace-in-tree and %collapse-parent share the same pattern:
 ;;;   set_tree_link(Window, Node, New) :-
@@ -94,21 +98,19 @@
 ;;;     set_child(Parent, Side, New).
 ;;;   set_tree_link(Window, _Node, New) :-
 ;;;     Window.tree := New.
-;;;
-;;; define-tree-link-setter generates this Prolog-like dispatch once.
 
 (defmacro %set-tree-link (window node new-value)
   "Replace NODE's position in WINDOW's tree with NEW-VALUE.
    If NODE has a parent, updates that parent's child link (preserving side);
    if NODE is the root, replaces the root directly."
-  (let ((p  (gensym "PARENT"))
-        (w  (gensym "WHICH")))
-    `(multiple-value-bind (,p ,w)
+  (let ((parent (gensym "PARENT"))
+        (which  (gensym "WHICH")))
+    `(multiple-value-bind (,parent ,which)
          (layout-find-parent (window-tree ,window) ,node)
-       (if ,p
-           (ecase ,w
-             (:first  (setf (layout-split-first  ,p) ,new-value))
-             (:second (setf (layout-split-second ,p) ,new-value)))
+       (if ,parent
+           (ecase ,which
+             (:first  (setf (layout-split-first  ,parent) ,new-value))
+             (:second (setf (layout-split-second ,parent) ,new-value)))
            (setf (window-tree ,window) ,new-value)))))
 
 (defun %replace-in-tree (window leaf replacement)
@@ -124,19 +126,47 @@
     (%set-tree-link window parent sibling)
     sibling))
 
+;;; ── Size-hint dispatch — define-size-hint-rules ────────────────────────────
+;;;
+;;; Follows the same defmacro idiom as define-csi-rules / define-axis-rules.
+;;; Each rule is (test-form result-form); the first matching rule wins.
+;;; The generated function falls through to (floor avail 2) when no rule matches.
+
+(defmacro define-size-hint-rules (name lambda-list &rest rules)
+  "Generate a size-hint conversion function NAME with LAMBDA-LIST.
+   Each RULE is (test-form result-form).
+   The generated function uses HINT and AVAIL from LAMBDA-LIST; any additional
+   parameters (e.g. ORIENT for calling-convention compatibility) are declared
+   ignorable.  Tries rules in order; falls through to (floor avail 2)."
+  `(defun ,name ,lambda-list
+     (declare (ignorable ,@lambda-list))
+     (cond
+       ,@(mapcar (lambda (rule) `(,(first rule) ,(second rule))) rules)
+       (t (floor avail 2)))))
+
+;;; Size-hint fact table:
+;;;   hint_rule(integer, positive) :- hint cells for the new pane.
+;;;   hint_rule(real, 0<r<1)       :- proportional cells derived from avail.
+;;;   hint_rule(_default_)         :- half the available space.
+
+(define-size-hint-rules %requested-cells-from-hint (hint avail orient)
+  ((and (integerp hint) (> hint 0))     hint)
+  ((and (realp hint) (< 0.0 hint 1.0)) (round (* avail hint))))
+
 (defun %ratio-from-size-hint (hint avail orient)
   "Convert a size HINT (integer cells or real percentage) to a split ratio for
    the new (second) child given AVAIL total cells and ORIENT.
-   Returns a ratio in (0,1) clamped to leave at least MIN cells on each side."
-  (let* ((floor* (%axis-floor orient))
-         (cells  (cond
-                   ((and (integerp hint) (> hint 0)) hint)
-                   ((and (realp hint) (< 0.0 hint 1.0)) (round (* avail hint)))
-                   (t (floor avail 2)))))
-    ;; clamp so both halves stay above the minimum
-    (let ((clamped (max floor* (min (- avail floor* 1) cells))))
-      ;; ratio is the fraction for the FIRST child; new pane is second.
-      (/ (- avail clamped 1) avail))))
+   Returns a ratio in (0,1) clamped to leave at least the axis floor on each side."
+  (let* ((floor*       (%axis-floor orient))
+         ;; Requested cells for the NEW (second) child.
+         (requested    (%requested-cells-from-hint hint avail orient))
+         ;; Upper bound: leave at least floor* cells for the FIRST child + 1 separator.
+         (upper-bound  (- avail floor* 1))
+         ;; Clamped size: both halves stay above floor*.
+         (clamped-size (max floor* (min upper-bound requested)))
+         ;; Ratio measures the FIRST child; new pane is the second.
+         (first-size   (- avail clamped-size 1)))
+    (/ first-size avail)))
 
 (defun window-split (window direction &key no-focus size)
   "Split the active pane of WINDOW along DIRECTION (:h left/right, :v top/bottom).
@@ -152,9 +182,6 @@
         (return-from window-split nil))
       (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
         (let* ((new-pane (%fork-pane (next-pane-id window) px py pw ph))
-               ;; Compute initial ratio; if SIZE given, derive from it.
-               ;; %orient-pane-extent reuses the axis-fact table so orientation
-               ;; semantics stay consistent with %split-fits-p and layout-min-extent.
                (avail    (1- (%orient-pane-extent active direction)))
                (ratio    (if size
                              (%ratio-from-size-hint size avail direction)
@@ -193,7 +220,7 @@
       (cond
         ;; LEAF was the sole root — window becomes empty.
         ((null parent)
-         (setf (window-tree window) nil
+         (setf (window-tree  window) nil
                (window-panes window) nil)
          nil)
         ;; Normal case: collapse the parent split and relayout.
@@ -244,6 +271,18 @@
 ;;; rotate_window(Window, :up)   :- move first pane to end of panes list, relayout.
 ;;; rotate_window(Window, :down) :- move last  pane to front of panes list, relayout.
 
+(defun %build-spine-tree (panes)
+  "Build a right-spine binary tree from PANES using :h orientation and equal 1/2 ratios.
+   Rotation resets the layout to a flat left-to-right arrangement so visual order
+   matches the panes list.  Use apply-named-layout after rotating to restore a
+   specific orientation."
+  (if (null (rest panes))
+      (make-layout-leaf (first panes))
+      (make-layout-split :h
+                         (make-layout-leaf (first panes))
+                         (%build-spine-tree (rest panes))
+                         1/2)))
+
 (defun window-rotate (window &optional (direction :up))
   "Rotate pane ordering within WINDOW.
    :UP moves the first pane to the end (forward rotation, tmux default).
@@ -256,48 +295,47 @@
                (:up   (append (rest panes) (list (first panes))))
                (:down (cons (car (last panes))
                             (butlast panes))))))
-        ;; Rebuild the split tree in the new panes order using equal splits.
-        ;; DESIGN NOTE: The rebuilt tree always uses :h orientation and equal
-        ;; 1/2 ratios, regardless of the original layout.  This is intentional:
-        ;; rotation resets the layout to a flat left-to-right arrangement so
-        ;; the visual order matches the panes list after rotation.
-        ;; If you need to preserve original orientations, use apply-named-layout
-        ;; after rotating (e.g. :even-horizontal preserves the same visual effect).
-        ;; Build a right-spine binary tree: each step pairs the next pane with
-        ;; a sub-tree of the remaining panes, all at ratio 1/2.
-        (let ((tree (labels ((build (ps)
-                               (if (null (rest ps))
-                                   (make-layout-leaf (first ps))
-                                   (make-layout-split :h
-                                      (make-layout-leaf (first ps))
-                                      (build (rest ps))
-                                      1/2))))
-                      (build new-panes))))
-          (setf (window-panes window) new-panes
-                (window-tree  window) tree)
-          (window-relayout window (window-height window) (window-width window)))))))
+        (setf (window-panes window) new-panes
+              (window-tree  window) (%build-spine-tree new-panes))
+        (window-relayout window (window-height window) (window-width window))))))
+
+;;; ── Zoom helpers — pure tree transforms ─────────────────────────────────────
+;;;
+;;; Data/logic separation: the pure tree-slot mutations are isolated from the
+;;; PTY resize side-effect (pane-reposition) so each concern is a named step.
+
+(defun %zoom-in-geometry (window pane)
+  "Save the current tree and replace it with a single-leaf tree for PANE.
+   Sets window-zoom-p to T and refreshes the panes list.
+   Does NOT call pane-reposition — caller handles the PTY resize."
+  (setf (window-zoom-tree window) (window-tree window)
+        (window-tree       window) (make-layout-leaf pane)
+        (window-zoom-p     window) t)
+  (window-refresh-panes window))
+
+(defun %zoom-out-geometry (window)
+  "Restore the saved tree from window-zoom-tree and clear zoom flags.
+   Guards against corrupted state where zoom-tree is NIL.
+   Returns T on success, NIL when the saved tree was missing."
+  (when (window-zoom-tree window)
+    (setf (window-tree      window) (window-zoom-tree window)
+          (window-zoom-tree window) nil
+          (window-zoom-p    window) nil)
+    (window-relayout window (window-height window) (window-width window))
+    t))
 
 (defun window-zoom-toggle (window)
-  "Toggle zoom on WINDOW's active pane. When zooming in, saves the current tree
-   and replaces it with a single-leaf tree. When zooming out, restores the saved tree.
+  "Toggle zoom on WINDOW's active pane.
+   Zooming in saves the current tree, replaces it with a single-leaf tree, then
+   calls pane-reposition to give the pane the full window rectangle.
+   Zooming out restores the saved tree and relayouts canonically.
    All slot mutations are protected by the window lock to prevent renderer races."
   (with-lock-held ((window-lock window))
     (if (window-zoom-p window)
-      ;; Zoom out: restore saved tree, then relayout canonically.
-      ;; Guard against corrupted state where zoom-tree is nil.
-      (when (window-zoom-tree window)
-        (setf (window-tree window) (window-zoom-tree window)
-              (window-zoom-tree window) nil
-              (window-zoom-p window) nil)
-        (window-relayout window (window-height window) (window-width window)))
-      ;; Zoom in: save tree, replace with single leaf.
-      ;; Guard against empty windows (no active pane).
-      (let ((pane (window-active-pane window)))
-        (when pane
-          (let ((new-tree (make-layout-leaf pane)))
-            (setf (window-zoom-tree window) (window-tree window)
-                  (window-tree window) new-tree
-                  (window-zoom-p window) t)
-            (window-refresh-panes window)
-            (pane-reposition pane 0 0 (window-width window) (window-height window))))))))
-
+        ;; Zoom out: restore saved tree (guard against corrupted state).
+        (%zoom-out-geometry window)
+        ;; Zoom in: save tree, replace with single leaf, then resize PTY.
+        (let ((pane (window-active-pane window)))
+          (when pane
+            (%zoom-in-geometry window pane)
+            (pane-reposition pane 0 0 (window-width window) (window-height window)))))))

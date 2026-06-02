@@ -26,9 +26,7 @@
 
 (test pane-reposition-updates-geometry-and-screen
   "pane-reposition sets x/y/width/height and resizes the underlying screen."
-  (let* ((screen (make-screen 20 5))
-         (pane   (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
-                            :fd -1 :pid -1 :screen screen)))
+  (let ((pane (make-no-pty-pane 1 0 0 20 5)))
     (pane-reposition pane 3 7 40 10)
     ;; Geometry slots updated.
     (is (= 3  (pane-x      pane)) "pane-x must be 3 after reposition")
@@ -43,9 +41,7 @@
 
 (test pane-reposition-zero-origin
   "pane-reposition correctly sets position to (0,0) — the corner case for zoom-in."
-  (let* ((screen (make-screen 10 5))
-         (pane   (make-pane :id 1 :x 5 :y 3 :width 10 :height 5
-                            :fd -1 :pid -1 :screen screen)))
+  (let ((pane (make-no-pty-pane 1 5 3 10 5)))
     (pane-reposition pane 0 0 80 24)
     (is (= 0  (pane-x      pane)) "pane-x must be 0 after reposition to origin")
     (is (= 0  (pane-y      pane)) "pane-y must be 0 after reposition to origin")
@@ -56,11 +52,7 @@
 
 (test pane-reposition-returns-no-value
   "pane-reposition returns no useful value — callers rely solely on side effects."
-  ;; We verify it does not return the pane (which would be a data leakage smell).
-  ;; The actual return is unspecified; just check it does not signal a condition.
-  (let* ((screen (make-screen 5 5))
-         (pane   (make-pane :id 1 :x 0 :y 0 :width 5 :height 5
-                            :fd -1 :pid -1 :screen screen)))
+  (let ((pane (make-no-pty-pane 1 0 0 5 5)))
     (is-true (progn (pane-reposition pane 0 0 10 10) t)
              "pane-reposition must complete without signalling")))
 
@@ -73,8 +65,8 @@
 
 (test next-pane-id-fills-lowest-gap
   "next-pane-id returns the lowest positive id not already in use."
-  (let* ((p1  (make-pane :id 1 :fd -1 :pid -1 :screen (make-screen 10 5)))
-         (p3  (make-pane :id 3 :fd -1 :pid -1 :screen (make-screen 10 5)))
+  (let* ((p1  (make-no-pty-pane 1 0 0 10 5))
+         (p3  (make-no-pty-pane 3 0 0 10 5))
          (win (make-window :id 1 :name "w" :panes (list p1 p3))))
     ;; id 1 and 3 are used; 2 is the lowest gap
     (is (= 2 (cl-tmux/model::next-pane-id win)))))
@@ -85,8 +77,7 @@
   "window-split :no-focus t creates the new pane but keeps the original active pane."
   (unless (pty-available-p)
     (skip "PTY not available"))
-  (let* ((p0  (make-pane :id 1 :x 0 :y 0 :width 41 :height 10
-                         :fd -1 :pid -1 :screen (make-screen 41 10)))
+  (let* ((p0  (make-no-pty-pane 1 0 0 41 10))
          (win (make-window :id 1 :name "w" :width 41 :height 10
                            :tree (make-layout-leaf p0)
                            :panes (list p0))))
@@ -106,8 +97,7 @@
   "window-split with a fractional size hint assigns the new pane a proportional width."
   (unless (pty-available-p)
     (skip "PTY not available"))
-  (let* ((p0  (make-pane :id 1 :x 0 :y 0 :width 81 :height 10
-                         :fd -1 :pid -1 :screen (make-screen 81 10)))
+  (let* ((p0  (make-no-pty-pane 1 0 0 81 10))
          (win (make-window :id 1 :name "w" :width 81 :height 10
                            :tree (make-layout-leaf p0)
                            :panes (list p0))))
@@ -123,10 +113,8 @@
 
 (test swap-pane-exchanges-rects
   "swap-pane exchanges the x/y/width/height between two panes."
-  (let* ((p0  (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
-                         :fd -1 :pid -1 :screen (make-screen 20 5)))
-         (p1  (make-pane :id 2 :x 21 :y 0 :width 20 :height 5
-                         :fd -1 :pid -1 :screen (make-screen 20 5)))
+  (let* ((p0  (make-no-pty-pane 1  0 0 20 5))
+         (p1  (make-no-pty-pane 2 21 0 20 5))
          (win (make-window :id 1 :name "w" :width 41 :height 5
                            :tree (make-layout-split :h
                                     (make-layout-leaf p0) (make-layout-leaf p1)
@@ -157,10 +145,8 @@
 (test last-pane-cycles
   "window-select-pane updates window-last-active; switching back via :last-pane
    returns to the previous pane."
-  (let* ((p0  (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
-                         :fd -1 :pid -1 :screen (make-screen 20 5)))
-         (p1  (make-pane :id 2 :x 21 :y 0 :width 20 :height 5
-                         :fd -1 :pid -1 :screen (make-screen 20 5)))
+  (let* ((p0  (make-no-pty-pane 1  0 0 20 5))
+         (p1  (make-no-pty-pane 2 21 0 20 5))
          (win (make-window :id 1 :name "w" :width 41 :height 5
                            :tree (make-layout-split :h
                                     (make-layout-leaf p0) (make-layout-leaf p1)
@@ -215,29 +201,25 @@
 
 (test pane-pipe-fd-defaults-nil
   "pane-pipe-fd defaults to NIL for a freshly created pane."
-  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
-                         :fd -1 :pid -1 :screen (make-screen 20 5))))
+  (let ((pane (make-no-pty-pane 1 0 0 20 5)))
     (is (null (pane-pipe-fd pane))
         "pane-pipe-fd must default to NIL")))
 
 (test pane-window-defaults-nil
   "pane-window defaults to NIL (back-pointer not set until attach)."
-  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
-                         :fd -1 :pid -1 :screen (make-screen 20 5))))
+  (let ((pane (make-no-pty-pane 1 0 0 20 5)))
     (is (null (pane-window pane))
         "pane-window must default to NIL before attach")))
 
 (test pane-marked-defaults-nil
   "pane-marked defaults to NIL for a freshly created pane."
-  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
-                         :fd -1 :pid -1 :screen (make-screen 20 5))))
+  (let ((pane (make-no-pty-pane 1 0 0 20 5)))
     (is (null (pane-marked pane))
         "pane-marked must default to NIL")))
 
 (test pane-marked-settable
   "pane-marked can be set to T and read back."
-  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
-                         :fd -1 :pid -1 :screen (make-screen 20 5))))
+  (let ((pane (make-no-pty-pane 1 0 0 20 5)))
     (setf (pane-marked pane) t)
     (is-true (pane-marked pane)
              "pane-marked must return T after being set")))
@@ -246,8 +228,8 @@
 
 (test next-pane-id-consecutive-when-no-gaps
   "next-pane-id returns (1+ highest-id) when ids are consecutive from 1."
-  (let* ((p1  (make-pane :id 1 :fd -1 :pid -1 :screen (make-screen 10 5)))
-         (p2  (make-pane :id 2 :fd -1 :pid -1 :screen (make-screen 10 5)))
+  (let* ((p1  (make-no-pty-pane 1 0 0 10 5))
+         (p2  (make-no-pty-pane 2 0 0 10 5))
          (win (make-window :id 1 :name "w" :panes (list p1 p2))))
     (is (= 3 (cl-tmux/model::next-pane-id win))
         "next-pane-id must return 3 when ids 1 and 2 are used")))
@@ -256,9 +238,7 @@
 
 (test pane-reposition-is-idempotent
   "Calling pane-reposition twice with the same arguments leaves geometry unchanged."
-  (let* ((screen (make-screen 20 5))
-         (pane   (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
-                            :fd -1 :pid -1 :screen screen)))
+  (let ((pane (make-no-pty-pane 1 0 0 20 5)))
     (pane-reposition pane 5 3 40 10)
     (pane-reposition pane 5 3 40 10)
     (is (= 5  (pane-x      pane)) "pane-x must be stable after double call")
@@ -267,9 +247,6 @@
     (is (= 10 (pane-height pane)) "pane-height must be stable after double call")))
 
 ;;; ── Table-driven pane-reposition edge cases ──────────────────────────────────
-;;;
-;;; The reposition tests share the same structure — verify slot values after a
-;;; single call.  A table reduces repetition without obscuring the assertions.
 
 (test pane-reposition-table
   "Table-driven: pane-reposition correctly updates x/y/width/height in multiple cases."
@@ -279,11 +256,123 @@
              (5  3  40 10 "offset non-zero case")
              (1  1   2  1 "minimum-size case")))
     (destructuring-bind (x y w h desc) entry
-      (let* ((screen (make-screen 10 5))
-             (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 5
-                                :fd -1 :pid -1 :screen screen)))
+      (let ((pane (make-no-pty-pane 1 0 0 10 5)))
         (pane-reposition pane x y w h)
         (is (= x (pane-x      pane)) desc)
         (is (= y (pane-y      pane)) desc)
         (is (= w (pane-width  pane)) desc)
         (is (= h (pane-height pane)) desc)))))
+
+;;; ── pane struct accessor defaults ───────────────────────────────────────────
+
+(test pane-id-slot-accessible
+  "pane-id returns the id passed to make-no-pty-pane."
+  (let ((pane (make-no-pty-pane 7 0 0 20 5)))
+    (is (= 7 (pane-id pane))
+        "pane-id must return the id set at construction")))
+
+(test pane-x-y-width-height-accessible
+  "pane-x, pane-y, pane-width, pane-height return the geometry set at construction."
+  (let ((pane (make-no-pty-pane 1 3 5 40 10)))
+    (is (= 3  (pane-x      pane)) "pane-x must return 3")
+    (is (= 5  (pane-y      pane)) "pane-y must return 5")
+    (is (= 40 (pane-width  pane)) "pane-width must return 40")
+    (is (= 10 (pane-height pane)) "pane-height must return 10")))
+
+(test pane-fd-defaults-negative-for-no-pty-pane
+  "make-no-pty-pane produces a pane with fd -1."
+  (let ((pane (make-no-pty-pane 1 0 0 20 5)))
+    (is (= -1 (pane-fd pane))
+        "pane-fd must be -1 for a no-PTY pane")))
+
+(test pane-pid-defaults-negative-for-no-pty-pane
+  "make-no-pty-pane produces a pane with pid -1."
+  (let ((pane (make-no-pty-pane 1 0 0 20 5)))
+    (is (= -1 (pane-pid pane))
+        "pane-pid must be -1 for a no-PTY pane")))
+
+(test pane-screen-accessible
+  "pane-screen returns the screen object set at construction."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                            :fd -1 :pid -1 :screen screen)))
+    (is (eq screen (pane-screen pane))
+        "pane-screen must return the exact screen object set at construction")))
+
+;;; ── pane-feed with empty bytes ───────────────────────────────────────────────
+
+(test pane-feed-empty-bytes-is-noop
+  "pane-feed with an empty byte vector does not signal and leaves cursor at (0,0)."
+  (let* ((screen (make-screen 10 5))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 5
+                            :fd -1 :pid -1 :screen screen)))
+    (finishes (pane-feed pane (make-array 0 :element-type '(unsigned-byte 8))))
+    (is (= 0 (screen-cursor-x screen)) "cursor must stay at 0 after feeding empty bytes")
+    (is (= 0 (screen-cursor-y screen)) "cursor must stay at 0 after feeding empty bytes")))
+
+;;; ── pane-feed updates screen-dirty-p ────────────────────────────────────────
+
+(test pane-feed-sets-dirty-flag
+  "pane-feed marks the screen dirty after processing bytes."
+  (let* ((screen (make-screen 10 5))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 5
+                            :fd -1 :pid -1 :screen screen)))
+    (screen-clear-dirty screen)
+    (pane-feed pane (babel:string-to-octets "A" :encoding :utf-8))
+    ;; After writing a character the dirty flag must be set.
+    (is-true (cl-tmux/terminal/types:screen-dirty-p screen)
+             "screen-dirty-p must be T after pane-feed writes a character")))
+
+;;; ── Table-driven next-pane-id gap-filling ────────────────────────────────────
+
+(test next-pane-id-table
+  "Table-driven: next-pane-id returns the correct lowest free id in various gap scenarios."
+  ;; Each entry: (used-ids expected description)
+  (dolist (entry
+           '((() 1 "empty window: first id is 1")
+             ((1) 2 "id 1 used: next is 2")
+             ((1 2) 3 "ids 1,2 used: next is 3")
+             ((1 3) 2 "gap at 2: fill it")))
+    (destructuring-bind (used-ids expected desc) entry
+      (let* ((panes (mapcar (lambda (id) (make-no-pty-pane id 0 0 10 5)) used-ids))
+             (win   (make-window :id 1 :name "w" :panes panes)))
+        (is (= expected (cl-tmux/model::next-pane-id win)) desc)))))
+
+;;; ── pane-at-position hit test ────────────────────────────────────────────────
+
+(test pane-at-position-returns-correct-pane
+  "pane-at-position returns the pane whose rectangle contains the given coordinates."
+  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2))))
+    ;; Column 10 is in p0's rectangle [0, 40).
+    (is (eq p0 (pane-at-position win 10 5))
+        "col 10, row 5 must hit p0")
+    ;; Column 50 is in p1's rectangle [41, 81).
+    (is (eq p1 (pane-at-position win 50 5))
+        "col 50, row 5 must hit p1")))
+
+(test pane-at-position-returns-nil-for-separator-column
+  "pane-at-position returns NIL when the coordinates fall in the separator gap."
+  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-split :h
+                                    (make-layout-leaf p0)
+                                    (make-layout-leaf p1)
+                                    1/2))))
+    ;; Column 40 is between p0 [0,40) and p1 [41,81) — the separator.
+    (is (null (pane-at-position win 40 5))
+        "separator column 40 must return NIL from pane-at-position")))
+
+(test pane-at-position-returns-nil-for-empty-window
+  "pane-at-position returns NIL when the window has no panes."
+  (let ((win (make-window :id 1 :name "w" :panes nil)))
+    (is (null (pane-at-position win 0 0))
+        "pane-at-position on empty window must return NIL")))

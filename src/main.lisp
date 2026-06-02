@@ -135,39 +135,54 @@
 ;;; outside the handler — this is the one-argument convention.
 
 (defparameter *startup-modes*
-  '(("server"         . run-server)
-    ("attach"         . run-client-with-autostart)
-    ("attach-session" . run-attach-with-flags))
-  "Mode-name → function-name (symbol) dispatch table for the binary entry point.
-   Storing symbols (not function objects) means test stubs that rebind the
-   function cell with SETF FDEFINITION are honoured at dispatch time.")
+  '(("server"         . (run-server))
+    ("attach"         . (run-attach-simple))
+    ("attach-session" . (run-attach-with-flags :raw-args-p t)))
+  "Mode-name → plist dispatch table for the binary entry point.
+   Each entry is (mode-name . (handler-symbol &key :raw-args-p bool)).
+   :raw-args-p T means the handler receives the full raw argv tail rather
+   than a single session-name string.
+   Storing handler symbols (not function objects) means test stubs that rebind
+   the function cell with SETF FDEFINITION are honoured at dispatch time.")
+
+(defconstant +server-socket-poll-interval-seconds+ 0.1
+  "Seconds between socket-existence probes while waiting for a server to start.")
+
+(defconstant +server-socket-poll-max-iterations+ 30
+  "Maximum number of socket-existence probes (30 × 0.1 s = 3 s total wait).")
 
 (defun %ensure-server-running (session-name)
   "Start a background server for SESSION-NAME if no socket exists.
-   Uses sb-ext:run-program with *posix-argv* to spawn a separate process safely.
-   Polls every 100 ms for up to 3 seconds for the socket to appear.
-   SBCL-only: on other implementations emits a warning and returns nil."
+   Uses sb-ext:run-program with *posix-argv* to spawn a separate process.
+   Only enters the polling loop when run-program succeeded.
+   Polls every +server-socket-poll-interval-seconds+ for up to
+   +server-socket-poll-max-iterations+ iterations for the socket to appear."
   (let ((socket-path (socket-path session-name)))
     (unless (probe-file socket-path)
-      #+sbcl
-      (let ((exe  (first sb-ext:*posix-argv*))
-            (args (list "server" session-name)))
-        ;; Guard: run-program may fail in test environments or when the binary
-        ;; is not yet on PATH. In that case we proceed and run-client will fail
-        ;; gracefully with a connection error.
-        (ignore-errors
-          (sb-ext:run-program exe args :wait nil :output nil :error nil
-                              :timeout 30)))
-      #-sbcl
-      (warn "Cannot auto-start server: not running on SBCL")
-      ;; Poll for the socket to appear (up to 3 seconds, 100 ms intervals).
-      ;; Bounded loop (max 30 iterations = 3 seconds) prevents infinite wait.
-      (loop for i from 0 to 30
-            until (probe-file socket-path)
-            do (sleep 0.1)))))
+      (let ((launched
+             (let ((exe  (first sb-ext:*posix-argv*))
+                   (args (list "server" session-name)))
+               ;; Guard: run-program may fail in test environments or when the
+               ;; binary is not yet on PATH.  Only poll if the spawn succeeded.
+               (ignore-errors
+                 (sb-ext:run-program exe args :wait nil :output nil :error nil)))))
+        ;; Poll only when we actually attempted a launch.  This avoids the
+        ;; unconditional 3-second dead-time when run-program silently failed.
+        (when launched
+          (loop repeat +server-socket-poll-max-iterations+
+                until (probe-file socket-path)
+                do (sleep +server-socket-poll-interval-seconds+)))))))
 
-(defun run-client-with-autostart (name)
-  "Auto-start a server for NAME if not running, then attach as a client."
+(defun %startup-mode-raw-args-p (mode-name)
+  "Return T when the startup mode named MODE-NAME receives the full raw argv tail.
+   Returns NIL for unknown mode names or modes that receive only a session name."
+  (let ((entry (cdr (assoc mode-name *startup-modes* :test #'equal))))
+    (when entry
+      (not (null (getf (rest entry) :raw-args-p))))))
+
+(defun run-attach-simple (name)
+  "Auto-start a server for NAME if not running, then attach as a client.
+   This is the handler for the bare 'attach' mode (no flag parsing)."
   (%ensure-server-running name)
   (run-client name))
 
@@ -182,25 +197,23 @@
     (%ensure-server-running name)
     (run-client name :detach-others detach-p)))
 
-(defun %startup-mode-raw-args-p (mode)
-  "Return T if MODE takes the full raw-args list rather than a single name.
-   Currently only attach-session needs the raw args for flag parsing."
-  (string= mode "attach-session"))
-
 (defun main ()
   "Binary entry point — dispatches on the first argv item via *startup-modes*.
-   Modes in the table receive either the full raw-args list (for flag-aware
-   modes like attach-session) or a single session name (default \"0\").
+   Each entry in *startup-modes* is a plist (handler-symbol &key :raw-args-p).
+   :raw-args-p T modes receive the full argv tail; all others receive a single
+   session name (defaulting to \"0\").
    Unrecognized or absent modes fall through to run-standalone."
   (let* ((argv    (rest sb-ext:*posix-argv*))
          (mode    (first argv))
          (rest    (rest argv))
-         (handler (cdr (assoc mode *startup-modes* :test #'equal))))
-    (if handler
-        ;; Dispatch: flag-aware modes get the full rest; name-only modes get a
-        ;; single session name so their signature stays (name) not (args).
-        (if (%startup-mode-raw-args-p mode)
-            (funcall (symbol-function handler) rest)
-            (funcall (symbol-function handler) (or (first rest) "0")))
+         (entry   (cdr (assoc mode *startup-modes* :test #'equal))))
+    (if entry
+        (let ((handler    (first entry))
+              (raw-args-p (getf (rest entry) :raw-args-p)))
+          ;; Dispatch: :raw-args-p modes receive the full tail; name-only modes
+          ;; receive a single session name so their signature stays (name).
+          (if raw-args-p
+              (funcall (symbol-function handler) rest)
+              (funcall (symbol-function handler) (or (first rest) "0"))))
         ;; Default: no recognized mode → standalone multiplexer.
         (run-standalone))))

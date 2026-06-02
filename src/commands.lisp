@@ -24,26 +24,54 @@
         (setf (nth idx new-panes) other
               (nth other-idx new-panes) ap
               (window-panes window) new-panes)
-        ;; Swap x/y/width/height between the two panes
-        (let ((ax (pane-x ap)) (ay (pane-y ap)) (aw (pane-width ap)) (ah (pane-height ap)))
-          (pane-reposition ap (pane-x other) (pane-y other) (pane-width other) (pane-height other))
+        ;; Swap x/y/width/height between the two panes using destructuring.
+        (let ((ax (pane-x ap)) (ay (pane-y ap))
+              (aw (pane-width ap)) (ah (pane-height ap)))
+          (pane-reposition ap
+                           (pane-x other) (pane-y other)
+                           (pane-width other) (pane-height other))
           (pane-reposition other ax ay aw ah))
         ap))))
 
+(defun %screen-row-string (screen row)
+  "Return a string of WIDTH characters representing ROW in SCREEN's visible grid.
+   Each character is read directly from the cell at (col, ROW).
+   This is a pure data-to-string conversion; no side effects."
+  (let* ((width (screen-width screen))
+         (result (make-string width)))
+    (dotimes (col width result)
+      (setf (char result col)
+            (cell-char (screen-cell screen col row))))))
+
+(defun %scrollback-row-string (cell-vector)
+  "Return a string of characters from a scrollback row CELL-VECTOR (a simple-vector of cells)."
+  (let* ((n      (length cell-vector))
+         (result (make-string n)))
+    (dotimes (i n result)
+      (setf (char result i) (cell-char (aref cell-vector i))))))
+
 (defun capture-pane (pane &key (include-scrollback nil))
   "Dump the visible content of PANE as a string.
-   When INCLUDE-SCROLLBACK is T, also include scrollback history above the visible area."
+   When INCLUDE-SCROLLBACK is T, also include scrollback history above the visible area.
+   The screen lock is held only for snapshot extraction; string rendering happens
+   outside the lock so renderer threads are not blocked during I/O."
   (let ((screen (pane-screen pane)))
-    (with-lock-held ((screen-lock screen))
-      (with-output-to-string (out)
+    ;; Snapshot pure data under lock (I/O-synchronisation concern).
+    (let ((scrollback-snapshot nil)
+          (visible-rows nil))
+      (with-lock-held ((screen-lock screen))
         (when include-scrollback
-          (dolist (row (reverse (screen-scrollback screen)))
-            (dotimes (i (length row))
-              (write-char (cell-char (aref row i)) out))
-            (terpri out)))
-        (dotimes (row (screen-height screen))
-          (dotimes (col (screen-width screen))
-            (write-char (cell-char (screen-cell screen col row)) out))
+          (setf scrollback-snapshot (reverse (screen-scrollback screen))))
+        (setf visible-rows
+              (loop for row from 0 below (screen-height screen)
+                    collect (%screen-row-string screen row))))
+      ;; Render to string outside the lock (pure I/O).
+      (with-output-to-string (out)
+        (dolist (row-str scrollback-snapshot)
+          (write-string (%scrollback-row-string row-str) out)
+          (terpri out))
+        (dolist (row-str visible-rows)
+          (write-string row-str out)
           (terpri out))))))
 
 ;;; ── break-pane ─────────────────────────────────────────────────────────────
@@ -74,10 +102,10 @@
       (window-select-pane src-win (first (window-panes src-win))))
     ;; Create a new window with the pane as the sole full-screen occupant.
     ;; Use the lowest free window id (same rule as session-new-window).
-    (let* ((rows   (window-height src-win))
-           (cols   (window-width  src-win))
-           (new-id (cl-tmux/model::%next-window-id session))
-           (name   (cl-tmux/model::%shell-basename))
+    (let* ((rows    (window-height src-win))
+           (cols    (window-width  src-win))
+           (new-id  (cl-tmux/model::%next-window-id session))
+           (name    (cl-tmux/model::%shell-basename))
            (new-win (make-window :id new-id :name name :width cols :height rows)))
       ;; Install the pane as the sole leaf in the new window's tree.
       (setf (window-panes new-win) (list pane)
@@ -85,9 +113,8 @@
       (window-select-pane new-win pane)
       ;; Reposition the pane to fill the new window.
       (pane-reposition pane 0 0 cols rows)
-      ;; Attach the new window to the session, keeping list sorted by id.
-      (setf (session-windows session)
-            (sort (cons new-win (session-windows session)) #'< :key #'window-id))
+      ;; Attach the new window to the session via the model-layer helper.
+      (session-insert-window session new-win)
       (session-select-window session new-win)
       (run-hooks +hook-after-new-window+ new-win)
       new-win)))
@@ -99,38 +126,44 @@
 ;;;   (empty(SrcWin) -> kill_window(Session, SrcWin) ; true),
 ;;;   insert_by_split(DstWin, SrcPane, Dir).
 
-(defun join-pane (session src-window src-pane dst-window direction)
-  "Move SRC-PANE from SRC-WINDOW into DST-WINDOW as a split in DIRECTION.
-   DIRECTION is :h (left/right) or :v (top/bottom).
-   If SRC-WINDOW becomes empty after removal, it is killed.
-   Returns SRC-PANE on success, NIL on failure."
-  (unless (and src-window src-pane dst-window) (return-from join-pane nil))
-  ;; Remove from source window.
-  (window-remove-pane src-window src-pane)
-  ;; Kill src window if now empty.
+(defun %join-pane-kill-empty-src (session src-window)
+  "Remove SRC-WINDOW from SESSION when it has no panes remaining.
+   Switches the active window to the nearest survivor if needed."
   (when (null (window-panes src-window))
     (let ((remaining (remove src-window (session-windows session))))
       (setf (session-windows session) remaining)
       (when (eq (session-active-window session) src-window)
-        (session-select-window session (first remaining)))))
-  ;; Insert into dst window as a split on the active pane.
-  (let* ((active (window-active-pane dst-window))
-         (tree   (window-tree dst-window)))
-    (unless (and active tree) (return-from join-pane nil))
-    (let ((active-leaf (layout-find-leaf tree active)))
-      (unless active-leaf (return-from join-pane nil))
-      ;; Compute geometry for the joined pane.
-      (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
-        ;; Reposition the incoming pane to the new geometry.
+        (session-select-window session (first remaining))))))
+
+(defun %join-pane-insert-into-dst (src-pane dst-window direction)
+  "Insert SRC-PANE into DST-WINDOW as a DIRECTION split.
+   Returns SRC-PANE on success, NIL when the destination has no active leaf."
+  (let* ((active      (window-active-pane dst-window))
+         (tree        (window-tree dst-window))
+         (active-leaf (and active tree (layout-find-leaf tree active))))
+    (when active-leaf
+      (multiple-value-bind (px py pw ph)
+          (split-child-geometry active direction)
         (pane-reposition src-pane px py pw ph)
-        ;; Wire into the tree: replace the active leaf with a split.
         (let ((new-split (make-layout-split direction active-leaf
                                             (make-layout-leaf src-pane) 1/2)))
           (cl-tmux/model::%replace-in-tree dst-window active-leaf new-split)
           (setf (window-panes dst-window)
                 (layout-leaves (window-tree dst-window)))
-          (window-relayout dst-window (window-height dst-window) (window-width dst-window))
+          (window-relayout dst-window
+                           (window-height dst-window)
+                           (window-width  dst-window))
           src-pane)))))
+
+(defun join-pane (session src-window src-pane dst-window direction)
+  "Move SRC-PANE from SRC-WINDOW into DST-WINDOW as a split in DIRECTION.
+   DIRECTION is :h (left/right) or :v (top/bottom).
+   If SRC-WINDOW becomes empty after removal, it is killed.
+   Returns SRC-PANE on success, NIL on failure."
+  (when (and src-window src-pane dst-window)
+    (window-remove-pane src-window src-pane)
+    (%join-pane-kill-empty-src session src-window)
+    (%join-pane-insert-into-dst src-pane dst-window direction)))
 
 ;;; ── pipe-pane ───────────────────────────────────────────────────────────────
 ;;;
@@ -189,7 +222,7 @@
 ;;; run_shell(cmd)            :- subprocess(cmd, timeout=30, output=string).
 ;;; if_shell(cmd, then, else) :- subprocess(cmd), exit_code=0 -> then ; else.
 ;;;
-;;; Both run-shell and if-shell accept an optional :timeout keyword (seconds).
+;;; Both run-shell and if-shell accept a :timeout keyword (seconds, default 30).
 ;;; The foreground (synchronous) paths honour the timeout via a bordeaux-threads
 ;;; helper; background tasks are fire-and-forget.
 ;;;
@@ -207,44 +240,50 @@
         (funcall thunk))
     (bt:timeout () nil)))
 
+(defmacro with-shell-timeout ((shell-var timeout) &body body)
+  "Bind SHELL-VAR to the active shell binary and run BODY with a TIMEOUT (seconds).
+   TIMEOUT is evaluated at macro-expansion call time and passed directly to
+   %RUN-WITH-TIMEOUT.  Returns the result of BODY or NIL when the timeout fires."
+  `(%run-with-timeout
+     (lambda ()
+       (let ((,shell-var (or *default-shell* "/bin/sh")))
+         ,@body))
+     ,timeout))
+
 (defun run-shell (command &key background (timeout 30))
   "Run COMMAND in a subshell.  Returns the output string (stdout) when BACKGROUND
    is nil, or T immediately when BACKGROUND is T.
    Uses *default-shell* for the shell binary.
    TIMEOUT (seconds, default 30) limits how long a synchronous command may run;
    when the limit is exceeded NIL is returned."
-  (let ((shell (or *default-shell* "/bin/sh")))
-    (if background
-        (progn
-          ;; Deliberate no-timeout policy: background shell commands are fire-and-forget.
-          ;; The caller requested asynchronous execution and does not need the result.
-          ;; If a bounded background job is needed, the caller should wrap in bt:with-timeout.
-          (bt:make-thread
-            (lambda ()
-              (uiop:run-program (list shell "-c" command)
-                                :output nil :ignore-error-status t))
-            :name "shell-bg")
-          t)
-        (%run-with-timeout
+  (if background
+      (progn
+        ;; Deliberate no-timeout policy: background shell commands are fire-and-forget.
+        ;; The caller requested asynchronous execution and does not need the result.
+        ;; If a bounded background job is needed, the caller should wrap in bt:with-timeout.
+        (bt:make-thread
           (lambda ()
-            (uiop:run-program (list shell "-c" command)
-                              :output :string :ignore-error-status t))
-          timeout))))
+            (let ((shell (or *default-shell* "/bin/sh")))
+              (uiop:run-program (list shell "-c" command)
+                                :output nil :ignore-error-status t)))
+          :name "shell-bg")
+        t)
+      (with-shell-timeout (shell timeout)
+        (uiop:run-program (list shell "-c" command)
+                          :output :string :ignore-error-status t))))
 
-(defun if-shell (command then-fn &optional else-fn &key (timeout 30))
+(defun if-shell (command then-fn &key else-fn (timeout 30))
   "Run COMMAND; call THEN-FN if exit code is 0, ELSE-FN otherwise.
-   THEN-FN and ELSE-FN are zero-argument functions.
+   THEN-FN and ELSE-FN are zero-argument functions (keyword arguments).
    TIMEOUT (seconds, default 30) limits how long the command may run;
    when the limit is exceeded ELSE-FN is called."
-  (let* ((shell (or *default-shell* "/bin/sh"))
-         (exit-code (%run-with-timeout
-                      (lambda ()
-                        (multiple-value-bind (output error-output code)
-                            (uiop:run-program (list shell "-c" command)
-                                              :output nil :ignore-error-status t)
-                          (declare (ignore output error-output))
-                          code))
-                      timeout)))
+  (let ((exit-code
+          (with-shell-timeout (shell timeout)
+            (multiple-value-bind (output error-output code)
+                (uiop:run-program (list shell "-c" command)
+                                  :output nil :ignore-error-status t)
+              (declare (ignore output error-output))
+              code))))
     (if (and exit-code (zerop exit-code))
         (when then-fn (funcall then-fn))
         (when else-fn (funcall else-fn)))))

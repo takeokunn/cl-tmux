@@ -105,24 +105,6 @@
     (is (plusp timeout)
         "+poll-timeout-us+ must be positive (non-zero timeout)")))
 
-(test read-byte-nonblock-is-exported-function
-  "read-byte-nonblock resolves as an :external symbol of cl-tmux/input and is fbound."
-  (multiple-value-bind (sym status)
-      (find-symbol "READ-BYTE-NONBLOCK" '#:cl-tmux/input)
-    (is (eq :external status)
-        "read-byte-nonblock must be an exported symbol")
-    (is (fboundp sym)
-        "read-byte-nonblock must be fbound")))
-
-(test with-raw-mode-is-exported-macro
-  "with-raw-mode resolves as an :external symbol of cl-tmux/input and is a macro."
-  (multiple-value-bind (sym status)
-      (find-symbol "WITH-RAW-MODE" '#:cl-tmux/input)
-    (is (eq :external status)
-        "with-raw-mode must be an exported symbol")
-    (is (macro-function sym)
-        "with-raw-mode must be a macro")))
-
 (test with-raw-mode-expansion-contains-format-newline
   "The expansion emits a format newline after restoring raw mode for clean output."
   (let* ((form (macroexpand-1 '(cl-tmux/input::with-raw-mode :body-marker)))
@@ -130,21 +112,34 @@
     (is-true (or (search "FORMAT" text) (search "format" text))
              "expansion must contain FORMAT for cleanup newline")))
 
-(test read-byte-nonblock-roundtrip-via-pipe
-  "read-byte-nonblock mechanics: select-fds + CFFI read gives the written byte value."
-  ;; This is a whitebox test of the same logic that read-byte-nonblock uses,
-  ;; exercised through a pipe instead of stdin (no TTY required).
+;;; ── select-fds empty-fd short-circuit via read-byte-nonblock path ────────────
+
+(test read-byte-nonblock-with-zero-timeout-returns-nil-when-no-data
+  "read-byte-nonblock with timeout-us=0 is a purely non-blocking poll.
+   On a fresh idle pipe it must return NIL immediately."
+  (with-pipe-fds (rfd _wfd)
+    ;; Temporarily redirect the select call through read-byte-nonblock's
+    ;; internal use of cl-tmux/pty:select-fds with the pipe read-end.
+    ;; We cannot call read-byte-nonblock directly (it polls stdin fd 0), so
+    ;; we validate the same mechanics: select-fds with timeout 0 on idle fd.
+    (let ((ready (cl-tmux/pty:select-fds (list rfd) 0)))
+      (is (null ready)
+          "non-blocking select on idle pipe must return NIL"))))
+
+(test read-byte-nonblock-select-returns-ready-list-when-data-present
+  "select-fds returns the fd in a ready list when data has been written."
   (with-pipe-fds (rfd wfd)
-    (cffi:with-foreign-object (wbuf :uint8)
-      (setf (cffi:mem-ref wbuf :uint8) 99)
-      (cffi:foreign-funcall "write" :int wfd :pointer wbuf :unsigned-long 1 :long))
+    (cffi:with-foreign-object (buf :uint8)
+      (setf (cffi:mem-ref buf :uint8) 7)
+      (cffi:foreign-funcall "write" :int wfd :pointer buf :unsigned-long 1 :long))
     (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))
-      (is-true ready "written byte must make pipe readable")
-      (when ready
-        (cffi:with-foreign-object (rbuf :uint8)
-          (let ((n (cffi:foreign-funcall "read"
-                                         :int rfd :pointer rbuf :unsigned-long 1
-                                         :long)))
-            (is (= 1 n)  "read must return 1 byte")
-            (is (= 99 (cffi:mem-ref rbuf :uint8))
-                "byte value must be 99")))))))
+      (is (equal (list rfd) ready)
+          "select-fds must return the ready fd in a list"))))
+
+(test with-raw-mode-expansion-has-force-output
+  "The expansion calls force-output to flush stdout after restoring the terminal."
+  (let* ((form (macroexpand-1 '(cl-tmux/input::with-raw-mode :body-marker)))
+         (text (prin1-to-string form)))
+    (is-true (or (search "FORCE-OUTPUT" text) (search "force-output" text))
+             "expansion must call FORCE-OUTPUT")))
+

@@ -16,12 +16,15 @@
 (declaim (inline printable-ascii-p utf8-lead-p utf8-continuation-p))
 
 (defun printable-ascii-p (byte)
+  "Return T when BYTE is in the printable ASCII range #x20-#x7E (space through tilde)."
   (and (>= byte #x20) (< byte #x7F)))
 
 (defun utf8-lead-p (byte)
+  "Return T when BYTE is a UTF-8 multi-byte lead byte (#xC0-#xFE, excluding #xFF)."
   (and (>= byte #xC0) (/= byte #xFF)))
 
 (defun utf8-continuation-p (byte)
+  "Return T when BYTE is a UTF-8 continuation byte (#x80-#xBF, high two bits = 10)."
   (= (logand byte #xC0) #x80))
 
 (defun utf8-lead-decode (byte)
@@ -60,37 +63,54 @@
                 ,@body)))
           rules))))
 
+;;; ── CSI byte-class constants ────────────────────────────────────────────────
+;;;
+;;; Named constants for the magic hex literals used in make-csi-k.
+;;; The ranges follow ECMA-48 § 5.4 table.
+
+(defconstant +csi-digit-low+   #x30 "Lowest decimal digit byte in a CSI sequence (ASCII '0').")
+(defconstant +csi-digit-high+  #x39 "Highest decimal digit byte in a CSI sequence (ASCII '9').")
+(defconstant +csi-semicolon+   #x3B "CSI parameter separator ';'.")
+(defconstant +csi-dec-marker+  #x3F "DEC private-mode marker '?'.")
+(defconstant +csi-sec-da+      #x3E "Secondary DA marker '>'.")
+(defconstant +csi-intermed-low+  #x20 "Lowest CSI intermediate byte (SPACE).")
+(defconstant +csi-intermed-high+ #x2F "Highest CSI intermediate byte.")
+(defconstant +csi-final-low+   #x40 "Lowest valid CSI final byte '@'.")
+(defconstant +csi-final-high+  #x7E "Highest valid CSI final byte '~'.")
+
 ;;; ── Parameterized state constructors ───────────────────────────────────────
 
 (defun make-csi-k (&optional (params '()) (cur-param nil) (intermed nil))
   "Return a continuation that collects CSI parameters then dispatches.
    Handles the standard VT/ECMA-48 CSI parameter syntax:
-     param bytes   0x30-0x3F  (digits, semicolon, ?, >)
-     intermediate  0x20-0x2F  (e.g. SPACE for DECSCUSR)
-     final byte    0x40-0x7E"
+     param bytes   +csi-digit-low+ to +csi-digit-high+  (digits 0-9)
+     semicolons    +csi-semicolon+                       (parameter separator)
+     markers       +csi-dec-marker+, +csi-sec-da+        (? and > markers)
+     intermediate  +csi-intermed-low+ to +csi-intermed-high+  (e.g. SPACE)
+     final byte    +csi-final-low+  to +csi-final-high+  (dispatch)"
   (lambda (screen byte)
     (declare (type screen screen) (type (unsigned-byte 8) byte))
     (cond
       ;; Digit 0-9: accumulate into current parameter
-      ((and (>= byte #x30) (<= byte #x39))
+      ((and (>= byte +csi-digit-low+) (<= byte +csi-digit-high+))
        (make-csi-k params
-                   (+ (* (or cur-param 0) 10) (- byte #x30))
+                   (+ (* (or cur-param 0) 10) (- byte +csi-digit-low+))
                    intermed))
       ;; Semicolon: end current param, start next
-      ((= byte #x3B)
+      ((= byte +csi-semicolon+)
        (make-csi-k (cons (or cur-param 0) params) nil intermed))
       ;; ? : DEC private marker (param byte)
-      ((= byte #x3F)
+      ((= byte +csi-dec-marker+)
        (make-csi-k params cur-param #\?))
       ;; > : secondary DA marker (param byte)
-      ((= byte #x3E)
+      ((= byte +csi-sec-da+)
        (make-csi-k params cur-param #\>))
-      ;; Intermediate bytes (0x20-0x2F): record as intermed.
+      ;; Intermediate bytes (SPACE through 0x2F): record as intermed.
       ;; SPACE (#x20) is the most common (used by DECSCUSR "CSI N SP q").
-      ((and (>= byte #x20) (<= byte #x2F))
+      ((and (>= byte +csi-intermed-low+) (<= byte +csi-intermed-high+))
        (make-csi-k params cur-param (code-char byte)))
       ;; Final byte (0x40-0x7E): dispatch
-      ((and (>= byte #x40) (<= byte #x7E))
+      ((and (>= byte +csi-final-low+) (<= byte +csi-final-high+))
        (let ((all-params (nreverse (if cur-param
                                        (cons cur-param params)
                                        params))))
@@ -99,18 +119,21 @@
       ;; Anything else: abort CSI
       (t #'ground-state))))
 
-(defun make-utf8-k (acc remaining)
-  "Return a continuation that collects UTF-8 continuation bytes."
-  (declare (type fixnum acc remaining))
+(defun make-utf8-k (utf8-acc continuation-bytes-remaining)
+  "Return a continuation that collects UTF-8 continuation bytes.
+   UTF8-ACC is the accumulator built from the lead byte.
+   CONTINUATION-BYTES-REMAINING is the count of continuation bytes still needed.
+   On the final continuation byte the assembled code point is written to screen."
+  (declare (type fixnum utf8-acc continuation-bytes-remaining))
   (lambda (screen byte)
     (declare (type screen screen) (type (unsigned-byte 8) byte))
     (if (utf8-continuation-p byte)
-        (let ((new-acc  (logior (ash acc 6) (logand byte #x3F)))
-              (new-left (1- remaining)))
-          (if (zerop new-left)
+        (let ((new-acc      (logior (ash utf8-acc 6) (logand byte #x3F)))
+              (bytes-left   (1- continuation-bytes-remaining)))
+          (if (zerop bytes-left)
               (progn (write-codepoint screen new-acc)
                      #'ground-state)
-              (make-utf8-k new-acc new-left)))
+              (make-utf8-k new-acc bytes-left)))
         ;; Malformed: emit U+FFFD, re-process this byte in ground state
         (progn
           (write-codepoint screen #xFFFD)
@@ -131,7 +154,7 @@
   (#x0C  (cursor-lf screen) #'ground-state)        ; FF treated as LF
   (#x08  (cursor-bs screen) #'ground-state)
   (#x09  (cursor-ht screen) #'ground-state)
-  (#x07  (setf (screen-bell-pending screen) t)
+  (#x07  (set-bell-pending screen)
          #'ground-state)                           ; BEL — set pending flag
   (#x7F  #'ground-state)                           ; DEL — ignore
   (#x0E  #'ground-state)                           ; SO  — charset shift out (ignore)
@@ -142,8 +165,8 @@
    #'ground-state)
   ;; ── Multi-byte UTF-8 ────────────────────────────────────────────────────
   (utf8-lead-p
-   (multiple-value-bind (acc left) (utf8-lead-decode byte)
-     (make-utf8-k acc left)))
+   (multiple-value-bind (utf8-acc continuation-bytes-remaining) (utf8-lead-decode byte)
+     (make-utf8-k utf8-acc continuation-bytes-remaining)))
   ;; ── Invalid / stray continuation byte ───────────────────────────────────
   ((>= byte #x80)
    (write-codepoint screen #xFFFD)
@@ -160,7 +183,7 @@
   (#x63  (ris-action screen)   #'ground-state)    ; ESC c → RIS
   (#x37  (save-cursor screen)    #'ground-state)  ; ESC 7 → DECSC
   (#x38  (restore-cursor screen) #'ground-state)  ; ESC 8 → DECRC
-  ;; ── Charset designators ──────────────────────────────────────────────────
+  ;; ── Charset designators (G0 and G1 both handled via charset-state) ─────────
   (#x28  #'charset-state)                          ; ESC ( → G0
   (#x29  #'charset-state)                          ; ESC ) → G1
   ;; ── All unrecognized ESC sequences → ground (including DECKPAM #x3D, DECKPNM #x3E)
@@ -218,7 +241,7 @@
   ;; Consume the designator byte.
   ;; #x30 = '0' → switch to DEC special graphics
   ;; #x42 = 'B' → switch to US ASCII
-  ;; All other designators are accepted silently.
-  (#x30  (setf (screen-charset screen) :dec-graphics) #'ground-state)
-  (#x42  (setf (screen-charset screen) :ascii)        #'ground-state)
-  (t     (setf (screen-charset screen) :ascii)        #'ground-state))
+  ;; All other designators fall back to ASCII (accepted silently).
+  (#x30  (set-charset screen :dec-graphics) #'ground-state)
+  (#x42  (set-charset screen :ascii)        #'ground-state)
+  (t     (set-charset screen :ascii)        #'ground-state))

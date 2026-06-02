@@ -115,6 +115,39 @@
     (show-overlay (format nil "a~%b~%"))
     (is (equal '("a" "b" "") (overlay-lines)))))
 
+(test overlay-scroll-zero-delta-is-noop
+  "overlay-scroll with delta 0 leaves *overlay-scroll-offset* unchanged."
+  (let ((*overlay* nil)
+        (*overlay-scroll-offset* 0))
+    (show-overlay (format nil "line1~%line2~%line3"))
+    (overlay-scroll 1)
+    (is (= 1 *overlay-scroll-offset*))
+    (overlay-scroll 0)
+    (is (= 1 *overlay-scroll-offset*)
+        "delta 0 must leave the offset unchanged")))
+
+(test show-overlay-empty-string
+  "show-overlay with an empty string activates overlay-active-p and overlay-lines returns a single empty line."
+  (let ((*overlay* nil)
+        (*overlay-scroll-offset* 5))
+    (show-overlay "")
+    (is (overlay-active-p)
+        "overlay must be active after show-overlay with empty string")
+    (is (= 0 *overlay-scroll-offset*)
+        "show-overlay must reset scroll offset even for empty string")
+    (is (equal '("") (overlay-lines))
+        "empty string produces a list with one empty line")))
+
+(test clear-overlay-when-no-overlay-is-noop
+  "clear-overlay when no overlay is active is a safe no-op."
+  (let ((*overlay* nil)
+        (*overlay-scroll-offset* 0))
+    (finishes (clear-overlay))
+    (is (not (overlay-active-p))
+        "overlay must remain inactive after clear-overlay on nil overlay")
+    (is (= 0 *overlay-scroll-offset*)
+        "scroll offset must remain 0 after clear-overlay on nil overlay")))
+
 ;;; -- Popup struct constructors and accessors ---------------------------------
 ;;;
 ;;; make-popup, *active-popup*, and all popup-* accessors are exported from
@@ -211,3 +244,38 @@
           "accessor works via the global")
       (setf *active-menu* nil)
       (is (null *active-menu*) "reset to nil clears it"))))
+
+;;; -- popup-p predicate -------------------------------------------------------
+
+(test popup-p-recognises-popup-struct
+  "popup-p returns T for a POPUP struct and NIL for any other value."
+  (let ((p (make-popup)))
+    (is (popup-p p)          "popup-p must return T for a make-popup result")
+    (is (not (popup-p nil))  "popup-p must return NIL for NIL")
+    (is (not (popup-p 42))   "popup-p must return NIL for a fixnum")
+    (is (not (popup-p ""))   "popup-p must return NIL for a string")
+    (is (not (popup-p (make-menu)))
+        "popup-p must return NIL for a MENU struct")))
+
+;;; -- menu-p predicate --------------------------------------------------------
+
+(test menu-p-recognises-menu-struct
+  "menu-p returns T for a MENU struct and NIL for any other value."
+  (let ((m (make-menu)))
+    (is (menu-p m)           "menu-p must return T for a make-menu result")
+    (is (not (menu-p nil))   "menu-p must return NIL for NIL")
+    (is (not (menu-p 42))    "menu-p must return NIL for a fixnum")
+    (is (not (menu-p ""))    "menu-p must return NIL for a string")
+    (is (not (menu-p (make-popup)))
+        "menu-p must return NIL for a POPUP struct")))
+
+;;; -- +default-popup-width+ / +default-popup-height+ constants ----------------
+
+(test default-popup-dimension-constants
+  "The named defconstants match the documented default slot values."
+  (is (= +default-popup-width+  (popup-width  (make-popup)))
+      "+default-popup-width+ must equal the default width slot")
+  (is (= +default-popup-height+ (popup-height (make-popup)))
+      "+default-popup-height+ must equal the default height slot")
+  (is (= 40 +default-popup-width+)  "canonical popup width is 40 columns")
+  (is (= 10 +default-popup-height+) "canonical popup height is 10 rows"))

@@ -441,14 +441,14 @@
 
 (test set-directive-stores-option
   "The set directive stores a value in the global options table."
-  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+  (with-fresh-global-options
     (apply-config-directive '("set" "status-interval" "30"))
     (is (= 30 (cl-tmux/options:get-option "status-interval"))
         "set must store status-interval = 30 in global options")))
 
 (test setw-directive-stores-option
   "The setw directive stores a value in the global options table."
-  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+  (with-fresh-global-options
     (apply-config-directive '("setw" "status-interval" "5"))
     (is (= 5 (cl-tmux/options:get-option "status-interval"))
         "setw must store the option value")))
@@ -515,28 +515,28 @@
 
 (test set-option-directive-stores-option
   "The set-option directive (long form of set) stores a value in global options."
-  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+  (with-fresh-global-options
     (apply-config-directive '("set-option" "status-interval" "20"))
     (is (= 20 (cl-tmux/options:get-option "status-interval"))
         "set-option must store status-interval = 20")))
 
 (test set-window-option-directive-stores-option
   "The setw/set-window-option directive stores a value in global options."
-  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+  (with-fresh-global-options
     (apply-config-directive '("set-window-option" "history-limit" "3000"))
     (is (= 3000 (cl-tmux/options:get-option "history-limit"))
         "set-window-option must store history-limit = 3000")))
 
 (test sets-directive-stores-option
   "The sets directive (session-scoped alias) stores a value in global options."
-  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+  (with-fresh-global-options
     (apply-config-directive '("sets" "status-interval" "10"))
     (is (= 10 (cl-tmux/options:get-option "status-interval"))
         "sets must store status-interval = 10")))
 
 (test set-session-option-directive-stores-option
   "The set-session-option directive stores a value in global options."
-  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+  (with-fresh-global-options
     (apply-config-directive '("set-session-option" "history-limit" "1500"))
     (is (= 1500 (cl-tmux/options:get-option "history-limit"))
         "set-session-option must store history-limit = 1500")))
@@ -628,3 +628,123 @@
           "root table binding must be :new-window")
       (is (cl-tmux/config:key-table-repeatable-p entry)
           "binding must be repeatable when -r flag is present"))))
+
+;;; ── %parse-bind-key-args with valid complete args ─────────────────────────
+
+(test parse-bind-key-args-returns-all-values
+  "%parse-bind-key-args with valid key+command returns all four values."
+  (multiple-value-bind (table key kw repeatable)
+      (cl-tmux/config::%parse-bind-key-args '("z" "new-window"))
+    (is (string= "prefix" table) "table defaults to prefix")
+    (is (char= #\z key)          "key must be #\\z")
+    (is (eq :new-window kw)      "command must be :new-window")
+    (is (null repeatable)        "repeatable must be NIL by default")))
+
+(test parse-bind-key-args-T-flag-specifies-table
+  "%parse-bind-key-args with -T uses the given table name."
+  (multiple-value-bind (table key kw ignored-rep)
+      (cl-tmux/config::%parse-bind-key-args '("-T" "copy-mode" "q" "copy-mode-enter"))
+    (declare (ignore ignored-rep))
+    (is (string= "copy-mode" table) "table must be copy-mode")
+    (is (char= #\q key)             "key must be #\\q")
+    (is (eq :copy-mode-enter kw)    "command must be :copy-mode-enter")))
+
+(test parse-bind-key-args-r-flag-sets-repeatable
+  "%parse-bind-key-args with -r sets repeatable to T."
+  (multiple-value-bind (table ignored-key kw repeatable)
+      (cl-tmux/config::%parse-bind-key-args '("-r" "H" "resize-left"))
+    (declare (ignore ignored-key))
+    (is (string= "prefix" table) "table must be prefix for -r alone")
+    (is (eq :resize-left kw)      "command must be :resize-left")
+    (is repeatable                "repeatable must be T with -r flag")))
+
+;;; ── %tokenize-backslash-escape direct tests ──────────────────────────────
+
+(test tokenize-backslash-escape-produces-escaped-char
+  "%tokenize-backslash-escape pushes the character following the backslash."
+  ;; We verify the behavior indirectly via %config-tokens which calls it.
+  (let ((tokens (cl-tmux/config::%config-tokens "a\\nb")))
+    (is (= 1 (length tokens))
+        "backslash-n must be one token, got ~S" tokens)
+    (is (string= "anb" (first tokens))
+        "token must be 'anb' (backslash consumed), got ~S" (first tokens))))
+
+(test tokenize-backslash-escape-at-end-produces-partial-token
+  "%tokenize-backslash-escape at the very end of input does not signal."
+  (finishes
+    (let ((toks (cl-tmux/config::%config-tokens "abc\\")))
+      ;; The backslash is at EOL — just one partial token, no error.
+      (is (= 1 (length toks)) "must have 1 token even with trailing backslash"))))
+
+;;; ── %tokenize-double-quoted unmatched quote ───────────────────────────────
+
+(test tokenize-double-quoted-unmatched-treats-as-literal
+  "%config-tokens: an unmatched double-quote is treated as a literal character."
+  ;; Input: a single \" with no closing quote.
+  (let ((tokens (cl-tmux/config::%config-tokens "\"")))
+    ;; The lone \" starts a token but has no closing quote — the opening \" is
+    ;; a literal so we get a token containing the character.
+    (is (= 1 (length tokens))
+        "unmatched \" must produce 1 token, got ~S" tokens)))
+
+;;; ── %tokenize-single-quoted direct test ──────────────────────────────────
+
+(test tokenize-single-quoted-preserves-content
+  "%config-tokens: single-quoted content is preserved literally."
+  (let ((tokens (cl-tmux/config::%config-tokens "'hello world'")))
+    (is (= 1 (length tokens))
+        "single-quoted string must produce 1 token, got ~S" tokens)
+    (is (string= "hello world" (first tokens))
+        "token must be 'hello world', got ~S" (first tokens))))
+
+(test tokenize-single-quoted-no-escape-processing
+  "%config-tokens: backslash inside single quotes is literal, not an escape."
+  (let ((tokens (cl-tmux/config::%config-tokens "'a\\b'")))
+    (is (= 1 (length tokens))
+        "single-quoted backslash-b must yield 1 token, got ~S" tokens)
+    ;; Inside single quotes the backslash is literal, so token = "a\b" (3 chars).
+    (is (= 3 (length (first tokens)))
+        "token must be 3 chars (backslash is literal), got ~S" (first tokens))))
+
+;;; ── Table-driven tokenizer tests ─────────────────────────────────────────
+;;;
+;;; Parameterises the whitespace-splitting and quoting cases, eliminating the
+;;; structural duplication across the 6 separate tokenizer tests above.
+
+(test config-tokens-table-driven
+  "%config-tokens produces the correct token list across representative inputs."
+  (dolist (entry '(("bind c new-window"            ("bind" "c" "new-window"))
+                   ("  set-shell  /bin/bash  "      ("set-shell" "/bin/bash"))
+                   (""                              nil)
+                   ("   "                           nil)
+                   ("cmd \"\""                      ("cmd" ""))
+                   ("a \"b c\" d\\ e"               ("a" "b c" "d e"))))
+    (destructuring-bind (input expected) entry
+      (let ((result (cl-tmux/config::%config-tokens input)))
+        (is (equal expected result)
+            "%config-tokens ~S: expected ~S got ~S"
+            input expected result)))))
+
+;;; ── apply-config-directive on nil/empty input ─────────────────────────────
+
+(test apply-config-directive-nil-returns-nil
+  "apply-config-directive with NIL (empty token list) returns NIL."
+  (is (null (apply-config-directive nil))
+      "NIL token list must return NIL"))
+
+;;; ── set option directives: table-driven aliases ───────────────────────────
+;;;
+;;; All six set-option aliases (set, set-option, setw, set-window-option,
+;;; sets, set-session-option) produce the same result.  This table-driven
+;;; test replaces the six near-identical individual tests with a single loop.
+
+(test set-option-directive-aliases-table-driven
+  "All six set-option directive aliases store a value in the global options table."
+  (dolist (verb '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option"))
+    (with-fresh-global-options
+      (let ((result (apply-config-directive (list verb "status-interval" "7"))))
+        (is (eq t result)
+            "~A directive must return T, got ~S" verb result)
+        (is (= 7 (cl-tmux/options:get-option "status-interval"))
+            "~A must store status-interval = 7 in global options, got ~S"
+            verb (cl-tmux/options:get-option "status-interval"))))))

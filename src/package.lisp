@@ -5,6 +5,10 @@
   (:use #:cl)
   (:export
    #:+prefix-key-code+
+   ;; Standard key-table name constants
+   #:+table-prefix+
+   #:+table-root+
+   #:+table-copy-mode+
    #:*default-shell*
    #:*status-height*
    #:+pty-buf-size+
@@ -13,7 +17,7 @@
    #:+accept-timeout-us+
    #:+pty-poll-timeout-us+
    #:define-initial-key-bindings
-    #:lookup-key-binding
+   #:lookup-key-binding
    #:describe-key-bindings
    #:set-key-binding
    #:remove-key-binding
@@ -23,8 +27,9 @@
    #:key-table-bind
    #:key-table-lookup
    #:key-table-command
-    #:key-table-repeatable-p
-    #:load-config-file
+   #:key-table-repeatable-p
+   #:initialize-default-key-tables
+   #:load-config-file
    #:load-config-from-stream
    #:load-config-from-string
    #:apply-config-directive
@@ -63,6 +68,9 @@
    #:msg-command
    ;; Command message codec
    #:encode-command-payload #:decode-command-payload #:target-field-p
+   ;; Command payload helpers — exported as stable API so tests use single-colon access
+   #:split-on-nul-bytes #:command-name-to-string
+   #:assemble-command-fields #:encode-fields-to-buffer
    ;; Payload decoders + octet helpers
    #:decode-size #:decode-text #:to-octets
    ;; Integer codec helpers (exported so tests can use single-colon access)
@@ -118,6 +126,7 @@
    #:clamp
    #:safe-code-char
    #:char-width
+   #:define-wide-char-ranges
    ;; Screen struct + constructors
    #:screen
    #:%make-screen
@@ -126,8 +135,8 @@
    #:screen-width
    #:screen-height
    #:screen-cells
-   #:screen-cx
-   #:screen-cy
+   #:screen-cursor-x
+   #:screen-cursor-y
    #:screen-cur-fg
    #:screen-cur-bg
    #:screen-cur-attrs
@@ -140,8 +149,8 @@
    #:screen-lock
    ;; Alternate-screen save slots
    #:screen-alt-cells
-   #:screen-alt-cx
-   #:screen-alt-cy
+   #:screen-alt-cursor-x
+   #:screen-alt-cursor-y
    ;; DECSC/DECRC saved cursor
    #:screen-saved-cursor
    ;; DECTCEM cursor visibility
@@ -179,12 +188,14 @@
    #:screen-charset
    ;; Response queue for DA1/DA2 and similar replies
    #:screen-response-queue
-   ;; Cursor wrappers + grid helpers
-   #:screen-cursor-x
-   #:screen-cursor-y
+   ;; Grid helpers
    #:screen-cell
    #:screen-clear-dirty
-   #:screen-resize))
+   #:screen-resize
+   ;; Bell consumption (logic layer — consume and clear bell-pending atomically)
+   #:screen-consume-bell
+   ;; SGR pen reset (canonical, data layer; shared by actions and sgr layers)
+   #:reset-sgr-pen))
 
 (defpackage #:cl-tmux/terminal/actions
   (:use #:cl #:cl-tmux/terminal/types)
@@ -225,17 +236,24 @@
    #:decstbm
    #:dec-pm-set
    #:dec-pm-reset
+   #:enter-alt-screen
+   #:exit-alt-screen
+   #:reset-terminal-modes
    #:ris-action
    ;; DECSC / DECRC cursor save & restore
    #:save-cursor
    #:restore-cursor
    ;; Display projection (copy-mode scrollback)
-   #:screen-display-cell))
+   #:screen-display-cell
+   ;; Terminal state action helpers (DISPATCH layer calls these instead of mutating structs)
+   #:set-cursor-shape
+   #:set-bell-pending
+   #:set-charset
+   #:set-screen-title))
 
 (defpackage #:cl-tmux/terminal/sgr
   (:use #:cl #:cl-tmux/terminal/types)
   (:export
-   #:define-sgr-rules
    #:%dispatch-sgr-code
    #:apply-sgr))
 
@@ -245,7 +263,6 @@
         #:cl-tmux/terminal/actions
         #:cl-tmux/terminal/sgr)
   (:export
-   #:define-csi-rules
    #:execute-csi))
 
 (defpackage #:cl-tmux/terminal/parser
@@ -345,6 +362,8 @@
    #:combining-char-p
    ;; BEL pending flag
    #:screen-bell-pending
+   ;; Bell consumption (logic layer)
+   #:screen-consume-bell
    ;; Copy-mode search term
    #:screen-copy-search-term
    ;; Copy-mode line-selection flag
@@ -367,6 +386,7 @@
    #:overlay-active-p #:show-overlay #:clear-overlay #:overlay-lines
    #:overlay-scroll
    ;; Popup overlay
+   #:+default-popup-width+ #:+default-popup-height+
    #:popup #:make-popup #:popup-p
    #:popup-x #:popup-y #:popup-width #:popup-height
    #:popup-screen #:popup-pane #:popup-title #:popup-close-on-exit
@@ -478,7 +498,8 @@
 
 (defpackage #:cl-tmux/buffer
   (:use #:cl)
-  (:export #:*paste-buffers* #:add-paste-buffer #:get-paste-buffer
+  (:export #:+default-buffer-limit+
+           #:*paste-buffers* #:add-paste-buffer #:get-paste-buffer
            #:list-paste-buffers #:delete-paste-buffer #:clear-paste-buffers))
 
 (defpackage #:cl-tmux/hooks
@@ -556,6 +577,7 @@
    #:copy-mode-exit
    #:copy-mode-scroll
    #:copy-mode-move-cursor
+   #:copy-mode-set-cursor
    #:copy-mode-begin-selection
    #:copy-mode-cancel-selection
    #:copy-mode-yank
@@ -651,10 +673,6 @@
    #:add-message-log
    ;; Clock mode (for :clock-mode)
    #:*clock-mode-pane-id*
-   ;; Status-bar timer
-   #:*status-dirty*
-   #:*status-timer-thread*
-   #:start-status-timer
    ;; Reader thread lifecycle
    #:stop-reader-threads
    ;; Named constants

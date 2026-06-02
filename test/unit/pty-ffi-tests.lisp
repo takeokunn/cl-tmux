@@ -112,3 +112,56 @@
     (cl-tmux/pty::fd-zero! rset)
     (is-false (cl-tmux/pty::fd-isset-p 10 rset) "fd 10 must be clear after fd-zero!")
     (is-false (cl-tmux/pty::fd-isset-p 20 rset) "fd 20 must be clear after fd-zero!")))
+
+;;; ── Additional fd_set edge cases ─────────────────────────────────────────────
+
+(test fd-set-fd-0-works
+  "fd-set! and fd-isset-p work correctly for fd 0 (the lowest possible fd)."
+  (cffi:with-foreign-object (rset :int32 cl-tmux/pty::+fd-set-words+)
+    (cl-tmux/pty::fd-zero! rset)
+    (is-false (cl-tmux/pty::fd-isset-p 0 rset) "fd 0 must be clear initially")
+    (cl-tmux/pty::fd-set! 0 rset)
+    (is-true  (cl-tmux/pty::fd-isset-p 0 rset) "fd 0 must be set after fd-set!")
+    (is-false (cl-tmux/pty::fd-isset-p 1 rset) "fd 1 must remain clear")))
+
+(test fd-isset-p-returns-false-on-zeroed-buffer
+  "fd-isset-p returns NIL for any fd after fd-zero!."
+  (cffi:with-foreign-object (rset :int32 cl-tmux/pty::+fd-set-words+)
+    (cl-tmux/pty::fd-zero! rset)
+    (dolist (fd '(0 1 5 15 32 63))
+      (is-false (cl-tmux/pty::fd-isset-p fd rset)
+                "fd ~D must be clear in zeroed buffer" fd))))
+
+(test fd-set-all-fds-in-last-word
+  "fd-set! and fd-isset-p work for fds in the last word (word 31, fds 992–1023)."
+  (cffi:with-foreign-object (rset :int32 cl-tmux/pty::+fd-set-words+)
+    (cl-tmux/pty::fd-zero! rset)
+    ;; fd 992 = word 31, bit 0; fd 993 = word 31, bit 1.
+    (cl-tmux/pty::fd-set! 992 rset)
+    (is-true  (cl-tmux/pty::fd-isset-p 992 rset) "fd 992 must be set")
+    (is-false (cl-tmux/pty::fd-isset-p 993 rset) "fd 993 must remain clear")))
+
+(test platform-constants-distinguish-read-write-flags
+  "+o-rdwr+ and +o-noctty+ are distinct non-zero values."
+  (is (not (= cl-tmux/pty::+o-rdwr+ cl-tmux/pty::+o-noctty+))
+      "+o-rdwr+ and +o-noctty+ must be distinct constants"))
+
+(test ioctl-request-codes-are-distinct
+  "+tiocgwinsz+ and +tiocswinsz+ are distinct (get ≠ set) ioctl codes."
+  (is (not (= cl-tmux/pty::+tiocgwinsz+ cl-tmux/pty::+tiocswinsz+))
+      "+tiocgwinsz+ and +tiocswinsz+ must be distinct ioctl codes"))
+
+;;; ── FFI function reachability ────────────────────────────────────────────────
+
+(test cffi-functions-are-fbound
+  "All CFFI-declared functions (%posix-openpt, %grantpt, %unlockpt, %ptsname,
+   %read, %write, %select) must be fbound after the FFI declarations are loaded."
+  (dolist (sym '(cl-tmux/pty::%posix-openpt
+                 cl-tmux/pty::%grantpt
+                 cl-tmux/pty::%unlockpt
+                 cl-tmux/pty::%ptsname
+                 cl-tmux/pty::%read
+                 cl-tmux/pty::%write
+                 cl-tmux/pty::%select))
+    (is (fboundp sym)
+        "~A must be fbound after CFFI defcfun" sym)))

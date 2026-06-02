@@ -200,8 +200,8 @@
 (test decstbm-homes-cursor-to-origin
   :description "After decstbm, the cursor is at (0, 0)."
   (with-screen (s 10 10)
-    (setf (cl-tmux/terminal/types::screen-cx s) 5
-          (cl-tmux/terminal/types::screen-cy s) 5)
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 5
+          (cl-tmux/terminal/types:screen-cursor-y s) 5)
     (cl-tmux/terminal/actions:decstbm s 2 7)
     (check-cursor s 0 0)))
 
@@ -225,3 +225,83 @@
     (cl-tmux/terminal/actions:decstbm s 0 99)
     (is (= 9 (cl-tmux/terminal/types:screen-scroll-bottom s))
         "scroll-bottom must be clamped to height-1 (9)")))
+
+;;; ── SUITE: screen-consume-bell ───────────────────────────────────────────────
+
+(def-suite screen-consume-bell-suite
+  :description "screen-consume-bell atomically reads and clears the bell-pending flag"
+  :in terminal-suite)
+(in-suite screen-consume-bell-suite)
+
+(test screen-consume-bell-returns-true-and-clears-flag
+  :description "screen-consume-bell returns T when the bell is pending and resets the flag."
+  (with-screen (s 10 5)
+    ;; Trigger a BEL via the emulator.
+    (screen-process-bytes s (make-array 1 :element-type '(unsigned-byte 8)
+                                          :initial-contents '(#x07)))
+    (is (cl-tmux/terminal/types:screen-bell-pending s)
+        "bell-pending must be T before consume-bell")
+    ;; Consume the bell: should return T and clear the flag.
+    (is (cl-tmux/terminal/types:screen-consume-bell s)
+        "screen-consume-bell must return T when bell was pending")
+    (is-false (cl-tmux/terminal/types:screen-bell-pending s)
+              "bell-pending must be NIL after screen-consume-bell")))
+
+(test screen-consume-bell-returns-nil-when-not-pending
+  :description "screen-consume-bell returns NIL when no bell was pending."
+  (with-screen (s 10 5)
+    ;; No BEL was received.
+    (is-false (cl-tmux/terminal/types:screen-bell-pending s)
+              "bell-pending must be NIL on a fresh screen")
+    (is-false (cl-tmux/terminal/types:screen-consume-bell s)
+              "screen-consume-bell must return NIL when bell was not pending")))
+
+(test screen-consume-bell-idempotent-second-call
+  :description "Calling screen-consume-bell twice returns T then NIL."
+  (with-screen (s 10 5)
+    (screen-process-bytes s (make-array 1 :element-type '(unsigned-byte 8)
+                                          :initial-contents '(#x07)))
+    (cl-tmux/terminal/types:screen-consume-bell s)   ; first call — clears the flag
+    (is-false (cl-tmux/terminal/types:screen-consume-bell s)
+              "second consume-bell must return NIL (bell already consumed)")))
+
+;;; ── SUITE: screen-resize emulator integration ────────────────────────────────
+
+(def-suite screen-resize-suite
+  :description "screen-resize adjusts width/height and preserves on-screen content"
+  :in terminal-suite)
+(in-suite screen-resize-suite)
+
+(test screen-resize-grows-dimensions
+  :description "screen-resize to a larger size updates width and height."
+  (with-screen (s 10 5)
+    (screen-resize s 20 10)
+    (is (= 20 (screen-width  s)) "width must be 20 after resize to 20x10")
+    (is (= 10 (screen-height s)) "height must be 10 after resize to 20x10")))
+
+(test screen-resize-shrinks-dimensions
+  :description "screen-resize to a smaller size updates width and height."
+  (with-screen (s 20 10)
+    (screen-resize s 10 5)
+    (is (= 10 (screen-width  s)) "width must be 10 after shrink")
+    (is (= 5  (screen-height s)) "height must be 5 after shrink")))
+
+(test screen-resize-preserves-content-within-new-bounds
+  :description "Content written before a grow-resize is accessible afterwards."
+  (with-screen (s 5 3)
+    (feed s "hello")
+    (screen-resize s 10 5)
+    ;; Original content at (0..4, 0) must still be readable.
+    (check-row s 0 "hello")))
+
+(test screen-resize-clamps-cursor-inside-new-bounds
+  :description "After shrink-resize, the cursor is clamped inside the new grid."
+  (with-screen (s 20 10)
+    ;; Move cursor to a position that would be out of bounds after shrink.
+    (feed s (esc "[10;20H"))   ; row 9, col 19
+    (screen-resize s 5 3)
+    ;; Cursor must be clamped to fit the new 5x3 grid.
+    (is (<= (screen-cursor-x s) 4)
+        "cursor-x must be clamped to width-1 after shrink")
+    (is (<= (screen-cursor-y s) 2)
+        "cursor-y must be clamped to height-1 after shrink")))

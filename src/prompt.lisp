@@ -146,7 +146,7 @@
    Matches readline/emacs C-w: skip trailing spaces left, then skip word chars left."
   (if (zerop end-index)
       0
-      (let* ((after-spaces (%skip-while-left buffer (1- end-index)
+      (let* ((after-spaces (%skip-while-left buffer end-index
                                              (lambda (c) (char= c #\Space))))
              (after-word   (%skip-while-left buffer after-spaces
                                              (lambda (c) (char/= c #\Space)))))
@@ -175,11 +175,11 @@
    The cursor is shown as a '|' inserted at cursor-index in the buffer."
   (let ((p *prompt*))
     (when p
-      (let* ((buf (prompt-buffer p))
-             (idx (prompt-cursor-index p)))
+      (let* ((buffer       (prompt-buffer p))
+             (cursor-index (prompt-cursor-index p)))
         (format nil "~A: ~A|~A"
                 (prompt-label p)
-                (subseq buf 0 idx)
-                (subseq buf idx))))))
+                (subseq buffer 0 cursor-index)
+                (subseq buffer cursor-index))))))
 
 ;;; Overlay, popup, and menu state continues in overlay.lisp (same package).

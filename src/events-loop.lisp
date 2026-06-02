@@ -88,15 +88,15 @@
 (defun %forward-octets-synchronized (session octets)
   "Forward OCTETS to the active pane.  If synchronize-panes is enabled on
    the active window, also write to all other panes in the window."
-  (let* ((win (session-active-window session))
-         (ap  (and win (window-active-pane win))))
-    (when ap
-      (pty-write (pane-fd ap) octets)
+  (let* ((window      (session-active-window session))
+         (active-pane (and window (window-active-pane window))))
+    (when active-pane
+      (pty-write (pane-fd active-pane) octets)
       ;; Broadcast when synchronize-panes is enabled.
       (when (cl-tmux/options:get-option "synchronize-panes")
-        (dolist (p (window-panes win))
-          (unless (eq p ap)
-            (ignore-errors (pty-write (pane-fd p) octets))))))))
+        (dolist (pane (window-panes window))
+          (unless (eq pane active-pane)
+            (ignore-errors (pty-write (pane-fd pane) octets))))))))
 
 ;;; -- Main event loop --------------------------------------------------------
 
@@ -104,38 +104,57 @@
   "Re-read terminal geometry and relayout the active window after SIGWINCH."
   (setf *resize-pending* nil)
   (multiple-value-setq (*term-rows* *term-cols*) (terminal-size))
-  (let ((win (session-active-window session)))
-    (when win
-      (window-relayout win (- *term-rows* *status-height*) *term-cols*))))
+  (let ((window (session-active-window session)))
+    (when window
+      (window-relayout window (- *term-rows* *status-height*) *term-cols*))))
 
 (defun %maybe-rename-window-from-title (session)
   "If the active pane has set an OSC title and the window's automatic-rename
-   option is enabled, propagate the title to the active window name."
-  (let* ((ap  (session-active-pane session))
-         (sc  (when ap (pane-screen ap)))
-         (win (session-active-window session)))
-    (when (and sc win
-               (window-automatic-rename-p win)
-               (not (string= (screen-title sc) "")))
-      (unless (string= (screen-title sc) (window-name win))
-        (setf (window-name win) (screen-title sc))
-        (setf *dirty* t)))))
+   option is enabled, propagate the title to the active window name.
+   Window renaming is routed through RENAME-WINDOW (commands layer) to ensure
+   hook dispatch and consistent state mutation."
+  (let* ((active-pane   (session-active-pane session))
+         (screen        (when active-pane (pane-screen active-pane)))
+         (active-window (session-active-window session)))
+    (when (and screen active-window
+               (window-automatic-rename-p active-window)
+               (not (string= (screen-title screen) ""))
+               (not (string= (screen-title screen) (window-name active-window))))
+      (rename-window active-window (screen-title screen))
+      (setf *dirty* t))))
 
 (defun %handle-dirty (session)
   "Fit the active window to current terminal size and repaint."
   (setf *dirty* nil)
   (%maybe-rename-window-from-title session)
-  (let ((win (session-active-window session)))
-    (when win
-      (ensure-window-fits win (- *term-rows* *status-height*) *term-cols*)))
+  (let ((window (session-active-window session)))
+    (when window
+      (ensure-window-fits window (- *term-rows* *status-height*) *term-cols*)))
   (render-session session *term-rows* *term-cols*))
 
+;;; +event-loop-max-idle-iterations+ bounds the number of consecutive nil reads
+;;; before the loop yields briefly, preventing a tight spin when *running* stays
+;;; T but no I/O arrives (e.g., during a hang-debugging session).
+(defconstant +event-loop-max-idle-iterations+ 10000
+  "Maximum consecutive nil reads before the event loop yields (safety bound).")
+
 (defun event-loop (session)
-  "In-process event loop: read stdin, route keystrokes, repaint on dirty."
-  (let ((state (make-input-state)))
+  "In-process event loop: read stdin, route keystrokes, repaint on dirty.
+   The loop is bounded by +event-loop-max-idle-iterations+ idle reads before
+   yielding so a stuck *running* flag cannot spin the CPU unboundedly."
+  (let ((state        (make-input-state))
+        (idle-counter 0))
     (loop while *running* do
-      (let ((b (read-byte-nonblock +poll-timeout-us+)))
-        (when (and b (member (process-byte session b state) '(:quit :detach)))
-          (setf *running* nil)))
+      (let ((byte (read-byte-nonblock +poll-timeout-us+)))
+        (if byte
+            (progn
+              (setf idle-counter 0)
+              (when (member (process-byte session byte state) '(:quit :detach))
+                (setf *running* nil)))
+            (progn
+              (incf idle-counter)
+              (when (>= idle-counter +event-loop-max-idle-iterations+)
+                (setf idle-counter 0)
+                (sleep 0.001)))))  ; 1 ms yield to prevent CPU starvation
       (when *resize-pending* (%handle-resize session))
       (when *dirty*           (%handle-dirty session)))))
