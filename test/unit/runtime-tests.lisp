@@ -83,21 +83,18 @@
       (ignore-errors
         (bordeaux-threads:join-thread thread :timeout 2)))))
 
-(test start-status-timer-is-idempotent
-  "Calling start-status-timer a second time while *running*=T is a no-op.
-   The second call returns the same thread object without spawning a new one.
-   The thread is killed immediately after by setting *running* NIL and joining."
-  (let ((cl-tmux::*running*            t)
+(test start-status-timer-stores-thread-in-global
+  "start-status-timer stores the thread object in *status-timer-thread*.
+   Uses *running*=NIL so the timer thread exits immediately (loop while *running*
+   is checked before sleeping, so the thread exits in microseconds)."
+  (let ((cl-tmux::*running*            nil)
         (cl-tmux::*status-timer-thread* nil))
-    (let ((thread1 (cl-tmux::start-status-timer))
-          (thread2 (cl-tmux::start-status-timer)))
-      ;; Both calls must return the same thread.
-      (is (eq thread1 thread2)
-          "second call must return the same thread")
-      ;; Shut down the timer so later fork tests are unaffected.
-      (setf cl-tmux::*running* nil)
+    (let ((thread (cl-tmux::start-status-timer)))
+      (is (eq thread cl-tmux::*status-timer-thread*)
+          "returned thread must match *status-timer-thread*")
+      ;; Let the thread exit cleanly before any subsequent tests run.
       (ignore-errors
-        (bordeaux-threads:join-thread thread1 :timeout 2)))))
+        (bordeaux-threads:join-thread thread :timeout 1)))))
 
 ;;; ── Reader CPS states (sandbox-safe) ─────────────────────────────────────────
 

@@ -78,122 +78,6 @@
         (cl-tmux/format:expand-format current ctx)
         (funcall default-fn))))
 
-;;; ── Style string parser ─────────────────────────────────────────────────────
-;;;
-;;; Parses tmux color/attribute style strings of the form:
-;;;   "fg=color,bg=color,bold,reverse,dim,underline,italics"
-;;; Color names: default black red green yellow blue magenta cyan white
-;;;              colourN (0-255), brightred etc.
-
-(defparameter *%color-name-table*
-  '(("black"    . "30")
-    ("red"      . "31")
-    ("green"    . "32")
-    ("yellow"   . "33")
-    ("blue"     . "34")
-    ("magenta"  . "35")
-    ("cyan"     . "36")
-    ("white"    . "37")
-    ("brightblack"   . "90")
-    ("brightred"     . "91")
-    ("brightgreen"   . "92")
-    ("brightyellow"  . "93")
-    ("brightblue"    . "94")
-    ("brightmagenta" . "95")
-    ("brightcyan"    . "96")
-    ("brightwhite"   . "97"))
-  "Alist mapping color name strings to integer SGR base code strings (foreground codes).")
-
-(defun %color-name-to-sgr-number (name is-bg)
-  "Convert a color name string NAME to an SGR sequence fragment.
-   IS-BG: T for background, NIL for foreground.
-   Returns a string like \"31\" or \"41\" or \"38;5;N\" for colourN."
-  (let ((lname (string-downcase name)))
-    (cond
-      ;; colourN → 256-color extended sequence
-      ((and (>= (length lname) 7) (string= (subseq lname 0 6) "colour"))
-       (let ((n (parse-integer lname :start 6 :junk-allowed t)))
-         (if n
-             (format nil "~D;5;~D" (if is-bg 48 38) n)
-             (if is-bg "49" "39"))))
-      ;; default
-      ((string= lname "default") (if is-bg "49" "39"))
-      ;; named colors
-      (t (let ((entry (assoc lname *%color-name-table* :test #'string=)))
-           (if entry
-               (let ((base (parse-integer (cdr entry))))
-                 (format nil "~D" (if is-bg (+ base 10) base)))
-               (if is-bg "49" "39")))))))
-
-(defun %split-style-tokens (style)
-  "Internal: split STYLE on commas. Used by parse-style-string."
-  (let ((tokens nil)
-        (start  0))
-    (loop for i from 0 below (length style)
-          when (char= (char style i) #\,)
-            do (push (subseq style start i) tokens)
-               (setf start (1+ i))
-          finally (push (subseq style start) tokens))
-    (nreverse tokens)))
-
-(defun parse-style-string (style)
-  "Parse a tmux style string STYLE into a plist with keys:
-   :fg :bg :bold :dim :reverse :underline :italics :blink :conceal :strikethrough
-   Color values are strings (e.g. \"red\", \"colour4\"), attribute values are T/NIL.
-   Returns NIL for NIL or empty STYLE."
-  (when (or (null style) (string= style ""))
-    (return-from parse-style-string nil))
-  (let ((result nil))
-    (dolist (token (%split-style-tokens style))
-      (let ((tok (string-downcase (string-trim " " token))))
-        (cond
-          ((and (>= (length tok) 3) (string= (subseq tok 0 3) "fg="))
-           (setf (getf result :fg) (subseq tok 3)))
-          ((and (>= (length tok) 3) (string= (subseq tok 0 3) "bg="))
-           (setf (getf result :bg) (subseq tok 3)))
-          ((string= tok "bold")          (setf (getf result :bold)          t))
-          ((string= tok "dim")           (setf (getf result :dim)           t))
-          ((string= tok "reverse")       (setf (getf result :reverse)       t))
-          ((string= tok "underline")     (setf (getf result :underline)     t))
-          ((string= tok "italics")       (setf (getf result :italics)       t))
-          ((string= tok "blink")         (setf (getf result :blink)         t))
-          ((string= tok "conceal")       (setf (getf result :conceal)       t))
-          ((string= tok "strikethrough") (setf (getf result :strikethrough) t))
-          ((string= tok "nodim")         (setf (getf result :dim)           nil))
-          ((string= tok "nobold")        (setf (getf result :bold)          nil))
-          ((string= tok "noreverse")     (setf (getf result :reverse)       nil))
-          ((string= tok "nounderline")   (setf (getf result :underline)     nil))
-          ((string= tok "noitalics")     (setf (getf result :italics)       nil)))))
-    result))
-
-(defun style-to-sgr (parsed-style)
-  "Convert a parsed style plist (from PARSE-STYLE-STRING) to an SGR sequence string.
-   Returns the default status-bar SGR \"44;97\" when PARSED-STYLE is NIL or empty."
-  (if (null parsed-style)
-      "44;97"
-      (let ((parts nil))
-        (when (getf parsed-style :bold)          (push "1"  parts))
-        (when (getf parsed-style :dim)           (push "2"  parts))
-        (when (getf parsed-style :italics)       (push "3"  parts))
-        (when (getf parsed-style :underline)     (push "4"  parts))
-        (when (getf parsed-style :blink)         (push "5"  parts))
-        (when (getf parsed-style :reverse)       (push "7"  parts))
-        (when (getf parsed-style :conceal)       (push "8"  parts))
-        (when (getf parsed-style :strikethrough) (push "9"  parts))
-        (when (getf parsed-style :fg)
-          (push (%color-name-to-sgr-number (getf parsed-style :fg) nil) parts))
-        (when (getf parsed-style :bg)
-          (push (%color-name-to-sgr-number (getf parsed-style :bg) t) parts))
-        (if parts
-            (format nil "~{~A~^;~}" (nreverse parts))
-            "44;97"))))
-
-(defun %status-sgr-from-style (style-str)
-  "Return a partial SGR string for STYLE-STR (e.g. \"fg=colour2,bg=colour4\").
-   Parses the style string via PARSE-STYLE-STRING / STYLE-TO-SGR.
-   Returns the default blue-on-white SGR \"44;97\" when style-str is empty/nil."
-  (style-to-sgr (parse-style-string style-str)))
-
 (defun %status-window-list-styled (session active-win)
   "Window-tab string with current-style applied to the active window entry.
    Uses window-status-format, window-status-current-format, window-status-separator,
@@ -216,12 +100,14 @@
                  (label    (cl-tmux/format:expand-format
                             (if active-p fmt-current fmt-normal)
                             ctx)))
-            ;; Apply per-window style if set
-            (when (and style (not (string= style "")))
-              (format ws "~C[~Am" +esc+ style))
-            (write-string label ws)
-            (when (and style (not (string= style "")))
-              (format ws "~C[0m" +esc+))))))))
+            ;; Apply per-window style using %status-sgr-from-style for proper SGR conversion.
+            (let ((sgr (when (and style (plusp (length style)))
+                         (%status-sgr-from-style style))))
+              (when sgr
+                (format ws "~C[~Am" +esc+ sgr))
+              (write-string label ws)
+              (when sgr
+                (reset-attrs ws)))))))))
 
 (defun %status-justify-line (left right-str cols justify)
   "Assemble the status bar according to JUSTIFY (:left :centre :right).
@@ -254,10 +140,9 @@
 (defun render-status-bar (stream session terminal-rows terminal-cols
                           &key (status-row (1- terminal-rows)))
   "Draw the status bar at STATUS-ROW with dynamic format string expansion.
-   By default STATUS-ROW is the bottom row (terminal-rows - 1).
+   STATUS-ROW defaults to (1- TERMINAL-ROWS), i.e. the bottom row.
    Respects status-style, status-justify, status-left-length, status-right-length,
    and window-status-current-style options."
-  (declare (ignore terminal-rows))
   (let* ((active-win (session-active-window session))
          (ap         (session-active-pane session))
          (ctx        (cl-tmux/format:format-context-from-session session active-win ap))
@@ -318,6 +203,23 @@
         do (move-to stream row 0)
            (write-string (subseq line 0 (min (length line) cols)) stream)))
 
+(defun %render-mouse-sequences (stream ap)
+  "Emit mouse-tracking mode sequences according to session and pane settings.
+   When the session 'mouse' option is enabled, emit SGR + button-event sequences.
+   Otherwise honour the active pane's screen-mouse-mode (X10/button-event/any-event)."
+  (let ((session-mouse (cl-tmux/options:get-option "mouse")))
+    (if session-mouse
+        (progn
+          (format stream "~C[?1006h" +esc+)
+          (format stream "~C[?1002h" +esc+))
+        (when ap
+          (let* ((screen (pane-screen ap))
+                 (mm     (screen-mouse-mode screen))
+                 (sgr    (screen-mouse-sgr-mode screen)))
+            (when (> mm 0)
+              (format stream "~C[?~Dh" +esc+ (case mm (1 1000) (2 1002) (t 1003)))
+              (when sgr (format stream "~C[?1006h" +esc+))))))))
+
 ;;; ── Full-session render ────────────────────────────────────────────────────
 
 (defun render-session-to-string (session terminal-rows terminal-cols)
@@ -365,24 +267,7 @@
     (when status-on
       (render-status-bar buf session terminal-rows terminal-cols
                          :status-row status-row))
-    ;; Enable/disable mouse reporting on the outer terminal.
-    ;; When the session "mouse" option is T, enable SGR + button-event tracking.
-    ;; When false, disable basic mouse tracking on the outer terminal.
-    ;; Per-pane screen-mouse-mode is also honoured for applications that set their
-    ;; own mouse mode (e.g. vim's mouse=a); the session option gates cl-tmux's
-    ;; own mouse handling.
-    (let ((session-mouse (cl-tmux/options:get-option "mouse")))
-      (if session-mouse
-          (progn
-            (format buf "~C[?1006h" +esc+)   ; SGR extended encoding
-            (format buf "~C[?1002h" +esc+))  ; button-event tracking
-          (when ap
-            (let* ((sc  (pane-screen ap))
-                   (mm  (screen-mouse-mode sc))
-                   (sgr (screen-mouse-sgr-mode sc)))
-              (when (> mm 0)
-                (format buf "~C[?~Dh" +esc+ (case mm (1 1000) (2 1002) (t 1003)))
-                (when sgr (format buf "~C[?1006h" +esc+)))))))
+    (%render-mouse-sequences buf ap)
     ;; Emit and clear a pending BEL from the active pane.
     (when ap
       (let ((screen (pane-screen ap)))
