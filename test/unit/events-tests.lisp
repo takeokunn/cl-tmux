@@ -185,7 +185,7 @@
         ;; Just assert *resize-pending* is cleared and no error is signalled.
         (cl-tmux::%handle-resize s)
         (is-false cl-tmux::*resize-pending*
-                  "*resize-pending* must be NIL after %handle-resize"))))
+                  "*resize-pending* must be NIL after %handle-resize")))))
 
 (test handle-dirty-clears-flag
   "%handle-dirty clears *dirty* and renders without error."
@@ -196,7 +196,7 @@
             (cl-tmux::*term-cols* 40))
         (cl-tmux::%handle-dirty s)
         (is-false cl-tmux::*dirty*
-                  "*dirty* must be NIL after %handle-dirty"))))
+                  "*dirty* must be NIL after %handle-dirty")))))
 
 ;;; ── handle-prompt-key: prompt editing keys ───────────────────────────────────
 
@@ -574,7 +574,7 @@
       (let ((*overlay* nil))
         (is-false (pane-marked p0) "pane must not be marked initially")
         (cl-tmux::dispatch-command sess :mark-pane nil)
-        (is (pane-marked p0) "pane must be marked after :mark-pane"))))
+        (is (pane-marked p0) "pane must be marked after :mark-pane")))))
 
 (test dispatch-mark-pane-toggle-unmarks
   ":mark-pane on an already-marked pane unmarks it (toggle)."
@@ -592,7 +592,7 @@
         (is (pane-marked p0) "pane marked before dispatch")
         (cl-tmux::dispatch-command sess :mark-pane nil)
         (is-false (pane-marked p0)
-            "pane unmarked after :mark-pane on already-marked pane"))))
+            "pane unmarked after :mark-pane on already-marked pane")))))
 
 (test dispatch-clear-mark-unmarks-all-panes
   ":clear-mark clears pane-marked on all panes in the current window."
@@ -609,7 +609,7 @@
         (setf (pane-marked p0) t)
         (is (pane-marked p0) "pane must be marked before :clear-mark")
         (cl-tmux::dispatch-command sess :clear-mark nil)
-        (is-false (pane-marked p0) "pane must not be marked after :clear-mark"))))
+        (is-false (pane-marked p0) "pane must not be marked after :clear-mark")))))
 
 ;;; ── dispatch :display-info ───────────────────────────────────────────────────
 
@@ -628,7 +628,7 @@
         (cl-tmux::dispatch-command sess :display-info nil)
         (is (overlay-active-p) "display-info must activate the overlay")
         (is (search "Session:" *overlay*)
-            "overlay must contain \"Session:\""))))
+            "overlay must contain \"Session:\"")))))
 
 ;;; ── dispatch :choose-client ──────────────────────────────────────────────────
 
@@ -1593,7 +1593,7 @@
     (with-loop-state
       (cl-tmux::%maybe-rename-window-from-title sess)
       (is (string= "new-title" (window-name win))
-          "%maybe-rename-window-from-title must set window-name to OSC title")))))
+          "%maybe-rename-window-from-title must set window-name to OSC title"))))
 
 (test maybe-rename-window-from-title-noop-when-titles-equal
   "%maybe-rename-window-from-title does nothing when OSC title equals window name."
@@ -1610,7 +1610,7 @@
     (with-loop-state
       (cl-tmux::%maybe-rename-window-from-title sess)
       (is (string= "same" (window-name win))
-          "window-name must be unchanged when title equals name")))))
+          "window-name must be unchanged when title equals name"))))
 
 (test maybe-rename-window-from-title-noop-when-auto-rename-off
   "%maybe-rename-window-from-title does nothing when automatic-rename is disabled."
@@ -1627,7 +1627,7 @@
     (with-loop-state
       (cl-tmux::%maybe-rename-window-from-title sess)
       (is (string= "original" (window-name win))
-          "window-name must not change when auto-rename is disabled")))))
+          "window-name must not change when auto-rename is disabled"))))
 
 ;;; ── Application cursor keys remapping ───────────────────────────────────────
 

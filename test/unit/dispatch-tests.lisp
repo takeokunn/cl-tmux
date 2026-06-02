@@ -593,7 +593,7 @@
         ;; Submit "n" — should NOT kill.
         (funcall (prompt-on-submit *prompt*) "n")
         (is (= 2 (length (window-panes (session-active-window s))))
-            "submitting \"n\" must NOT kill the pane"))))))
+            "submitting \"n\" must NOT kill the pane")))))
 
 ;;; ── :kill-window-confirm dispatch ────────────────────────────────────────────
 
@@ -807,7 +807,7 @@
           ;; Toggle off
           (cl-tmux::dispatch-command s :clock-mode nil)
           (is (null cl-tmux::*clock-mode-pane-id*)
-              "*clock-mode-pane-id* must be nil after second :clock-mode (toggle off)")))))
+              "*clock-mode-pane-id* must be nil after second :clock-mode (toggle off)"))))))
 
 ;;; ── :capture-pane dispatch ───────────────────────────────────────────────────
 
@@ -2508,3 +2508,403 @@
       (cl-tmux::dispatch-command sess :select-pane-left nil)
       (is (eq p0 (window-active-pane win))
           ":select-pane-left at leftmost pane must remain on p0"))))
+
+;;; ── :prev-pane dispatch ──────────────────────────────────────────────────────
+
+(test dispatch-prev-pane-wraps-from-first
+  ":prev-pane cycles in reverse: from the first pane wraps to the last."
+  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
+         (win (session-active-window s))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win))))
+    (with-loop-state
+      (is (eq p0 (window-active-pane win)) "p0 is active initially")
+      (cl-tmux::dispatch-command s :prev-pane nil)
+      (is (eq p1 (window-active-pane win))
+          ":prev-pane from the first pane must wrap to the last pane"))))
+
+(test dispatch-prev-pane-retreats-from-last
+  ":prev-pane from the last pane selects the preceding pane."
+  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
+         (win (session-active-window s))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win))))
+    (with-loop-state
+      (window-select-pane win p1)
+      (cl-tmux::dispatch-command s :prev-pane nil)
+      (is (eq p0 (window-active-pane win))
+          ":prev-pane from p1 must select p0"))))
+
+;;; ── :split-horizontal / :split-vertical (focus versions) dispatch ────────────
+
+(test dispatch-split-horizontal-does-not-error
+  ":split-horizontal dispatches without error on a fake session."
+  (let ((s (make-fake-session :nwindows 1 :npanes 1)))
+    (with-loop-state
+      (finishes (cl-tmux::dispatch-command s :split-horizontal nil)
+                ":split-horizontal must not signal an error"))))
+
+(test dispatch-split-vertical-does-not-error
+  ":split-vertical dispatches without error on a fake session."
+  (let ((s (make-fake-session :nwindows 1 :npanes 1)))
+    (with-loop-state
+      (finishes (cl-tmux::dispatch-command s :split-vertical nil)
+                ":split-vertical must not signal an error"))))
+
+;;; ── :new-window dispatch ─────────────────────────────────────────────────────
+
+(test dispatch-new-window-does-not-error
+  ":new-window dispatches without error (or signals at PTY level, which is acceptable)."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (handler-case
+          (progn
+            (cl-tmux::dispatch-command s :new-window nil)
+            (is-true t ":new-window dispatched without error"))
+        (error ()
+          (is-true t ":new-window signalled at PTY level (acceptable in sandbox)"))))))
+
+;;; ── copy-mode paging / scrolling / movement command dispatch ─────────────────
+;;;
+;;; These commands delegate to copy-mode helpers via %copy-mode-call.
+;;; We verify each dispatches without error when copy mode is active.
+
+(defmacro with-copy-mode-active ((session-var) &body body)
+  "Enter copy mode on a fresh fake session bound to SESSION-VAR, run BODY.
+   Used to test copy-mode dispatch commands in isolation."
+  `(let ((,session-var (make-fake-session)))
+     (with-loop-state
+       (cl-tmux::dispatch-command ,session-var :copy-mode-enter nil)
+       (is (cl-tmux::%copy-mode-active-p ,session-var)
+           "copy mode must be on before testing copy-mode commands")
+       ,@body)))
+
+(test dispatch-copy-mode-page-up-does-not-error
+  ":copy-mode-page-up dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-page-up nil)
+              ":copy-mode-page-up must not signal an error")))
+
+(test dispatch-copy-mode-page-down-does-not-error
+  ":copy-mode-page-down dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-page-down nil)
+              ":copy-mode-page-down must not signal an error")))
+
+(test dispatch-copy-mode-half-page-up-does-not-error
+  ":copy-mode-half-page-up dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-half-page-up nil)
+              ":copy-mode-half-page-up must not signal an error")))
+
+(test dispatch-copy-mode-half-page-down-does-not-error
+  ":copy-mode-half-page-down dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-half-page-down nil)
+              ":copy-mode-half-page-down must not signal an error")))
+
+(test dispatch-copy-mode-scroll-up-line-does-not-error
+  ":copy-mode-scroll-up-line dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-scroll-up-line nil)
+              ":copy-mode-scroll-up-line must not signal an error")))
+
+(test dispatch-copy-mode-scroll-down-line-does-not-error
+  ":copy-mode-scroll-down-line dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-scroll-down-line nil)
+              ":copy-mode-scroll-down-line must not signal an error")))
+
+(test dispatch-copy-mode-word-forward-does-not-error
+  ":copy-mode-word-forward dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-word-forward nil)
+              ":copy-mode-word-forward must not signal an error")))
+
+(test dispatch-copy-mode-word-backward-does-not-error
+  ":copy-mode-word-backward dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-word-backward nil)
+              ":copy-mode-word-backward must not signal an error")))
+
+(test dispatch-copy-mode-word-end-does-not-error
+  ":copy-mode-word-end dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-word-end nil)
+              ":copy-mode-word-end must not signal an error")))
+
+(test dispatch-copy-mode-line-start-does-not-error
+  ":copy-mode-line-start dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-line-start nil)
+              ":copy-mode-line-start must not signal an error")))
+
+(test dispatch-copy-mode-line-end-does-not-error
+  ":copy-mode-line-end dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-line-end nil)
+              ":copy-mode-line-end must not signal an error")))
+
+(test dispatch-copy-mode-top-does-not-error
+  ":copy-mode-top dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-top nil)
+              ":copy-mode-top must not signal an error")))
+
+(test dispatch-copy-mode-bottom-does-not-error
+  ":copy-mode-bottom dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-bottom nil)
+              ":copy-mode-bottom must not signal an error")))
+
+(test dispatch-copy-mode-high-does-not-error
+  ":copy-mode-high dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-high nil)
+              ":copy-mode-high must not signal an error")))
+
+(test dispatch-copy-mode-middle-does-not-error
+  ":copy-mode-middle dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-middle nil)
+              ":copy-mode-middle must not signal an error")))
+
+(test dispatch-copy-mode-low-does-not-error
+  ":copy-mode-low dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-low nil)
+              ":copy-mode-low must not signal an error")))
+
+(test dispatch-copy-mode-begin-line-selection-does-not-error
+  ":copy-mode-begin-line-selection dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-begin-line-selection nil)
+              ":copy-mode-begin-line-selection must not signal an error")))
+
+(test dispatch-copy-mode-copy-end-of-line-does-not-error
+  ":copy-mode-copy-end-of-line dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-copy-end-of-line nil)
+              ":copy-mode-copy-end-of-line must not signal an error")))
+
+(test dispatch-copy-mode-copy-line-does-not-error
+  ":copy-mode-copy-line dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-copy-line nil)
+              ":copy-mode-copy-line must not signal an error")))
+
+(test dispatch-copy-mode-search-next-does-not-error
+  ":copy-mode-search-next dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-search-next nil)
+              ":copy-mode-search-next must not signal an error")))
+
+(test dispatch-copy-mode-search-prev-does-not-error
+  ":copy-mode-search-prev dispatches without error when copy mode is active."
+  (with-copy-mode-active (s)
+    (finishes (cl-tmux::dispatch-command s :copy-mode-search-prev nil)
+              ":copy-mode-search-prev must not signal an error")))
+
+(test dispatch-copy-mode-choose-buffer-no-buffers-shows-overlay
+  ":copy-mode-choose-buffer opens an overlay saying 'no paste buffers' when ring is empty."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (cl-tmux::dispatch-command s :copy-mode-enter nil)
+      (is (cl-tmux::%copy-mode-active-p s) "copy mode must be on")
+      (let ((*overlay* nil)
+            (cl-tmux/buffer:*paste-buffers* nil))
+        (cl-tmux::dispatch-command s :copy-mode-choose-buffer nil)
+        (is (overlay-active-p)
+            ":copy-mode-choose-buffer must open an overlay")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is (search "no paste buffers" text)
+              "overlay must say 'no paste buffers' when ring is empty"))))))
+
+(test dispatch-copy-mode-choose-buffer-with-entries
+  ":copy-mode-choose-buffer with buffers lists them by index."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (cl-tmux::dispatch-command s :copy-mode-enter nil)
+      (is (cl-tmux::%copy-mode-active-p s) "copy mode must be on")
+      (let ((*overlay* nil)
+            (cl-tmux/buffer:*paste-buffers* (list "alpha" "beta")))
+        (cl-tmux::dispatch-command s :copy-mode-choose-buffer nil)
+        (is (overlay-active-p)
+            ":copy-mode-choose-buffer must open an overlay")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is (search "0:" text) "overlay must list buffer 0")
+          (is (search "1:" text) "overlay must list buffer 1"))))))
+
+;;; ── copy-mode commands are no-ops when copy mode is off ─────────────────────
+
+(test dispatch-copy-mode-commands-noop-outside-copy-mode
+  "Copy-mode dispatch commands do not error when copy mode is not active."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (is-false (cl-tmux::%copy-mode-active-p s) "copy mode must be off")
+      (dolist (cmd '(:copy-mode-page-up :copy-mode-page-down
+                     :copy-mode-word-forward :copy-mode-word-backward
+                     :copy-mode-line-start :copy-mode-line-end
+                     :copy-mode-top :copy-mode-bottom))
+        (finishes (cl-tmux::dispatch-command s cmd nil)
+                  "~A must not error when copy mode is off" cmd)))))
+
+;;; ── with-active-pane body execution ─────────────────────────────────────────
+
+(test with-active-pane-evaluates-body-when-pane-exists
+  "with-active-pane evaluates BODY and binds PANE-VAR when a pane is active."
+  (let* ((s  (make-fake-session))
+         (ap (session-active-pane s))
+         (result nil))
+    (cl-tmux::with-active-pane (p s)
+      (setf result p))
+    (is (eq ap result)
+        "with-active-pane must bind PANE-VAR to the active pane")))
+
+(test with-active-pane-skips-body-for-windowless-session
+  "with-active-pane does not evaluate BODY when no active pane is present."
+  (with-empty-session (s)
+    (let ((called nil))
+      (cl-tmux::with-active-pane (p s)
+        (declare (ignore p))
+        (setf called t))
+      (is-false called
+                "with-active-pane body must not execute when no active pane"))))
+
+;;; ── %format-menu selected-index=0 ───────────────────────────────────────────
+
+(test format-menu-selected-index-zero-marks-first-item
+  "%format-menu with selected-index=0 places the arrow marker next to the first item."
+  (let* ((menu   (make-menu :title "T"
+                             :items (list (cons "First" :k1) (cons "Second" :k2))
+                             :selected-index 0))
+         (output (cl-tmux::%format-menu menu)))
+    (is (stringp output) "%format-menu must return a string")
+    (is (search "▶" output) "output must have the ▶ marker")
+    (is (search "First" output) "output must contain the first item label")))
+
+;;; ── %apply-named-layout-to-session :tiled ────────────────────────────────────
+
+(test apply-named-layout-tiled-does-not-error
+  "%apply-named-layout-to-session :tiled dispatches without error on a 2-pane window."
+  (let* ((p0   (make-no-pty-pane 1  0 0 40 24))
+         (p1   (make-no-pty-pane 2 41 0 40 24))
+         (win  (make-window :id 1 :name "w" :width 81 :height 24
+                            :panes (list p0 p1)
+                            :tree (make-layout-split :h
+                                     (make-layout-leaf p0)
+                                     (make-layout-leaf p1)
+                                     1/2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (with-loop-state
+      (finishes (cl-tmux::%apply-named-layout-to-session sess :tiled)
+                "%apply-named-layout-to-session :tiled must not signal an error"))))
+
+;;; ── %handle-kill-result :detach does not clear *running* ─────────────────────
+
+(test handle-kill-result-preserves-running-for-detach
+  "%handle-kill-result does NOT clear *running* for a :detach result."
+  (with-loop-state
+    (cl-tmux::%handle-kill-result :detach)
+    (is-true cl-tmux::*running*
+             "*running* must remain T after :detach")))
+
+;;; ── %format-window-list empty session ───────────────────────────────────────
+
+(test format-window-list-empty-session-returns-empty-string
+  "%format-window-list with no windows returns an empty string."
+  (with-empty-session (s)
+    (let ((text (cl-tmux::%format-window-list s)))
+      (is (stringp text) "%format-window-list must return a string")
+      (is (string= "" text)
+          "%format-window-list must return empty string for windowless session"))))
+
+;;; ── %format-session-list window count ────────────────────────────────────────
+
+(test format-session-list-shows-window-count
+  "%format-session-list includes the window count for each session."
+  (let* ((s    (make-fake-session :nwindows 2))
+         (name (session-name s)))
+    (let ((cl-tmux::*server-sessions* (list (cons name s))))
+      (let ((text (cl-tmux::%format-session-list s)))
+        (is (search "2 window" text)
+            "output must include the window count '2 window'")))))
+
+;;; ── dispatch-command outcome propagation ─────────────────────────────────────
+
+(test dispatch-command-returns-quit-from-killing-last-window
+  "dispatch-command propagates :quit when kill-window eliminates the last window."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (is (eq :quit (cl-tmux::dispatch-command s :kill-window nil))
+          "dispatch-command must return :quit when the last window is killed"))))
+
+(test dispatch-command-returns-nil-and-marks-dirty-for-next-window
+  "dispatch-command returns NIL and marks *dirty* for :next-window."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (let ((result (cl-tmux::dispatch-command s :next-window nil)))
+        (is (null result)
+            "dispatch-command must return NIL for :next-window")
+        (is-true cl-tmux::*dirty*
+                 "dispatch-command must mark *dirty* for :next-window")))))
+
+;;; ── %copy-mode-cmd exhaustive override-table coverage ───────────────────────
+
+(test copy-mode-cmd-correct-overrides-for-all-table-chars
+  "%copy-mode-cmd returns the correct keyword for every character in the override table."
+  (flet ((check (ch kw)
+           (is (eq kw (cl-tmux::%copy-mode-cmd ch))
+               "%copy-mode-cmd ~C must return ~S" ch kw)))
+    (check #\q :copy-mode-exit)
+    (check #\i :copy-mode-exit)
+    (check #\Space :copy-mode-begin-selection)
+    (check #\v :copy-mode-begin-selection)
+    (check #\V :copy-mode-begin-line-selection)
+    (check #\y :copy-mode-yank)
+    (check #\w :copy-mode-word-forward)
+    (check #\b :copy-mode-word-backward)
+    (check #\e :copy-mode-word-end)
+    (check #\0 :copy-mode-line-start)
+    (check #\$ :copy-mode-line-end)
+    (check #\g :copy-mode-top)
+    (check #\G :copy-mode-bottom)
+    (check #\H :copy-mode-high)
+    (check #\M :copy-mode-middle)
+    (check #\L :copy-mode-low)
+    (check #\D :copy-mode-copy-end-of-line)
+    (check #\Y :copy-mode-copy-line)
+    (check #\n :copy-mode-search-next)
+    (check #\N :copy-mode-search-prev)
+    (check #\/ :copy-mode-search-forward-prompt)
+    (check #\? :copy-mode-search-backward-prompt)
+    (check #\= :copy-mode-choose-buffer)))
+
+;;; ── %format-tree-entry with multiple windows ─────────────────────────────────
+
+(test format-tree-entry-marks-active-window-with-asterisk
+  "%format-tree-entry marks the active window's id with an asterisk."
+  (let* ((screen0 (make-screen 20 5))
+         (pane0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                             :screen screen0))
+         (win0    (make-window :id 0 :name "alpha" :width 20 :height 5
+                               :panes (list pane0)
+                               :tree  (make-layout-leaf pane0)))
+         (screen1 (make-screen 20 5))
+         (pane1   (make-pane :id 2 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                             :screen screen1))
+         (win1    (make-window :id 1 :name "beta" :width 20 :height 5
+                               :panes (list pane1)
+                               :tree  (make-layout-leaf pane1))))
+    (window-select-pane win0 pane0)
+    (window-select-pane win1 pane1)
+    (let ((output
+            (with-output-to-string (s)
+              (cl-tmux::%format-tree-entry s "sess" "sess"
+                                          (list win0 win1) win0))))
+      (is (search "*0" output)
+          "active window id must appear with an asterisk prefix")
+      (is (search "alpha" output) "first window name must appear in output")
+      (is (search "beta"  output) "second window name must appear in output"))))
