@@ -67,28 +67,24 @@
 
 (test run-hooks-suppresses-any-error-subclass
   "run-hooks swallows the full ERROR condition hierarchy -- a subclass of ERROR
-   (here a SIMPLE-ERROR) is also silently suppressed."
+   (here a SIMPLE-ERROR) is also silently suppressed without reaching the caller."
   (with-isolated-hooks
-    (let ((suppressed nil))
+    ;; Register a hook that signals a SIMPLE-ERROR (a direct subclass of ERROR).
+    ;; run-hooks must catch it without the error propagating to the caller.
+    (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-kill-pane+
+                             (lambda () (error 'simple-error :format-control "hook boom")))
+    ;; Register a second hook to verify run-hooks continues after the first errors.
+    (let ((second-ran nil))
       (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-kill-pane+
-                               (lambda ()
-                                 (handler-case
-                                     (progn
-                                       (error "inner ~A" "error")
-                                       (setf suppressed nil))
-                                   ;; This handler runs only if the error escapes run-hooks.
-                                   ;; If run-hooks swallows it, SUPPRESSED stays at its
-                                   ;; initial value (:not-reached) set before run-hooks.
-                                   (error () (setf suppressed :escaped)))))
-      ;; Use a second hook that signals directly -- run-hooks must swallow it.
-      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-kill-pane+
-                               (lambda () (error 'simple-error :format-control "hook boom")))
-      (setf suppressed :not-reached)
+                               (lambda () (setf second-ran t)))
+      ;; FINISHES asserts that no condition escapes.
       (finishes (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-kill-pane+))
-      ;; The good hook ran; the error did not escape past run-hooks into the first hook's
-      ;; handler-case -- so suppressed must still be :not-reached.
-      (is (eq :not-reached suppressed)
-          "SIMPLE-ERROR from a later hook must not propagate to an earlier hook"))))
+      ;; The second hook (added last = runs first, newest-first) ran before the error hook.
+      ;; After the error hook signals, run-hooks swallows the error and execution ends
+      ;; (no more hooks after the error hook in this order).
+      ;; This verifies: (1) finishes = error swallowed, (2) order/second-ran is a bonus check.
+      (is-true second-ran
+               "the first-registered hook must run despite the second hook signalling an error"))))
 
 (test run-hooks-passes-args
   "run-hooks passes its extra arguments to each registered callback."

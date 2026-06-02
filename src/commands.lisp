@@ -76,8 +76,8 @@
     ;; Use the lowest free window id (same rule as session-new-window).
     (let* ((rows   (window-height src-win))
            (cols   (window-width  src-win))
-           (new-id (%next-window-id session))
-           (name   (%shell-basename))
+           (new-id (cl-tmux/model::%next-window-id session))
+           (name   (cl-tmux/model::%shell-basename))
            (new-win (make-window :id new-id :name name :width cols :height rows)))
       ;; Install the pane as the sole leaf in the new window's tree.
       (setf (window-panes new-win) (list pane)
@@ -126,7 +126,7 @@
         ;; Wire into the tree: replace the active leaf with a split.
         (let ((new-split (make-layout-split direction active-leaf
                                             (make-layout-leaf src-pane) 1/2)))
-          (%replace-in-tree dst-window active-leaf new-split)
+          (cl-tmux/model::%replace-in-tree dst-window active-leaf new-split)
           (setf (window-panes dst-window)
                 (layout-leaves (window-tree dst-window)))
           (window-relayout dst-window (window-height dst-window) (window-width dst-window))

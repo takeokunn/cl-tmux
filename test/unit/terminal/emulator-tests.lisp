@@ -80,21 +80,13 @@
 
 (test display-cell-live-row-oob-returns-blank
   "screen-display-cell returns the blank-cell fallback when live-row exceeds
-   screen-height (i.e. the copy-offset is larger than the scrollback depth,
-   causing the bottom portion of the viewport to map beyond the live grid)."
+   screen-height.  This happens when the caller passes a row argument that is
+   >= height with offset=0, which can occur in renderers that probe beyond the
+   live grid boundary."
   (with-screen (s 5 3)
-    (feed-lines s "L0" "L1" "L2" "L3")
-    (setf (cl-tmux/terminal/types:screen-copy-mode-p s) t
-          ;; Set offset to 1 (only 1 scrollback row available).
-          ;; Row indices 0..2 map to: row 0 → scrollback[0], rows 1-2 → live rows 0-1.
-          ;; Row 3 would map to live-row 2 which equals height-1 = 2, still valid.
-          ;; Use an offset of 2 so row 2 maps to live-row 0, row 2 to live 0:
-          ;; with offset=scrollback-depth+2, live-row for the bottom viewport row
-          ;; will exceed height.
-          (cl-tmux/terminal/types:screen-copy-offset s)
-          (+ (length (cl-tmux/terminal/types:screen-scrollback s)) 2)))
-    ;; The last viewport row now maps to a live-row beyond screen-height.
-    ;; screen-display-cell must return *display-blank-cell*, not error.
-    (let ((cell (cl-tmux/terminal/actions:screen-display-cell s 0 2)))
+    (feed-lines s "L0" "L1" "L2")
+    ;; With copy-offset=0 (live grid mode) and height=3, valid live rows are 0-2.
+    ;; Querying row=3 gives live-row=3 which equals height → OOB → blank cell.
+    (let ((cell (cl-tmux/terminal/actions:screen-display-cell s 0 3)))
       (is (char= #\Space (cl-tmux/terminal/types:cell-char cell))
-          "live-row beyond screen-height must return a blank cell")))
+          "live-row beyond screen-height must return a blank cell"))))

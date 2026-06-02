@@ -47,13 +47,16 @@
     (is-false cl-tmux::*running*)))
 
 (test stop-reader-threads-joins-already-dead-thread
-  "stop-reader-threads tolerates joining a thread that has already exited."
-  (let* ((cl-tmux::*running* t)
-         ;; Spawn a thread that exits immediately.
+  "stop-reader-threads tolerates joining a thread that has already exited.
+   The thread runs under *running*=NIL so it exits immediately on first check."
+  (let* ((cl-tmux::*running* nil)
+         ;; Spawn a thread that exits immediately because *running* is NIL.
+         ;; We use a lambda that loops exactly as %pane-reader-loop would.
          (thread (bordeaux-threads:make-thread
-                  (lambda () nil)
+                  (lambda ()
+                    (loop while cl-tmux::*running* do (sleep 0.001)))
                   :name "test-dead-thread")))
-    ;; Give the thread a moment to exit.
+    ;; Give the thread a moment to observe *running*=NIL and exit.
     (sleep 0.05)
     ;; join-thread on an already-dead thread should not signal.
     (finishes (cl-tmux::stop-reader-threads (list thread)))
@@ -62,33 +65,39 @@
 ;;; ── start-status-timer ───────────────────────────────────────────────────────
 
 (test start-status-timer-returns-a-thread
-  "start-status-timer returns a bordeaux thread object."
-  (let ((cl-tmux::*running*            t)
+  "start-status-timer creates a thread and stores it in *status-timer-thread*.
+   The thread is started with *running* NIL so it exits immediately; we verify
+   the structural properties without needing a long-running thread."
+  ;; Start with *running* NIL so the timer thread loop exits in one iteration
+  ;; (it checks *running* before sleeping).
+  (let ((cl-tmux::*running*            nil)
         (cl-tmux::*status-timer-thread* nil))
     (let ((thread (cl-tmux::start-status-timer)))
-      (unwind-protect
-           (progn
-             (is-true (bordeaux-threads:threadp thread)
-                      "start-status-timer must return a thread")
-             (is (eq thread cl-tmux::*status-timer-thread*)
-                 "*status-timer-thread* must be set to the returned thread"))
-        ;; Shut the timer down cleanly.
-        (setf cl-tmux::*running* nil)
-        (ignore-errors
-          (bordeaux-threads:join-thread thread :timeout 2))))))
+      ;; The thread object is a real bordeaux thread.
+      (is-true (bordeaux-threads:threadp thread)
+               "start-status-timer must return a thread")
+      ;; *status-timer-thread* is set to the returned thread.
+      (is (eq thread cl-tmux::*status-timer-thread*)
+          "*status-timer-thread* must be set to the returned thread")
+      ;; Give the thread time to observe *running*=NIL and exit.
+      (ignore-errors
+        (bordeaux-threads:join-thread thread :timeout 2)))))
 
 (test start-status-timer-is-idempotent
-  "Calling start-status-timer a second time while the thread is alive is a no-op."
+  "Calling start-status-timer a second time while *running*=T is a no-op.
+   The second call returns the same thread object without spawning a new one.
+   The thread is killed immediately after by setting *running* NIL and joining."
   (let ((cl-tmux::*running*            t)
         (cl-tmux::*status-timer-thread* nil))
     (let ((thread1 (cl-tmux::start-status-timer))
           (thread2 (cl-tmux::start-status-timer)))
-      (unwind-protect
-           (is (eq thread1 thread2)
-               "second call must return the same thread")
-        (setf cl-tmux::*running* nil)
-        (ignore-errors
-          (bordeaux-threads:join-thread thread1 :timeout 2))))))
+      ;; Both calls must return the same thread.
+      (is (eq thread1 thread2)
+          "second call must return the same thread")
+      ;; Shut down the timer so later fork tests are unaffected.
+      (setf cl-tmux::*running* nil)
+      (ignore-errors
+        (bordeaux-threads:join-thread thread1 :timeout 2)))))
 
 ;;; ── Reader CPS states (sandbox-safe) ─────────────────────────────────────────
 
