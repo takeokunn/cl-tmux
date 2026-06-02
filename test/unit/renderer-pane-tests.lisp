@@ -36,9 +36,9 @@
     (cl-tmux/test::utf8-feed screen "あ")
     (let ((out (with-output-to-string (s)
                  (cl-tmux/renderer::render-pane s pane))))
-      (is (= 1 (count #あ out))
+      (is (= 1 (count #\あ out))
           "exactly one wide glyph should be printed (got ~D in ~S)"
-          (count #あ out) out))))
+          (count #\あ out) out))))
 
 ;;; -- layout-subtree-rect and subtree-contains-p ------------------------------
 
@@ -80,7 +80,7 @@
       (cl-tmux/renderer::render-tree-borders buf tree ap 81)
       (let ((out (get-output-stream-string buf)))
         (is (plusp (length out)) "render-tree-borders must produce output")
-        (is (find #│ out) "vertical bar character must be present")))))
+        (is (find #\│ out) "vertical bar character must be present")))))
 
 ;;; -- %apply-border-style branch coverage -------------------------------------
 ;;;
@@ -148,7 +148,7 @@
                (cl-tmux/renderer::draw-clock-to-screen s 0 0 20 6))))
     (is (plusp (length out))
         "draw-clock-to-screen must produce non-empty output for 20x6 pane")
-    (is (find #█ out)
+    (is (find #\█ out)
         "draw-clock-to-screen must emit block-element characters for digits (got ~S)" out)))
 
 (test draw-clock-to-screen-too-small-emits-nothing
@@ -165,7 +165,7 @@
          (cl-tmux::*clock-mode-pane-id* 42))
     (let ((out (with-output-to-string (s)
                  (cl-tmux/renderer::render-pane s pane))))
-      (is (find #█ out)
+      (is (find #\█ out)
           "render-pane in clock mode must emit block-element digits (got ~S)" out))))
 
 (test render-pane-no-clock-when-id-mismatch
@@ -175,7 +175,7 @@
          (cl-tmux::*clock-mode-pane-id* 99))
     (let ((out (with-output-to-string (s)
                  (cl-tmux/renderer::render-pane s pane))))
-      (is (null (find #█ out))
+      (is (null (find #\█ out))
           "render-pane without matching clock-mode id must not emit clock digits (got ~S)"
           out))))
 

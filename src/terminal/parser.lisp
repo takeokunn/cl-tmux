@@ -198,17 +198,18 @@
 (defun make-dcs-k ()
   "Return a continuation that consumes DCS payload bytes until ST (ESC \\)."
   (lambda (screen byte)
-    (declare (type screen screen) (type (unsigned-byte 8) byte))
+    (declare (type screen screen) (type (unsigned-byte 8) byte)
+             (ignorable screen))
     (cond
       ((= byte #x1B)
        ;; Possible ESC \ ST — wait for backslash
-       (lambda (screen2 byte2)
-         (declare (type screen screen2) (type (unsigned-byte 8) byte2))
-         (declare (ignore screen2))
-         (if (= byte2 #x5C)      ; backslash = ST confirmed
+       (lambda (screen-st byte-st)
+         (declare (type screen screen-st) (type (unsigned-byte 8) byte-st)
+                  (ignorable screen-st))
+         (if (= byte-st #x5C)      ; backslash = ST confirmed
              #'ground-state
              ;; Not ST — keep consuming
-             (funcall (make-dcs-k) screen2 byte2))))
+             (funcall (make-dcs-k) screen-st byte-st))))
       (t
        ;; Continue consuming
        (make-dcs-k)))))

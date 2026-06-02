@@ -319,6 +319,6 @@
          (payload    (concatenate '(simple-array (unsigned-byte 8) (*))
                                   name-bytes #(0))))
     (multiple-value-bind (command target args) (decode-command-payload payload)
-      (is (eq :weird:name command))
+      (is (eq (intern "WEIRD:NAME" :keyword) command))
       (is (null target))
       (is (null args)))))

@@ -85,11 +85,11 @@
       (parse-integer (subseq payload 0 semicolon-position))
     (error () nil)))
 
-(defun %handle-osc-52 (screen text)
+(defun %handle-osc-52 (text)
   "Handle OSC 52 clipboard write: decode Base64 payload PD and call *osc52-handler*.
    Format: Pc ; Pd  where Pc is the clipboard target and Pd is Base64-encoded data
    or '?' for a read request (read requests are silently ignored)."
-  (let* ((inner-semi (position #\; text))
+  (let* ((inner-semi   (position #\; text))
          (payload-data (if inner-semi (subseq text (1+ inner-semi)) nil)))
     (when (and payload-data (not (string= payload-data "?")))
       (let* ((decoded-bytes (and payload-data (%base64-decode payload-data)))
@@ -114,7 +114,7 @@
           ((member command '(0 2))
            (setf (screen-title screen) body))
           ((eql command 52)
-           (%handle-osc-52 screen body)))))))
+           (%handle-osc-52 body)))))))
 
 ;;; ── CPS OSC accumulator continuations ──────────────────────────────────────
 ;;;
