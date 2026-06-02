@@ -528,6 +528,64 @@
     (is (char= #\q (char-at s 0 0))
         "ASCII mode: 'q' must write literal 'q', not a box-drawing char")))
 
+;;; ── Coverage: %dec-graphics-char corner cases ────────────────────────────────
+;;;
+;;; The existing tests cover only 'q' and 'x'.  These tests add coverage for
+;;; the corner characters, junctions, the catch-all unmapped branch, and the
+;;; macro itself (define-dec-graphics-table).
+
+(defmacro check-dec-graphics (char expected-char description)
+  "Assert that %dec-graphics-char maps CHAR to EXPECTED-CHAR with DESCRIPTION."
+  `(is (char= ,expected-char (cl-tmux/terminal/actions::%dec-graphics-char ,char))
+       ,description))
+
+(test dec-graphics-corner-characters
+  "DEC graphics corner and junction characters map to the correct box-drawing codepoints."
+  (check-dec-graphics #\j #\┘ "j must map to lower-right corner (┘)")
+  (check-dec-graphics #\k #\┐ "k must map to upper-right corner (┐)")
+  (check-dec-graphics #\l #\┌ "l must map to upper-left corner (┌)")
+  (check-dec-graphics #\m #\└ "m must map to lower-left corner (└)")
+  (check-dec-graphics #\n #\┼ "n must map to crossing (┼)")
+  (check-dec-graphics #\t #\├ "t must map to left tee (├)")
+  (check-dec-graphics #\u #\┤ "u must map to right tee (┤)")
+  (check-dec-graphics #\v #\┴ "v must map to bottom tee (┴)")
+  (check-dec-graphics #\w #\┬ "w must map to top tee (┬)"))
+
+(test dec-graphics-special-characters
+  "DEC graphics special characters map to the correct Unicode codepoints."
+  (check-dec-graphics #\a #\▒ "a must map to checkerboard (▒)")
+  (check-dec-graphics #\` #\◆ "` must map to diamond (◆)")
+  (check-dec-graphics #\f #\° "f must map to degree symbol (°)")
+  (check-dec-graphics #\g #\± "g must map to plus-minus (±)"))
+
+(test dec-graphics-dash-variants
+  "DEC graphics dash variants (o, p, r, s) all map to the horizontal line (─)."
+  (check-dec-graphics #\o #\─ "o must map to horizontal line")
+  (check-dec-graphics #\p #\─ "p must map to horizontal line")
+  (check-dec-graphics #\r #\─ "r must map to horizontal line")
+  (check-dec-graphics #\s #\─ "s must map to horizontal line"))
+
+(test dec-graphics-unmapped-char-returned-unchanged
+  "An unmapped character (not in the DEC special graphics set) is returned as-is."
+  ;; 'z' is not in the DEC graphics mapping — it should pass through unchanged.
+  (check-dec-graphics #\z #\z "unmapped 'z' must be returned unchanged")
+  (check-dec-graphics #\A #\A "unmapped 'A' must be returned unchanged"))
+
+(test dec-graphics-via-emulator-corner-chars
+  "Writing corner characters through the emulator in DEC graphics mode places
+   the correct box-drawing characters on the screen."
+  (with-screen (s 20 5)
+    (feed s (format nil "~C(0" #\Escape))  ; switch to DEC graphics
+    (feed s "jklm")
+    (is (char= #\┘ (char-at s 0 0)) "j at col 0 must be ┘")
+    (is (char= #\┐ (char-at s 1 0)) "k at col 1 must be ┐")
+    (is (char= #\┌ (char-at s 2 0)) "l at col 2 must be ┌")
+    (is (char= #\└ (char-at s 3 0)) "m at col 3 must be └")))
+
+(test define-dec-graphics-table-macro-is-defined
+  "define-dec-graphics-table is a defined macro in the actions package."
+  (is (macro-function 'cl-tmux/terminal/actions::define-dec-graphics-table)))
+
 ;;; ── SUITE: dcs-parsing ───────────────────────────────────────────────────────
 
 (def-suite dcs-parsing

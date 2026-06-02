@@ -10,22 +10,8 @@
 (in-suite layout-tree-suite)
 
 ;;; ── Helpers ──────────────────────────────────────────────────────────────
-
-(defun tl-pane (id w h)
-  "A no-PTY pane of W x H with a matching screen."
-  (make-pane :id id :x 0 :y 0 :width w :height h
-             :fd -1 :pid -1 :screen (make-screen w h)))
-
-(defun tl-leaf (id w h)
-  (make-layout-leaf (tl-pane id w h)))
-
-(defun tl-window (tree rows cols &key active)
-  "A window wrapping TREE, laid out at ROWS x COLS, with ACTIVE selected."
-  (let ((win (make-window :id 1 :name "w" :width cols :height rows :tree tree)))
-    (window-refresh-panes win)
-    (window-relayout win rows cols)
-    (window-select-pane win (or active (first (window-panes win))))
-    win))
+;;; tl-pane, tl-leaf, tl-window are defined in test/helpers.lisp and available
+;;; to all test files in the suite — no local redefinitions needed here.
 
 ;;; ── layout-leaves / find helpers ─────────────────────────────────────────
 
@@ -284,12 +270,7 @@
     (is (equal (list pane) (layout-leaves leaf))
         "single leaf must yield (list pane)")))
 
-(test axis-floor-returns-correct-minimum-per-orientation
-  "%axis-floor returns +pane-min-height+ for :v and +pane-min-width+ for :h."
-  (is (= cl-tmux/model::+pane-min-height+ (cl-tmux/model::%axis-floor :v))
-      ":v axis floor must equal +pane-min-height+")
-  (is (= cl-tmux/model::+pane-min-width+  (cl-tmux/model::%axis-floor :h))
-      ":h axis floor must equal +pane-min-width+"))
+;; axis-floor is tested in layout-geometry-tests.lisp (axis-floor-returns-correct-minimum).
 
 (test direct-child-side-identifies-first-and-second
   "%direct-child-side returns (split :first) or (split :second) for direct children

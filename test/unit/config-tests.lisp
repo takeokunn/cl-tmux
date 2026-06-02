@@ -4,9 +4,9 @@
 ;;;;
 ;;;; These tests are purely functional (no PTY, no threads) and cover:
 ;;;;   • the compile-time constant +prefix-key-code+,
-;;;;   • known bindings in the default *key-bindings* table,
+;;;;   • known bindings in the default prefix key-table,
 ;;;;   • the lookup-key-binding helper, and
-;;;;   • structural invariants of *key-bindings* itself.
+;;;;   • structural invariants of the prefix key-table itself.
 
 (def-suite config-suite :description "Key bindings and configuration")
 (in-suite config-suite)
@@ -15,9 +15,8 @@
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (import '(cl-tmux/config:lookup-key-binding
-            cl-tmux/config:describe-key-bindings
-            cl-tmux/config:*key-bindings*
-            cl-tmux/config:+prefix-key-code+
+             cl-tmux/config:describe-key-bindings
+             cl-tmux/config:+prefix-key-code+
             cl-tmux/config:+max-scrollback-lines+
             cl-tmux/config:+poll-timeout-us+
             cl-tmux/config:set-key-binding
@@ -48,39 +47,55 @@
   (is (null (lookup-key-binding #\@))
       "#\\@ should return NIL (unbound)"))
 
-;;; ── Structural invariants of *key-bindings* ───────────────────────────────
+;;; ── Structural invariants of prefix key-table ──────────────────────────────
 
 (test all-bindings-have-keyword-values
-  "Every value (cdr) in *key-bindings* is a keyword symbol."
-  (dolist (binding *key-bindings*)
-    (is (keywordp (cdr binding))
-        "binding ~A should have a keyword value, got ~A"
-        binding (cdr binding))))
+  "Every value in the prefix key-table is a keyword symbol."
+  (let* ((tbl (cl-tmux/config:ensure-key-table "prefix"))
+         (keys nil))
+    (maphash (lambda (k v) (declare (ignore k)) (push v keys)) tbl)
+    (dolist (entry keys)
+      (is (keywordp (cl-tmux/config:key-table-command entry))
+          "entry ~A should have a keyword command, got ~A"
+          entry (cl-tmux/config:key-table-command entry)))))
 
 (test all-bindings-have-char-or-string-keys
-  "Every key (car) in *key-bindings* is a character or a string."
-  (dolist (binding *key-bindings*)
-    (is (or (characterp (car binding))
-            (stringp    (car binding)))
-        "binding ~A should have a character or string key, got ~A"
-        binding (car binding))))
+  "Every key in the prefix key-table is a character or a string."
+  (let* ((tbl (cl-tmux/config:ensure-key-table "prefix"))
+         (keys nil))
+    (maphash (lambda (k v) (declare (ignore v)) (push k keys)) tbl)
+    (dolist (k keys)
+      (is (or (characterp k)
+              (stringp    k))
+          "key ~A should be a character or string, got ~A"
+          k (type-of k)))))
 
 ;;; ── define-initial-key-bindings macro ─────────────────────────────────────
+;;;
+;;; define-initial-key-bindings expands to side-effecting key-table-bind calls.
+;;; It does NOT return an alist.  Tests verify the side effects via key-table-lookup.
 
-(test define-initial-key-bindings-macro-produces-alist
-  "define-initial-key-bindings produces fresh cons pairs for char and digit entries."
-  (let ((bindings (define-initial-key-bindings
-                    (#\c :new-window)
-                    (:digits :select-window))))
+(test define-initial-key-bindings-macro-populates-key-table
+  "define-initial-key-bindings populates the prefix key-table for char and digit entries."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (define-initial-key-bindings
+      (#\c :new-window)
+      (:digits :select-window))
     ;; #\c → :new-window
-    (is (eq :new-window (cdr (assoc #\c bindings)))
-        "char entry must produce a (char . command) pair")
+    (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\c)))
+      (is (not (null entry)) "#\\c must have a prefix binding")
+      (is (eq :new-window (cl-tmux/config:key-table-command entry))
+          "char entry must bind :new-window"))
     ;; digits 0-9 → :select-window
     (dolist (d '(#\0 #\1 #\5 #\9))
-      (is (eq :select-window (cdr (assoc d bindings)))
-          "digit ~C must map to :select-window" d))
+      (let ((entry (cl-tmux/config:key-table-lookup "prefix" d)))
+        (is (not (null entry)) "digit ~C must have a prefix binding" d)
+        (is (eq :select-window (cl-tmux/config:key-table-command entry))
+            "digit ~C must bind :select-window" d)))
     ;; 11 total entries: 1 char + 10 digits
-    (is (= 11 (length bindings)))))
+    (let ((tbl (cl-tmux/config:ensure-key-table "prefix")))
+      (is (= 11 (hash-table-count tbl))
+          "prefix table must have exactly 11 entries (1 char + 10 digits)"))))
 
 ;;; ── set-key-binding / remove-key-binding ──────────────────────────────────
 
@@ -98,15 +113,16 @@
   "set-key-binding on an existing key replaces the command without duplicating."
   (with-isolated-config
     (set-key-binding #\z :new-window)
-    (let ((before (count #\z *key-bindings* :key #'car :test #'equal)))
-      (is (= 1 before)
-          "#\\z should appear exactly once after first bind, got ~A" before))
-    (set-key-binding #\z :detach)
-    (is (eq :detach (lookup-key-binding #\z))
-        "#\\z should now be bound to :detach")
-    (let ((after (count #\z *key-bindings* :key #'car :test #'equal)))
-      (is (= 1 after)
-          "#\\z should still appear exactly once (no duplicate), got ~A" after))))
+    (is (eq :new-window (lookup-key-binding #\z))
+        "#\\z should be bound to :new-window")
+    (let* ((tbl (cl-tmux/config:ensure-key-table "prefix"))
+           (before (hash-table-count tbl)))
+      (set-key-binding #\z :detach)
+      (is (eq :detach (lookup-key-binding #\z))
+          "#\\z should now be bound to :detach")
+      (let ((after (hash-table-count tbl)))
+        (is (= before after)
+            "prefix table size should not grow (replace, not duplicate)")))))
 
 (test remove-key-binding-removes
   "remove-key-binding removes a binding so lookup returns NIL afterward."
@@ -206,3 +222,36 @@
   (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
     (is (null (cl-tmux/config:key-table-lookup "nonexistent" #\a))
         "lookup in absent table must return NIL")))
+
+;;; ── key-table-repeatable-p nil-safe guard ─────────────────────────────────
+
+(test key-table-repeatable-p-nil-safe
+  "key-table-repeatable-p returns NIL when passed NIL (nil-safe guard)."
+  (is (null (cl-tmux/config:key-table-repeatable-p nil))
+      "key-table-repeatable-p NIL must return NIL without signaling"))
+
+(test key-table-command-nil-safe
+  "key-table-command is the car of the entry; key-table-repeatable-p is nil-safe."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    ;; Absent key returns NIL; nil-safe guard means no error.
+    (let ((absent (cl-tmux/config:key-table-lookup "prefix" #\@)))
+      (is (null absent) "absent key must return NIL")
+      (is (null (cl-tmux/config:key-table-repeatable-p absent))
+          "key-table-repeatable-p on NIL must return NIL"))))
+
+;;; ── initialize-default-key-tables idempotency ─────────────────────────────
+
+(test initialize-default-key-tables-idempotent
+  "Calling initialize-default-key-tables twice does not duplicate bindings."
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (cl-tmux/config::initialize-default-key-tables)
+    (let* ((tbl-after-first  (cl-tmux/config:ensure-key-table "prefix"))
+           (count-after-first (hash-table-count tbl-after-first)))
+      (cl-tmux/config::initialize-default-key-tables)
+      (let ((count-after-second (hash-table-count tbl-after-first)))
+        (is (= count-after-first count-after-second)
+            "prefix table must not grow on second initialize-default-key-tables call")))
+    (is (not (null (gethash "root"      cl-tmux/config:*key-tables*)))
+        "\"root\" table must exist after double initialization")
+    (is (not (null (gethash "copy-mode" cl-tmux/config:*key-tables*)))
+        "\"copy-mode\" table must exist after double initialization")))

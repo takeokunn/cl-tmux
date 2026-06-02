@@ -13,24 +13,18 @@
    #:+accept-timeout-us+
    #:+pty-poll-timeout-us+
    #:define-initial-key-bindings
-   #:*key-bindings*
-   #:lookup-key-binding
+    #:lookup-key-binding
    #:describe-key-bindings
    #:set-key-binding
    #:remove-key-binding
    ;; Key-table system
    #:*key-tables*
-   #:*current-key-table*
    #:ensure-key-table
-   #:get-key-table
-   #:set-key-binding-in-table
-   #:lookup-key-in-table
    #:key-table-bind
    #:key-table-lookup
    #:key-table-command
-   #:key-table-repeatable-p
-   #:sync-key-tables-from-bindings
-   #:load-config-file
+    #:key-table-repeatable-p
+    #:load-config-file
    #:load-config-from-stream
    #:load-config-from-string
    #:apply-config-directive
@@ -51,9 +45,7 @@
    ;; Multiplexed I/O
    #:select-fds            ; (fds timeout-us) → ready-fd-list
    ;; Terminal geometry
-   #:terminal-size         ; () → (values rows cols)
-   ;; Availability probe
-   #:pty-available-p))     ; () → boolean
+   #:terminal-size))       ; () → (values rows cols)
 
 ;;; ── Client/server wire protocol ──────────────────────────────────────────
 
@@ -70,17 +62,20 @@
    #:msg-attach #:msg-key #:msg-resize #:msg-detach #:msg-frame #:msg-bye
    #:msg-command
    ;; Command message codec
-   #:encode-command-payload #:decode-command-payload
+   #:encode-command-payload #:decode-command-payload #:target-field-p
    ;; Payload decoders + octet helpers
-   #:decode-size #:decode-text #:to-octets #:read-u32))
+   #:decode-size #:decode-text #:to-octets
+   ;; Integer codec helpers (exported so tests can use single-colon access)
+   #:u16-octets #:u32-octets #:u16-octets-pair #:read-u16 #:read-u32))
 
 ;;; ── Client/server stream transport ───────────────────────────────────────
 
 (defpackage #:cl-tmux/transport
   (:use #:cl #:cl-tmux/protocol)
   (:export
-   #:send-frame          ; (stream octets)        — write one frame + flush
-   #:read-frame))        ; (stream) → (values type payload) or NIL at EOF
+   #:send-frame            ; (stream octets)          — write one frame + flush
+   #:read-frame            ; (stream) → (values type payload) or NIL at EOF
+   #:with-incoming-frame)) ; macro — read + Prolog-dispatch one frame from a stream
 
 (defpackage #:cl-tmux/net
   (:use #:cl)
@@ -216,6 +211,7 @@
    #:scroll-up-one
    #:scroll-down-one
    #:trim-scroll-history
+   #:*history-limit-fn*
    ;; Erase
    #:erase-region
    #:erase-display
@@ -264,7 +260,6 @@
    #:escape-state
    #:make-csi-k
    #:make-utf8-k
-   #:make-dcs-k
    #:osc-state
    #:charset-state
    #:*osc52-handler*))
@@ -454,6 +449,7 @@
    #:session-windows
    #:session-active-window
    #:session-select-window
+   #:session-insert-window
    #:session-new-window
    #:session-active-pane
    #:session-last-active
@@ -461,7 +457,6 @@
    #:session-locked-p
    #:session-group
    #:session-touch
-   #:*session-id-counter*
    ;; Pane hit testing
    #:pane-at-position
    ;; Named layouts
@@ -470,11 +465,6 @@
    #:session-move-window
    #:session-swap-windows
    #:session-last-window
-   ;; Global state
-   ;; Shell basename helper (used by dispatch and commands/break-pane)
-   #:%shell-basename
-   ;; Lowest-free window-id helper (used by commands/break-pane)
-   #:%next-window-id
    ;; Global state
    #:create-initial-session
    #:all-panes
@@ -502,14 +492,7 @@
    #:+hook-session-created+
    #:+hook-after-kill-pane+
    #:+hook-after-kill-window+
-   #:+hook-client-attached+
-   #:+hook-client-detached+
-   #:+hook-after-new-session+
-   #:+hook-after-kill-session+
    #:+hook-after-split-window+
-   #:+hook-window-layout-changed+
-   ;; Macro
-   #:define-hook-events
    ;; Registry and dispatch
    #:*hook-registry*
    #:add-hook
@@ -523,7 +506,10 @@
   (:export #:*global-options* #:*option-registry*
            #:option-spec #:make-option-spec
            #:option-spec-name #:option-spec-type #:option-spec-default
-           #:define-tmux-options #:get-option #:set-option
+           ;; Registration macros
+           #:define-option-table
+           #:define-tmux-options
+           #:get-option #:set-option
            #:option-defined-p #:all-options
            ;; Server options
            #:*server-options* #:*server-option-registry*
@@ -644,8 +630,8 @@
    #:server-current-session
    ;; Session groups
    #:*session-groups*
+   #:*group-id-counter*
    #:server-new-session-in-group
-   #:server-sessions-in-group
    ;; Multi-session commands
    #:new-session
    ;; Session/window/pane targeting (-t flag)
@@ -668,4 +654,8 @@
    ;; Status-bar timer
    #:*status-dirty*
    #:*status-timer-thread*
-   #:start-status-timer))
+   #:start-status-timer
+   ;; Reader thread lifecycle
+   #:stop-reader-threads
+   ;; Named constants
+   #:+max-message-log-entries+))

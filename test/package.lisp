@@ -93,7 +93,11 @@
                 ;; Session name / id
                 #:session-id
                 #:session-last-active
-                #:session-touch)
+                #:session-touch
+                ;; Pane geometry (direct reposition)
+                #:pane-reposition
+                ;; Session window management
+                #:session-insert-window)
   (:import-from #:cl-tmux
                 ;; Session groups
                 #:*session-groups*
@@ -147,10 +151,19 @@
                 #:prompt-clear
                 #:prompt-text
                 #:*overlay*
+                #:*overlay-scroll-offset*
                 #:overlay-active-p
                 #:show-overlay
                 #:clear-overlay
                 #:overlay-lines
+                #:overlay-scroll
+                #:popup #:make-popup #:popup-p
+                #:popup-x #:popup-y #:popup-width #:popup-height
+                #:popup-screen #:popup-pane #:popup-title #:popup-close-on-exit
+                #:*active-popup*
+                #:menu #:make-menu #:menu-p
+                #:menu-title #:menu-items #:menu-selected-index
+                #:*active-menu*
                 #:prompt-label
                 #:prompt-buffer
                 #:prompt-on-submit
@@ -167,7 +180,6 @@
                 #:pty-write
                 #:pty-read-blocking
                 #:pty-close
-                #:select-fds
-                #:pty-available-p)
+                #:select-fds)
   (:export #:run-tests
            #:cl-tmux-suite))

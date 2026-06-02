@@ -102,40 +102,20 @@
   (is (eq :v (cl-tmux/model::resize-direction-orientation :down))))
 
 ;;; ── pane-neighbor tests ──────────────────────────────────────────────────────
+;;;
+;;; Shared fixture: with-h-split-window and with-v-split-window from helpers.lisp
+;;; replace the previously triplicated inline 81x24 two-pane window construction.
 
 (test pane-neighbor-right
   "Right neighbor of the left pane in a side-by-side split is the right pane."
   ;; Window 81 wide x 24 tall, split :h 50/50 → left pane x=0 w=40, right pane x=41 w=40
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1
-                           :x 0 :y 0 :width 40 :height 24
-                           :screen (make-screen 40 24)))
-         (p1   (make-pane :id 2 :fd -1 :pid -1
-                           :x 41 :y 0 :width 40 :height 24
-                           :screen (make-screen 40 24)))
-         (win  (make-window :id 1 :name "w" :width 81 :height 24
-                            :panes (list p0 p1)
-                            :tree (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2))))
-    (window-select-pane win p0)
+  (with-h-split-window (win p0 p1)
     (is (eq p1 (pane-neighbor win p0 :right))
         "Right neighbor of p0 must be p1")))
 
 (test pane-neighbor-left
   "Left neighbor of the right pane in a side-by-side split is the left pane."
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1
-                           :x 0 :y 0 :width 40 :height 24
-                           :screen (make-screen 40 24)))
-         (p1   (make-pane :id 2 :fd -1 :pid -1
-                           :x 41 :y 0 :width 40 :height 24
-                           :screen (make-screen 40 24)))
-         (win  (make-window :id 1 :name "w" :width 81 :height 24
-                            :panes (list p0 p1)
-                            :tree (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2))))
+  (with-h-split-window (win p0 p1)
     (window-select-pane win p1)
     (is (eq p0 (pane-neighbor win p1 :left))
         "Left neighbor of p1 must be p0")))
@@ -153,6 +133,20 @@
     (is (null (pane-neighbor win p0 :left))   "No left neighbor when alone")
     (is (null (pane-neighbor win p0 :up))     "No up neighbor when alone")
     (is (null (pane-neighbor win p0 :down))   "No down neighbor when alone")))
+
+(test pane-neighbor-down
+  "Down neighbor of the top pane in a top/bottom split is the bottom pane."
+  ;; Window 80 wide x 21 tall, split :v → top pane y=0 h=10, bottom pane y=11 h=10
+  (with-v-split-window (win p0 p1)
+    (is (eq p1 (pane-neighbor win p0 :down))
+        "Down neighbor of top pane (p0) must be the bottom pane (p1)")))
+
+(test pane-neighbor-up
+  "Up neighbor of the bottom pane in a top/bottom split is the top pane."
+  (with-v-split-window (win p0 p1)
+    (window-select-pane win p1)
+    (is (eq p0 (pane-neighbor win p1 :up))
+        "Up neighbor of bottom pane (p1) must be the top pane (p0)")))
 
 ;;; ── pane-at-position tests ───────────────────────────────────────────────────
 

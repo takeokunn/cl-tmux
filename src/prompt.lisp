@@ -1,12 +1,20 @@
 (in-package #:cl-tmux/prompt)
 
-;;;; Transient view-state shown over the session: a single-line input prompt
-;;;; (e.g. interactive rename-window) and a dismissible multi-line overlay
-;;;; (e.g. the list-keys help).
+;;;; Single-line input prompt -- buffer editing and display.
 ;;;;
-;;;; This module is pure UI state plus buffer-editing logic.  Applying any
-;;;; effect (renaming a window, etc.) is the caller's job; see events.lisp.
-;;;; It lives below the renderer so the renderer can read this state directly.
+;;;; Overlay, popup, and menu state lives in overlay.lisp (same package).
+;;;; Applying effects (e.g. renaming a window) is the caller's job; see events.lisp.
+;;;; The renderer reads this state directly; it lives below the renderer.
+
+;;; -- with-active-prompt guard macro ------------------------------------------
+
+(defmacro with-active-prompt ((var) &body body)
+  "Bind VAR to *prompt* and execute BODY only when a prompt is active.
+   No-op when *prompt* is NIL.  Eliminates the repeated (let ((p *prompt*)) (when p ..)) guard."
+  `(let ((,var *prompt*))
+     (when ,var ,@body)))
+
+;;; -- Prompt struct ------------------------------------------------------------
 
 (defstruct prompt
   "An active single-line input prompt."
@@ -32,99 +40,131 @@
                                :cursor-index (length initial)
                                :on-submit on-submit)))
 
+;;; -- Buffer editing -----------------------------------------------------------
+
 (defun prompt-input (ch)
   "Insert character CH at the cursor position in the active prompt's buffer.
    Advances the cursor by one.  No-op when the prompt is inactive."
-  (let ((p *prompt*))
-    (when p
-      (let* ((buf  (prompt-buffer p))
-             (idx  (prompt-cursor-index p))
-             (new  (concatenate 'string
-                                (subseq buf 0 idx)
+  (with-active-prompt (p)
+    (let* ((buffer (prompt-buffer p))
+           (index  (prompt-cursor-index p))
+           (new    (concatenate 'string
+                                (subseq buffer 0 index)
                                 (string ch)
-                                (subseq buf idx))))
-        (setf (prompt-buffer       p) new)
-        (setf (prompt-cursor-index p) (1+ idx))))))
+                                (subseq buffer index))))
+      (setf (prompt-buffer       p) new)
+      (setf (prompt-cursor-index p) (1+ index)))))
 
 (defun prompt-backspace ()
   "Delete the character immediately before the cursor, if any.
    The cursor moves back one position."
-  (let ((p *prompt*))
-    (when p
-      (let* ((buf (prompt-buffer p))
-             (idx (prompt-cursor-index p)))
-        (when (plusp idx)
-          (setf (prompt-buffer       p)
-                (concatenate 'string
-                             (subseq buf 0 (1- idx))
-                             (subseq buf idx)))
-          (setf (prompt-cursor-index p) (1- idx)))))))
+  (with-active-prompt (p)
+    (let* ((buffer (prompt-buffer p))
+           (index  (prompt-cursor-index p)))
+      (when (plusp index)
+        (setf (prompt-buffer       p)
+              (concatenate 'string
+                           (subseq buffer 0 (1- index))
+                           (subseq buffer index)))
+        (setf (prompt-cursor-index p) (1- index))))))
 
-(defun prompt-cursor-bol ()
-  "Move the cursor to the beginning of the buffer (index 0)."
-  (when *prompt*
-    (setf (prompt-cursor-index *prompt*) 0)))
+;;; -- Cursor navigation -- declarative table ----------------------------------
+;;;
+;;; All four cursor-movement functions are generated from a declarative table
+;;; so the guard condition and setf target are never duplicated.
+;;; with-active-prompt provides a uniform guard idiom throughout this file.
 
-(defun prompt-cursor-eol ()
-  "Move the cursor to the end of the buffer."
-  (when *prompt*
-    (setf (prompt-cursor-index *prompt*)
-          (length (prompt-buffer *prompt*)))))
+(defmacro define-prompt-cursor-ops (&rest specs)
+  "Generate cursor-navigation defuns from a declarative fact table.
+   Each SPEC has the form:
+     (fn-name docstring :mode MODE ARGS...)
+   where MODE is one of:
+     :absolute EXPR   -- set cursor-index unconditionally to EXPR
+     :step GUARD EXPR -- set cursor-index to EXPR only when GUARD is true
+   EXPR and GUARD may reference the local variable P (the active prompt)."
+  `(progn
+     ,@(mapcar
+        (lambda (spec)
+          (destructuring-bind (fn-name docstring &rest rest) spec
+            (let ((mode (first rest))
+                  (args (rest rest)))
+              `(defun ,fn-name ()
+                 ,docstring
+                 (with-active-prompt (p)
+                   ,(ecase mode
+                      (:absolute
+                       `(setf (prompt-cursor-index p) ,(first args)))
+                      (:step
+                       (destructuring-bind (guard expr) args
+                         `(when ,guard
+                            (setf (prompt-cursor-index p) ,expr))))))))))
+        specs)))
 
-(defun prompt-cursor-back ()
-  "Move the cursor one character to the left (no-op at beginning)."
-  (let ((p *prompt*))
-    (when (and p (plusp (prompt-cursor-index p)))
-      (decf (prompt-cursor-index p)))))
+(define-prompt-cursor-ops
+  (prompt-cursor-bol
+   "Move the cursor to the beginning of the buffer (index 0)."
+   :absolute 0)
+  (prompt-cursor-eol
+   "Move the cursor to the end of the buffer."
+   :absolute (length (prompt-buffer p)))
+  (prompt-cursor-back
+   "Move the cursor one character to the left (no-op at beginning)."
+   :step (plusp (prompt-cursor-index p))
+         (1- (prompt-cursor-index p)))
+  (prompt-cursor-forward
+   "Move the cursor one character to the right (no-op at end)."
+   :step (< (prompt-cursor-index p) (length (prompt-buffer p)))
+         (1+ (prompt-cursor-index p))))
 
-(defun prompt-cursor-forward ()
-  "Move the cursor one character to the right (no-op at end)."
-  (let ((p *prompt*))
-    (when (and p (< (prompt-cursor-index p)
-                    (length (prompt-buffer p))))
-      (incf (prompt-cursor-index p)))))
+;;; -- Kill commands -----------------------------------------------------------
 
 (defun prompt-kill-to-end ()
   "Kill (delete) all characters from the cursor to the end of the buffer."
-  (let ((p *prompt*))
-    (when p
-      (let ((idx (prompt-cursor-index p)))
-        (setf (prompt-buffer p) (subseq (prompt-buffer p) 0 idx))))))
+  (with-active-prompt (p)
+    (let ((index (prompt-cursor-index p)))
+      (setf (prompt-buffer p) (subseq (prompt-buffer p) 0 index)))))
 
 (defun prompt-kill-to-start ()
   "Kill (delete) all characters from the start of the buffer to the cursor."
-  (let ((p *prompt*))
-    (when p
-      (let* ((buf (prompt-buffer p))
-             (idx (prompt-cursor-index p)))
-        (setf (prompt-buffer       p) (subseq buf idx))
-        (setf (prompt-cursor-index p) 0)))))
+  (with-active-prompt (p)
+    (let* ((buffer (prompt-buffer p))
+           (index  (prompt-cursor-index p)))
+      (setf (prompt-buffer       p) (subseq buffer index))
+      (setf (prompt-cursor-index p) 0))))
+
+(defun %skip-while-left (buffer scan predicate)
+  "Walk SCAN leftward while PREDICATE holds for (char buffer (1- scan)).
+   SCAN is a cursor position — it points between characters, so (1- scan) is
+   the character immediately to the left.  Returns the new cursor index; clamps at 0."
+  (loop while (and (> scan 0)
+                   (funcall predicate (char buffer (1- scan))))
+        do (decf scan)
+        finally (return scan)))
+
+(defun %word-kill-start (buffer end-index)
+  "Return the new cursor index after a backward word-kill from END-INDEX.
+   Matches readline/emacs C-w: skip trailing spaces left, then skip word chars left."
+  (if (zerop end-index)
+      0
+      (let* ((after-spaces (%skip-while-left buffer (1- end-index)
+                                             (lambda (c) (char= c #\Space))))
+             (after-word   (%skip-while-left buffer after-spaces
+                                             (lambda (c) (char/= c #\Space)))))
+        after-word)))
 
 (defun prompt-kill-word-back ()
-  "Kill the word immediately before the cursor (back to last space or start)."
-  (let ((p *prompt*))
-    (when p
-      (let* ((buf (prompt-buffer p))
-             (idx (prompt-cursor-index p))
-             ;; Skip trailing spaces before the word
-             (end idx)
-             (start (if (zerop end)
-                        0
-                        (let ((i (1- end)))
-                          ;; skip trailing spaces
-                          (loop while (and (> i 0)
-                                           (char= #\Space (char buf (1- i))))
-                                do (decf i))
-                          ;; skip word chars
-                          (loop while (and (> i 0)
-                                           (char/= #\Space (char buf (1- i))))
-                                do (decf i))
-                          i))))
-        (setf (prompt-buffer p)
-              (concatenate 'string
-                           (subseq buf 0 start)
-                           (subseq buf end)))
-        (setf (prompt-cursor-index p) start)))))
+  "Kill the word immediately before the cursor (C-w: back past spaces then word chars)."
+  (with-active-prompt (p)
+    (let* ((buffer      (prompt-buffer p))
+           (end-index   (prompt-cursor-index p))
+           (start-index (%word-kill-start buffer end-index)))
+      (setf (prompt-buffer p)
+            (concatenate 'string
+                         (subseq buffer 0 start-index)
+                         (subseq buffer end-index)))
+      (setf (prompt-cursor-index p) start-index))))
+
+;;; -- Dismiss and display -----------------------------------------------------
 
 (defun prompt-clear ()
   "Dismiss the active prompt."
@@ -142,72 +182,4 @@
                 (subseq buf 0 idx)
                 (subseq buf idx))))))
 
-;;; ── Dismissible overlay (e.g. list-keys help) ───────────────────────────────
-
-(defvar *overlay* nil
-  "Active overlay text (a string, possibly multi-line) shown over the session,
-   or NIL.  Dismissed by q or Esc; scrolled by j/k.  Main-thread-only, like *prompt*.")
-
-(defvar *overlay-scroll-offset* 0
-  "Current scroll offset (in lines) for the active overlay pager.
-   0 means the first line is shown at the top.  Reset to 0 when a new overlay
-   is displayed.  Main-thread-only.")
-
-(defun overlay-active-p ()
-  "True when an overlay is currently displayed."
-  (and *overlay* t))
-
-(defun show-overlay (text)
-  "Display TEXT as an overlay; navigated with j/k, dismissed with q or Esc."
-  (setf *overlay* text)
-  (setf *overlay-scroll-offset* 0))
-
-(defun clear-overlay ()
-  "Dismiss the active overlay and reset the scroll offset."
-  (setf *overlay* nil)
-  (setf *overlay-scroll-offset* 0))
-
-(defun overlay-lines ()
-  "The active overlay split into a list of lines, or NIL when inactive."
-  (when *overlay*
-    (loop with text = *overlay*
-          for start = 0 then (1+ nl)
-          for nl = (position #\Newline text :start start)
-          collect (subseq text start (or nl (length text)))
-          while nl)))
-
-(defun overlay-scroll (delta)
-  "Scroll the active overlay by DELTA lines (positive = down, negative = up).
-   Clamps to valid range.  No-op when no overlay is active."
-  (when *overlay*
-    (let* ((lines (overlay-lines))
-           (max-offset (max 0 (1- (length lines)))))
-      (setf *overlay-scroll-offset*
-            (max 0 (min max-offset (+ *overlay-scroll-offset* delta)))))))
-
-;;; ── Popup overlay ───────────────────────────────────────────────────────────
-
-(defstruct popup
-  "A floating overlay window with its own PTY and screen."
-  (x 0 :type fixnum)
-  (y 0 :type fixnum)
-  (width 40 :type fixnum)
-  (height 10 :type fixnum)
-  (screen nil)             ; screen struct for the popup (or NIL for text-only)
-  (pane   nil)             ; pane struct for the popup (or NIL for text-only)
-  (title  "" :type string)
-  (close-on-exit t :type boolean))
-
-(defparameter *active-popup* nil
-  "The currently displayed POPUP overlay, or NIL.")
-
-;;; ── Menu overlay ────────────────────────────────────────────────────────────
-
-(defstruct menu
-  "An interactive text menu overlay."
-  (title "" :type string)
-  (items '() :type list)          ; list of (label . keyword) pairs
-  (selected-index 0 :type fixnum))
-
-(defparameter *active-menu* nil
-  "The currently displayed MENU overlay, or NIL.")
+;;; Overlay, popup, and menu state continues in overlay.lisp (same package).

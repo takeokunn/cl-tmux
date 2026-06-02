@@ -178,6 +178,42 @@
     (cl-tmux/terminal/actions::%advance-cursor s 1)
     (check-cursor s 0 1)))
 
+;;; ── %advance-cursor no-wrap mode ─────────────────────────────────────────────
+;;;
+;;; Coverage gap: screen-autowrap=NIL clamps the cursor at the right edge instead
+;;; of wrapping to the next row.  This path (lines 100-104 of cursor.lisp) was
+;;; previously untested; modes-tests.lisp only verified the flag itself.
+
+(test advance-cursor-clamps-when-autowrap-off
+  "%advance-cursor with autowrap=NIL clamps the cursor to the last column and
+   does NOT wrap to the next row when advancing past the right edge."
+  (with-screen (s 5 3)
+    ;; Disable autowrap
+    (setf (cl-tmux/terminal/types:screen-autowrap s) nil)
+    ;; Position at the last column
+    (cl-tmux/terminal/actions:set-cursor s 4 0)
+    ;; Attempt to advance by 1 (would normally wrap to row 1 col 0)
+    (cl-tmux/terminal/actions::%advance-cursor s 1)
+    ;; Cursor must remain at column 4 (width-1), row 0
+    (check-cursor s 4 0)))
+
+(test write-char-overwrites-at-right-edge-when-autowrap-off
+  "With autowrap=NIL, writing a character at the rightmost column overwrites
+   that cell in place; the cursor stays at the last column."
+  (with-screen (s 5 3)
+    (feed s (esc "[?7l"))        ; disable auto-wrap
+    ;; Move to last column and write two chars
+    (cl-tmux/terminal/actions:set-cursor s 4 0)
+    (cl-tmux/terminal/actions:write-char-at-cursor s #\A)
+    ;; Cursor still at last column (no wrap)
+    (check-cursor s 4 0)
+    ;; The cell at (4, 0) must contain A
+    (is (char= #\A (char-at s 4 0))
+        "char at right edge must be A, got ~C" (char-at s 4 0))
+    ;; row 1 must be completely blank (no wrap occurred)
+    (is (row-blank-p s 1)
+        "row 1 must stay blank when autowrap is off")))
+
 ;;; ── define-cursor-movements macro ────────────────────────────────────────────
 
 (test define-cursor-movements-macro-is-defined

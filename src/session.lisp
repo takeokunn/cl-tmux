@@ -51,6 +51,14 @@
     (loop for i from base-index
           unless (member i used) return i)))
 
+(defun session-insert-window (session window)
+  "Insert WINDOW into SESSION's window list, keeping the list sorted by window-id.
+   Does NOT update the active window — callers manage focus separately.
+   Returns the updated window list (pure list management)."
+  (setf (session-windows session)
+        (sort (cons window (session-windows session)) #'< :key #'window-id))
+  (session-windows session))
+
 (defun session-new-window (session name rows cols &optional (base-index 0))
   "Create a new window with one full-screen pane, attach it to SESSION.
    The new window receives the lowest free id >= BASE-INDEX (default 0).
@@ -58,8 +66,7 @@
   (let* ((new-id (%next-window-id session base-index))
          (win (make-window :id new-id :name name :width cols :height rows)))
     (%attach-full-screen-pane win rows cols)
-    (setf (session-windows session)
-          (sort (cons win (session-windows session)) #'< :key #'window-id))
+    (session-insert-window session win)
     (setf (session-active session) win)
     win))
 

@@ -123,6 +123,81 @@
         (is (null (find 1 remaining :key #'window-id))
             "window id=1 must be gone after kill")))))
 
+;;; ── %shell-basename edge cases ──────────────────────────────────────────────
+
+(test shell-basename-with-slash
+  "%shell-basename returns only the basename component when shell path contains slashes."
+  (let ((cl-tmux/config:*default-shell* "/bin/bash"))
+    (is (string= "bash" (cl-tmux/model::%shell-basename))
+        "%shell-basename must strip path prefix for /bin/bash")))
+
+(test shell-basename-no-slash
+  "%shell-basename returns the whole string when there is no slash in *default-shell*."
+  (let ((cl-tmux/config:*default-shell* "zsh"))
+    (is (string= "zsh" (cl-tmux/model::%shell-basename))
+        "%shell-basename must return the full string when no slash is present")))
+
+(test shell-basename-empty-default-shell
+  "%shell-basename falls back to \"window\" when *default-shell* is NIL."
+  (let ((cl-tmux/config:*default-shell* nil))
+    (is (string= "window" (cl-tmux/model::%shell-basename))
+        "%shell-basename must return \"window\" when *default-shell* is NIL")))
+
+(test shell-basename-trailing-slash
+  "%shell-basename returns empty string when *default-shell* ends in a slash."
+  (let ((cl-tmux/config:*default-shell* "/usr/bin/"))
+    ;; The last slash is at position (1- (length "/usr/bin/")); subseq gives "".
+    ;; This is a degenerate input — the important thing is no error is signalled.
+    (is (stringp (cl-tmux/model::%shell-basename))
+        "%shell-basename must return a string even for a trailing-slash path")))
+
+;;; ── session-insert-window ────────────────────────────────────────────────────
+
+(test session-insert-window-sorts-by-id
+  "session-insert-window keeps the window list sorted by window-id."
+  (let* ((w0  (make-window :id 0 :name "a"))
+         (w2  (make-window :id 2 :name "c"))
+         (w1  (make-window :id 1 :name "b"))
+         (sess (make-session :id 1 :name "s" :windows (list w0 w2))))
+    (session-insert-window sess w1)
+    (is (equal (list w0 w1 w2) (session-windows sess))
+        "session-insert-window must sort windows by id ascending")))
+
+(test session-insert-window-does-not-change-active
+  "session-insert-window does not mutate the active window slot."
+  (let* ((w0  (make-window :id 0 :name "a"))
+         (w1  (make-window :id 1 :name "b"))
+         (sess (make-session :id 1 :name "s" :windows (list w0))))
+    (session-select-window sess w0)
+    (session-insert-window sess w1)
+    (is (eq w0 (session-active-window sess))
+        "session-insert-window must not change the active window")))
+
+;;; ── get-update-environment-vars ─────────────────────────────────────────────
+
+(test get-update-environment-vars-returns-alist
+  "get-update-environment-vars returns an alist of (name . value) pairs."
+  ;; DISPLAY may or may not be set depending on the build environment;
+  ;; just verify the shape of the return value (alist with string keys).
+  (let ((result (get-update-environment-vars)))
+    (is (listp result)
+        "get-update-environment-vars must return a list")
+    (dolist (entry result)
+      (is (consp entry)
+          "each entry must be a cons pair")
+      (is (stringp (car entry))
+          "each entry key must be a string")
+      (is (stringp (cdr entry))
+          "each entry value must be a string"))))
+
+(test get-update-environment-vars-respects-star-update-environment
+  "get-update-environment-vars only queries variables listed in *update-environment*."
+  ;; Bind *update-environment* to a single sentinel name guaranteed not to exist.
+  (let ((*update-environment* (list "__CL_TMUX_NONEXISTENT_VAR_99999__")))
+    (let ((result (get-update-environment-vars)))
+      (is (null result)
+          "when the env var is absent, result must be NIL"))))
+
 (test kill-window-selects-nearest-id
   "After killing the active window, the window with the nearest id is selected."
   (let* ((w0 (make-window :id 0 :name "a" :width 20 :height 5

@@ -40,7 +40,10 @@
 (defun %child-setup-tty (slave-path master-fd)
   "Set up the slave PTY as the controlling terminal for a new child process.
    Becomes session leader, opens the slave, installs it as the controlling
-   terminal, wires it to stdin/stdout/stderr, and closes the now-unneeded fds."
+   terminal, wires it to stdin/stdout/stderr, and closes the now-unneeded fds.
+   On failure (e.g., open returns -1 or ioctl fails) the child continues to
+   %child-exec-shell; if execv then also fails, _exit(1) ensures the child
+   does not accidentally return into the parent Lisp runtime."
   (sb-posix:setsid)
   (let ((slave (sb-posix:open slave-path (logior +o-rdwr+ +o-noctty+) 0)))
     (cffi:foreign-funcall "ioctl"
@@ -53,7 +56,11 @@
 
 (defun %child-exec-shell ()
   "Replace the current process image with *DEFAULT-SHELL*.
-   Calls _exit(1) if execv fails — never returns normally."
+   Calls _exit(1) if execv fails — never returns normally.
+   NOTE: _exit (not exit or sb-ext:quit) is used intentionally: _exit bypasses
+   C atexit handlers and Lisp finalizers that are unsafe to call in a child
+   process after fork, preventing double-flushing of stdio buffers and avoiding
+   any SBCL runtime teardown that would race with the parent process."
   (let ((shell cl-tmux/config:*default-shell*))
     (cffi:with-foreign-string (path-ptr shell)
       (cffi:with-foreign-string (arg0-ptr shell)
@@ -61,6 +68,7 @@
           (setf (cffi:mem-aref argv :pointer 0) arg0-ptr
                 (cffi:mem-aref argv :pointer 1) (cffi:null-pointer))
           (cffi:foreign-funcall "execv" :pointer path-ptr :pointer argv :int)))))
+  ;; execv failed (wrong path, not executable, etc.) — fall through to _exit.
   (cffi:foreign-funcall "_exit" :int 1 :void))
 
 (defun forkpty-with-shell (rows cols)
@@ -130,7 +138,7 @@
    Likewise a negative MASTER-FD is not closed."
   (ignore-errors
     (when (> child-pid 0)
-      (cffi:foreign-funcall "kill" :int child-pid :int 1 :int))  ; SIGHUP = 1
+      (cffi:foreign-funcall "kill" :int child-pid :int +sighup+ :int))
     (when (>= master-fd 0)
       (sb-posix:close master-fd))))
 
@@ -162,13 +170,16 @@
 (defconstant +max-sane-rows+ 1000)
 (defconstant +max-sane-cols+ 1000)
 
+;;; Well-known POSIX file descriptors.
+(defconstant +stdout-fd+ 1 "POSIX file descriptor number for standard output.")
+
 (defun terminal-size ()
   "Return (values rows cols) of the terminal attached to stdout.
    Falls back to 24×80 if ioctl fails or reports an out-of-range size
    (a transient 0×0 or garbage read must not drive a resize)."
   (cffi:with-foreign-object (ws '(:struct winsize))
     (let ((r (cffi:foreign-funcall "ioctl"
-                                   :int 1               ; stdout
+                                   :int +stdout-fd+
                                    :unsigned-long +tiocgwinsz+
                                    :pointer ws
                                    :int)))
@@ -181,12 +192,3 @@
                 (values 24 80)))
           (values 24 80)))))          ; safe fallback if ioctl fails
 
-;;; ── Public: availability probe ────────────────────────────────────────────
-
-(defun pty-available-p ()
-  "Return T if a PTY can be opened and forked on this system, NIL otherwise."
-  (handler-case
-      (multiple-value-bind (fd pid) (forkpty-with-shell 8 20)
-        (pty-close fd pid)
-        t)
-    (error () nil)))

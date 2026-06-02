@@ -32,10 +32,12 @@
        (:file "sgr")
        (:file "csi")
        (:file "parser")
+       (:file "parser-osc")    ; OSC accumulator, Base64 decoder, *osc52-handler*
        (:file "emulator")))
      (:file "pane")             ; leaf PTY data and wiring (loaded first: layout needs pane-reposition)
-     (:file "layout")           ; tree structure + traversal (uses pane-reposition)
-     (:file "layout-geometry")  ; rectangle assignment + resize helpers (uses pane-id, pane-x/y/w/h)
+     (:file "layout")             ; tree structure + traversal (uses pane-reposition)
+     (:file "layout-persistence") ; layout string serialization/deserialization
+     (:file "layout-geometry")    ; rectangle assignment + resize helpers (uses pane-id, pane-x/y/w/h)
      (:file "window")          ; window struct + core operations (split/relayout/resize)
      (:file "window-neighbor") ; directional pane navigation (uses window-panes)
      (:file "window-layout")   ; named layouts (apply-named-layout, uses window accessors)
@@ -46,14 +48,22 @@
      (:file "buffer")   ; paste-buffer ring (uses options for buffer-limit)
      (:file "hooks")    ; user-defined hook registry
      (:file "prompt")
+     (:file "overlay")              ; overlay, popup, menu state (used by dispatch/events/renderer)
+     (:file "commands-core")
+     (:file "commands-copy-mode")
      (:file "commands")
-     (:file "renderer-format")  ; ANSI primitives
+     (:file "renderer-format")   ; ANSI primitives
+     (:file "renderer-style")   ; style-string parsing + SGR dispatch tables
      (:file "renderer-pane")    ; pane + border rendering
+     (:file "renderer-overlay") ; popup and menu box-drawing
      (:file "renderer")         ; status bar + session compositing
      (:file "input")
      (:file "runtime")
-     (:file "dispatch") ; declarative command dispatch (in cl-tmux)
-     (:file "events")
+     (:file "dispatch-core")     ; dispatch macros, helpers, and core logic
+     (:file "dispatch-handlers") ; command handler rule table (define-command-handlers)
+     (:file "events-core")
+     (:file "events-keystroke")
+     (:file "events-loop")
      (:file "server")
      (:file "client")
      (:file "main"))))
@@ -106,6 +116,7 @@
        (:file "events-tests")
        (:file "mouse-tests")
        (:file "commands-tests")
+       (:file "overlay-tests")
        (:file "prompt-tests")
        (:file "protocol-tests")
        (:file "transport-tests")

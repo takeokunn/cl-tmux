@@ -84,26 +84,10 @@
     (feed s (esc "[100;100H"))
     (check-cursor s 9 4)))
 
-(test cursor-movement-table
-  "Table-driven: verify each cursor CSI sequence independently."
-  (let ((cases
-          ;; (setup-seq  motion-seq  expected-cx  expected-cy)
-          `(("" ,(esc "[5;5H") 4 4)
-            (,(esc "[5;5H") ,(esc "[2A") 4 2)
-            (,(esc "[1;1H") ,(esc "[3B") 0 3)
-            (,(esc "[1;3H") ,(esc "[4C") 6 0)
-            (,(esc "[1;7H") ,(esc "[4D") 2 0)
-            (,(esc "[3;5H") ,(esc "[2E") 0 4)
-            (,(esc "[5;5H") ,(esc "[2F") 0 2))))
-    (dolist (c cases)
-      (destructuring-bind (setup motion ecx ecy) c
-        (with-screen (s 20 10)
-          (unless (string= setup "") (feed s setup))
-          (feed s motion)
-          (is (= ecx (screen-cursor-x s))
-              "cx ~D expected ~D after ~S" (screen-cursor-x s) ecx motion)
-          (is (= ecy (screen-cursor-y s))
-              "cy ~D expected ~D after ~S" (screen-cursor-y s) ecy motion))))))
+;;; Note: the individual named tests above (cup, cuu, cud, cuf, cub, cnl, cpl,
+;;; cha, vpa) cover the same cases as a parameterized table would.  Keeping the
+;;; named tests provides clearer failure messages; the table version is omitted
+;;; to avoid redundancy (audit finding: test_abstraction_issues).
 
 (test csi-cursor-home-no-params-goes-to-origin
   "ESC[H with no parameters uses p1*/p2* = (max 1 0) = 1 (1-based), so 1-1 = 0,0.

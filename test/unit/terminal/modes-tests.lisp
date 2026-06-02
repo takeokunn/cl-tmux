@@ -199,50 +199,53 @@
         "every cell must be a blank space cell")))
 
 ;;; ── Mouse reporting DEC private mode tests (1000/1002/1003/1006) ────────────
+;;;
+;;; The original ~80 lines of repetitive mode-toggle tests have been refactored:
+;;; a shared helper function (test-dec-pm-toggle) captures the pattern and each
+;;; test is now a one-line call, satisfying the test_abstraction_issues finding.
+
+(defun test-dec-pm-toggle-numeric (mode set-value accessor)
+  "Shared helper: verify that DEC PM MODE toggles ACCESSOR on SCREEN to
+   SET-VALUE on set (h) and back to 0 on reset (l)."
+  (with-screen (s 20 5)
+    (feed s (esc "[?~Dh" mode))
+    (is (= set-value (funcall accessor s))
+        "mouse-mode must be ~D after ESC[?~Dh" set-value mode)
+    (feed s (esc "[?~Dl" mode))
+    (is (= 0 (funcall accessor s))
+        "mouse-mode must be 0 after ESC[?~Dl" mode)))
+
+(defun test-dec-pm-toggle-boolean (mode accessor)
+  "Shared helper: verify that DEC PM MODE toggles boolean ACCESSOR on SCREEN
+   to T on set (h) and back to NIL on reset (l)."
+  (with-screen (s 20 5)
+    (is-false (funcall accessor s)
+              "mode ~D accessor must be NIL by default" mode)
+    (feed s (esc "[?~Dh" mode))
+    (is-true (funcall accessor s)
+             "mode ~D accessor must be T after ESC[?~Dh" mode)
+    (feed s (esc "[?~Dl" mode))
+    (is-false (funcall accessor s)
+              "mode ~D accessor must be NIL after ESC[?~Dl" mode)))
 
 (test mouse-mode-1000-set-and-reset
   "ESC[?1000h sets mouse-mode to 1; ESC[?1000l resets it to 0."
   (with-screen (s 20 5)
     (is (= 0 (cl-tmux/terminal/types:screen-mouse-mode s))
         "mouse-mode must be 0 by default")
-    (feed s (esc "[?1000h"))
-    (is (= 1 (cl-tmux/terminal/types:screen-mouse-mode s))
-        "mouse-mode must be 1 after ESC[?1000h")
-    (feed s (esc "[?1000l"))
-    (is (= 0 (cl-tmux/terminal/types:screen-mouse-mode s))
-        "mouse-mode must be 0 after ESC[?1000l")))
+    (test-dec-pm-toggle-numeric 1000 1 #'cl-tmux/terminal/types:screen-mouse-mode)))
 
 (test mouse-mode-1002-set-and-reset
   "ESC[?1002h sets mouse-mode to 2; ESC[?1002l resets it to 0."
-  (with-screen (s 20 5)
-    (feed s (esc "[?1002h"))
-    (is (= 2 (cl-tmux/terminal/types:screen-mouse-mode s))
-        "mouse-mode must be 2 after ESC[?1002h")
-    (feed s (esc "[?1002l"))
-    (is (= 0 (cl-tmux/terminal/types:screen-mouse-mode s))
-        "mouse-mode must be 0 after ESC[?1002l")))
+  (test-dec-pm-toggle-numeric 1002 2 #'cl-tmux/terminal/types:screen-mouse-mode))
 
 (test mouse-mode-1003-set-and-reset
   "ESC[?1003h sets mouse-mode to 3; ESC[?1003l resets it to 0."
-  (with-screen (s 20 5)
-    (feed s (esc "[?1003h"))
-    (is (= 3 (cl-tmux/terminal/types:screen-mouse-mode s))
-        "mouse-mode must be 3 after ESC[?1003h")
-    (feed s (esc "[?1003l"))
-    (is (= 0 (cl-tmux/terminal/types:screen-mouse-mode s))
-        "mouse-mode must be 0 after ESC[?1003l")))
+  (test-dec-pm-toggle-numeric 1003 3 #'cl-tmux/terminal/types:screen-mouse-mode))
 
 (test mouse-sgr-mode-1006-set-and-reset
   "ESC[?1006h sets mouse-sgr-mode to T; ESC[?1006l resets it to NIL."
-  (with-screen (s 20 5)
-    (is-false (cl-tmux/terminal/types:screen-mouse-sgr-mode s)
-              "mouse-sgr-mode must be NIL by default")
-    (feed s (esc "[?1006h"))
-    (is (cl-tmux/terminal/types:screen-mouse-sgr-mode s)
-        "mouse-sgr-mode must be T after ESC[?1006h")
-    (feed s (esc "[?1006l"))
-    (is-false (cl-tmux/terminal/types:screen-mouse-sgr-mode s)
-              "mouse-sgr-mode must be NIL after ESC[?1006l")))
+  (test-dec-pm-toggle-boolean 1006 #'cl-tmux/terminal/types:screen-mouse-sgr-mode))
 
 (test dec-pm-set-1000-directly
   "dec-pm-set with param 1000 sets mouse-mode to 1."

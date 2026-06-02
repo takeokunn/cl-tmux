@@ -306,6 +306,47 @@
           "col ~D should be blank after oversized ICH, got ~C"
           x (char-at s x 0)))))
 
+;;; ── SUITE: direct-row-primitives ────────────────────────────────────────────
+;;;
+;;; Coverage gap: %copy-row and %clear-row are used by scroll and edit operations
+;;; but were previously only tested indirectly.  These tests call them directly.
+
+(def-suite direct-row-primitives
+  :description "Direct calls to %copy-row and %clear-row row primitives"
+  :in terminal-suite)
+(in-suite direct-row-primitives)
+
+(test copy-row-copies-all-cells
+  "%copy-row copies every cell from the source row to the destination row."
+  (with-screen (s 5 3)
+    (feed s "hello")                       ; row 0 = "hello"
+    (cl-tmux/terminal/actions::%copy-row s 1 0)  ; copy row 0 to row 1
+    (is (string= "hello" (row-string s 1))
+        "row 1 must equal row 0 after %copy-row, got ~S"
+        (row-string s 1))))
+
+(test clear-row-blanks-all-cells
+  "%clear-row replaces every cell in the target row with a blank cell."
+  (with-screen (s 5 3)
+    (feed s "hello")                       ; row 0 = "hello"
+    (cl-tmux/terminal/actions::%clear-row s 0)
+    (is (row-blank-p s 0) "row 0 must be blank after %clear-row")))
+
+(test trim-scroll-history-caps-at-limit
+  "trim-scroll-history removes entries beyond the effective history-limit."
+  (with-screen (s 5 3)
+    (let ((cap 5))
+      ;; Pre-populate scrollback beyond the cap
+      (setf (cl-tmux/terminal/types:screen-scrollback s)
+            (loop repeat (+ cap 3)
+                  collect (make-array 5 :initial-element
+                                        (cl-tmux/terminal/types:blank-cell))))
+      ;; Install a temporary limit function
+      (let ((cl-tmux/terminal/actions:*history-limit-fn* (lambda () cap)))
+        (cl-tmux/terminal/actions:trim-scroll-history s))
+      (is (<= (length (cl-tmux/terminal/types:screen-scrollback s)) cap)
+          "scrollback must not exceed cap (~D) after trim-scroll-history" cap))))
+
 ;;; ── SUITE: direct-action-erase ───────────────────────────────────────────────
 ;;;
 ;;; These tests call erase-region, erase-display, erase-line directly rather

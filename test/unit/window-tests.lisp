@@ -320,26 +320,19 @@
       (is (eq l0 (window-tree win)) "tree root must be l0 after collapsing :second"))))
 
 ;;; ── pane-neighbor (directional navigation) ───────────────────────────────────
-
-(defun %two-pane-h-window ()
-  "Build a laid-out :h split window: p0 (x=0 w=40) | p1 (x=41 w=40), h=24, w=81."
-  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
-         (p1  (make-no-pty-pane 2 41 0 40 24))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree (make-layout-split :h (make-layout-leaf p0)
-                                                       (make-layout-leaf p1) 1/2))))
-    (window-select-pane win p0)
-    (values win p0 p1)))
+;;;
+;;; Uses make-two-pane-h-window from test/helpers.lisp — the local duplicate
+;;; %two-pane-h-window was removed to eliminate the 81×24 two-pane fixture
+;;; defined in two places with identical construction logic.
 
 (test pane-neighbor-right-in-h-split
   "Right neighbor of the left pane is the right pane."
-  (multiple-value-bind (win p0 p1) (%two-pane-h-window)
+  (multiple-value-bind (win p0 p1) (make-two-pane-h-window)
     (is (eq p1 (cl-tmux/model::pane-neighbor win p0 :right)))))
 
 (test pane-neighbor-left-in-h-split
   "Left neighbor of the right pane is the left pane."
-  (multiple-value-bind (win p0 p1) (%two-pane-h-window)
+  (multiple-value-bind (win p0 p1) (make-two-pane-h-window)
     (is (eq p0 (cl-tmux/model::pane-neighbor win p1 :left)))))
 
 (test pane-neighbor-nil-for-single-pane
@@ -771,42 +764,37 @@
       (is (search "0:"      listing) "listing must include the window-id (0) as prefix"))))
 
 ;;; ── auto-rename-from-osc ─────────────────────────────────────────────────────
+;;;
+;;; These tests call the production function cl-tmux::%maybe-rename-window-from-title
+;;; directly, rather than duplicating the rename logic inline.  This ensures the
+;;; tests verify the real code path and provide genuine coverage confidence.
 
 (test auto-rename-from-osc
   "When window-automatic-rename-p is T, window-name is updated from OSC title."
-  (let* ((p0   (make-no-pty-pane 1 0 0 80 24))
-         (w0   (make-window :id 1 :name "original"
-                            :panes (list p0) :active p0))
-         (sess (make-session :id 1 :name "s" :windows (list w0))))
-    (session-select-window sess w0)
-    ;; Simulate OSC 0 title update on the screen
-    (setf (screen-title (pane-screen p0)) "new-title")
-    ;; Directly call the rename logic (mimicking what %handle-dirty does)
-    (let* ((sc  (pane-screen p0))
-           (win w0))
-      (when (and sc win
-                 (window-automatic-rename-p win)
-                 (not (string= (screen-title sc) "")))
-        (unless (string= (screen-title sc) (window-name win))
-          (setf (window-name win) (screen-title sc)))))
-    (is (string= "new-title" (window-name w0))
-        "window-name must be updated from OSC title when automatic-rename is enabled")))
+  (with-loop-state
+    (let* ((p0   (make-no-pty-pane 1 0 0 80 24))
+           (w0   (make-window :id 1 :name "original"
+                              :panes (list p0) :active p0))
+           (sess (make-session :id 1 :name "s" :windows (list w0))))
+      (session-select-window sess w0)
+      ;; Simulate OSC 0 title update on the screen.
+      (setf (screen-title (pane-screen p0)) "new-title")
+      ;; Call the production rename function — not a copy of its logic.
+      (cl-tmux::%maybe-rename-window-from-title sess)
+      (is (string= "new-title" (window-name w0))
+          "window-name must be updated from OSC title when automatic-rename is enabled"))))
 
 (test auto-rename-disabled-ignores-osc
   "When window-automatic-rename-p is NIL, window-name is NOT updated from OSC title."
-  (let* ((p0   (make-no-pty-pane 1 0 0 80 24))
-         (w0   (make-window :id 1 :name "kept"
-                            :automatic-rename-p nil
-                            :panes (list p0) :active p0))
-         (sess (make-session :id 1 :name "s" :windows (list w0))))
-    (session-select-window sess w0)
-    (setf (screen-title (pane-screen p0)) "ignored-title")
-    ;; Mimic the rename check but with automatic-rename-p nil
-    (let* ((sc  (pane-screen p0))
-           (win w0))
-      (when (and sc win
-                 (window-automatic-rename-p win)  ; this is NIL, so body not executed
-                 (not (string= (screen-title sc) "")))
-        (setf (window-name win) (screen-title sc))))
-    (is (string= "kept" (window-name w0))
-        "window-name must NOT change when automatic-rename is disabled")))
+  (with-loop-state
+    (let* ((p0   (make-no-pty-pane 1 0 0 80 24))
+           (w0   (make-window :id 1 :name "kept"
+                              :automatic-rename-p nil
+                              :panes (list p0) :active p0))
+           (sess (make-session :id 1 :name "s" :windows (list w0))))
+      (session-select-window sess w0)
+      (setf (screen-title (pane-screen p0)) "ignored-title")
+      ;; Call the production rename function; automatic-rename-p nil must suppress it.
+      (cl-tmux::%maybe-rename-window-from-title sess)
+      (is (string= "kept" (window-name w0))
+          "window-name must NOT change when automatic-rename is disabled"))))

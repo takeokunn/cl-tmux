@@ -89,6 +89,11 @@
 
 ;;; ── Character writing ──────────────────────────────────────────────────────
 
+(declaim (inline %mark-dirty))
+(defun %mark-dirty (screen)
+  "Mark SCREEN dirty: signal the renderer that cells have changed."
+  (setf (screen-dirty-p screen) t))
+
 (defun %advance-cursor (screen n)
   "Advance the cursor N columns, wrapping to the next line (and scrolling the
    scroll region if needed) when it would pass the right edge.
@@ -115,16 +120,47 @@
 ;;; DEC special graphics character set (G1; activated by ESC ( 0).
 ;;; Maps ASCII code points (in the range used by line-drawing apps) to the
 ;;; corresponding Unicode box-drawing characters.
+;;;
+;;; Prolog-like fact table — each entry is one character mapping:
+;;;   dec_graphics(j, '┘').  dec_graphics(k, '┐').  ...
+;;; The define-dec-graphics-table macro builds the case form from this table.
 
-(defun %dec-graphics-char (ch)
-  "Remap CH from the DEC special graphics set to the corresponding Unicode
-   box-drawing character.  Returns CH unchanged for unmapped code points."
-  (case ch
-    (#\j #\┘) (#\k #\┐) (#\l #\┌) (#\m #\└) (#\n #\┼)
-    (#\q #\─) (#\t #\├) (#\u #\┤) (#\v #\┴) (#\w #\┬) (#\x #\│)
-    (#\a #\▒) (#\` #\◆) (#\f #\°) (#\g #\±) (#\o #\─) ; tilde
-    (#\p #\─) (#\r #\─) (#\s #\─) ; various dashes
-    (t ch)))
+(defmacro define-dec-graphics-table (&rest mappings)
+  "Generate %DEC-GRAPHICS-CHAR from a declarative character-mapping table.
+   Each MAPPING is (ascii-char unicode-char description) where description is
+   a compile-time annotation only."
+  `(defun %dec-graphics-char (ch)
+     "Remap CH from the DEC special graphics set to the corresponding Unicode
+      box-drawing character.  Returns CH unchanged for unmapped code points."
+     (case ch
+       ,@(mapcar (lambda (m) `(,(first m) ,(second m))) mappings)
+       (t ch))))
+
+(define-dec-graphics-table
+  ;; Box-drawing corners
+  (#\j #\┘ "lower-right corner")
+  (#\k #\┐ "upper-right corner")
+  (#\l #\┌ "upper-left corner")
+  (#\m #\└ "lower-left corner")
+  ;; Box-drawing junctions
+  (#\n #\┼ "crossing")
+  (#\t #\├ "left tee")
+  (#\u #\┤ "right tee")
+  (#\v #\┴ "bottom tee")
+  (#\w #\┬ "top tee")
+  ;; Lines
+  (#\q #\─ "horizontal line")
+  (#\x #\│ "vertical line")
+  ;; Special characters
+  (#\a #\▒ "checkerboard")
+  (#\` #\◆ "diamond")
+  (#\f #\° "degree symbol")
+  (#\g #\± "plus-minus")
+  ;; Dash variants — all map to horizontal line
+  (#\o #\─ "top horizontal dash")
+  (#\p #\─ "upper horizontal dash")
+  (#\r #\─ "lower horizontal dash")
+  (#\s #\─ "bottom horizontal dash"))
 
 ;;; Unicode combining character ranges (Category M*: combining marks).
 ;;; These code points have zero display width and should be appended to the
@@ -139,6 +175,66 @@
         (<= #x20D0 cp #x20FF)   ; Combining Diacritical Marks for Symbols
         (<= #xFE20 cp #xFE2F)))) ; Combining Half Marks
 
+(defun %append-combining-char (screen ch)
+  "Append combining character CH to the cell immediately left of the cursor.
+   The cursor is NOT advanced.  If the cursor is at column 0, the combining
+   char is appended to column 0 (the only cell available on that row)."
+  (let* ((prev-x    (if (> (screen-cx screen) 0) (1- (screen-cx screen)) 0))
+         (prev-y    (screen-cy screen))
+         (prev-cell (screen-cell screen prev-x prev-y)))
+    (setf (screen-cell screen prev-x prev-y)
+          (make-cell :char      (cell-char     prev-cell)
+                     :fg        (cell-fg       prev-cell)
+                     :bg        (cell-bg       prev-cell)
+                     :attrs     (cell-attrs    prev-cell)
+                     :attrs2    (cell-attrs2   prev-cell)
+                     :ul-color  (cell-ul-color prev-cell)
+                     :combining (append (cell-combining prev-cell) (list ch))
+                     :width     (cell-width    prev-cell)))
+    (%mark-dirty screen)))
+
+(defun %remap-charset-char (screen ch)
+  "When SCREEN's charset is :dec-graphics, remap CH through the DEC special
+   graphics table; otherwise return CH unchanged."
+  (if (eq (screen-charset screen) :dec-graphics)
+      (%dec-graphics-char ch)
+      ch))
+
+(defun %write-wide-cell (screen ch)
+  "Write double-width character CH at the cursor.
+   Wraps to the next row first if the character does not fit in the last column.
+   Advances the cursor by 2 after placing the lead + continuation cells."
+  (let ((fg  (screen-cur-fg       screen))
+        (bg  (screen-cur-bg       screen))
+        (at  (screen-cur-attrs    screen))
+        (at2 (screen-cur-attrs2   screen))
+        (ulc (screen-cur-ul-color screen)))
+    ;; If the wide char cannot fit (only one column remains), blank the last
+    ;; column and wrap to the next row before placing it.
+    (when (>= (1+ (screen-cx screen)) (screen-width screen))
+      (setf (screen-cell screen (screen-cx screen) (screen-cy screen)) (blank-cell))
+      (setf (screen-cx screen) 0)
+      (cursor-down/scroll screen))
+    (%place-wide-char screen (screen-cx screen) (screen-cy screen)
+                      ch fg bg at at2 ulc)
+    (%mark-dirty screen)
+    (%advance-cursor screen 2)))
+
+(defun %write-normal-cell (screen ch)
+  "Write single-width character CH at the cursor and advance by 1."
+  (let ((x   (screen-cx screen))
+        (y   (screen-cy screen))
+        (fg  (screen-cur-fg       screen))
+        (bg  (screen-cur-bg       screen))
+        (at  (screen-cur-attrs    screen))
+        (at2 (screen-cur-attrs2   screen))
+        (ulc (screen-cur-ul-color screen)))
+    (setf (screen-cell screen x y)
+          (make-cell :char ch :fg fg :bg bg :attrs at :attrs2 at2
+                     :ul-color ulc :width 1))
+    (%mark-dirty screen)
+    (%advance-cursor screen 1)))
+
 (defun write-char-at-cursor (screen ch)
   "Write CH at the cursor, then advance.  Double-width (CJK) characters occupy
    a lead cell plus a continuation placeholder and advance the cursor by two;
@@ -152,40 +248,14 @@
    special graphics table before being written."
   ;; Combining character: append to the previous cell, no cursor advance.
   (when (combining-char-p ch)
-    (let* ((prev-x (if (> (screen-cx screen) 0) (1- (screen-cx screen)) 0))
-           (prev-y (screen-cy screen))
-           (prev-cell (screen-cell screen prev-x prev-y)))
-      (setf (screen-cell screen prev-x prev-y)
-            (make-cell :char      (cell-char prev-cell)
-                       :fg        (cell-fg prev-cell)
-                       :bg        (cell-bg prev-cell)
-                       :attrs     (cell-attrs prev-cell)
-                       :attrs2    (cell-attrs2 prev-cell)
-                       :ul-color  (cell-ul-color prev-cell)
-                       :combining (append (cell-combining prev-cell) (list ch))
-                       :width     (cell-width prev-cell))))
+    (%append-combining-char screen ch)
     (return-from write-char-at-cursor))
   ;; Apply DEC special graphics remapping when active.
-  (when (eq (screen-charset screen) :dec-graphics)
-    (setf ch (%dec-graphics-char ch)))
-  (let ((w   (char-width ch))
-        (fg  (screen-cur-fg       screen))
-        (bg  (screen-cur-bg       screen))
-        (at  (screen-cur-attrs    screen))
-        (at2 (screen-cur-attrs2   screen))
-        (ulc (screen-cur-ul-color screen)))
-    (when (and (= w 2) (>= (1+ (screen-cx screen)) (screen-width screen)))
-      (setf (screen-cell screen (screen-cx screen) (screen-cy screen)) (blank-cell))
-      (setf (screen-cx screen) 0)
-      (cursor-down/scroll screen))
-    (let ((x (screen-cx screen))
-          (y (screen-cy screen)))
-      (if (= w 2)
-          (%place-wide-char screen x y ch fg bg at at2 ulc)
-          (setf (screen-cell screen x y)
-                (make-cell :char ch :fg fg :bg bg :attrs at :attrs2 at2 :ul-color ulc :width w)))
-      (setf (screen-last-char screen) ch)
-      (%advance-cursor screen w))))
+  (setf ch (%remap-charset-char screen ch))
+  (setf (screen-last-char screen) ch)
+  (if (= (char-width ch) 2)
+      (%write-wide-cell   screen ch)
+      (%write-normal-cell screen ch)))
 
 (defun write-codepoint (screen cp)
   "Write Unicode code point CP at the cursor, converting it via SAFE-CODE-CHAR."

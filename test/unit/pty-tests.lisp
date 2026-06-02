@@ -34,79 +34,67 @@
 (test shell-echoes-command-output
   (unless (pty-available-p)
     (skip "no PTY available (sandboxed environment)"))
-  (multiple-value-bind (fd pid) (forkpty-with-shell 24 80)
-    (unwind-protect
-         (let ((marker "CLTMUX_MARKER_42"))
-           ;; Give the shell a moment to start, then send a command.
-           (sleep 0.2)
-           (pty-write fd (format nil "echo ~A~%" marker))
-           (let ((out (drain-pty fd :stop-marker marker)))
-             (is (search marker out)
-                 "expected marker ~S in shell output, got ~S" marker out)))
-      (pty-close fd pid))))
+  (with-pty-shell (fd pid)
+    (let ((marker "CLTMUX_MARKER_42"))
+      ;; Give the shell a moment to start, then send a command.
+      (sleep 0.2)
+      (pty-write fd (format nil "echo ~A~%" marker))
+      (let ((out (drain-pty fd :stop-marker marker)))
+        (is (search marker out)
+            "expected marker ~S in shell output, got ~S" marker out)))))
 
 (test pty-write-accepts-octet-vector
   (unless (pty-available-p)
     (skip "no PTY available (sandboxed environment)"))
-  (multiple-value-bind (fd pid) (forkpty-with-shell 24 80)
-    (unwind-protect
-         (let ((bytes (map '(simple-array (unsigned-byte 8) (*))
-                           #'char-code
-                           (format nil "printf DONE_OCTETS~%"))))
-           (sleep 0.2)
-           (pty-write fd bytes)
-           (let ((out (drain-pty fd :stop-marker "DONE_OCTETS")))
-             (is (search "DONE_OCTETS" out))))
-      (pty-close fd pid))))
+  (with-pty-shell (fd pid)
+    (let ((bytes (map '(simple-array (unsigned-byte 8) (*))
+                      #'char-code
+                      (format nil "printf DONE_OCTETS~%"))))
+      (sleep 0.2)
+      (pty-write fd bytes)
+      (let ((out (drain-pty fd :stop-marker "DONE_OCTETS")))
+        (is (search "DONE_OCTETS" out))))))
 
 (test select-times-out-when-idle
   (unless (pty-available-p)
     (skip "no PTY available (sandboxed environment)"))
-  (multiple-value-bind (fd pid) (forkpty-with-shell 24 80)
-    (unwind-protect
-         (progn
-           ;; Drain the initial shell prompt, then expect idleness.
-           (drain-pty fd :deadline-seconds 0.5)
-           (let ((ready (select-fds (list fd) 100000)))  ; 100 ms, no input sent
-             (is (null ready) "idle PTY should not be readable")))
-      (pty-close fd pid))))
+  (with-pty-shell (fd pid)
+    ;; Drain the initial shell prompt, then expect idleness.
+    (drain-pty fd :deadline-seconds 0.5)
+    (let ((ready (select-fds (list fd) 100000)))  ; 100 ms, no input sent
+      (is (null ready) "idle PTY should not be readable"))))
 
 (test split-then-relayout-keeps-panes-fitting
   "Exercises the real resize path: forkpty per pane + ioctl(TIOCSWINSZ) +
    screen-resize, across a split and a subsequent terminal resize."
   (unless (pty-available-p)
     (skip "no PTY available (sandboxed environment)"))
-  (let ((session (create-initial-session 24 80)))
-    (unwind-protect
-         (let ((win (session-active-window session)))
-           ;; Split vertically → two panes side by side.
-           (window-split win :h)
-           (is (= 2 (length (window-panes win))))
-           ;; Now resize the terminal larger and relayout.
-           (window-relayout win 40 120)
-           (let ((ps (window-panes win)))
-             ;; All panes fit within the new geometry, no overlap.
-             (dolist (p ps)
-               (is (<= (+ (pane-x p) (pane-width p))  120))
-               (is (<= (+ (pane-y p) (pane-height p)) 40))
-               (is (plusp (pane-width  p)))
-               (is (plusp (pane-height p))))
-             (destructuring-bind (a b) ps
-               (is (< (+ (pane-x a) (pane-width a)) (pane-x b))
-                   "divider column separates the two panes after relayout"))))
-      ;; Clean up every shell we forked (initial + split).
-      (dolist (p (all-panes session))
-        (ignore-errors (pty-close (pane-fd p) (pane-pid p)))))))
+  (with-session (session 24 80)
+    (let ((win (session-active-window session)))
+      ;; Split vertically → two panes side by side.
+      (window-split win :h)
+      (is (= 2 (length (window-panes win))))
+      ;; Now resize the terminal larger and relayout.
+      (window-relayout win 40 120)
+      (let ((ps (window-panes win)))
+        ;; All panes fit within the new geometry, no overlap.
+        (dolist (p ps)
+          (is (<= (+ (pane-x p) (pane-width p))  120))
+          (is (<= (+ (pane-y p) (pane-height p)) 40))
+          (is (plusp (pane-width  p)))
+          (is (plusp (pane-height p))))
+        (destructuring-bind (a b) ps
+          (is (< (+ (pane-x a) (pane-width a)) (pane-x b))
+              "divider column separates the two panes after relayout"))))))
 
 (test cmd-kill-pane-closes-fd
   "kill-pane on the last pane kills the window; session has 0 windows."
   (unless (pty-available-p)
     (skip "no PTY available (sandboxed environment)"))
-  (let ((session (create-initial-session 24 80)))
-    ;; Capture the active pane fd before kill so we can verify no error.
-    (let* ((win  (session-active-window session))
-           (pane (window-active-pane win)))
-      (declare (ignore pane))
+  ;; with-session handles cleanup of all pane PTYs via unwind-protect.
+  (with-session (session 24 80)
+    (let ((win (session-active-window session)))
+      (declare (ignore win))
       ;; kill-pane on the sole pane must not signal an error.
       (finishes (kill-pane session))
       ;; Killing the only pane removes the window; no windows remain.
@@ -117,19 +105,15 @@
   "After splitting vertically and killing one pane, exactly one pane remains."
   (unless (pty-available-p)
     (skip "no PTY available (sandboxed environment)"))
-  (let ((session (create-initial-session 24 80)))
-    (unwind-protect
-         (let ((win (session-active-window session)))
-           ;; Split → 2 panes.
-           (window-split win :h)
-           (is (= 2 (length (window-panes win))))
-           ;; Kill the active (second) pane → 1 pane should remain.
-           (kill-pane session)
-           (is (= 1 (length (window-panes (session-active-window session))))
-               "one pane should remain after killing one of two"))
-      ;; Clean up any surviving shells.
-      (dolist (p (all-panes session))
-        (ignore-errors (pty-close (pane-fd p) (pane-pid p)))))))
+  (with-session (session 24 80)
+    (let ((win (session-active-window session)))
+      ;; Split → 2 panes.
+      (window-split win :h)
+      (is (= 2 (length (window-panes win))))
+      ;; Kill the active (second) pane → 1 pane should remain.
+      (kill-pane session)
+      (is (= 1 (length (window-panes (session-active-window session))))
+          "one pane should remain after killing one of two"))))
 
 ;;;; ── Un-gated sandbox-safe unit tests ──────────────────────────────────────
 ;;;; These run real assertions without /dev/ptmx, a tty, or a socket.

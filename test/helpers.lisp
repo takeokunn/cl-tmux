@@ -11,7 +11,7 @@
   "Run BODY with a fresh *hook-registry* so hook registrations do not leak."
   (let ((registry (gensym "REGISTRY")))
     `(let ((,registry (make-hash-table :test #'equal)))
-       (let ((cl-tmux/hooks::*hook-registry* ,registry))
+       (let ((cl-tmux/hooks:*hook-registry* ,registry))
          (progn ,@body)))))
 
 ;;; ── Config isolation ────────────────────────────────────────────────────────
@@ -19,9 +19,11 @@
 (defmacro with-isolated-config (&body body)
   "Run BODY with the mutable config specials dynamically rebound to copies,
    so directives applied in a test never leak into other suites."
-  `(let ((cl-tmux/config:*key-bindings*  (copy-alist cl-tmux/config:*key-bindings*))
-         (cl-tmux/config:*default-shell* cl-tmux/config:*default-shell*)
-         (cl-tmux/config:*status-height* cl-tmux/config:*status-height*))
+  `(let ((cl-tmux/config:*key-tables*  (make-hash-table :test #'equal))
+          (cl-tmux/config:*default-shell* cl-tmux/config:*default-shell*)
+          (cl-tmux/config:*status-height* cl-tmux/config:*status-height*))
+     ;; Re-initialize with fresh key tables
+     (cl-tmux/config::initialize-default-key-tables)
      ,@body))
 
 ;;; ── Screen builder ──────────────────────────────────────────────────────────
@@ -172,6 +174,29 @@
       (loop for x below end
             do (write-char (cell-char (screen-display-cell screen x y)) s)))))
 
+;;; ── PTY availability probe (test-only) ─────────────────────────────────────
+;;;
+;;; pty-available-p is a testing artifact: it forks a real shell and immediately
+;;; kills it purely to check PTY access.  It lives here (test helpers) rather
+;;; than in production source so the production pty.lisp has no test-only code.
+
+(defun pty-available-p ()
+  "Return T if a PTY can be opened and forked on this system, NIL otherwise.
+   Used as a skip guard in integration tests that require /dev/ptmx."
+  (handler-case
+      (multiple-value-bind (fd pid) (forkpty-with-shell 8 20)
+        (cl-tmux/pty:pty-close fd pid)
+        t)
+    (error () nil)))
+
+(defmacro with-pty-shell ((fd-var pid-var &key (rows 24) (cols 80)) &body body)
+  "Fork a shell on a fresh PTY of ROWS×COLS; bind FD-VAR and PID-VAR.
+   Closes the PTY via unwind-protect on exit, even if BODY signals."
+  `(multiple-value-bind (,fd-var ,pid-var) (forkpty-with-shell ,rows ,cols)
+     (unwind-protect
+          (progn ,@body)
+       (pty-close ,fd-var ,pid-var))))
+
 ;;; ── No-PTY pane builder ─────────────────────────────────────────────────────
 
 (defun make-no-pty-pane (id x y w h)
@@ -179,6 +204,20 @@
   (make-pane :id id :x x :y y :width w :height h
              :fd -1 :pid -1
              :screen (make-screen w h)))
+
+;;; ── Two-pane horizontal window fixture ──────────────────────────────────────
+
+(defun make-two-pane-h-window ()
+  "Build a laid-out :h split window: p0 (x=0 w=40) | p1 (x=41 w=40), h=24, w=81.
+   Returns (values window p0 p1).  Used by pane-neighbor and directional tests."
+  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+         (p1  (make-no-pty-pane 2 41 0 40 24))
+         (win (make-window :id 1 :name "w" :width 81 :height 24
+                           :panes (list p0 p1)
+                           :tree (make-layout-split :h (make-layout-leaf p0)
+                                                       (make-layout-leaf p1) 1/2))))
+    (window-select-pane win p0)
+    (values win p0 p1)))
 
 ;;; ── Session fixture ─────────────────────────────────────────────────────────
 
@@ -233,6 +272,12 @@
   "Dynamically bind *prompt* to NIL and cl-tmux::*dirty* to NIL so prompt
    state never leaks between tests and dirty flags start clean."
   `(let ((*prompt* nil) (cl-tmux::*dirty* nil)) ,@body))
+
+(defmacro with-empty-registry (&body body)
+  "Bind *server-sessions* to NIL for the duration of BODY.
+   Eliminates the repeated (let ((cl-tmux::*server-sessions* nil)) ...) pattern
+   and makes the registry isolation contract explicit in a single named macro."
+  `(let ((cl-tmux::*server-sessions* nil)) ,@body))
 
 (defun seed-scrollback (screen n)
   "Give SCREEN N dummy scrollback rows so copy-mode-scroll has room to move."
@@ -298,3 +343,164 @@
        (dotimes (col ,w)
          (feed ,var (string ,fill-char))))
      ,@body))
+
+;;; ── Shared layout-tree builders ─────────────────────────────────────────────
+;;;
+;;; tl-pane, tl-leaf, and tl-window are defined here (not in layout-tests.lisp)
+;;; so that layout-geometry-tests.lisp, window-tests.lisp, and any future test
+;;; file can use them without a fragile cross-file dependency.
+
+(defun tl-pane (id w h)
+  "Build a no-PTY pane of width W and height H with a matching screen."
+  (make-pane :id id :x 0 :y 0 :width w :height h
+             :fd -1 :pid -1 :screen (make-screen w h)))
+
+(defun tl-leaf (id w h)
+  "Build a layout-leaf wrapping a no-PTY pane of ID, width W, height H."
+  (make-layout-leaf (tl-pane id w h)))
+
+(defun tl-window (tree rows cols &key active)
+  "Build a window wrapping TREE, laid out at ROWS x COLS, with ACTIVE pane selected."
+  (let ((win (make-window :id 1 :name "w" :width cols :height rows :tree tree)))
+    (window-refresh-panes win)
+    (window-relayout win rows cols)
+    (window-select-pane win (or active (first (window-panes win))))
+    win))
+
+;;; ── Shared 2-pane fixture macros ─────────────────────────────────────────────
+;;;
+;;; Many dispatch tests need identical 2-pane sessions.  These macros eliminate
+;;; ~110 lines of repetition and enforce a single source of truth for geometry.
+
+(defmacro with-h-split-window ((win-var p0-var p1-var) &body body)
+  "Bind WIN-VAR P0-VAR P1-VAR to a 2-pane horizontal split window:
+   p0 (x=0 w=40) | p1 (x=41 w=40), window 81x24, p0 active.
+   No session is created; use this for pure pane-neighbor / geometry tests."
+  `(let* ((,p0-var  (make-no-pty-pane 1  0 0 40 24))
+          (,p1-var  (make-no-pty-pane 2 41 0 40 24))
+          (,win-var (make-window :id 1 :name "w" :width 81 :height 24
+                                 :panes (list ,p0-var ,p1-var)
+                                 :tree (make-layout-split :h
+                                          (make-layout-leaf ,p0-var)
+                                          (make-layout-leaf ,p1-var)
+                                          1/2))))
+     (window-select-pane ,win-var ,p0-var)
+     ,@body))
+
+(defmacro with-v-split-window ((win-var p0-var p1-var) &body body)
+  "Bind WIN-VAR P0-VAR P1-VAR to a 2-pane vertical split window:
+   p0 (y=0 h=10) above p1 (y=11 h=10), window 80x21, p0 active.
+   No session is created; use this for pure pane-neighbor / geometry tests."
+  `(let* ((,p0-var  (make-no-pty-pane 1 0  0 80 10))
+          (,p1-var  (make-no-pty-pane 2 0 11 80 10))
+          (,win-var (make-window :id 1 :name "w" :width 80 :height 21
+                                 :panes (list ,p0-var ,p1-var)
+                                 :tree (make-layout-split :v
+                                          (make-layout-leaf ,p0-var)
+                                          (make-layout-leaf ,p1-var)
+                                          1/2))))
+     (window-select-pane ,win-var ,p0-var)
+     ,@body))
+
+(defmacro with-two-pane-h-session ((sess-var win-var p0-var p1-var) &body body)
+  "Bind SESS-VAR WIN-VAR P0-VAR P1-VAR to a 2-pane horizontal split session:
+   p0 (x=0 w=40) | p1 (x=41 w=40), window 81x24, first pane active.
+   Runs BODY with those bindings."
+  `(let* ((,p0-var  (make-no-pty-pane 1  0 0 40 24))
+          (,p1-var  (make-no-pty-pane 2 41 0 40 24))
+          (,win-var (make-window :id 1 :name "w" :width 81 :height 24
+                                 :panes (list ,p0-var ,p1-var)
+                                 :tree (make-layout-split :h
+                                          (make-layout-leaf ,p0-var)
+                                          (make-layout-leaf ,p1-var)
+                                          1/2)))
+          (,sess-var (make-session :id 1 :name "0" :windows (list ,win-var))))
+     (window-select-pane ,win-var ,p0-var)
+     (session-select-window ,sess-var ,win-var)
+     ,@body))
+
+(defmacro with-two-pane-v-session ((sess-var win-var p0-var p1-var) &body body)
+  "Bind SESS-VAR WIN-VAR P0-VAR P1-VAR to a 2-pane vertical split session:
+   p0 (y=0 h=10) above p1 (y=11 h=10), window 80x21, first pane active.
+   Runs BODY with those bindings."
+  `(let* ((,p0-var  (make-no-pty-pane 1 0  0 80 10))
+          (,p1-var  (make-no-pty-pane 2 0 11 80 10))
+          (,win-var (make-window :id 1 :name "w" :width 80 :height 21
+                                 :panes (list ,p0-var ,p1-var)
+                                 :tree (make-layout-split :v
+                                          (make-layout-leaf ,p0-var)
+                                          (make-layout-leaf ,p1-var)
+                                          1/2)))
+          (,sess-var (make-session :id 1 :name "0" :windows (list ,win-var))))
+     (window-select-pane ,win-var ,p0-var)
+     (session-select-window ,sess-var ,win-var)
+     ,@body))
+
+
+;;; ---- Options isolation --------------------------------------------------------
+
+(defmacro with-isolated-options ((&rest overrides) &body body)
+  "Run BODY with a fresh copy of *global-options*, applying OVERRIDES.
+   OVERRIDES is a flat list of alternating option-name and value pairs.
+   Changes do not leak back to the real *global-options* table."
+  (let ((ht-sym (gensym "HT")))
+    `(let ((cl-tmux/options:*global-options*
+            (let ((,ht-sym (make-hash-table :test #'equal)))
+              (maphash (lambda (k v) (setf (gethash k ,ht-sym) v))
+                       cl-tmux/options:*global-options*)
+              ,@(loop for (k v) on overrides by #'cddr
+                      collect `(setf (gethash ,k ,ht-sym) ,v))
+              ,ht-sym)))
+       ,@body)))
+
+;;; ---- Shared renderer session fixture ------------------------------------------
+
+(defun make-renderer-test-session (w h &key (content ""))
+  "A 1-window, 1-pane session whose pane screen has CONTENT fed into it.
+   No PTY is allocated (fd -1), so this is safe in any environment.
+   Shared by renderer-tests.lisp, renderer-pane-tests.lisp, and prompt-tests.lisp."
+  (let* ((screen (make-screen w h))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width w :height h :fd -1 :screen screen))
+         (win    (make-window :id 1 :name "1" :width w :height h :panes (list pane)))
+         (sess   (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win pane)
+    (session-select-window sess win)
+    (unless (string= content "") (feed screen content))
+    sess))
+
+;;; ── Shared transport / net fixtures ─────────────────────────────────────────
+;;;
+;;; Both transport-tests and net-tests write and read protocol frames over file
+;;; or socket streams.  The helpers below are shared to avoid duplicating the
+;;; temp-path idiom and the write-frames pattern.
+
+(defmacro with-temp-octet-file ((path-var) &body body)
+  "Bind PATH-VAR to a fresh temp file path, run BODY, then delete the file.
+   Shared by transport-tests.lisp and net-tests.lisp."
+  `(let ((,path-var (merge-pathnames "cl-tmux-wire-test.bin"
+                                     (uiop:temporary-directory))))
+     (unwind-protect (progn ,@body)
+       (ignore-errors (delete-file ,path-var)))))
+
+(defun write-frames-to-file (path &rest frames)
+  "Write each FRAME (octet vector) to PATH via cl-tmux/transport:send-frame.
+   Shared by transport-tests.lisp and net-tests.lisp."
+  (with-open-file (out path :direction :output :if-exists :supersede
+                            :element-type '(unsigned-byte 8))
+    (dolist (frame frames)
+      (cl-tmux/transport:send-frame out frame))))
+
+(defmacro with-temp-socket-path ((path-var) &body body)
+  "Bind PATH-VAR to a unique temp socket path, run BODY, then delete it.
+   Shared by net-tests.lisp to eliminate duplicated path-building patterns."
+  (let ((label (gensym "LABEL")))
+    `(let* ((,label (format nil "cl-tmux-test-~D-~D.sock"
+                            (get-universal-time) (random 1000000)))
+            (,path-var (namestring
+                        (merge-pathnames ,label (uiop:temporary-directory)))))
+       (unwind-protect (progn ,@body)
+         (ignore-errors (delete-file ,path-var))))))
+
+(defun make-test-session (w h &key (content ""))
+  "Convenience alias for make-renderer-test-session; available to all test files."
+  (make-renderer-test-session w h :content content))

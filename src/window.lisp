@@ -43,13 +43,33 @@
 ;;; The :v/:h naming is tmux-style:
 ;;;   :v split stacks children vertically → extent measured in ROWS (height)
 ;;;   :h split places children side-by-side → extent measured in COLS (width)
-;;; Both helpers use ecase for exhaustive, readable dispatch (Prolog-style fact).
+;;;
+;;; define-axis-rules generates a Prolog-style fact table for orient dispatch:
+;;;   axis_rule(:v, pane) :- (pane-height pane)
+;;;   axis_rule(:h, pane) :- (pane-width  pane)
+;;; The macro follows the same pattern as define-csi-rules / define-command-handlers.
 
-(defun %orient-pane-extent (pane orient)
+(defmacro define-axis-rules (name lambda-list &rest orient-cases)
+  "Generate an orient-dispatching function NAME with LAMBDA-LIST.
+   Each ORIENT-CASE is (:orient form) — an exhaustive table of orient facts.
+   The generated function uses ecase for compile-time exhaustiveness checking."
+  (let* ((docstring (when (stringp (first orient-cases)) (first orient-cases)))
+         (cases     (if docstring (rest orient-cases) orient-cases)))
+    `(defun ,name ,lambda-list
+       ,@(when docstring (list docstring))
+       (ecase ,(car (last lambda-list))
+         ,@(mapcar (lambda (c)
+                     `(,(first c) ,(second c)))
+                   cases)))))
+
+;;; Axis fact table: for each orient, which pane accessor gives the relevant extent?
+;;;   axis_extent(:v, pane) :- pane-height.
+;;;   axis_extent(:h, pane) :- pane-width.
+
+(define-axis-rules %orient-pane-extent (pane orient)
   "Current extent of PANE along ORIENT's split axis."
-  (ecase orient
-    (:v (pane-height pane))
-    (:h (pane-width  pane))))
+  (:v (pane-height pane))
+  (:h (pane-width  pane)))
 
 (defun %split-fits-p (pane orient)
   "T when PANE is wide/tall enough to split along ORIENT (needs 2×min + 1 separator)."
@@ -133,9 +153,9 @@
       (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
         (let* ((new-pane (%fork-pane (next-pane-id window) px py pw ph))
                ;; Compute initial ratio; if SIZE given, derive from it.
-               (avail    (1- (ecase direction
-                               (:h (pane-width  active))
-                               (:v (pane-height active)))))
+               ;; %orient-pane-extent reuses the axis-fact table so orientation
+               ;; semantics stay consistent with %split-fits-p and layout-min-extent.
+               (avail    (1- (%orient-pane-extent active direction)))
                (ratio    (if size
                              (%ratio-from-size-hint size avail direction)
                              1/2))
@@ -237,6 +257,12 @@
                (:down (cons (car (last panes))
                             (butlast panes))))))
         ;; Rebuild the split tree in the new panes order using equal splits.
+        ;; DESIGN NOTE: The rebuilt tree always uses :h orientation and equal
+        ;; 1/2 ratios, regardless of the original layout.  This is intentional:
+        ;; rotation resets the layout to a flat left-to-right arrangement so
+        ;; the visual order matches the panes list after rotation.
+        ;; If you need to preserve original orientations, use apply-named-layout
+        ;; after rotating (e.g. :even-horizontal preserves the same visual effect).
         ;; Build a right-spine binary tree: each step pairs the next pane with
         ;; a sub-tree of the remaining panes, all at ratio 1/2.
         (let ((tree (labels ((build (ps)

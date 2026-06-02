@@ -34,33 +34,18 @@
 ;;; Flags is a plist; :repeatable T means the prefix stays active after dispatch.
 ;;; Standard table names: "prefix", "root", "copy-mode".
 ;;;
-;;; *current-key-table* tracks which table is active during input processing.
+;;; set-key-binding / remove-key-binding are thin wrappers around key-table-bind
+;;; for the "prefix" table — the only table that matters for the main dispatch path.
 
 (defparameter *key-tables*
   (make-hash-table :test #'equal)
   "Hash-table mapping table-name string → inner hash-table of chord → (keyword . flags).")
-
-(defparameter *current-key-table* "root"
-  "Name of the active key-table for input dispatch (dynamic variable).")
 
 (defun ensure-key-table (name)
   "Return the inner hash-table for key-table NAME, creating it if absent."
   (or (gethash name *key-tables*)
       (setf (gethash name *key-tables*)
             (make-hash-table :test #'equal))))
-
-;;; Alias used by callers that prefer the tmux-manual naming convention.
-(defun get-key-table (name)
-  "Return or create the named key table (alias for ensure-key-table)."
-  (ensure-key-table name))
-
-(defun set-key-binding-in-table (table key cmd)
-  "Bind KEY → CMD in the named TABLE (creating the table if absent)."
-  (setf (gethash key (ensure-key-table table)) (cons cmd '(:repeatable nil))))
-
-(defun lookup-key-in-table (table key)
-  "Return the (cmd . flags) entry for KEY in TABLE, or NIL."
-  (key-table-lookup table key))
 
 (defun key-table-bind (table key command &key repeatable)
   "Add a binding for KEY → COMMAND in TABLE (a table-name string).
@@ -81,100 +66,95 @@
   "Return T if the key-table entry is marked repeatable."
   (and entry (getf (cdr entry) :repeatable)))
 
-;;; After receiving the prefix key, the next keystroke (a character or a
-;;; multi-character string like \"M-1\") is looked up here.
-;;; Each entry is (char-or-string . keyword).
+;;; ── Initial key-binding data (declarative) ────────────────────────────────
+;;;
+;;; define-initial-key-bindings registers key-table bindings at load time.
+;;; After load, set-key-binding / remove-key-binding delegate to key-table-bind
+;;; directly — no sync step needed.
 
 (defmacro define-initial-key-bindings (&rest pairs)
-  "Build the initial *key-bindings* alist from a declarative table.
+  "Populate the prefix key-table with initial bindings.
    Each PAIR is (char-literal command-keyword).
-   The special entry (:digits command) binds digit chars 0-9 to COMMAND."
-  `(list ,@(mapcan
-            (lambda (pair)
-              (if (eq (first pair) :digits)
-                  (loop for d from 0 to 9
-                        collect `(cons (digit-char ,d) ,(second pair)))
-                  `((cons ,(first pair) ,(second pair)))))
-            pairs)))
+   The special entry (:digits command) binds digit chars 0-9 to COMMAND.
+   The macro expands to side-effecting key-table-bind calls — it does NOT
+   return an alist."
+  `(progn
+     ,@(mapcan
+        (lambda (pair)
+          (if (eq (first pair) :digits)
+              (loop for d from 0 to 9
+                    collect `(key-table-bind "prefix" (digit-char ,d) ,(second pair)))
+              `((key-table-bind "prefix" ,(first pair) ,(second pair)))))
+        pairs)))
 
-(defparameter *key-bindings*
-  (define-initial-key-bindings
-    (#\c :new-window)
-    (#\n :next-window)
-    (#\p :prev-window)
-    (#\" :split-horizontal)
-    (#\% :split-vertical)
-    (#\o :next-pane)
-    (#\d :detach)
-    (#\? :list-keys)
-    (#\[ :copy-mode-enter)
-    (#\] :paste-buffer)
-    (#\x :kill-pane-confirm)
-    (#\& :kill-window-confirm)
-    (#\, :rename-window)
-    (#\H :resize-left)
-    (#\J :resize-down)
-    (#\K :resize-up)
-    (#\L :resize-right)
-    (#\Z :zoom-toggle)
-    (#\$ :rename-session)
-    (#\! :if-shell)
-    (:digits :select-window))
-  "Prefix-key dispatch alist of (char-or-string . keyword).
-   Built from the table above; mutated at runtime by set-key-binding.")
+(define-initial-key-bindings
+  (#\c :new-window)
+  (#\n :next-window)
+  (#\p :prev-window)
+  (#\" :split-horizontal)
+  (#\% :split-vertical)
+  (#\o :next-pane)
+  (#\d :detach)
+  (#\? :list-keys)
+  (#\[ :copy-mode-enter)
+  (#\] :paste-buffer)
+  (#\x :kill-pane-confirm)
+  (#\& :kill-window-confirm)
+  (#\, :rename-window)
+  (#\H :resize-left)
+  (#\J :resize-down)
+  (#\K :resize-up)
+  (#\L :resize-right)
+  (#\Z :zoom-toggle)
+  (#\$ :rename-session)
+  (#\! :if-shell)
+  (:digits :select-window))
+
+;;; ── Key-binding accessors (thin wrappers over key-tables) ─────────────────
 
 (defun lookup-key-binding (key)
-  "Return the command keyword bound to KEY (a character or string), or NIL."
-  (cdr (assoc key *key-bindings* :test #'equal)))
+  "Return the command keyword bound to KEY (a character or string), or NIL.
+   Looks up the \"prefix\" table."
+  (let ((entry (key-table-lookup "prefix" key)))
+    (and entry (key-table-command entry))))
 
 (defun describe-key-bindings ()
   "A newline-separated, key-sorted listing of the current prefix bindings
    (\"<key>  <command>\" per line) for the list-keys help overlay.
-   Pure: reads *KEY-BINDINGS* without mutating it (copy-list before sort)."
+   Reads from the \"prefix\" key-table."
   (flet ((key-label (k) (if (characterp k) (string k) k)))
-    (with-output-to-string (out)
-      (write-string "key bindings — press prefix (C-b) then:" out)
-      (dolist (binding (sort (copy-list *key-bindings*) #'string<
-                             :key (lambda (b) (key-label (car b)))))
-        (format out "~%  ~A  ~(~A~)" (key-label (car binding)) (cdr binding))))))
+    (let ((alist (loop for k being the hash-keys of
+                            (ensure-key-table "prefix")
+                            using (hash-value v)
+                       collect (cons k (car v)))))
+      (with-output-to-string (out)
+        (write-string "key bindings — press prefix (C-b) then:" out)
+        (dolist (binding (sort alist #'string<
+                               :key (lambda (b) (key-label (car b)))))
+          (format out "~%  ~A  ~(~A~)" (key-label (car binding)) (cdr binding)))))))
 
 (defun set-key-binding (key command)
-  "Bind KEY (a character or string) to COMMAND (a keyword) in *KEY-BINDINGS*,
-   replacing any existing binding for KEY.  Returns COMMAND."
-  (let ((existing (assoc key *key-bindings* :test #'equal)))
-    (if existing
-        (setf (cdr existing) command)
-        (push (cons key command) *key-bindings*)))
+  "Bind KEY (a character or string) to COMMAND (a keyword) in the prefix table.
+   Returns COMMAND."
+  (key-table-bind "prefix" key command)
   command)
 
 (defun remove-key-binding (key)
-  "Remove any binding for KEY (a character or string) from *KEY-BINDINGS*."
-  (setf *key-bindings* (remove key *key-bindings* :key #'car :test #'equal)))
+  "Remove any binding for KEY (a character or string) from the prefix table."
+  (let ((tbl (gethash "prefix" *key-tables*)))
+    (when tbl (remhash key tbl))))
 
-;;; ── Populate key-tables from *key-bindings* ───────────────────────────────
+;;; ── Initialisation ────────────────────────────────────────────────────────
 ;;;
-;;; Called once at load time; also called from config-directives when bind/unbind
-;;; is processed.  Copies the prefix-table alist into *key-tables* "prefix".
+;;; initialize-default-key-tables is called from with-isolated-config in the
+;;; test helpers, so it must remain a named defun rather than an inline progn.
 
-(defun sync-key-tables-from-bindings ()
-  "Copy current *key-bindings* alist into the \"prefix\" key-table, replacing it."
-  (let ((prefix-table (ensure-key-table "prefix")))
-    ;; Clear existing entries
-    (clrhash prefix-table)
-    ;; Populate from *key-bindings* alist
-    (dolist (binding *key-bindings*)
-      (setf (gethash (car binding) prefix-table)
-            (cons (cdr binding) '(:repeatable nil)))))
-  ;; Ensure "root" and "copy-mode" tables exist
+(defun initialize-default-key-tables ()
+  "Install the C-b C-b → :send-prefix binding and ensure root/copy-mode tables exist.
+   Called once at load time.  Safe to call again (idempotent)."
+  (set-key-binding (code-char +prefix-key-code+) :send-prefix)
   (ensure-key-table "root")
   (ensure-key-table "copy-mode"))
 
-;;; Bind C-b C-b (prefix then byte 2) to :send-prefix so the user can send
-;;; a literal prefix byte to the running program.  This cannot be expressed
-;;; as a character literal in define-initial-key-bindings because the
-;;; character has code 2 (STX / Control-B), so we push it at load time.
-(push (cons (code-char +prefix-key-code+) :send-prefix) *key-bindings*)
-
 ;;; Initialise tables at load time.
-(sync-key-tables-from-bindings)
-
+(initialize-default-key-tables)

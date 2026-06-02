@@ -6,6 +6,11 @@
 ;;;; type, payload, and consumed-byte count.  Also covers streaming concerns:
 ;;;; partial buffers (incomplete header / payload) and several frames packed
 ;;;; back-to-back in one buffer.
+;;;;
+;;;; All protocol helpers referenced here are exported from cl-tmux/protocol
+;;;; so tests use single-colon qualified names (cl-tmux/protocol:name) rather
+;;;; than double-colon internal access (cl-tmux/protocol::name).  If a helper
+;;;; is renamed or unexported, the compile-time package check will catch it.
 
 (def-suite protocol-suite :description "Client/server wire protocol codec")
 (in-suite protocol-suite)
@@ -14,30 +19,30 @@
 
 (test u16-octets-big-endian
   "u16-octets encodes a 16-bit value as two big-endian bytes."
-  (is (equalp #(0 0)     (cl-tmux/protocol::u16-octets 0)))
-  (is (equalp #(0 1)     (cl-tmux/protocol::u16-octets 1)))
-  (is (equalp #(1 0)     (cl-tmux/protocol::u16-octets 256)))
-  (is (equalp #(255 255) (cl-tmux/protocol::u16-octets 65535))))
+  (is (equalp #(0 0)     (cl-tmux/protocol:u16-octets 0)))
+  (is (equalp #(0 1)     (cl-tmux/protocol:u16-octets 1)))
+  (is (equalp #(1 0)     (cl-tmux/protocol:u16-octets 256)))
+  (is (equalp #(255 255) (cl-tmux/protocol:u16-octets 65535))))
 
 (test u32-octets-big-endian
   "u32-octets encodes a 32-bit value as four big-endian bytes."
-  (is (equalp #(0 0 0 0)   (cl-tmux/protocol::u32-octets 0)))
-  (is (equalp #(0 0 0 1)   (cl-tmux/protocol::u32-octets 1)))
-  (is (equalp #(0 1 0 0)   (cl-tmux/protocol::u32-octets 65536)))
-  (is (equalp #(255 255 255 255) (cl-tmux/protocol::u32-octets #xFFFFFFFF))))
+  (is (equalp #(0 0 0 0)   (cl-tmux/protocol:u32-octets 0)))
+  (is (equalp #(0 0 0 1)   (cl-tmux/protocol:u32-octets 1)))
+  (is (equalp #(0 1 0 0)   (cl-tmux/protocol:u32-octets 65536)))
+  (is (equalp #(255 255 255 255) (cl-tmux/protocol:u32-octets #xFFFFFFFF))))
 
 (test u16-octets-pair-concatenates-two-u16s
   "u16-octets-pair concatenates two u16 values as 4 big-endian bytes."
-  (is (equalp #(0 24 0 80) (cl-tmux/protocol::u16-octets-pair 24 80)))
-  (is (equalp #(0 0 0 0)   (cl-tmux/protocol::u16-octets-pair 0 0))))
+  (is (equalp #(0 24 0 80) (cl-tmux/protocol:u16-octets-pair 24 80)))
+  (is (equalp #(0 0 0 0)   (cl-tmux/protocol:u16-octets-pair 0 0))))
 
 (test read-u16-decodes-big-endian
   "read-u16 reads two bytes at START as a big-endian u16."
-  (let ((buf (make-array 6 :element-type '(unsigned-byte 8)
-                           :initial-contents '(0 0 0 24 0 80))))
-    (is (= 0  (cl-tmux/protocol::read-u16 buf 0)))
-    (is (= 24 (cl-tmux/protocol::read-u16 buf 2)))
-    (is (= 80 (cl-tmux/protocol::read-u16 buf 4)))))
+  (let ((buffer (make-array 6 :element-type '(unsigned-byte 8)
+                              :initial-contents '(0 0 0 24 0 80))))
+    (is (= 0  (cl-tmux/protocol:read-u16 buffer 0)))
+    (is (= 24 (cl-tmux/protocol:read-u16 buffer 2)))
+    (is (= 80 (cl-tmux/protocol:read-u16 buffer 4)))))
 
 ;;; ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -154,7 +159,7 @@
         (is (= (+ +header-size+ n) (length frame))
             "frame is header + payload bytes")
         ;; Length field stored big-endian at offset 1.
-        (is (= n (cl-tmux/protocol::read-u32 frame 1))
+        (is (= n (cl-tmux/protocol:read-u32 frame 1))
             "u32-be length field equals payload length")
         (multiple-value-bind (type decoded next) (decode-frame frame)
           (is (= +msg-frame+ type))
@@ -188,27 +193,132 @@
   "define-uint-decoders generates decoder functions symmetric to the encoders.
    Round-tripping through encode → decode must recover the original value."
   (dolist (n '(0 1 255 256 65535))
-    (is (= n (cl-tmux/protocol::read-u16 (cl-tmux/protocol::u16-octets n) 0))
+    (is (= n (cl-tmux/protocol:read-u16 (cl-tmux/protocol:u16-octets n) 0))
         "u16 round-trip failed for ~D" n))
   (dolist (n '(0 1 65536 #xFFFFFF #xFFFFFFFF))
-    (is (= n (cl-tmux/protocol::read-u32 (cl-tmux/protocol::u32-octets n) 0))
+    (is (= n (cl-tmux/protocol:read-u32 (cl-tmux/protocol:u32-octets n) 0))
         "u32 round-trip failed for ~D" n)))
 
 (test define-uint-encoders-generated-functions-have-correct-sizes
   "define-uint-encoders generates big-endian encoder functions of exactly BITS/8 bytes.
    This verifies the macro expansion — u16-octets always yields 2 bytes and
    u32-octets always yields 4 bytes, regardless of the value encoded."
-  (is (= 2 (length (cl-tmux/protocol::u16-octets 0)))        "u16(0) = 2 bytes")
-  (is (= 2 (length (cl-tmux/protocol::u16-octets 65535)))    "u16(max) = 2 bytes")
-  (is (= 4 (length (cl-tmux/protocol::u32-octets 0)))        "u32(0) = 4 bytes")
-  (is (= 4 (length (cl-tmux/protocol::u32-octets #xFFFFFFFF))) "u32(max) = 4 bytes"))
+  (is (= 2 (length (cl-tmux/protocol:u16-octets 0)))        "u16(0) = 2 bytes")
+  (is (= 2 (length (cl-tmux/protocol:u16-octets 65535)))    "u16(max) = 2 bytes")
+  (is (= 4 (length (cl-tmux/protocol:u32-octets 0)))        "u32(0) = 4 bytes")
+  (is (= 4 (length (cl-tmux/protocol:u32-octets #xFFFFFFFF))) "u32(max) = 4 bytes"))
 
 (test define-wire-messages-generates-all-message-constructors
   "define-wire-messages generates one constructor per spec entry.
    Verify all six constructors are bound and callable."
-  (is (fboundp 'cl-tmux/protocol::msg-attach)  "msg-attach must be fbound")
-  (is (fboundp 'cl-tmux/protocol::msg-key)     "msg-key must be fbound")
-  (is (fboundp 'cl-tmux/protocol::msg-resize)  "msg-resize must be fbound")
-  (is (fboundp 'cl-tmux/protocol::msg-detach)  "msg-detach must be fbound")
-  (is (fboundp 'cl-tmux/protocol::msg-frame)   "msg-frame must be fbound")
-  (is (fboundp 'cl-tmux/protocol::msg-bye)     "msg-bye must be fbound"))
+  (is (fboundp 'cl-tmux/protocol:msg-attach)  "msg-attach must be fbound")
+  (is (fboundp 'cl-tmux/protocol:msg-key)     "msg-key must be fbound")
+  (is (fboundp 'cl-tmux/protocol:msg-resize)  "msg-resize must be fbound")
+  (is (fboundp 'cl-tmux/protocol:msg-detach)  "msg-detach must be fbound")
+  (is (fboundp 'cl-tmux/protocol:msg-frame)   "msg-frame must be fbound")
+  (is (fboundp 'cl-tmux/protocol:msg-bye)     "msg-bye must be fbound"))
+
+;;; ── msg-command constructor ──────────────────────────────────────────────────
+
+(test msg-command-builds-valid-frame
+  "msg-command produces a +msg-command+ frame whose payload decodes cleanly."
+  (let ((frame (msg-command :new-window nil nil)))
+    (multiple-value-bind (type payload next) (decode-frame frame)
+      (is (= +msg-command+ type))
+      (is (= (length frame) next) "consumed the whole frame")
+      (multiple-value-bind (command target args)
+          (decode-command-payload payload)
+        (is (eq :new-window command))
+        (is (null target))
+        (is (null args)))))
+  ;; With target and args
+  (let ((frame (msg-command :send-keys "1:2.3" '("hello" "world"))))
+    (multiple-value-bind (type payload) (decode-frame frame)
+      (is (= +msg-command+ type))
+      (multiple-value-bind (command target args)
+          (decode-command-payload payload)
+        (is (eq :send-keys command))
+        (is (string= "1:2.3" target))
+        (is (equal '("hello" "world") args))))))
+
+;;; ── encode-command-payload / decode-command-payload round-trips ─────────────
+
+(test encode-decode-command-payload-no-target-no-args
+  "A command with no target and no args encodes and decodes cleanly."
+  (let ((payload (encode-command-payload :new-window)))
+    (multiple-value-bind (command target args) (decode-command-payload payload)
+      (is (eq :new-window command))
+      (is (null target))
+      (is (null args)))))
+
+(test encode-decode-command-payload-with-target
+  "A command with a target field round-trips target and command-name."
+  (multiple-value-bind (command target args)
+      (decode-command-payload
+       (encode-command-payload :select-pane :target "$1:0.0"))
+    (is (eq :select-pane command))
+    (is (string= "$1:0.0" target))
+    (is (null args))))
+
+(test encode-decode-command-payload-with-args
+  "A command with argument strings round-trips all args in order."
+  (multiple-value-bind (command target args)
+      (decode-command-payload
+       (encode-command-payload :send-keys :args '("C-c" "")))
+    (is (eq :send-keys command))
+    (is (null target))
+    (is (equal '("C-c" "") args))))
+
+(test encode-decode-command-payload-target-and-args
+  "A command with both target and args round-trips all fields."
+  (multiple-value-bind (command target args)
+      (decode-command-payload
+       (encode-command-payload :resize-pane :target "2:0" :args '("-U" "5")))
+    (is (eq :resize-pane command))
+    (is (string= "2:0" target))
+    (is (equal '("-U" "5") args))))
+
+(test encode-decode-command-payload-string-command-name
+  "encode-command-payload accepts a plain string command-name (not keyword)."
+  (multiple-value-bind (command target args)
+      (decode-command-payload
+       (encode-command-payload "new-session" :target "$2"))
+    (is (eq :new-session command))
+    (is (string= "$2" target))
+    (is (null args))))
+
+;;; ── target-field-p predicate ────────────────────────────────────────────────
+
+(test target-field-p-detects-session-sigil
+  "A field starting with '$' is a target (session sigil)."
+  (is (cl-tmux/protocol:target-field-p "$0"))
+  (is (cl-tmux/protocol:target-field-p "$99")))
+
+(test target-field-p-detects-colon-syntax
+  "A field containing ':' is a target (session:window format)."
+  (is (cl-tmux/protocol:target-field-p "mysession:1"))
+  (is (cl-tmux/protocol:target-field-p "0:1")))
+
+(test target-field-p-detects-dot-syntax
+  "A field containing '.' is a target (window.pane format)."
+  (is (cl-tmux/protocol:target-field-p "0.1"))
+  (is (cl-tmux/protocol:target-field-p "mysession:0.2")))
+
+(test target-field-p-rejects-plain-command-names
+  "Plain command names (no '$', ':', or '.') are not targets."
+  (is (not (cl-tmux/protocol:target-field-p "new-window")))
+  (is (not (cl-tmux/protocol:target-field-p "select-pane")))
+  (is (not (cl-tmux/protocol:target-field-p ""))))
+
+(test decode-command-payload-command-name-with-colon-is-not-misidentified
+  "A command name containing ':' is not misidentified as a target when only
+   one field is present (no ambiguity — target detection requires >= 2 fields)."
+  ;; Encode manually: a single NUL-terminated field with ':' in the name.
+  ;; With only 1 field decode-command-payload cannot treat it as a target.
+  (let* ((name-bytes (babel:string-to-octets "weird:name" :encoding :utf-8))
+         (payload    (concatenate '(simple-array (unsigned-byte 8) (*))
+                                  name-bytes #(0))))
+    (multiple-value-bind (command target args) (decode-command-payload payload)
+      (is (eq :weird:name command))
+      (is (null target))
+      (is (null args)))))

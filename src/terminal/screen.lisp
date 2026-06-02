@@ -125,10 +125,12 @@
         (+ (* y (screen-width screen)) x)))
 
 (defun (setf screen-cell) (cell screen x y)
+  "Store CELL at column X, row Y in SCREEN's grid.
+   Dirty-marking is the responsibility of the action layer; this setter is a
+   pure grid accessor — it does NOT set screen-dirty-p."
   (setf (aref (screen-cells screen)
               (+ (* y (screen-width screen)) x))
-        cell
-        (screen-dirty-p screen) t))
+        cell))
 
 (defun screen-clear-dirty (screen)
   "Clear the dirty flag on SCREEN."

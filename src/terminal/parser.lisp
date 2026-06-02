@@ -168,91 +168,16 @@
 
 ;;; OSC payload accumulator: captures bytes into a buffer, then dispatches
 ;;; on BEL (#x07) or ST (ESC \) termination.
-
-;;; OSC 52 clipboard callback.  Set by the higher-level code (buffer.lisp or
-;;; main) after the terminal module is loaded.  NIL means clipboard writes are
-;;; silently dropped (safe default for unit tests that don't need the buffer).
-(defvar *osc52-handler* nil
-  "A function of one argument (text string) called when OSC 52 clipboard data
-   is received.  Install cl-tmux/buffer:add-paste-buffer here at startup.")
-
-;;; Base64 decoder (used for OSC 52 clipboard payloads).
-;;; We use a simple table-driven approach rather than depending on an external library.
-
-(defun %base64-decode (str)
-  "Decode a Base64-encoded string STR into a byte vector.
-   Returns NIL on decoding errors."
-  (let ((table "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
-        (len    (length str)))
-    (ignore-errors
-      (let* ((out-len (floor (* 3 (ceiling len 4)) 1))
-             (out     (make-array out-len :element-type '(unsigned-byte 8)
-                                          :fill-pointer 0 :adjustable t)))
-        (loop for i from 0 below len by 4
-              do (let* ((c0 (position (char str i)      table))
-                        (c1 (and (< (+ i 1) len) (position (char str (+ i 1)) table)))
-                        (c2 (and (< (+ i 2) len) (position (char str (+ i 2)) table)))
-                        (c3 (and (< (+ i 3) len) (position (char str (+ i 3)) table)))
-                        (b0 (and c0 c1 (logior (ash c0 2) (ash c1 -4))))
-                        (b1 (and c1 c2 (logand #xFF (logior (ash (logand c1 #xF) 4) (ash c2 -2)))))
-                        (b2 (and c2 c3 (logand #xFF (logior (ash (logand c2 #x3) 6) c3)))))
-                   (when b0 (vector-push-extend b0 out))
-                   (when b1 (vector-push-extend b1 out))
-                   (when b2 (vector-push-extend b2 out))))
-        out))))
-
-(defun %dispatch-osc (screen buf)
-  "Parse accumulated OSC payload BUF and apply side-effects to SCREEN.
-   Handles OSC 0 and OSC 2 (set window title) and OSC 52 (clipboard)."
-  (let* ((payload (babel:octets-to-string buf :encoding :utf-8 :errorp nil))
-         (semi    (position #\; payload)))
-    (when semi
-      (let ((cmd  (ignore-errors (parse-integer (subseq payload 0 semi))))
-            (text (subseq payload (1+ semi))))
-        (cond
-          ((member cmd '(0 2))
-           (setf (screen-title screen) text))
-          ((eql cmd 52)
-           ;; OSC 52: clipboard read/write.
-           ;; Format: 52 ; Pc ; Pd  where Pc is clipboard target (often "c")
-           ;; and Pd is the Base64-encoded payload, or "?" for a read request.
-           (let* ((semi2 (position #\; text))
-                  (pd    (if semi2 (subseq text (1+ semi2)) nil)))
-             (when (and pd (not (string= pd "?")))
-               (let* ((decoded (ignore-errors (%base64-decode pd)))
-                      (text-str (and decoded
-                                     (ignore-errors
-                                       (babel:octets-to-string decoded :encoding :utf-8)))))
-                 (when (and text-str *osc52-handler*)
-                   (funcall *osc52-handler* text-str)))))))))))
-
-(defun make-osc-st-k (screen buf)
-  "Continuation waiting for the backslash of ESC \\ ST."
-  (lambda (screen-arg byte)
-    (declare (type screen screen-arg) (type (unsigned-byte 8) byte))
-    (when (= byte #x5C)
-      (%dispatch-osc screen-arg buf))
-    #'ground-state))
-
-(defun make-osc-k (screen buf)
-  "Return a continuation that accumulates OSC payload bytes.
-   Dispatches to %DISPATCH-OSC on BEL or ESC termination."
-  (lambda (screen-arg byte)
-    (declare (type screen screen-arg) (type (unsigned-byte 8) byte))
-    (cond
-      ((= byte #x07)
-       ;; BEL: terminate and dispatch
-       (%dispatch-osc screen-arg buf)
-       #'ground-state)
-      ((= byte #x1B)
-       ;; possible ESC \ ST — save screen reference for the ST continuation
-       (make-osc-st-k screen-arg buf))
-      (t
-       (vector-push-extend byte buf)
-       (make-osc-k screen-arg buf)))))
+;;;
+;;; The implementation lives in parser-osc.lisp (loaded after this file):
+;;;   *osc52-handler* — clipboard callback variable
+;;;   %dispatch-osc   — payload parser and side-effect applier
+;;;   make-osc-st-k   — bridge continuation waiting for ESC \ backslash
+;;;   make-osc-k      — accumulator continuation for OSC payload bytes
 
 (define-state osc-state (screen byte)
-  ;; OSC payload: start accumulating
+  ;; OSC payload: start accumulating into a fresh buffer.
+  ;; Bare BEL and bare ESC with empty payload are handled as no-ops.
   (#x07  #'ground-state)                           ; bare BEL with empty payload
   (#x1B  #'osc-st-state)                           ; possible ST = ESC \ with empty payload
   (t     (let ((buf (make-array 64
@@ -260,7 +185,7 @@
                                 :fill-pointer 0
                                 :adjustable t)))
            (vector-push-extend byte buf)
-           (make-osc-k screen buf))))
+           (make-osc-k buf))))
 
 (define-state osc-st-state (screen byte)
   (#x5C  #'ground-state)                           ; \ → ST confirmed (empty payload)

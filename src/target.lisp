@@ -17,6 +17,19 @@
 
 ;;; ── Pure: parse a raw target string into three string components ─────────────
 
+(defun %parse-session-component (target-string colon-pos dot-pos)
+  "Derive the session component from TARGET-STRING given split positions.
+   When a colon is present, the session is the text before it (possibly empty).
+   When no colon is present, the session is the text before the dot (or the
+   whole string when no dot is present either).
+   Returns a non-empty string or NIL."
+  (flet ((non-empty (s) (when (and s (plusp (length s))) s)))
+    (if colon-pos
+        (non-empty (subseq target-string 0 colon-pos))
+        (non-empty (if dot-pos
+                       (subseq target-string 0 dot-pos)
+                       target-string)))))
+
 (defun %parse-target (target-string)
   "Split TARGET-STRING into (values session-str window-str pane-str).
    Each value is NIL when the component is absent.
@@ -24,125 +37,111 @@
    The SESSION portion is everything up to the first colon (if any).
    The WINDOW portion is between the first colon and the first dot (if any).
    The PANE portion is everything after the first dot."
-  (if (or (null target-string) (string= target-string ""))
-      (values nil nil nil)
-      (let* ((colon-pos (position #\: target-string))
-             (dot-pos   (position #\. target-string :start (or colon-pos 0)))
-             (sess-str  (when colon-pos
-                          (let ((s (subseq target-string 0 colon-pos)))
-                            (when (plusp (length s)) s))))
-             (win-str   (cond
-                          ;; Both colon and dot: window is between them
-                          ((and colon-pos dot-pos)
-                           (let ((s (subseq target-string (1+ colon-pos) dot-pos)))
-                             (when (plusp (length s)) s)))
-                          ;; Colon but no dot: window is everything after colon
-                          (colon-pos
-                           (let ((s (subseq target-string (1+ colon-pos))))
-                             (when (plusp (length s)) s)))
-                          ;; No colon but there's a dot — no window component
-                          (t nil)))
-             (pane-str  (when dot-pos
-                          (let ((s (subseq target-string (1+ dot-pos))))
-                            (when (plusp (length s)) s)))))
-        ;; When no colon was found, the whole string without dot is the session
-        (let ((sess-final (or sess-str
-                              (when (not colon-pos)
-                                (let ((s (if dot-pos
-                                             (subseq target-string 0 dot-pos)
-                                             target-string)))
-                                  (when (plusp (length s)) s))))))
-          (values sess-final win-str pane-str)))))
+  (when (or (null target-string) (string= target-string ""))
+    (return-from %parse-target (values nil nil nil)))
+  (let* ((colon-pos (position #\: target-string))
+         (dot-pos   (position #\. target-string :start (or colon-pos 0))))
+    (flet ((non-empty (s) (when (and s (plusp (length s))) s)))
+      (let* ((win-raw  (cond
+                         ;; Both colon and dot: window is between them.
+                         ((and colon-pos dot-pos)
+                          (subseq target-string (1+ colon-pos) dot-pos))
+                         ;; Colon but no dot: window is everything after colon.
+                         (colon-pos
+                          (subseq target-string (1+ colon-pos)))
+                         ;; No colon — no window component.
+                         (t nil)))
+             (pane-raw (when dot-pos
+                         (subseq target-string (1+ dot-pos))))
+             (sess-str (%parse-session-component target-string colon-pos dot-pos)))
+        (values sess-str (non-empty win-raw) (non-empty pane-raw))))))
+
+;;; ── define-target-lookup — Prolog-style sequential rule dispatch ─────────────
+;;;
+;;; Follows the same pattern as define-csi-rules / define-command-handlers.
+;;; Each rule is a list: (test-expr) — return test-expr when it is non-NIL.
+;;; The special rule (:nil-guard EXPR) exits early when EXPR is NIL.
+;;; The generated dispatcher tries rules in order; returns NIL when none match.
+
+(defmacro define-target-lookup (name lambda-list &rest rules)
+  "Generate a target lookup function NAME with LAMBDA-LIST.
+   An optional docstring may appear as the first element of RULES.
+   Each remaining RULE is either:
+     (:nil-guard EXPR)  -- return NIL early when EXPR is NIL
+     (TEST-EXPR)        -- return TEST-EXPR when it is non-NIL
+   Rules are tried in order.  Returns NIL when no rule matches."
+  (let* ((docstring (when (stringp (first rules)) (first rules)))
+         (actual-rules (if docstring (rest rules) rules)))
+    `(defun ,name ,lambda-list
+       ,@(when docstring (list docstring))
+       ,@(mapcar
+          (lambda (rule)
+            (if (eq (car rule) :nil-guard)
+                `(unless ,(cadr rule) (return-from ,name nil))
+                `(let ((%result% ,(car rule)))
+                   (when %result% (return-from ,name %result%)))))
+          actual-rules)
+       nil)))
+
+;;; ── Sigil helpers (pure) ─────────────────────────────────────────────────────
+
+(defun %sigil-id (target-str sigil-char)
+  "If TARGET-STR starts with SIGIL-CHAR, parse the rest as an integer.
+   Returns the integer or NIL."
+  (when (and (plusp (length target-str))
+             (char= (char target-str 0) sigil-char))
+    (ignore-errors (parse-integer (subseq target-str 1)))))
+
+(defun %name-prefix-p (prefix name)
+  "T when NAME starts with PREFIX (both strings)."
+  (and (>= (length name) (length prefix))
+       (string= prefix name :end2 (min (length prefix) (length name)))))
 
 ;;; ── Find: session lookup ─────────────────────────────────────────────────────
 
-(defun find-session-by-target (server target-str)
-  "Find a session in SERVER (the *server-sessions* alist) matching TARGET-STR.
-   Match rules (in order):
-     1. Exact name match
-     2. Name prefix match (first matching session wins)
-     3. $N notation (session id)
-   Returns the session object or NIL when not found.
-   SERVER is the *server-sessions* alist: ((name . session) ...)."
-  (unless target-str (return-from find-session-by-target nil))
-  (flet ((sessions () (mapcar #'cdr server)))
-    ;; 1. Exact name match
-    (let ((exact (cdr (assoc target-str server :test #'string=))))
-      (when exact (return-from find-session-by-target exact)))
-    ;; 2. $N: match by session id
-    (when (and (plusp (length target-str))
-               (char= (char target-str 0) #\$))
-      (let ((id (ignore-errors
-                  (parse-integer (subseq target-str 1)))))
-        (when id
-          (let ((by-id (find id (sessions) :key #'session-id)))
-            (when by-id (return-from find-session-by-target by-id))))))
-    ;; 3. Name prefix match
-    (dolist (pair server)
-      (when (and (stringp (car pair))
-                 (> (length (car pair)) 0)
-                 (<= (length target-str) (length (car pair)))
-                 (string= target-str (car pair)
-                          :end2 (min (length target-str) (length (car pair)))))
-        (return-from find-session-by-target (cdr pair))))
-    nil))
+(define-target-lookup find-session-by-target (server target-str)
+  "Find a session in SERVER matching TARGET-STR.
+   Rules: exact name, $N id, name prefix. Returns session or NIL."
+  (:nil-guard target-str)
+  ((cdr (assoc target-str server :test #'string=)))
+  ((let ((id (%sigil-id target-str #\$)))
+     (when id (find id (mapcar #'cdr server) :key #'session-id))))
+  ((loop for (name . sess) in server
+         when (and (stringp name) (plusp (length name))
+                   (%name-prefix-p target-str name))
+           return sess)))
 
 ;;; ── Find: window lookup ──────────────────────────────────────────────────────
 
-(defun find-window-by-target (session target-str)
+(define-target-lookup find-window-by-target (session target-str)
   "Find a window in SESSION matching TARGET-STR.
-   Match rules (in order):
-     1. Exact name match
-     2. @N: match by window id
-     3. Numeric string: 0-based index into (session-windows session)
-     4. Name prefix match
-   Returns the window object or NIL."
-  (unless (and session target-str) (return-from find-window-by-target nil))
-  (let ((wins (session-windows session)))
-    ;; 1. Exact name match
-    (let ((by-name (find target-str wins :key #'window-name :test #'string=)))
-      (when by-name (return-from find-window-by-target by-name)))
-    ;; 2. @N: match by window id
-    (when (and (plusp (length target-str))
-               (char= (char target-str 0) #\@))
-      (let ((id (ignore-errors (parse-integer (subseq target-str 1)))))
-        (when id
-          (let ((by-id (find id wins :key #'window-id)))
-            (when by-id (return-from find-window-by-target by-id))))))
-    ;; 3. Numeric index (0-based)
-    (let ((idx (ignore-errors (parse-integer target-str))))
-      (when (and idx (>= idx 0) (< idx (length wins)))
-        (return-from find-window-by-target (nth idx wins))))
-    ;; 4. Name prefix match
-    (dolist (w wins)
-      (when (and (>= (length (window-name w)) (length target-str))
-                 (string= target-str (window-name w)
-                          :end2 (min (length target-str) (length (window-name w)))))
-        (return-from find-window-by-target w)))
-    nil))
+   Rules: exact name, @N id, numeric index, name prefix. Returns window or NIL."
+  (:nil-guard (and session target-str))
+  ((find target-str (session-windows session)
+         :key #'window-name :test #'string=))
+  ((let ((id (%sigil-id target-str #\@)))
+     (when id (find id (session-windows session) :key #'window-id))))
+  ((let* ((wins (session-windows session))
+          (idx  (ignore-errors (parse-integer target-str))))
+     (when (and idx (>= idx 0) (< idx (length wins)))
+       (nth idx wins))))
+  ((let ((wins (session-windows session)))
+     (loop for w in wins
+           when (%name-prefix-p target-str (window-name w))
+             return w))))
 
 ;;; ── Find: pane lookup ────────────────────────────────────────────────────────
 
-(defun find-pane-by-target (window target-str)
+(define-target-lookup find-pane-by-target (window target-str)
   "Find a pane in WINDOW matching TARGET-STR.
-   Match rules (in order):
-     1. %N: match by pane id
-     2. Numeric string: 0-based index into (window-panes window)
-   Returns the pane object or NIL."
-  (unless (and window target-str) (return-from find-pane-by-target nil))
-  (let ((panes (window-panes window)))
-    ;; 1. %N: match by pane id
-    (when (and (plusp (length target-str))
-               (char= (char target-str 0) #\%))
-      (let ((id (ignore-errors (parse-integer (subseq target-str 1)))))
-        (when id
-          (let ((by-id (find id panes :key #'pane-id)))
-            (when by-id (return-from find-pane-by-target by-id))))))
-    ;; 2. Numeric index (0-based)
-    (let ((idx (ignore-errors (parse-integer target-str))))
-      (when (and idx (>= idx 0) (< idx (length panes)))
-        (return-from find-pane-by-target (nth idx panes))))
-    nil))
+   Rules: %N id, numeric index. Returns pane or NIL."
+  (:nil-guard (and window target-str))
+  ((let ((id (%sigil-id target-str #\%)))
+     (when id (find id (window-panes window) :key #'pane-id))))
+  ((let* ((panes (window-panes window))
+          (idx   (ignore-errors (parse-integer target-str))))
+     (when (and idx (>= idx 0) (< idx (length panes)))
+       (nth idx panes)))))
 
 ;;; ── Public: resolve-target ───────────────────────────────────────────────────
 
@@ -150,23 +149,14 @@
   "Parse TARGET-STRING and resolve it to (values session window pane).
    SERVER is the *server-sessions* alist used for session lookup.
    CURRENT-SESSION / CURRENT-WINDOW / CURRENT-PANE are the defaults when
-   a component is absent from TARGET-STRING or cannot be resolved.
-
-   Target string format: [SESSION][:WINDOW][.PANE]
-   Each component may be omitted to use the current default.
-
-   Returns (values session window pane) — any component may be NIL when
-   resolution fails and no current default was supplied."
+   a component is absent from TARGET-STRING or cannot be resolved."
   (multiple-value-bind (sess-str win-str pane-str)
       (%parse-target target-string)
-    ;; Session resolution: found or fall back to current
     (let* ((session (or (when sess-str (find-session-by-target server sess-str))
                         current-session))
-           ;; Window resolution within the resolved session
            (window  (or (when win-str (find-window-by-target session win-str))
                         (when (null win-str) current-window)
                         (session-active-window session)))
-           ;; Pane resolution within the resolved window
            (pane    (or (when pane-str (find-pane-by-target window pane-str))
                         (when (null pane-str) current-pane)
                         (when window (window-active-pane window)))))

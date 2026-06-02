@@ -25,6 +25,7 @@
                   (run 'events-suite)
                   (run 'mouse-suite)
                   (run 'commands-suite)
+                  (run 'overlay-suite)
                   (run 'prompt-suite)
                   (run 'protocol-suite)
                   (run 'transport-suite)

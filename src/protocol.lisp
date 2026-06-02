@@ -175,59 +175,84 @@
 ;;; When target is NIL the target field is omitted entirely.
 ;;; The command keyword name is encoded without the leading colon.
 
+(defconstant +nul-byte+ 0
+  "ASCII NUL byte — the field delimiter in +msg-command+ payloads.")
+
+(defun target-field-p (field)
+  "Return true when FIELD looks like a tmux target rather than a command name.
+   A field is a target when it starts with '$' (session sigil), contains ':'
+   (session:window syntax), or contains '.' (window.pane syntax).
+   This predicate is the sole policy point for target detection; keeping it
+   separate from the NUL-field-splitting logic ensures that command names
+   containing these characters are never misidentified."
+  (and (plusp (length field))
+       (or (char= (char field 0) #\$)
+           (find #\: field)
+           (find #\. field))))
+
+(defun command-name-to-string (command-name)
+  "Convert COMMAND-NAME (keyword or string) to a lowercase string for wire encoding."
+  (if (keywordp command-name)
+      (string-downcase (symbol-name command-name))
+      command-name))
+
+(defun assemble-command-fields (name-str target args)
+  "Build the ordered list of NUL-delimited field strings for a command payload.
+   TARGET is prepended when non-NIL; ARGS are appended after NAME-STR."
+  (append (when target (list target))
+          (list name-str)
+          (or args nil)))
+
+(defun encode-fields-to-buffer (field-octets)
+  "Pack FIELD-OCTETS (a list of octet vectors) into a fresh buffer.
+   Each field is written followed by a NUL byte; the total length equals
+   the sum of all field lengths plus one NUL per field."
+  (let* ((nul-count  (length field-octets))
+         (data-bytes (reduce #'+ field-octets :key #'length :initial-value 0))
+         (total-len  (+ data-bytes nul-count))
+         (buffer     (make-array total-len :element-type '(unsigned-byte 8)))
+         (position   0))
+    (dolist (field-bytes field-octets)
+      (replace buffer field-bytes :start1 position)
+      (incf position (length field-bytes))
+      (setf (aref buffer position) +nul-byte+)
+      (incf position))
+    buffer))
+
 (defun encode-command-payload (command-name &key target args)
   "Encode a command message payload.
    COMMAND-NAME is a keyword or string naming the command.
    TARGET is an optional -t target string (NIL = current session).
    ARGS is an optional list of argument strings.
-   Returns a fresh octet vector."
-  (let* ((name-str  (if (keywordp command-name)
-                        (string-downcase (symbol-name command-name))
-                        command-name))
-         (parts     (append (when target (list target))
-                            (list name-str)
-                            (or args nil)))
-         (strings   (mapcar (lambda (s) (babel:string-to-octets s :encoding :utf-8))
-                            parts))
-         ;; Each field followed by NUL byte (0); compute total length
-         (total-len (reduce #'+ strings :key #'length :initial-value (length strings))))
-    (let ((buf (make-array total-len :element-type '(unsigned-byte 8)))
-          (pos 0))
-      (dolist (s strings)
-        (replace buf s :start1 pos)
-        (incf pos (length s))
-        (setf (aref buf pos) 0)
-        (incf pos))
-      buf)))
+   Returns a fresh octet vector of NUL-delimited UTF-8 fields."
+  (let* ((name-str     (command-name-to-string command-name))
+         (field-strings (assemble-command-fields name-str target args))
+         (field-octets  (mapcar (lambda (s)
+                                  (babel:string-to-octets s :encoding :utf-8))
+                                field-strings)))
+    (encode-fields-to-buffer field-octets)))
+
+(defun split-on-nul-bytes (octets)
+  "Split OCTETS on NUL bytes and return a list of decoded UTF-8 strings."
+  (let ((fields nil)
+        (start  0))
+    (loop for i from 0 below (length octets)
+          when (zerop (aref octets i))
+          do (push (babel:octets-to-string octets :start start :end i :encoding :utf-8)
+                   fields)
+             (setf start (1+ i)))
+    (nreverse fields)))
 
 (defun decode-command-payload (payload)
   "Decode a +msg-command+ PAYLOAD into (values command-keyword target args).
    COMMAND-KEYWORD is a keyword symbol of the command name.
    TARGET is a string or NIL when absent.
    ARGS is a list of argument strings (may be nil).
-   The first NUL-delimited field that starts with '$' or a session-name prefix
-   is treated as the target; all remaining fields after the command name are args."
-  (let ((octets (to-octets payload))
-        (fields nil)
-        (start  0))
-    ;; Split payload on NUL bytes
-    (loop for i from 0 below (length octets)
-          when (zerop (aref octets i))
-          do (push (babel:octets-to-string octets :start start :end i :encoding :utf-8)
-                   fields)
-             (setf start (1+ i)))
-    (setf fields (nreverse fields))
-    ;; The payload format: [target] command-name [args...]
-    ;; Determine whether the first field is a target or the command name.
-    ;; A target field is present when there are at least 2 fields AND the
-    ;; second field is not empty (it would be the command name).
-    ;; We stored target first when it was non-NIL, so check heuristically:
-    ;; if first field contains ':' or starts with '$' it is a target.
+   The first NUL-delimited field is examined by TARGET-FIELD-P to determine
+   whether it is a target or the command name; all remaining fields are args."
+  (let ((fields (split-on-nul-bytes (to-octets payload))))
     (if (and (>= (length fields) 2)
-             (let ((f (first fields)))
-               (or (and (plusp (length f)) (char= (char f 0) #\$))
-                   (find #\: f)
-                   (find #\. f))))
+             (target-field-p (first fields)))
         (values (intern (string-upcase (second fields)) :keyword)
                 (first fields)
                 (cddr fields))

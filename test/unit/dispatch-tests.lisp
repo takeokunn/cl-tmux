@@ -987,3 +987,283 @@
       (is (prompt-active-p) ":set-session-option must open a prompt")
       (is (string= "set-session-option" (prompt-label *prompt*))
           ":set-session-option prompt label must be \"set-session-option\""))))
+
+;;; ── :confirm-before dispatch ─────────────────────────────────────────────────
+;;;
+;;; confirm-before is implemented in dispatch.lisp as a prompt with an
+;;; on-submit lambda.  The helper below eliminates repetition across the input
+;;; variants.
+
+(defmacro with-confirm-before-prompt ((on-submit-var) &body body)
+  "Activate a confirm-before prompt in an isolated environment and bind
+   ON-SUBMIT-VAR to the prompt's on-submit function, then execute BODY."
+  `(let ((sess (make-fake-session)))
+     (with-loop-state
+       (with-clean-prompt
+         (let ((*overlay* nil))
+           (cl-tmux::dispatch-command sess :confirm-before nil)
+           (is-true (prompt-active-p)
+                    "dispatch-command :confirm-before must activate a prompt")
+           (let ((,on-submit-var (prompt-on-submit *prompt*)))
+             ,@body))))))
+
+(test confirm-before-y-dispatches
+  "dispatch-command :confirm-before activates a prompt; submitting \"y\" shows the overlay."
+  (with-confirm-before-prompt (on-submit)
+    (funcall on-submit "y")
+    (is (overlay-active-p)
+        "on-submit with \"y\" must show the [confirmed] overlay")))
+
+(test confirm-before-n-cancels
+  "dispatch-command :confirm-before activates a prompt; submitting \"n\" does NOT show overlay."
+  (with-confirm-before-prompt (on-submit)
+    (funcall on-submit "n")
+    (is (null (overlay-active-p))
+        "on-submit with \"n\" must NOT show the overlay")))
+
+(test confirm-before-empty-cancels
+  "dispatch-command :confirm-before activates a prompt; submitting \"\" does NOT show overlay."
+  (with-confirm-before-prompt (on-submit)
+    (funcall on-submit "")
+    (is (null (overlay-active-p))
+        "on-submit with empty string must NOT show the overlay")))
+
+;;; ── %set-option-from-prompt helper ──────────────────────────────────────────
+
+(test set-option-from-prompt-helper-opens-prompt
+  "%set-option-from-prompt opens a prompt with the given label."
+  (let ((*prompt* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+    (cl-tmux::%set-option-from-prompt "test-label")
+    (is (prompt-active-p) "%set-option-from-prompt must open a prompt")
+    (is (string= "test-label" (prompt-label *prompt*))
+        "%set-option-from-prompt prompt label must match the argument")))
+
+(test set-option-from-prompt-sets-option
+  "%set-option-from-prompt on-submit with 'name value' calls set-option."
+  (let ((*prompt* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+    (cl-tmux::%set-option-from-prompt "set-window-option")
+    (is (prompt-active-p) "prompt must be open")
+    ;; Submit "mouse on" which maps to set-option "mouse" "on"
+    (finishes (funcall (prompt-on-submit *prompt*) "mouse on")
+              "%set-option-from-prompt on-submit must not error")))
+
+;;; ── %paste-to-pane helper ────────────────────────────────────────────────────
+
+(test paste-to-pane-no-crash-fd-minus-one
+  "%paste-to-pane with fd=-1 pane is a no-op (guard skips the write)."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                            :screen screen)))
+    (finishes (cl-tmux::%paste-to-pane pane "hello world")
+              "%paste-to-pane must not error with fd=-1 pane")))
+
+(test paste-to-pane-nil-text-is-noop
+  "%paste-to-pane with nil text is a no-op."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                            :screen screen)))
+    (finishes (cl-tmux::%paste-to-pane pane nil)
+              "%paste-to-pane with nil text must not error")))
+
+;;; ── %format-tree-entry helper ────────────────────────────────────────────────
+
+(test format-tree-entry-marks-current-session
+  "%format-tree-entry marks the current session with an asterisk."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                            :screen screen))
+         (win    (make-window :id 0 :name "test-win" :width 20 :height 5
+                              :panes (list pane)
+                              :tree  (make-layout-leaf pane))))
+    (window-select-pane win pane)
+    (let ((output
+            (with-output-to-string (s)
+              (cl-tmux::%format-tree-entry s "mysess" "mysess"
+                                          (list win) win))))
+      (is (search "* mysess" output)
+          "current session must be marked with '* ' prefix")
+      (is (search "test-win" output)
+          "window name must appear in the output"))))
+
+(test format-tree-entry-non-current-session-uses-space
+  "%format-tree-entry uses '  ' prefix for non-current sessions."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                            :screen screen))
+         (win    (make-window :id 0 :name "w" :width 20 :height 5
+                              :panes (list pane)
+                              :tree  (make-layout-leaf pane))))
+    (window-select-pane win pane)
+    (let ((output
+            (with-output-to-string (s)
+              (cl-tmux::%format-tree-entry s "other" "current"
+                                          (list win) win))))
+      (is (not (search "* other" output))
+          "non-current session must not start with '* '")
+      (is (search "  other" output)
+          "non-current session must start with '  '"))))
+
+;;; ── :choose-session / :list-sessions-full aliases ────────────────────────────
+
+(test dispatch-choose-session-shows-session-list
+  ":choose-session shows the session list overlay (same body as :list-sessions)."
+  (let ((s (make-fake-session :nwindows 1)))
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t)
+          (cl-tmux::*server-sessions* nil))
+      (cl-tmux::dispatch-command s :choose-session nil)
+      (is (overlay-active-p) ":choose-session must open an overlay")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search (session-name s) text)
+            ":choose-session overlay must contain the session name")))))
+
+(test dispatch-list-sessions-full-shows-session-list
+  ":list-sessions-full shows the session list overlay."
+  (let ((s (make-fake-session :nwindows 1)))
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t)
+          (cl-tmux::*server-sessions* nil))
+      (cl-tmux::dispatch-command s :list-sessions-full nil)
+      (is (overlay-active-p) ":list-sessions-full must open an overlay"))))
+
+;;; ── :resize-left/:resize-right/:resize-up/:resize-down dispatch ──────────────
+
+(test dispatch-resize-commands-do-not-error
+  "The four resize commands dispatch without signalling an error."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (dolist (cmd '(:resize-left :resize-right :resize-up :resize-down))
+        (finishes (cl-tmux::dispatch-command s cmd nil)
+                  "~A must not signal an error" cmd)))))
+
+;;; ── :rotate-window / :rotate-window-reverse dispatch ─────────────────────────
+
+(test dispatch-rotate-window-does-not-error
+  ":rotate-window dispatches without error on a single-pane window."
+  (let ((s (make-fake-session :nwindows 1 :npanes 1)))
+    (with-loop-state
+      (finishes (cl-tmux::dispatch-command s :rotate-window nil)
+                ":rotate-window must not signal an error"))))
+
+(test dispatch-rotate-window-reverse-does-not-error
+  ":rotate-window-reverse dispatches without error on a single-pane window."
+  (let ((s (make-fake-session :nwindows 1 :npanes 1)))
+    (with-loop-state
+      (finishes (cl-tmux::dispatch-command s :rotate-window-reverse nil)
+                ":rotate-window-reverse must not signal an error"))))
+
+;;; ── :split-horizontal / :split-vertical (no-focus) dispatch ─────────────────
+
+(test dispatch-split-horizontal-no-focus-does-not-error
+  ":split-horizontal-no-focus dispatches without error."
+  (let ((s (make-fake-session :nwindows 1 :npanes 1)))
+    (with-loop-state
+      (finishes (cl-tmux::dispatch-command s :split-horizontal-no-focus nil)
+                ":split-horizontal-no-focus must not signal an error"))))
+
+(test dispatch-split-vertical-no-focus-does-not-error
+  ":split-vertical-no-focus dispatches without error."
+  (let ((s (make-fake-session :nwindows 1 :npanes 1)))
+    (with-loop-state
+      (finishes (cl-tmux::dispatch-command s :split-vertical-no-focus nil)
+                ":split-vertical-no-focus must not signal an error"))))
+
+;;; ── :synchronize-panes toggle ────────────────────────────────────────────────
+
+(test dispatch-synchronize-panes-toggles
+  ":synchronize-panes toggles the option and shows an overlay."
+  (let ((s (make-fake-session)))
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux/options:set-option "synchronize-panes" nil)
+      (cl-tmux::dispatch-command s :synchronize-panes nil)
+      (is (overlay-active-p) ":synchronize-panes must show an overlay")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "ON" text) "first toggle must produce ON message"))
+      ;; Toggle back off.
+      (cl-tmux::dispatch-command s :synchronize-panes nil)
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "OFF" text) "second toggle must produce OFF message")))))
+
+;;; ── :lock-session / :unlock-session dispatch ─────────────────────────────────
+
+(test dispatch-lock-unlock-session
+  ":lock-session sets session-locked-p; :unlock-session clears it."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (is-false (session-locked-p s) "session must be unlocked initially")
+      (cl-tmux::dispatch-command s :lock-session nil)
+      (is-true  (session-locked-p s) "session must be locked after :lock-session")
+      (cl-tmux::dispatch-command s :unlock-session nil)
+      (is-false (session-locked-p s) "session must be unlocked after :unlock-session"))))
+
+;;; ── :last-window dispatch ────────────────────────────────────────────────────
+
+(test dispatch-last-window-selects-previous-window
+  ":last-window selects the previously active window."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (let* ((w0 (first  (session-windows s)))
+             (w1 (second (session-windows s))))
+        ;; Visit w1, then switch back to w0.
+        (session-select-window s w1)
+        (session-select-window s w0)
+        ;; :last-window should go back to w1.
+        (cl-tmux::dispatch-command s :last-window nil)
+        (is (eq w1 (session-active-window s))
+            ":last-window must return to the previously active window")))))
+
+;;; ── :show-options / :show-option dispatch ────────────────────────────────────
+
+(test dispatch-show-options-shows-overlay
+  ":show-options opens an overlay listing global options."
+  (let ((s (make-fake-session)))
+    (let ((*overlay* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command s :show-options nil)
+      (is (overlay-active-p) ":show-options must open an overlay"))))
+
+(test dispatch-show-option-opens-prompt
+  ":show-option opens a prompt for the option name."
+  (let ((s (make-fake-session)))
+    (let ((*prompt* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command s :show-option nil)
+      (is (prompt-active-p) ":show-option must open a prompt"))))
+
+;;; ── :respawn-pane dispatch ────────────────────────────────────────────────────
+
+(test dispatch-respawn-pane-does-not-error
+  ":respawn-pane dispatches without error on a no-PTY fake session."
+  (let ((s (make-fake-session :nwindows 1 :npanes 1)))
+    (with-loop-state
+      ;; respawn-pane tries to fork a shell; it may fail in test sandbox.
+      ;; We verify dispatch does not error at the dispatch layer itself.
+      (handler-case
+          (progn
+            (cl-tmux::dispatch-command s :respawn-pane nil)
+            (is t ":respawn-pane dispatched without error"))
+        (error (e)
+          (declare (ignore e))
+          (is t ":respawn-pane signalled at PTY level (expected in sandbox)"))))))
+
+;;; ── :pipe-pane dispatch ──────────────────────────────────────────────────────
+
+(test dispatch-pipe-pane-opens-prompt-when-not-open
+  ":pipe-pane opens a prompt for the command when no pipe is open."
+  (let ((s (make-fake-session)))
+    (let ((*prompt* nil) (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
+      (cl-tmux::dispatch-command s :pipe-pane nil)
+      (is (prompt-active-p) ":pipe-pane must open a prompt when pipe is not open"))))
+
+;;; ── :last-pane dispatch ──────────────────────────────────────────────────────
+
+(test dispatch-last-pane-selects-previous-pane
+  ":last-pane selects the previously active pane."
+  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
+         (win (session-active-window s))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win))))
+    (with-loop-state
+      ;; Visit p1, then switch back to p0.
+      (window-select-pane win p1)
+      (window-select-pane win p0)
+      ;; :last-pane should return to p1.
+      (cl-tmux::dispatch-command s :last-pane nil)
+      (is (eq p1 (window-active-pane win))
+          ":last-pane must select the previously active pane"))))

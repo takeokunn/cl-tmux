@@ -65,24 +65,33 @@
 
 ;;; ── Public: pane-neighbor (logic layer) ─────────────────────────────────────
 
+(defun %closest-to-center (candidates pane center-fn)
+  "Among CANDIDATES, return the one whose CENTER-FN value is closest to
+   PANE's CENTER-FN value.  Ties are broken in favor of the earlier candidate."
+  (reduce (lambda (a b)
+            (if (<= (abs (- (funcall center-fn a) (funcall center-fn pane)))
+                    (abs (- (funcall center-fn b) (funcall center-fn pane))))
+                a b))
+          candidates))
+
+;;; Direction → perpendicular center function:
+;;;   :left/:right neighbors are picked by closest y-center (perpendicular = vertical).
+;;;   :up/:down    neighbors are picked by closest x-center (perpendicular = horizontal).
+(defparameter *neighbor-center-fn*
+  (list (cons :left  #'%pane-center-y)
+        (cons :right #'%pane-center-y)
+        (cons :up    #'%pane-center-x)
+        (cons :down  #'%pane-center-x))
+  "Alist mapping direction → center-function used for tie-breaking among candidates.
+   defparameter (not defconstant) because the value contains function objects.")
+
 (defun pane-neighbor (window pane direction)
   "Return the pane adjacent to PANE in DIRECTION (:left :right :up :down), or NIL.
    Among edge-touching candidates, returns the one whose center is closest to
    PANE's center along the perpendicular axis."
   (let* ((filter     (cdr (assoc direction *neighbor-filters*)))
+         (center-fn  (cdr (assoc direction *neighbor-center-fn*)))
          (candidates (remove pane (window-panes window)))
          (matching   (remove-if-not (lambda (p) (funcall filter p pane)) candidates)))
     (when matching
-      (ecase direction
-        ((:left :right)
-         (reduce (lambda (a b)
-                   (if (<= (abs (- (%pane-center-y a) (%pane-center-y pane)))
-                           (abs (- (%pane-center-y b) (%pane-center-y pane))))
-                       a b))
-                 matching))
-        ((:up :down)
-         (reduce (lambda (a b)
-                   (if (<= (abs (- (%pane-center-x a) (%pane-center-x pane)))
-                           (abs (- (%pane-center-x b) (%pane-center-x pane))))
-                       a b))
-                 matching))))))
+      (%closest-to-center matching pane center-fn))))

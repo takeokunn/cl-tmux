@@ -123,3 +123,20 @@
   "add-paste-buffer returns the inserted text."
   (with-empty-buffers
     (is (string= "hello" (cl-tmux/buffer:add-paste-buffer "hello")))))
+
+;;; ── %buffer-limit fallback (ignore-errors path) ─────────────────────────────
+
+(test buffer-limit-fallback-when-options-error
+  "When get-option signals a condition, %buffer-limit falls back to 50."
+  ;; Verify the fallback by shadowing *global-options* with a hash table that
+  ;; causes get-option to return NIL (unregistered option name), which exercises
+  ;; the (or (ignore-errors ...) 50) fallback in %buffer-limit.
+  ;; We use with-isolated-options with an intentionally wrong type value so that
+  ;; the coercion does not signal; instead we temporarily remove buffer-limit
+  ;; from the options hash so get-option returns NIL.
+  (let ((empty-ht (make-hash-table :test #'equal)))
+    (let ((cl-tmux/options:*global-options* empty-ht))
+      ;; With no buffer-limit key in *global-options*, get-option returns NIL.
+      ;; %buffer-limit must then return 50 (the hardcoded default).
+      (is (= 50 (cl-tmux/buffer::%buffer-limit))
+          "%buffer-limit must return 50 when get-option returns NIL"))))

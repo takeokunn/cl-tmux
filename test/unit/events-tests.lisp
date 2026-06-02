@@ -358,7 +358,7 @@
       (let ((state (cl-tmux::make-input-state)))
         ;; C-b (prefix)
         (is (null (cl-tmux::process-byte s 2 state)))
-        ;; Unbound key: '@' (64) — not in *key-bindings*
+        ;; Unbound key: '@' (64) — not in prefix key-table
         (is (null (cl-tmux::process-byte s (char-code #\@) state))
             "unbound prefix key must return NIL (discarded, not forwarded)")
         ;; State must be back to ground: next ordinary byte is forwarded cleanly.
@@ -785,12 +785,12 @@
 
 ;;; ── All standard tmux default key bindings present ───────────────────────────
 ;;;
-;;; Verify every key in the standard tmux default table has an entry in
-;;; *key-bindings*.  This is a regression guard: if a binding is accidentally
+;;; Verify every key in the standard tmux default table has an entry in the
+;;; prefix key-table.  This is a regression guard: if a binding is accidentally
 ;;; removed the test fails immediately.
 
 (test standard-key-bindings-complete
-  "All standard tmux default bindings must be present in *key-bindings*."
+  "All standard tmux default bindings must be present in prefix key-table."
   (flet ((bound-p (key)
            (not (null (lookup-key-binding key)))))
     ;; Session
@@ -842,3 +842,172 @@
     (is (bound-p (code-char 32))  "Space → next-layout")
     (is (bound-p #\D)   "D → choose-client")
     (is (bound-p (code-char 2))   "C-b → send-prefix")))
+
+;;; ── Mouse scroll-wheel paths ─────────────────────────────────────────────────
+
+(test dispatch-mouse-scroll-up-enters-copy-mode
+  "Mouse scroll-up (btn=64) enters copy mode on the active pane when not in copy mode."
+  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
+                          :x 0 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (win (make-window :id 1 :name "w" :width 40 :height 24
+                           :panes (list p0)
+                           :tree  (make-layout-leaf p0)
+                           :active p0))
+         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
+    (cl-tmux/options:set-option "mouse" t)
+    (unwind-protect
+         (with-loop-state
+           (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
+             (seed-scrollback (pane-screen p0) 5)
+             (cl-tmux::%dispatch-mouse-event sess 64 5 5 nil)
+             (is (screen-copy-mode-p (pane-screen p0))
+                 "scroll-up must enter copy mode")))
+      (cl-tmux/options:set-option "mouse" nil))))
+
+(test dispatch-mouse-scroll-down-exits-copy-mode-at-bottom
+  "Mouse scroll-down (btn=65) exits copy mode when the viewport is at the bottom (offset=0)."
+  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
+                          :x 0 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (win (make-window :id 1 :name "w" :width 40 :height 24
+                           :panes (list p0)
+                           :tree  (make-layout-leaf p0)
+                           :active p0))
+         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
+    (cl-tmux/options:set-option "mouse" t)
+    (unwind-protect
+         (with-loop-state
+           (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40)
+                 (sc (pane-screen p0)))
+             (seed-scrollback sc 5)
+             (copy-mode-enter sc)
+             ;; offset already at 0 — scroll down should exit copy mode
+             (cl-tmux::%dispatch-mouse-event sess 65 5 5 nil)
+             (is (not (screen-copy-mode-p sc))
+                 "scroll-down at offset=0 must exit copy mode")))
+      (cl-tmux/options:set-option "mouse" nil))))
+
+(test dispatch-mouse-gated-by-mouse-option
+  "%dispatch-mouse-event is a no-op when the 'mouse' option is false."
+  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
+                          :x 0 :y 0 :width 40 :height 24
+                          :screen (make-screen 40 24)))
+         (win (make-window :id 1 :name "w" :width 40 :height 24
+                           :panes (list p0)
+                           :tree  (make-layout-leaf p0)
+                           :active p0))
+         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
+    (cl-tmux/options:set-option "mouse" nil)
+    (with-loop-state
+      (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
+        ;; With mouse off, click must not enter copy mode.
+        (cl-tmux::%dispatch-mouse-event sess 0 5 5 nil)
+        (is (not (screen-copy-mode-p (pane-screen p0)))
+            "mouse event must be ignored when mouse option is off")))))
+
+;;; ── %status-col-to-window helper ─────────────────────────────────────────────
+
+(test status-col-to-window-returns-nil-before-first-window
+  "%status-col-to-window returns NIL for a column before any window entry."
+  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                           :screen (make-screen 20 5)))
+         (win  (make-window :id 0 :name "win0" :width 20 :height 5
+                            :panes (list p0) :tree (make-layout-leaf p0)))
+         (sess (make-session :id 1 :name "mysess" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    ;; Session prefix is " mysess" = 1 + 6 = 7 chars.
+    ;; First window "win0" entry starts at column 7; col 0 is before it.
+    (is (null (cl-tmux::%status-col-to-window sess 0))
+        "%status-col-to-window must return NIL for column before the first window")))
+
+(test status-col-to-window-returns-window-for-column-in-entry
+  "%status-col-to-window returns the window when the column falls within its entry."
+  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                           :screen (make-screen 20 5)))
+         (win  (make-window :id 0 :name "w" :width 20 :height 5
+                            :panes (list p0) :tree (make-layout-leaf p0)))
+         (sess (make-session :id 1 :name "s" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    ;; Session prefix " s" = 2 chars.
+    ;; Window "w" entry = 4 + 1 = 5 chars starting at col 2.
+    ;; Column 2 is within that entry.
+    (is (eq win (cl-tmux::%status-col-to-window sess 2))
+        "%status-col-to-window must return the window for a column within its entry")))
+
+;;; ── Mouse button constant sanity checks ──────────────────────────────────────
+
+(test mouse-button-constants-have-expected-values
+  "Named mouse button constants must have the correct integer values."
+  (is (= 0  cl-tmux::+mouse-btn-left+)        "left button must be 0")
+  (is (= 3  cl-tmux::+mouse-btn-release-x10+) "X10 release must be 3")
+  (is (= 32 cl-tmux::+mouse-btn-motion+)       "motion must be 32")
+  (is (= 64 cl-tmux::+mouse-btn-scroll-up+)    "scroll-up must be 64")
+  (is (= 65 cl-tmux::+mouse-btn-scroll-down+)  "scroll-down must be 65"))
+
+;;; ── SGR mouse parser ─────────────────────────────────────────────────────────
+
+(test parse-sgr-mouse-press-sequence
+  "%parse-sgr-mouse parses a well-formed SGR press sequence."
+  ;; ESC [ < 0 ; 10 ; 5 M  — btn=0, col=10, row=5 (1-based), press
+  (let* ((seq "ESC[<0;10;5M")   ; textual — we build the actual byte vector below
+         (s   (format nil "~C[<0;10;5M" #\Escape))
+         (buf (make-array (length s) :element-type '(unsigned-byte 8)
+                          :initial-contents (map 'list #'char-code s)))
+         (len (length buf)))
+    (declare (ignore seq))
+    (multiple-value-bind (btn col row release-p)
+        (cl-tmux::%parse-sgr-mouse buf len)
+      (is (= 0 btn)       "SGR btn must be 0 for left-button press")
+      (is (= 9 col)       "SGR col must be 0-based (10-1=9)")
+      (is (= 4 row)       "SGR row must be 0-based (5-1=4)")
+      (is (not release-p) "press sequence must have release-p=NIL"))))
+
+(test parse-sgr-mouse-release-sequence
+  "%parse-sgr-mouse parses a well-formed SGR release sequence (final byte 'm')."
+  (let* ((s   (format nil "~C[<0;10;5m" #\Escape))
+         (buf (make-array (length s) :element-type '(unsigned-byte 8)
+                          :initial-contents (map 'list #'char-code s)))
+         (len (length buf)))
+    (multiple-value-bind (btn col row release-p)
+        (cl-tmux::%parse-sgr-mouse buf len)
+      (is (= 0 btn)    "SGR btn must be 0")
+      (is (= 9 col)    "SGR col 0-based")
+      (is (= 4 row)    "SGR row 0-based")
+      (is release-p    "release sequence (final 'm') must set release-p=T"))))
+
+(test sgr-mouse-sequence-p-detects-sgr-intro
+  "%sgr-mouse-sequence-p returns T for ESC [ < prefix."
+  (let* ((s   (format nil "~C[<0;5;3M" #\Escape))
+         (buf (make-array (length s) :element-type '(unsigned-byte 8)
+                          :initial-contents (map 'list #'char-code s)))
+         (len (length buf)))
+    (is (cl-tmux::%sgr-mouse-sequence-p buf len)
+        "%sgr-mouse-sequence-p must return T for ESC [ < prefix")))
+
+(test sgr-mouse-terminated-p-detects-final-byte
+  "%sgr-mouse-terminated-p returns T when the last byte is 'M' or 'm'."
+  (flet ((buf-from (s)
+           (make-array (length s) :element-type '(unsigned-byte 8)
+                       :initial-contents (map 'list #'char-code s))))
+    (let* ((press-str   (format nil "~C[<0;5;3M" #\Escape))
+           (release-str (format nil "~C[<0;5;3m" #\Escape))
+           (pb (buf-from press-str))
+           (rb (buf-from release-str)))
+      (is (cl-tmux::%sgr-mouse-terminated-p pb (length pb))
+          "press sequence ending in 'M' must be terminated")
+      (is (cl-tmux::%sgr-mouse-terminated-p rb (length rb))
+          "release sequence ending in 'm' must be terminated"))))
+
+;;; ── define-cps-state: ignorable session/byte args ────────────────────────────
+
+(test cps-state-ignores-unused-args
+  "A define-cps-state function that ignores both args compiles and runs cleanly."
+  ;; Both session and byte are declared ignorable — verify no compile warnings
+  ;; by just calling the function and checking the return type.
+  (let ((s (make-fake-session))
+        (state (cl-tmux::make-input-state)))
+    (is (null (cl-tmux::process-byte s 0 state))
+        "NUL byte must return NIL (forwarded, no quit)")))

@@ -1,15 +1,15 @@
 (in-package #:cl-tmux/options)
 
-;;; ── Global option storage ────────────────────────────────────────────────
+;;; Global option storage
 
 (defvar *global-options* (make-hash-table :test #'equal)
   "Hash-table mapping option name strings to their current values.")
 
 (defvar *server-options* (make-hash-table :test #'equal)
   "Hash-table for server-scoped options (set-option -s).
-   Keys: \"escape-time\", \"exit-empty\", \"exit-unattached\".")
+   Keys: escape-time, exit-empty, exit-unattached.")
 
-;;; ── Option specification ─────────────────────────────────────────────────
+;;; Option specification
 
 (defstruct option-spec
   "Describes one tmux option: its name, type keyword, and default value."
@@ -20,24 +20,52 @@
 (defvar *option-registry* (make-hash-table :test #'equal)
   "Hash-table mapping option name strings to OPTION-SPEC instances.")
 
-;;; ── Registration macro ───────────────────────────────────────────────────
+;;; ── Unified option-table registration macro ───────────────────────────────
+;;;
+;;; define-option-table encapsulates the two-phase expand pattern shared by
+;;; define-tmux-options and define-server-options: registering spec metadata
+;;; (immutable after load) and initialising runtime default values.
+;;;
+;;; Parameters:
+;;;   REGISTRY-VAR  — the *-option-registry* hash-table to receive specs
+;;;   STORAGE-VAR   — the *-options* hash-table to receive runtime defaults
+;;;   SPECS         — list of (name type default) triples
 
-(defmacro define-tmux-options (&rest specs)
-  "Register tmux options and initialise *GLOBAL-OPTIONS* with their defaults.
-Each SPEC has the form (name type default) where TYPE is :boolean, :integer,
-or :string."
+(defmacro define-option-table (registry-var storage-var &rest specs)
+  "Register option specs in REGISTRY-VAR and initialise STORAGE-VAR with defaults.
+   Each SPEC has the form (name type default) where TYPE is :boolean, :integer,
+   or :string.  Phase 1 stores spec metadata; phase 2 stores runtime defaults."
   `(progn
+     ;; Phase 1: register spec metadata (immutable after load)
      ,@(mapcar (lambda (spec)
                  (destructuring-bind (name type default) spec
-                   `(progn
-                      (setf (gethash ,name *option-registry*)
-                            (make-option-spec :name ,name
-                                              :type ,type
-                                              :default ,default))
-                      (setf (gethash ,name *global-options*) ,default))))
+                   `(setf (gethash ,name ,registry-var)
+                          (make-option-spec :name ,name
+                                            :type ,type
+                                            :default ,default))))
+               specs)
+     ;; Phase 2: initialise runtime default values
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (name _type default) spec
+                   (declare (ignore _type))
+                   `(setf (gethash ,name ,storage-var) ,default)))
                specs)))
 
-;;; ── Registered options ───────────────────────────────────────────────────
+;;; ── Convenience wrappers for the two standard option tables ───────────────
+
+(defmacro define-tmux-options (&rest specs)
+  "Register tmux options in *OPTION-REGISTRY* (spec metadata) and initialise
+   *GLOBAL-OPTIONS* with their defaults (runtime state).  Each SPEC has the form
+   (name type default) where TYPE is :boolean, :integer, or :string."
+  `(define-option-table *option-registry* *global-options* ,@specs))
+
+(defmacro define-server-options (&rest specs)
+  "Register server options in *SERVER-OPTION-REGISTRY* and initialise
+   *SERVER-OPTIONS* with their defaults.  Each SPEC has the form
+   (name type default)."
+  `(define-option-table *server-option-registry* *server-options* ,@specs))
+
+;;; Registered options
 
 (define-tmux-options
   ("status"                   :boolean t)
@@ -82,39 +110,24 @@ or :string."
   ("message-style"            :string  "")
   ("update-environment"       :string  "DISPLAY SSH_ASKPASS SSH_AUTH_SOCK SSH_CONNECTION WINDOWID XAUTHORITY"))
 
-;;; ── Server-option defaults ────────────────────────────────────────────────
+;;; Server-option registry and defaults
 
 (defvar *server-option-registry* (make-hash-table :test #'equal)
   "Specs for server-scoped options (set with set-option -s).")
-
-(defmacro define-server-options (&rest specs)
-  "Register server options and initialise *SERVER-OPTIONS* with their defaults.
-Each SPEC has the form (name type default)."
-  `(progn
-     ,@(mapcar (lambda (spec)
-                 (destructuring-bind (name type default) spec
-                   `(progn
-                      (setf (gethash ,name *server-option-registry*)
-                            (make-option-spec :name ,name
-                                              :type ,type
-                                              :default ,default))
-                      (setf (gethash ,name *server-options*) ,default))))
-               specs)))
 
 (define-server-options
   ("escape-time"      :integer 500)
   ("exit-empty"       :boolean t)
   ("exit-unattached"  :boolean nil))
 
-;;; ── Coercion helpers ─────────────────────────────────────────────────────
+;;; ── Type coercions ────────────────────────────────────────────────────────
 
 (defmacro define-type-coercions (&rest specs)
   "Generate a %COERCE-VALUE (type value) function from a declarative fact table.
-Each SPEC has the form (TYPE-KEYWORD &rest BODY) where BODY is evaluated with
-VALUE bound to the argument.  The generated function dispatches via ECASE."
+   Each SPEC has the form (TYPE-KEYWORD &rest BODY) where BODY is evaluated with
+   VALUE bound to the argument.  The generated function dispatches via ECASE."
   `(defun %coerce-value (type value)
-     "Coerce VALUE to the Lisp type indicated by the TYPE keyword.
-Dispatch is generated from the DEFINE-TYPE-COERCIONS fact table."
+     "Coerce VALUE to the Lisp type indicated by the TYPE keyword."
      (ecase type
        ,@(mapcar (lambda (spec)
                    (destructuring-bind (type-keyword &rest body) spec
@@ -137,25 +150,25 @@ Dispatch is generated from the DEFINE-TYPE-COERCIONS fact table."
   (:string
    (format nil "~A" value)))
 
-;;; ── Public API ───────────────────────────────────────────────────────────
+;;; ── Public API ────────────────────────────────────────────────────────────
 
 (defun get-option (name &optional default)
   "Return the current value of option NAME from *GLOBAL-OPTIONS*.
-Returns DEFAULT (nil if not supplied) when NAME is not present."
+   Returns DEFAULT (nil if not supplied) when NAME is not present."
   (multiple-value-bind (value presentp)
       (gethash name *global-options*)
     (if presentp value default)))
 
 (defun set-option (name value)
   "Coerce VALUE to the registered type for NAME and store it in *GLOBAL-OPTIONS*.
-Returns the coerced value.  If NAME is not in *OPTION-REGISTRY* the value is
-stored as-is (no coercion)."
-  (let ((spec (gethash name *option-registry*)))
-    (let ((coerced (if spec
-                       (%coerce-value (option-spec-type spec) value)
-                       value)))
-      (setf (gethash name *global-options*) coerced)
-      coerced)))
+   Returns the coerced value.  If NAME is not in *OPTION-REGISTRY* the value is
+   stored as-is (no coercion)."
+  (let* ((spec    (gethash name *option-registry*))
+         (coerced (if spec
+                      (%coerce-value (option-spec-type spec) value)
+                      value)))
+    (setf (gethash name *global-options*) coerced)
+    coerced))
 
 (defun option-defined-p (name)
   "Return T if NAME is a registered option in *OPTION-REGISTRY*."
@@ -168,40 +181,40 @@ stored as-is (no coercion)."
              *global-options*)
     result))
 
-;;; ── Server option API ────────────────────────────────────────────────────
+;;; ── Server option API ─────────────────────────────────────────────────────
 
 (defun get-server-option (name &optional default)
   "Return the current value of server option NAME from *SERVER-OPTIONS*.
-Returns DEFAULT (nil if not supplied) when NAME is not present."
+   Returns DEFAULT (nil if not supplied) when NAME is not present."
   (multiple-value-bind (value presentp)
       (gethash name *server-options*)
     (if presentp value default)))
 
 (defun set-server-option (name value)
   "Coerce VALUE to the registered type for NAME and store in *SERVER-OPTIONS*.
-Returns the coerced value."
-  (let ((spec (gethash name *server-option-registry*)))
-    (let ((coerced (if spec
-                       (%coerce-value (option-spec-type spec) value)
-                       value)))
-      (setf (gethash name *server-options*) coerced)
-      coerced)))
+   Returns the coerced value."
+  (let* ((spec    (gethash name *server-option-registry*))
+         (coerced (if spec
+                      (%coerce-value (option-spec-type spec) value)
+                      value)))
+    (setf (gethash name *server-options*) coerced)
+    coerced))
 
-;;; ── show-options helpers ─────────────────────────────────────────────────
+;;; ── show-options helpers ──────────────────────────────────────────────────
 
 (defun show-options (&optional scope)
-  "Return a string of \"name value\\n\" lines for all options in SCOPE.
-SCOPE is :server for server options, otherwise global options are used."
+  "Return a string of name value lines for all options in SCOPE.
+   SCOPE is :server for server options, otherwise global options are used."
   (with-output-to-string (s)
-    (let ((ht (if (eq scope :server) *server-options* *global-options*)))
-      (let (pairs)
-        (maphash (lambda (k v) (push (cons k v) pairs)) ht)
-        (dolist (pair (sort pairs #'string< :key #'car))
-          (format s "~A ~S~%" (car pair) (cdr pair)))))))
+    (let* ((ht    (if (eq scope :server) *server-options* *global-options*))
+           (pairs '()))
+      (maphash (lambda (k v) (push (cons k v) pairs)) ht)
+      (dolist (pair (sort pairs #'string< :key #'car))
+        (format s "~A ~S~%" (car pair) (cdr pair))))))
 
 (defun show-option (name &optional scope)
   "Return a string showing the current value of a single option NAME.
-SCOPE is :server for server options."
+   SCOPE is :server for server options."
   (let* ((ht  (if (eq scope :server) *server-options* *global-options*))
          (val (gethash name ht :not-found)))
     (if (eq val :not-found)

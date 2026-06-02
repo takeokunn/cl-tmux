@@ -26,25 +26,35 @@
 
 ;;; ── Scrollback trimming ────────────────────────────────────────────────────
 
+;;; The history-limit callback is set at startup by the higher-level layer
+;;; (buffer.lisp / main.lisp) once the options package is loaded.  NIL means
+;;; fall back to the compile-time constant.  Injecting the cap as a callback
+;;; rather than probing cl-tmux/options at call time keeps this file pure
+;;; (no runtime package discovery) and testable in isolation.
+(defvar *history-limit-fn* nil
+  "A zero-argument function returning the current history-limit integer, or NIL.
+   Install (lambda () (cl-tmux/options:get-option \"history-limit\")) at startup.")
+
+(defun %effective-history-limit ()
+  "Return the history-limit in effect: callback result if available, else +max-scrollback-lines+."
+  (or (and *history-limit-fn* (funcall *history-limit-fn*))
+      cl-tmux/config:+max-scrollback-lines+))
+
 (defun trim-scroll-history (screen)
-  "Cap the scrollback buffer of SCREEN to the current history-limit option.
-   Reads the 'history-limit' option from cl-tmux/options when available,
-   falling back to +max-scrollback-lines+.  Called after every scroll-up to
-   honour runtime configuration changes."
-  (let ((cap (if (find-package '#:cl-tmux/options)
-                 (let ((fn (find-symbol "GET-OPTION" '#:cl-tmux/options)))
-                   (if fn
-                       (or (funcall fn "history-limit") cl-tmux/config:+max-scrollback-lines+)
-                       cl-tmux/config:+max-scrollback-lines+))
-                 cl-tmux/config:+max-scrollback-lines+)))
+  "Cap the scrollback buffer of SCREEN to the current history-limit.
+   The limit is obtained from *history-limit-fn* (injected at startup)
+   rather than discovered via find-package at call time.
+   Called after every scroll-up to honour runtime configuration changes."
+  (let ((cap (%effective-history-limit)))
     (when (> (length (screen-scrollback screen)) cap)
       (let ((tail (nthcdr (1- cap) (screen-scrollback screen))))
         (when tail (setf (cdr tail) nil))))))
 
 (defun scroll-up-one (screen)
   "Scroll the scroll region up one line; the displaced top row is pushed onto
-   the scrollback buffer (capped by the history-limit option) and the new
-   bottom line is cleared to blank cells.
+   the scrollback buffer and the new bottom line is cleared to blank cells.
+   The scrollback cap (history-limit) is enforced by the caller or by the
+   post-scroll trim below — keeping policy out of the primitive operation itself.
 
    Scrollback cap note: the cap is enforced by trim-scroll-history which
    splices off the tail cons of the list, keeping the operation O(limit).
@@ -55,10 +65,14 @@
          (saved-row (make-array w)))
     (dotimes (col w) (setf (aref saved-row col) (screen-cell screen col top)))
     (push saved-row (screen-scrollback screen))
-    (trim-scroll-history screen)
     (loop for row from top below bottom
           do (%copy-row screen row (1+ row)))
-    (%clear-row screen bottom)))
+    (%clear-row screen bottom)
+    ;; Enforce the scrollback cap after pushing the new entry so the policy
+    ;; decision (cap size) stays at this logical boundary rather than inside
+    ;; the raw grid-copy operations above.
+    (trim-scroll-history screen)
+    (setf (screen-dirty-p screen) t)))
 
 (defun scroll-down-one (screen)
   "Scroll the scroll region down one line; the new top line is cleared to blanks."
@@ -66,7 +80,8 @@
         (bottom (screen-scroll-bottom screen)))
     (loop for row from bottom above top
           do (%copy-row screen row (1- row)))
-    (%clear-row screen top)))
+    (%clear-row screen top)
+    (setf (screen-dirty-p screen) t)))
 
 ;;; ── Scroll region ──────────────────────────────────────────────────────────
 

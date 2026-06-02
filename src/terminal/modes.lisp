@@ -102,7 +102,8 @@
             (screen-alt-cy    screen) (screen-cy screen))
       (setf (screen-cells screen)
             (%make-blank-cells (* (screen-width screen) (screen-height screen))))
-      (set-cursor screen 0 0)))
+      (set-cursor screen 0 0)
+      (setf (screen-dirty-p screen) t)))
    ;; Reset: restore saved grid + cursor, or clear if nothing was saved.
    ((if (screen-alt-cells screen)
         (setf (screen-cells     screen) (screen-alt-cells screen)
@@ -112,28 +113,51 @@
         (erase-display screen 2))
     (setf (screen-dirty-p screen) t))))
 
+;;; ── SGR pen reset helper ────────────────────────────────────────────────────
+;;;
+;;; Parallel idiom to the attr-on/attr-off inline helpers in sgr.lisp.
+;;; Both restore-cursor (no-save branch) and ris-action perform an identical
+;;; 5-slot SGR reset; this helper deduplicates both sites.
+
+(declaim (inline %reset-sgr-pen))
+(defun %reset-sgr-pen (screen)
+  "Reset all five SGR pen slots of SCREEN to their VT100 defaults."
+  (setf (screen-cur-fg       screen) 7
+        (screen-cur-bg       screen) 0
+        (screen-cur-attrs    screen) 0
+        (screen-cur-attrs2   screen) 0
+        (screen-cur-ul-color screen) 0))
+
 ;;; ── DECSC / DECRC (cursor save & restore) ──────────────────────────────────
 
 (defun save-cursor (screen)
-  "DECSC (ESC 7): save the cursor position and current SGR state."
+  "DECSC (ESC 7): save the cursor position and full SGR pen state.
+   Saves: cx, cy, cur-fg, cur-bg, cur-attrs, cur-attrs2, cur-ul-color."
   (setf (screen-saved-cursor screen)
-        (list (screen-cx screen) (screen-cy screen)
-              (screen-cur-fg screen) (screen-cur-bg screen)
-              (screen-cur-attrs screen))))
+        (list (screen-cx           screen)
+              (screen-cy           screen)
+              (screen-cur-fg       screen)
+              (screen-cur-bg       screen)
+              (screen-cur-attrs    screen)
+              (screen-cur-attrs2   screen)
+              (screen-cur-ul-color screen))))
 
 (defun restore-cursor (screen)
-  "DECRC (ESC 8): restore the cursor position and SGR state saved by DECSC.
-   With nothing previously saved, home the cursor and reset SGR (VT100 default)."
+  "DECRC (ESC 8): restore the cursor position and full SGR pen state saved by DECSC.
+   With nothing previously saved, home the cursor and reset the SGR pen (VT100 default)."
   (cond
     ((null (screen-saved-cursor screen))
      (set-cursor screen 0 0)
-     (setf (screen-cur-fg screen) 7 (screen-cur-bg screen) 0 (screen-cur-attrs screen) 0))
+     (%reset-sgr-pen screen))
     (t
-     (destructuring-bind (cx cy fg bg attrs) (screen-saved-cursor screen)
+     (destructuring-bind (cx cy fg bg attrs attrs2 ul-color)
+         (screen-saved-cursor screen)
        (set-cursor screen cx cy)
-       (setf (screen-cur-fg    screen) fg
-             (screen-cur-bg    screen) bg
-             (screen-cur-attrs screen) attrs)))))
+       (setf (screen-cur-fg       screen) fg
+             (screen-cur-bg       screen) bg
+             (screen-cur-attrs    screen) attrs
+             (screen-cur-attrs2   screen) attrs2
+             (screen-cur-ul-color screen) ul-color)))))
 
 ;;; ── Full reset ─────────────────────────────────────────────────────────────
 
@@ -145,12 +169,8 @@
                 (1- (screen-width  screen))
                 (1- (screen-height screen)))
   (set-cursor screen 0 0)
-  (setf (screen-cur-fg         screen) 7
-        (screen-cur-bg         screen) 0
-        (screen-cur-attrs      screen) 0
-        (screen-cur-attrs2     screen) 0
-        (screen-cur-ul-color   screen) 0
-        (screen-cursor-visible screen) t
+  (%reset-sgr-pen screen)
+  (setf (screen-cursor-visible screen) t
         (screen-scroll-top     screen) 0
         (screen-scroll-bottom  screen) (1- (screen-height screen))
         (screen-charset        screen) :ascii

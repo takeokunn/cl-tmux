@@ -7,27 +7,17 @@
 ;;;; sequence of frames, then read them back and assert type/payload and clean
 ;;;; end-of-stream handling.  A binary file stream behaves like a socket stream
 ;;;; for these purposes (blocking read-sequence).
+;;;;
+;;;; with-temp-octet-file and write-frames-to-file are defined in test/helpers.lisp
+;;;; and shared with net-tests.lisp to avoid duplicating the temp-file idiom.
 
 (def-suite transport-suite :description "Frame transport over a binary stream")
 (in-suite transport-suite)
 
-(defmacro with-temp-octet-file ((path) &body body)
-  "Bind PATH to a fresh temp file path, run BODY, then delete the file."
-  `(let ((,path (merge-pathnames "cl-tmux-transport-test.bin"
-                                 (uiop:temporary-directory))))
-     (unwind-protect (progn ,@body)
-       (ignore-errors (delete-file ,path)))))
-
-(defun write-frames (path &rest frames)
-  "Write each FRAME (octet vector) to PATH via send-frame."
-  (with-open-file (out path :direction :output :if-exists :supersede
-                            :element-type '(unsigned-byte 8))
-    (dolist (f frames) (send-frame out f))))
-
 (test transport-roundtrips-a-frame
   "A single frame written with send-frame reads back intact via read-frame."
   (with-temp-octet-file (path)
-    (write-frames path (msg-resize 24 80))
+    (write-frames-to-file path (msg-resize 24 80))
     (with-open-file (in path :element-type '(unsigned-byte 8))
       (multiple-value-bind (type payload) (read-frame in)
         (is (= +msg-resize+ type))
@@ -38,7 +28,7 @@
 (test transport-reads-sequential-frames
   "Several frames in one stream read back one at a time, in order."
   (with-temp-octet-file (path)
-    (write-frames path (msg-key #(65 66)) (msg-detach) (msg-frame "hi あ"))
+    (write-frames-to-file path (msg-key #(65 66)) (msg-detach) (msg-frame "hi あ"))
     (with-open-file (in path :element-type '(unsigned-byte 8))
       (multiple-value-bind (type payload) (read-frame in)
         (is (= +msg-key+ type))
@@ -53,7 +43,7 @@
 (test transport-read-at-eof-returns-nil
   "read-frame on an exhausted stream returns NIL (peer closed)."
   (with-temp-octet-file (path)
-    (write-frames path (msg-detach))
+    (write-frames-to-file path (msg-detach))
     (with-open-file (in path :element-type '(unsigned-byte 8))
       (is (= +msg-detach+ (read-frame in)) "first frame reads back")
       (is (null (read-frame in)) "second read hits EOF → NIL"))))
@@ -85,7 +75,7 @@
 (test transport-empty-payload-frame-roundtrips
   "A frame with an empty payload flushes and round-trips intact."
   (with-temp-octet-file (path)
-    (write-frames path (msg-detach))
+    (write-frames-to-file path (msg-detach))
     (with-open-file (in path :element-type '(unsigned-byte 8))
       (multiple-value-bind (type payload) (read-frame in)
         (is (= +msg-detach+ type))
@@ -94,7 +84,7 @@
 (test transport-roundtrips-attach-and-bye-frames
   "send-frame then read-frame returns the same type/payload for attach and bye."
   (with-temp-octet-file (path)
-    (write-frames path (msg-attach 30 120) (msg-bye))
+    (write-frames-to-file path (msg-attach 30 120) (msg-bye))
     (with-open-file (in path :element-type '(unsigned-byte 8))
       (multiple-value-bind (type payload) (read-frame in)
         (is (= +msg-attach+ type))

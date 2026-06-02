@@ -44,6 +44,9 @@
   #+darwin  #x20000
   #-darwin  #o000400)
 
+;;; POSIX signal numbers
+(defconstant +sighup+ 1 "POSIX SIGHUP — sent to a process group leader on terminal close.")
+
 ;;; ioctl request codes (TIOC*)
 (defconstant +tiocsctty+
   #+darwin #x20007461

@@ -10,12 +10,13 @@
 
 (defun erase-region (screen x0 y0 x1 y1)
   "Erase all cells from (X0,Y0) to (X1,Y1) inclusive, treating the range as
-   a linear span across rows."
+   a linear span across rows.  Sets screen-dirty-p whenever any cell is written."
   (loop for y from y0 to y1
         do (let ((bx (if (= y y0) x0 0))
                  (ex (if (= y y1) x1 (1- (screen-width screen)))))
              (loop for x from bx to ex
-                   do (setf (screen-cell screen x y) (blank-cell))))))
+                   do (setf (screen-cell screen x y) (blank-cell)))))
+  (setf (screen-dirty-p screen) t))
 
 ;;; ── ED (erase-display) rule table ──────────────────────────────────────────
 ;;;

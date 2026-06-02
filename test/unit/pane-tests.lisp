@@ -17,6 +17,53 @@
     (is (char= #\i (cell-char (screen-cell screen 1 0))))
     (is (= 2 (screen-cursor-x screen)))))
 
+;;; ── pane-reposition direct unit test (no PTY) ───────────────────────────────
+;;;
+;;; NOTE: pane-reposition calls set-pty-size on fd -1, which is a tolerated
+;;; EBADF no-op (ioctl returns -1 without signalling a Lisp condition), and
+;;; calls screen-resize under the screen lock.  The observable effects are the
+;;; x/y/width/height slot updates and the matching screen dimension update.
+
+(test pane-reposition-updates-geometry-and-screen
+  "pane-reposition sets x/y/width/height and resizes the underlying screen."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                            :fd -1 :pid -1 :screen screen)))
+    (pane-reposition pane 3 7 40 10)
+    ;; Geometry slots updated.
+    (is (= 3  (pane-x      pane)) "pane-x must be 3 after reposition")
+    (is (= 7  (pane-y      pane)) "pane-y must be 7 after reposition")
+    (is (= 40 (pane-width  pane)) "pane-width must be 40 after reposition")
+    (is (= 10 (pane-height pane)) "pane-height must be 10 after reposition")
+    ;; Screen dimensions match pane geometry.
+    (is (= 40 (screen-width  (pane-screen pane)))
+        "screen-width must match new pane width")
+    (is (= 10 (screen-height (pane-screen pane)))
+        "screen-height must match new pane height")))
+
+(test pane-reposition-zero-origin
+  "pane-reposition correctly sets position to (0,0) — the corner case for zoom-in."
+  (let* ((screen (make-screen 10 5))
+         (pane   (make-pane :id 1 :x 5 :y 3 :width 10 :height 5
+                            :fd -1 :pid -1 :screen screen)))
+    (pane-reposition pane 0 0 80 24)
+    (is (= 0  (pane-x      pane)) "pane-x must be 0 after reposition to origin")
+    (is (= 0  (pane-y      pane)) "pane-y must be 0 after reposition to origin")
+    (is (= 80 (pane-width  pane)) "pane-width must be 80")
+    (is (= 24 (pane-height pane)) "pane-height must be 24")
+    (is (= 80 (screen-width  (pane-screen pane))))
+    (is (= 24 (screen-height (pane-screen pane))))))
+
+(test pane-reposition-returns-no-value
+  "pane-reposition returns no useful value — callers rely solely on side effects."
+  ;; We verify it does not return the pane (which would be a data leakage smell).
+  ;; The actual return is unspecified; just check it does not signal a condition.
+  (let* ((screen (make-screen 5 5))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 5 :height 5
+                            :fd -1 :pid -1 :screen screen)))
+    (is-true (progn (pane-reposition pane 0 0 10 10) t)
+             "pane-reposition must complete without signalling")))
+
 ;;; ── next-pane-id direct tests (pure, no PTY) ─────────────────────────────
 
 (test next-pane-id-returns-one-for-empty-window

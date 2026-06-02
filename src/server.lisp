@@ -33,12 +33,12 @@
         (let ((by-id (find id (mapcar #'cdr *server-sessions*)
                            :key #'session-id)))
           (when by-id (return-from server-find-session by-id))))))
-  ;; 3. Name prefix match
+  ;; 3. Name prefix match — guard already ensures (length (car pair)) >= (length name),
+  ;;    so :end2 (length name) is the correct clamp without the redundant min.
   (dolist (pair *server-sessions*)
     (when (and (stringp (car pair))
                (>= (length (car pair)) (length name))
-               (string= name (car pair)
-                         :end2 (min (length name) (length (car pair)))))
+               (string= name (car pair) :end2 (length name)))
       (return-from server-find-session (cdr pair))))
   nil)
 
@@ -69,34 +69,52 @@
 (defparameter *session-groups* nil
   "Alist mapping group-id → list of sessions in that group.")
 
+(defvar *group-id-counter* 0
+  "Monotonic counter for session group ids. Never decremented — id reuse is impossible.")
+
 (defun %next-group-id ()
-  "Allocate a fresh group-id (simple integer counter)."
-  (1+ (length *session-groups*)))
+  "Allocate a fresh group-id via a monotonic counter (never derives from alist length)."
+  (incf *group-id-counter*))
+
+;;; ── Session group helpers (data / logic decomposed) ──────────────────────────
+;;;
+;;; server-new-session-in-group has three distinct phases:
+;;;   1. Allocate/reuse a group-id   (pure: id derivation)
+;;;   2. Link session structs         (mutation: windows + group slot)
+;;;   3. Update the registry alist    (mutation: *session-groups*)
+;;; Each phase is extracted into a named sub-function so it is independently
+;;; readable and testable.
+
+(defun %resolve-group-id (session)
+  "Return SESSION's existing group-id, or allocate a fresh one and install it."
+  (or (session-group session)
+      (let ((gid (%next-group-id)))
+        (setf (session-group session) gid)
+        gid)))
+
+(defun %link-session-to-group (new-session existing-session group-id)
+  "Share EXISTING-SESSION's windows into NEW-SESSION and assign GROUP-ID to both."
+  (setf (session-windows new-session) (session-windows existing-session)
+        (session-group   new-session) group-id)
+  (let ((active-window (session-active-window existing-session)))
+    (when active-window
+      (session-select-window new-session active-window))))
+
+(defun %register-in-group-alist (session group-id)
+  "Add SESSION to the *session-groups* alist under GROUP-ID."
+  (let ((entry (assoc group-id *session-groups*)))
+    (if entry
+        (pushnew session (cdr entry))
+        (push (list group-id session) *session-groups*))))
 
 (defun server-new-session-in-group (new-session existing-session)
   "Add NEW-SESSION to the same session group as EXISTING-SESSION.
    If EXISTING-SESSION is not yet in a group, a new group is created.
    Both sessions will share the same window list."
-  (let ((gid (or (session-group existing-session)
-                 (%next-group-id))))
-    ;; Ensure the existing session has a group id.
-    (setf (session-group existing-session) gid)
-    ;; Share the windows list and set active window.
-    (setf (session-windows new-session) (session-windows existing-session)
-          (session-group   new-session) gid)
-    ;; Use session-select-window to set the active window in the new session.
-    (let ((aw (session-active-window existing-session)))
-      (when aw
-        (session-select-window new-session aw)))
-    ;; Register in the group alist.
-    (let ((entry (assoc gid *session-groups*)))
-      (if entry
-          (pushnew new-session (cdr entry))
-          (push (list gid existing-session new-session) *session-groups*)))))
-
-(defun server-sessions-in-group (group-id)
-  "Return the list of sessions sharing GROUP-ID."
-  (cdr (assoc group-id *session-groups*)))
+  (let ((group-id (%resolve-group-id existing-session)))
+    (%link-session-to-group new-session existing-session group-id)
+    (%register-in-group-alist existing-session group-id)
+    (%register-in-group-alist new-session group-id)))
 
 ;;;; The server owns the session, PTYs, and per-pane reader threads, and serves
 ;;;; one attached client at a time over a Unix socket.  Client keystrokes are
@@ -105,27 +123,9 @@
 ;;;; On detach the client disconnects but the session persists for re-attach;
 ;;;; the server only exits when the last window is killed (:quit) or *running*
 ;;;; is cleared.
-
-;;; ── Frame dispatch macro ────────────────────────────────────────────────────
-;;;
-;;; Both serve-client (server) and run-client (client) read one frame then
-;;; dispatch on its type.  The Prolog-like table makes each handler a named
-;;; clause that reads independently of the others.
-;;;
-;;;   handle_frame(nil, _)           :- disconnect.    % EOF
-;;;   handle_frame(msg_detach, _)    :- disconnect.    % explicit detach
-;;;   handle_frame(msg_attach|msg_resize, payload) :- apply_size(session, payload).
-;;;   handle_frame(msg_key, payload) :- process_keys(session, payload).
-
-(defmacro with-incoming-frame ((type-var payload-var stream) &rest rules)
-  "Read one frame from STREAM, bind TYPE-VAR and PAYLOAD-VAR, then dispatch
-   through the Prolog-like rule table RULES.  Each RULE is (condition &rest body).
-   NIL type (EOF) must be handled by the caller if no rule matches."
-  `(multiple-value-bind (,type-var ,payload-var) (read-frame ,stream)
-     (cond ,@(mapcar (lambda (rule)
-                       (destructuring-bind (condition &rest body) rule
-                         `(,condition ,@body)))
-                     rules))))
+;;;;
+;;;; with-incoming-frame is defined in cl-tmux/transport so both server and
+;;;; client can use it without creating a circular dependency.
 
 (defun socket-path (name)
   "Filesystem path of the Unix socket for the server session named NAME."
@@ -142,20 +142,37 @@
         (window-relayout win (- rows *status-height*) cols)))
     (setf *dirty* t)))
 
+(defun %dispatch-byte-result (result)
+  "CPS state: map a single process-byte RESULT to a serve-loop disposition.
+   Returns :quit (also clears *running*), :detach, or NIL (continue).
+   This is the continuation passed between bytes in the key-processing stream."
+  (cond ((eq result :quit)   (setf *running* nil) :quit)
+        ((eq result :detach) :detach)
+        (t                   nil)))
+
+(defun %process-bytes-cps (session bytes state index)
+  "CPS key-stream walker: process BYTES starting at INDEX through `process-byte`,
+   calling itself as the continuation after each byte that returns NIL.
+   Returns the first non-NIL disposition from `%dispatch-byte-result`, or NIL
+   when all bytes are consumed without a quit/detach."
+  (if (>= index (length bytes))
+      nil
+      (let ((disposition (%dispatch-byte-result
+                          (process-byte session (aref bytes index) state))))
+        (if disposition
+            disposition
+            (%process-bytes-cps session bytes state (1+ index))))))
+
 (defun process-client-keys (session payload state)
   "Feed a client key PAYLOAD through `process-byte` (the shared keystroke
-   pipeline) one byte at a time, updating keystroke STATE.  Returns the
-   serve-loop disposition:
+   pipeline) one byte at a time via a CPS walker, updating keystroke STATE.
+   Returns the serve-loop disposition:
      :quit   — a command ended the session (also clears *running*);
      :detach — the user requested detach (the client should disconnect);
      NIL     — keep serving (the caller should mark the screen dirty).
    Takes the already-decoded PAYLOAD (not a socket), so the serve loop's
    quit/detach decision is unit-testable without a live client connection."
-  (loop for b across payload
-        for result = (process-byte session b state)
-        when (eq result :quit)   do (setf *running* nil) (return :quit)
-        when (eq result :detach) do (return :detach)
-        finally (return nil)))
+  (%process-bytes-cps session payload state 0))
 
 (defun serve-client (session socket)
   "Serve one attached client on SOCKET until it detaches or disconnects.
@@ -203,7 +220,9 @@
   (setf *running* t *dirty* t *resize-pending* nil)
   (let* ((session (create-initial-session *term-rows* *term-cols*))
          (path    (socket-path name)))
-    (setf *server-sessions* nil)
+    (setf *server-sessions* nil
+          *session-groups*   nil
+          *group-id-counter* 0)
     (server-add-session session)
     (ignore-errors (delete-file path))
     (let ((listener (make-listener path)))
@@ -214,8 +233,10 @@
            (loop while *running*
                  ;; Poll with timeout so *running* is checked between accepts.
                  do (when (select-fds (list (socket-fd listener)) +accept-timeout-us+)
-                      (when (eq :quit (serve-client session (accept-connection listener)))
-                        (setf *running* nil))))
+                      ;; accept-connection may return NIL on a timeout (select→accept race).
+                      (let ((client (accept-connection listener)))
+                        (when (and client (eq :quit (serve-client session client)))
+                          (setf *running* nil)))))
         (close-socket listener)
         (ignore-errors (delete-file path))
         (dolist (pane (all-panes session))
