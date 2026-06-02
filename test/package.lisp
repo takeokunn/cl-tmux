@@ -110,12 +110,13 @@
                 #:clear-display)
   (:import-from #:cl-tmux/protocol
                 #:+msg-attach+ #:+msg-key+ #:+msg-resize+
-                #:+msg-detach+ #:+msg-frame+ #:+msg-bye+ #:+header-size+
+                #:+msg-detach+ #:+msg-frame+ #:+msg-bye+ #:+msg-command+ #:+header-size+
                 #:encode-frame #:decode-frame
                 #:msg-attach #:msg-key #:msg-resize #:msg-detach #:msg-frame #:msg-bye
+                #:msg-command
                 #:decode-size #:decode-text #:to-octets)
   (:import-from #:cl-tmux/transport
-                #:send-frame #:read-frame)
+                #:send-frame #:read-frame #:with-incoming-frame)
   (:import-from #:cl-tmux/net
                 #:make-listener #:accept-connection #:connect-to
                 #:socket-stream #:socket-fd #:close-socket
