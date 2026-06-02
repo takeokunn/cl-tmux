@@ -507,7 +507,7 @@
       (let ((*overlay* nil))
         (cl-tmux::dispatch-command sess :display-panes nil)
         (is-true cl-tmux::*dirty*
-                 ":display-panes must mark *dirty*"))))
+                 ":display-panes must mark *dirty*")))))
 
 ;;; ── :swap-pane-forward dispatch ──────────────────────────────────────────────
 ;;;
