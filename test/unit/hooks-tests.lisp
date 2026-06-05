@@ -19,7 +19,10 @@
   (is (string= "session-created"     cl-tmux/hooks:+hook-session-created+))
   (is (string= "after-kill-pane"     cl-tmux/hooks:+hook-after-kill-pane+))
   (is (string= "after-kill-window"   cl-tmux/hooks:+hook-after-kill-window+))
-  (is (string= "after-split-window"  cl-tmux/hooks:+hook-after-split-window+)))
+  (is (string= "after-split-window"  cl-tmux/hooks:+hook-after-split-window+))
+  (is (string= "client-attached"     cl-tmux/hooks:+hook-client-attached+))
+  (is (string= "client-detached"     cl-tmux/hooks:+hook-client-detached+))
+  (is (string= "alert-bell"          cl-tmux/hooks:+hook-alert-bell+)))
 
 ;;; hook-event-constants-are-strings was removed: hook-event-constants already
 ;;; asserts string= for every constant, which implies stringp — the type check
@@ -303,7 +306,7 @@
 ;;; ── table-driven: all hook event constants have correct string values ────────
 
 (test hook-event-constants-table-driven
-  "All eight hook event constants have their expected string values (table form)."
+  "All hook event constants have their expected string values (table form)."
   (let ((cases
          (list (cons cl-tmux/hooks:+hook-after-new-window+    "after-new-window")
                (cons cl-tmux/hooks:+hook-after-new-pane+      "after-new-pane")
@@ -312,7 +315,37 @@
                (cons cl-tmux/hooks:+hook-session-created+     "session-created")
                (cons cl-tmux/hooks:+hook-after-kill-pane+     "after-kill-pane")
                (cons cl-tmux/hooks:+hook-after-kill-window+   "after-kill-window")
-               (cons cl-tmux/hooks:+hook-after-split-window+  "after-split-window"))))
+               (cons cl-tmux/hooks:+hook-after-split-window+  "after-split-window")
+               (cons cl-tmux/hooks:+hook-client-attached+     "client-attached")
+               (cons cl-tmux/hooks:+hook-client-detached+     "client-detached")
+               (cons cl-tmux/hooks:+hook-alert-bell+          "alert-bell"))))
     (dolist (pair cases)
       (is (string= (cdr pair) (car pair))
           "hook constant ~S must equal ~S" (car pair) (cdr pair)))))
+
+;;; ── New hook event constant values ─────────────────────────────────────────
+
+(test hook-client-attached-constant
+  "+hook-client-attached+ string equals \"client-attached\"."
+  (is (string= "client-attached" cl-tmux/hooks:+hook-client-attached+)))
+
+(test hook-client-detached-constant
+  "+hook-client-detached+ string equals \"client-detached\"."
+  (is (string= "client-detached" cl-tmux/hooks:+hook-client-detached+)))
+
+(test hook-alert-bell-constant
+  "+hook-alert-bell+ string equals \"alert-bell\"."
+  (is (string= "alert-bell" cl-tmux/hooks:+hook-alert-bell+)))
+
+(test run-hooks-client-attached-fires-all-callbacks
+  "run-hooks fires all registered callbacks for client-attached."
+  (with-isolated-hooks
+    (let ((first-called nil)
+          (second-called nil))
+      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-client-attached+
+                               (lambda () (setf first-called t)))
+      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-client-attached+
+                               (lambda () (setf second-called t)))
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-client-attached+)
+      (is-true first-called  "first callback must fire for client-attached")
+      (is-true second-called "second callback must fire for client-attached"))))

@@ -13,6 +13,7 @@
   (panes nil :type list)
   (active nil)
   (tree  nil)
+  (local-options (make-hash-table :test #'equal) :type hash-table) ; per-window option overrides
   (zoom-p      nil :type boolean)  ; T when this window's active pane is zoomed
   (zoom-tree   nil)               ; saved layout tree before zooming, NIL when not zoomed
   (last-active nil)               ; previously active pane (for C-b ;)

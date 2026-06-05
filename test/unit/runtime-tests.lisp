@@ -318,3 +318,58 @@ given a non-NIL initial state (loop while *running*)."
       (cl-tmux::add-message-log (format nil "~D" i)))
     (is (= limit (length cl-tmux::*message-log*))
         "log must be capped to +max-message-log-entries+ after one over the limit")))
+
+;;; ── Status interval timer ────────────────────────────────────────────────────
+
+(test status-timer-var-is-boundp
+  :description "*status-timer* is defined and accessible."
+  (is (boundp 'cl-tmux::*status-timer*)
+      "*status-timer* must be bound"))
+
+(test start-status-timer-is-fbound
+  :description "start-status-timer is a defined function."
+  (is (fboundp 'cl-tmux::start-status-timer)
+      "start-status-timer must be fbound"))
+
+(test start-status-timer-returns-thread
+  :description "start-status-timer returns a non-nil thread object."
+  (let ((cl-tmux::*running* t))
+    (let ((thread (cl-tmux::start-status-timer (lambda () nil))))
+      (unwind-protect
+           (is-true thread "start-status-timer must return a non-nil thread")
+        ;; Clean up: stop the timer thread.
+        (setf cl-tmux::*running* nil)
+        (ignore-errors
+          (bordeaux-threads:join-thread thread
+                                        :timeout cl-tmux::+reader-thread-join-timeout+))))))
+
+(test start-status-timer-fires-callback
+  :description "With a short status-interval, at least one dirty callback fires."
+  ;; Use a very short interval (1 second minimum enforced by max 1) but we
+  ;; set status-interval to 0 so max 1 clamps it to 1.  We use a counter
+  ;; closure, set *running* to nil after a brief wall-clock wait, then
+  ;; verify at least one call occurred.
+  (let ((cl-tmux::*running* t)
+        (counter 0))
+    (let ((original-interval (cl-tmux/options:get-option "status-interval")))
+      (unwind-protect
+           (progn
+             ;; Force a 1-second interval (minimum enforced via max 1).
+             (cl-tmux/options:set-option "status-interval" 1)
+             (let ((thread (cl-tmux::start-status-timer
+                            (lambda () (incf counter)))))
+               (unwind-protect
+                    (progn
+                      ;; Wait long enough for at least one tick (interval=1s).
+                      (sleep 1.5)
+                      (setf cl-tmux::*running* nil)
+                      (ignore-errors
+                        (bordeaux-threads:join-thread
+                         thread
+                         :timeout cl-tmux::+reader-thread-join-timeout+))
+                      (is (>= counter 1)
+                          "at least one dirty callback must fire; got ~D" counter))
+                 ;; Ensure thread is stopped even if assertion fails.
+                 (setf cl-tmux::*running* nil))))
+        ;; Restore original status-interval.
+        (cl-tmux/options:set-option "status-interval" original-interval)))))

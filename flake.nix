@@ -9,7 +9,7 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs { inherit system; config.allowBroken = true; };
 
         # SBCL with every Quicklisp-packaged library the code depends on.
         # PTY/termios bindings use sb-posix + CFFI against libc — no C files.
@@ -104,6 +104,10 @@
         apps.default = {
           type    = "app";
           program = "${cl-tmux}/bin/cl-tmux";
+          meta = {
+            description = "cl-tmux — a tmux-compatible terminal multiplexer in Common Lisp";
+            mainProgram  = "cl-tmux";
+          };
         };
       });
 }

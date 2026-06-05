@@ -2105,3 +2105,126 @@
         (kill-window sess w1)
         (is (eq w1 hooked-win)
             "+hook-after-kill-window+ must be called with the killed window")))))
+
+;;; ── copy-mode-toggle-rectangle ───────────────────────────────────────────────
+
+(test copy-mode-toggle-rectangle-flips-flag
+  "copy-mode-toggle-rectangle toggles screen-copy-rect-select-p between NIL and T."
+  (let ((s (%copy-mode-screen)))
+    (is-false (cl-tmux/terminal/types:screen-copy-rect-select-p s)
+              "rect-select must start NIL")
+    (cl-tmux/commands::copy-mode-toggle-rectangle s)
+    (is-true  (cl-tmux/terminal/types:screen-copy-rect-select-p s)
+              "rect-select must be T after first toggle")
+    (cl-tmux/commands::copy-mode-toggle-rectangle s)
+    (is-false (cl-tmux/terminal/types:screen-copy-rect-select-p s)
+              "rect-select must return to NIL after second toggle")))
+
+(test copy-mode-toggle-rectangle-noop-outside-copy-mode
+  "copy-mode-toggle-rectangle does nothing when not in copy mode."
+  (let ((s (make-screen 20 5)))
+    (is-false (screen-copy-mode-p s) "precondition: not in copy mode")
+    (cl-tmux/commands::copy-mode-toggle-rectangle s)
+    (is-false (cl-tmux/terminal/types:screen-copy-rect-select-p s)
+              "rect-select must remain NIL outside copy mode")))
+
+(test copy-mode-exit-resets-rect-select
+  "copy-mode-exit clears screen-copy-rect-select-p."
+  (let ((s (%copy-mode-screen)))
+    (setf (cl-tmux/terminal/types:screen-copy-rect-select-p s) t)
+    (cl-tmux/commands::copy-mode-exit s)
+    (is-false (cl-tmux/terminal/types:screen-copy-rect-select-p s)
+              "rect-select must be NIL after exit")))
+
+;;; ── copy-mode-append-selection ───────────────────────────────────────────────
+
+(test copy-mode-append-selection-appends-to-existing-buffer
+  "copy-mode-append-selection appends selected text to the current paste buffer entry."
+  (let ((cl-tmux/buffer:*paste-buffers* nil))
+    ;; Seed a buffer entry.
+    (cl-tmux/buffer:add-paste-buffer "hello")
+    (let ((s (make-screen 20 5)))
+      (feed s " world")
+      (cl-tmux/commands::copy-mode-enter s)
+      ;; Manually set a selection spanning " world" on row 0.
+      (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
+            (cl-tmux/terminal/types:screen-copy-mark      s) (cons 0 0)
+            (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 6))
+      (cl-tmux/commands::copy-mode-append-selection s)
+      ;; Exactly one buffer entry (appended, not pushed).
+      (is (= 1 (length cl-tmux/buffer:*paste-buffers*))
+          "append-selection must not add a second paste buffer entry")
+      (let ((buf (cl-tmux/buffer:get-paste-buffer 0)))
+        (is (and (stringp buf) (search "hello" buf))
+            "appended buffer must contain original text")
+        (is (and (stringp buf) (search " world" buf))
+            "appended buffer must contain the newly appended text")))))
+
+(test copy-mode-append-selection-creates-new-entry-when-empty
+  "copy-mode-append-selection pushes a new entry when the paste buffer is empty."
+  (let ((cl-tmux/buffer:*paste-buffers* nil))
+    (let ((s (make-screen 20 5)))
+      (feed s "hello")
+      (cl-tmux/commands::copy-mode-enter s)
+      (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
+            (cl-tmux/terminal/types:screen-copy-mark      s) (cons 0 0)
+            (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 5))
+      (cl-tmux/commands::copy-mode-append-selection s)
+      (is (= 1 (length cl-tmux/buffer:*paste-buffers*))
+          "append-selection must create one entry when buffer is empty")
+      (is (string= "hello" (cl-tmux/buffer:get-paste-buffer 0))
+          "new entry must equal the selected text"))))
+
+;;; ── copy-mode-copy-pipe ──────────────────────────────────────────────────────
+
+(test copy-mode-copy-pipe-puts-text-in-paste-buffer
+  "copy-mode-copy-pipe adds the selected text to the paste buffer."
+  (let ((cl-tmux/buffer:*paste-buffers* nil))
+    (let ((s (make-screen 20 5)))
+      (feed s "pipe-me")
+      (cl-tmux/commands::copy-mode-enter s)
+      (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
+            (cl-tmux/terminal/types:screen-copy-mark      s) (cons 0 0)
+            (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 7))
+      ;; Pass an empty CMD so only the buffer side runs (no real shell invoked).
+      (cl-tmux/commands::copy-mode-copy-pipe s "")
+      (is (= 1 (length cl-tmux/buffer:*paste-buffers*))
+          "copy-pipe must push selected text to paste buffers")
+      (is (string= "pipe-me" (cl-tmux/buffer:get-paste-buffer 0))
+          "paste buffer must contain the selected text"))))
+
+(test copy-mode-copy-pipe-exits-copy-mode
+  "copy-mode-copy-pipe exits copy mode after yanking."
+  (let ((cl-tmux/buffer:*paste-buffers* nil))
+    (let ((s (make-screen 20 5)))
+      (feed s "data")
+      (cl-tmux/commands::copy-mode-enter s)
+      (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
+            (cl-tmux/terminal/types:screen-copy-mark      s) (cons 0 0)
+            (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 4))
+      (cl-tmux/commands::copy-mode-copy-pipe s "")
+      (is-false (screen-copy-mode-p s)
+                "copy mode must be inactive after copy-pipe"))))
+
+;;; ── rectangle selection text ─────────────────────────────────────────────────
+
+(test copy-mode-yank-rectangle-uses-fixed-columns
+  "When rect-select is T, yank uses column bounds from mark and cursor on every row."
+  (let ((cl-tmux/buffer:*paste-buffers* nil))
+    (let ((s (make-screen 10 5)))
+      ;; Write row 0 "abcde" and row 1 "ABCDE" using CR+LF to ensure row 1 starts at col 0.
+      (feed s (format nil "abcde~C~CABCDE" #\Return #\Linefeed))
+      (cl-tmux/commands::copy-mode-enter s)
+      ;; Rectangle col 1-3, rows 0-1.
+      ;; %extract-row-chars from-col=1 to-col=3 → 2 chars at cols 1 and 2.
+      ;; Row 0: "bc"; row 1: "BC".
+      (setf (cl-tmux/terminal/types:screen-copy-rect-select-p s) t
+            (cl-tmux/terminal/types:screen-copy-selecting s) t
+            (cl-tmux/terminal/types:screen-copy-mark      s) (cons 0 1)
+            (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 1 3))
+      (cl-tmux/commands::copy-mode-yank s)
+      (let ((buf (cl-tmux/buffer:get-paste-buffer 0)))
+        (is (and (stringp buf) (search "bc" buf))
+            "rectangle yank must include chars from first row")
+        (is (and (stringp buf) (search "BC" buf))
+            "rectangle yank must include chars from second row")))))

@@ -264,12 +264,14 @@
         (outcome nil))
     (unwind-protect
          (block serve
+           (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-client-attached+)
            (setf *dirty* t)               ; force an initial paint for the client
            (loop while *running* do
              (case (%serve-one-poll-iteration session stream fd state)
                (:quit       (setf outcome :quit) (return-from serve))
                (:disconnect (return-from serve))
                (:detach     (return-from serve)))))
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-client-detached+)
       (ignore-errors (send-frame stream (msg-bye)))
       (close-socket socket))
     outcome))
@@ -291,6 +293,7 @@
     (let ((listener (make-listener path)))
       (dolist (pane (all-panes session))
         (start-reader-thread pane))
+      (setf *status-timer* (start-status-timer (lambda () (setf *dirty* t))))
       (install-sigwinch-handler)
       (unwind-protect
            (loop while *running*

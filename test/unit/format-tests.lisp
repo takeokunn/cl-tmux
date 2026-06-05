@@ -457,3 +457,137 @@
     (dolist (c cases)
       (is (eq (cdr c) (cl-tmux/format::%variable-to-keyword (car c)))
           "%variable-to-keyword ~S → ~S" (car c) (cdr c)))))
+
+;;; ── #{pane_title} expansion ───────────────────────────────────────────────────
+
+(test expand-format-pane-title-from-context
+  "#{pane_title} expands to :pane-title from context."
+  (is (string= "mytitle"
+               (fmt "#{pane_title}" :pane-title "mytitle"))
+      "#{pane_title} must expand to the :pane-title value"))
+
+(test expand-format-pane-title-missing-returns-empty
+  "#{pane_title} returns empty string when :pane-title is absent."
+  (is (string= "" (fmt "#{pane_title}"))
+      "#{pane_title} with no context must return empty string"))
+
+(test format-context-pane-title-from-pane-slot
+  "format-context-from-session :pane-title uses the pane's title slot."
+  (let* ((sess  (make-fake-session :nwindows 1 :npanes 1))
+         (win   (first (cl-tmux/model:session-windows sess)))
+         (pane  (first (cl-tmux/model:window-panes win))))
+    (setf (cl-tmux/model:pane-title pane) "my-pane-title")
+    (let ((ctx (cl-tmux/format:format-context-from-session sess win pane)))
+      (is (string= "my-pane-title" (getf ctx :pane-title))
+          ":pane-title mismatch: expected ~S got ~S"
+          "my-pane-title" (getf ctx :pane-title)))))
+
+(test format-context-pane-title-nil-pane-returns-empty
+  "format-context-from-session :pane-title is empty when pane is NIL."
+  (let* ((sess (make-fake-session :nwindows 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win nil)))
+    (is (string= "" (getf ctx :pane-title))
+        ":pane-title must be empty when pane is NIL, got ~S"
+        (getf ctx :pane-title))))
+
+(test expand-format-conditional-pane-title
+  "#{?pane_title,has-title,no-title} branches correctly on :pane-title."
+  (is (string= "has-title"
+               (cl-tmux/format:expand-format "#{?pane_title,has-title,no-title}"
+                                             '(:pane-title "vim")))
+      "non-empty pane_title must select true branch")
+  (is (string= "no-title"
+               (cl-tmux/format:expand-format "#{?pane_title,has-title,no-title}"
+                                             '(:pane-title "")))
+      "empty pane_title must select false branch"))
+
+;;; ── #{client_width}, #{client_height}, #{client_tty} ─────────────────────────
+
+(test expand-format-client-width-from-context
+  "#{client_width} expands to :client-width from context."
+  (is (string= "220"
+               (fmt "#{client_width}" :client-width 220))
+      "#{client_width} must expand to the :client-width value"))
+
+(test expand-format-client-height-from-context
+  "#{client_height} expands to :client-height from context."
+  (is (string= "55"
+               (fmt "#{client_height}" :client-height 55))
+      "#{client_height} must expand to the :client-height value"))
+
+(test expand-format-client-tty-from-context
+  "#{client_tty} expands to :client-tty from context."
+  (is (string= "/dev/pts/0"
+               (fmt "#{client_tty}" :client-tty "/dev/pts/0"))
+      "#{client_tty} must expand to the :client-tty value"))
+
+(test format-context-client-defaults-are-zero
+  "format-context-from-session :client-width and :client-height default to 0."
+  (let* ((sess (make-fake-session :nwindows 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (is (eql 0 (getf ctx :client-width))
+        ":client-width must default to 0, got ~S" (getf ctx :client-width))
+    (is (eql 0 (getf ctx :client-height))
+        ":client-height must default to 0, got ~S" (getf ctx :client-height))
+    (is (string= "" (getf ctx :client-tty))
+        ":client-tty must default to empty string, got ~S" (getf ctx :client-tty))))
+
+(test format-context-client-keyword-args-propagated
+  "format-context-from-session forwards :client-width/:client-height/:client-tty."
+  (let* ((sess (make-fake-session :nwindows 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane
+                                                           :client-width  200
+                                                           :client-height 50
+                                                           :client-tty    "/dev/pts/3")))
+    (is (eql 200 (getf ctx :client-width))
+        ":client-width expected 200 got ~S" (getf ctx :client-width))
+    (is (eql 50 (getf ctx :client-height))
+        ":client-height expected 50 got ~S" (getf ctx :client-height))
+    (is (string= "/dev/pts/3" (getf ctx :client-tty))
+        ":client-tty expected \"/dev/pts/3\" got ~S" (getf ctx :client-tty))))
+
+;;; ── #(shell-cmd) expansion ───────────────────────────────────────────────────
+
+(test expand-format-shell-cmd-echo
+  "#(echo hello) expands to the command output."
+  (let ((result (fmt "#(echo hello)")))
+    (is (string= "hello" result)
+        "#(echo hello) must expand to \"hello\", got ~S" result)))
+
+(test expand-format-shell-cmd-no-trailing-newline
+  "#(printf foo) does not add a trailing newline."
+  (let ((result (fmt "#(printf '%s' foo)")))
+    (is (string= "foo" result)
+        "#(printf '%%s' foo) must expand to \"foo\" without newline, got ~S" result)))
+
+(test expand-format-shell-cmd-error-returns-empty
+  "#(false) (failing command) returns empty string without signalling."
+  (let ((result (fmt "#(false)")))
+    (is (stringp result) "#(false) result must be a string")
+    (is (string= "" result) "#(false) must return empty string on non-zero exit")))
+
+(test expand-format-shell-cmd-no-close-paren-emits-literal-hash
+  "#( with no closing paren emits a literal '#' and does not crash."
+  (let ((result (cl-tmux/format:expand-format "#(no_close" '())))
+    (is (char= #\# (char result 0))
+        "missing closing paren must emit literal '#' (got ~S)" result)))
+
+(test expand-format-shell-cmd-mixed-with-text
+  "#(echo ok) embedded in a longer format string expands inline."
+  (let ((result (fmt "status: #(echo ok) done")))
+    (is (string= "status: ok done" result)
+        "shell cmd must expand inline, got ~S" result)))
+
+;;; ── #[attr] style directive — no crash guarantee ─────────────────────────────
+
+(test expand-format-sgr-no-crash-complex-attr
+  "#[fg=colour231,bold] passes through without crashing."
+  (let ((result (fmt "#[fg=colour231,bold]")))
+    (is (stringp result) "#[...] result must be a string (no crash)")
+    (is (string= "#[fg=colour231,bold]" result)
+        "#[fg=colour231,bold] must pass through literally, got ~S" result)))

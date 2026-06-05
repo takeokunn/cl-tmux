@@ -10,6 +10,9 @@
 ;;;   "session-created"     — when the session starts
 ;;;   "after-kill-pane"     — after a pane is killed
 ;;;   "after-kill-window"   — after a window is killed
+;;;   "client-attached"     — when a client attaches to the server
+;;;   "client-detached"     — when a client detaches from the server
+;;;   "alert-bell"          — when a BEL character is received in a pane
 
 ;;; ── Hook event constant table ────────────────────────────────────────────
 
@@ -36,7 +39,10 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
   (+hook-session-created+        "session-created"        "Fired when a session is first created")
   (+hook-after-kill-pane+        "after-kill-pane"        "Fired after a pane is killed")
   (+hook-after-kill-window+      "after-kill-window"      "Fired after a window is killed")
-  (+hook-after-split-window+     "after-split-window"     "Fired after a window is split"))
+  (+hook-after-split-window+     "after-split-window"     "Fired after a window is split")
+  (+hook-client-attached+        "client-attached"        "Fired when a client attaches to the server")
+  (+hook-client-detached+        "client-detached"        "Fired when a client detaches from the server")
+  (+hook-alert-bell+             "alert-bell"             "Fired when a BEL character is received in a pane"))
 
 (defvar *hook-registry* (make-hash-table :test #'equal)
   "Maps event-name (string) to a list of callback functions.

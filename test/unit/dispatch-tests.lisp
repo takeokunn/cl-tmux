@@ -1802,7 +1802,6 @@
   (with-empty-session (s)
     (let ((called nil))
       (cl-tmux::with-active-window (w s)
-        (declare (ignore w))
         (setf called t))
       (is-false called
                 "with-active-window body must not execute when no active window"))))
@@ -2765,9 +2764,8 @@
   "with-active-pane does not evaluate BODY when no active pane is present."
   (with-empty-session (s)
     (let ((called nil))
-      (cl-tmux::with-active-pane (p s)
-        (declare (ignore p))
-        (setf called t))
+      (cl-tmux::with-active-pane (_p s)
+        (setf called (not (null _p))))
       (is-false called
                 "with-active-pane body must not execute when no active pane"))))
 

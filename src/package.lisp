@@ -175,6 +175,8 @@
    #:screen-copy-search-term
    ;; Copy-mode line-selection flag (V)
    #:screen-copy-line-selection-p
+   ;; Copy-mode rectangle-select flag (r)
+   #:screen-copy-rect-select-p
    ;; Bracketed paste mode
    #:screen-bracketed-paste
    ;; Application cursor keys
@@ -369,7 +371,9 @@
    ;; Copy-mode search term
    #:screen-copy-search-term
    ;; Copy-mode line-selection flag
-   #:screen-copy-line-selection-p))
+   #:screen-copy-line-selection-p
+   ;; Copy-mode rectangle-select flag
+   #:screen-copy-rect-select-p))
 
 (defpackage #:cl-tmux/prompt
   (:use #:cl)
@@ -417,6 +421,8 @@
    #:pane-pipe-fd
    #:pane-window
    #:pane-marked
+   #:pane-title
+   #:pane-local-options
    #:respawn-pane
    ;; Window
    #:window
@@ -457,6 +463,8 @@
    #:window-last-active
    ;; Last-active time (for C-b l last-window)
    #:window-last-active-time
+   ;; Per-window local options
+   #:window-local-options
    ;; Automatic-rename (OSC 0/2 updates window-name)
    #:window-automatic-rename-p
    ;; Layout cycle index (for C-b Space next-layout)
@@ -516,6 +524,9 @@
    #:+hook-after-kill-pane+
    #:+hook-after-kill-window+
    #:+hook-after-split-window+
+   #:+hook-client-attached+
+   #:+hook-client-detached+
+   #:+hook-alert-bell+
    ;; Registry and dispatch
    #:*hook-registry*
    #:add-hook
@@ -538,6 +549,9 @@
            #:*server-options* #:*server-option-registry*
            #:define-server-options
            #:get-server-option #:set-server-option
+           ;; Scoped accessors (per-window / per-pane)
+           #:get-option-for-window #:set-option-for-window
+           #:get-option-for-pane   #:set-option-for-pane
            ;; show-options helpers
            #:show-options #:show-option))
 
@@ -614,6 +628,12 @@
    #:copy-mode-search-backward
    #:copy-mode-search-next
    #:copy-mode-search-prev
+   ;; Rectangle select
+   #:copy-mode-toggle-rectangle
+   ;; Append selection
+   #:copy-mode-append-selection
+   ;; Copy-pipe (yank + pipe to shell command)
+   #:copy-mode-copy-pipe
    #:rename-session
    #:run-shell
    #:if-shell
@@ -677,5 +697,8 @@
    #:*clock-mode-pane-id*
    ;; Reader thread lifecycle
    #:stop-reader-threads
+   ;; Status interval timer
+   #:*status-timer*
+   #:start-status-timer
    ;; Named constants
    #:+max-message-log-entries+))

@@ -626,7 +626,7 @@
           (let* ((,client-var (cl-tmux/net:connect-to ,path))
                  (,conn-var   (cl-tmux/net:accept-connection ,listener-var)))
             (unwind-protect
-                 (progn ,@body)
+                 (locally ,@body)
               (ignore-errors (cl-tmux/net:close-socket ,client-var))
               (ignore-errors (cl-tmux/net:close-socket ,conn-var))))
        (ignore-errors (cl-tmux/net:close-socket ,listener-var)))))

@@ -465,7 +465,7 @@
   (with-screen (s 10 5)
     (cl-tmux/terminal/actions:set-bell-pending s)
     (let ((result (cl-tmux/terminal/types:screen-consume-bell s)))
-      (is result "screen-consume-bell must return T when bell is pending")
+      (is-true result "screen-consume-bell must return T when bell is pending")
       (is-false (cl-tmux/terminal/types:screen-bell-pending s)
                 "bell-pending must be NIL after screen-consume-bell"))))
 

@@ -29,6 +29,7 @@
                 #:screen-mouse-sgr-mode
                 #:screen-title
                 #:screen-copy-line-selection-p
+                #:screen-copy-rect-select-p
                 #:screen-app-cursor-keys
                 #:char-width)
   (:import-from #:cl-tmux/model

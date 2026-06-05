@@ -124,10 +124,12 @@
 
 (defun %render-bell-and-cursor (buffer active-pane)
   "Emit a pending BEL from ACTIVE-PANE (if any) and restore cursor visibility.
-   Bell consumption is delegated to screen-consume-bell (terminal logic layer)."
+   Bell consumption is delegated to screen-consume-bell (terminal logic layer).
+   Fires the alert-bell hook when a BEL is consumed."
   (when active-pane
     (when (screen-consume-bell (pane-screen active-pane))
-      (write-char (code-char 7) buffer)))
+      (write-char (code-char 7) buffer)
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-bell+)))
   (when (or (null active-pane)
             (screen-cursor-visible (pane-screen active-pane)))
     (cursor-visible buffer)

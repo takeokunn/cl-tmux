@@ -2,6 +2,17 @@
 
 ;;;; CPS keystroke state machine and escape sequence processing.
 
+;;; ── Copy-mode numeric prefix ─────────────────────────────────────────────────
+;;;
+;;; *copy-mode-prefix* accumulates digit bytes (0-9) pressed while copy mode
+;;; is active.  When a non-digit navigation key is pressed, the accumulated
+;;; count (clamped to min 1) is applied and the prefix is reset to 0.
+;;; The variable lives on the main event-loop thread; no locking is needed.
+
+(defvar *copy-mode-prefix* 0
+  "Accumulated numeric prefix for copy-mode repeat counts.
+   Set to 0 between commands.  Updated exclusively on the event-loop thread.")
+
 ;;; ── Named CPS state functions ────────────────────────────────────────────────
 ;;;
 ;;; Rules read like Prolog clauses:
@@ -68,69 +79,106 @@
   ;; ── Copy-mode single-byte navigation (unprefixed) ─────────────────────────
   ;; These keys are intercepted ONLY when copy mode is active; they are never
   ;; forwarded to the pane.  The check comes before the default forward branch.
+  ;; Numeric prefix: digit bytes 0-9 accumulate *copy-mode-prefix*.  '0' with a
+  ;; zero prefix goes to line-start instead (vi convention: 0 = BOL when no count).
   ((%copy-mode-active-p session)
    (let ((screen (%active-screen session)))
      (when screen
-       (case byte
-         ;; q / i — exit copy mode
-         (#.+byte-q+ (copy-mode-exit screen))
-         (105        (copy-mode-exit screen))               ; i
-         ;; h — move cursor left
-         (104        (copy-mode-move-cursor screen :left))  ; h
-         ;; l — move cursor right
-         (108        (copy-mode-move-cursor screen :right)) ; l
-         ;; j / C-n (14) — move cursor down (viewport follows at edge)
-         ((#.+byte-j+ 14)  (copy-mode-move-cursor screen :down))
-         ;; k / C-p (16) — move cursor up (viewport follows at edge)
-         ((#.+byte-k+ 16)  (copy-mode-move-cursor screen :up))
-         ;; w — word forward
-         (119        (copy-mode-word-forward screen))        ; w
-         ;; b — word backward
-         (98         (copy-mode-word-backward screen))       ; b
-         ;; e — word end
-         (101        (copy-mode-word-end screen))            ; e
-         ;; 0 — line start
-         (48         (copy-mode-line-start screen))          ; 0
-         ;; $ — line end
-         (36         (copy-mode-line-end screen))            ; $
-         ;; g — jump to top (maximum scrollback)
-         (103        (copy-mode-top screen))
-         ;; G — jump to bottom (offset = 0, live view)
-         (71         (copy-mode-bottom screen))
-         ;; H — cursor to top of screen
-         (72         (copy-mode-high screen))                ; H
-         ;; M — cursor to middle of screen
-         (#.(char-code #\M) (copy-mode-middle screen))      ; M
-         ;; L — cursor to bottom of screen
-         (76         (copy-mode-low screen))                 ; L
-         ;; C-f (6) — page down
-         (6          (copy-mode-page-down screen))
-         ;; C-b (2) — page up
-         (2          (copy-mode-page-up screen))
-         ;; C-u (21) — scroll up half page
-         (21         (copy-mode-half-page-up screen))
-         ;; C-d (4) — scroll down half page
-         (4          (copy-mode-half-page-down screen))
-         ;; C-e (5) — scroll down one line
-         (5          (copy-mode-scroll-down-line screen))
-         ;; C-y (25) — scroll up one line
-         (25         (copy-mode-scroll-up-line screen))
-         ;; V — begin line selection
-         (86         (copy-mode-begin-line-selection screen)) ; V
-         ;; D — copy to end of line
-         (68         (copy-mode-copy-end-of-line screen))    ; D
-         ;; Y — copy current line
-         (89         (copy-mode-copy-line screen))           ; Y
-         ;; Space / v — begin selection
-         ((32 118)   (copy-mode-begin-selection screen))
-         ;; y — yank selection
-         (121        (copy-mode-yank screen))
-         ;; n — search next
-         (110        (copy-mode-search-next screen))         ; n
-         ;; N — search prev
-         (78         (copy-mode-search-prev screen))         ; N
-         ;; Any other byte is consumed without forwarding (no passthrough in copy mode)
-         (otherwise nil)))
+       ;; Digit accumulation: build a numeric count for the next command.
+       ;; '0' with prefix=0 falls through to line-start (handled by case below).
+       (cond
+         ;; Accumulate digit into prefix (1-9 always; 0 only when prefix already set)
+         ((and (>= byte +byte-digit-0+) (<= byte +byte-digit-9+)
+               (or (> byte +byte-digit-0+) (plusp *copy-mode-prefix*)))
+          (setf *copy-mode-prefix*
+                (+ (* *copy-mode-prefix* 10) (- byte +byte-digit-0+))))
+         ;; Non-digit (or bare '0'): dispatch with accumulated count then reset.
+         (t
+          (let ((count (max 1 *copy-mode-prefix*)))
+            (setf *copy-mode-prefix* 0)
+            (flet ((repeat (fn)
+                     "Call FN COUNT times on SCREEN."
+                     (dotimes (_ count) (funcall fn screen))))
+              (case byte
+                ;; q / i — exit copy mode
+                (#.+byte-q+ (copy-mode-exit screen))
+                (105        (copy-mode-exit screen))               ; i
+                ;; h — move cursor left
+                (104        (repeat (lambda (s) (copy-mode-move-cursor s :left))))  ; h
+                ;; l — move cursor right
+                (108        (repeat (lambda (s) (copy-mode-move-cursor s :right)))) ; l
+                ;; j / C-n (14) — move cursor down (viewport follows at edge)
+                ((#.+byte-j+ 14)
+                 (repeat (lambda (s) (copy-mode-move-cursor s :down))))
+                ;; k / C-p (16) — move cursor up (viewport follows at edge)
+                ((#.+byte-k+ 16)
+                 (repeat (lambda (s) (copy-mode-move-cursor s :up))))
+                ;; w — word forward
+                (119        (repeat #'copy-mode-word-forward))        ; w
+                ;; b — word backward
+                (98         (repeat #'copy-mode-word-backward))       ; b
+                ;; e — word end
+                (101        (repeat #'copy-mode-word-end))            ; e
+                ;; 0 — line start (bare '0' with no prefix)
+                (48         (copy-mode-line-start screen))            ; 0
+                ;; $ — line end
+                (36         (copy-mode-line-end screen))              ; $
+                ;; g — jump to top (maximum scrollback)
+                (103        (copy-mode-top screen))
+                ;; G — jump to bottom (offset = 0, live view)
+                (71         (copy-mode-bottom screen))
+                ;; H — cursor to top of screen
+                (72         (copy-mode-high screen))                  ; H
+                ;; M — cursor to middle of screen
+                (#.(char-code #\M) (copy-mode-middle screen))        ; M
+                ;; L — cursor to bottom of screen
+                (76         (copy-mode-low screen))                   ; L
+                ;; C-f (6) — page down
+                (6          (repeat #'copy-mode-page-down))
+                ;; C-b (2) — page up
+                (2          (repeat #'copy-mode-page-up))
+                ;; C-u (21) — scroll up half page
+                (21         (repeat #'copy-mode-half-page-up))
+                ;; C-d (4) — scroll down half page
+                (4          (repeat #'copy-mode-half-page-down))
+                ;; C-e (5) — scroll down one line
+                (5          (repeat #'copy-mode-scroll-down-line))
+                ;; C-y (25) — scroll up one line
+                (25         (repeat #'copy-mode-scroll-up-line))
+                ;; V — begin line selection
+                (86         (copy-mode-begin-line-selection screen))  ; V
+                ;; D — copy to end of line
+                (68         (copy-mode-copy-end-of-line screen))      ; D
+                ;; Y — copy current line
+                (89         (copy-mode-copy-line screen))             ; Y
+                ;; Space / v — begin selection
+                ((32 118)   (copy-mode-begin-selection screen))
+                ;; y — yank selection
+                (121        (copy-mode-yank screen))
+                ;; A — append selection to paste buffer
+                (65         (copy-mode-append-selection screen))      ; A
+                ;; r — toggle rectangle select
+                (114        (copy-mode-toggle-rectangle screen))      ; r
+                ;; n — search next
+                (110        (copy-mode-search-next screen))           ; n
+                ;; N — search prev
+                (78         (copy-mode-search-prev screen))           ; N
+                ;; / — interactive search forward prompt
+                (47
+                 (prompt-start "search" ""
+                               (lambda (term)
+                                 (setf *dirty* t)
+                                 (when (and (stringp term) (plusp (length term)))
+                                   (copy-mode-search-forward screen term)))))
+                ;; ? — interactive search backward prompt
+                (63
+                 (prompt-start "search-back" ""
+                               (lambda (term)
+                                 (setf *dirty* t)
+                                 (when (and (stringp term) (plusp (length term)))
+                                   (copy-mode-search-backward screen term)))))
+                ;; Any other byte is consumed without forwarding (no passthrough in copy mode)
+                (otherwise nil)))))))
      (setf *dirty* t))
    (values nil #'%ground-input-state))
   ;; ── Default: forward raw byte to active pane (+ synchronize-panes broadcast) ─

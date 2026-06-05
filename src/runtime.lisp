@@ -21,6 +21,7 @@
 (defvar *term-cols* 80)
 (defvar *server-sessions* nil
   "Alist mapping session-name (string) to session object for the running server.")
+(defvar *status-timer* nil "Background thread for status-interval redraws.")
 
 ;;; -- Named constants --------------------------------------------------------
 
@@ -136,8 +137,8 @@
        #'reader-idle-state))))
 
 (defun reader-eof-state (pane)
-  "Terminal state: EOF received, stop the reader loop."
-  (declare (ignore pane))
+  "Terminal state: EOF received, fire pane-exited hook and stop the reader loop."
+  (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-exited+ pane)
   nil)
 
 (defun %run-reader-states (pane initial-state)
@@ -161,3 +162,18 @@
     (ignore-errors
       (bordeaux-threads:join-thread thread
                                     :timeout +reader-thread-join-timeout+))))
+
+;;; -- Status interval timer --------------------------------------------------
+
+(defun start-status-timer (dirty-fn)
+  "Start a background thread that calls DIRTY-FN every status-interval seconds.
+   DIRTY-FN should mark the session dirty to trigger a status bar redraw.
+   Returns the thread object. Stops when *running* is NIL."
+  (make-thread
+   (lambda ()
+     (loop while *running*
+           do (let ((interval (max 1 (cl-tmux/options:get-option "status-interval"))))
+                (sleep interval))
+           when *running*
+           do (funcall dirty-fn)))
+   :name "cl-tmux-status-timer"))

@@ -35,11 +35,13 @@
 
 (defun copy-mode-exit (screen)
   "Exit copy mode: resume live PTY output display."
-  (setf (screen-copy-mode-p   screen) nil
-        (screen-copy-offset    screen) 0
-        (screen-copy-mark      screen) nil
-        (screen-copy-cursor    screen) nil
-        (screen-copy-selecting screen) nil))
+  (setf (screen-copy-mode-p        screen) nil
+        (screen-copy-offset         screen) 0
+        (screen-copy-mark           screen) nil
+        (screen-copy-cursor         screen) nil
+        (screen-copy-selecting      screen) nil
+        (screen-copy-line-selection-p screen) nil
+        (screen-copy-rect-select-p  screen) nil))
 
 (defun %copy-mode-clamp-cursor (screen)
   "Clamp the copy-mode cursor row into [0, height-1] and col into [0, width-1].
@@ -127,6 +129,15 @@
         (setf (screen-copy-mark screen) (screen-copy-cursor screen)))
       (setf (screen-dirty-p screen) t))))
 
+(defun copy-mode-set-cursor (screen row col)
+  "Set the copy-mode cursor to ROW, COL, clamping both to the screen bounds.
+   No-op when copy mode is not active."
+  (when (screen-copy-mode-p screen)
+    (let ((clamped-row (max 0 (min (1- (screen-height screen)) row)))
+          (clamped-col (max 0 (min (1- (screen-width  screen)) col))))
+      (setf (screen-copy-cursor screen) (cons clamped-row clamped-col)
+            (screen-dirty-p screen) t))))
+
 (defun copy-mode-begin-selection (screen)
   "Begin a text selection at the current copy-mode cursor position."
   (when (screen-copy-mode-p screen)
@@ -138,10 +149,12 @@
 
 (defun copy-mode-cancel-selection (screen)
   "Cancel any active copy-mode selection."
-  (setf (screen-copy-mark      screen) nil
-        (screen-copy-cursor    screen) nil
-        (screen-copy-selecting screen) nil
-        (screen-dirty-p        screen) t))
+  (setf (screen-copy-mark           screen) nil
+        (screen-copy-cursor         screen) nil
+        (screen-copy-selecting      screen) nil
+        (screen-copy-line-selection-p screen) nil
+        (screen-copy-rect-select-p  screen) nil
+        (screen-dirty-p             screen) t))
 
 ;;; %selection-bounds extracts the canonical (start-row end-row start-col end-col)
 ;;; rectangle from the mark and cursor positions — independent of which end the
@@ -210,13 +223,126 @@
                          (write-char #\Newline out)))))))
       (if (plusp (length text)) text nil))))
 
+;;; ── Rectangle selection text ────────────────────────────────────────────────
+;;;
+;;; When rectangle select is active (screen-copy-rect-select-p), each row in
+;;; the selection range is read between the same left and right column bounds
+;;; (the canonical column range derived from mark and cursor column positions).
+;;; Rows are joined with newlines; trailing spaces within each row are trimmed.
+
+(defun %rectangle-selection-text (screen)
+  "Compute the rectangle-selected text for SCREEN.
+   Returns a string, or NIL when no valid selection exists.
+   In rectangle mode each row between start-row and end-row is extracted
+   between fixed column bounds (min/max of mark-col and cursor-col)."
+  (unless (and (screen-copy-selecting screen)
+               (screen-copy-mark   screen)
+               (screen-copy-cursor screen))
+    (return-from %rectangle-selection-text nil))
+  (multiple-value-bind (start-row end-row start-col end-col)
+      (%selection-bounds screen)
+    (let* ((text (with-output-to-string (out)
+                   (loop for row from start-row to end-row do
+                     (let* ((row-str  (%extract-row-chars screen row start-col end-col))
+                            (trimmed  (string-right-trim " " row-str)))
+                       (write-string trimmed out)
+                       (when (< row end-row)
+                         (write-char #\Newline out)))))))
+      (if (plusp (length text)) text nil))))
+
+;;; ── copy-pipe helper ─────────────────────────────────────────────────────────
+;;;
+;;; When the "copy-command" option is set to a non-empty string, the yank text
+;;; is also piped to that shell command via uiop:run-program.  Errors are
+;;; silently swallowed so a misconfigured copy-command does not crash the session.
+
+(defun %run-copy-command (text)
+  "Pipe TEXT to the shell command stored in the \"copy-command\" option.
+   No-op when the option is empty or TEXT is NIL/empty."
+  (when (and text (plusp (length text)))
+    (let ((cmd (ignore-errors (cl-tmux/options:get-option "copy-command"))))
+      (when (and (stringp cmd) (plusp (length cmd)))
+        (ignore-errors
+          (uiop:run-program (list "/bin/sh" "-c" cmd)
+                            :input (make-string-input-stream text)
+                            :ignore-error-status t))))))
+
 (defun copy-mode-yank (screen)
-  "Copy selected text to paste buffer and exit copy mode."
-  (let ((text (%selection-text screen)))
+  "Copy selected text to paste buffer (and pipe via copy-command if configured),
+   then exit copy mode.  In rectangle-select mode the rectangular region is used."
+  (let ((text (if (screen-copy-rect-select-p screen)
+                  (%rectangle-selection-text screen)
+                  (%selection-text screen))))
     (when (and text (plusp (length text)))
-      (cl-tmux/buffer:add-paste-buffer text)))
+      (cl-tmux/buffer:add-paste-buffer text)
+      (%run-copy-command text)))
   (copy-mode-cancel-selection screen)
   (copy-mode-exit screen))
+
+;;; ── Rectangle-select toggle ─────────────────────────────────────────────────
+
+(defun copy-mode-toggle-rectangle (screen)
+  "Toggle rectangle-select mode for SCREEN.
+   When toggled on, yank uses the rectangular region instead of stream selection.
+   Marks the screen dirty."
+  (when (screen-copy-mode-p screen)
+    (setf (screen-copy-rect-select-p screen)
+          (not (screen-copy-rect-select-p screen))
+          (screen-dirty-p screen) t)))
+
+;;; ── Append selection ────────────────────────────────────────────────────────
+;;;
+;;; append-selection appends the current selection to the *most recent* paste
+;;; buffer entry (if one exists) instead of pushing a new entry.  If the paste
+;;; buffer is empty, it behaves like a normal yank.
+
+(defun copy-mode-append-selection (screen)
+  "Append selected text to the most recent paste buffer entry, then exit copy mode.
+   If the paste buffer is empty the selection is pushed as a new entry.
+   Rectangle-select mode is honoured."
+  (when (screen-copy-mode-p screen)
+    (let ((text (if (screen-copy-rect-select-p screen)
+                    (%rectangle-selection-text screen)
+                    (%selection-text screen))))
+      (when (and text (plusp (length text)))
+        (let ((existing (cl-tmux/buffer:get-paste-buffer 0)))
+          (if existing
+              ;; Replace the most recent entry with old + new text.
+              (progn
+                (cl-tmux/buffer:delete-paste-buffer 0)
+                (cl-tmux/buffer:add-paste-buffer (concatenate 'string existing text)))
+              (cl-tmux/buffer:add-paste-buffer text)))
+        (%run-copy-command text)))
+    (copy-mode-cancel-selection screen)
+    (copy-mode-exit screen)))
+
+;;; ── copy-pipe (yank + pipe) ─────────────────────────────────────────────────
+;;;
+;;; copy-mode-copy-pipe is the direct implementation of tmux's copy-pipe-and-cancel:
+;;; it places the selection text into the paste buffer AND pipes it to CMD.
+;;; CMD overrides the "copy-command" option for this single invocation.
+
+(defun copy-mode-copy-pipe (screen cmd)
+  "Yank selected text to the paste buffer and pipe it to CMD (a shell string).
+   If CMD is empty or NIL the global \"copy-command\" option is used.
+   Exits copy mode after yanking."
+  (when (screen-copy-mode-p screen)
+    (let ((text (if (screen-copy-rect-select-p screen)
+                    (%rectangle-selection-text screen)
+                    (%selection-text screen))))
+      (when (and text (plusp (length text)))
+        (cl-tmux/buffer:add-paste-buffer text)
+        (let ((effective-cmd (if (and (stringp cmd) (plusp (length cmd)))
+                                 cmd
+                                 (ignore-errors
+                                   (cl-tmux/options:get-option "copy-command")))))
+          (when (and (stringp effective-cmd) (plusp (length effective-cmd)))
+            (ignore-errors
+              (uiop:run-program (list "/bin/sh" "-c" effective-cmd)
+                                :input (make-string-input-stream text)
+                                :ignore-error-status t))))))
+    (copy-mode-cancel-selection screen)
+    (copy-mode-exit screen)))
 
 ;;; ── Copy-mode navigation (word / line / screen jumps) ───────────────────────
 ;;;

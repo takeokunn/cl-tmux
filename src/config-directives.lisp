@@ -261,11 +261,13 @@
 ;;; ── Simple directive definitions ─────────────────────────────────────────
 ;;;
 ;;; The six set-option variants (set, set-option, setw, set-window-option,
-;;; sets, set-session-option) all forward identically to cl-tmux/options:set-option.
-;;; The per-scope variants exist for tmux config-file compatibility only — cl-tmux
-;;; treats them as permanent global-scope aliases with no scope differentiation.
-;;; This is an intentional permanent shim: setw/sets/set-window-option/set-session-option
-;;; have no scope-differentiation planned; they exist purely for config-file compatibility.
+;;; sets, set-session-option) all forward to cl-tmux/options:set-option at
+;;; config-file load time, because no session/window/pane context is available
+;;; during config parsing.
+;;;
+;;; Runtime commands that carry a window or pane context should call
+;;; cl-tmux/options:set-option-for-window / set-option-for-pane directly to
+;;; store in the per-struct local-options hash.
 
 (define-config-directives
   ("set-shell" 1 (path)

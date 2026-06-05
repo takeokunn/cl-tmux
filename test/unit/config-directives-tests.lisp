@@ -574,7 +574,7 @@
     (is (string= "root" table) "table must be root for -n flag")
     (is (char= #\z key)        "key must be #\\z")
     (is (eq :new-window kw)    "command must be :new-window")
-    (is repeatable             "repeatable must be T for -r flag")))
+    (is-true repeatable        "repeatable must be T for -r flag")))
 
 ;;; %parse-unbind-key-args edge cases
 
@@ -656,7 +656,7 @@
     (declare (ignore ignored-key))
     (is (string= "prefix" table) "table must be prefix for -r alone")
     (is (eq :resize-left kw)      "command must be :resize-left")
-    (is repeatable                "repeatable must be T with -r flag")))
+    (is-true repeatable           "repeatable must be T with -r flag")))
 
 ;;; ── %tokenize-backslash-escape direct tests ──────────────────────────────
 

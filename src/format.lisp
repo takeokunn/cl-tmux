@@ -106,7 +106,9 @@
           (1+ close)))))
 
 (defun %expand-bracket (template start out)
-  "Pass through #[attrs] content starting at START (just past the '[').
+  "Consume #[attrs] style directive starting at START (just past the '[').
+   In real tmux these become SGR sequences; here we pass them through literally
+   so the renderer can recognise and convert them (or ignore them safely).
    Writes the full #[...] literally and returns the index just past ']'.
    Emits '#' literally when no closing bracket is found."
   (let ((close (position #\] template :start start)))
@@ -118,6 +120,31 @@
           (write-char #\] out)
           (1+ close)))))
 
+(defun %expand-paren (template start out)
+  "Expand #(shell-cmd) starting at START (just past the '(').
+   Runs the command via uiop:run-program and writes its stdout to OUT.
+   Returns the index just past the closing ')'.
+   On any error (no closing paren, command failure) returns safely without
+   crashing: missing ')' emits '#' literally; command errors emit empty string."
+  (let ((close (position #\) template :start start)))
+    (if (null close)
+        (progn (write-char #\# out) (1- start))
+        (let ((cmd (subseq template start close)))
+          (let ((result
+                  (handler-case
+                      (uiop:run-program (list "/bin/sh" "-c" cmd)
+                                        :output :string
+                                        :ignore-error-status t)
+                    (error () ""))))
+            ;; Strip a single trailing newline (shell commands usually add one)
+            (write-string
+             (if (and (plusp (length result))
+                      (char= (char result (1- (length result))) #\Newline))
+                 (subseq result 0 (1- (length result)))
+                 result)
+             out))
+          (1+ close)))))
+
 ;;; ── CPS-style character processor ───────────────────────────────────────────
 ;;;
 ;;; %expand-step processes template[I] and returns the NEXT index.
@@ -126,6 +153,7 @@
 ;;; Prolog reading of each cond clause:
 ;;;   expand_step(#,{,...}, ctx, out) :- expand_brace(ctx, out).
 ;;;   expand_step(#,[,...}, ctx, out) :- expand_bracket(out).
+;;;   expand_step(#,(,...}, ctx, out) :- expand_paren(out).
 ;;;   expand_step(#,X,     ctx, out) :- shorthand(X, ctx, out).
 ;;;   expand_step(#,?,     _,   out) :- write(#), write(?).   % unknown
 ;;;   expand_step(Ch,      _,   out) :- write(Ch).            % plain char
@@ -141,6 +169,7 @@
          (cond
            ((char= next #\{) (%expand-brace   template (+ i 2) context out))
            ((char= next #\[) (%expand-bracket template (+ i 2) out))
+           ((char= next #\() (%expand-paren   template (+ i 2) out))
            ((%expand-shorthand next context out) (+ i 2))
            ;; Unknown specifier: emit both characters literally
            (t (write-char #\# out) (write-char next out) (+ i 2)))))
@@ -154,7 +183,7 @@
    Processes one character position at a time via %expand-step (CPS-like):
    each call returns the next index, making the loop a pure iteration over steps.
 
-   Supported specifiers:  #S #I #W #P #H ##  #{var}  #{?c,t,f}  #[sgr]"
+   Supported specifiers:  #S #I #W #P #H ##  #{var}  #{?c,t,f}  #[sgr]  #(cmd)"
   (with-output-to-string (out)
     (loop for i = 0 then (%expand-step template i context out)
           while (< i (length template)))))
@@ -171,13 +200,23 @@
   "Return the hostname up to the first dot, or the full string if no dot."
   (subseq h 0 (or (position #\. h) (length h))))
 
-(defun format-context-from-session (session window pane)
+(defun format-context-from-session (session window pane
+                                    &key (client-width 0) (client-height 0)
+                                         (client-tty ""))
   "Build a context plist for EXPAND-FORMAT from SESSION, WINDOW, and PANE.
-   Any argument may be NIL; missing slots default to safe empty values.
+   Any of SESSION, WINDOW, PANE may be NIL; missing slots default to safe
+   empty values.
 
-   Keys: :session-name :window-index :window-name :window-count
-         :window-active :window-flags :pane-index
-         :hostname :host :host-short :time"
+   Optional keyword arguments supply client dimensions and tty path:
+     :CLIENT-WIDTH   — terminal width reported to the client (default 0)
+     :CLIENT-HEIGHT  — terminal height reported to the client (default 0)
+     :CLIENT-TTY     — path to the client tty device (default \"\")
+
+   Keys returned:
+     :session-name :window-index :window-name :window-count
+     :window-active :window-flags :pane-index :pane-title
+     :hostname :host :host-short :time
+     :client-width :client-height :client-tty"
   ;; session-active-window is the session's current window — distinct from
   ;; the WINDOW argument which is the window whose context we are building.
   ;; Naming it explicitly avoids confusion when both appear in the same binding.
@@ -199,6 +238,16 @@
                               (let ((pos (position pane window-panes)))
                                 (if pos (1+ pos) 0))
                               0))
+         ;; pane-title: prefer the explicit pane-title slot; fall back to the
+         ;; screen-title set via OSC 0/2 when the pane has a live screen.
+         (pane-title      (cond
+                            ((null pane) "")
+                            ((and (plusp (length (cl-tmux/model:pane-title pane))))
+                             (cl-tmux/model:pane-title pane))
+                            ((cl-tmux/model:pane-screen pane)
+                             (cl-tmux/terminal:screen-title
+                              (cl-tmux/model:pane-screen pane)))
+                            (t "")))
          (hostname        (machine-instance))
          (time-str        (%current-time-string))
          (host-short      (%short-hostname hostname)))
@@ -209,18 +258,29 @@
           :window-active window-active
           :window-flags  window-flags
           :pane-index    pane-index
+          :pane-title    pane-title
           :hostname      hostname
           :host          hostname
           :host-short    host-short
-          :time          time-str)))
+          :time          time-str
+          :client-width  client-width
+          :client-height client-height
+          :client-tty    client-tty)))
 
-(defun format-context-from-window (session window)
+(defun format-context-from-window (session window
+                                   &key (client-width 0) (client-height 0)
+                                        (client-tty ""))
   "Build a context plist for per-window format strings (e.g. window-status-format).
    Like FORMAT-CONTEXT-FROM-SESSION but specialised for a single window.
    Any argument may be NIL.
 
    Keys: :session-name :window-index :window-name :window-count
-         :window-active :window-flags :pane-index :hostname :time :host :host-short"
+         :window-active :window-flags :pane-index :pane-title
+         :hostname :time :host :host-short
+         :client-width :client-height :client-tty"
   (format-context-from-session session window
                                (when window
-                                 (first (cl-tmux/model:window-panes window)))))
+                                 (first (cl-tmux/model:window-panes window)))
+                               :client-width  client-width
+                               :client-height client-height
+                               :client-tty    client-tty))

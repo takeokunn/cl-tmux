@@ -592,3 +592,104 @@
   "*server-options* contains exit-unattached = NIL by default."
   (is (null (cl-tmux/options:get-server-option "exit-unattached"))
       "default exit-unattached must be NIL"))
+
+;;; ── Per-window scoped option tests ───────────────────────────────────────
+
+(test set-option-for-window-stores-in-local-hash
+  "set-option-for-window stores the value in the window's local-options hash."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win")))
+    (cl-tmux/options:set-option-for-window "synchronize-panes" t win)
+    (is (eq t (gethash "synchronize-panes"
+                       (cl-tmux/model:window-local-options win)))
+        "local-options hash must contain the stored value")))
+
+(test get-option-for-window-returns-local-override
+  "get-option-for-window returns the window-local value when present,
+   even when the global option has a different value."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+        (cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (setf (gethash "synchronize-panes" ht) nil)
+           ht)))
+    (cl-tmux/options:set-option-for-window "synchronize-panes" t win)
+    (is (eq t (cl-tmux/options:get-option-for-window "synchronize-panes" win))
+        "get-option-for-window must return the local override T")))
+
+(test get-option-for-window-falls-back-to-global
+  "get-option-for-window returns the global value when no local override is set."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+        (cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (setf (gethash "history-limit" ht) 9999)
+           ht)))
+    (is (= 9999 (cl-tmux/options:get-option-for-window "history-limit" win))
+        "get-option-for-window must fall back to *global-options*")))
+
+(test get-option-for-window-falls-back-to-spec-default
+  "get-option-for-window returns the registered spec default when absent from
+   both the local hash and *global-options*."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+        (cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+    ;; status defaults to T in the spec table
+    (is (eq t (cl-tmux/options:get-option-for-window "status" win))
+        "get-option-for-window must return spec default T for status")))
+
+;;; ── Per-pane scoped option tests ─────────────────────────────────────────
+
+(test set-option-for-pane-stores-in-local-hash
+  "set-option-for-pane stores the value in the pane's local-options hash."
+  (let ((p (cl-tmux/model:make-pane :id 1)))
+    (cl-tmux/options:set-option-for-pane "mouse" t p)
+    (is (eq t (gethash "mouse" (cl-tmux/model:pane-local-options p)))
+        "pane local-options hash must contain the stored value")))
+
+(test get-option-for-pane-returns-local-override
+  "get-option-for-pane returns the pane-local value when present,
+   even when the global option has a different value."
+  (let ((p (cl-tmux/model:make-pane :id 1))
+        (cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (setf (gethash "mouse" ht) nil)
+           ht)))
+    (cl-tmux/options:set-option-for-pane "mouse" t p)
+    (is (eq t (cl-tmux/options:get-option-for-pane "mouse" p))
+        "get-option-for-pane must return the local override T")))
+
+(test get-option-for-pane-falls-back-to-global
+  "get-option-for-pane returns the global value when no local override is set."
+  (let ((p (cl-tmux/model:make-pane :id 1))
+        (cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (setf (gethash "history-limit" ht) 7777)
+           ht)))
+    (is (= 7777 (cl-tmux/options:get-option-for-pane "history-limit" p))
+        "get-option-for-pane must fall back to *global-options*")))
+
+(test get-option-for-pane-falls-back-to-spec-default
+  "get-option-for-pane returns the registered spec default when absent from
+   both the local hash and *global-options*."
+  (let ((p (cl-tmux/model:make-pane :id 1))
+        (cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+    ;; mouse defaults to NIL in the spec table
+    (is (null (cl-tmux/options:get-option-for-pane "mouse" p))
+        "get-option-for-pane must return spec default NIL for mouse")))
+
+(test window-local-options-isolated-between-windows
+  "Two windows have independent local-options hashes."
+  (let ((win-a (cl-tmux/model:make-window :id 1 :name "a"))
+        (win-b (cl-tmux/model:make-window :id 2 :name "b")))
+    (cl-tmux/options:set-option-for-window "mouse" t win-a)
+    (is (eq t   (cl-tmux/options:get-option-for-window "mouse" win-a))
+        "win-a must have mouse = T")
+    (is (null (gethash "mouse" (cl-tmux/model:window-local-options win-b)))
+        "win-b local-options must be unaffected by win-a")))
+
+(test pane-local-options-isolated-between-panes
+  "Two panes have independent local-options hashes."
+  (let ((p1 (cl-tmux/model:make-pane :id 1))
+        (p2 (cl-tmux/model:make-pane :id 2)))
+    (cl-tmux/options:set-option-for-pane "mouse" t p1)
+    (is (eq t   (cl-tmux/options:get-option-for-pane "mouse" p1))
+        "p1 must have mouse = T")
+    (is (null (gethash "mouse" (cl-tmux/model:pane-local-options p2)))
+        "p2 local-options must be unaffected by p1")))

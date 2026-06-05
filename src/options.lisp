@@ -222,6 +222,45 @@
   "Coerce VALUE to the registered type for NAME and store in *SERVER-OPTIONS*.
    Returns the coerced value.")
 
+;;; ── Scoped option accessors (per-window / per-pane) ──────────────────────
+;;;
+;;; These functions implement the fallback chain:
+;;;   pane-local  → global  → registered default
+;;;   window-local → global → registered default
+;;;
+;;; The cl-tmux/model package is referenced by qualified name to avoid a
+;;; circular dependency (model depends on config which depends on options).
+
+(defun get-option-for-window (name window)
+  "Look up NAME in WINDOW's local options, falling back to *global-options*,
+   then to the registered spec default.  Returns NIL when not found anywhere."
+  (or (gethash name (cl-tmux/model:window-local-options window))
+      (gethash name *global-options*)
+      (let ((spec (gethash name *option-registry*)))
+        (when spec (option-spec-default spec)))))
+
+(defun set-option-for-window (name value window)
+  "Store VALUE under NAME in WINDOW's local-options hash.
+   The value is stored as-is (no type coercion); callers that want coercion
+   should call %coerce-value before passing value here.
+   Returns VALUE."
+  (setf (gethash name (cl-tmux/model:window-local-options window)) value))
+
+(defun get-option-for-pane (name pane)
+  "Look up NAME in PANE's local options, falling back to *global-options*,
+   then to the registered spec default.  Returns NIL when not found anywhere."
+  (or (gethash name (cl-tmux/model:pane-local-options pane))
+      (gethash name *global-options*)
+      (let ((spec (gethash name *option-registry*)))
+        (when spec (option-spec-default spec)))))
+
+(defun set-option-for-pane (name value pane)
+  "Store VALUE under NAME in PANE's local-options hash.
+   The value is stored as-is (no type coercion); callers that want coercion
+   should call %coerce-value before passing value here.
+   Returns VALUE."
+  (setf (gethash name (cl-tmux/model:pane-local-options pane)) value))
+
 ;;; ── show-options helpers ──────────────────────────────────────────────────
 
 (defun show-options (&optional scope)

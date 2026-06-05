@@ -86,7 +86,9 @@
   ;; Copy-mode search state: the last search term entered via / or ?
   (copy-search-term nil :type (or null string))
   ;; Copy-mode line-selection flag: T when V (line-select) mode is active
-  (copy-line-selection-p nil :type boolean))
+  (copy-line-selection-p nil :type boolean)
+  ;; Copy-mode rectangle-select flag: T when 'r' toggles rectangle mode
+  (copy-rect-select-p nil :type boolean))
 
 (defun %make-blank-cells (n)
   "Allocate a simple vector of N blank cells (space, default colour, no attrs)."
