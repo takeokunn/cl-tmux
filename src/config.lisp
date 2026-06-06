@@ -102,19 +102,26 @@
 ;;; directly — no sync step needed.
 
 (defmacro define-initial-key-bindings (&rest pairs)
-  "Populate the prefix key-table with initial bindings.
-   Each PAIR is (char-literal command-keyword).
-   The special entry (:digits command) binds digit chars 0-9 to COMMAND.
-   The macro expands to side-effecting key-table-bind calls — it does NOT
-   return an alist."
-  `(progn
+  "Define INSTALL-DEFAULT-PREFIX-BINDINGS, a function that populates the prefix
+   key-table with the standard default bindings.  Each PAIR is
+   (char-literal command-keyword); the special entry (:digits command) binds
+   digit chars 0-9 to COMMAND.
+
+   Defining a function (rather than emitting top-level side effects) lets
+   INITIALIZE-DEFAULT-KEY-TABLES reinstall the defaults whenever *key-tables*
+   is rebuilt — notably under test isolation (with-isolated-config), which
+   binds a fresh empty *key-tables* and must restore the standard bindings so
+   that e.g. unbind tests find #\\c bound to :new-window."
+  `(defun install-default-prefix-bindings ()
+     "Bind every standard default key into the prefix key-table. Idempotent."
      ,@(mapcan
         (lambda (pair)
           (if (eq (first pair) :digits)
               (loop for d from 0 to 9
                     collect `(key-table-bind +table-prefix+ (digit-char ,d) ,(second pair)))
               `((key-table-bind +table-prefix+ ,(first pair) ,(second pair)))))
-        pairs)))
+        pairs)
+     (values)))
 
 (define-initial-key-bindings
   (#\c :new-window)
@@ -152,6 +159,14 @@
    strings are returned as-is."
   (if (characterp key) (string key) key))
 
+(defun %binding-label (command)
+  "Human-readable label for a binding's COMMAND value: a reconstructed command
+   line for a token list (`bind key cmd args`), or the lowercased keyword name
+   for a built-in command."
+  (if (consp command)
+      (format nil "~{~A~^ ~}" command)
+      (format nil "~(~A~)" command)))
+
 (defun describe-key-bindings ()
   "Return a newline-separated, key-sorted listing of the current prefix bindings
    (\"<key>  <command>\" per line) for the list-keys help overlay.
@@ -164,7 +179,8 @@
       (write-string "key bindings — press prefix (C-b) then:" out)
       (dolist (binding (sort alist #'string<
                              :key (lambda (b) (key-label (car b)))))
-        (format out "~%  ~A  ~(~A~)" (key-label (car binding)) (cdr binding))))))
+        (format out "~%  ~A  ~A" (key-label (car binding))
+                (%binding-label (cdr binding)))))))
 
 (defun set-key-binding (key command)
   "Bind KEY (a character or string) to COMMAND (a keyword) in the prefix table.
@@ -180,8 +196,10 @@
 ;;; ── Initialisation ────────────────────────────────────────────────────────
 
 (defun initialize-default-key-tables ()
-  "Install the C-b C-b → :send-prefix binding and ensure root/copy-mode tables exist.
+  "Install the standard default prefix bindings, the C-b C-b → :send-prefix
+   binding, and ensure the root/copy-mode tables exist.
    Called once at load time and by test isolation helpers (idempotent)."
+  (install-default-prefix-bindings)
   (set-key-binding (code-char +prefix-key-code+) :send-prefix)
   (ensure-key-table +table-root+)
   (ensure-key-table +table-copy-mode+))

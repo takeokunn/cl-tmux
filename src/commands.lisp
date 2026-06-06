@@ -203,19 +203,136 @@
       (write-sequence bytes (pane-pipe-fd pane))
       (force-output (pane-pipe-fd pane)))))
 
-;;; ── send-keys-to-pane ───────────────────────────────────────────────────────
+;;; ── send-keys key-name translation ──────────────────────────────────────────
 ;;;
-;;; send_keys_to_pane(Pane, String) :-
-;;;   pane_fd(Pane, Fd),
-;;;   Fd > -1,
-;;;   forall(char(Ch, String), write_byte(Fd, Ch)).
+;;; tmux's send-keys interprets arguments that name a key (Enter, Tab, Up, C-c,
+;;; M-x, F5, ...) and sends that key's byte sequence rather than the literal
+;;; text.  *send-key-names* is the named-key table; C-<x> (control) and M-<x>
+;;; (meta/alt) are handled algorithmically.  Escape sequences use the normal
+;;; (non-application) xterm encodings, matching what send-keys emits by default.
+
+(defparameter *send-key-names*
+  (let ((esc (string (code-char 27))))
+    (flet ((seq (&rest tail) (apply #'concatenate 'string esc tail)))
+      (list
+       ;; whitespace / control
+       (cons "Enter"  (string #\Return)) (cons "C-m" (string #\Return))
+       (cons "Tab"    (string #\Tab))    (cons "C-i" (string #\Tab))
+       (cons "Space"  " ")
+       (cons "Escape" esc)               (cons "Esc" esc)
+       (cons "BSpace" (string (code-char 127)))
+       (cons "BTab"   (seq "[Z"))
+       ;; arrows (normal cursor mode)
+       (cons "Up"     (seq "[A")) (cons "Down"  (seq "[B"))
+       (cons "Right"  (seq "[C")) (cons "Left"  (seq "[D"))
+       ;; navigation block
+       (cons "Home"     (seq "[H")) (cons "End"      (seq "[F"))
+       (cons "PageUp"   (seq "[5~")) (cons "PPage"   (seq "[5~"))
+       (cons "PageDown" (seq "[6~")) (cons "NPage"   (seq "[6~"))
+       (cons "Insert"   (seq "[2~")) (cons "IC"      (seq "[2~"))
+       (cons "Delete"   (seq "[3~")) (cons "DC"      (seq "[3~"))
+       ;; function keys
+       (cons "F1" (seq "OP")) (cons "F2" (seq "OQ")) (cons "F3" (seq "OR"))
+       (cons "F4" (seq "OS")) (cons "F5" (seq "[15~")) (cons "F6" (seq "[17~"))
+       (cons "F7" (seq "[18~")) (cons "F8" (seq "[19~")) (cons "F9" (seq "[20~"))
+       (cons "F10" (seq "[21~")) (cons "F11" (seq "[23~")) (cons "F12" (seq "[24~")))))
+  "Alist mapping tmux key-name strings to their literal byte sequence (as a
+   string whose char-codes are the bytes — all < 128).")
+
+(defun %key-name-to-bytes (name)
+  "Return the octet vector for a tmux key NAME (Enter, Tab, Up, C-c, M-x, F5...),
+   or NIL when NAME is not a recognised key.
+   C-<char> → the control byte (logand char #x1f); M-<char> → ESC then <char>."
+  (let ((entry (assoc name *send-key-names* :test #'string=)))
+    (cond
+      (entry
+       (babel:string-to-octets (cdr entry) :encoding :utf-8))
+      ;; C-<char>: control byte.  C-a..C-z → 1..26, C-@ → 0, C-[ → 27, ...
+      ((and (= (length name) 3) (string= (subseq name 0 2) "C-"))
+       (make-array 1 :element-type '(unsigned-byte 8)
+                     :initial-element (logand (char-code (char-upcase (char name 2)))
+                                              #x1f)))
+      ;; M-<char>: ESC followed by the character (Alt/Meta).
+      ((and (= (length name) 3) (string= (subseq name 0 2) "M-"))
+       (babel:string-to-octets
+        (concatenate 'string (string (code-char 27)) (subseq name 2))
+        :encoding :utf-8))
+      (t nil))))
+
+;;; ── Command-string tokeniser ────────────────────────────────────────────────
+;;;
+;;; tmux command arguments are split shell-style: whitespace separates arguments,
+;;; '...' is a literal span, "..." allows backslash escapes, and a bare \\ escapes
+;;; the next character.  Adjacent spans join into one argument (foo"bar baz" →
+;;; foobar baz).  This is the shared lexer behind multi-argument commands such as
+;;; send-keys (and, in future, display-message / if-shell).
+
+(defun tokenize-command-string (string)
+  "Split STRING into a list of argument strings, shell-style.
+   Whitespace separates arguments; '...' is a literal span; \"...\" allows \\
+   escapes; a bare \\ escapes the next character; adjacent spans concatenate.
+   Unterminated quotes are tolerated (consumed to end of string).  An explicitly
+   quoted empty token (e.g. '') yields an empty-string argument."
+  (let ((args nil)
+        (cur  (make-string-output-stream))
+        (in-arg nil)
+        (i 0)
+        (n (length string)))
+    (labels ((finish ()
+               (when in-arg
+                 (push (get-output-stream-string cur) args)
+                 (setf in-arg nil))))
+      (loop while (< i n) do
+        (let ((c (char string i)))
+          (cond
+            ((member c '(#\Space #\Tab))
+             (finish) (incf i))
+            ((char= c #\')                      ; single-quoted literal span
+             (setf in-arg t) (incf i)
+             (loop while (and (< i n) (char/= (char string i) #\'))
+                   do (write-char (char string i) cur) (incf i))
+             (when (< i n) (incf i)))
+            ((char= c #\")                      ; double-quoted span with escapes
+             (setf in-arg t) (incf i)
+             (loop while (and (< i n) (char/= (char string i) #\"))
+                   do (if (and (char= (char string i) #\\) (< (1+ i) n))
+                          (progn (write-char (char string (1+ i)) cur) (incf i 2))
+                          (progn (write-char (char string i) cur) (incf i))))
+             (when (< i n) (incf i)))
+            ((and (char= c #\\) (< (1+ i) n))   ; bare backslash escape
+             (setf in-arg t)
+             (write-char (char string (1+ i)) cur) (incf i 2))
+            (t
+             (setf in-arg t)
+             (write-char c cur) (incf i)))))
+      (finish)
+      (nreverse args))))
+
+(defun %translate-send-keys (string)
+  "Bytes that send-keys should write for the argument string STRING.  STRING is
+   tokenised shell-style; each argument naming a tmux key (Enter, C-c, Up, F5,
+   M-x, ...) contributes that key's byte sequence and every other argument
+   contributes its literal UTF-8 bytes.  Matches tmux: spaces separate arguments
+   unless quoted — `send-keys echo hi` sends \"echohi\", whereas
+   `send-keys \"echo hi\" Enter` sends \"echo hi\" then CR."
+  (let ((args (tokenize-command-string string)))
+    (if (null args)
+        (babel:string-to-octets string :encoding :utf-8)
+        (apply #'concatenate '(vector (unsigned-byte 8))
+               (mapcar (lambda (arg)
+                         (or (%key-name-to-bytes arg)
+                             (babel:string-to-octets arg :encoding :utf-8)))
+                       args)))))
+
+;;; ── send-keys-to-pane ───────────────────────────────────────────────────────
 
 (defun send-keys-to-pane (pane string)
-  "Write each character of STRING as a UTF-8 byte sequence to PANE's PTY fd.
-   Silently ignores the write when PANE has no open PTY (fd <= -1)."
+  "Write STRING to PANE's PTY.  STRING is parsed as send-keys arguments: each
+   argument naming a tmux key (Enter, Tab, C-c, Up, F5, M-x, ...) is translated
+   to its byte sequence, and other arguments are sent as literal UTF-8 text.
+   No-op when PANE has no open PTY (fd <= -1)."
   (when (and pane (> (pane-fd pane) -1))
-    (let ((bytes (babel:string-to-octets string :encoding :utf-8)))
-      (pty-write (pane-fd pane) bytes))))
+    (pty-write (pane-fd pane) (%translate-send-keys string))))
 
 ;;; ── Shell ──────────────────────────────────────────────────────────────────
 ;;;

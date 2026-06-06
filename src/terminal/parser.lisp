@@ -157,8 +157,8 @@
   (#x07  (set-bell-pending screen)
          #'ground-state)                           ; BEL — set pending flag
   (#x7F  #'ground-state)                           ; DEL — ignore
-  (#x0E  #'ground-state)                           ; SO  — charset shift out (ignore)
-  (#x0F  #'ground-state)                           ; SI  — charset shift in  (ignore)
+  (#x0E  (invoke-charset screen :g1) #'ground-state) ; SO — invoke G1 (locking shift out)
+  (#x0F  (invoke-charset screen :g0) #'ground-state) ; SI — invoke G0 (locking shift in)
   ;; ── Printable ASCII ─────────────────────────────────────────────────────
   (printable-ascii-p
    (write-char-at-cursor screen (code-char byte))
@@ -183,9 +183,12 @@
   (#x63  (ris-action screen)   #'ground-state)    ; ESC c → RIS
   (#x37  (save-cursor screen)    #'ground-state)  ; ESC 7 → DECSC
   (#x38  (restore-cursor screen) #'ground-state)  ; ESC 8 → DECRC
-  ;; ── Charset designators (G0 and G1 both handled via charset-state) ─────────
-  (#x28  #'charset-state)                          ; ESC ( → G0
-  (#x29  #'charset-state)                          ; ESC ) → G1
+  (#x44  (cursor-lf  screen)     #'ground-state)  ; ESC D → IND (index: down, no CR)
+  (#x45  (cursor-nel screen)     #'ground-state)  ; ESC E → NEL (next line: CR+LF)
+  (#x48  (set-tab-stop screen)   #'ground-state)  ; ESC H → HTS (set tab stop)
+  ;; ── Charset designators: ESC ( designates G0, ESC ) designates G1 ──────────
+  (#x28  (make-charset-designator-k :g0))          ; ESC ( → designate G0
+  (#x29  (make-charset-designator-k :g1))          ; ESC ) → designate G1
   ;; ── All unrecognized ESC sequences → ground (including DECKPAM #x3D, DECKPNM #x3E)
   (t     #'ground-state))
 
@@ -237,11 +240,15 @@
        ;; Continue consuming
        (make-dcs-k)))))
 
-(define-state charset-state (screen byte)
-  ;; Consume the designator byte.
-  ;; #x30 = '0' → switch to DEC special graphics
-  ;; #x42 = 'B' → switch to US ASCII
-  ;; All other designators fall back to ASCII (accepted silently).
-  (#x30  (set-charset screen :dec-graphics) #'ground-state)
-  (#x42  (set-charset screen :ascii)        #'ground-state)
-  (t     (set-charset screen :ascii)        #'ground-state))
+(defun make-charset-designator-k (g)
+  "Return a CPS state that consumes one charset DESIGNATOR byte and designates
+   G (:g0 for ESC (, :g1 for ESC )) to the corresponding charset, then returns to
+   ground:
+     #x30 '0' → DEC special graphics (line-drawing)
+     #x42 'B' → US ASCII
+     all other designators → ASCII (accepted silently).
+   Designating does NOT activate G1 — that requires a SO (0x0E) locking shift."
+  (lambda (screen byte)
+    (declare (type screen screen) (type (unsigned-byte 8) byte))
+    (designate-charset screen g (if (= byte #x30) :dec-graphics :ascii))
+    #'ground-state))

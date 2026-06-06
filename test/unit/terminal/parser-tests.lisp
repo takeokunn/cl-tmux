@@ -333,15 +333,76 @@
       (is (eq #'cl-tmux/terminal/parser:ground-state next))
       (is (row-blank-p s 0) "RIS via escape-state must clear the screen"))))
 
-;; charset-state ────────────────────────────────────────────────────────────────
+;; charset designators (ESC ( / ESC ) ) + SO/SI locking shifts ──────────────────
 
-(test charset-state-always-returns-ground-state
-  "charset-state consumes any designator byte and always returns ground-state."
+(test charset-designator-always-returns-ground-state
+  "A charset designator continuation consumes any designator byte and always
+   returns ground-state."
   (with-screen (s 10 5)
     (is (eq #'cl-tmux/terminal/parser:ground-state
-            (cl-tmux/terminal/parser:charset-state s 66)))  ; B = ASCII
+            (funcall (cl-tmux/terminal/parser:make-charset-designator-k :g0) s 66)))  ; B = ASCII
     (is (eq #'cl-tmux/terminal/parser:ground-state
-            (cl-tmux/terminal/parser:charset-state s 48))))) ; 0 = special graphics
+            (funcall (cl-tmux/terminal/parser:make-charset-designator-k :g0) s 48))))) ; 0 = graphics
+
+(test esc-paren-0-designates-and-activates-g0-line-drawing
+  "ESC ( 0 designates G0 to DEC graphics AND activates it (G0 is invoked by default)."
+  (with-screen (s 10 5)
+    (feed s (format nil "~C(0" #\Escape))
+    (is (eq :dec-graphics (cl-tmux/terminal/types:screen-g0-charset s))
+        "ESC ( 0 must designate G0 to :dec-graphics")
+    (is (eq :dec-graphics (cl-tmux/terminal/types:screen-charset s))
+        "ESC ( 0 must activate line-drawing (G0 is the active set)")))
+
+(test esc-close-paren-0-designates-g1-without-activating
+  "ESC ) 0 designates G1 to DEC graphics but does NOT activate it (needs SO)."
+  (with-screen (s 10 5)
+    (feed s (format nil "~C)0" #\Escape))
+    (is (eq :dec-graphics (cl-tmux/terminal/types:screen-g1-charset s))
+        "ESC ) 0 must designate G1 to :dec-graphics")
+    (is (eq :ascii (cl-tmux/terminal/types:screen-charset s))
+        "ESC ) 0 must NOT activate line-drawing until a SO locking shift")))
+
+(test so-invokes-g1-si-invokes-g0
+  "SO (0x0E) invokes G1; SI (0x0F) invokes G0 (VT100 locking shifts)."
+  (with-screen (s 10 5)
+    (feed s (format nil "~C)0" #\Escape))            ; designate G1 = line-drawing
+    (feed s (string (code-char #x0E)))               ; SO
+    (is (eq :g1 (cl-tmux/terminal/types:screen-active-g s)) "SO must invoke G1")
+    (is (eq :dec-graphics (cl-tmux/terminal/types:screen-charset s))
+        "SO must activate G1's line-drawing charset")
+    (feed s (string (code-char #x0F)))               ; SI
+    (is (eq :g0 (cl-tmux/terminal/types:screen-active-g s)) "SI must invoke G0")
+    (is (eq :ascii (cl-tmux/terminal/types:screen-charset s))
+        "SI must restore G0's ASCII charset")))
+
+(test g1-line-drawing-via-so-remaps-characters
+  "End-to-end: ESC ) 0, SO, 'q' renders the box-drawing horizontal line ─."
+  (with-screen (s 10 5)
+    (feed s (format nil "~C)0~Cq" #\Escape (code-char #x0E)))  ; ESC ) 0, SO, 'q'
+    (is (string= "─" (row-string s 0 :end 1))
+        "Under invoked G1 line-drawing, 'q' must render as ─")))
+
+;; IND (ESC D) / NEL (ESC E) line control ──────────────────────────────────────
+
+(test esc-d-ind-moves-cursor-down-keeping-column
+  "ESC D (IND) moves the cursor down one row, keeping the column (no carriage return)."
+  (with-screen (s 20 5)
+    (feed s (esc "[3;5H"))   ; CUP → row 3, col 5 (cursor x=4, y=2)
+    (feed s (esc "D"))       ; ESC D → IND
+    (is (= 4 (cl-tmux/terminal/types:screen-cursor-x s))
+        "IND must keep the column (no CR)")
+    (is (= 3 (cl-tmux/terminal/types:screen-cursor-y s))
+        "IND must move the cursor down one row")))
+
+(test esc-e-nel-moves-to-start-of-next-line
+  "ESC E (NEL) moves the cursor to column 0 of the next row (CR + LF)."
+  (with-screen (s 20 5)
+    (feed s (esc "[3;5H"))   ; CUP → row 3, col 5
+    (feed s (esc "E"))       ; ESC E → NEL
+    (is (= 0 (cl-tmux/terminal/types:screen-cursor-x s))
+        "NEL must move the cursor to column 0")
+    (is (= 3 (cl-tmux/terminal/types:screen-cursor-y s))
+        "NEL must move the cursor down one row")))
 
 ;; osc-state ────────────────────────────────────────────────────────────────────
 
@@ -793,12 +854,15 @@
       (is (functionp next)
           "ESC P must return a DCS accumulator continuation function"))))
 
-(test escape-state-open-paren-returns-charset-state
-  "escape-state on #x28 ('(' = G0 designator introducer) returns charset-state."
+(test escape-state-open-paren-returns-charset-designator
+  "escape-state on #x28 ('(' = G0 designator introducer) returns a designator
+   continuation that designates G0 to the next byte's charset."
   (with-screen (s 10 5)
     (let ((next (cl-tmux/terminal/parser:escape-state s #x28)))
-      (is (eq #'cl-tmux/terminal/parser:charset-state next)
-          "ESC ( must return charset-state"))))
+      (is (functionp next) "ESC ( must return a charset-designator continuation")
+      (funcall next s 48)                ; '0' → DEC graphics
+      (is (eq :dec-graphics (cl-tmux/terminal/types:screen-g0-charset s))
+          "ESC ( 0 must designate G0 to :dec-graphics"))))
 
 (test escape-state-close-bracket-returns-osc-state
   "escape-state on #x5D (']' = OSC introducer) returns osc-state."
@@ -976,10 +1040,11 @@
     (let* ((received nil)
            (cl-tmux/terminal/parser:*osc52-handler*
              (lambda (text) (setf received text))))
-      ;; Feed OSC 52 ; c ; SGVsbG8= BEL  (c = clipboard target, ignored)
+      ;; Base64 of "hello" is aGVsbG8=  (SGVsbG8= would decode to "Hello").
+      ;; Feed OSC 52 ; c ; aGVsbG8= BEL  (c = clipboard target, ignored)
       (screen-process-bytes s
         (babel:string-to-octets
-          (format nil "~C]52;c;SGVsbG8=~C" #\Escape #\Bel)
+          (format nil "~C]52;c;aGVsbG8=~C" #\Escape #\Bel)
           :encoding :utf-8))
       (is (string= "hello" received)
           "osc52-handler must be called with decoded text 'hello'"))))
@@ -1006,3 +1071,49 @@
           :encoding :utf-8))
       (is (eq :not-called received)
           "handler must NOT be invoked for a clipboard read request ('?')"))))
+
+;;; ── OSC 7: current working directory (file://host/path) ──────────────────────
+
+(test osc7-path-extraction
+  "%osc7-path extracts the path from a file:// URL, with or without a host."
+  (flet ((p (s) (cl-tmux/terminal/parser::%osc7-path s)))
+    (is (string= "/home/u"     (p "file://host/home/u")) "with host")
+    (is (string= "/home/u"     (p "file:///home/u"))     "empty host")
+    (is (string= "/"           (p "file://host"))        "host but no path → /")
+    (is (string= "not-a-url"   (p "not-a-url"))          "non-file:// → unchanged")))
+
+(test osc7-sets-screen-cwd-end-to-end
+  "Feeding ESC ] 7 ; file://host/path BEL sets screen-cwd to the path."
+  (with-screen (s 20 5)
+    (screen-process-bytes s
+      (babel:string-to-octets
+        (format nil "~C]7;file://myhost/home/user/project~C" #\Escape #\Bel)
+        :encoding :utf-8))
+    (is (string= "/home/user/project" (cl-tmux/terminal/types:screen-cwd s))
+        "screen-cwd must be the OSC 7 path after the sequence (got ~S)"
+        (cl-tmux/terminal/types:screen-cwd s))))
+
+(test percent-decode-cases
+  "%percent-decode handles %20 spaces, UTF-8 multibyte, no-% passthrough, and an
+   incomplete trailing % (left literal)."
+  (flet ((d (s) (cl-tmux/terminal/parser::%percent-decode s)))
+    (is (string= "a b"   (d "a%20b"))      "%20 → space")
+    (is (string= "abc"   (d "abc"))        "no % → unchanged")
+    (is (string= "/"     (d "%2F"))        "%2F → /")
+    (is (string= "a%"    (d "a%"))         "incomplete trailing % is literal")
+    (is (string= "a%zz"  (d "a%zz"))       "non-hex after % is literal")
+    (is (string= "✓"     (d "%E2%9C%93"))  "UTF-8 multibyte (U+2713) decodes")))
+
+(test osc7-path-percent-decoded
+  "OSC 7 paths are percent-decoded — e.g. macOS '/Application Support'."
+  (is (string= "/My Docs"
+               (cl-tmux/terminal/parser::%osc7-path "file://host/My%20Docs")))
+  (is (string= "/Library/Application Support"
+               (cl-tmux/terminal/parser::%osc7-path
+                "file:///Library/Application%20Support"))))
+
+(test screen-cwd-defaults-empty
+  "screen-cwd is empty on a fresh screen (no OSC 7 reported yet)."
+  (with-screen (s 20 5)
+    (is (string= "" (cl-tmux/terminal/types:screen-cwd s))
+        "a fresh screen has no reported cwd")))

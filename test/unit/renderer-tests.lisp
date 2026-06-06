@@ -106,9 +106,14 @@
            (start  (+ (search color out) (length color)))
            (end    (search reset out :start2 start))
            (content (subseq out start end)))
-      (is (<= (length content) width)
-          "narrow status content must fit in ~D cols (got ~D: ~S)"
-          width (length content) content)
+      ;; Measure VISIBLE cells: the default window-status-current-style is
+      ;; "reverse", so the active window is wrapped in a zero-width ESC[7m…
+      ;; highlight.  The renderer now fills the full terminal width with visible
+      ;; glyphs and preserves that SGR, so the raw length may exceed WIDTH while
+      ;; the on-screen width does not.
+      (is (<= (cl-tmux/renderer::%visible-length content) width)
+          "narrow status content must fit in ~D visible cols (got ~D visible / ~D raw: ~S)"
+          width (cl-tmux/renderer::%visible-length content) (length content) content)
       ;; The full line (left text + gap + time) is longer than the terminal, so
       ;; the HH:MM time string (right portion) is truncated off the visible content.
       ;; We verify this by checking the content is shorter than the full line would be.
@@ -331,6 +336,54 @@
       ;; No SGR sequences should be emitted when styles are empty.
       (is (null (search (format nil "~C[" #\Escape) out))
           "%status-window-list-styled must NOT emit SGR when styles are empty (got ~S)" out))))
+
+(test status-window-list-inline-style-block-in-current-format
+  "Inline #[fg=red] in window-status-current-format expands to real SGR in the
+   window list, even when the per-window style option is empty."
+  (with-isolated-options ("window-status-current-style" ""
+                          "window-status-style" ""
+                          "window-status-current-format" "#[fg=red]#{window_name}#[default]")
+    (let* ((sess (make-test-session 20 5 :content ""))
+           (win  (session-active-window sess))
+           (out  (cl-tmux/renderer::%status-window-list-styled sess win)))
+      (is (search (format nil "~C[31m" #\Escape) out)
+          "inline #[fg=red] must emit SGR 31 in the window list (got ~S)" out)
+      (is (null (search "#[" out))
+          "no literal #[ block may survive into the window list (got ~S)" out)
+      (is (search "1" out)
+          "the window name must still be present (got ~S)" out)
+      ;; The trailing #[default] / wrapper guarantees a reset so colour does not
+      ;; bleed past the window label.
+      (is (search (format nil "~C[0" #\Escape) out)
+          "a reset must close the inline style (got ~S)" out))))
+
+(test status-window-list-inline-block-without-window-style-still-resets
+  "A window label that injects SGR via #[...] is reset afterwards even when the
+   window has no style option set (so the next window/separator is unstyled)."
+  (with-isolated-options ("window-status-current-style" ""
+                          "window-status-style" ""
+                          "window-status-current-format" "#[fg=green]#{window_name}")
+    (let* ((sess (make-test-session 20 5 :content ""))
+           (win  (session-active-window sess))
+           (out  (cl-tmux/renderer::%status-window-list-styled sess win)))
+      (is (search (format nil "~C[32m" #\Escape) out)
+          "inline #[fg=green] must emit SGR 32 (got ~S)" out)
+      (is (search (format nil "~C[0m" #\Escape) out)
+          "the injected style must be reset after the label (got ~S)" out))))
+
+(test status-window-list-plain-format-unchanged-by-expansion
+  "A window-status-current-format with no #[ block and no style option produces
+   exactly the same plain label as before (no spurious SGR)."
+  (with-isolated-options ("window-status-current-style" ""
+                          "window-status-style" ""
+                          "window-status-current-format" " #{window_index}:#{window_name} ")
+    (let* ((sess (make-test-session 20 5 :content ""))
+           (win  (session-active-window sess))
+           (out  (cl-tmux/renderer::%status-window-list-styled sess win)))
+      (is (search "1:1" out)
+          "plain window label must be present (got ~S)" out)
+      (is (null (search (format nil "~C[" #\Escape) out))
+          "plain format with empty styles must emit NO SGR (got ~S)" out))))
 
 ;;; ── %status-bar-line (pure) ─────────────────────────────────────────────────
 
@@ -1177,3 +1230,114 @@
       ;; We just check a colon is present in a 5-char time substring.
       (is (find #\: out)
           "default status must include time with ':' character (got ~S)" out))))
+
+;;; ── inline #[attr] style blocks + SGR-aware width (renderer-statusbar) ────────
+;;;
+;;; tmux status strings carry inline #[fg=…] style blocks and embedded SGR.  Those
+;;; sequences are zero-width on screen, so the renderer expands #[…] into SGR and
+;;; measures width by VISIBLE cells.  %visible-length/%visible-truncate must reduce
+;;; to LENGTH/SUBSEQ on escape-free input (proven below) so older tests are intact.
+
+(test visible-length-escape-free-equals-length
+  "%visible-length equals LENGTH for strings with no escape sequences."
+  (is (= 5 (cl-tmux/renderer::%visible-length "hello")))
+  (is (= 0 (cl-tmux/renderer::%visible-length "")))
+  (is (= (length "a:b 12:34")
+         (cl-tmux/renderer::%visible-length "a:b 12:34"))))
+
+(test visible-length-skips-sgr-sequences
+  "%visible-length counts only visible cells, skipping CSI SGR escapes."
+  (let ((esc #\Escape))
+    (is (= 2 (cl-tmux/renderer::%visible-length
+              (format nil "~C[32mhi~C[0m" esc esc)))
+        "ESC[32mhiESC[0m has 2 visible cells")
+    (is (= 3 (cl-tmux/renderer::%visible-length
+              (format nil "~C[1;44;97mABC" esc)))
+        "a multi-param SGR prefix is zero-width")))
+
+(test visible-truncate-escape-free-equals-subseq
+  "%visible-truncate equals SUBSEQ for escape-free strings."
+  (is (string= "hel" (cl-tmux/renderer::%visible-truncate "hello" 3)))
+  (is (string= "hello" (cl-tmux/renderer::%visible-truncate "hello" 5)))
+  (is (string= "hello" (cl-tmux/renderer::%visible-truncate "hello" 99)))
+  (is (string= "" (cl-tmux/renderer::%visible-truncate "hello" 0))))
+
+(test visible-truncate-passes-sgr-through
+  "%visible-truncate copies SGR escapes through without counting them toward N."
+  (let* ((esc  #\Escape)
+         (in   (format nil "~C[32mABCDE" esc))
+         (out  (cl-tmux/renderer::%visible-truncate in 2)))
+    (is (= 2 (cl-tmux/renderer::%visible-length out))
+        "result must hold exactly 2 visible cells (got ~S)" out)
+    (is (search "AB" out) "the 2 kept glyphs AB must be present (got ~S)" out)
+    (is (char= esc (char out 0))
+        "the leading SGR escape must be preserved (got ~S)" out)))
+
+(test status-style-block-fg-becomes-sgr
+  "%status-style-block-sgr turns fg=green into the SGR colour code 32."
+  (let ((out (cl-tmux/renderer::%status-style-block-sgr "fg=green" "44;97")))
+    (is (search (format nil "~C[32m" #\Escape) out)
+        "fg=green must produce ESC[32m (got ~S)" out)))
+
+(test status-style-block-default-resets-to-base
+  "%status-style-block-sgr default/none/empty resets to the base status SGR."
+  (let ((esc #\Escape))
+    (dolist (body '("default" "none" "" "  "))
+      (is (string= (format nil "~C[0;44;97m" esc)
+                   (cl-tmux/renderer::%status-style-block-sgr body "44;97"))
+          "~S must reset to ESC[0;44;97m" body))))
+
+(test status-expand-style-blocks-no-block-unchanged
+  "%status-expand-style-blocks returns escape-free / block-free text unchanged."
+  (is (string= "plain text"
+               (cl-tmux/renderer::%status-expand-style-blocks "plain text" "44;97")))
+  (is (string= " 0 1:1* "
+               (cl-tmux/renderer::%status-expand-style-blocks " 0 1:1* " "44;97"))))
+
+(test status-expand-style-blocks-converts-blocks
+  "%status-expand-style-blocks turns #[fg=green]X#[default] into SGR around X."
+  (let* ((esc #\Escape)
+         (out (cl-tmux/renderer::%status-expand-style-blocks
+               "#[fg=green]X#[default]Y" "44;97")))
+    (is (null (search "#[" out))
+        "no literal #[ block may survive (got ~S)" out)
+    (is (search (format nil "~C[32mX" esc) out)
+        "green SGR must wrap X (got ~S)" out)
+    (is (search (format nil "~C[0;44;97mY" esc) out)
+        "#[default] before Y must reset to base SGR (got ~S)" out)))
+
+(test clamp-status-segment-counts-visible-not-sgr
+  "%clamp-status-segment measures visible cells; SGR escapes don't count and survive."
+  (let* ((esc #\Escape)
+         (txt (format nil "~C[32mhello~C[0m" esc esc)))   ; 5 visible cells
+    (is (string= txt (cl-tmux/renderer::%clamp-status-segment txt 5))
+        "5 visible ≤ max 5 → unchanged (SGR preserved)")
+    (is (= 3 (cl-tmux/renderer::%visible-length
+              (cl-tmux/renderer::%clamp-status-segment txt 3)))
+        "max 3 keeps 3 visible cells")))
+
+(test justify-right-ignores-sgr-width
+  "%justify-right computes the gap from visible cells, so SGR doesn't shove content off-edge."
+  (let* ((esc  #\Escape)
+         (left (format nil "~C[32mABC~C[0m" esc esc))   ; 3 visible cells
+         (line (cl-tmux/renderer::%justify-right left "RR" 20)))
+    (is (= 20 (cl-tmux/renderer::%visible-length line))
+        "visible width must fill exactly 20 cols (got ~D: ~S)"
+        (cl-tmux/renderer::%visible-length line) line)
+    (is (search "RR" line) "right text must be present (got ~S)" line)))
+
+(test render-status-bar-inline-style-block-becomes-sgr
+  "render-status-bar expands status-left #[fg=green]…#[default] into real SGR,
+   and no literal #[ block reaches the output."
+  (with-isolated-options ("status-left"  "#[fg=green]G#[default]"
+                          "status-right" nil
+                          "status-style" "")
+    (let* ((sess (make-test-session 40 6))
+           (out  (with-output-to-string (s)
+                   (cl-tmux/renderer::render-status-bar s sess 10 40))))
+      (is (search (format nil "~C[32m" #\Escape) out)
+          "inline #[fg=green] must emit SGR 32 (got ~S)" out)
+      (is (null (search "#[" out))
+          "literal #[ must not survive into the rendered bar (got ~S)" out)
+      (is (find #\G out)
+          "the styled glyph G must be present (got ~S)" out))))

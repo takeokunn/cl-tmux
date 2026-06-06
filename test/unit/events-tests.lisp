@@ -56,11 +56,14 @@
 
 (test process-byte-prefix-detach-returns-detach
   "Prefix byte then 'd' returns :detach from process-byte."
+  ;; Isolate the key-tables: another suite can mutate the live prefix table, and
+  ;; this test depends on the default #\d → :detach binding being present.
   (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((state (cl-tmux::make-input-state)))
-        (cl-tmux::process-byte s 2 state)
-        (is (eq :detach (cl-tmux::process-byte s (char-code #\d) state)))))))
+    (with-isolated-config
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (cl-tmux::process-byte s 2 state)
+          (is (eq :detach (cl-tmux::process-byte s (char-code #\d) state))))))))
 
 (test process-byte-ordinary-key-forwards
   "An ordinary byte (no prefix) is forwarded and returns NIL (no quit)."
@@ -284,6 +287,59 @@
       (cl-tmux::process-byte sess 38 state)
       (is (eq p1 (window-active-pane win))
           "X10 left-click in right pane must focus p1"))))
+
+(test mouse-middle-click-pastes-top-buffer-into-pane
+  "Middle-button press (btn 1) pastes the most recent paste-buffer into the pane
+   under the pointer, writing it to that pane's PTY."
+  (with-empty-buffers
+    (with-pipe-fds (rfd wfd)
+      (with-two-pane-mouse-session (sess win p0 p1)
+        ;; Give the right pane (p1) a live PTY and stage a paste-buffer.
+        (setf (pane-fd p1) wfd)
+        (cl-tmux/buffer:add-paste-buffer "PASTE-ME")
+        ;; Middle-click at col 50 (within p1, x=41..80), row 5.
+        (cl-tmux::%dispatch-mouse-event sess 1 50 5 nil)
+        (is (eq p1 (window-active-pane win))
+            "middle-click must focus the pane under the pointer")
+        (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))  ; 200 ms
+          (is-true ready "the pasted text must reach the pane's PTY")
+          (when ready
+            (cffi:with-foreign-object (buf :uint8 32)
+              (let ((n (cffi:foreign-funcall "read"
+                                             :int rfd :pointer buf :unsigned-long 8
+                                             :long)))
+                (is (= 8 n) "all 8 bytes of PASTE-ME must arrive (got ~D)" n)
+                (let ((str (make-string (max 0 n))))
+                  (dotimes (i (max 0 n))
+                    (setf (char str i) (code-char (cffi:mem-aref buf :uint8 i))))
+                  (is (string= "PASTE-ME" str)
+                      "pane must receive the buffer text (got ~S)" str))))))))))
+
+(test mouse-middle-click-with-empty-buffer-writes-nothing
+  "Middle-click with no paste-buffer is a safe no-op: the pane is focused but no
+   bytes are written to its PTY."
+  (with-empty-buffers
+    (with-pipe-fds (rfd wfd)
+      (with-two-pane-mouse-session (sess win p0 p1)
+        (setf (pane-fd p1) wfd)
+        ;; No add-paste-buffer → get-paste-buffer 0 is NIL.
+        (cl-tmux::%dispatch-mouse-event sess 1 50 5 nil)
+        (is (eq p1 (window-active-pane win))
+            "middle-click still focuses the pane under the pointer")
+        (is (null (cl-tmux/pty:select-fds (list rfd) 20000))
+            "no paste-buffer → nothing is written (pipe stays idle)")))))
+
+(test mouse-middle-click-release-does-not-paste
+  "A middle-button RELEASE event must not paste (only the press does)."
+  (with-empty-buffers
+    (with-pipe-fds (rfd wfd)
+      (with-two-pane-mouse-session (sess win p0 p1)
+        (setf (pane-fd p1) wfd)
+        (cl-tmux/buffer:add-paste-buffer "NOPE")
+        ;; release-p = T → no paste
+        (cl-tmux::%dispatch-mouse-event sess 1 50 5 t)
+        (is (null (cl-tmux/pty:select-fds (list rfd) 20000))
+            "middle-button release must not write any paste bytes")))))
 
 (test mouse-mode-default-is-off
   "screen-mouse-mode defaults to 0 (off) on a fresh screen."
@@ -641,7 +697,7 @@
         (cl-tmux::dispatch-command s :choose-client nil)
         (is (overlay-active-p) "choose-client must activate the overlay")
         (is (search "Clients" *overlay*)
-            "overlay must contain \"Clients\""))))
+            "overlay must contain \"Clients\"")))))
 
 ;;; ── Root key-table lookup ────────────────────────────────────────────────────
 
@@ -661,6 +717,23 @@
           (let ((tbl (gethash "root" *key-tables*)))
             (when tbl (remhash #\Z tbl))))))))
 
+(test root-table-bound-command-line-runs-without-prefix
+  "A -n binding to a command LINE runs without the prefix: bind -n Z
+   display-message hi, then pressing Z (no C-b) shows 'hi' in an overlay
+   (verifies the root dispatch site's token-list path)."
+  (with-isolated-config
+    (with-loop-state
+      (let ((s (make-fake-session)) (*overlay* nil)
+            (state (cl-tmux::make-input-state)))
+        (cl-tmux/config:apply-config-directive
+         '("bind" "-n" "Z" "display-message" "hi"))
+        (cl-tmux::process-byte s (char-code #\Z) state)
+        (is (overlay-active-p)
+            "a -n command-line binding must fire without C-b")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is (search "hi" text)
+              "overlay must contain the bound command's output 'hi' (got ~S)" text))))))
+
 ;;; ── dispatch :select-layout-spread ─────────────────────────────────────────
 
 (test dispatch-select-layout-spread-applies-even-horizontal
@@ -676,8 +749,11 @@
 
 (test key-binding-z-lowercase-is-zoom-toggle
   "C-b z (lowercase, char code 122) is bound to :zoom-toggle."
-  (is (eq :zoom-toggle (lookup-key-binding #\z))
-      "C-b z must be bound to :zoom-toggle (standard tmux default)"))
+  ;; Isolated config: z is an install-extended-key-binding, vulnerable to the
+  ;; known global prefix-table polluter (see also the detach tests).
+  (with-isolated-config
+    (is (eq :zoom-toggle (lookup-key-binding #\z))
+        "C-b z must be bound to :zoom-toggle (standard tmux default)")))
 
 (test key-binding-Z-uppercase-is-still-zoom-toggle
   "C-b Z (uppercase, char code 90) remains bound to :zoom-toggle."
@@ -691,12 +767,13 @@
 
 (test dispatch-zoom-toggle-via-lowercase-z
   "C-b z dispatches :zoom-toggle without error."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((state (cl-tmux::make-input-state)))
-        (cl-tmux::process-byte s 2 state)
-        (is (null (cl-tmux::process-byte s (char-code #\z) state))
-            "C-b z must dispatch :zoom-toggle and return NIL")))))
+  (with-isolated-config
+    (let ((s (make-fake-session)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (cl-tmux::process-byte s 2 state)
+          (is (null (cl-tmux::process-byte s (char-code #\z) state))
+              "C-b z must dispatch :zoom-toggle and return NIL"))))))
 
 (test dispatch-select-window-prompt-opens-prompt
   ":select-window-prompt opens a prompt without signaling."
@@ -745,8 +822,11 @@
 
 (test standard-key-bindings-complete
   "All standard tmux default bindings must be present in prefix key-table."
-  (flet ((bound-p (key)
-           (not (null (lookup-key-binding key)))))
+  ;; Isolated config so the assertion runs against the clean default+extended
+  ;; bindings, immune to the known global prefix-table polluter.
+  (with-isolated-config
+   (flet ((bound-p (key)
+            (not (null (lookup-key-binding key)))))
     ;; Session
     (is (bound-p #\d)   "d → detach")
     (is (bound-p #\$)   "$ → rename-session")
@@ -795,7 +875,7 @@
     (is (bound-p #\E)   "E → select-layout-spread")
     (is (bound-p (code-char 32))  "Space → next-layout")
     (is (bound-p #\D)   "D → choose-client")
-    (is (bound-p (code-char 2))   "C-b → send-prefix")))
+    (is (bound-p (code-char 2))   "C-b → send-prefix"))))
 
 ;;; ── Mouse scroll-wheel paths ─────────────────────────────────────────────────
 
@@ -1103,7 +1183,7 @@
     ;; Drag the border rightward: col=60 out of total ~81 columns.
     (cl-tmux::%apply-drag-resize win split :h 60 5)
     ;; The ratio must have changed from 1/2.
-    (is (/= 1/2 (layout-split-ratio split))
+    (is (/= 1/2 (cl-tmux/model:layout-split-ratio split))
         "%apply-drag-resize must update the split ratio on :h drag")))
 
 (test apply-drag-resize-vertical-updates-ratio
@@ -1120,7 +1200,7 @@
     (window-select-pane win p0)
     ;; Drag border downward: row=15 out of total ~21 rows.
     (cl-tmux::%apply-drag-resize win split :v 5 15)
-    (is (/= 1/2 (layout-split-ratio split))
+    (is (/= 1/2 (cl-tmux/model:layout-split-ratio split))
         "%apply-drag-resize must update the split ratio on :v drag")))
 
 ;;; ── %dispatch-modifier-arrow coverage ───────────────────────────────────────
@@ -1442,7 +1522,7 @@
         (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
         (cl-tmux::process-byte s 16 state)   ; C-p
         (is (= 1 (screen-copy-offset screen))
-            "C-p at top row must scroll viewport up by 1"))))))
+            "C-p at top row must scroll viewport up by 1")))))
 
 (test copy-mode-H-moves-cursor-to-high
   "Plain 'H' (byte 72) moves the copy-mode cursor to the top row of the screen."
@@ -2075,7 +2155,11 @@
 
 (test overlay-scroll-up-decrements-offset
   "overlay-scroll -1 decrements *overlay-scroll-offset* by 1 (clamped at 0)."
-  (let ((*overlay* "line1\nline2\nline3\nline4\nline5\n")
+  ;; NOTE: build the overlay with real newlines via ~%.  A CL string literal
+  ;; does NOT treat \n as a newline (backslash only escapes " and \), so
+  ;; "line1\nline2..." is a SINGLE line and overlay-lines would return 1 entry,
+  ;; clamping every scroll to 0.
+  (let ((*overlay* (format nil "line1~%line2~%line3~%line4~%line5~%"))
         (*overlay-scroll-offset* 3))
     (overlay-scroll -1)
     (is (= 2 *overlay-scroll-offset*)
@@ -2083,7 +2167,9 @@
 
 (test overlay-scroll-down-increments-offset
   "overlay-scroll 1 increments *overlay-scroll-offset* by 1."
-  (let ((*overlay* "line1\nline2\nline3\nline4\nline5\n")
+  ;; Real newlines via ~% (a CL literal's \n is NOT a newline; see the
+  ;; overlay-scroll-up test for the full explanation).
+  (let ((*overlay* (format nil "line1~%line2~%line3~%line4~%line5~%"))
         (*overlay-scroll-offset* 0))
     (overlay-scroll 1)
     (is (= 1 *overlay-scroll-offset*)

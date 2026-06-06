@@ -83,6 +83,69 @@
       (is (eql height-before *status-height*)
           "*status-height* must be unchanged by an unknown directive"))))
 
+;;; set [-g|-a|...] name value  — flag handling (the canonical .tmux.conf form)
+
+(test apply-set-directive-global-flag
+  "'set -g status off' applies (3 tokens) — previously the fixed-arity table
+   silently dropped it.  Sets 'status', not an option named '-g'."
+  (with-isolated-options ()
+    (is (eq t (apply-config-directive '("set" "-g" "status" "off")))
+        "set -g status off must return T (applied)")
+    (is (null (cl-tmux/options:get-option "status"))
+        "status option must be NIL (boolean coercion of 'off')")
+    (is (null (cl-tmux/options:get-option "-g"))
+        "must NOT create an option literally named '-g'")))
+
+(test apply-set-directive-append-flag
+  "'set -ag <name> <value>' appends to the option's current value."
+  (with-isolated-options ("status-left" "A")
+    (is (eq t (apply-config-directive '("set" "-ag" "status-left" "B")))
+        "set -ag must return T")
+    (is (string= "AB" (cl-tmux/options:get-option "status-left"))
+        "set -ag must append B to the existing A")))
+
+(test apply-set-directive-plain-unaffected
+  "Plain 'set name value' (no flags) still flows through the normal directive
+   table and applies unchanged."
+  (with-isolated-options ()
+    (is (eq t (apply-config-directive '("set" "status" "off")))
+        "plain set must still return T")
+    (is (null (cl-tmux/options:get-option "status"))
+        "plain set status off must set status to NIL")))
+
+;;; bind key to a command LINE (arg-taking key bindings)
+
+(test bind-key-to-command-line-stores-token-list
+  "'bind X display-message hello' binds X to the command token list, applies (T),
+   and list-keys shows the reconstructed command line."
+  (with-isolated-key-tables
+    (is (eq t (apply-config-directive '("bind" "X" "display-message" "hello")))
+        "multi-token bind must return T")
+    (is (equal '("display-message" "hello") (lookup-key-binding #\X))
+        "binding value must be the command token list")
+    (is (search "display-message hello" (cl-tmux/config:describe-key-bindings))
+        "list-keys must show the reconstructed command line")))
+
+(test bind-key-single-keyword-still-binds
+  "'bind z new-window' still binds the key to the :new-window keyword (existing
+   single-command behaviour is preserved)."
+  (with-isolated-key-tables
+    (is (eq t (apply-config-directive '("bind" "z" "new-window")))
+        "single known-command bind must return T")
+    (is (eq :new-window (lookup-key-binding #\z))
+        "a single known command binds to its keyword")))
+
+(test bind-key-single-unknown-command-rejected
+  "'bind z totally-bogus-xyz' (one unknown command word) is still rejected (NIL),
+   and the unknown command is not stored (z keeps its default keyword binding)."
+  (with-isolated-key-tables
+    (is (null (apply-config-directive '("bind" "z" "totally-bogus-xyz")))
+        "an unknown single command must be rejected")
+    ;; z is bound to a built-in (zoom) by default; the rejected bind must not have
+    ;; replaced it with the bogus command token-list.
+    (is (not (equal '("totally-bogus-xyz") (lookup-key-binding #\z)))
+        "the unknown command must not be stored as a binding")))
+
 ;;; load-config-from-string
 
 (test load-from-string-counts-and-applies
@@ -162,8 +225,10 @@
 (test invalid-directive-cases-return-nil
   "Every malformed or unknown directive returns NIL without mutating state."
   (with-isolated-config
+    ;; NOTE: ("bind" "z" "new-window" "x") is no longer here — a bind with extra
+    ;; tokens is now a valid arg-taking binding (key → command line), covered by
+    ;; bind-key-to-command-line-stores-token-list.
     (dolist (tokens '(("bind")
-                      ("bind" "z" "new-window" "x")
                       ("bind" "z" "bogus-command")
                       ("unbind")
                       ("unbind" "z" "extra")
@@ -372,7 +437,9 @@
 
 (test config-tokenizer-backslash-escape
   "%config-tokens: backslash outside quotes escapes the next character."
-  (let ((tokens (cl-tmux/config::%config-tokens "foo\ bar")))
+  ;; The Lisp literal "foo\\ bar" is the 8-char string  foo\ bar  (with a real
+  ;; backslash); that is what the tokenizer must collapse to "foo bar".
+  (let ((tokens (cl-tmux/config::%config-tokens "foo\\ bar")))
     (is (= 1 (length tokens))
         "backslash-escaped space must yield a single token, got ~S" tokens)
     (is (string= "foo bar" (first tokens))
@@ -388,7 +455,9 @@
 
 (test config-tokenizer-mixed
   "%config-tokens: mix of plain tokens, quoted tokens, and backslash escapes."
-  (let ((tokens (cl-tmux/config::%config-tokens "a \"b c\" d\ e")))
+  ;; "a \"b c\" d\\ e" is the literal  a "b c" d\ e  — quoted token preserves the
+  ;; inner space; the backslash-space escapes to keep "d e" as one token.
+  (let ((tokens (cl-tmux/config::%config-tokens "a \"b c\" d\\ e")))
     (is (= 3 (length tokens))
         "must have 3 tokens, got ~S" tokens)
     (is (string= "a" (first tokens)) "first token is a")

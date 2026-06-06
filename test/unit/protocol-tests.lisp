@@ -331,7 +331,7 @@
 (test read-u32-decodes-big-endian
   "read-u32 reads four bytes at START as a big-endian u32."
   (let ((buffer (make-array 8 :element-type '(unsigned-byte 8)
-                              :initial-contents '(0 0 0 0 0 1 0 0))))
+                              :initial-contents '(0 0 0 0 0 0 1 0))))
     (is (= 0      (cl-tmux/protocol:read-u32 buffer 0)) "all-zero word")
     (is (= 256    (cl-tmux/protocol:read-u32 buffer 4)) "0 0 1 0 = 256")
     (let ((buf2 (cl-tmux/protocol:u32-octets #xDEADBEEF)))

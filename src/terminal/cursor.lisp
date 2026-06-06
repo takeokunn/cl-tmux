@@ -52,25 +52,56 @@
   "Line feed: move cursor down, scrolling the scroll region if at the bottom."
   (cursor-down/scroll screen))
 
+(defun %materialize-tab-stops (screen)
+  "Return SCREEN's tab stops as a concrete sorted list of columns, expanding the
+   :DEFAULT sentinel into the standard every-8-columns stops for the width."
+  (let ((stops (screen-tab-stops screen)))
+    (if (eq stops :default)
+        (loop for c from 8 below (screen-width screen) by 8 collect c)
+        stops)))
+
+(defun set-tab-stop (screen)
+  "HTS (ESC H) — set a horizontal tab stop at the current cursor column."
+  (setf (screen-tab-stops screen)
+        (sort (adjoin (screen-cursor-x screen) (%materialize-tab-stops screen)) #'<)))
+
+(defun clear-tab-stops (screen mode)
+  "TBC (CSI N g) — clear tab stops.  MODE 3 clears ALL stops; any other value
+   (including 0) clears the stop at the current cursor column."
+  (setf (screen-tab-stops screen)
+        (if (= mode 3)
+            '()
+            (remove (screen-cursor-x screen) (%materialize-tab-stops screen)))))
+
 (defun cursor-ht (screen)
-  "Horizontal tab: advance cursor to the next 8-column tab stop."
-  (let ((nx (* 8 (ceiling (1+ (screen-cursor-x screen)) 8))))
+  "Horizontal tab: advance the cursor to the next tab stop (default: every 8
+   columns; HTS/TBC can customise the stops), clamping to the last column."
+  (let ((stops (screen-tab-stops screen))
+        (x     (screen-cursor-x screen))
+        (max-x (1- (screen-width screen))))
     (setf (screen-cursor-x screen)
-          (min nx (1- (screen-width screen))))))
+          (if (eq stops :default)
+              (min (* 8 (ceiling (1+ x) 8)) max-x)
+              (or (find-if (lambda (c) (> c x)) (sort (copy-list stops) #'<))
+                  max-x)))))
 
 (defun cursor-cht (screen n)
   "CHT — cursor forward N tab stops (CSI N I).
-   Advance the cursor to the Nth next 8-column tab stop, clamping to width-1."
+   Advance the cursor to the Nth next tab stop, clamping to width-1."
   (dotimes (_ (max 1 n))
     (cursor-ht screen)))
 
 (defun cursor-cbt (screen n)
   "CBT — cursor backward N tab stops (CSI N Z).
-   Move the cursor back to the Nth previous 8-column tab stop, stopping at column 0."
+   Move the cursor back to the Nth previous tab stop, stopping at column 0."
   (dotimes (_ (max 1 n))
-    (let* ((col-before (max 0 (1- (screen-cursor-x screen))))
-           (prev-stop  (* 8 (floor col-before 8))))
-      (setf (screen-cursor-x screen) prev-stop))))
+    (let ((stops (screen-tab-stops screen))
+          (x     (screen-cursor-x screen)))
+      (setf (screen-cursor-x screen)
+            (if (eq stops :default)
+                (* 8 (floor (max 0 (1- x)) 8))
+                (or (find-if (lambda (c) (< c x)) (sort (copy-list stops) #'>))
+                    0))))))
 
 (defun cursor-bs (screen)
   "Backspace: move cursor left one column if not already at column 0."
@@ -86,6 +117,12 @@
 (defun cursor-cr (screen)
   "Carriage return: move the cursor to column 0."
   (setf (screen-cursor-x screen) 0))
+
+(defun cursor-nel (screen)
+  "NEL (ESC E) — Next Line: carriage return then line feed, i.e. move the cursor
+   to column 0 of the next row (scrolling at the bottom margin like LF)."
+  (cursor-cr screen)
+  (cursor-lf screen))
 
 ;;; ── Character writing ──────────────────────────────────────────────────────
 

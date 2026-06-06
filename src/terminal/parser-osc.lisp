@@ -112,10 +112,49 @@
 ;;; OSC 52 delivers clipboard data; the Base64 payload is decoded and forwarded
 ;;; to *osc52-handler* when one has been installed.
 
+(defun %percent-decode (s)
+  "Decode %XX percent-escapes in S, UTF-8 aware: %20 → space, %E2%9C%93 → ✓.
+   A '%' not followed by two hex digits is left literal.  No-op when S has no '%'
+   (the common case — avoids the byte round-trip)."
+  (if (not (find #\% s))
+      s
+      (let ((bytes '()) (i 0) (n (length s)))
+        (flet ((hex (c) (digit-char-p c 16)))
+          (loop while (< i n) do
+            (let ((c (char s i)))
+              (if (and (char= c #\%) (< (+ i 2) n)
+                       (hex (char s (1+ i))) (hex (char s (+ i 2))))
+                  (progn
+                    (push (+ (* 16 (hex (char s (1+ i)))) (hex (char s (+ i 2)))) bytes)
+                    (incf i 3))
+                  (progn
+                    (loop for b across (babel:string-to-octets (string c) :encoding :utf-8)
+                          do (push b bytes))
+                    (incf i))))))
+        (babel:octets-to-string (coerce (nreverse bytes) '(vector (unsigned-byte 8)))
+                                :encoding :utf-8 :errorp nil))))
+
+(defun %osc7-path (body)
+  "Extract the filesystem path from an OSC 7 'file://host/path' URL (the form a
+   shell uses to report its cwd) and percent-decode it.
+   \"file://host/home/u\" → \"/home/u\"; \"file:///My%20Docs\" → \"/My Docs\".
+   Returns BODY unchanged when it is not a file:// URL."
+  (let ((prefix "file://"))
+    (if (and (>= (length body) (length prefix))
+             (string= (subseq body 0 (length prefix)) prefix))
+        (let* ((after-scheme (subseq body (length prefix)))   ; "host/path" or "/path"
+               (slash        (position #\/ after-scheme)))
+          (if slash (%percent-decode (subseq after-scheme slash)) "/"))
+        body)))
+
 (define-osc-rules
   ;; OSC 0 / OSC 2: set window title
   ((0 2)
    (set-screen-title screen body))
+
+  ;; OSC 7: report current working directory (file://host/path) → #{pane_current_path}
+  (7
+   (set-screen-cwd screen (%osc7-path body)))
 
   ;; OSC 52: clipboard write — handled by the dedicated helper
   (52

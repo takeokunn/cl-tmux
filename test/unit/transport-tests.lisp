@@ -127,8 +127,9 @@
 (test with-incoming-frame-eof-falls-through-to-nil-type
   "At EOF, with-incoming-frame delivers NIL type; a nil-check rule can handle it."
   (with-temp-octet-file (path)
-    ;; Write nothing — the stream is immediately at EOF.
-    (with-open-file (in path :element-type '(unsigned-byte 8))
+    ;; Write nothing — create an empty file so the stream is immediately at EOF.
+    (with-open-file (in path :element-type '(unsigned-byte 8)
+                             :if-does-not-exist :create)
       (let ((hit-eof nil))
         (with-incoming-frame (type payload in)
           ((null type) (setf hit-eof t))

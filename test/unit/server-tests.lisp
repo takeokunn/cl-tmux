@@ -92,15 +92,17 @@ NIL→NIL, and any other value→NIL."
 (test process-client-keys-detach-keystroke-returns-detach
   :description "A prefix+detach key payload (^B d) returns :detach and leaves *running* T —
 a detach disconnects the client but the session must survive for re-attach."
+  ;; Isolate the key-tables so the default #\d → :detach binding is present.
   (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((state   (cl-tmux::make-input-state))
-            (payload (make-array 2 :element-type '(unsigned-byte 8)
-                                   :initial-contents (list 2 (char-code #\d)))))
-        (is (eq :detach (cl-tmux::process-client-keys s payload state))
-            "^B d should yield the :detach disposition")
-        (is-true cl-tmux::*running*
-                 "a detach must not clear *running* (session survives)")))))
+    (with-isolated-config
+      (with-loop-state
+        (let ((state   (cl-tmux::make-input-state))
+              (payload (make-array 2 :element-type '(unsigned-byte 8)
+                                     :initial-contents (list 2 (char-code #\d)))))
+          (is (eq :detach (cl-tmux::process-client-keys s payload state))
+              "^B d should yield the :detach disposition")
+          (is-true cl-tmux::*running*
+                   "a detach must not clear *running* (session survives)"))))))
 
 (test process-client-keys-quit-keystroke-returns-quit
   :description "A prefix+kill-window key payload (^B &) now shows a confirm-before prompt
@@ -655,13 +657,15 @@ it still updates *term-rows*/*term-cols* without signalling."
 
 (test process-bytes-cps-detach-keystroke-returns-detach
   :description "%process-bytes-cps on a prefix+d byte sequence returns :detach."
+  ;; Isolate the key-tables so the default #\d → :detach binding is present.
   (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((state (cl-tmux::make-input-state))
-            (bytes (make-array 2 :element-type '(unsigned-byte 8)
-                                 :initial-contents (list 2 (char-code #\d)))))
-        (is (eq :detach (cl-tmux::%process-bytes-cps s bytes state 0))
-            "prefix+d must yield :detach disposition from CPS walker")))))
+    (with-isolated-config
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state))
+              (bytes (make-array 2 :element-type '(unsigned-byte 8)
+                                   :initial-contents (list 2 (char-code #\d)))))
+          (is (eq :detach (cl-tmux::%process-bytes-cps s bytes state 0))
+              "prefix+d must yield :detach disposition from CPS walker"))))))
 
 ;;; ── %sync-active-window unit test ────────────────────────────────────────────
 

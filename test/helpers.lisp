@@ -8,11 +8,11 @@
 ;;; ── Hooks isolation ─────────────────────────────────────────────────────────
 
 (defmacro with-isolated-hooks (&body body)
-  "Run BODY with a fresh *hook-registry* so hook registrations do not leak."
-  (let ((registry (gensym "REGISTRY")))
-    `(let ((,registry (make-hash-table :test #'equal)))
-       (let ((cl-tmux/hooks:*hook-registry* ,registry))
-         (progn ,@body)))))
+  "Run BODY with fresh *hook-registry* and *command-hooks* tables so neither
+   lisp-function hooks nor command hooks (set-hook) leak between tests."
+  `(let ((cl-tmux/hooks:*hook-registry* (make-hash-table :test #'equal))
+         (cl-tmux/hooks:*command-hooks* (make-hash-table :test #'equal)))
+     ,@body))
 
 ;;; ── Config isolation ────────────────────────────────────────────────────────
 
@@ -22,8 +22,12 @@
   `(let ((cl-tmux/config:*key-tables*  (make-hash-table :test #'equal))
           (cl-tmux/config:*default-shell* cl-tmux/config:*default-shell*)
           (cl-tmux/config:*status-height* cl-tmux/config:*status-height*))
-     ;; Re-initialize with fresh key tables
+     ;; Re-initialize with fresh key tables: config.lisp defaults PLUS the
+     ;; extended prefix bindings installed by events-loop.lisp (C-b z, C-b L,
+     ;; etc.).  Without the latter the isolated table would diverge from the live
+     ;; image and tests like bind-multichar would not find #\z bound.
      (cl-tmux/config::initialize-default-key-tables)
+     (cl-tmux::install-extended-key-bindings)
      ,@body))
 
 ;;; ── Screen builder ──────────────────────────────────────────────────────────
@@ -290,9 +294,74 @@
 (defun active-screen (session)
   (pane-screen (window-active-pane (session-active-window session))))
 
+(defmacro with-global-running (value &body body)
+  "Run BODY with the GLOBAL value of cl-tmux::*running* set to VALUE, restoring
+   the prior global value afterward.
+
+   Why not (let ((cl-tmux::*running* value)) ...)?  A LET establishes a
+   thread-LOCAL dynamic binding visible only in the current thread.  Reader and
+   status-timer threads spawned inside BODY do NOT inherit the parent's dynamic
+   bindings — they observe the GLOBAL value of *running*.  A LET binding is
+   therefore invisible to them: they never see the stop signal, loop forever,
+   outlive join-thread's timeout, and leak into later suites where a leftover
+   thread makes fork() fail with \"Cannot fork with multiple threads running.\"
+   Mutating the global with SETF is what those threads actually observe, so any
+   test that spawns a reader/timer thread must drive *running* through this
+   macro rather than a LET."
+  (let ((saved (gensym "SAVED-RUNNING")))
+    `(let ((,saved cl-tmux::*running*))
+       (setf cl-tmux::*running* ,value)
+       (unwind-protect (progn ,@body)
+         (setf cl-tmux::*running* ,saved)))))
+
+(defun stop-cl-tmux-threads ()
+  "Stop and join every PTY-reader / status-timer / background-shell thread that
+   a test may have spawned, so none leaks into a later test where a leftover
+   thread makes sb-posix:fork signal \"Cannot fork with multiple threads
+   running.\"
+
+   Dispatching :split-*, :new-window, :new-session or :respawn-pane forks a real
+   pane and calls START-READER-THREAD; that reader loops while the GLOBAL
+   *running* is true.  We clear the global so the loops exit, join the named
+   threads (bounded), then restore *running* to T for the next test.  Threads
+   are matched by name, so no global registry is required.
+
+   IMPORTANT: after signaling *running*=NIL we SLEEP before restoring it.
+   Reader/timer loops only observe *running* between poll cycles (readers poll
+   every +pty-poll-timeout-us+ ≈ 50 ms).  bordeaux-threads:join-thread does not
+   reliably honour :timeout on this build, so we cannot count on the join to
+   block until the thread dies — without the pause, *running* would flip back to
+   T while a reader is still mid-poll and it would never stop.  Sleeping ~3 poll
+   cycles guarantees every reader observes the stop and exits (leaving
+   sb-thread:list-all-threads, which is what makes the next fork succeed)."
+  (let ((targets
+          (remove-if-not
+           (lambda (th)
+             (let ((name (bordeaux-threads:thread-name th)))
+               (and (stringp name)
+                    (or (search "pty-reader" name)
+                        (search "cl-tmux-status-timer" name)
+                        (search "shell-bg" name)))))
+           (bordeaux-threads:all-threads))))
+    (when targets
+      (setf cl-tmux::*running* nil)
+      (sleep 0.15)
+      (dolist (th targets)
+        (ignore-errors (bordeaux-threads:join-thread th :timeout 2)))
+      (setf cl-tmux::*running* t))))
+
 (defmacro with-loop-state (&body body)
-  "Dynamically bind the event-loop specials so dispatch side effects are isolated."
-  `(let ((cl-tmux::*running* t) (cl-tmux::*dirty* nil)) ,@body))
+  "Run BODY with the event-loop specials isolated, then stop any reader/timer
+   threads BODY spawned (e.g. by dispatching a :split that forks a real pane).
+
+   *running* is driven through its GLOBAL value (via WITH-GLOBAL-RUNNING) rather
+   than a LET, because reader threads spawned during BODY read the global; a LET
+   binding would be invisible to them and they would leak into later forking
+   tests.  STOP-CL-TMUX-THREADS joins them before returning."
+  `(let ((cl-tmux::*dirty* nil))
+     (with-global-running t
+       (unwind-protect (progn ,@body)
+         (stop-cl-tmux-threads)))))
 
 (defmacro with-clean-prompt (&body body)
   "Dynamically bind *prompt* to NIL and cl-tmux::*dirty* to NIL so prompt

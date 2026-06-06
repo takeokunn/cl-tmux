@@ -63,14 +63,37 @@
   (app-cursor-keys nil :type boolean)
   ;; OSC 0/2 window title
   (title "" :type string)
+  ;; OSC 7 current working directory (file://host/path reported by the shell);
+  ;; surfaces as #{pane_current_path}.  Empty until the shell reports it.
+  (cwd "" :type string)
   ;; Mouse reporting mode: 0=off, 1=basic-1000, 2=button-1002, 3=all-motion-1003
   (mouse-mode 0 :type (unsigned-byte 8))
   ;; SGR extended mouse encoding: T when ?1006h is set
   (mouse-sgr-mode nil :type boolean)
   ;; Auto-wrap mode: T = wrap at right margin (?7h default), NIL = no wrap (?7l)
   (autowrap t :type boolean)
-  ;; Active character set: :ascii (G0 default) or :dec-graphics (ESC ( 0)
+  ;; Origin mode (DECOM, ?6): T = CUP/HVP rows are relative to the scroll region
+  ;; (and the cursor is confined to it); NIL (default) = absolute positioning.
+  (origin-mode nil :type boolean)
+  ;; Focus event reporting (?1004h = on, ?1004l = off).  When on, the pane's
+  ;; application is sent ESC[I on focus gained / ESC[O on focus lost (e.g. when
+  ;; the active pane changes), so TUIs like vim can redraw or pause.
+  (focus-events nil :type boolean)
+  ;; Effective (currently-invoked) character set: :ascii or :dec-graphics.
+  ;; Derived from whichever of G0/G1 is active; read by %remap-charset-char so
+  ;; that direct (setf screen-charset) in tests keeps working.
   (charset :ascii :type (member :ascii :dec-graphics))
+  ;; VT100 charset state: G0/G1 designations (ESC ( X / ESC ) X) plus the active
+  ;; locking-shift selector toggled by SO (0x0E → G1) / SI (0x0F → G0).  G0 is
+  ;; the invoked set on reset.  CHARSET above mirrors the active set's designation.
+  (g0-charset :ascii :type (member :ascii :dec-graphics))
+  (g1-charset :ascii :type (member :ascii :dec-graphics))
+  (active-g :g0 :type (member :g0 :g1))
+  ;; Horizontal tab stops.  The :DEFAULT sentinel means "the standard fixed
+  ;; every-8-columns stops" (so the common path needs no per-screen list and is
+  ;; resize-proof); HTS (ESC H) / TBC (CSI g) materialize it into an explicit
+  ;; sorted list of stop columns.
+  (tab-stops :default)
   ;; Current underline color pen (same encoding as fg/bg; 0 = default)
   (cur-ul-color 0 :type (unsigned-byte 25))
   ;; Current extended attribute pen (attrs2 bits: double-underline, overline)

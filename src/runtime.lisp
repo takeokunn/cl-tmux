@@ -165,15 +165,27 @@
 
 ;;; -- Status interval timer --------------------------------------------------
 
+(defconstant +status-timer-poll-seconds+ 0.1
+  "Granularity (seconds) at which the status timer re-checks *running* and the
+   elapsed interval.  Kept small so the thread shuts down promptly when *running*
+   clears instead of holding a multi-second sleep that would outlive the
+   join-thread timeout and leak the thread (which, fatally, makes every
+   subsequent fork() fail with \"Cannot fork with multiple threads running\").")
+
 (defun start-status-timer (dirty-fn)
   "Start a background thread that calls DIRTY-FN every status-interval seconds.
    DIRTY-FN should mark the session dirty to trigger a status bar redraw.
-   Returns the thread object. Stops when *running* is NIL."
+   The thread polls *running* at +status-timer-poll-seconds+ granularity and
+   accumulates elapsed time, firing DIRTY-FN once per status-interval, so it
+   exits within one poll tick of *running* clearing.  Returns the thread object."
   (make-thread
    (lambda ()
-     (loop while *running*
-           do (let ((interval (max 1 (cl-tmux/options:get-option "status-interval"))))
-                (sleep interval))
-           when *running*
-           do (funcall dirty-fn)))
+     (let ((elapsed 0))
+       (loop while *running*
+             do (sleep +status-timer-poll-seconds+)
+                (incf elapsed +status-timer-poll-seconds+)
+                (let ((interval (max 1 (cl-tmux/options:get-option "status-interval"))))
+                  (when (and *running* (>= elapsed interval))
+                    (setf elapsed 0)
+                    (funcall dirty-fn))))))
    :name "cl-tmux-status-timer"))

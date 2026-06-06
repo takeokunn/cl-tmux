@@ -286,6 +286,46 @@
     (is-false (cl-tmux/terminal/types:screen-bracketed-paste s)
               "dec-pm-reset 2004 must set bracketed-paste to NIL")))
 
+;;; ── Focus event reporting (?1004h / ?1004l) ──────────────────────────────────
+
+(test focus-events-mode-toggle
+  "ESC[?1004h sets focus-events to T; ESC[?1004l resets it to NIL."
+  (with-screen (s 20 5)
+    (is-false (cl-tmux/terminal/types:screen-focus-events s)
+              "focus-events must be NIL by default")
+    (feed s (esc "[?1004h"))
+    (is (cl-tmux/terminal/types:screen-focus-events s)
+        "focus-events must be T after ESC[?1004h")
+    (feed s (esc "[?1004l"))
+    (is-false (cl-tmux/terminal/types:screen-focus-events s)
+              "focus-events must be NIL after ESC[?1004l")))
+
+(test focus-events-direct-set-reset
+  "dec-pm-set/reset with param 1004 toggles focus-events directly."
+  (with-screen (s 20 5)
+    (cl-tmux/terminal/actions:dec-pm-set s '(1004))
+    (is (cl-tmux/terminal/types:screen-focus-events s)
+        "dec-pm-set 1004 must set focus-events to T")
+    (cl-tmux/terminal/actions:dec-pm-reset s '(1004))
+    (is-false (cl-tmux/terminal/types:screen-focus-events s)
+              "dec-pm-reset 1004 must set focus-events to NIL")))
+
+(test focus-event-report-bytes
+  "focus-event-report yields ESC[I on focus gained, ESC[O on focus lost, and NIL
+   when focus events are disabled."
+  (with-screen (s 20 5)
+    (is-false (cl-tmux/terminal/actions:focus-event-report s t)
+              "disabled screen must report NIL for focus gained")
+    (is-false (cl-tmux/terminal/actions:focus-event-report s nil)
+              "disabled screen must report NIL for focus lost")
+    (feed s (esc "[?1004h"))
+    (is (string= (format nil "~C[I" #\Escape)
+                 (cl-tmux/terminal/actions:focus-event-report s t))
+        "focus gained must report ESC[I")
+    (is (string= (format nil "~C[O" #\Escape)
+                 (cl-tmux/terminal/actions:focus-event-report s nil))
+        "focus lost must report ESC[O")))
+
 ;;; ── Application cursor keys (?1h / ?1l) ─────────────────────────────────────
 
 (test app-cursor-keys-toggle

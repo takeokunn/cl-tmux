@@ -591,3 +591,376 @@
     (is (stringp result) "#[...] result must be a string (no crash)")
     (is (string= "#[fg=colour231,bold]" result)
         "#[fg=colour231,bold] must pass through literally, got ~S" result)))
+
+;;; ── structural pane / aggregate format variables ─────────────────────────────
+;;;
+;;; These are pure functions of the session/window/pane structs, wired into
+;;; format-context-from-session and exercised end-to-end through expand-format.
+
+(test format-context-exposes-structural-pane-variables
+  "format-context-from-session populates pane geometry/id/pid variables that
+   expand-format resolves (#{pane_width} #{pane_height} #{pane_id} #{pane_left}
+   #{pane_top} #{pane_pid})."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    ;; make-fake-window panes are 20x5 at (0,0), id 1, pid -1.
+    (is (string= "20" (cl-tmux/format:expand-format "#{pane_width}"  ctx)))
+    (is (string= "5"  (cl-tmux/format:expand-format "#{pane_height}" ctx)))
+    (is (string= "1"  (cl-tmux/format:expand-format "#{pane_id}"     ctx)))
+    (is (string= "0"  (cl-tmux/format:expand-format "#{pane_left}"   ctx)))
+    (is (string= "0"  (cl-tmux/format:expand-format "#{pane_top}"    ctx)))
+    (is (string= "-1" (cl-tmux/format:expand-format "#{pane_pid}"    ctx)))))
+
+(test format-context-pane-variables-default-when-pane-nil
+  "With a NIL pane, structural pane variables default to 0 (empty-safe)."
+  (let ((ctx (cl-tmux/format:format-context-from-session nil nil nil)))
+    (is (string= "0" (cl-tmux/format:expand-format "#{pane_width}"  ctx)))
+    (is (string= "0" (cl-tmux/format:expand-format "#{pane_id}"     ctx)))
+    (is (string= "0" (cl-tmux/format:expand-format "#{pane_active}" ctx)))))
+
+(test format-context-pane-active-distinguishes-active-pane
+  "#{pane_active} is 1 for the window's active pane, 0 otherwise — and drives
+   the #{?pane_active,t,f} conditional, the common real-world usage."
+  (let* ((sess       (make-fake-session :nwindows 1 :npanes 2))
+         (win        (first (cl-tmux/model:session-windows sess)))
+         (panes      (cl-tmux/model:window-panes win))
+         (p-active   (cl-tmux/model:window-active-pane win))
+         (p-inactive (find-if-not (lambda (p) (eq p p-active)) panes)))
+    (let ((ctx-a (cl-tmux/format:format-context-from-session sess win p-active))
+          (ctx-i (cl-tmux/format:format-context-from-session sess win p-inactive)))
+      (is (string= "1" (cl-tmux/format:expand-format "#{pane_active}" ctx-a))
+          "active pane → #{pane_active} 1")
+      (is (string= "0" (cl-tmux/format:expand-format "#{pane_active}" ctx-i))
+          "inactive pane → #{pane_active} 0")
+      (is (string= "HERE" (cl-tmux/format:expand-format "#{?pane_active,HERE,away}" ctx-a))
+          "conditional picks the true branch for the active pane")
+      (is (string= "away" (cl-tmux/format:expand-format "#{?pane_active,HERE,away}" ctx-i))
+          "conditional picks the false branch for an inactive pane"))))
+
+(test format-context-window-panes-and-session-windows-counts
+  "#{window_panes} is the pane count; #{session_windows} is the window count."
+  (let* ((sess (make-fake-session :nwindows 3 :npanes 2))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (is (string= "2" (cl-tmux/format:expand-format "#{window_panes}" ctx))
+        "window has 2 panes")
+    (is (string= "3" (cl-tmux/format:expand-format "#{session_windows}" ctx))
+        "session has 3 windows")))
+
+;;; ── Format modifiers: #{=N:var} #{=-N:var} #{b:var} #{d:var} ─────────────────
+
+(test format-modifier-truncate-left
+  "#{=N:var} keeps the first N characters of the resolved value."
+  (is (string= "veryl" (fmt "#{=5:window_name}" :window-name "verylongname"))))
+
+(test format-modifier-truncate-right
+  "#{=-N:var} keeps the last N characters of the resolved value."
+  (is (string= "gname" (fmt "#{=-5:window_name}" :window-name "verylongname"))))
+
+(test format-modifier-truncate-shorter-than-limit-unchanged
+  "#{=N:var} leaves a value shorter than N untouched."
+  (is (string= "short" (fmt "#{=20:window_name}" :window-name "short"))))
+
+(test format-modifier-basename
+  "#{b:var} yields the final path component of the resolved value."
+  (is (string= "project"
+               (fmt "#{b:pane_current_path}" :pane-current-path "/home/user/project")))
+  (is (string= "b" (fmt "#{b:p}" :p "/a/b/"))   "trailing slash is stripped first")
+  (is (string= "foo" (fmt "#{b:p}" :p "foo"))   "a bare name is its own basename"))
+
+(test format-modifier-dirname
+  "#{d:var} yields the directory part of the resolved value."
+  (is (string= "/home/user"
+               (fmt "#{d:pane_current_path}" :pane-current-path "/home/user/project")))
+  (is (string= "." (fmt "#{d:p}" :p "foo"))   "no slash → current dir")
+  (is (string= "/" (fmt "#{d:p}" :p "/foo"))  "top-level → root"))
+
+(test format-modifier-unrecognized-falls-back-to-lookup
+  "An unrecognised modifier prefix falls back to a plain variable lookup of the
+   whole #{...} content (an unknown key yields empty string), never an error."
+  (is (string= "" (fmt "#{zz:window_name}" :window-name "x"))))
+
+(test format-conditional-with-colon-in-branch-is-not-a-modifier
+  "A ':' inside a #{?...} conditional branch must NOT be mistaken for a modifier
+   separator — the conditional is matched first."
+  (is (string= "a:b" (fmt "#{?on,a:b,c}" :on "1"))
+      "true branch 'a:b' (containing a colon) must survive intact")
+  (is (string= "c"   (fmt "#{?on,a:b,c}" :on "0"))
+      "false branch still selected when condition is false"))
+
+;;; ── Path-modifier helpers (direct unit tests for edge cases) ──────────────────
+
+(test path-basename-edge-cases
+  "%path-basename handles roots, trailing slashes, and bare names."
+  (is (string= "c"   (cl-tmux/format::%path-basename "/a/b/c")))
+  (is (string= "b"   (cl-tmux/format::%path-basename "/a/b/")))
+  (is (string= "foo" (cl-tmux/format::%path-basename "foo")))
+  (is (string= "/"   (cl-tmux/format::%path-basename "/"))))
+
+(test path-dirname-edge-cases
+  "%path-dirname handles roots, trailing slashes, and bare names."
+  (is (string= "/a/b" (cl-tmux/format::%path-dirname "/a/b/c")))
+  (is (string= "/"    (cl-tmux/format::%path-dirname "/foo")))
+  (is (string= "."    (cl-tmux/format::%path-dirname "foo"))))
+
+;;; ── Substitute modifier: #{s/PAT/REP/[i]:var} ────────────────────────────────
+
+(test format-modifier-substitute-replaces-all
+  "#{s/PAT/REP/:var} replaces every occurrence of PAT in the resolved value."
+  (is (string= "barbar" (fmt "#{s/foo/bar/:window_name}" :window-name "foofoo")))
+  (is (string= "m00n"   (fmt "#{s/o/0/:p}" :p "moon"))))
+
+(test format-modifier-substitute-no-match-unchanged
+  "#{s/PAT/REP/:var} returns the value unchanged when PAT does not occur."
+  (is (string= "abc" (fmt "#{s/xyz/Q/:p}" :p "abc"))))
+
+(test format-modifier-substitute-case-insensitive-flag
+  "The trailing 'i' flag makes the substitution case-insensitive."
+  (is (string= "xx" (fmt "#{s/abc/x/i:p}" :p "abcABC"))))
+
+(test format-modifier-substitute-case-sensitive-by-default
+  "Without the 'i' flag, the substitution is case-sensitive."
+  (is (string= "xABC" (fmt "#{s/abc/x/:p}" :p "abcABC"))))
+
+(test format-modifier-substitute-empty-pattern-is-safe
+  "An empty pattern leaves the value unchanged (no infinite loop)."
+  (is (string= "abc" (fmt "#{s///:p}" :p "abc"))))
+
+(test string-replace-all-unit
+  "%string-replace-all replaces all occurrences; case-insensitive on request;
+   empty pattern returns the input unchanged."
+  (is (string= "a-b-c" (cl-tmux/format::%string-replace-all "axbxc" "x" "-")))
+  (is (string= "XXX"   (cl-tmux/format::%string-replace-all "aAa" "a" "X" t))
+      "case-insensitive replaces all three a/A")
+  (is (string= "XAX"   (cl-tmux/format::%string-replace-all "aAa" "a" "X"))
+      "case-sensitive replaces only the two lowercase a")
+  (is (string= "abc"   (cl-tmux/format::%string-replace-all "abc" "" "Z"))
+      "empty pattern returns the input unchanged"))
+
+;;; ── Nested #{...} (balanced braces) + comparison operators ───────────────────
+
+(test format-matching-close-brace-balances-nesting
+  "%matching-close-brace returns the OUTER close, skipping nested #{...}."
+  (flet ((mc (s) (cl-tmux/format::%matching-close-brace s 2)))  ; start past '#{'
+    ;; "#{=5:#{w}}" → content is "=5:#{w}", outer } at index 9
+    (is (= 9 (mc "#{=5:#{w}}")))
+    ;; no nesting: first } (index 4) for "#{abc}"
+    (is (= 5 (mc "#{abc}")))))
+
+(test format-modifier-nested-operand
+  "A modifier operand may itself be a nested #{...}, expanded before the modifier."
+  (is (string= "veryl" (fmt "#{=5:#{window_name}}" :window-name "verylongname"))
+      "truncate the expansion of a nested #{window_name}")
+  (is (string= "project"
+               (fmt "#{b:#{pane_current_path}}" :pane-current-path "/home/u/project"))
+      "basename of a nested path expansion"))
+
+(test format-modifier-bare-operand-still-lookup
+  "A bare (non-nested) modifier operand is still a variable lookup (unchanged)."
+  (is (string= "veryl" (fmt "#{=5:window_name}" :window-name "verylongname"))))
+
+(test format-comparison-equal-and-not-equal
+  "#{==:a,b} → 1 when equal else 0; #{!=:a,b} is its negation."
+  (is (string= "1" (fmt "#{==:foo,foo}")))
+  (is (string= "0" (fmt "#{==:foo,bar}")))
+  (is (string= "1" (fmt "#{!=:foo,bar}")))
+  (is (string= "0" (fmt "#{!=:foo,foo}"))))
+
+(test format-comparison-expands-nested-sides
+  "#{==:#{var},literal} expands the nested side before comparing."
+  (is (string= "1" (fmt "#{==:#{session_name},main}" :session-name "main")))
+  (is (string= "0" (fmt "#{==:#{session_name},main}" :session-name "other"))))
+
+(test format-comparison-drives-conditional
+  "#{?#{==:#{x},y},A,B} — a comparison used as a conditional test (the if-shell -F
+   pattern), end-to-end."
+  (is (string= "A" (fmt "#{?#{==:#{session_name},main},A,B}" :session-name "main")))
+  (is (string= "B" (fmt "#{?#{==:#{session_name},main},A,B}" :session-name "nope"))))
+
+(test format-comparison-numeric-operators
+  "#{<:a,b} #{>:a,b} #{<=:a,b} #{>=:a,b} compare the sides numerically."
+  (is (string= "1" (fmt "#{<:5,10}"))  "5 < 10")
+  (is (string= "0" (fmt "#{<:10,5}"))  "not 10 < 5")
+  (is (string= "1" (fmt "#{>:10,5}"))  "10 > 5")
+  (is (string= "0" (fmt "#{>:5,10}"))  "not 5 > 10")
+  (is (string= "1" (fmt "#{<=:5,5}"))  "5 <= 5")
+  (is (string= "0" (fmt "#{<=:6,5}"))  "not 6 <= 5")
+  (is (string= "1" (fmt "#{>=:5,5}"))  "5 >= 5")
+  (is (string= "0" (fmt "#{>=:4,5}"))  "not 4 >= 5"))
+
+(test format-comparison-numeric-nested-and-nonnumeric
+  "Numeric comparison expands nested sides; a non-numeric side parses as 0."
+  (is (string= "1" (fmt "#{>:#{window_index},0}" :window-index "2"))
+      "#{window_index}=2 > 0")
+  (is (string= "1" (fmt "#{<:foo,5}"))
+      "a non-numeric side parses as 0, so 0 < 5"))
+
+(test format-comparison-numeric-drives-conditional
+  "A numeric comparison as a conditional test (e.g. wide-vs-narrow on width)."
+  (is (string= "pos"
+               (fmt "#{?#{>:#{window_index},0},pos,nonpos}" :window-index "1")))
+  (is (string= "nonpos"
+               (fmt "#{?#{>:#{window_index},0},pos,nonpos}" :window-index "0"))))
+
+(test format-conditional-nested-condition
+  "#{?#{var},t,f} expands the nested condition before testing truthiness."
+  (is (string= "yes" (fmt "#{?#{window_active},yes,no}" :window-active "1")))
+  (is (string= "no"  (fmt "#{?#{window_active},yes,no}" :window-active "0"))))
+
+(test format-conditional-nested-branch
+  "#{?cond,#{var},f} expands the chosen branch (nested #{...} resolves)."
+  (is (string= "win"  (fmt "#{?1,#{window_name},none}" :window-name "win")))
+  (is (string= "none" (fmt "#{?0,#{window_name},none}" :window-name "win"))))
+
+(test format-conditional-literal-branch-still-works
+  "Backward compat: a #{?cond,YES,NO} with literal branches is unchanged."
+  (is (string= "YES" (fmt "#{?window_active,YES,NO}" :window-active "1")))
+  (is (string= "NO"  (fmt "#{?window_active,YES,NO}" :window-active "0"))))
+
+;;; ── #{pane_current_path} (from the OSC 7 cwd) ────────────────────────────────
+
+(test format-context-pane-current-path-from-osc7
+  "format-context-from-session exposes #{pane_current_path} from the pane's screen
+   cwd, and #{b:pane_current_path} gives its basename."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win))))
+    (setf (cl-tmux/terminal/types:screen-cwd (cl-tmux/model:pane-screen pane))
+          "/home/user/project")
+    (let ((ctx (cl-tmux/format:format-context-from-session sess win pane)))
+      (is (string= "/home/user/project"
+                   (cl-tmux/format:expand-format "#{pane_current_path}" ctx))
+          "pane_current_path must be the screen cwd")
+      (is (string= "project"
+                   (cl-tmux/format:expand-format "#{b:pane_current_path}" ctx))
+          "#{b:pane_current_path} must be the basename"))))
+
+(test format-context-pane-current-path-defaults-empty
+  "#{pane_current_path} is empty when no OSC 7 cwd has been reported (nil pane)."
+  (let ((ctx (cl-tmux/format:format-context-from-session nil nil nil)))
+    (is (string= "" (cl-tmux/format:expand-format "#{pane_current_path}" ctx)))))
+
+;;; ── New modifiers: #{t:strftime}, #{pN:var}, #{U:var}, #{L:var}, #{l:var} ──
+
+(test format-modifier-strftime-hhmm
+  "#{t:%H:%M} formats the current hour and minute as HH:MM."
+  (let ((result (fmt "#{t:%H:%M}")))
+    ;; Result must be exactly 5 chars HH:MM
+    (is (= 5 (length result))
+        "#{t:%H:%M} must be 5 chars, got ~S" result)
+    (is (char= #\: (char result 2))
+        "#{t:%H:%M} must have colon at position 2, got ~S" result)))
+
+(test format-modifier-strftime-date
+  "#{t:%Y-%m-%d} formats the current date as YYYY-MM-DD."
+  (let ((result (fmt "#{t:%Y-%m-%d}")))
+    (is (= 10 (length result))
+        "#{t:%Y-%m-%d} must be 10 chars, got ~S" result)
+    (is (char= #\- (char result 4))
+        "#{t:%Y-%m-%d} must have dash at position 4, got ~S" result)))
+
+(test format-modifier-strftime-default-empty-format
+  "#{t:} with empty format string uses the default strftime format."
+  (let ((result (fmt "#{t:}")))
+    ;; Default format is "%a %b %e %H:%M:%S %Z %Y" — reasonably long
+    (is (plusp (length result))
+        "#{t:} default format must produce a non-empty string, got ~S" result)))
+
+(test format-modifier-strftime-literals-pass-through
+  "Non-% characters in the strftime format are passed through unchanged."
+  (let ((result (fmt "#{t:TIME:}")))
+    (is (string= "TIME:" result)
+        "Literal text with no %codes passes through, got ~S" result)))
+
+(test format-modifier-strftime-percent-escape
+  "%% in the strftime format produces a literal percent."
+  (let ((result (fmt "#{t:100%%}")))
+    (is (string= "100%" result)
+        "#{t:100%%} must produce '100%%', got ~S" result)))
+
+(test format-modifier-pad-right
+  "#{p5:var} pads value to 5 chars on the right (left-align)."
+  (is (string= "ab   " (fmt "#{p5:v}" :v "ab"))
+      "2-char value padded to 5 should be 'ab   '")
+  (is (string= "hello" (fmt "#{p5:v}" :v "hello"))
+      "5-char value matches width exactly — no change")
+  (is (string= "toolong" (fmt "#{p5:v}" :v "toolong"))
+      "value longer than width passes through unchanged"))
+
+(test format-modifier-pad-left
+  "#{p-5:var} pads value to 5 chars on the left (right-align)."
+  (is (string= "   ab" (fmt "#{p-5:v}" :v "ab"))
+      "2-char value right-aligned to 5 should be '   ab'")
+  (is (string= "hello" (fmt "#{p-5:v}" :v "hello"))
+      "5-char value matches width exactly — no change"))
+
+(test format-modifier-uppercase
+  "#{U:var} uppercases the value."
+  (is (string= "HELLO" (fmt "#{U:v}" :v "hello")))
+  (is (string= "BASH"  (fmt "#{U:window_name}" :window-name "bash"))))
+
+(test format-modifier-lowercase
+  "#{L:var} lowercases the value."
+  (is (string= "hello" (fmt "#{L:v}" :v "HELLO")))
+  (is (string= "main"  (fmt "#{L:session_name}" :session-name "MAIN"))))
+
+(test format-modifier-length
+  "#{l:var} returns the character length of the value as a string."
+  (is (string= "5" (fmt "#{l:v}" :v "hello")))
+  (is (string= "0" (fmt "#{l:v}" :v "")))
+  (is (string= "3" (fmt "#{l:session_name}" :session-name "abc"))))
+
+(test format-modifier-strftime-unit-tests
+  "%strftime-format internal helpers produce correct output."
+  ;; Month abbreviations
+  (is (plusp (length (cl-tmux/format::%strftime-format "%b")))
+      "%b produces a non-empty abbreviation")
+  ;; Hour is in 0-23 range
+  (let ((h (parse-integer (cl-tmux/format::%strftime-format "%H") :junk-allowed t)))
+    (is (and h (>= h 0) (< h 24))
+        "%H must be in 0-23, got ~A" (cl-tmux/format::%strftime-format "%H")))
+  ;; %F is YYYY-MM-DD (10 chars)
+  (is (= 10 (length (cl-tmux/format::%strftime-format "%F")))
+      "%F must produce 10-char YYYY-MM-DD"))
+
+;;; ── New context keys: cursor_x, cursor_y, pane_in_mode, window_layout ────────
+
+(test format-context-cursor-xy-defaults
+  "format-context-from-session :cursor-x and :cursor-y default to 0 when pane is NIL."
+  (let ((ctx (cl-tmux/format:format-context-from-session nil nil nil)))
+    (is (= 0 (getf ctx :cursor-x))  ":cursor-x must default to 0")
+    (is (= 0 (getf ctx :cursor-y))  ":cursor-y must default to 0")))
+
+(test format-context-pane-in-mode-not-in-copy-mode
+  "format-context-from-session :pane-in-mode is \"0\" when pane is not in copy mode."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (is (string= "0" (getf ctx :pane-in-mode))
+        ":pane-in-mode must be \"0\" when pane is not in copy mode")))
+
+(test format-context-pane-in-mode-in-copy-mode
+  "format-context-from-session :pane-in-mode is \"1\" when pane is in copy mode."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (scr  (cl-tmux/model:pane-screen pane)))
+    (setf (cl-tmux/terminal/types:screen-copy-mode-p scr) t)
+    (let ((ctx (cl-tmux/format:format-context-from-session sess win pane)))
+      (is (string= "1" (getf ctx :pane-in-mode))
+          ":pane-in-mode must be \"1\" when copy mode is active"))
+    (setf (cl-tmux/terminal/types:screen-copy-mode-p scr) nil)))
+
+(test format-context-window-layout-non-empty-for-window-with-panes
+  "format-context-from-session :window-layout is a non-empty string for a window with a tree."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 2))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (let ((layout (getf ctx :window-layout)))
+      (is (stringp layout) ":window-layout must be a string")
+      (is (plusp (length layout)) ":window-layout must be non-empty for a window with panes"))))

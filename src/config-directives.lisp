@@ -192,13 +192,19 @@
          (setf table     (first remaining))
          (setf remaining (rest remaining)))
         (t
-         (unless (= (length remaining) 2) (return nil))
-         (let* ((key-token (%parse-key-token (first remaining)))
-                (cmd-name  (second remaining))
-                (keyword   (%command-keyword cmd-name)))
-           (if keyword
-               (return (values table key-token keyword repeatable))
-               (return nil))))))))
+         ;; Need a key plus at least one command token.
+         (when (null (rest remaining)) (return nil))
+         (let ((key-token  (%parse-key-token (first remaining)))
+               (cmd-tokens (rest remaining)))
+           (return
+             (if (= (length cmd-tokens) 1)
+                 ;; Single command word: resolve to a keyword, rejecting an
+                 ;; unknown command (preserves the original behaviour).
+                 (let ((keyword (%command-keyword (first cmd-tokens))))
+                   (if keyword (values table key-token keyword repeatable) nil))
+                 ;; Command WITH arguments: store the token list, to be run via
+                 ;; %run-command-tokens when the key is pressed.
+                 (values table key-token cmd-tokens repeatable)))))))))
 
 ;;; ── unbind-key flag parsing ──────────────────────────────────────────────
 ;;;
@@ -245,10 +251,11 @@
 
 (define-key-directive-handlers
   (("bind" "bind-key")
-   (multiple-value-bind (table key keyword repeatable)
+   (multiple-value-bind (table key command repeatable)
        (%parse-bind-key-args args)
-     (when keyword
-       (key-table-bind table key keyword :repeatable repeatable)
+     (when command
+       ;; COMMAND is a keyword (built-in) or a token list (`bind key cmd args`).
+       (key-table-bind table key command :repeatable repeatable)
        t)))
   (("unbind" "unbind-key")
    (multiple-value-bind (table key)
@@ -296,17 +303,71 @@
     t)
   ("set-session-option" 2 (option-name option-value)
     (cl-tmux/options:set-option option-name option-value)
-    t))
+    t)
+  ("set-hook" 2 (event-name command-name)
+    ;; Register a tmux command to run when the named hook fires.  COMMAND-NAME
+    ;; must be a bindable command name; unknown commands are rejected (NIL).
+    (let ((keyword (%command-keyword command-name)))
+      (when keyword
+        (cl-tmux/hooks:set-command-hook event-name keyword)
+        t))))
+
+;;; ── set-option flag handling (set -g / -a / ...) ────────────────────────────
+;;;
+;;; The fixed-arity directive table cannot match `set -g status off` (3 tokens vs
+;;; arity 2), so the canonical .tmux.conf form silently failed.  %apply-set-
+;;; directive consumes leading scope flags (-g global / -s server / -w window /
+;;; -o only-if-unset — all the same flat global store here) and handles -a
+;;; (append).  It only activates when a set-family directive carries a flag, so
+;;; the plain `set name value` form still flows through the normal table below.
+
+(defparameter +set-directive-names+
+  '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")
+  "Config directive verbs that forward to the global option store.")
+
+(defun %strip-set-flags (args)
+  "Consume leading -X flag tokens from a set directive's ARGS.
+   Returns (values HAD-FLAG APPEND-P POSITIONALS): HAD-FLAG is T when any flag was
+   present, APPEND-P is T when an -a flag appeared, POSITIONALS is the remaining
+   non-flag tokens (the option name and value)."
+  (let ((had-flag nil) (append-p nil) (rest args))
+    (loop while (and rest
+                     (let ((tok (first rest)))
+                       (and (>= (length tok) 2) (char= (char tok 0) #\-))))
+          do (let ((tok (pop rest)))
+               (setf had-flag t)
+               (when (find #\a tok) (setf append-p t))))
+    (values had-flag append-p rest)))
+
+(defun %apply-set-directive (cmd args)
+  "Apply a flag-bearing set-family directive (e.g. `set -g status off`,
+   `set -ag word-separators x`).  Returns T when applied; NIL when CMD is not a
+   set verb or carries no flags (so the normal directive table handles the plain
+   `set name value` form unchanged)."
+  (when (member cmd +set-directive-names+ :test #'string=)
+    (multiple-value-bind (had-flag append-p positionals) (%strip-set-flags args)
+      (when (and had-flag (first positionals))
+        (let ((name  (first positionals))
+              (value (format nil "~{~A~^ ~}" (rest positionals))))
+          (if append-p
+              (cl-tmux/options:set-option
+               name (concatenate 'string
+                                 (princ-to-string
+                                  (or (cl-tmux/options:get-option name nil) ""))
+                                 value))
+              (cl-tmux/options:set-option name value))
+          t)))))
 
 (defun apply-config-directive (tokens)
   "Apply one parsed config directive (list of string TOKENS) to live state.
    Returns T when applied, NIL for an unknown/invalid directive.
-   Handles bind [-n] [-r] [-T table] key command and
-   unbind/unbind-key [-n] [-T table] key, in addition to simple directives."
+   Handles bind [-n] [-r] [-T table] key command, unbind/unbind-key [-n] [-T
+   table] key, and set [-g|-a|...] name value, in addition to simple directives."
   (when tokens
     (let ((cmd  (first tokens))
           (args (rest tokens)))
       (or (%apply-key-directive cmd args)
+          (%apply-set-directive cmd args)
           (%apply-config-directive-inner tokens)))))
 
 (defun apply-config-line (line)

@@ -153,21 +153,28 @@
 (defun select-fds (fds timeout-us)
   "Poll FDS for readability with a TIMEOUT-US microsecond timeout.
    timeout-us = 0 → non-blocking; -1 → block indefinitely.
-   Returns the sub-list of fds that are ready to read."
+   Returns the sub-list of fds that are ready to read, or NIL.
+
+   The read-set is meaningful ONLY when select(2) returns a positive count: on a
+   timeout it returns 0, and on an interrupted/failed call (e.g. EINTR from a
+   SIGCHLD) it returns -1 and leaves the read-set UNDEFINED.  We therefore gate on
+   the return value and never inspect stale bits — without this, an EINTR could
+   make an idle fd spuriously report readable (an intermittent false positive)."
   (when (null fds) (return-from select-fds nil))
   (let ((maxfd (reduce #'max fds)))
-    (cffi:with-foreign-objects ((rset :int32 +fd-set-words+)
-                                (tv   :long  2))
+    (cffi:with-foreign-objects ((rset :uint32 +fd-set-words+)
+                                (tv   :long   2))
       (fd-zero! rset)
       (dolist (fd fds) (fd-set! fd rset))
-      (if (>= timeout-us 0)
-          (progn
-            (setf (cffi:mem-aref tv :long 0) (floor timeout-us 1000000)
-                  (cffi:mem-aref tv :long 1) (mod   timeout-us 1000000))
-            (%call-select (1+ maxfd) rset tv))
-          (%call-select (1+ maxfd) rset (cffi:null-pointer)))
-      ;; Return only the fds that became readable.
-      (loop for fd in fds when (fd-isset-p fd rset) collect fd))))
+      (let ((nready (if (>= timeout-us 0)
+                        (progn
+                          (setf (cffi:mem-aref tv :long 0) (floor timeout-us 1000000)
+                                (cffi:mem-aref tv :long 1) (mod   timeout-us 1000000))
+                          (%call-select (1+ maxfd) rset tv))
+                        (%call-select (1+ maxfd) rset (cffi:null-pointer)))))
+        ;; Only a positive count leaves a valid read-set to inspect.
+        (when (> nready 0)
+          (loop for fd in fds when (fd-isset-p fd rset) collect fd))))))
 
 ;;; ── Public: terminal geometry ──────────────────────────────────────────────
 

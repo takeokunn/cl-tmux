@@ -51,13 +51,21 @@
                  (label    (cl-tmux/format:expand-format
                             (if active-p fmt-current fmt-normal)
                             context)))
-            ;; Apply per-window style using %status-sgr-from-style for SGR conversion.
-            (let ((sgr-code (when (and style (plusp (length style)))
-                              (%status-sgr-from-style style))))
+            ;; Apply the per-window style, then expand any inline #[attr] blocks
+            ;; embedded in the label.  Within a window label, #[default] reverts to
+            ;; the window's own style (or the status default when it is unstyled).
+            ;; STYLED-P is true when we emitted a wrapper SGR or the label injected
+            ;; one, so the trailing reset keeps colour from bleeding into the
+            ;; separator / next window.
+            (let* ((sgr-code (when (and style (plusp (length style)))
+                               (%status-sgr-from-style style)))
+                   (expanded (%status-expand-style-blocks
+                              label (or sgr-code +sgr-default-status+)))
+                   (styled-p (or sgr-code (not (eq expanded label)))))
               (when sgr-code
                 (format window-stream "~C[~Am" +esc+ sgr-code))
-              (write-string label window-stream)
-              (when sgr-code
+              (write-string expanded window-stream)
+              (when styled-p
                 (reset-attrs window-stream)))))))))
 
 (defun %status-left-text (session active-win active-pane)
@@ -71,11 +79,93 @@
               (%status-pane-indicator active-pane)
               (%status-copy-indicator active-pane))))
 
+;;; ── SGR-aware length / truncation (inline #[attr] support) ───────────────────
+;;;
+;;; tmux status strings may embed CSI SGR sequences — both from window-status
+;;; styling and from inline #[fg=…] blocks (expanded below).  Those sequences are
+;;; zero-width on screen, so gap math and width clamping must count VISIBLE cells,
+;;; not raw characters.  For escape-free strings these reduce exactly to
+;;; LENGTH / SUBSEQ, so every existing alignment test is unaffected.
+
+(defun %sgr-sequence-end (str start)
+  "If STR has a CSI escape (ESC[…<final>) starting at START, return the index just
+   past its final byte; otherwise NIL.  A CSI final byte is in the #x40–#x7e range."
+  (let ((len (length str)))
+    (when (and (< (1+ start) len)
+               (char= (char str start) +esc+)
+               (char= (char str (1+ start)) #\[))
+      (let ((j (+ start 2)))
+        (loop while (and (< j len)
+                         (not (<= #x40 (char-code (char str j)) #x7e)))
+              do (incf j))
+        (if (< j len) (1+ j) len)))))
+
+(defun %visible-length (str)
+  "Number of visible cells in STR, skipping CSI SGR escape sequences.
+   Equals (LENGTH STR) for strings with no escape sequences."
+  (let ((n 0) (i 0) (len (length str)))
+    (loop while (< i len)
+          for esc-end = (%sgr-sequence-end str i)
+          do (if esc-end
+                 (setf i esc-end)
+                 (progn (incf n) (incf i))))
+    n))
+
+(defun %visible-truncate (str n)
+  "Prefix of STR holding at most N visible cells; CSI escape sequences are copied
+   through without counting toward N.  Equals (SUBSEQ STR 0 (MIN N (LENGTH STR)))
+   for escape-free strings."
+  (if (>= n (%visible-length str))
+      str
+      (with-output-to-string (out)
+        (let ((seen 0) (i 0) (len (length str)))
+          (loop while (and (< i len) (< seen n))
+                for esc-end = (%sgr-sequence-end str i)
+                do (if esc-end
+                       (progn (write-string str out :start i :end esc-end)
+                              (setf i esc-end))
+                       (progn (write-char (char str i) out)
+                              (incf seen)
+                              (incf i))))))))
+
+(defun %status-style-block-sgr (body base-sgr)
+  "SGR escape string for one inline #[BODY] status block.
+   An empty / \"default\" / \"none\" BODY resets to BASE-SGR (reset + base attrs);
+   any other BODY is parsed as a tmux style string (e.g. \"fg=green,bold\")."
+  (let ((b (string-trim " " body)))
+    (if (or (string= b "")
+            (string-equal b "default")
+            (string-equal b "none"))
+        (format nil "~C[0;~Am" +esc+ base-sgr)
+        (format nil "~C[~Am" +esc+ (%status-sgr-from-style b)))))
+
+(defun %status-expand-style-blocks (str base-sgr)
+  "Replace tmux inline #[…] style blocks in STR with CSI SGR escape sequences.
+   #[fg=green,bold] → ESC[1;32m ; #[default] → reset to BASE-SGR.  Returns STR
+   unchanged when it contains no #[ block, so default/format paths are untouched."
+  (if (not (search "#[" str))
+      str
+      (with-output-to-string (out)
+        (let ((i 0) (len (length str)))
+          (loop while (< i len)
+                do (if (and (char= (char str i) #\#)
+                            (< (1+ i) len)
+                            (char= (char str (1+ i)) #\[))
+                       (let ((close (position #\] str :start (+ i 2))))
+                         (if close
+                             (progn
+                               (write-string
+                                (%status-style-block-sgr (subseq str (+ i 2) close) base-sgr)
+                                out)
+                               (setf i (1+ close)))
+                             (progn (write-char (char str i) out) (incf i))))
+                       (progn (write-char (char str i) out) (incf i))))))))
+
 (defun %status-bar-line (left time-str terminal-cols)
   "Assemble the full status bar string: LEFT text, gap, TIME-STR, truncated to TERMINAL-COLS."
-  (let* ((gap  (max 0 (- terminal-cols (length left) (length time-str) 1)))
+  (let* ((gap  (max 0 (- terminal-cols (%visible-length left) (%visible-length time-str) 1)))
          (line (format nil "~A~A ~A" left (make-string gap :initial-element #\Space) time-str)))
-    (subseq line 0 (min (length line) terminal-cols))))
+    (%visible-truncate line terminal-cols)))
 
 (defun %status-format-or-default (opt-name context default-fn)
   "Return the expanded format string for OPT-NAME when it differs from its registered default;
@@ -88,9 +178,10 @@
         (funcall default-fn))))
 
 (defun %clamp-status-segment (raw-text max-length)
-  "Return RAW-TEXT truncated to at most MAX-LENGTH characters."
-  (if (> (length raw-text) max-length)
-      (subseq raw-text 0 max-length)
+  "Return RAW-TEXT truncated to at most MAX-LENGTH visible cells.
+   CSI SGR sequences (from inline #[attr] blocks) do not count toward the limit."
+  (if (> (%visible-length raw-text) max-length)
+      (%visible-truncate raw-text max-length)
       raw-text))
 
 ;;; ── Status bar justify strategies (data layer) ───────────────────────────────
@@ -106,16 +197,16 @@
 
 (defun %justify-right (left right-str cols)
   "Layout formula for right-justify: place RIGHT-STR flush against the right edge."
-  (let* ((gap  (max 0 (- cols (length left) (length right-str) 1)))
+  (let* ((gap  (max 0 (- cols (%visible-length left) (%visible-length right-str) 1)))
          (line (format nil "~A~A ~A" left
                        (make-string gap :initial-element #\Space)
                        right-str)))
-    (subseq line 0 (min (length line) cols))))
+    (%visible-truncate line cols)))
 
 (defun %justify-centre (left right-str cols)
   "Layout formula for centre-justify: pad before LEFT so the combined text is centred."
-  (let* ((llen  (length left))
-         (rlen  (length right-str))
+  (let* ((llen  (%visible-length left))
+         (rlen  (%visible-length right-str))
          (total (+ llen 1 rlen))   ; 1 = the separator space before right-str
          (pad-l (max 0 (floor (- cols total) 2)))
          (gap   (max 0 (- cols llen pad-l 1 rlen)))
@@ -124,7 +215,7 @@
                         left
                         (make-string gap :initial-element #\Space)
                         right-str)))
-    (subseq line 0 (min (length line) cols))))
+    (%visible-truncate line cols)))
 
 (defun %status-justify-line (left right-str cols justify)
   "Assemble the status bar according to JUSTIFY (\"left\" \"centre\" \"right\").
@@ -146,21 +237,27 @@
          (active-pane (session-active-pane session))
          (context     (cl-tmux/format:format-context-from-session
                        session active-win active-pane))
-         (raw-left    (if (prompt-active-p)
-                          (prompt-text)
-                          (%status-format-or-default
-                           "status-left" context
-                           (lambda () (%status-left-text session active-win active-pane)))))
-         (raw-right   (%status-format-or-default
-                       "status-right" context #'%status-current-time))
+         (sgr-code    (%status-sgr-from-style
+                       (cl-tmux/options:get-option "status-style" "")))
+         ;; Expand inline #[attr] style blocks into SGR escapes; #[default]
+         ;; reverts to SGR-CODE (the base status style) so the bar's bg/fg returns.
+         (raw-left    (%status-expand-style-blocks
+                       (if (prompt-active-p)
+                           (prompt-text)
+                           (%status-format-or-default
+                            "status-left" context
+                            (lambda () (%status-left-text session active-win active-pane))))
+                       sgr-code))
+         (raw-right   (%status-expand-style-blocks
+                       (%status-format-or-default
+                        "status-right" context #'%status-current-time)
+                       sgr-code))
          (left        (%clamp-status-segment
                        raw-left (cl-tmux/options:get-option "status-left-length" 40)))
          (right-str   (%clamp-status-segment
                        raw-right (cl-tmux/options:get-option "status-right-length" 40)))
          (justify     (cl-tmux/options:get-option "status-justify" "left"))
-         (line        (%status-justify-line left right-str terminal-cols justify))
-         (sgr-code    (%status-sgr-from-style
-                       (cl-tmux/options:get-option "status-style" ""))))
+         (line        (%status-justify-line left right-str terminal-cols justify)))
     (move-to stream status-row 0)
     (format stream "~C[~Am" +esc+ sgr-code)
     (write-string line stream)

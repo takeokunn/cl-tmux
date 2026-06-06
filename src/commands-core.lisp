@@ -28,6 +28,7 @@
       (ignore-errors (pty-close (pane-fd target) (pane-pid target))))
     (let ((survivor (window-remove-pane win target)))
       (run-hooks +hook-after-kill-pane+ target)
+      (run-command-hooks-via-runner +hook-after-kill-pane+ session)
       (if (null (window-panes win))
           (kill-window session win)
           (progn
@@ -53,11 +54,22 @@
           (rest windows)
           :initial-value (first windows)))
 
+(defun %maybe-renumber-windows (session)
+  "If the 'renumber-windows' option is set, renumber all windows in SESSION
+   starting from the 'base-index' option value, preserving their current order."
+  (when (cl-tmux/options:get-option "renumber-windows")
+    (let ((base (or (cl-tmux/options:get-option "base-index") 0)))
+      (loop for win in (session-windows session)
+            for i from base
+            do (setf (window-id win) i)))))
+
 (defun kill-window (session &optional window)
   "Destroy WINDOW (default: active window of SESSION).
    Kills all panes in it and removes the window from SESSION.
    After killing the active window, selects the numerically nearest remaining
    window (next higher id if available, otherwise next lower).
+   If 'renumber-windows' is set, renumbers the remaining windows starting from
+   the 'base-index' option.
    Returns :quit if no windows remain, NIL otherwise."
   (let* ((target    (or window (session-active-window session)))
          (killed-id (window-id target))
@@ -66,9 +78,11 @@
       (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
     (setf (session-windows session) remaining)
     (run-hooks +hook-after-kill-window+ target)
+    (run-command-hooks-via-runner +hook-after-kill-window+ session)
     (unless remaining (return-from kill-window :quit))
     (when (eq (session-active-window session) target)
       (session-select-window session (%nearest-window remaining killed-id)))
+    (%maybe-renumber-windows session)
     nil))
 
 ;;; ── Rename / Select ────────────────────────────────────────────────────────

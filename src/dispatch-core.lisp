@@ -79,7 +79,66 @@
   (with-active-window (win session)
     (swap-pane win direction)))
 
+;;; -- Focus event delivery (?1004) -------------------------------------------
+;;;
+;;; When a pane's application has enabled focus events, switching the active pane
+;;; must deliver ESC[O (focus lost) to the pane being left and ESC[I (focus
+;;; gained) to the pane being entered.  focus-event-report (terminal layer) owns
+;;; the byte sequence; here we perform the PTY write.  Both are guarded by a live
+;;; fd, so panes without a PTY (fd <= 0, e.g. in tests) are a harmless no-op.
+
+(defun %notify-pane-focus (pane focused-p)
+  "Send PANE's application its focus-tracking report (ESC[I gained / ESC[O lost)
+   when it enabled focus events and PANE has a live PTY.  A safe no-op otherwise."
+  (when (and pane (> (pane-fd pane) 0))
+    (let ((seq (cl-tmux/terminal/actions:focus-event-report
+                (pane-screen pane) focused-p)))
+      (when seq
+        (pty-write (pane-fd pane) (babel:string-to-octets seq :encoding :utf-8))))))
+
+(defun %select-pane-with-focus (win new-pane)
+  "Make NEW-PANE the active pane of WIN, delivering focus-out to the previously
+   active pane and focus-in to NEW-PANE (for panes that enabled ?1004).  Used by
+   every interactive pane-switch path so focus tracking stays transparent."
+  (let ((old (window-active-pane win)))
+    (window-select-pane win new-pane)
+    (unless (eq old new-pane)
+      (%notify-pane-focus old nil)
+      (%notify-pane-focus new-pane t))))
+
+(defmacro %with-window-focus-transition ((session) &body body)
+  "Run BODY (which may change SESSION's active window by any means) and then
+   deliver focus-out to the previously active window's pane and focus-in to the
+   newly active window's pane.  Captures the active window/pane BEFORE BODY and
+   diffs AFTER, so it works for direct session-select-window calls and for
+   lookup-based switches (select-window-by-number, find-window) alike.  Returns
+   BODY's primary value."
+  (let ((sess (gensym "SESSION")) (old-win (gensym "OLD-WIN"))
+        (old-pane (gensym "OLD-PANE")) (new-win (gensym "NEW-WIN")))
+    `(let* ((,sess     ,session)
+            (,old-win  (session-active-window ,sess))
+            (,old-pane (and ,old-win (window-active-pane ,old-win))))
+       (prog1 (progn ,@body)
+         (let ((,new-win (session-active-window ,sess)))
+           (unless (eq ,old-win ,new-win)
+             (%notify-pane-focus ,old-pane nil)
+             (%notify-pane-focus (and ,new-win (window-active-pane ,new-win)) t)))))))
+
 ;;; -- Private command helpers ------------------------------------------------
+
+(defun run-command-hooks (event-name session)
+  "Dispatch every command registered for hook EVENT-NAME (via the `set-hook`
+   directive) on SESSION.  A no-op when no command hooks are set, so calling it
+   next to each hook's run-hooks at a fire site is free for the common case.
+   NOTE: command hooks that dispatch a pane-forking command (:new-window,
+   :split-*) hit the single-thread fork constraint when reader threads are live;
+   non-forking commands (select/rename/layout) are the supported case."
+  (dolist (keyword (cl-tmux/hooks:command-hooks event-name))
+    (dispatch-command session keyword 0)))
+
+;; Install run-command-hooks as the command-hook runner so lower layers
+;; (cl-tmux/commands kill-pane / kill-window) can fire command hooks too.
+(setf cl-tmux/hooks:*command-hook-runner* #'run-command-hooks)
 
 (defun %cmd-new-window (session)
   "Create a new window in SESSION and start a reader thread for it.
@@ -90,21 +149,24 @@
          (name (%shell-basename))
          (win  (session-new-window session name rows cols)))
     (start-reader-thread (window-active-pane win))
-    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+ win)))
+    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+ win)
+    (run-command-hooks cl-tmux/hooks:+hook-after-new-window+ session)))
 
 (defun %cmd-cycle-window (session cycler)
   "Switch the active window using CYCLER (next-cyclic or prev-cyclic)."
   (let ((w (funcall cycler
                     (session-windows session)
                     (session-active-window session))))
-    (when w (session-select-window session w))))
+    (when w
+      (%with-window-focus-transition (session)
+        (session-select-window session w)))))
 
 (defun %cmd-cycle-pane (session cycler)
   "Switch the active pane within the active window using CYCLER."
   (let* ((win   (session-active-window session))
          (panes (window-panes win))
          (next  (funcall cycler panes (window-active-pane win))))
-    (when next (window-select-pane win next))))
+    (when next (%select-pane-with-focus win next))))
 
 (defun %cmd-split (session orient &key no-focus size)
   "Split the active pane of SESSION's active window in tree ORIENT (:h left/right,
@@ -114,7 +176,8 @@
          (new (window-split win orient :no-focus no-focus :size size)))
     (when new
       (start-reader-thread new)
-      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-split-window+ new))
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-split-window+ new)
+      (run-command-hooks cl-tmux/hooks:+hook-after-split-window+ session))
     new))
 
 (defun %active-screen (session)
@@ -146,7 +209,7 @@
          (ap  (and win (window-active-pane win))))
     (when (and win ap)
       (let ((nb (pane-neighbor win ap direction)))
-        (when nb (window-select-pane win nb))))))
+        (when nb (%select-pane-with-focus win nb))))))
 
 ;;; -- Named-layout application helper --------------------------------------
 ;;;
@@ -302,6 +365,7 @@
     (dolist (pane (all-panes session))
       (start-reader-thread pane))
     (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-created+ session)
+    (run-command-hooks cl-tmux/hooks:+hook-session-created+ session)
     session))
 
 ;;; -- Signal-channel prompt helper --------------------------------------------
@@ -420,7 +484,9 @@
   ("choose-window" :choose-window)
   ("display-panes" :display-panes)
   ("show-messages" :show-messages)
+  ("show-hooks"    :show-hooks)
   ("capture-pane"  :capture-pane)
+  ("clear-history" :clear-history)
   ("respawn-pane"  :respawn-pane)
   ("send-keys"     :send-keys)
   ("clock-mode"    :clock-mode)
@@ -433,18 +499,326 @@
   ("mark-pane"     :mark-pane)
   ("clear-mark"    :clear-mark)
   ("next-layout"   :next-layout)
-  ("bind-key"      :bind-key)
-  ("unbind-key"    :unbind-key)
-  ("choose-client" :choose-client)
-  ("move-window"   :move-window-prompt))
+  ("bind-key"       :bind-key)
+  ("unbind-key"     :unbind-key)
+  ("choose-client"  :choose-client)
+  ("move-window"    :move-window-prompt)
+  ("refresh-client" :refresh-client)
+  ;; Commands that had key bindings + handlers but were not reachable by name
+  ;; from the C-b : prompt until now (no-argument forms).
+  ("break-pane"      :break-pane)
+  ("swap-pane"       :swap-pane-forward)
+  ("last-pane"       :last-pane)
+  ("last-window"     :last-window)
+  ("find-window"     :find-window)
+  ("previous-window" :prev-window)
+  ("command-prompt"  :command-prompt)
+  ("rotate-window"   :rotate-window)
+  ;; No-arg forms open a prompt; the arg form (rename-window <name>) is handled
+  ;; by %run-command-line before reaching this table.
+  ("rename-window"   :rename-window)
+  ("rename-session"  :rename-session)
+  ;; No-arg kill acts on the active window/pane; the -t arg form is intercepted
+  ;; by %run-command-line first.
+  ("kill-window"     :kill-window)
+  ("kill-pane"       :kill-pane))
+
+;;; -- Arg-aware command-line runner -------------------------------------------
+;;;
+;;; The C-b : prompt may name a command WITH arguments (e.g.
+;;; "display-message #{session_name}").  %run-command-line tokenises the line
+;;; (shared shell-style lexer), routes arg-taking commands to their handlers, and
+;;; falls through to the no-argument name table for everything else.
+
+(defun %cmd-display-message (session args)
+  "display-message <fmt...>: expand the space-joined ARGS as a format string
+   against the active session/window/pane, then log and show the result.
+   This is what makes #{session_name} etc. resolve instead of printing literally."
+  (let* ((win  (session-active-window session))
+         (pane (session-active-pane session))
+         (ctx  (cl-tmux/format:format-context-from-session session win pane))
+         (text (cl-tmux/format:expand-format
+                (format nil "~{~A~^ ~}" args) ctx)))
+    (add-message-log text)
+    (show-overlay text)))
+
+(defparameter *set-option-command-names*
+  '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")
+  "Command names that all forward to the global option store, mirroring the
+   set-option family of config directives.")
+
+(defun %cmd-set-option (session args)
+  "set / set-option [-g|-s|-w|-o] [-a] [-u] <name> <value...>: set a global option.
+   Scope flags (-g global, -s server, -w window, -o only-if-unset) are accepted
+   and treated as the global store (cl-tmux keeps a flat option table); -a
+   appends VALUE to the option's current value; -u unsets the option (removes
+   the override, reverting to the registered default).
+   SESSION is unused.  NOTE: this fixes `set -g status off`, which previously set
+   an option literally named \"-g\"."
+  (declare (ignore session))
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "")
+    (let ((name  (first positionals))
+          (value (format nil "~{~A~^ ~}" (rest positionals))))
+      (when name
+        (cond
+          ;; -u: unset option — remove from hash table so the default is used.
+          ((assoc #\u flags)
+           (remhash name cl-tmux/options:*global-options*))
+          ;; -a: append value to existing.
+          ((assoc #\a flags)
+           (cl-tmux/options:set-option
+            name (concatenate 'string
+                              (princ-to-string
+                               (or (cl-tmux/options:get-option name nil) ""))
+                              value)))
+          ;; normal set.
+          (t (cl-tmux/options:set-option name value)))))))
+
+(defun %cmd-rename-window (session args)
+  "rename-window <name...>: rename SESSION's active window to the joined ARGS."
+  (let ((win (session-active-window session)))
+    (when win (rename-window win (format nil "~{~A~^ ~}" args)))))
+
+(defun %cmd-rename-session (session args)
+  "rename-session <name...>: rename SESSION to the joined ARGS."
+  (rename-session session (format nil "~{~A~^ ~}" args)))
+
+;;; -- Flag parser (-t target, boolean flags) ----------------------------------
+;;;
+;;; Many tmux commands take a -t target plus boolean flags (-d, -p, ...).  This
+;;; splits a token list into (alist-of-flags . positionals).  Flags whose char is
+;;; in VALUE-FLAGS consume the next token (or an attached -Xvalue) as their value;
+;;; the rest are boolean (T).  Used by select-window/-pane and any future -t cmd.
+
+(defun %parse-command-flags (tokens &optional (value-flags ""))
+  "Split TOKENS into (values FLAGS POSITIONALS).  A -X token is a flag; when X is
+   in VALUE-FLAGS it consumes the next token (or the attached -Xvalue) as its
+   value, otherwise it is boolean (T).  FLAGS is an alist of (flag-char . value)
+   (look up with ASSOC, which uses EQL on the character); POSITIONALS is the
+   remaining non-flag tokens in order."
+  (let ((flags nil) (positionals nil) (rest tokens))
+    (loop while rest do
+      (let ((tok (pop rest)))
+        (cond
+          ((and (>= (length tok) 2)
+                (char= (char tok 0) #\-)
+                (char/= (char tok 1) #\-))
+           (let ((fc (char tok 1)))
+             (if (find fc value-flags)
+                 (push (cons fc (if (> (length tok) 2)
+                                    (subseq tok 2)
+                                    (if rest (pop rest) "")))
+                       flags)
+                 (push (cons fc t) flags))))
+          (t (push tok positionals)))))
+    (values (nreverse flags) (nreverse positionals))))
+
+(defun %resolve-window-target (session target-str)
+  "Resolve TARGET-STR to a window in SESSION: by window-id when TARGET-STR is
+   numeric, otherwise by window-name.  Returns NIL when nothing matches."
+  (let ((n (parse-integer target-str :junk-allowed t)))
+    (if n
+        (find n (session-windows session) :key #'window-id)
+        (find target-str (session-windows session)
+              :key #'window-name :test #'string-equal))))
+
+(defun %cmd-select-window (session args)
+  "select-window -t <target>: select the window whose number (window-id) or name
+   is the -t value.  Delivers ?1004 focus events on the switch."
+  (let ((target (cdr (assoc #\t (%parse-command-flags args "t")))))
+    (when target
+      (%with-window-focus-transition (session)
+        (let ((win (%resolve-window-target session target)))
+          (when win (session-select-window session win)))))))
+
+(defun %cmd-select-pane (session args)
+  "select-pane -t <target>: select the pane with pane-id <target> in the active
+   window, delivering focus events."
+  (let* ((target (cdr (assoc #\t (%parse-command-flags args "t"))))
+         (n      (and target (parse-integer target :junk-allowed t)))
+         (win    (session-active-window session)))
+    (when (and n win)
+      (let ((pane (find n (window-panes win) :key #'pane-id)))
+        (when pane (%select-pane-with-focus win pane))))))
+
+(defun %cmd-kill-window (session args)
+  "kill-window [-t target]: kill the window named by -t (window-id or name), or
+   the active window when no -t is given.  Quits when the last window is killed."
+  (let* ((target-str (cdr (assoc #\t (%parse-command-flags args "t"))))
+         (win (if target-str
+                  (%resolve-window-target session target-str)
+                  (session-active-window session))))
+    (when win
+      (%handle-kill-result (kill-window session win)))))
+
+(defun %cmd-kill-pane (session args)
+  "kill-pane [-t target]: kill the pane with pane-id -t in the active window, or
+   the active pane when no -t is given.  A -t target that matches nothing is a
+   no-op (the active pane is NOT killed by accident)."
+  (let* ((target-str (cdr (assoc #\t (%parse-command-flags args "t"))))
+         (n    (and target-str (parse-integer target-str :junk-allowed t)))
+         (win  (session-active-window session))
+         (pane (and n win (find n (window-panes win) :key #'pane-id))))
+    (when (or pane (null target-str))
+      (%handle-kill-result (kill-pane session pane)))))
+
+(defun %cmd-swap-window (session args)
+  "swap-window [-s src] -t dst: exchange two windows in the session's list.  SRC
+   and DST are window-id/name targets; with no -s the active window is the source.
+   First command to use two value flags (-s and -t) at once."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "st")
+    (declare (ignore positionals))
+    (let* ((src-str (cdr (assoc #\s flags)))
+           (dst-str (cdr (assoc #\t flags)))
+           (src     (if src-str
+                        (%resolve-window-target session src-str)
+                        (session-active-window session)))
+           (dst     (and dst-str (%resolve-window-target session dst-str)))
+           (wins    (session-windows session)))
+      (when (and src dst (not (eq src dst)))
+        (session-swap-windows session (position src wins) (position dst wins))))))
+
+(defun %cmd-source-file (session args)
+  "source-file <path>: load the tmux config file at <path>.  Enables the
+   canonical reload binding (bind r source-file ~/.tmux.conf).  SESSION unused."
+  (declare (ignore session))
+  (let ((path (first args)))
+    (when path
+      ;; A missing file or parse error must not crash the session (tmux shows an
+      ;; error but keeps running).
+      (ignore-errors (cl-tmux/config:load-config-file path)))))
+
+(defun %cmd-move-window (session args)
+  "move-window -t <n>: renumber the active window to window-id <n>.  A no-op when
+   <n> is already taken by a DIFFERENT window (tmux would error; we keep running)."
+  (let* ((target (cdr (assoc #\t (%parse-command-flags args "t"))))
+         (n      (and target (parse-integer target :junk-allowed t)))
+         (win    (session-active-window session)))
+    (when (and n win
+               (let ((holder (find n (session-windows session) :key #'window-id)))
+                 (or (null holder) (eq holder win))))
+      (setf (window-id win) n))))
+
+(defun %cmd-if-shell (session args)
+  "if-shell -F <cond> <then> [<else>]: when the format CONDITION expands to a
+   truthy value (non-empty and not \"0\"), run the THEN command line; otherwise
+   run ELSE if given.  Only the -F (format, no shell fork) form is handled; a
+   plain shell-condition if-shell is a no-op here (would require a fork)."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "")
+    (when (assoc #\F flags)
+      (let ((cond-str (first  positionals))
+            (then     (second positionals))
+            (else     (third  positionals)))
+        (when cond-str
+          (let* ((win  (session-active-window session))
+                 (pane (session-active-pane session))
+                 (ctx  (cl-tmux/format:format-context-from-session session win pane))
+                 (val  (cl-tmux/format:expand-format cond-str ctx)))
+            (if (and (plusp (length val)) (not (string= val "0")))
+                (when then (%run-command-line session then))
+                (when else (%run-command-line session else)))))))))
+
+(defun %cmd-select-layout (session args)
+  "select-layout <name>: apply the named layout to the active window.
+   Accepted names: even-horizontal (even-h), even-vertical (even-v),
+   main-horizontal (main-h), main-vertical (main-v), tiled."
+  (let* ((name (first args))
+         (kw   (and name
+                    (cond
+                      ((member name '("even-horizontal" "even-h")
+                               :test #'string-equal) :even-horizontal)
+                      ((member name '("even-vertical" "even-v")
+                               :test #'string-equal) :even-vertical)
+                      ((member name '("main-horizontal" "main-h")
+                               :test #'string-equal) :main-horizontal)
+                      ((member name '("main-vertical" "main-v")
+                               :test #'string-equal) :main-vertical)
+                      ((string-equal name "tiled") :tiled)
+                      (t nil)))))
+    (when kw
+      (%apply-named-layout-to-session session kw))))
+
+(defun %cmd-list-panes (session args)
+  "list-panes: list all panes in the active window (mirrors display-panes)."
+  (declare (ignore args))
+  (with-active-window (win session)
+    (let ((panes (window-panes win)))
+      (show-overlay
+       (if panes
+           (with-output-to-string (stream)
+             (dolist (p panes)
+               (format stream "~D: ~Dx~D at (~D,~D)~A~%"
+                       (pane-id p)
+                       (pane-width p) (pane-height p)
+                       (pane-x p) (pane-y p)
+                       (if (eq p (window-active-pane win)) " [active]" ""))))
+           "(no panes)")))))
+
+(defun %cmd-new-window-arg (session args)
+  "new-window [-n name]: create a new window, optionally with a given name."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "n")
+    (declare (ignore positionals))
+    (let ((name (cdr (assoc #\n flags))))
+      (%cmd-new-window session)
+      (when name
+        (let ((win (session-active-window session)))
+          (when win (rename-window win name)))))))
+
+(defparameter *arg-command-table*
+  (list
+   (cons '("display-message" "display") #'%cmd-display-message)
+   (cons *set-option-command-names*     #'%cmd-set-option)
+   (cons '("rename-window")             #'%cmd-rename-window)
+   (cons '("rename-session")            #'%cmd-rename-session)
+   (cons '("select-window" "selectw")   #'%cmd-select-window)
+   (cons '("select-pane")               #'%cmd-select-pane)
+   (cons '("kill-window" "killw")       #'%cmd-kill-window)
+   (cons '("kill-pane")                 #'%cmd-kill-pane)
+   (cons '("swap-window" "swapw")       #'%cmd-swap-window)
+   (cons '("move-window" "movew")       #'%cmd-move-window)
+   (cons '("if-shell" "if")             #'%cmd-if-shell)
+   (cons '("source-file" "source")      #'%cmd-source-file)
+   (cons '("select-layout" "selectl")   #'%cmd-select-layout)
+   (cons '("list-panes" "lsp")          #'%cmd-list-panes)
+   (cons '("new-window" "neww")         #'%cmd-new-window-arg))
+  "Arg-taking commands: (list-of-names . handler), handler a function of
+   (SESSION ARGS).  Consulted by %run-command-line before the no-argument
+   %dispatch-named-command name table.")
+
+(defun %run-command-tokens (session tokens)
+  "Run a command line given as an already-tokenised TOKENS list (first = command
+   name, rest = arguments).  Arg-taking commands (found in *arg-command-table*)
+   consume their arguments; everything else dispatches by name via
+   %dispatch-named-command (no args).  Taking pre-split tokens lets arg-bearing
+   key bindings store and run their command without a lossy re-tokenisation."
+  (let ((cmd  (first tokens))
+        (rest (rest tokens)))
+    (cond
+      ((null cmd) nil)
+      (t (let ((entry (and rest
+                           (find-if (lambda (e)
+                                      (member cmd (car e) :test #'string-equal))
+                                    *arg-command-table*))))
+           (if entry
+               (funcall (cdr entry) session rest)
+               (%dispatch-named-command session cmd)))))))
+
+(defun %run-command-line (session input)
+  "Tokenise INPUT (one command line, shell-style) and run it via
+   %run-command-tokens."
+  (%run-command-tokens session (cl-tmux/commands:tokenize-command-string input)))
 
 ;;; -- dispatch-prefix-command -----------------------------------------------
 
 (defun dispatch-prefix-command (session byte)
   "Handle one byte received after the prefix key.
-   Copy mode intercepts [ ] q before the normal binding table."
+   Copy mode intercepts [ ] q before the normal binding table.  A binding whose
+   value is a token LIST (from `bind key command args...`) runs as a command
+   line; a keyword value dispatches as a built-in command."
   (let* ((ch  (and byte (code-char byte)))
          (cmd (if (%copy-mode-active-p session)
                   (%copy-mode-cmd ch)
                   (and ch (lookup-key-binding ch)))))
-    (dispatch-command session cmd byte)))
+    (if (consp cmd)
+        (%run-command-tokens session cmd)
+        (dispatch-command session cmd byte))))

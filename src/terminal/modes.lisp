@@ -66,6 +66,16 @@
    ;; Reset (?25l): hide the cursor
    ((setf (screen-cursor-visible screen) nil)))
 
+  ;; Mode 6 — origin mode (DECOM): CUP/HVP rows become relative to the scroll
+  ;; region; setting/resetting homes the cursor to the (new) origin.
+  (6
+   ;; Set (?6h): origin mode on; home the cursor to the scroll-region origin.
+   ((setf (screen-origin-mode screen) t)
+    (set-cursor screen 0 (screen-scroll-top screen)))
+   ;; Reset (?6l): origin mode off (absolute); home the cursor to (0,0).
+   ((setf (screen-origin-mode screen) nil)
+    (set-cursor screen 0 0)))
+
   ;; Mode 1 — application cursor keys (?1h / ?1l)
   ;; When set, pane expects ESC O A-D instead of ESC [ A-D for arrow keys.
   (1
@@ -118,12 +128,37 @@
    ;; Reset (?7l): disable auto-wrap
    ((setf (screen-autowrap screen) nil)))
 
+  ;; Mode 1004 — focus event reporting (?1004h / ?1004l)
+  ;; vim, neovim, and tmux-in-tmux enable this to learn when they gain/lose the
+  ;; terminal's focus; the report bytes are sent by focus-event-report below.
+  (1004
+   ;; Set (?1004h): enable focus event reporting
+   ((setf (screen-focus-events screen) t))
+   ;; Reset (?1004l): disable focus event reporting
+   ((setf (screen-focus-events screen) nil)))
+
   ;; Mode 1049 — alternate screen (?1049h enters, ?1049l exits)
   (1049
    ;; Set: save current grid + cursor, replace with a fresh blank grid.
    ((enter-alt-screen screen))
    ;; Reset: restore saved grid + cursor, or clear if nothing was saved.
    ((exit-alt-screen screen))))
+
+;;; ── Focus event reporting (?1004) ──────────────────────────────────────────
+;;;
+;;; When an application enables focus events, it expects the terminal to deliver
+;;; ESC[I when focus is gained and ESC[O when focus is lost.  This pure function
+;;; produces those report bytes; the dispatch layer writes them to the pane's PTY
+;;; as the active pane changes.  Returns NIL when the screen has not opted in, so
+;;; callers can treat "no report" and "focus events off" uniformly.
+
+(defun focus-event-report (screen focused-p)
+  "Focus-tracking report bytes for SCREEN: ESC[I when FOCUSED-P, ESC[O otherwise.
+   Returns NIL unless the screen enabled focus events (?1004h)."
+  (when (screen-focus-events screen)
+    (if focused-p
+        (format nil "~C[I" #\Escape)
+        (format nil "~C[O" #\Escape))))
 
 ;;; ── DECSC / DECRC (cursor save & restore) ──────────────────────────────────
 
@@ -165,6 +200,11 @@
         (screen-scroll-top     screen) 0
         (screen-scroll-bottom  screen) (1- (screen-height screen))
         (screen-charset        screen) :ascii
+        (screen-g0-charset     screen) :ascii
+        (screen-g1-charset     screen) :ascii
+        (screen-active-g       screen) :g0
+        (screen-tab-stops      screen) :default
+        (screen-origin-mode    screen) nil
         (screen-autowrap       screen) t))
 
 (defun ris-action (screen)
@@ -228,11 +268,40 @@
 ;;; ── Charset selection ────────────────────────────────────────────────────────
 
 (defun set-charset (screen charset)
-  "Set the active character set of SCREEN to CHARSET (:ascii or :dec-graphics)."
+  "Set the effective character set of SCREEN to CHARSET (:ascii or :dec-graphics).
+   Low-level helper retained for tests; the parser uses DESIGNATE-CHARSET /
+   INVOKE-CHARSET to model the full VT100 G0/G1 + SO/SI behaviour."
   (setf (screen-charset screen) charset))
+
+(defun screen-invoked-charset (screen g)
+  "Return the charset currently designated to G (:g0 or :g1) on SCREEN."
+  (ecase g
+    (:g0 (screen-g0-charset screen))
+    (:g1 (screen-g1-charset screen))))
+
+(defun designate-charset (screen g charset)
+  "Designate G (:g0 or :g1) of SCREEN to CHARSET — the effect of ESC ( X (G0)
+   or ESC ) X (G1).  Updates the effective charset ONLY when G is the currently
+   invoked set, so ESC ) 0 designates G1 without activating line-drawing until a
+   SO (0x0E) locking shift selects G1."
+  (ecase g
+    (:g0 (setf (screen-g0-charset screen) charset))
+    (:g1 (setf (screen-g1-charset screen) charset)))
+  (when (eq (screen-active-g screen) g)
+    (setf (screen-charset screen) charset)))
+
+(defun invoke-charset (screen g)
+  "Invoke G (:g0 or :g1) as the active charset: SO (0x0E) invokes G1, SI (0x0F)
+   invokes G0.  Sets the effective charset to G's current designation."
+  (setf (screen-active-g screen) g)
+  (setf (screen-charset screen) (screen-invoked-charset screen g)))
 
 ;;; ── Screen title ─────────────────────────────────────────────────────────────
 
 (defun set-screen-title (screen title)
   "Set the OSC window title of SCREEN to TITLE string."
   (setf (screen-title screen) title))
+
+(defun set-screen-cwd (screen cwd)
+  "Set the OSC 7 current working directory of SCREEN to CWD string."
+  (setf (screen-cwd screen) cwd))

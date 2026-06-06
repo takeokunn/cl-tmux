@@ -40,3 +40,8 @@
 (defun clear-paste-buffers ()
   "Set *paste-buffers* to nil."
   (setf *paste-buffers* nil))
+
+;; Wire OSC 52 clipboard writes into the paste buffer ring.
+;; Applications (e.g., vim, tmux copy-mode) can write clipboard data via
+;; ESC ] 52 ; c ; <base64> ST — decoded by parser-osc and forwarded here.
+(setf cl-tmux/terminal/parser:*osc52-handler* #'add-paste-buffer)

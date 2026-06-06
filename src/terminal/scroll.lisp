@@ -75,6 +75,11 @@
     (trim-scroll-history screen)
     (setf (screen-dirty-p screen) t)))
 
+(defun clear-scrollback (screen)
+  "Clear SCREEN's scrollback history; the visible grid is left intact.
+   Backs the clear-history command (tmux: C-b : clear-history)."
+  (setf (screen-scrollback screen) nil))
+
 (defun scroll-down-one (screen)
   "Scroll the scroll region down one line; the new top line is cleared to blanks."
   (let ((top    (screen-scroll-top    screen))

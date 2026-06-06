@@ -109,6 +109,7 @@
 ;;; ── Mouse button-number constants ───────────────────────────────────────────
 ;;; These are X10-encoded button numbers (raw byte minus 32).
 (defconstant +mouse-btn-left+          0  "Left mouse button press (X10 btn 0).")
+(defconstant +mouse-btn-middle+        1  "Middle mouse button press (X10 btn 1) — paste.")
 (defconstant +mouse-btn-release-x10+   3  "X10 release marker (btn 3+32=35).")
 (defconstant +mouse-btn-motion+       32  "Button-1 drag/motion (X10 btn 32).")
 (defconstant +mouse-btn-scroll-up+    64  "Scroll-wheel up (X10 btn 64).")
@@ -220,7 +221,8 @@
   "Handle a click at COL on the status bar row: select the clicked window."
   (let ((window (%status-col-to-window session col)))
     (when window
-      (session-select-window session window))))
+      (%with-window-focus-transition (session)
+        (session-select-window session window)))))
 
 ;;; ── Drag-resize state ────────────────────────────────────────────────────────
 
@@ -340,7 +342,9 @@
                ;; Press in pane: focus pane and begin copy selection
                (let ((target-pane (pane-at-position active-window col row)))
                  (when target-pane
-                   (window-select-pane active-window target-pane)
+                   ;; %select-pane-with-focus so clicking a pane delivers ?1004
+                   ;; focus events, consistent with keyboard pane switches.
+                   (%select-pane-with-focus active-window target-pane)
                    (let* ((screen    (pane-screen target-pane))
                           (pane-col  (- col (pane-x target-pane)))
                           (pane-row  (- row (pane-y target-pane))))
@@ -359,6 +363,18 @@
                (when (and (screen-copy-mode-p screen)
                           (screen-copy-selecting screen))
                  (copy-mode-yank screen))))))
+
+      ;; ── Middle button press: paste the top paste-buffer into the pane ─────
+      ;; xterm-style middle-click paste.  Focuses the pane under the pointer and
+      ;; writes the most recent paste-buffer (honouring bracketed-paste mode).
+      ((and (= btn +mouse-btn-middle+) (not release-p) (not in-status))
+       (when active-window
+         (let ((target-pane (pane-at-position active-window col row)))
+           (when target-pane
+             (%select-pane-with-focus active-window target-pane)
+             (let ((text (cl-tmux/buffer:get-paste-buffer 0)))
+               (when text
+                 (%paste-to-pane target-pane text)))))))
 
       ;; ── Mouse motion with button 1 (btn 32): drag selection or resize ─────
       ((= btn +mouse-btn-motion+)

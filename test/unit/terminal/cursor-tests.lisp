@@ -217,6 +217,56 @@
     (is (= 8 (screen-cursor-x s))
         "cursor-cbt 0 must move back one tab stop")))
 
+;;; ── HTS / TBC custom tab stops (ESC H / CSI g) ───────────────────────────────
+
+(test hts-set-tab-stop-makes-cursor-ht-land-on-custom-stop
+  :description "set-tab-stop (HTS) adds a stop at the cursor column; cursor-ht lands on it."
+  (with-screen (s 40 5)
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 3)
+    (cl-tmux/terminal/actions:set-tab-stop s)        ; HTS at col 3
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 0)
+    (cl-tmux/terminal/actions:cursor-ht s)           ; HT from col 0
+    (is (= 3 (screen-cursor-x s))
+        "after HTS at col 3, HT from col 0 must land on the custom stop 3")))
+
+(test tbc-3-clears-all-stops-so-ht-goes-to-last-column
+  :description "clear-tab-stops 3 (TBC 3) removes every stop; HT then goes to width-1."
+  (with-screen (s 40 5)
+    (cl-tmux/terminal/actions:clear-tab-stops s 3)   ; TBC 3 — clear all
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 0)
+    (cl-tmux/terminal/actions:cursor-ht s)
+    (is (= 39 (screen-cursor-x s))
+        "with no tab stops, HT must advance to the last column (width-1)")))
+
+(test tbc-0-clears-stop-at-cursor-column
+  :description "clear-tab-stops 0 (TBC 0) removes the default stop at the cursor column."
+  (with-screen (s 40 5)
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 8)
+    (cl-tmux/terminal/actions:clear-tab-stops s 0)   ; TBC 0 at col 8
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 0)
+    (cl-tmux/terminal/actions:cursor-ht s)
+    (is (= 16 (screen-cursor-x s))
+        "after clearing the stop at col 8, HT from col 0 must skip to 16")))
+
+(test esc-h-hts-sets-tab-stop-via-parser
+  :description "ESC H (HTS) through the parser sets a tab stop at the cursor column."
+  (with-screen (s 40 5)
+    (feed s (esc "[1;4H"))   ; CUP → col 4 (1-based) = col 3 (0-based)
+    (feed s (esc "H"))       ; ESC H → HTS at col 3
+    (feed s (esc "[1;1H"))   ; CUP → col 0
+    (feed s (string (code-char 9)))  ; HT → custom stop 3
+    (is (= 3 (screen-cursor-x s))
+        "ESC H then HT must land on the custom tab stop")))
+
+(test csi-3-g-tbc-clears-all-stops-via-parser
+  :description "CSI 3 g (TBC) through the parser clears all tab stops."
+  (with-screen (s 40 5)
+    (feed s (esc "[3g"))     ; CSI 3 g → TBC clear all
+    (feed s (esc "[1;1H"))   ; cursor to col 0
+    (feed s (string (code-char 9)))  ; HT → last column
+    (is (= 39 (screen-cursor-x s))
+        "after CSI 3 g, HT must advance to the last column")))
+
 ;;; ── cursor-ri (ESC M — reverse index) ───────────────────────────────────────
 
 (test cursor-ri-moves-up-within-region

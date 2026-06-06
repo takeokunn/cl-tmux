@@ -216,6 +216,130 @@
       (cl-tmux::%cmd-cycle-pane s #'cl-tmux::next-cyclic)
       (is (eq p1 (window-active-pane win))))))
 
+;;; ── focus events (?1004) on pane switch ──────────────────────────────────────
+
+(test notify-pane-focus-noop-without-pty
+  "%notify-pane-focus is a safe no-op for a pane with no live PTY (fd <= 0),
+   even when focus events are enabled."
+  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5 :fd -1
+                         :screen (make-screen 20 5))))
+    (setf (cl-tmux/terminal/types:screen-focus-events (pane-screen pane)) t)
+    (is (null (cl-tmux::%notify-pane-focus pane t))
+        "no PTY → %notify-pane-focus returns NIL without writing")
+    (finishes (cl-tmux::%notify-pane-focus pane nil))))
+
+(test notify-pane-focus-writes-focus-in-to-pty
+  "With focus events enabled and a live fd, %notify-pane-focus delivers the
+   focus-gained report ESC[I to the pane's PTY."
+  (with-pipe-fds (rfd wfd)
+    (let ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5 :fd wfd
+                           :screen (make-screen 20 5))))
+      (setf (cl-tmux/terminal/types:screen-focus-events (pane-screen pane)) t)
+      (cl-tmux::%notify-pane-focus pane t)
+      (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))  ; 200 ms
+        (is-true ready "the PTY read-end must be readable after a focus report")
+        (when ready
+          (cffi:with-foreign-object (buf :uint8 8)
+            (let ((n (cffi:foreign-funcall "read"
+                                           :int rfd :pointer buf :unsigned-long 3
+                                           :long)))
+              (is (= 3 n) "focus-in report must be exactly 3 bytes (got ~D)" n)
+              (is (= 27 (cffi:mem-aref buf :uint8 0)) "byte 0 must be ESC (27)")
+              (is (= 91 (cffi:mem-aref buf :uint8 1)) "byte 1 must be #\\[ (91)")
+              (is (= 73 (cffi:mem-aref buf :uint8 2)) "byte 2 must be #\\I (73)"))))))))
+
+(test notify-pane-focus-disabled-screen-writes-nothing
+  "A pane whose app did NOT enable focus events receives no report even with a
+   live fd, and select-fds reports the pipe idle."
+  (with-pipe-fds (rfd wfd)
+    (let ((pane (make-pane :id 1 :x 0 :y 0 :width 20 :height 5 :fd wfd
+                           :screen (make-screen 20 5))))
+      ;; focus-events left NIL (default)
+      (cl-tmux::%notify-pane-focus pane t)
+      (is (null (cl-tmux/pty:select-fds (list rfd) 20000))
+          "no focus report must reach an opted-out pane (pipe must stay idle)"))))
+
+(test select-pane-with-focus-switches-and-tolerates-no-pty
+  "%select-pane-with-focus changes the active pane and runs the focus-notify path
+   without error even when panes have no PTY and focus events are enabled."
+  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
+         (win (session-active-window s))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win))))
+    (setf (cl-tmux/terminal/types:screen-focus-events (pane-screen p0)) t)
+    (setf (cl-tmux/terminal/types:screen-focus-events (pane-screen p1)) t)
+    (with-loop-state
+      (is (eq p0 (window-active-pane win)))
+      (finishes (cl-tmux::%select-pane-with-focus win p1))
+      (is (eq p1 (window-active-pane win))
+          "%select-pane-with-focus must make p1 the active pane"))))
+
+;;; ── focus events (?1004) on window switch ────────────────────────────────────
+
+(test cycle-window-delivers-focus-in-to-new-window-pane
+  "Switching windows sends ESC[I (focus gained) to the newly active window's pane
+   when that pane's app enabled focus events."
+  (with-pipe-fds (rfd wfd)
+    (let* ((s   (make-fake-session :nwindows 2 :npanes 1))
+           (w1  (second (session-windows s)))
+           (p1  (window-active-pane w1)))
+      ;; Make the SECOND window's pane a live, focus-aware PTY.
+      (setf (pane-fd p1) wfd)
+      (setf (cl-tmux/terminal/types:screen-focus-events (pane-screen p1)) t)
+      (with-loop-state
+        (cl-tmux::%cmd-cycle-window s #'cl-tmux::next-cyclic)
+        (is (eq w1 (session-active-window s)) "next-window must activate w1")
+        (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))  ; 200 ms
+          (is-true ready "the new window's pane must receive a focus report")
+          (when ready
+            (cffi:with-foreign-object (buf :uint8 8)
+              (let ((n (cffi:foreign-funcall "read"
+                                             :int rfd :pointer buf :unsigned-long 3
+                                             :long)))
+                (is (= 3 n) "focus-in must be 3 bytes (got ~D)" n)
+                (is (= 27 (cffi:mem-aref buf :uint8 0)) "byte 0 must be ESC (27)")
+                (is (= 73 (cffi:mem-aref buf :uint8 2))
+                    "byte 2 must be #\\I (73) for focus gained")))))))))
+
+(test cycle-window-delivers-focus-out-to-old-window-pane
+  "Switching away from a window sends ESC[O (focus lost) to the window being left."
+  (with-pipe-fds (rfd wfd)
+    (let* ((s   (make-fake-session :nwindows 2 :npanes 1))
+           (w0  (first (session-windows s)))
+           (p0  (window-active-pane w0)))
+      ;; The FIRST (currently active) window's pane is the live, focus-aware PTY.
+      (setf (pane-fd p0) wfd)
+      (setf (cl-tmux/terminal/types:screen-focus-events (pane-screen p0)) t)
+      (with-loop-state
+        (cl-tmux::%cmd-cycle-window s #'cl-tmux::next-cyclic)
+        (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))
+          (is-true ready "the old window's pane must receive a focus-out report")
+          (when ready
+            (cffi:with-foreign-object (buf :uint8 8)
+              (let ((n (cffi:foreign-funcall "read"
+                                             :int rfd :pointer buf :unsigned-long 3
+                                             :long)))
+                (is (= 3 n) "focus-out must be 3 bytes (got ~D)" n)
+                (is (= 27 (cffi:mem-aref buf :uint8 0)) "byte 0 must be ESC (27)")
+                (is (= 79 (cffi:mem-aref buf :uint8 2))
+                    "byte 2 must be #\\O (79) for focus lost")))))))))
+
+(test cycle-window-with-focus-events-no-pty-no-error
+  "Cycling windows runs the focus-transition path without error when panes have no
+   PTY, and still changes the active window."
+  (let* ((s   (make-fake-session :nwindows 2 :npanes 1))
+         (w0  (first  (session-windows s)))
+         (w1  (second (session-windows s))))
+    (setf (cl-tmux/terminal/types:screen-focus-events
+           (pane-screen (window-active-pane w0))) t)
+    (setf (cl-tmux/terminal/types:screen-focus-events
+           (pane-screen (window-active-pane w1))) t)
+    (with-loop-state
+      (is (eq w0 (session-active-window s)))
+      (finishes (cl-tmux::%cmd-cycle-window s #'cl-tmux::next-cyclic))
+      (is (eq w1 (session-active-window s))
+          "cycle-window must activate w1 even with focus events on and no PTY"))))
+
 ;;; ── list-keys overlay ───────────────────────────────────────────────────────
 
 (test dispatch-list-keys-shows-overlay
@@ -721,6 +845,334 @@
         (cl-tmux::dispatch-command s :command-prompt nil)
         (funcall (prompt-on-submit *prompt*) "list-windows")
         (is (overlay-active-p) "list-windows via command-prompt must open an overlay")))))
+
+;;; ── %run-command-line / display-message with arguments ───────────────────────
+
+(test command-prompt-display-message-expands-format
+  ":command-prompt 'display-message #{session_name}' expands the format and shows
+   the result (not the literal #{...})."
+  (let ((s (make-fake-session)))               ; session name is \"0\"
+    (with-loop-state
+      (let ((*prompt* nil) (*overlay* nil))
+        (cl-tmux::dispatch-command s :command-prompt nil)
+        (funcall (prompt-on-submit *prompt*) "display-message #{session_name}")
+        (is (overlay-active-p) "display-message must open an overlay")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is (search "0" text)
+              "overlay must contain the expanded session name '0' (got ~S)" text)
+          (is (null (search "#{" text))
+              "the #{...} format must be expanded, not shown literally (got ~S)" text))))))
+
+(test run-command-line-no-arg-command-falls-through
+  "%run-command-line with a bare command name dispatches it by name (no args)."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "next-window")
+        (is (eq (second (session-windows s)) (session-active-window s))
+            "next-window via %run-command-line must switch to the second window")))))
+
+(test run-command-line-display-message-joins-args
+  "display-message with multiple unquoted args joins them with spaces."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "display-message hello world")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is (search "hello world" text)
+              "joined args 'hello world' must appear in the overlay (got ~S)" text))))))
+
+(test run-command-line-empty-is-noop
+  "%run-command-line with blank input does not signal an error."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (finishes (cl-tmux::%run-command-line s "   ")
+                "blank command line must be a safe no-op"))))
+
+(test run-command-line-set-option-coerces-boolean
+  "'set status off' stores NIL and 'set status on' stores T (type-coerced)."
+  (let ((s (make-fake-session)))
+    (with-isolated-options ()
+      (cl-tmux::%run-command-line s "set status off")
+      (is (null (cl-tmux/options:get-option "status"))
+          "set status off → NIL (boolean coercion)")
+      (cl-tmux::%run-command-line s "set status on")
+      (is (eq t (cl-tmux/options:get-option "status"))
+          "set status on → T"))))
+
+(test run-command-line-set-option-string-and-quoted
+  "'set' stores string option values, and a quoted value keeps its spaces/format."
+  (let ((s (make-fake-session)))
+    (with-isolated-options ()
+      (cl-tmux::%run-command-line s "set status-left bar")
+      (is (string= "bar" (cl-tmux/options:get-option "status-left"))
+          "unquoted string value")
+      (cl-tmux::%run-command-line s "set status-left \"#{session_name} x\"")
+      (is (string= "#{session_name} x" (cl-tmux/options:get-option "status-left"))
+          "quoted value keeps its space and #{...} intact"))))
+
+(test run-command-line-set-option-scope-flag
+  "'set -g status off' sets the 'status' option (not an option literally named
+   '-g') — the canonical tmux form must work."
+  (let ((s (make-fake-session)))
+    (with-isolated-options ()
+      (cl-tmux::%run-command-line s "set -g status off")
+      (is (null (cl-tmux/options:get-option "status"))
+          "set -g status off must set 'status' to NIL")
+      (is (null (cl-tmux/options:get-option "-g"))
+          "must NOT create an option literally named '-g'"))))
+
+(test run-command-line-set-option-append-flag
+  "'set -a <name> <value>' appends to the option's current value."
+  (let ((s (make-fake-session)))
+    (with-isolated-options ("status-left" "A")
+      (cl-tmux::%run-command-line s "set -a status-left B")
+      (is (string= "AB" (cl-tmux/options:get-option "status-left"))
+          "set -a must append B to the existing 'A'"))))
+
+(test run-command-line-rename-window
+  "'rename-window <name>' renames the active window."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (cl-tmux::%run-command-line s "rename-window mywin")
+      (is (string= "mywin" (window-name (session-active-window s)))
+          "active window must be renamed to 'mywin'"))))
+
+(test run-command-line-rename-session
+  "'rename-session <name>' renames the session."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (cl-tmux::%run-command-line s "rename-session mysess")
+      (is (string= "mysess" (session-name s))
+          "session must be renamed to 'mysess'"))))
+
+(test run-command-line-rename-window-no-arg-opens-prompt
+  "'rename-window' with no argument falls through to the prompt (name table)."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (let ((*prompt* nil))
+        (cl-tmux::%run-command-line s "rename-window")
+        (is (prompt-active-p)
+            "no-arg rename-window must open the rename prompt")))))
+
+;;; ── %parse-command-flags + -t target commands ───────────────────────────────
+
+(test parse-command-flags-value-and-boolean
+  "%parse-command-flags separates -t<value> flags, boolean flags, and positionals."
+  (flet ((flags (toks vf)
+           (multiple-value-bind (f p) (cl-tmux::%parse-command-flags toks vf)
+             (declare (ignore p)) f))
+         (pos (toks vf)
+           (multiple-value-bind (f p) (cl-tmux::%parse-command-flags toks vf)
+             (declare (ignore f)) p)))
+    (is (equal "2" (cdr (assoc #\t (flags '("-t" "2") "t"))))
+        "-t 2 (separate) → value \"2\"")
+    (is (equal "2" (cdr (assoc #\t (flags '("-t2") "t"))))
+        "-t2 (attached) → value \"2\"")
+    (is (eq t (cdr (assoc #\d (flags '("-d") "t"))))
+        "-d (not a value flag) → boolean T")
+    (is (equal '("foo" "bar") (pos '("-d" "foo" "-t" "2" "bar") "t"))
+        "non-flag tokens are positionals in order")))
+
+(test run-command-line-select-window-by-number
+  "'select-window -t N' selects the window whose window-id is N."
+  (let ((s (make-fake-session :nwindows 3)))   ; window-ids 0,1,2 (base-index 0)
+    (with-loop-state
+      (cl-tmux::%run-command-line s "select-window -t 2")
+      (is (= 2 (window-id (session-active-window s)))
+          "select-window -t 2 must activate window-id 2"))))
+
+(test run-command-line-select-window-by-name
+  "'select-window -t <name>' selects the window with that (non-numeric) name."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (setf (window-name (second (session-windows s))) "alpha")
+      (cl-tmux::%run-command-line s "select-window -t alpha")
+      (is (string= "alpha" (window-name (session-active-window s)))
+          "select-window -t alpha must activate the window named 'alpha'"))))
+
+(test run-command-line-select-pane-by-id
+  "'select-pane -t N' selects the pane with pane-id N in the active window."
+  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
+         (win (session-active-window s)))
+    ;; make-fake-window panes have ids 1,2; the first is active.
+    (with-loop-state
+      (is (= 1 (pane-id (window-active-pane win))) "pane 1 is active initially")
+      (cl-tmux::%run-command-line s "select-pane -t 2")
+      (is (= 2 (pane-id (window-active-pane win)))
+          "select-pane -t 2 must activate pane-id 2"))))
+
+;;; ── kill-window / kill-pane with -t target ───────────────────────────────────
+
+(test run-command-line-kill-window-by-target
+  "'kill-window -t N' kills the window whose window-id is N."
+  (let ((s (make-fake-session :nwindows 3)))   ; window-ids 0,1,2
+    (with-loop-state
+      (cl-tmux::%run-command-line s "kill-window -t 1")
+      (is (= 2 (length (session-windows s))) "one window must be removed")
+      (is (null (find 1 (session-windows s) :key #'window-id))
+          "window-id 1 must be gone"))))
+
+(test run-command-line-kill-pane-by-target
+  "'kill-pane -t N' kills the pane with pane-id N in the active window."
+  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
+         (win (session-active-window s)))   ; pane-ids 1,2
+    (with-loop-state
+      (cl-tmux::%run-command-line s "kill-pane -t 2")
+      (is (= 1 (length (window-panes win))) "one pane must be removed")
+      (is (null (find 2 (window-panes win) :key #'pane-id))
+          "pane-id 2 must be gone"))))
+
+(test run-command-line-kill-pane-invalid-target-is-noop
+  "'kill-pane -t <nonexistent>' must NOT kill the active pane by accident."
+  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
+         (win (session-active-window s)))
+    (with-loop-state
+      (cl-tmux::%run-command-line s "kill-pane -t 99")
+      (is (= 2 (length (window-panes win)))
+          "no pane may be removed for a -t target that matches nothing"))))
+
+(test run-command-line-kill-window-no-arg-kills-active
+  "'kill-window' with no -t kills the active window (name-table fallthrough)."
+  (let* ((s      (make-fake-session :nwindows 2))
+         (active (session-active-window s)))
+    (with-loop-state
+      (cl-tmux::%run-command-line s "kill-window")
+      (is (= 1 (length (session-windows s))) "the active window must be removed")
+      (is (null (find active (session-windows s)))
+          "the previously active window must be gone"))))
+
+;;; ── swap-window -s -t (two value flags) ──────────────────────────────────────
+
+(test run-command-line-swap-window-by-targets
+  "'swap-window -s X -t Y' exchanges the two windows' positions in the list."
+  (let* ((s           (make-fake-session :nwindows 3))   ; ids 0,1,2 at pos 0,1,2
+         (wins-before (copy-list (session-windows s))))
+    (with-loop-state
+      (cl-tmux::%run-command-line s "swap-window -s 0 -t 2")
+      (is (= 2 (window-id (first (session-windows s))))
+          "position 0 now holds window-id 2")
+      (is (= 0 (window-id (third (session-windows s))))
+          "position 2 now holds window-id 0")
+      (is (eq (second wins-before) (second (session-windows s)))
+          "the middle window is unchanged"))))
+
+(test run-command-line-swap-window-default-source-is-active
+  "'swap-window -t Y' uses the active window as the source."
+  (let ((s (make-fake-session :nwindows 2)))   ; active = id 0 at pos 0
+    (with-loop-state
+      (cl-tmux::%run-command-line s "swap-window -t 1")
+      (is (= 1 (window-id (first (session-windows s))))
+          "active window (pos 0) swapped to hold window-id 1"))))
+
+(test run-command-line-swap-window-unknown-target-is-noop
+  "'swap-window -s 0 -t 99' (no such dst) leaves the window order unchanged."
+  (let* ((s           (make-fake-session :nwindows 3))
+         (ids-before  (mapcar #'window-id (session-windows s))))
+    (with-loop-state
+      (cl-tmux::%run-command-line s "swap-window -s 0 -t 99")
+      (is (equal ids-before (mapcar #'window-id (session-windows s)))
+          "a -t target that matches nothing must not reorder windows"))))
+
+;;; ── arg-taking key bindings + source-file ────────────────────────────────────
+
+(test dispatch-prefix-bound-command-line-runs
+  "A key bound to a command line runs it: bind X display-message hi, then prefix+X
+   shows 'hi' in an overlay (verifies dispatch-prefix-command's token-list path)."
+  (with-isolated-config
+    (with-loop-state
+      (let ((s (make-fake-session)) (*overlay* nil))
+        (cl-tmux/config:apply-config-directive '("bind" "X" "display-message" "hi"))
+        (cl-tmux::dispatch-prefix-command s (char-code #\X))
+        (is (overlay-active-p) "the bound display-message must open an overlay")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is (search "hi" text)
+              "overlay must contain the bound command's output 'hi' (got ~S)" text))))))
+
+(test cmd-source-file-loads-config-file
+  "source-file <path> loads the file and applies its directives (end-to-end with
+   the set -g fix)."
+  (with-isolated-options ()
+    (let ((path (format nil "/tmp/cl-tmux-srcfile-~D.conf" (get-universal-time))))
+      (unwind-protect
+           (progn
+             (with-open-file (out path :direction :output :if-exists :supersede
+                                       :if-does-not-exist :create)
+               (write-line "set -g status off" out))
+             (cl-tmux::%run-command-line (make-fake-session)
+                                         (format nil "source-file ~A" path))
+             (is (null (cl-tmux/options:get-option "status"))
+                 "source-file must apply 'set -g status off' from the file"))
+        (ignore-errors (delete-file path))))))
+
+(test cmd-source-file-missing-path-no-crash
+  "source-file on a non-existent path is a safe no-op (no error signalled)."
+  (finishes (cl-tmux::%run-command-line (make-fake-session)
+                                        "source-file /no/such/cl-tmux-file.conf")
+            "source-file on a missing file must not signal"))
+
+;;; ── move-window -t <n> (renumber the active window) ──────────────────────────
+
+(test run-command-line-move-window-to-free-number
+  "'move-window -t N' renumbers the active window to window-id N when N is free."
+  (let* ((s   (make-fake-session :nwindows 2))   ; window-ids 0,1; active = 0
+         (win (session-active-window s)))
+    (with-loop-state
+      (cl-tmux::%run-command-line s "move-window -t 5")
+      (is (= 5 (window-id win))
+          "active window must be renumbered to window-id 5"))))
+
+(test run-command-line-move-window-to-taken-number-is-noop
+  "'move-window -t N' is a no-op when N is already held by another window."
+  (let* ((s   (make-fake-session :nwindows 2))   ; ids 0 (active),1
+         (win (session-active-window s)))
+    (with-loop-state
+      (cl-tmux::%run-command-line s "move-window -t 1")   ; 1 is taken
+      (is (= 0 (window-id win))
+          "active window must keep its id when the target number is taken"))))
+
+;;; ── if-shell -F <cond> <then> [<else>] (format-conditional) ──────────────────
+
+(test run-command-line-if-shell-F-true-runs-then
+  "if-shell -F with a truthy condition runs the THEN command line."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "if-shell -F 1 \"display-message yes\"")
+        (is (overlay-active-p) "truthy if-shell -F must run THEN (overlay opens)")
+        (is (search "yes" (format nil "~{~A~%~}" (overlay-lines)))
+            "overlay must show the THEN command's output")))))
+
+(test run-command-line-if-shell-F-false-runs-else
+  "if-shell -F with a falsey condition (\"0\") runs the ELSE command line."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line
+         s "if-shell -F 0 \"display-message yes\" \"display-message no\"")
+        (is (search "no" (format nil "~{~A~%~}" (overlay-lines)))
+            "falsey if-shell -F must run ELSE, not THEN")))))
+
+(test run-command-line-if-shell-F-format-condition
+  "if-shell -F evaluates a #{...} format as its condition.  A non-zero value is
+   truthy (note: \"0\" is falsey, so we use #{window_index}=1, not the fake
+   session name which is literally \"0\")."
+  (let ((s (make-fake-session)))           ; active window_index = 1 (truthy)
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line
+         s "if-shell -F \"#{window_index}\" \"display-message named\"")
+        (is (search "named" (format nil "~{~A~%~}" (overlay-lines)))
+            "a non-zero #{window_index} (1) must be truthy → THEN")))))
+
+(test run-command-line-if-shell-F-empty-condition-no-then
+  "if-shell -F with an empty condition and no else runs nothing."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "if-shell -F \"\" \"display-message x\"")
+        (is (not (overlay-active-p))
+            "an empty (falsey) condition with no else must not run THEN")))))
 
 ;;; ── %dispatch-named-command helper ──────────────────────────────────────────
 
@@ -2906,3 +3358,98 @@
           "active window id must appear with an asterisk prefix")
       (is (search "alpha" output) "first window name must appear in output")
       (is (search "beta"  output) "second window name must appear in output"))))
+
+;;; ── clear-history (clear a pane's scrollback) ─────────────────────────────────
+
+(test clear-scrollback-empties-history
+  "clear-scrollback empties a screen's scrollback, leaving the visible grid intact."
+  (let ((s (make-screen 20 5)))
+    (seed-scrollback s 3)
+    (is (= 3 (length (cl-tmux/terminal/types::screen-scrollback s)))
+        "scrollback must be seeded with 3 rows")
+    (cl-tmux/terminal/actions:clear-scrollback s)
+    (is (null (cl-tmux/terminal/types::screen-scrollback s))
+        "scrollback must be empty after clear-scrollback")))
+
+(test dispatch-clear-history-empties-active-pane-scrollback
+  ":clear-history clears the active pane's scrollback history."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (pane-screen (window-active-pane (session-active-window s)))))
+        (seed-scrollback screen 3)
+        (cl-tmux::dispatch-command s :clear-history nil)
+        (is (null (cl-tmux/terminal/types::screen-scrollback screen))
+            ":clear-history must empty the active pane's scrollback")))))
+
+;;; ── named-command table (C-b : prompt resolution) ─────────────────────────────
+
+(test named-command-break-pane-is-recognized
+  "%dispatch-named-command recognizes 'break-pane' and breaks the pane into a window."
+  (let ((s (make-fake-session :nwindows 1 :npanes 2)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%dispatch-named-command s "break-pane")
+        (is (not (and *overlay* (search "unknown command" *overlay*)))
+            "break-pane must be a recognized command name")
+        (is (= 2 (length (session-windows s)))
+            "break-pane must move the pane into a second window")))))
+
+(test named-command-unknown-shows-error-overlay
+  "%dispatch-named-command shows an unknown-command overlay for an unrecognized name."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%dispatch-named-command s "no-such-command-xyz")
+        (is (and *overlay* (search "unknown command" *overlay*))
+            "an unknown command name must show the unknown-command overlay")))))
+
+;;; ── select-layout arg command ────────────────────────────────────────────────
+
+(test run-command-line-select-layout-even-horizontal
+  "%run-command-line select-layout even-horizontal applies even-horizontal layout."
+  (let ((s (make-fake-session :nwindows 1 :npanes 2)))
+    (with-loop-state
+      (cl-tmux::%run-command-line s "select-layout even-horizontal")
+      ;; Layout must be applied without error — just check the window still has 2 panes.
+      (is (= 2 (length (cl-tmux/model:window-panes (cl-tmux/model:session-active-window s))))
+          "select-layout even-horizontal must leave pane count unchanged"))))
+
+(test run-command-line-select-layout-main-horizontal
+  "%run-command-line select-layout main-horizontal applies main-horizontal layout."
+  (let ((s (make-fake-session :nwindows 1 :npanes 3)))
+    (with-loop-state
+      (cl-tmux::%run-command-line s "select-layout main-horizontal")
+      (is (= 3 (length (cl-tmux/model:window-panes (cl-tmux/model:session-active-window s))))
+          "select-layout main-horizontal must leave pane count unchanged"))))
+
+(test run-command-line-select-layout-unknown-is-noop
+  "%run-command-line select-layout with an unknown name is a no-op (no error)."
+  (let ((s (make-fake-session :nwindows 1 :npanes 2)))
+    (with-loop-state
+      (is (null (cl-tmux::%run-command-line s "select-layout bogus-layout"))
+          "unknown layout name must not raise an error"))))
+
+;;; ── set-option -u (unset) ────────────────────────────────────────────────────
+
+(test run-command-line-set-option-unset
+  "%run-command-line 'set -u <name>' removes the option from *global-options*."
+  (let ((cl-tmux/options:*global-options*
+         (let ((h (make-hash-table :test #'equal)))
+           (setf (gethash "status-left" h) "my-value")
+           h)))
+    (let ((s (make-fake-session)))
+      (with-loop-state
+        (cl-tmux::%run-command-line s "set -u status-left")
+        (is (not (gethash "status-left" cl-tmux/options:*global-options*))
+            "set -u status-left must remove the key from *global-options*")))))
+
+;;; ── list-panes arg command ───────────────────────────────────────────────────
+
+(test run-command-line-list-panes-shows-overlay
+  "%run-command-line list-panes shows an overlay listing panes."
+  (let ((s (make-fake-session :nwindows 1 :npanes 2)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "list-panes")
+        (is (and *overlay* (plusp (length *overlay*)))
+            "list-panes must produce a non-empty overlay")))))

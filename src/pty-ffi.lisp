@@ -76,22 +76,27 @@
 
 (declaim (inline fd-zero! fd-set! fd-isset-p))
 
+;;; fd_set words are accessed as :UINT32, not :INT32: bit 31 corresponds to
+;;; (ash 1 31) = 2147483648, which is out of range for (signed-byte 32).  With
+;;; :INT32 any fd whose (mod fd 32) = 31 (e.g. fd 31, 63, …) would signal a
+;;; TYPE-ERROR when its bit is set.  Unsigned access stores the raw bit pattern.
+
 (defun fd-zero! (ptr)
   (declare (type cffi:foreign-pointer ptr))
   (dotimes (i +fd-set-words+)
-    (setf (cffi:mem-aref ptr :int32 i) 0)))
+    (setf (cffi:mem-aref ptr :uint32 i) 0)))
 
 (defun fd-set! (fd ptr)
   (declare (type fixnum fd)
            (type cffi:foreign-pointer ptr))
   (let ((word (floor fd 32))
         (bit  (mod   fd 32)))
-    (setf (cffi:mem-aref ptr :int32 word)
-          (logior (cffi:mem-aref ptr :int32 word) (ash 1 bit)))))
+    (setf (cffi:mem-aref ptr :uint32 word)
+          (logior (cffi:mem-aref ptr :uint32 word) (ash 1 bit)))))
 
 (defun fd-isset-p (fd ptr)
   (declare (type fixnum fd)
            (type cffi:foreign-pointer ptr))
   (let ((word (floor fd 32))
         (bit  (mod   fd 32)))
-    (not (zerop (logand (cffi:mem-aref ptr :int32 word) (ash 1 bit))))))
+    (not (zerop (logand (cffi:mem-aref ptr :uint32 word) (ash 1 bit))))))

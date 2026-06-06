@@ -132,12 +132,14 @@
 (test cursor-movement-table
   "CUU/CUD/CUF/CUB with explicit counts moves the cursor by the specified amount."
   :description "parameterized cursor-movement checks"
+  ;; Built with LIST (not quoted) so the ESC helper actually runs — a quoted
+  ;; table would leave (esc "...") as a literal list and feed a bare symbol.
   (dolist (entry
-           ;; (setup           move      ex-x ex-y)
-           '(((esc "[3;3H") (esc "[1A")   2    1)   ; CUU 1 from (2,2) → y=1
-             ((esc "[3;3H") (esc "[1B")   2    3)   ; CUD 1 from (2,2) → y=3
-             ((esc "[3;3H") (esc "[1C")   3    2)   ; CUF 1 from (2,2) → x=3
-             ((esc "[3;3H") (esc "[1D")   1    2))) ; CUB 1 from (2,2) → x=1
+           ;;     (setup          move          ex-x ex-y)
+           (list (list (esc "[3;3H") (esc "[1A")   2    1)   ; CUU 1 from (2,2) → y=1
+                 (list (esc "[3;3H") (esc "[1B")   2    3)   ; CUD 1 from (2,2) → y=3
+                 (list (esc "[3;3H") (esc "[1C")   3    2)   ; CUF 1 from (2,2) → x=3
+                 (list (esc "[3;3H") (esc "[1D")   1    2))) ; CUB 1 from (2,2) → x=1
     (destructuring-bind (setup move expected-cx expected-cy) entry
       (with-screen (s 20 10)
         (feed s setup)
@@ -343,6 +345,26 @@
       (is (some (lambda (r) (search ">1;" r)) q)
           "DA2 response must contain >1;"))))
 
+;;; ── CPR (cursor position report, CSI 6 n) ────────────────────────────────────
+
+(test cpr-at-home-replies-1-1
+  "CSI 6 n (CPR) at the home position replies ESC[1;1R (1-based)."
+  (with-screen (s 20 5)
+    (feed s (esc "[6n"))       ; CPR — report cursor position
+    (let ((q (cl-tmux/terminal/types:screen-response-queue s)))
+      (is (consp q) "response-queue must be non-empty after CSI 6n")
+      (is (some (lambda (r) (search "[1;1R" r)) q)
+          "CPR at home must report [1;1R"))))
+
+(test cpr-reports-moved-cursor-position
+  "After CUP to row 3, col 5, CSI 6 n reports the new 1-based position ESC[3;5R."
+  (with-screen (s 20 5)
+    (feed s (esc "[3;5H"))     ; CUP → row 3, col 5 (1-based)
+    (feed s (esc "[6n"))       ; CPR
+    (let ((q (cl-tmux/terminal/types:screen-response-queue s)))
+      (is (some (lambda (r) (search "[3;5R" r)) q)
+          "CPR after CUP 3;5 must report [3;5R"))))
+
 ;;; ── DA response table: both responses enqueue without error ──────────────────
 ;;;
 ;;; The two DA variants (DA1/DA2) both follow the same pattern: feed the
@@ -416,23 +438,25 @@
 ;;; ── SUITE: dsr ───────────────────────────────────────────────────────────────
 
 (def-suite dsr
-  :description "DSR (CSI 5 n) — Device Status Report no-op"
+  :description "DSR (CSI 5 n) — Device Status Report (replies ESC[0n)"
   :in terminal-suite)
 (in-suite dsr)
 
-(test dsr-5n-is-noop
-  "CSI 5 n (DSR) is consumed without error and without altering screen or cursor."
+(test dsr-5n-replies-ok-without-altering-screen
+  "CSI 5 n (DSR) queues the ESC[0n status reply without moving the cursor or
+   altering screen content."
   (with-screen (s 20 5)
     (feed s "A")
-    (feed s (esc "[5n"))   ; DSR — no reply is enqueued (no-op emulator)
+    (feed s (esc "[5n"))   ; DSR — report status (queues ESC[0n)
     (feed s "B")
-    ;; Screen content and cursor must be as if DSR was not present.
+    ;; Screen content and cursor must be as if the report query were absent.
     (is (char= #\A (char-at s 0 0)) "col 0 must be A")
     (is (char= #\B (char-at s 1 0)) "col 1 must be B")
     (check-cursor s 2 0)
-    ;; DSR must NOT have queued a response.
-    (is (null (cl-tmux/terminal/types:screen-response-queue s))
-        "DSR must not enqueue a response string")))
+    ;; DSR must have queued the terminal-OK status reply.
+    (is (some (lambda (r) (search "[0n" r))
+              (cl-tmux/terminal/types:screen-response-queue s))
+        "DSR (CSI 5 n) must enqueue the ESC[0n status reply")))
 
 ;;; ── SUITE: ich-dch ───────────────────────────────────────────────────────────
 
@@ -695,3 +719,39 @@
         (feed s (esc "[3z"))))
     (feed s "end")
     (check-row s 0 "startend")))
+
+;;; ── SUITE: decom ──────────────────────────────────────────────────────────────
+
+(def-suite decom
+  :description "DECOM (?6) origin mode — CUP/HVP relative to the scroll region"
+  :in terminal-suite)
+(in-suite decom)
+
+(test decom-cup-is-relative-to-scroll-region
+  "With DECOM (?6h) set, CUP rows are relative to the scroll-region top."
+  (with-screen (s 20 10)
+    (feed s (esc "[3;6r"))   ; DECSTBM → scroll region rows 3-6 (0-based top=2, bottom=5)
+    (feed s (esc "[?6h"))    ; DECOM on → cursor homes to (scroll-top=2, col 0)
+    (is (= 2 (screen-cursor-y s)) "setting DECOM homes the cursor to the scroll-top")
+    (is (= 0 (screen-cursor-x s)) "setting DECOM homes the cursor to column 0")
+    (feed s (esc "[2;3H"))   ; CUP row 2 col 3 → origin-relative: row top+1=3, col 2
+    (is (= 3 (screen-cursor-y s)) "CUP row 2 maps to scroll-top+1 under DECOM")
+    (is (= 2 (screen-cursor-x s)) "CUP col 3 is absolute (col 2, 0-based)")))
+
+(test decom-confines-cursor-to-scroll-region
+  "With DECOM set, a CUP row past the scroll-region bottom is clamped to it."
+  (with-screen (s 20 10)
+    (feed s (esc "[3;6r"))
+    (feed s (esc "[?6h"))
+    (feed s (esc "[99;1H"))  ; CUP row 99 → clamped to scroll-bottom (row 5)
+    (is (= 5 (screen-cursor-y s)) "DECOM must clamp the row to the scroll-region bottom")))
+
+(test decom-reset-restores-absolute-cup
+  "With DECOM reset (?6l, default), CUP rows are absolute."
+  (with-screen (s 20 10)
+    (feed s (esc "[3;6r"))
+    (feed s (esc "[?6h"))
+    (feed s (esc "[?6l"))    ; DECOM off → cursor homes to (0,0)
+    (is (= 0 (screen-cursor-y s)) "resetting DECOM homes the cursor to row 0")
+    (feed s (esc "[2;3H"))   ; CUP row 2 col 3 → absolute: row 1, col 2
+    (is (= 1 (screen-cursor-y s)) "CUP row 2 maps to absolute row 1 without DECOM")))

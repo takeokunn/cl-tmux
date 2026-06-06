@@ -57,6 +57,14 @@
   (values (1- (max 1 p1))
           (if (zerop p2) (1- (screen-height screen)) (1- p2))))
 
+(defun %cup-row (screen p1)
+  "Translate a 1-based CUP/HVP row P1 to a 0-based screen row, honoring DECOM
+   origin mode (?6): when set, the row is relative to the scroll-region top and
+   clamped to the scroll region; otherwise it is absolute."
+  (if (screen-origin-mode screen)
+      (min (+ (screen-scroll-top screen) (1- p1)) (screen-scroll-bottom screen))
+      (1- p1)))
+
 ;;; ── CSI rule table ─────────────────────────────────────────────────────────
 
 (define-csi-rules
@@ -89,9 +97,9 @@
   ((and (null intermed) (char= final #\G))
    (set-cursor screen (1- p1*) (screen-cursor-y screen)))
 
-  ;; CUP – Cursor Position (row P1, col P2, 1-based)
+  ;; CUP – Cursor Position (row P1, col P2, 1-based; row is DECOM-aware)
   ((and (null intermed) (char= final #\H))
-   (set-cursor screen (1- p2*) (1- p1*)))
+   (set-cursor screen (1- p2*) (%cup-row screen p1*)))
 
   ;; ICH – Insert Characters
   ((and (null intermed) (char= final #\@))
@@ -138,9 +146,13 @@
   ;; tracked via the SCREEN-LAST-CHAR slot; if nothing has been written yet
   ;; the sequence is a no-op, which matches xterm behaviour.
   ((and (null intermed) (char= final #\b))
-   (let ((ch (screen-last-char screen)))
+   ;; Count comes from the RAW param: an explicit 0 (CSI 0 b) repeats 0 times
+   ;; (a no-op), while an ABSENT param (CSI b) defaults to 1.  p1* = (max 1 p1)
+   ;; cannot tell these apart because p1 is 0 in both cases.
+   (let ((ch    (screen-last-char screen))
+         (count (if params (first params) 1)))
      (when ch
-       (dotimes (_ p1*) (write-char-at-cursor screen ch)))))
+       (dotimes (_ count) (write-char-at-cursor screen ch)))))
 
   ;; VPA – Vertical Position Absolute (1-based row)
   ((and (null intermed) (char= final #\d))
@@ -148,15 +160,26 @@
 
   ;; HVP – Horizontal and Vertical Position (same as CUP)
   ((and (null intermed) (char= final #\f))
-   (set-cursor screen (1- p2*) (1- p1*)))
+   (set-cursor screen (1- p2*) (%cup-row screen p1*)))
 
   ;; SGR – Select Graphic Rendition
   ((and (null intermed) (char= final #\m))
    (apply-sgr screen params))
 
-  ;; DSR – Device Status Report; we do not send replies from inside the emulator
+  ;; DSR – Device Status Report.  Replies are queued onto the response-queue,
+  ;; which the PTY loop drains back to the application (same path as DA1/DA2).
+  ;;   CSI 5 n → device status: ESC [ 0 n  (terminal OK)
   ((and (null intermed) (char= final #\n) (= p1 5))
-   (values))
+   (push (format nil "~C[0n" #\Escape)
+         (screen-response-queue screen)))
+  ;; CPR – Cursor Position Report.
+  ;;   CSI 6 n → ESC [ <row> ; <col> R  (1-based; apps like shells, vim, less
+  ;;   block waiting for this reply, so an unanswered query hangs them).
+  ((and (null intermed) (char= final #\n) (= p1 6))
+   (push (format nil "~C[~D;~DR" #\Escape
+                 (1+ (screen-cursor-y screen))
+                 (1+ (screen-cursor-x screen)))
+         (screen-response-queue screen)))
 
   ;; DECSTBM – Set Top and Bottom Margins.  Params are 1-based; an omitted
   ;; bottom (p2 = 0) means "full screen", matching real-terminal ESC[r reset.
@@ -170,6 +193,11 @@
   ;; CBT – Cursor Backward Tabulation (CSI N Z)
   ((and (null intermed) (char= final #\Z))
    (cursor-cbt screen p1*))
+
+  ;; TBC – Tab Clear (CSI N g).  p1=0 (or omitted) clears the stop at the cursor
+  ;; column; p1=3 clears all tab stops.
+  ((and (null intermed) (char= final #\g))
+   (clear-tab-stops screen p1))
 
   ;; DA1 – Primary Device Attributes (CSI c or CSI 0 c)
   ;; Response: ESC [ ? 1 ; 2 c  (VT100 with AVO)

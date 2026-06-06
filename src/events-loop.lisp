@@ -3,10 +3,18 @@
 ;;;; Key bindings, synchronize-panes, event loop.
 
 ;;; ── Additional key bindings ─────────────────────────────────────────────────
+;;;
+;;; These extend config.lisp's prefix defaults.  They live in a FUNCTION (not
+;;; top-level side effects) so test isolation (with-isolated-config) can reinstall
+;;; them onto a fresh *key-tables*, keeping the isolated table consistent with the
+;;; live image (e.g. C-b z = zoom-toggle, C-b L = last-session).
 
-;;; Session management
-;; C-b s — choose-session (interactive overlay listing all sessions)
-(set-key-binding #\s :choose-session)
+(defun install-extended-key-bindings ()
+  "Install the prefix bindings that extend config.lisp's defaults.  Idempotent.
+   Called once at load time, and again by with-isolated-config under test."
+  ;; Session management
+  ;; C-b s — choose-session (interactive overlay listing all sessions)
+  (set-key-binding #\s :choose-session)
 ;; C-b ( / C-b ) — switch to prev/next session
 (set-key-binding #\( :switch-client-prev)
 (set-key-binding #\) :switch-client-next)
@@ -67,6 +75,10 @@
 (set-key-binding #\i :display-info)
 ;; C-b ~ — show-messages (show recent display-message log)
 (set-key-binding (code-char 126) :show-messages)
+  (values))
+
+;; Install once at load time so the running image has the full default set.
+(install-extended-key-bindings)
 
 (defstruct input-state
   "Opaque CPS keystroke-processing state. Holds the current continuation."

@@ -185,9 +185,11 @@
          (pty-write (pane-fd ap) (byte-vec +prefix-key-code+))))))
 
   ;; ── Layout commands ────────────────────────────────────────────────────────
-  (:select-layout-even-h  (%apply-named-layout-to-session session :even-horizontal))
-  (:select-layout-even-v  (%apply-named-layout-to-session session :even-vertical))
-  (:select-layout-tiled   (%apply-named-layout-to-session session :tiled))
+  (:select-layout-even-h    (%apply-named-layout-to-session session :even-horizontal))
+  (:select-layout-even-v    (%apply-named-layout-to-session session :even-vertical))
+  (:select-layout-tiled     (%apply-named-layout-to-session session :tiled))
+  (:select-layout-main-h    (%apply-named-layout-to-session session :main-horizontal))
+  (:select-layout-main-v    (%apply-named-layout-to-session session :main-vertical))
 
   ;; ── Pane selection ────────────────────────────────────────────────────────
   (:select-pane-left   (%select-pane-in-direction session :left))
@@ -263,15 +265,18 @@
            (prompt-start "window: " ""
                          (lambda (input)
                            (let ((n (ignore-errors (parse-integer input))))
-                             (when n (select-window-by-number session n)))
+                             (when n
+                               (%with-window-focus-transition (session)
+                                 (select-window-by-number session n))))
                            (setf *active-menu* nil)
                            (clear-overlay))))
          (show-overlay "(no windows)"))))
   (:last-window
    (let ((prev (session-last-window session)))
      (when prev
-       (session-select-window session prev)
-       (setf (window-last-active-time prev) (get-universal-time)))))
+       (%with-window-focus-transition (session)
+         (session-select-window session prev)
+         (setf (window-last-active-time prev) (get-universal-time))))))
   (:move-window
    (with-active-window (win session)
      (prompt-start "move-window" ""
@@ -321,7 +326,7 @@
   (:last-pane
    (let* ((win  (session-active-window session))
           (last (and win (window-last-active win))))
-     (when last (window-select-pane win last))))
+     (when last (%select-pane-with-focus win last))))
   (:display-panes
    (with-active-window (win session)
      (let ((panes (window-panes win)))
@@ -361,8 +366,9 @@
    (prompt-start "display-message" ""
                  (lambda (msg)
                    (unless (string= msg "")
-                     (add-message-log msg)
-                     (show-overlay msg)))))
+                     ;; Expand the message as a format too, so the two-step prompt
+                     ;; and the one-line "display-message <fmt>" behave the same.
+                     (%cmd-display-message session (list msg))))))
   (:source-file
    (prompt-start "source-file" ""
                  (lambda (path)
@@ -476,12 +482,15 @@
    (prompt-start ": " ""
                  (lambda (input)
                    (unless (string= input "")
-                     (let* ((trimmed  (string-trim '(#\Space #\Tab) input))
-                            (parts    (uiop:split-string trimmed :separator " "))
-                            (cmd-name (first parts)))
-                       (%dispatch-named-command session cmd-name))))))
+                     ;; Arg-aware: parses "<command> <args...>" so commands like
+                     ;; display-message #{session_name} run with their arguments.
+                     (%run-command-line session input)))))
 
   ;; ── Miscellaneous commands ─────────────────────────────────────────────────
+  (:refresh-client
+   ;; Force an immediate redraw of the terminal.  Useful after terminal resize
+   ;; or when the display has been corrupted by another program.
+   (setf *dirty* t))
   (:send-keys
    (with-active-pane (ap session)
      (prompt-start "send-keys" ""
@@ -500,9 +509,14 @@
         (format nil "~{~A~%~}"
                 (mapcar #'cdr *message-log*))
         "(no messages)")))
+  (:show-hooks
+   (show-overlay (cl-tmux/hooks:describe-command-hooks)))
   (:capture-pane
    (with-active-pane (ap session)
      (show-overlay (capture-pane ap))))
+  (:clear-history
+   (with-active-pane (ap session)
+     (cl-tmux/terminal/actions:clear-scrollback (pane-screen ap))))
   (:choose-tree
    (show-overlay
     (with-output-to-string (stream)
@@ -616,5 +630,6 @@
                                            :key #'window-name
                                            :test #'string-equal))))
                        (if win
-                           (session-select-window session win)
+                           (%with-window-focus-transition (session)
+                             (session-select-window session win))
                            (show-overlay (format nil "no window: ~A" input)))))))))

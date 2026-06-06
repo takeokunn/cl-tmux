@@ -94,6 +94,22 @@
     (let ((ready (cl-tmux/pty:select-fds (list rfd) 10000)))  ; 10 ms
       (is (null ready) "empty pipe must not be readable"))))
 
+(test select-fds-gates-on-positive-select-return
+  "select-fds inspects the read-set ONLY when select(2) reports a positive count:
+   an idle pipe returns NIL (count 0 / EINTR -1 leave the read-set undefined), and
+   after a write the readable fd is reported.  This guards against an EINTR-driven
+   false positive on an idle fd."
+  (with-pipe-fds (rfd wfd)
+    ;; Idle pipe → NIL (gated; never inspects stale bits).
+    (is (null (cl-tmux/pty:select-fds (list rfd) 10000))
+        "idle pipe must return NIL")
+    ;; Write one byte → select reports a positive count → the fd is returned.
+    (cffi:with-foreign-object (buf :uint8)
+      (setf (cffi:mem-ref buf :uint8) 7)
+      (cffi:foreign-funcall "write" :int wfd :pointer buf :unsigned-long 1 :long))
+    (is (equal (list rfd) (cl-tmux/pty:select-fds (list rfd) 200000))
+        "after a write, select-fds must report exactly the readable fd")))
+
 ;;; ── Package / constant coverage ─────────────────────────────────────────────
 
 (test poll-timeout-us-constant-is-positive

@@ -79,26 +79,40 @@
 ;;; It does NOT return an alist.  Tests verify the side effects via key-table-lookup.
 
 (test define-initial-key-bindings-macro-populates-key-table
-  "define-initial-key-bindings populates the prefix key-table for char and digit entries."
-  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
-    (define-initial-key-bindings
-      (#\c :new-window)
-      (:digits :select-window))
-    ;; #\c → :new-window
-    (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\c)))
-      (is (not (null entry)) "#\\c must have a prefix binding")
-      (is (eq :new-window (cl-tmux/config:key-table-command entry))
-          "char entry must bind :new-window"))
-    ;; digits 0-9 → :select-window
-    (dolist (d '(#\0 #\1 #\5 #\9))
-      (let ((entry (cl-tmux/config:key-table-lookup "prefix" d)))
-        (is (not (null entry)) "digit ~C must have a prefix binding" d)
-        (is (eq :select-window (cl-tmux/config:key-table-command entry))
-            "digit ~C must bind :select-window" d)))
-    ;; 11 total entries: 1 char + 10 digits
-    (let ((tbl (cl-tmux/config:ensure-key-table "prefix")))
-      (is (= 11 (hash-table-count tbl))
-          "prefix table must have exactly 11 entries (1 char + 10 digits)"))))
+  "define-initial-key-bindings expands to install-default-prefix-bindings, which
+   populates the prefix key-table for char and digit entries when called."
+  ;; The macro now expands to (defun install-default-prefix-bindings ...) rather
+  ;; than emitting side effects, so we must CALL the generated installer to
+  ;; populate the table.  Because the macro redefines the GLOBAL installer with
+  ;; this test's custom binding set, save and restore its real definition — else
+  ;; later tests that rebuild defaults via initialize-default-key-tables would
+  ;; inherit a prefix table missing #\d, #\x, etc. (a cross-test cascade).
+  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal))
+        (saved-installer
+          (fdefinition 'cl-tmux/config::install-default-prefix-bindings)))
+    (unwind-protect
+         (progn
+           (define-initial-key-bindings
+             (#\c :new-window)
+             (:digits :select-window))
+           (cl-tmux/config::install-default-prefix-bindings)
+           ;; #\c → :new-window
+           (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\c)))
+             (is (not (null entry)) "#\\c must have a prefix binding")
+             (is (eq :new-window (cl-tmux/config:key-table-command entry))
+                 "char entry must bind :new-window"))
+           ;; digits 0-9 → :select-window
+           (dolist (d '(#\0 #\1 #\5 #\9))
+             (let ((entry (cl-tmux/config:key-table-lookup "prefix" d)))
+               (is (not (null entry)) "digit ~C must have a prefix binding" d)
+               (is (eq :select-window (cl-tmux/config:key-table-command entry))
+                   "digit ~C must bind :select-window" d)))
+           ;; 11 total entries: 1 char + 10 digits
+           (let ((tbl (cl-tmux/config:ensure-key-table "prefix")))
+             (is (= 11 (hash-table-count tbl))
+                 "prefix table must have exactly 11 entries (1 char + 10 digits)")))
+      (setf (fdefinition 'cl-tmux/config::install-default-prefix-bindings)
+            saved-installer))))
 
 ;;; ── set-key-binding / remove-key-binding ──────────────────────────────────
 
@@ -378,10 +392,13 @@
                   (#\H :resize-left)
                   (#\J :resize-down)
                   (#\K :resize-up)
-                  (#\L :resize-right)
+                  ;; #\L and #\! are rebound to their tmux-correct commands by
+                  ;; events-loop.lisp (loaded after config.lisp): L = last-session
+                  ;; (switch-client -l), ! = break-pane.
+                  (#\L :last-session)
                   (#\Z :zoom-toggle)
                   (#\$ :rename-session)
-                  (#\! :if-shell)))
+                  (#\! :break-pane)))
     (let ((key (first pair))
           (expected (second pair)))
       (is (eq expected (lookup-key-binding key))

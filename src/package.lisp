@@ -183,13 +183,22 @@
    #:screen-app-cursor-keys
    ;; OSC 0/2 window title
    #:screen-title
+   ;; OSC 7 current working directory
+   #:screen-cwd
    ;; Mouse reporting mode
    #:screen-mouse-mode
    #:screen-mouse-sgr-mode
    ;; Auto-wrap mode (?7h / ?7l)
    #:screen-autowrap
-   ;; Active character set (:ascii / :dec-graphics)
+   #:screen-origin-mode
+   ;; Focus event reporting (?1004h / ?1004l)
+   #:screen-focus-events
+   ;; Active character set (:ascii / :dec-graphics) + VT100 G0/G1 + SO/SI state
    #:screen-charset
+   #:screen-g0-charset
+   #:screen-g1-charset
+   #:screen-active-g
+   #:screen-tab-stops
    ;; Response queue for DA1/DA2 and similar replies
    #:screen-response-queue
    ;; Grid helpers
@@ -214,9 +223,12 @@
    #:cursor-ht
    #:cursor-cht
    #:cursor-cbt
+   #:set-tab-stop
+   #:clear-tab-stops
    #:cursor-bs
    #:cursor-ri
    #:cursor-cr
+   #:cursor-nel
    #:cursor-down/scroll
    ;; Character writing
    #:write-char-at-cursor
@@ -226,7 +238,10 @@
    #:scroll-up-one
    #:scroll-down-one
    #:trim-scroll-history
+   #:clear-scrollback
    #:*history-limit-fn*
+   ;; Focus event reporting (?1004)
+   #:focus-event-report
    ;; Erase
    #:erase-region
    #:erase-display
@@ -253,7 +268,11 @@
    #:set-cursor-shape
    #:set-bell-pending
    #:set-charset
-   #:set-screen-title))
+   #:designate-charset
+   #:invoke-charset
+   #:screen-invoked-charset
+   #:set-screen-title
+   #:set-screen-cwd))
 
 (defpackage #:cl-tmux/terminal/sgr
   (:use #:cl #:cl-tmux/terminal/types)
@@ -282,7 +301,7 @@
    #:make-csi-k
    #:make-utf8-k
    #:osc-state
-   #:charset-state
+   #:make-charset-designator-k
    #:*osc52-handler*))
 
 (defpackage #:cl-tmux/terminal/emulator
@@ -323,6 +342,8 @@
    #:screen-app-cursor-keys
    ;; OSC 0/2 window title
    #:screen-title
+   ;; OSC 7 current working directory
+   #:screen-cwd
    ;; Mouse reporting mode
    #:screen-mouse-mode
    #:screen-mouse-sgr-mode
@@ -533,7 +554,15 @@
    #:remove-hook
    #:run-hooks
    #:clear-hooks
-   #:list-hooks))
+   #:list-hooks
+   #:*command-hooks*
+   #:set-command-hook
+   #:command-hooks
+   #:clear-command-hooks
+   #:list-command-hooks
+   #:describe-command-hooks
+   #:*command-hook-runner*
+   #:run-command-hooks-via-runner))
 
 (defpackage #:cl-tmux/options
   (:use #:cl)
@@ -646,7 +675,9 @@
    #:pipe-pane-close
    #:pipe-pane-write
    ;; send-keys
-   #:send-keys-to-pane))
+   #:send-keys-to-pane
+   ;; command-string tokeniser (shared lexer for multi-arg commands)
+   #:tokenize-command-string))
 
 ;;; ── Top-level entry point ────────────────────────────────────────────────
 

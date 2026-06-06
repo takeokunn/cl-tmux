@@ -75,12 +75,18 @@
 (test add-same-callback-twice
   "Adding the same lambda twice registers it twice; run-hooks calls it twice."
   (with-isolated-hooks
-    (let ((count 0)
-          (cb    (lambda () (incf count))))
+    ;; Use LET* (not LET): the CB closure must capture the SAME binding the
+    ;; assertion reads.  Under a PARALLEL let, the init-form (lambda () (incf
+    ;; hits)) is evaluated in the ENCLOSING scope, where HITS is a free
+    ;; (special, unbound) variable — the callback then errors at call time
+    ;; ("variable HITS is unbound"), run-hooks swallows it, and the counter
+    ;; never moves.  let* binds HITS before evaluating CB's init-form.
+    (let* ((hits 0)
+           (cb   (lambda () (incf hits))))
       (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-new-window+ cb)
       (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-new-window+ cb)
       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+)
-      (is (= 2 count) "same callback added twice must be called twice"))))
+      (is (= 2 hits) "same callback added twice must be called twice"))))
 
 ;;; ── remove-hook ──────────────────────────────────────────────────────────────
 
@@ -349,3 +355,95 @@
       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-client-attached+)
       (is-true first-called  "first callback must fire for client-attached")
       (is-true second-called "second callback must fire for client-attached"))))
+
+;;; ── Command hooks (the `set-hook` directive) ──────────────────────────────────
+
+(test set-command-hook-stores-keyword
+  "set-command-hook registers a command keyword under an event name."
+  (with-isolated-hooks
+    (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
+    (is (equal '(:next-window) (cl-tmux/hooks:command-hooks "after-new-window"))
+        "command-hooks must return the registered keyword")))
+
+(test set-command-hook-accumulates-in-order
+  "Multiple set-command-hook calls accumulate in registration order."
+  (with-isolated-hooks
+    (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
+    (cl-tmux/hooks:set-command-hook "after-new-window" :rename-window)
+    (is (equal '(:next-window :rename-window)
+               (cl-tmux/hooks:command-hooks "after-new-window"))
+        "command hooks must accumulate in order")))
+
+(test clear-command-hooks-removes-all
+  "clear-command-hooks removes every command hook for an event."
+  (with-isolated-hooks
+    (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
+    (cl-tmux/hooks:clear-command-hooks "after-new-window")
+    (is (null (cl-tmux/hooks:command-hooks "after-new-window"))
+        "after clear-command-hooks the event must have no command hooks")))
+
+(test set-hook-directive-registers-command-hook
+  "set-hook <event> <command> resolves the command name and stores a command hook."
+  (with-isolated-hooks
+    (let ((applied (cl-tmux/config:load-config-from-string
+                    "set-hook after-new-window next-window")))
+      (is (= 1 applied) "set-hook must apply as exactly 1 directive")
+      (is (equal '(:next-window) (cl-tmux/hooks:command-hooks "after-new-window"))
+          "set-hook must register :next-window for after-new-window"))))
+
+(test set-hook-directive-rejects-unknown-command
+  "set-hook with an unknown command name registers nothing."
+  (with-isolated-hooks
+    (cl-tmux/config:load-config-from-string "set-hook after-new-window no-such-command")
+    (is (null (cl-tmux/hooks:command-hooks "after-new-window"))
+        "set-hook must not register an unknown command")))
+
+(test run-command-hooks-dispatches-registered-commands
+  "run-command-hooks dispatches each registered command keyword on the session."
+  (with-isolated-hooks
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
+        (cl-tmux::run-command-hooks "after-new-window" s)
+        (is (eq (second (session-windows s)) (session-active-window s))
+            "run-command-hooks must dispatch :next-window, advancing the active window")))))
+
+(test command-hook-fires-on-after-kill-pane-via-runner
+  "Killing a pane fires the after-kill-pane command hook through the runner."
+  (with-isolated-hooks
+    (let ((s (make-fake-session :nwindows 2 :npanes 2)))
+      (with-loop-state
+        (cl-tmux/hooks:set-command-hook "after-kill-pane" :next-window)
+        ;; kill-pane removes window 0's active pane (a survivor remains), fires
+        ;; after-kill-pane, and the runner dispatches :next-window.  No fork: the
+        ;; fake panes have fd -1 so pty-close is a guarded no-op.
+        (cl-tmux/commands:kill-pane s)
+        (is (eq (second (session-windows s)) (session-active-window s))
+            "after-kill-pane command hook (:next-window) must advance the active window")))))
+
+;;; ── show-hooks (inspect registered command hooks) ─────────────────────────────
+
+(test describe-command-hooks-empty-message
+  "describe-command-hooks reports the empty state when no command hooks are set."
+  (with-isolated-hooks
+    (is (search "no command hooks" (cl-tmux/hooks:describe-command-hooks))
+        "describe-command-hooks must report the empty state")))
+
+(test describe-command-hooks-lists-registered
+  "describe-command-hooks lists each event and its (downcased) commands."
+  (with-isolated-hooks
+    (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
+    (let ((desc (cl-tmux/hooks:describe-command-hooks)))
+      (is (search "after-new-window" desc) "must list the event name")
+      (is (search "next-window" desc) "must list the command (downcased)"))))
+
+(test dispatch-show-hooks-opens-overlay
+  ":show-hooks dispatches without error and opens an overlay listing the hooks."
+  (with-isolated-hooks
+    (let ((s (make-fake-session))
+          (*overlay* nil))
+      (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
+      (cl-tmux::dispatch-command s :show-hooks nil)
+      (is (overlay-active-p) ":show-hooks must open an overlay")
+      (is (search "after-new-window" (or *overlay* ""))
+          "the overlay must list the registered hook"))))

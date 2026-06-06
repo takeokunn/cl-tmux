@@ -29,7 +29,7 @@
 
 (test runtime-max-message-log-entries-is-constant
   :description "+max-message-log-entries+ is a positive integer constant."
-  (is (constantp '+max-message-log-entries+) "+max-message-log-entries+ must be a constant")
+  (is (constantp 'cl-tmux::+max-message-log-entries+) "+max-message-log-entries+ must be a constant")
   (is (integerp cl-tmux::+max-message-log-entries+) "constant must be an integer")
   (is (plusp cl-tmux::+max-message-log-entries+) "constant must be positive"))
 
@@ -105,15 +105,19 @@ given a non-NIL initial state (loop while *running*)."
 
 (test stop-reader-threads-joins-already-dead-thread
   :description "stop-reader-threads tolerates joining a thread that has already exited."
-  (let* ((cl-tmux::*running* nil)
-         (thread (bordeaux-threads:make-thread
-                  (lambda ()
-                    (loop while cl-tmux::*running* do (sleep 0.001)))
-                  :name "test-dead-thread")))
-    (sleep 0.05)
-    (finishes (cl-tmux::stop-reader-threads (list thread))
-              "stop-reader-threads must not signal when joining a dead thread")
-    (is-false cl-tmux::*running*)))
+  ;; with-global-running NIL sets the GLOBAL *running* the spawned thread reads,
+  ;; so its (loop while *running*) exits immediately and the thread is already
+  ;; dead by the time stop-reader-threads joins it.  A LET binding would be
+  ;; invisible to the child thread, leaving it looping forever.
+  (with-global-running nil
+    (let ((thread (bordeaux-threads:make-thread
+                   (lambda ()
+                     (loop while cl-tmux::*running* do (sleep 0.001)))
+                   :name "test-dead-thread")))
+      (sleep 0.05)
+      (finishes (cl-tmux::stop-reader-threads (list thread))
+                "stop-reader-threads must not signal when joining a dead thread")
+      (is-false cl-tmux::*running*))))
 
 ;;; ── start-reader-thread ──────────────────────────────────────────────────────
 
@@ -333,11 +337,13 @@ given a non-NIL initial state (loop while *running*)."
 
 (test start-status-timer-returns-thread
   :description "start-status-timer returns a non-nil thread object."
-  (let ((cl-tmux::*running* t))
+  (with-global-running t
     (let ((thread (cl-tmux::start-status-timer (lambda () nil))))
       (unwind-protect
            (is-true thread "start-status-timer must return a non-nil thread")
-        ;; Clean up: stop the timer thread.
+        ;; Clean up: stop the timer thread.  Setting the GLOBAL *running* NIL
+        ;; (we are inside with-global-running, not a LET) is what the spawned
+        ;; timer thread observes, so it exits and join-thread returns promptly.
         (setf cl-tmux::*running* nil)
         (ignore-errors
           (bordeaux-threads:join-thread thread
@@ -349,8 +355,11 @@ given a non-NIL initial state (loop while *running*)."
   ;; set status-interval to 0 so max 1 clamps it to 1.  We use a counter
   ;; closure, set *running* to nil after a brief wall-clock wait, then
   ;; verify at least one call occurred.
-  (let ((cl-tmux::*running* t)
-        (counter 0))
+  ;; The timer thread reads the GLOBAL *running*, so drive it via
+  ;; with-global-running; a LET would be invisible to the spawned thread and
+  ;; leak it into later suites (breaking fork()).
+  (with-global-running t
+   (let ((counter 0))
     (let ((original-interval (cl-tmux/options:get-option "status-interval")))
       (unwind-protect
            (progn
@@ -360,8 +369,10 @@ given a non-NIL initial state (loop while *running*)."
                             (lambda () (incf counter)))))
                (unwind-protect
                     (progn
-                      ;; Wait long enough for at least one tick (interval=1s).
-                      (sleep 1.5)
+                      ;; Poll for the first callback (interval=1s) instead of a
+                      ;; fixed sleep, so a loaded build machine cannot starve the
+                      ;; timer thread within the window.  Budget ~6s; exits early.
+                      (loop repeat 600 until (>= counter 1) do (sleep 0.01))
                       (setf cl-tmux::*running* nil)
                       (ignore-errors
                         (bordeaux-threads:join-thread
@@ -372,4 +383,4 @@ given a non-NIL initial state (loop while *running*)."
                  ;; Ensure thread is stopped even if assertion fails.
                  (setf cl-tmux::*running* nil))))
         ;; Restore original status-interval.
-        (cl-tmux/options:set-option "status-interval" original-interval)))))
+        (cl-tmux/options:set-option "status-interval" original-interval))))))

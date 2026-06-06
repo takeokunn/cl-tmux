@@ -40,6 +40,11 @@
 
       (install-sigwinch-handler)
 
+      ;; Start the status-interval timer so the status bar refreshes
+      ;; periodically (e.g. the clock updates without requiring a keystroke).
+      (setf *status-timer*
+            (start-status-timer (lambda () (setf *dirty* t))))
+
       (handler-case
           (with-raw-mode
             (clear-display)
@@ -61,8 +66,10 @@
                   "~&cl-tmux: unhandled error: ~A~%" c)
           (sb-ext:exit :code 1)))
 
-      ;; Cleanup: signal shutdown, join reader threads, then close fds.
-      (stop-reader-threads reader-threads)
+      ;; Cleanup: signal shutdown, join reader threads and status timer, then close fds.
+      (stop-reader-threads (append reader-threads
+                                   (when *status-timer* (list *status-timer*))))
+      (setf *status-timer* nil)
       (dolist (pane (all-panes session))
         (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))))
 
