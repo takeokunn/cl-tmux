@@ -137,8 +137,22 @@
        #'reader-idle-state))))
 
 (defun reader-eof-state (pane)
-  "Terminal state: EOF received, fire pane-exited hook and stop the reader loop."
+  "Terminal state: EOF received.  Fire the pane-exited hook.
+   When the 'remain-on-exit' option is set, display a notice on the pane's screen
+   and spin-wait until *running* clears (the pane content stays frozen but visible).
+   Otherwise, return NIL to stop the reader loop immediately."
   (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-exited+ pane)
+  (when (ignore-errors (cl-tmux/options:get-option "remain-on-exit"))
+    ;; Write [Process exited] to the pane screen so the user can see it exited.
+    (let ((screen (pane-screen pane)))
+      (when screen
+        (let ((msg (babel:string-to-octets
+                    (format nil "~C[7m[Process exited]~C[m" #\Escape #\Escape)
+                    :encoding :utf-8)))
+          (cl-tmux/terminal/emulator:screen-process-bytes screen msg))))
+    (setf *dirty* t)
+    ;; Spin-wait while the session is still running; the pane stays on screen.
+    (loop while *running* do (sleep 0.1)))
   nil)
 
 (defun %run-reader-states (pane initial-state)

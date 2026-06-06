@@ -381,6 +381,25 @@
                  (lambda (name)
                    (unless (string= name "")
                      (show-overlay (cl-tmux/options:show-option name))))))
+  ;; show-window-options / show-session-options: per-scope option listing.
+  ;; Currently cl-tmux uses a flat global store; these show the same global
+  ;; table but with a scope label, matching tmux's output format closely enough
+  ;; for transparency.  Per-window local options are shown when a window is active.
+  (:show-window-options
+   (show-overlay
+    (with-output-to-string (s)
+      (format s "# window options~%")
+      (write-string (cl-tmux/options:show-options) s))))
+  (:show-session-options
+   (show-overlay
+    (with-output-to-string (s)
+      (format s "# session options~%")
+      (write-string (cl-tmux/options:show-options) s))))
+  (:show-server-options
+   (show-overlay
+    (with-output-to-string (s)
+      (format s "# server options~%")
+      (write-string (cl-tmux/options:show-options :server) s))))
   (:confirm-before
    (prompt-start "confirm? (y/n)" ""
                  (lambda (input)

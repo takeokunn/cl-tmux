@@ -103,21 +103,48 @@
   (if (= (length token) 1) (char token 0) token))
 
 (defparameter *bindable-commands*
-  '(:new-window :next-window :prev-window :next-pane :prev-pane
-    :split-horizontal :split-vertical :detach :kill-pane :kill-window
-    :rename-window :rename-session :list-keys :copy-mode-enter
-    :resize-left :resize-right :resize-up :resize-down
-    :select-window   ; the pressed digit chooses the window
-    :paste-buffer
-    :zoom-toggle
+  '(;; Window lifecycle
+    :new-window :next-window :prev-window :last-window :find-window
+    :rename-window :choose-window :list-windows :move-window-prompt :swap-window
+    :rotate-window :rotate-window-reverse :next-layout
     :select-layout-even-h :select-layout-even-v :select-layout-tiled
-    :run-shell :list-sessions :list-sessions-full :list-windows
+    :select-layout-main-h :select-layout-main-v :select-layout-spread
+    ;; Pane lifecycle
+    :next-pane :prev-pane :last-pane :display-panes
+    :split-horizontal :split-vertical
+    :split-horizontal-no-focus :split-vertical-no-focus
+    :kill-pane :kill-pane-confirm :kill-window :kill-window-confirm
+    :respawn-pane :break-pane :join-pane
     :swap-pane-forward :swap-pane-backward
-    :last-pane :display-panes
-    :new-session :kill-session :rename-session-prompt
+    :resize-left :resize-right :resize-up :resize-down
+    :zoom-toggle :mark-pane :clear-mark
+    :synchronize-panes :pipe-pane :display-info
+    ;; Session lifecycle
+    :new-session :kill-session :rename-session :detach
+    :list-sessions :list-sessions-full :choose-session
     :switch-client-next :switch-client-prev :last-session
-    :display-message :source-file
-    :show-options :show-option)
+    :has-session :lock-session :unlock-session
+    ;; Key bindings / config
+    :list-keys :source-file :bind-key :unbind-key
+    :rename-window :rename-session
+    ;; Selection / navigation
+    :select-window ; the pressed digit chooses the window
+    :select-window-prompt :select-pane-left :select-pane-right
+    :select-pane-up :select-pane-down
+    ;; Copy / paste / buffers
+    :paste-buffer :copy-mode-enter :send-prefix
+    :list-buffers :show-buffer :choose-buffer :delete-buffer
+    :save-buffer :load-buffer
+    ;; Display / info
+    :show-options :show-option
+    :show-window-options :show-session-options :show-server-options
+    :show-messages :show-hooks
+    :display-message :display-panes :display-info :display-popup
+    :capture-pane :clear-history :clock-mode
+    ;; Scripting / hooks
+    :run-shell :if-shell :command-prompt :wait-for
+    ;; Client management
+    :choose-client :choose-tree :refresh-client)
   "Command keywords a config-file bind directive may target.
    Type: list of keyword symbols.
    This is the user-bindable subset of commands cl-tmux:dispatch-command handles.

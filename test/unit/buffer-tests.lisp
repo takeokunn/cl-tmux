@@ -192,3 +192,34 @@
     (finishes (cl-tmux/buffer:clear-paste-buffers))
     (is (null (cl-tmux/buffer:list-paste-buffers))
         "ring must remain NIL after clearing an empty ring")))
+
+;;; ── OSC 52 end-to-end: handler wired to paste buffer ─────────────────────────
+
+(test osc52-handler-is-set-to-add-paste-buffer
+  "The *osc52-handler* is wired to add-paste-buffer at load time."
+  (is-true cl-tmux/terminal/parser:*osc52-handler*
+           "*osc52-handler* must be non-NIL after loading buffer.lisp")
+  (is (functionp cl-tmux/terminal/parser:*osc52-handler*)
+      "*osc52-handler* must be a function"))
+
+(test osc52-handler-populates-paste-buffer
+  "Calling *osc52-handler* with text pushes it onto the paste buffer ring."
+  (with-empty-buffers
+    (funcall cl-tmux/terminal/parser:*osc52-handler* "clipboard-text")
+    (is (string= "clipboard-text" (cl-tmux/buffer:get-paste-buffer 0))
+        "paste buffer must contain the text passed to *osc52-handler*")))
+
+(test osc52-screen-process-bytes-populates-paste-buffer
+  "An OSC 52 escape sequence processed by screen-process-bytes fills the paste buffer.
+   ESC ] 52 ; c ; SGVsbG8= ST  (Hello in base64)."
+  (with-empty-buffers
+    (let ((s (make-screen 10 5)))
+      ;; OSC 52: ESC ] 52 ; c ; SGVsbG8= ST
+      ;; ST = ESC backslash (0x1b 0x5c)
+      (let ((seq (babel:string-to-octets
+                  (format nil "~C]52;c;SGVsbG8=~C\\" #\Escape #\Escape)
+                  :encoding :latin-1)))
+        (cl-tmux/terminal/emulator:screen-process-bytes s seq))
+      (let ((buf (cl-tmux/buffer:get-paste-buffer 0)))
+        (is (and (stringp buf) (string= "Hello" buf))
+            "OSC 52 clipboard write must put decoded 'Hello' into paste buffer, got ~S" buf)))))
