@@ -3453,3 +3453,63 @@
         (cl-tmux::%run-command-line s "list-panes")
         (is (and *overlay* (plusp (length *overlay*)))
             "list-panes must produce a non-empty overlay")))))
+
+;;; ── split-window arg command ─────────────────────────────────────────────────
+
+(test run-command-line-split-window-default-vertical-stack
+  "%run-command-line split-window (no flags) adds a new pane below."
+  (let ((s (make-fake-session :nwindows 1 :npanes 1)))
+    (with-loop-state
+      ;; split-window forks a PTY; skip if not available
+      (when (pty-available-p)
+        (let* ((win   (cl-tmux/model:session-active-window s))
+               (before (length (cl-tmux/model:window-panes win))))
+          (cl-tmux::%run-command-line s "split-window")
+          (stop-cl-tmux-threads)
+          (is (> (length (cl-tmux/model:window-panes win)) before)
+              "split-window must add a pane to the active window"))))))
+
+(test run-command-line-split-window-h-flag
+  "%run-command-line split-window -h adds a pane to the right."
+  (let ((s (make-fake-session :nwindows 1 :npanes 1)))
+    (with-loop-state
+      (when (pty-available-p)
+        (let* ((win    (cl-tmux/model:session-active-window s))
+               (before (length (cl-tmux/model:window-panes win))))
+          (cl-tmux::%run-command-line s "split-window -h")
+          (stop-cl-tmux-threads)
+          (is (> (length (cl-tmux/model:window-panes win)) before)
+              "split-window -h must add a pane to the active window"))))))
+
+;;; ── new-window -n name ───────────────────────────────────────────────────────
+
+(test run-command-line-new-window-with-name
+  "%run-command-line new-window -n myname creates a window named myname."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (when (pty-available-p)
+        (cl-tmux::%run-command-line s "new-window -n myname")
+        (stop-cl-tmux-threads)
+        (let ((win (cl-tmux/model:session-active-window s)))
+          (is (string= "myname" (cl-tmux/model:window-name win))
+              "new-window -n must set the window name"))))))
+
+;;; ── show-window-options / show-session-options ───────────────────────────────
+
+(test dispatch-show-window-options-shows-overlay
+  ":show-window-options shows an overlay with window options."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::dispatch-command s :show-window-options nil)
+        (is (and *overlay* (plusp (length *overlay*)))
+            ":show-window-options must produce an overlay")))))
+
+(test dispatch-show-session-options-shows-overlay
+  ":show-session-options shows an overlay with session options."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::dispatch-command s :show-session-options nil)
+        (is (and *overlay* (plusp (length *overlay*)))
+            ":show-session-options must produce an overlay")))))

@@ -146,7 +146,7 @@
    real tmux; the id is assigned by session-new-window as the lowest free slot."
   (let* ((rows (- *term-rows* *status-height*))
          (cols *term-cols*)
-         (name (%shell-basename))
+         (name (cl-tmux/model::%shell-basename))
          (win  (session-new-window session name rows cols)))
     (start-reader-thread (window-active-pane win))
     (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+ win)
@@ -779,6 +779,50 @@
         (let ((win (session-active-window session)))
           (when win (rename-window win name)))))))
 
+(defun %cmd-split-window (session args)
+  "split-window [-h|-v] [-p percent]: split the active pane.
+   -h: horizontal split (new pane to the right; :split-vertical in dispatch terms).
+   -v: vertical split (new pane below; :split-horizontal, the default).
+   -p N: size as a percentage of the parent pane (0-100)."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "p")
+    (declare (ignore positionals))
+    (let* ((horizontal-p (assoc #\h flags))  ; -h = side by side
+           (pct-str      (cdr (assoc #\p flags)))
+           (pct          (and pct-str (parse-integer pct-str :junk-allowed t)))
+           (size         (and pct (/ pct 100.0))))
+      (if horizontal-p
+          (%cmd-split session :h :size size)   ; :h = side-by-side (:split-vertical key)
+          (%cmd-split session :v :size size))))) ; :v = stacked (:split-horizontal key)
+
+(defun %cmd-new-session-arg (session args)
+  "new-session [-s name]: create a new session, optionally with a given name.
+   SESSION is the current session (unused; the new session is added to *server-sessions*)."
+  (declare (ignore session))
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "s")
+    (declare (ignore positionals))
+    (let* ((name (or (cdr (assoc #\s flags))
+                     (format nil "~D" (1+ (length *server-sessions*)))))
+           (rows (- *term-rows* *status-height*))
+           (cols *term-cols*))
+      (new-session name rows cols))))
+
+(defun %cmd-kill-session-arg (session args)
+  "kill-session [-t name]: kill the named session, or the current session when no -t."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
+    (declare (ignore positionals))
+    (let* ((target-name (cdr (assoc #\t flags)))
+           (target-sess (if target-name
+                            (cdr (assoc target-name *server-sessions*
+                                        :test #'equal))
+                            session)))
+      (when target-sess
+        (let ((name (session-name target-sess)))
+          (dolist (pane (all-panes target-sess))
+            (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
+          (server-remove-session name)
+          (when (and (eq target-sess session) (null *server-sessions*))
+            (setf *running* nil)))))))
+
 (defparameter *arg-command-table*
   (list
    (cons '("display-message" "display") #'%cmd-display-message)
@@ -789,13 +833,16 @@
    (cons '("select-pane")               #'%cmd-select-pane)
    (cons '("kill-window" "killw")       #'%cmd-kill-window)
    (cons '("kill-pane")                 #'%cmd-kill-pane)
+   (cons '("kill-session")              #'%cmd-kill-session-arg)
    (cons '("swap-window" "swapw")       #'%cmd-swap-window)
    (cons '("move-window" "movew")       #'%cmd-move-window)
    (cons '("if-shell" "if")             #'%cmd-if-shell)
    (cons '("source-file" "source")      #'%cmd-source-file)
    (cons '("select-layout" "selectl")   #'%cmd-select-layout)
    (cons '("list-panes" "lsp")          #'%cmd-list-panes)
-   (cons '("new-window" "neww")         #'%cmd-new-window-arg))
+   (cons '("new-window" "neww")         #'%cmd-new-window-arg)
+   (cons '("split-window" "splitw")     #'%cmd-split-window)
+   (cons '("new-session" "new")         #'%cmd-new-session-arg))
   "Arg-taking commands: (list-of-names . handler), handler a function of
    (SESSION ARGS).  Consulted by %run-command-line before the no-argument
    %dispatch-named-command name table.")
