@@ -749,8 +749,22 @@
          (window-name     (if window (cl-tmux/model:window-name window) ""))
          (window-active   (if (and window session-active-window
                                    (eq window session-active-window)) "1" "0"))
-         (window-flags    (if (and window session-active-window
-                                   (eq window session-active-window)) "*" " "))
+         ;; #{window_flags}: composite flag string (*=active, -=last, Z=zoomed, M=marked).
+         (window-flags
+          (let ((flags ""))
+            (when window
+              ;; * = current/active window
+              (when (and session-active-window (eq window session-active-window))
+                (setf flags (concatenate 'string flags "*")))
+              ;; - = last window (was previously active)
+              (when (and session
+                         (eq window (cl-tmux/model:session-last-window session))
+                         (not (eq window session-active-window)))
+                (setf flags (concatenate 'string flags "-")))
+              ;; Z = zoomed
+              (when (cl-tmux/model:window-zoom-p window)
+                (setf flags (concatenate 'string flags "Z"))))
+            (if (zerop (length flags)) " " flags)))
          ;; #{window_zoomed_flag}: "Z" when the window is zoomed, else " ".
          (window-zoomed-flag (if (and window (cl-tmux/model:window-zoom-p window)) "Z" " "))
          (window-panes    (if window (cl-tmux/model:window-panes window) nil))
