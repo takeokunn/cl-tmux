@@ -1019,6 +1019,44 @@
       (dispatch-command session kw nil)
       t)))
 
+(defun %cmd-run-shell-arg (session args)
+  "run-shell [-b] command: run COMMAND in a shell and show the output.
+   -b: run in background (fire-and-forget, no output shown).
+   The command is run via /bin/sh -c."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "")
+    (let* ((bg-p    (assoc #\b flags))
+           (command (format nil "~{~A~^ ~}" positionals)))
+      (when (plusp (length command))
+        (if bg-p
+            (run-shell command :background t)
+            (let ((output (run-shell command)))
+              (when (plusp (length (or output "")))
+                (show-overlay output))))))))
+
+(defun %cmd-if-shell-arg (session args)
+  "if-shell [-F] condition [then-cmd] [else-cmd]: conditional command execution.
+   -F: treat condition as a format string (#{var}) instead of a shell command.
+   Without -F: runs condition as shell; exit 0 = truthy."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "")
+    (let* ((format-p (assoc #\F flags))
+           (cond-str (first positionals))
+           (then-str (second positionals))
+           (else-str (third positionals)))
+      (when cond-str
+        (if format-p
+            ;; -F: expand the condition as a format string
+            (let* ((win    (session-active-window session))
+                   (pane   (session-active-pane session))
+                   (ctx    (cl-tmux/format:format-context-from-session session win pane))
+                   (result (cl-tmux/format:expand-format cond-str ctx))
+                   (truthy (and result (plusp (length result)) (not (string= result "0")))))
+              (when truthy (when then-str (%run-command-line session then-str)))
+              (unless truthy (when else-str (%run-command-line session else-str))))
+            ;; Plain shell: run condition and check exit code
+            (if-shell cond-str
+                      (lambda () (when then-str (%run-command-line session then-str)))
+                      :else-fn (lambda () (when else-str (%run-command-line session else-str)))))))))
+
 (defun %cmd-capture-pane-arg (session args)
   "capture-pane [-p] [-S start-line] [-E end-line] [-t target]: capture pane content.
    -p: print to stdout (shows overlay in standalone mode).
@@ -1112,7 +1150,9 @@
    (cons '("detach-client" "detachc")   #'%cmd-detach-client-arg)
    (cons '("send-keys" "send-key")      #'%cmd-send-keys-arg)
    (cons '("resize-pane" "resizep")     #'%cmd-resize-pane-arg)
-   (cons '("capture-pane" "capturep")   #'%cmd-capture-pane-arg))
+   (cons '("capture-pane" "capturep")   #'%cmd-capture-pane-arg)
+   (cons '("run-shell" "run")           #'%cmd-run-shell-arg)
+   (cons '("if-shell" "if")             #'%cmd-if-shell-arg))
   "Arg-taking commands: (list-of-names . handler), handler a function of
    (SESSION ARGS).  Consulted by %run-command-line before the no-argument
    %dispatch-named-command name table.")
