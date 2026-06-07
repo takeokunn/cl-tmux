@@ -1049,3 +1049,34 @@
         "#{session_id} must expand to a non-empty string")
     (is (plusp (length (cl-tmux/format:expand-format "#{window_id}" ctx)))
         "#{window_id} must expand to a non-empty string")))
+
+;;; ── Format arithmetic #{e|OP|A,B} ───────────────────────────────────────────
+
+(test format-arithmetic-addition
+  "#{e|+|1,2} expands to 3."
+  (is (string= "3" (fmt "#{e|+|1,2}"))))
+
+(test format-arithmetic-subtraction
+  "#{e|-|5,2} expands to 3."
+  (is (string= "3" (fmt "#{e|-|5,2}"))))
+
+(test format-arithmetic-multiplication
+  "#{e|*|3,4} expands to 12."
+  (is (string= "12" (fmt "#{e|*|3,4}"))))
+
+(test format-arithmetic-division
+  "#{e|/|10,3} expands to 3 (integer division)."
+  (is (string= "3" (fmt "#{e|/|10,3}"))))
+
+(test format-arithmetic-modulo
+  "#{e|%|10,3} expands to 1."
+  (is (string= "1" (fmt "#{e|%|10,3}"))))
+
+(test format-arithmetic-with-variable
+  "#{e|+|1,#{window_index}} expands to window_index+1."
+  (let ((ctx (list :window-index 5)))
+    (is (string= "6" (cl-tmux/format:expand-format "#{e|+|1,#{window_index}}" ctx)))))
+
+(test format-arithmetic-divide-by-zero
+  "#{e|/|5,0} returns 0 (no error)."
+  (is (string= "0" (fmt "#{e|/|5,0}"))))

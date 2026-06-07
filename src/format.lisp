@@ -336,6 +336,29 @@
             ;; value; otherwise treat cond-str as the literal condition.
             ;; This makes #{?window_active,YES,NO} work for real-world use-cases
             ;; while preserving #{?1,yes,no} / #{?0,yes,no} / #{?,yes,no}.
+            ;; #{e|OP|A,B} — arithmetic: OP is +,-,*,/,% (integer).
+            ;; No colon — checked before the colon branch.
+            ((and (>= (length content) 3)
+                  (char= (char content 0) #\e)
+                  (char= (char content 1) #\|))
+             (let* ((pipe2 (position #\| content :start 2))
+                    (op    (and pipe2 (subseq content 2 pipe2)))
+                    (args  (and pipe2 (subseq content (1+ pipe2)))))
+               (if (and op args (member op '("+" "-" "*" "/" "%") :test #'string=))
+                   (let* ((comma (%top-level-comma args 0))
+                          (a-str (expand-format (if comma (subseq args 0 comma) args) context))
+                          (b-str (expand-format (if comma (subseq args (1+ comma)) "0") context))
+                          (a     (or (parse-integer a-str :junk-allowed t) 0))
+                          (b     (or (parse-integer b-str :junk-allowed t) 0))
+                          (result (cond
+                                    ((string= op "+") (+ a b))
+                                    ((string= op "-") (- a b))
+                                    ((string= op "*") (* a b))
+                                    ((string= op "/") (if (zerop b) 0 (truncate a b)))
+                                    ((string= op "%") (if (zerop b) 0 (rem a b)))
+                                    (t 0))))
+                     (write-string (format nil "~D" result) out))
+                   (write-string "" out))))
             ((and (plusp (length content)) (char= (char content 0) #\?))
              (multiple-value-bind (cond-str true-str false-str)
                  (%split-conditional (subseq content 1))
