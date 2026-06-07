@@ -120,20 +120,34 @@
     (when window
       (window-relayout window (- *term-rows* *status-height*) *term-cols*))))
 
+(defun %auto-rename-name (session window pane screen)
+  "Compute the new automatic window name using automatic-rename-format option.
+   Falls back to the OSC 0/2 screen title when the format yields an empty string."
+  (let* ((fmt (or (cl-tmux/options:get-option "automatic-rename-format")
+                  "#{pane_current_command}"))
+         (ctx (cl-tmux/format:format-context-from-session session window pane))
+         (new-name (cl-tmux/format:expand-format fmt ctx)))
+    (if (and new-name (plusp (length new-name)))
+        new-name
+        ;; Fallback to OSC 0/2 screen title
+        (let ((title (screen-title screen)))
+          (if (plusp (length title)) title "")))))
+
 (defun %maybe-rename-window-from-title (session)
-  "If the active pane has set an OSC title and the window's automatic-rename
-   option is enabled, propagate the title to the active window name.
-   Window renaming is routed through RENAME-WINDOW (commands layer) to ensure
-   hook dispatch and consistent state mutation."
+  "If automatic-rename is enabled for the active window, update its name using
+   automatic-rename-format (default: #{pane_current_command}).  Falls back to
+   the OSC 0/2 screen title.  Routed through RENAME-WINDOW for hooks."
   (let* ((active-pane   (session-active-pane session))
          (screen        (when active-pane (pane-screen active-pane)))
          (active-window (session-active-window session)))
     (when (and screen active-window
                (window-automatic-rename-p active-window)
-               (not (string= (screen-title screen) ""))
-               (not (string= (screen-title screen) (window-name active-window))))
-      (rename-window active-window (screen-title screen))
-      (setf *dirty* t))))
+               (cl-tmux/options:get-option "allow-rename"))
+      (let ((new-name (%auto-rename-name session active-window active-pane screen)))
+        (when (and (plusp (length new-name))
+                   (not (string= new-name (window-name active-window))))
+          (rename-window active-window new-name)
+          (setf *dirty* t))))))
 
 (defun %handle-dirty (session)
   "Fit the active window to current terminal size and repaint."
