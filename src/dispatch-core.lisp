@@ -696,14 +696,31 @@
           (when win (session-select-window session win)))))))
 
 (defun %cmd-select-pane (session args)
-  "select-pane -t <target>: select the pane with pane-id <target> in the active
-   window, delivering focus events."
-  (let* ((target (cdr (assoc #\t (%parse-command-flags args "t"))))
-         (n      (and target (parse-integer target :junk-allowed t)))
-         (win    (session-active-window session)))
-    (when (and n win)
-      (let ((pane (find n (window-panes win) :key #'pane-id)))
-        (when pane (%select-pane-with-focus win pane))))))
+  "select-pane [-L|-R|-U|-D|-m] [-t target]: select a pane by direction or id.
+   -L/-R/-U/-D: move in the given direction (same as prefix C-b arrow keys).
+   -t target: select pane by pane-id in the active window.
+   -m: mark the selected pane."
+  (multiple-value-bind (flags _positionals) (%parse-command-flags args "t")
+    (declare (ignore _positionals))
+    (cond
+      ((assoc #\L flags) (%select-pane-in-direction session :left))
+      ((assoc #\R flags) (%select-pane-in-direction session :right))
+      ((assoc #\U flags) (%select-pane-in-direction session :up))
+      ((assoc #\D flags) (%select-pane-in-direction session :down))
+      ((assoc #\m flags)
+       ;; -m: mark the active pane
+       (with-active-pane (ap session)
+         (with-active-window (win session)
+           (dolist (p (window-panes win)) (setf (pane-marked p) nil)))
+         (setf (pane-marked ap) t)))
+      (t
+       ;; Default: select by pane-id via -t
+       (let* ((target (cdr (assoc #\t flags)))
+              (n      (and target (parse-integer target :junk-allowed t)))
+              (win    (session-active-window session)))
+         (when (and n win)
+           (let ((pane (find n (window-panes win) :key #'pane-id)))
+             (when pane (%select-pane-with-focus win pane)))))))))
 
 (defun %cmd-kill-window (session args)
   "kill-window [-t target]: kill the window named by -t (window-id or name), or
@@ -1093,9 +1110,15 @@
                   (%dispatch-named-command session cmd))))))))
 
 (defun %run-command-line (session input)
-  "Tokenise INPUT (one command line, shell-style) and run it via
-   %run-command-tokens."
-  (%run-command-tokens session (cl-tmux/commands:tokenize-command-string input)))
+  "Tokenise INPUT (one command line, shell-style) and run it.
+   When the tokenised line contains \";\" tokens, splits into multiple commands
+   and runs each in sequence, matching tmux's command-prompt behaviour."
+  (let* ((tokens    (cl-tmux/commands:tokenize-command-string input))
+         (sequences (cl-tmux/config::%split-on-semicolons tokens)))
+    (if (= (length sequences) 1)
+        (%run-command-tokens session (first sequences))
+        (dolist (subcmd sequences)
+          (%run-command-tokens session subcmd)))))
 
 ;;; -- dispatch-prefix-command -----------------------------------------------
 
