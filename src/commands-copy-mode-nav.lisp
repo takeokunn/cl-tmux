@@ -18,6 +18,12 @@
       (setf (aref result col)
             (cell-char (screen-display-cell screen col row))))))
 
+(defun %word-separator-p (ch)
+  "Return T when CH is a word separator according to the 'word-separators' option.
+   Default separators: space, hyphen, underscore, at-sign."
+  (let ((seps (or (cl-tmux/options:get-option "word-separators") " -_@")))
+    (find ch seps :test #'char=)))
+
 ;;; ── Declarative word-navigation macro table ─────────────────────────────────
 ;;;
 ;;; define-copy-mode-word-command: Prolog-style facts table for word-motion
@@ -56,28 +62,28 @@
 
 (define-copy-mode-word-command
   (copy-mode-word-forward
-   "Move cursor forward to the start of the next word (non-space run).
-    A word is any run of non-space characters.  Space is #\\Space."
+   "Move cursor forward to the start of the next word.
+    Word boundaries are defined by the 'word-separators' option (default: space, -, _, @)."
    (min (1- width) new-col)
-   ;; Step over the current word characters.
+   ;; Step over the current word characters (non-separator run).
    (loop while (and (< new-col width)
-                    (char/= (aref chars new-col) #\Space))
+                    (not (%word-separator-p (aref chars new-col))))
          do (incf new-col))
-   ;; Step over the trailing spaces to reach the next word start.
+   ;; Step over the trailing separators to reach the next word start.
    (loop while (and (< new-col width)
-                    (char= (aref chars new-col) #\Space))
+                    (%word-separator-p (aref chars new-col)))
          do (incf new-col)))
 
   (copy-mode-word-backward
    "Move cursor backward to the start of the previous or current word."
    (max 0 new-col)
-   ;; Step back over any leading spaces.
+   ;; Step back over any leading separators.
    (loop while (and (> new-col 0)
-                    (char= (aref chars (1- new-col)) #\Space))
+                    (%word-separator-p (aref chars (1- new-col))))
          do (decf new-col))
    ;; Step back over word characters to reach the word start.
    (loop while (and (> new-col 0)
-                    (char/= (aref chars (1- new-col)) #\Space))
+                    (not (%word-separator-p (aref chars (1- new-col)))))
          do (decf new-col)))
 
   (copy-mode-word-end
@@ -85,16 +91,16 @@
    (min (1- width) new-col)
    ;; If already at end of a word, cross the boundary into the next word.
    (when (and (< new-col (1- width))
-              (char/= (aref chars new-col) #\Space)
-              (char= (aref chars (1+ new-col)) #\Space))
+              (not (%word-separator-p (aref chars new-col)))
+              (%word-separator-p (aref chars (1+ new-col))))
      (incf new-col))
-   ;; Skip over spaces to reach the next word.
+   ;; Skip over separators to reach the next word.
    (loop while (and (< new-col (1- width))
-                    (char= (aref chars new-col) #\Space))
+                    (%word-separator-p (aref chars new-col)))
          do (incf new-col))
    ;; Advance to the last character of the word.
    (loop while (and (< new-col (1- width))
-                    (char/= (aref chars (1+ new-col)) #\Space))
+                    (not (%word-separator-p (aref chars (1+ new-col)))))
          do (incf new-col))))
 
 ;;; ── Line start / end ─────────────────────────────────────────────────────────
