@@ -550,6 +550,17 @@
     ((string= name "status")
      (let ((on-p (member value '("on" "true" "1") :test #'equal)))
        (setf *status-height* (if on-p 1 0))))
+    ;; mouse: on/off enables/disables mouse reporting on the outer terminal.
+    ;; We call the renderer's mouse-reporting functions via symbol lookup to
+    ;; avoid a compile-time circular dependency.
+    ((string= name "mouse")
+     (let ((on-p (member value '("on" "true" "1") :test #'equal))
+           (pkg   (find-package "CL-TMUX/RENDERER")))
+       (when pkg
+         (let ((fn (find-symbol (if on-p "ENABLE-MOUSE-REPORTING"
+                                        "DISABLE-MOUSE-REPORTING")
+                                pkg)))
+           (when fn (ignore-errors (funcall fn)))))))
     ;; status-position: top or bottom adjusts status bar position.
     ;; (stored in options; renderer reads it at render time — no extra side effect needed.)
     ))
