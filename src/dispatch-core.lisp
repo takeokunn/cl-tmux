@@ -1019,6 +1019,38 @@
       (dispatch-command session kw nil)
       t)))
 
+(defun %cmd-capture-pane-arg (session args)
+  "capture-pane [-p] [-S start-line] [-E end-line] [-t target]: capture pane content.
+   -p: print to stdout (shows overlay in standalone mode).
+   -S N: start from scrollback line N (negative = N lines above visible).
+   -t: target pane (not fully supported in standalone mode, uses active pane).
+   Without -p: shows in overlay."
+  (multiple-value-bind (flags _positionals) (%parse-command-flags args "tSE")
+    (declare (ignore _positionals))
+    (let* ((print-p (assoc #\p flags))
+           (include-scrollback (assoc #\S flags))
+           (pane (session-active-pane session))
+           (content (and pane (capture-pane pane :include-scrollback (and include-scrollback t)))))
+      (when content
+        (if print-p
+            (show-overlay content)
+            (show-overlay content))))))
+
+(defun %cmd-resize-pane-arg (session args)
+  "resize-pane [-L|-R|-U|-D|-Z] [amount]: resize the active pane.
+   -L/-R/-U/-D: resize by AMOUNT (default 5) in the given direction.
+   -Z: zoom-toggle the active pane."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "")
+    (let* ((amount-str (first positionals))
+           (amount     (or (and amount-str (parse-integer amount-str :junk-allowed t)) 5))
+           (win        (session-active-window session)))
+      (cond
+        ((assoc #\Z flags) (with-active-window (w session) (window-zoom-toggle w)))
+        ((assoc #\L flags) (resize-pane win :left  amount))
+        ((assoc #\R flags) (resize-pane win :right amount))
+        ((assoc #\U flags) (resize-pane win :up    amount))
+        ((assoc #\D flags) (resize-pane win :down  amount))))))
+
 (defun %cmd-send-keys-arg (session args)
   "send-keys [-t target-pane] [-X copy-mode-cmd] [key ...]: send keys or copy-mode commands.
    -X: dispatch a named copy-mode command (begin-selection, copy-selection, etc.)
@@ -1078,7 +1110,9 @@
    (cons '("set-environment" "setenv")  #'%cmd-set-environment-prompt)
    (cons '("resize-window" "resizew")   #'%cmd-resize-window-arg)
    (cons '("detach-client" "detachc")   #'%cmd-detach-client-arg)
-   (cons '("send-keys" "send-key")      #'%cmd-send-keys-arg))
+   (cons '("send-keys" "send-key")      #'%cmd-send-keys-arg)
+   (cons '("resize-pane" "resizep")     #'%cmd-resize-pane-arg)
+   (cons '("capture-pane" "capturep")   #'%cmd-capture-pane-arg))
   "Arg-taking commands: (list-of-names . handler), handler a function of
    (SESSION ARGS).  Consulted by %run-command-line before the no-argument
    %dispatch-named-command name table.")
