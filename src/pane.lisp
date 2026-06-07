@@ -59,10 +59,15 @@
         (h       (pane-height pane)))
     ;; Close the old PTY; ignore errors (process may have already exited).
     (ignore-errors (pty-close old-fd old-pid))
-    ;; Open a fresh PTY-backed shell at the same geometry.
-    (multiple-value-bind (new-fd new-pid) (forkpty-with-shell h w)
-      (setf (pane-fd  pane) new-fd
-            (pane-pid pane) new-pid))
+    ;; Open a fresh PTY-backed shell at the same geometry, respecting options.
+    (let* ((term (cl-tmux/options:get-option "default-terminal"))
+           (cmd  (cl-tmux/options:get-option "default-command")))
+      (multiple-value-bind (new-fd new-pid)
+          (forkpty-with-shell h w
+                              :term (and term (plusp (length term)) term)
+                              :default-command (and cmd (plusp (length cmd)) cmd))
+        (setf (pane-fd  pane) new-fd
+              (pane-pid pane) new-pid)))
     pane))
 
 ;;; ── pane-reposition ──────────────────────────────────────────────────────────

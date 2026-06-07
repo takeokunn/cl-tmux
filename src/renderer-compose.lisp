@@ -162,6 +162,14 @@
                          :status-row status-row))
     (%render-mouse-sequences buffer active-pane)
     (%render-bell-and-cursor buffer active-pane)
+    ;; set-titles: emit OSC 0 to set the outer terminal window title.
+    (when (cl-tmux/options:get-option "set-titles")
+      (let* ((title-fmt (cl-tmux/options:get-option "set-titles-string" "#W"))
+             (win        (session-active-window session))
+             (pane       (session-active-pane session))
+             (ctx        (cl-tmux/format:format-context-from-session session win pane))
+             (title      (cl-tmux/format:expand-format title-fmt ctx)))
+        (format buffer "~C]0;~A~C" +esc+ title (code-char 7))))
     (get-output-stream-string buffer)))
 
 (defun render-session (session terminal-rows terminal-cols)
