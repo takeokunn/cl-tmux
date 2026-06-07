@@ -944,21 +944,40 @@
         new-sess))))
 
 (defun %cmd-kill-session-arg (session args)
-  "kill-session [-t name]: kill the named session, or the current session when no -t."
+  "kill-session [-a] [-t name]: kill session(s).
+   -a: kill all sessions EXCEPT the one named by -t (or current session).
+   -t name: the target session (default: current session)."
   (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
     (declare (ignore positionals))
-    (let* ((target-name (cdr (assoc #\t flags)))
-           (target-sess (if target-name
-                            (cdr (assoc target-name *server-sessions*
-                                        :test #'equal))
-                            session)))
-      (when target-sess
-        (let ((name (session-name target-sess)))
-          (dolist (pane (all-panes target-sess))
-            (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
-          (server-remove-session name)
-          (when (and (eq target-sess session) (null *server-sessions*))
-            (setf *running* nil)))))))
+    (let* ((kill-all-others (assoc #\a flags))
+           (target-name     (cdr (assoc #\t flags)))
+           (keep-sess       (if target-name
+                                (cdr (assoc target-name *server-sessions*
+                                            :test #'equal))
+                                session)))
+      (if kill-all-others
+          ;; -a: kill all sessions except keep-sess
+          (let ((to-kill (loop for (name . sess) in *server-sessions*
+                               unless (eq sess keep-sess)
+                               collect (cons name sess))))
+            (dolist (entry to-kill)
+              (let ((name (car entry))
+                    (sess (cdr entry)))
+                (dolist (pane (all-panes sess))
+                  (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
+                (server-remove-session name))))
+          ;; No -a: kill the target session
+          (let ((target-sess (or (and target-name
+                                      (cdr (assoc target-name *server-sessions*
+                                                  :test #'equal)))
+                                 session)))
+            (when target-sess
+              (let ((name (session-name target-sess)))
+                (dolist (pane (all-panes target-sess))
+                  (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
+                (server-remove-session name)
+                (when (and (eq target-sess session) (null *server-sessions*))
+                  (setf *running* nil))))))))))
 
 (defun %cmd-resize-window-arg (session args)
   "resize-window [-x cols] [-y rows] [-t target-window]: resize a window.
