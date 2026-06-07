@@ -832,7 +832,28 @@
           :client-height client-height
           :client-tty    client-tty
           ;; #{version}: cl-tmux version string (matches tmux 3.x format for compat).
-          :version       "3.5")))
+          :version       "3.5"
+          ;; #{session_attached}: "1" when clients are attached, else "0".
+          :session-attached (if (and session
+                                     (cl-tmux/model:session-clients session))
+                                "1" "0")
+          ;; #{server_pid}: PID of the cl-tmux server process (via sb-posix when available).
+          :server-pid    (let ((getpid (ignore-errors (find-symbol "GETPID" "SB-POSIX"))))
+                           (if getpid
+                               (format nil "~D" (ignore-errors (funcall getpid)))
+                               "0"))
+          ;; #{session_last_attached}: universal-time of last access.
+          :session-last-attached (if session
+                                     (format nil "~D"
+                                             (cl-tmux/model:session-last-active session))
+                                     "0")
+          ;; #{window_last_flag}: "*" when window was last active, else " ".
+          ;; #{window_flag} is the active indicator ("*" = active, "-" = last, " " = other).
+          :window-last-flag " "
+          ;; #{pane_format}: always "1" in context (we have a pane).
+          :pane-format (if pane "1" "0")
+          ;; #{window_format}: always "1" in context.
+          :window-format (if window "1" "0")))
 
 (defun format-context-from-window (session window
                                    &key (client-width 0) (client-height 0)

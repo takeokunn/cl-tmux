@@ -1008,7 +1008,26 @@
     ("append-selection"          . :copy-mode-yank)
     ("back-to-indentation"       . :copy-mode-line-start)
     ("start-of-line"             . :copy-mode-line-start)
-    ("end-of-line"               . :copy-mode-line-end))
+    ("end-of-line"               . :copy-mode-line-end)
+    ;; scroll variants
+    ("scroll-up"                 . :copy-mode-scroll-up-line)
+    ("scroll-down"               . :copy-mode-scroll-down-line)
+    ("scroll-up-half-page"       . :copy-mode-half-page-up)
+    ("scroll-down-half-page"     . :copy-mode-half-page-down)
+    ;; emacs-style names
+    ("select-word"               . :copy-mode-begin-selection)
+    ("copy-pipe"                 . :copy-mode-yank)
+    ("copy-pipe-and-cancel"      . :copy-mode-yank)
+    ;; mouse-wheel support
+    ("scroll-mouse"              . :copy-mode-scroll-up-line)
+    ;; vi-style movement
+    ("previous-paragraph"        . :copy-mode-page-up)
+    ("next-paragraph"            . :copy-mode-page-down)
+    ("jump-to-mark"              . :copy-mode-line-start)
+    ("toggle-position"           . :copy-mode-begin-selection)
+    ;; pipe operations
+    ("pipe"                      . :copy-mode-yank)
+    ("pipe-and-cancel"           . :copy-mode-yank))
   "Alist mapping send-keys -X command names to copy-mode dispatch keywords.")
 
 (defun %dispatch-send-keys-X (session command-name)

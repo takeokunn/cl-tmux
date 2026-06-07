@@ -108,14 +108,18 @@
             (setf *copy-mode-prefix* 0)
             ;; First: check the copy-mode-vi and copy-mode key tables for
             ;; user-defined overrides (bind -T copy-mode-vi ...).
-            (let* ((ch    (code-char byte))
-                   (entry (or (key-table-lookup "copy-mode-vi" ch)
-                              (key-table-lookup "copy-mode" ch))))
+            ;; When a table binding is found, execute it and SKIP the hardcoded dispatch.
+            (let* ((ch       (code-char byte))
+                   (entry    (or (key-table-lookup "copy-mode-vi" ch)
+                                 (key-table-lookup "copy-mode" ch)))
+                   (handled  nil))
               (when entry
                 (let ((cmd (key-table-command entry)))
                   (if (consp cmd)
                       (%run-command-tokens session cmd)
-                      (dispatch-command session cmd byte)))))
+                      (dispatch-command session cmd byte)))
+                (setf handled t))
+              (unless handled
             (flet ((repeat (fn)
                      "Call FN COUNT times on SCREEN."
                      (dotimes (_ count) (funcall fn screen))))
@@ -198,7 +202,7 @@
                                  (when (and (stringp term) (plusp (length term)))
                                    (copy-mode-search-backward screen term)))))
                 ;; Any other byte is consumed without forwarding (no passthrough in copy mode)
-                (otherwise nil)))))))
+                (otherwise nil)))))))))
      (setf *dirty* t))
    (values nil #'%ground-input-state))
   ;; ── Default: forward raw byte to active pane (+ synchronize-panes broadcast) ─
