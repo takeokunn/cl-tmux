@@ -124,12 +124,26 @@
 
 (defun %render-bell-and-cursor (buffer active-pane)
   "Emit a pending BEL from ACTIVE-PANE (if any) and restore cursor visibility.
-   Bell consumption is delegated to screen-consume-bell (terminal logic layer).
+   Bell consumption is gated on the 'bell-action' option:
+   - 'any' (default): relay BEL from any pane
+   - 'current': relay only from active pane (already filtered here since active-pane is the active one)
+   - 'none': swallow all BELs silently
+   - 'other': relay from non-active panes (not applicable here — active-pane IS active)
    Fires the alert-bell hook when a BEL is consumed."
   (when active-pane
-    (when (screen-consume-bell (pane-screen active-pane))
-      (write-char (code-char 7) buffer)
-      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-bell+)))
+    (let* ((bell-pending (screen-consume-bell (pane-screen active-pane)))
+           (bell-action  (or (cl-tmux/options:get-option "bell-action") "any"))
+           ;; Check if visual-bell is on — emit reverse-video flash instead of BEL
+           (visual-bell  (cl-tmux/options:get-option "visual-bell"))
+           (relay-bell   (and bell-pending
+                              (not (string= bell-action "none")))))
+      (when relay-bell
+        (if visual-bell
+            ;; Visual bell: brief reverse-video flash (SGR 7 + SGR 0)
+            (format buffer "~C[7m~C[0m" +esc+ +esc+)
+            ;; Audible bell: BEL character
+            (write-char (code-char 7) buffer))
+        (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-bell+))))
   (when (or (null active-pane)
             (screen-cursor-visible (pane-screen active-pane)))
     (cursor-visible buffer)
