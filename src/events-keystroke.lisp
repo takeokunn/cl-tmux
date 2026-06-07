@@ -101,6 +101,16 @@
          (t
           (let ((count (max 1 *copy-mode-prefix*)))
             (setf *copy-mode-prefix* 0)
+            ;; First: check the copy-mode-vi and copy-mode key tables for
+            ;; user-defined overrides (bind -T copy-mode-vi ...).
+            (let* ((ch    (code-char byte))
+                   (entry (or (key-table-lookup "copy-mode-vi" ch)
+                              (key-table-lookup "copy-mode" ch))))
+              (when entry
+                (let ((cmd (key-table-command entry)))
+                  (if (consp cmd)
+                      (%run-command-tokens session cmd)
+                      (dispatch-command session cmd byte)))))
             (flet ((repeat (fn)
                      "Call FN COUNT times on SCREEN."
                      (dotimes (_ count) (funcall fn screen))))

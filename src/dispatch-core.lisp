@@ -953,16 +953,72 @@
   (declare (ignore session args))
   (setf *running* nil))
 
+;;; ── Copy-mode command name table (for send-keys -X) ─────────────────────────
+;;;
+;;; Real tmux's `send-keys -X <name>` dispatches a named copy-mode action.
+;;; This table maps name strings to dispatch command keywords so that
+;;; `bind -T copy-mode-vi v send-keys -X begin-selection` works.
+
+(defparameter *copy-mode-x-commands*
+  '(("begin-selection"           . :copy-mode-begin-selection)
+    ("begin-selection-line"      . :copy-mode-begin-line-selection)
+    ("begin-line-selection"      . :copy-mode-begin-line-selection)
+    ("copy-selection"            . :copy-mode-yank)
+    ("copy-selection-and-cancel" . :copy-mode-yank)
+    ("cancel"                    . :copy-mode-exit)
+    ("cursor-up"                 . :copy-mode-scroll-up-line)
+    ("cursor-down"               . :copy-mode-scroll-down-line)
+    ("cursor-left"               . :copy-mode-begin-selection)   ; approximate
+    ("cursor-right"              . :copy-mode-begin-selection)   ; approximate
+    ("page-up"                   . :copy-mode-page-up)
+    ("page-down"                 . :copy-mode-page-down)
+    ("halfpage-up"               . :copy-mode-half-page-up)
+    ("halfpage-down"             . :copy-mode-half-page-down)
+    ("search-again"              . :copy-mode-search-next)
+    ("search-reverse"            . :copy-mode-search-prev)
+    ("search-forward"            . :copy-mode-search-forward-prompt)
+    ("search-backward"           . :copy-mode-search-backward-prompt)
+    ("top-line"                  . :copy-mode-top)
+    ("bottom-line"               . :copy-mode-bottom)
+    ("history-top"               . :copy-mode-top)
+    ("history-bottom"            . :copy-mode-bottom)
+    ("next-word"                 . :copy-mode-word-forward)
+    ("previous-word"             . :copy-mode-word-backward)
+    ("next-word-end"             . :copy-mode-word-end)
+    ("rectangle-toggle"          . :copy-mode-begin-selection)  ; approximate
+    ("copy-end-of-line"          . :copy-mode-copy-end-of-line)
+    ("copy-line"                 . :copy-mode-copy-line)
+    ("append-selection"          . :copy-mode-yank)
+    ("back-to-indentation"       . :copy-mode-line-start)
+    ("start-of-line"             . :copy-mode-line-start)
+    ("end-of-line"               . :copy-mode-line-end))
+  "Alist mapping send-keys -X command names to copy-mode dispatch keywords.")
+
+(defun %dispatch-send-keys-X (session command-name)
+  "Dispatch a send-keys -X COMMAND-NAME against the active pane's copy mode.
+   Returns T when handled, NIL otherwise."
+  (let ((kw (cdr (assoc command-name *copy-mode-x-commands* :test #'string-equal))))
+    (when kw
+      (dispatch-command session kw nil)
+      t)))
+
 (defun %cmd-send-keys-arg (session args)
-  "send-keys [-t target-pane] [key ...]: send keys to the active pane.
-   Each argument in ARGS is either a key name (Enter, Tab, Escape, C-c, etc.)
-   or a literal string to type verbatim.  No -t targeting in standalone mode."
+  "send-keys [-t target-pane] [-X copy-mode-cmd] [key ...]: send keys or copy-mode commands.
+   -X: dispatch a named copy-mode command (begin-selection, copy-selection, etc.)
+   Without -X: each positional is a key name or literal string typed into the active pane.
+   No -t targeting in standalone mode."
   (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
     (declare (ignore flags))
-    (when positionals
-      (with-active-pane (ap session)
-        (dolist (key positionals)
-          (send-keys-to-pane ap key))))))
+    ;; Check for -X flag: it consumes the next token as a copy-mode command name.
+    (let ((x-pos (position "-X" args :test #'string=)))
+      (if (and x-pos (nth (1+ x-pos) args))
+          ;; -X command: dispatch to copy-mode
+          (%dispatch-send-keys-X session (nth (1+ x-pos) args))
+          ;; Normal: send key strings to the active pane
+          (when positionals
+            (with-active-pane (ap session)
+              (dolist (key positionals)
+                (send-keys-to-pane ap key))))))))
 
 (defun %cmd-set-environment-prompt (session args)
   "set-environment [-r] NAME [VALUE]: set or unset a process environment variable.
