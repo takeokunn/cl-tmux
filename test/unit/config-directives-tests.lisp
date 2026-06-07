@@ -959,3 +959,41 @@
     (cl-tmux/config:apply-config-directive '("unbind-all" "-T" "root"))
     (is (null (cl-tmux/config:key-table-lookup "root" #\x))
         "root binding must be cleared after unbind-all -T root")))
+
+;;; ── set -g status off side-effect ────────────────────────────────────────────
+
+(test apply-set-directive-status-off-sets-status-height-zero
+  "'set -g status off' sets *status-height* to 0."
+  (let ((orig cl-tmux/config:*status-height*))
+    (unwind-protect
+         (progn
+           (cl-tmux/config:apply-config-directive '("set" "-g" "status" "off"))
+           (is (= 0 cl-tmux/config:*status-height*)
+               "*status-height* must be 0 after 'set -g status off'"))
+      (setf cl-tmux/config:*status-height* orig))))
+
+(test apply-set-directive-status-on-sets-status-height-one
+  "'set -g status on' sets *status-height* to 1."
+  (let ((orig cl-tmux/config:*status-height*))
+    (unwind-protect
+         (progn
+           (setf cl-tmux/config:*status-height* 0)
+           (cl-tmux/config:apply-config-directive '("set" "-g" "status" "on"))
+           (is (= 1 cl-tmux/config:*status-height*)
+               "*status-height* must be 1 after 'set -g status on'"))
+      (setf cl-tmux/config:*status-height* orig))))
+
+;;; ── bind -n with argument-bearing command ────────────────────────────────────
+
+(test bind-key-n-split-window-with-c-flag
+  "'bind -n C-\\ split-window -c /tmp' stores the full command token list."
+  (with-isolated-key-tables
+    (cl-tmux/config:apply-config-directive
+     '("bind" "-n" "C-\\" "split-window" "-c" "/tmp"))
+    (let ((entry (cl-tmux/config:key-table-lookup "root" "C-\\")))
+      (is (not (null entry)) "C-\\ must be bound in root table")
+      (let ((cmd (cl-tmux/config:key-table-command entry)))
+        (is (consp cmd) "command for multi-token bind must be a token list")
+        (is (string= "split-window" (first cmd)) "first token must be split-window")
+        (is (member "-c" cmd :test #'string=) "token list must include -c flag")
+        (is (member "/tmp" cmd :test #'string=) "token list must include /tmp")))))

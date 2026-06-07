@@ -807,7 +807,9 @@
           :time          time-str
           :client-width  client-width
           :client-height client-height
-          :client-tty    client-tty)))
+          :client-tty    client-tty
+          ;; #{version}: cl-tmux version string (matches tmux 3.x format for compat).
+          :version       "3.5")))
 
 (defun format-context-from-window (session window
                                    &key (client-width 0) (client-height 0)

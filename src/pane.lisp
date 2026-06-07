@@ -34,12 +34,16 @@
   "Fork a shell and build a PTY-backed pane at position (X,Y) sized W×H.
    START-DIR: when non-NIL, the child shell is started in that directory.
    The TERM environment variable is set from the 'default-terminal' option.
+   When 'default-command' is set to a non-empty string, it is run via sh -c.
    Returns the new pane.  The PTY file descriptor and child PID are embedded
    in the pane struct; callers should call pty-close on them at teardown."
-  (let ((term (cl-tmux/options:get-option "default-terminal")))
+  (let* ((term    (cl-tmux/options:get-option "default-terminal"))
+         (cmd     (cl-tmux/options:get-option "default-command")))
     (multiple-value-bind (fd pid)
-        (forkpty-with-shell h w :start-dir start-dir
-                                :term (and term (plusp (length term)) term))
+        (forkpty-with-shell h w
+                            :start-dir start-dir
+                            :term (and term (plusp (length term)) term)
+                            :default-command (and cmd (plusp (length cmd)) cmd))
       (make-pane :id id :x x :y y :width w :height h
                  :fd fd :pid pid :screen (make-screen w h)))))
 

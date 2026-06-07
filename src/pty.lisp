@@ -66,37 +66,46 @@
                             :int 1
                             :int))))
 
-(defun %child-exec-shell (&optional start-dir term)
-  "Replace the current process image with *DEFAULT-SHELL*.
+(defun %child-exec-shell (&optional start-dir term default-command)
+  "Replace the current process image with a shell or default-command.
    When START-DIR is a non-empty string, chdir to it before execv.
    When TERM is a non-empty string, set TERM=TERM in the child environment.
-   MUST be called only in the child process after fork — NEVER from the parent.
-   Never returns normally: either execv succeeds (process image replaced) or
-   _exit(1) terminates the child immediately.
-   NOTE: _exit (not exit or sb-ext:quit) is used intentionally: _exit bypasses
-   C atexit handlers and Lisp finalizers that are unsafe to call in a child
-   process after fork, preventing double-flushing of stdio buffers and avoiding
-   any SBCL runtime teardown that would race with the parent process."
+   When DEFAULT-COMMAND is a non-empty string, run sh -c DEFAULT-COMMAND
+   instead of *DEFAULT-SHELL* directly.
+   MUST be called only in the child process after fork — NEVER from the parent."
   (when (and start-dir (plusp (length start-dir)))
     (ignore-errors (sb-posix:chdir start-dir)))
   (when (and term (plusp (length term)))
     (%child-setenv "TERM" term))
-  (let ((shell cl-tmux/config:*default-shell*))
-    (cffi:with-foreign-string (path-ptr shell)
-      (cffi:with-foreign-string (arg0-ptr shell)
-        (cffi:with-foreign-object (argv :pointer 2)
-          (setf (cffi:mem-aref argv :pointer 0) arg0-ptr
-                (cffi:mem-aref argv :pointer 1) (cffi:null-pointer))
-          (cffi:foreign-funcall "execv" :pointer path-ptr :pointer argv :int)))))
-  ;; execv failed (wrong path, not executable, etc.) — fall through to _exit.
+  (if (and default-command (plusp (length default-command)))
+      ;; Run: /bin/sh -c "default-command"
+      (cffi:with-foreign-string (sh-ptr "/bin/sh")
+        (cffi:with-foreign-string (dash-c-ptr "-c")
+          (cffi:with-foreign-string (cmd-ptr default-command)
+            (cffi:with-foreign-object (argv :pointer 4)
+              (setf (cffi:mem-aref argv :pointer 0) sh-ptr
+                    (cffi:mem-aref argv :pointer 1) dash-c-ptr
+                    (cffi:mem-aref argv :pointer 2) cmd-ptr
+                    (cffi:mem-aref argv :pointer 3) (cffi:null-pointer))
+              (cffi:foreign-funcall "execv" :pointer sh-ptr :pointer argv :int)))))
+      ;; Run the default shell directly.
+      (let ((shell cl-tmux/config:*default-shell*))
+        (cffi:with-foreign-string (path-ptr shell)
+          (cffi:with-foreign-string (arg0-ptr shell)
+            (cffi:with-foreign-object (argv :pointer 2)
+              (setf (cffi:mem-aref argv :pointer 0) arg0-ptr
+                    (cffi:mem-aref argv :pointer 1) (cffi:null-pointer))
+              (cffi:foreign-funcall "execv" :pointer path-ptr :pointer argv :int))))))
+  ;; execv failed — fall through to _exit.
   (cffi:foreign-funcall "_exit" :int 1 :void))
 
-(defun forkpty-with-shell (rows cols &key start-dir term)
+(defun forkpty-with-shell (rows cols &key start-dir term default-command)
   "Fork a child shell process on a fresh PTY of size ROWS×COLS.
    START-DIR: when non-NIL, chdir to this path before exec.
    TERM: when non-NIL, set TERM=TERM in the child environment.
+   DEFAULT-COMMAND: when non-NIL, run via sh -c instead of the shell directly.
    Parent returns (values master-fd child-pid).
-   Child execs *default-shell* and never returns to Lisp."
+   Child execs and never returns to Lisp."
   (declare (type fixnum rows cols))
   (multiple-value-bind (master slave-path) (open-pty rows cols)
     (let ((pid (sb-posix:fork)))
@@ -104,7 +113,7 @@
         ((< pid 0) (error "fork failed"))
         ((= pid 0)                             ; child
          (%child-setup-tty slave-path master)
-         (%child-exec-shell start-dir term))
+         (%child-exec-shell start-dir term default-command))
         (t                                     ; parent
          (values master pid))))))
 

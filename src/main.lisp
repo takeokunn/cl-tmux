@@ -23,12 +23,14 @@
     (if dot (subseq hostname 0 dot) hostname)))
 
 (defun %build-hostname-context ()
-  "Return a format context plist with :hostname, :host, and :host-short
-   populated from the current machine hostname (captured once at call time)."
+  "Return a format context plist with :hostname, :host, :host-short, and
+   :version populated.  Used for %if condition evaluation at config-load time."
   (let ((hostname (machine-instance)))
-    (list :hostname hostname
-          :host     hostname
-          :host-short (%hostname-short hostname))))
+    (list :hostname   hostname
+          :host       hostname
+          :host-short (%hostname-short hostname)
+          ;; version: reported as tmux 3.5 for compatibility with config guards.
+          :version    "3.5")))
 
 (defun %make-format-condition-evaluator ()
   "Return a closure (string) → string that expands a %if condition using the
