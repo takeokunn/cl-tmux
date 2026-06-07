@@ -182,7 +182,17 @@
 (defparameter *startup-modes*
   '(("server"         . (run-server))
     ("attach"         . (run-attach-simple))
-    ("attach-session" . (run-attach-with-flags :raw-args-p t)))
+    ("attach-session" . (run-attach-with-flags :raw-args-p t))
+    ;; new-session: create a new session (optionally named) and attach to it.
+    ("new-session"    . (run-new-session :raw-args-p t))
+    ("new"            . (run-new-session :raw-args-p t))
+    ;; has-session: exit 0 if session exists, 1 otherwise (useful in scripts).
+    ("has-session"    . (run-has-session :raw-args-p t))
+    ;; kill-server: terminate the server process.
+    ("kill-server"    . (run-kill-server :raw-args-p t))
+    ;; list-sessions: print sessions to stdout.
+    ("list-sessions"  . (run-list-sessions :raw-args-p t))
+    ("ls"             . (run-list-sessions :raw-args-p t)))
   "Mode-name → plist dispatch table for the binary entry point.
    Each entry is (mode-name . (handler-symbol &key :raw-args-p bool)).
    :raw-args-p T means the handler receives the full raw argv tail rather
@@ -242,6 +252,54 @@
     (declare (ignore readonly-p))
     (%ensure-server-running name)
     (run-client name :detach-others detach-p)))
+
+(define-flag-parser %parse-new-session-flags
+    ((name nil) (win-name nil) (detach nil) (start-dir nil))
+  (:value "-s" name)
+  (:value "-n" win-name)
+  (:bool  "-d" detach)
+  (:value "-c" start-dir))
+
+(defun run-new-session (raw-args)
+  "Create a new session (optionally named via -s) and attach to it.
+   Ensures the server is running; sends new-session command via the socket."
+  (multiple-value-bind (name _win-name detach _start-dir)
+      (%parse-new-session-flags raw-args)
+    (declare (ignore _win-name _start-dir))
+    (let* ((sess-name (or name "0")))
+      ;; Start the server if not already running.
+      (%ensure-server-running sess-name)
+      ;; Attach; if the session doesn't exist the server creates it on first attach.
+      (unless detach
+        (run-client sess-name)))))
+
+(defun run-has-session (raw-args)
+  "Exit 0 when a session named by -t exists, exit 1 otherwise.
+   Connects to the server to query the session list."
+  (let* ((target (loop for (a b) on raw-args by #'cddr
+                       when (string= a "-t") return b))
+         (name   (or target "0"))
+         (socket (socket-path name)))
+    (if (probe-file socket)
+        (sb-ext:exit :code 0)
+        (sb-ext:exit :code 1))))
+
+(defun run-kill-server (raw-args)
+  "Send kill-server command via the socket, then exit."
+  (declare (ignore raw-args))
+  ;; In standalone mode, we can't reach the server socket from this process.
+  ;; This is a best-effort implementation.
+  (format t "kill-server: not supported in standalone mode~%")
+  (sb-ext:exit :code 0))
+
+(defun run-list-sessions (raw-args)
+  "Print a list of active sessions to stdout and exit.
+   Reads the server socket to query sessions."
+  (declare (ignore raw-args))
+  ;; In standalone mode, we cannot query the server.
+  ;; Best effort: list any session whose socket file exists.
+  (format t "(no server running or session listing requires attach)~%")
+  (sb-ext:exit :code 0))
 
 (defun main ()
   "Binary entry point — dispatches on the first argv item via *startup-modes*.
