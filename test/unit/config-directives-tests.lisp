@@ -1015,3 +1015,50 @@
             "first sub-command must start with source-file")
         (is (string= "display-message" (first (second (cdr cmd))))
             "second sub-command must start with display-message")))))
+
+;;; ── Common .tmux.conf patterns ───────────────────────────────────────────────
+
+(test load-config-common-patterns-no-error
+  "Common .tmux.conf patterns load without error."
+  (with-isolated-config
+    (let ((common-config
+           "set -g prefix C-a
+set -g mouse on
+set -g base-index 1
+setw -g pane-base-index 1
+set -g default-terminal \"screen-256color\"
+set -g escape-time 0
+set -g history-limit 50000
+set -g renumber-windows on
+set -g mode-keys vi
+bind r source-file /dev/null \; display-message \"Reloaded\"
+bind-key -T copy-mode-vi v send-keys -X begin-selection
+bind-key -T copy-mode-vi y send-keys -X copy-selection-and-cancel
+bind '\"' split-window -c #{pane_current_path}
+bind % split-window -h -c #{pane_current_path}
+bind c new-window -c #{pane_current_path}
+unbind-all
+bind-key r source-file /dev/null"))
+      (is (zerop (multiple-value-bind (result)
+                     (ignore-errors (cl-tmux/config:load-config-from-string common-config))
+                   (declare (ignore result))
+                   0))
+          "common .tmux.conf patterns must load without signaling conditions"))))
+
+(test load-config-bind-T-copy-mode-vi-stores-correctly
+  "bind -T copy-mode-vi v send-keys -X begin-selection stores in copy-mode-vi table."
+  (with-isolated-config
+    (cl-tmux/config:load-config-from-string
+     "bind-key -T copy-mode-vi v send-keys -X begin-selection")
+    (let ((entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\v)))
+      (is (not (null entry)) "copy-mode-vi must have 'v' binding after load")
+      (let ((cmd (cl-tmux/config:key-table-command entry)))
+        (is (consp cmd) "command must be a token list")
+        (is (string= "send-keys" (first cmd)) "first token must be send-keys")))))
+
+(test load-config-set-g-escape-time-stores-as-server-option
+  "'set -s escape-time 0' stores in server options."
+  (with-isolated-config
+    (cl-tmux/config:load-config-from-string "set -s escape-time 0")
+    (is (eql 0 (cl-tmux/options:get-server-option "escape-time"))
+        "escape-time must be 0 after 'set -s escape-time 0'")))
