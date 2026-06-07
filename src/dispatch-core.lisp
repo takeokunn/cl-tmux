@@ -1126,6 +1126,24 @@
               (dolist (key positionals)
                 (send-keys-to-pane ap key))))))))
 
+(defun %cmd-pipe-pane-arg (session args)
+  "pipe-pane [-o] [command]: open or close pipe-pane for the active pane.
+   -o: only open a pipe if no current pipe is open (no-op when pipe already open).
+   Without command: close any open pipe.
+   With command: open a pipe to COMMAND."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "")
+    (let* ((only-open (assoc #\o flags))
+           (command   (format nil "~{~A~^ ~}" positionals)))
+      (with-active-pane (ap session)
+        (cond
+          ;; No command: close existing pipe
+          ((zerop (length command))
+           (when (pane-pipe-fd ap) (pipe-pane-close ap)))
+          ;; -o: skip if already piped
+          ((and only-open (pane-pipe-fd ap)) nil)
+          ;; Open the pipe
+          (t (pipe-pane-open ap command)))))))
+
 (defun %cmd-set-environment-prompt (session args)
   "set-environment [-r] NAME [VALUE]: set or unset a process environment variable.
    -r: unset the variable.  Without -r, VALUE is required."
@@ -1171,7 +1189,8 @@
    (cons '("resize-pane" "resizep")     #'%cmd-resize-pane-arg)
    (cons '("capture-pane" "capturep")   #'%cmd-capture-pane-arg)
    (cons '("run-shell" "run")           #'%cmd-run-shell-arg)
-   (cons '("if-shell" "if")             #'%cmd-if-shell-arg))
+   (cons '("if-shell" "if")             #'%cmd-if-shell-arg)
+   (cons '("pipe-pane" "pipep")         #'%cmd-pipe-pane-arg))
   "Arg-taking commands: (list-of-names . handler), handler a function of
    (SESSION ARGS).  Consulted by %run-command-line before the no-argument
    %dispatch-named-command name table.")
