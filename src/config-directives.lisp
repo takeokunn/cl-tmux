@@ -269,17 +269,44 @@
         (t
          ;; Need a key plus at least one command token.
          (when (null (rest remaining)) (return nil))
-         (let ((key-token  (%parse-key-token (first remaining)))
-               (cmd-tokens (rest remaining)))
+         (let* ((key-token  (%parse-key-token (first remaining)))
+                (cmd-tokens (rest remaining))
+                ;; Split on ";" tokens to support multi-command sequences:
+                ;; bind r source-file ~/.tmux.conf \; display "Reloaded!"
+                (sequences  (%split-on-semicolons cmd-tokens)))
            (return
-             (if (= (length cmd-tokens) 1)
-                 ;; Single command word: resolve to a keyword, rejecting an
-                 ;; unknown command (preserves the original behaviour).
-                 (let ((keyword (%command-keyword (first cmd-tokens))))
-                   (if keyword (values table key-token keyword repeatable) nil))
-                 ;; Command WITH arguments: store the token list, to be run via
-                 ;; %run-command-tokens when the key is pressed.
-                 (values table key-token cmd-tokens repeatable)))))))))
+             (if (= (length sequences) 1)
+                 ;; Single command: use the existing single-command path.
+                 (let ((tokens (first sequences)))
+                   (if (= (length tokens) 1)
+                       ;; Single word: resolve to a keyword.
+                       (let ((keyword (%command-keyword (first tokens))))
+                         (if keyword (values table key-token keyword repeatable) nil))
+                       ;; Multi-token: store as token list.
+                       (values table key-token tokens repeatable)))
+                 ;; Multiple commands: store as :sequence list of token lists.
+                 (values table key-token (cons :sequence sequences) repeatable)))))))))
+
+;;; ── Semicolon-sequence splitter ──────────────────────────────────────────
+;;;
+;;; tmux bind directives support ";" (from "\;" in the config line) as a
+;;; command separator: bind r source-file ~/.tmux.conf \; display "Reloaded!"
+;;; %split-on-semicolons splits a flat token list on ";" tokens,
+;;; removing empty segments, yielding a list of per-command token lists.
+
+(defun %split-on-semicolons (tokens)
+  "Split TOKENS on \";\" tokens, returning a list of per-command token lists.
+   Empty segments (consecutive semicolons or trailing) are discarded.
+   When no semicolons are present, returns (list tokens) unchanged."
+  (let ((result  '())
+        (current '()))
+    (dolist (tok tokens)
+      (if (string= tok ";")
+          (progn (when current (push (nreverse current) result))
+                 (setf current '()))
+          (push tok current)))
+    (when current (push (nreverse current) result))
+    (if result (nreverse result) (list tokens))))
 
 ;;; ── unbind-key flag parsing ──────────────────────────────────────────────
 ;;;

@@ -1114,9 +1114,18 @@
          (cmd (if (%copy-mode-active-p session)
                   (%copy-mode-cmd ch)
                   (and ch (lookup-key-binding ch))))
-         (result (if (consp cmd)
-                     (%run-command-tokens session cmd)
-                     (dispatch-command session cmd byte))))
+         (result (cond
+                   ;; (:sequence cmd1 cmd2 ...) — run each sub-command in order.
+                   ((and (consp cmd) (eq (car cmd) :sequence))
+                    (let (last-result)
+                      (dolist (subcmd (cdr cmd) last-result)
+                        (setf last-result (%run-command-tokens session subcmd)))))
+                   ;; Token list (arg-bearing command).
+                   ((consp cmd)
+                    (%run-command-tokens session cmd))
+                   ;; Built-in command keyword.
+                   (t
+                    (dispatch-command session cmd byte)))))
     ;; Propagate :quit/:detach outcomes to the caller.  For other outcomes,
     ;; signal :repeatable when the binding had the -r flag so the caller can
     ;; stay in after-prefix state (resize without re-pressing the prefix key).

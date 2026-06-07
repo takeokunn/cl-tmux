@@ -59,12 +59,17 @@
   ;; keys that would otherwise be forwarded to the pane.
   ((let ((entry (key-table-lookup +table-root+ (code-char byte))))
      (when entry
-       ;; A -n binding's command is a keyword (built-in) or a token LIST
-       ;; (bind -n key command args...), matching dispatch-prefix-command.
+       ;; A -n binding's command is a keyword (built-in), a token LIST, or a
+       ;; :sequence of token lists (from bind -n key cmd1 \; cmd2).
        (let ((cmd (key-table-command entry)))
-         (if (consp cmd)
-             (%run-command-tokens session cmd)
-             (dispatch-command session cmd byte)))
+         (cond
+           ((and (consp cmd) (eq (car cmd) :sequence))
+            (dolist (subcmd (cdr cmd))
+              (%run-command-tokens session subcmd)))
+           ((consp cmd)
+            (%run-command-tokens session cmd))
+           (t
+            (dispatch-command session cmd byte))))
        (setf *dirty* t)
        t))
    (values nil #'%ground-input-state))

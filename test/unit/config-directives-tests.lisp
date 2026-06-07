@@ -997,3 +997,21 @@
         (is (string= "split-window" (first cmd)) "first token must be split-window")
         (is (member "-c" cmd :test #'string=) "token list must include -c flag")
         (is (member "/tmp" cmd :test #'string=) "token list must include /tmp")))))
+
+;;; ── Semicolon-separated multi-command bindings ───────────────────────────────
+
+(test bind-key-semicolon-sequence-stored-as-sequence
+  "'bind r source-file x \; display y' stores a :sequence command list."
+  (with-isolated-key-tables
+    (cl-tmux/config:apply-config-directive
+     '("bind" "r" "source-file" "/tmp/x" ";" "display-message" "Reloaded"))
+    (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\r)))
+      (is (not (null entry)) "#\\r must be bound in prefix table")
+      (let ((cmd (cl-tmux/config:key-table-command entry)))
+        (is (consp cmd) "command must be a cons")
+        (is (eq :sequence (car cmd)) "first element must be :sequence")
+        (is (= 2 (length (cdr cmd))) ":sequence must have 2 sub-command lists")
+        (is (string= "source-file" (first (first (cdr cmd))))
+            "first sub-command must start with source-file")
+        (is (string= "display-message" (first (second (cdr cmd))))
+            "second sub-command must start with display-message")))))
