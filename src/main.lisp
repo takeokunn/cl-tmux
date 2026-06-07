@@ -58,6 +58,10 @@
   ;; conditional blocks (e.g. %if #{==:#{host},myserver}) resolve correctly.
   (setf cl-tmux/config:*config-condition-evaluator* (%make-format-condition-evaluator))
 
+  ;; Install the history-limit callback so scroll.lisp uses the option value.
+  (setf cl-tmux/terminal:*history-limit-function*
+        (lambda () (cl-tmux/options:get-option "history-limit")))
+
   ;; Apply the user config file — searches cl-tmux config, XDG tmux config, and
   ;; ~/.tmux.conf in priority order (NIL triggers auto-detection).
   (ignore-errors (load-config-file nil))
