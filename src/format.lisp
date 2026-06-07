@@ -752,17 +752,19 @@
          (window-name     (if window (cl-tmux/model:window-name window) ""))
          (window-active   (if (and window session-active-window
                                    (eq window session-active-window)) "1" "0"))
-         ;; #{window_flags}: composite flag string (*=active, -=last, Z=zoomed, M=marked).
+         ;; #{window_flags}: composite flag string (*=active, -=last, Z=zoomed).
          (window-flags
           (let ((flags ""))
             (when window
               ;; * = current/active window
               (when (and session-active-window (eq window session-active-window))
                 (setf flags (concatenate 'string flags "*")))
-              ;; - = last window (was previously active)
+              ;; - = last window (was previously active and has a positive last-active-time)
               (when (and session
-                         (eq window (cl-tmux/model:session-last-window session))
-                         (not (eq window session-active-window)))
+                         (not (eq window session-active-window))
+                         ;; Only mark as last if the window has actually been active before
+                         (> (cl-tmux/model:window-last-active-time window) 0)
+                         (eq window (cl-tmux/model:session-last-window session)))
                 (setf flags (concatenate 'string flags "-")))
               ;; Z = zoomed
               (when (cl-tmux/model:window-zoom-p window)
