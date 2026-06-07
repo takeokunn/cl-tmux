@@ -1047,11 +1047,22 @@
   "Handle one byte received after the prefix key.
    Copy mode intercepts [ ] q before the normal binding table.  A binding whose
    value is a token LIST (from `bind key command args...`) runs as a command
-   line; a keyword value dispatches as a built-in command."
+   line; a keyword value dispatches as a built-in command.
+   Returns :REPEATABLE when the binding had the -r (repeatable) flag set, so
+   the caller can stay in after-prefix state for the next key."
   (let* ((ch  (and byte (code-char byte)))
+         (entry (if (%copy-mode-active-p session)
+                    nil
+                    (and ch (key-table-lookup +table-prefix+ ch))))
+         (repeatable-p (and entry (key-table-repeatable-p entry)))
          (cmd (if (%copy-mode-active-p session)
                   (%copy-mode-cmd ch)
-                  (and ch (lookup-key-binding ch)))))
-    (if (consp cmd)
-        (%run-command-tokens session cmd)
-        (dispatch-command session cmd byte))))
+                  (and ch (lookup-key-binding ch))))
+         (result (if (consp cmd)
+                     (%run-command-tokens session cmd)
+                     (dispatch-command session cmd byte))))
+    ;; Propagate :quit/:detach outcomes to the caller.  For other outcomes,
+    ;; signal :repeatable when the binding had the -r flag so the caller can
+    ;; stay in after-prefix state (resize without re-pressing the prefix key).
+    (or (and (member result '(:quit :detach)) result)
+        (and repeatable-p :repeatable))))

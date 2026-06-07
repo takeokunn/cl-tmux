@@ -58,18 +58,21 @@
 
 ;;; ── next-pane-id direct tests (pure, no PTY) ─────────────────────────────
 
-(test next-pane-id-returns-one-for-empty-window
-  "next-pane-id starts at 1 when the window has no panes."
+(test next-pane-id-returns-base-index-for-empty-window
+  "next-pane-id returns pane-base-index when the window has no panes (default 0)."
   (let ((win (make-window :id 1 :name "w" :panes nil)))
-    (is (= 1 (cl-tmux/model::next-pane-id win)))))
+    ;; With pane-base-index=0 (default), first pane id is 0.
+    (is (= (or (cl-tmux/options:get-option "pane-base-index") 0)
+           (cl-tmux/model::next-pane-id win)))))
 
 (test next-pane-id-fills-lowest-gap
-  "next-pane-id returns the lowest positive id not already in use."
-  (let* ((p1  (make-no-pty-pane 1 0 0 10 5))
-         (p3  (make-no-pty-pane 3 0 0 10 5))
+  "next-pane-id returns the lowest id >= pane-base-index not already in use."
+  (let* ((base (or (cl-tmux/options:get-option "pane-base-index") 0))
+         (p1  (make-no-pty-pane (+ base 1) 0 0 10 5))
+         (p3  (make-no-pty-pane (+ base 3) 0 0 10 5))
          (win (make-window :id 1 :name "w" :panes (list p1 p3))))
-    ;; id 1 and 3 are used; 2 is the lowest gap
-    (is (= 2 (cl-tmux/model::next-pane-id win)))))
+    ;; The lowest gap above base should be filled.
+    (is (= base (cl-tmux/model::next-pane-id win)))))
 
 ;;; ── split-window -d flag (no-focus) ─────────────────────────────────────────
 
@@ -227,12 +230,14 @@
 ;;; ── next-pane-id consecutive allocation ──────────────────────────────────────
 
 (test next-pane-id-consecutive-when-no-gaps
-  "next-pane-id returns (1+ highest-id) when ids are consecutive from 1."
-  (let* ((p1  (make-no-pty-pane 1 0 0 10 5))
-         (p2  (make-no-pty-pane 2 0 0 10 5))
+  "next-pane-id returns (1+ highest-id) when ids are consecutive from base."
+  (let* ((base (or (cl-tmux/options:get-option "pane-base-index") 0))
+         (p1  (make-no-pty-pane (+ base 1) 0 0 10 5))
+         (p2  (make-no-pty-pane (+ base 2) 0 0 10 5))
          (win (make-window :id 1 :name "w" :panes (list p1 p2))))
-    (is (= 3 (cl-tmux/model::next-pane-id win))
-        "next-pane-id must return 3 when ids 1 and 2 are used")))
+    ;; The first gap is at base (ids base+1 and base+2 are used).
+    (is (= base (cl-tmux/model::next-pane-id win))
+        "next-pane-id must return base when base+1 and base+2 are used")))
 
 ;;; ── pane-reposition preserves screen content metadata ────────────────────────
 
@@ -326,17 +331,23 @@
 ;;; ── Table-driven next-pane-id gap-filling ────────────────────────────────────
 
 (test next-pane-id-table
-  "Table-driven: next-pane-id returns the correct lowest free id in various gap scenarios."
-  ;; Each entry: (used-ids expected description)
-  (dolist (entry
-           '((() 1 "empty window: first id is 1")
-             ((1) 2 "id 1 used: next is 2")
-             ((1 2) 3 "ids 1,2 used: next is 3")
-             ((1 3) 2 "gap at 2: fill it")))
-    (destructuring-bind (used-ids expected desc) entry
-      (let* ((panes (mapcar (lambda (id) (make-no-pty-pane id 0 0 10 5)) used-ids))
-             (win   (make-window :id 1 :name "w" :panes panes)))
-        (is (= expected (cl-tmux/model::next-pane-id win)) desc)))))
+  "Table-driven: next-pane-id fills the lowest gap >= pane-base-index."
+  ;; Each entry: (used-id-offsets expected-offset description)
+  ;; Offsets are relative to pane-base-index (so offset 0 = base, 1 = base+1, etc.)
+  (let ((base (or (cl-tmux/options:get-option "pane-base-index") 0)))
+    (dolist (entry
+             `((() 0 "empty window: first id is base")
+               ((1) 0 ,(format nil "id base+1 used: base (~D) is free" base))
+               ((0 1) 2 "ids base and base+1 used: next is base+2")
+               ((0 2) 1 "gap at base+1: fill it")))
+      (destructuring-bind (used-offsets expected-offset desc) entry
+        (let* ((panes (mapcar (lambda (off)
+                                (make-no-pty-pane (+ base off) 0 0 10 5))
+                              used-offsets))
+               (win   (make-window :id 1 :name "w" :panes panes)))
+          (is (= (+ base expected-offset)
+                 (cl-tmux/model::next-pane-id win))
+              desc))))))
 
 ;;; ── pane-at-position hit test ────────────────────────────────────────────────
 

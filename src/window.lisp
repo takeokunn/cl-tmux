@@ -68,10 +68,11 @@
 ;;; ── Window-level pane ID allocation ────────────────────────────────────────
 
 (defun next-pane-id (window)
-  "Smallest positive pane id not already used in WINDOW.
+  "Smallest pane id >= pane-base-index not already used in WINDOW.
    Window-level concern: queries pane membership, not geometry."
-  (let ((used (mapcar #'pane-id (window-panes window))))
-    (loop for i from 1
+  (let* ((base (or (cl-tmux/options:get-option "pane-base-index") 0))
+         (used (mapcar #'pane-id (window-panes window))))
+    (loop for i from base
           unless (member i used) return i)))
 
 ;;; ── Tree-link mutation ──────────────────────────────────────────────────────

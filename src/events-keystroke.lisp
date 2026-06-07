@@ -287,8 +287,14 @@
                                :fill-pointer 0 :adjustable t)))
      (vector-push-extend byte buffer)
      (values nil (%make-prefix-csi-k session buffer))))
-  ;; Single-byte: dispatch the command table and return to ground.
-  (t (values (dispatch-prefix-command session byte) #'%ground-input-state)))
+  ;; Single-byte: dispatch the command table.  When the binding is repeatable
+  ;; (-r flag), stay in after-prefix state so the user can press the key again
+  ;; without the prefix key (e.g. C-b H H H to resize left three times).
+  (t
+   (let ((result (dispatch-prefix-command session byte)))
+     (if (eq result :repeatable)
+         (values nil #'%after-prefix-input-state)
+         (values result #'%ground-input-state)))))
 
 ;;; ── SGR mouse sequence parser ────────────────────────────────────────────────
 ;;;
