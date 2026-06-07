@@ -687,10 +687,13 @@
                      (error () ""))))
           (when (plusp (length cwd)) (return-from %pane-cwd-from-os cwd)))))
     ;; macOS: lsof reports the cwd as file descriptor 'cwd'.
+    ;; Try both full path (/usr/sbin/lsof) and bare name in case PATH varies.
     (handler-case
-        (let ((out (string-trim " \t\n\r"
+        (let* ((lsof  (or (and (probe-file "/usr/sbin/lsof") "/usr/sbin/lsof")
+                          "lsof"))
+               (out (string-trim " \t\n\r"
                                 (uiop:run-program
-                                 (list "lsof" "-p" (format nil "~D" pid)
+                                 (list lsof "-p" (format nil "~D" pid)
                                        "-a" "-d" "cwd" "-Fn")
                                  :output :string :ignore-error-status t
                                  :timeout 2))))
