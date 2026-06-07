@@ -751,6 +751,8 @@
                                    (eq window session-active-window)) "1" "0"))
          (window-flags    (if (and window session-active-window
                                    (eq window session-active-window)) "*" " "))
+         ;; #{window_zoomed_flag}: "Z" when the window is zoomed, else " ".
+         (window-zoomed-flag (if (and window (cl-tmux/model:window-zoom-p window)) "Z" " "))
          (window-panes    (if window (cl-tmux/model:window-panes window) nil))
          ;; #{pane_index}: the pane's numeric id (respects pane-base-index).
          (pane-index      (if pane (cl-tmux/model:pane-id pane) 0))
@@ -798,6 +800,8 @@
           :session-windows window-count
           :window-active window-active
           :window-flags  window-flags
+          ;; #{window_zoomed_flag}: "Z" when the active pane is zoomed.
+          :window-zoomed-flag window-zoomed-flag
           ;; #{window_panes}: number of panes in this window.
           :window-panes  (length window-panes)
           ;; #{window_layout}: layout serialization string.
