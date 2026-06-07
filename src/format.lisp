@@ -876,7 +876,7 @@
           ;; #{pane_format}: always "1" in context (we have a pane).
           :pane-format (if pane "1" "0")
           ;; #{window_format}: always "1" in context.
-          :window-format (if window "1" "0")))
+          :window-format (if window "1" "0"))))
 
 (defun format-context-from-window (session window
                                    &key (client-width 0) (client-height 0)
