@@ -142,6 +142,20 @@
    ;; Set: save current grid + cursor, replace with a fresh blank grid.
    ((enter-alt-screen screen))
    ;; Reset: restore saved grid + cursor, or clear if nothing was saved.
+   ((exit-alt-screen screen)))
+
+  ;; Mode 2026 — Synchronized Output (?2026h / ?2026l)
+  ;; Applications batch terminal updates between ?2026h and ?2026l.
+  ;; We accept and silently ignore this mode — our renderer already
+  ;; composites frames atomically, so no special batching is needed.
+  (2026
+   ((values))  ; no-op set
+   ((values))) ; no-op reset
+
+  ;; Mode 2004 - duplicate entry silently overrides (already handled above).
+  ;; Mode 47 — alternate screen (older form of 1049, without save/restore)
+  (47
+   ((enter-alt-screen screen))
    ((exit-alt-screen screen))))
 
 ;;; ── Focus event reporting (?1004) ──────────────────────────────────────────
