@@ -18,6 +18,10 @@
    0 means the first line is shown at the top.  Reset to 0 when a new overlay
    is displayed.  Main-thread-only.")
 
+(defvar *overlay-shown-at* 0
+  "Universal-time when the most recent transient overlay was shown.
+   Set by show-transient-overlay for display-time auto-dismiss.")
+
 (defun overlay-active-p ()
   "True when an overlay is currently displayed."
   (and *overlay* t))
@@ -26,6 +30,13 @@
   "Display TEXT as an overlay; navigated with j/k, dismissed with q or Esc."
   (setf *overlay* text)
   (setf *overlay-scroll-offset* 0))
+
+(defun show-transient-overlay (text)
+  "Display TEXT as a transient overlay that auto-dismisses after display-time ms.
+   Used for display-message and similar short notifications."
+  (setf *overlay* text
+        *overlay-scroll-offset* 0
+        *overlay-shown-at* (get-universal-time)))
 
 (defun clear-overlay ()
   "Dismiss the active overlay and reset the scroll offset."

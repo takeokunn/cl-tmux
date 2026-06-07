@@ -580,14 +580,14 @@
 (defun %cmd-display-message (session args)
   "display-message <fmt...>: expand the space-joined ARGS as a format string
    against the active session/window/pane, then log and show the result.
-   This is what makes #{session_name} etc. resolve instead of printing literally."
+   Uses show-transient-overlay so display-time ms auto-dismisses it."
   (let* ((win  (session-active-window session))
          (pane (session-active-pane session))
          (ctx  (cl-tmux/format:format-context-from-session session win pane))
          (text (cl-tmux/format:expand-format
                 (format nil "~{~A~^ ~}" args) ctx)))
     (add-message-log text)
-    (show-overlay text)))
+    (show-transient-overlay text)))
 
 ;;; *set-option-command-names* removed — inlined into *arg-command-table* below.
 

@@ -230,18 +230,36 @@
    join-thread timeout and leak the thread (which, fatally, makes every
    subsequent fork() fail with \"Cannot fork with multiple threads running\").")
 
+(defun %maybe-auto-dismiss-overlay ()
+  "Auto-dismiss the active overlay when display-time milliseconds have elapsed.
+   display-time is in ms (default 750); the timer resolution is 0.1s so actual
+   dismiss may lag up to 100ms.  Only affects transient overlays shown without
+   :no-timer; long-lived paged overlays (list-keys, list-sessions) use :no-timer."
+  (when (cl-tmux/prompt:overlay-active-p)
+    (let* ((display-time-ms (or (cl-tmux/options:get-option "display-time") 750))
+           (display-secs    (/ display-time-ms 1000.0))
+           (shown-at        cl-tmux/prompt::*overlay-shown-at*)
+           (elapsed         (- (get-universal-time) shown-at)))
+      (when (and (plusp shown-at) (>= elapsed display-secs))
+        (cl-tmux/prompt:clear-overlay)
+        t))))
+
 (defun start-status-timer (dirty-fn)
   "Start a background thread that calls DIRTY-FN every status-interval seconds.
    DIRTY-FN should mark the session dirty to trigger a status bar redraw.
    The thread polls *running* at +status-timer-poll-seconds+ granularity and
    accumulates elapsed time, firing DIRTY-FN once per status-interval, so it
-   exits within one poll tick of *running* clearing.  Returns the thread object."
+   exits within one poll tick of *running* clearing.
+   Also drives auto-dismiss of transient overlays per display-time option.
+   Returns the thread object."
   (make-thread
    (lambda ()
      (let ((elapsed 0))
        (loop while *running*
              do (sleep +status-timer-poll-seconds+)
                 (incf elapsed +status-timer-poll-seconds+)
+                ;; Auto-dismiss transient overlays after display-time ms.
+                (when (%maybe-auto-dismiss-overlay) (funcall dirty-fn))
                 (let ((interval (max 1 (cl-tmux/options:get-option "status-interval"))))
                   (when (and *running* (>= elapsed interval))
                     (setf elapsed 0)

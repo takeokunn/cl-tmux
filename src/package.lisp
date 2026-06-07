@@ -417,8 +417,9 @@
    #:prompt-kill-to-end #:prompt-kill-to-start #:prompt-kill-word-back
    ;; Dismissible overlay (list-keys help, …)
    #:*overlay* #:*overlay-scroll-offset*
-   #:overlay-active-p #:show-overlay #:clear-overlay #:overlay-lines
-   #:overlay-scroll
+   #:overlay-active-p #:show-overlay #:show-transient-overlay
+   #:clear-overlay #:overlay-lines
+   #:overlay-scroll #:*overlay-shown-at*
    ;; Popup overlay
    #:+default-popup-width+ #:+default-popup-height+
    #:popup #:make-popup #:popup-p
