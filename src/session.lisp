@@ -167,11 +167,21 @@
 (defparameter *update-environment*
   '("DISPLAY" "SSH_AUTH_SOCK" "SSH_CONNECTION" "XAUTHORITY")
   "List of environment variable names to propagate into new panes.
-   Mirrors tmux's update-environment server option.")
+   Mirrors tmux's update-environment server option.  Used as a fallback when
+   the option string has not been set.")
+
+(defun %parse-update-environment ()
+  "Return the list of env var names from the 'update-environment' option,
+   falling back to *UPDATE-ENVIRONMENT* when the option is unset/empty."
+  (let ((opt-val (cl-tmux/options:get-option "update-environment")))
+    (if (and opt-val (plusp (length opt-val)))
+        (remove-if (lambda (s) (zerop (length s)))
+                   (uiop:split-string opt-val :separator '(#\Space)))
+        *update-environment*)))
 
 (defun get-update-environment-vars ()
-  "Return an alist of (name . value) for each variable in *UPDATE-ENVIRONMENT*
-   that is set in the current process environment.  Unset variables are omitted."
-  (loop for name in *update-environment*
-        for value = (sb-ext:posix-getenv name)
+  "Return an alist of (name . value) for each variable in the update-environment
+   option that is set in the current process environment.  Unset vars omitted."
+  (loop for name in (%parse-update-environment)
+        for value = (ignore-errors (sb-ext:posix-getenv name))
         when value collect (cons name value)))
