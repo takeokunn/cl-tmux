@@ -1240,7 +1240,7 @@
           ;; -o: skip if already piped
           ((and only-open (pane-pipe-fd ap)) nil)
           ;; Open the pipe
-          (t (pipe-pane-open ap command)))))))
+          (t (pipe-pane-open ap command))))))
 
 (defun %cmd-set-environment-prompt (session args)
   "set-environment [-r] NAME [VALUE]: set or unset a process environment variable.
