@@ -13,12 +13,16 @@
 
 ;;; ── Box-drawing shared helpers ──────────────────────────────────────────────
 
-(defun %render-box-border-top (stream ox oy pw title)
-  "Draw the top border of any box at (OX, OY) with width PW and TITLE label.
-   Emits: ┌ TITLE ──...──┐ truncated to PW columns."
-  (move-to stream oy ox)
+(defun %render-box-border-top (stream origin-x origin-y box-width title)
+  "Draw the top border of any box.
+   ORIGIN-X  — terminal column of the box left edge.
+   ORIGIN-Y  — terminal row of the box top edge.
+   BOX-WIDTH — total width of the box in columns (includes the two corner chars).
+   TITLE     — title label rendered after the top-left corner.
+   Emits: ┌ TITLE ──...──┐ truncated to BOX-WIDTH columns."
+  (move-to stream origin-y origin-x)
   (write-char #\┌ stream)
-  (let* ((inner  (- pw 2))
+  (let* ((inner  (- box-width 2))
          (tlabel (format nil " ~A " title))
          (tlen   (min (length tlabel) inner))
          (fill   (max 0 (- inner tlen))))
@@ -26,78 +30,96 @@
     (loop repeat fill do (write-char #\─ stream)))
   (write-char #\┐ stream))
 
-(defun %render-box-border-bottom (stream ox bottom-row pw)
-  "Draw the bottom border of a box at (OX, BOTTOM-ROW) with width PW.
+(defun %render-box-border-bottom (stream origin-x bottom-row box-width)
+  "Draw the bottom border of a box.
+   ORIGIN-X   — terminal column of the box left edge.
+   BOTTOM-ROW — terminal row of the bottom border line.
+   BOX-WIDTH  — total width of the box in columns.
    Emits: └ ──...──┘"
-  (move-to stream bottom-row ox)
+  (move-to stream bottom-row origin-x)
   (write-char #\└ stream)
-  (loop repeat (- pw 2) do (write-char #\─ stream))
+  (loop repeat (- box-width 2) do (write-char #\─ stream))
   (write-char #\┘ stream))
 
 ;;; ── Popup rendering ─────────────────────────────────────────────────────────
 
-(defun %render-popup-content-pane (stream ox oy pw ph popup-screen)
-  "Render the live pane screen inside a popup box interior."
-  (loop for row below (min ph (screen-height popup-screen)) do
-    (move-to stream (+ oy 1 row) ox)
+(defun %render-popup-content-pane (stream origin-x origin-y box-width box-height popup-screen)
+  "Render the live pane screen inside a popup box interior.
+   ORIGIN-X   — terminal column of the box left edge (where │ is drawn).
+   ORIGIN-Y   — terminal row of the top border (content starts at ORIGIN-Y+1).
+   BOX-WIDTH  — total width of the box (content width = BOX-WIDTH - 2).
+   BOX-HEIGHT — total height of the box (content rows = min of BOX-HEIGHT, screen height).
+   POPUP-SCREEN — the live screen to render inside the box."
+  (loop for row below (min box-height (screen-height popup-screen)) do
+    (move-to stream (+ origin-y 1 row) origin-x)
     (write-char #\│ stream)
-    (loop for col below (- pw 2)
+    (loop for col below (- box-width 2)
           for cell = (screen-display-cell popup-screen col row)
           do (write-char (cell-char cell) stream))
     (write-char #\│ stream)))
 
-(defun %render-popup-content-empty (stream ox oy ph pw)
-  "Render empty side bars inside a popup box that has no live pane."
-  (loop for row below (- ph 2) do
-    (move-to stream (+ oy 1 row) ox)
+(defun %render-popup-content-empty (stream origin-x origin-y box-height box-width)
+  "Render empty side bars inside a popup box that has no live pane.
+   ORIGIN-X   — terminal column of the box left edge.
+   ORIGIN-Y   — terminal row of the top border (content starts at ORIGIN-Y+1).
+   BOX-HEIGHT — total height of the box (content rows = BOX-HEIGHT - 2).
+   BOX-WIDTH  — total width of the box (content width = BOX-WIDTH - 2)."
+  (loop for row below (- box-height 2) do
+    (move-to stream (+ origin-y 1 row) origin-x)
     (write-char #\│ stream)
-    (loop repeat (- pw 2) do (write-char #\Space stream))
+    (loop repeat (- box-width 2) do (write-char #\Space stream))
     (write-char #\│ stream)))
 
 (defun render-popup (stream popup terminal-rows terminal-cols)
   "Draw the POPUP overlay box centered on the terminal.
    When the popup has a live pane, render it inside the box.
    Otherwise render an empty box with the popup title."
-  (let* ((pw    (min (popup-width  popup) terminal-cols))
-         (ph    (popup-height popup))
-         (ox    (max 0 (floor (- terminal-cols pw) 2)))
-         (oy    (max 0 (floor (- (1- terminal-rows) ph) 2)))
-         (title (popup-title popup)))
+  (let* ((box-width  (min (popup-width  popup) terminal-cols))
+         (box-height (popup-height popup))
+         (origin-x   (max 0 (floor (- terminal-cols box-width) 2)))
+         (origin-y   (max 0 (floor (- (1- terminal-rows) box-height) 2)))
+         (title      (popup-title popup)))
     (reset-attrs stream)
-    (%render-box-border-top stream ox oy pw title)
+    (%render-box-border-top stream origin-x origin-y box-width title)
     (if (popup-pane popup)
-        (let ((sc (popup-screen popup)))
-          (when sc
-            (%render-popup-content-pane stream ox oy pw ph sc)))
-        (%render-popup-content-empty stream ox oy ph pw))
-    (%render-box-border-bottom stream ox (+ oy ph -1) pw)))
+        (let ((popup-screen (popup-screen popup)))
+          (when popup-screen
+            (%render-popup-content-pane stream origin-x origin-y
+                                        box-width box-height popup-screen)))
+        (%render-popup-content-empty stream origin-x origin-y box-height box-width))
+    (%render-box-border-bottom stream origin-x (+ origin-y box-height -1) box-width)))
 
 ;;; ── Menu rendering ──────────────────────────────────────────────────────────
 
-(defun %render-menu-items (stream ox oy items pw sel)
-  "Draw each menu item row with a selection indicator (▶ for selected, space for others)."
+(defun %render-menu-items (stream origin-x origin-y items box-width selected-index)
+  "Draw each menu item row with a selection indicator (▶ for selected, space for others).
+   ORIGIN-X       — terminal column of the box left edge.
+   ORIGIN-Y       — terminal row of the top border (items start at ORIGIN-Y+1).
+   ITEMS          — alist of (label . command) pairs.
+   BOX-WIDTH      — total width of the box (item content width = BOX-WIDTH - 3).
+   SELECTED-INDEX — 0-based index of the highlighted item."
   (loop for (label . _cmd) in items
-        for i from 0
-        do (move-to stream (+ oy 1 i) ox)
+        for item-index from 0
+        do (move-to stream (+ origin-y 1 item-index) origin-x)
            (write-char #\│ stream)
-           (write-char (if (= i sel) #\▶ #\Space) stream)
-           (let* ((inner (- pw 3))
-                  (llen  (min (length label) inner))
-                  (fill  (max 0 (- inner llen))))
-             (write-string (subseq label 0 llen) stream)
+           (write-char (if (= item-index selected-index) #\▶ #\Space) stream)
+           (let* ((inner-width (- box-width 3))
+                  (label-len   (min (length label) inner-width))
+                  (fill        (max 0 (- inner-width label-len))))
+             (write-string (subseq label 0 label-len) stream)
              (loop repeat fill do (write-char #\Space stream)))
            (write-char #\│ stream)))
 
 (defun render-menu (stream menu terminal-rows terminal-cols)
   "Draw the MENU overlay box centered on the terminal."
-  (let* ((items  (menu-items menu))
-         (n      (length items))
-         (title  (menu-title menu))
-         (pw     (min 40 terminal-cols))
-         (ox     (max 0 (floor (- terminal-cols pw) 2)))
-         (oy     (max 0 (floor (- terminal-rows (+ n 2)) 2)))
-         (sel    (menu-selected-index menu)))
+  (let* ((items          (menu-items menu))
+         (item-count     (length items))
+         (title          (menu-title menu))
+         (box-width      (min 40 terminal-cols))
+         (origin-x       (max 0 (floor (- terminal-cols box-width) 2)))
+         (origin-y       (max 0 (floor (- terminal-rows (+ item-count 2)) 2)))
+         (selected-index (menu-selected-index menu)))
     (reset-attrs stream)
-    (%render-box-border-top    stream ox oy pw title)
-    (%render-menu-items        stream ox oy items pw sel)
-    (%render-box-border-bottom stream ox (+ oy n 1) pw)))
+    (%render-box-border-top    stream origin-x origin-y box-width title)
+    (%render-menu-items        stream origin-x origin-y items box-width selected-index)
+    (%render-box-border-bottom stream origin-x (+ origin-y item-count 1) box-width)))

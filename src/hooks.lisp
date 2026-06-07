@@ -64,7 +64,10 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
 (defun run-hooks (event-name &rest args)
   "Call each registered hook for EVENT-NAME with ARGS.
    Errors signalled by individual hooks are silently suppressed so that
-   a broken hook never prevents the rest from running."
+   a broken hook never prevents the rest from running.
+   Trade-off: silent suppression makes debugging a broken hook difficult;
+   if a hook never fires, check whether it signals an unhandled condition.
+   A future *hooks-error-handler* hook-point could surface these at debug time."
   (dolist (cb (gethash event-name *hook-registry*))
     (handler-case (apply cb args)
       (error () nil))))
@@ -109,8 +112,9 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
   "Remove all command hooks registered for EVENT-NAME."
   (remhash event-name *command-hooks*))
 
-(defun list-command-hooks ()
-  "Return an alist of (event-name . command-keyword-list) for all command hooks."
+(defun %list-command-hooks ()
+  "Return an alist of (event-name . command-keyword-list) for all command hooks.
+   Internal helper; callers that need a sorted copy must sort the result themselves."
   (let (result)
     (maphash (lambda (name kws) (push (cons name kws) result)) *command-hooks*)
     result))
@@ -118,7 +122,7 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
 (defun describe-command-hooks ()
   "Return a newline-separated, event-sorted listing of the registered command
    hooks (\"<event> -> <command>, ...\" per line) for the show-hooks overlay."
-  (let ((entries (sort (list-command-hooks) #'string< :key #'car)))
+  (let ((entries (sort (copy-list (%list-command-hooks)) #'string< :key #'car)))
     (if (null entries)
         "no command hooks set"
         (with-output-to-string (out)

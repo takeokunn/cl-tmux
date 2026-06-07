@@ -221,9 +221,7 @@
 (test select-fds-with-pipe-data-returns-ready-fd
   "select-fds returns the readable fd in a list when data is available on a pipe."
   (with-pipe-fds (rfd wfd)
-    (cffi:with-foreign-object (buf :uint8)
-      (setf (cffi:mem-ref buf :uint8) 99)
-      (cffi:foreign-funcall "write" :int wfd :pointer buf :unsigned-long 1 :long))
+    (write-byte-to-fd wfd 99)
     (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))
       (is (equal (list rfd) ready)
           "ready list must contain exactly rfd after write"))))

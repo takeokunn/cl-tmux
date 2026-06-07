@@ -594,15 +594,14 @@
                          wins)))
      (if items
          (progn
-           (setf *active-menu*
-                 (make-menu :title "choose-window" :items items :selected-index 0))
+           (show-menu (make-menu :title "choose-window" :items items :selected-index 0))
            (show-overlay (%format-menu *active-menu*))
            ;; Use a prompt so the user can type the index or navigate with Enter.
            (prompt-start "window: " ""
                          (lambda (s)
                            (let ((n (ignore-errors (parse-integer s))))
                              (when n (select-window-by-number session n)))
-                           (setf *active-menu* nil)
+                           (close-menu)
                            (clear-overlay))))
          (show-overlay "(no windows)"))))
   (:last-window
@@ -755,12 +754,11 @@
                  (lambda (cmd)
                    (unless (string= cmd "")
                      (let ((output (run-shell cmd)))
-                       (setf *active-popup*
-                             (make-popup :title cmd
-                                         :width  (min 60 *term-cols*)
-                                         :height (min 15 (- *term-rows* 4))
-                                         :screen nil
-                                         :pane   nil))
+                       (show-popup (make-popup :title cmd
+                                               :width  (min 60 *term-cols*)
+                                               :height (min 15 (- *term-rows* 4))
+                                               :screen nil
+                                               :pane   nil))
                        ;; Show output as overlay until dismissed
                        (show-overlay
                         (format nil "┌─ ~A ─┐~%~A~%└~A┘"
@@ -769,7 +767,7 @@
                                 (make-string (+ 2 (length cmd)) :initial-element #\─))))))))
   (:display-popup-dismiss
    ;; Dismiss the active popup.
-   (setf *active-popup* nil))
+   (close-popup))
   (:display-menu
    ;; Show a text menu overlay with j/k navigation and Enter selection.
    (let ((items (list (cons "New Window"    :new-window)
@@ -780,7 +778,7 @@
                       (cons "Zoom Toggle"   :zoom-toggle)
                       (cons "List Sessions" :list-sessions)
                       (cons "Detach"        :detach))))
-     (setf *active-menu* (make-menu :title "Menu" :items items :selected-index 0))
+     (show-menu (make-menu :title "Menu" :items items :selected-index 0))
      (show-overlay (%format-menu *active-menu*))))
   (:menu-next
    ;; Move menu selection down.
@@ -802,13 +800,13 @@
      (let* ((idx  (menu-selected-index *active-menu*))
             (item (nth idx (menu-items *active-menu*)))
             (cmd  (cdr item)))
-       (setf *active-menu* nil)
+       (close-menu)
        (clear-overlay)
        (when cmd
          (dispatch-command session cmd byte)))))
   (:menu-dismiss
    ;; Cancel the menu.
-   (setf *active-menu* nil)
+   (close-menu)
    (clear-overlay))
   (:break-pane
    ;; C-b ! — detach active pane into a new window.

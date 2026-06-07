@@ -73,12 +73,19 @@
         (condition-notify cv)))))
 
 (defun lock-channel (name)
-  "Lock channel NAME so signal-channel is a no-op until unlocked."
+  "Lock channel NAME so signal-channel is suppressed (a no-op) until unlocked.
+   While a channel is locked, any call to signal-channel for the same NAME
+   checks the :locked flag and skips the condition-notify entirely.  This
+   allows callers to temporarily block notifications without losing them
+   permanently — the channel is not destroyed, only silenced."
   (let ((ch (%ensure-channel name)))
     (setf (getf ch :locked) t)))
 
 (defun unlock-channel (name)
-  "Unlock channel NAME, allowing signal-channel to proceed."
+  "Unlock channel NAME, allowing subsequent signal-channel calls to notify waiters.
+   Paired with lock-channel: once unlocked, signal-channel will again call
+   condition-notify on the channel's condition variable.  Does not retroactively
+   deliver signals that were suppressed while the channel was locked."
   (let ((ch (%ensure-channel name)))
     (setf (getf ch :locked) nil)))
 
@@ -92,6 +99,22 @@
   (push (cons (get-universal-time) msg) *message-log*)
   (when (> (length *message-log*) +max-message-log-entries+)
     (setf *message-log* (subseq *message-log* 0 +max-message-log-entries+))))
+
+;;; -- Prompt history ----------------------------------------------------------
+
+(defconstant +max-prompt-history+ 100
+  "Maximum number of entries retained in *prompt-history*.")
+
+(defvar *prompt-history* nil
+  "A list of strings — the most recent command-prompt inputs, newest first.
+   Populated by the :command-prompt handler; shown by :show-prompt-history.")
+
+(defun add-prompt-history (entry)
+  "Prepend ENTRY to *prompt-history*, capping at +max-prompt-history+."
+  (when (and (stringp entry) (plusp (length entry)))
+    (push entry *prompt-history*)
+    (when (> (length *prompt-history*) +max-prompt-history+)
+      (setf *prompt-history* (subseq *prompt-history* 0 +max-prompt-history+)))))
 
 ;;; -- Clock mode --------------------------------------------------------------
 
@@ -117,6 +140,14 @@
 ;;; CPS state machine: each state function takes (pane) and returns the next
 ;;; state function (or NIL to stop).
 
+;;; ANSI SGR sequence displayed on the pane when remain-on-exit is active.
+;;; SGR 7 = reverse video; SGR 0 (implicit via reset) restores normal.
+;;; Defined as a variable (not defconstant) because SBCL's DEFCONSTANT
+;;; requires EQL identity across reloads, which string values fail.
+(defvar +remain-on-exit-message+
+  (format nil "~C[7m[Process exited]~C[m" #\Escape #\Escape)
+  "Reverse-video banner written to the pane screen when remain-on-exit is set.")
+
 (defun reader-idle-state (pane)
   "Poll the pane PTY fd; transition to reading if data is available."
   (if (select-fds (list (pane-fd pane)) +pty-poll-timeout-us+)
@@ -136,24 +167,37 @@
        (setf *dirty* t)
        #'reader-idle-state))))
 
+(defun reader-remain-on-exit-state (pane)
+  "CPS spin state: park the reader thread while *running* is true.
+   Returns itself to keep the driver loop alive, or NIL when *running* clears.
+   Uses a short sleep so the loop yields the CPU; the pane stays visible."
+  (declare (ignore pane))
+  (if *running*
+      (progn (sleep 0.1) #'reader-remain-on-exit-state)
+      nil))
+
 (defun reader-eof-state (pane)
-  "Terminal state: EOF received.  Fire the pane-exited hook.
-   When the 'remain-on-exit' option is set, display a notice on the pane's screen
-   and spin-wait until *running* clears (the pane content stays frozen but visible).
-   Otherwise, return NIL to stop the reader loop immediately."
+  "Fire the pane-exited hook and determine the next CPS state.
+   When 'remain-on-exit' is set, write a notice to the pane screen and
+   transition to reader-remain-on-exit-state so the pane stays visible.
+   Otherwise return NIL to stop the reader loop immediately."
   (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-exited+ pane)
-  (when (ignore-errors (cl-tmux/options:get-option "remain-on-exit"))
-    ;; Write [Process exited] to the pane screen so the user can see it exited.
-    (let ((screen (pane-screen pane)))
-      (when screen
-        (let ((msg (babel:string-to-octets
-                    (format nil "~C[7m[Process exited]~C[m" #\Escape #\Escape)
-                    :encoding :utf-8)))
-          (cl-tmux/terminal/emulator:screen-process-bytes screen msg))))
-    (setf *dirty* t)
-    ;; Spin-wait while the session is still running; the pane stays on screen.
-    (loop while *running* do (sleep 0.1)))
-  nil)
+  (let ((remain-on-exit
+          (handler-case (cl-tmux/options:get-option "remain-on-exit")
+            (error () nil))))
+    (cond
+      (remain-on-exit
+       ;; Write [Process exited] banner to the pane screen.
+       (let ((screen (pane-screen pane)))
+         (when screen
+           (let ((message-bytes
+                   (babel:string-to-octets +remain-on-exit-message+
+                                           :encoding :utf-8)))
+             (cl-tmux/terminal/emulator:screen-process-bytes screen message-bytes))))
+       (setf *dirty* t)
+       ;; Return the parking state: the driver loop calls it on each tick.
+       #'reader-remain-on-exit-state)
+      (t nil))))
 
 (defun %run-reader-states (pane initial-state)
   "Drive the CPS reader state machine for PANE starting from INITIAL-STATE."

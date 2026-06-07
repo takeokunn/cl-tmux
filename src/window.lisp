@@ -49,38 +49,21 @@
 ;;;   :v split stacks children vertically → extent measured in ROWS (height)
 ;;;   :h split places children side-by-side → extent measured in COLS (width)
 ;;;
-;;; define-axis-rules generates a Prolog-style fact table for orient dispatch:
-;;;   axis_rule(:v, pane) :- (pane-height pane)
-;;;   axis_rule(:h, pane) :- (pane-width  pane)
-;;; The macro follows the same pattern as define-csi-rules / define-command-handlers.
-
-(defmacro define-axis-rules (name lambda-list &rest orient-cases)
-  "Generate an orient-dispatching function NAME with LAMBDA-LIST.
-   Each ORIENT-CASE is (:orient form) — an exhaustive table of orient facts.
-   The generated function uses ecase for compile-time exhaustiveness checking."
-  (let* ((docstring (when (stringp (first orient-cases)) (first orient-cases)))
-         (cases     (if docstring (rest orient-cases) orient-cases)))
-    `(defun ,name ,lambda-list
-       ,@(when docstring (list docstring))
-       (ecase ,(car (last lambda-list))
-         ,@(mapcar (lambda (c)
-                     `(,(first c) ,(second c)))
-                   cases)))))
-
-;;; Axis fact table: for each orient, which pane accessor gives the relevant extent?
+;;; Axis fact table (Prolog-style):
 ;;;   axis_extent(:v, pane) :- pane-height.
 ;;;   axis_extent(:h, pane) :- pane-width.
 
-(define-axis-rules %orient-pane-extent (pane orient)
+(defun %orient-pane-extent (pane orient)
   "Current extent of PANE along ORIENT's split axis."
-  (:v (pane-height pane))
-  (:h (pane-width  pane)))
+  (ecase orient
+    (:v (pane-height pane))
+    (:h (pane-width  pane))))
 
 (defun %split-fits-p (pane orient)
   "T when PANE is wide/tall enough to split along ORIENT (needs 2×min + 1 separator)."
-  (let ((avail  (%orient-pane-extent pane orient))
-        (floor* (%axis-floor orient)))
-    (>= avail (+ floor* 1 floor*))))
+  (let ((avail     (%orient-pane-extent pane orient))
+        (axis-floor (%axis-floor orient)))
+    (>= avail (+ axis-floor 1 axis-floor))))
 
 ;;; ── Window-level pane ID allocation ────────────────────────────────────────
 
@@ -127,54 +110,44 @@
     (%set-tree-link window parent sibling)
     sibling))
 
-;;; ── Size-hint dispatch — define-size-hint-rules ────────────────────────────
+;;; ── Size-hint conversion ────────────────────────────────────────────────────
 ;;;
-;;; Follows the same defmacro idiom as define-csi-rules / define-axis-rules.
-;;; Each rule is (test-form result-form); the first matching rule wins.
-;;; The generated function falls through to (floor avail 2) when no rule matches.
-
-(defmacro define-size-hint-rules (name lambda-list &rest rules)
-  "Generate a size-hint conversion function NAME with LAMBDA-LIST.
-   Each RULE is (test-form result-form).
-   The generated function uses HINT and AVAIL from LAMBDA-LIST; any additional
-   parameters (e.g. ORIENT for calling-convention compatibility) are declared
-   ignorable.  Tries rules in order; falls through to (floor avail 2)."
-  `(defun ,name ,lambda-list
-     (declare (ignorable ,@lambda-list))
-     (cond
-       ,@(mapcar (lambda (rule) `(,(first rule) ,(second rule))) rules)
-       (t (floor avail 2)))))
-
-;;; Size-hint fact table:
+;;; Size-hint fact table (Prolog-style):
 ;;;   hint_rule(integer, positive) :- hint cells for the new pane.
 ;;;   hint_rule(real, 0<r<1)       :- proportional cells derived from avail.
 ;;;   hint_rule(_default_)         :- half the available space.
 
-(define-size-hint-rules %requested-cells-from-hint (hint avail orient)
-  ((and (integerp hint) (> hint 0))     hint)
-  ((and (realp hint) (< 0.0 hint 1.0)) (round (* avail hint))))
+(defun %requested-cells-from-hint (hint avail orient)
+  "Convert a split size HINT to a cell count within AVAIL along ORIENT.
+   Returns an integer: the requested cell count for the new (second) child."
+  (declare (ignorable orient))
+  (cond
+    ((and (integerp hint) (> hint 0))     hint)
+    ((and (realp hint) (< 0.0 hint 1.0)) (round (* avail hint)))
+    (t (floor avail 2))))
 
 (defun %ratio-from-size-hint (hint avail orient)
   "Convert a size HINT (integer cells or real percentage) to a split ratio for
    the new (second) child given AVAIL total cells and ORIENT.
    Returns a ratio in (0,1) clamped to leave at least the axis floor on each side."
-  (let* ((floor*       (%axis-floor orient))
+  (let* ((axis-floor   (%axis-floor orient))
          ;; Requested cells for the NEW (second) child.
          (requested    (%requested-cells-from-hint hint avail orient))
-         ;; Upper bound: leave at least floor* cells for the FIRST child + 1 separator.
-         (upper-bound  (- avail floor* 1))
-         ;; Clamped size: both halves stay above floor*.
-         (clamped-size (max floor* (min upper-bound requested)))
+         ;; Upper bound: leave at least axis-floor cells for the FIRST child + 1 separator.
+         (upper-bound  (- avail axis-floor 1))
+         ;; Clamped size: both halves stay above axis-floor.
+         (clamped-size (max axis-floor (min upper-bound requested)))
          ;; Ratio measures the FIRST child; new pane is the second.
          (first-size   (- avail clamped-size 1)))
     (/ first-size avail)))
 
-(defun window-split (window direction &key no-focus size)
+(defun window-split (window direction &key no-focus size start-dir)
   "Split the active pane of WINDOW along DIRECTION (:h left/right, :v top/bottom).
    Returns the new pane, or NIL when the active pane is too small.
    NO-FOCUS T keeps the current active pane selected (the new pane is created
    but not focused).  SIZE is an integer (cells) or real (fraction 0..1) that
-   controls the new pane's initial size along the split axis."
+   controls the new pane's initial size along the split axis.
+   START-DIR: when non-NIL, the new pane's shell starts in that directory."
   (let ((active (window-active-pane window))
         (tree   (window-tree window)))
     (unless (and active tree) (return-from window-split nil))
@@ -182,7 +155,8 @@
       (unless (and leaf (%split-fits-p active direction))
         (return-from window-split nil))
       (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
-        (let* ((new-pane (%fork-pane (next-pane-id window) px py pw ph))
+        (let* ((new-pane (%fork-pane (next-pane-id window) px py pw ph
+                                     :start-dir start-dir))
                (avail    (1- (%orient-pane-extent active direction)))
                (ratio    (if size
                              (%ratio-from-size-hint size avail direction)
@@ -236,12 +210,19 @@
   "Compute the ratio after moving the split border by DELTA cells.
    Returns the new ratio as a rational, or NIL when the move would violate
    the minimum pane size on either side."
-  (let* ((floor*    (%axis-floor orient))
-         (cur-first (round (* avail cur-ratio)))
-         (sign      (if grow-first 1 -1))
-         (new-first (+ cur-first (* sign delta))))
-    (when (and (<= floor* new-first) (<= new-first (- avail floor*)))
+  (let* ((axis-floor (%axis-floor orient))
+         (cur-first  (round (* avail cur-ratio)))
+         (sign       (if grow-first 1 -1))
+         (new-first  (+ cur-first (* sign delta))))
+    (when (and (<= axis-floor new-first) (<= new-first (- avail axis-floor)))
       (/ new-first avail))))
+
+(defun %grow-first-p (side direction)
+  "Return true when the first child of a split should grow given SIDE (:first/:second)
+   and the resize DIRECTION (:left/:right/:up/:down)."
+  (if (eq side :first)
+      (member direction '(:right :down))
+      (member direction '(:left :up))))
 
 (defun window-resize-active (window direction delta)
   "Move the split border between the active pane and its neighbour in DIRECTION
@@ -256,9 +237,7 @@
       (multiple-value-bind (split side) (resize-find-split tree leaf orient)
         (unless split (return-from window-resize-active nil))
         (let* ((avail      (max 1 (- (layout-split-axis-extent split orient) 1)))
-               (grow-first (if (eq side :first)
-                               (member direction '(:right :down))
-                               (member direction '(:left :up))))
+               (grow-first (%grow-first-p side direction))
                (new-ratio  (%new-split-ratio orient avail
                                              (layout-split-ratio split)
                                              delta grow-first)))

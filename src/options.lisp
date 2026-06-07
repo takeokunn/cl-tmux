@@ -108,7 +108,59 @@
   ("remain-on-exit"           :boolean nil)
   ("renumber-windows"         :boolean nil)
   ("message-style"            :string  "")
-  ("update-environment"       :string  "DISPLAY SSH_ASKPASS SSH_AUTH_SOCK SSH_CONNECTION WINDOWID XAUTHORITY"))
+  ("update-environment"       :string  "DISPLAY SSH_ASKPASS SSH_AUTH_SOCK SSH_CONNECTION WINDOWID XAUTHORITY")
+  ;; Display options
+  ("display-time"             :integer 750)    ; ms to show messages / pane numbers
+  ("display-panes-time"       :integer 1000)   ; ms to show pane numbers (display-panes)
+  ("display-panes-colour"     :string  "blue")
+  ("display-panes-active-colour" :string "red")
+  ;; Resize and timing
+  ("repeat-time"              :integer 500)    ; ms window for repeatable bindings
+  ("lock-after-time"          :integer 0)      ; 0 = disabled
+  ;; Terminal settings
+  ("default-terminal"         :string  "screen")
+  ("terminal-overrides"       :string  "")
+  ;; Window/pane defaults
+  ("allow-rename"             :boolean t)
+  ("aggressive-resize"        :boolean nil)
+  ("alternate-screen"         :boolean t)
+  ;; Status bar extras
+  ("status-keys"              :string  "emacs")  ; emacs or vi
+  ("mode-keys"                :string  "vi")     ; vi or emacs copy-mode keys
+  ("status-left-style"        :string  "")
+  ("status-right-style"       :string  "")
+  ;; Pane display
+  ("other-pane-height"        :integer 0)
+  ("other-pane-width"         :integer 0)
+  ;; Pane border status line (top / bottom / off)
+  ("pane-border-status"       :string  "off")
+  ("pane-border-format"       :string  " #{pane_index} ")
+  ;; Clock display
+  ("clock-mode-colour"        :string  "blue")
+  ("clock-mode-style"         :integer 24)      ; 12 or 24 hour
+  ;; Copy mode search
+  ("wrap-search"              :boolean t)        ; wrap search in copy-mode
+  ("copy-mode-current-match-style" :string "bg=magenta")
+  ("copy-mode-match-style"    :string  "bg=green")
+  ;; Session lifecycle
+  ("destroy-unattached"       :boolean nil)     ; destroy session when no clients
+  ("detach-on-destroy"        :boolean t)       ; detach when session destroyed
+  ;; Window sizing
+  ("default-size"             :string  "80x24") ; default WxH for new sessions
+  ;; Input handling
+  ("extended-keys"            :string  "off")   ; off / on / always
+  ("key-table"                :string  "prefix") ; default key table
+  ("prefix2"                  :string  "")      ; secondary prefix key
+  ;; History / logging
+  ("history-file"             :string  "")      ; save command history here
+  ("fill-character"           :string  "")      ; char to fill empty areas
+  ;; Locking
+  ("lock-command"             :string  "lock -np") ; command to run on lock
+  ;; Status format (tmux 3.2+ array-style; stored as single string here)
+  ("status-format"            :string  "")
+  ;; Popup defaults
+  ("popup-border-lines"       :string  "single")
+  ("popup-border-style"       :string  ""))
 
 ;;; Server-option registry and defaults
 
@@ -116,9 +168,45 @@
   "Specs for server-scoped options (set with set-option -s).")
 
 (define-server-options
-  ("escape-time"      :integer 500)
-  ("exit-empty"       :boolean t)
-  ("exit-unattached"  :boolean nil))
+  ("escape-time"          :integer 500)
+  ("exit-empty"           :boolean t)
+  ("exit-unattached"      :boolean nil)
+  ("focus-events"         :boolean nil)  ; enable focus-events reporting (server-wide)
+  ("set-clipboard"        :string  "on") ; external, on, or off
+  ("terminal-features"    :string  "")
+  ("terminal-overrides"   :string  "")
+  ("command-alias"        :string  "")   ; array stored as single string for simplicity
+  ("default-terminal"     :string  "screen")
+  ("buffer-limit"         :integer 50))
+
+;;; ── Command-alias registry ────────────────────────────────────────────────
+;;;
+;;; Implements tmux's command-alias[] array option.  Each entry maps an alias
+;;; name string to a command-line expansion string, e.g.
+;;;   "e" → "new-window -n"
+;;; When the alias is looked up, the expansion is tokenised and the caller's
+;;; remaining arguments are appended.
+;;;
+;;; In .tmux.conf:
+;;;   set -s command-alias[0] e='new-window -n'
+;;;   set -s command-alias[1] gst='new-session -s'
+
+(defvar *command-aliases* (make-hash-table :test #'equal)
+  "Hash-table mapping alias name strings to their command-line expansion strings.")
+
+(defun register-command-alias (alias expansion)
+  "Register ALIAS as a shorthand for the EXPANSION command line."
+  (setf (gethash alias *command-aliases*) expansion))
+
+(defun lookup-command-alias (name)
+  "Return the expansion string for alias NAME, or NIL when not found."
+  (gethash name *command-aliases*))
+
+(defun list-command-aliases ()
+  "Return an alist of (alias . expansion) pairs from *command-aliases*."
+  (let (result)
+    (maphash (lambda (k v) (push (cons k v) result)) *command-aliases*)
+    (sort result #'string< :key #'car)))
 
 ;;; ── Type coercions ────────────────────────────────────────────────────────
 

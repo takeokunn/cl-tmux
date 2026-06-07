@@ -102,3 +102,18 @@
          (matching   (remove-if-not (lambda (p) (funcall filter p pane)) candidates)))
     (when matching
       (%closest-to-center matching pane center-fn))))
+
+;;; ── Pane hit testing ────────────────────────────────────────────────────────
+;;;
+;;; pane-at-position lives here (not layout-geometry.lisp) because it accesses
+;;; WINDOW struct slots (window-panes), which are defined in window.lisp.
+;;; The layout-geometry.lisp file's own architecture comment reserves this file
+;;; for all neighbor/hit-testing functions that access window-panes.
+
+(defun pane-at-position (window col row)
+  "Return the pane in WINDOW that contains column COL and row ROW (0-based screen coordinates).
+   Returns NIL when no pane contains the position."
+  (find-if (lambda (p)
+             (and (<= (pane-x p) col) (< col (+ (pane-x p) (pane-width p)))
+                  (<= (pane-y p) row) (< row (+ (pane-y p) (pane-height p)))))
+           (window-panes window)))

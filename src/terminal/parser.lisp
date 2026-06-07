@@ -80,43 +80,50 @@
 
 ;;; ── Parameterized state constructors ───────────────────────────────────────
 
-(defun make-csi-k (&optional (params '()) (cur-param nil) (intermed nil))
+(defun make-csi-k (&optional (params '()) (param-accumulator nil) (intermed nil))
   "Return a continuation that collects CSI parameters then dispatches.
    Handles the standard VT/ECMA-48 CSI parameter syntax:
-     param bytes   +csi-digit-low+ to +csi-digit-high+  (digits 0-9)
-     semicolons    +csi-semicolon+                       (parameter separator)
-     markers       +csi-dec-marker+, +csi-sec-da+        (? and > markers)
-     intermediate  +csi-intermed-low+ to +csi-intermed-high+  (e.g. SPACE)
-     final byte    +csi-final-low+  to +csi-final-high+  (dispatch)"
+     param bytes        +csi-digit-low+ to +csi-digit-high+  (digits 0-9)
+     semicolons         +csi-semicolon+                       (parameter separator)
+     marker bytes       +csi-dec-marker+ (#\\?) and +csi-sec-da+ (#\\>)
+       These are VT convention 'private use' markers that set the intermed slot
+       rather than the parameter accumulator.  They are NOT the same as true
+       intermediate bytes (#x20-#x2F), even though both affect INTERMED.
+     intermediate bytes +csi-intermed-low+ to +csi-intermed-high+  (e.g. SPACE)
+       True intermediate bytes such as #x20 (SPACE) select a sub-table of the
+       final-byte dispatch (e.g. DECSCUSR uses CSI N SP q).
+     final byte         +csi-final-low+  to +csi-final-high+  (dispatch)"
   (lambda (screen byte)
     (declare (type screen screen) (type (unsigned-byte 8) byte))
     (cond
-      ;; Digit 0-9: accumulate into current parameter
+      ;; Digit 0-9: accumulate into the current parameter accumulator.
       ((and (>= byte +csi-digit-low+) (<= byte +csi-digit-high+))
        (make-csi-k params
-                   (+ (* (or cur-param 0) 10) (- byte +csi-digit-low+))
+                   (+ (* (or param-accumulator 0) 10) (- byte +csi-digit-low+))
                    intermed))
-      ;; Semicolon: end current param, start next
+      ;; Semicolon: flush the accumulator as the current parameter, start fresh.
       ((= byte +csi-semicolon+)
-       (make-csi-k (cons (or cur-param 0) params) nil intermed))
-      ;; ? : DEC private marker (param byte)
+       (make-csi-k (cons (or param-accumulator 0) params) nil intermed))
+      ;; ? — DEC private-mode marker byte (selects DEC private sequences).
+      ;; This is a VT convention 'marker byte', stored in intermed like a true
+      ;; intermediate byte but not in the #x20-#x2F range.
       ((= byte +csi-dec-marker+)
-       (make-csi-k params cur-param #\?))
-      ;; > : secondary DA marker (param byte)
+       (make-csi-k params param-accumulator #\?))
+      ;; > — secondary DA marker byte (selects secondary device attribute queries).
       ((= byte +csi-sec-da+)
-       (make-csi-k params cur-param #\>))
+       (make-csi-k params param-accumulator #\>))
       ;; Intermediate bytes (SPACE through 0x2F): record as intermed.
       ;; SPACE (#x20) is the most common (used by DECSCUSR "CSI N SP q").
       ((and (>= byte +csi-intermed-low+) (<= byte +csi-intermed-high+))
-       (make-csi-k params cur-param (code-char byte)))
-      ;; Final byte (0x40-0x7E): dispatch
+       (make-csi-k params param-accumulator (code-char byte)))
+      ;; Final byte (0x40-0x7E): flush accumulator, reverse collected params, dispatch.
       ((and (>= byte +csi-final-low+) (<= byte +csi-final-high+))
-       (let ((all-params (nreverse (if cur-param
-                                       (cons cur-param params)
+       (let ((all-params (nreverse (if param-accumulator
+                                       (cons param-accumulator params)
                                        params))))
          (execute-csi screen (code-char byte) intermed all-params))
        #'ground-state)
-      ;; Anything else: abort CSI
+      ;; Anything else: abort CSI (e.g. C0 controls inside a sequence).
       (t #'ground-state))))
 
 (defun make-utf8-k (utf8-acc continuation-bytes-remaining)
@@ -213,6 +220,11 @@
            (vector-push-extend byte buf)
            (make-osc-k buf))))
 
+;;; osc-st-state is an internal state used to await the backslash of ESC \
+;;; (String Terminator) with an empty OSC payload.  It is not exported because
+;;; it is an implementation detail of the OSC accumulator state machine.
+;;; Contrast with ground-state and escape-state which are exported since callers
+;;; may need to reset or inspect the parser's initial state.
 (define-state osc-st-state (screen byte)
   (#x5C  #'ground-state)                           ; \ → ST confirmed (empty payload)
   (t     #'osc-state))
@@ -220,25 +232,35 @@
 ;;; DCS (Device Control String) accumulator.
 ;;; ESC P introduces a DCS; collect bytes until ESC \ (ST).
 ;;; For now: consume silently (pass-through no-op).
+;;;
+;;; make-dcs-st-k is the bridge state waiting for the backslash of ESC \ after
+;;; an ESC byte seen inside a DCS payload.  This is symmetric with make-osc-st-k
+;;; which plays the same role for OSC payloads.
 
-(defun make-dcs-k ()
-  "Return a continuation that consumes DCS payload bytes until ST (ESC \\)."
+(defun make-dcs-st-k ()
+  "Return a continuation waiting for the backslash of ESC \\ (String Terminator)
+   inside a DCS sequence.  On backslash: return ground-state.  On any other byte:
+   resume consuming the DCS payload (re-dispatch via make-dcs-k)."
   (lambda (screen byte)
     (declare (type screen screen) (type (unsigned-byte 8) byte)
              (ignorable screen))
-    (cond
-      ((= byte #x1B)
-       ;; Possible ESC \ ST — wait for backslash
-       (lambda (screen-st byte-st)
-         (declare (type screen screen-st) (type (unsigned-byte 8) byte-st)
-                  (ignorable screen-st))
-         (if (= byte-st #x5C)      ; backslash = ST confirmed
-             #'ground-state
-             ;; Not ST — keep consuming
-             (funcall (make-dcs-k) screen-st byte-st))))
-      (t
-       ;; Continue consuming
-       (make-dcs-k)))))
+    (if (= byte #x5C)            ; backslash = ST confirmed
+        #'ground-state
+        ;; Not ST — keep consuming the DCS payload
+        (funcall (make-dcs-k) screen byte))))
+
+(defun make-dcs-k ()
+  "Return a continuation that consumes DCS payload bytes until ST (ESC \\).
+   On ESC (#x1B): transition to make-dcs-st-k to await the backslash.
+   On all other bytes: continue consuming via a fresh make-dcs-k continuation."
+  (lambda (screen byte)
+    (declare (type screen screen) (type (unsigned-byte 8) byte)
+             (ignorable screen))
+    (if (= byte #x1B)
+        ;; Possible ESC \ ST — wait for backslash
+        (make-dcs-st-k)
+        ;; Continue consuming DCS payload bytes
+        (make-dcs-k))))
 
 (defun make-charset-designator-k (g)
   "Return a CPS state that consumes one charset DESIGNATOR byte and designates

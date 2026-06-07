@@ -31,8 +31,8 @@
 ;;; -- double-width glyphs are not double-printed ------------------------------
 
 (test render-pane-double-width-not-duplicated
-  (let* ((screen (make-screen 5 2))
-         (pane   (make-pane :id 1 :x 0 :y 0 :width 5 :height 2 :fd -1 :screen screen)))
+  (let* ((pane   (make-test-pane 5 2))
+         (screen (pane-screen pane)))
     (cl-tmux/test::utf8-feed screen "あ")
     (let ((out (with-output-to-string (s)
                  (cl-tmux/renderer::render-pane s pane))))
@@ -160,8 +160,7 @@
 
 (test render-pane-clock-mode-overlay
   "When *clock-mode-pane-id* matches the pane id, render-pane draws the clock overlay."
-  (let* ((screen (make-screen 20 6))
-         (pane   (make-pane :id 42 :x 0 :y 0 :width 20 :height 6 :fd -1 :screen screen))
+  (let* ((pane   (make-test-pane 20 6 :id 42))
          (cl-tmux::*clock-mode-pane-id* 42))
     (let ((out (with-output-to-string (s)
                  (cl-tmux/renderer::render-pane s pane))))
@@ -170,8 +169,7 @@
 
 (test render-pane-no-clock-when-id-mismatch
   "When *clock-mode-pane-id* does not match the pane id, the clock overlay is suppressed."
-  (let* ((screen (make-screen 20 6))
-         (pane   (make-pane :id 1 :x 0 :y 0 :width 20 :height 6 :fd -1 :screen screen))
+  (let* ((pane   (make-test-pane 20 6 :id 1))
          (cl-tmux::*clock-mode-pane-id* 99))
     (let ((out (with-output-to-string (s)
                  (cl-tmux/renderer::render-pane s pane))))
@@ -205,10 +203,8 @@
 
 (test in-sel-branch-not-selecting
   "When copy-selecting is NIL the sel-active gate is false."
-  (let* ((screen (make-screen 8 4))
-         (pane   (make-pane :id 1 :x 0 :y 0 :width 8 :height 4
-                            :fd -1 :screen screen)))
-    (feed screen "ABCDEFGH")
+  (let* ((pane   (make-test-pane 8 4 :content "ABCDEFGH"))
+         (screen (pane-screen pane)))
     (setf (screen-copy-mode-p    screen) t
           (screen-copy-selecting screen) nil
           (screen-copy-mark      screen) nil
@@ -256,10 +252,8 @@
 
 (test in-sel-branch-selecting-but-no-mark
   "When copy-selecting is T but mark is NIL, sel-active is false."
-  (let* ((screen (make-screen 8 4))
-         (pane   (make-pane :id 1 :x 0 :y 0 :width 8 :height 4
-                            :fd -1 :screen screen)))
-    (feed screen "ABCDEFGH")
+  (let* ((pane   (make-test-pane 8 4 :content "ABCDEFGH"))
+         (screen (pane-screen pane)))
     (setf (screen-copy-mode-p    screen) t
           (screen-copy-selecting screen) t
           (screen-copy-mark      screen) nil
@@ -409,11 +403,7 @@
 
 (test compute-selection-bounds-active-selection
   "%compute-selection-bounds returns sel-active=T when all prerequisites are present."
-  (let ((screen (make-screen 10 5)))
-    (setf (cl-tmux/terminal/types:screen-copy-selecting screen) t
-          (cl-tmux/terminal/types:screen-copy-mark     screen) (cons 1 2)
-          (cl-tmux/terminal/types:screen-copy-cursor   screen) (cons 3 4)
-          (cl-tmux/terminal/types:screen-copy-offset   screen) 0)
+  (let ((screen (make-selecting-screen 10 5 1 2 3 4)))
     (multiple-value-bind (active sr er sc ec)
         (cl-tmux/renderer::%compute-selection-bounds screen)
       (is-true active "sel-active must be T when all prerequisites present")
@@ -426,8 +416,8 @@
   "%compute-selection-bounds returns sel-active=NIL when copy-selecting is NIL."
   (let ((screen (make-screen 10 5)))
     (setf (cl-tmux/terminal/types:screen-copy-selecting screen) nil
-          (cl-tmux/terminal/types:screen-copy-mark     screen) (cons 0 0)
-          (cl-tmux/terminal/types:screen-copy-cursor   screen) (cons 1 1))
+          (cl-tmux/terminal/types:screen-copy-mark      screen) (cons 0 0)
+          (cl-tmux/terminal/types:screen-copy-cursor    screen) (cons 1 1))
     (multiple-value-bind (active sr er sc ec)
         (cl-tmux/renderer::%compute-selection-bounds screen)
       (declare (ignore sr er sc ec))
@@ -437,8 +427,8 @@
   "%compute-selection-bounds returns sel-active=NIL when mark is NIL."
   (let ((screen (make-screen 10 5)))
     (setf (cl-tmux/terminal/types:screen-copy-selecting screen) t
-          (cl-tmux/terminal/types:screen-copy-mark     screen) nil
-          (cl-tmux/terminal/types:screen-copy-cursor   screen) (cons 1 1))
+          (cl-tmux/terminal/types:screen-copy-mark      screen) nil
+          (cl-tmux/terminal/types:screen-copy-cursor    screen) (cons 1 1))
     (multiple-value-bind (active sr er sc ec)
         (cl-tmux/renderer::%compute-selection-bounds screen)
       (declare (ignore sr er sc ec))
@@ -446,12 +436,8 @@
 
 (test compute-selection-bounds-reversed-rows-normalised
   "%compute-selection-bounds normalises row order so start <= end."
-  (let ((screen (make-screen 10 5)))
-    ;; cursor above mark — rows should be swapped in the output
-    (setf (cl-tmux/terminal/types:screen-copy-selecting screen) t
-          (cl-tmux/terminal/types:screen-copy-mark     screen) (cons 3 5)
-          (cl-tmux/terminal/types:screen-copy-cursor   screen) (cons 1 2)
-          (cl-tmux/terminal/types:screen-copy-offset   screen) 0)
+  ;; cursor above mark — rows should be swapped in the output
+  (let ((screen (make-selecting-screen 10 5 3 5 1 2)))
     (multiple-value-bind (active sr er sc ec)
         (cl-tmux/renderer::%compute-selection-bounds screen)
       (is-true active "sel-active must be T")
@@ -464,11 +450,7 @@
 
 (test compute-selection-bounds-same-row-cols-normalised
   "%compute-selection-bounds normalises col order for same-row selections."
-  (let ((screen (make-screen 10 5)))
-    (setf (cl-tmux/terminal/types:screen-copy-selecting screen) t
-          (cl-tmux/terminal/types:screen-copy-mark     screen) (cons 2 7)
-          (cl-tmux/terminal/types:screen-copy-cursor   screen) (cons 2 3)
-          (cl-tmux/terminal/types:screen-copy-offset   screen) 0)
+  (let ((screen (make-selecting-screen 10 5 2 7 2 3)))
     (multiple-value-bind (active sr er sc ec)
         (cl-tmux/renderer::%compute-selection-bounds screen)
       (is-true active "sel-active must be T")
@@ -479,14 +461,108 @@
 
 (test compute-selection-bounds-copy-offset-applied
   "%compute-selection-bounds adds copy-offset to both row values."
-  (let ((screen (make-screen 10 5)))
-    (setf (cl-tmux/terminal/types:screen-copy-selecting screen) t
-          (cl-tmux/terminal/types:screen-copy-mark     screen) (cons 0 0)
-          (cl-tmux/terminal/types:screen-copy-cursor   screen) (cons 1 0)
-          (cl-tmux/terminal/types:screen-copy-offset   screen) 5)
+  (let ((screen (make-selecting-screen 10 5 0 0 1 0 :offset 5)))
     (multiple-value-bind (active sr er sc ec)
         (cl-tmux/renderer::%compute-selection-bounds screen)
       (declare (ignore sc ec))
       (is-true active "sel-active must be T")
       (is (= 5 sr) "start row must be min(0,1) + offset(5) = 5")
       (is (= 6 er) "end row must be max(0,1) + offset(5) = 6"))))
+
+;;; -- make-test-pane and make-selecting-screen fixture helpers -------------------
+
+(test make-test-pane-creates-correct-geometry
+  "make-test-pane returns a pane with the requested width, height, id, and origin."
+  (let ((pane (make-test-pane 20 5 :id 7 :x 3 :y 2)))
+    (is (= 20 (pane-width  pane)) "pane width must be 20")
+    (is (= 5  (pane-height pane)) "pane height must be 5")
+    (is (= 7  (pane-id     pane)) "pane id must be 7")
+    (is (= 3  (pane-x      pane)) "pane x must be 3")
+    (is (= 2  (pane-y      pane)) "pane y must be 2")
+    (is (screen-p (pane-screen pane)) "pane screen must be a screen struct")))
+
+(test make-test-pane-feeds-content
+  "make-test-pane feeds :content into the pane screen."
+  (let* ((pane   (make-test-pane 10 5 :content "AB"))
+         (screen (pane-screen pane)))
+    (is (char= #\A (cell-char (screen-cell screen 0 0)))
+        "first char must be A")
+    (is (char= #\B (cell-char (screen-cell screen 1 0)))
+        "second char must be B")))
+
+(test make-selecting-screen-sets-selection-state
+  "make-selecting-screen returns a screen with copy-selecting T and the given mark/cursor."
+  (let ((screen (make-selecting-screen 10 5 1 2 3 4)))
+    (is-true (cl-tmux/terminal/types:screen-copy-selecting screen)
+             "copy-selecting must be T")
+    (is (equal (cons 1 2) (cl-tmux/terminal/types:screen-copy-mark screen))
+        "mark must be (1 . 2)")
+    (is (equal (cons 3 4) (cl-tmux/terminal/types:screen-copy-cursor screen))
+        "cursor must be (3 . 4)")
+    (is (= 0 (cl-tmux/terminal/types:screen-copy-offset screen))
+        "default offset must be 0")))
+
+(test make-selecting-screen-custom-offset
+  "make-selecting-screen respects the :offset keyword."
+  (let ((screen (make-selecting-screen 10 5 0 0 1 0 :offset 7)))
+    (is (= 7 (cl-tmux/terminal/types:screen-copy-offset screen))
+        "copy-offset must be 7")))
+
+;;; -- %render-pane-border-status coverage ------------------------------------
+;;;
+;;; %render-pane-border-status (~line 250-271 in renderer-pane.lisp) is only
+;;; reachable when pane-border-status is not "off".  These tests exercise the
+;;; top/bottom row placement branches and the format expansion path.
+
+(defun %border-status-output (pane session win status-val fmt-val)
+  "Run %render-pane-border-status with STATUS-VAL and FMT-VAL options and return output."
+  (with-isolated-options ("pane-border-status" status-val
+                          "pane-border-format"  fmt-val)
+    (with-output-to-string (s)
+      (cl-tmux/renderer::%render-pane-border-status s pane session win))))
+
+(test render-pane-border-status-off-produces-nothing
+  "%render-pane-border-status does nothing when pane-border-status is \"off\"."
+  (let* ((pane (make-test-pane 20 5 :id 1))
+         (sess (make-fake-session :nwindows 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (out  (%border-status-output pane sess win "off" " #{pane_index} ")))
+    (is (string= "" out)
+        "pane-border-status=off must produce no output (got ~S)" out)))
+
+(test render-pane-border-status-top-positions-on-first-row
+  "%render-pane-border-status with status=top places the label on pane-y."
+  (let* ((pane (make-test-pane 20 5 :id 1 :y 3))
+         (sess (make-fake-session :nwindows 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (out  (%border-status-output pane sess win "top" "TITLE")))
+    ;; The move-to sequence for row=3 is ESC[4;1H (1-based: 3+1=4)
+    (is (search (format nil "~C[4;" #\Escape) out)
+        "top status must position at row pane-y=3 → ESC[4;...H (got ~S)" out)
+    (is (search "TITLE" out)
+        "top status must emit the format text (got ~S)" out)))
+
+(test render-pane-border-status-bottom-positions-on-last-row
+  "%render-pane-border-status with status=bottom places the label on pane-y + pane-height - 1."
+  (let* ((pane (make-test-pane 20 5 :id 1 :y 0))
+         (sess (make-fake-session :nwindows 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (out  (%border-status-output pane sess win "bottom" "BOT")))
+    ;; Bottom row: pane-y + pane-height - 1 = 0 + 5 - 1 = 4 → ESC[5;1H
+    (is (search (format nil "~C[5;" #\Escape) out)
+        "bottom status must position at row 4 → ESC[5;...H (got ~S)" out)
+    (is (search "BOT" out)
+        "bottom status must emit the format text (got ~S)" out)))
+
+(test render-pane-border-status-truncates-to-pane-width
+  "%render-pane-border-status truncates the label to pane-width characters."
+  (let* ((pane (make-test-pane 5 3 :id 1))
+         (sess (make-fake-session :nwindows 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (out  (%border-status-output pane sess win "top" "ABCDEFGHIJ")))
+    ;; Only the first 5 visible chars should appear (pane-width=5).
+    ;; The status text "ABCDEFGHIJ" should be truncated to "ABCDE".
+    (is (search "ABCDE" out)
+        "border status must emit first 5 chars for a 5-wide pane (got ~S)" out)
+    (is (null (search "ABCDEF" out))
+        "border status must not emit more than pane-width chars (got ~S)" out)))

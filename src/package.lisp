@@ -33,7 +33,14 @@
    #:load-config-from-stream
    #:load-config-from-string
    #:apply-config-directive
-   #:config-file-path))
+   #:config-file-path
+   ;; %if condition evaluator hook (set by top-level package)
+   #:*config-condition-evaluator*
+   ;; Dynamic prefix key
+   #:*prefix-key-code*
+   #:%parse-prefix-key
+   ;; ORCHESTRATE-layer shell initializer
+   #:init-default-shell))
 
 (defpackage #:cl-tmux/pty
   (:use #:cl #:cffi)
@@ -239,7 +246,7 @@
    #:scroll-down-one
    #:trim-scroll-history
    #:clear-scrollback
-   #:*history-limit-fn*
+   #:*history-limit-function*
    ;; Focus event reporting (?1004)
    #:focus-event-report
    ;; Erase
@@ -418,10 +425,12 @@
    #:popup-x #:popup-y #:popup-width #:popup-height
    #:popup-screen #:popup-pane #:popup-title #:popup-close-on-exit
    #:*active-popup*
+   #:show-popup #:close-popup #:popup-active-p
    ;; Menu overlay
    #:menu #:make-menu #:menu-p
    #:menu-title #:menu-items #:menu-selected-index
-   #:*active-menu*))
+   #:*active-menu*
+   #:show-menu #:close-menu #:menu-active-p))
 
 ;;; ── Model / renderer / input ─────────────────────────────────────────────
 
@@ -559,7 +568,6 @@
    #:set-command-hook
    #:command-hooks
    #:clear-command-hooks
-   #:list-command-hooks
    #:describe-command-hooks
    #:*command-hook-runner*
    #:run-command-hooks-via-runner))
@@ -582,7 +590,12 @@
            #:get-option-for-window #:set-option-for-window
            #:get-option-for-pane   #:set-option-for-pane
            ;; show-options helpers
-           #:show-options #:show-option))
+           #:show-options #:show-option
+           ;; Command-alias registry
+           #:*command-aliases*
+           #:register-command-alias
+           #:lookup-command-alias
+           #:list-command-aliases))
 
 (defpackage #:cl-tmux/renderer
   (:use #:cl #:bordeaux-threads
@@ -724,12 +737,15 @@
    ;; Message log (for :show-messages)
    #:*message-log*
    #:add-message-log
+   ;; Prompt history (for :show-prompt-history / :clear-prompt-history)
+   #:*prompt-history*
+   #:add-prompt-history
    ;; Clock mode (for :clock-mode)
    #:*clock-mode-pane-id*
    ;; Reader thread lifecycle
    #:stop-reader-threads
    ;; Status interval timer
-   #:*status-timer*
    #:start-status-timer
    ;; Named constants
-   #:+max-message-log-entries+))
+   #:+max-message-log-entries+
+   #:+max-prompt-history+))

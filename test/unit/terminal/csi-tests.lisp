@@ -755,3 +755,88 @@
     (is (= 0 (screen-cursor-y s)) "resetting DECOM homes the cursor to row 0")
     (feed s (esc "[2;3H"))   ; CUP row 2 col 3 → absolute: row 1, col 2
     (is (= 1 (screen-cursor-y s)) "CUP row 2 maps to absolute row 1 without DECOM")))
+
+;;; ── Coverage gap: %cup-row direct tests ──────────────────────────────────────
+;;;
+;;; Audit finding: %cup-row's non-DECOM branch and the DECOM clamping case were
+;;; not separately asserted.  The DECOM tests above exercise the origin-mode path
+;;; indirectly; these tests assert %cup-row directly.
+
+(def-suite cup-row-direct
+  :description "Direct coverage of %cup-row 1-based to 0-based row conversion"
+  :in terminal-suite)
+(in-suite cup-row-direct)
+
+(test cup-row-non-decom-converts-1-based-to-0-based
+  "%cup-row without DECOM converts a 1-based row to a 0-based row."
+  (with-screen (s 20 10)
+    ;; origin-mode NIL by default
+    (is (= 0 (cl-tmux/terminal/csi::%cup-row s 1))
+        "1-based row 1 → 0-based row 0")
+    (is (= 4 (cl-tmux/terminal/csi::%cup-row s 5))
+        "1-based row 5 → 0-based row 4")))
+
+(test cup-row-decom-adds-scroll-top-offset
+  "%cup-row with DECOM set adds the scroll-region top to the 1-based row."
+  (with-screen (s 20 10)
+    ;; Install a scroll region of rows 3-7 (0-based top=2)
+    (feed s (esc "[3;8r"))     ; DECSTBM → top=2, bottom=7 (0-based)
+    (feed s (esc "[?6h"))      ; DECOM on
+    ;; Now %cup-row(1) should be scroll-top + 0 = 2
+    (is (= 2 (cl-tmux/terminal/csi::%cup-row s 1))
+        "DECOM: row 1 maps to scroll-top (row 2)")
+    ;; %cup-row(2) should be scroll-top + 1 = 3
+    (is (= 3 (cl-tmux/terminal/csi::%cup-row s 2))
+        "DECOM: row 2 maps to scroll-top+1 (row 3)")))
+
+(test cup-row-decom-clamps-to-scroll-bottom
+  "%cup-row with DECOM clamps to scroll-region bottom when row exceeds it."
+  (with-screen (s 20 10)
+    (feed s (esc "[3;6r"))     ; DECSTBM → top=2, bottom=5 (0-based)
+    (feed s (esc "[?6h"))      ; DECOM on
+    ;; Row 99 (large) relative to top=2: 2 + 98 = 100, clamped to bottom=5
+    (is (= 5 (cl-tmux/terminal/csi::%cup-row s 99))
+        "DECOM: oversized row must be clamped to scroll-bottom (5)")))
+
+;;; ── Coverage gap: enqueue-* helpers ─────────────────────────────────────────
+;;;
+;;; Audit finding: the extracted enqueue-dsr-reply, enqueue-cpr-reply,
+;;; enqueue-da1-reply, and enqueue-da2-reply helpers are not tested directly.
+
+(def-suite enqueue-helpers
+  :description "Direct coverage of CSI response-queue enqueue helpers"
+  :in terminal-suite)
+(in-suite enqueue-helpers)
+
+(test enqueue-dsr-reply-pushes-0n
+  "enqueue-dsr-reply pushes ESC[0n onto the response queue."
+  (with-screen (s 20 5)
+    (cl-tmux/terminal/csi::enqueue-dsr-reply s)
+    (is (some (lambda (r) (search "[0n" r))
+              (cl-tmux/terminal/types:screen-response-queue s))
+        "enqueue-dsr-reply must push a string containing '[0n'")))
+
+(test enqueue-cpr-reply-reflects-cursor
+  "enqueue-cpr-reply pushes ESC[row;colR reflecting the current cursor (1-based)."
+  (with-screen (s 20 10)
+    (feed s (esc "[3;5H"))     ; cursor → row 2, col 4 (0-based)
+    (cl-tmux/terminal/csi::enqueue-cpr-reply s)
+    (is (some (lambda (r) (search "[3;5R" r))
+              (cl-tmux/terminal/types:screen-response-queue s))
+        "enqueue-cpr-reply must contain '[3;5R' for cursor at (row=2,col=4)")))
+
+(test enqueue-da1-reply-contains-signature
+  "enqueue-da1-reply pushes a string containing the DA1 signature '?1;2c'."
+  (with-screen (s 20 5)
+    (cl-tmux/terminal/csi::enqueue-da1-reply s)
+    (is (some (lambda (r) (search "?1;2c" r))
+              (cl-tmux/terminal/types:screen-response-queue s))
+        "enqueue-da1-reply must push a string containing '?1;2c'")))
+
+(test enqueue-da2-reply-contains-signature
+  "enqueue-da2-reply pushes a string containing the DA2 signature '>1;'."
+  (with-screen (s 20 5)
+    (cl-tmux/terminal/csi::enqueue-da2-reply s)
+    (is (some (lambda (r) (search ">1;" r))
+              (cl-tmux/terminal/types:screen-response-queue s))
+        "enqueue-da2-reply must push a string containing '>1;'")))

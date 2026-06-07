@@ -140,17 +140,31 @@
 ;; (cl-tmux/commands kill-pane / kill-window) can fire command hooks too.
 (setf cl-tmux/hooks:*command-hook-runner* #'run-command-hooks)
 
-(defun %cmd-new-window (session)
+(defun %cmd-new-window (session &key name start-dir detach at-index after-current)
   "Create a new window in SESSION and start a reader thread for it.
-   The window name defaults to the shell basename (e.g. \"bash\"), matching
-   real tmux; the id is assigned by session-new-window as the lowest free slot."
+   NAME: window name (defaults to shell basename).
+   START-DIR: start directory for the new pane's shell.
+   DETACH: when T, do not make the new window active.
+   AT-INDEX: when an integer, try to assign that specific window id.
+   AFTER-CURRENT: when T, insert after the current window's id.
+   Returns the new window."
   (let* ((rows (- *term-rows* *status-height*))
          (cols *term-cols*)
-         (name (cl-tmux/model::%shell-basename))
-         (win  (session-new-window session name rows cols)))
+         (win-name (or name (cl-tmux/model::%shell-basename)))
+         (prev-win (session-active-window session))
+         ;; Determine base-index for id assignment.
+         (base (cond
+                 ((and at-index (integerp at-index)) at-index)
+                 ((and after-current prev-win)
+                  (1+ (window-id prev-win)))
+                 (t (or (cl-tmux/options:get-option "base-index") 0))))
+         (win  (session-new-window session win-name rows cols base start-dir)))
     (start-reader-thread (window-active-pane win))
     (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+ win)
-    (run-command-hooks cl-tmux/hooks:+hook-after-new-window+ session)))
+    (run-command-hooks cl-tmux/hooks:+hook-after-new-window+ session)
+    (when (and detach prev-win)
+      (session-select-window session prev-win))
+    win))
 
 (defun %cmd-cycle-window (session cycler)
   "Switch the active window using CYCLER (next-cyclic or prev-cyclic)."
@@ -168,12 +182,14 @@
          (next  (funcall cycler panes (window-active-pane win))))
     (when next (%select-pane-with-focus win next))))
 
-(defun %cmd-split (session orient &key no-focus size)
+(defun %cmd-split (session orient &key no-focus size start-dir)
   "Split the active pane of SESSION's active window in tree ORIENT (:h left/right,
    :v top/bottom).  Returns NIL when the pane is too small and no shell is forked.
-   NO-FOCUS T skips focus change.  SIZE hints the new pane's extent."
+   NO-FOCUS T skips focus change.  SIZE hints the new pane's extent.
+   START-DIR: when non-NIL, the new pane's shell starts in that directory."
   (let* ((win (session-active-window session))
-         (new (window-split win orient :no-focus no-focus :size size)))
+         (new (window-split win orient :no-focus no-focus :size size
+                                       :start-dir start-dir)))
     (when new
       (start-reader-thread new)
       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-split-window+ new)
@@ -355,10 +371,11 @@
 
 ;;; -- new-session -------------------------------------------------------------
 
-(defun new-session (name rows cols)
+(defun new-session (name rows cols &key start-dir)
   "Create a new session named NAME with a full-screen window of ROWS x COLS.
+   START-DIR: when non-NIL, the initial shell starts in that directory.
    Registers the session in *server-sessions* and starts reader threads."
-  (let ((session (create-initial-session rows cols)))
+  (let ((session (create-initial-session rows cols :start-dir start-dir)))
     (setf (session-name session) name)
     (session-touch session)
     (server-add-session session)
@@ -527,16 +544,31 @@
   ("wait-for"          :wait-for)
   ("pipe-pane"         :pipe-pane)
   ("display-popup"     :display-popup)
-  ("choose-client"     :choose-client)
-  ("zoom-toggle"       :zoom-toggle)
-  ;; No-arg forms open a prompt; the arg form (rename-window <name>) is handled
-  ;; by %run-command-line before reaching this table.
-  ("rename-window"   :rename-window)
-  ("rename-session"  :rename-session)
-  ;; No-arg kill acts on the active window/pane; the -t arg form is intercepted
-  ;; by %run-command-line first.
-  ("kill-window"     :kill-window)
-  ("kill-pane"       :kill-pane))
+  ;; Server management
+  ("server-info"       :server-info)
+  ("list-clients"      :list-clients)
+  ("lsc"               :list-clients)
+  ("suspend-client"    :suspend-client)
+  ("suspendc"          :suspend-client)
+  ("lock-server"       :lock-server)
+  ;; Window management (additional)
+  ("resize-window"     :resize-window)
+  ("resizew"           :resize-window)
+  ("respawn-window"    :respawn-window)
+  ("attach-session"    :attach-session)
+  ("attach"            :attach-session)
+  ("move-pane"         :move-pane)
+  ;; Environment
+  ("show-environment"  :show-environment)
+  ("showenv"           :show-environment)
+  ("set-environment"   :set-environment)
+  ("setenv"            :set-environment)
+  ;; Prompt history
+  ("show-prompt-history"  :show-prompt-history)
+  ("clear-prompt-history" :clear-prompt-history)
+  ;; Detach all clients (no-arg form; the interactive :detach handler covers
+  ;; the common single-client case; this name dispatches :detach-all-clients).
+  ("detach-all-clients"   :detach-all-clients))
 
 ;;; -- Arg-aware command-line runner -------------------------------------------
 ;;;
@@ -557,10 +589,7 @@
     (add-message-log text)
     (show-overlay text)))
 
-(defparameter *set-option-command-names*
-  '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")
-  "Command names that all forward to the global option store, mirroring the
-   set-option family of config directives.")
+;;; *set-option-command-names* removed — inlined into *arg-command-table* below.
 
 (defun %cmd-set-option (session args)
   "set / set-option [-g|-s|-w|-o] [-a] [-u] <name> <value...>: set a global option.
@@ -595,8 +624,14 @@
     (when win (rename-window win (format nil "~{~A~^ ~}" args)))))
 
 (defun %cmd-rename-session (session args)
-  "rename-session <name...>: rename SESSION to the joined ARGS."
-  (rename-session session (format nil "~{~A~^ ~}" args)))
+  "rename-session <name...>: rename SESSION to the joined ARGS.
+   Updates *server-sessions* so the registry stays consistent with the
+   new name (same invariant enforced by the interactive :rename-session handler)."
+  (let ((new-name (format nil "~{~A~^ ~}" args)))
+    (unless (string= new-name "")
+      (server-remove-session (session-name session))
+      (rename-session session new-name)
+      (server-add-session session))))
 
 ;;; -- Flag parser (-t target, boolean flags) ----------------------------------
 ;;;
@@ -605,28 +640,42 @@
 ;;; in VALUE-FLAGS consume the next token (or an attached -Xvalue) as their value;
 ;;; the rest are boolean (T).  Used by select-window/-pane and any future -t cmd.
 
+(defun %parse-flag-token (token value-flags remaining-tokens)
+  "Parse one flag TOKEN whose first char is #\\-.
+   Returns (values flag-entry new-remaining) where FLAG-ENTRY is (char . value)
+   and NEW-REMAINING is the residual token list after consuming a value argument
+   when the flag char is in VALUE-FLAGS.
+   TOKEN must have length >= 2 and token[0] = #\\-."
+  (let ((flag-char (char token 1)))
+    (if (find flag-char value-flags)
+        (let ((attached (when (> (length token) 2) (subseq token 2))))
+          (if attached
+              (values (cons flag-char attached) remaining-tokens)
+              (values (cons flag-char (if remaining-tokens
+                                          (first remaining-tokens)
+                                          ""))
+                      (if remaining-tokens (rest remaining-tokens) nil))))
+        (values (cons flag-char t) remaining-tokens))))
+
 (defun %parse-command-flags (tokens &optional (value-flags ""))
   "Split TOKENS into (values FLAGS POSITIONALS).  A -X token is a flag; when X is
    in VALUE-FLAGS it consumes the next token (or the attached -Xvalue) as its
    value, otherwise it is boolean (T).  FLAGS is an alist of (flag-char . value)
    (look up with ASSOC, which uses EQL on the character); POSITIONALS is the
    remaining non-flag tokens in order."
-  (let ((flags nil) (positionals nil) (rest tokens))
-    (loop while rest do
-      (let ((tok (pop rest)))
-        (cond
-          ((and (>= (length tok) 2)
-                (char= (char tok 0) #\-)
-                (char/= (char tok 1) #\-))
-           (let ((fc (char tok 1)))
-             (if (find fc value-flags)
-                 (push (cons fc (if (> (length tok) 2)
-                                    (subseq tok 2)
-                                    (if rest (pop rest) "")))
-                       flags)
-                 (push (cons fc t) flags))))
-          (t (push tok positionals)))))
-    (values (nreverse flags) (nreverse positionals))))
+  (loop with flags = nil and positionals = nil and rest = tokens
+        while rest
+        for token = (first rest)
+        do (setf rest (rest rest))
+           (if (and (>= (length token) 2)
+                    (char= (char token 0) #\-)
+                    (char/= (char token 1) #\-))
+               (multiple-value-bind (entry new-rest)
+                   (%parse-flag-token token value-flags rest)
+                 (push entry flags)
+                 (setf rest new-rest))
+               (push token positionals))
+        finally (return (values (nreverse flags) (nreverse positionals)))))
 
 (defun %resolve-window-target (session target-str)
   "Resolve TARGET-STR to a window in SESSION: by window-id when TARGET-STR is
@@ -733,23 +782,38 @@
                 (when then (%run-command-line session then))
                 (when else (%run-command-line session else)))))))))
 
+;;; -- Layout name → keyword dispatch macro ------------------------------------
+;;;
+;;; Each row is (aliases... keyword), Prolog-style: one fact per layout name.
+;;; The macro generates a flat cond of (member name aliases :test #'string-equal)
+;;; checks so adding a new layout requires appending one line here.
+
+(defmacro define-layout-name-table (&rest rows)
+  "Build %RESOLVE-LAYOUT-NAME from a declarative aliases→keyword table.
+   Each ROW is (keyword alias-string...).  Generates a function that maps a
+   layout name string to the corresponding keyword, or NIL for unknown names."
+  `(defun %resolve-layout-name (name)
+     "Map NAME (a string) to a layout keyword, or NIL when unrecognised."
+     (cond
+       ,@(mapcar (lambda (row)
+                   (destructuring-bind (kw &rest aliases) row
+                     `((member name ',aliases :test #'string-equal) ,kw)))
+                 rows)
+       (t nil))))
+
+(define-layout-name-table
+  (:even-horizontal "even-horizontal" "even-h")
+  (:even-vertical   "even-vertical"   "even-v")
+  (:main-horizontal "main-horizontal" "main-h")
+  (:main-vertical   "main-vertical"   "main-v")
+  (:tiled           "tiled"))
+
 (defun %cmd-select-layout (session args)
   "select-layout <name>: apply the named layout to the active window.
    Accepted names: even-horizontal (even-h), even-vertical (even-v),
    main-horizontal (main-h), main-vertical (main-v), tiled."
   (let* ((name (first args))
-         (kw   (and name
-                    (cond
-                      ((member name '("even-horizontal" "even-h")
-                               :test #'string-equal) :even-horizontal)
-                      ((member name '("even-vertical" "even-v")
-                               :test #'string-equal) :even-vertical)
-                      ((member name '("main-horizontal" "main-h")
-                               :test #'string-equal) :main-horizontal)
-                      ((member name '("main-vertical" "main-v")
-                               :test #'string-equal) :main-vertical)
-                      ((string-equal name "tiled") :tiled)
-                      (t nil)))))
+         (kw   (and name (%resolve-layout-name name))))
     (when kw
       (%apply-named-layout-to-session session kw))))
 
@@ -770,41 +834,87 @@
            "(no panes)")))))
 
 (defun %cmd-new-window-arg (session args)
-  "new-window [-n name]: create a new window, optionally with a given name."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "n")
+  "new-window [-d] [-n name] [-t target-window] [-a] [-c start-dir]: create a new window.
+   -d: create the window but do not make it active (detached).
+   -n name: name the new window.
+   -t idx: insert at specific index (assigned as the window id).
+   -a: insert after the current window.
+   -c dir: start directory for the new pane's shell (format strings expanded)."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "ntc")
     (declare (ignore positionals))
-    (let ((name (cdr (assoc #\n flags))))
-      (%cmd-new-window session)
-      (when name
-        (let ((win (session-active-window session)))
-          (when win (rename-window win name)))))))
+    (let* ((name       (cdr (assoc #\n flags)))
+           (detach-p   (assoc #\d flags))
+           (after-p    (assoc #\a flags))
+           (target-str (cdr (assoc #\t flags)))
+           (raw-dir    (cdr (assoc #\c flags)))
+           ;; Expand #{...} format variables in the -c argument.
+           (start-dir  (when raw-dir
+                         (let* ((win  (session-active-window session))
+                                (pane (and win (window-active-pane win)))
+                                (ctx  (cl-tmux/format:format-context-from-session
+                                       session win pane)))
+                           (cl-tmux/format:expand-format raw-dir ctx))))
+           (at-idx     (and target-str (parse-integer target-str :junk-allowed t))))
+      (%cmd-new-window session
+                       :name name
+                       :start-dir start-dir
+                       :detach (and detach-p t)
+                       :at-index at-idx
+                       :after-current (and after-p t)))))
 
 (defun %cmd-split-window (session args)
-  "split-window [-h|-v] [-p percent]: split the active pane.
-   -h: horizontal split (new pane to the right; :split-vertical in dispatch terms).
-   -v: vertical split (new pane below; :split-horizontal, the default).
-   -p N: size as a percentage of the parent pane (0-100)."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "p")
+  "split-window [-h|-v] [-d] [-p percent] [-l size] [-c start-dir]: split the active pane.
+   -h: horizontal split (new pane to the right; side-by-side).
+   -v: vertical split (new pane below — default).
+   -d: split but do not change focus (detached mode).
+   -p N: size as a percentage of the parent pane (0-100).
+   -l N: size in lines/columns (absolute integer).
+   -c dir: start directory for the new pane's shell (format strings expanded)."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "plc")
     (declare (ignore positionals))
-    (let* ((horizontal-p (assoc #\h flags))  ; -h = side by side
+    (let* ((horizontal-p (assoc #\h flags))
+           (detach-p     (assoc #\d flags))
            (pct-str      (cdr (assoc #\p flags)))
+           (lines-str    (cdr (assoc #\l flags)))
+           (raw-dir      (cdr (assoc #\c flags)))
+           ;; Expand #{...} format variables in the -c argument so that
+           ;; 'split-window -c "#{pane_current_path}"' opens in the right dir.
+           (start-dir    (when raw-dir
+                           (let* ((win  (session-active-window session))
+                                  (pane (and win (window-active-pane win)))
+                                  (ctx  (cl-tmux/format:format-context-from-session
+                                         session win pane)))
+                             (cl-tmux/format:expand-format raw-dir ctx))))
            (pct          (and pct-str (parse-integer pct-str :junk-allowed t)))
-           (size         (and pct (/ pct 100.0))))
+           (lines        (and lines-str (parse-integer lines-str :junk-allowed t)))
+           (size         (or (and pct (/ pct 100.0)) lines)))
       (if horizontal-p
-          (%cmd-split session :h :size size)   ; :h = side-by-side (:split-vertical key)
-          (%cmd-split session :v :size size))))) ; :v = stacked (:split-horizontal key)
+          (%cmd-split session :h :size size :no-focus (and detach-p t)
+                              :start-dir start-dir)
+          (%cmd-split session :v :size size :no-focus (and detach-p t)
+                              :start-dir start-dir)))))
 
 (defun %cmd-new-session-arg (session args)
-  "new-session [-s name]: create a new session, optionally with a given name.
-   SESSION is the current session (unused; the new session is added to *server-sessions*)."
+  "new-session [-s name] [-n window-name] [-c start-dir] [-d]: create a new session.
+   -s name: session name.
+   -n name: initial window name.
+   -c dir: start directory for the initial window's shell.
+   -d: do not switch to the new session (stay in current session)."
   (declare (ignore session))
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "s")
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "snc")
     (declare (ignore positionals))
-    (let* ((name (or (cdr (assoc #\s flags))
-                     (format nil "~D" (1+ (length *server-sessions*)))))
-           (rows (- *term-rows* *status-height*))
-           (cols *term-cols*))
-      (new-session name rows cols))))
+    (let* ((name      (or (cdr (assoc #\s flags))
+                          (format nil "~D" (1+ (length *server-sessions*)))))
+           (win-name  (cdr (assoc #\n flags)))
+           (start-dir (cdr (assoc #\c flags)))
+           (rows      (- *term-rows* *status-height*))
+           (cols      *term-cols*)
+           (new-sess  (new-session name rows cols :start-dir start-dir)))
+      ;; Apply window name if given (new-session creates window named by shell basename)
+      (when (and win-name new-sess)
+        (let ((win (session-active-window new-sess)))
+          (when win (rename-window win win-name))))
+      new-sess)))
 
 (defun %cmd-kill-session-arg (session args)
   "kill-session [-t name]: kill the named session, or the current session when no -t."
@@ -823,10 +933,59 @@
           (when (and (eq target-sess session) (null *server-sessions*))
             (setf *running* nil)))))))
 
+(defun %cmd-resize-window-arg (session args)
+  "resize-window [-x cols] [-y rows] [-t target-window]: resize a window.
+   Sets the window to exactly COLS × ROWS; without flags prompts interactively."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "xyt")
+    (declare (ignore positionals))
+    (let* ((cols-str (cdr (assoc #\x flags)))
+           (rows-str (cdr (assoc #\y flags)))
+           (cols     (and cols-str (parse-integer cols-str :junk-allowed t)))
+           (rows     (and rows-str (parse-integer rows-str :junk-allowed t)))
+           (win      (session-active-window session)))
+      (when (and win cols rows (> cols 0) (> rows 0))
+        (window-relayout win rows cols)))))
+
+(defun %cmd-detach-client-arg (session args)
+  "detach-client [-a] [-t target-session]: detach from a session.
+   In standalone mode, both the -a (all clients) form and the no-flag form
+   stop the event loop.  SESSION and ARGS are not used."
+  (declare (ignore session args))
+  (setf *running* nil))
+
+(defun %cmd-send-keys-arg (session args)
+  "send-keys [-t target-pane] [key ...]: send keys to the active pane.
+   Each argument in ARGS is either a key name (Enter, Tab, Escape, C-c, etc.)
+   or a literal string to type verbatim.  No -t targeting in standalone mode."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
+    (declare (ignore flags))
+    (when positionals
+      (with-active-pane (ap session)
+        (dolist (key positionals)
+          (send-keys-to-pane ap key))))))
+
+(defun %cmd-set-environment-prompt (session args)
+  "set-environment [-r] NAME [VALUE]: set or unset a process environment variable.
+   -r: unset the variable.  Without -r, VALUE is required."
+  (declare (ignore session))
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "")
+    (let* ((remove-p (assoc #\r flags))
+           (name     (first positionals))
+           (value    (format nil "~{~A~^ ~}" (rest positionals))))
+      (when (and name (plusp (length name)))
+        (if remove-p
+            (ignore-errors
+              (let ((fn (find-symbol "UNSETENV" (find-package "SB-POSIX"))))
+                (when fn (funcall fn name))))
+            (ignore-errors
+              (let ((fn (find-symbol "SETENV" (find-package "SB-POSIX"))))
+                (when fn (funcall fn name value 1)))))))))
+
 (defparameter *arg-command-table*
   (list
    (cons '("display-message" "display") #'%cmd-display-message)
-   (cons *set-option-command-names*     #'%cmd-set-option)
+   (cons '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")
+         #'%cmd-set-option)
    (cons '("rename-window")             #'%cmd-rename-window)
    (cons '("rename-session")            #'%cmd-rename-session)
    (cons '("select-window" "selectw")   #'%cmd-select-window)
@@ -842,28 +1001,40 @@
    (cons '("list-panes" "lsp")          #'%cmd-list-panes)
    (cons '("new-window" "neww")         #'%cmd-new-window-arg)
    (cons '("split-window" "splitw")     #'%cmd-split-window)
-   (cons '("new-session" "new")         #'%cmd-new-session-arg))
+   (cons '("new-session" "new")         #'%cmd-new-session-arg)
+   (cons '("set-environment" "setenv")  #'%cmd-set-environment-prompt)
+   (cons '("resize-window" "resizew")   #'%cmd-resize-window-arg)
+   (cons '("detach-client" "detachc")   #'%cmd-detach-client-arg)
+   (cons '("send-keys" "send-key")      #'%cmd-send-keys-arg))
   "Arg-taking commands: (list-of-names . handler), handler a function of
    (SESSION ARGS).  Consulted by %run-command-line before the no-argument
    %dispatch-named-command name table.")
 
 (defun %run-command-tokens (session tokens)
   "Run a command line given as an already-tokenised TOKENS list (first = command
-   name, rest = arguments).  Arg-taking commands (found in *arg-command-table*)
-   consume their arguments; everything else dispatches by name via
-   %dispatch-named-command (no args).  Taking pre-split tokens lets arg-bearing
-   key bindings store and run their command without a lossy re-tokenisation."
+   name, rest = arguments).  Dispatch order:
+   1. command-alias lookup (expand alias + append remaining tokens)
+   2. arg-taking commands in *arg-command-table* (consume their arguments)
+   3. no-arg named commands via %dispatch-named-command
+   Taking pre-split tokens lets arg-bearing key bindings run without lossy
+   re-tokenisation.  Returns the handler's return value."
   (let ((cmd  (first tokens))
         (rest (rest tokens)))
-    (cond
-      ((null cmd) nil)
-      (t (let ((entry (and rest
-                           (find-if (lambda (e)
-                                      (member cmd (car e) :test #'string-equal))
-                                    *arg-command-table*))))
-           (if entry
-               (funcall (cdr entry) session rest)
-               (%dispatch-named-command session cmd)))))))
+    (when cmd
+      ;; 1. Command alias: expand and re-dispatch with remaining args appended.
+      (let ((alias-exp (cl-tmux/options:lookup-command-alias cmd)))
+        (if alias-exp
+            (%run-command-line session
+                               (format nil "~A~@[ ~{~A~^ ~}~]" alias-exp rest))
+            ;; 2. Arg-taking commands (only when there are arguments to consume).
+            (let ((entry (and rest
+                              (find-if (lambda (e)
+                                         (member cmd (car e) :test #'string-equal))
+                                       *arg-command-table*))))
+              (if entry
+                  (funcall (cdr entry) session rest)
+                  ;; 3. No-arg named commands (includes arg-cmds invoked with no args).
+                  (%dispatch-named-command session cmd))))))))
 
 (defun %run-command-line (session input)
   "Tokenise INPUT (one command line, shell-style) and run it via

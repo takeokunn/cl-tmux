@@ -30,13 +30,18 @@
 ;;; with a live shell behind it" into one named step, keeping callers free to
 ;;; express the "where to attach it" concern independently.
 
-(defun %fork-pane (id x y w h)
+(defun %fork-pane (id x y w h &key start-dir)
   "Fork a shell and build a PTY-backed pane at position (X,Y) sized W×H.
+   START-DIR: when non-NIL, the child shell is started in that directory.
+   The TERM environment variable is set from the 'default-terminal' option.
    Returns the new pane.  The PTY file descriptor and child PID are embedded
    in the pane struct; callers should call pty-close on them at teardown."
-  (multiple-value-bind (fd pid) (forkpty-with-shell h w)
-    (make-pane :id id :x x :y y :width w :height h
-               :fd fd :pid pid :screen (make-screen w h))))
+  (let ((term (cl-tmux/options:get-option "default-terminal")))
+    (multiple-value-bind (fd pid)
+        (forkpty-with-shell h w :start-dir start-dir
+                                :term (and term (plusp (length term)) term))
+      (make-pane :id id :x x :y y :width w :height h
+                 :fd fd :pid pid :screen (make-screen w h)))))
 
 (defun respawn-pane (pane)
   "Restart PANE's PTY process, keeping geometry and screen intact.
@@ -56,13 +61,24 @@
             (pane-pid pane) new-pid))
     pane))
 
-(defun pane-reposition (pane x y width height)
-  "Move and resize PANE to X,Y with WIDTH x HEIGHT.
-   Resizes the underlying PTY and virtual screen."
+;;; ── pane-reposition ──────────────────────────────────────────────────────────
+;;;
+;;; Data/logic separation mirrors the zoom helpers in window.lisp:
+;;;   %update-pane-geometry — pure slot mutation (data)
+;;;   pane-reposition       — geometry update then PTY/screen resize (effects)
+
+(defun %update-pane-geometry (pane x y width height)
+  "Update PANE's position and dimension slots to X, Y, WIDTH, HEIGHT.
+   Pure data mutation — no I/O side effects."
   (setf (pane-x pane)      x
         (pane-y pane)      y
         (pane-width  pane) width
-        (pane-height pane) height)
+        (pane-height pane) height))
+
+(defun pane-reposition (pane x y width height)
+  "Move and resize PANE to X,Y with WIDTH x HEIGHT.
+   Updates the geometry slots, then resizes the underlying PTY and virtual screen."
+  (%update-pane-geometry pane x y width height)
   (set-pty-size (pane-fd pane) height width)
   (let ((screen (pane-screen pane)))
     (with-lock-held ((screen-lock screen))

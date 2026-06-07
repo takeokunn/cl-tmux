@@ -392,7 +392,7 @@
                   collect (make-array 5 :initial-element
                                         (cl-tmux/terminal/types:blank-cell))))
       ;; Install a temporary limit function
-      (let ((cl-tmux/terminal/actions:*history-limit-fn* (lambda () cap)))
+      (let ((cl-tmux/terminal/actions:*history-limit-function* (lambda () cap)))
         (cl-tmux/terminal/actions:trim-scroll-history s))
       (is (<= (length (cl-tmux/terminal/types:screen-scrollback s)) cap)
           "scrollback must not exceed cap (~D) after trim-scroll-history" cap))))
@@ -576,19 +576,19 @@
     (is (cl-tmux/terminal/types:screen-dirty-p s)
         "screen must be marked dirty after scroll-down-one")))
 
-;;; ── SUITE: history-limit-fn nil path ─────────────────────────────────────────
+;;; ── SUITE: history-limit-function nil path ────────────────────────────────────
 ;;;
-;;; When *history-limit-fn* is NIL, trim-scroll-history falls back to
+;;; When *history-limit-function* is NIL, trim-scroll-history falls back to
 ;;; +max-scrollback-lines+.  %effective-history-limit must return a positive
 ;;; integer in this case.
 
 (def-suite history-limit-fn-nil
-  :description "*history-limit-fn* NIL falls back to +max-scrollback-lines+"
+  :description "*history-limit-function* NIL falls back to +max-scrollback-lines+"
   :in terminal-suite)
 (in-suite history-limit-fn-nil)
 
 (test history-limit-fn-nil-falls-back-to-constant
-  "*history-limit-fn* = NIL causes trim-scroll-history to use +max-scrollback-lines+."
+  "*history-limit-function* = NIL causes trim-scroll-history to use +max-scrollback-lines+."
   (with-screen (s 5 3)
     (let ((cap cl-tmux/config:+max-scrollback-lines+))
       ;; Pre-populate scrollback at the cap
@@ -597,7 +597,7 @@
                   collect (make-array 5 :initial-element
                                         (cl-tmux/terminal/types:blank-cell))))
       ;; With *history-limit-fn* bound to NIL, push one more row
-      (let ((cl-tmux/terminal/actions:*history-limit-fn* nil))
+      (let ((cl-tmux/terminal/actions:*history-limit-function* nil))
         (cl-tmux/terminal/actions:scroll-up-one s))
       ;; Scrollback must not exceed the constant cap
       (is (<= (length (cl-tmux/terminal/types:screen-scrollback s)) cap)
@@ -605,10 +605,10 @@
           cap))))
 
 (test history-limit-fn-callback-overrides-constant
-  "When *history-limit-fn* returns a value, it overrides +max-scrollback-lines+."
+  "When *history-limit-function* returns a value, it overrides +max-scrollback-lines+."
   (with-screen (s 5 3)
     (let* ((custom-cap 3)
-           (cl-tmux/terminal/actions:*history-limit-fn* (lambda () custom-cap)))
+           (cl-tmux/terminal/actions:*history-limit-function* (lambda () custom-cap)))
       ;; Scroll enough to exceed the custom cap
       (dotimes (_ (+ custom-cap 5))
         (cl-tmux/terminal/actions:scroll-up-one s))

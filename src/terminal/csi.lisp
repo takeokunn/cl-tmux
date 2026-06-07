@@ -65,6 +65,38 @@
       (min (+ (screen-scroll-top screen) (1- p1)) (screen-scroll-bottom screen))
       (1- p1)))
 
+;;; ── Response-queue action helpers ─────────────────────────────────────────
+;;;
+;;; DSR, CPR, DA1, and DA2 all push a response string onto the screen's
+;;; response-queue so the PTY loop can drain it back to the application.
+;;; Extracting named helpers moves the format/push I/O concern out of the
+;;; declarative CSI rule table and into named, testable action functions.
+
+(defun enqueue-dsr-reply (screen)
+  "Push the Device Status Report OK reply (ESC [ 0 n) onto SCREEN's response queue."
+  (push (format nil "~C[0n" #\Escape)
+        (screen-response-queue screen)))
+
+(defun enqueue-cpr-reply (screen)
+  "Push a Cursor Position Report (ESC [ row ; col R, 1-based) onto SCREEN's
+   response queue, reflecting the current cursor position."
+  (push (format nil "~C[~D;~DR" #\Escape
+                (1+ (screen-cursor-y screen))
+                (1+ (screen-cursor-x screen)))
+        (screen-response-queue screen)))
+
+(defun enqueue-da1-reply (screen)
+  "Push the Primary Device Attributes response (ESC [ ? 1 ; 2 c — VT100 with AVO)
+   onto SCREEN's response queue."
+  (push (format nil "~C[?1;2c" #\Escape)
+        (screen-response-queue screen)))
+
+(defun enqueue-da2-reply (screen)
+  "Push the Secondary Device Attributes response (ESC [ > 1 ; 10 ; 0 c)
+   onto SCREEN's response queue."
+  (push (format nil "~C[>1;10;0c" #\Escape)
+        (screen-response-queue screen)))
+
 ;;; ── CSI rule table ─────────────────────────────────────────────────────────
 
 (define-csi-rules
@@ -170,16 +202,12 @@
   ;; which the PTY loop drains back to the application (same path as DA1/DA2).
   ;;   CSI 5 n → device status: ESC [ 0 n  (terminal OK)
   ((and (null intermed) (char= final #\n) (= p1 5))
-   (push (format nil "~C[0n" #\Escape)
-         (screen-response-queue screen)))
+   (enqueue-dsr-reply screen))
   ;; CPR – Cursor Position Report.
   ;;   CSI 6 n → ESC [ <row> ; <col> R  (1-based; apps like shells, vim, less
   ;;   block waiting for this reply, so an unanswered query hangs them).
   ((and (null intermed) (char= final #\n) (= p1 6))
-   (push (format nil "~C[~D;~DR" #\Escape
-                 (1+ (screen-cursor-y screen))
-                 (1+ (screen-cursor-x screen)))
-         (screen-response-queue screen)))
+   (enqueue-cpr-reply screen))
 
   ;; DECSTBM – Set Top and Bottom Margins.  Params are 1-based; an omitted
   ;; bottom (p2 = 0) means "full screen", matching real-terminal ESC[r reset.
@@ -202,14 +230,12 @@
   ;; DA1 – Primary Device Attributes (CSI c or CSI 0 c)
   ;; Response: ESC [ ? 1 ; 2 c  (VT100 with AVO)
   ((and (null intermed) (char= final #\c))
-   (push (format nil "~C[?1;2c" #\Escape)
-         (screen-response-queue screen)))
+   (enqueue-da1-reply screen))
 
   ;; DA2 – Secondary Device Attributes (CSI > c or CSI > 0 c)
   ;; Response: ESC [ > 1 ; 10 ; 0 c
   ((and (eql intermed #\>) (char= final #\c))
-   (push (format nil "~C[>1;10;0c" #\Escape)
-         (screen-response-queue screen)))
+   (enqueue-da2-reply screen))
 
   ;; DEC Private Mode Set (?...h) — e.g. ?1049h enters the alternate screen
   ((and (eql intermed #\?) (char= final #\h))

@@ -25,19 +25,19 @@
 (defun %assign-split (node x y w h)
   "Assign rectangles to the two children of layout-split NODE.
    The :h and :v cases are symmetric: :h divides WIDTH, :v divides HEIGHT."
-  (let* ((orient (layout-split-orientation node))
-         (ratio  (layout-split-ratio node))
+  (let* ((orient          (layout-split-orientation node))
+         (ratio           (layout-split-ratio node))
          ;; :h splits divide the width (cols); :v splits divide the height (rows).
-         (avail  (1- (orient-case orient :h w :v h)))
-         (fext   (max 1 (min (1- avail) (round (* avail ratio)))))
-         (sext   (- avail fext)))
+         (available-cells (1- (orient-case orient :h w :v h)))
+         (first-extent    (max 1 (min (1- available-cells) (round (* available-cells ratio)))))
+         (second-extent   (- available-cells first-extent)))
     (orient-case orient
       :h (progn
-           (layout-assign (layout-split-first  node)  x           y  fext h)
-           (layout-assign (layout-split-second node) (+ x fext 1) y  sext h))
+           (layout-assign (layout-split-first  node)  x                    y  first-extent h)
+           (layout-assign (layout-split-second node) (+ x first-extent 1)  y  second-extent h))
       :v (progn
-           (layout-assign (layout-split-first  node)  x  y           w  fext)
-           (layout-assign (layout-split-second node)  x (+ y fext 1) w  sext)))))
+           (layout-assign (layout-split-first  node)  x  y                    w  first-extent)
+           (layout-assign (layout-split-second node)  x (+ y first-extent 1)  w  second-extent)))))
 
 (defun layout-assign (node x y w h)
   "Walk NODE, repositioning every leaf's pane to fill the X,Y,W,H rectangle.
@@ -46,10 +46,11 @@
     (layout-leaf  (pane-reposition (layout-leaf-pane node) x y (max 1 w) (max 1 h)))
     (layout-split (%assign-split node x y w h))))
 
-;;; ── Pane neighbor lookup — see window.lisp ──────────────────────────────────
+;;; ── Pane neighbor lookup and hit testing — see window-neighbor.lisp ─────────
 ;;;
-;;; pane-neighbor and its helpers (%ranges-overlap-p, %pane-center-x/y) live in
-;;; window.lisp because they access WINDOW struct slots (window-panes).
+;;; pane-neighbor, pane-at-position, and their helpers (%ranges-overlap-p,
+;;; %pane-center-x/y) live in window-neighbor.lisp because they access WINDOW
+;;; struct slots (window-panes), which are defined in window.lisp.
 ;;; Defining them here would forward-reference the WINDOW struct (loaded later).
 
 ;;; ── Resize helpers ─────────────────────────────────────────────────────────
@@ -101,11 +102,4 @@
          (values (+ (pane-x pane) fw 1) (pane-y pane)
                  (- avail fw) (pane-height pane)))))
 
-(defun pane-at-position (window col row)
-  "Return the pane in WINDOW that contains column COL and row ROW (0-based screen coordinates).
-   Returns NIL when no pane contains the position."
-  (find-if (lambda (p)
-             (and (<= (pane-x p) col) (< col (+ (pane-x p) (pane-width p)))
-                  (<= (pane-y p) row) (< row (+ (pane-y p) (pane-height p)))))
-           (window-panes window)))
 

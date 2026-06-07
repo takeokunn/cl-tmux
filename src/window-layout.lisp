@@ -34,7 +34,14 @@
 (defmacro define-named-layout-rules (&rest rules)
   "Build apply-named-layout from a declarative fact table of layout rules.
    Each RULE is (layout-keyword function-call-form).
-   Generates an ecase dispatch that calls the appropriate helper."
+   Generates an ecase dispatch that calls the appropriate helper.
+
+   IMPLICIT FREE VARIABLES: the generated ecase body is evaluated in the
+   lexical scope of apply-named-layout's let*, so every RULE's call-form
+   may freely reference 'window', 'panes', 'n', 'w', and 'h' by name.
+   This is intentional: the macro acts as a code template, not a closure,
+   and the Prolog-fact reading of each rule relies on those names being in
+   scope at the call site."
   `(defun apply-named-layout (window layout-name)
      "Reposition all panes in WINDOW according to LAYOUT-NAME, one of:
         :even-horizontal  :even-vertical  :main-horizontal
@@ -58,13 +65,15 @@
 ;;; repositions every leaf's pane to the correct rectangle, so a pre-loop
 ;;; was redundant and fragile (side-effect order dependency).
 
-(defun %layout-even-h (window panes n w h)
-  "Apply the :even-horizontal layout: N equal-width columns separated by 1-col borders."
+(defun %layout-even-h (window panes w h)
+  "Apply the :even-horizontal layout: equal-width columns separated by 1-col borders.
+   The pane count is derived from PANES; no separate count parameter is needed."
   (setf (window-tree window) (%build-flat-tree panes :h))
   (layout-assign (window-tree window) 0 0 w h))
 
-(defun %layout-even-v (window panes n w h)
-  "Apply the :even-vertical layout: N equal-height rows separated by 1-row borders."
+(defun %layout-even-v (window panes w h)
+  "Apply the :even-vertical layout: equal-height rows separated by 1-row borders.
+   The pane count is derived from PANES; no separate count parameter is needed."
   (setf (window-tree window) (%build-flat-tree panes :v))
   (layout-assign (window-tree window) 0 0 w h))
 
@@ -120,15 +129,15 @@
 ;;; ── apply-named-layout — declarative fact table ──────────────────────────────
 ;;;
 ;;; One clause per layout:
-;;;   layout_rule(:even-horizontal) :- %layout-even-h(window, panes, n, w, h)
-;;;   layout_rule(:even-vertical)   :- %layout-even-v(window, panes, n, w, h)
+;;;   layout_rule(:even-horizontal) :- %layout-even-h(window, panes, w, h)
+;;;   layout_rule(:even-vertical)   :- %layout-even-v(window, panes, w, h)
 ;;;   layout_rule(:main-horizontal) :- %layout-main(window, panes, w, h, :v, :h)
 ;;;   layout_rule(:main-vertical)   :- %layout-main(window, panes, w, h, :h, :v)
 ;;;   layout_rule(:tiled)           :- %layout-tiled(window, panes, n, w, h)
 
 (define-named-layout-rules
-  (:even-horizontal (%layout-even-h window panes n w h))
-  (:even-vertical   (%layout-even-v window panes n w h))
+  (:even-horizontal (%layout-even-h window panes w h))
+  (:even-vertical   (%layout-even-v window panes w h))
   (:main-horizontal (%layout-main   window panes w h :v :h))
   (:main-vertical   (%layout-main   window panes w h :h :v))
   (:tiled           (%layout-tiled  window panes n w h)))

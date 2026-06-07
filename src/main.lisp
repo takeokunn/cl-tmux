@@ -16,13 +16,49 @@
 ;;;;   cl-tmux server [NAME]   → headless server owning a session
 ;;;;   cl-tmux attach [NAME]   → attach a thin client to a running server
 
+(defun %hostname-short (hostname)
+  "Return the short form of HOSTNAME: the part before the first dot,
+   or the full string if no dot is present."
+  (let ((dot (position #\. hostname)))
+    (if dot (subseq hostname 0 dot) hostname)))
+
+(defun %build-hostname-context ()
+  "Return a format context plist with :hostname, :host, and :host-short
+   populated from the current machine hostname (captured once at call time)."
+  (let ((hostname (machine-instance)))
+    (list :hostname hostname
+          :host     hostname
+          :host-short (%hostname-short hostname))))
+
+(defun %make-format-condition-evaluator ()
+  "Return a closure (string) → string that expands a %if condition using the
+   tmux format language with the current machine hostname.  Wired into
+   *config-condition-evaluator* before loading the config file so that .tmux.conf
+   blocks like %if #{==:#{host},myserver} work correctly.
+   The hostname is captured once when the closure is called, not at closure creation."
+  (lambda (cond-str)
+    (let ((context (%build-hostname-context)))
+      (handler-case
+          (cl-tmux/format:expand-format cond-str context)
+        (error () "1")))))
+
 (defun run-standalone ()
   "Standalone in-process multiplexer: own a session and run the event loop on
    the local terminal (no socket).  This is the default mode."
   (require :sb-posix)
 
-  ;; Apply the user config file (~/.cl-tmux.conf or $CL_TMUX_CONF) if present.
-  (ignore-errors (load-config-file))
+  ;; Read $SHELL from the environment now that sb-posix is loaded.
+  ;; init-default-shell is the ORCHESTRATE-layer call that was formerly
+  ;; executed at module load time; doing it here keeps config.lisp pure.
+  (cl-tmux/config:init-default-shell)
+
+  ;; Wire up the %if condition evaluator before loading the config file so that
+  ;; conditional blocks (e.g. %if #{==:#{host},myserver}) resolve correctly.
+  (setf cl-tmux/config:*config-condition-evaluator* (%make-format-condition-evaluator))
+
+  ;; Apply the user config file — searches cl-tmux config, XDG tmux config, and
+  ;; ~/.tmux.conf in priority order (NIL triggers auto-detection).
+  (ignore-errors (load-config-file nil))
 
   ;; Discover terminal dimensions before any fork so children inherit them.
   (multiple-value-setq (*term-rows* *term-cols*)
@@ -121,10 +157,10 @@
          (values ,@var-names)))))
 
 (define-flag-parser %parse-attach-flags
-    ((name "0") (detach nil) (ro nil))
+    ((name "0") (detach nil) (read-only-p nil))
   (:value "-t" name)
   (:bool  "-d" detach)
-  (:bool  "-r" ro))
+  (:bool  "-r" read-only-p))
 
 ;;; ── Startup mode dispatch (data / logic separation) ─────────────────────────
 ;;;
@@ -164,15 +200,16 @@
    Only enters the polling loop when run-program succeeded.
    Polls every +server-socket-poll-interval-seconds+ for up to
    +server-socket-poll-max-iterations+ iterations for the socket to appear."
-  (let ((socket-path (socket-path session-name)))
+  (let* ((socket-path (socket-path session-name))
+         (exe         (first sb-ext:*posix-argv*))
+         (args        (list "server" session-name)))
     (unless (probe-file socket-path)
-      (let ((launched
-             (let ((exe  (first sb-ext:*posix-argv*))
-                   (args (list "server" session-name)))
-               ;; Guard: run-program may fail in test environments or when the
-               ;; binary is not yet on PATH.  Only poll if the spawn succeeded.
-               (ignore-errors
-                 (sb-ext:run-program exe args :wait nil :output nil :error nil)))))
+      ;; Guard: run-program may fail in test environments or when the
+      ;; binary is not yet on PATH.  Only poll if the spawn succeeded.
+      ;; :wait nil means non-blocking — run-program returns immediately after fork.
+      (let ((launched (ignore-errors
+                        (sb-ext:run-program exe args
+                                            :wait nil :output nil :error nil))))
         ;; Poll only when we actually attempted a launch.  This avoids the
         ;; unconditional 3-second dead-time when run-program silently failed.
         (when launched
@@ -199,8 +236,8 @@
    yet enforced — run-client does not currently propagate a read-only constraint
    to the server.  It is intentionally a no-op until server-side enforcement is
    implemented."
-  (multiple-value-bind (name detach-p _readonly-p) (%parse-attach-flags raw-args)
-    (declare (ignore _readonly-p))
+  (multiple-value-bind (name detach-p readonly-p) (%parse-attach-flags raw-args)
+    (declare (ignore readonly-p))
     (%ensure-server-running name)
     (run-client name :detach-others detach-p)))
 

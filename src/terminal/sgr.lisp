@@ -8,7 +8,7 @@
 
 ;;; ── Attribute mutation helpers (data layer) ────────────────────────────────
 ;;;
-;;; These three inline functions separate the HOW (bit manipulation) from the
+;;; These four inline functions separate the HOW (bit manipulation) from the
 ;;; WHAT (which SGR code means what), keeping the rule table below readable.
 
 (declaim (inline attr-on attr-off attr2-on attr2-off))
@@ -39,8 +39,12 @@
   "Each RULE is (condition-form &body forms).
    Available bindings in each rule: SCREEN (the screen struct), P (the SGR
    parameter integer).
-   Expands into a DEFUN for %DISPATCH-SGR-CODE that dispatches via COND."
+   Expands into a DEFUN for %DISPATCH-SGR-CODE that dispatches via COND.
+   A generated docstring is injected so the exported symbol is documented."
   `(defun %dispatch-sgr-code (screen p)
+     "Dispatch a single SGR parameter code P against SCREEN, applying the
+      appropriate attribute or colour mutation.  Called by APPLY-SGR for each
+      element of the parameter list.  Unknown codes are silently ignored."
      (declare (type screen screen) (type fixnum p) (ignorable p))
      (cond
        ,@(mapcar (lambda (rule)
@@ -122,16 +126,29 @@
 ;;; duplicating the clamp/logior arithmetic for the fg and bg arms.
 
 (declaim (inline %set-truecolor))
-(defun %set-truecolor (screen setter ps)
-  "Encode the R;G;B triple at positions 3-5 of PS as #x1RRGGBB and call
-   SETTER with (SCREEN value) to store the result.  SETTER should be one of
+(defun %set-truecolor (screen setter parameter-list)
+  "Encode the R;G;B triple at positions 3-5 of PARAMETER-LIST as #x1RRGGBB and
+   call SETTER with (SCREEN value) to store the result.  SETTER should be one of
    #'(setf screen-cur-fg) or #'(setf screen-cur-bg).
-   Returns the tail of PS after the five consumed parameters."
-  (let* ((r (clamp (or (third  ps) 0) 0 255))
-         (g (clamp (or (fourth ps) 0) 0 255))
-         (b (clamp (or (fifth  ps) 0) 0 255)))
+   Returns the tail of PARAMETER-LIST after the five consumed parameters."
+  (let* ((r (clamp (or (third  parameter-list) 0) 0 255))
+         (g (clamp (or (fourth parameter-list) 0) 0 255))
+         (b (clamp (or (fifth  parameter-list) 0) 0 255)))
     (funcall setter (logior #x1000000 (ash r 16) (ash g 8) b) screen))
-  (nthcdr 5 ps))
+  (nthcdr 5 parameter-list))
+
+;;; %consume-256-color-param handles the 38;5;N / 48;5;N / 58;5;N sub-protocol
+;;; for a single selector code.  SETTER is the (setf screen-cur-XX) function to
+;;; call; PARAMETER-TAIL is the full remaining list starting at the selector.
+;;; Returns the tail after the three consumed elements (selector, 5, N).
+
+(declaim (inline %consume-256-color-param))
+(defun %consume-256-color-param (screen setter parameter-tail)
+  "Apply a 256-color SGR selector arm: read the index at (third PARAMETER-TAIL),
+   clamp it to 0-255, store it via SETTER, and return the tail after the three
+   consumed parameter elements (selector; 5; N)."
+  (funcall setter (clamp (third parameter-tail) 0 255) screen)
+  (cdddr parameter-tail))
 
 (defun apply-sgr (screen params)
   "Apply a sequence of SGR codes to SCREEN.
@@ -141,33 +158,36 @@
      38;5;N / 48;5;N   — 256-color fg/bg (N clamped to 0-255)
      38;2;R;G;B / 48;2;R;G;B — true-color fg/bg (stored as #x1RRGGBB;
                                 bit 24 is the true-color flag)"
-  (labels ((consume (params-tail)
-             (when params-tail
-               (let ((p (first params-tail)))
+  (labels ((consume (parameter-tail)
+             (when parameter-tail
+               (let ((p (first parameter-tail)))
                  (cond
                    ;; 256-color foreground: 38;5;N
-                   ((and (= p 38) (eql (second params-tail) 5) (third params-tail))
-                    (setf (screen-cur-fg screen) (clamp (third params-tail) 0 255))
-                    (consume (cdddr params-tail)))
+                   ((and (= p 38) (eql (second parameter-tail) 5) (third parameter-tail))
+                    (consume (%consume-256-color-param screen
+                                                       #'(setf screen-cur-fg)
+                                                       parameter-tail)))
                    ;; True-color foreground: 38;2;R;G;B → store as #x1RRGGBB
                    ;; Each component is clamped to 0-255 to stay within (unsigned-byte 25).
-                   ((and (= p 38) (eql (second params-tail) 2) (cddr params-tail))
-                    (consume (%set-truecolor screen #'(setf screen-cur-fg) params-tail)))
+                   ((and (= p 38) (eql (second parameter-tail) 2) (cddr parameter-tail))
+                    (consume (%set-truecolor screen #'(setf screen-cur-fg) parameter-tail)))
                    ;; 256-color background: 48;5;N
-                   ((and (= p 48) (eql (second params-tail) 5) (third params-tail))
-                    (setf (screen-cur-bg screen) (clamp (third params-tail) 0 255))
-                    (consume (cdddr params-tail)))
+                   ((and (= p 48) (eql (second parameter-tail) 5) (third parameter-tail))
+                    (consume (%consume-256-color-param screen
+                                                       #'(setf screen-cur-bg)
+                                                       parameter-tail)))
                    ;; True-color background: 48;2;R;G;B → store as #x1RRGGBB
-                   ((and (= p 48) (eql (second params-tail) 2) (cddr params-tail))
-                    (consume (%set-truecolor screen #'(setf screen-cur-bg) params-tail)))
+                   ((and (= p 48) (eql (second parameter-tail) 2) (cddr parameter-tail))
+                    (consume (%set-truecolor screen #'(setf screen-cur-bg) parameter-tail)))
                    ;; Underline-color 256: 58;5;N
-                   ((and (= p 58) (eql (second params-tail) 5) (third params-tail))
-                    (setf (screen-cur-ul-color screen) (clamp (third params-tail) 0 255))
-                    (consume (cdddr params-tail)))
+                   ((and (= p 58) (eql (second parameter-tail) 5) (third parameter-tail))
+                    (consume (%consume-256-color-param screen
+                                                       #'(setf screen-cur-ul-color)
+                                                       parameter-tail)))
                    ;; Underline-color true-color: 58;2;R;G;B
-                   ((and (= p 58) (eql (second params-tail) 2) (cddr params-tail))
-                    (consume (%set-truecolor screen #'(setf screen-cur-ul-color) params-tail)))
+                   ((and (= p 58) (eql (second parameter-tail) 2) (cddr parameter-tail))
+                    (consume (%set-truecolor screen #'(setf screen-cur-ul-color) parameter-tail)))
                    (t
                     (%dispatch-sgr-code screen p)
-                    (consume (rest params-tail))))))))
+                    (consume (rest parameter-tail))))))))
     (consume (or params '(0)))))

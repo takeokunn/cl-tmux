@@ -31,7 +31,8 @@
                 #:screen-copy-line-selection-p
                 #:screen-copy-rect-select-p
                 #:screen-app-cursor-keys
-                #:char-width)
+                #:char-width
+                #:screen-p)
   (:import-from #:cl-tmux/model
                 #:create-initial-session
                 #:session-windows
@@ -84,6 +85,10 @@
                 #:pane-pipe-fd
                 #:pane-window
                 #:pane-marked
+                #:pane-title
+                #:pane-local-options
+                ;; Window options
+                #:window-local-options
                 ;; New session slots
                 #:session-locked-p
                 #:session-group
@@ -172,6 +177,8 @@
                 #:popup-x #:popup-y #:popup-width #:popup-height
                 #:popup-screen #:popup-pane #:popup-title #:popup-close-on-exit
                 #:*active-popup*
+                #:show-popup #:close-popup #:popup-active-p
+                #:show-menu #:close-menu #:menu-active-p
                 #:menu #:make-menu #:menu-p
                 #:menu-title #:menu-items #:menu-selected-index
                 #:*active-menu*

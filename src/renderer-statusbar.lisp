@@ -12,9 +12,10 @@
 ;;; ── Status bar data formatters (pure) ─────────────────────────────────────
 
 (defun %status-current-time ()
-  "HH:MM string from the system clock.
-   Delegates to cl-tmux/format::%current-time-string — single source of truth."
-  (cl-tmux/format::%current-time-string))
+  "Return current time as a HH:MM string (5 characters)."
+  (multiple-value-bind (_ min hour) (get-decoded-time)
+    (declare (ignore _))
+    (format nil "~2,'0D:~2,'0D" hour min)))
 
 (defun %status-pane-indicator (active-pane)
   "Pane-number string for the status bar, or empty string when ACTIVE-PANE is NIL."
@@ -88,8 +89,15 @@
 ;;; LENGTH / SUBSEQ, so every existing alignment test is unaffected.
 
 (defun %sgr-sequence-end (str start)
-  "If STR has a CSI escape (ESC[…<final>) starting at START, return the index just
-   past its final byte; otherwise NIL.  A CSI final byte is in the #x40–#x7e range."
+  "If STR has a CSI escape starting at START, return the index just past its final byte.
+   Otherwise returns NIL.
+
+   CSI encoding: ESC (0x1B) '[' (0x5B) <parameter-bytes 0x30–0x3F>*
+                 <intermediate-bytes 0x20–0x2F>* <final-byte 0x40–0x7E>.
+   The function skips all bytes until the first final-byte or end of string,
+   returning (1+ final-byte-index) on success, or LEN when the sequence is
+   unterminated.  Callers should treat an unterminated sequence as consuming
+   the rest of the string."
   (let ((len (length str)))
     (when (and (< (1+ start) len)
                (char= (char str start) +esc+)
@@ -250,7 +258,7 @@
                        sgr-code))
          (raw-right   (%status-expand-style-blocks
                        (%status-format-or-default
-                        "status-right" context #'%status-current-time)
+                        "status-right" context #'cl-tmux/format::%current-time-string)
                        sgr-code))
          (left        (%clamp-status-segment
                        raw-left (cl-tmux/options:get-option "status-left-length" 40)))

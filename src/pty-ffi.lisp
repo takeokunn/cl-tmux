@@ -44,6 +44,11 @@
   #+darwin  #x20000
   #-darwin  #o000400)
 
+;;; Standard file descriptor numbers
+(defconstant +stdin-fd+  0 "Standard input.")
+(defconstant +stdout-fd+ 1 "Standard output.")
+(defconstant +stderr-fd+ 2 "Standard error.")
+
 ;;; POSIX signal numbers
 (defconstant +sighup+ 1 "POSIX SIGHUP — sent to a process group leader on terminal close.")
 

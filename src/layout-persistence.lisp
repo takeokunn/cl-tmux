@@ -1,6 +1,6 @@
 (in-package #:cl-tmux/model)
 
-;;; ── Layout persistence (layout string serialization) ──────────────────────────
+;;; -- Layout persistence (layout string serialization) --------------------------
 ;;;
 ;;; Encode/decode the layout tree in tmux's WxH,X,Y format.
 ;;; Full tmux format: checksum,WxH,X,Y[node1,node2]  or  checksum,WxH,X,Y,pane-id
@@ -11,7 +11,7 @@
 ;;;   V-split: "WxH,X,Y[first,second]"
 ;;; The 4-hex-digit checksum prefix is computed from the string.
 
-;;; tmux rolling checksum multiplier — matches the algorithm in tmux's layout.c.
+;;; tmux rolling checksum multiplier -- matches the algorithm in tmux's layout.c.
 (defconstant +checksum-multiplier+ 61
   "Multiplier for the tmux rolling 16-bit layout checksum (from tmux layout.c).")
 
@@ -65,7 +65,7 @@
            (checksum (%layout-checksum body)))
       (format nil "~A,~A" checksum body))))
 
-;;; ── String → layout decoder ──────────────────────────────────────────────────
+;;; -- String -> layout decoder --------------------------------------------------
 ;;;
 ;;; Parse a layout string (optionally with a leading checksum) back into
 ;;; a layout tree, matching existing panes by id from PANES-LIST.
@@ -92,6 +92,32 @@
                      (digit-char-p (char str pos)))
           do (incf pos))
     (values (parse-integer str :start start :end pos) pos)))
+
+;;; -- define-parse-dispatch-rules: declarative layout parse-character table -----
+;;;
+;;; Analogous to define-csi-rules / define-command-handlers: each clause names
+;;; a dispatch character and the form that handles it.  %parse-node dispatches
+;;; via cond generated from this table.
+;;;
+;;; Pattern (Prolog analogy):
+;;;   parse_node_rule(#\{, Body) :- split_h_body(Body).
+;;;   parse_node_rule(#\[, Body) :- split_v_body(Body).
+;;;   parse_node_rule(#\,, Body) :- leaf_body(Body).
+;;;   parse_node_rule(_,   Body) :- warn_and_fail.
+
+(defmacro define-parse-dispatch-rules (&rest rules)
+  "Build %parse-node's internal dispatch from a declarative character->form table.
+   Each RULE is (dispatch-character &rest body-forms).
+   The final rule may use T as the character to serve as a catch-all.
+   Generates a cond dispatch over DISPATCH-CHAR.
+   Implicit free variables available in each body-form: STR PANES DISPATCH-POS DISPATCH-CHAR."
+  `(cond
+     ,@(mapcar (lambda (rule)
+                 (destructuring-bind (ch &rest body) rule
+                   (if (eq ch t)
+                       `(t ,@body)
+                       `((char= dispatch-char ,ch) ,@body))))
+               rules)))
 
 ;;; %parse-node uses forward-reference to %parse-split-body.
 ;;; We declare it here so the compiler accepts the mutual recursion.
@@ -129,20 +155,16 @@
     (if (>= dispatch-pos (length str))
         (values nil dispatch-pos)
         (let ((dispatch-char (char str dispatch-pos)))
-          (cond
-            ((char= dispatch-char #\{)
-             (%parse-split-body str panes (1+ dispatch-pos) #\} :h))
-            ((char= dispatch-char #\[)
-             (%parse-split-body str panes (1+ dispatch-pos) #\] :v))
-            ((char= dispatch-char #\,)
-             (multiple-value-bind (pane-id pane-id-end)
-                 (%read-digits str (1+ dispatch-pos))
-               (let ((found-pane (find pane-id panes :key #'pane-id)))
-                 (values (when found-pane (make-layout-leaf found-pane)) pane-id-end))))
-            (t
-             (warn "~A: unrecognized dispatch character ~S at position ~D; skipping."
-                   '%parse-node dispatch-char dispatch-pos)
-             (values nil dispatch-pos)))))))
+          (define-parse-dispatch-rules
+            (#\{ (%parse-split-body str panes (1+ dispatch-pos) #\} :h))
+            (#\[ (%parse-split-body str panes (1+ dispatch-pos) #\] :v))
+            (#\, (multiple-value-bind (pane-id pane-id-end)
+                     (%read-digits str (1+ dispatch-pos))
+                   (let ((found-pane (find pane-id panes :key #'pane-id)))
+                     (values (when found-pane (make-layout-leaf found-pane)) pane-id-end))))
+            (t   (warn "~A: unrecognized dispatch character ~S at position ~D; skipping."
+                       '%parse-node dispatch-char dispatch-pos)
+                 (values nil dispatch-pos)))))))
 
 (defun string->layout (layout-string panes)
   "Decode LAYOUT-STRING (tmux format, checksum optional) and rebuild the layout
@@ -150,8 +172,8 @@
    Returns the root layout node, or NIL on parse failure."
   (handler-case
       (let ((str (%skip-checksum layout-string)))
-        (multiple-value-bind (node _end)
+        (multiple-value-bind (node end)
             (%parse-node str panes 0)
-          (declare (ignore _end))
+          (declare (ignore end))
           node))
     (error () nil)))

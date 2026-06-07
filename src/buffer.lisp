@@ -41,7 +41,13 @@
   "Set *paste-buffers* to nil."
   (setf *paste-buffers* nil))
 
-;; Wire OSC 52 clipboard writes into the paste buffer ring.
-;; Applications (e.g., vim, tmux copy-mode) can write clipboard data via
-;; ESC ] 52 ; c ; <base64> ST — decoded by parser-osc and forwarded here.
-(setf cl-tmux/terminal/parser:*osc52-handler* #'add-paste-buffer)
+(defun initialize-osc52-handler ()
+  "Wire the OSC 52 clipboard handler to the paste buffer ring.
+   Applications (e.g., vim, tmux copy-mode) can write clipboard data via
+   ESC ] 52 ; c ; <base64> ST — decoded by parser-osc and forwarded here.
+   Called once at load time; separated from top-level to make the coupling explicit
+   and allow re-initialisation if the handler variable is reset."
+  (setf cl-tmux/terminal/parser:*osc52-handler* #'add-paste-buffer))
+
+;; Wire OSC 52 handler at module load time via an explicit named call.
+(initialize-osc52-handler)

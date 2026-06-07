@@ -125,27 +125,27 @@
 
 (test parse-attach-flags-all-flags
   "%parse-attach-flags correctly parses -d, -r, and -t <name> independently."
-  (multiple-value-bind (name detach ro)
+  (multiple-value-bind (name detach read-only-p)
       (cl-tmux::%parse-attach-flags '("-t" "mysession" "-d" "-r"))
     (is (string= "mysession" name))
     (is-true detach)
-    (is-true ro)))
+    (is-true read-only-p)))
 
 (test parse-attach-flags-defaults
   "%parse-attach-flags returns default name \"0\" when no flags are given."
-  (multiple-value-bind (name detach ro)
+  (multiple-value-bind (name detach read-only-p)
       (cl-tmux::%parse-attach-flags '())
     (is (string= "0" name))
     (is-false detach)
-    (is-false ro)))
+    (is-false read-only-p)))
 
 (test parse-attach-flags-unknown-flags-ignored
   "%parse-attach-flags silently ignores unrecognized flags."
-  (multiple-value-bind (name detach ro)
+  (multiple-value-bind (name detach read-only-p)
       (cl-tmux::%parse-attach-flags '("-x" "-t" "abc"))
     (is (string= "abc" name))
     (is-false detach)
-    (is-false ro)))
+    (is-false read-only-p)))
 
 ;;; ── *startup-modes* data table ───────────────────────────────────────────────
 
@@ -188,34 +188,36 @@
 
 (test parse-attach-flags-value-flag-t-alone
   "%parse-attach-flags parses -t alone and returns default booleans."
-  (multiple-value-bind (name detach ro)
+  (multiple-value-bind (name detach read-only-p)
       (cl-tmux::%parse-attach-flags '("-t" "only-name"))
     (is (string= "only-name" name) "name must be 'only-name'")
-    (is-false detach "detach must default to NIL when -d absent")
-    (is-false ro     "ro must default to NIL when -r absent")))
+    (is-false detach     "detach must default to NIL when -d absent")
+    (is-false read-only-p "read-only-p must default to NIL when -r absent")))
 
 (test parse-attach-flags-bool-d-alone
   "%parse-attach-flags parses -d alone, leaving name at default."
-  (multiple-value-bind (name detach ro)
+  (multiple-value-bind (name detach read-only-p)
       (cl-tmux::%parse-attach-flags '("-d"))
     (is (string= "0" name) "name must be default '0' when -t absent")
-    (is-true  detach "detach must be T when -d is present")
-    (is-false ro     "ro must remain NIL when -r absent")))
+    (is-true  detach     "detach must be T when -d is present")
+    (is-false read-only-p "read-only-p must remain NIL when -r absent")))
 
 (test parse-attach-flags-bool-r-alone
   "%parse-attach-flags parses -r alone, leaving name and detach at defaults."
-  (multiple-value-bind (name detach ro)
+  (multiple-value-bind (name detach read-only-p)
       (cl-tmux::%parse-attach-flags '("-r"))
     (is (string= "0" name) "name must be default '0' when -t absent")
     (is-false detach "detach must remain NIL when -d absent")
-    (is-true  ro     "ro must be T when -r is present")))
+    (is-true  read-only-p "read-only-p must be T when -r is present")))
 
 (test parse-attach-flags-order-independent
   "%parse-attach-flags parses -d -t in either order."
-  (multiple-value-bind (name1 detach1 _ro1)
+  (multiple-value-bind (name1 detach1 read-only-p1)
       (cl-tmux::%parse-attach-flags '("-d" "-t" "sess1"))
-    (multiple-value-bind (name2 detach2 _ro2)
+    (declare (ignore read-only-p1))
+    (multiple-value-bind (name2 detach2 read-only-p2)
         (cl-tmux::%parse-attach-flags '("-t" "sess1" "-d"))
+      (declare (ignore read-only-p2))
       (is (string= name1 name2) "name must match regardless of flag order")
       (is (eq detach1 detach2)  "detach must match regardless of flag order"))))
 

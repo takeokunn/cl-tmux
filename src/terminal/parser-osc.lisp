@@ -23,9 +23,9 @@
 ;;; Used for OSC 52 clipboard payloads.  We use a simple table-driven approach
 ;;; rather than depending on an external Base64 library.
 
-(defun %base64-char-index (alphabet ch)
-  "Return the 6-bit index of character CH in the Base64 ALPHABET, or NIL."
-  (position ch alphabet))
+(defun %base64-char-index (b64-table character)
+  "Return the 6-bit index of CHARACTER in the Base64 lookup table B64-TABLE, or NIL."
+  (position character b64-table))
 
 (defun %decode-base64-group (alphabet encoded-string group-start)
   "Decode one 4-character Base64 group starting at GROUP-START in ENCODED-STRING.
@@ -112,25 +112,32 @@
 ;;; OSC 52 delivers clipboard data; the Base64 payload is decoded and forwarded
 ;;; to *osc52-handler* when one has been installed.
 
-(defun %percent-decode (s)
-  "Decode %XX percent-escapes in S, UTF-8 aware: %20 → space, %E2%9C%93 → ✓.
-   A '%' not followed by two hex digits is left literal.  No-op when S has no '%'
-   (the common case — avoids the byte round-trip)."
-  (if (not (find #\% s))
-      s
-      (let ((bytes '()) (i 0) (n (length s)))
-        (flet ((hex (c) (digit-char-p c 16)))
-          (loop while (< i n) do
-            (let ((c (char s i)))
-              (if (and (char= c #\%) (< (+ i 2) n)
-                       (hex (char s (1+ i))) (hex (char s (+ i 2))))
+(defun %percent-decode (encoded-string)
+  "Decode %XX percent-escapes in ENCODED-STRING, UTF-8 aware: %20 → space, %E2%9C%93 → ✓.
+   A '%' not followed by two hex digits is left literal.  No-op when ENCODED-STRING
+   has no '%' (the common case — avoids the byte round-trip)."
+  (if (not (find #\% encoded-string))
+      encoded-string
+      (let ((bytes '())
+            (index 0)
+            (input-length (length encoded-string)))
+        (flet ((hex-digit (char) (digit-char-p char 16)))
+          (loop while (< index input-length) do
+            (let ((current-char (char encoded-string index)))
+              (if (and (char= current-char #\%)
+                       (< (+ index 2) input-length)
+                       (hex-digit (char encoded-string (1+ index)))
+                       (hex-digit (char encoded-string (+ index 2))))
                   (progn
-                    (push (+ (* 16 (hex (char s (1+ i)))) (hex (char s (+ i 2)))) bytes)
-                    (incf i 3))
+                    (push (+ (* 16 (hex-digit (char encoded-string (1+ index))))
+                             (hex-digit (char encoded-string (+ index 2))))
+                          bytes)
+                    (incf index 3))
                   (progn
-                    (loop for b across (babel:string-to-octets (string c) :encoding :utf-8)
-                          do (push b bytes))
-                    (incf i))))))
+                    (loop for byte across (babel:string-to-octets (string current-char)
+                                                                  :encoding :utf-8)
+                          do (push byte bytes))
+                    (incf index))))))
         (babel:octets-to-string (coerce (nreverse bytes) '(vector (unsigned-byte 8)))
                                 :encoding :utf-8 :errorp nil))))
 

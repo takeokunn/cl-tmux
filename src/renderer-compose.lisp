@@ -151,6 +151,11 @@
       (render-lock-screen buffer terminal-rows terminal-cols)
       (return-from render-session-to-string (get-output-stream-string buffer)))
     (%render-panes-and-borders buffer window panes active-pane terminal-cols)
+    ;; pane-border-status title lines (drawn after borders so they overwrite border cells)
+    (when (and window panes
+               (not (string= (cl-tmux/options:get-option "pane-border-status" "off") "off")))
+      (dolist (pane panes)
+        (%render-pane-border-status buffer pane session window)))
     (%render-overlay-layer buffer active-pane terminal-rows terminal-cols)
     (when status-on
       (render-status-bar buffer session terminal-rows terminal-cols

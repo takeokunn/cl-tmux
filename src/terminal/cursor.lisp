@@ -4,6 +4,11 @@
 ;;;; Loads AFTER scroll.lisp so cursor-down/scroll can call scroll-up-one
 ;;;; (defined there) without a forward-reference.
 
+;;; ── Constants ──────────────────────────────────────────────────────────────
+
+(defconstant +tab-width+ 8
+  "Standard terminal tab column interval: tab stops every 8 columns by default.")
+
 ;;; ── Cursor movement ────────────────────────────────────────────────────────
 ;;;
 ;;; define-cursor-movements is a Prolog-like table:
@@ -73,17 +78,31 @@
             '()
             (remove (screen-cursor-x screen) (%materialize-tab-stops screen)))))
 
+(defun %next-tab-stop (stops x max-x)
+  "Return the column of the next tab stop after X.
+   When STOPS is :DEFAULT the standard every-+TAB-WIDTH+-column grid is used;
+   otherwise STOPS is a custom sorted list.  The result is clamped to MAX-X."
+  (if (eq stops :default)
+      (min (* +tab-width+ (ceiling (1+ x) +tab-width+)) max-x)
+      (or (find-if (lambda (c) (> c x)) (sort (copy-list stops) #'<))
+          max-x)))
+
+(defun %prev-tab-stop (stops x)
+  "Return the column of the previous tab stop before X.
+   When STOPS is :DEFAULT the standard every-+TAB-WIDTH+-column grid is used;
+   otherwise STOPS is a custom sorted list.  The result is clamped to 0."
+  (if (eq stops :default)
+      (* +tab-width+ (floor (max 0 (1- x)) +tab-width+))
+      (or (find-if (lambda (c) (< c x)) (sort (copy-list stops) #'>))
+          0)))
+
 (defun cursor-ht (screen)
-  "Horizontal tab: advance the cursor to the next tab stop (default: every 8
-   columns; HTS/TBC can customise the stops), clamping to the last column."
-  (let ((stops (screen-tab-stops screen))
-        (x     (screen-cursor-x screen))
-        (max-x (1- (screen-width screen))))
-    (setf (screen-cursor-x screen)
-          (if (eq stops :default)
-              (min (* 8 (ceiling (1+ x) 8)) max-x)
-              (or (find-if (lambda (c) (> c x)) (sort (copy-list stops) #'<))
-                  max-x)))))
+  "Horizontal tab: advance the cursor to the next tab stop (default: every
+   +TAB-WIDTH+ columns; HTS/TBC can customise the stops), clamping to the last column."
+  (setf (screen-cursor-x screen)
+        (%next-tab-stop (screen-tab-stops screen)
+                        (screen-cursor-x screen)
+                        (1- (screen-width screen)))))
 
 (defun cursor-cht (screen n)
   "CHT — cursor forward N tab stops (CSI N I).
@@ -95,13 +114,9 @@
   "CBT — cursor backward N tab stops (CSI N Z).
    Move the cursor back to the Nth previous tab stop, stopping at column 0."
   (dotimes (_ (max 1 n))
-    (let ((stops (screen-tab-stops screen))
-          (x     (screen-cursor-x screen)))
-      (setf (screen-cursor-x screen)
-            (if (eq stops :default)
-                (* 8 (floor (max 0 (1- x)) 8))
-                (or (find-if (lambda (c) (< c x)) (sort (copy-list stops) #'>))
-                    0))))))
+    (setf (screen-cursor-x screen)
+          (%prev-tab-stop (screen-tab-stops screen)
+                          (screen-cursor-x screen)))))
 
 (defun cursor-bs (screen)
   "Backspace: move cursor left one column if not already at column 0."

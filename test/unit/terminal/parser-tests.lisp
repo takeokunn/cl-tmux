@@ -97,7 +97,7 @@
   (with-screen (s 20 5)
     (screen-process-bytes s
       (babel:string-to-octets
-        (format nil "~C]0;my-window~C" #\Escape #\Bel)
+        (format nil "~C]0;my-window~C" #\Escape (code-char 7))
         :encoding :utf-8))
     (is (string= "my-window" (cl-tmux/terminal/types:screen-title s))
         "screen-title must be set to 'my-window' after OSC 0")))
@@ -107,7 +107,7 @@
   (with-screen (s 20 5)
     (screen-process-bytes s
       (babel:string-to-octets
-        (format nil "~C]2;xterm-title~C" #\Escape #\Bel)
+        (format nil "~C]2;xterm-title~C" #\Escape (code-char 7))
         :encoding :utf-8))
     (is (string= "xterm-title" (cl-tmux/terminal/types:screen-title s))
         "screen-title must be set to 'xterm-title' after OSC 2")))
@@ -119,7 +119,7 @@
     ;; OSC 0 ; title BEL -- common in xterm
     (screen-process-bytes s
       (babel:string-to-octets
-        (format nil "~C]0;window title~C" #\Escape #\Bel)
+        (format nil "~C]0;window title~C" #\Escape (code-char 7))
         :encoding :utf-8))
     (feed s "b")
     (is (char= #\a (char-at s 0 0)))
@@ -992,7 +992,7 @@
     (finishes
       (screen-process-bytes s
         (babel:string-to-octets
-          (format nil "~C]notanumber~C" #\Escape #\Bel)
+          (format nil "~C]notanumber~C" #\Escape (code-char 7))
           :encoding :utf-8)))
     ;; screen-title must remain at its default (NIL or empty string).
     (let ((title (cl-tmux/terminal/types:screen-title s)))
@@ -1006,7 +1006,7 @@
     (finishes
       (screen-process-bytes s
         (babel:string-to-octets
-          (format nil "~C]99;some-data~C" #\Escape #\Bel)
+          (format nil "~C]99;some-data~C" #\Escape (code-char 7))
           :encoding :utf-8)))
     ;; screen-title must remain unset (OSC 99 has no handler).
     (let ((title (cl-tmux/terminal/types:screen-title s)))
@@ -1044,7 +1044,7 @@
       ;; Feed OSC 52 ; c ; aGVsbG8= BEL  (c = clipboard target, ignored)
       (screen-process-bytes s
         (babel:string-to-octets
-          (format nil "~C]52;c;aGVsbG8=~C" #\Escape #\Bel)
+          (format nil "~C]52;c;aGVsbG8=~C" #\Escape (code-char 7))
           :encoding :utf-8))
       (is (string= "hello" received)
           "osc52-handler must be called with decoded text 'hello'"))))
@@ -1056,7 +1056,7 @@
       (finishes
         (screen-process-bytes s
           (babel:string-to-octets
-            (format nil "~C]52;c;SGVsbG8=~C" #\Escape #\Bel)
+            (format nil "~C]52;c;SGVsbG8=~C" #\Escape (code-char 7))
             :encoding :utf-8))))))
 
 (test osc52-read-request-silently-ignored
@@ -1067,7 +1067,7 @@
              (lambda (text) (setf received text))))
       (screen-process-bytes s
         (babel:string-to-octets
-          (format nil "~C]52;c;?~C" #\Escape #\Bel)
+          (format nil "~C]52;c;?~C" #\Escape (code-char 7))
           :encoding :utf-8))
       (is (eq :not-called received)
           "handler must NOT be invoked for a clipboard read request ('?')"))))
@@ -1087,7 +1087,7 @@
   (with-screen (s 20 5)
     (screen-process-bytes s
       (babel:string-to-octets
-        (format nil "~C]7;file://myhost/home/user/project~C" #\Escape #\Bel)
+        (format nil "~C]7;file://myhost/home/user/project~C" #\Escape (code-char 7))
         :encoding :utf-8))
     (is (string= "/home/user/project" (cl-tmux/terminal/types:screen-cwd s))
         "screen-cwd must be the OSC 7 path after the sequence (got ~S)"
@@ -1117,3 +1117,159 @@
   (with-screen (s 20 5)
     (is (string= "" (cl-tmux/terminal/types:screen-cwd s))
         "a fresh screen has no reported cwd")))
+
+;;; ── Coverage gap: define-osc-rules macro ─────────────────────────────────────
+;;;
+;;; Audit finding: define-osc-rules was not tested as a macro in isolation.
+;;; Symmetry with the define-state and define-dec-graphics-table assertions.
+
+(test define-osc-rules-macro-is-defined
+  "define-osc-rules is a defined macro in the parser package."
+  (is (macro-function 'cl-tmux/terminal/parser::define-osc-rules)
+      "define-osc-rules must be a macro"))
+
+;;; ── Coverage gap: make-dcs-st-k direct test ──────────────────────────────────
+;;;
+;;; make-dcs-st-k was extracted from the inline lambda inside make-dcs-k.
+;;; Test it directly to confirm symmetry with make-osc-st-k.
+
+(def-suite direct-dcs-st-suite
+  :description "Direct calls to make-dcs-st-k bridge continuation"
+  :in terminal-suite)
+(in-suite direct-dcs-st-suite)
+
+(test make-dcs-st-k-backslash-returns-ground
+  "make-dcs-st-k on backslash (#x5C) returns ground-state (ST confirmed)."
+  (let* ((s   (make-screen 10 5))
+         (k   (cl-tmux/terminal/parser::make-dcs-st-k))
+         (result (funcall k s #x5C)))
+    (is (eq #'cl-tmux/terminal/parser:ground-state result)
+        "make-dcs-st-k on backslash must return ground-state")))
+
+(test make-dcs-st-k-non-backslash-resumes-consuming
+  "make-dcs-st-k on a non-backslash byte resumes DCS consumption (returns a continuation)."
+  (let* ((s   (make-screen 10 5))
+         (k   (cl-tmux/terminal/parser::make-dcs-st-k))
+         (result (funcall k s (char-code #\A))))
+    (is (functionp result)
+        "make-dcs-st-k on non-backslash must return a continuation (keeps consuming DCS)")))
+
+;;; ── Coverage gap: make-bytes / feed-osc helpers ──────────────────────────────
+;;;
+;;; Audit finding: the pattern
+;;;   (make-array N :element-type '(unsigned-byte 8) :initial-contents '(...))
+;;; is repeated 7+ times in parser-tests.lisp.  Centralise it as make-bytes.
+;;; The pattern
+;;;   (screen-process-bytes s (babel:string-to-octets (format nil "~C]N;...~C" ...) :encoding :utf-8))
+;;; is repeated 10+ times.  Centralise it as feed-osc.
+
+(defun make-bytes (&rest byte-values)
+  "Return a simple (unsigned-byte 8) vector containing BYTE-VALUES."
+  (make-array (length byte-values)
+              :element-type '(unsigned-byte 8)
+              :initial-contents byte-values))
+
+(defun feed-osc (screen command-number body-string)
+  "Feed an OSC sequence with integer COMMAND-NUMBER and BODY-STRING to SCREEN,
+   terminated by BEL (ASCII 7).  Uses UTF-8 encoding to match real terminal behaviour."
+  (screen-process-bytes screen
+    (babel:string-to-octets
+      (format nil "~C]~D;~A~C" #\Escape command-number body-string (code-char 7))
+      :encoding :utf-8)))
+
+;;; Verify the helpers function correctly before relying on them in later tests.
+
+(test make-bytes-helper
+  "make-bytes returns a (unsigned-byte 8) vector with the given byte values."
+  (let ((bytes (make-bytes #x1B #x5D #x07)))
+    (is (= 3 (length bytes)) "length must be 3")
+    (is (= #x1B (aref bytes 0)) "first byte must be ESC")
+    (is (= #x5D (aref bytes 1)) "second byte must be ]")
+    (is (= #x07 (aref bytes 2)) "third byte must be BEL")))
+
+(test feed-osc-helper
+  "feed-osc sends an OSC sequence that causes the expected side-effect."
+  (with-screen (s 20 5)
+    (feed-osc s 0 "test-title")
+    (is (string= "test-title" (cl-tmux/terminal/types:screen-title s))
+        "feed-osc for OSC 0 must set screen-title")))
+
+;;; ── Coverage gap: zero-length buffer in screen-process-bytes ─────────────────
+;;;
+;;; Audit finding: screen-process-bytes with start=0, end=0 on a zero-length
+;;; buffer was not tested.
+
+(def-suite parser-suite
+  :description "Parser and emulator coverage gap tests"
+  :in terminal-suite)
+(in-suite parser-suite)
+
+(test screen-process-bytes-zero-length-buffer-is-noop
+  "screen-process-bytes on a zero-length buffer (start=end=0) is a no-op."
+  (with-screen (s 10 5)
+    (let ((buf (make-array 0 :element-type '(unsigned-byte 8))))
+      (screen-process-bytes s buf :start 0 :end 0))
+    (is (char= #\Space (char-at s 0 0))
+        "zero-length buffer must leave screen unchanged")))
+
+;;; ── Coverage gap: %base64-decode edge cases ──────────────────────────────────
+;;;
+;;; Audit finding: Base64 padding ('='), truncated input, and invalid characters
+;;; were not directly asserted.
+
+(def-suite base64-decode-suite
+  :description "Direct coverage of %base64-decode edge cases"
+  :in terminal-suite)
+(in-suite base64-decode-suite)
+
+(test base64-decode-basic-string
+  "%base64-decode decodes a standard Base64 string ('hello' = aGVsbG8=)."
+  (let ((result (cl-tmux/terminal/parser::%base64-decode "aGVsbG8=")))
+    (is (not (null result)) "must return a byte vector, not NIL")
+    (is (string= "hello"
+                 (babel:octets-to-string result :encoding :utf-8))
+        "aGVsbG8= must decode to 'hello'")))
+
+(test base64-decode-empty-string
+  "%base64-decode on an empty string returns an empty byte vector."
+  (let ((result (cl-tmux/terminal/parser::%base64-decode "")))
+    (is (or (null result) (zerop (length result)))
+        "empty input must produce empty output or NIL")))
+
+(test base64-decode-truncated-group
+  "%base64-decode on input shorter than 4 chars does not crash."
+  (finishes (cl-tmux/terminal/parser::%base64-decode "YQ"))
+  ;; 'YQ' decodes to 'a' (no padding); should succeed without error.
+  (let ((result (cl-tmux/terminal/parser::%base64-decode "YQ==")))
+    (is (not (null result)) "padded 2-char group must decode successfully")))
+
+;;; ── Coverage gap: %parse-osc-command error branch ────────────────────────────
+;;;
+;;; Audit finding: the error-return branch (non-integer command field) was not
+;;; directly asserted.
+
+(test parse-osc-command-returns-nil-for-non-integer
+  "%parse-osc-command returns NIL when the command field is not a valid integer."
+  (let ((result (cl-tmux/terminal/parser::%parse-osc-command "notanumber" 10)))
+    (is (null result)
+        "%parse-osc-command must return NIL for a non-integer command field")))
+
+(test parse-osc-command-returns-integer-for-valid-input
+  "%parse-osc-command returns the integer for a valid command field."
+  (let ((result (cl-tmux/terminal/parser::%parse-osc-command "52;data" 2)))
+    (is (= 52 result)
+        "%parse-osc-command must return 52 for '52' prefix")))
+
+;;; ── Coverage gap: %handle-osc-52 no-inner-semicolon branch ──────────────────
+;;;
+;;; Audit finding: the branch where the OSC 52 body has no semicolon was not
+;;; directly tested.
+
+(test handle-osc-52-no-inner-semicolon-is-noop
+  "%handle-osc-52 is a no-op when the body has no semicolon (malformed OSC 52)."
+  (let ((received :not-called)
+        (cl-tmux/terminal/parser:*osc52-handler*
+          (lambda (text) (setf received text))))
+    (finishes (cl-tmux/terminal/parser::%handle-osc-52 "nodatahere"))
+    (is (eq :not-called received)
+        "%handle-osc-52 with no semicolon must not invoke the handler")))

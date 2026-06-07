@@ -51,6 +51,8 @@
      (:file "overlay")              ; overlay, popup, menu state (used by dispatch/events/renderer)
      (:file "commands-core")
      (:file "commands-copy-mode")
+     (:file "commands-copy-mode-nav")    ; word/line navigation, page/half-page scroll, copy-D/Y
+     (:file "commands-copy-mode-search") ; search-forward/backward, search-next/prev
      (:file "commands")
      (:file "renderer-format")     ; ANSI primitives
      (:file "renderer-style")     ; style-string parsing + SGR dispatch tables
@@ -67,6 +69,7 @@
      (:file "events-core")
      (:file "events-keystroke")
      (:file "events-loop")
+     (:file "session-registry")  ; session registry + group management
      (:file "server")
      (:file "client")
      (:file "main"))))

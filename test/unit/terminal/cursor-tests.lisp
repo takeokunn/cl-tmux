@@ -7,6 +7,21 @@
 ;;;; Also covers: combining-char-p predicate, DEC graphics charset remapping,
 ;;;;              write-char-at-cursor combining-char path, write-codepoint.
 
+;;; ── Shared fixture: with-scroll-region ──────────────────────────────────────
+;;;
+;;; Several tests in this file set a non-trivial scroll region and position the
+;;; cursor within it before calling action functions.  This macro captures the
+;;; repeated setup to remove the inline duplication.
+
+(defmacro with-scroll-region ((screen-var w h top bottom cy) &body body)
+  "Bind SCREEN-VAR to a W×H screen with scroll region TOP..BOTTOM and cursor
+   initially on row CY.  Used by scroll-region clamping and cursor-ri tests."
+  `(with-screen (,screen-var ,w ,h)
+     (setf (cl-tmux/terminal/types::screen-scroll-top    ,screen-var) ,top
+           (cl-tmux/terminal/types::screen-scroll-bottom ,screen-var) ,bottom
+           (cl-tmux/terminal/types::screen-cursor-y      ,screen-var) ,cy)
+     ,@body))
+
 ;;; ── SUITE: scroll-region cursor clamping ────────────────────────────────────
 ;;;
 ;;; cl-tmux/terminal/actions::cursor-up/down clamp to the SCROLL REGION
@@ -24,12 +39,7 @@
 (test cursor-up-clamps-to-scroll-top
   "cursor-up with a large count stops at scroll-top, NOT at row 0.
    This is the divergence from set-cursor, which would clamp to 0."
-  (with-screen (s 10 10)
-    ;; Scroll region = rows 3..7 (0-based inclusive).
-    (setf (cl-tmux/terminal/types::screen-scroll-top s) 3
-          (cl-tmux/terminal/types::screen-scroll-bottom s) 7)
-    ;; Position cursor inside the region.
-    (setf (cl-tmux/terminal/types:screen-cursor-y s) 6)
+  (with-scroll-region (s 10 10 3 7 6)
     (cl-tmux/terminal/actions::cursor-up s 100)
     (is (= 3 (screen-cursor-y s))
         "cursor-up should clamp to scroll-top 3, got ~D" (screen-cursor-y s))
@@ -39,10 +49,7 @@
 
 (test cursor-down-clamps-to-scroll-bottom
   "cursor-down with a large count stops at scroll-bottom, NOT at height-1."
-  (with-screen (s 10 10)
-    (setf (cl-tmux/terminal/types::screen-scroll-top s) 3
-          (cl-tmux/terminal/types::screen-scroll-bottom s) 7)
-    (setf (cl-tmux/terminal/types:screen-cursor-y s) 4)
+  (with-scroll-region (s 10 10 3 7 4)
     (cl-tmux/terminal/actions::cursor-down s 100)
     (is (= 7 (screen-cursor-y s))
         "cursor-down should clamp to scroll-bottom 7, got ~D" (screen-cursor-y s))
@@ -69,10 +76,7 @@
 (test cursor-up-down-respect-region-from-mid
   "From a row inside the region, a small cursor-up/down stays within the
    region and does not overshoot the margins."
-  (with-screen (s 10 10)
-    (setf (cl-tmux/terminal/types::screen-scroll-top s) 2
-          (cl-tmux/terminal/types::screen-scroll-bottom s) 8)
-    (setf (cl-tmux/terminal/types:screen-cursor-y s) 5)
+  (with-scroll-region (s 10 10 2 8 5)
     (cl-tmux/terminal/actions::cursor-up s 2)
     (is (= 3 (screen-cursor-y s)) "cursor-up 2 from row 5 -> row 3")
     (cl-tmux/terminal/actions::cursor-down s 4)
@@ -290,14 +294,56 @@
 
 (test cursor-ri-at-scroll-top-non-default-region
   :description "cursor-ri at a custom scroll-top scrolls that region only."
-  (with-screen (s 10 10)
-    (setf (cl-tmux/terminal/types::screen-scroll-top    s) 3
-          (cl-tmux/terminal/types::screen-scroll-bottom s) 7)
-    (setf (cl-tmux/terminal/types:screen-cursor-y s) 3)   ; at scroll-top
+  (with-scroll-region (s 10 10 3 7 3)
     (cl-tmux/terminal/actions:cursor-ri s)
     ;; cursor stays at scroll-top (scroll happened, not cursor move)
     (is (= 3 (screen-cursor-y s))
         "cursor-ri at scroll-top must stay at scroll-top after scrolling down")))
+
+;;; ── cursor-nel (ESC E — Next Line) ──────────────────────────────────────────
+;;;
+;;; cursor-nel is exported from cl-tmux/terminal/actions and used by the parser
+;;; (ESC E handler).  It performs CR then LF: moves the cursor to column 0 of
+;;; the next row, scrolling at the bottom margin exactly like LF.
+
+(def-suite cursor-nel-suite
+  :description "cursor-nel: composite CR+LF with scroll at the bottom margin"
+  :in terminal-suite)
+(in-suite cursor-nel-suite)
+
+(test cursor-nel-moves-to-column-zero-of-next-row
+  "cursor-nel from an interior column moves to col 0 of the next row."
+  (with-screen (s 10 5)
+    (feed s "hello")                       ; cursor at col 5, row 0
+    (cl-tmux/terminal/actions:cursor-nel s)
+    (check-cursor s 0 1)))
+
+(test cursor-nel-at-right-edge-moves-to-next-row
+  "cursor-nel from the last column also moves to col 0 of the next row."
+  (with-screen (s 5 5)
+    (setf (cl-tmux/terminal/types:screen-cursor-x s) 4
+          (cl-tmux/terminal/types:screen-cursor-y s) 2)
+    (cl-tmux/terminal/actions:cursor-nel s)
+    (check-cursor s 0 3)))
+
+(test cursor-nel-at-bottom-margin-scrolls
+  "cursor-nel at the bottom of the scroll region scrolls up; cursor stays on the
+   bottom row at column 0 (identical behaviour to LF at the bottom margin)."
+  (with-screen (s 5 3)
+    (feed s "LINE0")
+    (cl-tmux/terminal/actions:set-cursor s 3 2)  ; col 3, last row
+    (cl-tmux/terminal/actions:cursor-nel s)
+    ;; After scroll, cursor is on row 2 col 0; the old row 0 is in scrollback.
+    (check-cursor s 0 2)
+    (is (plusp (length (cl-tmux/terminal/types:screen-scrollback s)))
+        "cursor-nel at bottom margin must push a row to scrollback")))
+
+(test cursor-nel-via-parser
+  "ESC E (NEL) through the parser advances to col 0 of the next row."
+  (with-screen (s 10 5)
+    (feed s "hello")                       ; cursor at col 5, row 0
+    (feed s (esc "E"))                     ; ESC E = NEL
+    (check-cursor s 0 1)))
 
 ;;; ── write-char-at-cursor wide char ───────────────────────────────────────────
 

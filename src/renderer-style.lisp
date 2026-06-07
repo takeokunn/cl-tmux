@@ -80,11 +80,35 @@
   (:conceal       "8")
   (:strikethrough "9"))
 
+;;; ── Colour-name table ───────────────────────────────────────────────────────
+;;;
+;;; Defined BEFORE %border-color-sgr so SBCL sees it as a known special at
+;;; compile time and does not emit an undefined-variable warning.
+
+(defparameter *%color-name-table*
+  '(("black"    . "30")
+    ("red"      . "31")
+    ("green"    . "32")
+    ("yellow"   . "33")
+    ("blue"     . "34")
+    ("magenta"  . "35")
+    ("cyan"     . "36")
+    ("white"    . "37")
+    ("brightblack"   . "90")
+    ("brightred"     . "91")
+    ("brightgreen"   . "92")
+    ("brightyellow"  . "93")
+    ("brightblue"    . "94")
+    ("brightmagenta" . "95")
+    ("brightcyan"    . "96")
+    ("brightwhite"   . "97"))
+  "Alist mapping color name strings to integer SGR base code strings (foreground codes).")
+
 ;;; ── Single-source border-colour lookup ───────────────────────────────────────
 ;;;
-;;; %border-color-sgr looks up a colour name in *%color-name-table* (defined in
-;;; renderer.lisp) and returns the foreground SGR code integer.  renderer-pane.lisp
-;;; calls this instead of its own duplicate cond table.
+;;; %border-color-sgr looks up a colour name in *%color-name-table* and returns
+;;; the foreground SGR code integer.  renderer-pane.lisp calls this instead of
+;;; its own duplicate cond table.
 
 (defun %border-color-sgr (color-name)
   "Return the foreground SGR code integer for COLOR-NAME via *%color-name-table*.
@@ -110,27 +134,6 @@
         (symbol-value '+sgr-clock-face+)
         "44;96")
   "Clock overlay SGR string: blue background (44) + bright cyan text (96).")
-
-;;; ── Colour-name table ───────────────────────────────────────────────────────
-
-(defparameter *%color-name-table*
-  '(("black"    . "30")
-    ("red"      . "31")
-    ("green"    . "32")
-    ("yellow"   . "33")
-    ("blue"     . "34")
-    ("magenta"  . "35")
-    ("cyan"     . "36")
-    ("white"    . "37")
-    ("brightblack"   . "90")
-    ("brightred"     . "91")
-    ("brightgreen"   . "92")
-    ("brightyellow"  . "93")
-    ("brightblue"    . "94")
-    ("brightmagenta" . "95")
-    ("brightcyan"    . "96")
-    ("brightwhite"   . "97"))
-  "Alist mapping color name strings to integer SGR base code strings (foreground codes).")
 
 (defun %color-name-to-sgr-number (name is-bg)
   "Convert a color name string NAME to an SGR sequence fragment.

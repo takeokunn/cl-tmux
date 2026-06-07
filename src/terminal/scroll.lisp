@@ -31,19 +31,19 @@
 ;;; fall back to the compile-time constant.  Injecting the cap as a callback
 ;;; rather than probing cl-tmux/options at call time keeps this file pure
 ;;; (no runtime package discovery) and testable in isolation.
-(defvar *history-limit-fn* nil
+(defvar *history-limit-function* nil
   "A zero-argument function returning the current history-limit integer, or NIL.
    Install (lambda () (cl-tmux/options:get-option \"history-limit\")) at startup.")
 
 (declaim (inline %effective-history-limit))
 (defun %effective-history-limit ()
   "Return the history-limit in effect: callback result if available, else +max-scrollback-lines+."
-  (or (and *history-limit-fn* (funcall *history-limit-fn*))
+  (or (and *history-limit-function* (funcall *history-limit-function*))
       cl-tmux/config:+max-scrollback-lines+))
 
 (defun trim-scroll-history (screen)
   "Cap the scrollback buffer of SCREEN to the current history-limit.
-   The limit is obtained from *history-limit-fn* (injected at startup)
+   The limit is obtained from *history-limit-function* (injected at startup)
    rather than discovered via find-package at call time.
    Called after every scroll-up to honour runtime configuration changes."
   (let ((cap (%effective-history-limit)))
@@ -66,6 +66,7 @@
          (saved-row (make-array w)))
     (dotimes (col w) (setf (aref saved-row col) (screen-cell screen col top)))
     (push saved-row (screen-scrollback screen))
+    ;; Copy row+1 → row (shift content upward; top row was already saved above).
     (loop for row from top below bottom
           do (%copy-row screen row (1+ row)))
     (%clear-row screen bottom)

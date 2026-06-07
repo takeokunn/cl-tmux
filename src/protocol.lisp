@@ -94,10 +94,10 @@
 (defun encode-frame (type payload)
   "Encode one frame of TYPE carrying PAYLOAD (a sequence of octets) into a fresh
    octet vector: [TYPE][LENGTH u32-be][PAYLOAD]."
-  (let* ((len   (length payload))
-         (frame (make-array (+ +header-size+ len) :element-type '(unsigned-byte 8))))
+  (let* ((payload-length (length payload))
+         (frame (make-array (+ +header-size+ payload-length) :element-type '(unsigned-byte 8))))
     (setf (aref frame 0) type)
-    (replace frame (u32-octets len) :start1 1)
+    (replace frame (u32-octets payload-length) :start1 1)
     (replace frame payload :start1 +header-size+)
     frame))
 
@@ -108,10 +108,10 @@
    complete frame (header incomplete, or payload not fully arrived)."
   (if (< (- end start) +header-size+)
       (values nil nil start)
-      (let* ((type    (aref buffer start))
-             (len     (read-u32 buffer (1+ start)))
-             (payload-start (+ start +header-size+))
-             (next    (+ payload-start len)))
+      (let* ((type           (aref buffer start))
+             (payload-length (read-u32 buffer (1+ start)))
+             (payload-start  (+ start +header-size+))
+             (next           (+ payload-start payload-length)))
         (if (> next end)
             (values nil nil start)                 ; payload not fully arrived
             (values type
@@ -175,8 +175,9 @@
 ;;; When target is NIL the target field is omitted entirely.
 ;;; The command keyword name is encoded without the leading colon.
 
-(defconstant +nul-byte+ 0
-  "ASCII NUL byte — the field delimiter in +msg-command+ payloads.")
+;;; The NUL byte (ASCII 0) is used as the field delimiter in +msg-command+ payloads.
+;;; It is used only in encode-fields-to-buffer below; the literal 0 is used directly
+;;; rather than a named constant to avoid a single-use defconstant with no reuse value.
 
 ;;; ── Target-sigil detection macro ─────────────────────────────────────────────
 ;;;
@@ -231,12 +232,12 @@
          (data-bytes  (reduce #'+ field-octets :key #'length :initial-value 0))
          (total-len   (+ data-bytes field-count))
          (buffer      (make-array total-len :element-type '(unsigned-byte 8))))
-    (loop with position = 0
+    (loop with write-pos = 0
           for field-bytes in field-octets
-          do (replace buffer field-bytes :start1 position)
-             (incf position (length field-bytes))
-             (setf (aref buffer position) +nul-byte+)
-             (incf position))
+          do (replace buffer field-bytes :start1 write-pos)
+             (incf write-pos (length field-bytes))
+             (setf (aref buffer write-pos) 0) ; ASCII NUL field delimiter
+             (incf write-pos))
     buffer))
 
 (defun encode-command-payload (command-name &key target args)

@@ -155,7 +155,7 @@
           (loop repeat 5 collect (make-array 5 :initial-element
                                                (cl-tmux/terminal/types:blank-cell))))
     ;; Override the limit function to return 3
-    (let ((cl-tmux/terminal/actions:*history-limit-fn* (lambda () 3)))
+    (let ((cl-tmux/terminal/actions:*history-limit-function* (lambda () 3)))
       (cl-tmux/terminal/actions:trim-scroll-history s))
     (is (<= (length (cl-tmux/terminal/types:screen-scrollback s)) 3)
         "scrollback must be capped at 3 entries after trim")))
@@ -166,7 +166,7 @@
     (setf (cl-tmux/terminal/types:screen-scrollback s)
           (loop repeat 2 collect (make-array 5 :initial-element
                                                (cl-tmux/terminal/types:blank-cell))))
-    (let ((cl-tmux/terminal/actions:*history-limit-fn* (lambda () 100)))
+    (let ((cl-tmux/terminal/actions:*history-limit-function* (lambda () 100)))
       (cl-tmux/terminal/actions:trim-scroll-history s))
     (is (= 2 (length (cl-tmux/terminal/types:screen-scrollback s)))
         "scrollback with 2 entries under limit of 100 must remain at 2")))
@@ -175,8 +175,8 @@
   :description "Scrolling a full screen through many lines caps scrollback at the default limit."
   (with-screen (s 5 3)
     ;; Feed enough lines to cause many scrolls (default cap is +max-scrollback-lines+)
-    ;; We use a small cap via *history-limit-fn* to keep the test fast
-    (let ((cl-tmux/terminal/actions:*history-limit-fn* (lambda () 5)))
+    ;; We use a small cap via *history-limit-function* to keep the test fast
+    (let ((cl-tmux/terminal/actions:*history-limit-function* (lambda () 5)))
       (loop for i below 20
             do (feed s (format nil "L~D" i))
             do (feed s (format nil "~C~C" #\Return #\Linefeed))))

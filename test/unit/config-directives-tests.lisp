@@ -32,12 +32,8 @@
    (HOME a directory pathname)."
   (namestring (cl-tmux/config::%config-path-from override xdg home)))
 
-(defmacro with-isolated-key-tables (&body body)
-  "Run BODY with a fresh *key-tables* and config isolation from
-   with-isolated-config.  Prevents key-table mutations from leaking between tests."
-  `(let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
-     (with-isolated-config
-       ,@body)))
+;;; NOTE: with-isolated-key-tables and with-temp-config-file are defined in
+;;; test/helpers.lisp so all test suites can reuse them.
 
 ;;; *bindable-commands* invariant
 
@@ -304,24 +300,14 @@
 (test load-config-file-existing-temp-file
   "load-config-file applies an existing file's directives and returns the count."
   (with-isolated-config
-    (let ((p (merge-pathnames "cl-tmux-test.conf" (uiop:temporary-directory))))
-      (unwind-protect
-           (progn
-             (with-open-file (out p :direction :output
-                                    :if-exists :supersede
-                                    :if-does-not-exist :create)
-               (write-line "bind z next-window" out)
-               (write-line "set-status-height 3" out)
-               (finish-output out))
-             (is (= 2 (load-config-file p))
-                 "load-config-file should apply and count both directives")
-             (is (eq :next-window (lookup-key-binding #\z))
-                 "#\\z should be bound to :next-window after loading the temp file")
-             (is (= 3 *status-height*)
-                 "*status-height* should be 3 after loading the temp file, got ~A"
-                 *status-height*))
-        (when (probe-file p)
-          (delete-file p))))))
+    (with-temp-config-file (p "bind z next-window" "set-status-height 3")
+      (is (= 2 (load-config-file p))
+          "load-config-file should apply and count both directives")
+      (is (eq :next-window (lookup-key-binding #\z))
+          "#\\z should be bound to :next-window after loading the temp file")
+      (is (= 3 *status-height*)
+          "*status-height* should be 3 after loading the temp file, got ~A"
+          *status-height*))))
 
 ;;; %command-keyword: resolution and non-interning contract
 
@@ -506,23 +492,11 @@
       (is (eq :new-window (cl-tmux/config:key-table-command entry))
           "prefix binding must be :new-window"))))
 
-;;; set directive
-
-(test set-directive-stores-option
-  "The set directive stores a value in the global options table."
-  (with-fresh-global-options
-    (apply-config-directive '("set" "status-interval" "30"))
-    (is (= 30 (cl-tmux/options:get-option "status-interval"))
-        "set must store status-interval = 30 in global options")))
-
-(test setw-directive-stores-option
-  "The setw directive stores a value in the global options table."
-  (with-fresh-global-options
-    (apply-config-directive '("setw" "status-interval" "5"))
-    (is (= 5 (cl-tmux/options:get-option "status-interval"))
-        "setw must store the option value")))
-
 ;;; bind-key directive alias
+;;;
+;;; NOTE: The six individual set-option alias tests (set-directive-stores-option,
+;;; setw-directive-stores-option, etc.) have been removed.  The table-driven test
+;;; set-option-directive-aliases-table-driven (below) supersedes them all.
 
 (test bind-key-alias-accepted
   "bind-key is accepted as an alias for bind and creates a prefix binding."
@@ -580,37 +554,10 @@
     (is (null (cl-tmux/config:key-table-lookup "copy-mode" #\q))
         "copy-mode binding must be removed after unbind -T")))
 
-;;; set-option directive alias
-
-(test set-option-directive-stores-option
-  "The set-option directive (long form of set) stores a value in global options."
-  (with-fresh-global-options
-    (apply-config-directive '("set-option" "status-interval" "20"))
-    (is (= 20 (cl-tmux/options:get-option "status-interval"))
-        "set-option must store status-interval = 20")))
-
-(test set-window-option-directive-stores-option
-  "The setw/set-window-option directive stores a value in global options."
-  (with-fresh-global-options
-    (apply-config-directive '("set-window-option" "history-limit" "3000"))
-    (is (= 3000 (cl-tmux/options:get-option "history-limit"))
-        "set-window-option must store history-limit = 3000")))
-
-(test sets-directive-stores-option
-  "The sets directive (session-scoped alias) stores a value in global options."
-  (with-fresh-global-options
-    (apply-config-directive '("sets" "status-interval" "10"))
-    (is (= 10 (cl-tmux/options:get-option "status-interval"))
-        "sets must store status-interval = 10")))
-
-(test set-session-option-directive-stores-option
-  "The set-session-option directive stores a value in global options."
-  (with-fresh-global-options
-    (apply-config-directive '("set-session-option" "history-limit" "1500"))
-    (is (= 1500 (cl-tmux/options:get-option "history-limit"))
-        "set-session-option must store history-limit = 1500")))
-
 ;;; %whitespace-p
+;;; NOTE: set-option-directive-stores-option, set-window-option-directive-stores-option,
+;;; sets-directive-stores-option, and set-session-option-directive-stores-option have
+;;; been removed — all superseded by set-option-directive-aliases-table-driven (below).
 
 (test whitespace-p-recognizes-space-and-tab
   "%whitespace-p returns T for space and tab, NIL for other chars."
@@ -817,3 +764,198 @@
         (is (= 7 (cl-tmux/options:get-option "status-interval"))
             "~A must store status-interval = 7 in global options, got ~S"
             verb (cl-tmux/options:get-option "status-interval"))))))
+
+;;; ── set -s server option routing ──────────────────────────────────────────
+
+(test apply-set-directive-server-flag
+  "'set -s exit-empty off' routes to server-options; exit-empty is server-only."
+  ;; exit-empty is in *server-option-registry* but NOT in *option-registry* /
+  ;; *global-options*, so the assertion 'not in global-options' is clean.
+  (let ((cl-tmux/options:*server-options* (make-hash-table :test #'equal)))
+    (is (eq t (apply-config-directive '("set" "-s" "exit-empty" "off")))
+        "set -s must return T")
+    (is (null (cl-tmux/options:get-server-option "exit-empty"))
+        "exit-empty must be NIL ('off') in server-options")
+    (is (null (cl-tmux/options:get-option "exit-empty" nil))
+        "exit-empty must NOT appear in global-options (it is server-only)")))
+
+;;; ── source-file / source directive ───────────────────────────────────────
+
+(test source-file-directive-loads-temp-file
+  "source-file applies a config file from disk, returning T."
+  (with-isolated-config
+    (with-temp-config-file (p "bind z next-window")
+      (is (eq t (apply-config-directive (list "source-file" (namestring p))))
+          "source-file must return T")
+      (is (eq :next-window (lookup-key-binding #\z))
+          "#\\z must be bound after source-file"))))
+
+(test source-directive-is-alias-for-source-file
+  "'source' is accepted as an alias for 'source-file'."
+  (with-isolated-config
+    (with-temp-config-file (p "bind w last-window")
+      (is (eq t (apply-config-directive (list "source" (namestring p))))
+          "source alias must return T")
+      (is (eq :last-window (lookup-key-binding #\w))
+          "#\\w must be bound after source"))))
+
+(test source-file-missing-returns-t-silently
+  "source-file on a nonexistent file returns T (errors are ignored)."
+  (with-isolated-config
+    (is (eq t (apply-config-directive '("source-file" "/nonexistent-cl-tmux-config-abc.conf")))
+        "source-file on a missing file must return T (error silently ignored)")))
+
+;;; ── run-shell / run directive ─────────────────────────────────────────────
+
+(test run-shell-directive-returns-t
+  "run-shell runs a shell command at config parse time and returns T."
+  (is (eq t (apply-config-directive '("run-shell" "true")))
+      "run-shell must return T"))
+
+(test run-directive-is-alias-for-run-shell
+  "'run' is accepted as an alias for 'run-shell'."
+  (is (eq t (apply-config-directive '("run" "true")))
+      "run alias must return T"))
+
+(test run-shell-errors-ignored
+  "run-shell with a failing command returns T (errors silently ignored)."
+  (is (eq t (apply-config-directive '("run-shell" "false")))
+      "run-shell with exit-code 1 must still return T"))
+
+;;; ── %if / %else / %endif preprocessor ───────────────────────────────────
+
+(test if-else-endif-truthy-condition
+  "%if with a truthy condition applies the then-block and skips the else-block."
+  (with-isolated-config
+    ;; *config-condition-evaluator* is NIL by default → all conditions truthy.
+    (let ((applied (load-config-from-string
+                    (format nil "%if 1~%bind z new-window~%%else~%bind z detach~%%endif~%"))))
+      (is (= 1 applied)
+          "only 1 directive must be applied under a truthy %if, got ~A" applied)
+      (is (eq :new-window (lookup-key-binding #\z))
+          "#\\z must be :new-window (then-block), not :detach (else-block)"))))
+
+(test if-else-endif-falsy-condition
+  "%if with a falsy condition skips the then-block and applies the else-block."
+  (with-isolated-config
+    ;; Set evaluator to return '0' (falsy) for any condition.
+    (let ((cl-tmux/config:*config-condition-evaluator*
+            (lambda (s) (declare (ignore s)) "0")))
+      (let ((applied (load-config-from-string
+                      (format nil "%if 0~%bind z new-window~%%else~%bind z detach~%%endif~%"))))
+        (is (= 1 applied)
+            "only 1 directive must be applied under a falsy %if, got ~A" applied)
+        (is (eq :detach (lookup-key-binding #\z))
+            "#\\z must be :detach (else-block) when condition is falsy")))))
+
+(test if-endif-no-else
+  "%if without %else applies the block when truthy, applies nothing when falsy."
+  (with-isolated-config
+    ;; Truthy (default evaluator NIL → all truthy)
+    (let ((applied (load-config-from-string
+                    (format nil "%if 1~%bind z new-window~%%endif~%"))))
+      (is (= 1 applied) "truthy %if without else applies 1 directive"))
+    ;; Falsy
+    (let ((cl-tmux/config:*config-condition-evaluator*
+            (lambda (s) (declare (ignore s)) "0")))
+      (let ((applied (load-config-from-string
+                      (format nil "%if 0~%bind w detach~%%endif~%"))))
+        (is (= 0 applied) "falsy %if without else applies 0 directives")))))
+
+(test if-block-outside-applies-normally
+  "Lines outside %if blocks are always applied regardless of evaluator."
+  (with-isolated-config
+    (let ((applied (load-config-from-string
+                    (format nil "bind z new-window~%%if 1~%bind n next-window~%%endif~%bind p prev-window~%"))))
+      (is (= 3 applied)
+          "3 directives must be applied (2 outside + 1 inside truthy %if)"))))
+
+(test nested-if-blocks
+  "Nested %if blocks work: inner block is skipped when outer is falsy."
+  (with-isolated-config
+    (let ((cl-tmux/config:*config-condition-evaluator*
+            (lambda (s) (declare (ignore s)) "0")))
+      (let ((applied (load-config-from-string
+                      (format nil "%if 0~%%if 1~%bind z new-window~%%endif~%%endif~%"))))
+        (is (= 0 applied)
+            "no directives inside a falsy outer %if block"))))
+  ;; All truthy
+  (with-isolated-config
+    (let ((applied (load-config-from-string
+                    (format nil "%if 1~%%if 1~%bind z new-window~%%endif~%%endif~%"))))
+      (is (= 1 applied) "one directive inside nested truthy %if blocks"))))
+
+(test if-condition-evaluated-by-callback
+  "%if condition string is passed verbatim to *config-condition-evaluator*."
+  (with-isolated-config
+    (let ((received nil))
+      (let ((cl-tmux/config:*config-condition-evaluator*
+              (lambda (s) (setf received s) "1")))
+        (load-config-from-string (format nil "%if some-condition~%bind z new-window~%%endif~%"))
+        (is (string= "some-condition" received)
+            "condition must be passed verbatim to the evaluator, got ~S" received)))))
+
+;;; ── %tmux-conf-paths ─────────────────────────────────────────────────────
+
+(test tmux-conf-paths-returns-list
+  "%tmux-conf-paths returns a list of pathname candidates."
+  (let ((paths (cl-tmux/config::%tmux-conf-paths #p"/home/user/")))
+    (is (listp paths) "must return a list")
+    (is (>= (length paths) 1) "must have at least 1 candidate")))
+
+;;; ── config-file-path (environment-variable reading path) ─────────────────
+;;;
+;;; These tests exercise config-file-path by temporarily overriding
+;;; environment variables.  Since posix-getenv reads the real environment
+;;; and we cannot setenv from Lisp portably in tests, we test the pure
+;;; %config-path-from helper directly (already covered above) and only
+;;; verify that config-file-path returns a pathname (not NIL) from the
+;;; live environment.
+
+(test config-file-path-returns-pathname
+  "config-file-path returns a pathname object (not NIL or a string)."
+  (let ((result (config-file-path)))
+    (is (pathnamep result)
+        "config-file-path must return a pathname, got ~S" result)))
+
+;;; ── %apply-option-side-effects: prefix branch ────────────────────────────
+;;;
+;;; Tests that "set -g prefix C-a" updates *prefix-key-code* and registers
+;;; the new key in the prefix table (the prefix2 branch has no separate
+;;; integration path into tests, so we cover the scalar + key-table path here).
+
+(test apply-set-directive-prefix-side-effect
+  "'set -g prefix C-a' updates *prefix-key-code* to 1 and binds the new key."
+  (with-isolated-key-tables
+    (let ((cl-tmux/config:*prefix-key-code* cl-tmux/config:+prefix-key-code+))
+      (apply-config-directive '("set" "-g" "prefix" "C-a"))
+      (is (= 1 cl-tmux/config:*prefix-key-code*)
+          "*prefix-key-code* must be 1 (C-a) after 'set -g prefix C-a'")
+      (let ((entry (cl-tmux/config:key-table-lookup "prefix" (code-char 1))))
+        (is (not (null entry))
+            "C-a (code-char 1) must be bound in the prefix table after prefix change")
+        (is (eq :send-prefix (cl-tmux/config:key-table-command entry))
+            "the new prefix key must be bound to :send-prefix")))))
+
+;;; ── unbind-all directive ─────────────────────────────────────────────────────
+
+(test apply-config-directive-unbind-all-clears-prefix-table
+  "'unbind-all' removes all bindings from the prefix key-table."
+  (with-isolated-key-tables
+    ;; Verify there's at least one binding first (e.g. C-c = :new-window).
+    (let ((before (cl-tmux/config:key-table-lookup "prefix" #\c)))
+      (is (not (null before)) "prefix table must have at least one binding before unbind-all"))
+    ;; Now clear it.
+    (cl-tmux/config:apply-config-directive '("unbind-all"))
+    ;; All bindings in prefix table should be gone.
+    (is (null (cl-tmux/config:key-table-lookup "prefix" #\c))
+        "C-c must be unbound after unbind-all")))
+
+(test apply-config-directive-unbind-all-T-clears-named-table
+  "'unbind-all -T root' removes all bindings from the root key-table."
+  (with-isolated-key-tables
+    ;; Bind something in root.
+    (cl-tmux/config:key-table-bind "root" #\x :new-window)
+    (cl-tmux/config:apply-config-directive '("unbind-all" "-T" "root"))
+    (is (null (cl-tmux/config:key-table-lookup "root" #\x))
+        "root binding must be cleared after unbind-all -T root")))

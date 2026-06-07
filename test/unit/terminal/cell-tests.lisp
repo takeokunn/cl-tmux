@@ -192,7 +192,12 @@
   :in terminal-suite)
 (in-suite clamp-suite)
 
-;;; Table-driven clamp tests: (v lo hi expected)
+;;; Table-driven clamp tests: (v lo hi expected description)
+;;;
+;;; This single table test covers all boundary cases: below lo, above hi,
+;;; at boundaries, within range, and lo=hi degenerate.  The four individual
+;;; named tests that previously existed were fully redundant with this table
+;;; and have been removed to eliminate noise without losing coverage.
 (test clamp-table
   :description "clamp correctly handles below, above, at, and within bounds."
   (dolist (case '((-5  0 10  0  "below lo clamps to lo")
@@ -207,28 +212,6 @@
                   (99  7  7  7  "lo=hi, v above: always returns lo/hi")))
     (destructuring-bind (v lo hi expected desc) case
       (is (= expected (cl-tmux/terminal/types:clamp v lo hi)) desc))))
-
-(test clamp-value-below-lo-returns-lo
-  :description "clamp returns LO when V < LO."
-  (is (= 0  (cl-tmux/terminal/types:clamp -5 0 10)))
-  (is (= 3  (cl-tmux/terminal/types:clamp  1 3  9))))
-
-(test clamp-value-above-hi-returns-hi
-  :description "clamp returns HI when V > HI."
-  (is (= 10 (cl-tmux/terminal/types:clamp 99 0 10)))
-  (is (= 9  (cl-tmux/terminal/types:clamp 20 3  9))))
-
-(test clamp-value-within-range-returned-unchanged
-  :description "clamp returns V unchanged when LO <= V <= HI."
-  (is (= 5  (cl-tmux/terminal/types:clamp  5 0 10)))
-  (is (= 0  (cl-tmux/terminal/types:clamp  0 0 10)))
-  (is (= 10 (cl-tmux/terminal/types:clamp 10 0 10))))
-
-(test clamp-lo-equals-hi-returns-lo
-  :description "When LO equals HI, clamp always returns that value."
-  (is (= 7 (cl-tmux/terminal/types:clamp  0 7 7)))
-  (is (= 7 (cl-tmux/terminal/types:clamp  7 7 7)))
-  (is (= 7 (cl-tmux/terminal/types:clamp 99 7 7))))
 
 ;;; ── safe-code-char ───────────────────────────────────────────────────────────
 

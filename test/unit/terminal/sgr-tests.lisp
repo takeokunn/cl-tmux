@@ -459,3 +459,47 @@
     (let ((expected (logior #x1000000 (ash 255 16) (ash 0 8) 128)))
       (is (= expected (cl-tmux/terminal/types:screen-cur-ul-color s))
           "apply-sgr 58;2;255;0;128 must encode true-color in cur-ul-color"))))
+
+;;; ── Coverage gap: define-sgr-rules macro ─────────────────────────────────────
+;;;
+;;; Audit finding: define-sgr-rules was not tested as a macro in isolation.
+;;; The generated %dispatch-sgr-code now also carries a docstring; verify it.
+
+(in-suite direct-action-sgr)
+
+(test define-sgr-rules-macro-is-defined
+  "define-sgr-rules is a defined macro in the sgr package."
+  (is (macro-function 'cl-tmux/terminal/sgr::define-sgr-rules)
+      "define-sgr-rules must be a macro"))
+
+(test dispatch-sgr-code-has-docstring
+  "%dispatch-sgr-code (exported) has a non-empty docstring injected by the macro."
+  (let ((doc (documentation 'cl-tmux/terminal/sgr:%dispatch-sgr-code 'function)))
+    (is (and (stringp doc) (plusp (length doc)))
+        "%dispatch-sgr-code must have a non-empty docstring")))
+
+;;; ── Coverage gap: %consume-256-color-param direct test ───────────────────────
+;;;
+;;; The %consume-256-color-param helper was extracted from apply-sgr to eliminate
+;;; code duplication across the 38/48/58 256-color arms.
+
+(test consume-256-color-param-sets-fg-and-advances
+  "%consume-256-color-param stores the clamped index via SETTER and returns the
+   tail after the three consumed elements."
+  (with-screen (s 10 2)
+    ;; Simulate the 38;5;42 arm: parameter-tail = (38 5 42 99)
+    (let* ((parameter-tail '(38 5 42 99))
+           (tail (cl-tmux/terminal/sgr::%consume-256-color-param
+                  s #'(setf cl-tmux/terminal/types:screen-cur-fg) parameter-tail)))
+      (is (= 42 (cl-tmux/terminal/types:screen-cur-fg s))
+          "%consume-256-color-param must store index 42 via the setter")
+      (is (equal '(99) tail)
+          "%consume-256-color-param must return the tail after the 3 consumed elements"))))
+
+(test consume-256-color-param-clamps-to-255
+  "%consume-256-color-param clamps an out-of-range index (> 255) to 255."
+  (with-screen (s 10 2)
+    (cl-tmux/terminal/sgr::%consume-256-color-param
+     s #'(setf cl-tmux/terminal/types:screen-cur-fg) '(38 5 300))
+    (is (= 255 (cl-tmux/terminal/types:screen-cur-fg s))
+        "index 300 must be clamped to 255")))

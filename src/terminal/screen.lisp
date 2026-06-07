@@ -27,12 +27,11 @@
   (scroll-top    0  :type fixnum)
   (scroll-bottom 23 :type fixnum)
   ;; CPS parser: a closure (screen byte) -> next-state-fn.
-  ;; The slot default is a lambda so that the cl-tmux/terminal/parser package need
-  ;; not be present at compile time.  At load time the package is guaranteed to
-  ;; exist before any screen is constructed (cl-tmux.asd loads parser before emulator).
-  (parser (lambda (screen byte)
-            (cl-tmux/terminal/parser:ground-state screen byte))
-          :type function)
+  ;; The DATA defstruct carries a placeholder (#'identity) so that the
+  ;; cl-tmux/terminal/parser package need not be present at defstruct compile time.
+  ;; make-screen (below) overwrites this slot with the real ground-state function
+  ;; after all packages are loaded (cl-tmux.asd guarantees parser loads before emulator).
+  (parser #'identity :type function)
   ;; Dirty flag: set whenever a cell changes; cleared by renderer after paint
   (dirty-p t :type boolean)
   ;; Lock for thread safety (renderer <-> PTY-reader threads)
@@ -113,16 +112,26 @@
   ;; Copy-mode rectangle-select flag: T when 'r' toggles rectangle mode
   (copy-rect-select-p nil :type boolean))
 
-(defun %make-blank-cells (n)
-  "Allocate a simple vector of N blank cells (space, default colour, no attrs)."
-  (make-array n :initial-contents (loop repeat n collect (blank-cell))))
+(defun %make-blank-cells (cell-count)
+  "Allocate a simple vector of CELL-COUNT blank cells (space, default colour, no attrs).
+   Each call to BLANK-CELL allocates a fresh struct; MAKE-ARRAY :initial-element
+   cannot be used here because that would share a single sentinel object across
+   all positions — mutations on one cell would silently corrupt others."
+  (make-array cell-count :initial-contents (loop repeat cell-count collect (blank-cell))))
 
 (defun make-screen (width height)
-  "Create a blank screen of given dimensions."
-  (%make-screen :width         width
-                :height        height
-                :cells         (%make-blank-cells (* width height))
-                :scroll-bottom (1- height)))
+  "Create a blank WIDTH x HEIGHT screen with cursor at origin and the CPS parser
+   wired to CL-TMUX/TERMINAL/PARSER:GROUND-STATE.
+   The parser slot is updated after construction so that the DATA-layer defstruct
+   carries no compile-time forward-reference to the CPS layer."
+  (let ((screen (%make-screen :width         width
+                               :height        height
+                               :cells         (%make-blank-cells (* width height))
+                               :scroll-bottom (1- height))))
+    ;; Wire the real ground-state now that all packages are loaded.
+    (setf (screen-parser screen)
+          (lambda (s byte) (cl-tmux/terminal/parser:ground-state s byte)))
+    screen))
 
 ;;; ── Grid helpers ───────────────────────────────────────────────────────────
 
@@ -144,25 +153,30 @@
   (setf (screen-dirty-p screen) nil))
 
 (defun screen-consume-bell (screen)
-  "Return T and clear the bell-pending flag when a BEL is pending on SCREEN.
+  "Return T and atomically clear SCREEN's bell-pending flag when a BEL is pending.
    Returns NIL without side effects when no bell is pending.
-   Belongs to the terminal logic layer so renderers can consume the bell
-   without reaching into the screen struct directly."
+
+   Canonical placement rationale: this function mutates a single flag slot and is
+   called exclusively by the renderer (cl-tmux/renderer-compose) to consume a BEL
+   without reaching into the struct directly.  It lives here so both the renderer
+   and the LOGIC layer share one definition without a load-order circularity."
   (when (screen-bell-pending screen)
     (setf (screen-bell-pending screen) nil)
     t))
 
 ;;; ── SGR pen reset (canonical, data layer) ─────────────────────────────────
 ;;;
-;;; Both cl-tmux/terminal/actions (modes.lisp) and cl-tmux/terminal/sgr
-;;; perform an identical five-slot SGR reset.  Placing the canonical version
-;;; here, in the types layer that both packages depend on, removes the
-;;; duplication without creating a load-order circularity.
+;;; Both cl-tmux/terminal/actions (modes.lisp) and cl-tmux/terminal/sgr perform
+;;; an identical five-slot SGR reset.  The canonical definition lives here, in
+;;; the TYPES layer that both packages depend on, to eliminate duplication without
+;;; creating a load-order circularity between the DISPATCH and LOGIC layers.
 
 (declaim (inline reset-sgr-pen))
 (defun reset-sgr-pen (screen)
-  "Reset all five SGR pen slots of SCREEN to their VT100 defaults.
-   Canonical data-layer helper used by both actions and sgr layers."
+  "Reset all five SGR pen slots of SCREEN to their VT100 power-on defaults:
+   foreground 7 (white), background 0 (black), all attribute bits clear.
+   Inlined canonical helper shared by cl-tmux/terminal/sgr and
+   cl-tmux/terminal/actions (modes.lisp) to ensure a single source of truth."
   (setf (screen-cur-fg       screen) 7
         (screen-cur-bg       screen) 0
         (screen-cur-attrs    screen) 0

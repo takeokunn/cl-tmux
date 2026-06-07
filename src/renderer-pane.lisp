@@ -6,6 +6,10 @@
 ;;;; (loaded first in the same package) and the layout/model structures from
 ;;;; cl-tmux/model.
 
+;;; Forward-declare the cl-tmux special variable defined in runtime.lisp so
+;;; SBCL does not warn about an unknown special during compilation of this file.
+(declaim (special cl-tmux::*clock-mode-pane-id*))
+
 ;;; ── Pane ────────────────────────────────────────────────────────────────────
 
 (defun in-selection-p (row col sel-start-r sel-end-r sel-start-c sel-end-c)
@@ -237,6 +241,34 @@
     (reset-attrs stream)
     (move-to stream border-row x)
     (loop repeat (max 0 w) do (write-char #\─ stream))))
+
+;;; ── Pane border status line ──────────────────────────────────────────────────
+;;;
+;;; When pane-border-status is "top" or "bottom", each pane displays a title
+;;; line on its border row showing the pane-border-format expansion.
+
+(defun %render-pane-border-status (stream pane session win)
+  "Render the pane-border-status title for PANE when pane-border-status is
+   \"top\" or \"bottom\".  Expands pane-border-format as a format string.
+   Does nothing when pane-border-status is \"off\" (the default)."
+  (let ((status (cl-tmux/options:get-option "pane-border-status" "off")))
+    (unless (or (string= status "off") (string= status ""))
+      (let* ((fmt  (cl-tmux/options:get-option "pane-border-format" " #{pane_index} "))
+             (ctx  (cl-tmux/format:format-context-from-session session win pane))
+             (text (handler-case (cl-tmux/format:expand-format fmt ctx)
+                     (error () (format nil " ~D " (pane-id pane)))))
+             ;; Truncate to pane width
+             (maxw (pane-width pane))
+             (disp (if (> (length text) maxw) (subseq text 0 maxw) text))
+             ;; Choose row: "top" draws on pane-y (pane's first row),
+             ;; "bottom" draws on pane-y + pane-height - 1 (last row).
+             (row  (if (string= status "top")
+                       (pane-y pane)
+                       (+ (pane-y pane) (pane-height pane) -1))))
+        (reset-attrs stream)
+        (move-to stream row (pane-x pane))
+        ;; Overwrite cells with the status text (no SGR for now)
+        (write-string disp stream)))))
 
 ;;; ── Tree border walk (logic layer) ──────────────────────────────────────────
 

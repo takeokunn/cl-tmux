@@ -248,19 +248,8 @@
   (test-dec-pm-toggle-boolean 1006 #'cl-tmux/terminal/types:screen-mouse-sgr-mode))
 
 (test dec-pm-set-1000-directly
-  "dec-pm-set with param 1000 sets mouse-mode to 1."
-  (with-screen (s 20 5)
-    (cl-tmux/terminal/actions:dec-pm-set s '(1000))
-    (is (= 1 (cl-tmux/terminal/types:screen-mouse-mode s))
-        "dec-pm-set 1000 must set mouse-mode to 1")))
-
-(test dec-pm-reset-1000-directly
-  "dec-pm-reset with param 1000 resets mouse-mode to 0."
-  (with-screen (s 20 5)
-    (cl-tmux/terminal/actions:dec-pm-set   s '(1000))
-    (cl-tmux/terminal/actions:dec-pm-reset s '(1000))
-    (is (= 0 (cl-tmux/terminal/types:screen-mouse-mode s))
-        "dec-pm-reset 1000 must set mouse-mode to 0")))
+  "dec-pm-set/reset with param 1000 toggles mouse-mode 0↔1 directly."
+  (test-dec-pm-toggle-numeric 1000 1 #'cl-tmux/terminal/types:screen-mouse-mode))
 
 ;;; ── Bracketed paste mode (?2004h / ?2004l) ───────────────────────────────────
 
@@ -278,13 +267,7 @@
 
 (test bracketed-paste-direct-set-reset
   "dec-pm-set/reset with param 2004 toggles bracketed-paste directly."
-  (with-screen (s 20 5)
-    (cl-tmux/terminal/actions:dec-pm-set s '(2004))
-    (is (cl-tmux/terminal/types:screen-bracketed-paste s)
-        "dec-pm-set 2004 must set bracketed-paste to T")
-    (cl-tmux/terminal/actions:dec-pm-reset s '(2004))
-    (is-false (cl-tmux/terminal/types:screen-bracketed-paste s)
-              "dec-pm-reset 2004 must set bracketed-paste to NIL")))
+  (test-dec-pm-toggle-boolean 2004 #'cl-tmux/terminal/types:screen-bracketed-paste))
 
 ;;; ── Focus event reporting (?1004h / ?1004l) ──────────────────────────────────
 
@@ -302,13 +285,7 @@
 
 (test focus-events-direct-set-reset
   "dec-pm-set/reset with param 1004 toggles focus-events directly."
-  (with-screen (s 20 5)
-    (cl-tmux/terminal/actions:dec-pm-set s '(1004))
-    (is (cl-tmux/terminal/types:screen-focus-events s)
-        "dec-pm-set 1004 must set focus-events to T")
-    (cl-tmux/terminal/actions:dec-pm-reset s '(1004))
-    (is-false (cl-tmux/terminal/types:screen-focus-events s)
-              "dec-pm-reset 1004 must set focus-events to NIL")))
+  (test-dec-pm-toggle-boolean 1004 #'cl-tmux/terminal/types:screen-focus-events))
 
 (test focus-event-report-bytes
   "focus-event-report yields ESC[I on focus gained, ESC[O on focus lost, and NIL
@@ -567,7 +544,7 @@
   :description "OSC 0 ; title ST sets screen-title via the emulator."
   (with-screen (s 20 5)
     ;; OSC 0 ; hello BEL — OSC title sequence
-    (feed s (format nil "~C]0;hello~C" #\Escape #\Bel))
+    (feed s (format nil "~C]0;hello~C" #\Escape (code-char 7)))
     (is (string= "hello" (cl-tmux/terminal/types:screen-title s))
         "screen-title must be \"hello\" after OSC 0;hello BEL sequence")))
 
@@ -685,3 +662,149 @@
     (cl-tmux/terminal/actions:set-cursor s 0 0)
     (cl-tmux/terminal/actions:exit-alt-screen s)
     (check-cursor s 7 3)))
+
+;;; ── SUITE: screen-invoked-charset and charset G0/G1 ─────────────────────────
+;;;
+;;; screen-invoked-charset is exported but previously had zero unit test coverage.
+;;; designate-charset G1 path (ESC ) X) was also untested directly.
+
+(def-suite charset-invoke-suite
+  :description "screen-invoked-charset, designate-charset G0/G1, invoke-charset"
+  :in terminal-suite)
+(in-suite charset-invoke-suite)
+
+(test screen-invoked-charset-returns-g0-charset
+  :description "screen-invoked-charset :g0 returns the G0 designation."
+  (with-screen (s 10 5)
+    ;; Default G0 is :ascii
+    (is (eq :ascii (cl-tmux/terminal/actions:screen-invoked-charset s :g0))
+        "screen-invoked-charset :g0 must return :ascii by default")))
+
+(test screen-invoked-charset-returns-g1-charset
+  :description "screen-invoked-charset :g1 returns the G1 designation."
+  (with-screen (s 10 5)
+    ;; Default G1 is also :ascii; designate it to :dec-graphics first
+    (cl-tmux/terminal/actions:designate-charset s :g1 :dec-graphics)
+    (is (eq :dec-graphics (cl-tmux/terminal/actions:screen-invoked-charset s :g1))
+        "screen-invoked-charset :g1 must return :dec-graphics after designation")))
+
+(test designate-charset-g0-and-invoke-activates-charset
+  :description "ESC ( 0 (designate G0 to DEC graphics) + active G0 → charset is :dec-graphics."
+  (with-screen (s 10 5)
+    ;; G0 is active by default; designating it immediately activates the charset.
+    (cl-tmux/terminal/actions:designate-charset s :g0 :dec-graphics)
+    (is (eq :dec-graphics (cl-tmux/terminal/types:screen-charset s))
+        "charset must be :dec-graphics after designating active G0")))
+
+(test designate-charset-g1-does-not-activate-immediately
+  :description "ESC ) 0 (designate G1 to DEC graphics) does NOT change the active charset until SO."
+  (with-screen (s 10 5)
+    ;; G0 is active; designating G1 must not change the effective charset.
+    (cl-tmux/terminal/actions:designate-charset s :g1 :dec-graphics)
+    (is (eq :ascii (cl-tmux/terminal/types:screen-charset s))
+        "charset must remain :ascii after designating inactive G1")))
+
+(test invoke-charset-so-activates-g1
+  :description "invoke-charset :g1 (SO) switches the active charset to G1's current designation."
+  (with-screen (s 10 5)
+    ;; Designate G1 to :dec-graphics, then invoke it.
+    (cl-tmux/terminal/actions:designate-charset s :g1 :dec-graphics)
+    (cl-tmux/terminal/actions:invoke-charset s :g1)
+    (is (eq :dec-graphics (cl-tmux/terminal/types:screen-charset s))
+        "charset must be :dec-graphics after invoke-charset :g1 with DEC graphics G1")))
+
+(test invoke-charset-si-restores-g0
+  :description "invoke-charset :g0 (SI) after SO restores G0's designation as active."
+  (with-screen (s 10 5)
+    ;; Invoke G1 (SO), then return to G0 (SI).
+    (cl-tmux/terminal/actions:designate-charset s :g1 :dec-graphics)
+    (cl-tmux/terminal/actions:invoke-charset s :g1)
+    (cl-tmux/terminal/actions:invoke-charset s :g0)
+    (is (eq :ascii (cl-tmux/terminal/types:screen-charset s))
+        "charset must revert to :ascii after SI restores G0")))
+
+(test g1-charset-via-parser-esc-paren-zero
+  :description "ESC ) 0 through the parser designates G1 to DEC graphics without activating it."
+  (with-screen (s 10 5)
+    (feed s (esc ")0"))                    ; ESC ) 0 = designate G1 to DEC graphics
+    ;; G0 is still active, so charset remains :ascii
+    (is (eq :ascii (cl-tmux/terminal/types:screen-charset s))
+        "charset must remain :ascii — G1 designated but not invoked")))
+
+(test g1-charset-so-si-via-parser
+  :description "ESC ) 0 + SO activates DEC graphics via G1; SI returns to ASCII via G0."
+  (with-screen (s 10 5)
+    (feed s (esc ")0"))                         ; designate G1 to DEC graphics
+    (feed s (string (code-char #x0E)))          ; SO = invoke G1
+    (is (eq :dec-graphics (cl-tmux/terminal/types:screen-charset s))
+        "after SO, charset must be :dec-graphics (G1 invoked)")
+    (feed s (string (code-char #x0F)))          ; SI = invoke G0
+    (is (eq :ascii (cl-tmux/terminal/types:screen-charset s))
+        "after SI, charset must revert to :ascii (G0 restored)")))
+
+;;; ── SUITE: set-screen-cwd ────────────────────────────────────────────────────
+;;;
+;;; set-screen-cwd is exported but previously had no direct unit test.
+
+(def-suite set-screen-cwd-suite
+  :description "set-screen-cwd: OSC 7 current working directory storage"
+  :in terminal-suite)
+(in-suite set-screen-cwd-suite)
+
+(test set-screen-cwd-stores-path
+  :description "set-screen-cwd stores the given path string in screen-cwd."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/actions:set-screen-cwd s "/home/user/projects")
+    (is (string= "/home/user/projects" (cl-tmux/terminal/types:screen-cwd s))
+        "screen-cwd must be \"/home/user/projects\" after set-screen-cwd")))
+
+(test set-screen-cwd-accepts-empty-string
+  :description "set-screen-cwd accepts an empty string (clears cwd)."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/actions:set-screen-cwd s "/initial/path")
+    (cl-tmux/terminal/actions:set-screen-cwd s "")
+    (is (string= "" (cl-tmux/terminal/types:screen-cwd s))
+        "screen-cwd must be empty string after set-screen-cwd \"\"")))
+
+;;; ── SUITE: erase-display mode 3 visual verification ─────────────────────────
+;;;
+;;; The existing test only checks that the scrollback is cleared.  This suite
+;;; also asserts that the visible display grid is erased (the two-step nature
+;;; of ED mode 3 must be fully covered).
+
+(def-suite erase-display-mode3-suite
+  :description "erase-display mode 3: both scrollback and visible grid are cleared"
+  :in terminal-suite)
+(in-suite erase-display-mode3-suite)
+
+(test erase-display-mode-3-clears-visible-grid
+  "erase-display mode 3 also erases the visible display grid (not just scrollback)."
+  (with-screen (s 5 3)
+    ;; Fill the visible grid with 'X'.
+    (dotimes (y 3)
+      (dotimes (x 5)
+        (cl-tmux/terminal/actions:write-char-at-cursor s #\X)
+        (cl-tmux/terminal/actions:set-cursor s (1+ (min x 3)) y)))
+    ;; ED mode 3
+    (cl-tmux/terminal/actions:erase-display s 3)
+    (dotimes (y 3)
+      (is (row-blank-p s y)
+          "row ~D must be blank in the visible grid after erase-display mode 3" y))))
+
+(test erase-display-mode-3-clears-both-grid-and-scrollback
+  "erase-display mode 3 clears the visible grid AND the scrollback in one call."
+  (with-screen (s 5 3)
+    ;; Build scrollback by forcing scrolls.
+    (feed-lines s "L0" "L1" "L2" "L3")
+    (is (plusp (length (cl-tmux/terminal/types:screen-scrollback s)))
+        "scrollback must be non-empty before erase-display mode 3")
+    ;; Also write visible content.
+    (cl-tmux/terminal/actions:set-cursor s 0 0)
+    (feed s "AAAAA")
+    ;; ED mode 3
+    (cl-tmux/terminal/actions:erase-display s 3)
+    ;; Both checks must pass:
+    (is (null (cl-tmux/terminal/types:screen-scrollback s))
+        "scrollback must be NIL after erase-display mode 3")
+    (is (row-blank-p s 0)
+        "row 0 must be blank in the visible grid after erase-display mode 3")))

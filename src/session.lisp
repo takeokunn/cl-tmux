@@ -43,9 +43,10 @@
 ;;;   %attach-full-screen-pane  — window data setup (PTY pane → tree leaf)
 ;;;   session-new-window        — session attachment (window → session list)
 
-(defun %attach-full-screen-pane (window rows cols)
-  "Fork a shell and install it as WINDOW's sole full-screen leaf pane."
-  (let ((pane (%fork-pane 1 0 0 cols rows)))
+(defun %attach-full-screen-pane (window rows cols &key start-dir)
+  "Fork a shell and install it as WINDOW's sole full-screen leaf pane.
+   START-DIR: when non-NIL, the shell starts in that directory."
+  (let ((pane (%fork-pane 1 0 0 cols rows :start-dir start-dir)))
     (setf (window-panes  window) (list pane)
           (window-active window) pane
           (window-tree   window) (make-layout-leaf pane))))
@@ -65,17 +66,19 @@
         (sort (cons window (session-windows session)) #'< :key #'window-id))
   (session-windows session))
 
-(defun session-new-window (session name rows cols &optional (base-index 0))
+(defun session-new-window (session name rows cols &optional (base-index 0)
+                                                            start-dir)
   "Create a new window with one full-screen pane, attach it to SESSION, and
    make it the active window.
    The new window receives the lowest free id >= BASE-INDEX (default 0).
+   START-DIR: when non-NIL, the new pane's shell starts in that directory.
    The window list is kept sorted by window-id after insertion.
    Data/logic separation: window construction (%attach-full-screen-pane,
    session-insert-window) happens first; focus assignment (session-select-window)
    is a separate named step so callers can see the two concerns distinctly."
   (let* ((new-id (%next-window-id session base-index))
          (win (make-window :id new-id :name name :width cols :height rows)))
-    (%attach-full-screen-pane win rows cols)
+    (%attach-full-screen-pane win rows cols :start-dir start-dir)
     (session-insert-window session win)
     ;; Focus assignment is logic — kept as an explicit named call so callers
     ;; can opt out by using session-insert-window directly if no focus switch
@@ -98,15 +101,20 @@
         (subseq shell (1+ slash-pos))
         shell)))
 
-(defun create-initial-session (rows cols)
+(defun create-initial-session (rows cols &key start-dir)
   "Bootstrap: one session, one window, one full-screen pane.
-   The first window index is base-index (default 0) and its name is the
-   shell basename (e.g. \"bash\", \"zsh\")."
-  (let ((session   (make-session :id (incf *session-id-counter*)
-                                 :name "0"
-                                 :last-active (get-universal-time)))
-        (pane-rows (- rows *status-height*)))
-    (session-new-window session (%shell-basename) pane-rows cols)
+   The first window index respects the 'base-index' option (default 0).
+   START-DIR: when non-NIL, the initial shell starts in that directory.
+   PANE-ROWS subtracts *STATUS-HEIGHT* from ROWS to leave one row for the
+   status bar at the bottom of the outer terminal."
+  (let* ((session   (make-session :id (incf *session-id-counter*)
+                                  :name "0"
+                                  :last-active (get-universal-time)))
+         ;; Reserve one row at the bottom for the status bar.
+         (pane-rows (- rows *status-height*))
+         ;; Respect base-index for the first window id.
+         (base-idx  (or (cl-tmux/options:get-option "base-index") 0)))
+    (session-new-window session (%shell-basename) pane-rows cols base-idx start-dir)
     session))
 
 (defun all-panes (session)

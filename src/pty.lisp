@@ -39,6 +39,7 @@
 
 (defun %child-setup-tty (slave-path master-fd)
   "Set up the slave PTY as the controlling terminal for a new child process.
+   MUST be called only in the child process after fork — NEVER from the parent.
    Becomes session leader, opens the slave, installs it as the controlling
    terminal, wires it to stdin/stdout/stderr, and closes the now-unneeded fds.
    On failure (e.g., open returns -1 or ioctl fails) the child continues to
@@ -54,13 +55,32 @@
     (sb-posix:close slave))
   (sb-posix:close master-fd))
 
-(defun %child-exec-shell ()
+(defun %child-setenv (name value)
+  "Call setenv(3) from the child process to set NAME=VALUE.
+   MUST be called only in the child process after fork — NEVER from the parent."
+  (cffi:with-foreign-string (name-ptr  name)
+    (cffi:with-foreign-string (value-ptr value)
+      (cffi:foreign-funcall "setenv"
+                            :pointer name-ptr
+                            :pointer value-ptr
+                            :int 1
+                            :int))))
+
+(defun %child-exec-shell (&optional start-dir term)
   "Replace the current process image with *DEFAULT-SHELL*.
-   Calls _exit(1) if execv fails — never returns normally.
+   When START-DIR is a non-empty string, chdir to it before execv.
+   When TERM is a non-empty string, set TERM=TERM in the child environment.
+   MUST be called only in the child process after fork — NEVER from the parent.
+   Never returns normally: either execv succeeds (process image replaced) or
+   _exit(1) terminates the child immediately.
    NOTE: _exit (not exit or sb-ext:quit) is used intentionally: _exit bypasses
    C atexit handlers and Lisp finalizers that are unsafe to call in a child
    process after fork, preventing double-flushing of stdio buffers and avoiding
    any SBCL runtime teardown that would race with the parent process."
+  (when (and start-dir (plusp (length start-dir)))
+    (ignore-errors (sb-posix:chdir start-dir)))
+  (when (and term (plusp (length term)))
+    (%child-setenv "TERM" term))
   (let ((shell cl-tmux/config:*default-shell*))
     (cffi:with-foreign-string (path-ptr shell)
       (cffi:with-foreign-string (arg0-ptr shell)
@@ -71,8 +91,10 @@
   ;; execv failed (wrong path, not executable, etc.) — fall through to _exit.
   (cffi:foreign-funcall "_exit" :int 1 :void))
 
-(defun forkpty-with-shell (rows cols)
+(defun forkpty-with-shell (rows cols &key start-dir term)
   "Fork a child shell process on a fresh PTY of size ROWS×COLS.
+   START-DIR: when non-NIL, chdir to this path before exec.
+   TERM: when non-NIL, set TERM=TERM in the child environment.
    Parent returns (values master-fd child-pid).
    Child execs *default-shell* and never returns to Lisp."
   (declare (type fixnum rows cols))
@@ -82,7 +104,7 @@
         ((< pid 0) (error "fork failed"))
         ((= pid 0)                             ; child
          (%child-setup-tty slave-path master)
-         (%child-exec-shell))
+         (%child-exec-shell start-dir term))
         (t                                     ; parent
          (values master pid))))))
 
@@ -144,11 +166,14 @@
 
 ;;; ── Public: select-based I/O multiplexing ─────────────────────────────────
 
-(defun %call-select (nfds rset tv-or-null)
-  "Invoke select(2) on NFDS file descriptors with read-set RSET.
-   TV-OR-NULL is a foreign pointer to a struct timeval, or cffi:null-pointer
-   for an indefinite block.  Returns the select(2) return value."
-  (%select nfds rset (cffi:null-pointer) (cffi:null-pointer) tv-or-null))
+(defun %setup-timeval (tv timeout-us)
+  "Write TIMEOUT-US microseconds into the struct timeval at foreign pointer TV."
+  (setf (cffi:mem-aref tv :long 0) (floor timeout-us 1000000)
+        (cffi:mem-aref tv :long 1) (mod   timeout-us 1000000)))
+
+(defun %collect-ready-fds (fds rset)
+  "Return the sub-list of FDS whose bits are set in read-set RSET."
+  (loop for fd in fds when (fd-isset-p fd rset) collect fd))
 
 (defun select-fds (fds timeout-us)
   "Poll FDS for readability with a TIMEOUT-US microsecond timeout.
@@ -168,23 +193,23 @@
       (dolist (fd fds) (fd-set! fd rset))
       (let ((nready (if (>= timeout-us 0)
                         (progn
-                          (setf (cffi:mem-aref tv :long 0) (floor timeout-us 1000000)
-                                (cffi:mem-aref tv :long 1) (mod   timeout-us 1000000))
-                          (%call-select (1+ maxfd) rset tv))
-                        (%call-select (1+ maxfd) rset (cffi:null-pointer)))))
+                          (%setup-timeval tv timeout-us)
+                          (%select (1+ maxfd) rset
+                                   (cffi:null-pointer) (cffi:null-pointer)
+                                   tv))
+                        (%select (1+ maxfd) rset
+                                 (cffi:null-pointer) (cffi:null-pointer)
+                                 (cffi:null-pointer)))))
         ;; Only a positive count leaves a valid read-set to inspect.
         (when (> nready 0)
-          (loop for fd in fds when (fd-isset-p fd rset) collect fd))))))
+          (%collect-ready-fds fds rset))))))
 
 ;;; ── Public: terminal geometry ──────────────────────────────────────────────
 
-(defconstant +max-sane-rows+ 1000)
-(defconstant +max-sane-cols+ 1000)
-
-;;; Well-known POSIX file descriptors (stdin/stdout/stderr).
-(defconstant +stdin-fd+  0 "POSIX file descriptor number for standard input.")
-(defconstant +stdout-fd+ 1 "POSIX file descriptor number for standard output.")
-(defconstant +stderr-fd+ 2 "POSIX file descriptor number for standard error.")
+(defconstant +max-sane-rows+ 1000
+  "Upper bound on terminal rows accepted from ioctl; values above this are clamped.")
+(defconstant +max-sane-cols+ 1000
+  "Upper bound on terminal columns accepted from ioctl; values above this are clamped.")
 
 (defun terminal-size ()
   "Return (values rows cols) of the terminal attached to stdout.

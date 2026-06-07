@@ -1599,7 +1599,8 @@
   (is (= 53  cl-tmux::+byte-page-up-param+)   "PageUp param must be 53")
   (is (= 54  cl-tmux::+byte-page-down-param+) "PageDown param must be 54")
   (is (= 77  cl-tmux::+byte-ascii-m+)      "ASCII M must be 77")
-  (is (= 77  cl-tmux::+byte-sgr-press+)    "SGR press final must be 77")
+  ;; +byte-sgr-press+ was merged into +byte-ascii-m+ (same value 77); verify the
+  ;; surviving constant still has the correct value.
   (is (= 109 cl-tmux::+byte-sgr-release+)  "SGR release final must be 109"))
 
 ;;; ── make-input-state and input-state-continuation ────────────────────────────
@@ -2182,3 +2183,224 @@
     (overlay-scroll -1)
     (is (>= *overlay-scroll-offset* 0)
         "overlay-scroll at offset 0 must not go negative")))
+
+;;; ── with-copy-mode-state test helper macro ───────────────────────────────────
+;;;
+;;; Eliminates the triple-nested boilerplate that appeared 43+ times:
+;;;   (let ((s (make-fake-session))) (with-loop-state (let ((screen ...) (state ...)) ...)))
+
+(defmacro with-copy-mode-state ((session-var screen-var state-var) &body body)
+  "Run BODY with SESSION-VAR bound to a fresh fake session in copy mode,
+   SCREEN-VAR bound to its active screen, and STATE-VAR bound to a fresh input-state.
+   Wraps everything in WITH-LOOP-STATE for proper event-loop isolation."
+  `(let ((,session-var (make-fake-session)))
+     (with-loop-state
+       (let ((,screen-var (active-screen ,session-var))
+             (,state-var  (cl-tmux::make-input-state)))
+         (cl-tmux::dispatch-command ,session-var :copy-mode-enter nil)
+         ,@body))))
+
+;;; ── %border-check-node direct tests ─────────────────────────────────────────
+;;;
+;;; %border-check-node is the recursive tree walker inside %border-at-position.
+;;; The :v split path and multi-level recursion deserve direct coverage.
+
+(test border-check-node-leaf-returns-nil
+  "%border-check-node on a layout-leaf always returns (values NIL NIL)."
+  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 40 :height 24
+                           :screen (make-screen 40 24)))
+         (leaf (make-layout-leaf p0)))
+    (multiple-value-bind (split orientation)
+        (cl-tmux::%border-check-node 20 10 leaf)
+      (is (null split)       "layout-leaf must return NIL split")
+      (is (null orientation) "layout-leaf must return NIL orientation"))))
+
+(test border-check-node-h-split-detects-separator
+  "%border-check-node returns (split :h) when col lands exactly on the horizontal separator."
+  (let* ((p0    (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 40 :height 24
+                            :screen (make-screen 40 24)))
+         (p1    (make-pane :id 2 :fd -1 :pid -1 :x 41 :y 0 :width 40 :height 24
+                            :screen (make-screen 40 24)))
+         (leaf0 (make-layout-leaf p0))
+         (leaf1 (make-layout-leaf p1))
+         (split (make-layout-split :h leaf0 leaf1 1/2)))
+    ;; Separator column for p0 (x=0 w=40) is at col 40.
+    (multiple-value-bind (found-split orientation)
+        (cl-tmux::%border-check-node 40 5 split)
+      (is (eq split found-split)
+          "%border-check-node :h split must return the split node at separator col")
+      (is (eq :h orientation)
+          "%border-check-node :h split must report :h orientation"))))
+
+(test border-check-node-v-split-detects-separator
+  "%border-check-node returns (split :v) when row lands exactly on the vertical separator."
+  (let* ((p0    (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0  :width 80 :height 10
+                            :screen (make-screen 80 10)))
+         (p1    (make-pane :id 2 :fd -1 :pid -1 :x 0 :y 11 :width 80 :height 10
+                            :screen (make-screen 80 10)))
+         (leaf0 (make-layout-leaf p0))
+         (leaf1 (make-layout-leaf p1))
+         (split (make-layout-split :v leaf0 leaf1 1/2)))
+    ;; Separator row for p0 (y=0 h=10) is at row 10.
+    (multiple-value-bind (found-split orientation)
+        (cl-tmux::%border-check-node 5 10 split)
+      (is (eq split found-split)
+          "%border-check-node :v split must return the split node at separator row")
+      (is (eq :v orientation)
+          "%border-check-node :v split must report :v orientation"))))
+
+(test border-check-node-h-split-inside-pane-returns-nil
+  "%border-check-node returns (values NIL NIL) when col is inside a pane (not on border)."
+  (let* ((p0    (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 40 :height 24
+                            :screen (make-screen 40 24)))
+         (p1    (make-pane :id 2 :fd -1 :pid -1 :x 41 :y 0 :width 40 :height 24
+                            :screen (make-screen 40 24)))
+         (leaf0 (make-layout-leaf p0))
+         (leaf1 (make-layout-leaf p1))
+         (split (make-layout-split :h leaf0 leaf1 1/2)))
+    (multiple-value-bind (found-split orientation)
+        (cl-tmux::%border-check-node 20 5 split)
+      (is (null found-split)   "col inside pane must return NIL split")
+      (is (null orientation)   "col inside pane must return NIL orientation"))))
+
+(test border-check-node-nested-split-finds-inner-border
+  "%border-check-node recurses into child splits and finds inner borders."
+  ;; Build a 3-pane layout: [p0 | [p1 above p2]]
+  ;; Outer: :h split at col 40; inner: :v split at row 10.
+  (let* ((p0    (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0  :width 40 :height 24
+                            :screen (make-screen 40 24)))
+         (p1    (make-pane :id 2 :fd -1 :pid -1 :x 41 :y 0  :width 40 :height 10
+                            :screen (make-screen 40 10)))
+         (p2    (make-pane :id 3 :fd -1 :pid -1 :x 41 :y 11 :width 40 :height 10
+                            :screen (make-screen 40 10)))
+         (leaf0 (make-layout-leaf p0))
+         (leaf1 (make-layout-leaf p1))
+         (leaf2 (make-layout-leaf p2))
+         (inner-split (make-layout-split :v leaf1 leaf2 1/2))
+         (outer-split (make-layout-split :h leaf0 inner-split 1/2)))
+    ;; Hit the inner :v border at (col=50, row=10)
+    (multiple-value-bind (found-split orientation)
+        (cl-tmux::%border-check-node 50 10 outer-split)
+      (is (eq inner-split found-split)
+          "%border-check-node must find the inner :v split node")
+      (is (eq :v orientation)
+          "%border-check-node must report :v for the inner split"))))
+
+;;; ── %status-col-to-window: multi-window traversal coverage ──────────────────
+
+(test status-col-to-window-finds-third-window
+  "%status-col-to-window returns the correct window when the column falls in the
+   third window entry (verifies the multi-window traversal path)."
+  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                           :screen (make-screen 20 5)))
+         (p1   (make-pane :id 2 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                           :screen (make-screen 20 5)))
+         (p2   (make-pane :id 3 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                           :screen (make-screen 20 5)))
+         (win0 (make-window :id 0 :name "a" :width 20 :height 5
+                            :panes (list p0) :tree (make-layout-leaf p0)))
+         (win1 (make-window :id 1 :name "b" :width 20 :height 5
+                            :panes (list p1) :tree (make-layout-leaf p1)))
+         (win2 (make-window :id 2 :name "c" :width 20 :height 5
+                            :panes (list p2) :tree (make-layout-leaf p2)))
+         (sess (make-session :id 1 :name "s" :windows (list win0 win1 win2))))
+    (window-select-pane win0 p0)
+    (window-select-pane win1 p1)
+    (window-select-pane win2 p2)
+    (session-select-window sess win0)
+    ;; Session prefix " s" = 2 chars.
+    ;; win0 "a": 4 + 1 = 5 chars, cols 2..6
+    ;; win1 "b": 4 + 1 = 5 chars, cols 7..11
+    ;; win2 "c": 4 + 1 = 5 chars, cols 12..16
+    ;; Column 14 should land in win2.
+    (is (eq win2 (cl-tmux::%status-col-to-window sess 14))
+        "%status-col-to-window must find the third window at the appropriate column")))
+
+;;; ── %handle-escape-sgr-mouse NIL branch coverage ─────────────────────────────
+
+(test handle-escape-sgr-mouse-ignores-malformed-sequence
+  "%handle-escape-sgr-mouse is a no-op and returns ground-state for a malformed SGR sequence
+   (one that %parse-sgr-mouse cannot parse)."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      ;; Build a syntactically valid ESC [ < prefix but with only one field (no semicolons).
+      ;; %parse-sgr-mouse will return (values nil nil nil nil) for this.
+      (let* ((seq (format nil "~C[<0M" #\Escape))  ; too short, missing fields
+             (buf (make-array (length seq) :element-type '(unsigned-byte 8)
+                              :fill-pointer (length seq) :adjustable t
+                              :initial-contents (map 'list #'char-code seq)))
+             (len (length seq)))
+        (multiple-value-bind (outcome next)
+            (cl-tmux::%handle-escape-sgr-mouse s buf len)
+          (is (null outcome)
+              "%handle-escape-sgr-mouse with malformed SGR must return NIL outcome")
+          (is (eq #'cl-tmux::%ground-input-state next)
+              "%handle-escape-sgr-mouse must return ground-state for malformed sequence"))))))
+
+;;; ── copy-mode navigation bytes via process-byte (table-driven coverage) ─────
+;;;
+;;; Tests that all the additional byte constants (h, l, w, b, e, $, etc.) defined
+;;; in events-core.lisp route correctly through the copy-mode dispatch in
+;;; %ground-input-state. We drive them through process-byte to stay at the
+;;; public API level.
+
+(test copy-mode-all-nav-bytes-via-process-byte
+  "All standard copy-mode navigation bytes route without error through process-byte."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
+        (seed-scrollback screen 10)
+        ;; Use the named constants from events-core.lisp for each byte.
+        (dolist (byte (list #.cl-tmux::+byte-h+
+                            #.cl-tmux::+byte-l+
+                            #.cl-tmux::+byte-w+
+                            #.cl-tmux::+byte-b+
+                            #.cl-tmux::+byte-e+
+                            #.cl-tmux::+byte-dollar+
+                            #.cl-tmux::+byte-g+
+                            #.cl-tmux::+byte-capital-g+
+                            #.cl-tmux::+byte-capital-h+
+                            #.cl-tmux::+byte-capital-m+
+                            #.cl-tmux::+byte-capital-l+
+                            #.cl-tmux::+byte-n+
+                            #.cl-tmux::+byte-capital-n+
+                            #.cl-tmux::+byte-capital-v+
+                            #.cl-tmux::+byte-space+
+                            #.cl-tmux::+byte-v+
+                            #.cl-tmux::+byte-y+
+                            #.cl-tmux::+byte-capital-y+
+                            #.cl-tmux::+byte-capital-d+
+                            #.cl-tmux::+byte-capital-a+
+                            #.cl-tmux::+byte-r+))
+          (cl-tmux::dispatch-command s :copy-mode-enter nil)
+          (finishes (cl-tmux::process-byte s byte state)))))))
+
+;;; ── idle sleep constant verification ─────────────────────────────────────────
+
+(test event-loop-idle-sleep-constant-is-positive
+  "+event-loop-idle-sleep-seconds+ is a positive real number."
+  (is (and (realp cl-tmux::+event-loop-idle-sleep-seconds+)
+           (plusp cl-tmux::+event-loop-idle-sleep-seconds+))
+      "+event-loop-idle-sleep-seconds+ must be a positive real"))
+
+(test event-loop-idle-sleep-constant-value
+  "+event-loop-idle-sleep-seconds+ is 0.001 (1 ms)."
+  (is (= 0.001 cl-tmux::+event-loop-idle-sleep-seconds+)
+      "+event-loop-idle-sleep-seconds+ must be 0.001"))
+
+;;; ── drag-state is set on border press ───────────────────────────────────────
+
+(test mouse-drag-state-is-set-on-border-press
+  "*mouse-drag-state* is non-NIL after a left-press on the separator column."
+  (with-two-pane-mouse-session (sess win p0 p1)
+    (declare (ignore p1))
+    ;; Simulate a left-press on the separator column (col 40).
+    (cl-tmux::%dispatch-mouse-event sess 0 40 5 nil)
+    ;; Whether the state has 2 or 4 elements depends on the implementation;
+    ;; what matters is that it is non-NIL and contains a split node.
+    (is (not (null cl-tmux::*mouse-drag-state*))
+        "*mouse-drag-state* must be set after a border press")
+    (is (cl-tmux/model:layout-split-p (first cl-tmux::*mouse-drag-state*))
+        "first element of drag-state must be a layout-split node")))

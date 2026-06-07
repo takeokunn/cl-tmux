@@ -347,12 +347,6 @@
 
 ;;; ── copy-mode-move-cursor ────────────────────────────────────────────────────
 
-(defun %copy-mode-screen-20x5 ()
-  "20x5 copy-mode screen with cursor pre-placed at (2 . 5)."
-  (let ((s (%copy-mode-screen)))
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 5))
-    s))
-
 (defmacro with-copy-mode-cursor ((screen-var row col &key (w 20) (h 5)) &body body)
   "Bind SCREEN-VAR to a fresh W x H copy-mode screen with cursor at (ROW . COL).
    Eliminates the three-step setup repeated across move-cursor tests."
@@ -363,7 +357,7 @@
 
 (test copy-mode-move-cursor-left-decrements-col
   "Moving :left decrements the column by 1."
-  (let ((s (%copy-mode-screen-20x5)))
+  (with-copy-mode-cursor (s 2 5)
     (cl-tmux/commands::copy-mode-move-cursor s :left)
     (is (equal (cons 2 4) (cl-tmux/terminal/types:screen-copy-cursor s))
         "column must decrease by 1 on :left")
@@ -372,21 +366,21 @@
 
 (test copy-mode-move-cursor-right-increments-col
   "Moving :right increments the column by 1."
-  (let ((s (%copy-mode-screen-20x5)))
+  (with-copy-mode-cursor (s 2 5)
     (cl-tmux/commands::copy-mode-move-cursor s :right)
     (is (equal (cons 2 6) (cl-tmux/terminal/types:screen-copy-cursor s))
         "column must increase by 1 on :right")))
 
 (test copy-mode-move-cursor-up-decrements-row
   "Moving :up decrements the row by 1."
-  (let ((s (%copy-mode-screen-20x5)))
+  (with-copy-mode-cursor (s 2 5)
     (cl-tmux/commands::copy-mode-move-cursor s :up)
     (is (equal (cons 1 5) (cl-tmux/terminal/types:screen-copy-cursor s))
         "row must decrease by 1 on :up")))
 
 (test copy-mode-move-cursor-down-increments-row
   "Moving :down increments the row by 1."
-  (let ((s (%copy-mode-screen-20x5)))
+  (with-copy-mode-cursor (s 2 5)
     (cl-tmux/commands::copy-mode-move-cursor s :down)
     (is (equal (cons 3 5) (cl-tmux/terminal/types:screen-copy-cursor s))
         "row must increase by 1 on :down")))
@@ -2384,3 +2378,136 @@
       (let ((ids (mapcar #'cl-tmux/model:window-id (cl-tmux/model:session-windows s))))
         (is (equal '(3 5) ids)
             "Without renumber-windows, IDs stay as-is; got ~S" ids)))))
+
+;;; ── %rectangle-selection-text (direct unit tests) ────────────────────────────
+;;;
+;;; %rectangle-selection-text is exercised transitively through copy-mode-yank
+;;; with rect-select=T.  These direct tests make boundary conditions explicit.
+
+(test rectangle-selection-text-returns-nil-when-no-selection
+  "%rectangle-selection-text returns NIL when no selection is active."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-selecting s) nil)
+    (is (null (cl-tmux/commands::%rectangle-selection-text s))
+        "%rectangle-selection-text must return NIL when copy-selecting is NIL")))
+
+(test rectangle-selection-text-returns-nil-when-mark-nil
+  "%rectangle-selection-text returns NIL when mark is NIL even if selecting is T."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
+          (cl-tmux/terminal/types:screen-copy-mark      s) nil
+          (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 5))
+    (is (null (cl-tmux/commands::%rectangle-selection-text s))
+        "%rectangle-selection-text must return NIL when mark is NIL")))
+
+(test rectangle-selection-text-single-row
+  "%rectangle-selection-text returns the correct column slice for a single-row selection."
+  ;; Feed "hello world" to row 0; rectangle from col 0 to col 5 on row 0 only.
+  (let ((s (make-screen 20 5)))
+    (feed s "hello world")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-selecting    s) t
+          (cl-tmux/terminal/types:screen-copy-mark         s) (cons 0 0)
+          (cl-tmux/terminal/types:screen-copy-cursor       s) (cons 0 5))
+    (let ((text (cl-tmux/commands::%rectangle-selection-text s)))
+      (is (stringp text) "%rectangle-selection-text must return a string")
+      (is (string= "hello" text)
+          "%rectangle-selection-text must return cols 0-4 (got ~S)" text))))
+
+(test rectangle-selection-text-multi-row-fixed-columns
+  "%rectangle-selection-text extracts the same column range on every row."
+  ;; Row 0 = "abcde", row 1 = "ABCDE"; rectangle col 1-3 (2 chars per row).
+  (let ((s (make-screen 10 5)))
+    (feed s (format nil "abcde~C~CABCDE" #\Return #\Linefeed))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
+          (cl-tmux/terminal/types:screen-copy-mark      s) (cons 0 1)
+          (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 1 3))
+    (let ((text (cl-tmux/commands::%rectangle-selection-text s)))
+      (is (stringp text) "%rectangle-selection-text must return a string")
+      (is (search "bc" text)
+          "%rectangle-selection-text must include cols 1-2 from row 0 (got ~S)" text)
+      (is (search "BC" text)
+          "%rectangle-selection-text must include cols 1-2 from row 1 (got ~S)" text)
+      (is (find #\Newline text)
+          "%rectangle-selection-text must separate rows with newlines"))))
+
+;;; ── %run-copy-command (direct unit tests) ────────────────────────────────────
+;;;
+;;; %run-copy-command is exercised only transitively through copy-mode-yank when
+;;; the 'copy-command' option is set.  These direct tests cover the no-op branch
+;;; (empty option / empty text) and the error-handling contract.
+
+(test run-copy-command-noop-when-text-is-nil
+  "%run-copy-command is a no-op when TEXT is NIL."
+  (finishes (cl-tmux/commands::%run-copy-command nil)
+            "%run-copy-command with nil text must not signal"))
+
+(test run-copy-command-noop-when-text-is-empty
+  "%run-copy-command is a no-op when TEXT is an empty string."
+  (finishes (cl-tmux/commands::%run-copy-command "")
+            "%run-copy-command with empty text must not signal"))
+
+(test run-copy-command-noop-when-option-unset
+  "%run-copy-command is a no-op when the 'copy-command' option is not set."
+  ;; Fresh option table: 'copy-command' is absent.
+  (with-fresh-global-options
+    (finishes (cl-tmux/commands::%run-copy-command "some text")
+              "%run-copy-command with no copy-command option must not signal")))
+
+(test run-copy-command-does-not-crash-on-bad-command
+  "%run-copy-command swallows errors from a malformed copy-command."
+  ;; Set copy-command to a command that will fail (exit non-zero or not found).
+  (let ((cl-tmux/options:*global-options*
+         (let ((h (make-hash-table :test #'equal)))
+           (setf (gethash "copy-command" h) "false")
+           h)))
+    (finishes (cl-tmux/commands::%run-copy-command "hello")
+              "%run-copy-command must not signal when the copy-command fails")))
+
+;;; ── copy-mode-set-cursor (direct unit tests in commands group) ───────────────
+;;;
+;;; copy-mode-set-cursor is exported from cl-tmux/commands and tested in
+;;; events-tests.lisp (via keystroke dispatch), but that test lives outside the
+;;; commands audit scope.  Direct tests here make the commands group self-contained.
+
+(test copy-mode-set-cursor-positions-cursor
+  "copy-mode-set-cursor sets the cursor to the given row and column."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (cl-tmux/commands:copy-mode-set-cursor s 2 7)
+    (is (equal (cons 2 7) (cl-tmux/terminal/types:screen-copy-cursor s))
+        "copy-mode-set-cursor must set cursor to (2 . 7)")))
+
+(test copy-mode-set-cursor-clamps-row-to-bounds
+  "copy-mode-set-cursor clamps the row to [0, height-1]."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (cl-tmux/commands:copy-mode-set-cursor s 99 0)
+    (is (= 4 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "row > height-1 must clamp to height-1=4")
+    (cl-tmux/commands:copy-mode-set-cursor s -1 0)
+    (is (= 0 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "row < 0 must clamp to 0")))
+
+(test copy-mode-set-cursor-clamps-col-to-bounds
+  "copy-mode-set-cursor clamps the column to [0, width-1]."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (cl-tmux/commands:copy-mode-set-cursor s 0 99)
+    (is (= 19 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "col > width-1 must clamp to width-1=19")
+    (cl-tmux/commands:copy-mode-set-cursor s 0 -1)
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "col < 0 must clamp to 0")))
+
+(test copy-mode-set-cursor-noop-outside-copy-mode
+  "copy-mode-set-cursor is a no-op when not in copy mode."
+  (let ((s (make-screen 20 5)))
+    ;; Do NOT enter copy mode.
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 1 1))
+    (cl-tmux/commands:copy-mode-set-cursor s 3 7)
+    (is (equal (cons 1 1) (cl-tmux/terminal/types:screen-copy-cursor s))
+        "cursor must be unchanged outside copy mode")))

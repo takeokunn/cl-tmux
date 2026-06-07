@@ -6,6 +6,8 @@
 ;;; (set-key-binding, remove-key-binding) and the mutable specials
 ;;; (*key-tables*, *default-shell*, *status-height*).
 
+;;; ── Tokenizer phase helpers ──────────────────────────────────────────────
+
 (defun %whitespace-p (ch)
   "True when CH is a configuration whitespace character (space or tab)."
   (or (char= ch #\Space) (char= ch #\Tab)))
@@ -126,7 +128,6 @@
     :has-session :lock-session :unlock-session
     ;; Key bindings / config
     :list-keys :source-file :bind-key :unbind-key
-    :rename-window :rename-session
     ;; Selection / navigation
     :select-window ; the pressed digit chooses the window
     :select-window-prompt :select-pane-left :select-pane-right
@@ -139,12 +140,28 @@
     :show-options :show-option
     :show-window-options :show-session-options :show-server-options
     :show-messages :show-hooks
-    :display-message :display-panes :display-info :display-popup
+    :display-message :display-popup
     :capture-pane :clear-history :clock-mode
     ;; Scripting / hooks
     :run-shell :if-shell :command-prompt :wait-for
     ;; Client management
-    :choose-client :choose-tree :refresh-client)
+    :choose-client :choose-tree :refresh-client :suspend-client
+    ;; Server management
+    :server-info :list-clients :lock-server :detach-all-clients
+    :kill-server :start-server :lock-client
+    ;; Window management (additional)
+    :resize-window :respawn-window :attach-session :move-pane
+    :previous-layout :link-window :unlink-window
+    ;; Pane management (additional)
+    :list-panes :set-buffer :select-pane-mark :detach-client
+    ;; Info / listing
+    :list-commands
+    ;; Environment
+    :show-environment :set-environment
+    ;; Prompt history
+    :show-prompt-history :clear-prompt-history
+    ;; Set-option (interactive)
+    :set-window-option :set-session-option)
   "Command keywords a config-file bind directive may target.
    Type: list of keyword symbols.
    This is the user-bindable subset of commands cl-tmux:dispatch-command handles.
@@ -160,36 +177,67 @@
   (let ((keyword (find-symbol (string-upcase name) :keyword)))
     (and keyword (member keyword *bindable-commands*) keyword)))
 
+;;; ── Environment-variable helper ─────────────────────────────────────────────
+;;;
+;;; set-environment / setenv directives need to mutate the process environment.
+;;; We use sb-posix:setenv resolved at runtime (not compile time) so that the
+;;; config package does not need a compile-time dependency on sb-posix.
+
+(defun %config-setenv (name value)
+  "Set environment variable NAME to VALUE for child processes.
+   Resolves sb-posix:setenv at runtime so the call is safe even when sb-posix
+   has not been loaded at compile time.  A no-op when sb-posix is absent."
+  (let ((pkg (find-package "SB-POSIX")))
+    (when pkg
+      (let ((fn (find-symbol "SETENV" pkg)))
+        (when fn
+          (ignore-errors (funcall fn name value 1)))))))
+
 ;;; ── Declarative directive dispatch macro ──────────────────────────────────
 
 (defmacro define-config-directives (&rest rules)
   "Build %APPLY-CONFIG-DIRECTIVE-INNER from a declarative table of directive RULES.
 
-   Each RULE is (NAME ARITY (ARG...) &body BODY):
-     NAME   – the directive keyword as a string (e.g. \"set-shell\")
-     ARITY  – the exact number of arguments the directive takes
-     (ARG…) – symbols bound to those arguments inside BODY
-     BODY   – forms run when NAME matches with the right ARITY; their value is
-              returned (non-NIL ⇒ the directive was applied).
+   Each RULE has one of two forms:
+     (NAME ARITY (ARG...) &body BODY)
+       NAME   – the directive keyword as a string (e.g. \"set-shell\")
+       ARITY  – the exact number of arguments the directive takes
+       (ARG…) – symbols bound to those arguments inside BODY
+       BODY   – forms run when NAME matches with the right ARITY; their value is
+                returned (non-NIL ⇒ the directive was applied).
+
+     (:aliases (NAME...) ARITY (ARG...) &body BODY)
+       Identical to the single-name form except CMD matches any string in (NAME...).
+       Eliminates alias repetition (source-file/source, set/setw/…, etc.).
 
    The outer APPLY-CONFIG-DIRECTIVE function wraps this inner dispatcher and
    handles 'bind' with variable-arity flags separately."
-  `(defun %apply-config-directive-inner (tokens)
-     "Apply one non-bind config directive (list of string TOKENS) to live state.
-      Returns T when applied, NIL for an unknown/invalid directive."
-     (when tokens
-       (let ((cmd (first tokens)) (args (rest tokens)))
-         (declare (ignorable args))
-         (cond
-           ,@(mapcar
-              (lambda (rule)
-                (destructuring-bind (name arity arglist &body body) rule
-                  `((and (string= cmd ,name) (= (length args) ,arity))
-                    (destructuring-bind ,arglist args
-                      (declare (ignorable ,@arglist))
-                      ,@body))))
-              rules)
-           (t nil))))))
+  (flet ((expand-rule (rule)
+           ;; Returns a list of cond arms (one arm per name).
+           (if (eq (first rule) :aliases)
+               ;; (:aliases (name...) arity arglist body...)
+               (destructuring-bind (names arity arglist &body body) (rest rule)
+                 (mapcar (lambda (name)
+                           `((and (string= cmd ,name) (= (length args) ,arity))
+                             (destructuring-bind ,arglist args
+                               (declare (ignorable ,@arglist))
+                               ,@body)))
+                         names))
+               ;; (name arity arglist body...)
+               (destructuring-bind (name arity arglist &body body) rule
+                 (list `((and (string= cmd ,name) (= (length args) ,arity))
+                         (destructuring-bind ,arglist args
+                           (declare (ignorable ,@arglist))
+                           ,@body)))))))
+    `(defun %apply-config-directive-inner (tokens)
+       "Apply one non-bind config directive (list of string TOKENS) to live state.
+        Returns T when applied, NIL for an unknown/invalid directive."
+       (when tokens
+         (let ((cmd (first tokens)) (args (rest tokens)))
+           (declare (ignorable args))
+           (cond
+             ,@(mapcan #'expand-rule rules)
+             (t nil)))))))
 
 ;;; ── bind-key flag parsing ────────────────────────────────────────────────
 ;;;
@@ -290,7 +338,17 @@
      (when (and table key)
        (let ((tbl (gethash table *key-tables*)))
          (when tbl (remhash key tbl)))
-       t))))
+       t)))
+  ;; unbind-all [-T table]: clear all bindings in a key-table (default: prefix).
+  ;; -T specifies the table; without -T the prefix table is cleared.
+  (("unbind-all")
+   (let* ((t-pos  (position "-T" args :test #'string=))
+          (table  (if (and t-pos (nth (1+ t-pos) args))
+                      (nth (1+ t-pos) args)
+                      +table-prefix+))
+          (inner  (gethash table *key-tables*)))
+     (when inner (clrhash inner))
+     t)))
 
 ;;; ── Simple directive definitions ─────────────────────────────────────────
 ;;;
@@ -308,7 +366,6 @@
     (setf *default-shell* path)
     t)
   ("set-status-height" 1 (n)
-    ;; Positive integers only; non-numeric / non-positive values are ignored.
     (let ((height (parse-integer n :junk-allowed t)))
       (when (and height (plusp height))
         (setf *status-height* height)
@@ -332,69 +389,257 @@
     (cl-tmux/options:set-option option-name option-value)
     t)
   ("set-hook" 2 (event-name command-name)
-    ;; Register a tmux command to run when the named hook fires.  COMMAND-NAME
-    ;; must be a bindable command name; unknown commands are rejected (NIL).
     (let ((keyword (%command-keyword command-name)))
       (when keyword
         (cl-tmux/hooks:set-command-hook event-name keyword)
-        t))))
+        t)))
+  ("source-file" 1 (path)
+    (ignore-errors (load-config-file (pathname path)))
+    t)
+  ("source" 1 (path)
+    (ignore-errors (load-config-file (pathname path)))
+    t)
+  ("run-shell" 1 (cmd)
+    (ignore-errors
+      (uiop:run-program (list "/bin/sh" "-c" cmd)
+                        :ignore-error-status t))
+    t)
+  ("run" 1 (cmd)
+    (ignore-errors
+      (uiop:run-program (list "/bin/sh" "-c" cmd)
+                        :ignore-error-status t))
+    t)
+  ;; set-environment / setenv 2-arg form: VAR VALUE (no flags).
+  ;; The %apply-set-environment-directive handler in apply-config-directive
+  ;; intercepts this first (handling -r/-g flags); these entries are fallbacks.
+  ("set-environment" 2 (var-name var-value)
+    (%config-setenv var-name var-value)
+    t)
+  ("setenv" 2 (var-name var-value)
+    (%config-setenv var-name var-value)
+    t))
 
-;;; ── set-option flag handling (set -g / -a / ...) ────────────────────────────
+;;; ── set-option flag handling (set -g / -a / -s / ...) ──────────────────────
 ;;;
 ;;; The fixed-arity directive table cannot match `set -g status off` (3 tokens vs
 ;;; arity 2), so the canonical .tmux.conf form silently failed.  %apply-set-
-;;; directive consumes leading scope flags (-g global / -s server / -w window /
-;;; -o only-if-unset — all the same flat global store here) and handles -a
-;;; (append).  It only activates when a set-family directive carries a flag, so
-;;; the plain `set name value` form still flows through the normal table below.
+;;; directive consumes leading scope flags:
+;;;   -g global (default)  -s server  -w window  -o only-if-unset
+;;;   -a append  -u unset
+;;; -s routes the write to *server-options* instead of *global-options*.
 
-(defparameter +set-directive-names+
+(defparameter *set-directive-names*
   '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")
   "Config directive verbs that forward to the global option store.")
 
 (defun %strip-set-flags (args)
   "Consume leading -X flag tokens from a set directive's ARGS.
-   Returns (values HAD-FLAG APPEND-P POSITIONALS): HAD-FLAG is T when any flag was
-   present, APPEND-P is T when an -a flag appeared, POSITIONALS is the remaining
-   non-flag tokens (the option name and value)."
-  (let ((had-flag nil) (append-p nil) (rest args))
-    (loop while (and rest
-                     (let ((tok (first rest)))
+   Returns (values HAD-FLAG APPEND-P SERVER-P UNSET-P POSITIONALS):
+     HAD-FLAG  – T when any flag was present
+     APPEND-P  – T when -a appeared (append to existing value)
+     SERVER-P  – T when -s appeared (route to server-options)
+     UNSET-P   – T when -u appeared (remove the option)
+   POSITIONALS is the remaining non-flag tokens (name and optional value)."
+  (let ((had-flag   nil)
+        (append-p   nil)
+        (server-p   nil)
+        (unset-p    nil)
+        (remaining  args))
+    (loop while (and remaining
+                     (let ((tok (first remaining)))
                        (and (>= (length tok) 2) (char= (char tok 0) #\-))))
-          do (let ((tok (pop rest)))
+          do (let ((tok (pop remaining)))
                (setf had-flag t)
-               (when (find #\a tok) (setf append-p t))))
-    (values had-flag append-p rest)))
+               (when (find #\a tok) (setf append-p t))
+               (when (find #\s tok) (setf server-p t))
+               (when (find #\u tok) (setf unset-p  t))))
+    (values had-flag append-p server-p unset-p remaining)))
 
 (defun %apply-set-directive (cmd args)
   "Apply a flag-bearing set-family directive (e.g. `set -g status off`,
-   `set -ag word-separators x`).  Returns T when applied; NIL when CMD is not a
-   set verb or carries no flags (so the normal directive table handles the plain
-   `set name value` form unchanged)."
-  (when (member cmd +set-directive-names+ :test #'string=)
-    (multiple-value-bind (had-flag append-p positionals) (%strip-set-flags args)
+   `set -s escape-time 0`, `set -ag word-separators x`).
+   Routes -s writes to *server-options*; handles -a (append) and -u (unset).
+   Returns T when applied; NIL when CMD is not a set verb or carries no flags."
+  (when (member cmd *set-directive-names* :test #'string=)
+    (multiple-value-bind (had-flag append-p server-p unset-p positionals)
+        (%strip-set-flags args)
       (when (and had-flag (first positionals))
         (let ((name  (first positionals))
               (value (format nil "~{~A~^ ~}" (rest positionals))))
-          (if append-p
-              (cl-tmux/options:set-option
-               name (concatenate 'string
-                                 (princ-to-string
-                                  (or (cl-tmux/options:get-option name nil) ""))
-                                 value))
-              (cl-tmux/options:set-option name value))
+          (cond
+            ;; -u: unset option — remove override, revert to registered default.
+            (unset-p
+             (if server-p
+                 (remhash name cl-tmux/options:*server-options*)
+                 (remhash name cl-tmux/options:*global-options*)))
+            ;; -s + -a: append to server option.
+            ((and server-p append-p)
+             (cl-tmux/options:set-server-option
+              name (concatenate 'string
+                                (princ-to-string
+                                 (or (cl-tmux/options:get-server-option name nil) ""))
+                                value)))
+            ;; -s: server option (escape-time, exit-empty, exit-unattached, etc.)
+            (server-p
+             (cl-tmux/options:set-server-option name value))
+            ;; -a: append to global option.
+            (append-p
+             (cl-tmux/options:set-option
+              name (concatenate 'string
+                                (princ-to-string
+                                 (or (cl-tmux/options:get-option name nil) ""))
+                                value)))
+            ;; Default: set global option.
+            (t
+             (cl-tmux/options:set-option name value)))
+          ;; Special: command-alias[N] alias=expansion array syntax.
+          (%apply-command-alias-directive name value)
+          ;; Side-effect: intercept special options that need runtime state updates.
+          (%apply-option-side-effects name value)
           t)))))
+
+(defun %apply-option-side-effects (name value)
+  "Apply runtime side-effects for options that touch non-option state.
+   Handles: prefix, prefix2 (key routing), default-shell, status-height,
+            escape-time, history-limit."
+  (cond
+    ((string= name "prefix")
+     (let ((byte (%parse-prefix-key value)))
+       (when byte
+         (setf *prefix-key-code* byte)
+         (key-table-bind +table-prefix+ (code-char byte) :send-prefix))))
+    ;; prefix2: a second prefix key that also arms the prefix table.
+    ((string= name "prefix2")
+     (let ((byte (%parse-prefix-key value)))
+       (when byte
+         (key-table-bind +table-root+
+                         (code-char byte)
+                         :send-prefix))))
+    ;; default-shell: update the shell used for new panes immediately.
+    ((string= name "default-shell")
+     (when (and (stringp value) (plusp (length value)))
+       (setf *default-shell* value)))
+    ;; status: on/off controls the status bar row count.
+    ((string= name "status")
+     (let ((on-p (member value '("on" "true" "1") :test #'equal)))
+       (setf *status-height* (if on-p 1 0))))
+    ;; status-position: top or bottom adjusts status bar position.
+    ;; (stored in options; renderer reads it at render time — no extra side effect needed.)
+    ))
+
+(defun %apply-set-hook-directive (cmd args)
+  "Handle 'set-hook [-r] event [command]' directives.
+   -r flag removes the hook; without -r it registers the command.
+   Returns T when handled, NIL otherwise."
+  (when (or (string= cmd "set-hook") (string= cmd "hook"))
+    (let* ((remove-p (string= (first args) "-r"))
+           (rest     (if remove-p (rest args) args))
+           (event    (first rest))
+           (cmd-name (second rest)))
+      (when event
+        (if remove-p
+            (progn (cl-tmux/hooks:remove-hook event nil) t)
+            (when cmd-name
+              (let ((kw (%command-keyword cmd-name)))
+                (when kw
+                  (cl-tmux/hooks:set-command-hook event kw)
+                  t))))))))
+
+;;; ── set-environment flag handling (set-environment -r VAR) ──────────────────
+;;;
+;;; The fixed-arity table handles only `set-environment VAR VALUE` (2 args).
+;;; The `-r` form (unset) passes 2 args: "-r" and VAR, which the fixed-arity
+;;; table rejects because arg[0] ≠ a variable name.  This handler intercepts
+;;; the unset form before the fixed-arity table gets a chance to reject it.
+
+(defun %apply-set-environment-directive (cmd args)
+  "Handle 'set-environment [-g] [-r] VAR [VALUE]' config directives.
+   -r unsets the variable (removes it from child-process environment).
+   -g is accepted and ignored (global scope is the only scope supported).
+   Returns T when handled, NIL otherwise."
+  (when (member cmd '("set-environment" "setenv") :test #'string=)
+    (let* (;; Consume optional flags: -g (global, default), -r (remove/unset).
+           (remove-p   nil)
+           (remaining  args))
+      (loop while (and remaining
+                       (let ((tok (first remaining)))
+                         (and (>= (length tok) 2) (char= (char tok 0) #\-))))
+            do (let ((tok (pop remaining)))
+                 (when (find #\r tok) (setf remove-p t))))
+      (let ((var-name  (first remaining))
+            (var-value (second remaining)))
+        (when var-name
+          (if remove-p
+              ;; Unset: remove from process environment if sb-posix available.
+              (let ((pkg (find-package "SB-POSIX")))
+                (when pkg
+                  (let ((fn (find-symbol "UNSETENV" pkg)))
+                    (when fn (ignore-errors (funcall fn var-name))))))
+              ;; Set: value required for non-remove form.
+              (when var-value
+                (%config-setenv var-name var-value)))
+          t)))))
+
+;;; ── if-shell config-time conditional ────────────────────────────────────────
+;;;
+;;; tmux's `if-shell` can appear as a standalone directive in .tmux.conf:
+;;;   if-shell 'uname | grep -q Darwin' 'set -g prefix C-a' 'set -g prefix C-b'
+;;; It runs the condition via /bin/sh, then applies THEN-CMD or ELSE-CMD.
+;;; This is different from the run-time :if-shell dispatch (which is interactive).
+
+(defun %apply-if-shell-directive (cmd args)
+  "Handle 'if-shell CONDITION THEN-CMD [ELSE-CMD]' config directives.
+   Runs CONDITION as a shell command; exit 0 means truthy.
+   Returns T when handled, NIL otherwise."
+  (when (member cmd '("if-shell" "if") :test #'string=)
+    (when (>= (length args) 2)
+      (let* ((condition (first args))
+             (then-cmd  (second args))
+             (else-cmd  (third args))
+             (exit-code (nth-value 2
+                          (ignore-errors
+                            (uiop:run-program
+                             (list "/bin/sh" "-c" condition)
+                             :ignore-error-status t))))
+             (truthy-p  (eql exit-code 0))
+             (apply-str (if truthy-p then-cmd else-cmd)))
+        (when apply-str
+          (apply-config-directive (%config-tokens apply-str)))
+        t))))
+
+;;; ── command-alias array syntax handling ─────────────────────────────────────
+;;;
+;;; tmux stores command aliases as an array option in .tmux.conf:
+;;;   set -s command-alias[0] e='new-window -n'
+;;; The option name carries the index (`command-alias[0]`).  After %strip-set-
+;;; flags the positionals look like: ("command-alias[0]" "e=new-window -n").
+;;; This function detects that pattern and routes it to the alias registry.
+
+(defun %apply-command-alias-directive (name value)
+  "If NAME looks like 'command-alias[N]', parse VALUE as 'alias=expansion'
+   and register the alias.  Returns T when handled, NIL otherwise."
+  (when (and (>= (length name) 13)
+             (string= (subseq name 0 13) "command-alias"))
+    (let ((eq-pos (position #\= value)))
+      (when eq-pos
+        (cl-tmux/options:register-command-alias
+         (subseq value 0 eq-pos)
+         (subseq value (1+ eq-pos)))
+        t))))
 
 (defun apply-config-directive (tokens)
   "Apply one parsed config directive (list of string TOKENS) to live state.
    Returns T when applied, NIL for an unknown/invalid directive.
-   Handles bind [-n] [-r] [-T table] key command, unbind/unbind-key [-n] [-T
-   table] key, and set [-g|-a|...] name value, in addition to simple directives."
+   Handles bind/unbind, set-hook, set[-g|-a|-s|-u|...], set-environment [-r],
+   if-shell, and the fixed-arity directive table."
   (when tokens
     (let ((cmd  (first tokens))
           (args (rest tokens)))
       (or (%apply-key-directive cmd args)
+          (%apply-if-shell-directive cmd args)
+          (%apply-set-environment-directive cmd args)
           (%apply-set-directive cmd args)
+          (%apply-set-hook-directive cmd args)
           (%apply-config-directive-inner tokens)))))
 
 (defun apply-config-line (line)
@@ -405,20 +650,103 @@
          (char/= (char trimmed 0) #\#)
          (apply-config-directive (%config-tokens trimmed)))))
 
+;;; ── %if / %else / %endif preprocessor support ───────────────────────────────
+;;;
+;;; tmux config files may contain conditional blocks:
+;;;   %if <condition>
+;;;   ...
+;;;   %else
+;;;   ...
+;;;   %endif
+;;;
+;;; The condition is a tmux format string that evaluates to "1" (truthy) or
+;;; "" / "0" (falsy).  A dynamic callback (*config-condition-evaluator*) is used
+;;; so the config layer (which cannot depend on cl-tmux/format) can delegate
+;;; evaluation to the top-level package which has access to full format expansion.
+;;; When the callback is unset, all %if conditions are treated as truthy so that
+;;; no directives are silently skipped.
+
+(defvar *config-condition-evaluator* nil
+  "When non-NIL, a function (string) → string that evaluates a %if condition.
+   The string result is truthy when non-empty and not equal to \"0\".
+   NIL means all %if conditions are treated as truthy (nothing skipped).")
+
+(defun %eval-config-condition (cond-str)
+  "Evaluate a %if condition string via *config-condition-evaluator*.
+   Returns T when the condition is truthy, NIL otherwise.
+   Defaults to T when *config-condition-evaluator* is NIL."
+  (if *config-condition-evaluator*
+      (let ((result (handler-case (funcall *config-condition-evaluator* cond-str)
+                      (error () "1"))))
+        (and result (plusp (length result)) (not (string= result "0"))))
+      t))
+
+(defun %preprocessor-line-p (trimmed)
+  "Return :if, :else, :elif, :endif, or NIL indicating whether TRIMMED is a
+   preprocessor directive line."
+  (cond
+    ((and (>= (length trimmed) 3) (string= (subseq trimmed 0 3) "%if")
+          (or (= (length trimmed) 3) (not (alpha-char-p (char trimmed 3)))))
+     :if)
+    ((string= trimmed "%else")
+     :else)
+    ((and (>= (length trimmed) 5) (string= (subseq trimmed 0 5) "%elif")
+          (or (= (length trimmed) 5) (not (alpha-char-p (char trimmed 5)))))
+     :elif)
+    ((string= trimmed "%endif")
+     :endif)
+    (t nil)))
+
 (defun load-config-from-stream (stream)
-  "Apply every directive line read from STREAM.  Returns the count applied."
-  (loop for line = (read-line stream nil nil)
-        while line
-        count (apply-config-line line)))
+  "Apply every directive line read from STREAM, honoring %if/%else/%endif blocks.
+   Returns the count of directives applied."
+  ;; SKIP-STACK: list of booleans — T means 'skip until matching %else/%endif'.
+  ;; Nested %if blocks push/pop the stack.
+  (let ((skip-stack nil)
+        (count 0))
+    (loop for line = (read-line stream nil nil)
+          while line do
+      (let* ((trimmed  (string-trim '(#\Space #\Tab #\Return #\Newline) line))
+             (pp-type  (%preprocessor-line-p trimmed)))
+        (case pp-type
+          (:if
+           ;; Evaluate condition unless we are already skipping.
+           (let ((cond-str (string-trim " \t" (subseq trimmed 3))))
+             (push (or (and skip-stack (first skip-stack))
+                       (not (%eval-config-condition cond-str)))
+                   skip-stack)))
+          (:elif
+           ;; Flip the top skip flag if not already done; treat like else+if.
+           (when skip-stack
+             (let* ((cond-str (string-trim " \t" (subseq trimmed 5)))
+                    (outer-skip (if (cdr skip-stack) (second skip-stack) nil))
+                    (was-skip   (first skip-stack)))
+               (setf (first skip-stack)
+                     (or outer-skip
+                         (if was-skip
+                             (not (%eval-config-condition cond-str))
+                             t))))))
+          (:else
+           (when skip-stack
+             (setf (first skip-stack) (not (first skip-stack)))))
+          (:endif
+           (when skip-stack (pop skip-stack)))
+          (otherwise
+           ;; Normal line: apply only when not inside a skipped block.
+           (when (or (null skip-stack) (not (first skip-stack)))
+             (when (apply-config-line line)
+               (incf count)))))))
+    count))
 
 (defun load-config-from-string (text)
-  "Apply every directive line in TEXT.  Returns the count of directives applied."
+  "Apply every directive line in TEXT, honoring %if/%else/%endif blocks.
+   Returns the count of directives applied."
   (with-input-from-string (in text)
     (load-config-from-stream in)))
 
-(defun %env-set-p (s)
-  "True when environment variable string S is set and non-empty."
-  (and s (plusp (length s))))
+(defun %env-set-p (env-string)
+  "True when environment variable string ENV-STRING is set and non-empty."
+  (and env-string (plusp (length env-string))))
 
 (defun %config-path-from (override xdg home)
   "Resolve the config-file path from environment values (OVERRIDE = $CL_TMUX_CONF,
@@ -437,6 +765,19 @@
         (pathname (format nil "~A/cl-tmux/cl-tmux.conf"
                           (string-right-trim "/" base))))))
 
+(defun %tmux-conf-paths (home)
+  "Return a list of candidate .tmux.conf paths in priority order:
+     1. $XDG_CONFIG_HOME/tmux/tmux.conf
+     2. ~/.config/tmux/tmux.conf  (XDG default)
+     3. ~/.tmux.conf              (traditional location)"
+  (let* ((xdg  (sb-ext:posix-getenv "XDG_CONFIG_HOME"))
+         (base (if (%env-set-p xdg)
+                   xdg
+                   (namestring (merge-pathnames ".config/" home)))))
+    (list (pathname (format nil "~A/tmux/tmux.conf"
+                            (string-right-trim "/" base)))
+          (merge-pathnames ".tmux.conf" home))))
+
 (defun config-file-path ()
   "Path to the user config file, honoring $CL_TMUX_CONF then the XDG Base
    Directory spec ($XDG_CONFIG_HOME, default ~/.config).  See %config-path-from."
@@ -446,7 +787,16 @@
 
 (defun load-config-file (&optional (path (config-file-path)))
   "Load and apply the config file at PATH if it exists (returns the count of
-   directives applied), or NIL when no file is found."
-  (with-open-file (in path :direction :input :if-does-not-exist nil)
-    (when in
-      (load-config-from-stream in))))
+   directives applied), or NIL when no file is found.
+   PATH defaults to the XDG/cl-tmux path; pass NIL to auto-detect, which also
+   searches the standard .tmux.conf locations for compatibility."
+  (if path
+      (with-open-file (in path :direction :input :if-does-not-exist nil)
+        (when in (load-config-from-stream in)))
+      ;; Auto-detect: try each candidate path in priority order.
+      (let ((home (user-homedir-pathname)))
+        (dolist (candidate (cons (config-file-path)
+                                 (%tmux-conf-paths home)))
+          (with-open-file (in candidate :direction :input :if-does-not-exist nil)
+            (when in
+              (return (load-config-from-stream in))))))))

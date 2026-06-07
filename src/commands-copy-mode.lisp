@@ -173,16 +173,12 @@
          (cursor-col (cdr cursor))
          (start-row  (min mark-row cursor-row))
          (end-row    (max mark-row cursor-row))
-         (start-col  (if (< mark-row cursor-row)
-                         mark-col
-                         (if (> mark-row cursor-row)
-                             cursor-col
-                             (min mark-col cursor-col))))
-         (end-col    (if (< mark-row cursor-row)
-                         cursor-col
-                         (if (> mark-row cursor-row)
-                             mark-col
-                             (max mark-col cursor-col)))))
+         (start-col  (cond ((< mark-row cursor-row) mark-col)
+                           ((> mark-row cursor-row) cursor-col)
+                           (t                       (min mark-col cursor-col))))
+         (end-col    (cond ((< mark-row cursor-row) cursor-col)
+                           ((> mark-row cursor-row) mark-col)
+                           (t                       (max mark-col cursor-col)))))
     (values start-row end-row start-col end-col)))
 
 ;;; %extract-row-chars reads characters from a rectangular range as a string.
@@ -256,16 +252,27 @@
 ;;; is also piped to that shell command via uiop:run-program.  Errors are
 ;;; silently swallowed so a misconfigured copy-command does not crash the session.
 
+(defconstant +copy-command-timeout+ 30
+  "Maximum seconds to wait for a copy-command subprocess before giving up.")
+
+(defun %run-shell-cmd-with-input (command text)
+  "Pipe TEXT as stdin to COMMAND (a shell string), bounded by +copy-command-timeout+.
+   Errors are silently swallowed so a misconfigured command does not crash the session."
+  (ignore-errors
+    (bt:with-timeout (+copy-command-timeout+)
+      (uiop:run-program (list "/bin/sh" "-c" command)
+                        :input (make-string-input-stream text)
+                        :ignore-error-status t))))
+
 (defun %run-copy-command (text)
   "Pipe TEXT to the shell command stored in the \"copy-command\" option.
-   No-op when the option is empty or TEXT is NIL/empty."
+   No-op when the option is empty or TEXT is NIL/empty.
+   The subprocess is bounded by +copy-command-timeout+ seconds so a hanging
+   copy-command does not block the event loop indefinitely."
   (when (and text (plusp (length text)))
     (let ((cmd (ignore-errors (cl-tmux/options:get-option "copy-command"))))
       (when (and (stringp cmd) (plusp (length cmd)))
-        (ignore-errors
-          (uiop:run-program (list "/bin/sh" "-c" cmd)
-                            :input (make-string-input-stream text)
-                            :ignore-error-status t))))))
+        (%run-shell-cmd-with-input cmd text)))))
 
 (defun copy-mode-yank (screen)
   "Copy selected text to paste buffer (and pipe via copy-command if configured),
@@ -322,6 +329,17 @@
 ;;; it places the selection text into the paste buffer AND pipes it to CMD.
 ;;; CMD overrides the "copy-command" option for this single invocation.
 
+(defun %resolve-copy-pipe-cmd (cmd)
+  "Return the effective shell command string for copy-pipe.
+   If CMD is a non-empty string, use it directly.
+   Otherwise fall back to the \"copy-command\" global option.
+   Returns NIL when neither source yields a usable command."
+  (if (and (stringp cmd) (plusp (length cmd)))
+      cmd
+      (let ((option-cmd (ignore-errors (cl-tmux/options:get-option "copy-command"))))
+        (when (and (stringp option-cmd) (plusp (length option-cmd)))
+          option-cmd))))
+
 (defun copy-mode-copy-pipe (screen cmd)
   "Yank selected text to the paste buffer and pipe it to CMD (a shell string).
    If CMD is empty or NIL the global \"copy-command\" option is used.
@@ -332,321 +350,15 @@
                     (%selection-text screen))))
       (when (and text (plusp (length text)))
         (cl-tmux/buffer:add-paste-buffer text)
-        (let ((effective-cmd (if (and (stringp cmd) (plusp (length cmd)))
-                                 cmd
-                                 (ignore-errors
-                                   (cl-tmux/options:get-option "copy-command")))))
-          (when (and (stringp effective-cmd) (plusp (length effective-cmd)))
-            (ignore-errors
-              (uiop:run-program (list "/bin/sh" "-c" effective-cmd)
-                                :input (make-string-input-stream text)
-                                :ignore-error-status t))))))
+        (let ((effective-cmd (%resolve-copy-pipe-cmd cmd)))
+          (when effective-cmd
+            (%run-shell-cmd-with-input effective-cmd text)))))
     (copy-mode-cancel-selection screen)
     (copy-mode-exit screen)))
 
-;;; ── Copy-mode navigation (word / line / screen jumps) ───────────────────────
-;;;
-;;; copy_mode_word_forward(Screen)  :- skip_spaces_right, advance to next non-space.
-;;; copy_mode_word_backward(Screen) :- skip_spaces_left, retreat to prev word start.
-;;; copy_mode_word_end(Screen)      :- advance to last char of current/next word.
-;;; copy_mode_line_start(Screen)    :- set cursor-x = 0.
-;;; copy_mode_line_end(Screen)      :- set cursor-x = width-1.
-;;; copy_mode_top(Screen)           :- jump to top of scrollback.
-;;; copy_mode_bottom(Screen)        :- jump to live view bottom.
-;;; copy_mode_high/middle/low(Screen) :- cursor to row 0 / mid / last.
-;;; copy_mode_page_up/down(Screen)  :- scroll by screen-height lines.
-;;; copy_mode_half_page_up/down     :- scroll by floor(screen-height/2) lines.
-;;; copy_mode_scroll_up/down_line   :- scroll 1 line keeping cursor fixed if possible.
-
-(defun %copy-mode-row-chars (screen row)
-  "Return a simple-vector of characters on ROW of SCREEN in viewport projection.
-   Uses the scrollback offset so word navigation works correctly in copy mode.
-   Returns a simple-vector for O(1) indexed access in word-motion loops."
-  (let* ((w      (screen-width screen))
-         (result (make-array w :element-type 'character)))
-    (dotimes (col w result)
-      (setf (aref result col)
-            (cell-char (screen-display-cell screen col row))))))
-
-(defun copy-mode-word-forward (screen)
-  "Move cursor forward to the start of the next word (non-space run).
-   A word is any run of non-space characters.  Space is #\\Space."
-  (when (screen-copy-mode-p screen)
-    (let* ((row     (car (screen-copy-cursor screen)))
-           (col     (cdr (screen-copy-cursor screen)))
-           (w       (screen-width screen))
-           (chars   (%copy-mode-row-chars screen row))
-           (new-col col))
-      ;; Step over the current word.
-      (loop while (and (< new-col w)
-                       (char/= (aref chars new-col) #\Space))
-            do (incf new-col))
-      ;; Step over spaces.
-      (loop while (and (< new-col w)
-                       (char= (aref chars new-col) #\Space))
-            do (incf new-col))
-      (setf (screen-copy-cursor screen) (cons row (min (1- w) new-col))
-            (screen-dirty-p screen) t))))
-
-(defun copy-mode-word-backward (screen)
-  "Move cursor backward to the start of the previous or current word."
-  (when (screen-copy-mode-p screen)
-    (let* ((row     (car (screen-copy-cursor screen)))
-           (col     (cdr (screen-copy-cursor screen)))
-           (chars   (%copy-mode-row-chars screen row))
-           (new-col col))
-      ;; Step back over spaces.
-      (loop while (and (> new-col 0)
-                       (char= (aref chars (1- new-col)) #\Space))
-            do (decf new-col))
-      ;; Step back over word characters.
-      (loop while (and (> new-col 0)
-                       (char/= (aref chars (1- new-col)) #\Space))
-            do (decf new-col))
-      (setf (screen-copy-cursor screen) (cons row (max 0 new-col))
-            (screen-dirty-p screen) t))))
-
-(defun copy-mode-word-end (screen)
-  "Move cursor to the last character of the current or next word."
-  (when (screen-copy-mode-p screen)
-    (let* ((row     (car (screen-copy-cursor screen)))
-           (col     (cdr (screen-copy-cursor screen)))
-           (w       (screen-width screen))
-           (chars   (%copy-mode-row-chars screen row))
-           (new-col col))
-      ;; If already at end of a word, skip one space to enter the next word.
-      (when (and (< new-col (1- w))
-                 (char/= (aref chars new-col) #\Space)
-                 (char= (aref chars (1+ new-col)) #\Space))
-        (incf new-col))
-      ;; Skip over spaces.
-      (loop while (and (< new-col (1- w))
-                       (char= (aref chars new-col) #\Space))
-            do (incf new-col))
-      ;; Advance to end of word.
-      (loop while (and (< new-col (1- w))
-                       (char/= (aref chars (1+ new-col)) #\Space))
-            do (incf new-col))
-      (setf (screen-copy-cursor screen) (cons row (min (1- w) new-col))
-            (screen-dirty-p screen) t))))
-
-(defun copy-mode-line-start (screen)
-  "Move cursor to column 0 of the current row."
-  (when (screen-copy-mode-p screen)
-    (let ((row (car (screen-copy-cursor screen))))
-      (setf (screen-copy-cursor screen) (cons row 0)
-            (screen-dirty-p screen) t))))
-
-(defun copy-mode-line-end (screen)
-  "Move cursor to the last column of the current row."
-  (when (screen-copy-mode-p screen)
-    (let ((row (car (screen-copy-cursor screen))))
-      (setf (screen-copy-cursor screen) (cons row (1- (screen-width screen)))
-            (screen-dirty-p screen) t))))
-
-;;; ── Declarative cursor-jump and scroll-wrapper macro tables ─────────────────
-;;;
-;;; define-copy-mode-cursor-jump: prolog-style facts table for commands that
-;;; jump the cursor row to a fixed or computed row expression, keeping column.
-;;;
-;;;   (define-copy-mode-cursor-jump (name docstring row-expr) ...)
-;;;
-;;; Each fact expands to a defun with the guard (when (screen-copy-mode-p screen)).
-;;;
-;;; define-copy-mode-scroll-commands: prolog-style facts table for commands that
-;;; delegate to copy-mode-scroll with a fixed delta expression.
-;;;
-;;;   (define-copy-mode-scroll-commands (name docstring delta-expr) ...)
-
-(defmacro define-copy-mode-cursor-jump (&rest rules)
-  "Generate one copy-mode cursor-jump defun per rule.
-   Each RULE is (function-name docstring row-expression).
-   The generated function jumps the cursor to ROW-EXPR, keeping the current
-   cursor column unchanged, and marks the screen dirty."
-  `(progn
-     ,@(mapcar (lambda (rule)
-                 (destructuring-bind (name docstring row-expr) rule
-                   `(defun ,name (screen)
-                      ,docstring
-                      (when (screen-copy-mode-p screen)
-                        (let ((new-row ,row-expr)
-                              (cur-col (cdr (screen-copy-cursor screen))))
-                          (setf (screen-copy-cursor screen) (cons new-row cur-col)
-                                (screen-dirty-p screen) t))))))
-               rules)))
-
-(defmacro define-copy-mode-scroll-commands (&rest rules)
-  "Generate one copy-mode scroll-wrapper defun per rule.
-   Each RULE is (function-name docstring delta-expression).
-   The generated function guards on copy-mode-p and delegates to copy-mode-scroll."
-  `(progn
-     ,@(mapcar (lambda (rule)
-                 (destructuring-bind (name docstring delta-expr) rule
-                   `(defun ,name (screen)
-                      ,docstring
-                      (when (screen-copy-mode-p screen)
-                        (copy-mode-scroll screen ,delta-expr)))))
-               rules)))
-
-(define-copy-mode-cursor-jump
-  (copy-mode-high
-   "Move cursor to row 0 (top of viewport), keeping column."
-   0)
-  (copy-mode-middle
-   "Move cursor to the middle row of the viewport, keeping column."
-   (floor (screen-height screen) 2))
-  (copy-mode-low
-   "Move cursor to the last row of the viewport (height-1), keeping column."
-   (1- (screen-height screen))))
-
-(define-copy-mode-scroll-commands
-  (copy-mode-page-up
-   "Scroll the viewport back by one full screen height."
-   (screen-height screen))
-  (copy-mode-page-down
-   "Scroll the viewport forward by one full screen height."
-   (- (screen-height screen)))
-  (copy-mode-half-page-up
-   "Scroll the viewport back by half a screen height."
-   (floor (screen-height screen) 2))
-  (copy-mode-half-page-down
-   "Scroll the viewport forward by half a screen height."
-   (- (floor (screen-height screen) 2)))
-  (copy-mode-scroll-up-line
-   "Scroll the viewport back by 1 line (cursor stays fixed when possible)."
-   1)
-  (copy-mode-scroll-down-line
-   "Scroll the viewport forward by 1 line (cursor stays fixed when possible)."
-   -1)
-  (copy-mode-top
-   "Jump to the oldest scrollback line (maximum scroll-back offset)."
-   +scroll-to-oldest+)
-  (copy-mode-bottom
-   "Jump to the live view bottom (scroll-offset = 0)."
-   +scroll-to-newest+))
-
-;;; ── Copy-mode selection: line-select (V) ────────────────────────────────────
-
-(defun copy-mode-begin-line-selection (screen)
-  "Begin a full-line selection at the current row (tmux V binding).
-   Sets copy-line-selection-p and activates the selection."
-  (when (screen-copy-mode-p screen)
-    (let* ((cur    (or (screen-copy-cursor screen) (cons 0 0)))
-           (row    (car cur))
-           ;; Mark at col 0, cursor at col width-1 to select full row.
-           (mark   (cons row 0))
-           (cursor (cons row (1- (screen-width screen)))))
-      (setf (screen-copy-mark             screen) mark
-            (screen-copy-cursor           screen) cursor
-            (screen-copy-selecting        screen) t
-            (screen-copy-line-selection-p screen) t
-            (screen-dirty-p               screen) t))))
-
-;;; ── Copy-mode yank variants (D and Y) ───────────────────────────────────────
-
-(defun %copy-row-range-to-paste-buffer (screen row from-col to-col)
-  "Extract characters from SCREEN at ROW between FROM-COL (inclusive) and
-   TO-COL (exclusive), right-trim trailing spaces, and push to the paste buffer.
-   Does nothing when the trimmed result is empty."
-  (let ((trimmed (string-right-trim " " (%extract-row-chars screen row from-col to-col))))
-    (when (plusp (length trimmed))
-      (cl-tmux/buffer:add-paste-buffer trimmed))))
-
-(defun copy-mode-copy-end-of-line (screen)
-  "Copy from the current cursor column to the end of the line, then exit copy mode."
-  (when (screen-copy-mode-p screen)
-    (let* ((row (car (screen-copy-cursor screen)))
-           (col (cdr (screen-copy-cursor screen)))
-           (w   (screen-width screen)))
-      (%copy-row-range-to-paste-buffer screen row col w))
-    (copy-mode-exit screen)))
-
-(defun copy-mode-copy-line (screen)
-  "Copy the full current line (all columns), then exit copy mode."
-  (when (screen-copy-mode-p screen)
-    (let* ((row (car (screen-copy-cursor screen)))
-           (w   (screen-width screen)))
-      (%copy-row-range-to-paste-buffer screen row 0 w))
-    (copy-mode-exit screen)))
-
-;;; ── Copy-mode search ────────────────────────────────────────────────────────
-;;;
-;;; copy_mode_search_forward(Screen, Term) :- scan rows from cursor downward.
-;;; copy_mode_search_backward(Screen, Term) :- scan rows from cursor upward.
-;;; copy_mode_search_next(Screen) :- repeat last search forward.
-;;; copy_mode_search_prev(Screen) :- repeat last search backward.
-
-(defun %copy-mode-row-string (screen row)
-  "Return the string content of ROW in the visible viewport."
-  (with-output-to-string (out)
-    (loop for col from 0 below (screen-width screen) do
-      (write-char (cell-char (screen-display-cell screen col row)) out))))
-
-(defun %copy-mode-find-forward (screen term start-row start-col)
-  "Scan forward from START-ROW/START-COL for TERM.
-   Returns (values row col) of the first match, or (values nil nil)."
-  (let ((h (screen-height screen)))
-    (loop for row from start-row below h do
-      (let* ((row-str  (%copy-mode-row-string screen row))
-             (from-col (if (= row start-row) start-col 0))
-             (pos      (search term row-str :start2 from-col)))
-        (when pos
-          (return-from %copy-mode-find-forward (values row pos)))))
-    (values nil nil)))
-
-(defun %copy-mode-find-backward (screen term start-row start-col)
-  "Scan backward from START-ROW/START-COL for TERM.
-   Returns (values row col) of the last match before cursor, or (values nil nil)."
-  (loop for row from start-row downto 0 do
-    (let* ((row-str  (%copy-mode-row-string screen row))
-           (end-col  (if (= row start-row) start-col (length row-str)))
-           (pos      (and (> end-col 0)
-                          (loop for i from (1- end-col) downto 0
-                                when (and (<= (+ i (length term)) (length row-str))
-                                          (string= term (subseq row-str i (+ i (length term)))))
-                                  return i))))
-      (when pos
-        (return-from %copy-mode-find-backward (values row pos)))))
-  (values nil nil))
-
-(defun copy-mode-search-forward (screen term)
-  "Search forward from the current cursor for TERM.
-   Saves TERM for n/N repeats.  Moves cursor to the first match."
-  (when (and (screen-copy-mode-p screen) term (plusp (length term)))
-    (setf (screen-copy-search-term screen) term)
-    (let* ((cur (or (screen-copy-cursor screen) (cons 0 0)))
-           (row (car cur))
-           (col (1+ (cdr cur))))   ; start one past current to advance
-      (multiple-value-bind (found-row found-col)
-          (%copy-mode-find-forward screen term row col)
-        (when found-row
-          (setf (screen-copy-cursor screen) (cons found-row found-col)
-                (screen-dirty-p screen) t))))))
-
-(defun copy-mode-search-backward (screen term)
-  "Search backward from the current cursor for TERM.
-   Saves TERM for n/N repeats.  Moves cursor to the first match going back."
-  (when (and (screen-copy-mode-p screen) term (plusp (length term)))
-    (setf (screen-copy-search-term screen) term)
-    (let* ((cur (or (screen-copy-cursor screen) (cons 0 0)))
-           (row (car cur))
-           (col (cdr cur)))
-      (multiple-value-bind (found-row found-col)
-          (%copy-mode-find-backward screen term row col)
-        (when found-row
-          (setf (screen-copy-cursor screen) (cons found-row found-col)
-                (screen-dirty-p screen) t))))))
-
-(defun copy-mode-search-next (screen)
-  "Repeat the last search in the forward direction."
-  (when (screen-copy-mode-p screen)
-    (let ((term (screen-copy-search-term screen)))
-      (when term
-        (copy-mode-search-forward screen term)))))
-
-(defun copy-mode-search-prev (screen)
-  "Repeat the last search in the backward direction."
-  (when (screen-copy-mode-p screen)
-    (let ((term (screen-copy-search-term screen)))
-      (when term
-        (copy-mode-search-backward screen term)))))
+;;; Navigation (word/line/screen jumps) and search are in separate files:
+;;;   commands-copy-mode-nav.lisp    — word-forward/backward/end, line-start/end,
+;;;                                    cursor-jump macros, page/half-page scroll,
+;;;                                    begin-line-selection, copy-end-of-line, copy-line
+;;;   commands-copy-mode-search.lisp — %copy-mode-row-string, find-forward/backward,
+;;;                                    search-forward/backward, search-next/prev

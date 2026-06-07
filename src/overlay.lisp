@@ -73,6 +73,21 @@
   "The currently displayed POPUP overlay, or NIL.
    Session-persistent: use defvar so image reloads do not reset live state.")
 
+(defun show-popup (popup)
+  "Register POPUP as the active popup overlay.
+   Callers should use this instead of directly mutating *active-popup* so that
+   the lifecycle boundary stays inside this module."
+  (setf *active-popup* popup))
+
+(defun close-popup ()
+  "Dismiss the active popup overlay.
+   Callers should use this instead of directly setting *active-popup* to NIL."
+  (setf *active-popup* nil))
+
+(defun popup-active-p ()
+  "True when a popup overlay is currently displayed."
+  (and *active-popup* t))
+
 ;;; -- Menu overlay ------------------------------------------------------------
 
 (defstruct menu
@@ -84,3 +99,18 @@
 (defvar *active-menu* nil
   "The currently displayed MENU overlay, or NIL.
    Session-persistent: use defvar so image reloads do not reset live state.")
+
+(defun show-menu (menu)
+  "Register MENU as the active menu overlay.
+   Callers should use this instead of directly mutating *active-menu* so that
+   the lifecycle boundary stays inside this module."
+  (setf *active-menu* menu))
+
+(defun close-menu ()
+  "Dismiss the active menu overlay.
+   Callers should use this instead of directly setting *active-menu* to NIL."
+  (setf *active-menu* nil))
+
+(defun menu-active-p ()
+  "True when a menu overlay is currently displayed."
+  (and *active-menu* t))

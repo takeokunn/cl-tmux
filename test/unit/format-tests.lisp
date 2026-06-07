@@ -98,32 +98,35 @@
     (is (= 3 (getf ctx :window-count))
         ":window-count expected 3 got ~D" (getf ctx :window-count))))
 
-(test format-context-window-index-is-1-based
-  "format-context-from-session :window-index is 1-based (first window → 1)."
+(test format-context-window-index-matches-window-id
+  "format-context-from-session :window-index equals the window's numeric id.
+   With make-fake-session (base-index=0), ids are 0, 1; :window-index follows."
   (let* ((sess (make-fake-session :nwindows 2))
          (wins (cl-tmux/model:session-windows sess))
          (win1 (first wins))
          (win2 (second wins))
          (pane (first (cl-tmux/model:window-panes win1))))
     (let ((ctx1 (cl-tmux/format:format-context-from-session sess win1 pane)))
-      (is (= 1 (getf ctx1 :window-index))
-          "first window: expected :window-index 1 got ~D" (getf ctx1 :window-index)))
+      (is (= (cl-tmux/model:window-id win1) (getf ctx1 :window-index))
+          "first window: :window-index must equal window-id (~D)"
+          (cl-tmux/model:window-id win1)))
     (let* ((pane2 (first (cl-tmux/model:window-panes win2)))
            (ctx2  (cl-tmux/format:format-context-from-session sess win2 pane2)))
-      (is (= 2 (getf ctx2 :window-index))
-          "second window: expected :window-index 2 got ~D" (getf ctx2 :window-index)))))
+      (is (= (cl-tmux/model:window-id win2) (getf ctx2 :window-index))
+          "second window: :window-index must equal window-id (~D)"
+          (cl-tmux/model:window-id win2)))))
 
-(test format-context-pane-index-is-1-based
-  "format-context-from-session :pane-index is 1-based (first pane → 1)."
+(test format-context-pane-index-matches-pane-id
+  "format-context-from-session :pane-index equals the pane's numeric id."
   (let* ((sess  (make-fake-session :nwindows 1 :npanes 2))
          (win   (first (cl-tmux/model:session-windows sess)))
          (panes (cl-tmux/model:window-panes win))
          (ctx1  (cl-tmux/format:format-context-from-session sess win (first panes)))
          (ctx2  (cl-tmux/format:format-context-from-session sess win (second panes))))
-    (is (= 1 (getf ctx1 :pane-index))
-        "first pane: expected :pane-index 1 got ~D" (getf ctx1 :pane-index))
-    (is (= 2 (getf ctx2 :pane-index))
-        "second pane: expected :pane-index 2 got ~D" (getf ctx2 :pane-index))))
+    (is (= (cl-tmux/model:pane-id (first panes)) (getf ctx1 :pane-index))
+        "first pane: :pane-index must equal pane-id")
+    (is (= (cl-tmux/model:pane-id (second panes)) (getf ctx2 :pane-index))
+        "second pane: :pane-index must equal pane-id")))
 
 (test format-context-session-name-propagated
   "format-context-from-session :session-name matches the session's name field."
@@ -964,3 +967,85 @@
     (let ((layout (getf ctx :window-layout)))
       (is (stringp layout) ":window-layout must be a string")
       (is (plusp (length layout)) ":window-layout must be non-empty for a window with panes"))))
+
+;;; ── Modifier chaining ────────────────────────────────────────────────────────
+
+(test format-modifier-chain-b-of-d
+  "#{b:d:var} chains dirname then basename: b(d('/a/b/c')) = b('/a/b') = 'b'."
+  (is (string= "b" (fmt "#{b:d:x}" :x "/a/b/c"))))
+
+(test format-modifier-chain-U-of-b
+  "#{U:b:var} chains basename then uppercase."
+  (is (string= "FOO" (fmt "#{U:b:x}" :x "/some/path/foo"))))
+
+(test format-modifier-chain-three
+  "#{U:b:d:var} chains dirname, basename, uppercase."
+  (is (string= "B" (fmt "#{U:b:d:x}" :x "/a/b/c"))))
+
+;;; ── Glob match #{m:pattern,string} ──────────────────────────────────────────
+
+(test format-glob-match-star-matches-prefix
+  "#{m:*bash,bash} → '1'."
+  (is (string= "1" (fmt "#{m:*bash,bash}"))))
+
+(test format-glob-match-star-suffix
+  "#{m:bash*,bash-5.1} → '1'."
+  (is (string= "1" (fmt "#{m:bash*,bash-5.1}"))))
+
+(test format-glob-match-no-match
+  "#{m:*zsh*,bash} → '0'."
+  (is (string= "0" (fmt "#{m:*zsh*,bash}"))))
+
+(test format-glob-match-question
+  "#{m:ba?h,bash} → '1'."
+  (is (string= "1" (fmt "#{m:ba?h,bash}"))))
+
+(test format-glob-match-with-context-var
+  "#{m:*bash,#{x}} with x='fish' → '0'."
+  (is (string= "0" (fmt "#{m:*bash,#{x}}" :x "fish"))))
+
+(test format-glob-match-in-conditional
+  "#{?#{m:*bash,bash},yes,no} → 'yes'."
+  (is (string= "yes" (fmt "#{?#{m:*bash,bash},yes,no}"))))
+
+;;; ── New format context variables ─────────────────────────────────────────────
+
+(test format-context-session-id
+  "#{session_id} is available and is an integer (via pane context)."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (is (integerp (getf ctx :session-id))
+        ":session-id must be an integer")))
+
+(test format-context-window-id
+  "#{window_id} is available and is an integer."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (is (integerp (getf ctx :window-id))
+        ":window-id must be an integer")))
+
+(test format-context-pane-current-command-is-string
+  "#{pane_current_command} is available as a non-empty string."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (is (stringp (getf ctx :pane-current-command))
+        ":pane-current-command must be a string")
+    (is (plusp (length (getf ctx :pane-current-command)))
+        ":pane-current-command must be non-empty")))
+
+(test format-expand-session-id-and-window-id
+  "#{session_id} and #{window_id} expand to numeric strings."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (is (plusp (length (cl-tmux/format:expand-format "#{session_id}" ctx)))
+        "#{session_id} must expand to a non-empty string")
+    (is (plusp (length (cl-tmux/format:expand-format "#{window_id}" ctx)))
+        "#{window_id} must expand to a non-empty string")))

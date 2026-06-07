@@ -30,6 +30,35 @@
      (cl-tmux::install-extended-key-bindings)
      ,@body))
 
+(defmacro with-isolated-key-tables (&body body)
+  "Run BODY with a fresh *KEY-TABLES* inside WITH-ISOLATED-CONFIG isolation.
+   Prevents key-table mutations from leaking between tests that exercise
+   bind/unbind directives across multiple key-tables (root, copy-mode, etc.)."
+  `(let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+     (with-isolated-config
+       ,@body)))
+
+(defmacro with-temp-config-file ((path-var &rest lines) &body body)
+  "Write LINES (each a string) to a fresh temporary config file, bind PATH-VAR
+   to that file's pathname, run BODY, then delete the file.
+   Used by load-config-file and source-file tests to avoid repetition of the
+   create->unwind-protect->delete-file scaffold."
+  (let ((path-sym (gensym "PATH")))
+    `(let ((,path-sym (merge-pathnames
+                        (format nil "cl-tmux-test-~D.conf" (random 1000000))
+                        (uiop:temporary-directory))))
+       (unwind-protect
+            (progn
+              (with-open-file (out ,path-sym :direction :output
+                                             :if-exists :supersede
+                                             :if-does-not-exist :create)
+                ,@(mapcar (lambda (line) `(write-line ,line out)) lines)
+                (finish-output out))
+              (let ((,path-var ,path-sym))
+                ,@body))
+         (when (probe-file ,path-sym)
+           (delete-file ,path-sym))))))
+
 ;;; ── Screen builder ──────────────────────────────────────────────────────────
 
 (defmacro with-screen ((var w h) &body body)
@@ -462,6 +491,22 @@
     (window-select-pane win (or active (first (window-panes win))))
     win))
 
+;;; ── Minimal 2-pane layout fixture ─────────────────────────────────────────────
+;;;
+;;; Many layout-geometry tests pair two 1×1 placeholder panes as inputs to
+;;; layout-assign and %assign-split.  with-two-1x1-panes removes the repeated
+;;; boilerplate of constructing p0 and p1 inline.
+
+(defmacro with-two-1x1-panes ((p0-var p1-var) &body body)
+  "Bind P0-VAR and P1-VAR to two 1x1 no-PTY panes (ids 1 and 2) for BODY.
+   Used by layout-assign and %assign-split tests to avoid repeating the
+   same (make-pane :id N :fd -1 :pid -1 :width 1 :height 1 ...) boilerplate."
+  `(let* ((,p0-var (make-pane :id 1 :fd -1 :pid -1 :width 1 :height 1
+                               :screen (make-screen 1 1)))
+          (,p1-var (make-pane :id 2 :fd -1 :pid -1 :width 1 :height 1
+                               :screen (make-screen 1 1))))
+     ,@body))
+
 ;;; ── Shared 2-pane fixture macros ─────────────────────────────────────────────
 ;;;
 ;;; Many dispatch tests need identical 2-pane sessions.  These macros eliminate
@@ -537,6 +582,38 @@
      (window-select-pane ,win-var ,p0-var)
      (session-select-window ,sess-var ,win-var)
      ,@body))
+
+;;; ── Two-pane layout session fixture ──────────────────────────────────────────
+;;;
+;;; Layout tests in the dispatch suite (apply-named-layout-even-horizontal,
+;;; apply-named-layout-even-vertical, apply-named-layout-tiled, and
+;;; run-command-line-select-layout-*) share the same manual build pattern:
+;;; make-no-pty-pane × 2 + make-window + make-session + window-select-pane +
+;;; session-select-window.  with-two-pane-layout-session encodes that pattern
+;;; once and eliminates the repeated boilerplate.
+
+(defmacro with-two-pane-layout-session ((sess-var win-var p0-var p1-var
+                                         &key (win-width 81) (win-height 24))
+                                        &body body)
+  "Bind SESS-VAR WIN-VAR P0-VAR P1-VAR to a 2-pane horizontal split session
+   ready for layout-assign tests.  WIN-WIDTH × WIN-HEIGHT default to 81 × 24.
+   p0 occupies the left half, p1 the right half, with p0 active.
+   Runs BODY with those bindings."
+  (let ((half-width (gensym "HALF-W")))
+    `(let* ((,half-width (floor (- ,win-width 1) 2))
+            (,p0-var  (make-no-pty-pane 1  0 0 ,half-width ,win-height))
+            (,p1-var  (make-no-pty-pane 2 (1+ ,half-width) 0 ,half-width ,win-height))
+            (,win-var (make-window :id 1 :name "w"
+                                   :width ,win-width :height ,win-height
+                                   :panes (list ,p0-var ,p1-var)
+                                   :tree (make-layout-split :h
+                                            (make-layout-leaf ,p0-var)
+                                            (make-layout-leaf ,p1-var)
+                                            1/2)))
+            (,sess-var (make-session :id 1 :name "0" :windows (list ,win-var))))
+       (window-select-pane ,win-var ,p0-var)
+       (session-select-window ,sess-var ,win-var)
+       ,@body)))
 
 (defmacro with-two-pane-v-session ((sess-var win-var p0-var p1-var) &body body)
   "Bind SESS-VAR WIN-VAR P0-VAR P1-VAR to a 2-pane vertical split session:
@@ -637,6 +714,35 @@
               ,ht-sym)))
        ,@body)))
 
+;;; ── Renderer pane fixture helpers ────────────────────────────────────────────
+;;;
+;;; These eliminate the repeated (make-screen N M) + (make-pane …) pattern that
+;;; appeared 8+ times inline across renderer-pane-tests.lisp.
+
+(defun make-test-pane (w h &key (id 1) (content "") (x 0) (y 0))
+  "Build a no-PTY pane of W x H at (X, Y) with ID.
+   CONTENT is fed into the pane's screen if non-empty.
+   Returns the pane; the screen is accessible via (pane-screen pane)."
+  (let* ((screen (make-screen w h))
+         (pane   (make-pane :id id :x x :y y :width w :height h
+                            :fd -1 :screen screen)))
+    (unless (string= content "")
+      (feed screen content))
+    pane))
+
+(defun make-selecting-screen (w h mark-row mark-col cursor-row cursor-col
+                              &key (offset 0))
+  "Build a screen of W x H in copy-mode with an active selection.
+   MARK-ROW/COL and CURSOR-ROW/COL define the selection anchor and cursor.
+   OFFSET (default 0) sets the copy-mode scroll offset."
+  (let ((screen (make-screen w h)))
+    (setf (cl-tmux/terminal/types:screen-copy-mode-p    screen) t
+          (cl-tmux/terminal/types:screen-copy-selecting screen) t
+          (cl-tmux/terminal/types:screen-copy-offset    screen) offset
+          (cl-tmux/terminal/types:screen-copy-mark      screen) (cons mark-row   mark-col)
+          (cl-tmux/terminal/types:screen-copy-cursor    screen) (cons cursor-row cursor-col))
+    screen))
+
 ;;; ---- Shared renderer session fixture ------------------------------------------
 
 (defun make-renderer-test-session (w h &key (content ""))
@@ -659,12 +765,17 @@
 ;;; temp-path idiom and the write-frames pattern.
 
 (defmacro with-temp-octet-file ((path-var) &body body)
-  "Bind PATH-VAR to a fresh temp file path, run BODY, then delete the file.
+  "Bind PATH-VAR to a unique fresh temp file path, run BODY, then delete the file.
+   The filename includes a timestamp and random component so that concurrent test
+   runs (or future parallel test execution) never collide on the same path.
    Shared by transport-tests.lisp and net-tests.lisp."
-  `(let ((,path-var (merge-pathnames "cl-tmux-wire-test.bin"
-                                     (uiop:temporary-directory))))
-     (unwind-protect (progn ,@body)
-       (ignore-errors (delete-file ,path-var)))))
+  (let ((label (gensym "LABEL")))
+    `(let* ((,label (format nil "cl-tmux-wire-test-~D-~D.bin"
+                            (get-universal-time) (random 1000000)))
+            (,path-var (namestring
+                        (merge-pathnames ,label (uiop:temporary-directory)))))
+       (unwind-protect (progn ,@body)
+         (ignore-errors (delete-file ,path-var))))))
 
 (defun write-frames-to-file (path &rest frames)
   "Write each FRAME (octet vector) to PATH via cl-tmux/transport:send-frame.
@@ -673,6 +784,14 @@
                             :element-type '(unsigned-byte 8))
     (dolist (frame frames)
       (cl-tmux/transport:send-frame out frame))))
+
+(defun write-partial-frame-to-file (path frame byte-count)
+  "Write only the first BYTE-COUNT bytes of FRAME to PATH (creating a truncated frame).
+   Used by truncation tests to simulate mid-frame EOF conditions without duplicating
+   the raw with-open-file / write-sequence / subseq boilerplate."
+  (with-open-file (out path :direction :output :if-exists :supersede
+                            :element-type '(unsigned-byte 8))
+    (write-sequence (subseq frame 0 byte-count) out)))
 
 (defmacro with-temp-socket-path ((path-var) &body body)
   "Bind PATH-VAR to a unique temp socket path, run BODY, then delete it.
@@ -748,6 +867,15 @@
 ;;; Several test suites (input-tests, pty-tests, pty-rawmode-tests) open pipe
 ;;; pairs to exercise select/read mechanics without a real TTY.  This macro
 ;;; consolidates the pattern in one place.
+
+(defun write-byte-to-fd (fd byte-value)
+  "Write a single BYTE-VALUE (0–255) to file descriptor FD via CFFI.
+   Returns the write(2) return value (1 on success, negative on error).
+   Shared by input-tests.lisp and pty-tests.lisp to eliminate repeated
+   cffi:with-foreign-object / mem-ref / foreign-funcall write patterns."
+  (cffi:with-foreign-object (buf :uint8)
+    (setf (cffi:mem-ref buf :uint8) byte-value)
+    (cffi:foreign-funcall "write" :int fd :pointer buf :unsigned-long 1 :long)))
 
 (defmacro with-pipe-fds ((read-fd write-fd) &body body)
   "Open a POSIX pipe; bind READ-FD and WRITE-FD; close both on exit.

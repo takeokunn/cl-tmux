@@ -211,31 +211,40 @@
 ;;; (meta/alt) are handled algorithmically.  Escape sequences use the normal
 ;;; (non-application) xterm encodings, matching what send-keys emits by default.
 
+;; String constants are not EQL-able, so DEFCONSTANT causes SBCL to signal a
+;; redefinition error every time the fasl is loaded.  DEFVAR avoids the check.
+(defvar +escape-string+ (load-time-value (string (code-char 27)) t)
+  "The ESC character (ASCII 27) as a single-character string.")
+
+(defun %escape-sequence (&rest tail)
+  "Build a string beginning with ESC followed by TAIL strings concatenated."
+  (apply #'concatenate 'string +escape-string+ tail))
+
 (defparameter *send-key-names*
-  (let ((esc (string (code-char 27))))
-    (flet ((seq (&rest tail) (apply #'concatenate 'string esc tail)))
-      (list
-       ;; whitespace / control
-       (cons "Enter"  (string #\Return)) (cons "C-m" (string #\Return))
-       (cons "Tab"    (string #\Tab))    (cons "C-i" (string #\Tab))
-       (cons "Space"  " ")
-       (cons "Escape" esc)               (cons "Esc" esc)
-       (cons "BSpace" (string (code-char 127)))
-       (cons "BTab"   (seq "[Z"))
-       ;; arrows (normal cursor mode)
-       (cons "Up"     (seq "[A")) (cons "Down"  (seq "[B"))
-       (cons "Right"  (seq "[C")) (cons "Left"  (seq "[D"))
-       ;; navigation block
-       (cons "Home"     (seq "[H")) (cons "End"      (seq "[F"))
-       (cons "PageUp"   (seq "[5~")) (cons "PPage"   (seq "[5~"))
-       (cons "PageDown" (seq "[6~")) (cons "NPage"   (seq "[6~"))
-       (cons "Insert"   (seq "[2~")) (cons "IC"      (seq "[2~"))
-       (cons "Delete"   (seq "[3~")) (cons "DC"      (seq "[3~"))
-       ;; function keys
-       (cons "F1" (seq "OP")) (cons "F2" (seq "OQ")) (cons "F3" (seq "OR"))
-       (cons "F4" (seq "OS")) (cons "F5" (seq "[15~")) (cons "F6" (seq "[17~"))
-       (cons "F7" (seq "[18~")) (cons "F8" (seq "[19~")) (cons "F9" (seq "[20~"))
-       (cons "F10" (seq "[21~")) (cons "F11" (seq "[23~")) (cons "F12" (seq "[24~")))))
+  (list
+   ;; whitespace / control
+   (cons "Enter"  (string #\Return)) (cons "C-m" (string #\Return))
+   (cons "Tab"    (string #\Tab))    (cons "C-i" (string #\Tab))
+   (cons "Space"  " ")
+   (cons "Escape" +escape-string+)   (cons "Esc" +escape-string+)
+   (cons "BSpace" (string (code-char 127)))
+   (cons "BTab"   (%escape-sequence "[Z"))
+   ;; arrows (normal cursor mode)
+   (cons "Up"     (%escape-sequence "[A")) (cons "Down"  (%escape-sequence "[B"))
+   (cons "Right"  (%escape-sequence "[C")) (cons "Left"  (%escape-sequence "[D"))
+   ;; navigation block
+   (cons "Home"     (%escape-sequence "[H")) (cons "End"      (%escape-sequence "[F"))
+   (cons "PageUp"   (%escape-sequence "[5~")) (cons "PPage"   (%escape-sequence "[5~"))
+   (cons "PageDown" (%escape-sequence "[6~")) (cons "NPage"   (%escape-sequence "[6~"))
+   (cons "Insert"   (%escape-sequence "[2~")) (cons "IC"      (%escape-sequence "[2~"))
+   (cons "Delete"   (%escape-sequence "[3~")) (cons "DC"      (%escape-sequence "[3~"))
+   ;; function keys
+   (cons "F1"  (%escape-sequence "OP"))   (cons "F2"  (%escape-sequence "OQ"))
+   (cons "F3"  (%escape-sequence "OR"))   (cons "F4"  (%escape-sequence "OS"))
+   (cons "F5"  (%escape-sequence "[15~")) (cons "F6"  (%escape-sequence "[17~"))
+   (cons "F7"  (%escape-sequence "[18~")) (cons "F8"  (%escape-sequence "[19~"))
+   (cons "F9"  (%escape-sequence "[20~")) (cons "F10" (%escape-sequence "[21~"))
+   (cons "F11" (%escape-sequence "[23~")) (cons "F12" (%escape-sequence "[24~")))
   "Alist mapping tmux key-name strings to their literal byte sequence (as a
    string whose char-codes are the bytes — all < 128).")
 
@@ -267,46 +276,69 @@
 ;;; foobar baz).  This is the shared lexer behind multi-argument commands such as
 ;;; send-keys (and, in future, display-message / if-shell).
 
+(defun %consume-single-quoted (string start length accumulator)
+  "Consume a single-quoted literal span from STRING beginning at START.
+   Writes characters into ACCUMULATOR stream up to the closing quote.
+   Returns the index after the closing quote (or LENGTH when unterminated)."
+  (let ((index (1+ start)))         ; skip the opening quote
+    (loop while (and (< index length)
+                     (char/= (char string index) #\'))
+          do (write-char (char string index) accumulator)
+             (incf index))
+    (if (< index length) (1+ index) index))) ; skip closing quote when present
+
+(defun %consume-double-quoted (string start length accumulator)
+  "Consume a double-quoted span from STRING beginning at START.
+   Inside double quotes a backslash followed by any character is an escape:
+   only the escaped character is written.  Other characters are written verbatim.
+   Returns the index after the closing quote (or LENGTH when unterminated)."
+  (let ((index (1+ start)))         ; skip the opening quote
+    (loop while (and (< index length)
+                     (char/= (char string index) #\"))
+          do (if (and (char= (char string index) #\\) (< (1+ index) length))
+                 (progn (write-char (char string (1+ index)) accumulator)
+                        (incf index 2))
+                 (progn (write-char (char string index) accumulator)
+                        (incf index))))
+    (if (< index length) (1+ index) index))) ; skip closing quote when present
+
 (defun tokenize-command-string (string)
   "Split STRING into a list of argument strings, shell-style.
    Whitespace separates arguments; '...' is a literal span; \"...\" allows \\
    escapes; a bare \\ escapes the next character; adjacent spans concatenate.
    Unterminated quotes are tolerated (consumed to end of string).  An explicitly
    quoted empty token (e.g. '') yields an empty-string argument."
-  (let ((args nil)
-        (cur  (make-string-output-stream))
-        (in-arg nil)
-        (i 0)
-        (n (length string)))
-    (labels ((finish ()
-               (when in-arg
-                 (push (get-output-stream-string cur) args)
-                 (setf in-arg nil))))
-      (loop while (< i n) do
-        (let ((c (char string i)))
-          (cond
-            ((member c '(#\Space #\Tab))
-             (finish) (incf i))
-            ((char= c #\')                      ; single-quoted literal span
-             (setf in-arg t) (incf i)
-             (loop while (and (< i n) (char/= (char string i) #\'))
-                   do (write-char (char string i) cur) (incf i))
-             (when (< i n) (incf i)))
-            ((char= c #\")                      ; double-quoted span with escapes
-             (setf in-arg t) (incf i)
-             (loop while (and (< i n) (char/= (char string i) #\"))
-                   do (if (and (char= (char string i) #\\) (< (1+ i) n))
-                          (progn (write-char (char string (1+ i)) cur) (incf i 2))
-                          (progn (write-char (char string i) cur) (incf i))))
-             (when (< i n) (incf i)))
-            ((and (char= c #\\) (< (1+ i) n))   ; bare backslash escape
-             (setf in-arg t)
-             (write-char (char string (1+ i)) cur) (incf i 2))
-            (t
-             (setf in-arg t)
-             (write-char c cur) (incf i)))))
-      (finish)
-      (nreverse args))))
+  (let ((arguments   nil)
+        (accumulator (make-string-output-stream))
+        (in-arg      nil)
+        (index       0)
+        (length      (length string)))
+    (flet ((flush-argument ()
+             (when in-arg
+               (push (get-output-stream-string accumulator) arguments)
+               (setf in-arg nil))))
+      (loop while (< index length)
+            for character = (char string index)
+            do (cond
+                 ((member character '(#\Space #\Tab))
+                  (flush-argument)
+                  (incf index))
+                 ((char= character #\')
+                  (setf in-arg t
+                        index (%consume-single-quoted string index length accumulator)))
+                 ((char= character #\")
+                  (setf in-arg t
+                        index (%consume-double-quoted string index length accumulator)))
+                 ((and (char= character #\\) (< (1+ index) length))
+                  (setf in-arg t)
+                  (write-char (char string (1+ index)) accumulator)
+                  (incf index 2))
+                 (t
+                  (setf in-arg t)
+                  (write-char character accumulator)
+                  (incf index))))
+      (flush-argument)
+      (nreverse arguments))))
 
 (defun %translate-send-keys (string)
   "Bytes that send-keys should write for the argument string STRING.  STRING is

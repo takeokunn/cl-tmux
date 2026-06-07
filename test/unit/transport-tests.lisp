@@ -55,9 +55,7 @@
   (with-temp-octet-file (path)
     ;; Write only the first 4 bytes of a key frame (header is 5 bytes).
     (let ((frame (msg-key #(1 2 3))))
-      (with-open-file (out path :direction :output :if-exists :supersede
-                                :element-type '(unsigned-byte 8))
-        (write-sequence (subseq frame 0 4) out)))
+      (write-partial-frame-to-file path frame 4))
     (with-open-file (in path :element-type '(unsigned-byte 8))
       (is (null (read-frame in)) "incomplete header → NIL"))))
 
@@ -68,9 +66,7 @@
     ;; Write the whole header plus only the first payload byte (6 of 8 bytes).
     (let ((frame (msg-key #(1 2 3))))
       (is (= 8 (length frame)) "header(5) + payload(3)")
-      (with-open-file (out path :direction :output :if-exists :supersede
-                                :element-type '(unsigned-byte 8))
-        (write-sequence (subseq frame 0 6) out)))
+      (write-partial-frame-to-file path frame 6))
     (with-open-file (in path :element-type '(unsigned-byte 8))
       (is (null (read-frame in)) "complete header, short payload → NIL"))))
 
@@ -269,3 +265,57 @@
         (lambda (payload)
           (is (string= "こんにちは" (cl-tmux/protocol:decode-text payload))
               "frame UTF-8 payload must survive transport")))))
+
+;;; ── %read-exact direct contract tests ───────────────────────────────────────
+;;;
+;;; These tests exercise the %read-exact helper directly using a file stream so
+;;; that the exact-byte-count contract is verified in isolation from read-frame.
+;;; The key invariant: %read-exact returns the actual number of bytes read, which
+;;; equals (- end start) on a normal read but is less than that at EOF.
+
+(test read-exact-fills-buffer-exactly
+  "%read-exact reads exactly (- end start) bytes from a stream with enough data."
+  (with-temp-octet-file (path)
+    ;; Write 10 known bytes to the file.
+    (with-open-file (out path :direction :output :if-exists :supersede
+                              :element-type '(unsigned-byte 8))
+      (write-sequence #(10 20 30 40 50 60 70 80 90 100) out))
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      (let ((buffer (make-array 10 :element-type '(unsigned-byte 8))))
+        (let ((bytes-read (cl-tmux/transport::%read-exact buffer in 0 10)))
+          (is (= 10 bytes-read)
+              "%read-exact must return 10 when 10 bytes are available")
+          (is (equalp #(10 20 30 40 50 60 70 80 90 100) buffer)
+              "%read-exact must place the bytes at the correct positions"))))))
+
+(test read-exact-returns-short-count-at-eof
+  "%read-exact returns less than requested when the stream ends before END."
+  (with-temp-octet-file (path)
+    ;; Write only 3 bytes but ask for 10.
+    (with-open-file (out path :direction :output :if-exists :supersede
+                              :element-type '(unsigned-byte 8))
+      (write-sequence #(1 2 3) out))
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      (let ((buffer (make-array 10 :element-type '(unsigned-byte 8) :initial-element 0)))
+        (let ((bytes-read (cl-tmux/transport::%read-exact buffer in 0 10)))
+          (is (< bytes-read 10)
+              "%read-exact must return less than 10 at EOF (only 3 bytes available)")
+          (is (= 3 bytes-read)
+              "%read-exact must return the actual byte count (3) at EOF"))))))
+
+(test read-exact-respects-start-offset
+  "%read-exact writes bytes starting at the given START offset in the buffer."
+  (with-temp-octet-file (path)
+    (with-open-file (out path :direction :output :if-exists :supersede
+                              :element-type '(unsigned-byte 8))
+      (write-sequence #(7 8 9) out))
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      (let ((buffer (make-array 6 :element-type '(unsigned-byte 8) :initial-element 0)))
+        ;; Read into the middle of the buffer (positions 3..6).
+        (cl-tmux/transport::%read-exact buffer in 3 6)
+        (is (= 0 (aref buffer 0)) "byte 0 must be untouched")
+        (is (= 0 (aref buffer 1)) "byte 1 must be untouched")
+        (is (= 0 (aref buffer 2)) "byte 2 must be untouched")
+        (is (= 7 (aref buffer 3)) "byte 3 must hold first read byte (7)")
+        (is (= 8 (aref buffer 4)) "byte 4 must hold second read byte (8)")
+        (is (= 9 (aref buffer 5)) "byte 5 must hold third read byte (9)")))))

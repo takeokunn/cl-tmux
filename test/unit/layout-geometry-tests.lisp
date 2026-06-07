@@ -38,17 +38,16 @@
 
 (test layout-assign-h-split-divides-width
   "A :h split divides width: left gets ratio share, right gets remainder, one separator."
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :width 1 :height 1 :screen (make-screen 1 1)))
-         (p1   (make-pane :id 2 :fd -1 :pid -1 :width 1 :height 1 :screen (make-screen 1 1)))
-         (tree (make-layout-split :h (make-layout-leaf p0) (make-layout-leaf p1) 1/2)))
-    (cl-tmux/model::layout-assign tree 0 0 81 24)
-    ;; 81 cols - 1 separator = 80, split 50/50 → 40 each
-    (is (= 0  (pane-x p0)))
-    (is (= 40 (pane-width p0)))
-    (is (= 41 (pane-x p1)))
-    (is (= 40 (pane-width p1)))
-    (is (= 24 (pane-height p0)))
-    (is (= 24 (pane-height p1)))))
+  (with-two-1x1-panes (p0 p1)
+    (let ((tree (make-layout-split :h (make-layout-leaf p0) (make-layout-leaf p1) 1/2)))
+      (cl-tmux/model::layout-assign tree 0 0 81 24)
+      ;; 81 cols - 1 separator = 80, split 50/50 → 40 each
+      (is (= 0  (pane-x p0)))
+      (is (= 40 (pane-width p0)))
+      (is (= 41 (pane-x p1)))
+      (is (= 40 (pane-width p1)))
+      (is (= 24 (pane-height p0)))
+      (is (= 24 (pane-height p1))))))
 
 ;;; ── layout-split-axis-extent direct tests ─────────────────────────────────
 
@@ -291,57 +290,53 @@
 
 (test layout-assign-v-split-divides-height
   "A :v split divides height: top gets ratio share, bottom gets remainder, one separator."
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :width 1 :height 1 :screen (make-screen 1 1)))
-         (p1   (make-pane :id 2 :fd -1 :pid -1 :width 1 :height 1 :screen (make-screen 1 1)))
-         (tree (make-layout-split :v (make-layout-leaf p0) (make-layout-leaf p1) 1/2)))
-    (cl-tmux/model::layout-assign tree 0 0 80 21)
-    ;; 21 rows - 1 separator = 20, split 50/50 → 10 each
-    (is (= 0  (pane-y p0)))
-    (is (= 10 (pane-height p0)))
-    (is (= 11 (pane-y p1)))
-    (is (= 10 (pane-height p1)))
-    (is (= 80 (pane-width p0)))
-    (is (= 80 (pane-width p1)))))
+  (with-two-1x1-panes (p0 p1)
+    (let ((tree (make-layout-split :v (make-layout-leaf p0) (make-layout-leaf p1) 1/2)))
+      (cl-tmux/model::layout-assign tree 0 0 80 21)
+      ;; 21 rows - 1 separator = 20, split 50/50 → 10 each
+      (is (= 0  (pane-y p0)))
+      (is (= 10 (pane-height p0)))
+      (is (= 11 (pane-y p1)))
+      (is (= 10 (pane-height p1)))
+      (is (= 80 (pane-width p0)))
+      (is (= 80 (pane-width p1))))))
 
 ;;; ── %assign-split boundary clamping ──────────────────────────────────────────
 ;;;
-;;; %assign-split clamps fext to [1, avail-1] so neither child vanishes even
-;;; when the ratio is extreme (near 0 or near 1).  These tests exercise both
-;;; extremes to confirm the clamping invariant holds.
+;;; %assign-split clamps first-extent to [1, available-cells-1] so neither child
+;;; vanishes when the ratio is extreme (near 0 or near 1).  These tests exercise
+;;; both extremes to confirm the clamping invariant holds.
 
 (test assign-split-extreme-ratio-near-zero-clamps-first-child
   "%assign-split clamps a near-zero ratio so the first child has at least 1 cell."
-  ;; ratio = 1/100: avail = 80-1 = 79, round(79/100) = 1 → fext = max(1, ...) = 1.
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :width 1 :height 1 :screen (make-screen 1 1)))
-         (p1   (make-pane :id 2 :fd -1 :pid -1 :width 1 :height 1 :screen (make-screen 1 1)))
-         (tree (make-layout-split :h (make-layout-leaf p0) (make-layout-leaf p1) 1/100)))
-    (cl-tmux/model::layout-assign tree 0 0 80 24)
-    (is (>= (pane-width p0) 1)  "first child must be at least 1 cell wide")
-    (is (>= (pane-width p1) 1)  "second child must be at least 1 cell wide")
-    (is (= 79 (+ (pane-width p0) (pane-width p1)))
-        "first + second children must equal avail (80-1=79)")))
+  ;; ratio = 1/100: avail = 80-1 = 79, round(79/100) = 1 → first-extent = max(1, ...) = 1.
+  (with-two-1x1-panes (p0 p1)
+    (let ((tree (make-layout-split :h (make-layout-leaf p0) (make-layout-leaf p1) 1/100)))
+      (cl-tmux/model::layout-assign tree 0 0 80 24)
+      (is (>= (pane-width p0) 1)  "first child must be at least 1 cell wide")
+      (is (>= (pane-width p1) 1)  "second child must be at least 1 cell wide")
+      (is (= 79 (+ (pane-width p0) (pane-width p1)))
+          "first + second children must equal avail (80-1=79)"))))
 
 (test assign-split-extreme-ratio-near-one-clamps-second-child
   "%assign-split clamps a near-unity ratio so the second child has at least 1 cell."
-  ;; ratio = 99/100: avail = 80-1 = 79, round(79*99/100) = 78 → sext = 79-78 = 1.
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :width 1 :height 1 :screen (make-screen 1 1)))
-         (p1   (make-pane :id 2 :fd -1 :pid -1 :width 1 :height 1 :screen (make-screen 1 1)))
-         (tree (make-layout-split :h (make-layout-leaf p0) (make-layout-leaf p1) 99/100)))
-    (cl-tmux/model::layout-assign tree 0 0 80 24)
-    (is (>= (pane-width p0) 1)  "first child must be at least 1 cell wide")
-    (is (>= (pane-width p1) 1)  "second child must be at least 1 cell wide")
-    (is (= 79 (+ (pane-width p0) (pane-width p1)))
-        "first + second children must equal avail (80-1=79)")))
+  ;; ratio = 99/100: avail = 80-1 = 79, round(79*99/100) = 78 → second-extent = 79-78 = 1.
+  (with-two-1x1-panes (p0 p1)
+    (let ((tree (make-layout-split :h (make-layout-leaf p0) (make-layout-leaf p1) 99/100)))
+      (cl-tmux/model::layout-assign tree 0 0 80 24)
+      (is (>= (pane-width p0) 1)  "first child must be at least 1 cell wide")
+      (is (>= (pane-width p1) 1)  "second child must be at least 1 cell wide")
+      (is (= 79 (+ (pane-width p0) (pane-width p1)))
+          "first + second children must equal avail (80-1=79)"))))
 
 (test assign-split-exact-half-ratio-distributes-evenly
   "%assign-split with ratio=1/2 on an even avail gives equal children."
-  ;; 81 cols: avail = 80, fext = round(40) = 40, sext = 40.
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :width 1 :height 1 :screen (make-screen 1 1)))
-         (p1   (make-pane :id 2 :fd -1 :pid -1 :width 1 :height 1 :screen (make-screen 1 1)))
-         (tree (make-layout-split :h (make-layout-leaf p0) (make-layout-leaf p1) 1/2)))
-    (cl-tmux/model::layout-assign tree 0 0 81 24)
-    (is (= 40 (pane-width p0)) "equal split: first child must be 40 cols")
-    (is (= 40 (pane-width p1)) "equal split: second child must be 40 cols")))
+  ;; 81 cols: avail = 80, first-extent = round(40) = 40, second-extent = 40.
+  (with-two-1x1-panes (p0 p1)
+    (let ((tree (make-layout-split :h (make-layout-leaf p0) (make-layout-leaf p1) 1/2)))
+      (cl-tmux/model::layout-assign tree 0 0 81 24)
+      (is (= 40 (pane-width p0)) "equal split: first child must be 40 cols")
+      (is (= 40 (pane-width p1)) "equal split: second child must be 40 cols"))))
 
 ;;; ── %ranges-overlap-p direct tests ──────────────────────────────────────────
 ;;;

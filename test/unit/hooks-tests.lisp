@@ -309,39 +309,11 @@
       ;; Either outcome (absent or count-0) is acceptable; what matters is run-hooks is safe.
       (finishes (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-rename-window+)))))
 
-;;; ── table-driven: all hook event constants have correct string values ────────
-
-(test hook-event-constants-table-driven
-  "All hook event constants have their expected string values (table form)."
-  (let ((cases
-         (list (cons cl-tmux/hooks:+hook-after-new-window+    "after-new-window")
-               (cons cl-tmux/hooks:+hook-after-new-pane+      "after-new-pane")
-               (cons cl-tmux/hooks:+hook-pane-exited+         "pane-exited")
-               (cons cl-tmux/hooks:+hook-after-rename-window+ "after-rename-window")
-               (cons cl-tmux/hooks:+hook-session-created+     "session-created")
-               (cons cl-tmux/hooks:+hook-after-kill-pane+     "after-kill-pane")
-               (cons cl-tmux/hooks:+hook-after-kill-window+   "after-kill-window")
-               (cons cl-tmux/hooks:+hook-after-split-window+  "after-split-window")
-               (cons cl-tmux/hooks:+hook-client-attached+     "client-attached")
-               (cons cl-tmux/hooks:+hook-client-detached+     "client-detached")
-               (cons cl-tmux/hooks:+hook-alert-bell+          "alert-bell"))))
-    (dolist (pair cases)
-      (is (string= (cdr pair) (car pair))
-          "hook constant ~S must equal ~S" (car pair) (cdr pair)))))
-
-;;; ── New hook event constant values ─────────────────────────────────────────
-
-(test hook-client-attached-constant
-  "+hook-client-attached+ string equals \"client-attached\"."
-  (is (string= "client-attached" cl-tmux/hooks:+hook-client-attached+)))
-
-(test hook-client-detached-constant
-  "+hook-client-detached+ string equals \"client-detached\"."
-  (is (string= "client-detached" cl-tmux/hooks:+hook-client-detached+)))
-
-(test hook-alert-bell-constant
-  "+hook-alert-bell+ string equals \"alert-bell\"."
-  (is (string= "alert-bell" cl-tmux/hooks:+hook-alert-bell+)))
+;;; hook-event-constants-table-driven, hook-client-attached-constant,
+;;; hook-client-detached-constant, and hook-alert-bell-constant were removed:
+;;; hook-event-constants above already asserts string= for every constant,
+;;; making the table-driven form and the three standalone tests strict subsets
+;;; that add no new coverage (14 redundant assertions removed).
 
 (test run-hooks-client-attached-fires-all-callbacks
   "run-hooks fires all registered callbacks for client-attached."
@@ -381,6 +353,49 @@
     (cl-tmux/hooks:clear-command-hooks "after-new-window")
     (is (null (cl-tmux/hooks:command-hooks "after-new-window"))
         "after clear-command-hooks the event must have no command hooks")))
+
+;;; ── %list-command-hooks (internal helper) ────────────────────────────────────
+
+(test internal-list-command-hooks-returns-alist
+  "%list-command-hooks returns an alist of (event-name . command-keyword-list)
+   for every registered command hook event."
+  (with-isolated-hooks
+    (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
+    (cl-tmux/hooks:set-command-hook "after-new-window" :rename-window)
+    (cl-tmux/hooks:set-command-hook "pane-exited"      :kill-pane)
+    (let ((alist (cl-tmux/hooks::%list-command-hooks)))
+      (is (= 2 (length alist))
+          "%list-command-hooks must return one entry per registered event")
+      (let ((nw-entry (assoc "after-new-window" alist :test #'string=))
+            (pe-entry (assoc "pane-exited"      alist :test #'string=)))
+        (is (not (null nw-entry))
+            "after-new-window must appear in the alist")
+        (is (equal '(:next-window :rename-window) (cdr nw-entry))
+            "after-new-window must list both commands in order")
+        (is (not (null pe-entry))
+            "pane-exited must appear in the alist")
+        (is (equal '(:kill-pane) (cdr pe-entry))
+            "pane-exited must list its single command")))))
+
+(test internal-list-command-hooks-empty-registry
+  "%list-command-hooks returns NIL on an empty *command-hooks* table."
+  (with-isolated-hooks
+    (is (null (cl-tmux/hooks::%list-command-hooks))
+        "%list-command-hooks must return NIL when no command hooks are registered")))
+
+(test internal-list-command-hooks-does-not-mutate-on-sort
+  "Sorting the result of %list-command-hooks does not corrupt *command-hooks*.
+   (Ensures the caller — describe-command-hooks — uses copy-list before sorting.)"
+  (with-isolated-hooks
+    (cl-tmux/hooks:set-command-hook "z-event" :next-window)
+    (cl-tmux/hooks:set-command-hook "a-event" :prev-window)
+    ;; Sort the result in place (worst-case destructive caller).
+    (sort (cl-tmux/hooks::%list-command-hooks) #'string< :key #'car)
+    ;; Both events must still be retrievable from the live registry.
+    (is (equal '(:next-window) (cl-tmux/hooks:command-hooks "z-event"))
+        "z-event must survive a destructive sort of the alist snapshot")
+    (is (equal '(:prev-window) (cl-tmux/hooks:command-hooks "a-event"))
+        "a-event must survive a destructive sort of the alist snapshot")))
 
 (test set-hook-directive-registers-command-hook
   "set-hook <event> <command> resolves the command name and stores a command hook."

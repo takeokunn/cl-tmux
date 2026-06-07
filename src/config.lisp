@@ -3,6 +3,29 @@
 ;;; ASCII 2 = ^B.  tmux uses C-b as the default prefix.
 (defconstant +prefix-key-code+ 2)
 
+;;; ── Runtime-modifiable prefix key ────────────────────────────────────────
+;;;
+;;; *prefix-key-code* shadows +prefix-key-code+ for the event loop so that
+;;; "set -g prefix C-a" (or any other .tmux.conf directive) can remap the
+;;; prefix at runtime without recompiling.  The constant is preserved for
+;;; compile-time uses (e.g., test expectations about the default value).
+
+(defparameter *prefix-key-code* +prefix-key-code+
+  "Runtime prefix key byte.  Default 2 (C-b).  Change via 'set -g prefix C-a'.")
+
+(defun %parse-prefix-key (key-str)
+  "Parse a tmux key name KEY-STR into a byte value.
+   Supports: C-x control (logand char 0x1f), single printable char.
+   Returns an integer, or NIL for unrecognized names."
+  (cond
+    ((and (= (length key-str) 3)
+          (char-equal (char key-str 0) #\C)
+          (char= (char key-str 1) #\-))
+     (logand (char-code (char key-str 2)) #x1f))
+    ((= (length key-str) 1)
+     (char-code (char key-str 0)))
+    (t nil)))
+
 ;;; ── Key-table name constants ──────────────────────────────────────────────
 ;;;
 ;;; All references to the standard table names use these constants so a typo
@@ -18,22 +41,21 @@
   (if (boundp '+table-copy-mode+) +table-copy-mode+ "copy-mode")
   "Name of the copy-mode key-table.")
 
-;;; ── Deferred shell default ────────────────────────────────────────────────
+;;; ── Shell default ─────────────────────────────────────────────────────────
 ;;;
-;;; *default-shell* is initialised at module load time via init-default-shell
-;;; rather than at defparameter expansion, to avoid I/O at macro-expand time.
+;;; *default-shell* starts as "/bin/sh".  The ORCHESTRATE layer (main.lisp)
+;;; calls init-default-shell at startup to read $SHELL from the environment.
+;;; This keeps the DATA-layer defparameter free of I/O side-effects.
 
 (defparameter *default-shell* "/bin/sh"
   "Shell binary launched for new panes.")
 
 (defun init-default-shell ()
-  "Set *DEFAULT-SHELL* from $SHELL if that variable is set and non-empty."
+  "Set *DEFAULT-SHELL* from $SHELL if that variable is set and non-empty.
+   Call this once at program startup (in main.lisp) before forking any panes."
   (let ((shell (sb-ext:posix-getenv "SHELL")))
     (when (and shell (plusp (length shell)))
       (setf *default-shell* shell))))
-
-;;; Perform the I/O side-effect exactly once at load time.
-(init-default-shell)
 
 (defparameter *status-height* 1
   "Number of rows reserved for the status bar at the bottom.")
@@ -167,20 +189,36 @@
       (format nil "~{~A~^ ~}" command)
       (format nil "~(~A~)" command)))
 
+(defun %sorted-table-names ()
+  "Return all key-table names from *KEY-TABLES* in alphabetical order."
+  (sort (loop for name being the hash-keys of *key-tables* collect name)
+        #'string<))
+
+(defun %table-binding-alist (inner)
+  "Build an alist of (key . command) from INNER (an inner key-table hash-table)."
+  (loop for key being the hash-keys of inner
+        using (hash-value entry)
+        collect (cons key (car entry))))
+
+(defun %format-binding-line (table-name key command)
+  "Format one bind-key -T TABLE-NAME KEY COMMAND line."
+  (format nil "bind-key -T ~A ~A ~A~%"
+          table-name
+          (key-label key)
+          (%binding-label command)))
+
 (defun describe-key-bindings ()
-  "Return a newline-separated, key-sorted listing of the current prefix bindings
-   (\"<key>  <command>\" per line) for the list-keys help overlay.
-   Reads from the prefix key-table."
-  (let ((alist (loop for k being the hash-keys of
-                          (ensure-key-table +table-prefix+)
-                          using (hash-value v)
-                     collect (cons k (car v)))))
-    (with-output-to-string (out)
-      (write-string "key bindings — press prefix (C-b) then:" out)
-      (dolist (binding (sort alist #'string<
-                             :key (lambda (b) (key-label (car b)))))
-        (format out "~%  ~A  ~A" (key-label (car binding))
-                (%binding-label (cdr binding)))))))
+  "Return bind-key -T table key command lines for all key tables.
+   Output format matches real tmux list-keys: one binding per line,
+   sorted by table name then by key within each table."
+  (with-output-to-string (out)
+    (dolist (table-name (%sorted-table-names))
+      (let* ((inner    (gethash table-name *key-tables*))
+             (bindings (sort (%table-binding-alist inner)
+                             #'string< :key (lambda (b) (key-label (car b))))))
+        (dolist (binding bindings)
+          (write-string (%format-binding-line table-name (car binding) (cdr binding))
+                        out))))))
 
 (defun set-key-binding (key command)
   "Bind KEY (a character or string) to COMMAND (a keyword) in the prefix table.

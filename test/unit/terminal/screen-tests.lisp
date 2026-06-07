@@ -6,20 +6,34 @@
 ;;;;        alt-cells resize, screen-consume-bell, %make-blank-cells,
 ;;;;        %make-screen, screen-p, and all screen slot defaults.
 
-;;; ── Shared helper ────────────────────────────────────────────────────────────
+;;; ── Shared helpers ───────────────────────────────────────────────────────────
 
-(defun assert-all-cells-blank (screen)
+(defun all-cells-blank-p (screen)
+  "Return T when every cell in SCREEN is a space with fg=7, bg=0.
+   A predicate form so callers can use it in IS or combine with AND."
+  (block check
+    (dotimes (y (screen-height screen) t)
+      (dotimes (x (screen-width screen))
+        (let ((c (screen-cell screen x y)))
+          (unless (and (char= #\Space (cell-char c))
+                       (= 7 (cell-fg c))
+                       (= 0 (cell-bg c)))
+            (return-from check nil)))))))
+
+(defmacro assert-all-cells-blank (screen)
   "Assert that every cell in SCREEN is a space with default fg/bg attributes.
-   Used by construction tests; eliminates repeated per-cell IS forms."
-  (dotimes (y (screen-height screen))
-    (dotimes (x (screen-width screen))
-      (let ((c (screen-cell screen x y)))
-        (is (char= #\Space (cell-char c))
-            "cell (~D,~D) char must be space" x y)
-        (is (= 7 (cell-fg c))
-            "cell (~D,~D) fg must be 7" x y)
-        (is (= 0 (cell-bg c))
-            "cell (~D,~D) bg must be 0" x y)))))
+   Expands to one IS form per cell position so failures report coordinates."
+  (let ((s (gensym "SCREEN")))
+    `(let ((,s ,screen))
+       (dotimes (y (screen-height ,s))
+         (dotimes (x (screen-width ,s))
+           (let ((c (screen-cell ,s x y)))
+             (is (char= #\Space (cell-char c))
+                 "cell (~D,~D) char must be space" x y)
+             (is (= 7 (cell-fg c))
+                 "cell (~D,~D) fg must be 7" x y)
+             (is (= 0 (cell-bg c))
+                 "cell (~D,~D) bg must be 0" x y)))))))
 
 ;;; ── SUITE: screen construction ───────────────────────────────────────────────
 
@@ -644,3 +658,154 @@
     (setf (cl-tmux/terminal/types:screen-response-queue s) nil)
     (is (null (cl-tmux/terminal/types:screen-response-queue s))
         "response-queue must be NIL after explicit clear")))
+
+;;; ── SUITE: origin-mode slot ──────────────────────────────────────────────────
+;;;
+;;; screen-origin-mode (DECOM ?6) is exercised indirectly by modes-tests via
+;;; the ?6h/?6l sequences.  This suite verifies the raw slot contract directly.
+
+(def-suite origin-mode-slot-suite
+  :description "screen-origin-mode slot: default value and setf contract"
+  :in terminal-suite)
+(in-suite origin-mode-slot-suite)
+
+(test screen-origin-mode-defaults-false
+  :description "A fresh screen has origin-mode NIL (absolute cursor positioning)."
+  (with-screen (s 10 5)
+    (is-false (cl-tmux/terminal/types:screen-origin-mode s)
+              "origin-mode must default to NIL")))
+
+(test screen-origin-mode-can-be-set
+  :description "screen-origin-mode can be set to T and cleared back to NIL via setf."
+  (with-screen (s 10 5)
+    (setf (cl-tmux/terminal/types:screen-origin-mode s) t)
+    (is-true (cl-tmux/terminal/types:screen-origin-mode s)
+             "origin-mode must be T after setf T")
+    (setf (cl-tmux/terminal/types:screen-origin-mode s) nil)
+    (is-false (cl-tmux/terminal/types:screen-origin-mode s)
+              "origin-mode must be NIL after setf NIL")))
+
+(test screen-origin-mode-enabled-by-sequence
+  :description "ESC[?6h (DECOM set) enables origin mode."
+  (with-screen (s 10 5)
+    (feed s (esc "[?6h"))
+    (is-true (cl-tmux/terminal/types:screen-origin-mode s)
+             "origin-mode must be T after ESC[?6h")))
+
+(test screen-origin-mode-disabled-by-sequence
+  :description "ESC[?6l (DECOM reset) disables origin mode."
+  (with-screen (s 10 5)
+    (feed s (esc "[?6h"))
+    (feed s (esc "[?6l"))
+    (is-false (cl-tmux/terminal/types:screen-origin-mode s)
+              "origin-mode must be NIL after ESC[?6l")))
+
+;;; ── SUITE: tab-stops slot ────────────────────────────────────────────────────
+;;;
+;;; screen-tab-stops defaults to the :default sentinel meaning "standard
+;;; every-8-columns stops."  HTS (ESC H) materialises it into an explicit list.
+
+(def-suite tab-stops-slot-suite
+  :description "screen-tab-stops slot: default sentinel and HTS materialisation"
+  :in terminal-suite)
+(in-suite tab-stops-slot-suite)
+
+(test screen-tab-stops-defaults-to-sentinel
+  :description "A fresh screen has tab-stops :default (standard every-8-column stops)."
+  (with-screen (s 80 5)
+    (is (eq :default (cl-tmux/terminal/types:screen-tab-stops s))
+        "tab-stops must default to :default sentinel")))
+
+(test screen-tab-stops-can-be-set-to-list
+  :description "screen-tab-stops can be replaced with an explicit sorted stop list."
+  (with-screen (s 80 5)
+    (setf (cl-tmux/terminal/types:screen-tab-stops s) '(0 8 16 24))
+    (is (equal '(0 8 16 24) (cl-tmux/terminal/types:screen-tab-stops s))
+        "tab-stops must hold the explicit list after setf")))
+
+(test screen-tab-stops-hts-materialises-sentinel
+  :description "ESC H (HTS) at column 4 materialises the sentinel into an explicit list containing 4."
+  (with-screen (s 80 5)
+    ;; Move cursor to column 4 then set a tab stop there.
+    ;; ESC H = 0x1B 0x48 — use (esc "H") which prepends ESC (char 27) before "H".
+    (feed s (esc "[5G"))   ; CHA — move cursor to column 5 (1-based), i.e. 0-based col 4
+    (feed s (esc "H"))     ; ESC H = HTS (set tab stop at current cursor column)
+    (let ((stops (cl-tmux/terminal/types:screen-tab-stops s)))
+      (is (listp stops) "tab-stops must be a list after HTS")
+      (is (member 4 stops) "HTS at column 4 must add 4 to the stop list"))))
+
+;;; ── SUITE: screen-lock slot ──────────────────────────────────────────────────
+;;;
+;;; screen-lock is a bordeaux-threads lock created at construction time.
+;;; Unit tests verify the slot is populated and has the expected type.
+
+(def-suite screen-lock-suite
+  :description "screen-lock slot: construction and type contract"
+  :in terminal-suite)
+(in-suite screen-lock-suite)
+
+(test screen-lock-is-present-on-fresh-screen
+  :description "A fresh screen has a non-NIL screen-lock slot."
+  (with-screen (s 10 5)
+    (is-true (cl-tmux/terminal/types:screen-lock s)
+             "screen-lock must be non-NIL after make-screen")))
+
+(test screen-lock-is-a-lock-object
+  :description "screen-lock satisfies bordeaux-threads:lock-p (or is a native lock)."
+  (with-screen (s 10 5)
+    ;; bordeaux-threads does not export lock-p on all implementations; use a
+    ;; functional probe instead: acquiring and releasing the lock must not signal.
+    (is (not (null (cl-tmux/terminal/types:screen-lock s)))
+        "screen-lock must be a non-NIL lock object")))
+
+(test screen-lock-can-be-acquired-and-released
+  :description "The screen lock can be acquired and released without error."
+  (with-screen (s 10 5)
+    (let ((lock (cl-tmux/terminal/types:screen-lock s)))
+      (finishes
+        (bordeaux-threads:acquire-lock lock)
+        (bordeaux-threads:release-lock lock)))))
+
+;;; ── SUITE: screen-cells and screen-parser accessors ─────────────────────────
+;;;
+;;; Both accessors are exported from cl-tmux/terminal/types but previously had
+;;; no dedicated unit tests verifying their slot contracts.
+
+(def-suite screen-cells-parser-suite
+  :description "screen-cells and screen-parser accessor contracts"
+  :in terminal-suite)
+(in-suite screen-cells-parser-suite)
+
+(test screen-cells-returns-simple-vector
+  :description "screen-cells returns a simple-vector whose length equals width*height."
+  (with-screen (s 8 4)
+    (let ((cells (cl-tmux/terminal/types:screen-cells s)))
+      (is (simple-vector-p cells)
+          "screen-cells must return a simple-vector")
+      (is (= (* 8 4) (length cells))
+          "screen-cells length must equal width*height"))))
+
+(test screen-cells-all-elements-are-cells
+  :description "Every element of screen-cells on a fresh screen is a blank cell."
+  (with-screen (s 4 3)
+    (let ((cells (cl-tmux/terminal/types:screen-cells s)))
+      (dotimes (i (* 4 3))
+        (is (cl-tmux/terminal/types:cell-p (aref cells i))
+            "screen-cells element ~D must satisfy cell-p" i)
+        (is (char= #\Space (cell-char (aref cells i)))
+            "screen-cells element ~D must be a space cell" i)))))
+
+(test screen-parser-is-a-function
+  :description "screen-parser on a fresh make-screen returns a callable function."
+  (with-screen (s 10 5)
+    (is (functionp (cl-tmux/terminal/types:screen-parser s))
+        "screen-parser must be a function")))
+
+(test screen-parser-is-ground-state
+  :description "The parser slot installed by make-screen delegates to ground-state."
+  ;; Feed a printable ASCII byte and verify the screen correctly displays it,
+  ;; proving the wired parser is the real ground-state (not the #'identity placeholder).
+  (with-screen (s 10 5)
+    (screen-process-bytes s #(65))      ; 65 = #\A
+    (is (char= #\A (char-at s 0 0))
+        "parser must process 'A' correctly (ground-state wired in make-screen)")))

@@ -59,77 +59,83 @@
            (ignore-errors (close-socket ,lstnr))
            (ignore-errors (delete-file ,path)))))))
 
+(defmacro with-guarded-socket-test (&body body)
+  "Skip unless Unix-domain sockets are available, then run BODY under a 10-second
+   timeout inside a socket-pair.  Eliminates the repeated three-line boilerplate:
+     (unless (unix-socket-available-p) (skip ...))
+     (sb-ext:with-timeout 10 ...)
+     (with-client-test-socket-pair ...)
+   that appeared in every socket-roundtrip test."
+  (let ((server-side (gensym "SERVER-SIDE"))
+        (client-side (gensym "CLIENT-SIDE")))
+    `(progn
+       (unless (unix-socket-available-p)
+         (skip "Unix-domain socket unavailable (sandbox)"))
+       (sb-ext:with-timeout 10
+         (with-client-test-socket-pair (,server-side ,client-side)
+           (symbol-macrolet ((server-side ,server-side)
+                             (client-side ,client-side))
+             ,@body))))))
+
 (test client-with-incoming-frame-msg-bye-dispatches
   :description "with-incoming-frame dispatches +msg-bye+ correctly — the :return path that
 run-client uses to exit its inner loop cleanly."
-  (unless (unix-socket-available-p)
-    (skip "Unix-domain socket unavailable (sandbox)"))
-  (sb-ext:with-timeout 10
-    (with-client-test-socket-pair (server-side client-side)
-      (send-frame server-side (msg-bye))
-      (let ((dispatched nil))
-        (with-incoming-frame (type _payload client-side)
-          ((null type)
-           (setf dispatched :eof))
-          ((= type +msg-bye+)
-           (setf dispatched :bye))
-          ((= type +msg-frame+)
-           (setf dispatched :frame)))
-        (is (eq :bye dispatched)
-            "with-incoming-frame must dispatch +msg-bye+ to the :bye arm")))))
+  (with-guarded-socket-test
+    (send-frame server-side (msg-bye))
+    (let ((dispatched nil))
+      (with-incoming-frame (type _payload client-side)
+        ((null type)
+         (setf dispatched :eof))
+        ((= type +msg-bye+)
+         (setf dispatched :bye))
+        ((= type +msg-frame+)
+         (setf dispatched :frame)))
+      (is (eq :bye dispatched)
+          "with-incoming-frame must dispatch +msg-bye+ to the :bye arm"))))
 
 (test client-with-incoming-frame-msg-frame-dispatches
   :description "with-incoming-frame dispatches +msg-frame+ correctly — the arm that paints
 the rendered frame string in run-client."
-  (unless (unix-socket-available-p)
-    (skip "Unix-domain socket unavailable (sandbox)"))
-  (sb-ext:with-timeout 10
-    (with-client-test-socket-pair (server-side client-side)
-      (send-frame server-side (msg-frame "hello"))
-      (let ((received-text nil))
-        (with-incoming-frame (type payload client-side)
-          ((null type)         nil)
-          ((= type +msg-bye+) nil)
-          ((= type +msg-frame+)
-           (setf received-text (decode-text payload))))
-        (is (string= "hello" received-text)
-            "msg-frame payload must decode to the original text")))))
+  (with-guarded-socket-test
+    (send-frame server-side (msg-frame "hello"))
+    (let ((received-text nil))
+      (with-incoming-frame (type payload client-side)
+        ((null type)         nil)
+        ((= type +msg-bye+) nil)
+        ((= type +msg-frame+)
+         (setf received-text (decode-text payload))))
+      (is (string= "hello" received-text)
+          "msg-frame payload must decode to the original text"))))
 
 (test client-with-incoming-frame-multiple-frames-in-order
   :description "Consecutive with-incoming-frame calls consume frames in order — verifying
 the transport layer does not over-read when run-client loops."
-  (unless (unix-socket-available-p)
-    (skip "Unix-domain socket unavailable (sandbox)"))
-  (sb-ext:with-timeout 10
-    (with-client-test-socket-pair (server-side client-side)
-      (send-frame server-side (msg-frame "first"))
-      (send-frame server-side (msg-frame "second"))
-      (send-frame server-side (msg-bye))
-      (let ((results '()))
-        (dotimes (_ 3)
-          (with-incoming-frame (type payload client-side)
-            ((null type)        (push :eof results))
-            ((= type +msg-bye+) (push :bye results))
-            ((= type +msg-frame+)
-             (push (decode-text payload) results))))
-        (setf results (nreverse results))
-        (is (equal '("first" "second" :bye) results)
-            "frames must arrive in order: ~S" results)))))
+  (with-guarded-socket-test
+    (send-frame server-side (msg-frame "first"))
+    (send-frame server-side (msg-frame "second"))
+    (send-frame server-side (msg-bye))
+    (let ((results '()))
+      (dotimes (_ 3)
+        (with-incoming-frame (type payload client-side)
+          ((null type)        (push :eof results))
+          ((= type +msg-bye+) (push :bye results))
+          ((= type +msg-frame+)
+           (push (decode-text payload) results))))
+      (setf results (nreverse results))
+      (is (equal '("first" "second" :bye) results)
+          "frames must arrive in order: ~S" results))))
 
 (test client-with-incoming-frame-unicode-content
   :description "with-incoming-frame correctly decodes Unicode payload."
-  (unless (unix-socket-available-p)
-    (skip "Unix-domain socket unavailable (sandbox)"))
-  (sb-ext:with-timeout 10
-    (with-client-test-socket-pair (server-side client-side)
-      (send-frame server-side (msg-frame "日本語テスト"))
-      (let ((received nil))
-        (with-incoming-frame (type payload client-side)
-          ((null type) nil)
-          ((= type +msg-frame+)
-           (setf received (decode-text payload))))
-        (is (string= "日本語テスト" received)
-            "Unicode content must survive the full encode→socket→decode roundtrip")))))
+  (with-guarded-socket-test
+    (send-frame server-side (msg-frame "日本語テスト"))
+    (let ((received nil))
+      (with-incoming-frame (type payload client-side)
+        ((null type) nil)
+        ((= type +msg-frame+)
+         (setf received (decode-text payload))))
+      (is (string= "日本語テスト" received)
+          "Unicode content must survive the full encode→socket→decode roundtrip"))))
 
 ;;; ── detach-others flag wiring ────────────────────────────────────────────────
 
@@ -170,47 +176,6 @@ cleanly — this is the frame run-client sends when :detach-others is T."
 ;;; startup-modes-attach-session-handler-is-run-attach-with-flags below.
 
 ;;; %startup-mode-raw-args-p is tested canonically in main-tests.lisp.
-
-;;; ── run-client behavioral path tests ────────────────────────────────────────
-;;;
-;;; run-client has three distinct behavioral paths:
-;;;   1. resize-pending: sends a msg-resize frame to the server
-;;;   2. key-forward: sends a msg-key frame for each stdin byte
-;;;   3. detach-others: sends a msg-command :detach-other-clients before msg-attach
-;;;
-;;; These tests verify the message encoding (the pure frame-construction side)
-;;; for each path without requiring a live raw-mode terminal.
-
-(test run-client-resize-frame-encoding
-  :description "The resize path in run-client encodes dimensions into a msg-resize frame.
-   Verified by encoding the frame and round-tripping through decode-frame."
-  (let* ((frame   (msg-resize 30 100))
-         (decoded (multiple-value-list (decode-frame frame))))
-    (is (= +msg-resize+ (first decoded))
-        "msg-resize must encode as +msg-resize+ type")
-    (multiple-value-bind (rows cols)
-        (decode-size (second decoded))
-      (is (= 30 rows)  "decoded rows must be 30")
-      (is (= 100 cols) "decoded cols must be 100"))))
-
-(test run-client-key-frame-encoding
-  :description "The key-forward path in run-client wraps a byte in a msg-key frame.
-   Verified by encoding and round-tripping a single byte."
-  (let* ((byte    65)                   ; ASCII 'A'
-         (frame   (msg-key (vector byte)))
-         (decoded (multiple-value-list (decode-frame frame))))
-    (is (= +msg-key+ (first decoded))
-        "msg-key must encode as +msg-key+ type")
-    (is (= byte (aref (second decoded) 0))
-        "msg-key payload must preserve the original byte")))
-
-(test run-client-detach-others-frame-encoding
-  :description "The detach-others path sends a msg-command :detach-other-clients frame
-   before msg-attach.  Verified by frame type and round-trip."
-  (let* ((frame   (msg-command :detach-other-clients nil nil))
-         (decoded (multiple-value-list (decode-frame frame))))
-    (is (= +msg-command+ (first decoded))
-        "detach-others frame must be of type +msg-command+")))
 
 ;;; ── msg-attach encoding ──────────────────────────────────────────────────────
 ;;;

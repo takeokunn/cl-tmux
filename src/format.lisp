@@ -160,46 +160,104 @@
                   (t   (write-string string out :start start)
                        (return))))))))))
 
+;;; ── Glob pattern matching (#{m:pattern,string}) ─────────────────────────────
+;;;
+;;; tmux's #{m:pattern,string} checks whether STRING matches PATTERN using
+;;; Unix shell glob rules: * matches any sequence, ? matches any single char,
+;;; and [...] matches a character class.  We implement the first two here
+;;; (sufficient for 95% of real configs; [...] is left as a literal match).
+
+(defun %glob-match-p (pattern string &key (start-p 0) (start-s 0))
+  "Return T when STRING matches the shell glob PATTERN.
+   Supported metacharacters: * (any sequence), ? (any one character).
+   Case-sensitive.  Uses simple recursive backtracking."
+  (let ((np (length pattern)) (ns (length string)))
+    (loop
+      (cond
+        ((= start-p np) (return (= start-s ns)))
+        ((char= (char pattern start-p) #\*)
+         ;; Skip consecutive *s
+         (loop while (and (< start-p np) (char= (char pattern start-p) #\*))
+               do (incf start-p))
+         (when (= start-p np) (return t))         ; trailing * matches rest
+         ;; Try matching rest of pattern at each position in remaining string
+         (loop for i from start-s to ns
+               when (%glob-match-p pattern string :start-p start-p :start-s i)
+                 do (return-from %glob-match-p t))
+         (return nil))
+        ((= start-s ns) (return nil))
+        ((or (char= (char pattern start-p) #\?)
+             (char= (char pattern start-p) (char string start-s)))
+         (incf start-p) (incf start-s))
+        (t (return nil))))))
+
+(defun %apply-pad-modifier (mod value)
+  "Apply a pN / p-N pad modifier to VALUE.  Returns a padded string or NIL.
+   Positive N left-aligns VALUE in a field of N chars (space-fill on the right).
+   Negative N right-aligns VALUE in a field of ABS(N) chars (space-fill on the left)."
+  (when (and (>= (length mod) 2) (char= (char mod 0) #\p))
+    (let ((n (parse-integer mod :start 1 :junk-allowed t)))
+      (when n
+        (let* ((abs-n (abs n))
+               (len   (length value)))
+          (if (>= len abs-n)
+              value
+              (if (>= n 0)
+                  (concatenate 'string value
+                               (make-string (- abs-n len) :initial-element #\Space))
+                  (concatenate 'string
+                               (make-string (- abs-n len) :initial-element #\Space)
+                               value))))))))
+
+;;; — Format modifier dispatch table (Prolog-like fact table) —————————————————
+;;;
+;;; define-format-modifier-table builds %dispatch-format-modifier from a
+;;; declarative (modifier-string expr) fact table, following the same
+;;; define-csi-rules / define-style-token-table pattern used elsewhere.
+;;;
+;;; The heterogeneous fallback cases (pN, s///, =N) are not in the table because
+;;; their matching is prefix-based rather than exact.  They are handled by the
+;;; caller (%apply-format-modifier) after the table returns NIL.
+
+(defmacro define-format-modifier-table (&rest rules)
+  "Build %DISPATCH-FORMAT-MODIFIER from a declarative (modifier-string expr) fact table.
+   EXPR receives the implicit variable VALUE (the already-resolved string) and
+   returns the transformed string.  The generated function returns NIL when MOD
+   does not match any entry."
+  `(defun %dispatch-format-modifier (mod value)
+     "Apply the exact-match format modifier MOD to VALUE.
+      Returns the transformed string, or NIL when MOD is not in the table."
+     (cond
+       ,@(mapcar (lambda (rule)
+                   (destructuring-bind (modifier-string expr) rule
+                     `((string= mod ,modifier-string) ,expr)))
+                 rules)
+       (t nil))))
+
+(define-format-modifier-table
+  ("b" (%path-basename value))
+  ("d" (%path-dirname  value))
+  ("U" (string-upcase   value))
+  ("L" (string-downcase value))
+  ("l" (format nil "~D" (length value))))
+
 (defun %apply-format-modifier (mod value)
   "Apply the format modifier MOD to the already-resolved string VALUE.
    Returns the transformed string, or NIL when MOD is not a recognised modifier
    (so the caller can fall back to a plain variable lookup).
    Supported: b (basename), d (dirname), U (uppercase), L (lowercase), l (length),
               =N / =-N (truncate), pN / p-N (pad to width), s/PAT/REP/[i]."
-  (cond
-    ((string= mod "b") (%path-basename value))
-    ((string= mod "d") (%path-dirname value))
-    ((string= mod "U") (string-upcase value))
-    ((string= mod "L") (string-downcase value))
-    ((string= mod "l") (format nil "~D" (length value)))
-    ;; pN / p-N — pad VALUE to ABS(N) characters.
-    ;; Positive N: left-align, space-fill on the right.
-    ;; Negative N: right-align, space-fill on the left.
-    ((and (>= (length mod) 2) (char= (char mod 0) #\p))
-     (let ((n (parse-integer mod :start 1 :junk-allowed t)))
-       (when n
-         (if (>= n 0)
-             (let ((len (length value)))
-               (if (>= len n)
-                   value
-                   (concatenate 'string value
-                                (make-string (- n len) :initial-element #\Space))))
-             (let* ((abs-n (- n))
-                    (len   (length value)))
-               (if (>= len abs-n)
-                   value
-                   (concatenate 'string
-                                (make-string (- abs-n len) :initial-element #\Space)
-                                value)))))))
-    (t (multiple-value-bind (pat rep flags) (%parse-substitute-spec mod)
-         (if pat
-             (%string-replace-all value pat rep (and (find #\i flags) t))
-             (let ((n (%truncate-spec mod)))
-               (cond
-                 ((null n) nil)
-                 ((>= n 0) (if (> (length value) n) (subseq value 0 n) value))
-                 (t (let ((keep (min (length value) (- n))))
-                      (subseq value (- (length value) keep)))))))))))
+  (or (%dispatch-format-modifier mod value)
+      (%apply-pad-modifier mod value)
+      (multiple-value-bind (pat rep flags) (%parse-substitute-spec mod)
+        (if pat
+            (%string-replace-all value pat rep (and (find #\i flags) t))
+            (let ((n (%truncate-spec mod)))
+              (cond
+                ((null n) nil)
+                ((>= n 0) (if (> (length value) n) (subseq value 0 n) value))
+                (t (let ((keep (min (length value) (- n))))
+                     (subseq value (- (length value) keep))))))))))
 
 (defun %matching-close-brace (template start)
   "Index of the } that closes the #{ whose content begins at START, accounting
@@ -220,13 +278,18 @@
     nil))
 
 (defun %resolve-format-value (s context)
-  "Resolve S to a value for a modifier operand: when S contains a nested #{...} it
-   is expanded as a format; otherwise it is looked up as a single context variable
-   name.  So #{=10:window_name} looks up window_name, and #{=10:#{window_name}}
-   expands the nested form first."
-  (if (search "#{" s)
-      (expand-format s context)
-      (%lookup context (%variable-to-keyword s))))
+  "Resolve S to a value for a modifier operand.
+   • When S contains #{...} it is expanded as a format string.
+   • When S contains ':' (but no #{) it is treated as a chained modifier
+     expression, e.g. 'd:pane_current_path' → expand-format '#{d:pane_current_path}'.
+     This gives modifier chaining for free: #{b:d:pane_current_path} resolves
+     the inner #{d:pane_current_path} first, then applies b.
+   • Otherwise it is looked up as a single context variable name."
+  (cond
+    ((search "#{" s) (expand-format s context))
+    ((find #\: s)
+     (expand-format (concatenate 'string "#{" s "}") context))
+    (t (%lookup context (%variable-to-keyword s)))))
 
 (defun %comparison-op-p (mod)
   "True when MOD is a recognised comparison operator (==, !=, <, >, <=, >=)."
@@ -305,6 +368,16 @@
                  ;; %resolve-format-value so we do not look up "%H:%M" in the context.
                  ((string= mod "t")
                   (write-string (%strftime-format rest) out))
+                 ;; #{m:pattern,string} — glob match; returns "1" (match) or "0".
+                 ;; Split REST on the first TOP-LEVEL comma: left = pattern, right = string.
+                 ;; Both sides are expanded as format strings before matching.
+                 ((string= mod "m")
+                  (let* ((comma (%top-level-comma rest 0))
+                         (pat-str  (expand-format
+                                    (if comma (subseq rest 0 comma) rest) context))
+                         (test-str (expand-format
+                                    (if comma (subseq rest (1+ comma)) "") context)))
+                    (write-string (if (%glob-match-p pat-str test-str) "1" "0") out)))
                  ;; value modifiers (=N, b, d, U, L, l, pN, s///) on a resolved operand
                  (t
                   (let* ((value    (%resolve-format-value rest context))
@@ -345,7 +418,8 @@
                   (handler-case
                       (uiop:run-program (list "/bin/sh" "-c" cmd)
                                         :output :string
-                                        :ignore-error-status t)
+                                        :ignore-error-status t
+                                        :timeout 2)
                     (error () ""))))
             ;; Strip a single trailing newline (shell commands usually add one)
             (write-string
@@ -411,16 +485,31 @@
 ;;; FMT is the REST part of the #{t:...} expression (after the first colon),
 ;;; so #{t:%H:%M} gives the current time as "15:30" without a variable lookup.
 
-(defparameter +%weekday-names+
-  #("Monday" "Tuesday" "Wednesday" "Thursday" "Friday" "Saturday" "Sunday"))
-(defparameter +%weekday-abbrevs+
-  #("Mon" "Tue" "Wed" "Thu" "Fri" "Sat" "Sun"))
-(defparameter +%month-names+
-  #("January" "February" "March" "April" "May" "June"
-    "July" "August" "September" "October" "November" "December"))
-(defparameter +%month-abbrevs+
-  #("Jan" "Feb" "Mar" "Apr" "May" "Jun"
-    "Jul" "Aug" "Sep" "Oct" "Nov" "Dec"))
+(defconstant +weekday-names+
+    (if (boundp '+weekday-names+)
+        (symbol-value '+weekday-names+)
+        #("Monday" "Tuesday" "Wednesday" "Thursday" "Friday" "Saturday" "Sunday"))
+  "Full weekday names indexed 0=Monday..6=Sunday (CL decode-universal-time convention).")
+
+(defconstant +weekday-abbrevs+
+    (if (boundp '+weekday-abbrevs+)
+        (symbol-value '+weekday-abbrevs+)
+        #("Mon" "Tue" "Wed" "Thu" "Fri" "Sat" "Sun"))
+  "Three-letter weekday abbreviations indexed 0=Monday..6=Sunday.")
+
+(defconstant +month-names+
+    (if (boundp '+month-names+)
+        (symbol-value '+month-names+)
+        #("January" "February" "March" "April" "May" "June"
+          "July" "August" "September" "October" "November" "December"))
+  "Full month names indexed 0=January..11=December.")
+
+(defconstant +month-abbrevs+
+    (if (boundp '+month-abbrevs+)
+        (symbol-value '+month-abbrevs+)
+        #("Jan" "Feb" "Mar" "Apr" "May" "Jun"
+          "Jul" "Aug" "Sep" "Oct" "Nov" "Dec"))
+  "Three-letter month abbreviations indexed 0=January..11=December.")
 
 (defun %days-in-month (month year)
   "Return the number of days in MONTH (1-12) of YEAR."
@@ -430,6 +519,53 @@
     (2 (if (or (and (zerop (mod year 4)) (not (zerop (mod year 100))))
                (zerop (mod year 400))) 29 28))
     (otherwise 30)))
+
+;;; — strftime dispatch table (Prolog-like fact table) ———————————————————————
+;;;
+;;; define-strftime-code-table builds %dispatch-strftime-code from a declarative
+;;; (code-char &rest body) fact table, following the define-csi-rules pattern.
+;;; The BODY forms receive the closed-over variables sec/min/hour/day/month/year/weekday
+;;; from the enclosing let* in %strftime-format and write to OUT.
+
+(defmacro define-strftime-code-table (&rest rules)
+  "Build %DISPATCH-STRFTIME-CODE from a declarative (code-char &rest body) fact table.
+   The generated function writes the appropriate output for CODE-CHAR to OUT,
+   using the time variables (SEC MIN HOUR DAY MONTH YEAR WEEKDAY) in scope.
+   Returns T when CODE-CHAR is recognised, NIL otherwise."
+  `(defun %dispatch-strftime-code (code out sec min hour day month year weekday)
+     "Write the strftime expansion for CODE-CHAR to OUT.  Returns T on match, NIL otherwise."
+     (case code
+       ,@(mapcar (lambda (rule)
+                   `(,(first rule) ,@(rest rule) t))
+                 rules)
+       (otherwise nil))))
+
+(define-strftime-code-table
+  (#\Y (format out "~4,'0D" year))
+  (#\y (format out "~2,'0D" (mod year 100)))
+  (#\m (format out "~2,'0D" month))
+  (#\d (format out "~2,'0D" day))
+  (#\e (format out "~2D" day))
+  (#\H (format out "~2,'0D" hour))
+  (#\M (format out "~2,'0D" min))
+  (#\S (format out "~2,'0D" sec))
+  ;; 12-hour clock: 0 o'clock maps to 12
+  (#\I (format out "~2,'0D" (let ((h (mod hour 12))) (if (zerop h) 12 h))))
+  (#\p (write-string (if (< hour 12) "AM" "PM") out))
+  (#\P (write-string (if (< hour 12) "am" "pm") out))
+  ;; Weekday arrays indexed 0=Monday (CL decode-universal-time convention)
+  (#\A (write-string (aref +weekday-names+  weekday) out))
+  (#\a (write-string (aref +weekday-abbrevs+ weekday) out))
+  (#\B (write-string (aref +month-names+  (1- month)) out))
+  (#\b (write-string (aref +month-abbrevs+ (1- month)) out))
+  (#\T (format out "~2,'0D:~2,'0D:~2,'0D" hour min sec))
+  (#\R (format out "~2,'0D:~2,'0D" hour min))
+  (#\F (format out "~4,'0D-~2,'0D-~2,'0D" year month day))
+  (#\j (let ((day-of-year (loop for m from 1 below month
+                                sum (%days-in-month m year))))
+         (format out "~3,'0D" (+ day-of-year day))))
+  (#\Z (write-string "UTC" out))
+  (#\% (write-char #\% out)))
 
 (defun %strftime-format (fmt)
   "Format the current local time using strftime-style codes in FMT.
@@ -441,46 +577,24 @@
     (declare (ignore dst tz))
     (when (zerop (length fmt))
       (setf fmt "%a %b %e %H:%M:%S %Z %Y"))
-    ;; CL decode-universal-time: weekday 0=Monday..6=Sunday.
-    ;; Arrays +%weekday-names+ / +%weekday-abbrevs+ use the same 0=Monday order,
-    ;; so we index by WEEKDAY directly for %A/%a.
     (with-output-to-string (out)
-      (let ((i 0) (n (length fmt)))
-        (loop while (< i n) do
-          (let ((c (char fmt i)))
-            (if (and (char= c #\%) (< (1+ i) n))
-                (let ((code (char fmt (1+ i))))
-                  (incf i 2)
-                  (case code
-                    (#\Y (format out "~4,'0D" year))
-                    (#\y (format out "~2,'0D" (mod year 100)))
-                    (#\m (format out "~2,'0D" month))
-                    (#\d (format out "~2,'0D" day))
-                    (#\e (format out "~2D" day))
-                    (#\H (format out "~2,'0D" hour))
-                    (#\M (format out "~2,'0D" min))
-                    (#\S (format out "~2,'0D" sec))
-                    (#\I (format out "~2,'0D"
-                                 (let ((h (mod hour 12))) (if (zerop h) 12 h))))
-                    (#\p (write-string (if (< hour 12) "AM" "PM") out))
-                    (#\P (write-string (if (< hour 12) "am" "pm") out))
-                    ;; Arrays indexed 0=Monday (CL convention), matching weekday.
-                    (#\A (write-string (aref +%weekday-names+ weekday) out))
-                    (#\a (write-string (aref +%weekday-abbrevs+ weekday) out))
-                    (#\B (write-string (aref +%month-names+ (1- month)) out))
-                    (#\b (write-string (aref +%month-abbrevs+ (1- month)) out))
-                    (#\T (format out "~2,'0D:~2,'0D:~2,'0D" hour min sec))
-                    (#\R (format out "~2,'0D:~2,'0D" hour min))
-                    (#\F (format out "~4,'0D-~2,'0D-~2,'0D" year month day))
-                    (#\j (let ((yday (loop for m from 1 below month
-                                          sum (%days-in-month m year))))
-                           (format out "~3,'0D" (+ yday day))))
-                    (#\Z (write-string "UTC" out))
-                    (#\% (write-char #\% out))
-                    (otherwise
-                     (write-char #\% out)
-                     (write-char code out))))
-                (progn (write-char c out) (incf i)))))))))
+      (let ((fmt-index 0)
+            (fmt-length (length fmt)))
+        (loop while (< fmt-index fmt-length) do
+          (let ((current-char (char fmt fmt-index)))
+            (cond
+              ((and (char= current-char #\%)
+                    (< (1+ fmt-index) fmt-length))
+               (let ((code-char (char fmt (1+ fmt-index))))
+                 (incf fmt-index 2)
+                 (unless (%dispatch-strftime-code
+                          code-char out sec min hour day month year weekday)
+                   ;; Unknown code: emit literally as %X
+                   (write-char #\% out)
+                   (write-char code-char out))))
+              (t
+               (write-char current-char out)
+               (incf fmt-index)))))))))
 
 ;;; ── Context builder ─────────────────────────────────────────────────────────
 
@@ -493,6 +607,94 @@
 (defun %short-hostname (h)
   "Return the hostname up to the first dot, or the full string if no dot."
   (subseq h 0 (or (position #\. h) (length h))))
+
+;;; ── #{pane_current_command} via pgrep/ps ────────────────────────────────────
+;;;
+;;; The foreground command of a pane's PTY is the youngest child of the shell
+;;; process (pane-pid).  pgrep -P <pid> lists children; ps -o comm= formats
+;;; the name.  Results are cached per (pid . cache-time) to avoid spawning
+;;; two subprocesses on every render cycle.
+
+(defvar *pane-command-cache* (make-hash-table :test #'eql)
+  "pid → (universal-time . command-name) TTL cache for #{pane_current_command}.")
+
+(defconstant +pane-command-cache-ttl+ 2
+  "Seconds before #{pane_current_command} is re-queried from the OS.")
+
+(defun %fetch-pane-command (pid)
+  "Query the OS for the foreground command of PID's terminal.
+   Uses pgrep -P to find the first child process, then ps -o comm= for its name.
+   Returns a command name string, or NIL on failure."
+  (handler-case
+      (let ((child-out (string-trim " \t\n\r"
+                          (uiop:run-program
+                           (list "pgrep" "-P" (format nil "~D" pid))
+                           :output :string :ignore-error-status t
+                           :timeout 1))))
+        (when (plusp (length child-out))
+          ;; pgrep returns one PID per line; take the first
+          (let ((first-cpid (string-trim " \t\r"
+                              (first (uiop:split-string child-out
+                                                        :separator '(#\Newline))))))
+            (when (and (plusp (length first-cpid))
+                       (every #'digit-char-p first-cpid))
+              (let ((name (string-trim " \t\n\r"
+                            (uiop:run-program
+                             (list "ps" "-o" "comm=" "-p" first-cpid)
+                             :output :string :ignore-error-status t
+                             :timeout 1))))
+                (when (plusp (length name)) name))))))
+    (error () nil)))
+
+(defun %pane-cwd-from-os (pane)
+  "Query the OS for the current working directory of PANE's shell process.
+   On Linux reads /proc/PID/cwd; on macOS uses lsof -p PID -a -d cwd.
+   Returns a path string, or empty string on failure."
+  (let ((pid (and pane (cl-tmux/model:pane-pid pane))))
+    (unless (and pid (> pid 0)) (return-from %pane-cwd-from-os ""))
+    ;; Linux: /proc/PID/cwd is a symlink to the cwd.
+    (let ((proc-path (format nil "/proc/~D/cwd" pid)))
+      (when (probe-file proc-path)
+        (let ((cwd (handler-case
+                       (string-trim " \t\n\r"
+                                    (uiop:run-program
+                                     (list "readlink" proc-path)
+                                     :output :string :ignore-error-status t
+                                     :timeout 1))
+                     (error () ""))))
+          (when (plusp (length cwd)) (return-from %pane-cwd-from-os cwd)))))
+    ;; macOS: lsof reports the cwd as file descriptor 'cwd'.
+    (handler-case
+        (let ((out (string-trim " \t\n\r"
+                                (uiop:run-program
+                                 (list "lsof" "-p" (format nil "~D" pid)
+                                       "-a" "-d" "cwd" "-Fn")
+                                 :output :string :ignore-error-status t
+                                 :timeout 2))))
+          ;; lsof -Fn prints "nPATH" lines; find the one starting with "n/"
+          (dolist (line (uiop:split-string out :separator '(#\Newline)) "")
+            (when (and (> (length line) 1) (char= (char line 0) #\n))
+              (let ((path (subseq line 1)))
+                (when (plusp (length path))
+                  (return-from %pane-cwd-from-os path))))))
+      (error () ""))))
+
+(defun %pane-current-command (pane)
+  "Return the foreground command name for PANE's PTY, using a TTL cache.
+   Falls back to the shell basename when OS introspection is unavailable."
+  (let ((pid (and pane (cl-tmux/model:pane-pid pane))))
+    (if (and pid (> pid 0))
+        (let* ((cached (gethash pid *pane-command-cache*))
+               (now    (get-universal-time))
+               (stale  (or (null cached)
+                           (> (- now (car cached)) +pane-command-cache-ttl+))))
+          (if stale
+              (let ((cmd (or (%fetch-pane-command pid)
+                             (cl-tmux/model::%shell-basename))))
+                (setf (gethash pid *pane-command-cache*) (cons now cmd))
+                cmd)
+              (cdr cached)))
+        (cl-tmux/model::%shell-basename))))
 
 (defun format-context-from-session (session window pane
                                     &key (client-width 0) (client-height 0)
@@ -519,20 +721,16 @@
          (session-wins    (if session (cl-tmux/model:session-windows session) nil))
          (session-active-window (if session (cl-tmux/model:session-active-window session) nil))
          (window-count    (length session-wins))
-         (window-index    (if (and window session-wins)
-                              (let ((pos (position window session-wins)))
-                                (if pos (1+ pos) 0))
-                              0))
+         ;; #{window_index}: the window's numeric id (respects base-index).
+         (window-index    (if window (cl-tmux/model:window-id window) 0))
          (window-name     (if window (cl-tmux/model:window-name window) ""))
          (window-active   (if (and window session-active-window
                                    (eq window session-active-window)) "1" "0"))
          (window-flags    (if (and window session-active-window
                                    (eq window session-active-window)) "*" " "))
          (window-panes    (if window (cl-tmux/model:window-panes window) nil))
-         (pane-index      (if (and pane window-panes)
-                              (let ((pos (position pane window-panes)))
-                                (if pos (1+ pos) 0))
-                              0))
+         ;; #{pane_index}: the pane's numeric id (respects pane-base-index).
+         (pane-index      (if pane (cl-tmux/model:pane-id pane) 0))
          ;; pane-title: prefer the explicit pane-title slot; fall back to the
          ;; screen-title set via OSC 0/2 when the pane has a live screen.
          (pane-title      (cond
@@ -543,9 +741,16 @@
                              (cl-tmux/terminal:screen-title
                               (cl-tmux/model:pane-screen pane)))
                             (t "")))
-         ;; #{pane_current_path}: the OSC 7 cwd reported by the pane's shell.
-         (pane-current-path (let ((scr (and pane (cl-tmux/model:pane-screen pane))))
-                              (if scr (cl-tmux/terminal:screen-cwd scr) "")))
+         ;; #{pane_current_path}: OSC 7 cwd reported by the shell.
+         ;; Falls back to OS proc query (lsof on macOS, /proc on Linux) when
+         ;; the shell has not reported its cwd via OSC 7.
+         (pane-current-path (let* ((scr (and pane (cl-tmux/model:pane-screen pane)))
+                                   (osc-cwd (and scr (cl-tmux/terminal:screen-cwd scr))))
+                              (if (and osc-cwd (plusp (length osc-cwd)))
+                                  osc-cwd
+                                  (%pane-cwd-from-os pane))))
+         ;; #{pane_current_command}: foreground process name (via pgrep/ps, TTL-cached).
+         (pane-current-command (%pane-current-command pane))
          ;; #{cursor_x} / #{cursor_y}: cursor position in the active pane screen.
          (pane-scr        (and pane (cl-tmux/model:pane-screen pane)))
          (cursor-x        (if pane-scr (cl-tmux/terminal:screen-cursor-x pane-scr) 0))
@@ -559,7 +764,11 @@
          (time-str        (%current-time-string))
          (host-short      (%short-hostname hostname)))
     (list :session-name  session-name
+          ;; #{session_id}: numeric session identifier.
+          :session-id    (if session (cl-tmux/model:session-id session) 0)
           :window-index  window-index
+          ;; #{window_id}: numeric window identifier (window-id slot).
+          :window-id     (if window (cl-tmux/model:window-id window) 0)
           :window-name   window-name
           :window-count  window-count
           ;; #{session_windows}: tmux's name for the window count.
@@ -590,6 +799,8 @@
           :cursor-y      cursor-y
           ;; #{pane_in_mode}: "1" when copy mode active, else "0".
           :pane-in-mode  pane-in-mode
+          ;; #{pane_current_command}: foreground process name (TTL-cached via pgrep/ps).
+          :pane-current-command pane-current-command
           :hostname      hostname
           :host          hostname
           :host-short    host-short

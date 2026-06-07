@@ -70,9 +70,7 @@
    Uses a pipe pair so no TTY is required."
   (with-pipe-fds (rfd wfd)
     ;; Write one known byte into the write end.
-    (cffi:with-foreign-object (buf :uint8)
-      (setf (cffi:mem-ref buf :uint8) 42)
-      (cffi:foreign-funcall "write" :int wfd :pointer buf :unsigned-long 1 :long))
+    (write-byte-to-fd wfd 42)
     ;; Poll the read end: data should be ready immediately.
     (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))  ; 200 ms timeout
       (is-true ready "pipe read-end must be readable after write")
@@ -104,9 +102,7 @@
     (is (null (cl-tmux/pty:select-fds (list rfd) 10000))
         "idle pipe must return NIL")
     ;; Write one byte → select reports a positive count → the fd is returned.
-    (cffi:with-foreign-object (buf :uint8)
-      (setf (cffi:mem-ref buf :uint8) 7)
-      (cffi:foreign-funcall "write" :int wfd :pointer buf :unsigned-long 1 :long))
+    (write-byte-to-fd wfd 7)
     (is (equal (list rfd) (cl-tmux/pty:select-fds (list rfd) 200000))
         "after a write, select-fds must report exactly the readable fd")))
 
@@ -145,9 +141,7 @@
 (test read-byte-nonblock-select-returns-ready-list-when-data-present
   "select-fds returns the fd in a ready list when data has been written."
   (with-pipe-fds (rfd wfd)
-    (cffi:with-foreign-object (buf :uint8)
-      (setf (cffi:mem-ref buf :uint8) 7)
-      (cffi:foreign-funcall "write" :int wfd :pointer buf :unsigned-long 1 :long))
+    (write-byte-to-fd wfd 7)
     (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))
       (is (equal (list rfd) ready)
           "select-fds must return the ready fd in a list"))))

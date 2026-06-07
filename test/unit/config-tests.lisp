@@ -52,15 +52,16 @@
 
 ;;; ── Structural invariants of prefix key-table ──────────────────────────────
 
-(test all-bindings-have-keyword-values
-  "Every value in the prefix key-table is a keyword symbol."
+(test all-bindings-have-keyword-or-list-values
+  "Every value in the prefix key-table is a keyword symbol or a command token list."
   (let* ((tbl (cl-tmux/config:ensure-key-table "prefix"))
          (keys nil))
     (maphash (lambda (k v) (declare (ignore k)) (push v keys)) tbl)
     (dolist (entry keys)
-      (is (keywordp (cl-tmux/config:key-table-command entry))
-          "entry ~A should have a keyword command, got ~A"
-          entry (cl-tmux/config:key-table-command entry)))))
+      (let ((cmd (cl-tmux/config:key-table-command entry)))
+        (is (or (keywordp cmd) (and (consp cmd) (every #'stringp cmd)))
+            "entry ~A should have a keyword or string-list command, got ~A"
+            entry cmd)))))
 
 (test all-bindings-have-char-or-string-keys
   "Every key in the prefix key-table is a character or a string."
@@ -316,10 +317,12 @@
 ;;; ── describe-key-bindings header ────────────────────────────────────────
 
 (test describe-key-bindings-has-header
-  "describe-key-bindings output starts with the 'key bindings' header line."
+  "describe-key-bindings output uses bind-key -T table format (real tmux list-keys format)."
   (let ((text (describe-key-bindings)))
-    (is (search "key bindings" text)
-        "header must contain 'key bindings'")))
+    (is (search "bind-key" text)
+        "output must contain 'bind-key' (real tmux list-keys format)")
+    (is (search "-T" text)
+        "output must contain '-T' (table specifier)")))
 
 ;;; ── initialize-default-key-tables idempotency ─────────────────────────────
 
@@ -425,3 +428,32 @@
   "The \"copy-mode\" key-table is created by initialize-default-key-tables."
   (is (not (null (gethash "copy-mode" cl-tmux/config:*key-tables*)))
       "\"copy-mode\" table must exist in *key-tables*"))
+
+;;; ── *prefix-key-code* dynamic variable ──────────────────────────────────────
+
+(test prefix-key-code-dynamic-var-defaults-to-constant
+  "*prefix-key-code* defaults to the value of +prefix-key-code+."
+  (is (= +prefix-key-code+ cl-tmux/config:*prefix-key-code*)
+      "*prefix-key-code* must equal +prefix-key-code+ by default"))
+
+;;; ── %parse-prefix-key ────────────────────────────────────────────────────────
+
+(test parse-prefix-key-ctrl-a
+  "%parse-prefix-key parses 'C-a' to 1."
+  (is (= 1 (cl-tmux/config::%parse-prefix-key "C-a"))
+      "C-a must be 1 (logand 97 0x1f)"))
+
+(test parse-prefix-key-ctrl-b
+  "%parse-prefix-key parses 'C-b' to 2 (the default prefix)."
+  (is (= 2 (cl-tmux/config::%parse-prefix-key "C-b"))
+      "C-b must be 2 (logand 98 0x1f)"))
+
+(test parse-prefix-key-single-char
+  "%parse-prefix-key parses a single character to its char-code."
+  (is (= (char-code #\A) (cl-tmux/config::%parse-prefix-key "A"))
+      "single-char 'A' must be char-code of A"))
+
+(test parse-prefix-key-unknown-returns-nil
+  "%parse-prefix-key returns NIL for unrecognized key names."
+  (is (null (cl-tmux/config::%parse-prefix-key "UnknownKey"))
+      "unknown key name must return NIL"))
