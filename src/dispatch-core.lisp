@@ -1136,6 +1136,75 @@
               (dolist (key positionals)
                 (send-keys-to-pane ap key))))))))
 
+(defun %cmd-list-sessions-arg (session args)
+  "list-sessions [-F format]: list sessions.
+   -F format: custom format string (default: shows name, windows, attached).
+   Shows overlay in standalone mode."
+  (multiple-value-bind (flags _positionals) (%parse-command-flags args "F")
+    (declare (ignore _positionals))
+    (let* ((fmt (cdr (assoc #\F flags))))
+      (if fmt
+          ;; Custom format: expand for each session
+          (show-overlay
+           (with-output-to-string (s)
+             (if *server-sessions*
+                 (dolist (entry *server-sessions*)
+                   (let ((sess (cdr entry)))
+                     (let ((ctx (cl-tmux/format:format-context-from-session
+                                 sess (session-active-window sess) nil)))
+                       (format s "~A~%" (cl-tmux/format:expand-format fmt ctx)))))
+                 (let ((ctx (cl-tmux/format:format-context-from-session
+                             session (session-active-window session) nil)))
+                   (format s "~A~%" (cl-tmux/format:expand-format fmt ctx))))))
+          ;; Default format
+          (show-overlay (%format-session-list session))))))
+
+(defun %cmd-list-windows-arg (session args)
+  "list-windows [-F format] [-a] [-t session]: list windows.
+   -F format: custom format string.
+   -a: list windows in all sessions."
+  (multiple-value-bind (flags _positionals) (%parse-command-flags args "Ft")
+    (declare (ignore _positionals))
+    (let* ((fmt    (cdr (assoc #\F flags)))
+           (all-p  (assoc #\a flags))
+           (sessions (if (and all-p *server-sessions*)
+                         (mapcar #'cdr *server-sessions*)
+                         (list session))))
+      (show-overlay
+       (with-output-to-string (s)
+         (dolist (sess sessions)
+           (dolist (win (session-windows sess))
+             (if fmt
+                 (let ((ctx (cl-tmux/format:format-context-from-window sess win)))
+                   (format s "~A~%" (cl-tmux/format:expand-format fmt ctx)))
+                 (format s "~A: ~A (~Dx~D) [~D pane~:P]~A~%"
+                         (window-id win) (window-name win)
+                         (window-width win) (window-height win)
+                         (length (window-panes win))
+                         (if (eq win (session-active-window sess)) " [active]" ""))))))))))
+
+(defun %cmd-list-panes-arg-full (session args)
+  "list-panes [-F format] [-a] [-t target]: list panes.
+   -F format: custom format string."
+  (multiple-value-bind (flags _positionals) (%parse-command-flags args "Ft")
+    (declare (ignore _positionals))
+    (let* ((fmt   (cdr (assoc #\F flags)))
+           (win   (session-active-window session)))
+      (show-overlay
+       (with-output-to-string (s)
+         (when win
+           (dolist (pane (window-panes win))
+             (if fmt
+                 (let ((ctx (cl-tmux/format:format-context-from-session
+                             session win pane)))
+                   (format s "~A~%" (cl-tmux/format:expand-format fmt ctx)))
+                 (format s "~D: [~Dx~D] [~D,~D] pane ~D~A~%"
+                         (pane-id pane)
+                         (pane-width pane) (pane-height pane)
+                         (pane-x pane) (pane-y pane)
+                         (pane-id pane)
+                         (if (eq pane (window-active-pane win)) " (active)" ""))))))))))
+
 (defun %cmd-pipe-pane-arg (session args)
   "pipe-pane [-o] [command]: open or close pipe-pane for the active pane.
    -o: only open a pipe if no current pipe is open (no-op when pipe already open).
@@ -1200,7 +1269,10 @@
    (cons '("capture-pane" "capturep")   #'%cmd-capture-pane-arg)
    (cons '("run-shell" "run")           #'%cmd-run-shell-arg)
    (cons '("if-shell" "if")             #'%cmd-if-shell-arg)
-   (cons '("pipe-pane" "pipep")         #'%cmd-pipe-pane-arg))
+   (cons '("pipe-pane" "pipep")         #'%cmd-pipe-pane-arg)
+   (cons '("list-sessions" "ls")        #'%cmd-list-sessions-arg)
+   (cons '("list-windows" "lsw")        #'%cmd-list-windows-arg)
+   (cons '("list-panes" "lsp")          #'%cmd-list-panes-arg-full))
   "Arg-taking commands: (list-of-names . handler), handler a function of
    (SESSION ARGS).  Consulted by %run-command-line before the no-argument
    %dispatch-named-command name table.")
