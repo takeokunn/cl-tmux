@@ -912,7 +912,8 @@
                               :start-dir start-dir)))))
 
 (defun %cmd-new-session-arg (session args)
-  "new-session [-s name] [-n window-name] [-c start-dir] [-d]: create a new session.
+  "new-session [-A] [-s name] [-n window-name] [-c start-dir] [-d]: create a new session.
+   -A: if a session named NAME already exists, attach to it instead of creating a new one.
    -s name: session name.
    -n name: initial window name.
    -c dir: start directory for the initial window's shell.
@@ -922,16 +923,25 @@
     (declare (ignore positionals))
     (let* ((name      (or (cdr (assoc #\s flags))
                           (format nil "~D" (1+ (length *server-sessions*)))))
+           (attach-if-exists (assoc #\A flags))
            (win-name  (cdr (assoc #\n flags)))
            (start-dir (cdr (assoc #\c flags)))
            (rows      (- *term-rows* *status-height*))
-           (cols      *term-cols*)
-           (new-sess  (new-session name rows cols :start-dir start-dir)))
-      ;; Apply window name if given (new-session creates window named by shell basename)
-      (when (and win-name new-sess)
-        (let ((win (session-active-window new-sess)))
-          (when win (rename-window win win-name))))
-      new-sess)))
+           (cols      *term-cols*))
+      ;; -A: attach to existing session if it exists
+      (when attach-if-exists
+        (let ((existing (server-find-session name)))
+          (when existing
+            (session-touch existing)
+            (setf *dirty* t)
+            (return-from %cmd-new-session-arg existing))))
+      ;; No existing session: create a new one
+      (let ((new-sess (new-session name rows cols :start-dir start-dir)))
+        ;; Apply window name if given
+        (when (and win-name new-sess)
+          (let ((win (session-active-window new-sess)))
+            (when win (rename-window win win-name))))
+        new-sess))))
 
 (defun %cmd-kill-session-arg (session args)
   "kill-session [-t name]: kill the named session, or the current session when no -t."
