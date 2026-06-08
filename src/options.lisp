@@ -130,6 +130,9 @@
   ("allow-rename"             :boolean t)
   ("aggressive-resize"        :boolean nil)
   ("alternate-screen"         :boolean t)
+  ;; main-horizontal / main-vertical layout: size of the main (first) pane.
+  ("main-pane-width"          :integer 80)
+  ("main-pane-height"         :integer 24)
   ;; Status bar extras
   ("status-keys"              :string  "emacs")  ; emacs or vi
   ("mode-keys"                :string  "vi")     ; vi or emacs copy-mode keys

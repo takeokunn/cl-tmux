@@ -527,7 +527,7 @@
          (win  (make-window :id 1 :name "w" :width 80 :height 24
                             :panes (list pane)
                             :tree  (make-layout-leaf pane))))
-    (cl-tmux/model::%layout-main win (list pane) 80 24 :v :h)
+    (cl-tmux/model::%layout-main win (list pane) 80 24 :v :h 12)
     (is (cl-tmux/model::layout-leaf-p (window-tree win))
         "single-pane main layout must produce a bare leaf")
     (is (= 80 (pane-width  pane)) "sole pane must span full width")
@@ -542,7 +542,7 @@
                            :tree  (make-layout-split :v
                                      (make-layout-leaf p0)
                                      (make-layout-leaf p1)))))
-    (cl-tmux/model::%layout-main win (list p0 p1) 80 24 :v :h)
+    (cl-tmux/model::%layout-main win (list p0 p1) 80 24 :v :h 12)
     (let ((tree (window-tree win)))
       (is (cl-tmux/model::layout-split-p tree) "result must be a split node")
       (is (eq :v (cl-tmux/model::layout-split-orientation tree))
@@ -987,3 +987,48 @@
     (dolist (c cases)
       (is (eq (cdr c) (cl-tmux/model::resize-direction-orientation (car c)))
           "direction ~A must map to orientation ~A" (car c) (cdr c)))))
+
+;;; ── main-horizontal / main-vertical honour main-pane size ────────────────────
+;;;
+;;; apply-named-layout takes the main pane's size (tmux's main-pane-width /
+;;; main-pane-height options, read by the cl-tmux-layer caller).  The main (first)
+;;; pane is sized to exactly that many cells along the outer axis; the rest share
+;;; the remainder.
+
+(defun %three-pane-window (w h)
+  "A window of three no-PTY panes (W x H) with no preset tree."
+  (make-window :id 1 :name "w" :width w :height h
+               :panes (list (make-no-pty-pane 1 0 0 w h)
+                            (make-no-pty-pane 2 0 0 w h)
+                            (make-no-pty-pane 3 0 0 w h))))
+
+(test main-vertical-honours-main-pane-width
+  "apply-named-layout :main-vertical sizes the main (first/left) pane to the
+   given main-pane-width."
+  (let ((win (%three-pane-window 100 30)))
+    (cl-tmux/model:apply-named-layout win :main-vertical 60 24)
+    (let ((p0 (first (window-panes win))))
+      (is (= 60 (pane-width p0)) "main pane is main-pane-width (60) columns wide")
+      (is (< (pane-width (second (window-panes win))) 60)
+          "secondary panes share the narrower remainder"))))
+
+(test main-horizontal-honours-main-pane-height
+  "apply-named-layout :main-horizontal sizes the main (first/top) pane to the
+   given main-pane-height."
+  (let ((win (%three-pane-window 100 40)))
+    (cl-tmux/model:apply-named-layout win :main-horizontal 80 15)
+    (let ((p0 (first (window-panes win)))
+          (p1 (second (window-panes win))))
+      (is (= 15 (pane-height p0)) "main pane is main-pane-height (15) rows tall")
+      (is (> (pane-y p1) 15)
+          "secondary panes sit below the main pane (in the remaining rows)"))))
+
+(test main-layout-default-main-pane-size-is-tmux-default
+  "Without explicit sizes, main-vertical defaults the main pane to 80 columns
+   (tmux's default), not a half-split."
+  (let ((win (make-window :id 1 :name "w" :width 200 :height 50
+                          :panes (list (make-no-pty-pane 1 0 0 200 50)
+                                       (make-no-pty-pane 2 0 0 200 50)))))
+    (cl-tmux/model:apply-named-layout win :main-vertical)
+    (is (= 80 (pane-width (first (window-panes win))))
+        "default main-pane-width is 80, not w/2")))

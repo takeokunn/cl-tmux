@@ -487,39 +487,40 @@
 ;;; using make-no-pty-pane and make-fake-window from helpers.lisp.
 
 (test apply-named-layout-main-horizontal-two-panes
-  ":main-horizontal with 2 panes places the first across the top half and
-   the second across the bottom half."
+  ":main-horizontal with 2 panes: the main pane spans the top main-pane-height
+   rows (tmux default 24); the second fills the rest below it."
   (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
          (p1  (make-no-pty-pane 2 0 0 1 1))
-         (win (make-window :id 1 :name "w" :width 80 :height 24
+         ;; Window taller than the default main-pane-height so the layout is
+         ;; non-degenerate: h=50 → main 24, rest = 50 - 24 - 1 = 25.
+         (win (make-window :id 1 :name "w" :width 80 :height 50
                            :panes (list p0 p1)
                            :tree (make-layout-leaf p0))))
     (apply-named-layout win :main-horizontal)
-    ;; main-h = floor(24/2) = 12; rest-h = 24 - 12 - 1 = 11
     (is (= 0  (pane-x p0))      "main pane starts at column 0")
     (is (= 0  (pane-y p0))      "main pane starts at row 0")
     (is (= 80 (pane-width p0))  "main pane spans full width")
-    (is (= 12 (pane-height p0)) "main pane height = floor(h/2)")
+    (is (= 24 (pane-height p0)) "main pane height = main-pane-height (24)")
     ;; Secondary pane fills the bottom portion.
     (is (= 0  (pane-x p1))      "secondary pane starts at column 0")
-    (is (= 13 (pane-y p1))      "secondary pane y = main-h + 1 separator")
+    (is (= 25 (pane-y p1))      "secondary pane y = main-h + 1 separator")
     (is (= 80 (pane-width p1))  "secondary pane spans full width (1 pane below)")
-    (is (= 11 (pane-height p1)) "secondary pane height = h - main-h - 1")))
+    (is (= 25 (pane-height p1)) "secondary pane height = h - main-h - 1")))
 
 (test apply-named-layout-main-horizontal-three-panes
-  ":main-horizontal with 3 panes: main spans top half; two panes share the
-   bottom half side by side with equal widths."
+  ":main-horizontal with 3 panes: main spans the top main-pane-height rows; two
+   panes share the bottom region side by side with equal widths."
   (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
          (p1  (make-no-pty-pane 2 0 0 1 1))
          (p2  (make-no-pty-pane 3 0 0 1 1))
-         (win (make-window :id 1 :name "w" :width 81 :height 25
+         (win (make-window :id 1 :name "w" :width 81 :height 50
                            :panes (list p0 p1 p2)
                            :tree (make-layout-leaf p0))))
     (apply-named-layout win :main-horizontal)
-    ;; main-h = floor(25/2) = 12; rest-h = 25 - 12 - 1 = 12
-    (is (= 12 (pane-height p0)) "main pane height = floor(h/2)")
-    (is (= 12 (pane-height p1)) "secondary panes share the rest row equally")
-    (is (= 12 (pane-height p2)) "secondary panes share the rest row equally")
+    ;; main-h = main-pane-height = 24; rest-h = 50 - 24 - 1 = 25
+    (is (= 24 (pane-height p0)) "main pane height = main-pane-height (24)")
+    (is (= 25 (pane-height p1)) "secondary panes fill the bottom region height")
+    (is (= 25 (pane-height p2)) "secondary panes fill the bottom region height")
     ;; Two secondary panes in a row: 81 cols - 1 separator = 80, floor(80/2) = 40 each
     (is (= 0  (pane-x p1))     "left secondary pane starts at column 0")
     (is (= 40 (pane-width p1)) "left secondary width = floor(avail/2)")
@@ -539,43 +540,44 @@
     (is (= 24 (pane-height p0)))))
 
 (test apply-named-layout-main-vertical-two-panes
-  ":main-vertical with 2 panes places the first in the left half and the
-   second in the right half (stacked — but as a single pane it spans all rows)."
+  ":main-vertical with 2 panes: the main pane spans the left main-pane-width
+   columns (tmux default 80); the second fills the right column."
   (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
          (p1  (make-no-pty-pane 2 0 0 1 1))
-         (win (make-window :id 1 :name "w" :width 80 :height 24
+         ;; Window wider than the default main-pane-width: w=120 → main 80,
+         ;; rest = 120 - 80 - 1 = 39.
+         (win (make-window :id 1 :name "w" :width 120 :height 24
                            :panes (list p0 p1)
                            :tree (make-layout-leaf p0))))
     (apply-named-layout win :main-vertical)
-    ;; main-w = floor(80/2) = 40; rest-w = 80 - 40 - 1 = 39
     (is (= 0  (pane-x p0))      "main pane starts at column 0")
     (is (= 0  (pane-y p0))      "main pane starts at row 0")
-    (is (= 40 (pane-width p0))  "main pane width = floor(w/2)")
+    (is (= 80 (pane-width p0))  "main pane width = main-pane-width (80)")
     (is (= 24 (pane-height p0)) "main pane spans full height")
     ;; Secondary pane fills the right column.
-    (is (= 41 (pane-x p1))      "secondary pane x = main-w + 1 separator")
+    (is (= 81 (pane-x p1))      "secondary pane x = main-w + 1 separator")
     (is (= 0  (pane-y p1))      "secondary pane starts at row 0")
     (is (= 39 (pane-width p1))  "secondary pane width = w - main-w - 1")
     (is (= 24 (pane-height p1)) "secondary pane spans full height (1 pane in column)")))
 
 (test apply-named-layout-main-vertical-three-panes
-  ":main-vertical with 3 panes: main spans the left half; two panes share
-   the right half stacked equally."
+  ":main-vertical with 3 panes: main spans the left main-pane-width columns; two
+   panes share the right region stacked equally."
   (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
          (p1  (make-no-pty-pane 2 0 0 1 1))
          (p2  (make-no-pty-pane 3 0 0 1 1))
-         (win (make-window :id 1 :name "w" :width 81 :height 25
+         (win (make-window :id 1 :name "w" :width 120 :height 25
                            :panes (list p0 p1 p2)
                            :tree (make-layout-leaf p0))))
     (apply-named-layout win :main-vertical)
-    ;; main-w = floor(81/2) = 40; rest-w = 81 - 40 - 1 = 40
-    (is (= 40 (pane-width p0))  "main pane width = floor(w/2)")
+    ;; main-w = main-pane-width = 80; rest-w = 120 - 80 - 1 = 39
+    (is (= 80 (pane-width p0))  "main pane width = main-pane-width (80)")
     (is (= 25 (pane-height p0)) "main pane spans full height")
     ;; Two secondary panes stacked: 25 rows - 1 separator = 24, floor(24/2) = 12 each
-    (is (= 41 (pane-x p1))     "top secondary pane x = main-w + 1")
+    (is (= 81 (pane-x p1))     "top secondary pane x = main-w + 1")
     (is (= 0  (pane-y p1))     "top secondary pane starts at row 0")
     (is (= 12 (pane-height p1)) "top secondary height = floor(avail/2)")
-    (is (= 41 (pane-x p2))     "bottom secondary pane in the same column")
+    (is (= 81 (pane-x p2))     "bottom secondary pane in the same column")
     (is (= 13 (pane-y p2))     "bottom secondary pane y = top-h + 1 separator")
     (is (= 12 (pane-height p2)) "bottom secondary height = avail - top-h")))
 

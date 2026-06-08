@@ -4443,3 +4443,19 @@
   (with-isolated-config
     (is (= 1 (cl-tmux/config:load-config-from-string "bind X paste-buffer -b foo"))
         "paste-buffer -b parses as one applied directive")))
+
+;;; ── main-pane-width/height options flow into the main layouts ────────────────
+
+(test apply-named-layout-main-vertical-reads-main-pane-width-option
+  "%apply-named-layout-to-session :main-vertical sizes the main pane from the
+   main-pane-width option (read at the cl-tmux layer, threaded into the model)."
+  (with-isolated-options ("main-pane-width" 50)
+    (let* ((p0  (make-no-pty-pane 1 0 0 100 30))
+           (p1  (make-no-pty-pane 2 0 0 100 30))
+           (win (make-window :id 1 :name "w" :width 100 :height 30
+                             :panes (list p0 p1)))
+           (sess (make-session :id 1 :name "0" :windows (list win))))
+      (session-select-window sess win)
+      (cl-tmux::%apply-named-layout-to-session sess :main-vertical)
+      (is (= 50 (pane-width p0))
+          "main pane width is taken from the main-pane-width option"))))

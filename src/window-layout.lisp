@@ -42,15 +42,21 @@
    This is intentional: the macro acts as a code template, not a closure,
    and the Prolog-fact reading of each rule relies on those names being in
    scope at the call site."
-  `(defun apply-named-layout (window layout-name)
+  `(defun apply-named-layout (window layout-name
+                              &optional (main-pane-width 80) (main-pane-height 24))
      "Reposition all panes in WINDOW according to LAYOUT-NAME, one of:
         :even-horizontal  :even-vertical  :main-horizontal
         :main-vertical    :tiled
+      MAIN-PANE-WIDTH / MAIN-PANE-HEIGHT size the main (first) pane in the
+      main-vertical / main-horizontal layouts (tmux's main-pane-width/-height
+      options; the option values are read by the cl-tmux-layer caller and passed
+      in as plain integers, since this model-layer code loads before options).
       Rebuilds the window tree and calls layout-assign to sync all rectangles."
      (let* ((panes (window-panes window))
             (n     (length panes))
             (w     (window-width  window))
             (h     (window-height window)))
+       (declare (ignorable main-pane-width main-pane-height))
        (when (zerop n) (return-from apply-named-layout nil))
        (ecase layout-name
          ,@(mapcar (lambda (rule)
@@ -86,15 +92,24 @@
 ;;; A single %layout-main function with an orient argument unifies the two,
 ;;; making the symmetry explicit and eliminating 18 nearly-identical lines.
 
-(defun %layout-main (window panes w h outer-orient inner-orient)
-  "Apply a main-axis layout: the first pane takes half the OUTER-ORIENT extent;
-   the rest are evenly distributed along INNER-ORIENT in the remaining half.
-   OUTER-ORIENT :v → main-horizontal; OUTER-ORIENT :h → main-vertical."
+(defun %layout-main (window panes w h outer-orient inner-orient main-size)
+  "Apply a main-axis layout: the first (main) pane takes MAIN-SIZE cells along the
+   OUTER-ORIENT axis; the rest are evenly distributed along INNER-ORIENT in the
+   remaining space.  OUTER-ORIENT :v → main-horizontal (MAIN-SIZE = rows, from
+   main-pane-height); :h → main-vertical (MAIN-SIZE = columns, from main-pane-width).
+   The split ratio is derived from MAIN-SIZE against the available extent (one
+   row/column is reserved for the separator), clamped so both regions stay > 0."
   (let* ((rest-panes (rest panes))
+         (extent     (ecase outer-orient (:v h) (:h w)))
+         ;; available-cells in %assign-split is (1- extent); the main pane's
+         ;; first-extent = round(available * ratio), so ratio = MAIN-SIZE/available.
+         (available  (max 1 (1- extent)))
+         (ratio      (max 1/100 (min 99/100 (/ main-size available))))
          (tree       (if rest-panes
                          (make-layout-split outer-orient
                                             (make-layout-leaf (first panes))
-                                            (%build-flat-tree rest-panes inner-orient))
+                                            (%build-flat-tree rest-panes inner-orient)
+                                            ratio)
                          (make-layout-leaf (first panes)))))
     (setf (window-tree window) tree)
     (layout-assign (window-tree window) 0 0 w h)))
@@ -138,6 +153,6 @@
 (define-named-layout-rules
   (:even-horizontal (%layout-even-h window panes w h))
   (:even-vertical   (%layout-even-v window panes w h))
-  (:main-horizontal (%layout-main   window panes w h :v :h))
-  (:main-vertical   (%layout-main   window panes w h :h :v))
+  (:main-horizontal (%layout-main   window panes w h :v :h main-pane-height))
+  (:main-vertical   (%layout-main   window panes w h :h :v main-pane-width))
   (:tiled           (%layout-tiled  window panes n w h)))
