@@ -95,17 +95,21 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
 ;;; needs DISPATCH-COMMAND and a session; this layer only stores the bindings.
 
 (defvar *command-hooks* (make-hash-table :test #'equal)
-  "Maps event-name (string) to an ordered list of command keywords to dispatch
-   when the corresponding hook fires.")
+  "Maps event-name (string) to an ordered list of commands to dispatch
+   when the corresponding hook fires.  Each entry is either a keyword
+   (legacy programmatic hook) or a raw command-line string (from
+   set-hook in .tmux.conf).  String hooks support format expansion.")
 
-(defun set-command-hook (event-name command-keyword)
-  "Append COMMAND-KEYWORD to the commands dispatched when hook EVENT-NAME fires.
-   Appending (rather than replacing) lets multiple set-hook calls accumulate."
+(defun set-command-hook (event-name command)
+  "Append COMMAND to the list dispatched when hook EVENT-NAME fires.
+   COMMAND may be a keyword (built-in command) or a string (command line,
+   potentially with arguments and #{format} variables).
+   Appending preserves declaration order across multiple set-hook calls."
   (setf (gethash event-name *command-hooks*)
-        (append (gethash event-name *command-hooks*) (list command-keyword))))
+        (append (gethash event-name *command-hooks*) (list command))))
 
 (defun command-hooks (event-name)
-  "Return the ordered list of command keywords registered for EVENT-NAME."
+  "Return the ordered list of commands registered for EVENT-NAME."
   (gethash event-name *command-hooks*))
 
 (defun clear-command-hooks (event-name)

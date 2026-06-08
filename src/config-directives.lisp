@@ -583,21 +583,26 @@
 
 (defun %apply-set-hook-directive (cmd args)
   "Handle 'set-hook [-r] event [command]' directives.
-   -r flag removes the hook; without -r it registers the command.
+   -r flag removes all hooks for the event; without -r, registers the command.
+   The command is stored as a raw string (not converted to keyword) so that
+   format variables and arguments (e.g. 'display-message #{session_name}')
+   are expanded at hook-fire time via %run-command-line.
    Returns T when handled, NIL otherwise."
   (when (or (string= cmd "set-hook") (string= cmd "hook"))
-    (let* ((remove-p (string= (first args) "-r"))
+    (let* ((remove-p (and (first args) (string= (first args) "-r")))
            (rest     (if remove-p (rest args) args))
            (event    (first rest))
-           (cmd-name (second rest)))
+           ;; The command may be a single quoted token or split across tokens;
+           ;; join all remaining tokens as a single command line string.
+           (cmd-str  (when (rest rest)
+                       (format nil "~{~A~^ ~}" (rest rest)))))
       (when event
         (if remove-p
-            (progn (cl-tmux/hooks:remove-hook event nil) t)
-            (when cmd-name
-              (let ((kw (%command-keyword cmd-name)))
-                (when kw
-                  (cl-tmux/hooks:set-command-hook event kw)
-                  t))))))))
+            (progn (cl-tmux/hooks:clear-command-hooks event) t)
+            (when cmd-str
+              ;; Store the raw command string for execution at hook-fire time.
+              (cl-tmux/hooks:set-command-hook event cmd-str)
+              t))))))
 
 ;;; ── set-environment flag handling (set-environment -r VAR) ──────────────────
 ;;;

@@ -398,20 +398,36 @@
         "a-event must survive a destructive sort of the alist snapshot")))
 
 (test set-hook-directive-registers-command-hook
-  "set-hook <event> <command> resolves the command name and stores a command hook."
+  "set-hook <event> <command> stores the raw command string for later execution."
   (with-isolated-hooks
     (let ((applied (cl-tmux/config:load-config-from-string
                     "set-hook after-new-window next-window")))
       (is (= 1 applied) "set-hook must apply as exactly 1 directive")
-      (is (equal '(:next-window) (cl-tmux/hooks:command-hooks "after-new-window"))
-          "set-hook must register :next-window for after-new-window"))))
+      ;; Command hooks are now stored as raw strings (run via %run-command-line
+      ;; at hook-fire time) rather than pre-resolved keywords, so format
+      ;; expansion and argument passing work in hook commands.
+      (is (equal '("next-window") (cl-tmux/hooks:command-hooks "after-new-window"))
+          "set-hook must register the command string for after-new-window"))))
 
-(test set-hook-directive-rejects-unknown-command
-  "set-hook with an unknown command name registers nothing."
+(test set-hook-directive-stores-string-with-args
+  "set-hook stores multi-token command strings (e.g. 'display-message #{session_name}')."
+  (with-isolated-hooks
+    (cl-tmux/config:load-config-from-string
+     "set-hook after-new-window display-message #{session_name}")
+    (let ((hooks (cl-tmux/hooks:command-hooks "after-new-window")))
+      (is (= 1 (length hooks)) "must register exactly one hook")
+      (is (stringp (first hooks)) "hook entry must be a string for format expansion")
+      (is (search "display-message" (first hooks))
+          "hook string must include the command name"))))
+
+(test set-hook-directive-accepts-any-command-name
+  "set-hook stores any command string, even unknown names (validated at fire time)."
   (with-isolated-hooks
     (cl-tmux/config:load-config-from-string "set-hook after-new-window no-such-command")
-    (is (null (cl-tmux/hooks:command-hooks "after-new-window"))
-        "set-hook must not register an unknown command")))
+    ;; String is stored and validated at fire time, not at config-load time.
+    ;; This matches real tmux behavior where set-hook doesn't validate command names.
+    (is (equal '("no-such-command") (cl-tmux/hooks:command-hooks "after-new-window"))
+        "set-hook must store the command string regardless of whether it is known")))
 
 (test run-command-hooks-dispatches-registered-commands
   "run-command-hooks dispatches each registered command keyword on the session."
