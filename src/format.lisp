@@ -960,6 +960,25 @@
                                 "1" "0")
           ;; #{pane_marked}: "1" when the pane is marked, else "0".
           :pane-marked (if (and pane (cl-tmux/model:pane-marked pane)) "1" "0")
+          ;; #{pane_dead}: "1" when the pane's PTY has closed (remain-on-exit case).
+          ;; A pane is dead when its fd is closed (fd <= 0) but it still exists.
+          :pane-dead   (if (and pane (<= (cl-tmux/model:pane-fd pane) 0)) "1" "0")
+          ;; #{session_count}: total number of sessions in *server-sessions*.
+          ;; Accessed via qualified name because *server-sessions* lives in cl-tmux.
+          ;; Falls back to 1 (this session) when the registry is empty or unbound.
+          :session-count (format nil "~D"
+                                 (max 1 (ignore-errors
+                                          (length (symbol-value
+                                                   (find-symbol "*SERVER-SESSIONS*"
+                                                                "CL-TMUX"))))))
+          ;; #{session_group}: session group identifier (empty string when not grouped).
+          :session-group (if (and session (cl-tmux/model:session-group session))
+                             (format nil "~A" (cl-tmux/model:session-group session))
+                             "")
+          ;; #{pane_mode}: mode name when the pane is in a special mode.
+          ;; "copy-mode" when in copy mode, "" otherwise.
+          :pane-mode   (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
+                           "copy-mode" "")
           ;; Environment variables for terminal detection in themes.
           :term-program term-program
           :colorterm    colorterm)))

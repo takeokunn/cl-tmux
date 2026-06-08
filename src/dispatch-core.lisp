@@ -962,21 +962,23 @@
                        :after-current (and after-p t)))))
 
 (defun %cmd-split-window (session args)
-  "split-window [-h|-v] [-b] [-d] [-p percent] [-l size] [-c start-dir] [-e VAR=val].
+  "split-window [-h|-v] [-b] [-d] [-t target] [-p percent] [-l size] [-c start-dir] [-e VAR=val].
    -h: horizontal split (new pane to the right; side-by-side).
    -v: vertical split (new pane below — default).
    -b: insert before the active pane (left of / above) instead of after.
    -d: split but do not change focus (detached mode).
+   -t target: split the target pane instead of the active pane.
    -p N: size as a percentage of the parent pane (0-100).
    -l N: size in lines/columns (absolute integer).
    -c dir: start directory for the new pane's shell (format strings expanded).
    -e VAR=val: set environment variable in the new pane (repeatable)."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "plce")
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "plcet")
     (declare (ignore positionals))
     (let* ((extra-env    (%collect-env-flags flags))
            (horizontal-p (assoc #\h flags))
            (before-p     (assoc #\b flags))
            (detach-p     (assoc #\d flags))
+           (target-str   (cdr (assoc #\t flags)))
            (pct-str      (cdr (assoc #\p flags)))
            (lines-str    (cdr (assoc #\l flags)))
            (raw-dir      (cdr (assoc #\c flags)))
@@ -991,14 +993,36 @@
            (pct          (and pct-str (parse-integer pct-str :junk-allowed t)))
            (lines        (and lines-str (parse-integer lines-str :junk-allowed t)))
            (size         (or (and pct (/ pct 100.0)) lines)))
-      ;; Inject -e VAR=val pairs via *pane-extra-env* so %fork-pane picks them up.
-      (when extra-env
-        (setf *pane-extra-env* extra-env))
-      (if horizontal-p
-          (%cmd-split session :h :size size :no-focus (and detach-p t)
-                              :start-dir start-dir :before (and before-p t))
-          (%cmd-split session :v :size size :no-focus (and detach-p t)
-                              :start-dir start-dir :before (and before-p t))))))
+      ;; -t target: temporarily make the target pane active so %cmd-split
+      ;; operates on it.  Restore the previous active pane afterwards if -d.
+      (let* ((prev-win  (session-active-window session))
+             (prev-pane (and prev-win (window-active-pane prev-win))))
+        (when target-str
+          (multiple-value-bind (_sess target-win target-pane)
+              (resolve-target *server-sessions* target-str
+                              :current-session session
+                              :current-window prev-win
+                              :current-pane prev-pane)
+            (declare (ignore _sess))
+            (when (and target-win target-pane)
+              ;; Switch active window and pane to the target for the split.
+              (session-select-window session target-win)
+              (window-select-pane target-win target-pane))))
+        ;; Inject -e VAR=val pairs via *pane-extra-env* so %fork-pane picks them up.
+        (when extra-env
+          (setf *pane-extra-env* extra-env))
+        (let ((result
+               (if horizontal-p
+                   (%cmd-split session :h :size size :no-focus (and detach-p t)
+                                       :start-dir start-dir :before (and before-p t))
+                   (%cmd-split session :v :size size :no-focus (and detach-p t)
+                                       :start-dir start-dir :before (and before-p t)))))
+          ;; Restore original focus when -d (detach): the target had focus switched
+          ;; transiently for the split but the user wants to stay in the prior window.
+          (when (and detach-p target-str prev-win)
+            (session-select-window session prev-win)
+            (when prev-pane (window-select-pane prev-win prev-pane)))
+          result)))))
 
 (defun %cmd-new-session-arg (session args)
   "new-session [-A] [-d] [-s name] [-n window-name] [-c start-dir]: create a new session.
