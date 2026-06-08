@@ -1613,7 +1613,7 @@
     ("scroll-up-half-page"       . :copy-mode-half-page-up)
     ("scroll-down-half-page"     . :copy-mode-half-page-down)
     ;; emacs-style names
-    ("select-word"               . :copy-mode-begin-selection)
+    ("select-word"               . :copy-mode-select-word)
     ("copy-pipe"                 . :copy-mode-yank)
     ("copy-pipe-and-cancel"      . :copy-mode-yank)
     ;; mouse-wheel support
@@ -1622,7 +1622,9 @@
     ("previous-paragraph"        . :copy-mode-page-up)
     ("next-paragraph"            . :copy-mode-page-down)
     ("jump-to-mark"              . :copy-mode-line-start)
-    ("toggle-position"           . :copy-mode-begin-selection)
+    ;; other-end / toggle-position: swap the two ends of the selection (vi `o`).
+    ("other-end"                 . :copy-mode-other-end)
+    ("toggle-position"           . :copy-mode-other-end)
     ;; pipe operations
     ("pipe"                      . :copy-mode-yank)
     ("pipe-and-cancel"           . :copy-mode-yank))

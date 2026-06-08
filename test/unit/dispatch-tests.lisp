@@ -168,6 +168,15 @@
     (is (eq :copy-mode-cursor-down      (kw "cursor-down")))
     (is (eq :copy-mode-rectangle-toggle (kw "rectangle-toggle")))))
 
+(test send-keys-x-command-table-maps-select-word-and-other-end
+  "select-word maps to :copy-mode-select-word, and both other-end (real tmux
+   name) and toggle-position map to :copy-mode-other-end (no longer the
+   begin-selection placeholder)."
+  (flet ((kw (name) (cdr (assoc name cl-tmux::*copy-mode-x-commands* :test #'string-equal))))
+    (is (eq :copy-mode-select-word (kw "select-word")))
+    (is (eq :copy-mode-other-end   (kw "other-end")))
+    (is (eq :copy-mode-other-end   (kw "toggle-position")))))
+
 (test send-keys-x-rectangle-toggle-toggles-rect-select
   "send -X rectangle-toggle flips the screen's rectangle (block) selection flag
    instead of starting a stream selection."

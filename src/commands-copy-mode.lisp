@@ -163,6 +163,62 @@
             (screen-copy-selecting screen) t
             (screen-dirty-p        screen) t))))
 
+(defun copy-mode-other-end (screen)
+  "Swap the two ends of the active selection (tmux copy-mode `other-end`, vi `o`).
+   The moving end (cursor) and the anchored end (mark) exchange places so the
+   user can extend the selection from the opposite side.  No-op (returns NIL)
+   when copy mode is inactive, no selection is in progress, or either end is
+   unset.  Marks the screen dirty when a swap occurs."
+  (when (and (screen-copy-mode-p screen)
+             (screen-copy-selecting screen)
+             (screen-copy-mark   screen)
+             (screen-copy-cursor screen))
+    (rotatef (screen-copy-cursor screen) (screen-copy-mark screen))
+    (setf (screen-dirty-p screen) t)))
+
+(defun copy-mode-select-word (screen)
+  "Select the word under the copy-mode cursor (tmux copy-mode `select-word`).
+   Word characters are defined by the same `word-separators` option used by the
+   w/b/e word-motion commands (via %word-separator-p), so selection is
+   consistent with word navigation.  The mark is placed on the first word
+   character and the cursor on the column just past the last word character so
+   that %selection-text extracts exactly the word (the single-row selection
+   reads columns [start-col, end-col) exclusively).  When the cursor is not on a
+   word character, only the single cell under the cursor is selected.  Marks the
+   screen dirty.  No-op when copy mode is inactive."
+  (when (screen-copy-mode-p screen)
+    (let* ((cur (or (screen-copy-cursor screen)
+                    (cons (1- (screen-height screen)) 0)))
+           (w   (screen-width screen))
+           (max-col (1- w))
+           ;; Clamp BOTH row and col to the (possibly shrunk) grid bounds so the
+           ;; (screen-cell screen col row) reads below can never go out of range.
+           (row (max 0 (min (1- (screen-height screen)) (car cur))))
+           (col (max 0 (min max-col (cdr cur))))
+           (char-at (lambda (c)
+                      (cell-char (screen-cell screen c row)))))
+      (if (%word-separator-p (funcall char-at col))
+          ;; Cursor not on a word char: select the single cell under it.  The
+          ;; cursor's EXCLUSIVE end may reach width (one past the last column) so
+          ;; %selection-text captures the rightmost cell; cap at width, never
+          ;; max-col, to avoid dropping a cell at the right edge.
+          (setf (screen-copy-mark   screen) (cons row col)
+                (screen-copy-cursor screen) (cons row (min w (1+ col))))
+          ;; On a word char: expand left to the word start and right past its end.
+          (let ((start col)
+                (end   col))
+            (loop while (and (> start 0)
+                             (not (%word-separator-p (funcall char-at (1- start)))))
+                  do (decf start))
+            (loop while (and (< end max-col)
+                             (not (%word-separator-p (funcall char-at (1+ end)))))
+                  do (incf end))
+            (setf (screen-copy-mark   screen) (cons row start)
+                  ;; Exclusive end may reach width so the last word char is kept.
+                  (screen-copy-cursor screen) (cons row (min w (1+ end))))))
+      (setf (screen-copy-selecting screen) t
+            (screen-dirty-p        screen) t))))
+
 (defun copy-mode-cancel-selection (screen)
   "Cancel any active copy-mode selection."
   (setf (screen-copy-mark           screen) nil

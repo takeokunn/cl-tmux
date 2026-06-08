@@ -140,6 +140,8 @@
   (:copy-mode-enter            (%copy-mode-call session #'copy-mode-enter))
   (:copy-mode-exit             (%copy-mode-call session #'copy-mode-exit))
   (:copy-mode-begin-selection  (%copy-mode-call session #'copy-mode-begin-selection))
+  (:copy-mode-other-end        (%copy-mode-call session #'copy-mode-other-end))
+  (:copy-mode-select-word      (%copy-mode-call session #'copy-mode-select-word))
   (:copy-mode-yank             (%copy-mode-call session #'copy-mode-yank))
   (:copy-mode-word-forward     (%copy-mode-call session #'copy-mode-word-forward))
   (:copy-mode-word-backward    (%copy-mode-call session #'copy-mode-word-backward))
