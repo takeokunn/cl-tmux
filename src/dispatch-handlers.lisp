@@ -374,17 +374,26 @@
           (last (and win (window-last-active win))))
      (when last (%select-pane-with-focus win last))))
   (:display-panes
+   ;; Show pane numbers as a transient overlay that auto-dismisses after
+   ;; display-panes-time milliseconds (default 1000ms), matching real tmux.
    (with-active-window (win session)
      (let ((panes (window-panes win)))
        (when panes
-         (show-overlay
-          (with-output-to-string (stream)
-            (dolist (p panes)
-              (format stream "Pane ~D: ~Dx~D at (~D,~D)~A~%"
-                      (pane-id p)
-                      (pane-width p) (pane-height p)
-                      (pane-x p) (pane-y p)
-                      (if (eq p (window-active-pane win)) " [active]" "")))))))))
+         ;; Temporarily override display-time with display-panes-time so that
+         ;; show-transient-overlay uses the pane-display duration, not the
+         ;; message-display duration.
+         (let* ((panes-ms (or (cl-tmux/options:get-option "display-panes-time") 1000))
+                (saved-ms (cl-tmux/options:get-option "display-time" 750)))
+           (cl-tmux/options:set-option "display-time" panes-ms)
+           (show-transient-overlay
+            (with-output-to-string (stream)
+              (dolist (p panes)
+                (format stream "Pane ~D: ~Dx~D at (~D,~D)~A~%"
+                        (pane-id p)
+                        (pane-width p) (pane-height p)
+                        (pane-x p) (pane-y p)
+                        (if (eq p (window-active-pane win)) " [active]" "")))))
+           (cl-tmux/options:set-option "display-time" saved-ms))))))
 
   ;; ── Client switching ───────────────────────────────────────────────────────
   (:switch-client-next

@@ -902,17 +902,28 @@
           (when win (session-select-window session win)))))))
 
 (defun %cmd-select-pane (session args)
-  "select-pane [-L|-R|-U|-D|-m] [-t target]: select a pane by direction or id.
-   -L/-R/-U/-D: move in the given direction (same as prefix C-b arrow keys).
+  "select-pane [-L|-R|-U|-D|-m] [-t target] [-T title]: select or configure a pane.
+   -L/-R/-U/-D: move in the given direction.
    -t target: select pane by pane-id in the active window.
+   -T title: set the title of the target (or active) pane.
    -m: mark the selected pane."
-  (multiple-value-bind (flags _positionals) (%parse-command-flags args "t")
+  (multiple-value-bind (flags _positionals) (%parse-command-flags args "tT")
     (declare (ignore _positionals))
     (cond
       ((assoc #\L flags) (%select-pane-in-direction session :left))
       ((assoc #\R flags) (%select-pane-in-direction session :right))
       ((assoc #\U flags) (%select-pane-in-direction session :up))
       ((assoc #\D flags) (%select-pane-in-direction session :down))
+      ;; -T title: set the pane title (equivalent to OSC 0/2 renaming)
+      ((assoc #\T flags)
+       (let* ((title (cdr (assoc #\T flags)))
+              (pane  (session-active-pane session)))
+         (when (and pane title)
+           (setf (pane-title pane) title)
+           ;; Also update the screen title so #{pane_title} reflects the change.
+           (let ((screen (pane-screen pane)))
+             (when screen
+               (cl-tmux/terminal/actions:set-screen-title screen title))))))
       ((assoc #\m flags)
        ;; -m: mark the active pane
        (with-active-pane (ap session)
@@ -939,15 +950,30 @@
       (%handle-kill-result (kill-window session win)))))
 
 (defun %cmd-kill-pane (session args)
-  "kill-pane [-t target]: kill the pane with pane-id -t in the active window, or
-   the active pane when no -t is given.  A -t target that matches nothing is a
-   no-op (the active pane is NOT killed by accident)."
-  (let* ((target-str (cdr (assoc #\t (%parse-command-flags args "t"))))
-         (n    (and target-str (parse-integer target-str :junk-allowed t)))
-         (win  (session-active-window session))
-         (pane (and n win (find n (window-panes win) :key #'pane-id))))
-    (when (or pane (null target-str))
-      (%handle-kill-result (kill-pane session pane)))))
+  "kill-pane [-a] [-t target]: kill the target pane, or all except target with -a.
+   -a: kill all panes in the active window EXCEPT the target (or active) pane.
+   -t target: target pane by pane-id.
+   No -t: target is the active pane.  A -t that matches nothing is a no-op."
+  (multiple-value-bind (flags _pos) (%parse-command-flags args "t")
+    (declare (ignore _pos))
+    (let* ((target-str (cdr (assoc #\t flags)))
+           (kill-all   (assoc #\a flags))
+           (n          (and target-str (parse-integer target-str :junk-allowed t)))
+           (win        (session-active-window session))
+           ;; Determine the pane to KEEP (when -a) or KILL.
+           (ref-pane   (if (and n win)
+                           (find n (window-panes win) :key #'pane-id)
+                           (session-active-pane session))))
+      (cond
+        ;; -a: kill all panes EXCEPT the reference pane.
+        (kill-all
+         (when (and win ref-pane)
+           (dolist (p (copy-list (window-panes win)))
+             (unless (eq p ref-pane)
+               (%handle-kill-result (kill-pane session p))))))
+        ;; Normal: kill the target (or active) pane.
+        ((or ref-pane (null target-str))
+         (%handle-kill-result (kill-pane session ref-pane)))))))
 
 (defun %cmd-swap-window (session args)
   "swap-window [-s src] -t dst: exchange two windows in the session's list.  SRC
@@ -1357,8 +1383,12 @@
         (if bg-p
             (run-shell command :background t)
             (let ((output (run-shell command)))
-              (when (plusp (length (or output "")))
-                (show-overlay output))))))))
+              ;; Show output when non-empty; show "(no output)" when empty
+              ;; so users know the command ran successfully.
+              (let ((text (if (and output (plusp (length output)))
+                              output
+                              "(run-shell: no output)")))
+                (show-overlay text))))))))
 
 (defun %cmd-if-shell-arg (session args)
   "if-shell [-F] condition [then-cmd] [else-cmd]: conditional command execution.
@@ -1402,19 +1432,31 @@
             (show-overlay content))))))
 
 (defun %cmd-resize-pane-arg (session args)
-  "resize-pane [-L|-R|-U|-D|-Z] [amount]: resize the active pane.
+  "resize-pane [-t target] [-L|-R|-U|-D|-Z] [amount]: resize a pane.
+   -t target: target pane by pane-id or 'session:window.pane' (default: active pane).
    -L/-R/-U/-D: resize by AMOUNT (default 5) in the given direction.
-   -Z: zoom-toggle the active pane."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "")
+   -Z: zoom-toggle the target pane."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
     (let* ((amount-str (first positionals))
            (amount     (or (and amount-str (parse-integer amount-str :junk-allowed t)) 5))
-           (win        (session-active-window session)))
+           ;; Resolve target pane; fall back to active window for resize operations.
+           (target-str (cdr (assoc #\t flags)))
+           (win        (if target-str
+                           ;; Resolve target to its window; resize operates on the window.
+                           (multiple-value-bind (_s target-win _p)
+                               (resolve-target *server-sessions* target-str
+                                               :current-session session
+                                               :current-window  (session-active-window session))
+                             (declare (ignore _s _p))
+                             target-win)
+                           (session-active-window session))))
       (cond
-        ((assoc #\Z flags) (with-active-window (w session) (window-zoom-toggle w)))
-        ((assoc #\L flags) (resize-pane win :left  amount))
-        ((assoc #\R flags) (resize-pane win :right amount))
-        ((assoc #\U flags) (resize-pane win :up    amount))
-        ((assoc #\D flags) (resize-pane win :down  amount))))))
+        ((assoc #\Z flags)
+         (when win (window-zoom-toggle win)))
+        ((assoc #\L flags) (when win (resize-pane win :left  amount)))
+        ((assoc #\R flags) (when win (resize-pane win :right amount)))
+        ((assoc #\U flags) (when win (resize-pane win :up    amount)))
+        ((assoc #\D flags) (when win (resize-pane win :down  amount)))))))
 
 (defun %cmd-send-keys-arg (session args)
   "send-keys [-t target-pane] [-X copy-mode-cmd] [key ...]: send keys or copy-mode commands.

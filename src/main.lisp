@@ -217,7 +217,10 @@
     ("kill-server"    . (run-kill-server :raw-args-p t))
     ;; list-sessions: print sessions to stdout.
     ("list-sessions"  . (run-list-sessions :raw-args-p t))
-    ("ls"             . (run-list-sessions :raw-args-p t)))
+    ("ls"             . (run-list-sessions :raw-args-p t))
+    ;; source-file: load a config file directly (useful for testing configs).
+    ("source-file"    . (run-source-file :raw-args-p t))
+    ("source"         . (run-source-file :raw-args-p t)))
   "Mode-name → plist dispatch table for the binary entry point.
    Each entry is (mode-name . (handler-symbol &key :raw-args-p bool)).
    :raw-args-p T means the handler receives the full raw argv tail rather
@@ -325,6 +328,20 @@
   ;; Best effort: list any session whose socket file exists.
   (format t "(no server running or session listing requires attach)~%")
   (sb-ext:exit :code 0))
+
+(defun run-source-file (raw-args)
+  "Load and apply a tmux config file, then exit.
+   Usage: tmux source-file <path>
+   Applies config directives from PATH against the global defaults.
+   Useful for pre-loading a config before the multiplexer starts."
+  (let ((path (or (first raw-args) (cl-tmux/config:config-file-path))))
+    (when (and path (probe-file path))
+      (handler-case
+          (cl-tmux/config:load-config-file path)
+        (error (c)
+          (format *error-output* "source-file: ~A~%" c)
+          (sb-ext:exit :code 1))))
+    (sb-ext:exit :code 0)))
 
 (defun main ()
   "Binary entry point — dispatches on the first argv item via *startup-modes*.
