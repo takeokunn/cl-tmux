@@ -1017,49 +1017,57 @@
     (format nil "~{~A~^ ; ~}" (nreverse parts))))
 
 (defun load-config-from-stream (stream)
-  "Apply every directive line read from STREAM, honoring %if/%else/%endif blocks.
-   Multi-line { ... } command blocks (tmux 3.x brace syntax) are joined into a
-   single logical directive before being applied.  Returns the count applied."
-  ;; SKIP-STACK: list of booleans — T means 'skip until matching %else/%endif'.
-  ;; Nested %if blocks push/pop the stack.
-  (let ((skip-stack nil)
+  "Apply every directive line read from STREAM, honoring %if/%elif/%else/%endif
+   blocks.  Multi-line { ... } command blocks (tmux 3.x brace syntax) are joined
+   into a single logical directive before being applied.  Returns the count applied."
+  ;; COND-STACK: one state per open %if level — :ACTIVE (this branch is taken),
+  ;; :SEEKING (no branch matched yet; keep evaluating %elif/%else), :TAKEN (a branch
+  ;; already matched; skip the rest), or :DEAD (an ancestor was skipping when this
+  ;; %if began).  A line is applied only when EVERY level is :ACTIVE.  The four
+  ;; states are what a plain skip flag cannot express: distinguishing "still seeking
+  ;; a match" from "a branch already matched" is required for correct %elif chains.
+  (let ((cond-stack nil)
         (count 0))
-    (loop for line = (read-line stream nil nil)
-          while line do
-      (let* ((trimmed  (string-trim '(#\Space #\Tab #\Return #\Newline) line))
-             (pp-type  (%preprocessor-line-p trimmed)))
-        (case pp-type
-          (:if
-           ;; Evaluate condition unless we are already skipping.
-           (let ((cond-str (string-trim " \t" (subseq trimmed 3))))
-             (push (or (and skip-stack (first skip-stack))
-                       (not (%eval-config-condition cond-str)))
-                   skip-stack)))
-          (:elif
-           ;; Flip the top skip flag if not already done; treat like else+if.
-           (when skip-stack
-             (let* ((cond-str (string-trim " \t" (subseq trimmed 5)))
-                    (outer-skip (if (cdr skip-stack) (second skip-stack) nil))
-                    (was-skip   (first skip-stack)))
-               (setf (first skip-stack)
-                     (or outer-skip
-                         (if was-skip
-                             (not (%eval-config-condition cond-str))
-                             t))))))
-          (:else
-           (when skip-stack
-             (setf (first skip-stack) (not (first skip-stack)))))
-          (:endif
-           (when skip-stack (pop skip-stack)))
-          (otherwise
-           ;; Normal line: apply only when not inside a skipped block.
-           (when (or (null skip-stack) (not (first skip-stack)))
-             ;; Join a multi-line { ... } command block into one logical line.
-             (let ((full-line (if (> (%line-brace-delta line) 0)
-                                  (%read-brace-block line stream)
-                                  line)))
-               (when (apply-config-line full-line)
-                 (incf count))))))))
+    (flet ((active-p () (every (lambda (s) (eq s :active)) cond-stack)))
+      (loop for line = (read-line stream nil nil)
+            while line do
+        (let* ((trimmed (string-trim '(#\Space #\Tab #\Return #\Newline) line))
+               (pp-type (%preprocessor-line-p trimmed)))
+          (case pp-type
+            (:if
+             ;; Only evaluate the condition in an active context; a dead block
+             ;; never evaluates (matching tmux's short-circuit).
+             (let ((cond-str (string-trim " \t" (subseq trimmed 3))))
+               (push (cond ((not (active-p)) :dead)
+                           ((%eval-config-condition cond-str) :active)
+                           (t :seeking))
+                     cond-stack)))
+            (:elif
+             (when cond-stack
+               (let ((cond-str (string-trim " \t" (subseq trimmed 5))))
+                 (setf (first cond-stack)
+                       (case (first cond-stack)
+                         (:seeking (if (%eval-config-condition cond-str) :active :seeking))
+                         (:active  :taken)   ; prior branch matched → skip the rest
+                         (t        (first cond-stack)))))))   ; :taken / :dead unchanged
+            (:else
+             (when cond-stack
+               (setf (first cond-stack)
+                     (case (first cond-stack)
+                       (:seeking :active)    ; no branch matched → take the else
+                       (:active  :taken)
+                       (t        (first cond-stack))))))
+            (:endif
+             (when cond-stack (pop cond-stack)))
+            (otherwise
+             ;; Normal line: apply only when every %if level is active.
+             (when (active-p)
+               ;; Join a multi-line { ... } command block into one logical line.
+               (let ((full-line (if (> (%line-brace-delta line) 0)
+                                    (%read-brace-block line stream)
+                                    line)))
+                 (when (apply-config-line full-line)
+                   (incf count)))))))))
     count))
 
 (defun load-config-from-string (text)

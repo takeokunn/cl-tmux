@@ -1484,3 +1484,57 @@ bind-key r source-file /dev/null"))
   (with-isolated-config
     (is (= 0 (cl-tmux/config:load-config-from-string "bind X totally-bogus-cmd"))
         "an unknown bare command must still be rejected (0 applied)")))
+
+;;; ── %elif chains (4-state cond stack) ────────────────────────────────────────
+;;;
+;;; A plain skip flag mishandles %elif after a matched branch.  These exercise the
+;;; :active/:seeking/:taken/:dead state machine.  The identity evaluator makes the
+;;; condition "1" truthy and "0" falsy.
+
+(test config-elif-not-taken-after-if-matched
+  "%if 1 then %elif 1: only the if-branch applies — the elif must be skipped."
+  (with-isolated-config
+    (let ((cl-tmux/config:*config-condition-evaluator* (lambda (c) c)))
+      (is (= 1 (cl-tmux/config:load-config-from-string
+                (format nil "%if 1~%bind a new-window~%%elif 1~%bind b new-window~%%endif~%")))
+          "if-true takes only the if-branch, not the following elif"))))
+
+(test config-elif-taken-when-if-false
+  "%if 0 / %elif 1: the elif-branch applies."
+  (with-isolated-config
+    (let ((cl-tmux/config:*config-condition-evaluator* (lambda (c) c)))
+      (is (= 1 (cl-tmux/config:load-config-from-string
+                (format nil "%if 0~%bind a new-window~%%elif 1~%bind b new-window~%%endif~%")))
+          "elif applies when the if condition is false"))))
+
+(test config-else-taken-when-if-and-elif-false
+  "%if 0 / %elif 0 / %else: the else-branch applies."
+  (with-isolated-config
+    (let ((cl-tmux/config:*config-condition-evaluator* (lambda (c) c)))
+      (is (= 1 (cl-tmux/config:load-config-from-string
+                (format nil "%if 0~%bind a x~%%elif 0~%bind b x~%%else~%bind c new-window~%%endif~%")))
+          "else applies when if and all elifs are false"))))
+
+(test config-elif-chain-picks-first-true
+  "%if 0 / %elif 0 / %elif 1 / %else: only the first true elif applies."
+  (with-isolated-config
+    (let ((cl-tmux/config:*config-condition-evaluator* (lambda (c) c)))
+      (is (= 1 (cl-tmux/config:load-config-from-string
+                (format nil "%if 0~%bind a x~%%elif 0~%bind b x~%%elif 1~%bind c new-window~%%else~%bind d x~%%endif~%")))
+          "the first matching elif applies; later elif/else skipped"))))
+
+(test config-if-true-skips-all-elif-and-else
+  "%if 1 / %elif 1 / %else: only the if-branch applies."
+  (with-isolated-config
+    (let ((cl-tmux/config:*config-condition-evaluator* (lambda (c) c)))
+      (is (= 1 (cl-tmux/config:load-config-from-string
+                (format nil "%if 1~%bind a new-window~%%elif 1~%bind b x~%%else~%bind c x~%%endif~%")))
+          "if-true takes only the if-branch; elif and else are skipped"))))
+
+(test config-nested-if-dead-inside-false-branch
+  "A nested %if/%elif inside a false outer block applies nothing."
+  (with-isolated-config
+    (let ((cl-tmux/config:*config-condition-evaluator* (lambda (c) c)))
+      (is (= 0 (cl-tmux/config:load-config-from-string
+                (format nil "%if 0~%%if 1~%bind a new-window~%%elif 1~%bind b new-window~%%endif~%%endif~%")))
+          "nested if/elif in a dead branch stays dead"))))
