@@ -30,14 +30,49 @@
       (format nil " [COPY +~D]" (screen-copy-offset (pane-screen active-pane)))
       ""))
 
+(defun %window-has-bell-p (window)
+  "T when any pane in WINDOW has a pending (unconsumed) BEL.
+   Mirrors the #{window_bell_flag} computation in format.lisp."
+  (some (lambda (p)
+          (let ((scr (pane-screen p)))
+            (and scr (screen-bell-pending scr))))
+        (window-panes window)))
+
+(defun %window-status-style (session window active-p)
+  "Resolve the status-bar style string for WINDOW's tab.
+   Active window → window-status-current-style.  For a non-active window, the
+   highest-priority non-empty alert style wins: bell > activity > last
+   (previously active) > the normal window-status-style.  Every option is read
+   per-window via get-option-for-context, so alert styles can be set per-window."
+  (flet ((opt (name) (cl-tmux/options:get-option-for-context name :window window)))
+    (if active-p
+        (opt "window-status-current-style")
+        (let ((bell-style     (opt "window-status-bell-style"))
+              (activity-style (opt "window-status-activity-style"))
+              (last-style     (opt "window-status-last-style"))
+              (normal-style   (opt "window-status-style")))
+          (cond
+            ((and (%window-has-bell-p window) (plusp (length bell-style)))
+             bell-style)
+            ((and (window-activity-flag window) (plusp (length activity-style)))
+             activity-style)
+            ((and (eq window (session-last-window session))
+                  (plusp (length last-style)))
+             last-style)
+            (t normal-style))))))
+
 (defun %status-window-list-styled (session active-win)
   "Window-tab string with current-style applied to the active window entry.
    Uses window-status-format, window-status-current-format, window-status-separator,
-   window-status-current-style, and window-status-style options.
+   window-status-current-style, window-status-style, and the alert-state styles
+   (window-status-{bell,activity,last}-style).
    The format/style options are resolved PER WINDOW via get-option-for-context
    (pane→window→global→default), so e.g. `setw -t :2 window-status-current-style
-   fg=red` styles only that window's tab.  window-status-separator stays global —
-   it sits between windows and has no single owning window."
+   fg=red` styles only that window's tab.  A non-active window with a pending bell,
+   unseen activity, or that is the last (previously active) window picks up the
+   corresponding alert style (bell > activity > last > normal).
+   window-status-separator stays global — it sits between windows and has no
+   single owning window."
   (let ((separator (cl-tmux/options:get-option "window-status-separator" " ")))
     (with-output-to-string (window-stream)
       (let ((first-p t))
@@ -49,9 +84,8 @@
                  (fmt      (cl-tmux/options:get-option-for-context
                             (if active-p "window-status-current-format" "window-status-format")
                             :window window))
-                 (style    (cl-tmux/options:get-option-for-context
-                            (if active-p "window-status-current-style" "window-status-style")
-                            :window window))
+                 ;; Style honors alert state (bell/activity/last) for non-active windows.
+                 (style    (%window-status-style session window active-p))
                  (label    (cl-tmux/format:expand-format fmt context)))
             ;; Apply the per-window style, then expand any inline #[attr] blocks
             ;; embedded in the label.  Within a window label, #[default] reverts to

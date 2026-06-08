@@ -529,6 +529,74 @@
         "per-window window-status-current-style override must change the output ~
          (with=~S without=~S)" with without)))
 
+;;; ── Alert-state window-tab styles (bell / activity / last) ───────────────────
+
+(test status-window-list-bell-style-applied-to-window-with-pending-bell
+  "A non-active window with a pane holding a pending BEL renders its tab with
+   window-status-bell-style (fg=red → SGR 31), overriding the (empty) normal style."
+  (with-isolated-config
+    (cl-tmux/options:set-option "window-status-style" "")        ; normal: unstyled
+    (cl-tmux/options:set-option "window-status-bell-style" "fg=red")
+    (let* ((sess (make-fake-session :nwindows 2))
+           (win2 (second (cl-tmux/model:session-windows sess)))
+           (pane (first (cl-tmux/model:window-panes win2))))
+      ;; Mark a pane in the inactive window 2 as having a pending bell.
+      (setf (cl-tmux/terminal/types:screen-bell-pending (cl-tmux/model:pane-screen pane)) t)
+      (let ((out (cl-tmux/renderer::%status-window-list-styled
+                  sess (cl-tmux/model:session-active-window sess))))
+        (is (search "31" out)
+            "window with a pending bell must use window-status-bell-style (SGR 31): ~S" out)))))
+
+(test status-window-list-activity-style-applied-to-window-with-activity
+  "A non-active window with its activity-flag set renders its tab with
+   window-status-activity-style (fg=blue → SGR 34)."
+  (with-isolated-config
+    (cl-tmux/options:set-option "window-status-style" "")
+    (cl-tmux/options:set-option "window-status-activity-style" "fg=blue")
+    (let* ((sess (make-fake-session :nwindows 2))
+           (win2 (second (cl-tmux/model:session-windows sess))))
+      (setf (cl-tmux/model:window-activity-flag win2) t)
+      (let ((out (cl-tmux/renderer::%status-window-list-styled
+                  sess (cl-tmux/model:session-active-window sess))))
+        (is (search "34" out)
+            "window with activity must use window-status-activity-style (SGR 34): ~S" out)))))
+
+(test status-window-list-last-style-applied-to-last-window
+  "The last (previously active) non-active window renders its tab with
+   window-status-last-style (fg=magenta → SGR 35) when set."
+  (with-isolated-config
+    (cl-tmux/options:set-option "window-status-style" "")
+    (cl-tmux/options:set-option "window-status-last-style" "fg=magenta")
+    (let* ((sess (make-fake-session :nwindows 2)))
+      ;; make-fake-session selects window 1 active, leaving window 2 as the
+      ;; last (second-highest last-active-time) window.
+      (is (eq (second (cl-tmux/model:session-windows sess))
+              (cl-tmux/model:session-last-window sess))
+          "precondition: window 2 is the last window")
+      (let ((out (cl-tmux/renderer::%status-window-list-styled
+                  sess (cl-tmux/model:session-active-window sess))))
+        (is (search "35" out)
+            "last window must use window-status-last-style (SGR 35): ~S" out)))))
+
+(test status-window-list-bell-style-beats-activity-style
+  "Alert-style precedence: a non-active window with BOTH a pending bell and the
+   activity flag uses bell-style (fg=red, 31), not activity-style (fg=blue, 34)."
+  (with-isolated-config
+    (cl-tmux/options:set-option "window-status-style" "")
+    (cl-tmux/options:set-option "window-status-bell-style" "fg=red")
+    (cl-tmux/options:set-option "window-status-activity-style" "fg=blue")
+    (let* ((sess (make-fake-session :nwindows 2))
+           (win2 (second (cl-tmux/model:session-windows sess)))
+           (pane (first (cl-tmux/model:window-panes win2))))
+      (setf (cl-tmux/model:window-activity-flag win2) t)
+      (setf (cl-tmux/terminal/types:screen-bell-pending (cl-tmux/model:pane-screen pane)) t)
+      (let ((out (cl-tmux/renderer::%status-window-list-styled
+                  sess (cl-tmux/model:session-active-window sess))))
+        (is (search "31" out)
+            "bell must win over activity (expect SGR 31): ~S" out)
+        (is (not (search "34" out))
+            "activity style (SGR 34) must NOT appear when bell takes priority: ~S" out)))))
+
 ;;; ── %status-bar-line (pure) ─────────────────────────────────────────────────
 
 (test status-bar-line-fits-in-terminal-cols

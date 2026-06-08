@@ -81,6 +81,11 @@
   ("window-status-current-format" :string " #{window_index}:#{window_name}* ")
   ("window-status-style"      :string  "")
   ("window-status-current-style" :string "reverse")
+  ;; Alert-state window-tab styles (applied to a non-active window in that state):
+  ;; bell takes priority over activity, then last (previously active) window.
+  ("window-status-activity-style" :string "reverse")
+  ("window-status-bell-style"     :string "reverse")
+  ("window-status-last-style"     :string "")
   ("window-status-separator"  :string  " ")
   ("history-limit"            :integer 2000)
   ("escape-time"              :integer 500)
