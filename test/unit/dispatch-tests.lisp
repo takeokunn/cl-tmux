@@ -156,6 +156,44 @@
       (cl-tmux::dispatch-command s :copy-mode-enter nil)
       (is (cl-tmux::%copy-mode-active-p s)))))
 
+;;; ── send-keys -X copy-mode commands: cursor-left/right + rectangle-toggle ────
+
+(test send-keys-x-command-table-maps-cursor-and-rectangle
+  "The send-keys -X command table maps cursor-left/right and rectangle-toggle to
+   their proper copy-mode keywords (no longer the begin-selection approximation)."
+  (flet ((kw (name) (cdr (assoc name cl-tmux::*copy-mode-x-commands* :test #'string-equal))))
+    (is (eq :copy-mode-cursor-left      (kw "cursor-left")))
+    (is (eq :copy-mode-cursor-right     (kw "cursor-right")))
+    (is (eq :copy-mode-rectangle-toggle (kw "rectangle-toggle")))))
+
+(test send-keys-x-rectangle-toggle-toggles-rect-select
+  "send -X rectangle-toggle flips the screen's rectangle (block) selection flag
+   instead of starting a stream selection."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (cl-tmux::dispatch-command s :copy-mode-enter nil)
+      (let ((screen (active-screen s)))
+        (is-false (screen-copy-rect-select-p screen) "rect-select off on entry")
+        (is (cl-tmux::%dispatch-send-keys-X s "rectangle-toggle")
+            "rectangle-toggle must be a handled -X command")
+        (is (screen-copy-rect-select-p screen) "rectangle-toggle turns rect-select ON")
+        (cl-tmux::%dispatch-send-keys-X s "rectangle-toggle")
+        (is-false (screen-copy-rect-select-p screen) "a second toggle turns it OFF")))))
+
+(test send-keys-x-cursor-left-right-move-cursor
+  "send -X cursor-right / cursor-left move the copy-mode cursor horizontally
+   (previously both mis-mapped to begin-selection, which did not move it)."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (cl-tmux::dispatch-command s :copy-mode-enter nil)
+      (let ((screen (active-screen s)))
+        (cl-tmux::%dispatch-send-keys-X s "cursor-right")
+        (is (= 1 (cdr (screen-copy-cursor screen)))
+            "cursor-right moves the cursor to column 1 (from the initial column 0)")
+        (cl-tmux::%dispatch-send-keys-X s "cursor-left")
+        (is (= 0 (cdr (screen-copy-cursor screen)))
+            "cursor-left moves the cursor back to column 0")))))
+
 ;;; ── Detach / kill ───────────────────────────────────────────────────────────
 
 (test dispatch-detach-returns-detach

@@ -1583,8 +1583,8 @@
     ("cancel"                    . :copy-mode-exit)
     ("cursor-up"                 . :copy-mode-scroll-up-line)
     ("cursor-down"               . :copy-mode-scroll-down-line)
-    ("cursor-left"               . :copy-mode-begin-selection)   ; approximate
-    ("cursor-right"              . :copy-mode-begin-selection)   ; approximate
+    ("cursor-left"               . :copy-mode-cursor-left)
+    ("cursor-right"              . :copy-mode-cursor-right)
     ("page-up"                   . :copy-mode-page-up)
     ("page-down"                 . :copy-mode-page-down)
     ("halfpage-up"               . :copy-mode-half-page-up)
@@ -1600,7 +1600,7 @@
     ("next-word"                 . :copy-mode-word-forward)
     ("previous-word"             . :copy-mode-word-backward)
     ("next-word-end"             . :copy-mode-word-end)
-    ("rectangle-toggle"          . :copy-mode-begin-selection)  ; approximate
+    ("rectangle-toggle"          . :copy-mode-rectangle-toggle)
     ("copy-end-of-line"          . :copy-mode-copy-end-of-line)
     ("copy-line"                 . :copy-mode-copy-line)
     ("append-selection"          . :copy-mode-yank)

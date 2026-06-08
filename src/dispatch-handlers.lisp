@@ -146,6 +146,13 @@
   (:copy-mode-word-end         (%copy-mode-call session #'copy-mode-word-end))
   (:copy-mode-line-start       (%copy-mode-call session #'copy-mode-line-start))
   (:copy-mode-line-end         (%copy-mode-call session #'copy-mode-line-end))
+  ;; Horizontal cursor movement and rectangle (block) selection toggle — the
+  ;; proper targets for `send -X cursor-left`/`cursor-right`/`rectangle-toggle`
+  ;; (previously mis-mapped to begin-selection).  copy-mode-move-cursor takes a
+  ;; direction, so it is wrapped in a one-arg lambda for %copy-mode-call.
+  (:copy-mode-cursor-left      (%copy-mode-call session (lambda (s) (copy-mode-move-cursor s :left))))
+  (:copy-mode-cursor-right     (%copy-mode-call session (lambda (s) (copy-mode-move-cursor s :right))))
+  (:copy-mode-rectangle-toggle (%copy-mode-call session #'copy-mode-toggle-rectangle))
   (:copy-mode-top              (%copy-mode-call session #'copy-mode-top))
   (:copy-mode-bottom           (%copy-mode-call session #'copy-mode-bottom))
   (:copy-mode-high             (%copy-mode-call session #'copy-mode-high))
