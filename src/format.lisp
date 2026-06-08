@@ -251,7 +251,13 @@
   ("d" (%path-dirname  value))
   ("U" (string-upcase   value))
   ("L" (string-downcase value))
-  ("l" (format nil "~D" (length value))))
+  ("l" (format nil "~D" (length value)))
+  ;; #{E:var}: expand the VALUE of var as another format string.
+  ;; This enables double-expansion: #{E:status-left} looks up status-left's
+  ;; value and then expands any #{...} in it, matching real tmux 3.x behaviour.
+  ;; The context is empty here — expand-format's global-options fallback handles
+  ;; format vars that expand to registered options (which is the main use case).
+  ("E" (expand-format value nil)))
 
 (defun %apply-format-modifier (mod value)
   "Apply the format modifier MOD to the already-resolved string VALUE.
