@@ -167,15 +167,19 @@
 
 (defun %forward-octets-synchronized (session octets)
   "Forward OCTETS to the active pane.  If synchronize-panes is enabled on
-   the active window, also write to all other panes in the window."
+   the active window, also write to all other panes in the window.
+   Panes with pane-input-disabled set (select-pane -d) receive no input."
   (let* ((window      (session-active-window session))
          (active-pane (and window (window-active-pane window))))
-    (when active-pane
+    (when (and active-pane
+               ;; select-pane -d: input disabled for this pane — swallow keystrokes.
+               (not (pane-input-disabled active-pane)))
       (pty-write (pane-fd active-pane) octets)
-      ;; Broadcast when synchronize-panes is enabled.
+      ;; Broadcast when synchronize-panes is enabled, skipping disabled panes.
       (when (cl-tmux/options:get-option "synchronize-panes")
         (dolist (pane (window-panes window))
-          (unless (eq pane active-pane)
+          (unless (or (eq pane active-pane)
+                      (pane-input-disabled pane))
             (ignore-errors (pty-write (pane-fd pane) octets))))))))
 
 ;;; -- Main event loop --------------------------------------------------------

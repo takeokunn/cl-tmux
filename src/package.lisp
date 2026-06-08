@@ -459,6 +459,7 @@
    #:pane-window
    #:pane-marked
    #:pane-title
+   #:pane-input-disabled
    #:pane-local-options
    #:respawn-pane
    ;; Window

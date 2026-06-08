@@ -953,8 +953,10 @@
                (when win (session-select-window session win))))))))))
 
 (defun %cmd-select-pane (session args)
-  "select-pane [-L|-R|-U|-D|-m] [-t target] [-T title]: select or configure a pane.
+  "select-pane [-L|-R|-U|-D|-d|-e|-m] [-t target] [-T title]: select or configure a pane.
    -L/-R/-U/-D: move in the given direction.
+   -d: disable keyboard input to the target pane (pane-input-disabled t).
+   -e: re-enable keyboard input to the target pane (pane-input-disabled nil).
    -t target: select pane by pane-id in the active window.
    -T title: set the title of the target (or active) pane.
    -m: mark the selected pane."
@@ -965,6 +967,14 @@
       ((assoc #\R flags) (%select-pane-in-direction session :right))
       ((assoc #\U flags) (%select-pane-in-direction session :up))
       ((assoc #\D flags) (%select-pane-in-direction session :down))
+      ;; -d: disable pane input (keystrokes will be swallowed rather than sent)
+      ((assoc #\d flags)
+       (with-active-pane (ap session)
+         (setf (pane-input-disabled ap) t)))
+      ;; -e: enable pane input (re-enable after -d)
+      ((assoc #\e flags)
+       (with-active-pane (ap session)
+         (setf (pane-input-disabled ap) nil)))
       ;; -T title: set the pane title (equivalent to OSC 0/2 renaming)
       ((assoc #\T flags)
        (let* ((title (cdr (assoc #\T flags)))

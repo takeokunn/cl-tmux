@@ -966,6 +966,8 @@
                                 "1" "0")
           ;; #{pane_marked}: "1" when the pane is marked, else "0".
           :pane-marked (if (and pane (cl-tmux/model:pane-marked pane)) "1" "0")
+          ;; #{pane_input_off}: "1" when pane input is disabled (select-pane -d).
+          :pane-input-off (if (and pane (cl-tmux/model:pane-input-disabled pane)) "1" "0")
           ;; #{pane_dead}: "1" when the pane's PTY has closed (remain-on-exit case).
           ;; A pane is dead when its fd is closed (fd <= 0) but it still exists.
           :pane-dead   (if (and pane (<= (cl-tmux/model:pane-fd pane) 0)) "1" "0")

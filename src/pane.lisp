@@ -14,7 +14,8 @@
   (screen   nil)
   (pipe-fd  nil)    ; NIL or file-descriptor for pipe-pane output tee
   (window   nil)    ; back-pointer to the owning window (set on attach)
-  (marked   nil)    ; T when this pane is the marked pane (C-b m)
+  (marked           nil)    ; T when this pane is the marked pane (C-b m)
+  (input-disabled   nil :type boolean) ; T when select-pane -d disables input
   (title    "" :type string)      ; pane title set via OSC 0/2 (#{pane_title})
   (local-options (make-hash-table :test #'equal) :type hash-table)) ; per-pane option overrides
 
