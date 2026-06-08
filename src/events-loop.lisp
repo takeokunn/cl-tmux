@@ -83,9 +83,12 @@
 (defstruct input-state
   "Opaque CPS keystroke-processing state. Holds the current continuation.
    REPEAT-ENTERED-AT is set (via GET-INTERNAL-REAL-TIME) when the state
-   transitions to a repeatable binding so that repeat-time can be honoured."
+   transitions to a repeatable binding so that repeat-time can be honoured.
+   ESC-ENTERED-AT is set when we begin accumulating an escape sequence; used by
+   %flush-esc-if-timed-out to implement the tmux escape-time disambiguation window."
   (continuation #'%ground-input-state :type function)
-  (repeat-entered-at nil))
+  (repeat-entered-at nil)
+  (esc-entered-at nil))
 
 (defun %reset-repeat-if-expired (state)
   "If STATE is in a repeatable prefix position and REPEAT-TIME ms have elapsed
@@ -113,8 +116,40 @@
         (setf (input-state-repeat-entered-at state) (get-internal-real-time)))
       ;; Leaving repeat mode: clear the timestamp.
       (unless (eq new-cont #'%after-prefix-input-state)
-        (setf (input-state-repeat-entered-at state) nil)))
+        (setf (input-state-repeat-entered-at state) nil))
+      ;; Track ESC accumulation: stamp esc-entered-at when we receive a lone ESC
+      ;; byte (byte 27) and transition OUT of ground state (entering escape-input-k).
+      ;; Clear it when we return to ground (sequence completed or aborted).
+      (cond
+        ((and (= byte +byte-esc+)
+              (not (eq new-cont #'%ground-input-state))
+              (not (eq new-cont #'%after-prefix-input-state)))
+         (setf (input-state-esc-entered-at state) (get-internal-real-time)))
+        ((eq new-cont #'%ground-input-state)
+         (setf (input-state-esc-entered-at state) nil))))
     outcome))
+
+(defun %flush-esc-if-timed-out (state session)
+  "If escape-time ms have elapsed since we started accumulating an ESC sequence
+   with no follow-up byte, forward a lone ESC to the active pane and reset to ground.
+   Implements the tmux 'escape-time' server option (default 500ms).
+   Critical for vim/neovim: lone ESC in insert mode must reach the program promptly."
+  (when (input-state-esc-entered-at state)
+    (let* ((esc-ms   (or (cl-tmux/options:get-server-option "escape-time") 500))
+           (elapsed  (/ (- (get-internal-real-time)
+                            (input-state-esc-entered-at state))
+                         (/ internal-time-units-per-second 1000))))
+      (when (>= elapsed esc-ms)
+        ;; Forward the lone ESC byte to the active pane.
+        (let* ((win  (session-active-window session))
+               (pane (and win (window-active-pane win))))
+          (when (and pane (> (pane-fd pane) 0))
+            (pty-write (pane-fd pane)
+                       (make-array 1 :element-type '(unsigned-byte 8)
+                                     :initial-element +byte-esc+))))
+        (setf (input-state-continuation state) #'%ground-input-state
+              (input-state-esc-entered-at state) nil)
+        (setf *dirty* t)))))
 
 ;;; ── Synchronize-panes broadcast ─────────────────────────────────────────────
 ;;;
@@ -217,9 +252,11 @@
   (let ((state        (make-input-state))
         (idle-counter 0))
     (loop while *running* do
-      ;; Honour repeat-time: if a repeatable binding has been active for longer
-      ;; than the repeat-time window, quietly reset to ground state.
+      ;; Honour repeat-time: reset to ground when the repeat window closes.
       (%reset-repeat-if-expired state)
+      ;; Honour escape-time: forward a lone ESC to the pane when no follow-up byte
+      ;; has arrived within escape-time ms (critical for vim ESC key in insert mode).
+      (%flush-esc-if-timed-out state session)
       (let ((byte (read-byte-nonblock +poll-timeout-us+)))
         (if byte
             (progn
