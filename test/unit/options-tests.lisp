@@ -218,7 +218,7 @@
     ("focus-events"                  nil)
     ("copy-command"                  "")
     ("set-titles"                    nil)
-    ("set-titles-string"             "#W")
+    ("set-titles-string"             "#S:#I:#W")
     ("remain-on-exit"                nil)
     ("renumber-windows"              nil)
     ("message-style"                 "")

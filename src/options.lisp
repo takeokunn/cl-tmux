@@ -109,7 +109,7 @@
   ("focus-events"             :boolean nil)
   ("copy-command"             :string  "")
   ("set-titles"               :boolean nil)
-  ("set-titles-string"        :string  "#W")
+  ("set-titles-string"        :string  "#S:#I:#W")
   ("remain-on-exit"           :boolean nil)
   ("renumber-windows"         :boolean nil)
   ("message-style"            :string  "")
