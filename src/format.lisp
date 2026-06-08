@@ -215,6 +215,53 @@
         (and (cl-ppcre:scan scanner string) t))
     (error () nil)))
 
+(defun %pane-visible-lines (pane)
+  "The visible (non-scrollback) rows of PANE's screen as a list of strings, top
+   to bottom, with trailing spaces trimmed — the per-line content tmux's #{C:}
+   search runs against.  Returns NIL when PANE has no live screen.  Read lazily
+   (only when a #{C:} modifier actually fires), so non-search formats pay nothing."
+  (let ((scr (and pane (cl-tmux/model:pane-screen pane))))
+    (when scr
+      (let ((w (cl-tmux/terminal:screen-width  scr))
+            (h (cl-tmux/terminal:screen-height scr)))
+        (loop for y below h
+              collect (string-right-trim
+                       '(#\Space)
+                       (with-output-to-string (s)
+                         (dotimes (x w)
+                           (write-char (cl-tmux/terminal:cell-char
+                                        (cl-tmux/terminal:screen-cell scr x y))
+                                       s)))))))))
+
+(defun %content-search-match-p (term line regex-p ci-p)
+  "Does LINE match the #{C:} search TERM?  Mirrors tmux's window_pane_search:
+   non-regex wraps TERM as the glob *TERM* and fnmatches the whole line (the
+   stars turn %glob-match-p's anchored match into a contains-with-globbing
+   search); regex scans LINE for TERM.  CI-P folds case on both branches."
+  (if regex-p
+      (%regex-match-p term line ci-p)
+      (let ((pat (concatenate 'string "*" term "*")))
+        (if ci-p
+            (%glob-match-p (string-downcase pat) (string-downcase line))
+            (%glob-match-p pat line)))))
+
+(defun %format-content-search (mod rest context)
+  "Evaluate a #{C[/r][/i]:term} content-search modifier.  TERM (REST) is first
+   expanded as a format string, then matched against the visible content of the
+   context pane line by line; returns the 1-based line number of the first match
+   as a string, or \"0\" when there is no match (or no pane).  MOD is the modifier
+   token (C, C/r, C/i, C/ri); r selects regex, i case-insensitivity — the same
+   flag syntax as #{m/r:} and tmux's format_search."
+  (let* ((term    (expand-format rest context))
+         (regex-p (and (> (length mod) 1) (find #\r mod :start 1)))
+         (ci-p    (and (> (length mod) 1) (find #\i mod :start 1)))
+         (lines   (%pane-visible-lines (getf context :%c-search-pane))))
+    (or (loop for line in lines
+              for n from 1
+              when (%content-search-match-p term line regex-p ci-p)
+                do (return (format nil "~D" n)))
+        "0")))
+
 (defun %apply-pad-modifier (mod value)
   "Apply a pN / p-N pad modifier to VALUE.  Returns a padded string or NIL.
    Positive N left-aligns VALUE in a field of N chars (space-fill on the right).
@@ -501,6 +548,15 @@
                          (ch    (and code (<= 0 code (1- char-code-limit))
                                      (ignore-errors (code-char code)))))
                     (when ch (write-string (string ch) out))))
+                 ;; #{C:term} — search the visible pane content for TERM and write
+                 ;; the 1-based line number of the first match (or "0").  #{C/r:}
+                 ;; treats TERM as a regex, #{C/i:} folds case (same flag grammar
+                 ;; as #{m/r:}).  Detected like the m: branch: MOD starts with C
+                 ;; and is either bare "C" or "C/...".
+                 ((and (plusp (length mod))
+                       (char= (char mod 0) #\C)
+                       (or (= (length mod) 1) (char= (char mod 1) #\/)))
+                  (write-string (%format-content-search mod rest context) out))
                  ;; value modifiers (=N, b, d, U, L, l, pN, s///) on a resolved operand
                  (t
                   (let* ((value    (%resolve-format-value rest context))
@@ -1005,6 +1061,11 @@
           :pane-title    pane-title
           ;; #{pane_tty}: the pane's slave PTY device path (e.g. /dev/pts/3).
           :pane-tty      (if pane (cl-tmux/model:pane-tty pane) "")
+          ;; Internal: the pane object itself, used ONLY by the #{C:term} content
+          ;; search to read the visible grid lazily (it is never surfaced as a
+          ;; #{...} variable — %variable-to-keyword cannot produce a "%"-prefixed
+          ;; keyword, so there is no collision with a user format name).
+          :%c-search-pane pane
           ;; #{pane_current_path}: OSC 7 cwd reported by the shell.
           :pane-current-path pane-current-path
           ;; Structural pane variables, all pure functions of the pane struct.

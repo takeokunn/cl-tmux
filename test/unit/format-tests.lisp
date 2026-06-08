@@ -1517,3 +1517,76 @@
     (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_left}"   ctx)))
     (is (string= "0" (cl-tmux/format:expand-format "#{pane_at_bottom}" ctx)))
     (is (string= "0" (cl-tmux/format:expand-format "#{pane_at_right}"  ctx)))))
+
+;;; ── Content search #{C:term} / #{C/r:} / #{C/i:} ─────────────────────────────
+;;;
+;;; tmux's #{C:term} searches the VISIBLE pane content line by line and yields the
+;;; 1-based line number of the first match (or "0").  Default = glob (*term*);
+;;; /r = regex; /i = case-insensitive.  These fixtures feed known text into a
+;;; no-PTY pane's virtual screen and assert the returned line number.
+
+(defun %content-search-pane (&rest lines)
+  "A no-PTY pane (width 20) whose visible screen holds LINES, one per row."
+  (let* ((p   (make-no-pty-pane 1 0 0 20 (max 3 (length lines))))
+         (scr (pane-screen p)))
+    (apply #'feed-lines scr lines)
+    p))
+
+(test format-content-search-glob-returns-line-number
+  "#{C:term} returns the 1-based line number of the first line containing term."
+  (let* ((p   (%content-search-pane "hello world" "foo bar" "baz qux"))
+         (ctx (cl-tmux/format:format-context-from-session nil nil p)))
+    (is (string= "1" (cl-tmux/format:expand-format "#{C:hello}" ctx))
+        "term on the first line → 1")
+    (is (string= "2" (cl-tmux/format:expand-format "#{C:bar}" ctx))
+        "term on the second line → 2")
+    (is (string= "3" (cl-tmux/format:expand-format "#{C:qux}" ctx))
+        "term on the third line → 3")))
+
+(test format-content-search-no-match-returns-zero
+  "#{C:term} returns \"0\" when no visible line contains term."
+  (let* ((p   (%content-search-pane "hello world" "foo bar"))
+         (ctx (cl-tmux/format:format-context-from-session nil nil p)))
+    (is (string= "0" (cl-tmux/format:expand-format "#{C:nomatch}" ctx)))))
+
+(test format-content-search-no-pane-returns-zero
+  "#{C:term} with no pane in context returns \"0\" (never errors)."
+  (let ((ctx (cl-tmux/format:format-context-from-session nil nil nil)))
+    (is (string= "0" (cl-tmux/format:expand-format "#{C:anything}" ctx)))))
+
+(test format-content-search-glob-metachars
+  "#{C:h?llo} glob (?) matches 'hello'; the term is wrapped *term* so it is a
+   contains-with-globbing search, matching tmux's window_pane_search."
+  (let* ((p   (%content-search-pane "say hello there"))
+         (ctx (cl-tmux/format:format-context-from-session nil nil p)))
+    (is (string= "1" (cl-tmux/format:expand-format "#{C:h?llo}" ctx))
+        "? matches one char inside an embedded word")))
+
+(test format-content-search-regex
+  "#{C/r:term} treats term as a regex (anchors honoured: ^ matches line start)."
+  (let* ((p   (%content-search-pane "alpha line" "foo bar" "baz"))
+         (ctx (cl-tmux/format:format-context-from-session nil nil p)))
+    (is (string= "2" (cl-tmux/format:expand-format "#{C/r:b.r}" ctx))
+        "b.r regex matches 'bar' on line 2")
+    (is (string= "2" (cl-tmux/format:expand-format "#{C/r:^foo}" ctx))
+        "^foo anchors to the start of line 2")
+    (is (string= "0" (cl-tmux/format:expand-format "#{C/r:^bar}" ctx))
+        "^bar matches no line start → 0 (regex, not substring)")))
+
+(test format-content-search-case-insensitive
+  "#{C/i:term} folds case; bare #{C:term} is case-sensitive."
+  (let* ((p   (%content-search-pane "Hello World"))
+         (ctx (cl-tmux/format:format-context-from-session nil nil p)))
+    (is (string= "0" (cl-tmux/format:expand-format "#{C:hello}" ctx))
+        "case-sensitive glob does not match 'Hello'")
+    (is (string= "1" (cl-tmux/format:expand-format "#{C/i:hello}" ctx))
+        "case-insensitive glob matches 'Hello'")
+    (is (string= "1" (cl-tmux/format:expand-format "#{C/ri:HELLO}" ctx))
+        "case-insensitive regex matches 'Hello'")))
+
+(test format-content-search-term-is-expanded
+  "#{C:#{var}} expands the term as a format string before searching."
+  (let* ((p   (%content-search-pane "alpha" "beta"))
+         (ctx (list :%c-search-pane p :target "beta")))
+    (is (string= "2" (cl-tmux/format:expand-format "#{C:#{target}}" ctx))
+        "the nested #{target} resolves to 'beta' → line 2")))
