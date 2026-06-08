@@ -28,6 +28,44 @@
    (setf (session-locked-p session) nil)
    (setf *dirty* t)
    (values nil #'%ground-input-state))
+  ;; ── Active menu: j/k navigate, Enter selects, q/Esc dismisses ───────────────
+  ;; Menu takes priority over overlay so choose-session/choose-window is
+  ;; navigable with the keyboard; the overlay just renders the menu content.
+  ;; Dispatch to :menu-next/:menu-prev/:menu-select/:menu-dismiss which each
+  ;; call show-overlay to redraw.  No direct call to %format-menu here because
+  ;; this file loads before dispatch-core.lisp (where %format-menu is defined).
+  ((menu-active-p)
+   (cond
+     ;; j — next item
+     ((= byte +byte-j+)
+      (dispatch-command session :menu-next byte)
+      (setf *dirty* t))
+     ;; k — previous item
+     ((= byte +byte-k+)
+      (dispatch-command session :menu-prev byte)
+      (setf *dirty* t))
+     ;; Enter — select current item
+     ((= byte 13)
+      (dispatch-command session :menu-select byte)
+      (setf *dirty* t))
+     ;; q / Escape — dismiss menu
+     ((or (= byte +byte-q+) (= byte +byte-esc+))
+      (dispatch-command session :menu-dismiss byte)
+      (setf *dirty* t))
+     ;; Digit 0-9: jump to that item index, then dispatch menu-next with 0 delta
+     ;; to trigger overlay refresh via the dispatch-handlers.lisp path.
+     ((and (>= byte 48) (<= byte 57))
+      (let* ((n   (- byte 48))
+             (len (length (menu-items *active-menu*))))
+        (when (< n len)
+          (setf (menu-selected-index *active-menu*) n)
+          ;; Trigger show-overlay refresh via dispatch (avoids direct %format-menu call).
+          (dispatch-command session :menu-next byte)
+          (dispatch-command session :menu-prev byte)
+          (setf *dirty* t))))
+     ;; All other keys swallowed while menu is open
+     (t nil))
+   (values nil #'%ground-input-state))
   ;; ── Global overlays take priority ─────────────────────────────────────────
   ;; j/k scroll; q/Esc dismiss; Up/Down arrows accumulate as ESC sequences and
   ;; are routed to overlay-scroll inside make-escape-input-k; all other keys

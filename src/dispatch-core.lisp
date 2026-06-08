@@ -622,6 +622,71 @@
         ;; No direction: swap forward (default tmux behavior with no -d/-s flags)
         (t (swap-pane win :right))))))
 
+(defun %cmd-command-prompt-arg (session args)
+  "command-prompt [-p prompts] [template]: open a command prompt with optional args.
+   -p prompts: comma-separated list of prompt labels; each label becomes a
+     separate sequential prompt.  On completion, each response replaces %%1, %%2,
+     etc. in TEMPLATE and the expanded command is executed.
+   Without -p: single prompt ':' that runs the typed command line (same as C-b :).
+   Without TEMPLATE: input is executed directly as a command line."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "p")
+    (let* ((prompts-str (cdr (assoc #\p flags)))
+           (template    (format nil "~{~A~^ ~}" positionals))
+           (prompt-list (when prompts-str
+                          (mapcar (lambda (s) (string-trim " " s))
+                                  (uiop:split-string prompts-str :separator ","))))
+           (num-prompts (length prompt-list)))
+      (cond
+        ;; -p with template: multi-prompt with %%N substitution
+        ((and prompt-list (plusp (length template)))
+         (let ((answers (make-array num-prompts :initial-element "")))
+           (labels ((ask-prompt (idx)
+                      (if (>= idx num-prompts)
+                          ;; All prompts answered — substitute %%N → answer and run
+                          (let ((cmd (%substitute-percent
+                                      template
+                                      (loop for i below num-prompts collect (aref answers i)))))
+                            (%run-command-line session cmd))
+                          ;; Ask next prompt
+                          (let ((label (nth idx prompt-list)))
+                            (prompt-start label "" (lambda (input)
+                                                     (setf (aref answers idx) input)
+                                                     (ask-prompt (1+ idx))))))))
+             (ask-prompt 0))))
+        ;; -p without template: each prompt result is concatenated
+        (prompt-list
+         (let ((label (first prompt-list)))
+           (prompt-start (or label ": ") ""
+                         (lambda (input)
+                           (unless (string= input "")
+                             (add-prompt-history input)
+                             (%run-command-line session input))))))
+        ;; No -p: standard C-b : interactive prompt
+        (t
+         (prompt-start ": " ""
+                       (lambda (input)
+                         (unless (string= input "")
+                           (add-prompt-history input)
+                           (%run-command-line session input)))))))))
+
+(defun %substitute-percent (template args)
+  "Replace %%1, %%2, ... in TEMPLATE with ARGS list elements.
+   Used by command-prompt -p substitution."
+  (let ((result template))
+    (loop for val in args
+          for i from 1
+          for pat = (format nil "%%~D" i)
+          do (let ((out (make-string-output-stream)))
+               (let ((start 0))
+                 (loop for pos = (search pat result :start2 start)
+                       while pos
+                       do (write-string result out :start start :end pos)
+                          (write-string val out)
+                          (setf start (+ pos (length pat)))
+                       finally (write-string result out :start start)))
+               (setf result (get-output-stream-string out))))
+    result))
+
 (defun %cmd-confirm-before-arg (session args)
   "confirm-before [-p prompt] command: prompt before running COMMAND.
    -p prompt: custom prompt text (default: 'command? (y/n)').
@@ -888,15 +953,39 @@
       (ignore-errors (cl-tmux/config:load-config-file path)))))
 
 (defun %cmd-move-window (session args)
-  "move-window -t <n>: renumber the active window to window-id <n>.  A no-op when
-   <n> is already taken by a DIFFERENT window (tmux would error; we keep running)."
-  (let* ((target (cdr (assoc #\t (%parse-command-flags args "t"))))
-         (n      (and target (parse-integer target :junk-allowed t)))
-         (win    (session-active-window session)))
-    (when (and n win
-               (let ((holder (find n (session-windows session) :key #'window-id)))
-                 (or (null holder) (eq holder win))))
-      (setf (window-id win) n))))
+  "move-window [-s src-window] [-t dst-index] [-r] [-a]: move/renumber a window.
+   -s src: source window (name or id); default is the active window.
+   -t n: destination window-id (numeric index to assign to the window).
+   -r: renumber all windows sequentially from base-index (repack gaps).
+   -a: insert after the current window (used with -t for relative positioning.
+   Without -s/-t: prompts interactively (no-op in arg-command path)."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "st")
+    (declare (ignore positionals))
+    (let* ((src-str (cdr (assoc #\s flags)))
+           (dst-str (cdr (assoc #\t flags)))
+           (repack  (assoc #\r flags))
+           (src-win (if src-str
+                        (%resolve-window-target session src-str)
+                        (session-active-window session)))
+           (dst-n   (and dst-str (parse-integer dst-str :junk-allowed t))))
+      (cond
+        ;; -r: repack all windows sequentially from base-index
+        (repack
+         (let* ((base (or (cl-tmux/options:get-option "base-index") 0))
+                (sorted (sort (copy-list (session-windows session))
+                              #'< :key #'window-id)))
+           (loop for win in sorted
+                 for i from base
+                 do (setf (window-id win) i))
+           (setf (session-windows session) sorted)))
+        ;; -s src + -t n: move a specific window to a new index
+        ((and src-win dst-n)
+         (let ((holder (find dst-n (session-windows session) :key #'window-id)))
+           (when (or (null holder) (eq holder src-win))
+             (setf (window-id src-win) dst-n))))
+        ;; -t n only: renumber the source (active) window
+        ((and src-win dst-n)
+         (setf (window-id src-win) dst-n))))))
 
 (defun %cmd-if-shell (session args)
   "if-shell -F <cond> <then> [<else>]: when the format CONDITION expands to a
@@ -1476,7 +1565,9 @@
    ;; swap-pane [-U|-D|-L|-R]: directional swap including up/down.
    (cons '("swap-pane" "swapp")         #'%cmd-swap-pane-arg)
    ;; confirm-before [-p prompt] cmd: gate COMMAND behind a y/n prompt.
-   (cons '("confirm-before" "confirm")  #'%cmd-confirm-before-arg))
+   (cons '("confirm-before" "confirm")  #'%cmd-confirm-before-arg)
+   ;; command-prompt [-p prompts] [template]: interactive prompt with substitution.
+   (cons '("command-prompt" "commandp") #'%cmd-command-prompt-arg))
   "Arg-taking commands: (list-of-names . handler), handler a function of
    (SESSION ARGS).  Consulted by %run-command-line before the no-argument
    %dispatch-named-command name table.")

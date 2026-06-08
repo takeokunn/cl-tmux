@@ -400,8 +400,13 @@
    *running* is driven through its GLOBAL value (via WITH-GLOBAL-RUNNING) rather
    than a LET, because reader threads spawned during BODY read the global; a LET
    binding would be invisible to them and they would leak into later forking
-   tests.  STOP-CL-TMUX-THREADS joins them before returning."
-  `(let ((cl-tmux::*dirty* nil))
+   tests.  STOP-CL-TMUX-THREADS joins them before returning.
+
+   Also isolates *active-menu* (cl-tmux/prompt) and *active-popup* so that
+   menu/popup state created by one test does not leak into subsequent tests."
+  `(let ((cl-tmux::*dirty* nil)
+         (cl-tmux/prompt:*active-menu* nil)
+         (cl-tmux/prompt:*active-popup* nil))
      (with-global-running t
        (unwind-protect (progn ,@body)
          (stop-cl-tmux-threads)))))

@@ -787,13 +787,15 @@
 ;;; ── choose-window uses menu system ──────────────────────────────────────────
 
 (test dispatch-choose-window-shows-menu-overlay
-  ":choose-window shows a menu overlay and opens a prompt for window selection."
+  ":choose-window shows a menu overlay for j/k navigation without a prompt."
   (let ((s (make-fake-session :nwindows 2)))
     (with-loop-state
       (let ((*overlay* nil) (*prompt* nil))
         (cl-tmux::dispatch-command s :choose-window nil)
         (is (overlay-active-p) ":choose-window must show an overlay")
-        (is (prompt-active-p)  ":choose-window must open a prompt")))))
+        ;; choose-window now uses j/k menu navigation, not a text prompt.
+        (is (not (null cl-tmux/prompt:*active-menu*))
+            ":choose-window must set *active-menu* for navigation")))))
 
 ;;; ── Mouse reporting helpers ──────────────────────────────────────────────────
 

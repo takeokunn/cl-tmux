@@ -249,11 +249,31 @@
                                (lambda () (show-overlay (format nil "[if-shell] ~A: ok" cmd)))
                                :else-fn (lambda () (show-overlay (format nil "[if-shell] ~A: non-zero exit" cmd))))))))
 
-  ;; :list-sessions, :list-sessions-full, and :choose-session share the same body.
-  ;; The three keywords are kept as distinct binding targets (some bound to
-  ;; different key-table entries) but a single shared form removes duplication.
-  ((:list-sessions :list-sessions-full :choose-session)
+  ;; :list-sessions / :list-sessions-full: static session list overlay.
+  ((:list-sessions :list-sessions-full)
    (show-overlay (%format-session-list session)))
+
+  ;; :choose-session: interactive j/k menu to switch sessions (C-b s).
+  ;; Builds a menu with one entry per session; selecting switches to it.
+  (:choose-session
+   (let* ((sessions (if *server-sessions*
+                        *server-sessions*
+                        (list (cons (session-name session) session))))
+          (items    (mapcar
+                     (lambda (entry)
+                       (let ((name (car entry))
+                             (sess (cdr entry)))
+                         (cons (format nil "~A~A (~D window~:P)"
+                                       (if (eq sess session) "*" " ")
+                                       name
+                                       (length (cl-tmux/model:session-windows sess)))
+                               ;; Command: switch-client via prompt-aware %run-command-line.
+                               ;; Store as a cons (switch-to-session . name) handled by
+                               ;; :menu-select dispatch extension.
+                               (list :switch-client name))))
+                     sessions)))
+     (show-menu (make-menu :title "choose-session (j/k, Enter)" :items items :selected-index 0))
+     (show-overlay (%format-menu *active-menu*))))
   (:new-session
    (let* ((rows (- *term-rows* *status-height*))
           (cols *term-cols*)
@@ -276,24 +296,24 @@
 
   ;; ── Window management ──────────────────────────────────────────────────────
   (:list-windows (show-overlay (%format-window-list session)))
+  ;; :choose-window: interactive j/k menu to select a window (C-b w).
+  ;; Builds a menu with one entry per window; Enter selects, q/Esc dismisses.
   (:choose-window
    (let* ((wins  (session-windows session))
+          (act   (session-active-window session))
           (items (mapcar (lambda (w)
-                           (cons (format nil "~A: ~A" (window-id w) (window-name w))
-                                 (window-id w)))
+                           (cons (format nil "~A~A: ~A (~D pane~:P)"
+                                         (if (eq w act) "*" " ")
+                                         (window-id w)
+                                         (window-name w)
+                                         (length (window-panes w)))
+                                 ;; Command: select this window by id.
+                                 (list :select-window (window-id w))))
                          wins)))
      (if items
          (progn
-           (show-menu (make-menu :title "choose-window" :items items :selected-index 0))
-           (show-overlay (%format-menu *active-menu*))
-           (prompt-start "window: " ""
-                         (lambda (input)
-                           (let ((n (ignore-errors (parse-integer input))))
-                             (when n
-                               (%with-window-focus-transition (session)
-                                 (select-window-by-number session n))))
-                           (close-menu)
-                           (clear-overlay))))
+           (show-menu (make-menu :title "choose-window (j/k, Enter)" :items items :selected-index 0))
+           (show-overlay (%format-menu *active-menu*)))
          (show-overlay "(no windows)"))))
   (:last-window
    (let ((prev (session-last-window session)))
@@ -470,7 +490,29 @@
        (close-menu)
        (clear-overlay)
        (when cmd
-         (dispatch-command session cmd byte)))))
+         (cond
+           ;; Built-in keyword command: dispatch directly.
+           ((keywordp cmd)
+            (dispatch-command session cmd byte))
+           ;; String command: run via command-line dispatcher.
+           ((stringp cmd)
+            (%run-command-line session cmd))
+           ;; List command: (keyword arg) — dispatch with argument.
+           ((and (consp cmd) (keywordp (first cmd)))
+            (case (first cmd)
+              ;; (:select-window N) — select window by id
+              (:select-window
+               (%with-window-focus-transition (session)
+                 (select-window-by-number session (second cmd))))
+              ;; (:switch-client name) — switch to named session
+              (:switch-client
+               (let ((target (server-find-session (second cmd))))
+                 (when target
+                   (session-touch target)
+                   (setf *dirty* t))))
+              ;; Default list: try running as command tokens
+              (otherwise
+               (%run-command-tokens session cmd)))))))))
   (:menu-dismiss
    (close-menu)
    (clear-overlay))

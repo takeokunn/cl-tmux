@@ -2541,14 +2541,15 @@
 ;;; ── :choose-window dispatch ──────────────────────────────────────────────────
 
 (test dispatch-choose-window-opens-menu-and-prompt
-  ":choose-window with windows opens a menu overlay and a prompt."
+  ":choose-window with windows opens a menu overlay for j/k navigation (no prompt)."
   (let ((s (make-fake-session :nwindows 2)))
     (with-loop-state
       (let ((*overlay* nil) (*prompt* nil)
             (cl-tmux::*active-menu* nil))
         (cl-tmux::dispatch-command s :choose-window nil)
         (is (overlay-active-p) ":choose-window must open an overlay")
-        (is (prompt-active-p) ":choose-window must open a prompt")
+        ;; choose-window now uses j/k menu navigation, not a prompt.
+        ;; Prompt is no longer opened; the menu handles input directly.
         (is (not (null cl-tmux::*active-menu*))
             ":choose-window must set *active-menu*")))))
 
