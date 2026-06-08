@@ -177,6 +177,32 @@
           "render-pane without matching clock-mode id must not emit clock digits (got ~S)"
           out))))
 
+;;; -- clock-mode-style (12/24h) and clock-mode-colour -------------------------
+
+(test clock-display-hour-24-hour-default
+  "clock-mode-style 24 (the default) leaves the hour unchanged."
+  (with-isolated-options ()
+    (is (= 13 (cl-tmux/renderer::%clock-display-hour 13)) "13:00 stays 13 in 24h")
+    (is (= 0  (cl-tmux/renderer::%clock-display-hour 0))  "midnight stays 0 in 24h")))
+
+(test clock-display-hour-12-hour
+  "clock-mode-style 12 converts to a 12-hour clock (0→12, 13→1, 12→12, 23→11)."
+  (with-isolated-options ("clock-mode-style" 12)
+    (is (= 12 (cl-tmux/renderer::%clock-display-hour 0))  "midnight → 12")
+    (is (= 1  (cl-tmux/renderer::%clock-display-hour 13)) "13:00 → 1")
+    (is (= 12 (cl-tmux/renderer::%clock-display-hour 12)) "noon → 12")
+    (is (= 11 (cl-tmux/renderer::%clock-display-hour 23)) "23:00 → 11")))
+
+(test clock-face-sgr-from-colour-option
+  "clock-mode-colour maps to its foreground SGR code; an unknown name falls back
+   to bright cyan (96)."
+  (with-isolated-options ("clock-mode-colour" "red")
+    (is (string= "31" (cl-tmux/renderer::%clock-face-sgr)) "red → 31"))
+  (with-isolated-options ("clock-mode-colour" "green")
+    (is (string= "32" (cl-tmux/renderer::%clock-face-sgr)) "green → 32"))
+  (with-isolated-options ("clock-mode-colour" "bogus-colour")
+    (is (string= "96" (cl-tmux/renderer::%clock-face-sgr)) "unknown → 96 fallback")))
+
 ;;; -- in-sel branch coverage via render-pane ----------------------------------
 
 (defun %make-selecting-pane (w h content mark-row mark-col cursor-row cursor-col)

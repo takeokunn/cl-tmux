@@ -44,13 +44,30 @@
   "Return the 3 display rows for DIGIT (0–9) from *clock-digits*."
   (nth digit *clock-digits*))
 
+(defun %clock-display-hour (hour)
+  "Convert HOUR (0–23) to the displayed hour per the clock-mode-style option:
+   24 (default) → unchanged; 12 → a 12-hour clock (0 → 12, 13–23 → 1–11)."
+  (if (eql 12 (cl-tmux/options:get-option "clock-mode-style" 24))
+      (let ((h (mod hour 12))) (if (zerop h) 12 h))
+      hour))
+
+(defun %clock-face-sgr ()
+  "SGR parameter string for the clock face, from the clock-mode-colour option
+   (a foreground colour name mapped to its SGR code; falls back to bright cyan
+   when the name is unknown)."
+  (format nil "~D" (or (%border-color-sgr
+                        (cl-tmux/options:get-option "clock-mode-colour" "blue"))
+                       96)))
+
 (defun draw-clock-to-screen (stream ox oy pw ph)
   "Render the current time HH:MM as 3-row ASCII digits centred in the pane
    at terminal offset (OX, OY), clipping to the pane rectangle (PW x PH).
+   Honours clock-mode-style (12/24-hour) and clock-mode-colour (digit colour).
    Only renders if the pane is at least 13 columns wide and 3 rows tall."
   (when (and (>= pw 13) (>= ph 3))
     (multiple-value-bind (sec min hour) (get-decoded-time)
       (declare (ignore sec))
+      (setf hour (%clock-display-hour hour))
       ;; Format: two digits, colon, two digits = 3+1+3+1+3+1+3 = 15 chars
       ;; But we use simple 3-char digits + 1-char separators:
       ;; D D : D D = 3+1+3+1+1+1+3+1+3 = 17 chars; trim to 13 "HH:MM" minimal.
@@ -78,7 +95,7 @@
         ;; Blue background, bright cyan text for clock face.
         ;; Use a named constant consistent with +sgr-default-status+ (44;97) but with
         ;; bright cyan (96) instead of bright white to distinguish the clock from the bar.
-        (format stream "~C[~Am" +esc+ +sgr-clock-face+)
+        (format stream "~C[~Am" +esc+ (%clock-face-sgr))
         (loop for row-str in rows
               for roff from 0 do
           (let ((term-row (+ oy start-row roff))
