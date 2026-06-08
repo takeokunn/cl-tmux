@@ -177,7 +177,14 @@
            ;; Activity flag: only for non-active windows.
            (when (and (cl-tmux/options:get-option "monitor-activity")
                       (not (cl-tmux/model:window-activity-flag win)))
-             (setf (cl-tmux/model:window-activity-flag win) t))))
+             (setf (cl-tmux/model:window-activity-flag win) t)
+             ;; visual-activity on: show a transient message overlay so the user
+             ;; knows which background window has activity (matches real tmux).
+             (when (cl-tmux/options:get-option "visual-activity")
+               (show-transient-overlay
+                (format nil "Activity in window ~A (~A)"
+                        (cl-tmux/model:window-id win)
+                        (cl-tmux/model:window-name win)))))))
        (setf *dirty* t)
        #'reader-idle-state))))
 
