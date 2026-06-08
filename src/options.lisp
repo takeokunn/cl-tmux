@@ -326,33 +326,61 @@
 
 (defun get-option-for-window (name window)
   "Look up NAME in WINDOW's local options, falling back to *global-options*,
-   then to the registered spec default.  Returns NIL when not found anywhere."
-  (or (gethash name (cl-tmux/model:window-local-options window))
-      (gethash name *global-options*)
-      (let ((spec (gethash name *option-registry*)))
-        (when spec (option-spec-default spec)))))
+   then to the registered spec default.  Returns NIL when not found anywhere.
+
+   Presence is decided by gethash's secondary PRESENT-P value, not by truthiness
+   of the stored value: a window-local value explicitly set to a FALSEY value
+   (e.g. boolean NIL from `set -w synchronize-panes off`) is honored and does NOT
+   fall through to the global value.  Likewise a present-but-falsey GLOBAL value is
+   returned instead of the registry default."
+  (multiple-value-bind (lv lp) (gethash name (cl-tmux/model:window-local-options window))
+    (if lp
+        lv
+        (multiple-value-bind (gv gp) (gethash name *global-options*)
+          (if gp
+              gv
+              (let ((spec (gethash name *option-registry*)))
+                (when spec (option-spec-default spec))))))))
 
 (defun set-option-for-window (name value window)
-  "Store VALUE under NAME in WINDOW's local-options hash.
-   The value is stored as-is (no type coercion); callers that want coercion
-   should call %coerce-value before passing value here.
-   Returns VALUE."
-  (setf (gethash name (cl-tmux/model:window-local-options window)) value))
+  "Coerce VALUE to the registered type for NAME and store it under NAME in
+   WINDOW's local-options hash.  If NAME is not in *OPTION-REGISTRY* the value
+   is stored as-is (no coercion).  Returns the coerced value."
+  (let* ((spec    (gethash name *option-registry*))
+         (coerced (if spec
+                      (%coerce-value (option-spec-type spec) value)
+                      value)))
+    (setf (gethash name (cl-tmux/model:window-local-options window)) coerced)
+    coerced))
 
 (defun get-option-for-pane (name pane)
   "Look up NAME in PANE's local options, falling back to *global-options*,
-   then to the registered spec default.  Returns NIL when not found anywhere."
-  (or (gethash name (cl-tmux/model:pane-local-options pane))
-      (gethash name *global-options*)
-      (let ((spec (gethash name *option-registry*)))
-        (when spec (option-spec-default spec)))))
+   then to the registered spec default.  Returns NIL when not found anywhere.
+
+   Presence is decided by gethash's secondary PRESENT-P value, not by truthiness
+   of the stored value: a pane-local value explicitly set to a FALSEY value
+   (e.g. boolean NIL from `set -p remain-on-exit off`) is honored and does NOT
+   fall through to the global value.  Likewise a present-but-falsey GLOBAL value is
+   returned instead of the registry default."
+  (multiple-value-bind (lv lp) (gethash name (cl-tmux/model:pane-local-options pane))
+    (if lp
+        lv
+        (multiple-value-bind (gv gp) (gethash name *global-options*)
+          (if gp
+              gv
+              (let ((spec (gethash name *option-registry*)))
+                (when spec (option-spec-default spec))))))))
 
 (defun set-option-for-pane (name value pane)
-  "Store VALUE under NAME in PANE's local-options hash.
-   The value is stored as-is (no type coercion); callers that want coercion
-   should call %coerce-value before passing value here.
-   Returns VALUE."
-  (setf (gethash name (cl-tmux/model:pane-local-options pane)) value))
+  "Coerce VALUE to the registered type for NAME and store it under NAME in
+   PANE's local-options hash.  If NAME is not in *OPTION-REGISTRY* the value
+   is stored as-is (no coercion).  Returns the coerced value."
+  (let* ((spec    (gethash name *option-registry*))
+         (coerced (if spec
+                      (%coerce-value (option-spec-type spec) value)
+                      value)))
+    (setf (gethash name (cl-tmux/model:pane-local-options pane)) coerced)
+    coerced))
 
 ;;; ── show-options helpers ──────────────────────────────────────────────────
 

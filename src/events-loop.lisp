@@ -176,7 +176,8 @@
                (not (pane-input-disabled active-pane)))
       (pty-write (pane-fd active-pane) octets)
       ;; Broadcast when synchronize-panes is enabled, skipping disabled panes.
-      (when (cl-tmux/options:get-option "synchronize-panes")
+      ;; Read the window-local override (falls back to global then default).
+      (when (cl-tmux/options:get-option-for-window "synchronize-panes" window)
         (dolist (pane (window-panes window))
           (unless (or (eq pane active-pane)
                       (pane-input-disabled pane))

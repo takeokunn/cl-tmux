@@ -812,31 +812,53 @@
 ;;; *set-option-command-names* removed — inlined into *arg-command-table* below.
 
 (defun %cmd-set-option (session args)
-  "set / set-option [-g|-s|-w|-o] [-a] [-u] <name> <value...>: set a global option.
-   Scope flags (-g global, -s server, -w window, -o only-if-unset) are accepted
-   and treated as the global store (cl-tmux keeps a flat option table); -a
-   appends VALUE to the option's current value; -u unsets the option (removes
-   the override, reverting to the registered default).
-   SESSION is unused.  NOTE: this fixes `set -g status off`, which previously set
-   an option literally named \"-g\"."
-  (declare (ignore session))
+  "set / set-option [-g|-s|-w|-p|-o] [-a] [-u] <name> <value...>: set an option.
+   Scope flags route a normal set to the matching store:
+     -p  pane-local   — stores on SESSION's active pane (falls back to global
+                        when there is no active pane).
+     -w  window-local — stores on SESSION's active window (falls back to global
+                        when there is no active window).
+     -g  global / (default) — stores in the flat global option table.
+   -p and -w are ignored when -g is also present (explicit global wins).
+   -s (server) and -o (only-if-unset) are accepted and treated as the global
+   store (cl-tmux keeps a flat option table).
+   -a appends VALUE to the option's current global value; -u unsets the global
+   option (removes the override, reverting to the registered default).  -a/-u
+   always operate on the GLOBAL store regardless of -w/-p.
+   NOTE: this fixes `set -g status off`, which previously set an option literally
+   named \"-g\"."
   (multiple-value-bind (flags positionals) (%parse-command-flags args "")
     (let ((name  (first positionals))
-          (value (format nil "~{~A~^ ~}" (rest positionals))))
+          (value (format nil "~{~A~^ ~}" (rest positionals)))
+          (globalp (and (assoc #\g flags) t))
+          (windowp (and (assoc #\w flags) t))
+          (panep   (and (assoc #\p flags) t)))
       (when name
         (cond
           ;; -u: unset option — remove from hash table so the default is used.
           ((assoc #\u flags)
            (remhash name cl-tmux/options:*global-options*))
-          ;; -a: append value to existing.
+          ;; -a: append value to existing (global store).
           ((assoc #\a flags)
            (cl-tmux/options:set-option
             name (concatenate 'string
                               (princ-to-string
                                (or (cl-tmux/options:get-option name nil) ""))
                               value)))
-          ;; normal set.
-          (t (cl-tmux/options:set-option name value)))))))
+          ;; normal set: route by scope flag.
+          (t
+           (let ((pane   (and panep   (not globalp) (session-active-pane session)))
+                 (window (and windowp (not globalp) (session-active-window session))))
+             (cond
+               ;; -p (and not -g): pane-local when an active pane exists.
+               (pane
+                (cl-tmux/options:set-option-for-pane name value pane))
+               ;; -w (and not -g): window-local when an active window exists.
+               (window
+                (cl-tmux/options:set-option-for-window name value window))
+               ;; global (default, includes -g and the no-active-pane/window fallback).
+               (t
+                (cl-tmux/options:set-option name value))))))))))
 
 ;;; -- -e VAR=val environment flag parser ----------------------------------------
 ;;;

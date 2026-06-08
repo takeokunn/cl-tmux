@@ -1218,3 +1218,25 @@
     ;; The test just verifies no error is thrown.
     (is (stringp (cl-tmux/format:expand-format "#{version}" ctx))
         "#{version} must expand to a string")))
+
+;;; ── #{pane_synchronized} respects per-window scoping ─────────────────────────
+
+(test format-pane-synchronized-window-local-override
+  "#{pane_synchronized} reads the window-local synchronize-panes override:
+   it is \"1\" for a window with the local override on, and \"0\" for a fresh
+   window with no override (global stays nil)."
+  (with-isolated-config
+    (cl-tmux/options:set-option "synchronize-panes" nil)
+    (let* ((sess (make-fake-session :nwindows 1))
+           (win  (first (cl-tmux/model:session-windows sess)))
+           (pane (first (cl-tmux/model:window-panes win))))
+      (cl-tmux/options:set-option-for-window "synchronize-panes" "on" win)
+      (let ((ctx (cl-tmux/format:format-context-from-session sess win pane)))
+        (is (string= "1" (cl-tmux/format:expand-format "#{pane_synchronized}" ctx))
+            "#{pane_synchronized} must be \"1\" for a window with the local override on"))
+      ;; A second, fresh window with no override falls back to the global NIL → "0".
+      (let* ((win2  (make-fake-window 99 "w2"))
+             (pane2 (first (cl-tmux/model:window-panes win2)))
+             (ctx2  (cl-tmux/format:format-context-from-session sess win2 pane2)))
+        (is (string= "0" (cl-tmux/format:expand-format "#{pane_synchronized}" ctx2))
+            "#{pane_synchronized} must be \"0\" for a window with no override")))))

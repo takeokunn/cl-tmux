@@ -905,6 +905,60 @@
       (is (string= "AB" (cl-tmux/options:get-option "status-left"))
           "set -a must append B to the existing 'A'"))))
 
+;;; ── %cmd-set-option scope routing: -w / -p / global ──────────────────────
+
+(test cmd-set-option-w-routes-to-window-local
+  "'set -w' routes to the active window's local options and leaves the global
+   value unchanged."
+  (with-isolated-config
+    (let* ((s   (make-fake-session))
+           (win (cl-tmux/model:session-active-window s)))
+      (cl-tmux/options:set-option "synchronize-panes" nil)
+      (cl-tmux::%cmd-set-option s '("-w" "synchronize-panes" "on"))
+      (is (eq t (cl-tmux/options:get-option-for-window "synchronize-panes" win))
+          "active window's synchronize-panes must be T after 'set -w'")
+      (is (null (cl-tmux/options:get-option "synchronize-panes"))
+          "global synchronize-panes must remain NIL — 'set -w' must not touch it"))))
+
+(test cmd-set-option-p-routes-to-pane-local
+  "'set -p' routes to the active pane's local options and leaves the global
+   value unchanged."
+  (with-isolated-config
+    (let* ((s    (make-fake-session))
+           (pane (cl-tmux/model:session-active-pane s)))
+      (cl-tmux/options:set-option "remain-on-exit" nil)
+      (cl-tmux::%cmd-set-option s '("-p" "remain-on-exit" "on"))
+      (is (eq t (cl-tmux/options:get-option-for-pane "remain-on-exit" pane))
+          "active pane's remain-on-exit must be T after 'set -p'")
+      (is (null (cl-tmux/options:get-option "remain-on-exit"))
+          "global remain-on-exit must remain NIL — 'set -p' must not touch it"))))
+
+(test cmd-set-option-plain-routes-to-global
+  "A plain 'set' (no -w/-p) still sets the global option."
+  (with-isolated-config
+    (let ((s (make-fake-session)))
+      (cl-tmux/options:set-option "synchronize-panes" nil)
+      (cl-tmux::%cmd-set-option s '("synchronize-panes" "on"))
+      (is (eq t (cl-tmux/options:get-option "synchronize-panes"))
+          "plain 'set' must set the global synchronize-panes to T"))))
+
+(test cmd-set-option-gw-stays-global
+  "'set -g -w' must set the GLOBAL option (the explicit -g overrides -w) and
+   leave the active window WITHOUT a local override.  Guards the (not globalp)
+   gate in %cmd-set-option."
+  (with-isolated-config
+    (let* ((s   (make-fake-session))
+           (win (cl-tmux/model:session-active-window s)))
+      (cl-tmux/options:set-option "synchronize-panes" nil)
+      (cl-tmux::%cmd-set-option s '("-g" "-w" "synchronize-panes" "on"))
+      (is (eq t (cl-tmux/options:get-option "synchronize-panes"))
+          "-g must override -w: global synchronize-panes must be T")
+      (is (null (nth-value 1 (gethash "synchronize-panes"
+                                      (cl-tmux/model:window-local-options win))))
+          "active window must have NO local override (local hash lacks the key)")
+      (is (eq t (cl-tmux/options:get-option-for-window "synchronize-panes" win))
+          "get-option-for-window must fall back to the global value T"))))
+
 (test run-command-line-rename-window
   "'rename-window <name>' renames the active window."
   (let ((s (make-fake-session :nwindows 1)))

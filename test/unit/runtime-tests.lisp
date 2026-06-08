@@ -71,6 +71,23 @@
         (is (functionp result)
             "reader-eof-state must return a function when remain-on-exit is set")))))
 
+(test reader-eof-state-honors-pane-local-remain-on-exit
+  :description "reader-eof-state honors a PANE-LOCAL remain-on-exit override at
+   runtime: with the GLOBAL remain-on-exit NIL but the pane-local value set to
+   T, reader-eof-state must return the parking state #'reader-remain-on-exit-state
+   (proving runtime.lisp's get-option-for-pane read honors per-pane overrides)."
+  (with-isolated-config
+    (with-isolated-hooks
+      (let* ((sess (make-fake-session))
+             (pane (cl-tmux/model:session-active-pane sess))
+             (cl-tmux::*dirty* nil))
+        (cl-tmux/options:set-option "remain-on-exit" nil)
+        (cl-tmux/options:set-option-for-pane "remain-on-exit" "on" pane)
+        (let ((result (cl-tmux::reader-eof-state pane)))
+          (is (eq #'cl-tmux::reader-remain-on-exit-state result)
+              "reader-eof-state must return the remain-on-exit parking state when the
+               pane-local override is set, even though the global value is NIL"))))))
+
 (test reader-remain-on-exit-state-returns-nil-when-not-running
   :description "reader-remain-on-exit-state returns NIL immediately when *running* is NIL."
   (let ((cl-tmux::*running* nil)

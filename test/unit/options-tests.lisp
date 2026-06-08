@@ -694,6 +694,85 @@
     (is (null (gethash "mouse" (cl-tmux/model:pane-local-options p2)))
         "p2 local-options must be unaffected by p1")))
 
+;;; ── Scoped accessors: boolean coercion + fallback chain (newly wired) ────
+
+(test set-option-for-window-coerces-boolean-string
+  "set-option-for-window coerces a :boolean string \"on\" to T before storing,
+   so get-option-for-window returns T (not the literal string)."
+  (with-isolated-config
+    (let ((win (make-fake-window 1 "w")))
+      (cl-tmux/options:set-option-for-window "synchronize-panes" "on" win)
+      (is (eq t (cl-tmux/options:get-option-for-window "synchronize-panes" win))
+          "get-option-for-window must return coerced T, not the string \"on\""))))
+
+(test get-option-for-window-falls-back-to-global-value
+  "With no window-local override, get-option-for-window returns the GLOBAL value."
+  (with-isolated-config
+    (cl-tmux/options:set-option "synchronize-panes" t)
+    (let ((win (make-fake-window 1 "w")))
+      (is (eq t (cl-tmux/options:get-option-for-window "synchronize-panes" win))
+          "must fall back to the global synchronize-panes value T"))))
+
+(test set-option-for-window-overrides-global
+  "A window-local override wins over the global value for that window, while the
+   global option itself remains unchanged."
+  (with-isolated-config
+    (cl-tmux/options:set-option "synchronize-panes" nil)
+    (let ((win (make-fake-window 1 "w")))
+      (cl-tmux/options:set-option-for-window "synchronize-panes" "on" win)
+      (is (eq t (cl-tmux/options:get-option-for-window "synchronize-panes" win))
+          "window-local override must return T")
+      (is (null (cl-tmux/options:get-option "synchronize-panes"))
+          "global synchronize-panes must remain NIL (not changed by -w set)"))))
+
+(test set-option-for-pane-coerces-boolean-string
+  "set-option-for-pane coerces a :boolean string \"on\" to T and stores it per-pane;
+   get-option-for-pane returns T."
+  (with-isolated-config
+    (let* ((win  (make-fake-window 1 "w"))
+           (pane (first (cl-tmux/model:window-panes win))))
+      (cl-tmux/options:set-option-for-pane "remain-on-exit" "on" pane)
+      (is (eq t (cl-tmux/options:get-option-for-pane "remain-on-exit" pane))
+          "get-option-for-pane must return coerced T, not the string \"on\""))))
+
+;;; ── Falsey local override beats truthy global (present-p semantics) ──────
+
+(test get-option-for-window-falsey-local-overrides-truthy-global
+  "A window-local value explicitly set to a FALSEY value (synchronize-panes
+   \"off\" → NIL) must win over a truthy GLOBAL value, instead of falling
+   through the or-chain.  The global value itself is unchanged."
+  (with-isolated-config
+    (cl-tmux/options:set-option "synchronize-panes" t)
+    (let ((win (make-fake-window 1 "w")))
+      (cl-tmux/options:set-option-for-window "synchronize-panes" "off" win)
+      (is (null (cl-tmux/options:get-option-for-window "synchronize-panes" win))
+          "window-local off (NIL) must win over global on (T)")
+      (is (eq t (cl-tmux/options:get-option "synchronize-panes"))
+          "global synchronize-panes must remain T (the -w override is local only)"))))
+
+(test get-option-for-pane-falsey-local-overrides-truthy-global
+  "A pane-local value explicitly set to a FALSEY value (remain-on-exit \"off\"
+   → NIL) must win over a truthy GLOBAL value, instead of falling through."
+  (with-isolated-config
+    (cl-tmux/options:set-option "remain-on-exit" t)
+    (let* ((win  (make-fake-window 1 "w"))
+           (pane (first (cl-tmux/model:window-panes win))))
+      (cl-tmux/options:set-option-for-pane "remain-on-exit" "off" pane)
+      (is (null (cl-tmux/options:get-option-for-pane "remain-on-exit" pane))
+          "pane-local off (NIL) must win over global on (T)")
+      (is (eq t (cl-tmux/options:get-option "remain-on-exit"))
+          "global remain-on-exit must remain T (the -p override is local only)"))))
+
+(test set-option-for-window-coerces-integer
+  "set-option-for-window coerces a non-boolean :integer string (\"5000\") to the
+   integer 5000 before storing, so get-option-for-window returns the integer
+   (not the literal string)."
+  (with-isolated-config
+    (let ((win (make-fake-window 1 "w")))
+      (cl-tmux/options:set-option-for-window "history-limit" "5000" win)
+      (is (eql 5000 (cl-tmux/options:get-option-for-window "history-limit" win))
+          "get-option-for-window must return coerced integer 5000, not \"5000\""))))
+
 ;;; ── Command-alias registry ───────────────────────────────────────────────
 
 (test register-and-lookup-command-alias
