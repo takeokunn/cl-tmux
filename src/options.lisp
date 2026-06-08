@@ -160,7 +160,12 @@
   ("status-format"            :string  "")
   ;; Popup defaults
   ("popup-border-lines"       :string  "single")
-  ("popup-border-style"       :string  ""))
+  ("popup-border-style"       :string  "")
+  ;; Passthrough: forward DCS/OSC sequences from pane to outer terminal.
+  ;; Values: "off" (default), "on" (non-nested), "all" (always).
+  ("allow-passthrough"        :string  "off")
+  ;; Command-prompt style (used when a : command-prompt overlay is active).
+  ("message-command-style"    :string  ""))
 
 ;;; Server-option registry and defaults
 

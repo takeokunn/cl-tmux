@@ -36,9 +36,17 @@
 ;;; ── Overlay (list-keys help) ────────────────────────────────────────────────
 
 (defun render-overlay (stream cols)
-  "Draw the active overlay's lines over the top rows of the screen, each
-   truncated to COLS columns, on default attributes."
-  (reset-attrs stream)
+  "Draw the active overlay's lines over the top rows of the screen.
+   Applies the message-style option (or message-command-style when a prompt is
+   active) so overlays respect the user's colour scheme."
+  (let* ((style-opt (if (prompt-active-p)
+                        (cl-tmux/options:get-option "message-command-style" "")
+                        (cl-tmux/options:get-option "message-style" "")))
+         (sgr-code  (when (and style-opt (plusp (length style-opt)))
+                      (%status-sgr-from-style style-opt))))
+    (if sgr-code
+        (format stream "~C[~Am" +esc+ sgr-code)
+        (reset-attrs stream)))
   (loop for line in (overlay-lines)
         for row from 0
         do (move-to stream row 0)

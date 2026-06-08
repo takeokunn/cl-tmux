@@ -12,9 +12,21 @@
 ;;; ── Pure data helpers ────────────────────────────────────────────────────────
 
 (defun %lookup (context key)
-  "Retrieve KEY from the plist CONTEXT, returning an empty string when absent."
+  "Retrieve KEY from the plist CONTEXT.
+   When not found in CONTEXT, falls back to *global-options* so that user-defined
+   options (#{@my-var}) and any registered tmux option (#{word_separators}) work.
+   The fallback uses the hyphenated option name that %variable-to-keyword produces
+   (underscores in the template map to hyphens in the keyword and option registry).
+   Returns an empty string when absent everywhere."
   (let ((val (getf context key)))
-    (if val (princ-to-string val) "")))
+    (if val
+        (princ-to-string val)
+        ;; The keyword's symbol-name is already the hyphenated option name
+        ;; (e.g. WORD-SEPARATORS from word_separators, or @MY-VAR from @my-var).
+        ;; Lowercasing it gives the option-registry key directly.
+        (let* ((opt-name (string-downcase (symbol-name key)))
+               (opt-val  (cl-tmux/options:get-option opt-name nil)))
+          (if opt-val (princ-to-string opt-val) "")))))
 
 (defun %variable-to-keyword (name)
   "Convert a variable name string to a context keyword.
@@ -464,7 +476,15 @@
 ;;;   expand_step(#,(,...}, ctx, out) :- expand_paren(out).
 ;;;   expand_step(#,X,     ctx, out) :- shorthand(X, ctx, out).
 ;;;   expand_step(#,?,     _,   out) :- write(#), write(?).   % unknown
+;;;   expand_step(%,X,     _,   out) :- strftime_letter(X), expand_strftime(%X).
 ;;;   expand_step(Ch,      _,   out) :- write(Ch).            % plain char
+
+(defun %strftime-letter-p (ch)
+  "Return T when CH is a single-character strftime code recognised by %strftime-format."
+  (and (characterp ch)
+       (member ch '(#\Y #\y #\m #\d #\e #\H #\M #\S #\I #\p #\P
+                    #\A #\a #\B #\b #\T #\R #\F #\j #\Z #\%)
+                :test #'char=)))
 
 (defun %expand-step (template i context out)
   "Process TEMPLATE[I] and return the index of the next character to process."
@@ -481,6 +501,14 @@
            ((%expand-shorthand next context out) (+ i 2))
            ;; Unknown specifier: emit both characters literally
            (t (write-char #\# out) (write-char next out) (+ i 2)))))
+      ;; Bare strftime code: %X where X is a recognised strftime letter.
+      ;; Real tmux passes status strings through strftime() before #{} expansion.
+      ;; Handling inline keeps the expansion composable and avoids a pre-pass.
+      ((and (char= ch #\%)
+            (< (1+ i) (length template))
+            (%strftime-letter-p (char template (1+ i))))
+       (write-string (%strftime-format (format nil "%~C" (char template (1+ i)))) out)
+       (+ i 2))
       ;; Plain character: pass through unchanged
       (t (write-char ch out) (+ i 1)))))
 

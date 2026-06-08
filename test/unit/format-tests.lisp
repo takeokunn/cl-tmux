@@ -1110,6 +1110,52 @@
     (is (string= "1" (cl-tmux/format:expand-format "#{window_format}" ctx))
         "#{window_format} must be 1 when window is in context")))
 
+;;; ── Bare strftime codes (%H, %M, %S, etc.) ──────────────────────────────────
+;;;
+;;; Real tmux passes status-left/right through strftime before #{} expansion,
+;;; so bare %H:%M works in those strings. Our inline handler mimics this.
+
+(test format-bare-strftime-hour-minute
+  "Bare %H:%M in a format string expands to the current HH:MM time."
+  (let ((result (cl-tmux/format:expand-format "%H:%M" nil)))
+    ;; Should look like HH:MM (10 chars: 2 digits, colon, 2 digits)
+    (is (= 5 (length result)) "bare %H:%M must expand to exactly 5 characters")
+    (is (char= #\: (char result 2)) "colon at position 2")))
+
+(test format-bare-strftime-percent-escape
+  "Bare %% expands to a literal %."
+  (is (string= "%" (cl-tmux/format:expand-format "%%" nil))))
+
+(test format-bare-strftime-mixed-with-hash-var
+  "Bare %H and #{session_name} can coexist in one template."
+  (let* ((result (cl-tmux/format:expand-format "%H:00 #{session_name}"
+                                               '(:session-name "main"))))
+    ;; Should end with ":00 main" (hour prefix varies)
+    (is (search ":00 main" result) "mixed bare-% and #{} expansion")))
+
+(test format-bare-strftime-unknown-letter-is-literal
+  "A %X where X is not a strftime letter passes through unchanged."
+  (is (string= "test%q" (cl-tmux/format:expand-format "test%q" nil))))
+
+;;; ── @user-option fallback in format variables ────────────────────────────────
+;;;
+;;; Real tmux allows #{@my-var} to access user-defined options set via
+;;; `set -g @my-var value`. The fallback through *global-options* provides this.
+
+(test format-user-option-at-variable
+  "#{@my-var} falls back to *global-options* when not in context."
+  (with-isolated-config
+    (cl-tmux/options:set-option "@my-var" "hello")
+    (let ((result (cl-tmux/format:expand-format "#{@my-var}" nil)))
+      (is (string= "hello" result)
+          "#{@my-var} must expand via global options fallback"))))
+
+(test format-user-option-unknown-returns-empty
+  "#{@nonexistent} returns empty string when option not set."
+  (with-isolated-config
+    (let ((result (cl-tmux/format:expand-format "#{@nonexistent}" nil)))
+      (is (string= "" result) "#{@nonexistent} must return empty string"))))
+
 ;;; ── Version guard patterns ───────────────────────────────────────────────────
 
 (test format-version-guard-comparison

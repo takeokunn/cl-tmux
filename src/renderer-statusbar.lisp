@@ -243,8 +243,12 @@
    and window-status-current-style options."
   (let* ((active-win  (session-active-window session))
          (active-pane (session-active-pane session))
+         ;; Pass terminal dimensions so #{client_width} / #{client_height} work
+         ;; in status-left, status-right, and window-status-format strings.
          (context     (cl-tmux/format:format-context-from-session
-                       session active-win active-pane))
+                       session active-win active-pane
+                       :client-width  terminal-cols
+                       :client-height (max 0 (- terminal-rows 1))))
          (sgr-code    (%status-sgr-from-style
                        (cl-tmux/options:get-option "status-style" "")))
          ;; Expand inline #[attr] style blocks into SGR escapes; #[default]

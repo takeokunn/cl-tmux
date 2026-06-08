@@ -612,6 +612,20 @@
     ;; Row 1 (top of region) should have moved to what was row 2.
     (check-row s 1 "row2")))
 
+(test decstbm-csi-invalid-top-greater-than-bottom-resets-to-full-screen
+  "DECSTBM with P1 > P2 (invalid margins) resets to full-screen per VT100 spec."
+  (with-screen (s 10 10)
+    ;; First set a valid region
+    (feed s (esc "[3;8r"))
+    (is (= 2 (cl-tmux/terminal/types:screen-scroll-top s)))
+    (is (= 7 (cl-tmux/terminal/types:screen-scroll-bottom s)))
+    ;; Now send invalid: top=8 (0-based 7) > bottom=3 (0-based 2)
+    (feed s (esc "[8;3r"))
+    (is (= 0 (cl-tmux/terminal/types:screen-scroll-top s))
+        "invalid DECSTBM must reset top to 0")
+    (is (= 9 (cl-tmux/terminal/types:screen-scroll-bottom s))
+        "invalid DECSTBM must reset bottom to height-1")))
+
 ;;; ── SUITE: execute-csi-direct ────────────────────────────────────────────────
 
 (def-suite execute-csi-direct

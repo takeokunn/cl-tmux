@@ -53,9 +53,13 @@
 (defun %csi-decstbm-params (screen p1 p2)
   "Convert 1-based DECSTBM CSI parameters P1 and P2 to the 0-based inclusive
    (top bottom) pair expected by ACTIONS:DECSTBM.
-   P2 = 0 means 'full screen': the bottom margin defaults to height-1."
-  (values (1- (max 1 p1))
-          (if (zerop p2) (1- (screen-height screen)) (1- p2))))
+   P2 = 0 means 'full screen': the bottom margin defaults to height-1.
+   When top >= bottom (invalid margins), reset to full-screen (VT100 behaviour)."
+  (let* ((top    (1- (max 1 p1)))
+         (bottom (if (zerop p2) (1- (screen-height screen)) (1- p2))))
+    (if (>= top bottom)
+        (values 0 (1- (screen-height screen)))
+        (values top bottom))))
 
 (defun %cup-row (screen p1)
   "Translate a 1-based CUP/HVP row P1 to a 0-based screen row, honoring DECOM
