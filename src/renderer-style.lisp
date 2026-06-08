@@ -117,6 +117,22 @@
     (when entry
       (parse-integer (cdr entry)))))
 
+(defun %popup-border-charset ()
+  "Return the popup box-drawing characters for the popup-border-lines option as
+   (values TOP-LEFT TOP-RIGHT BOTTOM-LEFT BOTTOM-RIGHT HORIZONTAL VERTICAL):
+   single (default), rounded, double, heavy, simple (ASCII +/-|), padded/none
+   (blank); an unknown value falls back to single.  The single source consumed by
+   both the popup box renderer (render-popup) and the text-overlay fallback."
+  (let ((style (cl-tmux/options:get-option "popup-border-lines" "single")))
+    (cond
+      ((string= style "rounded") (values #\╭ #\╮ #\╰ #\╯ #\─ #\│))
+      ((string= style "double")  (values #\╔ #\╗ #\╚ #\╝ #\═ #\║))
+      ((string= style "heavy")   (values #\┏ #\┓ #\┗ #\┛ #\━ #\┃))
+      ((string= style "simple")  (values #\+ #\+ #\+ #\+ #\- #\|))
+      ((or (string= style "padded") (string= style "none"))
+       (values #\Space #\Space #\Space #\Space #\Space #\Space))
+      (t (values #\┌ #\┐ #\└ #\┘ #\─ #\│)))))
+
 ;;; ── Named SGR constants ──────────────────────────────────────────────────────
 ;;;
 ;;; +sgr-default-status+ : default status-bar and lock-screen style (blue bg / bright white)

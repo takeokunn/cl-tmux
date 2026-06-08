@@ -13,62 +13,71 @@
 
 ;;; ── Box-drawing shared helpers ──────────────────────────────────────────────
 
-(defun %render-box-border-top (stream origin-x origin-y box-width title)
+(defun %render-box-border-top (stream origin-x origin-y box-width title
+                               &optional (tl #\┌) (tr #\┐) (h #\─))
   "Draw the top border of any box.
    ORIGIN-X  — terminal column of the box left edge.
    ORIGIN-Y  — terminal row of the box top edge.
    BOX-WIDTH — total width of the box in columns (includes the two corner chars).
    TITLE     — title label rendered after the top-left corner.
-   Emits: ┌ TITLE ──...──┐ truncated to BOX-WIDTH columns."
+   TL/TR/H   — top-left, top-right, horizontal characters (default single-line; the
+               popup renderer passes the popup-border-lines set, menus use defaults).
+   Emits: TL TITLE H…H TR truncated to BOX-WIDTH columns."
   (move-to stream origin-y origin-x)
-  (write-char #\┌ stream)
+  (write-char tl stream)
   (let* ((inner  (- box-width 2))
          (tlabel (format nil " ~A " title))
          (tlen   (min (length tlabel) inner))
          (fill   (max 0 (- inner tlen))))
     (write-string (subseq tlabel 0 tlen) stream)
-    (loop repeat fill do (write-char #\─ stream)))
-  (write-char #\┐ stream))
+    (loop repeat fill do (write-char h stream)))
+  (write-char tr stream))
 
-(defun %render-box-border-bottom (stream origin-x bottom-row box-width)
+(defun %render-box-border-bottom (stream origin-x bottom-row box-width
+                                  &optional (bl #\└) (br #\┘) (h #\─))
   "Draw the bottom border of a box.
    ORIGIN-X   — terminal column of the box left edge.
    BOTTOM-ROW — terminal row of the bottom border line.
    BOX-WIDTH  — total width of the box in columns.
-   Emits: └ ──...──┘"
+   BL/BR/H    — bottom-left, bottom-right, horizontal characters (default single).
+   Emits: BL H…H BR"
   (move-to stream bottom-row origin-x)
-  (write-char #\└ stream)
-  (loop repeat (- box-width 2) do (write-char #\─ stream))
-  (write-char #\┘ stream))
+  (write-char bl stream)
+  (loop repeat (- box-width 2) do (write-char h stream))
+  (write-char br stream))
 
 ;;; ── Popup rendering ─────────────────────────────────────────────────────────
 
-(defun %render-popup-content-pane (stream origin-x origin-y box-width box-height popup-screen)
+(defun %render-popup-content-pane (stream origin-x origin-y box-width box-height popup-screen
+                                   &optional (v #\│))
   "Render the live pane screen inside a popup box interior.
-   ORIGIN-X   — terminal column of the box left edge (where │ is drawn).
+   ORIGIN-X   — terminal column of the box left edge (where the V side is drawn).
    ORIGIN-Y   — terminal row of the top border (content starts at ORIGIN-Y+1).
    BOX-WIDTH  — total width of the box (content width = BOX-WIDTH - 2).
    BOX-HEIGHT — total height of the box (content rows = min of BOX-HEIGHT, screen height).
-   POPUP-SCREEN — the live screen to render inside the box."
+   POPUP-SCREEN — the live screen to render inside the box.
+   V          — vertical side character (default single │)."
   (loop for row below (min box-height (screen-height popup-screen)) do
     (move-to stream (+ origin-y 1 row) origin-x)
-    (write-char #\│ stream)
+    (write-char v stream)
     (loop for col below (- box-width 2)
           for cell = (screen-display-cell popup-screen col row)
           do (write-char (cell-char cell) stream))
-    (write-char #\│ stream)))
+    (write-char v stream)))
 
-(defun %render-popup-content-empty (stream origin-x origin-y box-height box-width)
+(defun %render-popup-content-empty (stream origin-x origin-y box-height box-width
+                                    &optional (v #\│))
   "Render empty side bars inside a popup box that has no live pane.
    ORIGIN-X   — terminal column of the box left edge.
    ORIGIN-Y   — terminal row of the top border (content starts at ORIGIN-Y+1).
    BOX-HEIGHT — total height of the box (content rows = BOX-HEIGHT - 2).
-   BOX-WIDTH  — total width of the box (content width = BOX-WIDTH - 2)."
+   BOX-WIDTH  — total width of the box (content width = BOX-WIDTH - 2).
+   V          — vertical side character (default single │)."
   (loop for row below (- box-height 2) do
     (move-to stream (+ origin-y 1 row) origin-x)
-    (write-char #\│ stream)
+    (write-char v stream)
     (loop repeat (- box-width 2) do (write-char #\Space stream))
-    (write-char #\│ stream)))
+    (write-char v stream)))
 
 (defun render-popup (stream popup terminal-rows terminal-cols)
   "Draw the POPUP overlay box centered on the terminal.
@@ -80,14 +89,17 @@
          (origin-y   (max 0 (floor (- (1- terminal-rows) box-height) 2)))
          (title      (popup-title popup)))
     (reset-attrs stream)
-    (%render-box-border-top stream origin-x origin-y box-width title)
-    (if (popup-pane popup)
-        (let ((popup-screen (popup-screen popup)))
-          (when popup-screen
-            (%render-popup-content-pane stream origin-x origin-y
-                                        box-width box-height popup-screen)))
-        (%render-popup-content-empty stream origin-x origin-y box-height box-width))
-    (%render-box-border-bottom stream origin-x (+ origin-y box-height -1) box-width)))
+    ;; popup-border-lines selects the box-drawing characters (menus keep single).
+    (multiple-value-bind (tl tr bl br h v) (%popup-border-charset)
+      (%render-box-border-top stream origin-x origin-y box-width title tl tr h)
+      (if (popup-pane popup)
+          (let ((popup-screen (popup-screen popup)))
+            (when popup-screen
+              (%render-popup-content-pane stream origin-x origin-y
+                                          box-width box-height popup-screen v)))
+          (%render-popup-content-empty stream origin-x origin-y box-height box-width v))
+      (%render-box-border-bottom stream origin-x (+ origin-y box-height -1)
+                                 box-width bl br h))))
 
 ;;; ── Menu rendering ──────────────────────────────────────────────────────────
 

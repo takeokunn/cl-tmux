@@ -878,17 +878,12 @@
 
 (defun %popup-border-chars ()
   "Return (values TOP-LEFT TOP-RIGHT BOTTOM-LEFT BOTTOM-RIGHT HORIZONTAL) box-
-   drawing characters for the popup-border-lines option: single (default), rounded,
-   double, heavy, simple (ASCII +/-), padded/none (blank).  Unknown → single."
-  (let ((style (cl-tmux/options:get-option "popup-border-lines" "single")))
-    (cond
-      ((string= style "rounded") (values #\╭ #\╮ #\╰ #\╯ #\─))
-      ((string= style "double")  (values #\╔ #\╗ #\╚ #\╝ #\═))
-      ((string= style "heavy")   (values #\┏ #\┓ #\┗ #\┛ #\━))
-      ((string= style "simple")  (values #\+ #\+ #\+ #\+ #\-))
-      ((or (string= style "padded") (string= style "none"))
-       (values #\Space #\Space #\Space #\Space #\Space))
-      (t (values #\┌ #\┐ #\└ #\┘ #\─)))))   ; single + unknown fallback
+   drawing characters for popup-border-lines.  Delegates to the single source
+   cl-tmux/renderer:%popup-border-charset (the text overlay has no sides, so the
+   vertical character it also returns is dropped here)."
+  (multiple-value-bind (tl tr bl br h v) (cl-tmux/renderer:%popup-border-charset)
+    (declare (ignore v))
+    (values tl tr bl br h)))
 
 (defun %format-popup-overlay (title output)
   "Format a popup overlay string with box-drawing borders whose characters follow

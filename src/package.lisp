@@ -651,7 +651,8 @@
    #:enable-mouse-reporting    ; () → emit ?1000h/?1002h/?1006h to outer terminal
    #:disable-mouse-reporting   ; () → emit ?1000l/?1002l/?1006l to outer terminal
    #:parse-style-string        ; (style-str) → plist :fg :bg :bold :reverse etc.
-   #:style-to-sgr))            ; (parsed-style) → escape-sequence string
+   #:style-to-sgr              ; (parsed-style) → escape-sequence string
+   #:%popup-border-charset))   ; () → (values tl tr bl br h v) for popup-border-lines
 
 (defpackage #:cl-tmux/input
   (:use #:cl #:cffi

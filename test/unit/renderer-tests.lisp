@@ -1084,6 +1084,21 @@
     (is (search "Test" out)
         "render-popup must include the popup title (got ~S)" out)))
 
+(test render-popup-honours-border-lines-option
+  "render-popup draws the box with the popup-border-lines characters (the whole
+   box: corners and vertical sides), and not the single-line glyphs."
+  (with-isolated-options ("popup-border-lines" "double")
+    (let* ((popup (make-popup :title "T" :x 0 :y 0 :width 20 :height 6
+                              :pane nil :screen nil :close-on-exit nil))
+           (out   (with-output-to-string (s)
+                    (cl-tmux/renderer::render-popup s popup 24 80))))
+      (is (find #\╔ out) "double border draws ╔ top-left")
+      (is (find #\╗ out) "double border draws ╗ top-right")
+      (is (find #\╚ out) "double border draws ╚ bottom-left")
+      (is (find #\╝ out) "double border draws ╝ bottom-right")
+      (is (find #\║ out) "double border draws ║ vertical sides")
+      (is (null (find #\┌ out)) "no single-line ┌ corner when double is set"))))
+
 (test render-popup-empty-draws-side-bars
   "render-popup with no live pane fills interior rows with │ side bars."
   (let* ((popup (make-popup :title "T" :x 0 :y 0 :width 10 :height 4
