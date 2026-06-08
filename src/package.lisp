@@ -596,6 +596,7 @@
    #:+hook-client-resized+
    #:+hook-window-linked+
    #:+hook-window-unlinked+
+   #:+hook-session-closed+
    ;; Registry and dispatch
    #:*hook-registry*
    #:add-hook

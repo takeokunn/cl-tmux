@@ -53,7 +53,8 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
   (+hook-after-resize-pane+      "after-resize-pane"      "Fired after a pane is resized")
   (+hook-client-resized+         "client-resized"         "Fired when the client terminal is resized")
   (+hook-window-linked+          "window-linked"          "Fired when a window is linked into a session")
-  (+hook-window-unlinked+        "window-unlinked"        "Fired when a window is unlinked from a session"))
+  (+hook-window-unlinked+        "window-unlinked"        "Fired when a window is unlinked from a session")
+  (+hook-session-closed+         "session-closed"         "Fired when a session is destroyed (kill-session)"))
 
 (defvar *hook-registry* (make-hash-table :test #'equal)
   "Maps event-name (string) to a list of callback functions.

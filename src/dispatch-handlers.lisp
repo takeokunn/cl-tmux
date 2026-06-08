@@ -294,13 +294,10 @@
           (name (format nil "~D" n)))
      (new-session name rows cols)))
   (:kill-session
-   (let ((name (session-name session)))
-     (dolist (pane (all-panes session))
-       (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
-     (server-remove-session name)
-     (if (null *server-sessions*)
-         (progn (setf *running* nil) :quit)
-         nil)))
+   (%destroy-session session)
+   (if (null *server-sessions*)
+       (progn (setf *running* nil) :quit)
+       nil))
   (:has-session
    (prompt-start "has-session" ""
                  (lambda (name)

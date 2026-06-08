@@ -1531,6 +1531,20 @@
            (format nil "new session: ~A" (session-name new-sess))))
         new-sess))))
 
+(defun %destroy-session (session)
+  "Tear down SESSION: close every pane's PTY, remove it from the server registry,
+   and fire the session-closed hook.  The single chokepoint for session
+   DESTRUCTION (every kill-session path routes through here) — deliberately
+   distinct from rename-session, which also removes+re-adds the registry entry but
+   must NOT fire session-closed.  Returns the session name."
+  (when session
+    (let ((name (session-name session)))
+      (dolist (pane (all-panes session))
+        (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
+      (server-remove-session name)
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-closed+ session)
+      name)))
+
 (defun %cmd-kill-session-arg (session args)
   "kill-session [-a] [-t name]: kill session(s).
    -a: kill all sessions EXCEPT the one named by -t (or current session).
@@ -1549,23 +1563,16 @@
                                unless (eq sess keep-sess)
                                collect (cons name sess))))
             (dolist (entry to-kill)
-              (let ((name (car entry))
-                    (sess (cdr entry)))
-                (dolist (pane (all-panes sess))
-                  (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
-                (server-remove-session name))))
+              (%destroy-session (cdr entry))))
           ;; No -a: kill the target session
           (let ((target-sess (or (and target-name
                                       (cdr (assoc target-name *server-sessions*
                                                   :test #'equal)))
                                  session)))
             (when target-sess
-              (let ((name (session-name target-sess)))
-                (dolist (pane (all-panes target-sess))
-                  (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
-                (server-remove-session name)
-                (when (and (eq target-sess session) (null *server-sessions*))
-                  (setf *running* nil)))))))))
+              (%destroy-session target-sess)
+              (when (and (eq target-sess session) (null *server-sessions*))
+                (setf *running* nil))))))))
 
 (defun %cmd-resize-window-arg (session args)
   "resize-window [-x cols] [-y rows] [-t target-window]: resize a window.

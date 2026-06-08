@@ -264,6 +264,31 @@ and leaves *running* untouched."
           (cl-tmux::%cmd-unlink-window beta nil))
         (is-true fired "window-unlinked hook must fire on unlink-window")))))
 
+(test destroy-session-fires-session-closed-hook
+  "%destroy-session removes the session AND fires +hook-session-closed+."
+  (with-empty-registry
+    (with-isolated-hooks
+      (let ((s (make-fake-session :nwindows 1))
+            (fired nil))
+        (cl-tmux::server-add-session s)
+        (cl-tmux/hooks:add-hook "session-closed"
+                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+        (cl-tmux::%destroy-session s)
+        (is-true fired "session-closed hook must fire on destroy")))))
+
+(test rename-session-does-not-fire-session-closed
+  "rename-session removes+re-adds its registry entry but must NOT fire
+   session-closed (only actual destruction does)."
+  (with-empty-registry
+    (with-isolated-hooks
+      (let ((s (make-fake-session :nwindows 1))
+            (fired nil))
+        (cl-tmux::server-add-session s)
+        (cl-tmux/hooks:add-hook "session-closed"
+                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+        (cl-tmux::%cmd-rename-session s '("renamed"))
+        (is-false fired "rename-session must NOT fire session-closed")))))
+
 (test unlink-window-only-session-needs-k-flag
   "unlink-window on a window present in only one session is refused without -k."
   (with-empty-registry
