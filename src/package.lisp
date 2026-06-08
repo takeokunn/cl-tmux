@@ -594,6 +594,8 @@
    #:+hook-session-renamed+
    #:+hook-after-resize-pane+
    #:+hook-client-resized+
+   #:+hook-window-linked+
+   #:+hook-window-unlinked+
    ;; Registry and dispatch
    #:*hook-registry*
    #:add-hook

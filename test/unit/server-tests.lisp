@@ -226,6 +226,44 @@ and leaves *running* untouched."
       (is-true (member win (cl-tmux/model:session-windows alpha))
                "window still present in alpha (not orphaned)"))))
 
+(test link-window-fires-window-linked-hook
+  "link-window fires +hook-window-linked+ when a window is linked in."
+  (with-empty-registry
+    (with-isolated-hooks
+      (let* ((alpha (make-fake-session :nwindows 1))
+             (beta  (make-fake-session :nwindows 1))
+             (fired nil))
+        (setf (cl-tmux/model:session-name alpha) "alpha"
+              (cl-tmux/model:session-name beta)  "beta")
+        (setf (cl-tmux/model:window-id (first (cl-tmux/model:session-windows beta))) 9)
+        (cl-tmux::server-add-session alpha)
+        (cl-tmux::server-add-session beta)
+        (cl-tmux/hooks:add-hook "window-linked"
+                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+        (let ((cl-tmux/prompt:*overlay* nil))
+          (cl-tmux::%cmd-link-window alpha '("-s" "alpha:0" "-t" "beta")))
+        (is-true fired "window-linked hook must fire on link-window")))))
+
+(test unlink-window-fires-window-unlinked-hook
+  "unlink-window fires +hook-window-unlinked+ when a shared window is unlinked."
+  (with-empty-registry
+    (with-isolated-hooks
+      (let* ((alpha (make-fake-session :nwindows 1))
+             (beta  (make-fake-session :nwindows 1))
+             (win   (first (cl-tmux/model:session-windows alpha)))
+             (fired nil))
+        (setf (cl-tmux/model:session-name alpha) "alpha"
+              (cl-tmux/model:session-name beta)  "beta")
+        (cl-tmux::server-add-session alpha)
+        (cl-tmux::server-add-session beta)
+        (cl-tmux/model:session-insert-window beta win)
+        (cl-tmux/model:session-select-window beta win)
+        (cl-tmux/hooks:add-hook "window-unlinked"
+                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+        (let ((cl-tmux/prompt:*overlay* nil))
+          (cl-tmux::%cmd-unlink-window beta nil))
+        (is-true fired "window-unlinked hook must fire on unlink-window")))))
+
 (test unlink-window-only-session-needs-k-flag
   "unlink-window on a window present in only one session is refused without -k."
   (with-empty-registry

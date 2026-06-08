@@ -1162,11 +1162,13 @@
              ((and collision kill-p)
               (kill-window dst-sess collision)
               (session-insert-window dst-sess src-win)
+              (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-linked+ src-win)
               (show-overlay "link-window: linked (replaced existing)"))
              (collision
               (show-overlay "link-window: target index in use (add -k to replace)"))
              (t
               (session-insert-window dst-sess src-win)
+              (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-linked+ src-win)
               (show-overlay "link-window: linked")))))))))
 
 (defun %cmd-unlink-window (session args)
@@ -1192,6 +1194,7 @@
            ;; Reselect a remaining window if we just removed the active one.
            (when (and was-active (session-windows session))
              (session-select-window session (first (session-windows session)))))
+         (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-unlinked+ win)
          (show-overlay "unlink-window: unlinked"))
         (kill-p
          ;; Only in this session and -k given — destroy it.
