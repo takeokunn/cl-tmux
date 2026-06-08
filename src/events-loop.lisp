@@ -37,6 +37,15 @@
   (set-key-binding #\E :select-layout-spread)
   ;; C-b Space — next-layout (cycle through layouts)
   (set-key-binding (code-char 32) :next-layout)
+  ;; C-b M-1..M-5 — preset layouts (tmux defaults).  Alt+digit after the prefix
+  ;; arrives as ESC <digit> and fires via the after-prefix meta path; stored as
+  ;; command token-lists under the canonical "M-N" string keys, identical to
+  ;; what `bind -T prefix M-1 select-layout even-horizontal` would install.
+  (set-key-binding "M-1" '("select-layout" "even-horizontal"))
+  (set-key-binding "M-2" '("select-layout" "even-vertical"))
+  (set-key-binding "M-3" '("select-layout" "main-horizontal"))
+  (set-key-binding "M-4" '("select-layout" "main-vertical"))
+  (set-key-binding "M-5" '("select-layout" "tiled"))
   ;; Pane management
   ;; C-b ! — break-pane (move active pane to a new window)
   (set-key-binding #\! :break-pane)

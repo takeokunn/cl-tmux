@@ -714,6 +714,33 @@
           (is (eq (first (session-windows s)) (session-active-window s))
               "unbound bare M-x must leave the first window active"))))))
 
+;;; ── Default M-1..M-5 preset-layout bindings (tmux defaults) ─────────────────
+
+(test default-meta-digit-layout-bindings-registered
+  "C-b M-1..M-5 are installed as select-layout command token-lists in the prefix
+   table, matching real tmux's preset-layout defaults."
+  (with-isolated-config
+    (flet ((cmd (k) (cl-tmux/config:key-table-command
+                     (cl-tmux/config:key-table-lookup "prefix" k))))
+      (is (equal '("select-layout" "even-horizontal") (cmd "M-1")))
+      (is (equal '("select-layout" "even-vertical")   (cmd "M-2")))
+      (is (equal '("select-layout" "main-horizontal") (cmd "M-3")))
+      (is (equal '("select-layout" "main-vertical")   (cmd "M-4")))
+      (is (equal '("select-layout" "tiled")           (cmd "M-5"))))))
+
+(test prefix-meta-1-applies-layout-end-to-end
+  "C-b then Alt+1 (ESC 1) runs the bound select-layout even-horizontal on a
+   two-pane window without error (the after-prefix meta path fires the default)."
+  (with-isolated-config
+    (let ((s (make-fake-session :nwindows 1 :npanes 2)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(2 27 49))  ; C-b ESC 1
+            (cl-tmux::process-byte s b state))
+          ;; Layout applied: the window still has its two panes and a usable tree.
+          (is (= 2 (length (window-panes (session-active-window s))))
+              "select-layout via C-b M-1 must preserve both panes"))))))
+
 ;;; ── Application cursor keys — %arrow-final-to-ss3-bytes helper ──────────────
 
 (test arrow-final-to-ss3-bytes-maps-arrows
