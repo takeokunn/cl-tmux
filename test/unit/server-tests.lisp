@@ -167,6 +167,79 @@ and leaves *running* untouched."
         (is-true (member s2 all)
                  "session s2 should appear in server-all-sessions")))))
 
+;;; ── link-window / unlink-window (cross-session window sharing) ────────────────
+
+(test window-session-count-counts-sessions-containing-window
+  "%window-session-count returns the number of registered sessions holding a window."
+  (with-empty-registry
+    (let* ((alpha (make-fake-session :nwindows 1))
+           (beta  (make-fake-session :nwindows 1))
+           (win   (first (cl-tmux/model:session-windows alpha))))
+      (setf (cl-tmux/model:session-name alpha) "alpha"
+            (cl-tmux/model:session-name beta)  "beta")
+      (cl-tmux::server-add-session alpha)
+      (cl-tmux::server-add-session beta)
+      (is (= 1 (cl-tmux::%window-session-count win))
+          "window initially in 1 session")
+      ;; Share alpha's window into beta (what link-window does).
+      (cl-tmux/model:session-insert-window beta win)
+      (is (= 2 (cl-tmux::%window-session-count win))
+          "after sharing, window is in 2 sessions"))))
+
+(test link-window-shares-window-into-destination
+  "link-window -s src -t dst makes the source window appear in dst (no collision)."
+  (with-empty-registry
+    (let* ((alpha (make-fake-session :nwindows 1))
+           (beta  (make-fake-session :nwindows 1))
+           (alpha-win (first (cl-tmux/model:session-windows alpha))))
+      (setf (cl-tmux/model:session-name alpha) "alpha"
+            (cl-tmux/model:session-name beta)  "beta")
+      ;; Give beta a distinct window id so alpha's window 0 links without a
+      ;; collision — exercises the clean link path (no kill-window).
+      (setf (cl-tmux/model:window-id (first (cl-tmux/model:session-windows beta))) 9)
+      (cl-tmux::server-add-session alpha)
+      (cl-tmux::server-add-session beta)
+      ;; Bind *overlay* so the show-overlay status message does not leak into
+      ;; later tests (an active overlay changes %ground-input-state dispatch).
+      (let ((cl-tmux/prompt:*overlay* nil))
+        (cl-tmux::%cmd-link-window alpha '("-s" "alpha:0" "-t" "beta")))
+      (is-true (member alpha-win (cl-tmux/model:session-windows beta))
+               "alpha's window must now appear in beta after link-window"))))
+
+(test unlink-window-shared-removes-from-one-session-only
+  "unlink-window on a window shared by 2 sessions removes it from the target only."
+  (with-empty-registry
+    (let* ((alpha (make-fake-session :nwindows 1))
+           (beta  (make-fake-session :nwindows 1))
+           (win   (first (cl-tmux/model:session-windows alpha))))
+      (setf (cl-tmux/model:session-name alpha) "alpha"
+            (cl-tmux/model:session-name beta)  "beta")
+      (cl-tmux::server-add-session alpha)
+      (cl-tmux::server-add-session beta)
+      ;; Share win into beta, then make it beta's active window.
+      (cl-tmux/model:session-insert-window beta win)
+      (cl-tmux/model:session-select-window beta win)
+      (let ((cl-tmux/prompt:*overlay* nil))
+        (cl-tmux::%cmd-unlink-window beta nil))
+      (is-false (member win (cl-tmux/model:session-windows beta))
+                "window unlinked from beta")
+      (is-true (member win (cl-tmux/model:session-windows alpha))
+               "window still present in alpha (not orphaned)"))))
+
+(test unlink-window-only-session-needs-k-flag
+  "unlink-window on a window present in only one session is refused without -k."
+  (with-empty-registry
+    (let* ((alpha (make-fake-session :nwindows 2))
+           (win   (first (cl-tmux/model:session-windows alpha))))
+      (setf (cl-tmux/model:session-name alpha) "alpha")
+      (cl-tmux::server-add-session alpha)
+      (cl-tmux/model:session-select-window alpha win)
+      ;; No -k: window must remain (only in this session).
+      (let ((cl-tmux/prompt:*overlay* nil))
+        (cl-tmux::%cmd-unlink-window alpha nil))
+      (is-true (member win (cl-tmux/model:session-windows alpha))
+               "window must remain without -k (would orphan otherwise)"))))
+
 (test server-all-sessions-empty-registry
   :description "server-all-sessions returns NIL (empty list) when no sessions are registered."
   (with-empty-registry

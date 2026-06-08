@@ -923,15 +923,18 @@
    (show-overlay "client locked"))
 
   ;; ── link-window ──────────────────────────────────────────────────────────
-  ;; Link a window into another session (informational stub: requires shared-
-  ;; session infrastructure beyond the current model).
+  ;; Bare :link-window (no args) — needs -s/-t targets to do anything useful.
+  ;; The arg-taking form (link-window -s src -t dst) is handled by
+  ;; %cmd-link-window in dispatch-core.lisp's *arg-command-table*.
   (:link-window
-   (show-overlay "link-window: not supported in standalone mode"))
+   (show-overlay "link-window: usage: link-window -s <src> -t <dst-session> [-k]"))
 
   ;; ── unlink-window ────────────────────────────────────────────────────────
-  ;; Unlink a linked window (informational stub).
+  ;; Bare :unlink-window — the arg form (unlink-window -t target [-k]) is in
+  ;; %cmd-unlink-window.  With no -t, unlink the active window if it is linked
+  ;; in another session.
   (:unlink-window
-   (show-overlay "unlink-window: not supported in standalone mode"))
+   (%cmd-unlink-window session nil))
 
   ;; ── select-pane -m / mark pane as the marked pane ────────────────────────
   ;; :mark-pane already handles this; this alias keeps the tmux name.

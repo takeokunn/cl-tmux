@@ -532,6 +532,8 @@
   ("unbind-key"     :unbind-key)
   ("choose-client"  :choose-client)
   ("move-window"    :move-window-prompt)
+  ("link-window"    :link-window)
+  ("unlink-window"  :unlink-window)
   ("refresh-client" :refresh-client)
   ;; Commands that had key bindings + handlers but were not reachable by name
   ;; from the C-b : prompt until now (no-argument forms).
@@ -1046,6 +1048,86 @@
           ;; Normal: kill the target window
           (when ref-win
             (%handle-kill-result (kill-window session ref-win)))))))
+
+(defun %window-session-count (window)
+  "Number of sessions in *server-sessions* whose window list contains WINDOW.
+   Used by unlink-window to avoid orphaning a window that is only in one session."
+  (count-if (lambda (entry)
+              (member window (session-windows (cdr entry))))
+            *server-sessions*))
+
+(defun %cmd-link-window (session args)
+  "link-window [-s src] -t dst [-k]: share a window into another session.
+   -s src: source window target (session:window); default is the active window.
+   -t dst: destination session (session or session:window).
+   -k: kill any window already occupying the destination index first.
+   The window object is SHARED — it appears in both sessions at the same index
+   (cl-tmux stores the index in the window struct, so linked windows share it)."
+  (multiple-value-bind (flags _pos) (%parse-command-flags args "st")
+    (declare (ignore _pos))
+    (let* ((src-str (cdr (assoc #\s flags)))
+           (dst-str (cdr (assoc #\t flags)))
+           (kill-p  (assoc #\k flags))
+           ;; Resolve source window (default: active window of current session).
+           (src-win (if src-str
+                        (nth-value 1 (resolve-target *server-sessions* src-str
+                                                     :current-session session
+                                                     :current-window (session-active-window session)))
+                        (session-active-window session)))
+           ;; Resolve destination session.
+           (dst-sess (and dst-str
+                          (nth-value 0 (resolve-target *server-sessions* dst-str
+                                                       :current-session session)))))
+      (cond
+        ((not (and src-win dst-sess))
+         (show-overlay "link-window: source window or destination session not found"))
+        ;; Already linked there — nothing to do.
+        ((member src-win (session-windows dst-sess))
+         (show-overlay "link-window: window already linked in destination"))
+        (t
+         (let ((collision (find (window-id src-win) (session-windows dst-sess)
+                                :key #'window-id)))
+           (cond
+             ((and collision kill-p)
+              (kill-window dst-sess collision)
+              (session-insert-window dst-sess src-win)
+              (show-overlay "link-window: linked (replaced existing)"))
+             (collision
+              (show-overlay "link-window: target index in use (add -k to replace)"))
+             (t
+              (session-insert-window dst-sess src-win)
+              (show-overlay "link-window: linked")))))))))
+
+(defun %cmd-unlink-window (session args)
+  "unlink-window [-t target] [-k]: remove a window's link from its session.
+   -t target: window to unlink (default: active window).
+   The window is removed from the resolved session only when it is also linked in
+   at least one OTHER session (so it is not orphaned).  When it exists in only
+   one session, -k is required to actually destroy it (matches tmux)."
+  (multiple-value-bind (flags _pos) (%parse-command-flags args "t")
+    (declare (ignore _pos))
+    (let* ((target-str (cdr (assoc #\t flags)))
+           (kill-p     (assoc #\k flags))
+           (win        (if target-str
+                           (%resolve-window-target session target-str)
+                           (session-active-window session))))
+      (cond
+        ((null win)
+         (show-overlay "unlink-window: window not found"))
+        ((> (%window-session-count win) 1)
+         ;; Linked elsewhere — safe to drop from this session only.
+         (let ((was-active (eq (session-active-window session) win)))
+           (setf (session-windows session) (remove win (session-windows session)))
+           ;; Reselect a remaining window if we just removed the active one.
+           (when (and was-active (session-windows session))
+             (session-select-window session (first (session-windows session)))))
+         (show-overlay "unlink-window: unlinked"))
+        (kill-p
+         ;; Only in this session and -k given — destroy it.
+         (%handle-kill-result (kill-window session win))
+         (show-overlay "unlink-window: killed (last link)"))
+        (t
+         (show-overlay "unlink-window: window only in this session (add -k to kill)"))))))
 
 (defun %cmd-kill-pane (session args)
   "kill-pane [-a] [-t target]: kill the target pane, or all except target with -a.
@@ -1733,6 +1815,8 @@
    (cons '("kill-session")              #'%cmd-kill-session-arg)
    (cons '("swap-window" "swapw")       #'%cmd-swap-window)
    (cons '("move-window" "movew")       #'%cmd-move-window)
+   (cons '("link-window" "linkw")       #'%cmd-link-window)
+   (cons '("unlink-window" "unlinkw")   #'%cmd-unlink-window)
    (cons '("if-shell" "if")             #'%cmd-if-shell)
    (cons '("source-file" "source")      #'%cmd-source-file)
    (cons '("select-layout" "selectl")   #'%cmd-select-layout)
