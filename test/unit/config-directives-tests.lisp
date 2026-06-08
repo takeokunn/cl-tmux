@@ -1460,3 +1460,27 @@ bind-key r source-file /dev/null"))
     (cl-tmux/config:load-config-from-string "set -s escape-time 0")
     (is (eql 0 (cl-tmux/options:get-server-option "escape-time"))
         "escape-time must be 0 after 'set -s escape-time 0'")))
+
+;;; ── Bare arg-command abbreviations in bind (single-token path) ───────────────
+;;;
+;;; `bind X <abbrev> args` (multi-token) already works — it is stored unvalidated
+;;; and resolved at dispatch via *arg-command-table*.  A BARE `bind X <abbrev>`
+;;; (single token) instead goes through %command-keyword, so each arg-command
+;;; abbreviation needs a *command-name-aliases* entry to be accepted.
+
+(test config-bind-accepts-arg-command-abbreviations
+  "Bare `bind X <abbrev>` is accepted for each arg-bearing command abbreviation."
+  (dolist (abbrev '("capturep" "commandp" "deleteb" "has" "killw"
+                    "lastp" "resizew" "selectw" "setb" "swapp"))
+    (with-isolated-config
+      (is (= 1 (cl-tmux/config:load-config-from-string
+                (format nil "bind X ~A" abbrev)))
+          "bind X ~A must apply (1 directive); the abbreviation must resolve"
+          abbrev))))
+
+(test config-bind-rejects-unknown-single-token-still
+  "The abbreviation aliases do not weaken typo rejection: an unknown single-token
+   command is still refused."
+  (with-isolated-config
+    (is (= 0 (cl-tmux/config:load-config-from-string "bind X totally-bogus-cmd"))
+        "an unknown bare command must still be rejected (0 applied)")))

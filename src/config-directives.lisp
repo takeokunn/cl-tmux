@@ -238,7 +238,22 @@
     ("saveb"     . :save-buffer)
     ("showb"     . :show-buffer)
     ("showmsgs"  . :show-messages)
-    ("show"      . :show-options))
+    ("show"      . :show-options)
+    ;; Single-token abbreviations of ARG-bearing commands.  `bind X <abbrev> args`
+    ;; (multi-token) already works — stored unvalidated, resolved via the runtime
+    ;; *arg-command-table* — but a BARE `bind X <abbrev>` goes through
+    ;; %command-keyword and needs an alias here.  Each maps to the same keyword the
+    ;; full command name resolves to (all verified members of *bindable-commands*).
+    ("capturep"  . :capture-pane)
+    ("commandp"  . :command-prompt)
+    ("deleteb"   . :delete-buffer)
+    ("has"       . :has-session)
+    ("killw"     . :kill-window)
+    ("lastp"     . :last-pane)
+    ("resizew"   . :resize-window)
+    ("selectw"   . :select-window)
+    ("setb"      . :set-buffer)
+    ("swapp"     . :swap-pane-forward))
   "tmux command names whose canonical bindable keyword is NOT simply the
    keyword-ized form of the name — full tmux names (previous-window, copy-mode,
    detach-client) and the standard short aliases (man tmux \"ALIASES\": breakp,
