@@ -200,7 +200,9 @@
   (multiple-value-setq (*term-rows* *term-cols*) (terminal-size))
   (let ((window (session-active-window session)))
     (when window
-      (window-relayout window (- *term-rows* *status-height*) *term-cols*))))
+      (window-relayout window (- *term-rows* *status-height*) *term-cols*)))
+  ;; client-resized hook: the client terminal changed size (SIGWINCH).
+  (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-client-resized+))
 
 (defun %auto-rename-name (session window pane screen)
   "Compute the new automatic window name using automatic-rename-format option.

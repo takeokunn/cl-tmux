@@ -190,6 +190,18 @@
         (is-false cl-tmux::*resize-pending*
                   "*resize-pending* must be NIL after %handle-resize")))))
 
+(test handle-resize-fires-client-resized-hook
+  "%handle-resize fires +hook-client-resized+ after relaying out the window."
+  (with-isolated-hooks
+    (let ((s (make-fake-session :nwindows 1))
+          (fired nil))
+      (with-loop-state
+        (let ((cl-tmux::*resize-pending* t))
+          (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-client-resized+
+                                  (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+          (cl-tmux::%handle-resize s)
+          (is-true fired "client-resized hook must fire on terminal resize"))))))
+
 (test handle-dirty-clears-flag
   "%handle-dirty clears *dirty* and renders without error."
   (let ((s (make-fake-session :nwindows 1)))

@@ -2458,6 +2458,18 @@
         (cl-tmux::%cmd-select-pane s '("-m"))
         (is-true fired "after-select-pane hook must fire")))))
 
+(test resize-pane-fires-after-resize-pane-hook
+  "resize-pane fires +hook-after-resize-pane+ (covers both the resize-pane command
+   and the C-b H/J/K/L keybind path, which share this function)."
+  (with-isolated-hooks
+    (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
+           (win (cl-tmux/model:session-active-window s))
+           (fired nil))
+      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-resize-pane+
+                              (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+      (resize-pane win :up 2)
+      (is-true fired "after-resize-pane hook must fire"))))
+
 ;;; ── copy-mode-begin-line-selection: multi-row window ────────────────────────
 
 (test copy-mode-begin-line-selection-selects-correct-width

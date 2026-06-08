@@ -125,4 +125,5 @@
 (defun resize-pane (window direction &optional (amount 5))
   "Resize the active pane via the split tree. Returns the active pane on success, NIL otherwise."
   (when (and window (window-tree window))
-    (window-resize-active window direction amount)))
+    (prog1 (window-resize-active window direction amount)
+      (run-hooks +hook-after-resize-pane+ window))))
