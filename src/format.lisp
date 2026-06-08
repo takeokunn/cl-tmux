@@ -823,6 +823,7 @@
      :session-name :window-index :window-name :window-count :session-windows
      :window-active :window-flags :window-raw-flags :window-panes :pane-index :pane-title
      :pane-id :pane-width :pane-height :pane-pid :pane-left :pane-top :pane-active
+     :window-width :window-height :pane-at-top :pane-at-bottom :pane-at-left :pane-at-right
      :hostname :host :host-short :time
      :client-width :client-height :client-tty"
   ;; session-active-window is the session's current window — distinct from
@@ -961,6 +962,23 @@
           :pane-pid      (if pane (cl-tmux/model:pane-pid    pane) 0)
           :pane-left     (if pane (cl-tmux/model:pane-x      pane) 0)
           :pane-top      (if pane (cl-tmux/model:pane-y      pane) 0)
+          ;; Geometry-derived variables: the window's layout dimensions and the
+          ;; pane's adjacency to the window edges, all pure functions of the
+          ;; window/pane structs.  pane_at_* are "1"/"0" flag strings (like
+          ;; pane_active).  pane_at_bottom/right compare the pane's far edge
+          ;; (origin + size) against the window's height/width.
+          :window-width   (if window (cl-tmux/model:window-width  window) 0)
+          :window-height  (if window (cl-tmux/model:window-height window) 0)
+          :pane-at-top    (if (and pane (= (cl-tmux/model:pane-y pane) 0)) "1" "0")
+          :pane-at-left   (if (and pane (= (cl-tmux/model:pane-x pane) 0)) "1" "0")
+          :pane-at-bottom (if (and pane window
+                                   (= (+ (cl-tmux/model:pane-y pane) (cl-tmux/model:pane-height pane))
+                                      (cl-tmux/model:window-height window)))
+                              "1" "0")
+          :pane-at-right  (if (and pane window
+                                   (= (+ (cl-tmux/model:pane-x pane) (cl-tmux/model:pane-width pane))
+                                      (cl-tmux/model:window-width window)))
+                              "1" "0")
           ;; #{pane_active}: "1" when PANE is its window's active pane, else "0".
           :pane-active   (if (and pane window
                                   (eq pane (cl-tmux/model:window-active-pane window)))
