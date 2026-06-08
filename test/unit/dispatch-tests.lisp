@@ -63,6 +63,33 @@
       (cl-tmux::dispatch-command s :prev-window nil)
       (is (eq (second (session-windows s)) (session-active-window s))))))
 
+(test run-command-tokens-abbrev-next-dispatches
+  "%run-command-tokens resolves the tmux abbreviation 'next' (no-arg named-table
+   path) to :next-window."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (cl-tmux::%run-command-tokens s '("next"))
+      (is (eq (second (session-windows s)) (session-active-window s))
+          "abbrev 'next' must advance to the next window"))))
+
+(test run-command-tokens-abbrev-prev-dispatches
+  "%run-command-tokens resolves the abbreviation 'prev' (no-arg named-table path)
+   to :prev-window, which from the first window wraps to the last."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (cl-tmux::%run-command-tokens s '("prev"))
+      (is (eq (second (session-windows s)) (session-active-window s))
+          "abbrev 'prev' must wrap to the last window"))))
+
+(test run-command-tokens-abbrev-renamew-with-arg
+  "%run-command-tokens resolves the arg-bearing abbreviation 'renamew' through
+   *arg-command-table* to rename the active window."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (cl-tmux::%run-command-tokens s '("renamew" "myname"))
+      (is (string= "myname" (window-name (session-active-window s)))
+          "renamew must rename the active window via the arg-table alias"))))
+
 (test dispatch-next-pane-cycles
   "C-b o moves to the next pane within the active window."
   (let* ((s   (make-fake-session :nwindows 1 :npanes 2))

@@ -411,6 +411,27 @@
   (is (eq :prev-window      (cl-tmux/config::%command-keyword "PREVIOUS-WINDOW"))
       "alias resolution must be case-insensitive"))
 
+(test command-keyword-resolves-standard-tmux-abbreviations
+  "%command-keyword resolves the standard tmux command abbreviations (man tmux
+   ALIASES) for arg-less bindable commands to their canonical keyword."
+  (is (eq :break-pane    (cl-tmux/config::%command-keyword "breakp")))
+  (is (eq :kill-pane     (cl-tmux/config::%command-keyword "killp")))
+  (is (eq :next-window   (cl-tmux/config::%command-keyword "next")))
+  (is (eq :prev-window   (cl-tmux/config::%command-keyword "prev")))
+  (is (eq :last-window   (cl-tmux/config::%command-keyword "last")))
+  (is (eq :display-panes (cl-tmux/config::%command-keyword "displayp")))
+  (is (eq :rotate-window (cl-tmux/config::%command-keyword "rotatew"))))
+
+(test bind-tmux-abbreviation-fires
+  "bind b breakp binds :break-pane via the abbreviation, and an unknown abbrev
+   is still rejected."
+  (with-isolated-config
+    (is (= 1 (load-config-from-string "bind b breakp")))
+    (is (eq :break-pane (lookup-key-binding #\b))
+        "abbrev breakp must bind :break-pane")
+    (is (= 0 (load-config-from-string "bind Q definitely-not-a-command"))
+        "an unknown abbreviation must still be rejected")))
+
 (test command-name-aliases-target-bindable-keywords
   "Every alias value must be a member of *bindable-commands* (else the bind would
    resolve to a keyword the dispatcher rejects)."

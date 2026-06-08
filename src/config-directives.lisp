@@ -202,19 +202,49 @@
    Updated whenever a new dispatchable command is added to dispatch-handlers.")
 
 (defparameter *command-name-aliases*
-  '(("previous-window" . :prev-window)
+  '(;; full tmux names whose keyword differs from the keyword-ized name
+    ("previous-window" . :prev-window)
     ("copy-mode"        . :copy-mode-enter)
     ("move-window"      . :move-window-prompt)
     ("swap-pane"        . :swap-pane-forward)
     ("detach-client"    . :detach)
-    ("showw"            . :show-window-options)
-    ("shows"            . :show-session-options))
+    ;; standard tmux command abbreviations (see man tmux "ALIASES") for the
+    ;; arg-less bindable commands, so `bind <key> <abbrev>` resolves directly
+    ("showw"     . :show-window-options)
+    ("shows"     . :show-session-options)
+    ("breakp"    . :break-pane)
+    ("clearhist" . :clear-history)
+    ("displayp"  . :display-panes)
+    ("findw"     . :find-window)
+    ("joinp"     . :join-pane)
+    ("killp"     . :kill-pane)
+    ("last"      . :last-window)
+    ("loadb"     . :load-buffer)
+    ("lock"      . :lock-server)
+    ("locks"     . :lock-session)
+    ("lockc"     . :lock-client)
+    ("lsb"       . :list-buffers)
+    ("movep"     . :move-pane)
+    ("next"      . :next-window)
+    ("nextl"     . :next-layout)
+    ("pasteb"    . :paste-buffer)
+    ("prev"      . :prev-window)
+    ("prevl"     . :previous-layout)
+    ("refresh"   . :refresh-client)
+    ("respawnp"  . :respawn-pane)
+    ("respawnw"  . :respawn-window)
+    ("rotatew"   . :rotate-window)
+    ("saveb"     . :save-buffer)
+    ("showb"     . :show-buffer)
+    ("showmsgs"  . :show-messages)
+    ("show"      . :show-options))
   "tmux command names whose canonical bindable keyword is NOT simply the
    keyword-ized form of the name — full tmux names (previous-window, copy-mode,
-   detach-client) and short aliases (showw, shows).  Mirrors the alias rows of
-   the runtime named-command table (dispatch-core.lisp define-named-command-table);
-   duplicated here because the config layer sits below the cl-tmux package and
-   cannot call it.  Every VALUE must be a member of *bindable-commands*.")
+   detach-client) and the standard short aliases (man tmux \"ALIASES\": breakp,
+   killp, next, prev, etc.).  Mirrors the alias rows of the runtime named-command
+   table (dispatch-core.lisp define-named-command-table); duplicated here because
+   the config layer sits below the cl-tmux package and cannot call it.  Every
+   VALUE must be a member of *bindable-commands* (enforced by a unit test).")
 
 (defun %command-keyword (name)
   "Return the bindable command keyword named by NAME (case-insensitive), or NIL

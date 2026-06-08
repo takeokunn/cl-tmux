@@ -577,7 +577,40 @@
   ("clear-prompt-history" :clear-prompt-history)
   ;; Detach all clients (no-arg form; the interactive :detach handler covers
   ;; the common single-client case; this name dispatches :detach-all-clients).
-  ("detach-all-clients"   :detach-all-clients))
+  ("detach-all-clients"   :detach-all-clients)
+  ;; ── Standard tmux command abbreviations (see man tmux "ALIASES") ──────────
+  ;; The no-argument / fall-through forms; arg-bearing abbreviations (killp -t,
+  ;; selectp -t, send, has, rename, renamew) are aliased in *arg-command-table*.
+  ;; previous-layout and lock-client were dispatchable by keyword but had no name
+  ;; entry at all — add both the canonical name and its abbreviation here.
+  ("breakp"    :break-pane)
+  ("clearhist" :clear-history)
+  ("displayp"  :display-panes)
+  ("findw"     :find-window)
+  ("joinp"     :join-pane)
+  ("killp"     :kill-pane)
+  ("last"      :last-window)
+  ("loadb"     :load-buffer)
+  ("lock"      :lock-server)
+  ("locks"     :lock-session)
+  ("lock-client" :lock-client)
+  ("lockc"     :lock-client)
+  ("lsb"       :list-buffers)
+  ("movep"     :move-pane)
+  ("next"      :next-window)
+  ("nextl"     :next-layout)
+  ("pasteb"    :paste-buffer)
+  ("prev"      :prev-window)
+  ("previous-layout" :previous-layout)
+  ("prevl"     :previous-layout)
+  ("refresh"   :refresh-client)
+  ("respawnp"  :respawn-pane)
+  ("respawnw"  :respawn-window)
+  ("rotatew"   :rotate-window)
+  ("saveb"     :save-buffer)
+  ("showb"     :show-buffer)
+  ("showmsgs"  :show-messages)
+  ("show"      :show-options))
 
 ;;; -- Arg-aware command-line runner -------------------------------------------
 ;;;
@@ -1828,12 +1861,12 @@
    (cons '("display-message" "display") #'%cmd-display-message)
    (cons '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")
          #'%cmd-set-option)
-   (cons '("rename-window")             #'%cmd-rename-window)
-   (cons '("rename-session")            #'%cmd-rename-session)
+   (cons '("rename-window" "renamew")   #'%cmd-rename-window)
+   (cons '("rename-session" "rename")   #'%cmd-rename-session)
    (cons '("select-window" "selectw")   #'%cmd-select-window)
-   (cons '("select-pane")               #'%cmd-select-pane)
+   (cons '("select-pane" "selectp")     #'%cmd-select-pane)
    (cons '("kill-window" "killw")       #'%cmd-kill-window)
-   (cons '("kill-pane")                 #'%cmd-kill-pane)
+   (cons '("kill-pane" "killp")         #'%cmd-kill-pane)
    (cons '("kill-session")              #'%cmd-kill-session-arg)
    (cons '("swap-window" "swapw")       #'%cmd-swap-window)
    (cons '("move-window" "movew")       #'%cmd-move-window)
@@ -1849,7 +1882,7 @@
    (cons '("set-environment" "setenv")  #'%cmd-set-environment-prompt)
    (cons '("resize-window" "resizew")   #'%cmd-resize-window-arg)
    (cons '("detach-client" "detachc")   #'%cmd-detach-client-arg)
-   (cons '("send-keys" "send-key")      #'%cmd-send-keys-arg)
+   (cons '("send-keys" "send-key" "send") #'%cmd-send-keys-arg)
    (cons '("resize-pane" "resizep")     #'%cmd-resize-pane-arg)
    (cons '("capture-pane" "capturep")   #'%cmd-capture-pane-arg)
    (cons '("run-shell" "run")           #'%cmd-run-shell-arg)
@@ -1871,7 +1904,7 @@
    ;; display-menu [-T title] [-x x] [-y y] [label key cmd ...]: interactive menu.
    (cons '("display-menu" "menu")       #'%cmd-display-menu-arg)
    ;; has-session [-t name]: check if a named session exists (0 = yes, 1 = no).
-   (cons '("has-session")               #'%cmd-has-session-arg)
+   (cons '("has-session" "has")         #'%cmd-has-session-arg)
    ;; last-pane [-Z]: select last pane, optionally toggling zoom.
    (cons '("last-pane" "lastp")         #'%cmd-last-pane-arg))
   "Arg-taking commands: (list-of-names . handler), handler a function of
