@@ -253,15 +253,18 @@
 
 (defun %apply-named-layout-to-session (session layout-name)
   "Apply LAYOUT-NAME to SESSION's active window and reassign geometry.
-   Reads the main-pane-width/-height options here (the cl-tmux layer, above
-   options) and threads them into apply-named-layout (model layer, below options)
-   so main-horizontal / main-vertical honour their configured main-pane size."
+   Reads the main-pane-width/-height and other-pane-width/-height options here (the
+   cl-tmux layer, above options) and threads them into apply-named-layout (model
+   layer, below options) so main-horizontal / main-vertical honour their configured
+   main / other pane sizes."
   (let ((win (session-active-window session)))
     (when win
       (cl-tmux/model:apply-named-layout
        win layout-name
        (or (cl-tmux/options:get-option "main-pane-width") 80)
-       (or (cl-tmux/options:get-option "main-pane-height") 24))
+       (or (cl-tmux/options:get-option "main-pane-height") 24)
+       (or (cl-tmux/options:get-option "other-pane-width") 0)
+       (or (cl-tmux/options:get-option "other-pane-height") 0))
       (layout-assign (window-tree win) 0 0 (window-width win) (window-height win)))))
 
 ;;; -- Copy-mode dispatch helper --------------------------------------------

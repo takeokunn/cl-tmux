@@ -1032,3 +1032,39 @@
     (cl-tmux/model:apply-named-layout win :main-vertical)
     (is (= 80 (pane-width (first (window-panes win))))
         "default main-pane-width is 80, not w/2")))
+
+;;; ── other-pane-width / -height override main-pane-* when set ─────────────────
+;;;
+;;; A non-zero other-pane size (that leaves room for the main pane) sizes the
+;;; OTHER region and gives the main pane the rest — tmux layout_set_main_h/_v.
+;;; When it does not fit, main-pane-* wins.
+
+(test main-vertical-other-pane-width-overrides-main
+  ":main-vertical with a fitting other-pane-width sizes the other panes to it and
+   gives the main pane the remaining width."
+  (let ((win (%three-pane-window 120 30)))
+    ;; available = 119; other-pane-width 30 fits (119-30=89 >= main 80) → main 89.
+    (cl-tmux/model:apply-named-layout win :main-vertical 80 24 30 0)
+    (is (= 89 (pane-width (first (window-panes win))))
+        "main pane width = available - other-pane-width")
+    (is (= 30 (pane-width (second (window-panes win))))
+        "other panes get other-pane-width (30)")))
+
+(test main-horizontal-other-pane-height-overrides-main
+  ":main-horizontal with a fitting other-pane-height sizes the other panes to it
+   and gives the main pane the remaining height."
+  (let ((win (%three-pane-window 100 50)))
+    ;; available = 49; other-pane-height 20 fits (49-20=29 >= main 24) → main 29.
+    (cl-tmux/model:apply-named-layout win :main-horizontal 80 24 0 20)
+    (is (= 29 (pane-height (first (window-panes win))))
+        "main pane height = available - other-pane-height")
+    (is (= 20 (pane-height (second (window-panes win))))
+        "other panes get other-pane-height (20)")))
+
+(test main-vertical-other-pane-width-too-big-falls-back-to-main
+  "An other-pane-width that does not leave room for the main pane is ignored;
+   main-pane-width applies instead."
+  (let ((win (%three-pane-window 120 30)))
+    (cl-tmux/model:apply-named-layout win :main-vertical 80 24 200 0)
+    (is (= 80 (pane-width (first (window-panes win))))
+        "over-large other-pane-width is ignored → main-pane-width (80) used")))

@@ -133,6 +133,10 @@
   ;; main-horizontal / main-vertical layout: size of the main (first) pane.
   ("main-pane-width"          :integer 80)
   ("main-pane-height"         :integer 24)
+  ;; ...and the OTHER (non-main) region: when non-zero it overrides main-pane-*,
+  ;; giving the other panes this size and the main pane the rest (0 = unset).
+  ("other-pane-width"         :integer 0)
+  ("other-pane-height"        :integer 0)
   ;; Status bar extras
   ("status-keys"              :string  "emacs")  ; emacs or vi
   ("mode-keys"                :string  "vi")     ; vi or emacs copy-mode keys

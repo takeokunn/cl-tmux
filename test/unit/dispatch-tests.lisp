@@ -4459,3 +4459,17 @@
       (cl-tmux::%apply-named-layout-to-session sess :main-vertical)
       (is (= 50 (pane-width p0))
           "main pane width is taken from the main-pane-width option"))))
+
+(test apply-named-layout-main-vertical-reads-other-pane-width-option
+  "%apply-named-layout-to-session :main-vertical reads other-pane-width and sizes
+   the other panes to it (main pane takes the rest)."
+  (with-isolated-options ("other-pane-width" 25)
+    (let* ((p0  (make-no-pty-pane 1 0 0 200 30))
+           (p1  (make-no-pty-pane 2 0 0 200 30))
+           (win (make-window :id 1 :name "w" :width 200 :height 30
+                             :panes (list p0 p1)))
+           (sess (make-session :id 1 :name "0" :windows (list win))))
+      (session-select-window sess win)
+      (cl-tmux::%apply-named-layout-to-session sess :main-vertical)
+      (is (= 25 (pane-width p1))
+          "the other pane uses the other-pane-width option (25)"))))
