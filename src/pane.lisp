@@ -30,20 +30,33 @@
 ;;; with a live shell behind it" into one named step, keeping callers free to
 ;;; express the "where to attach it" concern independently.
 
+(defvar *pane-extra-env* nil
+  "Dynamic variable: alist of (NAME . VALUE) pairs to set in the NEXT pane's
+   child environment.  Bound by callers that need per-pane env vars (e.g.
+   new-window -e VAR=val).  Consumed by %fork-pane and reset to NIL after use.")
+
 (defun %fork-pane (id x y w h &key start-dir)
   "Fork a shell and build a PTY-backed pane at position (X,Y) sized W×H.
    START-DIR: when non-NIL, the child shell is started in that directory.
    The TERM environment variable is set from the 'default-terminal' option.
    When 'default-command' is set to a non-empty string, it is run via sh -c.
+   Extra environment variables may be injected via the *PANE-EXTRA-ENV* dynamic
+   variable (alist of (NAME . VALUE)), which is consumed once and reset.
    Returns the new pane.  The PTY file descriptor and child PID are embedded
    in the pane struct; callers should call pty-close on them at teardown."
-  (let* ((term    (cl-tmux/options:get-option "default-terminal"))
-         (cmd     (cl-tmux/options:get-option "default-command")))
+  (let* ((term      (cl-tmux/options:get-option "default-terminal"))
+         (cmd       (cl-tmux/options:get-option "default-command"))
+         ;; Merge update-environment vars with *pane-extra-env*.
+         ;; *pane-extra-env* entries take precedence (placed last = later setenv).
+         (env-pairs (append (get-update-environment-vars) *pane-extra-env*)))
+    ;; Consume *pane-extra-env*: reset so a later fork without -e starts clean.
+    (setf *pane-extra-env* nil)
     (multiple-value-bind (fd pid)
         (forkpty-with-shell h w
                             :start-dir start-dir
                             :term (and term (plusp (length term)) term)
-                            :default-command (and cmd (plusp (length cmd)) cmd))
+                            :default-command (and cmd (plusp (length cmd)) cmd)
+                            :extra-env env-pairs)
       (make-pane :id id :x x :y y :width w :height h
                  :fd fd :pid pid :screen (make-screen w h)))))
 

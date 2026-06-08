@@ -645,6 +645,25 @@
           ;; normal set.
           (t (cl-tmux/options:set-option name value)))))))
 
+;;; -- -e VAR=val environment flag parser ----------------------------------------
+;;;
+;;; new-window and split-window accept repeated -e VAR=val flags to set
+;;; environment variables in the new pane.  This helper collects them from
+;;; an already-parsed flags alist (produced by %parse-command-flags with "e"
+;;; in value-flags) into an alist suitable for %fork-pane's :extra-env.
+
+(defun %collect-env-flags (flags-alist)
+  "Extract all (-e . \"VAR=val\") entries from FLAGS-ALIST and return an alist
+   of (\"VAR\" . \"val\") pairs.  Entries without \"=\" are included as (\"NAME\" . \"\").
+   Multiple -e flags are supported; all are collected."
+  (loop for (char . value) in flags-alist
+        when (and (char= char #\e) (stringp value))
+        collect (let ((eq-pos (position #\= value)))
+                  (if eq-pos
+                      (cons (subseq value 0 eq-pos)
+                            (subseq value (1+ eq-pos)))
+                      (cons value "")))))
+
 (defun %cmd-rename-window (session args)
   "rename-window <name...>: rename SESSION's active window to the joined ARGS."
   (let ((win (session-active-window session)))
@@ -878,15 +897,17 @@
            "(no panes)")))))
 
 (defun %cmd-new-window-arg (session args)
-  "new-window [-d] [-n name] [-t target-window] [-a] [-c start-dir]: create a new window.
+  "new-window [-d] [-n name] [-t target-window] [-a] [-c start-dir] [-e VAR=val]: create a new window.
    -d: create the window but do not make it active (detached).
    -n name: name the new window.
    -t idx: insert at specific index (assigned as the window id).
    -a: insert after the current window.
-   -c dir: start directory for the new pane's shell (format strings expanded)."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "ntc")
+   -c dir: start directory for the new pane's shell (format strings expanded).
+   -e VAR=val: set environment variable in the new pane (repeatable)."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "ntce")
     (declare (ignore positionals))
-    (let* ((name       (cdr (assoc #\n flags)))
+    (let* ((extra-env  (%collect-env-flags flags))
+           (name       (cdr (assoc #\n flags)))
            (detach-p   (assoc #\d flags))
            (after-p    (assoc #\a flags))
            (target-str (cdr (assoc #\t flags)))
@@ -899,6 +920,9 @@
                                        session win pane)))
                            (cl-tmux/format:expand-format raw-dir ctx))))
            (at-idx     (and target-str (parse-integer target-str :junk-allowed t))))
+      ;; Inject -e VAR=val pairs via *pane-extra-env* so %fork-pane picks them up.
+      (when extra-env
+        (setf *pane-extra-env* extra-env))
       (%cmd-new-window session
                        :name name
                        :start-dir start-dir
@@ -907,17 +931,19 @@
                        :after-current (and after-p t)))))
 
 (defun %cmd-split-window (session args)
-  "split-window [-h|-v] [-b] [-d] [-p percent] [-l size] [-c start-dir]: split the active pane.
+  "split-window [-h|-v] [-b] [-d] [-p percent] [-l size] [-c start-dir] [-e VAR=val].
    -h: horizontal split (new pane to the right; side-by-side).
    -v: vertical split (new pane below — default).
    -b: insert before the active pane (left of / above) instead of after.
    -d: split but do not change focus (detached mode).
    -p N: size as a percentage of the parent pane (0-100).
    -l N: size in lines/columns (absolute integer).
-   -c dir: start directory for the new pane's shell (format strings expanded)."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "plc")
+   -c dir: start directory for the new pane's shell (format strings expanded).
+   -e VAR=val: set environment variable in the new pane (repeatable)."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "plce")
     (declare (ignore positionals))
-    (let* ((horizontal-p (assoc #\h flags))
+    (let* ((extra-env    (%collect-env-flags flags))
+           (horizontal-p (assoc #\h flags))
            (before-p     (assoc #\b flags))
            (detach-p     (assoc #\d flags))
            (pct-str      (cdr (assoc #\p flags)))
@@ -934,6 +960,9 @@
            (pct          (and pct-str (parse-integer pct-str :junk-allowed t)))
            (lines        (and lines-str (parse-integer lines-str :junk-allowed t)))
            (size         (or (and pct (/ pct 100.0)) lines)))
+      ;; Inject -e VAR=val pairs via *pane-extra-env* so %fork-pane picks them up.
+      (when extra-env
+        (setf *pane-extra-env* extra-env))
       (if horizontal-p
           (%cmd-split session :h :size size :no-focus (and detach-p t)
                               :start-dir start-dir :before (and before-p t))

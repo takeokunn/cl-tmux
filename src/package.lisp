@@ -502,6 +502,8 @@
    #:window-automatic-rename-p
    ;; Activity flag for monitor-activity / #{window_activity_flag}
    #:window-activity-flag
+   ;; Per-fork extra environment injection (new-window -e / split-window -e)
+   #:*pane-extra-env*
    ;; Layout cycle index (for C-b Space next-layout)
    #:window-layout-cycle-index
    ;; Rotate-window

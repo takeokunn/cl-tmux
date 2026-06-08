@@ -66,17 +66,23 @@
                             :int 1
                             :int))))
 
-(defun %child-exec-shell (&optional start-dir term default-command)
+(defun %child-exec-shell (&optional start-dir term default-command extra-env)
   "Replace the current process image with a shell or default-command.
    When START-DIR is a non-empty string, chdir to it before execv.
    When TERM is a non-empty string, set TERM=TERM in the child environment.
    When DEFAULT-COMMAND is a non-empty string, run sh -c DEFAULT-COMMAND
    instead of *DEFAULT-SHELL* directly.
+   EXTRA-ENV: alist of (NAME . VALUE) pairs to set in the child environment
+   before exec (e.g. from new-window -e VAR=val).
    MUST be called only in the child process after fork — NEVER from the parent."
   (when (and start-dir (plusp (length start-dir)))
     (ignore-errors (sb-posix:chdir start-dir)))
   (when (and term (plusp (length term)))
     (%child-setenv "TERM" term))
+  ;; Apply extra environment variables from -e flags (new-window / split-window).
+  (dolist (pair extra-env)
+    (when (and (consp pair) (stringp (car pair)) (stringp (cdr pair)))
+      (%child-setenv (car pair) (cdr pair))))
   (if (and default-command (plusp (length default-command)))
       ;; Run: /bin/sh -c "default-command"
       (cffi:with-foreign-string (sh-ptr "/bin/sh")
@@ -99,11 +105,12 @@
   ;; execv failed — fall through to _exit.
   (cffi:foreign-funcall "_exit" :int 1 :void))
 
-(defun forkpty-with-shell (rows cols &key start-dir term default-command)
+(defun forkpty-with-shell (rows cols &key start-dir term default-command extra-env)
   "Fork a child shell process on a fresh PTY of size ROWS×COLS.
    START-DIR: when non-NIL, chdir to this path before exec.
    TERM: when non-NIL, set TERM=TERM in the child environment.
    DEFAULT-COMMAND: when non-NIL, run via sh -c instead of the shell directly.
+   EXTRA-ENV: alist of (NAME . VALUE) pairs set in the child environment.
    Parent returns (values master-fd child-pid).
    Child execs and never returns to Lisp."
   (declare (type fixnum rows cols))
@@ -113,7 +120,7 @@
         ((< pid 0) (error "fork failed"))
         ((= pid 0)                             ; child
          (%child-setup-tty slave-path master)
-         (%child-exec-shell start-dir term default-command))
+         (%child-exec-shell start-dir term default-command extra-env))
         (t                                     ; parent
          (values master pid))))))
 
