@@ -1974,6 +1974,35 @@
         (is (string= "new-title" (window-name win))
             "window-name must update when window-local automatic-rename is on")))))
 
+(test maybe-rename-window-keeps-tracking-after-first-rename
+  "Auto-rename must keep working after the first rename: %maybe-rename-window-
+   from-title must NOT disable automatic-rename, so a later title change renames
+   again.  Regression for rename-window unconditionally clearing
+   automatic-rename-p (which made auto-rename fire only once)."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                             :screen screen))
+         (win    (make-window :id 1 :name "old" :width 20 :height 5
+                              :panes (list pane) :tree (make-layout-leaf pane)))
+         (sess   (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win pane)
+    (session-select-window sess win)
+    (setf (window-automatic-rename-p win) t)
+    (with-isolated-config
+      (cl-tmux/options:set-option "automatic-rename" t)
+      (cl-tmux/options:set-option "allow-rename" t)
+      (with-loop-state
+        (setf (screen-title screen) "first")
+        (cl-tmux::%maybe-rename-window-from-title sess)
+        (is (string= "first" (window-name win)) "first auto-rename applies")
+        (is-true (window-automatic-rename-p win)
+                 "automatic-rename must stay ON after an auto-rename")
+        ;; A second title change must rename again (the bug made this a no-op).
+        (setf (screen-title screen) "second")
+        (cl-tmux::%maybe-rename-window-from-title sess)
+        (is (string= "second" (window-name win))
+            "auto-rename must keep tracking after the first rename")))))
+
 ;;; ── Application cursor keys remapping ───────────────────────────────────────
 
 (test app-cursor-keys-remaps-csi-arrow-to-ss3

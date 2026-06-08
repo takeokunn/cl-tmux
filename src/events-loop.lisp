@@ -243,7 +243,9 @@
       (let ((new-name (%auto-rename-name session active-window active-pane screen)))
         (when (and (plusp (length new-name))
                    (not (string= new-name (window-name active-window))))
-          (rename-window active-window new-name)
+          ;; Auto-rename must NOT disable automatic-rename, or it would fire only
+          ;; once; keep it on so the name keeps tracking the foreground process.
+          (rename-window active-window new-name :disable-automatic-rename nil)
           (setf *dirty* t))))))
 
 (defun %handle-dirty (session)

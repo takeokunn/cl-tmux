@@ -2426,6 +2426,19 @@
       (is (string= "new" hook-name)
           "hook name argument must equal the new name"))))
 
+(test rename-window-disable-automatic-rename-flag
+  "A manual rename-window (default) disables automatic-rename; passing
+   :disable-automatic-rename NIL (the auto-rename path) keeps it on."
+  (let ((win (make-window :id 1 :name "x" :width 20 :height 5 :panes nil)))
+    (setf (window-automatic-rename-p win) t)
+    (rename-window win "manual")
+    (is-false (window-automatic-rename-p win)
+              "manual rename disables automatic-rename")
+    (setf (window-automatic-rename-p win) t)
+    (rename-window win "auto" :disable-automatic-rename nil)
+    (is-true (window-automatic-rename-p win)
+             ":disable-automatic-rename NIL keeps automatic-rename on")))
+
 (test rename-window-fires-window-renamed-hook
   "rename-window also fires +hook-window-renamed+ (tmux's window-renamed hook)."
   (with-isolated-hooks

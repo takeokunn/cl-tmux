@@ -91,16 +91,18 @@
 ;;; rename_session(Session, Name) :- nonempty(Name), set(session-name, Name).
 ;;; select_window(Session, N)     :- nth(N, windows(Session), W), activate(W).
 
-(defun rename-window (window name)
+(defun rename-window (window name &key (disable-automatic-rename t))
   "Set WINDOW's name to NAME.  Empty NAME is a no-op, matching tmux behaviour.
-   Disables automatic-rename so subsequent foreground-process changes do not
-   overwrite the user-assigned name — same behaviour as real tmux."
+   By default (a MANUAL rename) disables automatic-rename, signalling user
+   ownership so subsequent foreground-process changes do not overwrite the name
+   (re-enable with `set-option -w automatic-rename on`).  The AUTOMATIC-rename
+   path passes :DISABLE-AUTOMATIC-RENAME NIL so repeated title-driven renames keep
+   working — otherwise auto-rename would fire only once.  Fires after-rename-window
+   and window-renamed in both cases."
   (when (and window name (not (string= name "")))
     (setf (window-name window) name)
-    ;; A manual rename signals user ownership: disable automatic rename so the
-    ;; name stays stable regardless of which process runs in the pane.
-    ;; (The user can re-enable with `set-option -w automatic-rename on`.)
-    (setf (window-automatic-rename-p window) nil)
+    (when disable-automatic-rename
+      (setf (window-automatic-rename-p window) nil))
     (run-hooks +hook-after-rename-window+ window name)
     (run-hooks +hook-window-renamed+ window name)))
 
