@@ -918,35 +918,41 @@
                               :start-dir start-dir)))))
 
 (defun %cmd-new-session-arg (session args)
-  "new-session [-A] [-s name] [-n window-name] [-c start-dir] [-d]: create a new session.
+  "new-session [-A] [-d] [-s name] [-n window-name] [-c start-dir]: create a new session.
    -A: if a session named NAME already exists, attach to it instead of creating a new one.
+   -d: create detached (do not switch to the new session).
    -s name: session name.
    -n name: initial window name.
-   -c dir: start directory for the initial window's shell.
-   -d: do not switch to the new session (stay in current session)."
-  (declare (ignore session))
+   -c dir: start directory for the initial window's shell."
   (multiple-value-bind (flags positionals) (%parse-command-flags args "snc")
     (declare (ignore positionals))
-    (let* ((name      (or (cdr (assoc #\s flags))
-                          (format nil "~D" (1+ (length *server-sessions*)))))
+    (let* ((name            (or (cdr (assoc #\s flags))
+                                (format nil "~D" (1+ (length *server-sessions*)))))
            (attach-if-exists (assoc #\A flags))
-           (win-name  (cdr (assoc #\n flags)))
-           (start-dir (cdr (assoc #\c flags)))
-           (rows      (- *term-rows* *status-height*))
-           (cols      *term-cols*))
+           (detach-p         (assoc #\d flags))
+           (win-name         (cdr (assoc #\n flags)))
+           (start-dir        (cdr (assoc #\c flags)))
+           (rows             (- *term-rows* *status-height*))
+           (cols             *term-cols*))
       ;; -A: attach to existing session if it exists
       (when attach-if-exists
         (let ((existing (server-find-session name)))
           (when existing
             (session-touch existing)
-            (setf *dirty* t)
+            (unless detach-p (setf *dirty* t))
             (return-from %cmd-new-session-arg existing))))
-      ;; No existing session: create a new one
+      ;; Create a new session
       (let ((new-sess (new-session name rows cols :start-dir start-dir)))
         ;; Apply window name if given
         (when (and win-name new-sess)
           (let ((win (session-active-window new-sess)))
             (when win (rename-window win win-name))))
+        ;; Without -d, show an overlay confirming the new session was created.
+        ;; With -d, the session is created in background and SESSION (the calling
+        ;; session) remains the active display — no dirty flag, no visual switch.
+        (when (and new-sess (not detach-p))
+          (show-transient-overlay
+           (format nil "new session: ~A" (session-name new-sess))))
         new-sess))))
 
 (defun %cmd-kill-session-arg (session args)
