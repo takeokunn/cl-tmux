@@ -585,6 +585,8 @@
    #:+hook-client-attached+
    #:+hook-client-detached+
    #:+hook-alert-bell+
+   #:+hook-alert-activity+
+   #:+hook-alert-silence+
    ;; Registry and dispatch
    #:*hook-registry*
    #:add-hook

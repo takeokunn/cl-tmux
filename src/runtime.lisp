@@ -154,6 +154,26 @@
       #'reader-reading-state
       #'reader-idle-state))
 
+(defun %mark-window-activity (win)
+  "Mark WIN as having activity for monitor-activity: set the activity flag, fire
+   the alert-activity hook, and show a visual-activity overlay when that option is
+   on.  No-op when WIN is NIL, monitor-activity is off for WIN, or the flag is
+   already set.  Extracted from reader-reading-state so the alert-activity firing
+   is unit-testable without a live PTY."
+  (when (and win
+             (cl-tmux/options:get-option-for-context "monitor-activity" :window win)
+             (not (cl-tmux/model:window-activity-flag win)))
+    (setf (cl-tmux/model:window-activity-flag win) t)
+    ;; Fire the alert-activity hook (matches real tmux).
+    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-activity+ win)
+    ;; visual-activity on: show a transient message overlay so the user knows
+    ;; which background window has activity (matches real tmux).
+    (when (cl-tmux/options:get-option "visual-activity")
+      (show-transient-overlay
+       (format nil "Activity in window ~A (~A)"
+               (cl-tmux/model:window-id win)
+               (cl-tmux/model:window-name win))))))
+
 (defun reader-reading-state (pane)
   "Read one PTY chunk and feed it to PANE; transition to eof if EOF."
   (let ((bytes (pty-read-blocking (pane-fd pane) +pty-buf-size+)))
@@ -174,17 +194,8 @@
            (setf (cl-tmux/model:window-last-output-time win) (get-universal-time))
            ;; Clear silence flag: new output resets the silence state.
            (setf (cl-tmux/model:window-silence-flag win) nil)
-           ;; Activity flag: only for non-active windows.
-           (when (and (cl-tmux/options:get-option-for-context "monitor-activity" :window win)
-                      (not (cl-tmux/model:window-activity-flag win)))
-             (setf (cl-tmux/model:window-activity-flag win) t)
-             ;; visual-activity on: show a transient message overlay so the user
-             ;; knows which background window has activity (matches real tmux).
-             (when (cl-tmux/options:get-option "visual-activity")
-               (show-transient-overlay
-                (format nil "Activity in window ~A (~A)"
-                        (cl-tmux/model:window-id win)
-                        (cl-tmux/model:window-name win)))))))
+           ;; Activity flag + alert-activity hook + visual overlay.
+           (%mark-window-activity win)))
        (setf *dirty* t)
        #'reader-idle-state))))
 
@@ -297,6 +308,8 @@
                            (not (cl-tmux/model:window-silence-flag win))
                            (>= (- now last-out) silence-secs))
                   (setf (cl-tmux/model:window-silence-flag win) t)
+                  ;; Fire the alert-silence hook (matches real tmux).
+                  (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-silence+ win)
                   (funcall dirty-fn))))))))))
 
 (defun start-status-timer (dirty-fn &key session server-sessions-fn)

@@ -132,6 +132,39 @@
         (is (null (cl-tmux/options:get-option-for-context "monitor-activity" :window bg-win))
             "window-local off (NIL) must win over global on (T) at the migrated site")))))
 
+(test mark-window-activity-fires-alert-activity-hook
+  :description "%mark-window-activity sets the activity flag AND fires the
+   alert-activity hook (tmux alert hook, previously never fired)."
+  (with-isolated-config
+    (with-isolated-hooks
+      (let* ((sess  (make-fake-session :nwindows 1))
+             (win   (cl-tmux/model:session-active-window sess))
+             (fired nil))
+        (cl-tmux/options:set-option "monitor-activity" "on")
+        (setf (cl-tmux/model:window-activity-flag win) nil)
+        (cl-tmux/hooks:add-hook "alert-activity"
+                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+        (cl-tmux::%mark-window-activity win)
+        (is-true (cl-tmux/model:window-activity-flag win) "activity flag must be set")
+        (is-true fired "the alert-activity hook must fire")))))
+
+(test monitor-silence-fires-alert-silence-hook
+  :description "%check-monitor-silence fires the alert-silence hook when a window
+   crosses the silence threshold (tmux alert hook, previously never fired)."
+  (with-isolated-config
+    (with-isolated-hooks
+      (let* ((sess  (make-fake-session :nwindows 1))
+             (win   (cl-tmux/model:session-active-window sess))
+             (fired nil))
+        (cl-tmux/options:set-option "monitor-silence" 5)
+        (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
+              (cl-tmux/model:window-silence-flag win) nil)
+        (cl-tmux/hooks:add-hook "alert-silence"
+                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+        (cl-tmux::%check-monitor-silence (list (cons 1 sess)) (lambda () nil))
+        (is-true (cl-tmux/model:window-silence-flag win) "silence flag must be set")
+        (is-true fired "the alert-silence hook must fire")))))
+
 (test reader-remain-on-exit-state-returns-nil-when-not-running
   :description "reader-remain-on-exit-state returns NIL immediately when *running* is NIL."
   (let ((cl-tmux::*running* nil)

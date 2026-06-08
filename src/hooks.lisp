@@ -42,7 +42,9 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
   (+hook-after-split-window+     "after-split-window"     "Fired after a window is split")
   (+hook-client-attached+        "client-attached"        "Fired when a client attaches to the server")
   (+hook-client-detached+        "client-detached"        "Fired when a client detaches from the server")
-  (+hook-alert-bell+             "alert-bell"             "Fired when a BEL character is received in a pane"))
+  (+hook-alert-bell+             "alert-bell"             "Fired when a BEL character is received in a pane")
+  (+hook-alert-activity+         "alert-activity"         "Fired when monitor-activity detects activity in a window")
+  (+hook-alert-silence+          "alert-silence"          "Fired when monitor-silence detects silence in a window"))
 
 (defvar *hook-registry* (make-hash-table :test #'equal)
   "Maps event-name (string) to a list of callback functions.

@@ -200,6 +200,9 @@
     (when new
       (start-reader-thread new)
       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-split-window+ new)
+      ;; A split creates a new pane — fire after-new-pane too (was defined but
+      ;; never fired).
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-pane+ new)
       (run-command-hooks cl-tmux/hooks:+hook-after-split-window+ session))
     new))
 
