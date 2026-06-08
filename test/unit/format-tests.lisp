@@ -1389,6 +1389,28 @@
 ;;; So p0 touches top/bottom/left but NOT right (0+40=40 ≠ 81); p1 touches
 ;;; top/bottom/right (41+40=81) but NOT left (x=41 ≠ 0).
 
+(test format-pane-tty-from-pane
+  "#{pane_tty} expands to the pane's slave PTY device path."
+  (let ((pane (make-no-pty-pane 1 0 0 80 24)))
+    (setf (cl-tmux/model:pane-tty pane) "/dev/pts/7")
+    (is (string= "/dev/pts/7"
+                 (cl-tmux/format:expand-format
+                  "#{pane_tty}"
+                  (cl-tmux/format:format-context-from-session nil nil pane)))
+        "#{pane_tty} must report the pane's tty slot")))
+
+(test format-pane-tty-empty-when-no-pty-or-nil
+  "#{pane_tty} is empty for a pane with no PTY (default \"\") and for a NIL pane."
+  (let ((pane (make-no-pty-pane 1 0 0 80 24)))
+    (is (string= "" (cl-tmux/format:expand-format
+                     "#{pane_tty}"
+                     (cl-tmux/format:format-context-from-session nil nil pane)))
+        "no-PTY pane → empty pane_tty"))
+  (is (string= "" (cl-tmux/format:expand-format
+                   "#{pane_tty}"
+                   (cl-tmux/format:format-context-from-session nil nil nil)))
+      "NIL pane → empty pane_tty"))
+
 (test format-window-width-height-from-window
   "#{window_width} / #{window_height} expand to the window's layout dimensions.
    make-fake-window builds a 20x5 window, so the expansions are \"20\"/\"5\"."

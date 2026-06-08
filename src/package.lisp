@@ -49,7 +49,7 @@
   (:use #:cl #:cffi)
   (:export
    ;; PTY lifecycle
-   #:forkpty-with-shell    ; (rows cols) → (values master-fd child-pid)
+   #:forkpty-with-shell    ; (rows cols) → (values master-fd child-pid slave-path)
    #:pty-write             ; (fd data)   — write octets/string to PTY
    #:pty-read-blocking     ; (fd size)   → octet-vector or nil on EOF
    #:pty-close             ; (fd pid)
@@ -471,6 +471,7 @@
    #:pane-window
    #:pane-marked
    #:pane-title
+   #:pane-tty
    #:pane-input-disabled
    #:pane-local-options
    #:respawn-pane

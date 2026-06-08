@@ -1003,6 +1003,8 @@
           :window-layout window-layout
           :pane-index    pane-index
           :pane-title    pane-title
+          ;; #{pane_tty}: the pane's slave PTY device path (e.g. /dev/pts/3).
+          :pane-tty      (if pane (cl-tmux/model:pane-tty pane) "")
           ;; #{pane_current_path}: OSC 7 cwd reported by the shell.
           :pane-current-path pane-current-path
           ;; Structural pane variables, all pure functions of the pane struct.

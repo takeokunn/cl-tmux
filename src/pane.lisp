@@ -17,6 +17,7 @@
   (marked           nil)    ; T when this pane is the marked pane (C-b m)
   (input-disabled   nil :type boolean) ; T when select-pane -d disables input
   (title    "" :type string)      ; pane title set via OSC 0/2 (#{pane_title})
+  (tty      "" :type string)      ; slave PTY device path, e.g. /dev/pts/3 (#{pane_tty})
   (local-options (make-hash-table :test #'equal) :type hash-table)) ; per-pane option overrides
 
 (defun pane-feed (pane bytes)
@@ -52,14 +53,15 @@
          (env-pairs (append (get-update-environment-vars) *pane-extra-env*)))
     ;; Consume *pane-extra-env*: reset so a later fork without -e starts clean.
     (setf *pane-extra-env* nil)
-    (multiple-value-bind (fd pid)
+    (multiple-value-bind (fd pid slave-path)
         (forkpty-with-shell h w
                             :start-dir start-dir
                             :term (and term (plusp (length term)) term)
                             :default-command (and cmd (plusp (length cmd)) cmd)
                             :extra-env env-pairs)
       (make-pane :id id :x x :y y :width w :height h
-                 :fd fd :pid pid :screen (make-screen w h)))))
+                 :fd fd :pid pid :tty (or slave-path "")
+                 :screen (make-screen w h)))))
 
 (defun respawn-pane (pane)
   "Restart PANE's PTY process, keeping geometry and screen intact.
@@ -76,12 +78,13 @@
     ;; Open a fresh PTY-backed shell at the same geometry, respecting options.
     (let* ((term (cl-tmux/options:get-option "default-terminal"))
            (cmd  (cl-tmux/options:get-option "default-command")))
-      (multiple-value-bind (new-fd new-pid)
+      (multiple-value-bind (new-fd new-pid slave-path)
           (forkpty-with-shell h w
                               :term (and term (plusp (length term)) term)
                               :default-command (and cmd (plusp (length cmd)) cmd))
         (setf (pane-fd  pane) new-fd
-              (pane-pid pane) new-pid)))
+              (pane-pid pane) new-pid
+              (pane-tty pane) (or slave-path ""))))
     pane))
 
 ;;; ── pane-reposition ──────────────────────────────────────────────────────────

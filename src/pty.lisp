@@ -111,7 +111,8 @@
    TERM: when non-NIL, set TERM=TERM in the child environment.
    DEFAULT-COMMAND: when non-NIL, run via sh -c instead of the shell directly.
    EXTRA-ENV: alist of (NAME . VALUE) pairs set in the child environment.
-   Parent returns (values master-fd child-pid).
+   Parent returns (values master-fd child-pid slave-path), where SLAVE-PATH is the
+   PTY device path (e.g. /dev/pts/3) the child sees — surfaced as #{pane_tty}.
    Child execs and never returns to Lisp."
   (declare (type fixnum rows cols))
   (multiple-value-bind (master slave-path) (open-pty rows cols)
@@ -122,7 +123,7 @@
          (%child-setup-tty slave-path master)
          (%child-exec-shell start-dir term default-command extra-env))
         (t                                     ; parent
-         (values master pid))))))
+         (values master pid slave-path))))))
 
 ;;; ── FFI memory transfer helpers (data layer) ────────────────────────────────
 ;;;
