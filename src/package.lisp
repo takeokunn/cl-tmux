@@ -567,8 +567,11 @@
 (defpackage #:cl-tmux/buffer
   (:use #:cl)
   (:export #:+default-buffer-limit+
-           #:*paste-buffers* #:add-paste-buffer #:get-paste-buffer
-           #:list-paste-buffers #:delete-paste-buffer #:clear-paste-buffers))
+           #:*paste-buffers* #:*buffer-auto-index*
+           #:add-paste-buffer #:get-paste-buffer #:set-named-buffer
+           #:get-buffer-by-name #:buffer-names
+           #:list-paste-buffers #:list-paste-buffers-with-names
+           #:delete-paste-buffer #:delete-buffer-by-name #:clear-paste-buffers))
 
 (defpackage #:cl-tmux/hooks
   (:use #:cl)

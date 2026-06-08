@@ -4,28 +4,74 @@
   "Fallback capacity for the paste-buffer ring when buffer-limit has not been configured.")
 
 (defvar *paste-buffers* nil
-  "List of paste buffer strings, most recent first.")
+  "List of paste buffers, most recent first.  Each entry is a (NAME . TEXT) cons:
+   NAME is the buffer's name string (auto-assigned \"bufferN\" for unnamed adds, or
+   an explicit name from set-buffer -b / capture-pane -b); TEXT is the content.
+   The public string-returning accessors (get-paste-buffer / list-paste-buffers)
+   hide the cons shape so existing callers keep seeing plain text.")
+
+(defvar *buffer-auto-index* 0
+  "Monotonic counter for auto-naming unnamed buffers buffer0, buffer1, ... — like
+   tmux's automatic buffer names.")
 
 (defun %buffer-limit ()
   "Return the configured buffer-limit, defaulting to +default-buffer-limit+ when options are not yet initialised."
   (or (ignore-errors (cl-tmux/options:get-option "buffer-limit"))
       +default-buffer-limit+))
 
-(defun add-paste-buffer (text)
-  "Push TEXT onto *paste-buffers*, keeping at most buffer-limit entries. Return TEXT."
-  (push text *paste-buffers*)
+(defun %next-auto-buffer-name ()
+  "Return the next automatic buffer name (bufferN) and advance the counter."
+  (prog1 (format nil "buffer~D" *buffer-auto-index*)
+    (incf *buffer-auto-index*)))
+
+(defun %enforce-buffer-limit ()
+  "Trim *paste-buffers* to at most buffer-limit entries (drops the oldest)."
   (let ((limit (max 1 (%buffer-limit))))
     (when (> (length *paste-buffers*) limit)
-      (setf *paste-buffers* (subseq *paste-buffers* 0 limit))))
+      (setf *paste-buffers* (subseq *paste-buffers* 0 limit)))))
+
+(defun add-paste-buffer (text &optional name)
+  "Add TEXT as a paste buffer (pushed most-recent-first) and return TEXT.
+   When NAME is supplied the buffer is named NAME, replacing any existing buffer
+   of that name (set-buffer -b semantics); when NAME is NIL an automatic name
+   bufferN is assigned.  Honours buffer-limit."
+  (let ((bname (or name (%next-auto-buffer-name))))
+    (when name
+      ;; Explicit name: replace any existing buffer with the same name in place.
+      (setf *paste-buffers*
+            (remove bname *paste-buffers* :key #'car :test #'string=)))
+    (push (cons bname text) *paste-buffers*)
+    (%enforce-buffer-limit))
   text)
 
+(defun set-named-buffer (name text)
+  "Set the buffer named NAME to TEXT (creating or replacing it).  Returns TEXT.
+   A thin alias for (add-paste-buffer TEXT NAME) naming the intent at call sites."
+  (add-paste-buffer text name))
+
 (defun get-paste-buffer (&optional (index 0))
-  "Return the INDEXth paste buffer (0-based), or NIL if empty or out of range."
-  (nth index *paste-buffers*))
+  "Return the TEXT of the INDEXth paste buffer (0-based, most recent first), or NIL
+   if empty or out of range."
+  (let ((entry (nth index *paste-buffers*)))
+    (and entry (cdr entry))))
+
+(defun get-buffer-by-name (name)
+  "Return the TEXT of the buffer named NAME, or NIL when there is no such buffer."
+  (let ((entry (assoc name *paste-buffers* :test #'string=)))
+    (and entry (cdr entry))))
+
+(defun buffer-names ()
+  "Return the list of buffer names, most recent first."
+  (mapcar #'car *paste-buffers*))
 
 (defun list-paste-buffers ()
-  "Return a copy of *paste-buffers*."
-  (copy-list *paste-buffers*))
+  "Return the buffer TEXTs, most recent first (strings, not (name . text) pairs —
+   backward-compatible with callers that predate named buffers)."
+  (mapcar #'cdr *paste-buffers*))
+
+(defun list-paste-buffers-with-names ()
+  "Return a copy of the (NAME . TEXT) entries, most recent first."
+  (copy-alist *paste-buffers*))
 
 (defun delete-paste-buffer (&optional (index 0))
   "Remove the INDEXth paste buffer. Return T if removed, NIL if index is out of range."
@@ -37,9 +83,17 @@
         t)
       nil))
 
+(defun delete-buffer-by-name (name)
+  "Remove the buffer named NAME.  Return T when one was removed, NIL otherwise."
+  (let ((before (length *paste-buffers*)))
+    (setf *paste-buffers*
+          (remove name *paste-buffers* :key #'car :test #'string=))
+    (/= before (length *paste-buffers*))))
+
 (defun clear-paste-buffers ()
-  "Set *paste-buffers* to nil."
-  (setf *paste-buffers* nil))
+  "Set *paste-buffers* to nil and reset the automatic-name counter."
+  (setf *paste-buffers* nil
+        *buffer-auto-index* 0))
 
 (defun initialize-osc52-handler ()
   "Wire the OSC 52 clipboard handler to the paste buffer ring.

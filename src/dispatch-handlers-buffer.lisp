@@ -12,18 +12,18 @@
 ;;; -- %cmd-list-buffers -------------------------------------------------------
 
 (defun %cmd-list-buffers ()
-  "Show an overlay listing all paste buffers with index, length, and preview."
+  "Show an overlay listing all paste buffers with name, length, and preview.
+   Lines read `name: NN bytes: preview`, matching tmux's named-buffer listing."
   (show-overlay
    (with-output-to-string (stream)
-     (let ((buffers (cl-tmux/buffer:list-paste-buffers)))
+     (let ((buffers (cl-tmux/buffer:list-paste-buffers-with-names)))
        (if buffers
-           (loop for buffer in buffers
-                 for index from 0
-                 do (format stream "~D: [~D] ~A~%"
-                            index
-                            (length buffer)
-                            (subseq buffer 0 (min +buffer-preview-length+
-                                                  (length buffer)))))
+           (loop for (name . text) in buffers
+                 do (format stream "~A: ~D bytes: ~A~%"
+                            name
+                            (length text)
+                            (subseq text 0 (min +buffer-preview-length+
+                                                (length text)))))
            (format stream "(no paste buffers)~%"))))))
 
 ;;; -- %cmd-show-buffer --------------------------------------------------------

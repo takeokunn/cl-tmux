@@ -2214,23 +2214,25 @@
               "overlay must say 'no paste buffers' when ring is empty"))))))
 
 (test dispatch-list-buffers-populated-shows-entries
-  ":list-buffers with buffers lists them by index."
+  ":list-buffers with buffers lists them by name with their content preview."
   (let ((s (make-fake-session)))
     (with-loop-state
       (let ((*overlay* nil)
-            (cl-tmux/buffer:*paste-buffers* (list "hello" "world")))
+            (cl-tmux/buffer:*paste-buffers* (list (cons "buffer1" "hello")
+                                                  (cons "buffer0" "world"))))
         (cl-tmux::dispatch-command s :list-buffers nil)
         (is (overlay-active-p) ":list-buffers must open an overlay")
         (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-          (is (search "0:" text) "overlay must list buffer 0")
-          (is (search "1:" text) "overlay must list buffer 1"))))))
+          (is (search "hello" text) "overlay must list the first buffer's content")
+          (is (search "world" text) "overlay must list the second buffer's content")
+          (is (search "buffer1:" text) "overlay must show buffer names"))))))
 
 (test dispatch-show-buffer-shows-content
   ":show-buffer opens an overlay with buffer 0's content."
   (let ((s (make-fake-session)))
     (with-loop-state
       (let ((*overlay* nil)
-            (cl-tmux/buffer:*paste-buffers* (list "test-content")))
+            (cl-tmux/buffer:*paste-buffers* (list (cons "buffer0" "test-content"))))
         (cl-tmux::dispatch-command s :show-buffer nil)
         (is (overlay-active-p) ":show-buffer must open an overlay")
         (let ((text (format nil "~{~A~%~}" (overlay-lines))))
@@ -2241,7 +2243,7 @@
   ":delete-buffer removes the first paste buffer."
   (let ((s (make-fake-session)))
     (with-loop-state
-      (let ((cl-tmux/buffer:*paste-buffers* (list "todelete")))
+      (let ((cl-tmux/buffer:*paste-buffers* (list (cons "buffer0" "todelete"))))
         (cl-tmux::dispatch-command s :delete-buffer nil)
         (is (null cl-tmux/buffer:*paste-buffers*)
             ":delete-buffer must remove buffer 0 from the ring")))))
@@ -2253,7 +2255,7 @@
   (let ((s (make-fake-session)))
     (with-loop-state
       (let ((*prompt* nil)
-            (cl-tmux/buffer:*paste-buffers* (list "save-me")))
+            (cl-tmux/buffer:*paste-buffers* (list (cons "buffer0" "save-me"))))
         (cl-tmux::dispatch-command s :save-buffer nil)
         (is (prompt-active-p) ":save-buffer must open a prompt when buffer exists")))))
 
@@ -2284,7 +2286,8 @@
   (let ((s (make-fake-session)))
     (with-loop-state
       (let ((*prompt* nil) (*overlay* nil)
-            (cl-tmux/buffer:*paste-buffers* (list "alpha" "beta")))
+            (cl-tmux/buffer:*paste-buffers* (list (cons "buffer1" "alpha")
+                                                  (cons "buffer0" "beta"))))
         (cl-tmux::dispatch-command s :choose-buffer nil)
         (is (overlay-active-p) ":choose-buffer must open a listing overlay")
         (is (prompt-active-p) ":choose-buffer must open a prompt for the index")))))
@@ -3359,7 +3362,8 @@
       (cl-tmux::dispatch-command s :copy-mode-enter nil)
       (is (cl-tmux::%copy-mode-active-p s) "copy mode must be on")
       (let ((*overlay* nil)
-            (cl-tmux/buffer:*paste-buffers* (list "alpha" "beta")))
+            (cl-tmux/buffer:*paste-buffers* (list (cons "buffer1" "alpha")
+                                                  (cons "buffer0" "beta"))))
         (cl-tmux::dispatch-command s :copy-mode-choose-buffer nil)
         (is (overlay-active-p)
             ":copy-mode-choose-buffer must open an overlay")
@@ -4371,3 +4375,71 @@
         (cl-tmux::%cmd-capture-pane-arg s '("-b" "mybuf"))
         (is (search "named buf" (or (cl-tmux/buffer:get-paste-buffer 0) ""))
             "-b stores the capture in the unnamed ring (single-ring model)")))))
+
+;;; ── Named paste-buffer commands (-b name) ────────────────────────────────────
+
+(test cmd-set-buffer-b-stores-named
+  "set-buffer -b name data stores a named buffer retrievable by name."
+  (with-empty-buffers
+    (with-loop-state
+      (let ((s (make-fake-session)))
+        (cl-tmux::%cmd-set-buffer-arg s '("-b" "mybuf" "hello" "world"))
+        (is (string= "hello world" (cl-tmux/buffer:get-buffer-by-name "mybuf"))
+            "set-buffer -b stores the joined data under the name")))))
+
+(test cmd-set-buffer-a-appends-named
+  "set-buffer -a -b name appends to the existing named buffer."
+  (with-empty-buffers
+    (with-loop-state
+      (let ((s (make-fake-session)))
+        (cl-tmux::%cmd-set-buffer-arg s '("-b" "b" "foo"))
+        (cl-tmux::%cmd-set-buffer-arg s '("-a" "-b" "b" "bar"))
+        (is (string= "foobar" (cl-tmux/buffer:get-buffer-by-name "b"))
+            "-a appends to the named buffer")))))
+
+(test cmd-show-buffer-b-shows-named
+  "show-buffer -b name shows that buffer's content in an overlay."
+  (with-empty-buffers
+    (with-loop-state
+      (let ((*overlay* nil) (s (make-fake-session)))
+        (cl-tmux/buffer:set-named-buffer "b" "shown-content")
+        (cl-tmux::%cmd-show-buffer-arg s '("-b" "b"))
+        (is (overlay-active-p) "show-buffer -b opens an overlay")
+        (is (search "shown-content" (format nil "~{~A~%~}" (overlay-lines)))
+            "the overlay contains the named buffer's content")))))
+
+(test cmd-delete-buffer-b-deletes-named
+  "delete-buffer -b name removes that named buffer."
+  (with-empty-buffers
+    (with-loop-state
+      (let ((s (make-fake-session)))
+        (cl-tmux/buffer:set-named-buffer "b" "x")
+        (cl-tmux::%cmd-delete-buffer-arg s '("-b" "b"))
+        (is (null (cl-tmux/buffer:get-buffer-by-name "b"))
+            "the named buffer is gone after delete-buffer -b")))))
+
+(test cmd-paste-buffer-d-deletes-named-after-paste
+  "paste-buffer -d -b name deletes the named buffer after pasting it."
+  (with-empty-buffers
+    (with-loop-state
+      (let ((s (make-fake-session)))
+        (cl-tmux/buffer:set-named-buffer "b" "data")
+        (cl-tmux::%cmd-paste-buffer-arg s '("-d" "-b" "b"))
+        (is (null (cl-tmux/buffer:get-buffer-by-name "b"))
+            "-d removes the named buffer after pasting")))))
+
+(test cmd-capture-pane-b-stores-named
+  "capture-pane -b name stores the captured content under that name."
+  (with-empty-buffers
+    (with-loop-state
+      (let ((s (make-fake-session)))
+        (feed (active-screen s) "captured text")
+        (cl-tmux::%cmd-capture-pane-arg s '("-b" "cap"))
+        (is (search "captured text" (or (cl-tmux/buffer:get-buffer-by-name "cap") ""))
+            "capture-pane -b stores the capture under the given name")))))
+
+(test config-bind-accepts-paste-buffer-b-flag
+  "`bind X paste-buffer -b foo` is accepted by the config parser."
+  (with-isolated-config
+    (is (= 1 (cl-tmux/config:load-config-from-string "bind X paste-buffer -b foo"))
+        "paste-buffer -b parses as one applied directive")))

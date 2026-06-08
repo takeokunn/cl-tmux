@@ -780,6 +780,82 @@
            (format nil "has-session ~A: yes" (or target-name ""))
            (format nil "has-session ~A: no"  (or target-name "")))))))
 
+;;; ── Named paste-buffer commands (set/paste/delete/show -b name) ──────────────
+;;;
+;;; tmux's set-buffer/paste-buffer/delete-buffer/show-buffer all accept -b <name>
+;;; to target a specific named buffer.  These arg-bearing handlers (registered in
+;;; *arg-command-table*) layer over cl-tmux/buffer's named-buffer API; the no-arg
+;;; keyword handlers (:set-buffer etc. in dispatch-handlers) remain for the C-b
+;;; interactive bindings.
+
+(defun %cmd-set-buffer-arg (session args)
+  "set-buffer [-a] [-b name] [-t target] data: set a paste buffer's contents.
+   -b name: name the buffer (retrievable via paste-buffer -b name, etc.); without
+     -b an automatic name (bufferN) is assigned.
+   -a: append DATA to the existing buffer (named NAME, or the most recent)."
+  (declare (ignore session))
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "bt")
+    (let* ((name     (cdr (assoc #\b flags)))
+           (append-p (and (assoc #\a flags) t))
+           (data     (format nil "~{~A~^ ~}" positionals)))
+      (when positionals
+        (if append-p
+            (let ((existing (or (if name
+                                    (cl-tmux/buffer:get-buffer-by-name name)
+                                    (cl-tmux/buffer:get-paste-buffer 0))
+                                "")))
+              (cl-tmux/buffer:add-paste-buffer
+               (concatenate 'string existing data) name))
+            (cl-tmux/buffer:add-paste-buffer data name))))))
+
+(defun %cmd-paste-buffer-arg (session args)
+  "paste-buffer [-d] [-p] [-r] [-b name] [-s sep] [-t target]: paste a buffer into
+   the target pane.  -b name pastes the named buffer (else the most recent); -d
+   deletes the buffer after pasting.  -p (bracketed) / -r (no LF→CR) / -s sep are
+   accepted but not specially handled."
+  (multiple-value-bind (flags _positionals) (%parse-command-flags args "bst")
+    (declare (ignore _positionals))
+    (let* ((name       (cdr (assoc #\b flags)))
+           (delete-p   (and (assoc #\d flags) t))
+           (target-str (cdr (assoc #\t flags)))
+           (text       (if name
+                           (cl-tmux/buffer:get-buffer-by-name name)
+                           (cl-tmux/buffer:get-paste-buffer 0)))
+           (target-pane (if target-str
+                            (nth-value 2 (resolve-target
+                                          *server-sessions* target-str
+                                          :current-session session
+                                          :current-window (session-active-window session)
+                                          :current-pane (session-active-pane session)))
+                            (session-active-pane session))))
+      (when text
+        (%paste-to-pane target-pane text)
+        (when delete-p
+          (if name
+              (cl-tmux/buffer:delete-buffer-by-name name)
+              (cl-tmux/buffer:delete-paste-buffer 0)))))))
+
+(defun %cmd-delete-buffer-arg (session args)
+  "delete-buffer [-b name]: delete the named buffer (or the most recent)."
+  (declare (ignore session))
+  (multiple-value-bind (flags _positionals) (%parse-command-flags args "b")
+    (declare (ignore _positionals))
+    (let ((name (cdr (assoc #\b flags))))
+      (if name
+          (cl-tmux/buffer:delete-buffer-by-name name)
+          (cl-tmux/buffer:delete-paste-buffer 0)))))
+
+(defun %cmd-show-buffer-arg (session args)
+  "show-buffer [-b name]: show the named buffer's contents (or the most recent)."
+  (declare (ignore session))
+  (multiple-value-bind (flags _positionals) (%parse-command-flags args "b")
+    (declare (ignore _positionals))
+    (let* ((name (cdr (assoc #\b flags)))
+           (text (if name
+                     (cl-tmux/buffer:get-buffer-by-name name)
+                     (cl-tmux/buffer:get-paste-buffer 0))))
+      (show-overlay (or text "(no buffer)")))))
+
 ;;; ── Popup overlay constants + formatter ─────────────────────────────────────
 ;;;
 ;;; Moved here from dispatch-handlers so BOTH the arg-bearing %cmd-display-popup
@@ -1831,8 +1907,8 @@
    -S start: include scrollback.  A line number or '-' (start of history) both
      include the full scrollback above the visible region.
    -E end: accepted (end line); the visible bottom is the end here.
-   -b name: accepted — cl-tmux keeps a single unnamed buffer ring, so the capture
-     is stored at the top of that ring regardless of NAME.
+   -b name: store the capture in the buffer named NAME (retrievable with
+     paste-buffer -b NAME); without -b an automatic name is assigned.
    -J (join wrapped lines) / -e (escapes) / -N (trailing spaces) / -a / -P:
      accepted but not specially handled.
    -t target: target pane (standalone uses the active pane)."
@@ -1847,8 +1923,8 @@
         (if print-p
             ;; -p: stdout equivalent — show the content in an overlay.
             (show-overlay content)
-            ;; Default: save to the paste-buffer ring (silent), like tmux.
-            (cl-tmux/buffer:add-paste-buffer content))))))
+            ;; Default: save to a paste buffer (silent), like tmux.  -b names it.
+            (cl-tmux/buffer:add-paste-buffer content (cdr (assoc #\b flags))))))))
 
 (defun %cmd-resize-pane-arg (session args)
   "resize-pane [-t target] [-L|-R|-U|-D|-Z] [amount]: resize a pane.
@@ -2091,6 +2167,11 @@
    ;; display-popup [-E] [-w W] [-h H] [-T title] [cmd]: run cmd, show output in a
    ;; popup (the `bind C-p popup -E "cmd"` form); no cmd opens the prompt.
    (cons '("display-popup" "popup")     #'%cmd-display-popup)
+   ;; Named paste-buffer commands: -b <name> targets a specific named buffer.
+   (cons '("set-buffer" "setb")         #'%cmd-set-buffer-arg)
+   (cons '("paste-buffer" "pasteb")     #'%cmd-paste-buffer-arg)
+   (cons '("delete-buffer" "deleteb")   #'%cmd-delete-buffer-arg)
+   (cons '("show-buffer" "showb")       #'%cmd-show-buffer-arg)
    ;; has-session [-t name]: check if a named session exists (0 = yes, 1 = no).
    (cons '("has-session" "has")         #'%cmd-has-session-arg)
    ;; switch-client -T <key-table>: activate a custom key table (modal keymaps).

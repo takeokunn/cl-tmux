@@ -253,3 +253,45 @@
     (is (and (char= #\Escape (char seq (- (length seq) 2)))
              (char= #\\ (char seq (1- (length seq)))))
         "terminates with ST (ESC backslash)")))
+
+;;; ── Named buffers (set-buffer -b / paste-buffer -b) ──────────────────────────
+
+(test named-buffer-set-and-get-by-name
+  "set-named-buffer stores under a name; get-buffer-by-name retrieves it."
+  (with-empty-buffers
+    (cl-tmux/buffer:set-named-buffer "foo" "hello")
+    (is (string= "hello" (cl-tmux/buffer:get-buffer-by-name "foo"))
+        "named buffer is retrievable by name")
+    (is (null (cl-tmux/buffer:get-buffer-by-name "bar"))
+        "an unknown name returns NIL")))
+
+(test named-buffer-same-name-replaces-in-place
+  "Setting an existing name replaces its content without adding a duplicate."
+  (with-empty-buffers
+    (cl-tmux/buffer:set-named-buffer "foo" "first")
+    (cl-tmux/buffer:set-named-buffer "foo" "second")
+    (is (string= "second" (cl-tmux/buffer:get-buffer-by-name "foo"))
+        "same name replaces the content")
+    (is (= 1 (length (cl-tmux/buffer:list-paste-buffers)))
+        "no duplicate entry is created")))
+
+(test named-buffer-delete-by-name
+  "delete-buffer-by-name removes a named buffer and reports whether it existed."
+  (with-empty-buffers
+    (cl-tmux/buffer:set-named-buffer "foo" "x")
+    (is (cl-tmux/buffer:delete-buffer-by-name "foo") "delete returns T when present")
+    (is (null (cl-tmux/buffer:get-buffer-by-name "foo")) "gone after delete")
+    (is (null (cl-tmux/buffer:delete-buffer-by-name "foo"))
+        "deleting an absent name returns NIL")))
+
+(test add-paste-buffer-auto-names-and-back-compat
+  "add-paste-buffer with no name auto-assigns a name; the public string API is
+   unchanged (get/list return text, not (name . text) pairs)."
+  (with-empty-buffers
+    (cl-tmux/buffer:add-paste-buffer "a")
+    (cl-tmux/buffer:add-paste-buffer "b")
+    (is (string= "b" (cl-tmux/buffer:get-paste-buffer 0)) "get returns text")
+    (is (equal '("b" "a") (cl-tmux/buffer:list-paste-buffers))
+        "list returns texts, most recent first")
+    (is (= 2 (length (cl-tmux/buffer:buffer-names))) "two auto-named buffers")
+    (is (every #'stringp (cl-tmux/buffer:buffer-names)) "names are strings")))
