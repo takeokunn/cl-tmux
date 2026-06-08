@@ -1721,12 +1721,24 @@
    (dispatch-core loads before events-keystroke) so it is declared special before
    either %cmd-switch-client or %ground-input-state references it.")
 
+(defun %current-session (&optional fallback)
+  "The session the standalone client is currently viewing: the most-recently-
+   touched (highest session-last-active) session in *server-sessions*, or FALLBACK
+   when the registry is empty.  This is how session-switch commands (switch-client,
+   choose-tree, last-session) change the displayed session — they session-touch
+   their target, and the event loop re-resolves the current session through here on
+   every iteration, so the display follows the switch.  Delegates to the registry's
+   server-current-session (highest last-active), adding the FALLBACK for the empty
+   registry — ties (same-second stamps) resolve there; deliberate switches are
+   seconds apart in practice."
+  (or (server-current-session) fallback))
+
 (defun %switch-to-session (target)
   "Make TARGET the client's active session by bumping its last-active stamp (the
-   renderer follows the most-recently-touched session) and marking the screen
-   dirty.  No-op when TARGET is NIL or already the front session.  Returns TARGET
-   when a switch happened, else NIL — the single chokepoint every switch-client
-   session move routes through."
+   renderer follows the most-recently-touched session via %current-session) and
+   marking the screen dirty.  No-op when TARGET is NIL or already the front session.
+   Returns TARGET when a switch happened, else NIL — the single chokepoint every
+   switch-client session move routes through."
   (when target
     (session-touch target)
     (setf *dirty* t)

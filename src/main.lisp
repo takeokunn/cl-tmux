@@ -88,6 +88,11 @@
 
   ;; Create the session.  All forks happen here, before reader threads start.
   (let ((session (create-initial-session *term-rows* *term-cols*)))
+    ;; Register the initial session so it appears in *server-sessions* alongside
+    ;; any later new-session — the event loop's %current-session resolver and the
+    ;; session-switch commands (switch-client, choose-tree) can then move to and
+    ;; FROM it; otherwise it would be orphaned once another session is created.
+    (server-add-session session)
 
     ;; Now it is safe to start threads -- no more forks will occur at this point
     ;; unless the user explicitly creates a new window/pane via a prefix command

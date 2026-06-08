@@ -284,23 +284,28 @@
   (let ((state        (make-input-state))
         (idle-counter 0))
     (loop while *running* do
-      ;; Honour repeat-time: reset to ground when the repeat window closes.
-      (%reset-repeat-if-expired state)
-      ;; Honour escape-time: forward a lone ESC to the pane when no follow-up byte
-      ;; has arrived within escape-time ms (critical for vim ESC key in insert mode).
-      (%flush-esc-if-timed-out state session)
-      (let ((byte (read-byte-nonblock +poll-timeout-us+)))
-        (if byte
-            (progn
-              (setf idle-counter 0)
-              ;; Stamp last-activity-time so lock-after-time can measure idle.
-              (setf *last-activity-time* (get-universal-time))
-              (when (member (process-byte session byte state) '(:quit :detach))
-                (setf *running* nil)))
-            (progn
-              (incf idle-counter)
-              (when (>= idle-counter +event-loop-max-idle-iterations+)
+      ;; Follow the most-recently-touched session: session-switch commands
+      ;; (switch-client, choose-tree, last-session) session-touch their target, and
+      ;; re-resolving here makes the single client's display + input follow the
+      ;; switch.  Falls back to the initial SESSION when the registry is empty.
+      (let ((session (%current-session session)))
+        ;; Honour repeat-time: reset to ground when the repeat window closes.
+        (%reset-repeat-if-expired state)
+        ;; Honour escape-time: forward a lone ESC to the pane when no follow-up byte
+        ;; has arrived within escape-time ms (critical for vim ESC in insert mode).
+        (%flush-esc-if-timed-out state session)
+        (let ((byte (read-byte-nonblock +poll-timeout-us+)))
+          (if byte
+              (progn
                 (setf idle-counter 0)
-                (sleep +event-loop-idle-sleep-seconds+)))))
-      (when *resize-pending* (%handle-resize session))
-      (when *dirty*           (%handle-dirty session)))))
+                ;; Stamp last-activity-time so lock-after-time can measure idle.
+                (setf *last-activity-time* (get-universal-time))
+                (when (member (process-byte session byte state) '(:quit :detach))
+                  (setf *running* nil)))
+              (progn
+                (incf idle-counter)
+                (when (>= idle-counter +event-loop-max-idle-iterations+)
+                  (setf idle-counter 0)
+                  (sleep +event-loop-idle-sleep-seconds+)))))
+        (when *resize-pending* (%handle-resize session))
+        (when *dirty*           (%handle-dirty session))))))

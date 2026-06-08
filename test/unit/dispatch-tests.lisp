@@ -4527,3 +4527,37 @@
       (is (search "╔" result) "double border uses ╔ top-left")
       (is (search "╝" result) "double border uses ╝ bottom-right")
       (is (search "body" result) "body content is present"))))
+
+;;; ── %current-session: the standalone loop follows the front session ──────────
+
+(test current-session-follows-most-recently-touched
+  "%current-session returns the session with the highest last-active, and falls
+   back to its argument when the registry is empty.  This is what makes the
+   single-client display follow session-switch commands."
+  (with-loop-state
+    (let ((s0 (make-fake-session))
+          (s1 (make-fake-session)))
+      (let ((cl-tmux::*server-sessions* nil))
+        (is (eq s0 (cl-tmux::%current-session s0))
+            "empty registry → fallback to the argument"))
+      (setf (cl-tmux::session-last-active s0) 10
+            (cl-tmux::session-last-active s1) 20)
+      (let ((cl-tmux::*server-sessions* (list (cons "0" s0) (cons "1" s1))))
+        (is (eq s1 (cl-tmux::%current-session s0))
+            "registry non-empty → the highest last-active (s1)")
+        (setf (cl-tmux::session-last-active s0) 30)
+        (is (eq s0 (cl-tmux::%current-session s1))
+            "after touching s0 it becomes current — the display follows")))))
+
+(test switch-to-session-makes-it-the-current-session
+  "%switch-to-session(target) makes target the %current-session, so the loop's
+   re-resolution displays it (end-to-end switch → display)."
+  (with-loop-state
+    (let ((s0 (make-fake-session)) (s1 (make-fake-session)))
+      (setf (cl-tmux::session-last-active s0) 100
+            (cl-tmux::session-last-active s1) 50)
+      (let ((cl-tmux::*server-sessions* (list (cons "0" s0) (cons "1" s1))))
+        (is (eq s0 (cl-tmux::%current-session s0)) "s0 starts as current")
+        (cl-tmux::%switch-to-session s1)
+        (is (eq s1 (cl-tmux::%current-session s0))
+            "after %switch-to-session s1, s1 is current")))))
