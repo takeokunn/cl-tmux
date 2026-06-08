@@ -1073,6 +1073,120 @@
   (is (eq t (apply-config-directive '("run-shell" "false")))
       "run-shell with exit-code 1 must still return T"))
 
+;;; ── run-shell / run flag tolerance (-b / -t / -d / -C) ────────────────────
+;;;
+;;; %apply-run-shell-directive strips leading flags so the common
+;;; `run-shell -b 'cmd'` / `run -b '~/.tmux/plugins/tpm/tpm'` forms — which the
+;;; fixed-arity table silently dropped — are handled.  These tests assert the
+;;; handler's RETURN VALUE (handled vs not) rather than shell side-effects;
+;;; `true` is used so any actual execution is harmless and fast.
+
+(test run-shell-handler-handles-background-flag
+  "%apply-run-shell-directive returns T for 'run-shell -b true' (handled)."
+  (with-isolated-config
+    (is (eq t (cl-tmux/config::%apply-run-shell-directive "run-shell" '("-b" "true")))
+        "run-shell -b true must be handled (T)")))
+
+(test run-shell-handler-handles-bare-command
+  "%apply-run-shell-directive returns T for the bare 'run true' (one arg) form."
+  (with-isolated-config
+    (is (eq t (cl-tmux/config::%apply-run-shell-directive "run" '("true")))
+        "run true must be handled (T)")))
+
+(test run-shell-handler-handles-target-then-background-flags
+  "%apply-run-shell-directive strips '-t 0 -b' and still handles 'true' (T)."
+  (with-isolated-config
+    (is (eq t (cl-tmux/config::%apply-run-shell-directive
+               "run-shell" '("-t" "0" "-b" "true")))
+        "run-shell -t 0 -b true must be handled (T)")))
+
+(test run-shell-handler-ignores-non-run-command
+  "%apply-run-shell-directive returns NIL for a non-run command (e.g. bind)."
+  (with-isolated-config
+    (is (null (cl-tmux/config::%apply-run-shell-directive
+               "bind" '("x" "next-window")))
+        "a non-run command must not be handled (NIL)")))
+
+(test run-shell-handler-flag-only-is-handled-no-op
+  "%apply-run-shell-directive returns T (no error) for a flag-only 'run-shell -b'."
+  (with-isolated-config
+    (is (eq t (cl-tmux/config::%apply-run-shell-directive "run-shell" '("-b")))
+        "a flag-only run-shell -b must be handled as a no-op (T)")))
+
+(test run-shell-handler-C-flag-is-no-op
+  "%apply-run-shell-directive returns T for '-C cmd' without shelling out
+   (running a tmux command is out of scope; treated as handled/no-op)."
+  (with-isolated-config
+    (is (eq t (cl-tmux/config::%apply-run-shell-directive
+               "run-shell" '("-C" "new-window")))
+        "run-shell -C <tmux-cmd> must be handled as a no-op (T)")))
+
+(test run-shell-handler-handles-delay-flag
+  "%apply-run-shell-directive strips '-d 5' (delay) and handles 'true' (T)."
+  (with-isolated-config
+    (is (eq t (cl-tmux/config::%apply-run-shell-directive
+               "run-shell" '("-d" "5" "true")))
+        "run-shell -d 5 true must be handled (T)")))
+
+(test run-shell-handler-unknown-flag-is-skipped
+  "%apply-run-shell-directive skips an unknown bare flag '-x' and handles 'true' (T)."
+  (with-isolated-config
+    (is (eq t (cl-tmux/config::%apply-run-shell-directive
+               "run-shell" '("-x" "true")))
+        "run-shell -x true must skip the unknown flag and be handled (T)")))
+
+(test run-shell-handler-run-alias-with-flag
+  "%apply-run-shell-directive returns T for the real tpm 'run -b <cmd>' form."
+  (with-isolated-config
+    (is (eq t (cl-tmux/config::%apply-run-shell-directive "run" '("-b" "true")))
+        "run -b true (the tpm form) must be handled (T)")))
+
+(test run-shell-handler-empty-args-is-handled-no-op
+  "%apply-run-shell-directive returns T for an empty args list (no-op)."
+  (with-isolated-config
+    (is (eq t (cl-tmux/config::%apply-run-shell-directive "run-shell" '()))
+        "run-shell with no args must be handled as a no-op (T)")))
+
+(test run-shell-handler-multiword-command-joined
+  "%apply-run-shell-directive joins multi-word command tokens after the flag (T)."
+  (with-isolated-config
+    (is (eq t (cl-tmux/config::%apply-run-shell-directive
+               "run-shell" '("-b" "echo" "hello" "world")))
+        "run-shell -b echo hello world must join and be handled (T)")))
+
+;;; ── %expand-leading-tilde ──────────────────────────────────────────────────
+
+(test expand-leading-tilde-expands-tilde-slash
+  "%expand-leading-tilde replaces a leading '~/' with $HOME, and leaves absolute
+   and relative paths unchanged."
+  (let ((home (or (ignore-errors (sb-ext:posix-getenv "HOME")) "~")))
+    (is (string= (concatenate 'string home "/x")
+                 (cl-tmux/config::%expand-leading-tilde "~/x"))
+        "~/x must expand to $HOME/x")
+    (is (string= "/abs" (cl-tmux/config::%expand-leading-tilde "/abs"))
+        "an absolute path must pass through unchanged")
+    (is (string= "rel" (cl-tmux/config::%expand-leading-tilde "rel"))
+        "a relative path must pass through unchanged")))
+
+(test expand-leading-tilde-leaves-non-tilde-slash-unchanged
+  "%expand-leading-tilde only expands a leading '~/'; every other form passes
+   through unchanged (bare ~, exact ~/, ~user, embedded ~)."
+  (is (string= "~" (cl-tmux/config::%expand-leading-tilde "~"))
+      "bare ~ (length 1, below the >2 guard) is unchanged")
+  (is (string= "~/" (cl-tmux/config::%expand-leading-tilde "~/"))
+      "exact ~/ (length 2, below the >2 guard) is unchanged")
+  (is (string= "~user" (cl-tmux/config::%expand-leading-tilde "~user"))
+      "~user is unchanged (only ~/ is expanded)")
+  (is (string= "a/~/b" (cl-tmux/config::%expand-leading-tilde "a/~/b"))
+      "an embedded ~ (not leading) is unchanged"))
+
+(test expand-leading-tilde-expands-full-tpm-path
+  "%expand-leading-tilde expands the real tpm path '~/.tmux/plugins/tpm/tpm'."
+  (let ((home (or (ignore-errors (sb-ext:posix-getenv "HOME")) "~")))
+    (is (string= (concatenate 'string home "/.tmux/plugins/tpm/tpm")
+                 (cl-tmux/config::%expand-leading-tilde "~/.tmux/plugins/tpm/tpm"))
+        "the full tpm path must expand its leading ~/ to $HOME")))
+
 ;;; ── %if / %else / %endif preprocessor ───────────────────────────────────
 
 (test if-else-endif-truthy-condition

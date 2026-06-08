@@ -272,6 +272,21 @@
         (when fn
           (ignore-errors (funcall fn name value 1)))))))
 
+;;; ── run-shell tilde expansion helper ─────────────────────────────────────────
+
+(defun %expand-leading-tilde (cmd)
+  "Expand a leading \"~/\" in CMD to \"$HOME/\" using the HOME environment
+   variable, so `run '~/.tmux/plugins/tpm/tpm'` resolves to the user's home.
+   Leaves absolute (\"/abs\") and relative (\"rel\") strings unchanged.  Pure
+   string transformation: returns CMD unchanged when it does not begin with ~/."
+  (if (and (> (length cmd) 2)
+           (char= (char cmd 0) #\~)
+           (char= (char cmd 1) #\/))
+      (concatenate 'string
+                   (or (ignore-errors (sb-ext:posix-getenv "HOME")) "~")
+                   (subseq cmd 1))
+      cmd))
+
 ;;; ── Declarative directive dispatch macro ──────────────────────────────────
 
 (defmacro define-config-directives (&rest rules)
@@ -531,32 +546,10 @@
   ("source" 1 (path)
     (ignore-errors (load-config-file (pathname path)))
     t)
-  ("run-shell" 1 (cmd)
-    ;; Expand leading ~/ to $HOME so run '~/.tmux/plugins/tpm/tpm' works.
-    (let ((expanded (if (and (> (length cmd) 2)
-                             (char= (char cmd 0) #\~)
-                             (char= (char cmd 1) #\/))
-                        (concatenate 'string
-                                     (or (ignore-errors (sb-ext:posix-getenv "HOME")) "~")
-                                     (subseq cmd 1))
-                        cmd)))
-      (ignore-errors
-        (uiop:run-program (list "/bin/sh" "-c" expanded)
-                          :ignore-error-status t)))
-    t)
-  ("run" 1 (cmd)
-    ;; Expand leading ~/ to $HOME so run '~/.tmux/plugins/tpm/tpm' works.
-    (let ((expanded (if (and (> (length cmd) 2)
-                             (char= (char cmd 0) #\~)
-                             (char= (char cmd 1) #\/))
-                        (concatenate 'string
-                                     (or (ignore-errors (sb-ext:posix-getenv "HOME")) "~")
-                                     (subseq cmd 1))
-                        cmd)))
-      (ignore-errors
-        (uiop:run-program (list "/bin/sh" "-c" expanded)
-                          :ignore-error-status t)))
-    t)
+  ;; NOTE: run-shell/run are handled entirely by %apply-run-shell-directive
+  ;; (wired into apply-config-directive before this fixed-arity table), which
+  ;; covers the bare 1-arg form as well as the flag-bearing forms.  No fixed-
+  ;; arity entries are needed here.
   ;; set-environment / setenv 2-arg form: VAR VALUE (no flags).
   ;; The %apply-set-environment-directive handler in apply-config-directive
   ;; intercepts this first (handling -r/-g flags); these entries are fallbacks.
@@ -841,11 +834,64 @@
          (subseq value (1+ eq-pos)))
         t))))
 
+;;; ── run-shell / run flag handling (run-shell -b/-t/-d/-C 'cmd') ──────────────
+;;;
+;;; The fixed-arity table only matches the bare 1-arg form `run-shell 'cmd'`, so
+;;; the common real-world `run-shell -b 'cmd'` / `run -b '~/.tmux/...'` forms
+;;; (with leading flags) silently failed.  This handler strips leading flags
+;;; before the fixed-arity table and runs whatever shell command remains.
+
+(defun %apply-run-shell-directive (cmd args)
+  "Handle 'run-shell [-b] [-C] [-t target] [-d delay] shell-command' directives
+   (alias 'run').  Consumes leading flags:
+     -b           run in background (boolean; we run synchronously regardless)
+     -C           run a tmux command instead of a shell command (boolean)
+     -t <target>  target pane (takes the next token as its value)
+     -d <delay>   delay (takes the next token as its value)
+   Unknown leading -X flags: a single bare flag token is skipped to stay
+   tolerant.  Stops at the first non-flag token; that token plus any remaining
+   tokens (joined by spaces) form the shell command.
+   Returns T when CMD is run-shell/run (handled), NIL otherwise."
+  (when (member cmd '("run-shell" "run") :test #'string=)
+    (let ((tmux-command-p nil)
+          (remaining      args))
+      ;; Consume leading flag tokens.
+      (loop while (and remaining
+                       (let ((tok (first remaining)))
+                         (and (>= (length tok) 1) (char= (char tok 0) #\-))))
+            do (let ((tok (pop remaining)))
+                 (cond
+                   ((string= tok "-C") (setf tmux-command-p t))
+                   ((string= tok "-b")) ; background flag, no argument
+                   ((or (string= tok "-t") (string= tok "-d"))
+                    ;; These flags take the next token as their value.
+                    (when remaining (pop remaining)))
+                   ;; Unknown bare -X flag: skip the single flag token only.
+                   (t nil))))
+      ;; Remaining tokens (joined) form the shell command.
+      (let ((command (when remaining
+                       (format nil "~{~A~^ ~}" remaining))))
+        (cond
+          ;; No command after flags: a flag-only invocation is a no-op but handled.
+          ((null command) t)
+          ;; -C: run a tmux command, not a shell command.  Wiring tmux-command
+          ;; execution here is out of scope; treat as handled/no-op for now.
+          (tmux-command-p t)
+          ;; Shell command: run it the same way the fixed-arity entries do.
+          (t
+           (let ((expanded (%expand-leading-tilde command)))
+             (ignore-errors
+               ;; :timeout guards against a hanging run-shell command blocking
+               ;; config loading (mirrors %expand-paren in format.lisp).
+               (uiop:run-program (list "/bin/sh" "-c" expanded)
+                                 :ignore-error-status t :timeout 2)))
+           t))))))
+
 (defun apply-config-directive (tokens)
   "Apply one parsed config directive (list of string TOKENS) to live state.
    Returns T when applied, NIL for an unknown/invalid directive.
    Handles bind/unbind, set-hook, set[-g|-a|-s|-u|...], set-environment [-r],
-   if-shell, and the fixed-arity directive table."
+   if-shell, run-shell/run [-b|-C|-t|-d], and the fixed-arity directive table."
   (when tokens
     (let ((cmd  (first tokens))
           (args (rest tokens)))
@@ -854,6 +900,7 @@
           (%apply-set-environment-directive cmd args)
           (%apply-set-directive cmd args)
           (%apply-set-hook-directive cmd args)
+          (%apply-run-shell-directive cmd args)
           (%apply-config-directive-inner tokens)))))
 
 (defun apply-config-line (line)

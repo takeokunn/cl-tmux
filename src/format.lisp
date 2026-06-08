@@ -113,6 +113,7 @@
 ;;;   #{b:pane_current_path} basename (final path component)
 ;;;   #{d:pane_current_path} dirname  (everything before the final component)
 ;;;   #{s/foo/bar/:window_name} substitute foo→bar (append i for case-insensitive)
+;;;   #{a:35}             the character whose code is 35 ('#')
 ;;; We support that flat (single-modifier, non-nested) subset.  The variable
 ;;; part is resolved through the normal context lookup before the modifier runs.
 
@@ -453,6 +454,22 @@
                          (test-str (expand-format
                                     (if comma (subseq rest (1+ comma)) "") context)))
                     (write-string (if (%glob-match-p pat-str test-str) "1" "0") out)))
+                 ;; #{a:N} — the single character whose character code is N.
+                 ;; A nested #{...} operand is expanded first so #{a:#{var}} works,
+                 ;; but a bare literal like 35 is parsed directly (NOT looked up as a
+                 ;; variable, which would treat "35" as a context var name and fail).
+                 ;; The parsed code is range-checked against char-code-limit; an
+                 ;; invalid code (nil, negative, or out of range) yields the empty
+                 ;; string.  Special-cased before %resolve-format-value's modifier
+                 ;; handling because REST is a NUMBER, like #{t:...} and #{m:...} above.
+                 ((string= mod "a")
+                  (let* ((n-str (if (search "#{" rest)
+                                    (expand-format rest context)
+                                    rest))
+                         (code  (parse-integer n-str :junk-allowed t))
+                         (ch    (and code (<= 0 code (1- char-code-limit))
+                                     (ignore-errors (code-char code)))))
+                    (when ch (write-string (string ch) out))))
                  ;; value modifiers (=N, b, d, U, L, l, pN, s///) on a resolved operand
                  (t
                   (let* ((value    (%resolve-format-value rest context))

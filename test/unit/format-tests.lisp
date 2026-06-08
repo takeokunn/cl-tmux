@@ -743,6 +743,42 @@
   (is (string= "a\\;b"  (fmt "#{q:p}" :p "a;b"))   "semicolon is escaped")
   (is (string= "plain"  (fmt "#{q:p}" :p "plain")) "ordinary text is unchanged"))
 
+(test format-modifier-char-from-code
+  "#{a:N} yields the single character whose character code is N."
+  (is (string= "#" (fmt "#{a:35}"))  "code 35 is '#'")
+  (is (string= "A" (fmt "#{a:65}"))  "code 65 is 'A'")
+  (is (string= "a" (fmt "#{a:97}"))  "code 97 is 'a'")
+  (is (string= "B" (fmt "#{a:#{code}}" :code "66"))
+      "operand may be a nested format resolving to a number")
+  (is (string= "" (fmt "#{a:notanumber}"))
+      "a non-numeric operand yields the empty string"))
+
+(test format-modifier-char-from-code-zero-is-nul
+  "#{a:0} yields a length-1 string whose char is #\\Nul."
+  (let ((result (fmt "#{a:0}")))
+    (is (= 1 (length result)))
+    (is (char= #\Nul (char result 0)))))
+
+(test format-modifier-char-from-code-negative-yields-empty
+  "#{a:-1} (negative code) yields the empty string."
+  (is (string= "" (fmt "#{a:-1}"))))
+
+(test format-modifier-char-from-code-out-of-range-yields-empty
+  "#{a:9999999} (beyond char-code-limit) yields the empty string."
+  (is (string= "" (fmt "#{a:9999999}"))))
+
+(test format-modifier-char-from-code-large-valid-unicode
+  "#{a:955} yields the Greek small letter lambda."
+  (is (string= (string (code-char 955)) (fmt "#{a:955}"))))
+
+(test format-modifier-char-from-code-empty-operand-yields-empty
+  "#{a:} (empty operand) yields the empty string."
+  (is (string= "" (fmt "#{a:}"))))
+
+(test format-modifier-char-from-code-nested-empty-operand-yields-empty
+  "#{a:#{missing}} (nested operand resolving to empty) yields the empty string."
+  (is (string= "" (fmt "#{a:#{missing}}"))))
+
 (test format-modifier-basename
   "#{b:var} yields the final path component of the resolved value."
   (is (string= "project"
