@@ -63,6 +63,36 @@
       (cl-tmux::dispatch-command s :prev-window nil)
       (is (eq (second (session-windows s)) (session-active-window s))))))
 
+(test notify-pane-focus-fires-focus-hooks
+  "%notify-pane-focus fires pane-focus-in / pane-focus-out independent of ?1004."
+  (with-isolated-hooks
+    (let* ((s        (make-fake-session :nwindows 1 :npanes 1))
+           (pane     (session-active-pane s))
+           (in-fired nil) (out-fired nil))
+      (cl-tmux/hooks:add-hook "pane-focus-in"
+                              (lambda (&rest _) (declare (ignore _)) (setf in-fired t)))
+      (cl-tmux/hooks:add-hook "pane-focus-out"
+                              (lambda (&rest _) (declare (ignore _)) (setf out-fired t)))
+      (cl-tmux::%notify-pane-focus pane t)
+      (is-true in-fired "focus-in hook fires on focus gain")
+      (cl-tmux::%notify-pane-focus pane nil)
+      (is-true out-fired "focus-out hook fires on focus loss"))))
+
+(test select-pane-with-focus-fires-out-then-in
+  "Switching panes fires focus-out for the old pane and focus-in for the new."
+  (with-isolated-hooks
+    (let* ((s         (make-fake-session :nwindows 1 :npanes 2))
+           (win       (session-active-window s))
+           (panes     (window-panes win))
+           (in-count 0) (out-count 0))
+      (cl-tmux/hooks:add-hook "pane-focus-in"
+                              (lambda (&rest _) (declare (ignore _)) (incf in-count)))
+      (cl-tmux/hooks:add-hook "pane-focus-out"
+                              (lambda (&rest _) (declare (ignore _)) (incf out-count)))
+      (cl-tmux::%select-pane-with-focus win (second panes))
+      (is (= 1 out-count) "focus-out fires once (old pane)")
+      (is (= 1 in-count)  "focus-in fires once (new pane)"))))
+
 (test run-command-tokens-abbrev-next-dispatches
   "%run-command-tokens resolves the tmux abbreviation 'next' (no-arg named-table
    path) to :next-window."

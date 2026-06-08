@@ -587,6 +587,8 @@
    #:+hook-alert-bell+
    #:+hook-alert-activity+
    #:+hook-alert-silence+
+   #:+hook-pane-focus-in+
+   #:+hook-pane-focus-out+
    ;; Registry and dispatch
    #:*hook-registry*
    #:add-hook

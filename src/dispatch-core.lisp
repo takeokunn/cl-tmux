@@ -88,8 +88,17 @@
 ;;; fd, so panes without a PTY (fd <= 0, e.g. in tests) are a harmless no-op.
 
 (defun %notify-pane-focus (pane focused-p)
-  "Send PANE's application its focus-tracking report (ESC[I gained / ESC[O lost)
-   when it enabled focus events and PANE has a live PTY.  A safe no-op otherwise."
+  "Notify PANE of a focus change: fire the pane-focus-in / pane-focus-out hook
+   (independent of ?1004), then send the application its focus-tracking report
+   (ESC[I gained / ESC[O lost) when it enabled focus events and PANE has a live
+   PTY.  A safe no-op when PANE is NIL."
+  (when pane
+    ;; Hook fires on every focus transition, regardless of whether the app
+    ;; enabled ?1004 focus reporting (matches tmux's pane-focus-in/out hooks).
+    (cl-tmux/hooks:run-hooks (if focused-p
+                                 cl-tmux/hooks:+hook-pane-focus-in+
+                                 cl-tmux/hooks:+hook-pane-focus-out+)
+                             pane))
   (when (and pane (> (pane-fd pane) 0))
     (let ((seq (cl-tmux/terminal/actions:focus-event-report
                 (pane-screen pane) focused-p)))
