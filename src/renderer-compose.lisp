@@ -184,9 +184,13 @@
          (window      (session-active-window session))
          (panes       (when window (window-panes window)))
          (active-pane (session-active-pane session))
-         (status-on   (cl-tmux/options:get-option "status" t))
-         (status-pos  (cl-tmux/options:get-option "status-position" "bottom"))
-         (status-row  (if (equal status-pos "top") 0 (1- terminal-rows))))
+         ;; Status row count from the `status` option (0..5).  The pane layout
+         ;; reserves the matching count via cl-tmux/config:*status-height*, kept
+         ;; in sync by the `status` option's side-effect — so the bar and the
+         ;; pane area stay in lockstep in normal use.
+         (status-lines (status-line-count))
+         (status-on   (> status-lines 0))
+         (status-pos  (cl-tmux/options:get-option "status-position" "bottom")))
     (cursor-invisible buffer)
     (when (session-locked-p session)
       (render-lock-screen buffer terminal-rows terminal-cols)
@@ -199,8 +203,8 @@
         (%render-pane-border-status buffer pane session window)))
     (%render-overlay-layer buffer active-pane terminal-rows terminal-cols)
     (when status-on
-      (render-status-bar buffer session terminal-rows terminal-cols
-                         :status-row status-row))
+      (render-status-region buffer session terminal-rows terminal-cols
+                            status-lines status-pos))
     (%render-mouse-sequences buffer active-pane)
     ;; allow-passthrough: emit any DCS-passthrough sequences (images, nested tmux).
     (when panes (%render-passthrough buffer panes))

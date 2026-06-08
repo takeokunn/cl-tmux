@@ -309,3 +309,62 @@
     (format stream "~C[~Am" +esc+ sgr-code)
     (write-string line stream)
     (reset-attrs stream)))
+
+(defun render-extra-status-line (stream session terminal-cols row index)
+  "Render the INDEX-th extra status line (INDEX >= 1) at ROW from the option
+   status-format[INDEX], expanded against SESSION's format context and padded to
+   TERMINAL-COLS with the base status style.  An unset/blank status-format[INDEX]
+   draws a blank styled row (which is still required, since the pane area has
+   shrunk to leave this row to the status region)."
+  (let* ((fmt      (cl-tmux/options:get-option
+                    (format nil "status-format[~D]" index) ""))
+         (sgr-code (%status-sgr-from-style
+                    (cl-tmux/options:get-option "status-style" "")))
+         (context  (cl-tmux/format:format-context-from-session
+                    session (session-active-window session)
+                    (session-active-pane session)
+                    :client-width terminal-cols))
+         (text     (if (and (stringp fmt) (plusp (length fmt)))
+                       (%status-expand-style-blocks
+                        (handler-case (cl-tmux/format:expand-format fmt context)
+                          (error () fmt))
+                        sgr-code)
+                       ""))
+         (line     (%status-justify-line text "" terminal-cols "left")))
+    (move-to stream row 0)
+    (format stream "~C[~Am" +esc+ sgr-code)
+    (write-string line stream)
+    (reset-attrs stream)))
+
+(defun status-line-count ()
+  "Number of status rows requested by the `status` option, 0..5.
+   off/false/0/nil → 0; an explicit positive integer N → min(N,5) (tmux caps at
+   5); any other truthy value (on/t) → 1.  This is the renderer's source of truth
+   for how many status rows to draw; the pane layout reserves the matching count
+   via cl-tmux/config:*status-height* (kept in sync by the `status` side-effect)."
+  (let ((v (cl-tmux/options:get-option "status" t)))
+    (cond
+      ((null v) 0)
+      ((integerp v) (max 0 (min v 5)))
+      ((stringp v)
+       (cond
+         ((member v '("off" "false" "0") :test #'equal) 0)
+         (t (let ((n (parse-integer v :junk-allowed t)))
+              (cond ((and n (> n 0)) (min n 5))
+                    (n 0)        ; parsed to <= 0
+                    (t 1))))))   ; non-numeric truthy string (e.g. "on")
+      (t 1))))                   ; T or any other truthy value
+
+(defun render-status-region (stream session terminal-rows terminal-cols lines position)
+  "Render a LINES-row status region.  The main bar (status-left, the window
+   list, and status-right) is drawn on the outer edge — the bottom-most row when
+   POSITION is \"bottom\" (the default), the top-most row when \"top\" — matching
+   the single-line layout.  Additional rows render status-format[1..LINES-1]
+   stacked inward from the main bar."
+  (let* ((bottom-p (not (equal position "top")))
+         (main-row (if bottom-p (1- terminal-rows) 0)))
+    (render-status-bar stream session terminal-rows terminal-cols
+                       :status-row main-row)
+    (loop for index from 1 below lines
+          for row = (if bottom-p (- main-row index) (+ main-row index))
+          do (render-extra-status-line stream session terminal-cols row index))))

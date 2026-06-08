@@ -682,17 +682,16 @@
        (setf *default-shell* value)))
     ;; status: off/on or a line count (tmux accepts 2..5 for a multi-line bar).
     ;; off/false/0 hides the bar; on/true or any positive integer shows it.
-    ;; Multi-line rendering (status-format[0..N]) is not yet implemented, so a
-    ;; line count >= 2 currently renders as a single-line bar — but it correctly
-    ;; SHOWS the bar instead of the previous behaviour where `status 2` (any value
-    ;; not literally "on"/"true"/"1") silently DISABLED the status bar.
+    ;; status: off/false/0 hides the bar; on/true shows 1 line; a numeric line
+    ;; count 1..5 reserves that many rows (tmux caps at 5).  The renderer draws
+    ;; the main bar on the outer line and status-format[1..N-1] on the rest.
     ((string= name "status")
      (let* ((off-p (member value '("off" "false" "0") :test #'equal))
             (n     (parse-integer value :junk-allowed t)))
        (setf *status-height*
              (cond (off-p 0)
-                   ((and n (> n 0)) 1)     ; numeric line count → show (1 line for now)
-                   (t 1)))))               ; on/true/other truthy → show
+                   ((and n (> n 0)) (min n 5))  ; numeric line count (tmux max 5)
+                   (t 1)))))                     ; on/true/other truthy → 1 line
     ;; mouse: on/off enables/disables mouse reporting on the outer terminal.
     ;; We call the renderer's mouse-reporting functions via symbol lookup to
     ;; avoid a compile-time circular dependency.

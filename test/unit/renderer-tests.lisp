@@ -832,6 +832,47 @@
       (is (search (format nil "~C[44;97m" #\Escape) out)
           "status=t must produce the status bar with blue background (got ~S)" out))))
 
+;;; ── multi-line status (status 2..5 + status-format[N]) ─────────────────────
+
+(test status-line-count-parses-option
+  "status-line-count maps the `status` option to a row count (0..5, tmux cap)."
+  (flet ((n (v) (with-isolated-options ("status" v)
+                  (cl-tmux/renderer::status-line-count))))
+    (is (= 0 (n nil))   "nil → 0")
+    (is (= 0 (n "off")) "off → 0")
+    (is (= 0 (n "0"))   "0 → 0")
+    (is (= 1 (n t))     "t → 1")
+    (is (= 1 (n "on"))  "on → 1")
+    (is (= 2 (n "2"))   "2 → 2")
+    (is (= 5 (n "5"))   "5 → 5")
+    (is (= 5 (n "9"))   "9 → 5 (capped at tmux maximum)")
+    (is (= 2 (n 2))     "integer 2 → 2")))
+
+(test render-session-multiline-status-shows-extra-line
+  "With status=2 and status-format[1] set, render-session-to-string renders the
+   extra status line's content; with status=1 it does not."
+  (let ((sess (make-test-session 20 5)))
+    (with-isolated-options ("status" "2" "status-format[1]" "EXTRALINE"
+                            "status-left" nil "status-right" nil "status-style" "")
+      (let ((out (render-session-to-string sess 8 20)))
+        (is (search "EXTRALINE" out)
+            "status=2 must render status-format[1] content (got ~S)" out)))
+    (with-isolated-options ("status" "1" "status-format[1]" "EXTRALINE"
+                            "status-left" nil "status-right" nil "status-style" "")
+      (let ((out (render-session-to-string sess 8 20)))
+        (is (null (search "EXTRALINE" out))
+            "status=1 must NOT render the extra status line (got ~S)" out)))))
+
+(test render-extra-status-line-blank-when-unset
+  "An extra status line with no status-format[N] set renders a blank styled row
+   (no crash, returns cleanly)."
+  (let ((sess (make-test-session 20 5)))
+    (with-isolated-options ("status" "3" "status-style" "")
+      (let ((out (render-session-to-string sess 8 20)))
+        ;; status=3 reserves three rows; rendering must succeed and produce output.
+        (is (stringp out) "multi-line status with unset formats must still render")
+        (is (plusp (length out)) "output must be non-empty")))))
+
 ;;; ── BEL rendering ────────────────────────────────────────────────────────────
 
 (test render-emits-bel-when-bell-pending

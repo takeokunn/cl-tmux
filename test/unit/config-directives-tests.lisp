@@ -562,12 +562,16 @@
 ;;; status option: off / on / line-count parsing → *status-height*
 
 (test set-status-numeric-shows-bar
-  "`set -g status 2` shows the status bar (height 1) instead of silently
-   disabling it.  The previous code treated any value != on/true/1 as OFF."
+  "`set -g status 2` reserves two status rows (multi-line); the count is clamped
+   to tmux's maximum of 5."
   (with-isolated-config
     (cl-tmux/config:apply-config-directive '("set" "-g" "status" "2"))
-    (is (= 1 cl-tmux/config:*status-height*)
-        "status 2 must show the bar (height 1; multi-line render deferred)")))
+    (is (= 2 cl-tmux/config:*status-height*)
+        "status 2 must reserve 2 rows")
+    (cl-tmux/config:apply-config-directive '("set" "-g" "status" "5"))
+    (is (= 5 cl-tmux/config:*status-height*) "status 5 → 5 rows")
+    (cl-tmux/config:apply-config-directive '("set" "-g" "status" "9"))
+    (is (= 5 cl-tmux/config:*status-height*) "status 9 → clamped to 5 rows")))
 
 (test set-status-off-hides-bar
   "`set -g status off` (and 0/false) hides the status bar (height 0)."
