@@ -185,7 +185,7 @@
   ;; ── Standard ESC sequences ───────────────────────────────────────────────
   (#x5B  (make-csi-k '() nil nil))                ; ESC [ → CSI
   (#x5D  #'osc-state)                              ; ESC ] → OSC
-  (#x50  (make-dcs-k))                             ; ESC P → DCS (consume silently)
+  (#x50  (make-dcs-k))                             ; ESC P → DCS (tmux passthrough or discard)
   (#x4D  (cursor-ri screen)    #'ground-state)    ; ESC M → RI
   (#x63  (ris-action screen)   #'ground-state)    ; ESC c → RIS
   (#x37  (save-cursor screen)    #'ground-state)  ; ESC 7 → DECSC
@@ -231,36 +231,77 @@
 
 ;;; DCS (Device Control String) accumulator.
 ;;; ESC P introduces a DCS; collect bytes until ESC \ (ST).
-;;; For now: consume silently (pass-through no-op).
+;;;
+;;; The tmux passthrough sequence is \ePtmux;<payload>\e\\ where every ESC in
+;;; the inner <payload> is DOUBLED (\e\e).  When the payload begins with the
+;;; bytes "tmux;", we accumulate the rest, un-double the ESCs, and push the
+;;; inner sequence onto the screen's passthrough-queue for the renderer to emit
+;;; to the OUTER terminal (tmux-in-tmux, iTerm2/kitty inline images).  Any other
+;;; DCS (e.g. Sixel) is consumed and discarded as before.
 ;;;
 ;;; make-dcs-st-k is the bridge state waiting for the backslash of ESC \ after
-;;; an ESC byte seen inside a DCS payload.  This is symmetric with make-osc-st-k
-;;; which plays the same role for OSC payloads.
+;;; an ESC byte seen inside a DCS payload.  This is symmetric with make-osc-st-k.
 
-(defun make-dcs-st-k ()
-  "Return a continuation waiting for the backslash of ESC \\ (String Terminator)
-   inside a DCS sequence.  On backslash: return ground-state.  On any other byte:
-   resume consuming the DCS payload (re-dispatch via make-dcs-k)."
+(defconstant +dcs-max-payload+ 1048576
+  "Maximum DCS passthrough payload bytes buffered (1 MiB).  Beyond this the
+   payload is truncated — a safety bound against a runaway/malformed stream.")
+
+(defun %dcs-tmux-prefix-p (buffer)
+  "T when BUFFER begins with the ASCII bytes for \"tmux;\" (the passthrough tag)."
+  (and (>= (fill-pointer buffer) 5)
+       (= (aref buffer 0) 116)   ; t
+       (= (aref buffer 1) 109)   ; m
+       (= (aref buffer 2) 117)   ; u
+       (= (aref buffer 3) 120)   ; x
+       (= (aref buffer 4) 59)))  ; ;
+
+(defun %finish-dcs (screen buffer)
+  "Process a completed DCS payload in BUFFER (ESCs already un-doubled).
+   When it is a tmux passthrough payload (\"tmux;<inner>\"), push the inner
+   sequence string onto SCREEN's passthrough-queue.  Otherwise discard."
+  (when (%dcs-tmux-prefix-p buffer)
+    (let ((inner (map 'string #'code-char (subseq buffer 5))))
+      (push inner (screen-passthrough-queue screen)))))
+
+(defun %dcs-accumulate (buffer byte)
+  "Append BYTE to BUFFER unless the payload cap is reached (truncate silently)."
+  (when (< (fill-pointer buffer) +dcs-max-payload+)
+    (vector-push-extend byte buffer)))
+
+(defun make-dcs-st-k (buffer)
+  "Bridge state after an ESC inside a DCS payload (BUFFER accumulated so far).
+   On backslash: ST confirmed — finish the DCS and return to ground.
+   On ESC: a doubled ESC (\\e\\e) — append ONE literal ESC and keep accumulating.
+   On any other byte: lenient — append ESC then re-dispatch the byte."
   (lambda (screen byte)
-    (declare (type screen screen) (type (unsigned-byte 8) byte)
-             (ignorable screen))
-    (if (= byte #x5C)            ; backslash = ST confirmed
-        #'ground-state
-        ;; Not ST — keep consuming the DCS payload
-        (funcall (make-dcs-k) screen byte))))
+    (declare (type screen screen) (type (unsigned-byte 8) byte))
+    (cond
+      ((= byte #x5C)               ; backslash = ST confirmed
+       (%finish-dcs screen buffer)
+       #'ground-state)
+      ((= byte #x1B)               ; doubled ESC → one literal ESC in payload
+       (%dcs-accumulate buffer #x1B)
+       (make-dcs-k buffer))
+      (t                           ; malformed: keep the ESC, re-process byte
+       (%dcs-accumulate buffer #x1B)
+       (funcall (make-dcs-k buffer) screen byte)))))
 
-(defun make-dcs-k ()
-  "Return a continuation that consumes DCS payload bytes until ST (ESC \\).
+(defun make-dcs-k (&optional buffer)
+  "Return a continuation that accumulates DCS payload bytes into BUFFER until
+   ST (ESC \\).  Allocates a fresh adjustable buffer when none is supplied.
    On ESC (#x1B): transition to make-dcs-st-k to await the backslash.
-   On all other bytes: continue consuming via a fresh make-dcs-k continuation."
-  (lambda (screen byte)
-    (declare (type screen screen) (type (unsigned-byte 8) byte)
-             (ignorable screen))
-    (if (= byte #x1B)
-        ;; Possible ESC \ ST — wait for backslash
-        (make-dcs-st-k)
-        ;; Continue consuming DCS payload bytes
-        (make-dcs-k))))
+   On all other bytes: accumulate (capped) and continue."
+  (let ((buf (or buffer (make-array 64 :element-type '(unsigned-byte 8)
+                                       :fill-pointer 0 :adjustable t))))
+    (lambda (screen byte)
+      (declare (type screen screen) (type (unsigned-byte 8) byte)
+               (ignorable screen))
+      (if (= byte #x1B)
+          ;; Possible ESC \ ST or doubled ESC — hand off to the bridge state.
+          (make-dcs-st-k buf)
+          ;; Accumulate payload byte (so the tmux; prefix + inner can be parsed).
+          (progn (%dcs-accumulate buf byte)
+                 (make-dcs-k buf))))))
 
 (defun make-charset-designator-k (g)
   "Return a CPS state that consumes one charset DESIGNATOR byte and designates

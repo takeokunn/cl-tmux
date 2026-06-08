@@ -212,6 +212,7 @@
    #:screen-tab-stops
    ;; Response queue for DA1/DA2 and similar replies
    #:screen-response-queue
+   #:screen-passthrough-queue
    ;; Grid helpers
    #:screen-cell
    #:screen-clear-dirty
@@ -396,6 +397,7 @@
    #:screen-cur-ul-color
    ;; Response queue
    #:screen-response-queue
+   #:screen-passthrough-queue
    ;; Combining char predicate
    #:combining-char-p
    ;; BEL pending flag

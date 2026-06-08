@@ -105,6 +105,12 @@
   ;; this and writes the bytes to the master fd.  A list is used as a simple
   ;; FIFO: new entries are pushed to the front (nreverse to drain in order).
   (response-queue nil :type list)
+  ;; Passthrough buffer: a list of strings the pane emitted via the tmux DCS
+  ;; passthrough sequence (\ePtmux;...\e\\) for the OUTER terminal (not the PTY).
+  ;; Used for tmux-in-tmux and image protocols (iTerm2 \e]1337, kitty graphics).
+  ;; The renderer drains this and writes to the outer terminal when the
+  ;; allow-passthrough option is enabled.  FIFO: push front, nreverse to drain.
+  (passthrough-queue nil :type list)
   ;; BEL (0x07) pending: set to T when the emulator receives a BEL byte.
   ;; The renderer emits an outer-terminal BEL on the next frame and clears the flag.
   (bell-pending nil :type boolean)

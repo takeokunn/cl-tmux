@@ -158,6 +158,25 @@
     (when active-pane
       (set-cursor-shape buffer (screen-cursor-shape (pane-screen active-pane))))))
 
+(defun %render-passthrough (buffer panes)
+  "Drain each pane's passthrough-queue and emit the inner sequences to BUFFER
+   (the outer terminal), oldest-first.  Gated on the allow-passthrough option:
+   when 'off' (default) the queue is cleared without emitting; when 'on'/'all'
+   the sequences are written through so tmux-in-tmux and iTerm2/kitty inline
+   images reach the real terminal.  Drains under the screen lock since reader
+   threads push to the queue concurrently."
+  (let* ((mode  (or (cl-tmux/options:get-option "allow-passthrough" "off") "off"))
+         (emit  (member mode '("on" "all") :test #'string=)))
+    (dolist (pane panes)
+      (let ((screen (pane-screen pane)))
+        (when screen
+          (with-lock-held ((screen-lock screen))
+            (let ((queued (nreverse (screen-passthrough-queue screen))))
+              (setf (screen-passthrough-queue screen) nil)
+              (when emit
+                (dolist (seq queued)
+                  (write-string seq buffer))))))))))
+
 (defun render-session-to-string (session terminal-rows terminal-cols)
   "Compose a full frame for SESSION as an escape-sequence string.
    Does not touch *standard-output*; suitable for unit-testing without a TTY."
@@ -183,6 +202,8 @@
       (render-status-bar buffer session terminal-rows terminal-cols
                          :status-row status-row))
     (%render-mouse-sequences buffer active-pane)
+    ;; allow-passthrough: emit any DCS-passthrough sequences (images, nested tmux).
+    (when panes (%render-passthrough buffer panes))
     (%render-bell-and-cursor buffer active-pane)
     ;; set-titles: emit OSC 0 to set the outer terminal window title.
     (when (cl-tmux/options:get-option "set-titles")
