@@ -2426,6 +2426,38 @@
       (is (string= "new" hook-name)
           "hook name argument must equal the new name"))))
 
+(test rename-window-fires-window-renamed-hook
+  "rename-window also fires +hook-window-renamed+ (tmux's window-renamed hook)."
+  (with-isolated-hooks
+    (let ((fired nil))
+      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-window-renamed+
+                              (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+      (let ((win (make-window :id 1 :name "old" :width 20 :height 5 :panes nil)))
+        (rename-window win "new"))
+      (is-true fired "window-renamed hook must fire on rename"))))
+
+(test cmd-rename-session-fires-session-renamed-hook
+  "%cmd-rename-session fires +hook-session-renamed+."
+  (with-isolated-hooks
+    (let ((cl-tmux::*server-sessions* nil)
+          (s (make-fake-session :nwindows 1))
+          (fired nil))
+      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-session-renamed+
+                              (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+      (cl-tmux::%cmd-rename-session s '("newname"))
+      (is-true fired "session-renamed hook must fire on rename-session"))))
+
+(test cmd-select-pane-fires-after-select-pane-hook
+  "%cmd-select-pane fires +hook-after-select-pane+ regardless of which form it took."
+  (with-isolated-hooks
+    (let ((s (make-fake-session :nwindows 1 :npanes 2))
+          (fired nil))
+      (with-loop-state
+        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-select-pane+
+                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+        (cl-tmux::%cmd-select-pane s '("-m"))
+        (is-true fired "after-select-pane hook must fire")))))
+
 ;;; ── copy-mode-begin-line-selection: multi-row window ────────────────────────
 
 (test copy-mode-begin-line-selection-selects-correct-width

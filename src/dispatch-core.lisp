@@ -937,7 +937,8 @@
     (unless (string= new-name "")
       (server-remove-session (session-name session))
       (rename-session session new-name)
-      (server-add-session session))))
+      (server-add-session session)
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-renamed+ session))))
 
 ;;; -- Flag parser (-t target, boolean flags) ----------------------------------
 ;;;
@@ -1093,7 +1094,10 @@
               (win    (session-active-window session)))
          (when (and n win)
            (let ((pane (find n (window-panes win) :key #'pane-id)))
-             (when pane (%select-pane-with-focus win pane)))))))))
+             (when pane (%select-pane-with-focus win pane))))))))
+  ;; after-select-pane fires once after the select-pane command, regardless of
+  ;; which form (-L/-R/.../-t/-T/-m) it took.
+  (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-pane+ session))
 
 (defun %cmd-kill-window (session args)
   "kill-window [-a] [-t target]: kill a window or all windows except the current.

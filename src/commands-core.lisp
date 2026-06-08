@@ -101,7 +101,8 @@
     ;; name stays stable regardless of which process runs in the pane.
     ;; (The user can re-enable with `set-option -w automatic-rename on`.)
     (setf (window-automatic-rename-p window) nil)
-    (run-hooks +hook-after-rename-window+ window name)))
+    (run-hooks +hook-after-rename-window+ window name)
+    (run-hooks +hook-window-renamed+ window name)))
 
 (defun rename-session (session name)
   "Set SESSION's name to NAME."

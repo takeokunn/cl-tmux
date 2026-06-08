@@ -46,7 +46,10 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
   (+hook-alert-activity+         "alert-activity"         "Fired when monitor-activity detects activity in a window")
   (+hook-alert-silence+          "alert-silence"          "Fired when monitor-silence detects silence in a window")
   (+hook-pane-focus-in+          "pane-focus-in"          "Fired when a pane gains focus")
-  (+hook-pane-focus-out+         "pane-focus-out"         "Fired when a pane loses focus"))
+  (+hook-pane-focus-out+         "pane-focus-out"         "Fired when a pane loses focus")
+  (+hook-after-select-pane+      "after-select-pane"      "Fired after the select-pane command")
+  (+hook-window-renamed+         "window-renamed"         "Fired when a window is renamed")
+  (+hook-session-renamed+        "session-renamed"        "Fired when a session is renamed"))
 
 (defvar *hook-registry* (make-hash-table :test #'equal)
   "Maps event-name (string) to a list of callback functions.
