@@ -261,6 +261,8 @@
         (if byte
             (progn
               (setf idle-counter 0)
+              ;; Stamp last-activity-time so lock-after-time can measure idle.
+              (setf *last-activity-time* (get-universal-time))
               (when (member (process-byte session byte state) '(:quit :detach))
                 (setf *running* nil)))
             (progn

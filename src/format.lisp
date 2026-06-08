@@ -839,6 +839,9 @@
          ;; (monitor-activity was triggered).  Cleared when the window is focused.
          (window-activity-flag
           (if (and window (cl-tmux/model:window-activity-flag window)) "#" " "))
+         ;; #{window_silence_flag}: "~" when monitor-silence threshold exceeded.
+         (window-silence-flag
+          (if (and window (cl-tmux/model:window-silence-flag window)) "~" " "))
          ;; #{window_start_flag} / #{window_end_flag}: "1" for first/last window
          ;; in the session list.  Used by themes for list-end decorators.
          (window-start-flag
@@ -939,6 +942,8 @@
           :window-bell-flag window-bell-flag
           ;; #{window_activity_flag}: "#" when monitor-activity was triggered.
           :window-activity-flag window-activity-flag
+          ;; #{window_silence_flag}: "~" when monitor-silence threshold exceeded.
+          :window-silence-flag window-silence-flag
           ;; #{window_start_flag} / #{window_end_flag}: first/last in session list.
           :window-start-flag window-start-flag
           :window-end-flag   window-end-flag

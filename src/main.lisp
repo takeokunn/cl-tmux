@@ -98,10 +98,15 @@
 
       (install-sigwinch-handler)
 
-      ;; Start the status-interval timer so the status bar refreshes
-      ;; periodically (e.g. the clock updates without requiring a keystroke).
+      ;; Initialise last-activity-time so lock-after-time doesn't fire immediately.
+      (setf *last-activity-time* (get-universal-time))
+      ;; Start the status-interval timer: status bar refresh, overlay dismiss,
+      ;; lock-after-time idle detection, and monitor-silence tracking.
       (setf *status-timer*
-            (start-status-timer (lambda () (setf *dirty* t))))
+            (start-status-timer
+             (lambda () (setf *dirty* t))
+             :session session
+             :server-sessions-fn (lambda () *server-sessions*)))
 
       (handler-case
           (with-raw-mode

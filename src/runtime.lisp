@@ -165,14 +165,19 @@
          (pipe-pane-write pane bytes))
        (pane-feed pane bytes)
        ;; monitor-activity: set the window's activity flag when bytes arrive
-       ;; in a background window (not the session-active window) and the
-       ;; monitor-activity option is enabled for that window.
+       ;; in a background window and monitor-activity is enabled.
+       ;; Also stamp last-output-time for monitor-silence and clear silence-flag
+       ;; (receiving output resets the silence timer for this window).
        (let ((win (cl-tmux/model:pane-window pane)))
-         (when (and win
-                    (cl-tmux/options:get-option "monitor-activity")
-                    (not (cl-tmux/model:window-activity-flag win)))
-           ;; Only flag non-active windows to avoid spurious alerts in the active window.
-           (setf (cl-tmux/model:window-activity-flag win) t)))
+         (when win
+           ;; Always update last-output-time (used by monitor-silence timer).
+           (setf (cl-tmux/model:window-last-output-time win) (get-universal-time))
+           ;; Clear silence flag: new output resets the silence state.
+           (setf (cl-tmux/model:window-silence-flag win) nil)
+           ;; Activity flag: only for non-active windows.
+           (when (and (cl-tmux/options:get-option "monitor-activity")
+                      (not (cl-tmux/model:window-activity-flag win)))
+             (setf (cl-tmux/model:window-activity-flag win) t))))
        (setf *dirty* t)
        #'reader-idle-state))))
 
@@ -253,14 +258,48 @@
         (cl-tmux/prompt:clear-overlay)
         t))))
 
-(defun start-status-timer (dirty-fn)
-  "Start a background thread that calls DIRTY-FN every status-interval seconds.
-   DIRTY-FN should mark the session dirty to trigger a status bar redraw.
-   The thread polls *running* at +status-timer-poll-seconds+ granularity and
-   accumulates elapsed time, firing DIRTY-FN once per status-interval, so it
-   exits within one poll tick of *running* clearing.
-   Also drives auto-dismiss of transient overlays per display-time option.
-   Returns the thread object."
+;;; *last-activity-time*: updated by process-byte on each keystroke; used by
+;;; lock-after-time to measure idle time.  Initialised to the startup time so
+;;; lock-after-time does not fire immediately on an idle session start.
+(defvar *last-activity-time* 0
+  "Universal-time of the most recent keypress.  Stamped in process-byte.")
+
+(defun %check-lock-after-time (session dirty-fn)
+  "Lock SESSION when lock-after-time seconds of keyboard idle have elapsed.
+   lock-after-time = 0 (default) disables the auto-lock.  A no-op when the
+   session is already locked."
+  (let ((lock-secs (cl-tmux/options:get-option "lock-after-time")))
+    (when (and (integerp lock-secs) (> lock-secs 0)
+               (not (cl-tmux/model:session-locked-p session)))
+      (when (>= (- (get-universal-time) *last-activity-time*) lock-secs)
+        (setf (cl-tmux/model:session-locked-p session) t)
+        (funcall dirty-fn)))))
+
+(defun %check-monitor-silence (sessions dirty-fn)
+  "For each window in SESSIONS with monitor-silence enabled, set
+   window-silence-flag when no PTY output has arrived for monitor-silence seconds.
+   monitor-silence = 0 (default) disables per-window silence monitoring."
+  (let ((silence-secs (cl-tmux/options:get-option "monitor-silence")))
+    (when (and (integerp silence-secs) (> silence-secs 0))
+      (let ((now (get-universal-time)))
+        (dolist (entry sessions)
+          (let ((sess (cdr entry)))
+            (dolist (win (cl-tmux/model:session-windows sess))
+              (let ((last-out (cl-tmux/model:window-last-output-time win)))
+                (when (and (> last-out 0)
+                           (not (cl-tmux/model:window-silence-flag win))
+                           (>= (- now last-out) silence-secs))
+                  (setf (cl-tmux/model:window-silence-flag win) t)
+                  (funcall dirty-fn))))))))))
+
+(defun start-status-timer (dirty-fn &key session server-sessions-fn)
+  "Start a background thread that drives periodic session maintenance:
+   - STATUS-INTERVAL: calls DIRTY-FN every N seconds to refresh the status bar.
+   - DISPLAY-TIME: auto-dismisses transient overlays after configured ms.
+   - LOCK-AFTER-TIME: locks SESSION after N seconds of keyboard inactivity.
+   - MONITOR-SILENCE: sets window-silence-flag after N seconds of PTY silence.
+   SESSION and SERVER-SESSIONS-FN are optional; lock/silence checks are skipped
+   when absent.  Returns the thread object."
   (make-thread
    (lambda ()
      (let ((elapsed 0))
@@ -269,8 +308,16 @@
                 (incf elapsed +status-timer-poll-seconds+)
                 ;; Auto-dismiss transient overlays after display-time ms.
                 (when (%maybe-auto-dismiss-overlay) (funcall dirty-fn))
+                ;; Status-interval: refresh the status bar.
                 (let ((interval (max 1 (cl-tmux/options:get-option "status-interval"))))
                   (when (and *running* (>= elapsed interval))
                     (setf elapsed 0)
-                    (funcall dirty-fn))))))
+                    (funcall dirty-fn)))
+                ;; lock-after-time: auto-lock on inactivity.
+                (when (and *running* session)
+                  (ignore-errors (%check-lock-after-time session dirty-fn)))
+                ;; monitor-silence: flag windows with no recent PTY output.
+                (when (and *running* server-sessions-fn)
+                  (ignore-errors
+                    (%check-monitor-silence (funcall server-sessions-fn) dirty-fn))))))
    :name "cl-tmux-status-timer"))

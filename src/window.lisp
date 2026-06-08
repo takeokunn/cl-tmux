@@ -24,6 +24,12 @@
   ;; set T when a non-active window receives PTY output and monitor-activity is on.
   ;; Cleared when the window is selected.
   (activity-flag nil :type boolean)
+  ;; Silence tracking for monitor-silence: universal-time of last PTY output.
+  ;; Updated by the reader thread; checked by the timer to detect long silences.
+  (last-output-time 0 :type integer)
+  ;; #{window_silence_flag}: set T when monitor-silence threshold is exceeded.
+  ;; Cleared when the window is selected or receives new output.
+  (silence-flag nil :type boolean)
   (lock (make-lock "window") :read-only t))
 
 (defun window-refresh-panes (window)
