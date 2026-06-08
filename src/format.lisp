@@ -204,6 +204,17 @@
          (incf start-p) (incf start-s))
         (t (return nil))))))
 
+(defun %regex-match-p (pattern string &optional ignore-case)
+  "Return T when STRING matches the regular expression PATTERN (via cl-ppcre).
+   IGNORE-CASE T compiles the pattern case-insensitively.  This backs the tmux
+   #{m/r:pattern,string} match modifier.  A malformed PATTERN yields NIL (no
+   match) rather than signaling — invalid regexes never break format expansion."
+  (handler-case
+      (let ((scanner (cl-ppcre:create-scanner pattern
+                                              :case-insensitive-mode ignore-case)))
+        (and (cl-ppcre:scan scanner string) t))
+    (error () nil)))
+
 (defun %apply-pad-modifier (mod value)
   "Apply a pN / p-N pad modifier to VALUE.  Returns a padded string or NIL.
    Positive N left-aligns VALUE in a field of N chars (space-fill on the right).
@@ -457,13 +468,23 @@
                  ;; #{m:pattern,string} — glob match; returns "1" (match) or "0".
                  ;; Split REST on the first TOP-LEVEL comma: left = pattern, right = string.
                  ;; Both sides are expanded as format strings before matching.
-                 ((string= mod "m")
+                 ;; #{m:pat,str} fnmatch glob; #{m/r:pat,str} regular expression
+                 ;; (with /ri for case-insensitive).  Both split REST on the first
+                 ;; top-level comma and expand each side before matching.
+                 ((and (plusp (length mod))
+                       (char= (char mod 0) #\m)
+                       (or (= (length mod) 1) (char= (char mod 1) #\/)))
                   (let* ((comma (%top-level-comma rest 0))
                          (pat-str  (expand-format
                                     (if comma (subseq rest 0 comma) rest) context))
                          (test-str (expand-format
-                                    (if comma (subseq rest (1+ comma)) "") context)))
-                    (write-string (if (%glob-match-p pat-str test-str) "1" "0") out)))
+                                    (if comma (subseq rest (1+ comma)) "") context))
+                         (regex-p  (and (> (length mod) 1) (find #\r mod :start 1)))
+                         (ci-p     (and (> (length mod) 1) (find #\i mod :start 1)))
+                         (matched  (if regex-p
+                                       (%regex-match-p pat-str test-str ci-p)
+                                       (%glob-match-p pat-str test-str))))
+                    (write-string (if matched "1" "0") out)))
                  ;; #{a:N} — the single character whose character code is N.
                  ;; A nested #{...} operand is expanded first so #{a:#{var}} works,
                  ;; but a bare literal like 35 is parsed directly (NOT looked up as a

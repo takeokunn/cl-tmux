@@ -17,6 +17,7 @@
           cffi             # C FFI
           bordeaux-threads # portable threads + locks
           babel            # string↔octet encoding
+          cl-ppcre         # Perl-compatible regular expressions (#{m/r:...})
         ];
         sbclWithDeps     = pkgs.sbcl.withPackages runtimeDeps;
         # Test build also needs the FiveAM test framework.

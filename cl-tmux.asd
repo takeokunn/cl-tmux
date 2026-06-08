@@ -5,7 +5,8 @@
   :license "MIT"
   :depends-on (:cffi           ; C foreign-function interface
                :bordeaux-threads ; portable threads + locks
-               :babel)           ; string↔octet encoding
+               :babel            ; string↔octet encoding
+               :cl-ppcre)        ; Perl-compatible regular expressions
   :components
   ((:module "src"
     :serial t

@@ -1157,6 +1157,44 @@
   "#{?#{m:*bash,bash},yes,no} → 'yes'."
   (is (string= "yes" (fmt "#{?#{m:*bash,bash},yes,no}"))))
 
+;;; ── Regex match #{m/r:pattern,string} (cl-ppcre) ─────────────────────────────
+
+(test format-regex-match-anchored
+  "#{m/r:^h.*o$,hello} → '1' (anchored regex matches the whole string)."
+  (is (string= "1" (fmt "#{m/r:^h.*o$,hello}"))))
+
+(test format-regex-match-substring
+  "#{m/r:ell,hello} → '1' (regex matches a substring, unlike anchored glob)."
+  (is (string= "1" (fmt "#{m/r:ell,hello}"))))
+
+(test format-regex-match-no-match
+  "#{m/r:^x,hello} → '0'."
+  (is (string= "0" (fmt "#{m/r:^x,hello}"))))
+
+(test format-regex-match-case-insensitive
+  "#{m/ri:HELLO,hello} → '1' (the i flag makes the regex case-insensitive)."
+  (is (string= "1" (fmt "#{m/ri:HELLO,hello}")))
+  (is (string= "0" (fmt "#{m/r:HELLO,hello}"))
+      "without i, the regex is case-sensitive → no match"))
+
+(test format-regex-match-malformed-pattern-is-zero
+  "A malformed regex yields '0' (no match), never an error."
+  (is (string= "0" (fmt "#{m/r:[,hello}"))))
+
+(test format-regex-match-character-class
+  "#{m/r:[0-9]+,abc123} → '1' (a regex feature glob cannot express)."
+  (is (string= "1" (fmt "#{m/r:[0-9]+,abc123}")))
+  (is (string= "0" (fmt "#{m/r:[0-9]+,abcdef}"))))
+
+(test format-regex-match-with-context-vars
+  "#{m/r:#{pat},#{val}} expands both operands before matching."
+  (is (string= "1" (fmt "#{m/r:#{pat},#{val}}" :pat "^a.c$" :val "abc"))))
+
+(test format-glob-still-works-after-regex-addition
+  "Plain #{m:...} glob is unaffected by the m/r regex branch."
+  (is (string= "1" (fmt "#{m:*bash,bash}")))
+  (is (string= "0" (fmt "#{m:*zsh*,bash}"))))
+
 ;;; ── New format context variables ─────────────────────────────────────────────
 
 (test format-context-session-id
