@@ -406,6 +406,34 @@
     (is (eq :next-window (lookup-key-binding (code-char 1)))
         "C-a must bind ^A (byte 1) in the prefix table")))
 
+(test bind-modifier-arrow-stores-canonical-string-key
+  "bind C-Up <cmd> stores the command under the string key \"C-Up\" in the
+   prefix table — the canonical key name the event loop reconstructs from the
+   ESC [ 1 ; 5 A wire sequence.  (Without this, modifier+arrow binds were dead.)"
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "C-Up" "next-window"))
+    (let ((entry (cl-tmux/config:key-table-lookup "prefix" "C-Up")))
+      (is (eq :next-window (cl-tmux/config:key-table-command entry))
+          "C-Up must bind under string key \"C-Up\" in the prefix table"))))
+
+(test bind-n-modifier-arrow-stores-in-root-table
+  "bind -n M-Left <cmd> stores under string key \"M-Left\" in the ROOT table so
+   a bare (no-prefix) Alt+Left fires it."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "-n" "M-Left" "next-window"))
+    (let ((entry (cl-tmux/config:key-table-lookup "root" "M-Left")))
+      (is (eq :next-window (cl-tmux/config:key-table-command entry))
+          "M-Left must bind under string key \"M-Left\" in the root table"))))
+
+(test bind-plain-arrow-stores-canonical-string-key
+  "bind Up <cmd> stores under string key \"Up\" in the prefix table, matching
+   the name reconstructed from the ESC [ A wire sequence."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "Up" "next-window"))
+    (let ((entry (cl-tmux/config:key-table-lookup "prefix" "Up")))
+      (is (eq :next-window (cl-tmux/config:key-table-command entry))
+          "Up must bind under string key \"Up\" in the prefix table"))))
+
 ;;; status option: off / on / line-count parsing → *status-height*
 
 (test set-status-numeric-shows-bar

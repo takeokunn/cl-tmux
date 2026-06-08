@@ -539,6 +539,125 @@
         (is (null (cl-tmux::process-byte s 2 state))
             "C-b C-b must dispatch :send-prefix and return NIL")))))
 
+;;; ── Modifier+arrow key-name helpers ────────────────────────────────────────
+
+(test arrow-final-name-maps-arrow-bytes
+  "%arrow-final-name returns the tmux base name for each arrow final byte."
+  (is (string= "Up"    (cl-tmux::%arrow-final-name 65)))
+  (is (string= "Down"  (cl-tmux::%arrow-final-name 66)))
+  (is (string= "Right" (cl-tmux::%arrow-final-name 67)))
+  (is (string= "Left"  (cl-tmux::%arrow-final-name 68))))
+
+(test arrow-final-name-returns-nil-for-non-arrows
+  "%arrow-final-name returns NIL for non-arrow final bytes."
+  (is (null (cl-tmux::%arrow-final-name 72)))   ; H = Home
+  (is (null (cl-tmux::%arrow-final-name 109)))) ; m = SGR final
+
+(test modifier-arrow-key-name-builds-canonical-names
+  "%modifier-arrow-key-name builds the exact strings %parse-key-token stores:
+   5=Ctrl→C-, 3=Meta→M-, 2=Shift→S-, combined with the arrow base name."
+  (is (string= "C-Up"    (cl-tmux::%modifier-arrow-key-name 53 65)))
+  (is (string= "M-Left"  (cl-tmux::%modifier-arrow-key-name 51 68)))
+  (is (string= "S-Down"  (cl-tmux::%modifier-arrow-key-name 50 66)))
+  (is (string= "C-Right" (cl-tmux::%modifier-arrow-key-name 53 67))))
+
+(test modifier-arrow-key-name-returns-nil-for-unknown
+  "%modifier-arrow-key-name returns NIL for an unknown modifier or non-arrow
+   final, so the caller forwards the sequence unchanged."
+  (is (null (cl-tmux::%modifier-arrow-key-name 53 72)))  ; Ctrl+Home — not arrow
+  (is (null (cl-tmux::%modifier-arrow-key-name 52 65)))) ; '4' (Shift+Alt) unmapped
+
+;;; ── Modifier+arrow binding override (bind C-Up / bind -n M-Left) ────────────
+
+(test prefix-c-up-binding-overrides-resize
+  "bind C-Up next-window makes C-b then Ctrl+Up (ESC [ 1 ; 5 A) run next-window
+   instead of the hardcoded resize-pane default."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "C-Up" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(2 27 91 49 59 53 65))  ; C-b ESC [ 1 ; 5 A
+            (cl-tmux::process-byte s b state))
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "bound C-Up must run next-window, not resize"))))))
+
+(test prefix-m-up-binding-overrides-resize
+  "bind M-Up next-window makes C-b then Alt+Up (ESC [ 1 ; 3 A) run next-window
+   instead of the hardcoded :resize-up default."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "M-Up" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(2 27 91 49 59 51 65))  ; C-b ESC [ 1 ; 3 A
+            (cl-tmux::process-byte s b state))
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "bound M-Up must run next-window, not resize"))))))
+
+(test prefix-plain-arrow-binding-overrides-select-pane
+  "bind Up next-window makes C-b Up (ESC [ A) run next-window instead of the
+   hardcoded :select-pane-up default."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "Up" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(2 27 91 65))  ; C-b ESC [ A
+            (cl-tmux::process-byte s b state))
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "bound Up must run next-window, not select-pane"))))))
+
+(test unbound-prefix-c-up-leaves-active-window
+  "With no C-Up binding, C-b Ctrl+Up takes the resize fallback and must NOT
+   change the active window (the override is purely additive)."
+  (with-isolated-config
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(2 27 91 49 59 53 65))  ; C-b ESC [ 1 ; 5 A
+            (cl-tmux::process-byte s b state))
+          (is (eq (first (session-windows s)) (session-active-window s))
+              "unbound C-Up must leave the first window active"))))))
+
+(test root-m-left-binding-fires-without-prefix
+  "bind -n M-Left next-window makes a bare Alt+Left (ESC [ 1 ; 3 D) run
+   next-window with no prefix — the root-table modifier+arrow path."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "-n" "M-Left" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(27 91 49 59 51 68))  ; ESC [ 1 ; 3 D  (no prefix)
+            (cl-tmux::process-byte s b state))
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "bound -n M-Left must run next-window at root"))))))
+
+(test root-c-up-binding-fires-without-prefix
+  "bind -n C-Up next-window makes a bare Ctrl+Up (ESC [ 1 ; 5 A) run
+   next-window with no prefix."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "-n" "C-Up" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(27 91 49 59 53 65))  ; ESC [ 1 ; 5 A  (no prefix)
+            (cl-tmux::process-byte s b state))
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "bound -n C-Up must run next-window at root"))))))
+
+(test unbound-root-c-up-leaves-active-window
+  "With no -n C-Up binding, a bare Ctrl+Up is forwarded to the pane and must
+   NOT change the active window."
+  (with-isolated-config
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(27 91 49 59 53 65))  ; ESC [ 1 ; 5 A  (no prefix, unbound)
+            (cl-tmux::process-byte s b state))
+          (is (eq (first (session-windows s)) (session-active-window s))
+              "unbound bare C-Up must leave the first window active"))))))
+
 ;;; ── Application cursor keys — %arrow-final-to-ss3-bytes helper ──────────────
 
 (test arrow-final-to-ss3-bytes-maps-arrows

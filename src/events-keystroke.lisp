@@ -263,10 +263,76 @@
     (#.+byte-arrow-left+  :select-pane-left)
     (otherwise nil)))
 
+(defun %arrow-final-name (final-byte)
+  "Base tmux key name for an arrow FINAL-BYTE — \"Up\"/\"Down\"/\"Left\"/\"Right\"
+   — or NIL when FINAL-BYTE is not an arrow.  These strings match exactly what
+   %parse-key-token stores for a `bind Up ...`-style directive, so they double as
+   key-table lookup keys."
+  (cond
+    ((= final-byte +byte-arrow-up+)    "Up")
+    ((= final-byte +byte-arrow-down+)  "Down")
+    ((= final-byte +byte-arrow-left+)  "Left")
+    ((= final-byte +byte-arrow-right+) "Right")
+    (t nil)))
+
+(defconstant +byte-csi-mod-shift+ 50
+  "CSI modifier '2' — Shift key (0x32), as in ESC [ 1 ; 2 A (Shift+Up).")
+
+(defun %modifier-arrow-key-name (mod-byte final-byte)
+  "Canonical tmux key name for a modifier+arrow CSI sequence — \"C-Up\",
+   \"M-Left\", \"S-Down\", etc.  MOD-BYTE is the digit from ESC [ 1 ; N FINAL:
+   2=Shift, 3=Meta/Alt, 5=Ctrl (the common single-modifier encodings).  Returns
+   NIL for an unrecognised modifier or a non-arrow final byte.  The result is the
+   exact string %parse-key-token produces for `bind C-Up ...`, so it serves
+   directly as a key-table lookup key."
+  (let ((base (%arrow-final-name final-byte))
+        (mod  (cond
+                ((= mod-byte +byte-csi-mod-ctrl+)  "C-")   ; '5'
+                ((= mod-byte +byte-csi-mod-meta+)  "M-")   ; '3'
+                ((= mod-byte +byte-csi-mod-shift+) "S-")   ; '2'
+                (t nil))))
+    (when (and base mod) (concatenate 'string mod base))))
+
+(defun %run-key-table-binding (session entry byte)
+  "Execute the command bound to a key-table ENTRY.  Mirrors the root/prefix
+   dispatch convention: a (:sequence . cmds) runs each sub-command in order, a
+   bare token LIST runs as one command line, and a keyword dispatches as a
+   built-in.  BYTE is the originating key byte (used only by built-in dispatch;
+   pass NIL for synthetic chords like modifier+arrow)."
+  (let ((cmd (key-table-command entry)))
+    (cond
+      ((and (consp cmd) (eq (car cmd) :sequence))
+       (dolist (subcmd (cdr cmd))
+         (%run-command-tokens session subcmd)))
+      ((consp cmd)
+       (%run-command-tokens session cmd))
+      (t
+       (dispatch-command session cmd byte)))))
+
+(defun %try-bound-string-key (session table key-string)
+  "Look up the string KEY-STRING (e.g. \"C-Up\", \"M-Left\", \"Up\") in key
+   TABLE.  When a binding exists, run it, mark the screen dirty, and return T;
+   otherwise return NIL so the caller can fall back to its hardcoded default.
+   This is the hook that lets `bind -T prefix C-Up <cmd>` and `bind -n M-Left
+   <cmd>` override the built-in resize/select behaviour."
+  (let ((entry (and key-string (key-table-lookup table key-string))))
+    (when entry
+      (%run-key-table-binding session entry nil)
+      (setf *dirty* t)
+      t)))
+
 (defun %dispatch-modifier-arrow (session mod-byte final-byte)
   "Handle the modifier+arrow combination inside the 6-byte CSI sequence.
    MOD-BYTE is +byte-csi-mod-ctrl+ (Ctrl) or +byte-csi-mod-meta+ (Meta).
-   FINAL-BYTE is the arrow final byte.  Dispatches resize-pane or :resize-*."
+   FINAL-BYTE is the arrow final byte.
+
+   A user binding for the canonical key name (e.g. `bind -T prefix C-Up <cmd>`)
+   takes precedence; only when the prefix table has no such binding do we fall
+   back to the built-in default — C-arrow resizes 1 cell, M-arrow resizes 5."
+  ;; User override in the prefix table wins over the hardcoded default.
+  (let ((key (%modifier-arrow-key-name mod-byte final-byte)))
+    (when (%try-bound-string-key session +table-prefix+ key)
+      (return-from %dispatch-modifier-arrow)))
   (let ((window (session-active-window session)))
     (when window
       (cond
@@ -308,9 +374,13 @@
              ((= final-byte +byte-csi-param-1+)
               (values nil (%make-prefix-csi-k session buffer)))
              (t
-              (let ((command (%prefix-csi-arrow-cmd final-byte)))
-                ;; dispatch-command always returns NIL; the when's value is discarded.
-                (when command (dispatch-command session command nil))
+              ;; A user binding (`bind -T prefix Up <cmd>`) overrides the built-in
+              ;; select-pane default; fall back only when the key is unbound.
+              (let ((name    (%arrow-final-name final-byte))
+                    (command (%prefix-csi-arrow-cmd final-byte)))
+                (unless (%try-bound-string-key session +table-prefix+ name)
+                  ;; dispatch-command always returns NIL; the when's value is discarded.
+                  (when command (dispatch-command session command nil)))
                 (values nil #'%ground-input-state))))))
         ;; 4-byte sequence starting ESC [ 1 ; — keep accumulating
         ((and (= length 4) (= (aref buffer 1) +byte-csi-bracket+)
@@ -544,6 +614,27 @@
         ((and (= length 4) (= (aref buffer 1) +byte-csi-bracket+)
               (= (aref buffer 3) +byte-tilde+))
          (%handle-escape-function-key session buffer))
+        ;; ── Modifier+arrow at root: ESC [ 1 ; MOD FINAL (6 bytes) ─────────
+        ;; A bare (no-prefix) C-Up / M-Left / S-Down etc.  Without this branch
+        ;; the generic 4-byte forward below would ship "ESC [ 1 ;" to the pane
+        ;; and mangle the chord.  Accumulate ESC [ 1 ; ... until the final
+        ;; letter, then look up the canonical key name in the ROOT table so
+        ;; `bind -n C-Up <cmd>` fires.  Unbound chords (or non-arrow finals such
+        ;; as Ctrl+Home) fall through to the pane unchanged.
+        ((and (>= length 4) (<= length 5)
+              (= (aref buffer 1) +byte-csi-bracket+)
+              (= (aref buffer 2) +byte-csi-param-1+)
+              (= (aref buffer 3) +byte-csi-semi+))
+         (values nil (make-escape-input-k session buffer)))
+        ((and (= length 6)
+              (= (aref buffer 1) +byte-csi-bracket+)
+              (= (aref buffer 2) +byte-csi-param-1+)
+              (= (aref buffer 3) +byte-csi-semi+))
+         (let ((key (%modifier-arrow-key-name (aref buffer 4) (aref buffer 5))))
+           (unless (%try-bound-string-key session +table-root+ key)
+             (unless (%copy-mode-active-p session)
+               (%forward-octets session (subseq buffer 0 length)))))
+         (values nil #'%ground-input-state))
         ;; ── 4-byte accumulation: ESC [ N (not yet '~') — keep buffering ───
         ((and (= length 4) (= (aref buffer 1) +byte-csi-bracket+)
               (/= (aref buffer 3) +byte-tilde+))
