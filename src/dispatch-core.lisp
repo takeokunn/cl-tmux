@@ -1822,21 +1822,33 @@
                       :else-fn (lambda () (when else-str (%run-command-line session else-str)))))))))
 
 (defun %cmd-capture-pane-arg (session args)
-  "capture-pane [-p] [-S start-line] [-E end-line] [-t target]: capture pane content.
-   -p: print to stdout (shows overlay in standalone mode).
-   -S N: start from scrollback line N (negative = N lines above visible).
-   -t: target pane (not fully supported in standalone mode, uses active pane).
-   Without -p: shows in overlay."
-  (multiple-value-bind (flags _positionals) (%parse-command-flags args "tSE")
+  "capture-pane [-p] [-S start] [-E end] [-b buffer] [-JeNaP] [-t target]: capture
+   the pane's content.
+   Default (no -p): SAVE the captured text to a paste buffer (retrievable with
+     paste-buffer) — tmux's default behaviour, and the canonical capture→paste
+     workflow.  Silent (no overlay).
+   -p: print to stdout (shown as an overlay in standalone mode) instead of saving.
+   -S start: include scrollback.  A line number or '-' (start of history) both
+     include the full scrollback above the visible region.
+   -E end: accepted (end line); the visible bottom is the end here.
+   -b name: accepted — cl-tmux keeps a single unnamed buffer ring, so the capture
+     is stored at the top of that ring regardless of NAME.
+   -J (join wrapped lines) / -e (escapes) / -N (trailing spaces) / -a / -P:
+     accepted but not specially handled.
+   -t target: target pane (standalone uses the active pane)."
+  (multiple-value-bind (flags _positionals) (%parse-command-flags args "tSEb")
     (declare (ignore _positionals))
     (let* ((print-p (assoc #\p flags))
            (include-scrollback (assoc #\S flags))
            (pane (session-active-pane session))
-           (content (and pane (capture-pane pane :include-scrollback (and include-scrollback t)))))
+           (content (and pane (capture-pane pane :include-scrollback
+                                            (and include-scrollback t)))))
       (when content
         (if print-p
+            ;; -p: stdout equivalent — show the content in an overlay.
             (show-overlay content)
-            (show-overlay content))))))
+            ;; Default: save to the paste-buffer ring (silent), like tmux.
+            (cl-tmux/buffer:add-paste-buffer content))))))
 
 (defun %cmd-resize-pane-arg (session args)
   "resize-pane [-t target] [-L|-R|-U|-D|-Z] [amount]: resize a pane.

@@ -4330,3 +4330,44 @@
         (cl-tmux::%cmd-send-keys-arg s '("-X" "cursor-up"))
         (is (= (- row0 1) (car (screen-copy-cursor screen)))
             "a bare -X command runs exactly once (count defaults to 1)")))))
+
+;;; ── capture-pane saves to a buffer by default (scriptable form) ──────────────
+;;;
+;;; The scriptable `capture-pane [flags]` command (%cmd-capture-pane-arg, distinct
+;;; from the interactive :capture-pane overlay binding) follows tmux: without -p
+;;; it SAVES the captured content to a paste buffer; -p prints (overlay) instead.
+
+(test cmd-capture-pane-saves-to-buffer-by-default
+  "capture-pane with no -p saves the pane content to a paste buffer (the canonical
+   capture→paste workflow), not an overlay."
+  (with-empty-buffers
+    (with-loop-state
+      (let ((s (make-fake-session)))
+        (feed (active-screen s) "hello capture")
+        (cl-tmux::%cmd-capture-pane-arg s '())
+        (let ((buf (cl-tmux/buffer:get-paste-buffer 0)))
+          (is (not (null buf)) "capture-pane (no -p) saves to a paste buffer")
+          (is (search "hello capture" buf)
+              "the saved buffer contains the captured pane content"))))))
+
+(test cmd-capture-pane-p-shows-overlay-not-buffer
+  "capture-pane -p prints (overlay) and does NOT save to a buffer."
+  (with-empty-buffers
+    (with-loop-state
+      (let ((*overlay* nil)
+            (s (make-fake-session)))
+        (feed (active-screen s) "shown only")
+        (cl-tmux::%cmd-capture-pane-arg s '("-p"))
+        (is (overlay-active-p) "-p shows the content in an overlay")
+        (is (null (cl-tmux/buffer:get-paste-buffer 0))
+            "-p does NOT save to a paste buffer (stdout equivalent)")))))
+
+(test cmd-capture-pane-b-flag-accepted-stores-in-ring
+  "capture-pane -b name is accepted; the capture is stored at the top of the ring."
+  (with-empty-buffers
+    (with-loop-state
+      (let ((s (make-fake-session)))
+        (feed (active-screen s) "named buf")
+        (cl-tmux::%cmd-capture-pane-arg s '("-b" "mybuf"))
+        (is (search "named buf" (or (cl-tmux/buffer:get-paste-buffer 0) ""))
+            "-b stores the capture in the unnamed ring (single-ring model)")))))
