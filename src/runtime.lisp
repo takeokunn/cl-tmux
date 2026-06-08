@@ -164,6 +164,15 @@
        (when (pane-pipe-fd pane)
          (pipe-pane-write pane bytes))
        (pane-feed pane bytes)
+       ;; monitor-activity: set the window's activity flag when bytes arrive
+       ;; in a background window (not the session-active window) and the
+       ;; monitor-activity option is enabled for that window.
+       (let ((win (cl-tmux/model:pane-window pane)))
+         (when (and win
+                    (cl-tmux/options:get-option "monitor-activity")
+                    (not (cl-tmux/model:window-activity-flag win)))
+           ;; Only flag non-active windows to avoid spurious alerts in the active window.
+           (setf (cl-tmux/model:window-activity-flag win) t)))
        (setf *dirty* t)
        #'reader-idle-state))))
 

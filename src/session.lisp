@@ -27,10 +27,13 @@
   "Make WINDOW the active window of SESSION.
    Updates WINDOW's last-active-time as a side effect so that session-last-window
    returns the correct recency order.  Callers that need a pure focus assignment
-   without the timestamp side effect should set (session-active session) directly."
+   without the timestamp side effect should set (session-active session) directly.
+   Clears the activity flag so #{window_activity_flag} resets on focus."
   (setf (session-active session) window)
   (when window
-    (setf (window-last-active-time window) (get-universal-time))))
+    (setf (window-last-active-time window) (get-universal-time))
+    ;; Clear activity flag when the window gains focus.
+    (setf (window-activity-flag window) nil)))
 
 (defun session-active-pane (session)
   "Return the active pane of SESSION's active window, or NIL when there is no window."

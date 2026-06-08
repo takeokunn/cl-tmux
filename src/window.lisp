@@ -20,6 +20,10 @@
   (last-active-time 0 :type integer)  ; universal-time when this window was last focused
   (automatic-rename-p t :type boolean) ; when T, OSC 0/2 title updates window-name
   (layout-cycle-index 0 :type fixnum) ; index into the layouts cycle for C-b Space
+  ;; Activity tracking for monitor-activity / #{window_activity_flag}:
+  ;; set T when a non-active window receives PTY output and monitor-activity is on.
+  ;; Cleared when the window is selected.
+  (activity-flag nil :type boolean)
   (lock (make-lock "window") :read-only t))
 
 (defun window-refresh-panes (window)

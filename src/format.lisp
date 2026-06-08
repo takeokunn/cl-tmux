@@ -835,6 +835,10 @@
          ;; #{pane_synchronized}: "1" when synchronize-panes option is on, else "0".
          (pane-synchronized (if (cl-tmux/options:get-option "synchronize-panes")
                                 "1" "0"))
+         ;; #{window_activity_flag}: "#" when the window has unseen activity
+         ;; (monitor-activity was triggered).  Cleared when the window is focused.
+         (window-activity-flag
+          (if (and window (cl-tmux/model:window-activity-flag window)) "#" " "))
          ;; #{window_bell_flag}: "!" when any pane in the window has a pending bell.
          ;; Used by status themes to show an alert indicator in the window list.
          (window-bell-flag
@@ -921,7 +925,9 @@
           ;; #{pane_synchronized}: reflects synchronize-panes option.
           :pane-synchronized pane-synchronized
           ;; #{window_bell_flag}: "!" when a pane in the window has a pending bell.
-          :window-bell-flag window-bell-flag)))
+          :window-bell-flag window-bell-flag
+          ;; #{window_activity_flag}: "#" when monitor-activity was triggered.
+          :window-activity-flag window-activity-flag)))
 
 (defun format-context-from-window (session window
                                    &key (client-width 0) (client-height 0)

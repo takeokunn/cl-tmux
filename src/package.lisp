@@ -500,6 +500,8 @@
    #:window-local-options
    ;; Automatic-rename (OSC 0/2 updates window-name)
    #:window-automatic-rename-p
+   ;; Activity flag for monitor-activity / #{window_activity_flag}
+   #:window-activity-flag
    ;; Layout cycle index (for C-b Space next-layout)
    #:window-layout-cycle-index
    ;; Rotate-window
