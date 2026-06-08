@@ -174,6 +174,8 @@
    #:screen-copy-mark
    #:screen-copy-cursor
    #:screen-copy-selecting
+   ;; copy-mode -e: auto-exit when scrolled to live bottom
+   #:screen-copy-exit-on-bottom
    ;; REP (repeat preceding char) support
    #:screen-last-char
    ;; DECSCUSR cursor shape
@@ -374,6 +376,8 @@
    #:screen-copy-mark
    #:screen-copy-cursor
    #:screen-copy-selecting
+   ;; copy-mode -e: auto-exit when scrolled to live bottom
+   #:screen-copy-exit-on-bottom
    ;; Cell accessors
    #:cell-char
    #:cell-fg
@@ -437,6 +441,7 @@
    ;; Menu overlay
    #:menu #:make-menu #:menu-p
    #:menu-title #:menu-items #:menu-selected-index
+   #:menu-x #:menu-y
    #:*active-menu*
    #:show-menu #:close-menu #:menu-active-p))
 

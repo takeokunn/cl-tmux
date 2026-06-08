@@ -105,7 +105,10 @@
   "An interactive text menu overlay."
   (title "" :type string)
   (items '() :type list)          ; list of (label . keyword) pairs
-  (selected-index 0 :type fixnum))
+  (selected-index 0 :type fixnum)
+  ;; Position (display-menu -x/-y): NIL = centre on screen, integer = fixed column/row.
+  (x nil)
+  (y nil))
 
 (defvar *active-menu* nil
   "The currently displayed MENU overlay, or NIL.

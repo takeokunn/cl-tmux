@@ -1771,6 +1771,34 @@
             ":display-menu must set *active-menu*")
         (is (overlay-active-p) ":display-menu must open an overlay")))))
 
+(test cmd-display-menu-x-y-sets-menu-position
+  "display-menu -x/-y stores the position on the menu struct (default NIL = centred)."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((*overlay* nil)
+            (cl-tmux::*active-menu* nil))
+        ;; -x 10 -y 5 with one item triple
+        (cl-tmux::%cmd-display-menu-arg
+         s '("-x" "10" "-y" "5" "Item" "a" "next-window"))
+        (is (not (null cl-tmux::*active-menu*)) "menu must be created")
+        (is (= 10 (cl-tmux/prompt:menu-x cl-tmux::*active-menu*))
+            "-x sets menu-x to 10")
+        (is (= 5 (cl-tmux/prompt:menu-y cl-tmux::*active-menu*))
+            "-y sets menu-y to 5")))))
+
+(test cmd-display-menu-no-x-y-is-centered
+  "display-menu without -x/-y leaves menu-x/menu-y NIL (centred default)."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((*overlay* nil)
+            (cl-tmux::*active-menu* nil))
+        (cl-tmux::%cmd-display-menu-arg s '("Item" "a" "next-window"))
+        (is (not (null cl-tmux::*active-menu*)) "menu must be created")
+        (is (null (cl-tmux/prompt:menu-x cl-tmux::*active-menu*))
+            "menu-x defaults to NIL (centred)")
+        (is (null (cl-tmux/prompt:menu-y cl-tmux::*active-menu*))
+            "menu-y defaults to NIL (centred)")))))
+
 (test dispatch-menu-next-advances-selection
   ":menu-next advances the selected index."
   (let ((s (make-fake-session)))

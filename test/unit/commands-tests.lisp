@@ -118,6 +118,34 @@
     (cl-tmux/commands::copy-mode-scroll s -100)  ; then race back to live
     (is (= 0 (screen-copy-offset s)) "offset clamped at 0")))
 
+(test copy-mode-enter-e-sets-exit-on-bottom
+  "copy-mode-enter with :exit-on-bottom t sets the screen slot."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s :exit-on-bottom t)
+    (is-true (cl-tmux/terminal/types:screen-copy-exit-on-bottom s)
+             "exit-on-bottom slot must be set by -e")))
+
+(test copy-mode-e-auto-exits-on-scroll-to-bottom
+  "With exit-on-bottom (copy-mode -e), scrolling back down to the live bottom
+   (offset 0) auto-exits copy mode."
+  (let ((s (%screen-with-scrollback 3)))
+    ;; Re-enter with -e semantics and scroll up into the scrollback.
+    (cl-tmux/commands::copy-mode-enter s :exit-on-bottom t)
+    (cl-tmux/commands::copy-mode-scroll s 2)        ; scroll back 2 lines (offset 2)
+    (is (= 2 (screen-copy-offset s)) "scrolled back into scrollback")
+    (is-true (screen-copy-mode-p s) "still in copy mode while scrolled up")
+    (cl-tmux/commands::copy-mode-scroll s -100)     ; race back to the live bottom
+    (is-false (screen-copy-mode-p s)
+              "copy-mode -e must auto-exit when scrolled to offset 0")))
+
+(test copy-mode-e-no-exit-while-scrolling-up
+  "copy-mode -e does NOT exit while scrolling upward (positive delta)."
+  (let ((s (%screen-with-scrollback 3)))
+    (cl-tmux/commands::copy-mode-enter s :exit-on-bottom t)
+    (cl-tmux/commands::copy-mode-scroll s 100)      ; scroll up to oldest
+    (is-true (screen-copy-mode-p s)
+             "scrolling up must not trigger exit-on-bottom")))
+
 (test copy-mode-scroll-noop-when-not-in-copy-mode
   "Outside copy mode, copy-mode-scroll does nothing: offset stays put and the
    call returns NIL."

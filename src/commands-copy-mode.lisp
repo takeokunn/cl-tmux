@@ -22,14 +22,17 @@
 ;;; copy_mode(yank, Screen)   :- selection_text(Screen, T), add_paste_buffer(T),
 ;;;                               copy_mode(cancel, Screen), copy_mode(exit, Screen).
 
-(defun copy-mode-enter (screen &key scroll-to-top)
+(defun copy-mode-enter (screen &key scroll-to-top exit-on-bottom)
   "Enter copy/scroll mode on SCREEN: freeze the viewport at the live position.
    The copy-mode cursor is placed at the bottom-left of the viewport so that
    the first navigation key moves it naturally upward toward older content.
-   SCROLL-TO-TOP T pre-scrolls to the oldest scrollback content (copy-mode -u)."
-  (setf (screen-copy-mode-p   screen) t
-        (screen-copy-mark      screen) nil
-        (screen-copy-selecting screen) nil)
+   SCROLL-TO-TOP T pre-scrolls to the oldest scrollback content (copy-mode -u).
+   EXIT-ON-BOTTOM T (copy-mode -e) auto-exits copy mode when the viewport is
+   scrolled back down to the live bottom (offset 0)."
+  (setf (screen-copy-mode-p        screen) t
+        (screen-copy-mark          screen) nil
+        (screen-copy-selecting     screen) nil
+        (screen-copy-exit-on-bottom screen) (and exit-on-bottom t))
   (if scroll-to-top
       ;; copy-mode -u: scroll to oldest content (max offset), cursor at top-left.
       (let ((max-offset (length (screen-scrollback screen))))
@@ -47,7 +50,8 @@
         (screen-copy-cursor         screen) nil
         (screen-copy-selecting      screen) nil
         (screen-copy-line-selection-p screen) nil
-        (screen-copy-rect-select-p  screen) nil))
+        (screen-copy-rect-select-p  screen) nil
+        (screen-copy-exit-on-bottom screen) nil))
 
 (defun %copy-mode-clamp-cursor (screen)
   "Clamp the copy-mode cursor row into [0, height-1] and col into [0, width-1].
@@ -69,7 +73,13 @@
       (setf (screen-copy-offset screen)
             (max 0 (min max-offset (+ (screen-copy-offset screen) delta))))
       (%copy-mode-clamp-cursor screen)
-      (setf (screen-dirty-p screen) t))))
+      (setf (screen-dirty-p screen) t)
+      ;; copy-mode -e: auto-exit when scrolled back down to the live bottom.
+      ;; Only triggers on a downward (newer) scroll that reaches offset 0.
+      (when (and (screen-copy-exit-on-bottom screen)
+                 (< delta 0)
+                 (zerop (screen-copy-offset screen)))
+        (copy-mode-exit screen)))))
 
 ;;; These top-level helpers are called from copy-mode-move-cursor for :up / :down.
 ;;; Keeping them at top level eliminates the flet nesting and makes each path

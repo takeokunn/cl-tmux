@@ -111,13 +111,21 @@
            (write-char #\│ stream)))
 
 (defun render-menu (stream menu terminal-rows terminal-cols)
-  "Draw the MENU overlay box centered on the terminal."
+  "Draw the MENU overlay box.  Centred by default, or at MENU-X/MENU-Y when set
+   (display-menu -x/-y).  Positions are clamped so the box stays on screen."
   (let* ((items          (menu-items menu))
          (item-count     (length items))
          (title          (menu-title menu))
          (box-width      (min 40 terminal-cols))
-         (origin-x       (max 0 (floor (- terminal-cols box-width) 2)))
-         (origin-y       (max 0 (floor (- terminal-rows (+ item-count 2)) 2)))
+         (box-height     (+ item-count 2))
+         ;; -x/-y: explicit position when set, else centre.  Clamp so the whole
+         ;; box fits on screen (origin in [0, dim - box-extent]).
+         (origin-x       (if (menu-x menu)
+                             (max 0 (min (menu-x menu) (- terminal-cols box-width)))
+                             (max 0 (floor (- terminal-cols box-width) 2))))
+         (origin-y       (if (menu-y menu)
+                             (max 0 (min (menu-y menu) (- terminal-rows box-height)))
+                             (max 0 (floor (- terminal-rows box-height) 2))))
          (selected-index (menu-selected-index menu)))
     (reset-attrs stream)
     (%render-box-border-top    stream origin-x origin-y box-width title)

@@ -50,6 +50,9 @@
   (copy-mark    nil  :type list)            ; (row . col) mark position, NIL = no selection
   (copy-cursor  nil  :type list)            ; (row . col) cursor position in copy mode, NIL = not in copy mode
   (copy-selecting nil :type boolean)        ; T when selection is being built
+  ;; copy-mode -e: when T, scrolling down to the live bottom (offset 0) auto-exits
+  ;; copy mode.  Set by `copy-mode -e`; cleared on copy-mode entry/exit.
+  (copy-exit-on-bottom nil :type boolean)
   ;; Last printed character — used by CSI REP (repeat preceding char, final byte 'b').
   ;; NIL until the first character has been written to the screen.
   (last-char nil :type (or null character))

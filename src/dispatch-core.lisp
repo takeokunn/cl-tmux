@@ -735,13 +735,17 @@
 (defun %cmd-display-menu-arg (session args)
   "display-menu [-T title] [-x x] [-y y] [label key command ...]: show an interactive menu.
    -T title: menu title (default: 'Menu').
-   -x/-y: screen position (accepted but currently ignored — menu always centres).
+   -x col / -y row: screen position (default: centred).  Clamped on screen.
    Item triples: label key command.  Empty label '' creates a visual separator.
    When selected, command is run via %run-command-line.
    Preconfigured commands as keyword tokens run directly (for compatibility)."
   (declare (ignore session))  ; session used via closure in item command
   (multiple-value-bind (flags positionals) (%parse-command-flags args "Txy")
     (let* ((title (or (cdr (assoc #\T flags)) "Menu"))
+           (x-str (cdr (assoc #\x flags)))
+           (y-str (cdr (assoc #\y flags)))
+           (menu-x (and x-str (parse-integer x-str :junk-allowed t)))
+           (menu-y (and y-str (parse-integer y-str :junk-allowed t)))
            ;; Build items from consecutive (label key command) triples.
            ;; Silently skip incomplete triples (real tmux shows an error).
            (items (loop for (label key cmd) on positionals by #'cdddr
@@ -752,7 +756,8 @@
                                           label)
                                       cmd))))
       (when items
-        (show-menu (make-menu :title title :items items :selected-index 0))
+        (show-menu (make-menu :title title :items items :selected-index 0
+                              :x menu-x :y menu-y))
         (show-overlay (%format-menu *active-menu*))))))
 
 (defun %cmd-confirm-before-arg (session args)
@@ -789,20 +794,17 @@
 (defun %cmd-copy-mode-arg (session args)
   "copy-mode [-e] [-u]: enter copy mode.
    -u: pre-scroll to the oldest scrollback content (e.g. bind PageUp copy-mode -u).
-   -e: exit copy mode automatically when scrolled to the bottom (mouse scroll).
-       The screen struct has no exit-on-bottom slot, so wiring the full behavior
-       would require a struct change rippling through terminal/screen.lisp and
-       the copy-mode scroll handlers.  We accept the flag without error so
-       bindings using it (e.g. `bind -n WheelUpPane copy-mode -e`) work; the
-       auto-exit behavior is DEFERRED until the slot is added safely."
+   -e: exit copy mode automatically when the viewport is scrolled back down to
+       the live bottom (offset 0).  Standard for mouse-wheel copy-mode entry:
+       `bind -n WheelUpPane copy-mode -e` enters copy mode on scroll-up and
+       leaves it once the user scrolls back to the live output."
   (let* ((flags (nth-value 0 (%parse-command-flags args "")))
-         (scroll-to-top (and (assoc #\u flags) t))
-         ;; -e accepted (no-op for now); see docstring for deferral rationale.
+         (scroll-to-top  (and (assoc #\u flags) t))
          (exit-on-bottom (and (assoc #\e flags) t))
          (screen (%active-screen session)))
-    (declare (ignore exit-on-bottom))
     (when screen
-      (copy-mode-enter screen :scroll-to-top scroll-to-top)
+      (copy-mode-enter screen :scroll-to-top scroll-to-top
+                              :exit-on-bottom exit-on-bottom)
       (setf *dirty* t))))
 
 ;;; *set-option-command-names* removed — inlined into *arg-command-table* below.
