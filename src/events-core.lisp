@@ -406,17 +406,53 @@
       (when tree
         (layout-assign tree 0 0 (window-width window) (window-height window))))))
 
+(defun %mouse-key-name (btn release-p location)
+  "Build the tmux mouse key name for a mouse event, e.g. \"WheelUpPane\",
+   \"MouseDown1Pane\", \"MouseUp3Status\".  BTN is the X10 button code, RELEASE-P
+   selects MouseUp vs MouseDown, and LOCATION is \"Pane\"/\"Status\"/\"Border\".
+   Returns NIL for events with no standard binding name (motion/drag, unknown
+   buttons), so the caller falls back to the built-in mouse behaviour.
+
+   These names are exactly what %parse-key-token stores for `bind -n WheelUpPane`
+   / `bind -n MouseDown1Pane` (multi-char tokens are kept as strings), so the
+   result doubles as a root key-table lookup key."
+  (let ((button (cond
+                  ((= btn +mouse-btn-left+)        "1")
+                  ((= btn +mouse-btn-middle+)      "2")
+                  ((= btn 2)                       "3")   ; right button (no named constant)
+                  (t nil))))
+    (cond
+      ((= btn +mouse-btn-scroll-up+)   (concatenate 'string "WheelUp" location))
+      ((= btn +mouse-btn-scroll-down+) (concatenate 'string "WheelDown" location))
+      (button (concatenate 'string (if release-p "MouseUp" "MouseDown")
+                           button location))
+      (t nil))))
+
 (defun %dispatch-mouse-event (session btn col row release-p)
   "Handle a parsed mouse event. BTN is the button number (X10 encoded minus 32),
    COL/ROW are 0-based screen coordinates, RELEASE-P is T for release events.
-   All handling is gated on the global 'mouse' option."
+   All handling is gated on the global 'mouse' option.
+
+   A user mouse binding in the root key table (e.g. `bind -n WheelUpPane
+   copy-mode`) takes precedence over the built-in behaviour; only when the
+   reconstructed mouse key name is unbound do we fall through to the hardcoded
+   scroll/click/drag handling below."
   (unless (cl-tmux/options:get-option "mouse")
     (setf *dirty* t)
     (return-from %dispatch-mouse-event nil))
   (let* ((active-window  (session-active-window session))
          (active-pane    (session-active-pane session))
          (status-row     (1- *term-rows*))  ; status bar is always bottom row
-         (in-status      (= row status-row)))
+         (in-status      (= row status-row))
+         (location       (cond (in-status "Status")
+                               ((and active-window
+                                     (%border-at-position active-window col row))
+                                "Border")
+                               (t "Pane")))
+         (mouse-key      (%mouse-key-name btn release-p location)))
+    ;; User mouse binding wins over the built-in handling.
+    (when (%try-bound-string-key session +table-root+ mouse-key)
+      (return-from %dispatch-mouse-event nil))
     (cond
       ;; ── Status bar click ────────────────────────────────────────────────────
       ((and in-status (not release-p) (= btn +mouse-btn-left+))

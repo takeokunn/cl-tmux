@@ -251,6 +251,47 @@
                        "wheel-down at offset 0 must exit copy mode")))
       (cl-tmux/options:set-option "mouse" nil))))
 
+;;; ── Mouse key-table bindings (bind -n WheelUpPane / MouseDown1Pane) ──────────
+
+(test mouse-key-name-builds-tmux-names
+  "%mouse-key-name maps (button, action, location) to tmux mouse key names."
+  (is (string= "WheelUpPane"      (cl-tmux::%mouse-key-name 64 nil "Pane")))
+  (is (string= "WheelDownPane"    (cl-tmux::%mouse-key-name 65 nil "Pane")))
+  (is (string= "MouseDown1Pane"   (cl-tmux::%mouse-key-name 0  nil "Pane")))
+  (is (string= "MouseUp1Pane"     (cl-tmux::%mouse-key-name 0  t   "Pane")))
+  (is (string= "MouseDown2Pane"   (cl-tmux::%mouse-key-name 1  nil "Pane")))
+  (is (string= "MouseDown3Status" (cl-tmux::%mouse-key-name 2  nil "Status")))
+  (is (string= "WheelUpStatus"    (cl-tmux::%mouse-key-name 64 nil "Status")))
+  (is (null (cl-tmux::%mouse-key-name 32 nil "Pane"))
+      "motion (btn 32) has no standard mouse key name"))
+
+(test mouse-wheel-up-binding-fires-and-overrides-default
+  "bind -n WheelUpPane <cmd> fires on a wheel-up event instead of the built-in
+   copy-mode scroll."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mouse" t)
+    (cl-tmux/config:apply-config-directive
+     '("bind" "-n" "WheelUpPane" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
+          (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "bound WheelUpPane must run next-window")
+          (is-false (screen-copy-mode-p (active-screen s))
+              "the binding overrides the default copy-mode scroll"))))))
+
+(test mouse-unbound-wheel-up-keeps-default-behavior
+  "With no WheelUpPane binding, wheel-up still enters copy mode (default)."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mouse" t)
+    (let ((s (make-fake-session :nwindows 1)))
+      (with-loop-state
+        (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
+          (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
+          (is-true (screen-copy-mode-p (active-screen s))
+              "unbound wheel-up falls through to the built-in copy-mode scroll"))))))
+
 ;;; ── Border-at-position ───────────────────────────────────────────────────────
 
 (test border-at-position-h-split
