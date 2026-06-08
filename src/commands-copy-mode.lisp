@@ -354,14 +354,26 @@
       (when (and (stringp cmd) (plusp (length cmd)))
         (%run-shell-cmd-with-input cmd text)))))
 
+(defun %maybe-copy-to-clipboard (screen text)
+  "When the set-clipboard option is on/external, enqueue an OSC 52 sequence on
+   SCREEN's clipboard-queue so the renderer copies TEXT to the host's system
+   clipboard on the next frame.  No-op when set-clipboard is off."
+  (let ((mode (or (ignore-errors (cl-tmux/options:get-option "set-clipboard")) "on")))
+    (when (member mode '("on" "external") :test #'equal)
+      (push (cl-tmux/terminal/parser:osc52-clipboard-sequence text)
+            (screen-clipboard-queue screen)))))
+
 (defun copy-mode-yank (screen)
   "Copy selected text to paste buffer (and pipe via copy-command if configured),
-   then exit copy mode.  In rectangle-select mode the rectangular region is used."
+   then exit copy mode.  In rectangle-select mode the rectangular region is used.
+   When set-clipboard is on/external, also emits OSC 52 to the host terminal so
+   the selection reaches the system clipboard."
   (let ((text (if (screen-copy-rect-select-p screen)
                   (%rectangle-selection-text screen)
                   (%selection-text screen))))
     (when (and text (plusp (length text)))
       (cl-tmux/buffer:add-paste-buffer text)
+      (%maybe-copy-to-clipboard screen text)
       (%run-copy-command text)))
   (copy-mode-cancel-selection screen)
   (copy-mode-exit screen))

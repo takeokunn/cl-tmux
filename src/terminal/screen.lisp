@@ -111,6 +111,12 @@
   ;; The renderer drains this and writes to the outer terminal when the
   ;; allow-passthrough option is enabled.  FIFO: push front, nreverse to drain.
   (passthrough-queue nil :type list)
+  ;; Clipboard buffer: a list of OSC 52 sequences (ESC ] 52 ; c ; <base64> ST)
+  ;; the copy-mode yank enqueues for the OUTER terminal so the host's system
+  ;; clipboard is updated.  The renderer drains this when the set-clipboard
+  ;; option is on/external (distinct from passthrough-queue's allow-passthrough
+  ;; gating).  FIFO: push front, nreverse to drain.
+  (clipboard-queue nil :type list)
   ;; BEL (0x07) pending: set to T when the emulator receives a BEL byte.
   ;; The renderer emits an outer-terminal BEL on the next frame and clears the flag.
   (bell-pending nil :type boolean)

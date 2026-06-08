@@ -214,6 +214,7 @@
    ;; Response queue for DA1/DA2 and similar replies
    #:screen-response-queue
    #:screen-passthrough-queue
+   #:screen-clipboard-queue
    ;; Grid helpers
    #:screen-cell
    #:screen-clear-dirty
@@ -315,7 +316,8 @@
    #:make-utf8-k
    #:osc-state
    #:make-charset-designator-k
-   #:*osc52-handler*))
+   #:*osc52-handler*
+   #:osc52-clipboard-sequence))
 
 (defpackage #:cl-tmux/terminal/emulator
   (:use #:cl
@@ -399,6 +401,7 @@
    ;; Response queue
    #:screen-response-queue
    #:screen-passthrough-queue
+   #:screen-clipboard-queue
    ;; Combining char predicate
    #:combining-char-p
    ;; BEL pending flag

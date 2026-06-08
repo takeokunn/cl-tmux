@@ -177,6 +177,23 @@
                 (dolist (seq queued)
                   (write-string seq buffer))))))))))
 
+(defun %render-clipboard (buffer panes)
+  "Drain each pane's clipboard-queue and emit the OSC 52 sequences to BUFFER (the
+   outer terminal) so a copy-mode yank reaches the host's system clipboard.  Gated
+   on set-clipboard: 'off' clears the queue without emitting; 'on'/'external' write
+   the sequences through.  Drains under the screen lock."
+  (let* ((mode (or (cl-tmux/options:get-option "set-clipboard" "on") "on"))
+         (emit (member mode '("on" "external") :test #'string=)))
+    (dolist (pane panes)
+      (let ((screen (pane-screen pane)))
+        (when screen
+          (with-lock-held ((screen-lock screen))
+            (let ((queued (nreverse (screen-clipboard-queue screen))))
+              (setf (screen-clipboard-queue screen) nil)
+              (when emit
+                (dolist (seq queued)
+                  (write-string seq buffer))))))))))
+
 (defun render-session-to-string (session terminal-rows terminal-cols)
   "Compose a full frame for SESSION as an escape-sequence string.
    Does not touch *standard-output*; suitable for unit-testing without a TTY."
@@ -208,6 +225,7 @@
     (%render-mouse-sequences buffer active-pane)
     ;; allow-passthrough: emit any DCS-passthrough sequences (images, nested tmux).
     (when panes (%render-passthrough buffer panes))
+    (when panes (%render-clipboard buffer panes))
     (%render-bell-and-cursor buffer active-pane)
     ;; set-titles: emit OSC 0 to set the outer terminal window title.
     (when (cl-tmux/options:get-option "set-titles")

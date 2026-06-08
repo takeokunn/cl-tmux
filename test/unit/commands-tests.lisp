@@ -369,6 +369,38 @@
         (is (string= "hello" yanked)
             "yanked text must equal the selected content \"hello\" (got ~S)" yanked)))))
 
+(test copy-mode-yank-enqueues-osc52-when-set-clipboard-on
+  "With set-clipboard on (tmux default), copy-mode-yank enqueues an OSC 52
+   sequence on the screen's clipboard-queue so the renderer copies the selection
+   to the host system clipboard."
+  (let ((cl-tmux/buffer:*paste-buffers* nil))
+    (with-isolated-options ("set-clipboard" "on")
+      (let ((s (make-screen 20 5)))
+        (feed s "hello")
+        (cl-tmux/commands::copy-mode-enter s)
+        (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
+              (cl-tmux/terminal/types:screen-copy-mark   s) (cons 0 0)
+              (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
+        (cl-tmux/commands::copy-mode-yank s)
+        (let ((q (cl-tmux/terminal/types:screen-clipboard-queue s)))
+          (is (= 1 (length q)) "exactly one OSC 52 sequence enqueued")
+          (is (search "]52;c;" (first q)) "the sequence is an OSC 52 clipboard set")
+          (is (search "aGVsbG8=" (first q)) "encodes the yanked text (base64 of hello)"))))))
+
+(test copy-mode-yank-no-osc52-when-set-clipboard-off
+  "With set-clipboard off, copy-mode-yank does NOT enqueue an OSC 52 sequence."
+  (let ((cl-tmux/buffer:*paste-buffers* nil))
+    (with-isolated-options ("set-clipboard" "off")
+      (let ((s (make-screen 20 5)))
+        (feed s "hello")
+        (cl-tmux/commands::copy-mode-enter s)
+        (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
+              (cl-tmux/terminal/types:screen-copy-mark   s) (cons 0 0)
+              (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
+        (cl-tmux/commands::copy-mode-yank s)
+        (is (null (cl-tmux/terminal/types:screen-clipboard-queue s))
+            "no OSC 52 enqueued when set-clipboard is off")))))
+
 (test copy-mode-yank-noop-when-no-selection
   "copy-mode-yank with no active selection does not push to *paste-buffers*."
   (let ((cl-tmux/buffer:*paste-buffers* nil))

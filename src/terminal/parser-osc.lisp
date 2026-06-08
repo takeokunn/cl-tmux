@@ -76,6 +76,36 @@
               finally (return output))
       (error () nil))))
 
+(defun %base64-encode (bytes)
+  "Encode a sequence of (unsigned-byte 8) BYTES to a padded Base64 string.
+   Inverse of %base64-decode; used to build outbound OSC 52 clipboard sequences."
+  (let ((alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+        (n (length bytes)))
+    (with-output-to-string (out)
+      (loop for i from 0 below n by 3
+            do (let* ((b0 (aref bytes i))
+                      (b1 (if (< (+ i 1) n) (aref bytes (+ i 1)) 0))
+                      (b2 (if (< (+ i 2) n) (aref bytes (+ i 2)) 0))
+                      (triple (logior (ash b0 16) (ash b1 8) b2)))
+                 (write-char (char alphabet (ldb (byte 6 18) triple)) out)
+                 (write-char (char alphabet (ldb (byte 6 12) triple)) out)
+                 (write-char (if (< (+ i 1) n)
+                                 (char alphabet (ldb (byte 6 6) triple)) #\=)
+                             out)
+                 (write-char (if (< (+ i 2) n)
+                                 (char alphabet (ldb (byte 6 0) triple)) #\=)
+                             out))))))
+
+(defun osc52-clipboard-sequence (text)
+  "Build the OSC 52 set-clipboard escape sequence (ESC ] 52 ; c ; <base64> ST)
+   that copies TEXT to the host system clipboard when written to the OUTER
+   terminal.  TEXT is UTF-8 encoded before Base64 encoding.  ST is the 7-bit
+   string terminator ESC \\."
+  (format nil "~C]52;c;~A~C\\"
+          #\Escape
+          (%base64-encode (babel:string-to-octets text :encoding :utf-8))
+          #\Escape))
+
 ;;; ── OSC payload dispatcher ──────────────────────────────────────────────────
 ;;;
 ;;; The OSC payload has the form:  Ps ; text
