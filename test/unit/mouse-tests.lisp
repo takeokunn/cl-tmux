@@ -292,6 +292,22 @@
           (is-true (screen-copy-mode-p (active-screen s))
               "unbound wheel-up falls through to the built-in copy-mode scroll"))))))
 
+(test mouse-copy-mode-table-binding-fires
+  "In copy mode, a copy-mode-vi mouse binding fires, overriding the built-in
+   wheel scroll (the copy-mode table is consulted before the root table)."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mouse" t)
+    (cl-tmux/options:set-option "mode-keys" "vi")
+    (cl-tmux/config:apply-config-directive
+     '("bind" "-T" "copy-mode-vi" "WheelUpPane" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
+          (cl-tmux/commands:copy-mode-enter (active-screen s))
+          (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "copy-mode-vi WheelUpPane must run next-window"))))))
+
 ;;; ── Border-at-position ───────────────────────────────────────────────────────
 
 (test border-at-position-h-split

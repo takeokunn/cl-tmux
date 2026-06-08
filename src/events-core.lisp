@@ -449,9 +449,18 @@
                                      (%border-at-position active-window col row))
                                 "Border")
                                (t "Pane")))
-         (mouse-key      (%mouse-key-name btn release-p location)))
-    ;; User mouse binding wins over the built-in handling.
-    (when (%try-bound-string-key session +table-root+ mouse-key)
+         (mouse-key      (%mouse-key-name btn release-p location))
+         ;; When the active pane is in copy mode, a copy-mode-table mouse binding
+         ;; (e.g. `bind -T copy-mode-vi WheelUpPane send -X halfpage-up`) takes
+         ;; precedence over both the root binding and the built-in handling.
+         (active-screen  (and active-pane (pane-screen active-pane)))
+         (in-copy        (and active-screen (screen-copy-mode-p active-screen)))
+         (copy-table     (if (equal (cl-tmux/options:get-option "mode-keys" "vi") "vi")
+                             "copy-mode-vi" +table-copy-mode+)))
+    ;; User mouse binding wins over the built-in handling: copy-mode table first
+    ;; (when in copy mode), then the root table.
+    (when (or (and in-copy (%try-bound-string-key session copy-table mouse-key))
+              (%try-bound-string-key session +table-root+ mouse-key))
       (return-from %dispatch-mouse-event nil))
     (cond
       ;; ── Status bar click ────────────────────────────────────────────────────
