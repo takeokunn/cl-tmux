@@ -401,7 +401,9 @@
    ;; Copy-mode line-selection flag
    #:screen-copy-line-selection-p
    ;; Copy-mode rectangle-select flag
-   #:screen-copy-rect-select-p))
+   #:screen-copy-rect-select-p
+   ;; Scroll history limit callback (injected at startup)
+   #:*history-limit-function*))
 
 (defpackage #:cl-tmux/prompt
   (:use #:cl)

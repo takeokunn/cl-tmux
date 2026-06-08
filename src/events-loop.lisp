@@ -122,16 +122,24 @@
 
 (defun %auto-rename-name (session window pane screen)
   "Compute the new automatic window name using automatic-rename-format option.
+   For panes with no real process (pid <= 0), prefer the OSC 0/2 screen title
+   directly; the format-string result would just be the shell basename fallback.
    Falls back to the OSC 0/2 screen title when the format yields an empty string."
-  (let* ((fmt (or (cl-tmux/options:get-option "automatic-rename-format")
-                  "#{pane_current_command}"))
-         (ctx (cl-tmux/format:format-context-from-session session window pane))
-         (new-name (cl-tmux/format:expand-format fmt ctx)))
-    (if (and new-name (plusp (length new-name)))
-        new-name
-        ;; Fallback to OSC 0/2 screen title
-        (let ((title (screen-title screen)))
-          (if (plusp (length title)) title "")))))
+  (let* ((has-real-process (let ((pid (and pane (cl-tmux/model:pane-pid pane))))
+                             (and pid (> pid 0))))
+         (osc-title (screen-title screen)))
+    (if (not has-real-process)
+        ;; No real PTY: OSC title is more meaningful than the shell-basename fallback.
+        (if (plusp (length osc-title)) osc-title "")
+        ;; Real PTY: expand the automatic-rename-format option.
+        (let* ((fmt (or (cl-tmux/options:get-option "automatic-rename-format")
+                        "#{pane_current_command}"))
+               (ctx (cl-tmux/format:format-context-from-session session window pane))
+               (new-name (cl-tmux/format:expand-format fmt ctx)))
+          (if (and new-name (plusp (length new-name)))
+              new-name
+              ;; Fallback to OSC 0/2 screen title
+              (if (plusp (length osc-title)) osc-title ""))))))
 
 (defun %maybe-rename-window-from-title (session)
   "If automatic-rename is enabled for the active window, update its name using

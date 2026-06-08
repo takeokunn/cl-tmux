@@ -171,13 +171,10 @@
    the option string has not been set.")
 
 (defun %parse-update-environment ()
-  "Return the list of env var names from the 'update-environment' option,
-   falling back to *UPDATE-ENVIRONMENT* when the option is unset/empty."
-  (let ((opt-val (cl-tmux/options:get-option "update-environment")))
-    (if (and opt-val (plusp (length opt-val)))
-        (remove-if (lambda (s) (zerop (length s)))
-                   (uiop:split-string opt-val :separator '(#\Space)))
-        *update-environment*)))
+  "Return the list of env var names from *UPDATE-ENVIRONMENT*.
+   The 'update-environment' option populates this variable via side-effects
+   in %apply-option-side-effects so that dynamic rebinding in tests works."
+  *update-environment*)
 
 (defun get-update-environment-vars ()
   "Return an alist of (name . value) for each variable in the update-environment

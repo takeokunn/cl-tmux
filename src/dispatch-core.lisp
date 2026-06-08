@@ -977,7 +977,7 @@
                   (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
                 (server-remove-session name)
                 (when (and (eq target-sess session) (null *server-sessions*))
-                  (setf *running* nil))))))))))
+                  (setf *running* nil)))))))))
 
 (defun %cmd-resize-window-arg (session args)
   "resize-window [-x cols] [-y rows] [-t target-window]: resize a window.
@@ -1240,7 +1240,7 @@
           ;; -o: skip if already piped
           ((and only-open (pane-pipe-fd ap)) nil)
           ;; Open the pipe
-          (t (pipe-pane-open ap command))))))
+          (t (pipe-pane-open ap command)))))))
 
 (defun %cmd-set-environment-prompt (session args)
   "set-environment [-r] NAME [VALUE]: set or unset a process environment variable.

@@ -156,7 +156,7 @@
   ;; Mode 47 — alternate screen (older form of 1049, without save/restore)
   (47
    ((enter-alt-screen screen))
-   ((exit-alt-screen screen)))  ; mode 47 spec closes, macro call closes on line above
+   ((exit-alt-screen screen))))  ; mode 47 spec closes, define-dec-pm-rules closes here
 
 ;;; ── Focus event reporting (?1004) ──────────────────────────────────────────
 ;;;

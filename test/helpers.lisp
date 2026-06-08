@@ -18,10 +18,23 @@
 
 (defmacro with-isolated-config (&body body)
   "Run BODY with the mutable config specials dynamically rebound to copies,
-   so directives applied in a test never leak into other suites."
+   so directives applied in a test never leak into other suites.
+   Isolates: key-tables, default-shell, status-height, prefix-key-code,
+             global-options (copy), server-options (copy)."
   `(let ((cl-tmux/config:*key-tables*  (make-hash-table :test #'equal))
           (cl-tmux/config:*default-shell* cl-tmux/config:*default-shell*)
-          (cl-tmux/config:*status-height* cl-tmux/config:*status-height*))
+          (cl-tmux/config:*status-height* cl-tmux/config:*status-height*)
+          (cl-tmux/config:*prefix-key-code* cl-tmux/config:*prefix-key-code*)
+          (cl-tmux/options:*global-options*
+           (let ((h (make-hash-table :test #'equal)))
+             (maphash (lambda (k v) (setf (gethash k h) v))
+                      cl-tmux/options:*global-options*)
+             h))
+          (cl-tmux/options:*server-options*
+           (let ((h (make-hash-table :test #'equal)))
+             (maphash (lambda (k v) (setf (gethash k h) v))
+                      cl-tmux/options:*server-options*)
+             h)))
      ;; Re-initialize with fresh key tables: config.lisp defaults PLUS the
      ;; extended prefix bindings installed by events-loop.lisp (C-b z, C-b L,
      ;; etc.).  Without the latter the isolated table would diverge from the live
@@ -291,7 +304,10 @@
 ;;; ── Event-dispatch fixtures ─────────────────────────────────────────────────
 
 (defun make-fake-window (id name &key (npanes 1))
-  "A window with NPANES fake panes (fd -1) and a matching tree; the first pane is active."
+  "A window with NPANES fake panes (fd -1) and a matching tree; the first pane is active.
+   Sets :active directly in make-window rather than calling window-select-pane to
+   avoid stamping window-last-active-time during construction — that timestamp is a
+   session-level concept updated only by session-select-window."
   (let* ((panes (loop for i below npanes
                       collect (make-pane :id (1+ i) :x 0 :y 0 :width 20 :height 5
                                          :fd -1 :pid -1 :screen (make-screen 20 5))))
@@ -304,11 +320,9 @@
                                   (make-layout-leaf (first ps))
                                   (build (rest ps))
                                   1/2))))
-                  (build panes)))
-         (win   (make-window :id id :name name :width 20 :height 5
-                             :panes panes :tree tree)))
-    (window-select-pane win (first panes))
-    win))
+                  (build panes))))
+    (make-window :id id :name name :width 20 :height 5
+                 :panes panes :tree tree :active (first panes))))
 
 (defun make-fake-session (&key (nwindows 1) (npanes 1))
   "A session of NWINDOWS fake windows (each with NPANES fake panes), no PTYs.

@@ -561,6 +561,14 @@
                                         "DISABLE-MOUSE-REPORTING")
                                 pkg)))
            (when fn (ignore-errors (funcall fn)))))))
+    ;; update-environment: propagate the space-separated name list into
+    ;; *update-environment* so that get-update-environment-vars picks it up
+    ;; via the dynamic variable rather than re-parsing the option on every call.
+    ((string= name "update-environment")
+     (when (and (stringp value) (plusp (length value)))
+       (setf cl-tmux/model:*update-environment*
+             (remove-if (lambda (s) (zerop (length s)))
+                        (uiop:split-string value :separator '(#\Space))))))
     ;; status-position: top or bottom adjusts status bar position.
     ;; (stored in options; renderer reads it at render time — no extra side effect needed.)
     ))
