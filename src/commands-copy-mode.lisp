@@ -137,7 +137,13 @@
            (max-offset (length (screen-scrollback screen))))
       (ecase direction
         (:left  (setf (screen-copy-cursor screen) (cons row (max 0      (1- col)))))
-        (:right (setf (screen-copy-cursor screen) (cons row (min (1- w) (1+ col)))))
+        ;; While selecting, the cursor is the EXCLUSIVE selection end, so it may
+        ;; advance to W (one past the last column) to let the selection include
+        ;; the rightmost cell — matching select-word.  Plain navigation caps at
+        ;; W-1 (the last visible column).
+        (:right (let ((right-bound (if (screen-copy-selecting screen) w (1- w))))
+                  (setf (screen-copy-cursor screen)
+                        (cons row (min right-bound (1+ col))))))
         (:up    (%scroll-up-one-line   screen row col max-offset))
         (:down  (%scroll-down-one-line screen row col h)))
       ;; When selecting, ensure mark is placed if not yet set.

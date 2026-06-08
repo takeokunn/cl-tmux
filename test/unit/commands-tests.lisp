@@ -656,6 +656,22 @@
     (is (= 19 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
         "column must clamp at width-1")))
 
+(test copy-mode-selection-cursor-can-reach-width
+  "While selecting, :right may advance the cursor to WIDTH (the exclusive end past
+   the last column) so the selection can include the rightmost cell — navigation
+   still caps at WIDTH-1 (covered by the test above)."
+  (let ((s (make-screen 5 3)))
+    (feed s "abcde")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-begin-selection s)
+    (dotimes (i 6) (cl-tmux/commands::copy-mode-move-cursor s :right))
+    (is (= 5 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "selecting cursor reaches width (5), got ~D"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+    (is (string= "abcde" (cl-tmux/commands::%selection-text s))
+        "selection includes the rightmost column 'e'")))
+
 (test copy-mode-move-cursor-clamps-down-at-screen-edge
   "Moving :down when at the last row stays at (height - 1)."
   (let ((s (make-screen 20 5)))
