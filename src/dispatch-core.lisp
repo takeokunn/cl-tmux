@@ -893,13 +893,34 @@
              (find target-str wins :key #'window-name :test #'string-equal)))))))
 
 (defun %cmd-select-window (session args)
-  "select-window -t <target>: select the window whose number (window-id) or name
-   is the -t value.  Delivers ?1004 focus events on the switch."
-  (let ((target (cdr (assoc #\t (%parse-command-flags args "t")))))
-    (when target
-      (%with-window-focus-transition (session)
-        (let ((win (%resolve-window-target session target)))
-          (when win (session-select-window session win)))))))
+  "select-window [-t target] [-l] [-n] [-p]: select a window.
+   -t target: window-id, name, or special shorthand (:! last, :+ next, :- prev).
+   -l: select the last (previously active) window (same as C-b l).
+   -n: select the next window.
+   -p: select the previous window.
+   Delivers ?1004 focus events on the switch."
+  (multiple-value-bind (flags _pos) (%parse-command-flags args "t")
+    (declare (ignore _pos))
+    (cond
+      ((assoc #\l flags)
+       ;; -l: last window
+       (let ((prev (session-last-window session)))
+         (when prev
+           (%with-window-focus-transition (session)
+             (session-select-window session prev)))))
+      ((assoc #\n flags)
+       ;; -n: next window
+       (%cmd-cycle-window session #'next-cyclic))
+      ((assoc #\p flags)
+       ;; -p: previous window
+       (%cmd-cycle-window session #'prev-cyclic))
+      (t
+       ;; -t target or bare target
+       (let ((target (cdr (assoc #\t flags))))
+         (when target
+           (%with-window-focus-transition (session)
+             (let ((win (%resolve-window-target session target)))
+               (when win (session-select-window session win))))))))))
 
 (defun %cmd-select-pane (session args)
   "select-pane [-L|-R|-U|-D|-m] [-t target] [-T title]: select or configure a pane.

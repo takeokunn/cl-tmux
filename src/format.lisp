@@ -981,7 +981,31 @@
                            "copy-mode" "")
           ;; Environment variables for terminal detection in themes.
           :term-program term-program
-          :colorterm    colorterm)))
+          :colorterm    colorterm
+          ;; #{client_prefix}: "1" when the prefix key has been pressed and we're
+          ;; waiting for the next key; "0" otherwise.  Used by prefix-highlight plugins.
+          ;; We always report "0" since this function has no access to input-state.
+          :client-prefix "0"
+          ;; #{client_last_session}: name of the previously active session.
+          ;; Used by some plugins to show a "back" indicator.
+          :client-last-session ""
+          ;; #{window_visible_layout}: layout string for the visible portion.
+          ;; Same as #{window_layout} in our implementation.
+          :window-visible-layout (or (and window (cl-tmux/model:layout->string window)) "")
+          ;; #{session_path}: initial working directory for the session.
+          :session-path (ignore-errors (sb-posix:getcwd))
+          ;; #{history_size}: number of lines in the active pane's scrollback.
+          :history-size (format nil "~D"
+                                (if pane-scr
+                                    (length (cl-tmux/terminal:screen-scrollback pane-scr))
+                                    0))
+          ;; #{history_limit}: configured history limit.
+          :history-limit (format nil "~D"
+                                 (or (cl-tmux/options:get-option "history-limit") 2000))
+          ;; #{window_last_flag}: "1" when this is the last (previously active) window.
+          :window-last-flag (if (and window session
+                                     (eq window (cl-tmux/model:session-last-window session)))
+                                "1" "0"))))
 
 (defun format-context-from-window (session window
                                    &key (client-width 0) (client-height 0)

@@ -351,14 +351,24 @@
                             (matches
                              (remove-if-not
                               (lambda (w)
-                                (search pattern (window-name w) :test #'char-equal))
+                                ;; Search window name AND pane titles for the pattern.
+                                (or (search pattern (window-name w) :test #'char-equal)
+                                    (some (lambda (p)
+                                            (let ((title (cl-tmux/model:pane-title p))
+                                                  (cmd   (cl-tmux/model:pane-screen p)))
+                                              (or (and (plusp (length title))
+                                                       (search pattern title :test #'char-equal))
+                                                  (and cmd (search pattern
+                                                                   (cl-tmux/terminal:screen-title cmd)
+                                                                   :test #'char-equal)))))
+                                          (cl-tmux/model:window-panes w))))
                               wins)))
                        (show-overlay
                         (if matches
                             (with-output-to-string (stream)
                               (dolist (w matches)
                                 (format stream "~A: ~A~A~%"
-                                        (position w wins)
+                                        (cl-tmux/model:window-id w)
                                         (window-name w)
                                         (if (eq w (session-active-window session))
                                             " [active]" ""))))
