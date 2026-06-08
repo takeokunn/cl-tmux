@@ -146,12 +146,14 @@
          (first-size   (- avail clamped-size 1)))
     (/ first-size avail)))
 
-(defun window-split (window direction &key no-focus size start-dir)
+(defun window-split (window direction &key no-focus size start-dir before)
   "Split the active pane of WINDOW along DIRECTION (:h left/right, :v top/bottom).
    Returns the new pane, or NIL when the active pane is too small.
    NO-FOCUS T keeps the current active pane selected (the new pane is created
    but not focused).  SIZE is an integer (cells) or real (fraction 0..1) that
    controls the new pane's initial size along the split axis.
+   BEFORE T inserts the new pane before (left of / above) the active pane
+   instead of after (right of / below) — matches split-window -b.
    START-DIR: when non-NIL, the new pane's shell starts in that directory."
   (let ((active (window-active-pane window))
         (tree   (window-tree window)))
@@ -163,11 +165,21 @@
         (let* ((new-pane (%fork-pane (next-pane-id window) px py pw ph
                                      :start-dir start-dir))
                (avail    (1- (%orient-pane-extent active direction)))
-               (ratio    (if size
-                             (%ratio-from-size-hint size avail direction)
-                             1/2))
-               (split    (make-layout-split direction leaf
-                                            (make-layout-leaf new-pane) ratio)))
+               (new-ratio (if size
+                              (%ratio-from-size-hint size avail direction)
+                              1/2))
+               ;; When BEFORE is T: new pane is the first child; existing is second.
+               ;; The ratio fraction refers to the FIRST child's share of the extent.
+               ;; With BEFORE: ratio = new-pane's share = new-ratio.
+               ;; Without BEFORE: first=existing pane, second=new; ratio = (1 - new-ratio).
+               (split    (if before
+                             (make-layout-split direction
+                                                (make-layout-leaf new-pane)
+                                                leaf
+                                                new-ratio)
+                             (make-layout-split direction leaf
+                                                (make-layout-leaf new-pane)
+                                                (- 1 new-ratio)))))
           (%replace-in-tree window leaf split)
           (window-relayout window (window-height window) (window-width window))
           (unless no-focus

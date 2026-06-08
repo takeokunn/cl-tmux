@@ -188,14 +188,15 @@
          (next  (funcall cycler panes (window-active-pane win))))
     (when next (%select-pane-with-focus win next))))
 
-(defun %cmd-split (session orient &key no-focus size start-dir)
+(defun %cmd-split (session orient &key no-focus size start-dir before)
   "Split the active pane of SESSION's active window in tree ORIENT (:h left/right,
    :v top/bottom).  Returns NIL when the pane is too small and no shell is forked.
    NO-FOCUS T skips focus change.  SIZE hints the new pane's extent.
+   BEFORE T inserts the new pane before the active pane (split-window -b).
    START-DIR: when non-NIL, the new pane's shell starts in that directory."
   (let* ((win (session-active-window session))
          (new (window-split win orient :no-focus no-focus :size size
-                                       :start-dir start-dir)))
+                                       :start-dir start-dir :before before)))
     (when new
       (start-reader-thread new)
       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-split-window+ new)
@@ -886,9 +887,10 @@
                        :after-current (and after-p t)))))
 
 (defun %cmd-split-window (session args)
-  "split-window [-h|-v] [-d] [-p percent] [-l size] [-c start-dir]: split the active pane.
+  "split-window [-h|-v] [-b] [-d] [-p percent] [-l size] [-c start-dir]: split the active pane.
    -h: horizontal split (new pane to the right; side-by-side).
    -v: vertical split (new pane below — default).
+   -b: insert before the active pane (left of / above) instead of after.
    -d: split but do not change focus (detached mode).
    -p N: size as a percentage of the parent pane (0-100).
    -l N: size in lines/columns (absolute integer).
@@ -896,6 +898,7 @@
   (multiple-value-bind (flags positionals) (%parse-command-flags args "plc")
     (declare (ignore positionals))
     (let* ((horizontal-p (assoc #\h flags))
+           (before-p     (assoc #\b flags))
            (detach-p     (assoc #\d flags))
            (pct-str      (cdr (assoc #\p flags)))
            (lines-str    (cdr (assoc #\l flags)))
@@ -913,9 +916,9 @@
            (size         (or (and pct (/ pct 100.0)) lines)))
       (if horizontal-p
           (%cmd-split session :h :size size :no-focus (and detach-p t)
-                              :start-dir start-dir)
+                              :start-dir start-dir :before (and before-p t))
           (%cmd-split session :v :size size :no-focus (and detach-p t)
-                              :start-dir start-dir)))))
+                              :start-dir start-dir :before (and before-p t))))))
 
 (defun %cmd-new-session-arg (session args)
   "new-session [-A] [-d] [-s name] [-n window-name] [-c start-dir]: create a new session.

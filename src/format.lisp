@@ -927,7 +927,20 @@
           ;; #{window_bell_flag}: "!" when a pane in the window has a pending bell.
           :window-bell-flag window-bell-flag
           ;; #{window_activity_flag}: "#" when monitor-activity was triggered.
-          :window-activity-flag window-activity-flag)))
+          :window-activity-flag window-activity-flag
+          ;; #{window_number}: deprecated alias for #{window_index}.
+          :window-number window-index
+          ;; #{scroll_position}: scrollback offset in copy mode, else "".
+          :scroll-position (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
+                               (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr))
+                               "")
+          ;; #{selection_active}: "1" when copy mode has an active selection.
+          :selection-active (if (and pane-scr
+                                     (cl-tmux/terminal:screen-copy-mode-p pane-scr)
+                                     (cl-tmux/terminal:screen-copy-selecting pane-scr))
+                                "1" "0")
+          ;; #{pane_marked}: "1" when the pane is marked, else "0".
+          :pane-marked (if (and pane (cl-tmux/model:pane-marked pane)) "1" "0"))))
 
 (defun format-context-from-window (session window
                                    &key (client-width 0) (client-height 0)
