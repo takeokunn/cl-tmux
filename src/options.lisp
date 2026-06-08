@@ -356,21 +356,33 @@
 
 ;;; ── show-options helpers ──────────────────────────────────────────────────
 
+(defun %option-value-string (value)
+  "Format VALUE for show-options output in tmux-compatible format.
+   Strings: printed as-is (no quotes).  Booleans: 'on'/'off'.
+   Integers: decimal.  NIL: 'off'.  Anything else: princ-to-string."
+  (cond
+    ((eq value t)   "on")
+    ((eq value nil) "off")
+    ((stringp value) value)
+    (t (princ-to-string value))))
+
 (defun show-options (&optional scope)
-  "Return a string of name value lines for all options in SCOPE.
-   SCOPE is :server for server options, otherwise global options are used."
+  "Return a string of 'name value' lines for all options in SCOPE.
+   SCOPE is :server for server options, otherwise global options are used.
+   Output matches real tmux format: 'option-name value' (no Lisp quoting)."
   (with-output-to-string (s)
     (let* ((ht    (if (eq scope :server) *server-options* *global-options*))
            (pairs '()))
       (maphash (lambda (k v) (push (cons k v) pairs)) ht)
       (dolist (pair (sort pairs #'string< :key #'car))
-        (format s "~A ~S~%" (car pair) (cdr pair))))))
+        (format s "~A ~A~%" (car pair) (%option-value-string (cdr pair)))))))
 
 (defun show-option (name &optional scope)
   "Return a string showing the current value of a single option NAME.
-   SCOPE is :server for server options."
+   SCOPE is :server for server options.
+   Output matches real tmux format: 'option-name value'."
   (let* ((ht  (if (eq scope :server) *server-options* *global-options*))
          (val (gethash name ht :not-found)))
     (if (eq val :not-found)
         (format nil "~A: (not set)~%" name)
-        (format nil "~A ~S~%" name val))))
+        (format nil "~A ~A~%" name (%option-value-string val)))))

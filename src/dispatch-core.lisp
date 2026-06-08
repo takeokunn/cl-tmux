@@ -622,6 +622,22 @@
         ;; No direction: swap forward (default tmux behavior with no -d/-s flags)
         (t (swap-pane win :right))))))
 
+(defun %cmd-confirm-before-arg (session args)
+  "confirm-before [-p prompt] command: prompt before running COMMAND.
+   -p prompt: custom prompt text (default: 'command? (y/n)').
+   COMMAND is the remaining positional tokens as a command line.
+   Only executes COMMAND when the user confirms with 'y' or 'Y'."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "p")
+    (let* ((custom-prompt (cdr (assoc #\p flags)))
+           (cmd-line      (format nil "~{~A~^ ~}" positionals))
+           (prompt-text   (or custom-prompt
+                              (format nil "~A? (y/n)" cmd-line))))
+      (when (plusp (length cmd-line))
+        (prompt-start prompt-text ""
+                      (lambda (input)
+                        (when (member input '("y" "Y") :test #'string=)
+                          (%run-command-line session cmd-line))))))))
+
 (defun %cmd-list-keys-arg (session args)
   "list-keys [-T table] [-1] [key]: list key bindings.
    -T table: show bindings for TABLE only (e.g. prefix, root, copy-mode-vi).
@@ -755,13 +771,38 @@
         finally (return (values (nreverse flags) (nreverse positionals)))))
 
 (defun %resolve-window-target (session target-str)
-  "Resolve TARGET-STR to a window in SESSION: by window-id when TARGET-STR is
-   numeric, otherwise by window-name.  Returns NIL when nothing matches."
-  (let ((n (parse-integer target-str :junk-allowed t)))
-    (if n
-        (find n (session-windows session) :key #'window-id)
-        (find target-str (session-windows session)
-              :key #'window-name :test #'string-equal))))
+  "Resolve TARGET-STR to a window in SESSION.
+   Supports special shorthands:
+     :!  — last (previously active) window
+     :+  — next window (wraps)
+     :-  — previous window (wraps)
+     :^  — first window
+     :$  — last window
+   Also accepts window-id (numeric) or window-name (string)."
+  (let* ((wins (session-windows session))
+         (act  (session-active-window session)))
+    (cond
+      ;; Special shorthands (with or without leading colon)
+      ((member target-str '(":!" "!") :test #'string=)
+       (session-last-window session))
+      ((member target-str '(":+" "+") :test #'string=)
+       (when wins
+         (let ((idx (or (position act wins) 0)))
+           (nth (mod (1+ idx) (length wins)) wins))))
+      ((member target-str '(":-" "-") :test #'string=)
+       (when wins
+         (let ((idx (or (position act wins) 0)))
+           (nth (mod (1- idx) (length wins)) wins))))
+      ((member target-str '(":^" "^") :test #'string=)
+       (first wins))
+      ((member target-str '(":$" "$") :test #'string=)
+       (car (last wins)))
+      ;; Numeric window-id
+      (t
+       (let ((n (parse-integer target-str :junk-allowed t)))
+         (if n
+             (find n wins :key #'window-id)
+             (find target-str wins :key #'window-name :test #'string-equal)))))))
 
 (defun %cmd-select-window (session args)
   "select-window -t <target>: select the window whose number (window-id) or name
@@ -928,8 +969,9 @@
            "(no panes)")))))
 
 (defun %cmd-new-window-arg (session args)
-  "new-window [-d] [-n name] [-t target-window] [-a] [-c start-dir] [-e VAR=val]: create a new window.
+  "new-window [-d] [-k] [-n name] [-t target-window] [-a] [-c start-dir] [-e VAR=val].
    -d: create the window but do not make it active (detached).
+   -k: kill any existing window at the target index before creating the new one.
    -n name: name the new window.
    -t idx: insert at specific index (assigned as the window id).
    -a: insert after the current window.
@@ -940,6 +982,7 @@
     (let* ((extra-env  (%collect-env-flags flags))
            (name       (cdr (assoc #\n flags)))
            (detach-p   (assoc #\d flags))
+           (kill-p     (assoc #\k flags))
            (after-p    (assoc #\a flags))
            (target-str (cdr (assoc #\t flags)))
            (raw-dir    (cdr (assoc #\c flags)))
@@ -951,6 +994,11 @@
                                        session win pane)))
                            (cl-tmux/format:expand-format raw-dir ctx))))
            (at-idx     (and target-str (parse-integer target-str :junk-allowed t))))
+      ;; -k: if a window with the target index already exists, kill it first.
+      (when (and kill-p at-idx)
+        (let ((existing (find at-idx (session-windows session) :key #'window-id)))
+          (when existing
+            (%handle-kill-result (kill-window session existing)))))
       ;; Inject -e VAR=val pairs via *pane-extra-env* so %fork-pane picks them up.
       (when extra-env
         (setf *pane-extra-env* extra-env))
@@ -1259,20 +1307,30 @@
 (defun %cmd-send-keys-arg (session args)
   "send-keys [-t target-pane] [-X copy-mode-cmd] [key ...]: send keys or copy-mode commands.
    -X: dispatch a named copy-mode command (begin-selection, copy-selection, etc.)
-   Without -X: each positional is a key name or literal string typed into the active pane.
-   No -t targeting in standalone mode."
+   -t: target a specific pane by pane-id or 'session:window.pane' syntax.
+   Without -X: each positional is a key name or literal string typed into the pane."
   (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
-    (declare (ignore flags))
-    ;; Check for -X flag: it consumes the next token as a copy-mode command name.
-    (let ((x-pos (position "-X" args :test #'string=)))
-      (if (and x-pos (nth (1+ x-pos) args))
-          ;; -X command: dispatch to copy-mode
-          (%dispatch-send-keys-X session (nth (1+ x-pos) args))
-          ;; Normal: send key strings to the active pane
-          (when positionals
-            (with-active-pane (ap session)
+    (let* ((target-str (cdr (assoc #\t flags)))
+           ;; Resolve -t to a specific pane; fall back to the active pane.
+           (target-pane
+            (if target-str
+                (multiple-value-bind (_s _w pane)
+                    (resolve-target *server-sessions* target-str
+                                    :current-session session
+                                    :current-window  (session-active-window session)
+                                    :current-pane    (session-active-pane session))
+                  (declare (ignore _s _w))
+                  pane)
+                (session-active-pane session))))
+      ;; Check for -X flag: it consumes the next token as a copy-mode command name.
+      (let ((x-pos (position "-X" args :test #'string=)))
+        (if (and x-pos (nth (1+ x-pos) args))
+            ;; -X command: dispatch to copy-mode on the target pane's screen.
+            (%dispatch-send-keys-X session (nth (1+ x-pos) args))
+            ;; Normal: send key strings to the target pane.
+            (when (and positionals target-pane)
               (dolist (key positionals)
-                (send-keys-to-pane ap key))))))))
+                (send-keys-to-pane target-pane key))))))))
 
 (defun %cmd-list-sessions-arg (session args)
   "list-sessions [-F format]: list sessions.
@@ -1416,7 +1474,9 @@
    ;; list-keys [-T table]: filter by key table when -T is supplied.
    (cons '("list-keys" "lsk")           #'%cmd-list-keys-arg)
    ;; swap-pane [-U|-D|-L|-R]: directional swap including up/down.
-   (cons '("swap-pane" "swapp")         #'%cmd-swap-pane-arg))
+   (cons '("swap-pane" "swapp")         #'%cmd-swap-pane-arg)
+   ;; confirm-before [-p prompt] cmd: gate COMMAND behind a y/n prompt.
+   (cons '("confirm-before" "confirm")  #'%cmd-confirm-before-arg))
   "Arg-taking commands: (list-of-names . handler), handler a function of
    (SESSION ARGS).  Consulted by %run-command-line before the no-argument
    %dispatch-named-command name table.")
