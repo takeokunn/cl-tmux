@@ -37,6 +37,60 @@
           rules))
      (setf *dirty* t)))
 
+;;; ── Vi-mode prompt key dispatch ──────────────────────────────────────────────
+;;;
+;;; When status-keys = "vi" and the prompt is in vi normal mode,
+;;; single-byte commands navigate / edit rather than inserting text.
+;;; Returns T when the byte was consumed by vi-normal dispatch.
+
+(defun %handle-vi-normal-key (byte)
+  "Dispatch BYTE in vi normal mode.  Returns T when the key was handled.
+   Navigation: h (left), l (right), 0/^ (BOL), $ (EOL), w (word-forward),
+               b (word-backward).
+   Editing:    x (delete char), D (delete to end), dd/d$ (delete to end).
+   Mode switch: a/i/A/I return to insert mode; : stays in normal (no-op).
+   Enter:      submit (same as insert mode)."
+  (let ((p *prompt*))
+    (unless (and p (prompt-vi-normal-p p))
+      (return-from %handle-vi-normal-key nil))
+    (case byte
+      ;; Navigation
+      (104 (prompt-cursor-back)    t)        ; h — left
+      (108 (prompt-cursor-forward) t)        ; l — right
+      (48  (prompt-cursor-bol)     t)        ; 0 — beginning of line
+      (94  (prompt-cursor-bol)     t)        ; ^ — beginning of line
+      (36  (prompt-cursor-eol)     t)        ; $ — end of line
+      (119 (prompt-cursor-forward) t)        ; w — word forward (approx: move right)
+      (98  (prompt-cursor-back)    t)        ; b — word backward (approx: move left)
+      ;; Editing
+      (120 (prompt-delete-char)    t)        ; x — delete char under cursor
+      (68  (prompt-kill-to-end)    t)        ; D — delete to end of line
+      ;; Enter to insert mode
+      (97                                    ; a — append (move right, enter insert)
+       (prompt-cursor-forward)
+       (setf (prompt-vi-normal-p p) nil)
+       t)
+      (65                                    ; A — append at end
+       (prompt-cursor-eol)
+       (setf (prompt-vi-normal-p p) nil)
+       t)
+      (105                                   ; i — insert mode
+       (setf (prompt-vi-normal-p p) nil)
+       t)
+      (73                                    ; I — insert at beginning
+       (prompt-cursor-bol)
+       (setf (prompt-vi-normal-p p) nil)
+       t)
+      (13                                    ; Enter — submit
+       (let ((active-prompt p))
+         (when (prompt-on-submit active-prompt)
+           (funcall (prompt-on-submit active-prompt) (prompt-buffer active-prompt)))
+         (prompt-clear))
+       t)
+      (27  (prompt-clear) t)                 ; ESC in normal mode — cancel
+      (3   (prompt-clear) t)                 ; C-c — cancel
+      (otherwise nil))))                     ; unhandled — fall through to insert
+
 (define-prompt-key-rules
   (13                                       ; Enter — submit and dismiss
    (setf *prompt-utf8-acc* 0 *prompt-utf8-left* 0)
@@ -44,7 +98,16 @@
      (when (and active-prompt (prompt-on-submit active-prompt))
        (funcall (prompt-on-submit active-prompt) (prompt-buffer active-prompt)))
      (prompt-clear)))
-  (27  (setf *prompt-utf8-acc* 0 *prompt-utf8-left* 0) (prompt-clear)) ; Esc — cancel
+  (27                                       ; Esc
+   (setf *prompt-utf8-acc* 0 *prompt-utf8-left* 0)
+   (let ((p *prompt*))
+     (cond
+       ;; vi mode: ESC enters normal mode (does NOT cancel the prompt).
+       ((and p (string-equal (cl-tmux/options:get-option "status-keys" "emacs") "vi")
+             (not (prompt-vi-normal-p p)))
+        (setf (prompt-vi-normal-p p) t))
+       ;; emacs mode or already in vi-normal: cancel.
+       (t (prompt-clear)))))
   (3   (setf *prompt-utf8-acc* 0 *prompt-utf8-left* 0) (prompt-clear)) ; C-c — cancel
   (1   (prompt-cursor-bol))                 ; C-a — beginning of line
   (5   (prompt-cursor-eol))                 ; C-e — end of line
@@ -55,6 +118,8 @@
   (23  (prompt-kill-word-back))             ; C-w — kill previous word
   ((or (= byte 127) (= byte 8))
    (prompt-backspace))                      ; Backspace / DEL
+  ;; Vi normal mode: intercept printable bytes before insert dispatch.
+  ((%handle-vi-normal-key byte) nil)        ; consumed by vi-normal — already handled
   ((and (>= byte 32) (< byte 127))
    (prompt-input (code-char byte)))         ; printable ASCII — insert
   ;; UTF-8 continuation byte: fold into accumulator

@@ -21,7 +21,9 @@
   (label        "" :type string)            ; shown before the buffer, e.g. "rename-window"
   (buffer       "" :type string)            ; the text typed so far
   (cursor-index  0 :type fixnum)            ; insertion point: 0..length-of-buffer
-  (on-submit   nil :type (or null function))) ; called with the final buffer string on Enter
+  (on-submit   nil :type (or null function)) ; called with the final buffer string on Enter
+  ;; Vi-mode: when status-keys = "vi", ESC enters normal mode instead of cancelling.
+  (vi-normal-p nil :type boolean))          ; T when in vi normal mode
 
 (defvar *prompt* nil
   "The active PROMPT, or NIL when not prompting.
@@ -163,6 +165,25 @@
                          (subseq buffer 0 start-index)
                          (subseq buffer end-index)))
       (setf (prompt-cursor-index p) start-index))))
+
+;;; -- Vi-mode character deletion -----------------------------------------------
+
+(defun prompt-delete-char ()
+  "Delete the character at the cursor (vi `x`): removes the char under the cursor.
+   Clamps cursor to stay within the buffer after deletion."
+  (with-active-prompt (p)
+    (let* ((buffer (prompt-buffer p))
+           (index  (prompt-cursor-index p))
+           (len    (length buffer)))
+      (when (< index len)
+        (setf (prompt-buffer p)
+              (concatenate 'string
+                           (subseq buffer 0 index)
+                           (subseq buffer (1+ index))))
+        ;; After deletion, clamp cursor so it doesn't go past end-1.
+        (let ((new-len (1- len)))
+          (when (> index new-len)
+            (setf (prompt-cursor-index p) (max 0 new-len))))))))
 
 ;;; -- Dismiss and display -----------------------------------------------------
 

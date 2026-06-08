@@ -411,6 +411,7 @@
   (:export
    #:prompt #:make-prompt #:prompt-p
    #:prompt-label #:prompt-buffer #:prompt-cursor-index #:prompt-on-submit
+   #:prompt-vi-normal-p
    #:*prompt* #:prompt-active-p #:prompt-start
    #:prompt-input #:prompt-backspace #:prompt-clear #:prompt-text
    ;; Cursor navigation
@@ -418,6 +419,8 @@
    #:prompt-cursor-back #:prompt-cursor-forward
    ;; Kill commands
    #:prompt-kill-to-end #:prompt-kill-to-start #:prompt-kill-word-back
+   ;; Vi-mode character deletion (vi x)
+   #:prompt-delete-char
    ;; Dismissible overlay (list-keys help, …)
    #:*overlay* #:*overlay-scroll-offset*
    #:overlay-active-p #:show-overlay #:show-transient-overlay
