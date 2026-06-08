@@ -984,6 +984,43 @@
     (is (plusp (length result))
         "#{t:} default format must produce a non-empty string, got ~S" result)))
 
+(test strftime-format-at-formats-given-timestamp
+  "%strftime-format-at decodes a CL universal-time and formats it (round-trips
+   through the local timezone, so encode then format returns the same wall clock)."
+  (let ((ts (encode-universal-time 5 30 14 15 6 2021)))   ; 2021-06-15 14:30:05 local
+    (is (string= "2021-06-15 14:30:05"
+                 (cl-tmux/format::%strftime-format-at "%Y-%m-%d %H:%M:%S" ts)))))
+
+(test strftime-format-at-empty-for-non-timestamp
+  "%strftime-format-at returns the empty string for NIL / zero / non-positive."
+  (is (string= "" (cl-tmux/format::%strftime-format-at "%Y" nil)))
+  (is (string= "" (cl-tmux/format::%strftime-format-at "%Y" 0)))
+  (is (string= "" (cl-tmux/format::%strftime-format-at "%Y" -1))))
+
+(test format-t-modifier-formats-timestamp-variable
+  "#{t:VAR} (bare variable, no %) formats VAR's value as a timestamp via the
+   default format — tmux semantics, e.g. #{t:session_last_attached}."
+  (let* ((ts       (encode-universal-time 0 0 12 1 1 2020))
+         (expected (cl-tmux/format::%strftime-format-at "" ts)))
+    (is (plusp (length expected)) "sanity: default format produces output")
+    (is (string= expected (fmt "#{t:my_time}" :my-time (princ-to-string ts)))
+        "#{t:my_time} formats the timestamp held by the variable")))
+
+(test format-t-modifier-legacy-percent-uses-current-time
+  "#{t:%Y} (operand contains %) still formats the CURRENT time, not a variable."
+  (let ((r (fmt "#{t:%Y}")))
+    (is (= 4 (length r)) "current year is 4 digits, got ~S" r)
+    (is (every #'digit-char-p r) "all digits, got ~S" r)))
+
+(test format-t-modifier-non-timestamp-falls-back-to-strftime
+  "#{t:VAR} where VAR does not resolve to an integer timestamp falls back to the
+   legacy strftime path (REST treated as a format string), preserving literal
+   pass-through and backward compatibility."
+  (is (string= "window_name" (fmt "#{t:window_name}" :window-name "bash"))
+      "a non-timestamp variable operand passes through as literal strftime text")
+  (is (string= "missing_var" (fmt "#{t:missing_var}"))
+      "an unknown operand passes through literally (legacy strftime)"))
+
 (test format-modifier-strftime-literals-pass-through
   "Non-% characters in the strftime format are passed through unchanged."
   (let ((result (fmt "#{t:TIME:}")))

@@ -439,11 +439,21 @@
                  ;; logical operators: #{||:a,b} (either truthy) #{&&:a,b} (both)
                  ((%logical-op-p mod)
                   (write-string (%apply-logical mod rest context) out))
-                 ;; #{t:strftime_format} — format current time; REST is the strftime format
-                 ;; string (e.g. "%H:%M"), NOT a variable name.  Special case before
-                 ;; %resolve-format-value so we do not look up "%H:%M" in the context.
+                 ;; #{t:...} — timestamp / strftime modifier.  We first look REST
+                 ;; up as a context variable: if it resolves to a positive integer
+                 ;; (a CL universal-time, e.g. #{t:session_last_attached}) we format
+                 ;; THAT timestamp with the default format — tmux's #{t:VARIABLE}
+                 ;; semantics.  Otherwise REST is treated as a strftime format
+                 ;; string applied to the CURRENT time (e.g. #{t:%H:%M}), which also
+                 ;; preserves literal pass-through and the empty-REST default.
                  ((string= mod "t")
-                  (write-string (%strftime-format rest) out))
+                  (let* ((looked-up (%lookup context (%variable-to-keyword rest)))
+                         (ts        (and (stringp looked-up)
+                                         (plusp (length looked-up))
+                                         (parse-integer looked-up :junk-allowed t))))
+                    (if (and ts (plusp ts))
+                        (write-string (%strftime-format-at "" ts) out)
+                        (write-string (%strftime-format rest) out))))
                  ;; #{m:pattern,string} — glob match; returns "1" (match) or "0".
                  ;; Split REST on the first TOP-LEVEL comma: left = pattern, right = string.
                  ;; Both sides are expanded as format strings before matching.
@@ -675,6 +685,32 @@
   (#\Z (write-string "UTC" out))
   (#\% (write-char #\% out)))
 
+(defun %strftime-format-decoded (fmt sec min hour day month year weekday)
+  "Format strftime-style FMT against already-decoded time components.
+   Shared core of %strftime-format (current time) and %strftime-format-at (a
+   specific universal-time).  Empty FMT uses the default '%a %b %e %H:%M:%S %Z %Y'.
+   Unknown %-codes are emitted literally as %X."
+  (when (zerop (length fmt))
+    (setf fmt "%a %b %e %H:%M:%S %Z %Y"))
+  (with-output-to-string (out)
+    (let ((fmt-index 0)
+          (fmt-length (length fmt)))
+      (loop while (< fmt-index fmt-length) do
+        (let ((current-char (char fmt fmt-index)))
+          (cond
+            ((and (char= current-char #\%)
+                  (< (1+ fmt-index) fmt-length))
+             (let ((code-char (char fmt (1+ fmt-index))))
+               (incf fmt-index 2)
+               (unless (%dispatch-strftime-code
+                        code-char out sec min hour day month year weekday)
+                 ;; Unknown code: emit literally as %X
+                 (write-char #\% out)
+                 (write-char code-char out))))
+            (t
+             (write-char current-char out)
+             (incf fmt-index))))))))
+
 (defun %strftime-format (fmt)
   "Format the current local time using strftime-style codes in FMT.
    Supported: %Y %y %m %d %e %H %M %S %I %p %P %A %a %B %b %T %R %F %j %Z %%.
@@ -683,26 +719,20 @@
   (multiple-value-bind (sec min hour day month year weekday dst tz)
       (get-decoded-time)
     (declare (ignore dst tz))
-    (when (zerop (length fmt))
-      (setf fmt "%a %b %e %H:%M:%S %Z %Y"))
-    (with-output-to-string (out)
-      (let ((fmt-index 0)
-            (fmt-length (length fmt)))
-        (loop while (< fmt-index fmt-length) do
-          (let ((current-char (char fmt fmt-index)))
-            (cond
-              ((and (char= current-char #\%)
-                    (< (1+ fmt-index) fmt-length))
-               (let ((code-char (char fmt (1+ fmt-index))))
-                 (incf fmt-index 2)
-                 (unless (%dispatch-strftime-code
-                          code-char out sec min hour day month year weekday)
-                   ;; Unknown code: emit literally as %X
-                   (write-char #\% out)
-                   (write-char code-char out))))
-              (t
-               (write-char current-char out)
-               (incf fmt-index)))))))))
+    (%strftime-format-decoded fmt sec min hour day month year weekday)))
+
+(defun %strftime-format-at (fmt universal-time)
+  "Format the given UNIVERSAL-TIME (a CL universal-time integer) in local time
+   with strftime-style FMT.  Used by the #{t:VARIABLE} format modifier to render a
+   timestamp variable (e.g. #{t:session_last_attached}).  Empty FMT uses the
+   default format.  Returns the empty string when UNIVERSAL-TIME is not a usable
+   positive integer."
+  (if (and (integerp universal-time) (plusp universal-time))
+      (multiple-value-bind (sec min hour day month year weekday dst tz)
+          (decode-universal-time universal-time)
+        (declare (ignore dst tz))
+        (%strftime-format-decoded fmt sec min hour day month year weekday))
+      ""))
 
 ;;; ── Context builder ─────────────────────────────────────────────────────────
 
