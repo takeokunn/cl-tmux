@@ -4499,3 +4499,33 @@
             "detached new-session width comes from default-size (100)")
         (is (= 40 (window-height (session-active-window new)))
             "detached new-session height comes from default-size (40)")))))
+
+;;; ── popup-border-lines: popup box-drawing character set ──────────────────────
+
+(test popup-border-chars-per-style
+  "%popup-border-chars returns the box-drawing set for each popup-border-lines
+   value; an unknown value falls back to single."
+  (with-isolated-options ("popup-border-lines" "double")
+    (multiple-value-bind (tl tr bl br h) (cl-tmux::%popup-border-chars)
+      (is (char= #\╔ tl)) (is (char= #\╗ tr)) (is (char= #\╚ bl))
+      (is (char= #\╝ br)) (is (char= #\═ h))))
+  (with-isolated-options ("popup-border-lines" "rounded")
+    (multiple-value-bind (tl tr bl br h) (cl-tmux::%popup-border-chars)
+      (declare (ignore h))
+      (is (char= #\╭ tl)) (is (char= #\╮ tr)) (is (char= #\╰ bl)) (is (char= #\╯ br))))
+  (with-isolated-options ("popup-border-lines" "simple")
+    (multiple-value-bind (tl tr bl br h) (cl-tmux::%popup-border-chars)
+      (is (char= #\+ tl)) (is (char= #\+ tr)) (is (char= #\+ bl))
+      (is (char= #\+ br)) (is (char= #\- h))))
+  (with-isolated-options ("popup-border-lines" "bogus")
+    (multiple-value-bind (tl tr bl br h) (cl-tmux::%popup-border-chars)
+      (declare (ignore tr bl br h))
+      (is (char= #\┌ tl) "unknown value falls back to single (┌)"))))
+
+(test format-popup-overlay-uses-border-lines-option
+  "%format-popup-overlay draws the box with the popup-border-lines characters."
+  (with-isolated-options ("popup-border-lines" "double")
+    (let ((result (cl-tmux::%format-popup-overlay "t" "body")))
+      (is (search "╔" result) "double border uses ╔ top-left")
+      (is (search "╝" result) "double border uses ╝ bottom-right")
+      (is (search "body" result) "body content is present"))))

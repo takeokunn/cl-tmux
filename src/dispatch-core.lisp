@@ -876,13 +876,28 @@
 (defconstant +popup-max-height+ 15 "Maximum row height of a popup overlay.")
 (defconstant +popup-margin+      4 "Row margin subtracted from terminal height for popups.")
 
+(defun %popup-border-chars ()
+  "Return (values TOP-LEFT TOP-RIGHT BOTTOM-LEFT BOTTOM-RIGHT HORIZONTAL) box-
+   drawing characters for the popup-border-lines option: single (default), rounded,
+   double, heavy, simple (ASCII +/-), padded/none (blank).  Unknown → single."
+  (let ((style (cl-tmux/options:get-option "popup-border-lines" "single")))
+    (cond
+      ((string= style "rounded") (values #\╭ #\╮ #\╰ #\╯ #\─))
+      ((string= style "double")  (values #\╔ #\╗ #\╚ #\╝ #\═))
+      ((string= style "heavy")   (values #\┏ #\┓ #\┗ #\┛ #\━))
+      ((string= style "simple")  (values #\+ #\+ #\+ #\+ #\-))
+      ((or (string= style "padded") (string= style "none"))
+       (values #\Space #\Space #\Space #\Space #\Space))
+      (t (values #\┌ #\┐ #\└ #\┘ #\─)))))   ; single + unknown fallback
+
 (defun %format-popup-overlay (title output)
-  "Format a popup overlay string with box-drawing borders.
-   TITLE is the popup header text; OUTPUT is the body content."
-  (format nil "┌─ ~A ─┐~%~A~%└~A┘"
-          title
-          (or output "")
-          (make-string (+ 2 (length title)) :initial-element #\─)))
+  "Format a popup overlay string with box-drawing borders whose characters follow
+   the popup-border-lines option.  TITLE is the header; OUTPUT is the body."
+  (multiple-value-bind (tl tr bl br h) (%popup-border-chars)
+    (format nil "~C~C ~A ~C~C~%~A~%~C~A~C"
+            tl h title h tr
+            (or output "")
+            bl (make-string (+ 2 (length title)) :initial-element h) br)))
 
 (defun %popup-dimension (spec axis-total fallback)
   "Resolve a popup -w/-h dimension SPEC against AXIS-TOTAL (the terminal width or
