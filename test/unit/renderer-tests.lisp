@@ -1099,6 +1099,19 @@
       (is (find #\║ out) "double border draws ║ vertical sides")
       (is (null (find #\┌ out)) "no single-line ┌ corner when double is set"))))
 
+(test render-popup-honours-border-style-colour
+  "render-popup wraps the popup border in the popup-border-style SGR."
+  (with-isolated-options ("popup-border-style" "fg=red")
+    (let* ((expected (cl-tmux/renderer:style-to-sgr
+                      (cl-tmux/renderer:parse-style-string "fg=red")))
+           (popup (make-popup :title "T" :x 0 :y 0 :width 20 :height 6
+                              :pane nil :screen nil :close-on-exit nil))
+           (out   (with-output-to-string (s)
+                    (cl-tmux/renderer::render-popup s popup 24 80))))
+      (is (search (format nil "~C[~Am" #\Escape expected) out)
+          "the popup-border-style SGR (~S) must appear in the rendered border"
+          expected))))
+
 (test render-popup-empty-draws-side-bars
   "render-popup with no live pane fills interior rows with │ side bars."
   (let* ((popup (make-popup :title "T" :x 0 :y 0 :width 10 :height 4
