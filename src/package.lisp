@@ -37,8 +37,9 @@
    #:config-file-path
    ;; %if condition evaluator hook (set by top-level package)
    #:*config-condition-evaluator*
-   ;; Dynamic prefix key
+   ;; Dynamic prefix key (primary and secondary)
    #:*prefix-key-code*
+   #:*prefix2-key-code*
    #:%parse-prefix-key
    ;; ORCHESTRATE-layer shell initializer
    #:init-default-shell))

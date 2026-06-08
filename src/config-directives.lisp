@@ -569,13 +569,17 @@
        (when byte
          (setf *prefix-key-code* byte)
          (key-table-bind +table-prefix+ (code-char byte) :send-prefix))))
-    ;; prefix2: a second prefix key that also arms the prefix table.
+    ;; prefix2: a second prefix key that arms the prefix table (same as primary prefix).
+    ;; Stores the byte in *prefix2-key-code* so %ground-input-state transitions to
+    ;; %after-prefix-input-state when this key is pressed — same as pressing C-b.
+    ;; Real tmux: pressing prefix2 arms the prefix table; C-b and prefix2 are equivalent.
     ((string= name "prefix2")
      (let ((byte (%parse-prefix-key value)))
        (when byte
-         (key-table-bind +table-root+
-                         (code-char byte)
-                         :send-prefix))))
+         (setf *prefix2-key-code* byte)
+         ;; Also bind prefix2 in prefix table → send-prefix so C-b prefix2
+         ;; (i.e., pressing prefix2 AFTER the prefix) sends prefix2 to the pane.
+         (key-table-bind +table-prefix+ (code-char byte) :send-prefix))))
     ;; default-shell: update the shell used for new panes immediately.
     ((string= name "default-shell")
      (when (and (stringp value) (plusp (length value)))

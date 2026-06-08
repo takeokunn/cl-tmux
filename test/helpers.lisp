@@ -24,7 +24,8 @@
   `(let ((cl-tmux/config:*key-tables*  (make-hash-table :test #'equal))
           (cl-tmux/config:*default-shell* cl-tmux/config:*default-shell*)
           (cl-tmux/config:*status-height* cl-tmux/config:*status-height*)
-          (cl-tmux/config:*prefix-key-code* cl-tmux/config:*prefix-key-code*)
+          (cl-tmux/config:*prefix-key-code*  cl-tmux/config:*prefix-key-code*)
+          (cl-tmux/config:*prefix2-key-code* cl-tmux/config:*prefix2-key-code*)
           (cl-tmux/options:*global-options*
            (let ((h (make-hash-table :test #'equal)))
              (maphash (lambda (k v) (setf (gethash k h) v))

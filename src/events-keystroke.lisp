@@ -112,7 +112,11 @@
        t))
    (values nil #'%ground-input-state))
   ;; ── Prefix key: arm command dispatcher ────────────────────────────────────
-  ((= byte +prefix-key-code+)
+  ;; Check the RUNTIME variable *prefix-key-code* (not the compile-time constant
+  ;; +prefix-key-code+) so that `set -g prefix C-a` actually remaps the prefix.
+  ;; Also check *prefix2-key-code* when a second prefix has been configured.
+  ((or (= byte *prefix-key-code*)
+       (and *prefix2-key-code* (= byte *prefix2-key-code*)))
    (values nil #'%after-prefix-input-state))
   ;; ── ESC: always accumulate for mouse events, arrows, copy mode ───────────
   ;; Even in copy mode we accumulate: arrow keys arrive as ESC [ FINAL and are

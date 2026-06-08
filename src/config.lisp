@@ -13,6 +13,10 @@
 (defparameter *prefix-key-code* +prefix-key-code+
   "Runtime prefix key byte.  Default 2 (C-b).  Change via 'set -g prefix C-a'.")
 
+(defparameter *prefix2-key-code* nil
+  "Second prefix key byte, or NIL when not set.  Changed via 'set -g prefix2 C-a'.
+   When set, pressing this key also arms the prefix key-table (same as the primary prefix).")
+
 (defun %parse-prefix-key (key-str)
   "Parse a tmux key name KEY-STR into a byte value.
    Supports: C-x control (logand char 0x1f), single printable char.
