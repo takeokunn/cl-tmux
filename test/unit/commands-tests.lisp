@@ -1502,6 +1502,42 @@
         "literal '(' must be found at col 2 (got ~D)"
         (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
 
+;;; ── wrap-search: search wraps around the buffer ends (default on) ────────────
+
+(test copy-mode-search-forward-wraps-to-top
+  "With wrap-search on (default), a forward search that finds nothing below the
+   cursor wraps to the top and lands on the first match in the buffer."
+  (let ((s (make-screen 30 5)))
+    (feed s "abc")                              ; only row 0 contains the term
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 0)) ; below the match
+    (cl-tmux/commands::copy-mode-search-forward s "abc")
+    (is (equal (cons 0 0) (cl-tmux/terminal/types:screen-copy-cursor s))
+        "no match below → wrap to the match at row 0 col 0")))
+
+(test copy-mode-search-forward-no-wrap-when-off
+  "With wrap-search off, a forward search with no match below leaves the cursor
+   where it is (no wrap-around)."
+  (with-isolated-options ("wrap-search" nil)
+    (let ((s (make-screen 30 5)))
+      (feed s "abc")
+      (cl-tmux/commands::copy-mode-enter s)
+      (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 0))
+      (cl-tmux/commands::copy-mode-search-forward s "abc")
+      (is (equal (cons 2 0) (cl-tmux/terminal/types:screen-copy-cursor s))
+          "wrap-search off → cursor stays put when nothing is found below"))))
+
+(test copy-mode-search-backward-wraps-to-bottom
+  "With wrap-search on, a backward search that finds nothing above the cursor
+   wraps to the bottom and lands on the last match in the buffer."
+  (let ((s (make-screen 30 5)))
+    (feed-lines s "" "" "" "" "abc")            ; only row 4 contains the term
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0)) ; above the match
+    (cl-tmux/commands::copy-mode-search-backward s "abc")
+    (is (equal (cons 4 0) (cl-tmux/terminal/types:screen-copy-cursor s))
+        "no match above → wrap to the match at row 4 col 0")))
+
 (test copy-mode-search-backward-regex
   "search-backward matches a regex and finds the nearest match before the cursor."
   (let ((s (make-screen 30 5)))
@@ -1514,20 +1550,20 @@
         (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
 
 (test copy-mode-search-next-repeats-forward
-  "copy-mode-search-next uses the saved term to repeat forward search."
+  "copy-mode-search-next uses the saved term to repeat forward search; with
+   wrap-search on (default) it wraps to the first match when none lies below."
   (let ((s (make-screen 30 5)))
     (feed s "abc def abc")
     (cl-tmux/commands::copy-mode-enter s)
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
-    ;; Save a term and jump to position 8
+    ;; Save a term and jump to the second "abc" at col 8.
     (cl-tmux/commands::copy-mode-search-forward s "abc")
-    ;; Cursor should now be at 8
     (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s))))
-    ;; search-next with cursor at 8 should not find another match (no more "abc" on row 0)
+    ;; search-next from col 8: nothing further below on row 0, so it wraps around
+    ;; to the first "abc" at col 0 (tmux's wrapping n).
     (cl-tmux/commands::copy-mode-search-next s)
-    ;; Cursor stays at 8 if no further match found
-    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "search-next must stay at current position when no further match")))
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "search-next wraps to the first match (col 0) when none lies below")))
 
 (test copy-mode-search-prev-noop-without-term
   "copy-mode-search-prev does nothing when no search term is saved."
