@@ -16,33 +16,56 @@
     (loop for col from 0 below (screen-width screen)
           do (write-char (cell-char (screen-display-cell screen col row)) out))))
 
+(defun %copy-mode-make-matcher (term)
+  "Return a matcher closure (row-string start) → match-start-column (or NIL) for
+   TERM.  TERM is treated as a regular expression (cl-ppcre) — matching tmux's
+   copy-mode regex search — when it compiles as a valid regex; otherwise it falls
+   back to a literal substring search, so search terms containing unbalanced regex
+   metacharacters (e.g. \"(\") still work.  A plain alphanumeric term compiles as
+   a regex that matches itself, so literal searches behave identically."
+  (let ((scanner (ignore-errors (cl-ppcre:create-scanner term))))
+    (if scanner
+        (lambda (str start) (cl-ppcre:scan scanner str :start start))
+        (lambda (str start) (search term str :start2 start)))))
+
 (defun %copy-mode-find-forward (screen term start-row start-col)
   "Scan forward from START-ROW/START-COL for TERM in SCREEN's visible viewport.
-   Returns (values row col) of the first match, or (values nil nil) when absent."
-  (let ((height (screen-height screen)))
+   TERM is matched as a regex (literal fallback).  Returns (values row col) of the
+   first match, or (values nil nil) when absent."
+  (let ((height (screen-height screen))
+        (match  (%copy-mode-make-matcher term)))
     (loop for row from start-row below height
           do (let* ((row-string (%copy-mode-row-string screen row))
-                    (from-col  (if (= row start-row) start-col 0))
-                    (position  (search term row-string :start2 from-col)))
-               (when position
-                 (return-from %copy-mode-find-forward (values row position)))))
+                    (from-col  (if (= row start-row) start-col 0)))
+               (when (<= from-col (length row-string))
+                 (let ((position (funcall match row-string from-col)))
+                   (when position
+                     (return-from %copy-mode-find-forward (values row position)))))))
     (values nil nil)))
 
 (defun %copy-mode-find-backward (screen term start-row start-col)
   "Scan backward from START-ROW/START-COL for TERM in SCREEN's visible viewport.
-   Returns (values row col) of the nearest match before the cursor, or (values nil nil)."
-  (loop for row from start-row downto 0
-        do (let* ((row-string (%copy-mode-row-string screen row))
-                  (end-col   (if (= row start-row) start-col (length row-string)))
-                  (position  (and (> end-col 0)
-                                  (loop for i from (1- end-col) downto 0
-                                        when (and (<= (+ i (length term)) (length row-string))
-                                                  (string= term (subseq row-string i
-                                                                        (+ i (length term)))))
-                                          return i))))
-             (when position
-               (return-from %copy-mode-find-backward (values row position)))))
-  (values nil nil))
+   TERM is matched as a regex (literal fallback).  Returns (values row col) of the
+   nearest match starting before the cursor, or (values nil nil).  Within a row the
+   LAST match whose start is < END-COL is chosen (the occurrence nearest the cursor)."
+  (let ((match (%copy-mode-make-matcher term)))
+    (loop for row from start-row downto 0
+          do (let* ((row-string (%copy-mode-row-string screen row))
+                    (end-col    (if (= row start-row) start-col (length row-string)))
+                    (best       nil)
+                    (from       0))
+               ;; Walk matches left-to-right, keeping the last start strictly
+               ;; before END-COL; +1 advance guarantees progress on zero-width
+               ;; matches.
+               (loop
+                 (let ((pos (and (<= from (length row-string))
+                                 (funcall match row-string from))))
+                   (cond
+                     ((or (null pos) (>= pos end-col)) (return))
+                     (t (setf best pos) (setf from (1+ pos))))))
+               (when best
+                 (return-from %copy-mode-find-backward (values row best)))))
+    (values nil nil)))
 
 (defun copy-mode-search-forward (screen term)
   "Search forward from the current cursor for TERM.

@@ -1452,6 +1452,51 @@
         "search-backward must find 'abc' at col 8 (nearest before col 11) (got ~D)"
         (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
 
+(test copy-mode-search-forward-regex-dot
+  "search-forward treats the term as a regex: 'a.c' matches 'abc'."
+  (let ((s (make-screen 30 5)))
+    (feed s "xy abc z")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-search-forward s "a.c")
+    (is (= 3 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "regex a.c must match 'abc' at col 3 (got ~D)"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+
+(test copy-mode-search-forward-regex-char-class
+  "search-forward regex character class '[0-9]+' finds the first digit run."
+  (let ((s (make-screen 30 5)))
+    (feed s "abc 123 def")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-search-forward s "[0-9]+")
+    (is (= 4 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "regex [0-9]+ must match '123' starting at col 4 (got ~D)"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+
+(test copy-mode-search-invalid-regex-falls-back-to-literal
+  "An invalid regex (unbalanced paren) falls back to a literal substring search,
+   so search terms with regex metacharacters still work."
+  (let ((s (make-screen 30 5)))
+    (feed s "a (b) c")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-search-forward s "(")
+    (is (= 2 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "literal '(' must be found at col 2 (got ~D)"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+
+(test copy-mode-search-backward-regex
+  "search-backward matches a regex and finds the nearest match before the cursor."
+  (let ((s (make-screen 30 5)))
+    (feed s "a1b a2b a3b")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 11))
+    (cl-tmux/commands::copy-mode-search-backward s "a.b")
+    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "regex a.b backward must find the last 'aNb' at col 8 before col 11 (got ~D)"
+        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+
 (test copy-mode-search-next-repeats-forward
   "copy-mode-search-next uses the saved term to repeat forward search."
   (let ((s (make-screen 30 5)))
