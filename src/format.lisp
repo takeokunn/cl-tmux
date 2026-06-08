@@ -839,6 +839,12 @@
          ;; (monitor-activity was triggered).  Cleared when the window is focused.
          (window-activity-flag
           (if (and window (cl-tmux/model:window-activity-flag window)) "#" " "))
+         ;; #{window_start_flag} / #{window_end_flag}: "1" for first/last window
+         ;; in the session list.  Used by themes for list-end decorators.
+         (window-start-flag
+          (if (and window session-wins (eq window (first session-wins))) "1" "0"))
+         (window-end-flag
+          (if (and window session-wins (eq window (car (last session-wins)))) "1" "0"))
          ;; #{window_bell_flag}: "!" when any pane in the window has a pending bell.
          ;; Used by status themes to show an alert indicator in the window list.
          (window-bell-flag
@@ -851,7 +857,12 @@
               " "))
          (hostname        (machine-instance))
          (time-str        (%current-time-string))
-         (host-short      (%short-hostname hostname)))
+         (host-short      (%short-hostname hostname))
+         ;; Environment variables available as format variables.
+         ;; These allow theme files to detect the outer terminal (iTerm2, kitty, etc.)
+         ;; and adjust rendering accordingly — same set as %if condition context.
+         (term-program    (or (ignore-errors (sb-ext:posix-getenv "TERM_PROGRAM")) ""))
+         (colorterm       (or (ignore-errors (sb-ext:posix-getenv "COLORTERM")) "")))
     (list :session-name  session-name
           ;; #{session_id}: numeric session identifier.
           :session-id    (if session (cl-tmux/model:session-id session) 0)
@@ -928,6 +939,9 @@
           :window-bell-flag window-bell-flag
           ;; #{window_activity_flag}: "#" when monitor-activity was triggered.
           :window-activity-flag window-activity-flag
+          ;; #{window_start_flag} / #{window_end_flag}: first/last in session list.
+          :window-start-flag window-start-flag
+          :window-end-flag   window-end-flag
           ;; #{window_number}: deprecated alias for #{window_index}.
           :window-number window-index
           ;; #{scroll_position}: scrollback offset in copy mode, else "".
@@ -940,7 +954,10 @@
                                      (cl-tmux/terminal:screen-copy-selecting pane-scr))
                                 "1" "0")
           ;; #{pane_marked}: "1" when the pane is marked, else "0".
-          :pane-marked (if (and pane (cl-tmux/model:pane-marked pane)) "1" "0"))))
+          :pane-marked (if (and pane (cl-tmux/model:pane-marked pane)) "1" "0")
+          ;; Environment variables for terminal detection in themes.
+          :term-program term-program
+          :colorterm    colorterm)))
 
 (defun format-context-from-window (session window
                                    &key (client-width 0) (client-height 0)

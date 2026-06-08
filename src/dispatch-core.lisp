@@ -585,16 +585,36 @@
 ;;; falls through to the no-argument name table for everything else.
 
 (defun %cmd-display-message (session args)
-  "display-message <fmt...>: expand the space-joined ARGS as a format string
+  "display-message [-d ms] <fmt...>: expand the space-joined ARGS as a format string
    against the active session/window/pane, then log and show the result.
-   Uses show-transient-overlay so display-time ms auto-dismisses it."
-  (let* ((win  (session-active-window session))
-         (pane (session-active-pane session))
-         (ctx  (cl-tmux/format:format-context-from-session session win pane))
-         (text (cl-tmux/format:expand-format
-                (format nil "~{~A~^ ~}" args) ctx)))
-    (add-message-log text)
-    (show-transient-overlay text)))
+   -d ms: display duration in milliseconds (overrides display-time option).
+   Uses show-transient-overlay so it auto-dismisses after the configured duration."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "d")
+    (let* ((delay-str (cdr (assoc #\d flags)))
+           (delay-ms  (and delay-str (parse-integer delay-str :junk-allowed t)))
+           (win       (session-active-window session))
+           (pane      (session-active-pane session))
+           (ctx       (cl-tmux/format:format-context-from-session session win pane))
+           (text      (cl-tmux/format:expand-format
+                       (format nil "~{~A~^ ~}" positionals) ctx)))
+      (add-message-log text)
+      (if delay-ms
+          ;; Custom delay: temporarily override display-time for this message.
+          (let ((saved (cl-tmux/options:get-option "display-time" 750)))
+            (cl-tmux/options:set-option "display-time" delay-ms)
+            (show-transient-overlay text)
+            (cl-tmux/options:set-option "display-time" saved))
+          (show-transient-overlay text)))))
+
+(defun %cmd-copy-mode-arg (session args)
+  "copy-mode [-u]: enter copy mode.
+   -u: pre-scroll to the oldest scrollback content (e.g. bind PageUp copy-mode -u)."
+  (let* ((flags (nth-value 0 (%parse-command-flags args "")))
+         (scroll-to-top (and (assoc #\u flags) t))
+         (screen (%active-screen session)))
+    (when screen
+      (copy-mode-enter screen :scroll-to-top scroll-to-top)
+      (setf *dirty* t))))
 
 ;;; *set-option-command-names* removed — inlined into *arg-command-table* below.
 
@@ -1306,7 +1326,9 @@
    (cons '("pipe-pane" "pipep")         #'%cmd-pipe-pane-arg)
    (cons '("list-sessions" "ls")        #'%cmd-list-sessions-arg)
    (cons '("list-windows" "lsw")        #'%cmd-list-windows-arg)
-   (cons '("list-panes" "lsp")          #'%cmd-list-panes-arg-full))
+   (cons '("list-panes" "lsp")          #'%cmd-list-panes-arg-full)
+   ;; copy-mode [-u]: -u flag pre-scrolls to oldest content on entry.
+   (cons '("copy-mode")                 #'%cmd-copy-mode-arg))
   "Arg-taking commands: (list-of-names . handler), handler a function of
    (SESSION ARGS).  Consulted by %run-command-line before the no-argument
    %dispatch-named-command name table.")

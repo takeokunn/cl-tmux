@@ -37,13 +37,16 @@
           ;; version: reported as tmux 3.5 for compatibility with config guards.
           :version    "3.5"
           ;; Environment variables commonly used in %if guards.
-          ;; #{TERM} is the most common: guards on default-terminal and terminal-overrides.
+          ;; #{TERM} guards on default-terminal and terminal-overrides.
+          ;; #{TERM_PROGRAM} detects iTerm2 / Apple Terminal / WezTerm / kitty.
           ;; All are looked up at condition-evaluation time so values are current.
-          :term       (%safe-getenv "TERM")
-          :display    (%safe-getenv "DISPLAY")
+          :term           (%safe-getenv "TERM")
+          :term-program   (%safe-getenv "TERM_PROGRAM")
+          :display        (%safe-getenv "DISPLAY")
           :ssh-connection (%safe-getenv "SSH_CONNECTION")
-          :tmux       (%safe-getenv "TMUX")
-          :xterm-version (%safe-getenv "XTERM_VERSION"))))
+          :tmux           (%safe-getenv "TMUX")
+          :xterm-version  (%safe-getenv "XTERM_VERSION")
+          :colorterm      (%safe-getenv "COLORTERM"))))
 
 (defun %make-format-condition-evaluator ()
   "Return a closure (string) → string that expands a %if condition using the

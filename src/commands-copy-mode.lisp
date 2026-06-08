@@ -22,16 +22,22 @@
 ;;; copy_mode(yank, Screen)   :- selection_text(Screen, T), add_paste_buffer(T),
 ;;;                               copy_mode(cancel, Screen), copy_mode(exit, Screen).
 
-(defun copy-mode-enter (screen)
+(defun copy-mode-enter (screen &key scroll-to-top)
   "Enter copy/scroll mode on SCREEN: freeze the viewport at the live position.
    The copy-mode cursor is placed at the bottom-left of the viewport so that
-   the first navigation key moves it naturally upward toward older content."
+   the first navigation key moves it naturally upward toward older content.
+   SCROLL-TO-TOP T pre-scrolls to the oldest scrollback content (copy-mode -u)."
   (setf (screen-copy-mode-p   screen) t
-        (screen-copy-offset    screen) 0
         (screen-copy-mark      screen) nil
-        ;; Start cursor at bottom-left of the visible viewport (real tmux behaviour).
-        (screen-copy-cursor    screen) (cons (1- (screen-height screen)) 0)
-        (screen-copy-selecting screen) nil))
+        (screen-copy-selecting screen) nil)
+  (if scroll-to-top
+      ;; copy-mode -u: scroll to oldest content (max offset), cursor at top-left.
+      (let ((max-offset (length (screen-scrollback screen))))
+        (setf (screen-copy-offset screen) max-offset
+              (screen-copy-cursor screen) (cons 0 0)))
+      ;; Normal entry: live view, cursor at bottom-left.
+      (setf (screen-copy-offset screen) 0
+            (screen-copy-cursor screen) (cons (1- (screen-height screen)) 0))))
 
 (defun copy-mode-exit (screen)
   "Exit copy mode: resume live PTY output display."
