@@ -849,13 +849,12 @@
      :CLIENT-HEIGHT  — terminal height reported to the client (default 0)
      :CLIENT-TTY     — path to the client tty device (default \"\")
 
-   Keys returned:
-     :session-name :window-index :window-name :window-count :session-windows
-     :window-active :window-flags :window-raw-flags :window-panes :pane-index :pane-title
-     :pane-id :pane-width :pane-height :pane-pid :pane-left :pane-top :pane-active
-     :window-width :window-height :pane-at-top :pane-at-bottom :pane-at-left :pane-at-right
-     :hostname :host :host-short :time
-     :client-width :client-height :client-tty"
+   Returns a plist of context keys; the body below is the authoritative list,
+   with a per-key ;; comment naming the #{...} variable each one backs (e.g.
+   :pane-at-top -> #{pane_at_top}).  An explicit enumeration here repeatedly
+   drifted out of date as variables were added, so it is intentionally omitted —
+   read the format-context-from-session body (and EXPAND-FORMAT) for the
+   current, complete set."
   ;; session-active-window is the session's current window — distinct from
   ;; the WINDOW argument which is the window whose context we are building.
   ;; Naming it explicitly avoids confusion when both appear in the same binding.
@@ -1130,13 +1129,9 @@
                                    &key (client-width 0) (client-height 0)
                                         (client-tty ""))
   "Build a context plist for per-window format strings (e.g. window-status-format).
-   Like FORMAT-CONTEXT-FROM-SESSION but specialised for a single window.
-   Any argument may be NIL.
-
-   Keys: :session-name :window-index :window-name :window-count
-         :window-active :window-flags :window-raw-flags :pane-index :pane-title
-         :hostname :time :host :host-short
-         :client-width :client-height :client-tty"
+   Specialised for a single WINDOW: delegates to FORMAT-CONTEXT-FROM-SESSION with
+   the window's first pane, so it returns that function's full key set (see its
+   body for the authoritative, complete list).  Any argument may be NIL."
   (format-context-from-session session window
                                (when window
                                  (first (cl-tmux/model:window-panes window)))
