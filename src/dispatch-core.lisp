@@ -1865,15 +1865,39 @@
         ((assoc #\U flags) (when win (resize-pane win :up    amount)))
         ((assoc #\D flags) (when win (resize-pane win :down  amount)))))))
 
+(defun %send-keys-hex-to-string (hex)
+  "Convert a send-keys -H argument (a hexadecimal character code like \"1b\" or
+   \"41\") to the one-character string it names, or NIL when HEX is not a valid
+   in-range code.  Mirrors tmux's send-keys -H (strtol base 16 → key).  Extracted
+   as a named helper so the hex→byte logic is unit-testable without a live PTY
+   (send-keys-to-pane no-ops on fd -1), matching the send-keys -l test pattern."
+  (let ((code (parse-integer hex :radix 16 :junk-allowed t)))
+    (when (and code (<= 0 code (1- char-code-limit)))
+      (string (code-char code)))))
+
 (defun %cmd-send-keys-arg (session args)
-  "send-keys [-l] [-t target-pane] [-X copy-mode-cmd] [key ...]: send keys or copy-mode commands.
-   -X: dispatch a named copy-mode command (begin-selection, copy-selection, etc.)
+  "send-keys [-lHR] [-N count] [-t target-pane] [-X] [key ...]: send keys or a
+   copy-mode command.
+   -X: the first positional is a named copy-mode command (begin-selection,
+       scroll-up, etc.) dispatched to the target pane's copy mode.  -X is a
+       BOOLEAN flag — the command is a positional, not -X's value.
+   -N count: repeat count.  With -X, the copy-mode command runs COUNT times
+       (e.g. `send -X -N 5 scroll-up`); with regular keys, the whole key sequence
+       is sent COUNT times.  Default 1.
    -t: target a specific pane by pane-id or 'session:window.pane' syntax.
    -l: send each positional literally (no key-name translation).
+   -H: each positional is a hexadecimal character code (e.g. `send -H 1b 5b 41`).
+   -R (reset terminal state) and -M (mouse passthrough) are accepted but not acted
+   on — they are rare in .tmux.conf and need pane terminal-reset / mouse-bind
+   context respectively.
    Without -X: each positional is a key name or literal string typed into the pane."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "tN")
     (let* ((target-str (cdr (assoc #\t flags)))
            (literal-p  (and (assoc #\l flags) t))
+           (hex-p      (and (assoc #\H flags) t))
+           (x-p        (and (assoc #\X flags) t))
+           (count      (let ((n (cdr (assoc #\N flags))))
+                         (max 1 (or (and n (parse-integer n :junk-allowed t)) 1))))
            ;; Resolve -t to a specific pane; fall back to the active pane.
            (target-pane
             (if target-str
@@ -1885,15 +1909,21 @@
                   (declare (ignore _s _w))
                   pane)
                 (session-active-pane session))))
-      ;; Check for -X flag: it consumes the next token as a copy-mode command name.
-      (let ((x-pos (position "-X" args :test #'string=)))
-        (if (and x-pos (nth (1+ x-pos) args))
-            ;; -X command: dispatch to copy-mode on the target pane's screen.
-            (%dispatch-send-keys-X session (nth (1+ x-pos) args))
-            ;; Normal: send key strings to the target pane.
-            (when (and positionals target-pane)
-              (dolist (key positionals)
-                (send-keys-to-pane target-pane key :literal literal-p))))))))
+      (cond
+        ;; -X: dispatch the copy-mode command (first positional) COUNT times.
+        (x-p
+         (when (first positionals)
+           (dotimes (_ count)
+             (%dispatch-send-keys-X session (first positionals)))))
+        ;; Regular keys: send the whole positional sequence COUNT times.  With -H
+        ;; each positional is a hex code → the literal character it names.
+        ((and positionals target-pane)
+         (dotimes (_ count)
+           (dolist (key positionals)
+             (if hex-p
+                 (let ((str (%send-keys-hex-to-string key)))
+                   (when str (send-keys-to-pane target-pane str :literal t)))
+                 (send-keys-to-pane target-pane key :literal literal-p)))))))))
 
 (defun %cmd-list-sessions-arg (session args)
   "list-sessions [-F format]: list sessions.

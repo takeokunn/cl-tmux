@@ -4289,3 +4289,44 @@
     (is (not (null entry)) "popup is registered in *arg-command-table*")
     (is (eq #'cl-tmux::%cmd-display-popup (cdr entry))
         "popup routes to %cmd-display-popup")))
+
+;;; ── send-keys -N (repeat) and -H (hex) ───────────────────────────────────────
+;;;
+;;; -N count repeats the -X copy-mode command (or the whole key sequence) COUNT
+;;; times; -H interprets each argument as a hexadecimal character code.  The -X
+;;; repeat is observed via the copy cursor; -H is tested through the extracted
+;;; %send-keys-hex-to-string helper (send-keys-to-pane no-ops on a fd -1 pane).
+
+(test send-keys-hex-to-string-converts-codes
+  "%send-keys-hex-to-string maps a hex code to its one-character string, or NIL
+   for an unparseable / out-of-range code."
+  (is (string= "A" (cl-tmux::%send-keys-hex-to-string "41")) "41 → A")
+  (is (string= " " (cl-tmux::%send-keys-hex-to-string "20")) "20 → space")
+  (is (= 27 (char-code (char (cl-tmux::%send-keys-hex-to-string "1b") 0)))
+      "1b → ESC (char code 27)")
+  (is (null (cl-tmux::%send-keys-hex-to-string "zz")) "non-hex → NIL")
+  (is (null (cl-tmux::%send-keys-hex-to-string "FFFFFFFF"))
+      "out-of-range code → NIL (never errors)"))
+
+(test send-keys-x-with-N-repeats-copy-command
+  "send-keys -X -N 3 cursor-up moves the copy cursor up 3 rows (the -N repeat
+   count applied to the copy-mode command)."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (cl-tmux::dispatch-command s :copy-mode-enter nil)
+      (let* ((screen (active-screen s))
+             (row0   (car (screen-copy-cursor screen))))
+        (cl-tmux::%cmd-send-keys-arg s '("-X" "-N" "3" "cursor-up"))
+        (is (= (- row0 3) (car (screen-copy-cursor screen)))
+            "cursor-up repeated 3× moves the copy cursor up 3 rows")))))
+
+(test send-keys-x-without-N-runs-once
+  "send-keys -X cursor-up with no -N defaults to a single application."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (cl-tmux::dispatch-command s :copy-mode-enter nil)
+      (let* ((screen (active-screen s))
+             (row0   (car (screen-copy-cursor screen))))
+        (cl-tmux::%cmd-send-keys-arg s '("-X" "cursor-up"))
+        (is (= (- row0 1) (car (screen-copy-cursor screen)))
+            "a bare -X command runs exactly once (count defaults to 1)")))))
