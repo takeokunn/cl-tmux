@@ -80,6 +80,13 @@
 ;; Install once at load time so the running image has the full default set.
 (install-extended-key-bindings)
 
+;;; *prefix-active* is set to T while waiting for the command key after the
+;;; prefix key (C-b).  The format engine reads it for #{client_prefix}.
+;;; Updated by process-byte; written on the event-loop thread only.
+(defvar *prefix-active* nil
+  "T when the input state machine is in %after-prefix-input-state (prefix pressed,
+   waiting for command key).  Exposed as #{client_prefix} in format strings.")
+
 (defstruct input-state
   "Opaque CPS keystroke-processing state. Holds the current continuation.
    REPEAT-ENTERED-AT is set (via GET-INTERNAL-REAL-TIME) when the state
@@ -117,6 +124,8 @@
       ;; Leaving repeat mode: clear the timestamp.
       (unless (eq new-cont #'%after-prefix-input-state)
         (setf (input-state-repeat-entered-at state) nil))
+      ;; Track prefix state for #{client_prefix} format variable.
+      (setf *prefix-active* (eq new-cont #'%after-prefix-input-state))
       ;; Track ESC accumulation: stamp esc-entered-at when we receive a lone ESC
       ;; byte (byte 27) and transition OUT of ground state (entering escape-input-k).
       ;; Clear it when we return to ground (sequence completed or aborted).

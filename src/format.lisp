@@ -990,8 +990,11 @@
           :colorterm    colorterm
           ;; #{client_prefix}: "1" when the prefix key has been pressed and we're
           ;; waiting for the next key; "0" otherwise.  Used by prefix-highlight plugins.
-          ;; We always report "0" since this function has no access to input-state.
-          :client-prefix "0"
+          ;; Reads *prefix-active* from events-loop.lisp (accessed via qualified name).
+          :client-prefix (if (ignore-errors
+                               (symbol-value
+                                (find-symbol "*PREFIX-ACTIVE*" "CL-TMUX")))
+                             "1" "0")
           ;; #{client_last_session}: name of the previously active session.
           ;; Used by some plugins to show a "back" indicator.
           :client-last-session ""
