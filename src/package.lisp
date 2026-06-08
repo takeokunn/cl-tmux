@@ -612,6 +612,7 @@
            ;; Scoped accessors (per-window / per-pane)
            #:get-option-for-window #:set-option-for-window
            #:get-option-for-pane   #:set-option-for-pane
+           #:get-option-for-context
            ;; show-options helpers
            #:show-options #:show-option
            ;; Command-alias registry

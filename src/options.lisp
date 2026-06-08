@@ -324,23 +324,42 @@
 ;;; The cl-tmux/model package is referenced by qualified name to avoid a
 ;;; circular dependency (model depends on config which depends on options).
 
+(defun get-option-for-context (name &key pane window)
+  "Resolve option NAME with full tmux scope precedence: pane-local -> window-local
+   -> global -> registered default.  PANE and/or WINDOW may be NIL (skip that
+   level).  Uses gethash present-p so a present-but-falsey override is honored
+   (consistent with get-option-for-window/pane).  When both PANE and WINDOW are
+   NIL this is equivalent to get-option.
+
+   This is the single source of truth for scoped option resolution;
+   get-option-for-window and get-option-for-pane delegate here."
+  (multiple-value-bind (pv pp)
+      (if pane
+          (gethash name (cl-tmux/model:pane-local-options pane))
+          (values nil nil))
+    (if pp
+        pv
+        (multiple-value-bind (wv wp)
+            (if window
+                (gethash name (cl-tmux/model:window-local-options window))
+                (values nil nil))
+          (if wp
+              wv
+              (multiple-value-bind (gv gp) (gethash name *global-options*)
+                (if gp
+                    gv
+                    (let ((spec (gethash name *option-registry*)))
+                      (when spec (option-spec-default spec))))))))))
+
 (defun get-option-for-window (name window)
   "Look up NAME in WINDOW's local options, falling back to *global-options*,
    then to the registered spec default.  Returns NIL when not found anywhere.
 
-   Presence is decided by gethash's secondary PRESENT-P value, not by truthiness
-   of the stored value: a window-local value explicitly set to a FALSEY value
-   (e.g. boolean NIL from `set -w synchronize-panes off`) is honored and does NOT
-   fall through to the global value.  Likewise a present-but-falsey GLOBAL value is
-   returned instead of the registry default."
-  (multiple-value-bind (lv lp) (gethash name (cl-tmux/model:window-local-options window))
-    (if lp
-        lv
-        (multiple-value-bind (gv gp) (gethash name *global-options*)
-          (if gp
-              gv
-              (let ((spec (gethash name *option-registry*)))
-                (when spec (option-spec-default spec))))))))
+   Delegates to get-option-for-context with only :window supplied (pane level
+   skipped); the present-p resolution ladder lives there in one place.  A
+   window-local value explicitly set to a FALSEY value is honored and does NOT
+   fall through to the global value."
+  (get-option-for-context name :window window))
 
 (defun set-option-for-window (name value window)
   "Coerce VALUE to the registered type for NAME and store it under NAME in
@@ -357,19 +376,11 @@
   "Look up NAME in PANE's local options, falling back to *global-options*,
    then to the registered spec default.  Returns NIL when not found anywhere.
 
-   Presence is decided by gethash's secondary PRESENT-P value, not by truthiness
-   of the stored value: a pane-local value explicitly set to a FALSEY value
-   (e.g. boolean NIL from `set -p remain-on-exit off`) is honored and does NOT
-   fall through to the global value.  Likewise a present-but-falsey GLOBAL value is
-   returned instead of the registry default."
-  (multiple-value-bind (lv lp) (gethash name (cl-tmux/model:pane-local-options pane))
-    (if lp
-        lv
-        (multiple-value-bind (gv gp) (gethash name *global-options*)
-          (if gp
-              gv
-              (let ((spec (gethash name *option-registry*)))
-                (when spec (option-spec-default spec))))))))
+   Delegates to get-option-for-context with only :pane supplied (window level
+   skipped); the present-p resolution ladder lives there in one place.  A
+   pane-local value explicitly set to a FALSEY value is honored and does NOT
+   fall through to the global value."
+  (get-option-for-context name :pane pane))
 
 (defun set-option-for-pane (name value pane)
   "Coerce VALUE to the registered type for NAME and store it under NAME in

@@ -773,6 +773,111 @@
       (is (eql 5000 (cl-tmux/options:get-option-for-window "history-limit" win))
           "get-option-for-window must return coerced integer 5000, not \"5000\""))))
 
+;;; ── get-option-for-context: full pane→window→global→default precedence ──
+
+(test get-option-for-context-pane-beats-window-beats-global
+  "get-option-for-context resolves with precedence pane-local > window-local >
+   global, and a present-but-falsey PANE override beats a truthy WINDOW value.
+   Uses the registered :boolean option synchronize-panes."
+  (with-isolated-config
+    (cl-tmux/options:set-option "synchronize-panes" nil)   ; global = NIL
+    (let* ((win  (make-fake-window 1 "w" :npanes 1))
+           (pane (first (cl-tmux/model:window-panes win))))
+      ;; No local overrides → resolves to the global value (NIL).
+      (is (null (cl-tmux/options:get-option-for-context
+                 "synchronize-panes" :pane pane :window win))
+          "with no overrides must return the global value NIL")
+      ;; Window-local "on" with no pane override → window value wins over global.
+      (cl-tmux/options:set-option-for-window "synchronize-panes" "on" win)
+      (is (eq t (cl-tmux/options:get-option-for-context
+                 "synchronize-panes" :pane pane :window win))
+          "window-local on (T) must beat global NIL when pane has no override")
+      ;; Pane-local "off" (NIL) → present-but-falsey pane override beats window "on".
+      (cl-tmux/options:set-option-for-pane "synchronize-panes" "off" pane)
+      (is (null (cl-tmux/options:get-option-for-context
+                 "synchronize-panes" :pane pane :window win))
+          "pane-local off (NIL) must beat window-local on (T) — falsey honored"))))
+
+(test get-option-for-context-skips-nil-levels
+  "get-option-for-context skips a NIL pane/window level: with both NIL it equals
+   get-option; with only one scope it consults that scope's local override."
+  (with-isolated-config
+    (cl-tmux/options:set-option "synchronize-panes" nil)
+    ;; Both pane and window NIL → equivalent to plain get-option.
+    (is (eq (cl-tmux/options:get-option "synchronize-panes")
+            (cl-tmux/options:get-option-for-context "synchronize-panes"))
+        "with no pane/window must equal get-option")
+    ;; Only :window supplied, with a window-local override → returns window value.
+    (let* ((win  (make-fake-window 1 "w" :npanes 1))
+           (pane (first (cl-tmux/model:window-panes win))))
+      (cl-tmux/options:set-option-for-window "synchronize-panes" "on" win)
+      (is (eq t (cl-tmux/options:get-option-for-context
+                 "synchronize-panes" :window win))
+          "with only :window must return the window-local value T")
+      ;; Only :pane supplied, with a pane-local override → returns pane value.
+      (cl-tmux/options:set-option-for-pane "synchronize-panes" "off" pane)
+      (is (null (cl-tmux/options:get-option-for-context
+                 "synchronize-panes" :pane pane))
+          "with only :pane must return the pane-local value NIL"))))
+
+(test get-option-for-context-falls-back-to-registry-default
+  "get-option-for-context returns the registered default (via the pre-populated
+   global store) when neither pane nor window carries an override.
+   history-limit has a non-nil default of 2000."
+  (with-isolated-config
+    (let* ((win  (make-fake-window 1 "w" :npanes 1))
+           (pane (first (cl-tmux/model:window-panes win))))
+      (is (eql 2000 (cl-tmux/options:get-option-for-context
+                     "history-limit" :pane pane :window win))
+          "must return the history-limit default 2000 with no local overrides"))))
+
+(test get-option-for-context-pane-falsey-honored-over-window
+  "Explicit: global on, window on, pane off → pane-local falsey override wins
+   and get-option-for-context returns NIL (present-p honored at every level)."
+  (with-isolated-config
+    (cl-tmux/options:set-option "synchronize-panes" t)      ; global = T
+    (let* ((win  (make-fake-window 1 "w" :npanes 1))
+           (pane (first (cl-tmux/model:window-panes win))))
+      (cl-tmux/options:set-option-for-window "synchronize-panes" "on" win)  ; window = T
+      (cl-tmux/options:set-option-for-pane   "synchronize-panes" "off" pane) ; pane = NIL
+      (is (null (cl-tmux/options:get-option-for-context
+                 "synchronize-panes" :pane pane :window win))
+          "pane-local off (NIL) must win over both window on and global on")
+      ;; The window/global values themselves are unchanged (override is pane-local).
+      (is (eq t (cl-tmux/options:get-option-for-window "synchronize-panes" win))
+          "window-local value must remain T (pane override is local only)")
+      (is (eq t (cl-tmux/options:get-option "synchronize-panes"))
+          "global value must remain T (pane override is local only)"))))
+
+(test get-option-for-context-window-falsey-over-global
+  "Mirror of the pane-over-window falsey test, one level up: global on, window
+   off (NIL) → the WINDOW present-p branch honors the present-but-falsey
+   window-local value over the truthy global, so get-option-for-context returns
+   NIL when only :window is supplied."
+  (with-isolated-config
+    (cl-tmux/options:set-option "synchronize-panes" t)            ; global = T
+    (let ((win (make-fake-window 1 "w" :npanes 1)))
+      (cl-tmux/options:set-option-for-window "synchronize-panes" "off" win)  ; window = NIL
+      (is (null (cl-tmux/options:get-option-for-context
+                 "synchronize-panes" :window win))
+          "window-local off (NIL) must win over global on (T) — window falsey honored")
+      ;; The global value itself is unchanged (override is window-local).
+      (is (eq t (cl-tmux/options:get-option "synchronize-panes"))
+          "global value must remain T (window override is local only)"))))
+
+(test get-option-for-context-global-falsey-over-default
+  "Proves the GLOBAL present-p branch returns a present global value rather than
+   falling through to the registry default.  history-limit's registry default is
+   2000; set the global to a distinguishable sentinel (1) and assert a fresh
+   window/pane with no local override resolves to the global value, not 2000."
+  (with-isolated-config
+    (cl-tmux/options:set-option "history-limit" 1)               ; global differs from default 2000
+    (let* ((win  (make-fake-window 1 "w" :npanes 1))
+           (pane (first (cl-tmux/model:window-panes win))))
+      (is (eql 1 (cl-tmux/options:get-option-for-context
+                  "history-limit" :pane pane :window win))
+          "must return the present global value 1, not the registry default 2000"))))
+
 ;;; ── Command-alias registry ───────────────────────────────────────────────
 
 (test register-and-lookup-command-alias

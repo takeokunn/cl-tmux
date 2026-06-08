@@ -1712,6 +1712,54 @@
       (is (string= "original" (window-name win))
           "window-name must not change when auto-rename is disabled"))))
 
+(test maybe-rename-window-from-title-noop-when-window-local-auto-rename-off
+  "%maybe-rename-window-from-title is suppressed for a window whose window-local
+   \"automatic-rename\" option is off (set via set-option-for-window), even though
+   the window-automatic-rename-p flag and the global option are still on.  This
+   exercises the get-option-for-context :window read wired into the rename path."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                             :screen screen))
+         (win    (make-window :id 1 :name "original" :width 20 :height 5
+                              :panes (list pane) :tree (make-layout-leaf pane)))
+         (sess   (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win pane)
+    (session-select-window sess win)
+    (setf (screen-title screen) "new-title")
+    (setf (window-automatic-rename-p win) t)
+    (with-isolated-config
+      ;; Global automatic-rename / allow-rename stay on; only the per-window
+      ;; option is turned off, so get-option-for-context :window returns NIL.
+      (cl-tmux/options:set-option "automatic-rename" t)
+      (cl-tmux/options:set-option "allow-rename" t)
+      (cl-tmux/options:set-option-for-window "automatic-rename" "off" win)
+      (with-loop-state
+        (cl-tmux::%maybe-rename-window-from-title sess)
+        (is (string= "original" (window-name win))
+            "window-name must not change when window-local automatic-rename is off")))))
+
+(test maybe-rename-window-from-title-renames-when-window-local-auto-rename-on
+  "Companion to the suppression test: with window-local automatic-rename ON the
+   rename path still fires and propagates the OSC title to the window name."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                             :screen screen))
+         (win    (make-window :id 1 :name "old-name" :width 20 :height 5
+                              :panes (list pane) :tree (make-layout-leaf pane)))
+         (sess   (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win pane)
+    (session-select-window sess win)
+    (setf (screen-title screen) "new-title")
+    (setf (window-automatic-rename-p win) t)
+    (with-isolated-config
+      (cl-tmux/options:set-option "automatic-rename" t)
+      (cl-tmux/options:set-option "allow-rename" t)
+      (cl-tmux/options:set-option-for-window "automatic-rename" "on" win)
+      (with-loop-state
+        (cl-tmux::%maybe-rename-window-from-title sess)
+        (is (string= "new-title" (window-name win))
+            "window-name must update when window-local automatic-rename is on")))))
+
 ;;; ── Application cursor keys remapping ───────────────────────────────────────
 
 (test app-cursor-keys-remaps-csi-arrow-to-ss3

@@ -175,7 +175,7 @@
            ;; Clear silence flag: new output resets the silence state.
            (setf (cl-tmux/model:window-silence-flag win) nil)
            ;; Activity flag: only for non-active windows.
-           (when (and (cl-tmux/options:get-option-for-window "monitor-activity" win)
+           (when (and (cl-tmux/options:get-option-for-context "monitor-activity" :window win)
                       (not (cl-tmux/model:window-activity-flag win)))
              (setf (cl-tmux/model:window-activity-flag win) t)
              ;; visual-activity on: show a transient message overlay so the user
@@ -204,7 +204,7 @@
    Otherwise return NIL to stop the reader loop immediately."
   (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-exited+ pane)
   (let ((remain-on-exit
-          (handler-case (cl-tmux/options:get-option-for-pane "remain-on-exit" pane)
+          (handler-case (cl-tmux/options:get-option-for-context "remain-on-exit" :pane pane)
             (error () nil))))
     (cond
       (remain-on-exit

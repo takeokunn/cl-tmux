@@ -177,7 +177,7 @@
       (pty-write (pane-fd active-pane) octets)
       ;; Broadcast when synchronize-panes is enabled, skipping disabled panes.
       ;; Read the window-local override (falls back to global then default).
-      (when (cl-tmux/options:get-option-for-window "synchronize-panes" window)
+      (when (cl-tmux/options:get-option-for-context "synchronize-panes" :window window)
         (dolist (pane (window-panes window))
           (unless (or (eq pane active-pane)
                       (pane-input-disabled pane))
@@ -223,6 +223,11 @@
          (active-window (session-active-window session)))
     (when (and screen active-window
                (window-automatic-rename-p active-window)
+               ;; Per-window "automatic-rename" option (default on); honors
+               ;; `setw -w automatic-rename off`.  allow-rename stays a global
+               ;; (server-ish) read.
+               (cl-tmux/options:get-option-for-context
+                "automatic-rename" :window active-window)
                (cl-tmux/options:get-option "allow-rename"))
       (let ((new-name (%auto-rename-name session active-window active-pane screen)))
         (when (and (plusp (length new-name))

@@ -88,6 +88,50 @@
               "reader-eof-state must return the remain-on-exit parking state when the
                pane-local override is set, even though the global value is NIL"))))))
 
+(test reader-reading-state-honors-window-local-monitor-activity
+  :description "Pins the per-window resolution at the migrated reader-reading-state
+   activity-flag site (src/runtime.lisp ~line 178): that site reads
+   (get-option-for-context \"monitor-activity\" :window win) to decide whether to
+   set window-activity-flag for a non-active window.  reader-reading-state itself
+   needs a live PTY fd (pty-read-blocking; fake panes have fd -1 → immediate EOF,
+   not useful), so we directly assert the OBSERVABLE decision the migrated site
+   makes: with global monitor-activity NIL, a window whose LOCAL value is on
+   resolves T (activity tracked), while a window with no override resolves NIL
+   (opted out)."
+  (with-isolated-config
+    (with-isolated-hooks
+      ;; >=2 windows so there is a NON-ACTIVE background window (the activity-flag
+      ;; path only fires for non-active windows).
+      (let* ((sess        (make-fake-session :nwindows 2))
+             (active-win  (cl-tmux/model:session-active-window sess))
+             (bg-win      (find-if-not (lambda (w) (eq w active-win))
+                                       (cl-tmux/model:session-windows sess))))
+        (is (not (null bg-win)) "must have a non-active background window")
+        (cl-tmux/options:set-option "monitor-activity" nil)              ; global = NIL
+        ;; Window-local "on" on the background window.
+        (cl-tmux/options:set-option-for-window "monitor-activity" "on" bg-win)
+        (is (eq t (cl-tmux/options:get-option-for-context "monitor-activity" :window bg-win))
+            "window-local on must resolve T at the migrated read site (global NIL)")
+        ;; The active window has no local override → resolves to global NIL.
+        (is (null (cl-tmux/options:get-option-for-context "monitor-activity" :window active-win))
+            "a window without the override must resolve NIL (global NIL)")))))
+
+(test reader-reading-state-window-local-monitor-activity-off-over-global-on
+  :description "Companion falsey-honoring check at the same migrated site: with
+   global monitor-activity on, a window whose LOCAL value is off (NIL) opts out —
+   the per-window read returns NIL, proving the present-but-falsey window override
+   is honored at the reader-reading-state activity-flag site."
+  (with-isolated-config
+    (with-isolated-hooks
+      (let* ((sess       (make-fake-session :nwindows 2))
+             (active-win (cl-tmux/model:session-active-window sess))
+             (bg-win     (find-if-not (lambda (w) (eq w active-win))
+                                      (cl-tmux/model:session-windows sess))))
+        (cl-tmux/options:set-option "monitor-activity" t)               ; global = T
+        (cl-tmux/options:set-option-for-window "monitor-activity" "off" bg-win) ; window = NIL
+        (is (null (cl-tmux/options:get-option-for-context "monitor-activity" :window bg-win))
+            "window-local off (NIL) must win over global on (T) at the migrated site")))))
+
 (test reader-remain-on-exit-state-returns-nil-when-not-running
   :description "reader-remain-on-exit-state returns NIL immediately when *running* is NIL."
   (let ((cl-tmux::*running* nil)

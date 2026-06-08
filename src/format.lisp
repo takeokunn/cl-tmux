@@ -845,10 +845,8 @@
          ;; #{pane_synchronized}: "1" when synchronize-panes option is on, else "0".
          ;; Prefer the window-local override (falls back to global then default);
          ;; fall back to the global read when WINDOW is nil.
-         (pane-synchronized (if (if window
-                                    (cl-tmux/options:get-option-for-window
-                                     "synchronize-panes" window)
-                                    (cl-tmux/options:get-option "synchronize-panes"))
+         (pane-synchronized (if (cl-tmux/options:get-option-for-context
+                                 "synchronize-panes" :window window)
                                 "1" "0"))
          ;; #{window_activity_flag}: "#" when the window has unseen activity
          ;; (monitor-activity was triggered).  Cleared when the window is focused.
