@@ -716,6 +716,33 @@
   "#{=N:var} leaves a value shorter than N untouched."
   (is (string= "short" (fmt "#{=20:window_name}" :window-name "short"))))
 
+(test format-modifier-logical-or
+  "#{||:a,b} returns 1 when either operand is truthy, else 0."
+  (is (string= "1" (fmt "#{||:1,0}")) "1 || 0 → 1")
+  (is (string= "1" (fmt "#{||:0,1}")) "0 || 1 → 1")
+  (is (string= "0" (fmt "#{||:0,0}")) "0 || 0 → 0")
+  (is (string= "0" (fmt "#{||:,}"))   "empty || empty → 0")
+  (is (string= "1" (fmt "#{||:#{a},#{b}}" :a "" :b "x"))
+      "operands expand as formats before the truthiness test"))
+
+(test format-modifier-logical-and
+  "#{&&:a,b} returns 1 only when both operands are truthy."
+  (is (string= "1" (fmt "#{&&:1,1}")) "1 && 1 → 1")
+  (is (string= "0" (fmt "#{&&:1,0}")) "1 && 0 → 0")
+  (is (string= "0" (fmt "#{&&:0,1}")) "0 && 1 → 0")
+  (is (string= "0" (fmt "#{&&:0,0}")) "0 && 0 → 0"))
+
+(test format-modifier-logical-nested-in-conditional
+  "#{?#{||:cond1,cond2},yes,no} chooses the branch by the logical result."
+  (is (string= "yes" (fmt "#{?#{||:#{a},#{b}},yes,no}" :a "" :b "1")))
+  (is (string= "no"  (fmt "#{?#{&&:#{a},#{b}},yes,no}" :a "" :b "1"))))
+
+(test format-modifier-quote
+  "#{q:var} backslash-escapes shell-special characters in the resolved value."
+  (is (string= "a\\ b"  (fmt "#{q:p}" :p "a b"))   "space is escaped")
+  (is (string= "a\\;b"  (fmt "#{q:p}" :p "a;b"))   "semicolon is escaped")
+  (is (string= "plain"  (fmt "#{q:p}" :p "plain")) "ordinary text is unchanged"))
+
 (test format-modifier-basename
   "#{b:var} yields the final path component of the resolved value."
   (is (string= "project"

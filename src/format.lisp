@@ -252,6 +252,8 @@
   ("U" (string-upcase   value))
   ("L" (string-downcase value))
   ("l" (format nil "~D" (length value)))
+  ;; #{q:var}: backslash-quote shell-special characters (e.g. embedding a path).
+  ("q" (%quote-format-value value))
   ;; #{E:var}: expand the VALUE of var as another format string.
   ;; This enables double-expansion: #{E:status-left} looks up status-left's
   ;; value and then expands any #{...} in it, matching real tmux 3.x behaviour.
@@ -337,6 +339,35 @@
                     ((string= op ">=") (>= na nb))
                     (t nil)))))))))
 
+(defun %logical-op-p (mod)
+  "True when MOD is a logical operator (|| or &&)."
+  (member mod '("||" "&&") :test #'string=))
+
+(defun %apply-logical (op rest context)
+  "Evaluate a logical #{||:a,b} / #{&&:a,b}.  Split REST on the first TOP-LEVEL
+   comma, expand BOTH operands as format strings, then test each for truthiness
+   (non-empty and not \"0\").  || returns \"1\" when either operand is truthy;
+   && returns \"1\" only when both are.  Mirrors tmux's logical format operators,
+   commonly nested inside a conditional: #{?#{||:#{a},#{b}},yes,no}."
+  (let* ((comma (%top-level-comma rest 0))
+         (a     (%truthy-p (expand-format (if comma (subseq rest 0 comma) rest) context)))
+         (b     (%truthy-p (expand-format (if comma (subseq rest (1+ comma)) "") context))))
+    (if (string= op "||")
+        (if (or a b) "1" "0")
+        (if (and a b) "1" "0"))))
+
+(defun %quote-format-value (value)
+  "Backslash-escape characters in VALUE that are special to the shell, matching
+   tmux's #{q:...} modifier — used to embed a value (e.g. a path) safely inside a
+   shell command such as run-shell or if-shell."
+  (with-output-to-string (s)
+    (loop for ch across value do
+      (when (member ch '(#\Space #\Tab #\Newline #\" #\' #\\ #\; #\& #\|
+                         #\$ #\` #\( #\) #\< #\> #\* #\? #\[ #\] #\{ #\} #\~ #\#)
+                    :test #'char=)
+        (write-char #\\ s))
+      (write-char ch s))))
+
 (defun %expand-brace (template start context out)
   "Expand #{...} content starting at START (just past the '{').
    Writes to OUT and returns the index just past the closing '}'.
@@ -404,6 +435,9 @@
                  ;; comparison operators: #{==:a,b} #{!=:a,b} #{<:a,b} #{>:..} #{<=:..} #{>=:..}
                  ((%comparison-op-p mod)
                   (write-string (%apply-comparison mod rest context) out))
+                 ;; logical operators: #{||:a,b} (either truthy) #{&&:a,b} (both)
+                 ((%logical-op-p mod)
+                  (write-string (%apply-logical mod rest context) out))
                  ;; #{t:strftime_format} — format current time; REST is the strftime format
                  ;; string (e.g. "%H:%M"), NOT a variable name.  Special case before
                  ;; %resolve-format-value so we do not look up "%H:%M" in the context.
