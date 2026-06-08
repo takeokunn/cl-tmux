@@ -164,6 +164,8 @@
   (flet ((kw (name) (cdr (assoc name cl-tmux::*copy-mode-x-commands* :test #'string-equal))))
     (is (eq :copy-mode-cursor-left      (kw "cursor-left")))
     (is (eq :copy-mode-cursor-right     (kw "cursor-right")))
+    (is (eq :copy-mode-cursor-up        (kw "cursor-up")))
+    (is (eq :copy-mode-cursor-down      (kw "cursor-down")))
     (is (eq :copy-mode-rectangle-toggle (kw "rectangle-toggle")))))
 
 (test send-keys-x-rectangle-toggle-toggles-rect-select
@@ -193,6 +195,23 @@
         (cl-tmux::%dispatch-send-keys-X s "cursor-left")
         (is (= 0 (cdr (screen-copy-cursor screen)))
             "cursor-left moves the cursor back to column 0")))))
+
+(test send-keys-x-cursor-up-down-move-cursor-vertically
+  "send -X cursor-up / cursor-down move the copy cursor vertically (the -X names
+   previously only scrolled a line, inconsistent with the arrow-key path)."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (cl-tmux::dispatch-command s :copy-mode-enter nil)
+      (let* ((screen (active-screen s))
+             (h      (screen-height screen)))
+        ;; The cursor initializes to the bottom-left (row h-1); cursor-up moves
+        ;; it to h-2, and cursor-down returns it to h-1.
+        (cl-tmux::%dispatch-send-keys-X s "cursor-up")
+        (is (= (- h 2) (car (screen-copy-cursor screen)))
+            "cursor-up moves the cursor one row up from the bottom")
+        (cl-tmux::%dispatch-send-keys-X s "cursor-down")
+        (is (= (- h 1) (car (screen-copy-cursor screen)))
+            "cursor-down moves the cursor back to the bottom row")))))
 
 ;;; ── Detach / kill ───────────────────────────────────────────────────────────
 

@@ -152,6 +152,10 @@
   ;; direction, so it is wrapped in a one-arg lambda for %copy-mode-call.
   (:copy-mode-cursor-left      (%copy-mode-call session (lambda (s) (copy-mode-move-cursor s :left))))
   (:copy-mode-cursor-right     (%copy-mode-call session (lambda (s) (copy-mode-move-cursor s :right))))
+  ;; cursor-up/down move the copy cursor (scrolling the viewport at the edges),
+  ;; matching the arrow-key path; the -X names previously only scrolled a line.
+  (:copy-mode-cursor-up        (%copy-mode-call session (lambda (s) (copy-mode-move-cursor s :up))))
+  (:copy-mode-cursor-down      (%copy-mode-call session (lambda (s) (copy-mode-move-cursor s :down))))
   (:copy-mode-rectangle-toggle (%copy-mode-call session #'copy-mode-toggle-rectangle))
   (:copy-mode-top              (%copy-mode-call session #'copy-mode-top))
   (:copy-mode-bottom           (%copy-mode-call session #'copy-mode-bottom))
