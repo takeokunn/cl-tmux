@@ -400,6 +400,32 @@
   (is (eq :split-horizontal (cl-tmux/config::%command-keyword "split-horizontal"))
       "split-horizontal should resolve to :split-horizontal"))
 
+(test command-keyword-resolves-tmux-aliases
+  "%command-keyword resolves tmux command-name aliases (full names whose keyword
+   differs, plus short forms) to the canonical bindable keyword."
+  (is (eq :prev-window      (cl-tmux/config::%command-keyword "previous-window")))
+  (is (eq :copy-mode-enter  (cl-tmux/config::%command-keyword "copy-mode")))
+  (is (eq :swap-pane-forward (cl-tmux/config::%command-keyword "swap-pane")))
+  (is (eq :detach           (cl-tmux/config::%command-keyword "detach-client")))
+  (is (eq :show-window-options (cl-tmux/config::%command-keyword "showw")))
+  (is (eq :prev-window      (cl-tmux/config::%command-keyword "PREVIOUS-WINDOW"))
+      "alias resolution must be case-insensitive"))
+
+(test command-name-aliases-target-bindable-keywords
+  "Every alias value must be a member of *bindable-commands* (else the bind would
+   resolve to a keyword the dispatcher rejects)."
+  (dolist (pair cl-tmux/config::*command-name-aliases*)
+    (is (member (cdr pair) cl-tmux/config::*bindable-commands*)
+        "alias ~A -> ~A must target a bindable keyword" (car pair) (cdr pair))))
+
+(test bind-tmux-alias-name-fires
+  "bind x previous-window binds the canonical :prev-window keyword via the alias."
+  (with-isolated-config
+    (let ((applied (load-config-from-string "bind x previous-window")))
+      (is (= 1 applied))
+      (is (eq :prev-window (lookup-key-binding #\x))
+          "previous-window alias must bind :prev-window"))))
+
 (test command-keyword-rejects-non-bindable-keyword
   "%command-keyword returns NIL for interned-but-non-bindable keywords."
   (let ((kw (intern "COPY-MODE-EXIT" :keyword)))
