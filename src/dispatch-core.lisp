@@ -1538,17 +1538,47 @@
    (dispatch-core loads before events-keystroke) so it is declared special before
    either %cmd-switch-client or %ground-input-state references it.")
 
+(defun %switch-to-session (target)
+  "Make TARGET the client's active session by bumping its last-active stamp (the
+   renderer follows the most-recently-touched session) and marking the screen
+   dirty.  No-op when TARGET is NIL or already the front session.  Returns TARGET
+   when a switch happened, else NIL — the single chokepoint every switch-client
+   session move routes through."
+  (when target
+    (session-touch target)
+    (setf *dirty* t)
+    target))
+
 (defun %cmd-switch-client (session args)
-  "switch-client [-T key-table] [-t target] ...: set the client's active key
-   table via -T (the modal-keymap mechanism).  `-T root` (or no table) returns to
-   the normal root/prefix flow.  Other flags (-t session switch, -n/-p/-l) are
-   tolerated but not yet acted on."
-  (declare (ignore session))
+  "switch-client [-T key-table] [-t target] [-n] [-p] [-l]: control the client's
+   session and key table.
+     -T <table>  set the active custom key table (modal keymaps); `-T root` (or no
+                 -T) returns to the normal root/prefix flow.
+     -t <name>   switch the client to the named session.
+     -n / -p     switch to the next / previous session (cyclic over the registry).
+     -l          switch to the last (most-recently-active-but-one) session.
+   -T is independent of the session flags, so `switch-client -t foo -T copy-mode`
+   both moves the client and arms a key table.  Mirrors the keybinding handlers
+   :switch-client / :switch-client-next/-prev / :last-session, reusing the same
+   session-touch primitive."
   (multiple-value-bind (flags _pos) (%parse-command-flags args "Tt")
     (declare (ignore _pos))
+    ;; -T key table (modal keymap) — orthogonal to the session move below.
     (let ((table (cdr (assoc #\T flags))))
       (when table
-        (setf *key-table* (if (equal table +table-root+) nil table))))))
+        (setf *key-table* (if (equal table +table-root+) nil table))))
+    ;; Session selection: -t named, else -n/-p cyclic, else -l last-active.
+    (let ((sessions (mapcar #'cdr *server-sessions*)))
+      (cond
+        ((assoc #\t flags)
+         (%switch-to-session (server-find-session (cdr (assoc #\t flags)))))
+        ((assoc #\n flags)
+         (%switch-to-session (and sessions (next-cyclic sessions session))))
+        ((assoc #\p flags)
+         (%switch-to-session (and sessions (prev-cyclic sessions session))))
+        ((assoc #\l flags)
+         (%switch-to-session
+          (second (sort (copy-list sessions) #'> :key #'session-last-active))))))))
 
 (defun %destroy-session (session)
   "Tear down SESSION: close every pane's PTY, remove it from the server registry,

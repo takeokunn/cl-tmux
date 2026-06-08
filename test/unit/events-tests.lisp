@@ -767,6 +767,67 @@
           (is (null cl-tmux::*key-table*)
               "switch-client -T root from within the table exits it"))))))
 
+;;; ── switch-client session selection (-t / -n / -p / -l) ─────────────────────
+
+(defun %make-three-session-registry ()
+  "Build three registered sessions named 0/1/2 (current = 1) with deterministic
+   last-active stamps 10/30/20, and return them as (values s0 s1 s2).  Caller
+   must run inside a binding that isolates cl-tmux::*server-sessions*."
+  (let ((s0 (make-fake-session :nwindows 1))
+        (s1 (make-fake-session :nwindows 1))
+        (s2 (make-fake-session :nwindows 1)))
+    (setf (cl-tmux::session-name s0) "0" (cl-tmux::session-last-active s0) 10
+          (cl-tmux::session-name s1) "1" (cl-tmux::session-last-active s1) 30
+          (cl-tmux::session-name s2) "2" (cl-tmux::session-last-active s2) 20
+          cl-tmux::*server-sessions*
+          (list (cons "0" s0) (cons "1" s1) (cons "2" s2)))
+    (values s0 s1 s2)))
+
+(test cmd-switch-client-t-switches-to-named-session
+  "switch-client -t <name> makes the named session the front (touched) one."
+  (with-loop-state
+    (with-empty-registry
+      (multiple-value-bind (s0 s1 s2) (%make-three-session-registry)
+        (declare (ignore s0 s1))
+        (let ((result (cl-tmux::%cmd-switch-client (cl-tmux::server-find-session "1")
+                                                   '("-t" "2"))))
+          (is (eq s2 result) "-t 2 selects session named 2")
+          (is-true cl-tmux::*dirty* "a session switch marks the screen dirty"))))))
+
+(test cmd-switch-client-n-and-p-cycle-sessions
+  "switch-client -n / -p move to the next / previous session cyclically."
+  (with-loop-state
+    (with-empty-registry
+      (multiple-value-bind (s0 s1 s2) (%make-three-session-registry)
+        ;; current = s1; registry order is (s0 s1 s2): next → s2, prev → s0.
+        (is (eq s2 (cl-tmux::%cmd-switch-client s1 '("-n")))
+            "-n from session 1 goes to session 2")
+        (is (eq s0 (cl-tmux::%cmd-switch-client s1 '("-p")))
+            "-p from session 1 goes to session 0")))))
+
+(test cmd-switch-client-l-switches-to-last-active
+  "switch-client -l selects the second-most-recently-active session."
+  (with-loop-state
+    (with-empty-registry
+      (multiple-value-bind (s0 s1 s2) (%make-three-session-registry)
+        (declare (ignore s0))
+        ;; last-active stamps 10/30/20 → desc order s1,s2,s0 → second = s2.
+        (is (eq s2 (cl-tmux::%cmd-switch-client s1 '("-l")))
+            "-l from the front session 1 returns to session 2")))))
+
+(test cmd-switch-client-t-and-T-are-orthogonal
+  "switch-client -t <name> -T <table> performs the session move AND arms the
+   key table in one invocation."
+  (with-loop-state
+    (with-empty-registry
+      (multiple-value-bind (s0 s1 s2) (%make-three-session-registry)
+        (declare (ignore s0 s1))
+        (let ((result (cl-tmux::%cmd-switch-client (cl-tmux::server-find-session "1")
+                                                   '("-t" "2" "-T" "resize"))))
+          (is (eq s2 result) "-t still switches the session when -T is also given")
+          (is (string= "resize" cl-tmux::*key-table*)
+              "-T still arms the key table when -t is also given"))))))
+
 ;;; ── Default M-1..M-5 preset-layout bindings (tmux defaults) ─────────────────
 
 (test default-meta-digit-layout-bindings-registered
