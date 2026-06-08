@@ -345,6 +345,15 @@
          (when (null remaining) (return nil))
          (setf table     (first remaining))
          (setf remaining (rest remaining)))
+        ;; -N "note": tmux 3.1+ key-binding description.  Consume the flag and
+        ;; its (already single-token, quote-joined) note argument.  The note is
+        ;; not yet surfaced by list-keys, but it MUST be skipped — otherwise the
+        ;; fall-through below would mis-read "-N" as the key and the note as the
+        ;; command, silently producing the wrong binding.
+        ((string= (first remaining) "-N")
+         (setf remaining (rest remaining))
+         (when (null remaining) (return nil))
+         (setf remaining (rest remaining)))
         (t
          ;; Need a key plus at least one command token.
          (when (null (rest remaining)) (return nil))

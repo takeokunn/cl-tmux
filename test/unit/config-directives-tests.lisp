@@ -280,6 +280,41 @@
       (is (eq :zoom-toggle (lookup-key-binding #\z))
           "the single character #\\z must still be :zoom-toggle"))))
 
+;;; bind -N "note" (tmux 3.1+ key-binding description)
+
+(test bind-with-note-flag-binds-correctly
+  "bind -N \"note\" x next-window skips the -N note and binds x to :next-window
+   (not the note string as a bogus command)."
+  (with-isolated-config
+    (let ((applied (load-config-from-string "bind -N \"Go to next window\" x next-window")))
+      (is (= 1 applied) "the bind must apply as exactly one directive")
+      (is (eq :next-window (lookup-key-binding #\x))
+          "x must bind :next-window with the -N note skipped"))))
+
+(test bind-note-flag-combined-with-n-and-r
+  "bind -N works alongside other flags in any order: -n (root) and -r (repeat)."
+  (with-isolated-config
+    (is (= 1 (load-config-from-string "bind -n -N \"root note\" y next-window")))
+    (is (eq :next-window (cl-tmux/config:key-table-command
+                          (cl-tmux/config:key-table-lookup "root" #\y)))
+        "bind -n -N must bind y in the root table")
+    (is (= 1 (load-config-from-string "bind -r -N \"repeat note\" z next-window")))
+    (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\z)))
+      (is (eq :next-window (cl-tmux/config:key-table-command entry))
+          "bind -r -N must still bind z")
+      (is (cl-tmux/config:key-table-repeatable-p entry)
+          "the -r flag must survive alongside -N"))))
+
+(test bind-note-flag-multi-command-block
+  "bind -N \"note\" key { cmd1 ; cmd2 } combines a note with a brace block."
+  (with-isolated-config
+    (load-config-from-string "bind -N \"reload\" R { split-window ; next-window }")
+    (let* ((entry (cl-tmux/config:key-table-lookup "prefix" #\R))
+           (cmd   (cl-tmux/config:key-table-command entry)))
+      (is (and (consp cmd) (eq :sequence (first cmd)))
+          "a -N note plus a brace block must store a :sequence")
+      (is (= 2 (length (rest cmd))) "both inner commands must be captured"))))
+
 ;;; brace-block command syntax (tmux 3.x): bind r { cmd1 ; cmd2 }
 
 (test strip-brace-block-unwraps-braces
