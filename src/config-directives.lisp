@@ -301,10 +301,15 @@
          ;; Need a key plus at least one command token.
          (when (null (rest remaining)) (return nil))
          (let* ((key-token  (%parse-key-token (first remaining)))
-                (cmd-tokens (rest remaining))
+                ;; Strip an optional { ... } block wrapper (tmux 3.x brace
+                ;; syntax) so it reuses the semicolon-sequence machinery below.
+                (cmd-tokens (%strip-brace-block (rest remaining)))
                 ;; Split on ";" tokens to support multi-command sequences:
                 ;; bind r source-file ~/.tmux.conf \; display "Reloaded!"
+                ;; — or:  bind r { source-file ~/.tmux.conf ; display "Reloaded!" }
                 (sequences  (%split-on-semicolons cmd-tokens)))
+           ;; An empty block (`bind r { }`) leaves no command — reject it.
+           (when (null cmd-tokens) (return nil))
            (return
              (if (= (length sequences) 1)
                  ;; Single command: use the existing single-command path.
@@ -324,6 +329,18 @@
 ;;; command separator: bind r source-file ~/.tmux.conf \; display "Reloaded!"
 ;;; %split-on-semicolons splits a flat token list on ";" tokens,
 ;;; removing empty segments, yielding a list of per-command token lists.
+
+(defun %strip-brace-block (tokens)
+  "When TOKENS form a `{ ... }` block — first token \"{\" and last token \"}\" —
+   return the inner tokens; otherwise return TOKENS unchanged.  This lets the
+   tmux 3.x brace form `bind r { cmd1 ; cmd2 }` reuse %split-on-semicolons
+   exactly like the older `bind r cmd1 \\; cmd2` form.  An empty block `{ }`
+   yields NIL (no commands)."
+  (if (and (cdr tokens)
+           (string= (first tokens) "{")
+           (string= (car (last tokens)) "}"))
+      (butlast (rest tokens))
+      tokens))
 
 (defun %split-on-semicolons (tokens)
   "Split TOKENS on \";\" tokens, returning a list of per-command token lists.
@@ -838,9 +855,49 @@
      :endif)
     (t nil)))
 
+(defun %line-brace-delta (line)
+  "Net unquoted brace depth of LINE: count of '{' minus '}', ignoring braces
+   inside single/double quotes or immediately after a backslash.  Used by
+   load-config-from-stream to detect and join multi-line { ... } command blocks
+   (tmux 3.x brace syntax)."
+  (let ((delta 0) (i 0) (len (length line)))
+    (loop while (< i len) do
+      (let ((c (char line i)))
+        (cond
+          ((char= c #\\) (incf i 2))                    ; skip escaped char
+          ((char= c #\")                                ; skip double-quoted span
+           (incf i)
+           (loop while (and (< i len) (char/= (char line i) #\"))
+                 do (if (char= (char line i) #\\) (incf i 2) (incf i)))
+           (incf i))
+          ((char= c #\')                                ; skip single-quoted span
+           (incf i)
+           (loop while (and (< i len) (char/= (char line i) #\'))
+                 do (incf i))
+           (incf i))
+          ((char= c #\{) (incf delta) (incf i))
+          ((char= c #\}) (decf delta) (incf i))
+          (t (incf i)))))
+    delta))
+
+(defun %read-brace-block (first-line stream)
+  "FIRST-LINE has opened an unbalanced { ... } block; keep reading from STREAM
+   until the brace depth returns to zero (or EOF), then return all the lines
+   joined into one logical line with \" ; \" separators so the inner commands
+   become a semicolon sequence the bind parser already understands."
+  (let ((depth (%line-brace-delta first-line))
+        (parts (list first-line)))
+    (loop while (> depth 0)
+          for next = (read-line stream nil nil)
+          while next
+          do (push next parts)
+             (incf depth (%line-brace-delta next)))
+    (format nil "~{~A~^ ; ~}" (nreverse parts))))
+
 (defun load-config-from-stream (stream)
   "Apply every directive line read from STREAM, honoring %if/%else/%endif blocks.
-   Returns the count of directives applied."
+   Multi-line { ... } command blocks (tmux 3.x brace syntax) are joined into a
+   single logical directive before being applied.  Returns the count applied."
   ;; SKIP-STACK: list of booleans — T means 'skip until matching %else/%endif'.
   ;; Nested %if blocks push/pop the stack.
   (let ((skip-stack nil)
@@ -875,8 +932,12 @@
           (otherwise
            ;; Normal line: apply only when not inside a skipped block.
            (when (or (null skip-stack) (not (first skip-stack)))
-             (when (apply-config-line line)
-               (incf count)))))))
+             ;; Join a multi-line { ... } command block into one logical line.
+             (let ((full-line (if (> (%line-brace-delta line) 0)
+                                  (%read-brace-block line stream)
+                                  line)))
+               (when (apply-config-line full-line)
+                 (incf count))))))))
     count))
 
 (defun load-config-from-string (text)

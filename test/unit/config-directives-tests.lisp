@@ -280,6 +280,75 @@
       (is (eq :zoom-toggle (lookup-key-binding #\z))
           "the single character #\\z must still be :zoom-toggle"))))
 
+;;; brace-block command syntax (tmux 3.x): bind r { cmd1 ; cmd2 }
+
+(test strip-brace-block-unwraps-braces
+  "%strip-brace-block returns the inner tokens of a { ... } block and leaves a
+   non-block token list unchanged."
+  (is (equal '("a" "b")
+             (cl-tmux/config::%strip-brace-block '("{" "a" "b" "}"))))
+  (is (equal '("a" "b")
+             (cl-tmux/config::%strip-brace-block '("a" "b")))
+      "a non-block list passes through untouched")
+  (is (null (cl-tmux/config::%strip-brace-block '("{" "}")))
+      "an empty block yields no inner tokens"))
+
+(test line-brace-delta-counts-unquoted-braces
+  "%line-brace-delta nets '{' against '}' and ignores braces inside quotes."
+  (is (= 1  (cl-tmux/config::%line-brace-delta "bind r {")))
+  (is (= -1 (cl-tmux/config::%line-brace-delta "}")))
+  (is (= 0  (cl-tmux/config::%line-brace-delta "bind r { next-window }")))
+  (is (= 0  (cl-tmux/config::%line-brace-delta "display \"a { b }\""))
+      "braces inside a double-quoted string are ignored"))
+
+(test bind-single-line-brace-block-single-command
+  "bind r { next-window } binds the single inner command as a keyword."
+  (with-isolated-config
+    (let ((applied (load-config-from-string "bind r { next-window }")))
+      (is (= 1 applied))
+      (is (eq :next-window (lookup-key-binding #\r))
+          "C-b r must be bound to :next-window via the brace block"))))
+
+(test bind-single-line-brace-block-multi-command
+  "bind r { split-window ; next-window } stores a :sequence of both commands."
+  (with-isolated-config
+    (load-config-from-string "bind r { split-window ; next-window }")
+    (let* ((entry (cl-tmux/config:key-table-lookup "prefix" #\r))
+           (cmd   (cl-tmux/config:key-table-command entry)))
+      (is (consp cmd) "command must be a list")
+      (is (eq :sequence (first cmd)) "must be a :sequence")
+      (is (= 2 (length (rest cmd))) "the sequence must hold two commands"))))
+
+(test bind-empty-brace-block-rejected
+  "bind r { } is not a valid binding (no command) and must apply nothing."
+  (with-isolated-config
+    (let ((applied (load-config-from-string "bind r { }")))
+      (is (= 0 applied) "an empty brace block applies no directive"))))
+
+(test bind-multiline-brace-block-joined-and-applied
+  "A multi-line { ... } block (tmux 3.x style) is joined into one directive and
+   stored as a :sequence — the inner newlines act as command separators."
+  (with-isolated-config
+    (let ((applied (load-config-from-string
+                    (format nil "bind r {~%  split-window~%  next-window~%}~%"))))
+      (is (= 1 applied) "the whole block counts as exactly one directive")
+      (let* ((entry (cl-tmux/config:key-table-lookup "prefix" #\r))
+             (cmd   (cl-tmux/config:key-table-command entry)))
+        (is (and (consp cmd) (eq :sequence (first cmd)))
+            "multi-line block must store a :sequence")
+        (is (= 2 (length (rest cmd)))
+            "both inner commands must be captured")))))
+
+(test multiline-brace-block-does-not-corrupt-following-directive
+  "After a multi-line brace block the reader resumes cleanly: a directive on the
+   line after the closing brace is still applied."
+  (with-isolated-config
+    (let ((applied (load-config-from-string
+                    (format nil "bind r {~%  next-window~%}~%bind x last-window~%"))))
+      (is (= 2 applied) "block + following bind = 2 directives")
+      (is (eq :last-window (lookup-key-binding #\x))
+          "the directive after the block must still bind"))))
+
 ;;; load-config-from-stream
 
 (test load-config-from-stream-applies
