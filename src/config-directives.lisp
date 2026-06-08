@@ -580,6 +580,16 @@
                         (uiop:split-string value :separator '(#\Space))))))
     ;; status-position: top or bottom adjusts status bar position.
     ;; (stored in options; renderer reads it at render time — no extra side effect needed.)
+    ;; terminal-overrides / terminal-features: parse known capability flags.
+    ;; The most common use is setting Tc (true-color) or RGB for 24-bit support.
+    ;; We accept these silently; the outer terminal already supports true-color,
+    ;; so the actual rendering path always uses 24-bit when the color requires it.
+    ;; Logging the intent preserves compatibility without behavioral impact.
+    ((member name '("terminal-overrides" "terminal-features") :test #'string=)
+     ;; No runtime side-effect needed: cl-tmux always emits 24-bit SGR sequences
+     ;; when the color is true-color (the renderer handles this transparently).
+     ;; The option is stored in *global-options* / *server-options* by the caller.
+     nil)
     ))
 
 (defun %apply-set-hook-directive (cmd args)

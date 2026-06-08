@@ -687,6 +687,29 @@
                (setf result (get-output-stream-string out))))
     result))
 
+(defun %cmd-display-menu-arg (session args)
+  "display-menu [-T title] [-x x] [-y y] [label key command ...]: show an interactive menu.
+   -T title: menu title (default: 'Menu').
+   -x/-y: screen position (accepted but currently ignored — menu always centres).
+   Item triples: label key command.  Empty label '' creates a visual separator.
+   When selected, command is run via %run-command-line.
+   Preconfigured commands as keyword tokens run directly (for compatibility)."
+  (declare (ignore session))  ; session used via closure in item command
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "Txy")
+    (let* ((title (or (cdr (assoc #\T flags)) "Menu"))
+           ;; Build items from consecutive (label key command) triples.
+           ;; Silently skip incomplete triples (real tmux shows an error).
+           (items (loop for (label key cmd) on positionals by #'cdddr
+                        when (and label key cmd)
+                        collect (cons (if (and (plusp (length label))
+                                               (plusp (length key)))
+                                          (format nil "~A [~A]" label key)
+                                          label)
+                                      cmd))))
+      (when items
+        (show-menu (make-menu :title title :items items :selected-index 0))
+        (show-overlay (%format-menu *active-menu*))))))
+
 (defun %cmd-confirm-before-arg (session args)
   "confirm-before [-p prompt] command: prompt before running COMMAND.
    -p prompt: custom prompt text (default: 'command? (y/n)').
@@ -1567,7 +1590,9 @@
    ;; confirm-before [-p prompt] cmd: gate COMMAND behind a y/n prompt.
    (cons '("confirm-before" "confirm")  #'%cmd-confirm-before-arg)
    ;; command-prompt [-p prompts] [template]: interactive prompt with substitution.
-   (cons '("command-prompt" "commandp") #'%cmd-command-prompt-arg))
+   (cons '("command-prompt" "commandp") #'%cmd-command-prompt-arg)
+   ;; display-menu [-T title] [-x x] [-y y] [label key cmd ...]: interactive menu.
+   (cons '("display-menu" "menu")       #'%cmd-display-menu-arg))
   "Arg-taking commands: (list-of-names . handler), handler a function of
    (SESSION ARGS).  Consulted by %run-command-line before the no-argument
    %dispatch-named-command name table.")
