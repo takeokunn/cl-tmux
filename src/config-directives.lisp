@@ -466,6 +466,11 @@
      APPEND-P  – T when -a appeared (append to existing value)
      SERVER-P  – T when -s appeared (route to server-options)
      UNSET-P   – T when -u appeared (remove the option)
+   Recognised but currently treated as global: -g (global), -w (window),
+   -p (pane), -o (only-if-unset — accepted, not enforced).  These scope
+   flags cannot be applied to per-object instances at config-load time
+   because no window or pane context exists yet; options fall through to
+   the global store so they take effect at the nearest practical scope.
    POSITIONALS is the remaining non-flag tokens (name and optional value)."
   (let ((had-flag   nil)
         (append-p   nil)
@@ -479,7 +484,10 @@
                (setf had-flag t)
                (when (find #\a tok) (setf append-p t))
                (when (find #\s tok) (setf server-p t))
-               (when (find #\u tok) (setf unset-p  t))))
+               (when (find #\u tok) (setf unset-p  t))
+               ;; -g, -w, -p, -o: accepted; scope intent noted but all
+               ;; fall through to global options during config load.
+               ))
     (values had-flag append-p server-p unset-p remaining)))
 
 (defun %apply-set-directive (cmd args)

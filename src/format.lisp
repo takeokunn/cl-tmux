@@ -832,6 +832,19 @@
                               "1" "0"))
          ;; #{window_layout}: tmux layout string (checksum,geometry).
          (window-layout   (or (and window (cl-tmux/model:layout->string window)) ""))
+         ;; #{pane_synchronized}: "1" when synchronize-panes option is on, else "0".
+         (pane-synchronized (if (cl-tmux/options:get-option "synchronize-panes")
+                                "1" "0"))
+         ;; #{window_bell_flag}: "!" when any pane in the window has a pending bell.
+         ;; Used by status themes to show an alert indicator in the window list.
+         (window-bell-flag
+          (if (and window
+                   (some (lambda (p)
+                           (let ((scr (cl-tmux/model:pane-screen p)))
+                             (and scr (cl-tmux/terminal:screen-bell-pending scr))))
+                         (cl-tmux/model:window-panes window)))
+              "!"
+              " "))
          (hostname        (machine-instance))
          (time-str        (%current-time-string))
          (host-short      (%short-hostname hostname)))
@@ -904,7 +917,11 @@
           ;; #{pane_format}: always "1" in context (we have a pane).
           :pane-format (if pane "1" "0")
           ;; #{window_format}: always "1" in context.
-          :window-format (if window "1" "0"))))
+          :window-format (if window "1" "0")
+          ;; #{pane_synchronized}: reflects synchronize-panes option.
+          :pane-synchronized pane-synchronized
+          ;; #{window_bell_flag}: "!" when a pane in the window has a pending bell.
+          :window-bell-flag window-bell-flag)))
 
 (defun format-context-from-window (session window
                                    &key (client-width 0) (client-height 0)

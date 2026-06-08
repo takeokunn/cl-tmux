@@ -81,15 +81,39 @@
 (install-extended-key-bindings)
 
 (defstruct input-state
-  "Opaque CPS keystroke-processing state. Holds the current continuation."
-  (continuation #'%ground-input-state :type function))
+  "Opaque CPS keystroke-processing state. Holds the current continuation.
+   REPEAT-ENTERED-AT is set (via GET-INTERNAL-REAL-TIME) when the state
+   transitions to a repeatable binding so that repeat-time can be honoured."
+  (continuation #'%ground-input-state :type function)
+  (repeat-entered-at nil))
+
+(defun %reset-repeat-if-expired (state)
+  "If STATE is in a repeatable prefix position and REPEAT-TIME ms have elapsed
+   since REPEAT-ENTERED-AT, reset to ground state.  Otherwise a no-op.
+   Called once per event-loop iteration before processing any new byte."
+  (when (input-state-repeat-entered-at state)
+    (let* ((repeat-ms  (or (cl-tmux/options:get-option "repeat-time") 500))
+           (elapsed-ms (/ (- (get-internal-real-time)
+                              (input-state-repeat-entered-at state))
+                           (/ internal-time-units-per-second 1000))))
+      (when (>= elapsed-ms repeat-ms)
+        (setf (input-state-continuation state) #'%ground-input-state
+              (input-state-repeat-entered-at state) nil)))))
 
 (defun process-byte (session byte state)
   "Feed BYTE to SESSION through the CPS keystroke pipeline STATE.
    Returns :QUIT, :DETACH, or NIL. Mutates STATE's continuation in place."
   (multiple-value-bind (outcome next)
       (funcall (input-state-continuation state) session byte)
-    (setf (input-state-continuation state) (or next #'%ground-input-state))
+    (let ((new-cont (or next #'%ground-input-state)))
+      (setf (input-state-continuation state) new-cont)
+      ;; Track entry into repeat mode: a :repeatable outcome means the binding
+      ;; had the -r flag; stamp the timestamp so %reset-repeat-if-expired works.
+      (when (eq outcome :repeatable)
+        (setf (input-state-repeat-entered-at state) (get-internal-real-time)))
+      ;; Leaving repeat mode: clear the timestamp.
+      (unless (eq new-cont #'%after-prefix-input-state)
+        (setf (input-state-repeat-entered-at state) nil)))
     outcome))
 
 ;;; ── Synchronize-panes broadcast ─────────────────────────────────────────────
@@ -193,6 +217,9 @@
   (let ((state        (make-input-state))
         (idle-counter 0))
     (loop while *running* do
+      ;; Honour repeat-time: if a repeatable binding has been active for longer
+      ;; than the repeat-time window, quietly reset to ground state.
+      (%reset-repeat-if-expired state)
       (let ((byte (read-byte-nonblock +poll-timeout-us+)))
         (if byte
             (progn

@@ -22,15 +22,28 @@
   (let ((dot (position #\. hostname)))
     (if dot (subseq hostname 0 dot) hostname)))
 
+(defun %safe-getenv (name)
+  "Return the value of environment variable NAME, or empty string on failure."
+  (or (ignore-errors (sb-ext:posix-getenv name)) ""))
+
 (defun %build-hostname-context ()
-  "Return a format context plist with :hostname, :host, :host-short, and
-   :version populated.  Used for %if condition evaluation at config-load time."
+  "Return a format context plist for %if condition evaluation at config-load time.
+   Includes hostname, version, and common environment variables (TERM, DISPLAY, etc.)
+   so that guards like %if #{==:#{TERM},xterm-256color} resolve correctly."
   (let ((hostname (machine-instance)))
     (list :hostname   hostname
           :host       hostname
           :host-short (%hostname-short hostname)
           ;; version: reported as tmux 3.5 for compatibility with config guards.
-          :version    "3.5")))
+          :version    "3.5"
+          ;; Environment variables commonly used in %if guards.
+          ;; #{TERM} is the most common: guards on default-terminal and terminal-overrides.
+          ;; All are looked up at condition-evaluation time so values are current.
+          :term       (%safe-getenv "TERM")
+          :display    (%safe-getenv "DISPLAY")
+          :ssh-connection (%safe-getenv "SSH_CONNECTION")
+          :tmux       (%safe-getenv "TMUX")
+          :xterm-version (%safe-getenv "XTERM_VERSION"))))
 
 (defun %make-format-condition-evaluator ()
   "Return a closure (string) → string that expands a %if condition using the
