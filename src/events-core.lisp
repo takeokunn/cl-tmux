@@ -339,6 +339,27 @@
    needed after the initial hit-test — only the split node and orientation
    matter for subsequent motion events.")
 
+(defvar *last-mouse-click* nil
+  "Double/triple-click detection state: (list time-ms row col count) of the most
+   recent left mouse press, or NIL.  Reset per-test by WITH-LOOP-STATE so click
+   counts do not leak between tests.")
+
+(defun %now-ms ()
+  "Current monotonic time in milliseconds, from GET-INTERNAL-REAL-TIME."
+  (floor (* 1000 (get-internal-real-time)) internal-time-units-per-second))
+
+(defun %mouse-click-count (last now-ms row col threshold-ms)
+  "Compute the click count for a left press at (ROW,COL) at NOW-MS.  LAST is the
+   previous (time row col count) record or NIL.  A press within THRESHOLD-MS of
+   the previous press AT THE SAME cell increments the count (1→2 double, 2→3
+   triple); otherwise the count resets to 1.  Pure — testable without a clock."
+  (if (and last
+           (<= (- now-ms (first last)) threshold-ms)
+           (= row (second last))
+           (= col (third last)))
+      (1+ (fourth last))
+      1))
+
 (defun %border-check-node (col row node)
   "Internal helper for %border-at-position: walk NODE and return
    (values split orientation) if (COL, ROW) is on a border, else (values nil nil)."
@@ -486,27 +507,38 @@
 
       ;; ── Left button press ─────────────────────────────────────────────────
       ((and (= btn +mouse-btn-left+) (not release-p) (not in-status))
-       (when active-window
-         ;; Check for border drag
-         (multiple-value-bind (split orient)
-             (%border-at-position active-window col row)
-           (if split
-               ;; Press on border: begin drag (store only what motion events need)
-               (setf *mouse-drag-state* (list split orient))
-               ;; Press in pane: focus pane and begin copy selection
-               (let ((target-pane (pane-at-position active-window col row)))
-                 (when target-pane
-                   ;; %select-pane-with-focus so clicking a pane delivers ?1004
-                   ;; focus events, consistent with keyboard pane switches.
-                   (%select-pane-with-focus active-window target-pane)
-                   (let* ((screen    (pane-screen target-pane))
-                          (pane-col  (- col (pane-x target-pane)))
-                          (pane-row  (- row (pane-y target-pane))))
-                     (unless (screen-copy-mode-p screen)
-                       (copy-mode-enter screen))
-                     ;; Route cursor mutation through the commands layer.
-                     (copy-mode-set-cursor screen pane-row pane-col)
-                     (copy-mode-begin-selection screen))))))))
+       ;; Double/triple-click detection: a click at the same cell within
+       ;; double-click-time of the previous one selects a word (2) or line (3+),
+       ;; matching tmux's default DoubleClick1Pane / TripleClick1Pane bindings.
+       (let* ((now   (%now-ms))
+              (count (%mouse-click-count *last-mouse-click* now row col
+                                         (or (cl-tmux/options:get-option "double-click-time")
+                                             500))))
+         (setf *last-mouse-click* (list now row col count))
+         (when active-window
+           ;; Check for border drag
+           (multiple-value-bind (split orient)
+               (%border-at-position active-window col row)
+             (if split
+                 ;; Press on border: begin drag (store only what motion events need)
+                 (setf *mouse-drag-state* (list split orient))
+                 ;; Press in pane: focus pane and begin/extend the copy selection
+                 (let ((target-pane (pane-at-position active-window col row)))
+                   (when target-pane
+                     ;; %select-pane-with-focus so clicking a pane delivers ?1004
+                     ;; focus events, consistent with keyboard pane switches.
+                     (%select-pane-with-focus active-window target-pane)
+                     (let* ((screen    (pane-screen target-pane))
+                            (pane-col  (- col (pane-x target-pane)))
+                            (pane-row  (- row (pane-y target-pane))))
+                       (unless (screen-copy-mode-p screen)
+                         (copy-mode-enter screen))
+                       ;; Route cursor mutation through the commands layer.
+                       (copy-mode-set-cursor screen pane-row pane-col)
+                       (cond
+                         ((= count 2)  (copy-mode-select-word screen))
+                         ((>= count 3) (copy-mode-begin-line-selection screen))
+                         (t            (copy-mode-begin-selection screen)))))))))))
 
       ;; ── Left button release: finalize selection or end drag ───────────────
       ((and (= btn +mouse-btn-left+) release-p)

@@ -406,6 +406,7 @@
    Also isolates *active-menu* (cl-tmux/prompt) and *active-popup* so that
    menu/popup state created by one test does not leak into subsequent tests."
   `(let ((cl-tmux::*dirty* nil)
+         (cl-tmux::*last-mouse-click* nil)
          (cl-tmux/prompt:*active-menu* nil)
          (cl-tmux/prompt:*active-popup* nil))
      (with-global-running t

@@ -308,6 +308,42 @@
           (is (eq (second (session-windows s)) (session-active-window s))
               "copy-mode-vi WheelUpPane must run next-window"))))))
 
+;;; ── Double / triple click detection ─────────────────────────────────────────
+
+(test mouse-click-count-increments-within-threshold
+  "%mouse-click-count increments when a press is within the threshold at the same cell."
+  (is (= 2 (cl-tmux::%mouse-click-count '(1000 5 0 1) 1200 5 0 500))
+      "within 500ms, same cell → 2")
+  (is (= 3 (cl-tmux::%mouse-click-count '(1000 5 0 2) 1400 5 0 500))
+      "third click within threshold → 3"))
+
+(test mouse-click-count-resets-when-slow-or-moved
+  "%mouse-click-count resets to 1 when the press is too slow, at a different cell,
+   or there is no previous click."
+  (is (= 1 (cl-tmux::%mouse-click-count '(1000 5 0 1) 1600 5 0 500))
+      "beyond threshold → reset to 1")
+  (is (= 1 (cl-tmux::%mouse-click-count '(1000 5 0 1) 1100 6 0 500))
+      "different column → reset")
+  (is (= 1 (cl-tmux::%mouse-click-count '(1000 5 0 1) 1100 5 1 500))
+      "different row → reset")
+  (is (= 1 (cl-tmux::%mouse-click-count nil 1000 5 0 500))
+      "no previous click → 1"))
+
+(test mouse-double-click-selects-word
+  "Two quick left-clicks at the same cell select the word under the pointer."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mouse" t)
+    (let ((s (make-fake-session :nwindows 1)))
+      (with-loop-state
+        (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
+          (feed (active-screen s) "foo bar baz")
+          ;; Two presses at col 5 row 0 (inside "bar"); the rapid succession is
+          ;; naturally within double-click-time (500ms).
+          (cl-tmux::%dispatch-mouse-event s 0 5 0 nil)
+          (cl-tmux::%dispatch-mouse-event s 0 5 0 nil)
+          (is (string= "bar" (cl-tmux/commands::%selection-text (active-screen s)))
+              "double-click selects the word 'bar'"))))))
+
 ;;; ── Border-at-position ───────────────────────────────────────────────────────
 
 (test border-at-position-h-split

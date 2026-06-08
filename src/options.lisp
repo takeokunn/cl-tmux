@@ -121,6 +121,7 @@
   ("display-panes-active-colour" :string "red")
   ;; Resize and timing
   ("repeat-time"              :integer 500)    ; ms window for repeatable bindings
+  ("double-click-time"        :integer 500)    ; ms window for double/triple mouse clicks
   ("lock-after-time"          :integer 0)      ; 0 = disabled
   ;; Terminal settings
   ("default-terminal"         :string  "screen")
