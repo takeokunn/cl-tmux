@@ -4216,3 +4216,76 @@
       "-x value '100' must convert to 100 columns")
   (is (= 40 (parse-integer "40" :junk-allowed t))
       "-y value '40' must convert to 40 rows"))
+
+;;; ── display-popup / popup (arg-bearing handler + alias) ──────────────────────
+;;;
+;;; `bind C-p popup -E "cmd"` is a very common .tmux.conf form.  Previously
+;;; display-popup only opened an interactive prompt and `popup` (its documented
+;;; alias, man tmux ALIASES) was unrecognised.  %cmd-display-popup parses the
+;;; flags, runs the command, and shows its output; `popup` aliases it everywhere.
+
+(test cmd-display-popup-dimension-helper
+  "%popup-dimension resolves nil→fallback, absolute cells, N% of axis, clamps to
+   axis-total, and falls back on junk."
+  (is (= 60  (cl-tmux::%popup-dimension nil    200 60)) "nil → fallback")
+  (is (= 40  (cl-tmux::%popup-dimension "40"   200 60)) "absolute cell count")
+  (is (= 80  (cl-tmux::%popup-dimension "80%"  100 60)) "N% of axis-total")
+  (is (= 100 (cl-tmux::%popup-dimension "150"  100 60)) "clamped to axis-total")
+  (is (= 60  (cl-tmux::%popup-dimension "junk" 200 60)) "unparseable → fallback"))
+
+(test cmd-display-popup-with-command-opens-popup
+  "display-popup with -w/-T and a command runs it and shows a popup with the
+   requested width and title."
+  (with-loop-state
+    (let ((*overlay* nil)           ; isolate the global overlay (not in with-loop-state)
+          (cl-tmux::*term-cols* 100)
+          (cl-tmux::*term-rows* 30)
+          (s (make-fake-session :nwindows 1)))
+      (cl-tmux::%cmd-display-popup s '("-E" "-w" "40" "-T" "mytitle" "echo" "hi"))
+      (is (not (null cl-tmux/prompt:*active-popup*))
+          "a command argument opens the popup directly (no prompt)")
+      (is (= 40 (cl-tmux/prompt:popup-width cl-tmux/prompt:*active-popup*))
+          "-w 40 sets the popup width")
+      (is (string= "mytitle"
+                   (cl-tmux/prompt:popup-title cl-tmux/prompt:*active-popup*))
+          "-T sets the popup title"))))
+
+(test cmd-display-popup-percent-width-of-terminal
+  "display-popup -w 50% sizes the popup to half the terminal width."
+  (with-loop-state
+    (let ((*overlay* nil)           ; isolate the global overlay (not in with-loop-state)
+          (cl-tmux::*term-cols* 80)
+          (cl-tmux::*term-rows* 24)
+          (s (make-fake-session :nwindows 1)))
+      (cl-tmux::%cmd-display-popup s '("-w" "50%" "echo" "x"))
+      (is (= 40 (cl-tmux/prompt:popup-width cl-tmux/prompt:*active-popup*))
+          "50% of 80 columns → 40"))))
+
+(test cmd-display-popup-no-command-opens-prompt
+  "display-popup with no command opens the interactive popup-command prompt
+   rather than a popup overlay (legacy behaviour preserved)."
+  (with-loop-state
+    (let ((*prompt* nil)            ; isolate the global prompt (not in with-loop-state)
+          (s (make-fake-session :nwindows 1)))
+      (cl-tmux::%cmd-display-popup s '())
+      (is (null cl-tmux/prompt:*active-popup*)
+          "no command → no popup overlay yet")
+      (is (prompt-active-p) "no command opens the popup-command prompt instead")
+      (is (string= "popup command" (prompt-label *prompt*))
+          "the prompt label matches the legacy :display-popup prompt"))))
+
+(test config-bind-accepts-popup-alias
+  "`bind P popup -E \"cmd\"` is accepted by the config parser (popup resolves to
+   :display-popup); previously the unrecognised `popup` name was rejected."
+  (with-isolated-config
+    (is (= 1 (cl-tmux/config:load-config-from-string
+              "bind P popup -E \"echo hi\""))
+        "one directive applied — popup is a recognised command alias")))
+
+(test arg-command-table-has-popup-alias
+  "*arg-command-table* maps both display-popup and popup to %cmd-display-popup."
+  (let ((entry (assoc "popup" cl-tmux::*arg-command-table*
+                      :test (lambda (k names) (member k names :test #'string=)))))
+    (is (not (null entry)) "popup is registered in *arg-command-table*")
+    (is (eq #'cl-tmux::%cmd-display-popup (cdr entry))
+        "popup routes to %cmd-display-popup")))

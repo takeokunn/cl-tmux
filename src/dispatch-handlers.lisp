@@ -57,16 +57,6 @@
          ((:quit :detach) outcome)
          (otherwise (setf *dirty* t) nil)))))
 
-;;; -- Popup overlay constants -----------------------------------------------
-;;;
-;;; These bounds cap the popup overlay geometry so it never exceeds the
-;;; terminal dimensions.  Named constants replace the magic literals 60, 15, 4
-;;; that previously appeared inline in the :display-popup handler.
-
-(defconstant +popup-max-width+  60 "Maximum column width of a popup overlay.")
-(defconstant +popup-max-height+ 15 "Maximum row height of a popup overlay.")
-(defconstant +popup-margin+      4 "Row margin subtracted from terminal height for popups.")
-
 ;;; -- Buffer preview constant -----------------------------------------------
 ;;;
 ;;; Buffer listing and preview truncate content to this many characters.
@@ -75,19 +65,6 @@
 
 (defconstant +buffer-preview-length+ 40
   "Maximum characters shown in a paste-buffer preview listing.")
-
-;;; -- Popup overlay formatter helper -----------------------------------------
-;;;
-;;; Extracted from the :display-popup handler to match the established pattern
-;;; of named formatters (%format-menu, %format-tree-entry, %format-window-list).
-
-(defun %format-popup-overlay (title output)
-  "Format a popup overlay string with box-drawing borders.
-   TITLE is the popup header text; OUTPUT is the body content."
-  (format nil "┌─ ~A ─┐~%~A~%└~A┘"
-          title
-          (or output "")
-          (make-string (+ 2 (length title)) :initial-element #\─)))
 
 (define-command-handlers
   (:detach :detach)

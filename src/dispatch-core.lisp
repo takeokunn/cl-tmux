@@ -565,6 +565,7 @@
   ("wait-for"          :wait-for)
   ("pipe-pane"         :pipe-pane)
   ("display-popup"     :display-popup)
+  ("popup"             :display-popup)   ; documented alias (man tmux ALIASES)
   ;; Server management
   ("server-info"       :server-info)
   ("list-clients"      :list-clients)
@@ -778,6 +779,71 @@
        (if found
            (format nil "has-session ~A: yes" (or target-name ""))
            (format nil "has-session ~A: no"  (or target-name "")))))))
+
+;;; ── Popup overlay constants + formatter ─────────────────────────────────────
+;;;
+;;; Moved here from dispatch-handlers so BOTH the arg-bearing %cmd-display-popup
+;;; (below, registered in *arg-command-table*) and the legacy :display-popup
+;;; keyword handler (in dispatch-handlers, which loads after dispatch-core) can
+;;; share them.  These bounds cap the overlay geometry to the terminal size.
+
+(defconstant +popup-max-width+  60 "Maximum column width of a popup overlay.")
+(defconstant +popup-max-height+ 15 "Maximum row height of a popup overlay.")
+(defconstant +popup-margin+      4 "Row margin subtracted from terminal height for popups.")
+
+(defun %format-popup-overlay (title output)
+  "Format a popup overlay string with box-drawing borders.
+   TITLE is the popup header text; OUTPUT is the body content."
+  (format nil "┌─ ~A ─┐~%~A~%└~A┘"
+          title
+          (or output "")
+          (make-string (+ 2 (length title)) :initial-element #\─)))
+
+(defun %popup-dimension (spec axis-total fallback)
+  "Resolve a popup -w/-h dimension SPEC against AXIS-TOTAL (the terminal width or
+   height).  SPEC may be NIL (use FALLBACK), an integer string (absolute cells),
+   or an N% string (percentage of AXIS-TOTAL, which tmux accepts, e.g. -w 80%).
+   Returns a positive integer clamped to [1, AXIS-TOTAL]."
+  (let ((n (cond
+             ((null spec) fallback)
+             ((and (plusp (length spec))
+                   (char= (char spec (1- (length spec))) #\%))
+              (let ((pct (parse-integer spec :end (1- (length spec)) :junk-allowed t)))
+                (if pct (max 1 (floor (* axis-total pct) 100)) fallback)))
+             (t (or (parse-integer spec :junk-allowed t) fallback)))))
+    (max 1 (min n axis-total))))
+
+(defun %cmd-display-popup (session args)
+  "display-popup (alias: popup) [-E] [-w width] [-h height] [-x col] [-y row]
+   [-d dir] [-t target] [-c client] [-b border] [-T title] [command]: show a popup.
+
+   With a COMMAND (the common `bind C-p popup -E \"cmd\"` form), run it in a shell
+   and display its output in the popup directly — no prompt.  With NO command, open
+   the interactive popup-command prompt (the legacy :display-popup behaviour).
+   -w/-h accept absolute cells or an N% of the terminal; -E/-EE and
+   -x/-y/-d/-t/-c/-b are parsed and tolerated.  Geometry is clamped to the overlay
+   bounds (cl-tmux popups render command output, not a live embedded terminal)."
+  (declare (ignore session))
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "whxydtcbT")
+    (let* ((title   (or (cdr (assoc #\T flags)) ""))
+           (command (when positionals (format nil "~{~A~^ ~}" positionals)))
+           (width   (%popup-dimension (cdr (assoc #\w flags)) *term-cols* +popup-max-width+))
+           (height  (%popup-dimension (cdr (assoc #\h flags)) *term-rows*
+                                      (min +popup-max-height+ (- *term-rows* +popup-margin+))))
+           (clamp-w (min width  *term-cols*))
+           (clamp-h (min height (max 1 (- *term-rows* +popup-margin+)))))
+      (flet ((render (cmd)
+               (let ((label  (if (plusp (length title)) title cmd))
+                     (output (run-shell cmd)))
+                 (show-popup (make-popup :title label :width clamp-w :height clamp-h
+                                         :screen nil :pane nil))
+                 (show-overlay (%format-popup-overlay label output)))))
+        (if command
+            (render command)
+            ;; No command: fall back to the interactive popup-command prompt.
+            (prompt-start "popup command" ""
+                          (lambda (cmd)
+                            (unless (string= cmd "") (render cmd)))))))))
 
 (defun %cmd-display-menu-arg (session args)
   "display-menu [-T title] [-x x] [-y y] [label key command ...]: show an interactive menu.
@@ -1980,6 +2046,9 @@
    (cons '("command-prompt" "commandp") #'%cmd-command-prompt-arg)
    ;; display-menu [-T title] [-x x] [-y y] [label key cmd ...]: interactive menu.
    (cons '("display-menu" "menu")       #'%cmd-display-menu-arg)
+   ;; display-popup [-E] [-w W] [-h H] [-T title] [cmd]: run cmd, show output in a
+   ;; popup (the `bind C-p popup -E "cmd"` form); no cmd opens the prompt.
+   (cons '("display-popup" "popup")     #'%cmd-display-popup)
    ;; has-session [-t name]: check if a named session exists (0 = yes, 1 = no).
    (cons '("has-session" "has")         #'%cmd-has-session-arg)
    ;; switch-client -T <key-table>: activate a custom key table (modal keymaps).

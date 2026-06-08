@@ -215,6 +215,7 @@
     ("breakp"    . :break-pane)
     ("clearhist" . :clear-history)
     ("displayp"  . :display-panes)
+    ("popup"     . :display-popup)   ; man tmux: display-popup (alias: popup)
     ("findw"     . :find-window)
     ("joinp"     . :join-pane)
     ("killp"     . :kill-pane)
