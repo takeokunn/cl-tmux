@@ -385,6 +385,150 @@
       (is (null (search (format nil "~C[" #\Escape) out))
           "plain format with empty styles must emit NO SGR (got ~S)" out))))
 
+;;; ── %status-window-list-styled per-window option resolution ──────────────────
+;;;
+;;; window-status-format / window-status-current-format / window-status-style /
+;;; window-status-current-style are now resolved PER WINDOW via
+;;; get-option-for-context :window WINDOW inside the dolist.  A window-local
+;;; override on one window must affect only that window's tab; windows without an
+;;; override must still resolve to the global / registered value (so output is
+;;; identical to the pre-change behaviour).  make-fake-session ids windows from 0
+;;; (base-index), the FIRST window is active, so window 2 has #{window_index} = 1.
+
+(test status-window-list-per-window-format-override
+  "A window-local window-status-format on the (non-active) second window is used
+   for that window's tab only; the active window keeps the default
+   current-format.  Proves the format is read per-window, not from the global."
+  (with-isolated-config
+    (let* ((sess (make-fake-session :nwindows 2))
+           (windows (cl-tmux/model:session-windows sess))
+           (win2 (second windows))
+           ;; make-fake-session selects the FIRST window, so win2 is inactive.
+           (idx2 (cl-tmux/model:window-id win2)))
+      ;; Distinctive literal so the expansion " W1X " is unmistakable in output.
+      (cl-tmux/options:set-option-for-window
+       "window-status-format" " W#{window_index}X " win2)
+      (let ((out (cl-tmux/renderer::%status-window-list-styled
+                  sess (cl-tmux/model:session-active-window sess))))
+        ;; Window 2 (inactive, index 1) must use its per-window override.
+        (is (search (format nil "W~DX" idx2) out)
+            "non-active window 2 must use its per-window window-status-format ~
+             (expected ~S in ~S)" (format nil "W~DX" idx2) out)
+        ;; Window 1 (active, index 0) must still use the default current-format,
+        ;; i.e. the normal "index:name" form ("0:0").  It must NOT have picked up
+        ;; window 2's distinctive literal.
+        (is (search "0:0" out)
+            "active window 1 must still use the default current-format \"0:0\" ~
+             (got ~S)" out)
+        (is (null (search "W0X" out))
+            "the per-window override on window 2 must NOT bleed onto window 1 ~
+             (got ~S)" out)))))
+
+(test status-window-list-per-window-style-override
+  "A window-local window-status-style fg=red on the non-active window changes
+   only that window's rendered output.  Comparing the 2-window list WITH the
+   per-window override against the same list WITHOUT it proves the per-window
+   style is resolved and applied (the strings must differ)."
+  ;; Capture WITHOUT any override.
+  (let ((without
+          (with-isolated-config
+            (let ((sess (make-fake-session :nwindows 2)))
+              (cl-tmux/renderer::%status-window-list-styled
+               sess (cl-tmux/model:session-active-window sess)))))
+        ;; Capture WITH a window-local fg=red on window 2 (inactive).
+        (with
+          (with-isolated-config
+            (let* ((sess (make-fake-session :nwindows 2))
+                   (win2 (second (cl-tmux/model:session-windows sess))))
+              (cl-tmux/options:set-option-for-window
+               "window-status-style" "fg=red" win2)
+              (cl-tmux/renderer::%status-window-list-styled
+               sess (cl-tmux/model:session-active-window sess))))))
+    ;; fg=red is SGR 31; the styled output must emit a CSI escape and "31".
+    (is (search (format nil "~C[" #\Escape) with)
+        "per-window fg=red must emit an SGR escape sequence (got ~S)" with)
+    (is (search "31" with)
+        "per-window fg=red must emit SGR code 31 for the window-2 tab (got ~S)"
+        with)
+    ;; Robust proof of per-window resolution: with vs without must differ.
+    (is (not (string= with without))
+        "per-window window-status-style override must change the output ~
+         (with=~S without=~S)" with without)))
+
+(test status-window-list-no-override-is-global
+  "With NO per-window overrides, a GLOBAL window-status-style still applies to
+   the window tabs.  Proves the fallback path (window -> global) is intact and
+   behaviour is preserved for windows that carry no local override."
+  (with-isolated-config
+    ;; fg=green is SGR 32.  Set it GLOBALLY (no per-window override anywhere).
+    (cl-tmux/options:set-option "window-status-style" "fg=green")
+    (cl-tmux/options:set-option "window-status-current-style" "fg=green")
+    (let* ((sess (make-fake-session :nwindows 2))
+           (out  (cl-tmux/renderer::%status-window-list-styled
+                  sess (cl-tmux/model:session-active-window sess))))
+      (is (search (format nil "~C[" #\Escape) out)
+          "global window-status-style must emit an SGR escape (got ~S)" out)
+      (is (search "32" out)
+          "global window-status-style fg=green must emit SGR code 32 for the ~
+           window tabs (got ~S)" out))))
+
+(test status-window-list-per-window-current-format-override
+  "A window-local window-status-CURRENT-format on the ACTIVE (first) window is
+   used for that window's tab only.  make-fake-session selects the FIRST window,
+   so the override lands on the active-window branch (current-format), proving
+   the current-format is read per-window and does not bleed onto the inactive
+   window."
+  (with-isolated-config
+    (let* ((sess (make-fake-session :nwindows 2))
+           (windows (cl-tmux/model:session-windows sess))
+           (win1 (first windows)))   ; make-fake-session selects the FIRST window
+      ;; Distinctive literal so the expansion " C0Y " is unmistakable in output.
+      (cl-tmux/options:set-option-for-window
+       "window-status-current-format" " C#{window_index}Y " win1)
+      (let ((out (cl-tmux/renderer::%status-window-list-styled
+                  sess (cl-tmux/model:session-active-window sess))))
+        ;; Window 1 (active, index 0) must use its per-window current-format override.
+        (is (search "C0Y" out)
+            "active window 1 must use its per-window window-status-current-format ~
+             (expected \"C0Y\" in ~S)" out)
+        ;; The per-window override on the active window must NOT bleed onto the
+        ;; inactive window 2 (index 1) — it keeps the default format.
+        (is (null (search "C1Y" out))
+            "the per-window current-format override on window 1 must NOT bleed ~
+             onto window 2 (got ~S)" out)))))
+
+(test status-window-list-per-window-current-style-override
+  "A window-local window-status-CURRENT-style fg=red on the ACTIVE (first) window
+   changes only that window's rendered output.  Comparing the 2-window list WITH
+   the per-window override against the same list WITHOUT it proves the per-window
+   current-style is resolved and applied to the active-window branch (the strings
+   must differ)."
+  ;; Capture WITHOUT any override.
+  (let ((without
+          (with-isolated-config
+            (let ((sess (make-fake-session :nwindows 2)))
+              (cl-tmux/renderer::%status-window-list-styled
+               sess (cl-tmux/model:session-active-window sess)))))
+        ;; Capture WITH a window-local fg=red on window 1 (active).
+        (with
+          (with-isolated-config
+            (let* ((sess (make-fake-session :nwindows 2))
+                   (win1 (first (cl-tmux/model:session-windows sess))))
+              (cl-tmux/options:set-option-for-window
+               "window-status-current-style" "fg=red" win1)
+              (cl-tmux/renderer::%status-window-list-styled
+               sess (cl-tmux/model:session-active-window sess))))))
+    ;; fg=red is SGR 31; the styled output must emit a CSI escape and "31".
+    (is (search (format nil "~C[" #\Escape) with)
+        "per-window current-style fg=red must emit an SGR escape sequence (got ~S)" with)
+    (is (search "31" with)
+        "per-window current-style fg=red must emit SGR code 31 for the active ~
+         window tab (got ~S)" with)
+    ;; Robust proof of per-window resolution: with vs without must differ.
+    (is (not (string= with without))
+        "per-window window-status-current-style override must change the output ~
+         (with=~S without=~S)" with without)))
+
 ;;; ── %status-bar-line (pure) ─────────────────────────────────────────────────
 
 (test status-bar-line-fits-in-terminal-cols

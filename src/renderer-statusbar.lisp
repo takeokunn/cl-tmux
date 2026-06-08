@@ -33,14 +33,12 @@
 (defun %status-window-list-styled (session active-win)
   "Window-tab string with current-style applied to the active window entry.
    Uses window-status-format, window-status-current-format, window-status-separator,
-   window-status-current-style, and window-status-style options."
-  (let ((fmt-normal    (cl-tmux/options:get-option "window-status-format"
-                                                   " #{window_index}:#{window_name} "))
-        (fmt-current   (cl-tmux/options:get-option "window-status-current-format"
-                                                   " #{window_index}:#{window_name}* "))
-        (separator     (cl-tmux/options:get-option "window-status-separator" " "))
-        (current-style (cl-tmux/options:get-option "window-status-current-style" ""))
-        (normal-style  (cl-tmux/options:get-option "window-status-style" "")))
+   window-status-current-style, and window-status-style options.
+   The format/style options are resolved PER WINDOW via get-option-for-context
+   (pane→window→global→default), so e.g. `setw -t :2 window-status-current-style
+   fg=red` styles only that window's tab.  window-status-separator stays global —
+   it sits between windows and has no single owning window."
+  (let ((separator (cl-tmux/options:get-option "window-status-separator" " ")))
     (with-output-to-string (window-stream)
       (let ((first-p t))
         (dolist (window (session-windows session))
@@ -48,10 +46,13 @@
           (setf first-p nil)
           (let* ((context  (cl-tmux/format:format-context-from-window session window))
                  (active-p (eq window active-win))
-                 (style    (if active-p current-style normal-style))
-                 (label    (cl-tmux/format:expand-format
-                            (if active-p fmt-current fmt-normal)
-                            context)))
+                 (fmt      (cl-tmux/options:get-option-for-context
+                            (if active-p "window-status-current-format" "window-status-format")
+                            :window window))
+                 (style    (cl-tmux/options:get-option-for-context
+                            (if active-p "window-status-current-style" "window-status-style")
+                            :window window))
+                 (label    (cl-tmux/format:expand-format fmt context)))
             ;; Apply the per-window style, then expand any inline #[attr] blocks
             ;; embedded in the label.  Within a window label, #[default] reverts to
             ;; the window's own style (or the status default when it is unstyled).
