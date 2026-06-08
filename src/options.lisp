@@ -157,7 +157,10 @@
   ("copy-mode-match-style"    :string  "bg=green")
   ;; Session lifecycle
   ("destroy-unattached"       :boolean nil)     ; destroy session when no clients
-  ("detach-on-destroy"        :boolean t)       ; detach when session destroyed
+  ;; detach-on-destroy: off / on (default) / no-detached / previous / next.
+  ;; A choice option (string), NOT boolean — controls what the client does when the
+  ;; session it is viewing is destroyed.
+  ("detach-on-destroy"        :string  "on")
   ;; Window sizing
   ("default-size"             :string  "80x24") ; default WxH for new sessions
   ;; Input handling

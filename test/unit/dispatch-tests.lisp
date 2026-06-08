@@ -4561,3 +4561,76 @@
         (cl-tmux::%switch-to-session s1)
         (is (eq s1 (cl-tmux::%current-session s0))
             "after %switch-to-session s1, s1 is current")))))
+
+;;; ── detach-on-destroy: client fate when its session is destroyed ─────────────
+
+(test detach-on-destroy-on-quits-even-with-survivors
+  "detach-on-destroy on (default): destroying the viewed session detaches (:quit)
+   even when other sessions survive."
+  (with-loop-state
+    (with-isolated-options ("detach-on-destroy" "on")
+      (let ((s1 (make-fake-session)))
+        (let ((cl-tmux::*server-sessions* (list (cons "1" s1))))
+          (is (eq :quit (cl-tmux::%detach-on-destroy-action "0"))
+              "on + survivors → :quit"))))))
+
+(test detach-on-destroy-off-switches-to-survivor
+  "detach-on-destroy off: destroying the viewed session switches to a survivor."
+  (with-loop-state
+    (with-isolated-options ("detach-on-destroy" "off")
+      (let ((s1 (make-fake-session)))
+        (let ((cl-tmux::*server-sessions* (list (cons "1" s1))))
+          (is (null (cl-tmux::%detach-on-destroy-action "0"))
+              "off + survivors → nil (switch, loop follows)"))))))
+
+(test detach-on-destroy-no-survivors-always-quits
+  "With no surviving sessions, detach-on-destroy always detaches (:quit)."
+  (with-loop-state
+    (with-isolated-options ("detach-on-destroy" "off")
+      (let ((cl-tmux::*server-sessions* nil))
+        (is (eq :quit (cl-tmux::%detach-on-destroy-action "0"))
+            "no survivors → :quit regardless of mode")))))
+
+(test alphabetical-neighbour-prev-next-and-wrap
+  "%alphabetical-neighbour finds the next/prev surviving session by name, wrapping."
+  (let ((sa (make-fake-session)) (sc (make-fake-session)) (se (make-fake-session)))
+    (setf (cl-tmux::session-name sa) "a"
+          (cl-tmux::session-name sc) "c"
+          (cl-tmux::session-name se) "e")
+    (let ((cl-tmux::*server-sessions* (list (cons "a" sa) (cons "c" sc) (cons "e" se))))
+      (is (eq se (cl-tmux::%alphabetical-neighbour "c"  1)) "next of c is e")
+      (is (eq sa (cl-tmux::%alphabetical-neighbour "c" -1)) "prev of c is a")
+      (is (eq sa (cl-tmux::%alphabetical-neighbour "z"  1)) "next of z wraps to a")
+      (is (eq se (cl-tmux::%alphabetical-neighbour "0" -1)) "prev of 0 wraps to e"))))
+
+(test detach-on-destroy-next-switches-to-alphabetical-neighbour
+  "detach-on-destroy next switches to the alphabetically-next surviving session."
+  (with-loop-state
+    (with-isolated-options ("detach-on-destroy" "next")
+      (let ((sa (make-fake-session)) (sc (make-fake-session)))
+        (setf (cl-tmux::session-name sa) "a" (cl-tmux::session-last-active sa) 5
+              (cl-tmux::session-name sc) "c" (cl-tmux::session-last-active sc) 5)
+        (let ((cl-tmux::*server-sessions* (list (cons "a" sa) (cons "c" sc))))
+          (is (null (cl-tmux::%detach-on-destroy-action "b")) "next returns nil (switch)")
+          (is (eq sc (cl-tmux::%current-session sa))
+              "next switched to the alphabetically-next survivor (c)"))))))
+
+(test dispatch-kill-session-default-on-detaches-with-survivors
+  ":kill-session with detach-on-destroy on (default) + a survivor returns :quit."
+  (with-loop-state
+    (with-isolated-options ("detach-on-destroy" "on")
+      (let ((s1 (make-fake-session)) (s2 (make-fake-session)))
+        (setf (cl-tmux::session-name s1) "cur" (cl-tmux::session-name s2) "other")
+        (let ((cl-tmux::*server-sessions* (list (cons "cur" s1) (cons "other" s2))))
+          (is (eq :quit (cl-tmux::dispatch-command s1 :kill-session nil))
+              "kill current with survivors + on → :quit (detach)"))))))
+
+(test dispatch-kill-session-off-keeps-running-with-survivors
+  ":kill-session with detach-on-destroy off keeps running (switches to survivor)."
+  (with-loop-state
+    (with-isolated-options ("detach-on-destroy" "off")
+      (let ((s1 (make-fake-session)) (s2 (make-fake-session)))
+        (setf (cl-tmux::session-name s1) "cur" (cl-tmux::session-name s2) "other")
+        (let ((cl-tmux::*server-sessions* (list (cons "cur" s1) (cons "other" s2))))
+          (is (null (cl-tmux::dispatch-command s1 :kill-session nil))
+              "kill current with survivors + off → nil (keep running)"))))))

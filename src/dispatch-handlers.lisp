@@ -271,10 +271,13 @@
           (name (format nil "~D" n)))
      (new-session name rows cols)))
   (:kill-session
-   (%destroy-session session)
-   (if (null *server-sessions*)
-       (progn (setf *running* nil) :quit)
-       nil))
+   ;; Destroy the current session, then apply detach-on-destroy: :quit (detach →
+   ;; exit standalone) or NIL (switch to a survivor; the loop follows it).
+   (let ((name (session-name session)))
+     (%destroy-session session)
+     (let ((action (%detach-on-destroy-action name)))
+       (when (eq action :quit) (setf *running* nil))
+       action)))
   (:has-session
    (prompt-start "has-session" ""
                  (lambda (name)

@@ -1789,6 +1789,39 @@
       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-closed+ session)
       name)))
 
+(defun %alphabetical-neighbour (name dir)
+  "The surviving session whose name is alphabetically just after (DIR +1) or
+   before (DIR -1) NAME (the destroyed session's name, no longer in the registry),
+   wrapping around.  Returns NIL when no sessions survive.  Backs detach-on-destroy
+   previous/next."
+  (let ((sorted (sort (mapcar #'cdr *server-sessions*) #'string< :key #'session-name)))
+    (when sorted
+      (if (plusp dir)
+          (or (find-if (lambda (s) (string< name (session-name s))) sorted)
+              (first sorted))
+          (or (find-if (lambda (s) (string< (session-name s) name)) (reverse sorted))
+              (car (last sorted)))))))
+
+(defun %detach-on-destroy-action (destroyed-name)
+  "Decide the standalone client's fate after the session it was viewing (named
+   DESTROYED-NAME) is destroyed, per the detach-on-destroy option
+   (off / on (default) / no-detached / previous / next).  Returns :QUIT when the
+   client should detach — which in the single-client standalone model means exit —
+   or NIL when it switches to a surviving session (the event loop then follows the
+   new current session).  No survivors → always :QUIT.  off/no-detached fall to the
+   most-recent survivor (the loop's natural choice); previous/next touch the
+   alphabetical neighbour of DESTROYED-NAME so the loop moves there."
+  (if (null *server-sessions*)
+      :quit
+      (let ((mode (or (cl-tmux/options:get-option "detach-on-destroy") "on")))
+        (cond
+          ((string= mode "on") :quit)
+          ((string= mode "previous")
+           (%switch-to-session (%alphabetical-neighbour destroyed-name -1)) nil)
+          ((string= mode "next")
+           (%switch-to-session (%alphabetical-neighbour destroyed-name 1)) nil)
+          (t nil)))))   ; off / no-detached → most-recent survivor (loop auto-follows)
+
 (defun %cmd-kill-session-arg (session args)
   "kill-session [-a] [-t name]: kill session(s).
    -a: kill all sessions EXCEPT the one named by -t (or current session).
@@ -1814,9 +1847,13 @@
                                                   :test #'equal)))
                                  session)))
             (when target-sess
-              (%destroy-session target-sess)
-              (when (and (eq target-sess session) (null *server-sessions*))
-                (setf *running* nil))))))))
+              (let ((name        (session-name target-sess))
+                    (was-current (eq target-sess session)))
+                (%destroy-session target-sess)
+                ;; Killing the session the client is viewing → apply detach-on-destroy.
+                (when (and was-current
+                           (eq :quit (%detach-on-destroy-action name)))
+                  (setf *running* nil)))))))))
 
 (defun %cmd-resize-window-arg (session args)
   "resize-window [-x cols] [-y rows] [-t target-window]: resize a window.
