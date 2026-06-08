@@ -4473,3 +4473,29 @@
       (cl-tmux::%apply-named-layout-to-session sess :main-vertical)
       (is (= 25 (pane-width p1))
           "the other pane uses the other-pane-width option (25)"))))
+
+;;; ── default-size: detached new-session sizing ────────────────────────────────
+
+(test parse-wxh-parses-size-strings
+  "%parse-wxh parses \"WxH\" into (values W H); rejects malformed input."
+  (multiple-value-bind (w h) (cl-tmux::%parse-wxh "80x24")
+    (is (= 80 w)) (is (= 24 h)))
+  (multiple-value-bind (w h) (cl-tmux::%parse-wxh "100x40")
+    (is (= 100 w)) (is (= 40 h)))
+  (multiple-value-bind (w h) (cl-tmux::%parse-wxh "junk")
+    (is (null w) "no 'x' separator → NIL") (is (null h)))
+  (multiple-value-bind (w h) (cl-tmux::%parse-wxh "80x")
+    (is (null w) "missing height → NIL") (is (null h))))
+
+(test cmd-new-session-detached-uses-default-size
+  "new-session -d with no -x/-y sizes the detached session from the default-size
+   option (it has no client to size it), not the current terminal."
+  (with-isolated-options ("default-size" "100x40")
+    (with-loop-state
+      (let* ((cl-tmux::*server-sessions* nil)
+             (s   (make-fake-session))
+             (new (cl-tmux::%cmd-new-session-arg s '("-d" "-s" "bg"))))
+        (is (= 100 (window-width (session-active-window new)))
+            "detached new-session width comes from default-size (100)")
+        (is (= 40 (window-height (session-active-window new)))
+            "detached new-session height comes from default-size (40)")))))

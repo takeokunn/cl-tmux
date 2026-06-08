@@ -1637,6 +1637,19 @@
               (show-transient-overlay (%format-pane-info session win result))))
           result)))))
 
+(defun %parse-wxh (str)
+  "Parse a \"WxH\" size string (e.g. the default-size option \"80x24\") into
+   (values W H), or (values NIL NIL) when STR is not of that form or either
+   dimension is not a positive integer."
+  (when (stringp str)
+    (let ((x (position #\x str :test #'char-equal)))
+      (when x
+        (let ((w (parse-integer str :end x :junk-allowed t))
+              (h (parse-integer str :start (1+ x) :junk-allowed t)))
+          (when (and w h (plusp w) (plusp h))
+            (return-from %parse-wxh (values w h))))))
+    (values nil nil)))
+
 (defun %cmd-new-session-arg (session args)
   "new-session [-A] [-d] [-s name] [-n window-name] [-c start-dir] [-x width] [-y height]: create a new session.
    -A: if a session named NAME already exists, attach to it instead of creating a new one.
@@ -1644,8 +1657,11 @@
    -s name: session name.
    -n name: initial window name.
    -c dir: start directory for the initial window's shell.
-   -x width: initial columns (default: terminal width).
-   -y height: initial rows (default: terminal height minus status bar)."
+   -x width: initial columns (default: terminal width, or default-size when -d).
+   -y height: initial rows (default: terminal height minus status bar, or
+     default-size when -d).
+   A DETACHED session (-d) has no client to size it, so — like tmux — it uses the
+   default-size option (\"WxH\", default 80x24) when -x/-y are not given."
   (multiple-value-bind (flags positionals) (%parse-command-flags args "sncxy")
     (declare (ignore positionals))
     (let* ((name            (or (cdr (assoc #\s flags))
@@ -1656,10 +1672,16 @@
            (start-dir        (cdr (assoc #\c flags)))
            (x-str            (cdr (assoc #\x flags)))
            (y-str            (cdr (assoc #\y flags)))
-           ;; -x/-y override the terminal dimensions when given (junk-allowed).
+           ;; Detached sessions have no client → fall back to default-size, not the
+           ;; current terminal size.  NIL for attached sessions (use the terminal).
+           (default-wxh      (and detach-p
+                                  (cl-tmux/options:get-option "default-size" "80x24")))
+           ;; -x/-y override everything when given (junk-allowed).
            (cols             (or (and x-str (parse-integer x-str :junk-allowed t))
+                                 (and default-wxh (nth-value 0 (%parse-wxh default-wxh)))
                                  *term-cols*))
            (rows             (or (and y-str (parse-integer y-str :junk-allowed t))
+                                 (and default-wxh (nth-value 1 (%parse-wxh default-wxh)))
                                  (- *term-rows* *status-height*))))
       ;; -A: attach to existing session if it exists
       (when attach-if-exists
