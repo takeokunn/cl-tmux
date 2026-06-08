@@ -104,6 +104,33 @@
             (write-string (subseq row-str 0 (min (length row-str) pw)) stream)))
         (reset-attrs stream)))))
 
+(defun %draw-pane-number-to-screen (stream ox oy pw ph number active-p)
+  "Draw NUMBER (a pane index) as centred 3-row big digits in the pane at terminal
+   offset (OX,OY), clipped to the pane rectangle (PW x PH).  Coloured by
+   display-panes-active-colour when ACTIVE-P, else display-panes-colour (a colour
+   name → fg SGR; fallback blue 34).  This is tmux's display-panes (C-b q) display;
+   reuses the clock's big-digit glyphs.  Renders only if the pane is ≥ 3x3."
+  (when (and (>= pw 3) (>= ph 3))
+    (let* ((digits    (map 'list #'digit-char-p (princ-to-string number)))
+           (rows      (loop for row-idx below 3
+                            collect (format nil "~{~A~^ ~}"
+                                            (mapcar (lambda (d)
+                                                      (nth row-idx (%clock-digit-rows d)))
+                                                    digits))))
+           (num-w     (length (first rows)))
+           (start-col (max 0 (floor (- pw num-w) 2)))
+           (start-row (max 0 (floor (- ph 3) 2)))
+           (colour    (if active-p
+                          (cl-tmux/options:get-option "display-panes-active-colour" "red")
+                          (cl-tmux/options:get-option "display-panes-colour" "blue")))
+           (sgr       (or (%border-color-sgr colour) 34)))
+      (format stream "~C[~Dm" +esc+ sgr)
+      (loop for row-str in rows
+            for roff from 0 do
+        (move-to stream (+ oy start-row roff) (+ ox start-col))
+        (write-string (subseq row-str 0 (min (length row-str) pw)) stream))
+      (reset-attrs stream))))
+
 ;;; ── Selection bounds computation ──────────────────────────────────────────────
 
 (defun %compute-selection-bounds (screen)

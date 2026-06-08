@@ -375,26 +375,20 @@
           (last (and win (window-last-active win))))
      (when last (%select-pane-with-focus win last))))
   (:display-panes
-   ;; Show pane numbers as a transient overlay that auto-dismisses after
-   ;; display-panes-time milliseconds (default 1000ms), matching real tmux.
+   ;; Show big per-pane numbers (drawn by the renderer while *display-panes-active*),
+   ;; matching real tmux.  An (empty) transient overlay is the timing vehicle: it
+   ;; auto-dismisses after display-panes-time ms (and on the next key), and clearing
+   ;; it also clears *display-panes-active* so the numbers vanish with it.
    (with-active-window (win session)
      (let ((panes (window-panes win)))
        (when panes
-         ;; Temporarily override display-time with display-panes-time so that
-         ;; show-transient-overlay uses the pane-display duration, not the
-         ;; message-display duration.
          (let* ((panes-ms (or (cl-tmux/options:get-option "display-panes-time") 1000))
                 (saved-ms (cl-tmux/options:get-option "display-time" 750)))
            (cl-tmux/options:set-option "display-time" panes-ms)
-           (show-transient-overlay
-            (with-output-to-string (stream)
-              (dolist (p panes)
-                (format stream "Pane ~D: ~Dx~D at (~D,~D)~A~%"
-                        (pane-id p)
-                        (pane-width p) (pane-height p)
-                        (pane-x p) (pane-y p)
-                        (if (eq p (window-active-pane win)) " [active]" "")))))
-           (cl-tmux/options:set-option "display-time" saved-ms))))))
+           (show-transient-overlay "")            ; resets *display-panes-active* to NIL …
+           (setf cl-tmux/prompt:*display-panes-active* t)  ; … then we arm it
+           (cl-tmux/options:set-option "display-time" saved-ms)
+           (setf *dirty* t))))))
 
   ;; ── Client switching ───────────────────────────────────────────────────────
   (:switch-client-next

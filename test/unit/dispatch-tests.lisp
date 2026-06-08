@@ -704,23 +704,21 @@
 
 ;;; ── :display-panes dispatch ──────────────────────────────────────────────────
 
-(test dispatch-display-panes-shows-overlay-with-pane-entries
-  ":display-panes with a 2-pane session opens an overlay whose text contains
-   two pane entries and marks the active pane as [active]."
+(test dispatch-display-panes-shows-pane-numbers
+  ":display-panes with a 2-pane session arms the per-pane number display (via a
+   timing overlay) and renders big-digit pane numbers."
   (with-two-pane-h-session (sess win p0 p1)
     (is (and win p0 p1) "session with 2 panes")
     (with-loop-state
-      (let ((*overlay* nil))
+      (let ((*overlay* nil) (cl-tmux/prompt:*display-panes-active* nil))
         (cl-tmux::dispatch-command sess :display-panes nil)
         (is (overlay-active-p)
-            ":display-panes must open an overlay")
-        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-          (is (search "Pane 1" text)
-              "overlay must mention pane 1")
-          (is (search "Pane 2" text)
-              "overlay must mention pane 2")
-          (is (search "[active]" text)
-              "overlay must mark the active pane with [active]"))))))
+            ":display-panes opens the (timing) overlay")
+        (is-true cl-tmux/prompt:*display-panes-active*
+                 ":display-panes arms the per-pane number display")
+        (let ((frame (cl-tmux/renderer:render-session-to-string sess 24 81)))
+          (is (find #\█ frame)
+              ":display-panes must render big-digit pane numbers (got no █)"))))))
 
 (test dispatch-display-panes-marks-dirty
   ":display-panes sets *dirty* to T."

@@ -203,6 +203,34 @@
   (with-isolated-options ("clock-mode-colour" "bogus-colour")
     (is (string= "96" (cl-tmux/renderer::%clock-face-sgr)) "unknown → 96 fallback")))
 
+;;; -- display-panes per-pane big numbers (C-b q) ------------------------------
+
+(test draw-pane-number-emits-big-digits
+  "%draw-pane-number-to-screen emits block-element digits for a pane number."
+  (let ((out (with-output-to-string (s)
+               (cl-tmux/renderer::%draw-pane-number-to-screen s 0 0 20 6 7 nil))))
+    (is (find #\█ out) "must emit big-digit block glyphs (got ~S)" out)))
+
+(test draw-pane-number-active-vs-inactive-colour
+  "%draw-pane-number-to-screen colours the active pane with display-panes-active-
+   colour and others with display-panes-colour."
+  (with-isolated-options ("display-panes-colour" "green"
+                          "display-panes-active-colour" "red")
+    (let ((inactive (with-output-to-string (s)
+                      (cl-tmux/renderer::%draw-pane-number-to-screen s 0 0 20 6 1 nil)))
+          (active   (with-output-to-string (s)
+                      (cl-tmux/renderer::%draw-pane-number-to-screen s 0 0 20 6 1 t))))
+      (is (search (format nil "~C[32m" #\Escape) inactive)
+          "inactive pane number uses display-panes-colour green (32)")
+      (is (search (format nil "~C[31m" #\Escape) active)
+          "active pane number uses display-panes-active-colour red (31)"))))
+
+(test draw-pane-number-too-small-emits-nothing
+  "%draw-pane-number-to-screen renders nothing in a pane smaller than 3x3."
+  (is (string= "" (with-output-to-string (s)
+                    (cl-tmux/renderer::%draw-pane-number-to-screen s 0 0 2 2 1 nil)))
+      "a 2x2 pane is too small for a big digit"))
+
 ;;; -- in-sel branch coverage via render-pane ----------------------------------
 
 (defun %make-selecting-pane (w h content mark-row mark-col cursor-row cursor-col)

@@ -22,6 +22,13 @@
   "Universal-time when the most recent transient overlay was shown.
    Set by show-transient-overlay for display-time auto-dismiss.")
 
+(defvar *display-panes-active* nil
+  "T while display-panes (C-b q) is showing per-pane numbers.  Set by the
+   :display-panes handler AFTER it opens its (timing) transient overlay; cleared by
+   any other overlay (show-overlay / show-transient-overlay) and by clear-overlay,
+   so it is T only for the display-panes overlay.  The renderer draws the big
+   per-pane numbers while it is T and the overlay is still active.")
+
 (defun overlay-active-p ()
   "True when an overlay is currently displayed."
   (and *overlay* t))
@@ -29,19 +36,22 @@
 (defun show-overlay (text)
   "Display TEXT as an overlay; navigated with j/k, dismissed with q or Esc."
   (setf *overlay* text)
-  (setf *overlay-scroll-offset* 0))
+  (setf *overlay-scroll-offset* 0)
+  (setf *display-panes-active* nil))
 
 (defun show-transient-overlay (text)
   "Display TEXT as a transient overlay that auto-dismisses after display-time ms.
    Used for display-message and similar short notifications."
   (setf *overlay* text
         *overlay-scroll-offset* 0
-        *overlay-shown-at* (get-universal-time)))
+        *overlay-shown-at* (get-universal-time)
+        *display-panes-active* nil))
 
 (defun clear-overlay ()
   "Dismiss the active overlay and reset the scroll offset."
   (setf *overlay* nil)
-  (setf *overlay-scroll-offset* 0))
+  (setf *overlay-scroll-offset* 0)
+  (setf *display-panes-active* nil))
 
 (defun overlay-lines ()
   "The active overlay split into a list of lines, or NIL when inactive."

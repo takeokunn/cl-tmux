@@ -433,7 +433,7 @@
    ;; Vi-mode character deletion (vi x)
    #:prompt-delete-char
    ;; Dismissible overlay (list-keys help, …)
-   #:*overlay* #:*overlay-scroll-offset*
+   #:*overlay* #:*overlay-scroll-offset* #:*display-panes-active*
    #:overlay-active-p #:show-overlay #:show-transient-overlay
    #:clear-overlay #:overlay-lines
    #:overlay-scroll #:*overlay-shown-at*
