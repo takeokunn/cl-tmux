@@ -376,13 +376,18 @@
 
 ;;; ── send-keys-to-pane ───────────────────────────────────────────────────────
 
-(defun send-keys-to-pane (pane string)
+(defun send-keys-to-pane (pane string &key literal)
   "Write STRING to PANE's PTY.  STRING is parsed as send-keys arguments: each
    argument naming a tmux key (Enter, Tab, C-c, Up, F5, M-x, ...) is translated
    to its byte sequence, and other arguments are sent as literal UTF-8 text.
+   When LITERAL is true (send-keys -l), STRING is written as raw UTF-8 bytes
+   with NO key-name interpretation.
    No-op when PANE has no open PTY (fd <= -1)."
   (when (and pane (> (pane-fd pane) -1))
-    (pty-write (pane-fd pane) (%translate-send-keys string))))
+    (pty-write (pane-fd pane)
+               (if literal
+                   (babel:string-to-octets string :encoding :utf-8)
+                   (%translate-send-keys string)))))
 
 ;;; ── Shell ──────────────────────────────────────────────────────────────────
 ;;;

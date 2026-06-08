@@ -622,14 +622,16 @@
     ))
 
 (defun %apply-set-hook-directive (cmd args)
-  "Handle 'set-hook [-r] event [command]' directives.
-   -r flag removes all hooks for the event; without -r, registers the command.
-   The command is stored as a raw string (not converted to keyword) so that
-   format variables and arguments (e.g. 'display-message #{session_name}')
+  "Handle 'set-hook [-r] [-u] event [command]' directives.
+   -r or -u flag removes/unsets all hooks for the event; without them, registers
+   the command.  The command is stored as a raw string (not converted to keyword)
+   so that format variables and arguments (e.g. 'display-message #{session_name}')
    are expanded at hook-fire time via %run-command-line.
    Returns T when handled, NIL otherwise."
   (when (or (string= cmd "set-hook") (string= cmd "hook"))
-    (let* ((remove-p (and (first args) (string= (first args) "-r")))
+    (let* ((remove-p (and (first args)
+                          (or (string= (first args) "-r")
+                              (string= (first args) "-u"))))
            (rest     (if remove-p (rest args) args))
            (event    (first rest))
            ;; The command may be a single quoted token or split across tokens;

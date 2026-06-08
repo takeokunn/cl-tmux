@@ -116,6 +116,55 @@
           "second window: :window-index must equal window-id (~D)"
           (cl-tmux/model:window-id win2)))))
 
+;;; ── #{window_raw_flags} vs #{window_flags} ──────────────────────────────────
+;;;
+;;; #{window_flags} pads to a single space when no flags apply; #{window_raw_flags}
+;;; stays empty ("") in that case.  For the active window both contain "*".
+
+(test format-window-raw-flags-active-window-has-star
+  "For the active window, #{window_raw_flags} and #{window_flags} both contain \"*\"."
+  (let* ((sess (make-fake-session :nwindows 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (let ((raw   (cl-tmux/format:expand-format "#{window_raw_flags}" ctx))
+          (flags (cl-tmux/format:expand-format "#{window_flags}" ctx)))
+      (is (search "*" raw)
+          "active window #{window_raw_flags} must contain \"*\" (got ~S)" raw)
+      (is (search "*" flags)
+          "active window #{window_flags} must contain \"*\" (got ~S)" flags))))
+
+(test format-window-raw-flags-inactive-empty-vs-flags-space
+  "For an inactive, never-previously-active window, #{window_raw_flags} is the
+   empty string while #{window_flags} is a single space (the padding fallback)."
+  (let* ((sess (make-fake-session :nwindows 2))
+         (wins (cl-tmux/model:session-windows sess))
+         ;; window 0 is active (make-fake-session selects the first window);
+         ;; window 1 is inactive and has never been previously active.
+         (inactive (second wins))
+         (pane     (first (cl-tmux/model:window-panes inactive)))
+         (ctx      (cl-tmux/format:format-context-from-session sess inactive pane)))
+    (let ((raw   (cl-tmux/format:expand-format "#{window_raw_flags}" ctx))
+          (flags (cl-tmux/format:expand-format "#{window_flags}" ctx)))
+      (is (string= "" raw)
+          "inactive window #{window_raw_flags} must be empty (got ~S)" raw)
+      (is (string= " " flags)
+          "inactive window #{window_flags} must be a single space (got ~S)" flags))))
+
+(test format-window-raw-flags-zoomed-window-has-z
+  "When the active window is zoomed, #{window_raw_flags} contains BOTH \"*\"
+   (active) and \"Z\" (zoomed)."
+  (let* ((sess (make-fake-session :nwindows 1))
+         (win  (cl-tmux/model:session-active-window sess))
+         (pane (first (cl-tmux/model:window-panes win))))
+    (setf (cl-tmux/model:window-zoom-p win) t)
+    (let* ((ctx (cl-tmux/format:format-context-from-session sess win pane))
+           (raw (cl-tmux/format:expand-format "#{window_raw_flags}" ctx)))
+      (is (search "*" raw)
+          "zoomed active window #{window_raw_flags} must contain \"*\" (got ~S)" raw)
+      (is (search "Z" raw)
+          "zoomed window #{window_raw_flags} must contain \"Z\" (got ~S)" raw))))
+
 (test format-context-pane-index-matches-pane-id
   "format-context-from-session :pane-index equals the pane's numeric id."
   (let* ((sess  (make-fake-session :nwindows 1 :npanes 2))

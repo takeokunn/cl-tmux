@@ -354,6 +354,24 @@
     (is (null (cl-tmux/hooks:command-hooks "after-new-window"))
         "after clear-command-hooks the event must have no command hooks")))
 
+;;; ── set-hook -u (unset) directive ────────────────────────────────────────────
+;;;
+;;; The `set-hook -u <event>` directive clears every command hook registered for
+;;; the event (same effect as -r), reverting the event to having no hooks.
+
+(test set-hook-u-unsets-registered-command-hook
+  "set-hook -u <event> clears the command hooks previously registered for that event."
+  (with-isolated-hooks
+    (with-isolated-config
+      ;; Register a command hook via the config directive.
+      (cl-tmux/config:load-config-from-string "set-hook after-new-window next-window")
+      (is (equal '("next-window") (cl-tmux/hooks:command-hooks "after-new-window"))
+          "precondition: set-hook must register the raw command string")
+      ;; Now unset it via -u.
+      (cl-tmux/config:load-config-from-string "set-hook -u after-new-window")
+      (is (null (cl-tmux/hooks:command-hooks "after-new-window"))
+          "set-hook -u must leave the event with no command hooks"))))
+
 ;;; ── %list-command-hooks (internal helper) ────────────────────────────────────
 
 (test internal-list-command-hooks-returns-alist

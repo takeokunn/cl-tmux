@@ -2511,3 +2511,50 @@
     (cl-tmux/commands:copy-mode-set-cursor s 3 7)
     (is (equal (cons 1 1) (cl-tmux/terminal/types:screen-copy-cursor s))
         "cursor must be unchanged outside copy mode")))
+
+;;; ── send-keys -l (literal) vs translated ────────────────────────────────────
+;;;
+;;; send-keys-to-pane (pane string &key literal) is the production entry point,
+;;; but it needs a pane with a real PTY (fd > -1) to observe output; fake panes
+;;; have fd -1, where pty-write is a harmless no-op.  We therefore test the
+;;; byte-production logic that distinguishes the two modes:
+;;;   - non-literal: %translate-send-keys maps the key name "Enter" → CR (13).
+;;;   - literal (-l): the string is emitted as raw UTF-8 bytes, so "Enter"
+;;;     stays the 5 bytes E-n-t-e-r with no key-name interpretation.
+
+(test send-keys-translated-enter-produces-cr
+  "Without -l, %translate-send-keys maps the key name \"Enter\" to a single CR byte (13)."
+  (let ((bytes (cl-tmux/commands::%translate-send-keys "Enter")))
+    (is (= 1 (length bytes))
+        "translated \"Enter\" must be exactly one byte (got length ~D)" (length bytes))
+    (is (= 13 (aref bytes 0))
+        "translated \"Enter\" must be CR (char code 13), got ~D" (aref bytes 0))))
+
+(test send-keys-literal-enter-stays-five-bytes
+  "With -l, the string \"Enter\" is written as raw UTF-8 bytes — five literal
+   characters E-n-t-e-r — NOT translated to a CR.  This is the byte payload
+   send-keys-to-pane writes when :literal is true."
+  (let ((literal-bytes (babel:string-to-octets "Enter")))
+    (is (= 5 (length literal-bytes))
+        "literal \"Enter\" must be five bytes (got length ~D)" (length literal-bytes))
+    (is (equalp #(69 110 116 101 114) literal-bytes)
+        "literal \"Enter\" must be the ASCII bytes for E,n,t,e,r")
+    ;; The literal payload must differ from the translated (single-CR) payload.
+    (is (not (equalp literal-bytes
+                     (cl-tmux/commands::%translate-send-keys "Enter")))
+        "literal mode must NOT equal the translated single-CR payload")))
+
+(test send-keys-literal-multibyte-utf8-preserves-bytes
+  "With -l, a multi-byte UTF-8 string is emitted as its raw UTF-8 octets:
+   \"café\" is 4 characters but encodes to 5 bytes (é = 2 bytes), so literal
+   mode preserves the multi-byte encoding rather than counting characters."
+  (let ((literal-bytes (babel:string-to-octets "café" :encoding :utf-8)))
+    (is (= 5 (length literal-bytes))
+        "literal \"café\" must be 5 UTF-8 bytes (got length ~D)" (length literal-bytes))
+    (is (> (length literal-bytes) (length "café"))
+        "byte count (~D) must exceed the 4-character count, proving multi-byte preservation"
+        (length literal-bytes))
+    ;; The é (U+00E9) encodes to the two-byte sequence C3 A9; assert the tail.
+    (is (equalp #(195 169) (subseq literal-bytes 3))
+        "the é must encode to the two UTF-8 bytes C3 A9 (got ~S)"
+        (subseq literal-bytes 3))))

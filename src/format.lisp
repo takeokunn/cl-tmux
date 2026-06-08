@@ -770,7 +770,7 @@
 
    Keys returned:
      :session-name :window-index :window-name :window-count :session-windows
-     :window-active :window-flags :window-panes :pane-index :pane-title
+     :window-active :window-flags :window-raw-flags :window-panes :pane-index :pane-title
      :pane-id :pane-width :pane-height :pane-pid :pane-left :pane-top :pane-active
      :hostname :host :host-short :time
      :client-width :client-height :client-tty"
@@ -786,8 +786,9 @@
          (window-name     (if window (cl-tmux/model:window-name window) ""))
          (window-active   (if (and window session-active-window
                                    (eq window session-active-window)) "1" "0"))
-         ;; #{window_flags}: composite flag string (*=active, -=last, Z=zoomed).
-         (window-flags
+         ;; #{window_raw_flags}: composite flag string (*=active, -=last, Z=zoomed),
+         ;; "" when no flags apply (no single-space padding fallback).
+         (window-raw-flags
           (let ((flags ""))
             (when window
               ;; * = current/active window
@@ -803,7 +804,10 @@
               ;; Z = zoomed
               (when (cl-tmux/model:window-zoom-p window)
                 (setf flags (concatenate 'string flags "Z"))))
-            (if (zerop (length flags)) " " flags)))
+            flags))
+         ;; #{window_flags}: same as raw flags but padded to a single space when empty.
+         (window-flags
+          (if (zerop (length window-raw-flags)) " " window-raw-flags))
          ;; #{window_zoomed_flag}: "Z" when the window is zoomed, else " ".
          (window-zoomed-flag (if (and window (cl-tmux/model:window-zoom-p window)) "Z" " "))
          (window-panes    (if window (cl-tmux/model:window-panes window) nil))
@@ -884,6 +888,8 @@
           :session-windows window-count
           :window-active window-active
           :window-flags  window-flags
+          ;; #{window_raw_flags}: same flags but "" (not " ") when empty.
+          :window-raw-flags window-raw-flags
           ;; #{window_zoomed_flag}: "Z" when the active pane is zoomed.
           :window-zoomed-flag window-zoomed-flag
           ;; #{window_panes}: number of panes in this window.
@@ -1026,7 +1032,7 @@
    Any argument may be NIL.
 
    Keys: :session-name :window-index :window-name :window-count
-         :window-active :window-flags :pane-index :pane-title
+         :window-active :window-flags :window-raw-flags :pane-index :pane-title
          :hostname :time :host :host-short
          :client-width :client-height :client-tty"
   (format-context-from-session session window

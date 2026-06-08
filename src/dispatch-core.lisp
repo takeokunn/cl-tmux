@@ -585,16 +585,31 @@
 ;;; falls through to the no-argument name table for everything else.
 
 (defun %cmd-display-message (session args)
-  "display-message [-d ms] <fmt...>: expand the space-joined ARGS as a format string
-   against the active session/window/pane, then log and show the result.
+  "display-message [-d ms] [-t target] <fmt...>: expand the space-joined ARGS as a format string
+   against the target (or active) session/window/pane, then log and show the result.
    -d ms: display duration in milliseconds (overrides display-time option).
+   -t target: build the format context from the target's session/window/pane.
    Uses show-transient-overlay so it auto-dismisses after the configured duration."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "d")
-    (let* ((delay-str (cdr (assoc #\d flags)))
-           (delay-ms  (and delay-str (parse-integer delay-str :junk-allowed t)))
-           (win       (session-active-window session))
-           (pane      (session-active-pane session))
-           (ctx       (cl-tmux/format:format-context-from-session session win pane))
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "dt")
+    (let* ((delay-str  (cdr (assoc #\d flags)))
+           (delay-ms   (and delay-str (parse-integer delay-str :junk-allowed t)))
+           (target-str (cdr (assoc #\t flags)))
+           ;; -t: resolve to a target session/window/pane; fall back to active.
+           (tgt-session session)
+           (tgt-win    (session-active-window session))
+           (tgt-pane   (session-active-pane session)))
+      (when target-str
+        (multiple-value-bind (rs rw rp)
+            (resolve-target *server-sessions* target-str
+                            :current-session session
+                            :current-window  (session-active-window session)
+                            :current-pane    (session-active-pane session))
+          (when rs (setf tgt-session rs))
+          (when rw (setf tgt-win rw))
+          (when rp (setf tgt-pane rp))))
+    (let* ((win       tgt-win)
+           (pane      tgt-pane)
+           (ctx       (cl-tmux/format:format-context-from-session tgt-session win pane))
            (text      (cl-tmux/format:expand-format
                        (format nil "~{~A~^ ~}" positionals) ctx)))
       (add-message-log text)
@@ -604,7 +619,7 @@
             (cl-tmux/options:set-option "display-time" delay-ms)
             (show-transient-overlay text)
             (cl-tmux/options:set-option "display-time" saved))
-          (show-transient-overlay text)))))
+          (show-transient-overlay text))))))
 
 (defun %cmd-swap-pane-arg (session args)
   "swap-pane [-U|-D|-L|-R] [-Z]: swap the active pane with an adjacent one.
@@ -772,11 +787,20 @@
                                 (or table-name "all")))))))
 
 (defun %cmd-copy-mode-arg (session args)
-  "copy-mode [-u]: enter copy mode.
-   -u: pre-scroll to the oldest scrollback content (e.g. bind PageUp copy-mode -u)."
+  "copy-mode [-e] [-u]: enter copy mode.
+   -u: pre-scroll to the oldest scrollback content (e.g. bind PageUp copy-mode -u).
+   -e: exit copy mode automatically when scrolled to the bottom (mouse scroll).
+       The screen struct has no exit-on-bottom slot, so wiring the full behavior
+       would require a struct change rippling through terminal/screen.lisp and
+       the copy-mode scroll handlers.  We accept the flag without error so
+       bindings using it (e.g. `bind -n WheelUpPane copy-mode -e`) work; the
+       auto-exit behavior is DEFERRED until the slot is added safely."
   (let* ((flags (nth-value 0 (%parse-command-flags args "")))
          (scroll-to-top (and (assoc #\u flags) t))
+         ;; -e accepted (no-op for now); see docstring for deferral rationale.
+         (exit-on-bottom (and (assoc #\e flags) t))
          (screen (%active-screen session)))
+    (declare (ignore exit-on-bottom))
     (when screen
       (copy-mode-enter screen :scroll-to-top scroll-to-top)
       (setf *dirty* t))))
@@ -1305,13 +1329,15 @@
           result)))))
 
 (defun %cmd-new-session-arg (session args)
-  "new-session [-A] [-d] [-s name] [-n window-name] [-c start-dir]: create a new session.
+  "new-session [-A] [-d] [-s name] [-n window-name] [-c start-dir] [-x width] [-y height]: create a new session.
    -A: if a session named NAME already exists, attach to it instead of creating a new one.
    -d: create detached (do not switch to the new session).
    -s name: session name.
    -n name: initial window name.
-   -c dir: start directory for the initial window's shell."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "snc")
+   -c dir: start directory for the initial window's shell.
+   -x width: initial columns (default: terminal width).
+   -y height: initial rows (default: terminal height minus status bar)."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "sncxy")
     (declare (ignore positionals))
     (let* ((name            (or (cdr (assoc #\s flags))
                                 (format nil "~D" (1+ (length *server-sessions*)))))
@@ -1319,8 +1345,13 @@
            (detach-p         (assoc #\d flags))
            (win-name         (cdr (assoc #\n flags)))
            (start-dir        (cdr (assoc #\c flags)))
-           (rows             (- *term-rows* *status-height*))
-           (cols             *term-cols*))
+           (x-str            (cdr (assoc #\x flags)))
+           (y-str            (cdr (assoc #\y flags)))
+           ;; -x/-y override the terminal dimensions when given (junk-allowed).
+           (cols             (or (and x-str (parse-integer x-str :junk-allowed t))
+                                 *term-cols*))
+           (rows             (or (and y-str (parse-integer y-str :junk-allowed t))
+                                 (- *term-rows* *status-height*))))
       ;; -A: attach to existing session if it exists
       (when attach-if-exists
         (let ((existing (server-find-session name)))
@@ -1553,12 +1584,14 @@
         ((assoc #\D flags) (when win (resize-pane win :down  amount)))))))
 
 (defun %cmd-send-keys-arg (session args)
-  "send-keys [-t target-pane] [-X copy-mode-cmd] [key ...]: send keys or copy-mode commands.
+  "send-keys [-l] [-t target-pane] [-X copy-mode-cmd] [key ...]: send keys or copy-mode commands.
    -X: dispatch a named copy-mode command (begin-selection, copy-selection, etc.)
    -t: target a specific pane by pane-id or 'session:window.pane' syntax.
+   -l: send each positional literally (no key-name translation).
    Without -X: each positional is a key name or literal string typed into the pane."
   (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
     (let* ((target-str (cdr (assoc #\t flags)))
+           (literal-p  (and (assoc #\l flags) t))
            ;; Resolve -t to a specific pane; fall back to the active pane.
            (target-pane
             (if target-str
@@ -1578,7 +1611,7 @@
             ;; Normal: send key strings to the target pane.
             (when (and positionals target-pane)
               (dolist (key positionals)
-                (send-keys-to-pane target-pane key))))))))
+                (send-keys-to-pane target-pane key :literal literal-p))))))))
 
 (defun %cmd-list-sessions-arg (session args)
   "list-sessions [-F format]: list sessions.

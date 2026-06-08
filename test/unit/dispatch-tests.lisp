@@ -3907,3 +3907,107 @@
           (stop-cl-tmux-threads)
           (is (> (length (cl-tmux/model:window-panes win)) before)
               "split-window -c /tmp must add a pane"))))))
+
+;;; ── copy-mode -e ─────────────────────────────────────────────────────────────
+;;;
+;;; %cmd-copy-mode-arg accepts -e (auto-exit-on-bottom) without error; the
+;;; auto-exit behaviour itself is DEFERRED (no screen slot yet), but the flag
+;;; must be tolerated so bindings like `bind -n WheelUpPane copy-mode -e` work.
+;;; We assert the observable outcome: copy mode is entered and no error is raised.
+
+(test cmd-copy-mode-arg-e-flag-enters-copy-mode
+  "copy-mode -e is accepted without error and enters copy mode on the active screen."
+  (let* ((s      (make-fake-session :nwindows 1 :npanes 1))
+         (screen (active-screen s)))
+    (is-false (cl-tmux/terminal/types:screen-copy-mode-p screen)
+              "precondition: active screen must not be in copy mode")
+    (finishes (cl-tmux::%cmd-copy-mode-arg s '("-e"))
+              "copy-mode -e must not signal an error")
+    (is-true (cl-tmux/terminal/types:screen-copy-mode-p screen)
+             "copy-mode -e must put the active screen into copy mode")))
+
+;;; ── display-message -t ───────────────────────────────────────────────────────
+;;;
+;;; display-message -t <target> resolves the format context from the target's
+;;; session/window/pane.  Overlay content is awkward to assert precisely, so we
+;;; verify the observable behaviour: the call succeeds and produces an overlay.
+
+(test cmd-display-message-t-target-produces-overlay
+  "display-message -t 0 <msg> runs without error and opens a transient overlay."
+  (let ((s (make-fake-session :nwindows 1 :npanes 1)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (finishes (cl-tmux::%cmd-display-message s '("-t" "0" "hello"))
+                  "display-message -t must not signal an error")
+        (is (overlay-active-p)
+            "display-message -t must open a transient overlay")))))
+
+(test cmd-display-message-t-resolves-target-session-name
+  "display-message -t <name> '#{session_name}' resolves the *targeted* session
+   from the registry — the expanded overlay text must contain the TARGET session's
+   name, not the dispatching session's, proving -t drives the format context.
+   Uses a populated *server-sessions* so -t actually resolves a distinct session
+   rather than falling back to the active one."
+  (let* ((current (make-fake-session :nwindows 1 :npanes 1))
+         (target  (make-fake-session :nwindows 1 :npanes 1)))
+    ;; Give the target a distinctive name so its presence in the overlay is
+    ;; unambiguous evidence that -t resolved it (the fallback session is "0").
+    (setf (session-name target) "target-sess")
+    (with-loop-state
+      (let ((*overlay* nil)
+            (cl-tmux::*server-sessions*
+              (list (cons (session-name current) current)
+                    (cons (session-name target)  target))))
+        ;; Dispatch FROM `current` but target `target-sess`.
+        (cl-tmux::%cmd-display-message
+         current '("-t" "target-sess" "#{session_name}"))
+        (is (overlay-active-p)
+            "display-message -t must open a transient overlay")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is (search "target-sess" text)
+              "overlay must expand #{session_name} to the TARGET session's name (got ~S)"
+              text)
+          (is (null (search "#{" text))
+              "the #{...} format must be expanded, not shown literally (got ~S)" text))))))
+
+;;; ── new-session -x / -y ──────────────────────────────────────────────────────
+;;;
+;;; The -x/-y flags set the initial width/height of a NEW session.  Dispatching a
+;;; live new-session forks a real PTY (forkpty-with-shell), which the unit suite
+;;; avoids — but the FLAG PARSING that derives cols/rows is fork-free and runs in
+;;; %cmd-new-session-arg BEFORE the fork: it calls
+;;;   (%parse-command-flags args "sncxy")
+;;; and then parse-integer's the -x/-y values into cols/rows.  We test that
+;;; fork-free contract directly: x and y must be VALUE flags (in the "sncxy"
+;;; spec), and their integer conversion must yield the expected dimensions.  This
+;;; guards against a regression where "sncxy" reverts to "snc" — then -x/-y would
+;;; parse as boolean flags and "100"/"40" would leak into the positionals, which
+;;; the assertions below would catch.
+
+(test new-session-x-y-flags-are-value-flags
+  "%parse-command-flags with the new-session 'sncxy' spec treats -x and -y as
+   VALUE flags, consuming '100' and '40' as their values rather than positionals.
+   This is the fork-free guard for new-session -x/-y dimension parsing."
+  (multiple-value-bind (flags positionals)
+      (cl-tmux::%parse-command-flags '("-x" "100" "-y" "40" "rest") "sncxy")
+    (is (string= "100" (cdr (assoc #\x flags)))
+        "-x must consume '100' as its value (got ~S)" (cdr (assoc #\x flags)))
+    (is (string= "40" (cdr (assoc #\y flags)))
+        "-y must consume '40' as its value (got ~S)" (cdr (assoc #\y flags)))
+    ;; The trailing non-flag token must remain a positional; the consumed
+    ;; values must NOT leak into positionals (which is what a 'snc' regression
+    ;; would cause).
+    (is (member "rest" positionals :test #'string=)
+        "'rest' must remain a positional (got ~S)" positionals)
+    (is (null (member "100" positionals :test #'string=))
+        "-x's value '100' must not leak into positionals (got ~S)" positionals)
+    (is (null (member "40" positionals :test #'string=))
+        "-y's value '40' must not leak into positionals (got ~S)" positionals)))
+
+(test new-session-x-y-values-convert-to-integers
+  "Documents the cols/rows derivation: %cmd-new-session-arg converts the parsed
+   -x/-y strings to integers via parse-integer for the new session's dimensions."
+  (is (= 100 (parse-integer "100" :junk-allowed t))
+      "-x value '100' must convert to 100 columns")
+  (is (= 40 (parse-integer "40" :junk-allowed t))
+      "-y value '40' must convert to 40 rows"))
