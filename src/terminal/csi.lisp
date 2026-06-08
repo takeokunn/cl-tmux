@@ -241,6 +241,15 @@
   ((and (eql intermed #\>) (char= final #\c))
    (enqueue-da2-reply screen))
 
+  ;; XTPUSHTITLE – push window title onto the title stack (CSI > Ps t)
+  ;; XTPOPTITLE  – pop window title from the stack (CSI < Ps t)
+  ;; These are accepted silently; our title is a single slot so we just no-op.
+  ;; Applications use these to save/restore the window title across operations.
+  ((and (eql intermed #\>) (char= final #\t))
+   (values))  ; push title — no-op (no title stack implemented)
+  ((and (eql intermed #\<) (char= final #\t))
+   (values))  ; pop title — no-op
+
   ;; DEC Private Mode Set (?...h) — e.g. ?1049h enters the alternate screen
   ((and (eql intermed #\?) (char= final #\h))
    (dec-pm-set screen params))

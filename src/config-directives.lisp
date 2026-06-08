@@ -427,14 +427,30 @@
     (ignore-errors (load-config-file (pathname path)))
     t)
   ("run-shell" 1 (cmd)
-    (ignore-errors
-      (uiop:run-program (list "/bin/sh" "-c" cmd)
-                        :ignore-error-status t))
+    ;; Expand leading ~/ to $HOME so run '~/.tmux/plugins/tpm/tpm' works.
+    (let ((expanded (if (and (> (length cmd) 2)
+                             (char= (char cmd 0) #\~)
+                             (char= (char cmd 1) #\/))
+                        (concatenate 'string
+                                     (or (ignore-errors (sb-ext:posix-getenv "HOME")) "~")
+                                     (subseq cmd 1))
+                        cmd)))
+      (ignore-errors
+        (uiop:run-program (list "/bin/sh" "-c" expanded)
+                          :ignore-error-status t)))
     t)
   ("run" 1 (cmd)
-    (ignore-errors
-      (uiop:run-program (list "/bin/sh" "-c" cmd)
-                        :ignore-error-status t))
+    ;; Expand leading ~/ to $HOME so run '~/.tmux/plugins/tpm/tpm' works.
+    (let ((expanded (if (and (> (length cmd) 2)
+                             (char= (char cmd 0) #\~)
+                             (char= (char cmd 1) #\/))
+                        (concatenate 'string
+                                     (or (ignore-errors (sb-ext:posix-getenv "HOME")) "~")
+                                     (subseq cmd 1))
+                        cmd)))
+      (ignore-errors
+        (uiop:run-program (list "/bin/sh" "-c" expanded)
+                          :ignore-error-status t)))
     t)
   ;; set-environment / setenv 2-arg form: VAR VALUE (no flags).
   ;; The %apply-set-environment-directive handler in apply-config-directive
@@ -476,6 +492,7 @@
         (append-p   nil)
         (server-p   nil)
         (unset-p    nil)
+        (format-p   nil)
         (remaining  args))
     (loop while (and remaining
                      (let ((tok (first remaining)))
@@ -485,11 +502,11 @@
                (when (find #\a tok) (setf append-p t))
                (when (find #\s tok) (setf server-p t))
                (when (find #\u tok) (setf unset-p  t))
+               ;; -F: expand the value as a format string before storing.
+               (when (find #\F tok) (setf format-p t))
                ;; -g, -w, -p, -o, -q: accepted silently.
-               ;; -q (quiet): suppress errors — cl-tmux already ignores unknown options.
-               ;; Other scope flags fall through to global options during config load.
                ))
-    (values had-flag append-p server-p unset-p remaining)))
+    (values had-flag append-p server-p unset-p format-p remaining)))
 
 (defun %apply-set-directive (cmd args)
   "Apply a flag-bearing set-family directive (e.g. `set -g status off`,
@@ -497,11 +514,19 @@
    Routes -s writes to *server-options*; handles -a (append) and -u (unset).
    Returns T when applied; NIL when CMD is not a set verb or carries no flags."
   (when (member cmd *set-directive-names* :test #'string=)
-    (multiple-value-bind (had-flag append-p server-p unset-p positionals)
+    (multiple-value-bind (had-flag append-p server-p unset-p format-p positionals)
         (%strip-set-flags args)
       (when (and had-flag (first positionals))
-        (let ((name  (first positionals))
-              (value (format nil "~{~A~^ ~}" (rest positionals))))
+        (let* ((name      (first positionals))
+               (raw-value (format nil "~{~A~^ ~}" (rest positionals)))
+               ;; -F: expand value as a format string with basic hostname context.
+               (value     (if format-p
+                              (let ((ctx (list :hostname (machine-instance)
+                                               :version "3.5")))
+                                (handler-case
+                                    (cl-tmux/format:expand-format raw-value ctx)
+                                  (error () raw-value)))
+                              raw-value)))
           (cond
             ;; -u: unset option — remove override, revert to registered default.
             (unset-p

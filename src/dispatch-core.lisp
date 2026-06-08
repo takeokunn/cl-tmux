@@ -687,6 +687,36 @@
                (setf result (get-output-stream-string out))))
     result))
 
+(defun %cmd-last-pane-arg (session args)
+  "last-pane [-Z]: jump to the previously active pane.
+   -Z: zoom/unzoom the pane after selecting it (toggle zoom state)."
+  (multiple-value-bind (flags _pos) (%parse-command-flags args "")
+    (declare (ignore _pos))
+    (let* ((win  (session-active-window session))
+           (last (and win (window-last-active win))))
+      (when last
+        (%select-pane-with-focus win last)
+        ;; -Z: toggle zoom on the newly selected pane's window.
+        (when (assoc #\Z flags)
+          (with-active-window (w session)
+            (window-zoom-toggle w)))))))
+
+(defun %cmd-has-session-arg (session args)
+  "has-session [-t name]: check if a named session exists.
+   Shows a transient overlay: 'has-session: yes' or 'has-session: no'.
+   Without -t: checks if there is any session in *server-sessions*."
+  (declare (ignore session))
+  (multiple-value-bind (flags _positionals) (%parse-command-flags args "t")
+    (declare (ignore _positionals))
+    (let* ((target-name (cdr (assoc #\t flags)))
+           (found       (if target-name
+                            (server-find-session target-name)
+                            (not (null *server-sessions*)))))
+      (show-transient-overlay
+       (if found
+           (format nil "has-session ~A: yes" (or target-name ""))
+           (format nil "has-session ~A: no"  (or target-name "")))))))
+
 (defun %cmd-display-menu-arg (session args)
   "display-menu [-T title] [-x x] [-y y] [label key command ...]: show an interactive menu.
    -T title: menu title (default: 'Menu').
@@ -961,14 +991,25 @@
              (when pane (%select-pane-with-focus win pane)))))))))
 
 (defun %cmd-kill-window (session args)
-  "kill-window [-t target]: kill the window named by -t (window-id or name), or
-   the active window when no -t is given.  Quits when the last window is killed."
-  (let* ((target-str (cdr (assoc #\t (%parse-command-flags args "t"))))
-         (win (if target-str
-                  (%resolve-window-target session target-str)
-                  (session-active-window session))))
-    (when win
-      (%handle-kill-result (kill-window session win)))))
+  "kill-window [-a] [-t target]: kill a window or all windows except the current.
+   -a: kill ALL windows in the session EXCEPT the target (or active) window.
+   -t target: target window by id or name.
+   No flags: kill the active window."
+  (multiple-value-bind (flags _pos) (%parse-command-flags args "t")
+    (declare (ignore _pos))
+    (let* ((target-str  (cdr (assoc #\t flags)))
+           (kill-others (assoc #\a flags))
+           (ref-win     (if target-str
+                            (%resolve-window-target session target-str)
+                            (session-active-window session))))
+      (if kill-others
+          ;; -a: kill all EXCEPT the reference window
+          (let ((to-kill (remove ref-win (session-windows session))))
+            (dolist (w to-kill)
+              (%handle-kill-result (kill-window session w))))
+          ;; Normal: kill the target window
+          (when ref-win
+            (%handle-kill-result (kill-window session ref-win)))))))
 
 (defun %cmd-kill-pane (session args)
   "kill-pane [-a] [-t target]: kill the target pane, or all except target with -a.
@@ -1127,10 +1168,21 @@
                        (if (eq p (window-active-pane win)) " [active]" ""))))
            "(no panes)")))))
 
+(defun %format-pane-info (session win pane)
+  "Return a short pane info string: session:window.pane geometry.
+   Used by -P flag in new-window and split-window."
+  (format nil "~A:~A.~A: [~Dx~D]"
+          (session-name session)
+          (if win (window-id win) "?")
+          (if pane (pane-id pane) "?")
+          (if pane (pane-width pane) 0)
+          (if pane (pane-height pane) 0)))
+
 (defun %cmd-new-window-arg (session args)
-  "new-window [-d] [-k] [-n name] [-t target-window] [-a] [-c start-dir] [-e VAR=val].
+  "new-window [-d] [-k] [-P] [-n name] [-t target-window] [-a] [-c start-dir] [-e VAR=val].
    -d: create the window but do not make it active (detached).
    -k: kill any existing window at the target index before creating the new one.
+   -P: print the new pane's details (session:window.pane [WxH]) to overlay.
    -n name: name the new window.
    -t idx: insert at specific index (assigned as the window id).
    -a: insert after the current window.
@@ -1142,6 +1194,7 @@
            (name       (cdr (assoc #\n flags)))
            (detach-p   (assoc #\d flags))
            (kill-p     (assoc #\k flags))
+           (print-p    (assoc #\P flags))
            (after-p    (assoc #\a flags))
            (target-str (cdr (assoc #\t flags)))
            (raw-dir    (cdr (assoc #\c flags)))
@@ -1161,12 +1214,17 @@
       ;; Inject -e VAR=val pairs via *pane-extra-env* so %fork-pane picks them up.
       (when extra-env
         (setf *pane-extra-env* extra-env))
-      (%cmd-new-window session
-                       :name name
-                       :start-dir start-dir
-                       :detach (and detach-p t)
-                       :at-index at-idx
-                       :after-current (and after-p t)))))
+      (let ((new-win (%cmd-new-window session
+                                      :name name
+                                      :start-dir start-dir
+                                      :detach (and detach-p t)
+                                      :at-index at-idx
+                                      :after-current (and after-p t))))
+        ;; -P: print new pane details to overlay.
+        (when (and print-p new-win)
+          (show-transient-overlay
+           (%format-pane-info session new-win (window-active-pane new-win))))
+        new-win))))
 
 (defun %cmd-split-window (session args)
   "split-window [-h|-v] [-b] [-d] [-t target] [-p percent] [-l size] [-c start-dir] [-e VAR=val].
@@ -1218,17 +1276,22 @@
         ;; Inject -e VAR=val pairs via *pane-extra-env* so %fork-pane picks them up.
         (when extra-env
           (setf *pane-extra-env* extra-env))
-        (let ((result
-               (if horizontal-p
-                   (%cmd-split session :h :size size :no-focus (and detach-p t)
-                                       :start-dir start-dir :before (and before-p t))
-                   (%cmd-split session :v :size size :no-focus (and detach-p t)
-                                       :start-dir start-dir :before (and before-p t)))))
+        (let* ((print-p (assoc #\P flags))
+               (result
+                (if horizontal-p
+                    (%cmd-split session :h :size size :no-focus (and detach-p t)
+                                        :start-dir start-dir :before (and before-p t))
+                    (%cmd-split session :v :size size :no-focus (and detach-p t)
+                                        :start-dir start-dir :before (and before-p t)))))
           ;; Restore original focus when -d (detach): the target had focus switched
           ;; transiently for the split but the user wants to stay in the prior window.
           (when (and detach-p target-str prev-win)
             (session-select-window session prev-win)
             (when prev-pane (window-select-pane prev-win prev-pane)))
+          ;; -P: print the new pane's details.
+          (when (and print-p result)
+            (let ((win (pane-window result)))
+              (show-transient-overlay (%format-pane-info session win result))))
           result)))))
 
 (defun %cmd-new-session-arg (session args)
@@ -1655,7 +1718,11 @@
    ;; command-prompt [-p prompts] [template]: interactive prompt with substitution.
    (cons '("command-prompt" "commandp") #'%cmd-command-prompt-arg)
    ;; display-menu [-T title] [-x x] [-y y] [label key cmd ...]: interactive menu.
-   (cons '("display-menu" "menu")       #'%cmd-display-menu-arg))
+   (cons '("display-menu" "menu")       #'%cmd-display-menu-arg)
+   ;; has-session [-t name]: check if a named session exists (0 = yes, 1 = no).
+   (cons '("has-session")               #'%cmd-has-session-arg)
+   ;; last-pane [-Z]: select last pane, optionally toggling zoom.
+   (cons '("last-pane" "lastp")         #'%cmd-last-pane-arg))
   "Arg-taking commands: (list-of-names . handler), handler a function of
    (SESSION ARGS).  Consulted by %run-command-line before the no-argument
    %dispatch-named-command name table.")

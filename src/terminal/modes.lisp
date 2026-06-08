@@ -156,7 +156,21 @@
   ;; Mode 47 — alternate screen (older form of 1049, without save/restore)
   (47
    ((enter-alt-screen screen))
-   ((exit-alt-screen screen))))  ; mode 47 spec closes, define-dec-pm-rules closes here
+   ((exit-alt-screen screen)))
+
+  ;; Mode 2048 — Kitty extended keyboard protocol (?2048h / ?2048l).
+  ;; We accept and silently ignore — no extended key reporting is implemented
+  ;; (we pass the standard CSI sequences through).  Kitty-aware apps work in
+  ;; degraded mode (fall back to legacy encoding) which is correct behaviour.
+  (2048
+   ((values))  ; no-op set
+   ((values))) ; no-op reset
+
+  ;; Mode 1 — xterm cursor-key app mode is already handled (line 79-84).
+  ;; Mode 12 — local echo mode (accepted silently, not modelled).
+  (12
+   ((values))
+   ((values))))  ; define-dec-pm-rules closes here
 
 ;;; ── Focus event reporting (?1004) ──────────────────────────────────────────
 ;;;

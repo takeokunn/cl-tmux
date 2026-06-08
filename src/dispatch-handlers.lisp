@@ -380,6 +380,10 @@
   (:swap-pane-up       (%swap-active-pane session :up))
   (:swap-pane-down     (%swap-active-pane session :down))
   (:last-pane
+   ;; Jump to the previously active pane.  The byte arg encodes a -Z zoom
+   ;; toggle modifier: when called with a specific flag byte, zoom the pane.
+   ;; In practice :last-pane is always dispatched without a zoom flag via C-b ;
+   ;; but %cmd-last-pane-arg (the arg-taking variant) can pass :zoom-toggle.
    (let* ((win  (session-active-window session))
           (last (and win (window-last-active win))))
      (when last (%select-pane-with-focus win last))))
