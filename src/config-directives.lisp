@@ -341,10 +341,12 @@
 
 (defun %parse-bind-key-args (args)
   "Parse the ARGS list for a bind directive (excludes the \"bind\" verb itself).
-   Returns (values table key command repeatable) where TABLE is +TABLE-PREFIX+ by
-   default, or NIL when ARGS do not form a valid binding."
+   Returns (values table key command repeatable note) where TABLE is +TABLE-PREFIX+
+   by default and NOTE is the -N description string (or NIL), or NIL when ARGS do
+   not form a valid binding."
   (let ((table      +table-prefix+)
         (repeatable nil)
+        (note       nil)
         (remaining  args))
     (loop
       (cond
@@ -360,14 +362,14 @@
          (when (null remaining) (return nil))
          (setf table     (first remaining))
          (setf remaining (rest remaining)))
-        ;; -N "note": tmux 3.1+ key-binding description.  Consume the flag and
-        ;; its (already single-token, quote-joined) note argument.  The note is
-        ;; not yet surfaced by list-keys, but it MUST be skipped — otherwise the
-        ;; fall-through below would mis-read "-N" as the key and the note as the
-        ;; command, silently producing the wrong binding.
+        ;; -N "note": tmux 3.1+ key-binding description.  Capture the (already
+        ;; single-token, quote-joined) note argument so list-keys can display it.
+        ;; It MUST be consumed here — otherwise the fall-through below would
+        ;; mis-read "-N" as the key and the note as the command.
         ((string= (first remaining) "-N")
          (setf remaining (rest remaining))
          (when (null remaining) (return nil))
+         (setf note      (first remaining))
          (setf remaining (rest remaining)))
         (t
          ;; Need a key plus at least one command token.
@@ -389,11 +391,11 @@
                    (if (= (length tokens) 1)
                        ;; Single word: resolve to a keyword.
                        (let ((keyword (%command-keyword (first tokens))))
-                         (if keyword (values table key-token keyword repeatable) nil))
+                         (if keyword (values table key-token keyword repeatable note) nil))
                        ;; Multi-token: store as token list.
-                       (values table key-token tokens repeatable)))
+                       (values table key-token tokens repeatable note)))
                  ;; Multiple commands: store as :sequence list of token lists.
-                 (values table key-token (cons :sequence sequences) repeatable)))))))))
+                 (values table key-token (cons :sequence sequences) repeatable note)))))))))
 
 ;;; ── Semicolon-sequence splitter ──────────────────────────────────────────
 ;;;
@@ -473,11 +475,12 @@
 
 (define-key-directive-handlers
   (("bind" "bind-key")
-   (multiple-value-bind (table key command repeatable)
+   (multiple-value-bind (table key command repeatable note)
        (%parse-bind-key-args args)
      (when command
        ;; COMMAND is a keyword (built-in) or a token list (`bind key cmd args`).
-       (key-table-bind table key command :repeatable repeatable)
+       ;; NOTE is the optional -N description, surfaced by list-keys.
+       (key-table-bind table key command :repeatable repeatable :note note)
        t)))
   (("unbind" "unbind-key")
    (multiple-value-bind (table key)

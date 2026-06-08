@@ -29,6 +29,7 @@
    #:key-table-lookup
    #:key-table-command
    #:key-table-repeatable-p
+   #:key-table-note
    #:initialize-default-key-tables
    #:load-config-file
    #:load-config-from-stream

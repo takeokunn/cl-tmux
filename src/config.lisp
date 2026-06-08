@@ -101,11 +101,13 @@
       (setf (gethash name *key-tables*)
             (make-hash-table :test #'equal))))
 
-(defun key-table-bind (table key command &key repeatable)
+(defun key-table-bind (table key command &key repeatable note)
   "Add a binding for KEY → COMMAND in TABLE (a table-name string).
-   :REPEATABLE T marks the binding so the prefix table stays active after dispatch."
+   :REPEATABLE T marks the binding so the prefix table stays active after dispatch.
+   :NOTE is an optional description string (from `bind -N`) shown by list-keys."
   (let ((inner (ensure-key-table table)))
-    (setf (gethash key inner) (cons command (list :repeatable repeatable)))))
+    (setf (gethash key inner)
+          (cons command (list :repeatable repeatable :note note)))))
 
 (defun key-table-lookup (table key)
   "Return the (command . flags) cons for KEY in TABLE, or NIL."
@@ -120,6 +122,11 @@
   "Return T if the key-table entry is marked repeatable.
    Safe to call with NIL (returns NIL without signaling)."
   (and entry (getf (cdr entry) :repeatable)))
+
+(defun key-table-note (entry)
+  "Return the -N description string for a key-table ENTRY, or NIL.
+   Safe to call with NIL (returns NIL without signaling)."
+  (and entry (getf (cdr entry) :note)))
 
 ;;; ── Initial key-binding data (declarative) ────────────────────────────────
 ;;;
@@ -199,17 +206,22 @@
         #'string<))
 
 (defun %table-binding-alist (inner)
-  "Build an alist of (key . command) from INNER (an inner key-table hash-table)."
+  "Build an alist of (key . entry) from INNER (an inner key-table hash-table).
+   The whole entry (command . flags) is kept so callers can read the -N note."
   (loop for key being the hash-keys of inner
         using (hash-value entry)
-        collect (cons key (car entry))))
+        collect (cons key entry)))
 
-(defun %format-binding-line (table-name key command)
-  "Format one bind-key -T TABLE-NAME KEY COMMAND line."
-  (format nil "bind-key -T ~A ~A ~A~%"
-          table-name
-          (key-label key)
-          (%binding-label command)))
+(defun %format-binding-line (table-name key entry)
+  "Format one `bind-key -T TABLE-NAME [-N note] KEY COMMAND` line.
+   When ENTRY carries an -N note it is emitted as `-N \"note\"` before the key,
+   matching tmux's list-keys -N output."
+  (let ((note (key-table-note entry)))
+    (format nil "bind-key -T ~A ~@[-N \"~A\" ~]~A ~A~%"
+            table-name
+            note
+            (key-label key)
+            (%binding-label (key-table-command entry)))))
 
 (defun %describe-one-table (out table-name)
   "Write bind-key lines for TABLE-NAME to OUT stream.  No-op when table is absent."

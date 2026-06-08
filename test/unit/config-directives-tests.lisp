@@ -315,6 +315,34 @@
           "a -N note plus a brace block must store a :sequence")
       (is (= 2 (length (rest cmd))) "both inner commands must be captured"))))
 
+(test bind-note-flag-stores-note-on-binding
+  "bind -N \"note\" key cmd stores the note, retrievable via key-table-note."
+  (with-isolated-config
+    (load-config-from-string "bind -N \"Go to next window\" x next-window")
+    (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\x)))
+      (is (eq :next-window (cl-tmux/config:key-table-command entry)))
+      (is (string= "Go to next window" (cl-tmux/config:key-table-note entry))
+          "the -N note must be stored on the binding"))))
+
+(test bind-without-note-has-nil-note
+  "A binding made without -N has a NIL note."
+  (with-isolated-config
+    (load-config-from-string "bind y next-window")
+    (is (null (cl-tmux/config:key-table-note
+               (cl-tmux/config:key-table-lookup "prefix" #\y)))
+        "no -N flag → NIL note")))
+
+(test describe-key-bindings-surfaces-note
+  "list-keys / describe-key-bindings renders the -N note in -N \"...\" form for a
+   noted binding, and emits no -N marker for un-noted bindings."
+  (with-isolated-config
+    (load-config-from-string "bind -N \"reload config\" R source-file ~/.tmux.conf")
+    (let ((output (cl-tmux/config:describe-key-bindings-for-table "prefix")))
+      (is (search "reload config" output)
+          "the note text must appear in the list-keys output")
+      (is (search "-N \"reload config\"" output)
+          "the note is rendered in -N \"...\" form"))))
+
 ;;; brace-block command syntax (tmux 3.x): bind r { cmd1 ; cmd2 }
 
 (test strip-brace-block-unwraps-braces
