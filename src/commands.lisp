@@ -8,29 +8,47 @@
 ;;;                              (scrollback(Opts) -> emit_scrollback ; true),
 ;;;                              emit_visible_rows.
 
+(defun %swap-pane-geometry (ap other)
+  "Exchange the screen positions of two panes AP and OTHER in-place.
+   Updates both pane structs so the renderer sees the swapped layout immediately."
+  (let ((ax (pane-x ap)) (ay (pane-y ap))
+        (aw (pane-width ap)) (ah (pane-height ap)))
+    (pane-reposition ap
+                     (pane-x other) (pane-y other)
+                     (pane-width other) (pane-height other))
+    (pane-reposition other ax ay aw ah)))
+
 (defun swap-pane (window direction)
-  "Swap the active pane with the next (:right) or previous (:left) pane in WINDOW.
-   Swaps the panes in the panes list, reassigns positions, and relayouts."
+  "Swap the active pane with an adjacent pane in WINDOW.
+   DIRECTION:
+     :right / :forward  — next in panes list (wraps around)
+     :left  / :backward — previous in panes list (wraps around)
+     :up    — spatially adjacent pane above (via pane-neighbor)
+     :down  — spatially adjacent pane below (via pane-neighbor)
+   Swaps both list order and screen geometry."
   (let* ((panes (window-panes window))
          (ap    (window-active-pane window))
          (idx   (position ap panes))
          (n     (length panes)))
-    (when (> n 1)
-      (let* ((other-idx (ecase direction
-                          (:right (mod (1+ idx) n))
-                          (:left  (mod (1- idx) n))))
-             (other (nth other-idx panes))
-             (new-panes (copy-list panes)))
-        (setf (nth idx new-panes) other
-              (nth other-idx new-panes) ap
-              (window-panes window) new-panes)
-        ;; Swap x/y/width/height between the two panes using destructuring.
-        (let ((ax (pane-x ap)) (ay (pane-y ap))
-              (aw (pane-width ap)) (ah (pane-height ap)))
-          (pane-reposition ap
-                           (pane-x other) (pane-y other)
-                           (pane-width other) (pane-height other))
-          (pane-reposition other ax ay aw ah))
+    (unless (> n 1) (return-from swap-pane nil))
+    (let ((other
+           (ecase direction
+             ((:right :forward)
+              (nth (mod (1+ idx) n) panes))
+             ((:left :backward)
+              (nth (mod (1- idx) n) panes))
+             (:up   (pane-neighbor window ap :up))
+             (:down (pane-neighbor window ap :down)))))
+      (when other
+        ;; Swap list positions.
+        (let ((other-idx (position other panes))
+              (new-panes (copy-list panes)))
+          (when other-idx
+            (setf (nth idx new-panes) other
+                  (nth other-idx new-panes) ap
+                  (window-panes window) new-panes)))
+        ;; Swap screen geometry.
+        (%swap-pane-geometry ap other)
         ap))))
 
 (defun %screen-row-string (screen row)

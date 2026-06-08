@@ -19,6 +19,7 @@
    #:define-initial-key-bindings
    #:lookup-key-binding
    #:describe-key-bindings
+   #:describe-key-bindings-for-table
    #:set-key-binding
    #:remove-key-binding
    ;; Key-table system

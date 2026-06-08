@@ -347,6 +347,8 @@
   ;; ── Pane management ────────────────────────────────────────────────────────
   (:swap-pane-forward  (%swap-active-pane session :right))
   (:swap-pane-backward (%swap-active-pane session :left))
+  (:swap-pane-up       (%swap-active-pane session :up))
+  (:swap-pane-down     (%swap-active-pane session :down))
   (:last-pane
    (let* ((win  (session-active-window session))
           (last (and win (window-last-active win))))

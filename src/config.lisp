@@ -207,18 +207,32 @@
           (key-label key)
           (%binding-label command)))
 
+(defun %describe-one-table (out table-name)
+  "Write bind-key lines for TABLE-NAME to OUT stream.  No-op when table is absent."
+  (let* ((inner (gethash table-name *key-tables*)))
+    (when inner
+      (let ((bindings (sort (%table-binding-alist inner)
+                            #'string< :key (lambda (b) (key-label (car b))))))
+        (dolist (binding bindings)
+          (write-string (%format-binding-line table-name (car binding) (cdr binding))
+                        out))))))
+
 (defun describe-key-bindings ()
   "Return bind-key -T table key command lines for all key tables.
    Output format matches real tmux list-keys: one binding per line,
    sorted by table name then by key within each table."
   (with-output-to-string (out)
     (dolist (table-name (%sorted-table-names))
-      (let* ((inner    (gethash table-name *key-tables*))
-             (bindings (sort (%table-binding-alist inner)
-                             #'string< :key (lambda (b) (key-label (car b))))))
-        (dolist (binding bindings)
-          (write-string (%format-binding-line table-name (car binding) (cdr binding))
-                        out))))))
+      (%describe-one-table out table-name))))
+
+(defun describe-key-bindings-for-table (table-name)
+  "Return bind-key lines for TABLE-NAME only.
+   When TABLE-NAME is NIL, returns all tables (same as DESCRIBE-KEY-BINDINGS).
+   Returns an empty string when TABLE-NAME names a non-existent table."
+  (if (null table-name)
+      (describe-key-bindings)
+      (with-output-to-string (out)
+        (%describe-one-table out table-name))))
 
 (defun set-key-binding (key command)
   "Bind KEY (a character or string) to COMMAND (a keyword) in the prefix table.

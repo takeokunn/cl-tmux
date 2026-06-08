@@ -485,8 +485,9 @@
                (when (find #\a tok) (setf append-p t))
                (when (find #\s tok) (setf server-p t))
                (when (find #\u tok) (setf unset-p  t))
-               ;; -g, -w, -p, -o: accepted; scope intent noted but all
-               ;; fall through to global options during config load.
+               ;; -g, -w, -p, -o, -q: accepted silently.
+               ;; -q (quiet): suppress errors — cl-tmux already ignores unknown options.
+               ;; Other scope flags fall through to global options during config load.
                ))
     (values had-flag append-p server-p unset-p remaining)))
 

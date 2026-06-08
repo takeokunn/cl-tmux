@@ -606,6 +606,37 @@
             (cl-tmux/options:set-option "display-time" saved))
           (show-transient-overlay text)))))
 
+(defun %cmd-swap-pane-arg (session args)
+  "swap-pane [-U|-D|-L|-R] [-Z]: swap the active pane with an adjacent one.
+   -U: swap with pane above.  -D: swap below.
+   -L: swap with pane to the left.  -R: swap with pane to the right.
+   Without direction flags: swap forward (same as C-b })."
+  (multiple-value-bind (flags _positionals) (%parse-command-flags args "")
+    (declare (ignore _positionals))
+    (with-active-window (win session)
+      (cond
+        ((assoc #\U flags) (swap-pane win :up))
+        ((assoc #\D flags) (swap-pane win :down))
+        ((assoc #\L flags) (swap-pane win :left))
+        ((assoc #\R flags) (swap-pane win :right))
+        ;; No direction: swap forward (default tmux behavior with no -d/-s flags)
+        (t (swap-pane win :right))))))
+
+(defun %cmd-list-keys-arg (session args)
+  "list-keys [-T table] [-1] [key]: list key bindings.
+   -T table: show bindings for TABLE only (e.g. prefix, root, copy-mode-vi).
+   Without -T: show all tables.  Additional positionals and flags (-1) are accepted
+   but ignored for simplicity (cl-tmux shows the full table always)."
+  (declare (ignore session))
+  (multiple-value-bind (flags _positionals) (%parse-command-flags args "T")
+    (declare (ignore _positionals))
+    (let* ((table-name (cdr (assoc #\T flags)))
+           (output     (cl-tmux/config:describe-key-bindings-for-table table-name)))
+      (show-overlay (if (plusp (length output))
+                        output
+                        (format nil "(no bindings in table ~A)"
+                                (or table-name "all")))))))
+
 (defun %cmd-copy-mode-arg (session args)
   "copy-mode [-u]: enter copy mode.
    -u: pre-scroll to the oldest scrollback content (e.g. bind PageUp copy-mode -u)."
@@ -1357,7 +1388,11 @@
    (cons '("list-windows" "lsw")        #'%cmd-list-windows-arg)
    (cons '("list-panes" "lsp")          #'%cmd-list-panes-arg-full)
    ;; copy-mode [-u]: -u flag pre-scrolls to oldest content on entry.
-   (cons '("copy-mode")                 #'%cmd-copy-mode-arg))
+   (cons '("copy-mode")                 #'%cmd-copy-mode-arg)
+   ;; list-keys [-T table]: filter by key table when -T is supplied.
+   (cons '("list-keys" "lsk")           #'%cmd-list-keys-arg)
+   ;; swap-pane [-U|-D|-L|-R]: directional swap including up/down.
+   (cons '("swap-pane" "swapp")         #'%cmd-swap-pane-arg))
   "Arg-taking commands: (list-of-names . handler), handler a function of
    (SESSION ARGS).  Consulted by %run-command-line before the no-argument
    %dispatch-named-command name table.")
