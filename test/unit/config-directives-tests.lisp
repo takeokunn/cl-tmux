@@ -372,6 +372,65 @@
   (is (string= "M-1" (cl-tmux/config::%parse-key-token "M-1")))
   (is (string= "F1"  (cl-tmux/config::%parse-key-token "F1"))))
 
+(test parse-key-token-control-letters-return-control-char
+  "%parse-key-token converts C-<letter> to its control character so the binding
+   matches the byte the event loop sees: C-a→^A(1), C-z→^Z(26), C-b→^B(2)."
+  (is (char= (code-char 1)  (cl-tmux/config::%parse-key-token "C-a")) "C-a → ^A (1)")
+  (is (char= (code-char 26) (cl-tmux/config::%parse-key-token "C-z")) "C-z → ^Z (26)")
+  (is (char= (code-char 2)  (cl-tmux/config::%parse-key-token "C-b")) "C-b → ^B (2)")
+  ;; Case-insensitive: C-A is the same control char as C-a.
+  (is (char= (code-char 1)  (cl-tmux/config::%parse-key-token "C-A")) "C-A → ^A (1)"))
+
+(test parse-key-token-control-space-and-at-return-nul
+  "C-Space and C-@ both map to the NUL control character (byte 0)."
+  (is (char= (code-char 0) (cl-tmux/config::%parse-key-token "C-Space")) "C-Space → NUL")
+  (is (char= (code-char 0) (cl-tmux/config::%parse-key-token "C-@")) "C-@ → NUL"))
+
+(test parse-key-token-control-punctuation-return-control-char
+  "C-[ C-\\ C-] map to control bytes 27/28/29."
+  (is (char= (code-char 27) (cl-tmux/config::%parse-key-token "C-[")) "C-[ → ESC (27)")
+  (is (char= (code-char 28) (cl-tmux/config::%parse-key-token "C-\\")) "C-\\ → FS (28)")
+  (is (char= (code-char 29) (cl-tmux/config::%parse-key-token "C-]")) "C-] → GS (29)"))
+
+(test parse-key-token-control-modifier-arrow-stays-string
+  "C-<named-key> (e.g. C-Left) that the event loop encodes as a multi-byte
+   sequence is kept as the string for the deferred modifier-key path."
+  (is (string= "C-Left"  (cl-tmux/config::%parse-key-token "C-Left")))
+  (is (string= "C-Up"    (cl-tmux/config::%parse-key-token "C-Up"))))
+
+(test bind-control-letter-fires-via-control-char
+  "bind C-a <cmd> binds the control character ^A (byte 1) so a real Ctrl-a
+   keypress (which the event loop reads as byte 1) resolves to the command."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "C-a" "next-window"))
+    (is (eq :next-window (lookup-key-binding (code-char 1)))
+        "C-a must bind ^A (byte 1) in the prefix table")))
+
+;;; status option: off / on / line-count parsing → *status-height*
+
+(test set-status-numeric-shows-bar
+  "`set -g status 2` shows the status bar (height 1) instead of silently
+   disabling it.  The previous code treated any value != on/true/1 as OFF."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("set" "-g" "status" "2"))
+    (is (= 1 cl-tmux/config:*status-height*)
+        "status 2 must show the bar (height 1; multi-line render deferred)")))
+
+(test set-status-off-hides-bar
+  "`set -g status off` (and 0/false) hides the status bar (height 0)."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("set" "-g" "status" "off"))
+    (is (= 0 cl-tmux/config:*status-height*) "status off → height 0")
+    (cl-tmux/config:apply-config-directive '("set" "-g" "status" "0"))
+    (is (= 0 cl-tmux/config:*status-height*) "status 0 → height 0")))
+
+(test set-status-on-shows-bar
+  "`set -g status on` shows the status bar (height 1)."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("set" "-g" "status" "off"))
+    (cl-tmux/config:apply-config-directive '("set" "-g" "status" "on"))
+    (is (= 1 cl-tmux/config:*status-height*) "status on → height 1")))
+
 ;;; apply-config-line
 
 (test apply-config-line-applies-valid-directives
@@ -986,12 +1045,17 @@
 ;;; ── bind -n with argument-bearing command ────────────────────────────────────
 
 (test bind-key-n-split-window-with-c-flag
-  "'bind -n C-\\ split-window -c /tmp' stores the full command token list."
+  "'bind -n C-\\ split-window -c /tmp' binds the control character ^\\ (byte 28)
+   and stores the full command token list.  C-<key> tokens now resolve to the
+   control CHARACTER the event loop sees (the old string-key form could never
+   fire), so the binding is looked up by (code-char 28), not the string \"C-\\\"."
   (with-isolated-key-tables
     (cl-tmux/config:apply-config-directive
      '("bind" "-n" "C-\\" "split-window" "-c" "/tmp"))
-    (let ((entry (cl-tmux/config:key-table-lookup "root" "C-\\")))
-      (is (not (null entry)) "C-\\ must be bound in root table")
+    ;; C-\ → (logand (char-code #\\) #x1f) = 28 (FS).  The binding is keyed by
+    ;; that control character so it matches the byte a real Ctrl-\ keypress sends.
+    (let ((entry (cl-tmux/config:key-table-lookup "root" (code-char 28))))
+      (is (not (null entry)) "C-\\ must be bound (as control char 28) in root table")
       (let ((cmd (cl-tmux/config:key-table-command entry)))
         (is (consp cmd) "command for multi-token bind must be a token list")
         (is (string= "split-window" (first cmd)) "first token must be split-window")

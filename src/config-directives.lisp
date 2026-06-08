@@ -99,10 +99,41 @@
         (finish-token)))
     (nreverse tokens)))
 
+(defun %parse-control-char (rest)
+  "Map REST (the part after a \"C-\" prefix) to its control CHARACTER, or NIL
+   when REST does not denote a single control-able key.
+   C-a..C-z → ^A..^Z (1..26); C-Space / C-@ → NUL (0);
+   C-[ C-\\ C-] C-^ C-_ → 27..31.  The control byte is (logand code #x1f)."
+  (cond
+    ((string-equal rest "Space") (code-char 0))
+    ((= (length rest) 1)
+     (let ((c (char-upcase (char rest 0))))
+       (cond
+         ((char= c #\@) (code-char 0))
+         ((char<= #\A c #\Z) (code-char (logand (char-code c) #x1f)))
+         ((member c '(#\[ #\\ #\] #\^ #\_) :test #'char=)
+          (code-char (logand (char-code c) #x1f)))
+         (t nil))))
+    (t nil)))
+
 (defun %parse-key-token (token)
-  "A single-character TOKEN denotes that character; a longer token (e.g. M-1)
-   is kept as the string itself, matching the key-table key format."
-  (if (= (length token) 1) (char token 0) token))
+  "Parse a bind-key key TOKEN into the key-table key.
+   A single-character TOKEN denotes that character.  A \"C-<key>\" token denotes
+   the corresponding control CHARACTER (C-a→^A, C-Space→NUL, ...) so that Ctrl
+   bindings match the byte the event loop sees when the key is pressed (the loop
+   looks keys up via (code-char byte)).  Any other multi-character token (named
+   keys like F1, Up, Home, or modifier combos like M-x / C-Left that the event
+   loop encodes as multi-byte sequences) is kept as the string itself, matching
+   the key-table key format used by the lookup path."
+  (cond
+    ((= (length token) 1) (char token 0))
+    ((and (> (length token) 2)
+          (char-equal (char token 0) #\C)
+          (char= (char token 1) #\-))
+     ;; "C-<key>": convert to the control char when single-key; otherwise (e.g.
+     ;; "C-Left") fall back to the string for the deferred modifier-key path.
+     (or (%parse-control-char (subseq token 2)) token))
+    (t token)))
 
 (defparameter *bindable-commands*
   '(;; Window lifecycle
@@ -584,10 +615,19 @@
     ((string= name "default-shell")
      (when (and (stringp value) (plusp (length value)))
        (setf *default-shell* value)))
-    ;; status: on/off controls the status bar row count.
+    ;; status: off/on or a line count (tmux accepts 2..5 for a multi-line bar).
+    ;; off/false/0 hides the bar; on/true or any positive integer shows it.
+    ;; Multi-line rendering (status-format[0..N]) is not yet implemented, so a
+    ;; line count >= 2 currently renders as a single-line bar — but it correctly
+    ;; SHOWS the bar instead of the previous behaviour where `status 2` (any value
+    ;; not literally "on"/"true"/"1") silently DISABLED the status bar.
     ((string= name "status")
-     (let ((on-p (member value '("on" "true" "1") :test #'equal)))
-       (setf *status-height* (if on-p 1 0))))
+     (let* ((off-p (member value '("off" "false" "0") :test #'equal))
+            (n     (parse-integer value :junk-allowed t)))
+       (setf *status-height*
+             (cond (off-p 0)
+                   ((and n (> n 0)) 1)     ; numeric line count → show (1 line for now)
+                   (t 1)))))               ; on/true/other truthy → show
     ;; mouse: on/off enables/disables mouse reporting on the outer terminal.
     ;; We call the renderer's mouse-reporting functions via symbol lookup to
     ;; avoid a compile-time circular dependency.

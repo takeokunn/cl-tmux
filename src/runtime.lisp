@@ -315,9 +315,13 @@
                 (incf elapsed +status-timer-poll-seconds+)
                 ;; Auto-dismiss transient overlays after display-time ms.
                 (when (%maybe-auto-dismiss-overlay) (funcall dirty-fn))
-                ;; Status-interval: refresh the status bar.
-                (let ((interval (max 1 (cl-tmux/options:get-option "status-interval"))))
-                  (when (and *running* (>= elapsed interval))
+                ;; Status-interval: refresh the status bar every N seconds.
+                ;; status-interval 0 DISABLES the periodic redraw entirely (tmux
+                ;; semantics) — the status bar then only updates on other dirty
+                ;; events, not on a timer.  A positive value fires every N seconds.
+                (let ((interval (cl-tmux/options:get-option "status-interval")))
+                  (when (and *running* (integerp interval) (> interval 0)
+                             (>= elapsed interval))
                     (setf elapsed 0)
                     (funcall dirty-fn)))
                 ;; lock-after-time: auto-lock on inactivity.
