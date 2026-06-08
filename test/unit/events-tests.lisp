@@ -658,6 +658,62 @@
           (is (eq (first (session-windows s)) (session-active-window s))
               "unbound bare C-Up must leave the first window active"))))))
 
+;;; ── Meta/Alt key-name helper and bind override (bind -n M-h / bind M-j) ─────
+
+(test meta-key-name-builds-canonical-names
+  "%meta-key-name reconstructs the M-<char> name from the byte that follows ESC,
+   matching the M-<char> encoding send-keys produces."
+  (is (string= "M-a"     (cl-tmux::%meta-key-name 97)))   ; a
+  (is (string= "M-1"     (cl-tmux::%meta-key-name 49)))   ; 1
+  (is (string= "M-/"     (cl-tmux::%meta-key-name 47)))   ; /
+  (is (string= "M-H"     (cl-tmux::%meta-key-name 72)))   ; H (Alt+Shift+h)
+  (is (string= "M-Space" (cl-tmux::%meta-key-name 32))))  ; space
+
+(test meta-key-name-returns-nil-for-control-and-del
+  "%meta-key-name returns NIL for control bytes and DEL, so they forward
+   unchanged rather than being treated as meta chords."
+  (is (null (cl-tmux::%meta-key-name 8)))    ; ^H (backspace)
+  (is (null (cl-tmux::%meta-key-name 27)))   ; ESC
+  (is (null (cl-tmux::%meta-key-name 127)))) ; DEL
+
+(test root-m-h-binding-fires-without-prefix
+  "bind -n M-h next-window makes a bare Alt+h (ESC h) run next-window with no
+   prefix — the root-table meta path overrides forwarding to the pane."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "-n" "M-h" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(27 104))  ; ESC h  (no prefix)
+            (cl-tmux::process-byte s b state))
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "bound -n M-h must run next-window at root"))))))
+
+(test prefix-m-j-binding-fires
+  "bind M-j next-window makes C-b then Alt+j (ESC j) run next-window — the
+   after-prefix meta path."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "M-j" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(2 27 106))  ; C-b ESC j
+            (cl-tmux::process-byte s b state))
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "bound M-j must run next-window after prefix"))))))
+
+(test unbound-root-meta-key-forwards-and-leaves-window
+  "With no -n M-x binding, a bare Alt+x is forwarded to the pane and must NOT
+   change the active window (the override is purely additive)."
+  (with-isolated-config
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(27 120))  ; ESC x  (no prefix, unbound)
+            (cl-tmux::process-byte s b state))
+          (is (eq (first (session-windows s)) (session-active-window s))
+              "unbound bare M-x must leave the first window active"))))))
+
 ;;; ── Application cursor keys — %arrow-final-to-ss3-bytes helper ──────────────
 
 (test arrow-final-to-ss3-bytes-maps-arrows

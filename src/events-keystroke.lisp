@@ -293,6 +293,18 @@
                 (t nil))))
     (when (and base mod) (concatenate 'string mod base))))
 
+(defun %meta-key-name (byte)
+  "Canonical tmux key name for the Meta/Alt chord that arrives as ESC then BYTE.
+   \"M-a\", \"M-1\", \"M-/\", and \"M-Space\" (byte 32).  Returns NIL for control
+   bytes and DEL, which are not standalone meta chords, so the caller forwards
+   them unchanged.  This is the exact inverse of the M-<char> encoding produced
+   by send-keys (commands.lisp), keeping input decode and output encode symmetric."
+  (cond
+    ((= byte +byte-space+) "M-Space")
+    ((and (> byte +byte-space+) (< byte 127))  ; 33..126 — printable graphic
+     (concatenate 'string "M-" (string (code-char byte))))
+    (t nil)))
+
 (defun %run-key-table-binding (session entry byte)
   "Execute the command bound to a key-table ENTRY.  Mirrors the root/prefix
    dispatch convention: a (:sequence . cmds) runs each sub-command in order, a
@@ -399,8 +411,12 @@
          (%dispatch-modifier-arrow session (aref buffer 4) (aref buffer 5))
          (setf *dirty* t)
          (values nil #'%ground-input-state))
-        ;; 2-byte non-CSI: silently discard after prefix (no passthrough)
+        ;; 2-byte non-CSI: a prefix meta chord (C-b then Alt+key → ESC <key>).
+        ;; Look up `bind M-<key>` in the prefix table; if unbound, discard as
+        ;; before (no passthrough after the prefix).
         ((and (= length 2) (/= (aref buffer 1) +byte-csi-bracket+))
+         (%try-bound-string-key session +table-prefix+
+                                (%meta-key-name (aref buffer 1)))
          (values nil #'%ground-input-state))
         ;; Buffer at capacity (>= 6 bytes but unrecognised) — discard and return
         ;; to ground to avoid permanent stuck-state on malformed CSI sequences.
@@ -643,14 +659,20 @@
            (%forward-octets session (subseq buffer 0 length)))
          (values nil #'%ground-input-state))
         ;; ── 2-byte non-CSI sequence: ESC X ────────────────────────────────
-        ;; In copy mode, a lone ESC (or ESC + non-CSI byte) exits copy mode.
-        ;; Outside copy mode, forward the raw bytes to the pane.
+        ;; In copy mode, a lone ESC (or ESC + non-CSI byte) exits copy mode —
+        ;; copy mode keeps its own keymap, so meta lookup is gated below it.
+        ;; Outside copy mode, a `bind -n M-<key>` root binding (ESC <key>)
+        ;; overrides forwarding; only when unbound do we forward to the pane.
         ((and (= length 2) (/= (aref buffer 1) +byte-csi-bracket+))
-         (if (%copy-mode-active-p session)
-             (let ((screen (%active-screen session)))
-               (when screen (copy-mode-exit screen))
-               (setf *dirty* t))
-             (%forward-octets session (subseq buffer 0 length)))
+         (cond
+           ((%copy-mode-active-p session)
+            (let ((screen (%active-screen session)))
+              (when screen (copy-mode-exit screen))
+              (setf *dirty* t)))
+           ((%try-bound-string-key session +table-root+
+                                   (%meta-key-name (aref buffer 1))))
+           (t
+            (%forward-octets session (subseq buffer 0 length))))
          (values nil #'%ground-input-state))
         ;; ── Buffer overflow guard (> 32 unrecognised bytes) ───────────────
         ((> length 32)

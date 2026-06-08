@@ -434,6 +434,15 @@
       (is (eq :next-window (cl-tmux/config:key-table-command entry))
           "Up must bind under string key \"Up\" in the prefix table"))))
 
+(test bind-n-meta-key-stores-in-root-table
+  "bind -n M-h <cmd> stores under string key \"M-h\" in the ROOT table so a bare
+   (no-prefix) Alt+h, which arrives as ESC h, fires it."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "-n" "M-h" "next-window"))
+    (let ((entry (cl-tmux/config:key-table-lookup "root" "M-h")))
+      (is (eq :next-window (cl-tmux/config:key-table-command entry))
+          "M-h must bind under string key \"M-h\" in the root table"))))
+
 ;;; status option: off / on / line-count parsing → *status-height*
 
 (test set-status-numeric-shows-bar
