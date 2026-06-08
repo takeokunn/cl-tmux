@@ -1016,6 +1016,28 @@
              (incf depth (%line-brace-delta next)))
     (format nil "~{~A~^ ; ~}" (nreverse parts))))
 
+(defun %line-continues-p (line)
+  "T when LINE ends with an ODD number of backslashes — a continuation backslash
+   that escapes the newline (an even count is escaped backslashes, not a
+   continuation)."
+  (let ((n 0) (i (1- (length line))))
+    (loop while (and (>= i 0) (char= (char line i) #\\))
+          do (incf n) (decf i))
+    (oddp n)))
+
+(defun %read-logical-config-line (first-line stream)
+  "Join trailing-backslash continuation lines into one logical line: while a line
+   ends in a continuation backslash, drop that backslash and append the next line.
+   Mirrors tmux: `cmd arg1 \\<newline>arg2` is one command.  Returns the joined line."
+  (let ((line first-line))
+    (loop while (%line-continues-p line)
+          for next = (read-line stream nil nil)
+          while next
+          do (setf line (concatenate 'string
+                                     (subseq line 0 (1- (length line)))
+                                     next)))
+    line))
+
 (defun load-config-from-stream (stream)
   "Apply every directive line read from STREAM, honoring %if/%elif/%else/%endif
    blocks.  Multi-line { ... } command blocks (tmux 3.x brace syntax) are joined
@@ -1029,8 +1051,11 @@
   (let ((cond-stack nil)
         (count 0))
     (flet ((active-p () (every (lambda (s) (eq s :active)) cond-stack)))
-      (loop for line = (read-line stream nil nil)
-            while line do
+      (loop for raw = (read-line stream nil nil)
+            while raw
+            ;; Join trailing-backslash continuation lines into one logical line
+            ;; before classifying it (so a continued directive is one directive).
+            for line = (%read-logical-config-line raw stream) do
         (let* ((trimmed (string-trim '(#\Space #\Tab #\Return #\Newline) line))
                (pp-type (%preprocessor-line-p trimmed)))
           (case pp-type

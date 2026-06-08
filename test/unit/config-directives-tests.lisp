@@ -1538,3 +1538,28 @@ bind-key r source-file /dev/null"))
       (is (= 0 (cl-tmux/config:load-config-from-string
                 (format nil "%if 0~%%if 1~%bind a new-window~%%elif 1~%bind b new-window~%%endif~%%endif~%")))
           "nested if/elif in a dead branch stays dead"))))
+
+;;; ── Line continuation (trailing backslash) ───────────────────────────────────
+
+(test line-continues-p-counts-trailing-backslashes
+  "%line-continues-p is T for an odd number of trailing backslashes."
+  (is-true  (cl-tmux/config::%line-continues-p "foo \\"))
+  (is-false (cl-tmux/config::%line-continues-p "foo \\\\"))
+  (is-true  (cl-tmux/config::%line-continues-p "foo \\\\\\"))
+  (is-false (cl-tmux/config::%line-continues-p "foo"))
+  (is-false (cl-tmux/config::%line-continues-p "")))
+
+(test config-line-continuation-joins-directive
+  "A line ending in a single backslash continues onto the next line, forming one
+   directive."
+  (with-isolated-config
+    (is (= 1 (cl-tmux/config:load-config-from-string
+              (format nil "bind a \\~%new-window")))
+        "the continued line is applied as a single bind directive")))
+
+(test config-no-continuation-two-lines-two-directives
+  "Without a trailing backslash, two lines remain two separate directives."
+  (with-isolated-config
+    (is (= 2 (cl-tmux/config:load-config-from-string
+              (format nil "bind a new-window~%bind b next-window")))
+        "two independent binds apply as two directives")))
