@@ -398,21 +398,18 @@
    (let* ((sessions (mapcar #'cdr *server-sessions*))
           (next     (and sessions (next-cyclic sessions session))))
      (when (and next (not (eq next session)))
-       (session-touch next)
-       (setf *dirty* t))))
+       (%switch-to-session next))))
   (:switch-client-prev
    (let* ((sessions (mapcar #'cdr *server-sessions*))
           (prev     (and sessions (prev-cyclic sessions session))))
      (when (and prev (not (eq prev session)))
-       (session-touch prev)
-       (setf *dirty* t))))
+       (%switch-to-session prev))))
   (:last-session
    (let* ((sessions (sort (mapcar #'cdr *server-sessions*) #'>
                           :key #'session-last-active))
           (second   (second sessions)))
      (when second
-       (session-touch second)
-       (setf *dirty* t))))
+       (%switch-to-session second))))
 
   ;; ── Message / info ─────────────────────────────────────────────────────────
   (:display-message
@@ -515,8 +512,7 @@
               (:switch-client
                (let ((target (server-find-session (second cmd))))
                  (when target
-                   (session-touch target)
-                   (setf *dirty* t))))
+                   (%switch-to-session target))))
               ;; Default list: try running as command tokens
               (otherwise
                (%run-command-tokens session cmd)))))))))
@@ -790,7 +786,7 @@
                    (unless (string= name "")
                      (let ((target (server-find-session name)))
                        (if target
-                           (progn (session-touch target) (setf *dirty* t)
+                           (progn (%switch-to-session target)
                                   (show-overlay (format nil "attached to ~A" name)))
                            (show-overlay (format nil "session not found: ~A" name))))))))
 

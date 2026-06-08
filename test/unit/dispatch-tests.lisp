@@ -4634,3 +4634,41 @@
         (let ((cl-tmux::*server-sessions* (list (cons "cur" s1) (cons "other" s2))))
           (is (null (cl-tmux::dispatch-command s1 :kill-session nil))
               "kill current with survivors + off → nil (keep running)"))))))
+
+;;; ── destroy-unattached: destroy the session left behind on a switch ──────────
+
+(test destroy-unattached-off-keeps-left-session
+  "With destroy-unattached off (default), switching away leaves the old session."
+  (with-loop-state
+    (with-isolated-options ("destroy-unattached" nil)
+      (let ((a (make-fake-session)) (b (make-fake-session)))
+        (setf (cl-tmux::session-name a) "a" (cl-tmux::session-last-active a) 20
+              (cl-tmux::session-name b) "b" (cl-tmux::session-last-active b) 10)
+        (let ((cl-tmux::*server-sessions* (list (cons "a" a) (cons "b" b))))
+          (cl-tmux::%switch-to-session b)
+          (is (cl-tmux::server-find-session "a")
+              "old session survives when destroy-unattached is off"))))))
+
+(test destroy-unattached-on-destroys-left-session
+  "With destroy-unattached on, switching away destroys the session left behind."
+  (with-loop-state
+    (with-isolated-options ("destroy-unattached" t)
+      (let ((a (make-fake-session)) (b (make-fake-session)))
+        (setf (cl-tmux::session-name a) "a" (cl-tmux::session-last-active a) 20
+              (cl-tmux::session-name b) "b" (cl-tmux::session-last-active b) 10)
+        (let ((cl-tmux::*server-sessions* (list (cons "a" a) (cons "b" b))))
+          (cl-tmux::%switch-to-session b)
+          (is (null (cl-tmux::server-find-session "a"))
+              "old session is destroyed when destroy-unattached is on")
+          (is (cl-tmux::server-find-session "b") "target session survives"))))))
+
+(test destroy-unattached-no-destroy-switching-to-current
+  "Switching to the already-current session destroys nothing (old == target)."
+  (with-loop-state
+    (with-isolated-options ("destroy-unattached" t)
+      (let ((a (make-fake-session)))
+        (setf (cl-tmux::session-name a) "a" (cl-tmux::session-last-active a) 20)
+        (let ((cl-tmux::*server-sessions* (list (cons "a" a))))
+          (cl-tmux::%switch-to-session a)
+          (is (cl-tmux::server-find-session "a")
+              "switching to current destroys nothing"))))))

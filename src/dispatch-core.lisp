@@ -1736,13 +1736,18 @@
 (defun %switch-to-session (target)
   "Make TARGET the client's active session by bumping its last-active stamp (the
    renderer follows the most-recently-touched session via %current-session) and
-   marking the screen dirty.  No-op when TARGET is NIL or already the front session.
-   Returns TARGET when a switch happened, else NIL — the single chokepoint every
-   switch-client session move routes through."
+   marking the screen dirty.  No-op when TARGET is NIL.  Returns TARGET when a switch
+   happened, else NIL — the single chokepoint every session move routes through.
+   When destroy-unattached is on, the session the client was viewing becomes
+   unattached on the switch and is destroyed (tmux's destroy-unattached)."
   (when target
-    (session-touch target)
-    (setf *dirty* t)
-    target))
+    (let ((old (server-current-session)))   ; the session being left, if any
+      (session-touch target)
+      (setf *dirty* t)
+      (when (and old (not (eq old target))
+                 (cl-tmux/options:get-option "destroy-unattached"))
+        (%destroy-session old))
+      target)))
 
 (defun %cmd-switch-client (session args)
   "switch-client [-T key-table] [-t target] [-n] [-p] [-l]: control the client's
