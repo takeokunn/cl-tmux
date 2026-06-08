@@ -226,6 +226,11 @@
         (%draw-pane-number-to-screen buffer (pane-x pane) (pane-y pane)
                                      (pane-width pane) (pane-height pane)
                                      (pane-id pane) (eq pane active-pane))))
+    ;; copy-mode search-match highlighting on the active pane (it is the one that
+    ;; can be in copy mode), overdrawn after panes/borders.
+    (when (and active-pane (pane-screen active-pane)
+               (screen-copy-mode-p (pane-screen active-pane)))
+      (%render-copy-search-matches buffer active-pane))
     (%render-overlay-layer buffer active-pane terminal-rows terminal-cols)
     (when status-on
       (render-status-region buffer session terminal-rows terminal-cols

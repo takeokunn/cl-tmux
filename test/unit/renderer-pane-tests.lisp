@@ -620,3 +620,42 @@
         "border status must emit first 5 chars for a 5-wide pane (got ~S)" out)
     (is (null (search "ABCDEF" out))
         "border status must not emit more than pane-width chars (got ~S)" out)))
+
+;;; -- copy-mode search-match highlighting -------------------------------------
+
+(test all-match-ranges-literal-and-regex
+  "%all-match-ranges returns every match span; regex with literal fallback."
+  (is (equal '((0 . 3) (8 . 11))
+             (cl-tmux/renderer::%all-match-ranges "abc" "abc def abc"))
+      "two literal matches")
+  (is (equal '((4 . 7))
+             (cl-tmux/renderer::%all-match-ranges "[0-9]+" "abc 123 xyz"))
+      "regex digit run")
+  (is (equal '((2 . 3))
+             (cl-tmux/renderer::%all-match-ranges "(" "a ( b"))
+      "invalid regex falls back to literal substring"))
+
+(test copy-mode-search-matches-highlighted-in-frame
+  "When copy mode has a search term, render-session-to-string overdraws matches in
+   copy-mode-match-style."
+  (let ((s (make-fake-session)))
+    (feed (active-screen s) "hello world hello")
+    (cl-tmux/commands::copy-mode-enter (active-screen s))
+    (setf (cl-tmux/terminal/types:screen-copy-search-term (active-screen s)) "hello")
+    (let* ((expected (cl-tmux/renderer:style-to-sgr
+                      (cl-tmux/renderer:parse-style-string "bg=green")))
+           (frame    (cl-tmux/renderer:render-session-to-string s 24 81)))
+      (is (search (format nil "~C[~Am" #\Escape expected) frame)
+          "matches must be drawn in copy-mode-match-style (~S)" expected))))
+
+(test copy-mode-no-search-term-no-highlight
+  "With copy mode active but no search term, no match-style SGR is emitted."
+  (let ((s (make-fake-session)))
+    (feed (active-screen s) "hello world")
+    (cl-tmux/commands::copy-mode-enter (active-screen s))
+    (setf (cl-tmux/terminal/types:screen-copy-search-term (active-screen s)) nil)
+    (let* ((match-sgr (cl-tmux/renderer:style-to-sgr
+                       (cl-tmux/renderer:parse-style-string "bg=green")))
+           (frame     (cl-tmux/renderer:render-session-to-string s 24 81)))
+      (is (null (search (format nil "~C[~Am" #\Escape match-sgr) frame))
+          "no search term → no match highlighting"))))
