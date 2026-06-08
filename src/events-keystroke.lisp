@@ -92,6 +92,24 @@
   ((prompt-active-p)
    (handle-prompt-key byte)
    (values nil #'%ground-input-state))
+  ;; ── Active custom key table (switch-client -T <table>) ─────────────────────
+  ;; While the client is in a user key table, keys are looked up THERE (not
+  ;; root/prefix) and the table PERSISTS until a binding switches back (e.g.
+  ;; switch-client -T root) — enabling modal keymaps like a resize mode.  Unbound
+  ;; keys are consumed (ignored), so the mode is truly modal.  Guarded on
+  ;; *key-table* being a non-root custom table, so the normal flow below is
+  ;; completely unaffected when no custom table is active (the default).
+  ((and *key-table* (not (equal *key-table* +table-root+)))
+   (let ((entry (key-table-lookup *key-table* (code-char byte))))
+     (when entry
+       (let ((cmd (key-table-command entry)))
+         (cond
+           ((and (consp cmd) (eq (car cmd) :sequence))
+            (dolist (subcmd (cdr cmd)) (%run-command-tokens session subcmd)))
+           ((consp cmd) (%run-command-tokens session cmd))
+           (t (dispatch-command session cmd byte))))))
+   (setf *dirty* t)
+   (values nil #'%ground-input-state))
   ;; ── Root key-table: check for bindings that fire without any prefix ────────
   ;; Looked up before the prefix-key check so that -n bindings can intercept
   ;; keys that would otherwise be forwarded to the pane.

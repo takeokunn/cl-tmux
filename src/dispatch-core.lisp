@@ -1531,6 +1531,25 @@
            (format nil "new session: ~A" (session-name new-sess))))
         new-sess))))
 
+(defvar *key-table* nil
+  "The client's active custom key table (a table-name string), or NIL for the
+   normal root/prefix flow.  Set by `switch-client -T <table>`; while non-NIL the
+   ground input state looks keys up in this table (modal keymaps).  Defined here
+   (dispatch-core loads before events-keystroke) so it is declared special before
+   either %cmd-switch-client or %ground-input-state references it.")
+
+(defun %cmd-switch-client (session args)
+  "switch-client [-T key-table] [-t target] ...: set the client's active key
+   table via -T (the modal-keymap mechanism).  `-T root` (or no table) returns to
+   the normal root/prefix flow.  Other flags (-t session switch, -n/-p/-l) are
+   tolerated but not yet acted on."
+  (declare (ignore session))
+  (multiple-value-bind (flags _pos) (%parse-command-flags args "Tt")
+    (declare (ignore _pos))
+    (let ((table (cdr (assoc #\T flags))))
+      (when table
+        (setf *key-table* (if (equal table +table-root+) nil table))))))
+
 (defun %destroy-session (session)
   "Tear down SESSION: close every pane's PTY, remove it from the server registry,
    and fire the session-closed hook.  The single chokepoint for session
@@ -1933,6 +1952,8 @@
    (cons '("display-menu" "menu")       #'%cmd-display-menu-arg)
    ;; has-session [-t name]: check if a named session exists (0 = yes, 1 = no).
    (cons '("has-session" "has")         #'%cmd-has-session-arg)
+   ;; switch-client -T <key-table>: activate a custom key table (modal keymaps).
+   (cons '("switch-client" "switchc")   #'%cmd-switch-client)
    ;; last-pane [-Z]: select last pane, optionally toggling zoom.
    (cons '("last-pane" "lastp")         #'%cmd-last-pane-arg))
   "Arg-taking commands: (list-of-names . handler), handler a function of

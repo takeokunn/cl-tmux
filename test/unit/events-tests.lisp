@@ -726,6 +726,47 @@
           (is (eq (first (session-windows s)) (session-active-window s))
               "unbound bare M-x must leave the first window active"))))))
 
+;;; ── Custom key tables (switch-client -T <table>) ────────────────────────────
+
+(test cmd-switch-client-T-sets-and-resets-key-table
+  "switch-client -T <table> sets *key-table*; -T root resets it to NIL."
+  (with-loop-state
+    (let ((s (make-fake-session :nwindows 1)))
+      (cl-tmux::%cmd-switch-client s '("-T" "resize"))
+      (is (string= "resize" cl-tmux::*key-table*)
+          "switch-client -T resize activates the custom table")
+      (cl-tmux::%cmd-switch-client s '("-T" "root"))
+      (is (null cl-tmux::*key-table*)
+          "switch-client -T root returns to the normal flow"))))
+
+(test custom-key-table-dispatches-from-active-table-and-persists
+  "In a custom key table, a bound key dispatches from THAT table and the table
+   persists (modal mode)."
+  (with-isolated-config
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (cl-tmux/config:apply-config-directive '("bind" "-T" "resize" "x" "next-window"))
+        (setf cl-tmux::*key-table* "resize")
+        (let ((state (cl-tmux::make-input-state)))
+          (cl-tmux::process-byte s 120 state)  ; 'x'
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "a key bound in the active custom table runs its binding")
+          (is (string= "resize" cl-tmux::*key-table*)
+              "the custom table persists after a key (modal)"))))))
+
+(test custom-key-table-binding-can-switch-back-to-root
+  "A binding in a custom table running 'switch-client -T root' exits the table."
+  (with-isolated-config
+    (let ((s (make-fake-session :nwindows 1)))
+      (with-loop-state
+        (cl-tmux/config:apply-config-directive
+         '("bind" "-T" "resize" "q" "switch-client" "-T" "root"))
+        (setf cl-tmux::*key-table* "resize")
+        (let ((state (cl-tmux::make-input-state)))
+          (cl-tmux::process-byte s 113 state)  ; 'q'
+          (is (null cl-tmux::*key-table*)
+              "switch-client -T root from within the table exits it"))))))
+
 ;;; ── Default M-1..M-5 preset-layout bindings (tmux defaults) ─────────────────
 
 (test default-meta-digit-layout-bindings-registered
