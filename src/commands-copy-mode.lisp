@@ -192,11 +192,15 @@
            (w   (screen-width screen))
            (max-col (1- w))
            ;; Clamp BOTH row and col to the (possibly shrunk) grid bounds so the
-           ;; (screen-cell screen col row) reads below can never go out of range.
+           ;; cell reads below can never go out of range.
            (row (max 0 (min (1- (screen-height screen)) (car cur))))
            (col (max 0 (min max-col (cdr cur))))
+           ;; Read through screen-display-cell (viewport-projected via copy-offset)
+           ;; so word detection is correct when copy mode is scrolled back —
+           ;; consistent with %copy-mode-row-chars (word navigation) and with the
+           ;; viewport rows stored in screen-copy-cursor/-mark.
            (char-at (lambda (c)
-                      (cell-char (screen-cell screen c row)))))
+                      (cell-char (screen-display-cell screen c row)))))
       (if (%word-separator-p (funcall char-at col))
           ;; Cursor not on a word char: select the single cell under it.  The
           ;; cursor's EXCLUSIVE end may reach width (one past the last column) so
@@ -257,13 +261,17 @@
 ;;; Pure data extraction — no I/O side effects.
 
 (defun %extract-row-chars (screen row from-col to-col)
-  "Return a string of characters from SCREEN at ROW, columns FROM-COL to TO-COL (exclusive).
-   Reads the live grid (not viewport-projected); pure data extraction."
+  "Return a string of characters from SCREEN at viewport ROW, columns FROM-COL to
+   TO-COL (exclusive).  Reads through screen-display-cell so the projection honours
+   the copy-mode scroll offset: when scrolled back, rows above the offset come from
+   the scrollback buffer.  ROW is a viewport row (matching screen-copy-cursor/-mark),
+   NOT a raw live-grid row — this is what makes a selection yanked while scrolled
+   back return the text the user actually sees.  Pure data extraction."
   (let* ((n      (- to-col from-col))
          (result (make-string n)))
     (dotimes (i n result)
       (setf (char result i)
-            (cell-char (screen-cell screen (+ from-col i) row))))))
+            (cell-char (screen-display-cell screen (+ from-col i) row))))))
 
 (defun %selection-text (screen)
   "Compute the text selected by copy-mode in SCREEN.

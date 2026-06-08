@@ -118,6 +118,26 @@
     (cl-tmux/commands::copy-mode-scroll s -100)  ; then race back to live
     (is (= 0 (screen-copy-offset s)) "offset clamped at 0")))
 
+(test copy-mode-selection-honours-scroll-offset
+  "A full-row selection made while scrolled back into the scrollback yanks the
+   text the user SEES at that viewport row (via screen-display-cell), not the
+   live-grid row at the same index.  Regression guard for the screen-cell ->
+   screen-display-cell fix in %extract-row-chars."
+  (let ((s (make-screen 8 3)))
+    (feed-lines s "AAA" "BBB" "CCC" "DDD" "EEE")
+    (cl-tmux/commands::copy-mode-enter s)
+    (cl-tmux/commands::copy-mode-scroll s 1000)   ; scroll fully back
+    (is (plusp (screen-copy-offset s))
+        "precondition: 5 lines on a height-3 screen must create scrollback")
+    (let ((w (screen-width s)))
+      (let ((expected (string-right-trim " " (display-row-string s 0))))
+        (setf (screen-copy-mark      s) (cons 0 0)
+              (screen-copy-cursor    s) (cons 0 w)
+              (screen-copy-selecting s) t)
+        (is (string= expected
+                     (string-right-trim " " (or (cl-tmux/commands::%selection-text s) "")))
+            "scrolled-back selection yanks the displayed (scrollback) text, not the live row")))))
+
 (test copy-mode-enter-e-sets-exit-on-bottom
   "copy-mode-enter with :exit-on-bottom t sets the screen slot."
   (let ((s (make-screen 20 5)))
