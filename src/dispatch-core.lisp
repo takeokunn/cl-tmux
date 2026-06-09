@@ -1126,7 +1126,15 @@
                 (cl-tmux/options:set-option-for-window name value window))
                ;; global (default, includes -g and the no-active-pane/window fallback).
                (t
-                (cl-tmux/options:set-option name value))))))))))
+                (cl-tmux/options:set-option name value))))))
+        ;; Apply runtime side-effects (prefix/prefix2/default-shell/status/
+        ;; status-height/escape-time/history-limit) for the special options that
+        ;; touch non-option state — the .tmux.conf path already does this, so the
+        ;; runtime `set` command (e.g. `bind b set -g status`) must too.  A no-op
+        ;; for ordinary options.  Passes the RAW string VALUE (the side-effect
+        ;; parses it itself; get-option would return the type-coerced value, e.g.
+        ;; NIL for a boolean, which the string-based parsing chokes on).
+        (cl-tmux/config:%apply-option-side-effects name value)))))
 
 ;;; -- -e VAR=val environment flag parser ----------------------------------------
 ;;;

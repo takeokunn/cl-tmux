@@ -1117,6 +1117,34 @@
       (is (null (cl-tmux/options:get-option "remain-on-exit"))
           "global remain-on-exit must remain NIL — 'set -p' must not touch it"))))
 
+(test cmd-set-option-status-applies-side-effect-at-runtime
+  "Runtime `set -g status off/on` runs the option side-effect, updating
+   *status-height* — not only the .tmux.conf path (e.g. `bind b set -g status`)."
+  (with-isolated-config
+    (let ((s (make-fake-session)))
+      (cl-tmux::%cmd-set-option s '("-g" "status" "off"))
+      (is (= 0 cl-tmux/config:*status-height*)
+          "set -g status off must hide the status bar at runtime")
+      (cl-tmux::%cmd-set-option s '("-g" "status" "on"))
+      (is (= 1 cl-tmux/config:*status-height*)
+          "set -g status on must restore the status bar at runtime"))))
+
+(test cmd-set-option-default-shell-applies-side-effect-at-runtime
+  "Runtime `set -g default-shell` updates *default-shell* via the side-effect."
+  (with-isolated-config
+    (let ((s (make-fake-session)))
+      (cl-tmux::%cmd-set-option s '("-g" "default-shell" "/bin/zsh"))
+      (is (string= "/bin/zsh" cl-tmux/config:*default-shell*)
+          "runtime set -g default-shell must update *default-shell*"))))
+
+(test cmd-set-option-prefix-applies-side-effect-at-runtime
+  "Runtime `set -g prefix C-a` rebinds the prefix key code via the side-effect."
+  (with-isolated-config
+    (let ((s (make-fake-session)))
+      (cl-tmux::%cmd-set-option s '("-g" "prefix" "C-a"))
+      (is (= 1 cl-tmux/config:*prefix-key-code*)
+          "set -g prefix C-a must set *prefix-key-code* to ^A (1) at runtime"))))
+
 (test cmd-set-option-plain-routes-to-global
   "A plain 'set' (no -w/-p) still sets the global option."
   (with-isolated-config
