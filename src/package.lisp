@@ -574,6 +574,19 @@
            #:list-paste-buffers #:list-paste-buffers-with-names
            #:delete-paste-buffer #:delete-buffer-by-name #:clear-paste-buffers))
 
+(defpackage #:cl-tmux/control
+  (:use #:cl)
+  ;; control-error is a standard CL condition type; we define our own line
+  ;; formatter of that name, so shadow the inherited symbol.
+  (:shadow #:control-error)
+  (:documentation "tmux control mode (-C) wire-protocol line formatters.")
+  (:export #:control-begin #:control-end #:control-error #:control-format-reply
+           #:control-escape-output #:control-output
+           #:control-session-changed #:control-session-renamed
+           #:control-window-add #:control-window-close #:control-window-renamed
+           #:control-layout-change #:control-unlinked-window-add
+           #:control-client-session-changed #:control-exit))
+
 (defpackage #:cl-tmux/hooks
   (:use #:cl)
   (:export

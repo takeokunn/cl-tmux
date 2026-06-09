@@ -8,7 +8,7 @@
 
 (defparameter *all-suites*
   '(terminal-suite layout-tree-suite layout-geometry-suite model-suite
-    format-suite target-suite buffer-suite options-suite
+    format-suite target-suite buffer-suite control-suite options-suite
     hooks-suite config-suite config-directives-suite renderer-suite
     dispatch-suite events-suite mouse-suite commands-suite
     overlay-suite prompt-suite protocol-suite transport-suite

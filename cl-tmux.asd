@@ -47,6 +47,7 @@
      (:file "target")   ; session/window/pane target resolution (-t flag)
      (:file "options")  ; global option registry
      (:file "buffer")   ; paste-buffer ring (uses options for buffer-limit)
+     (:file "control-mode")  ; control mode (-C) wire-protocol formatters
      (:file "hooks")    ; user-defined hook registry
      (:file "prompt")
      (:file "overlay")              ; overlay, popup, menu state (used by dispatch/events/renderer)
@@ -112,6 +113,7 @@
        (:file "format-tests")
        (:file "target-tests")
        (:file "buffer-tests")
+       (:file "control-mode-tests")
        (:file "options-tests")
        (:file "hooks-tests")
        (:file "config-tests")
