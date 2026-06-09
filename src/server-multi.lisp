@@ -177,6 +177,14 @@
   (and (null *clients*)
        (cl-tmux/options:get-option "exit-unattached")))
 
+(defun %exit-when-empty-p ()
+  "True when no sessions remain AND exit-empty is on (default) — the server should
+   terminate once its last session is destroyed (tmux exit-empty).  The server
+   starts with an initial session, so this only becomes true after a session is
+   killed during the loop, never at startup."
+  (and (null *server-sessions*)
+       (cl-tmux/options:get-option "exit-empty")))
+
 (defun %multi-serve-iteration (listener session)
   "One iteration of the multi-client server loop: broadcast a dirty frame, then
    select on the listener fd + every client fd; accept a new connection when the
@@ -218,6 +226,9 @@
   (unwind-protect
        (loop while *running* do
          (when (eq :quit (%multi-serve-iteration listener session))
+           (setf *running* nil))
+         ;; exit-empty: terminate once the last session has been destroyed.
+         (when (%exit-when-empty-p)
            (setf *running* nil)))
     (dolist (conn (copy-list *clients*))
       (%drop-client conn :bye t))))

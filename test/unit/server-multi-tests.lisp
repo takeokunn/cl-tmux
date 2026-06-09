@@ -217,6 +217,23 @@
       (is-false (cl-tmux::%exit-after-last-detach-p)
                 "clients still attached → keep running regardless of the option"))))
 
+(test exit-when-empty-respects-option
+  "%exit-when-empty-p is true only when NO sessions remain AND exit-empty is on
+   (default); off keeps the server alive with zero sessions."
+  (with-fresh-options
+    (let ((cl-tmux::*server-sessions* nil))
+      (cl-tmux/options:set-option "exit-empty" t)
+      (is-true (cl-tmux::%exit-when-empty-p)
+               "no sessions + exit-empty on (default) → server should exit"))
+    (let ((cl-tmux::*server-sessions* nil))
+      (cl-tmux/options:set-option "exit-empty" nil)
+      (is-false (cl-tmux::%exit-when-empty-p)
+                "no sessions + exit-empty off → keep running"))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" (make-fake-session)))))
+      (cl-tmux/options:set-option "exit-empty" t)
+      (is-false (cl-tmux::%exit-when-empty-p)
+                "sessions still present → keep running regardless of the option"))))
+
 ;;; ── Integration: a broadcast frame reaches every attached client ─────────────
 
 (test multi-broadcast-reaches-all-clients
