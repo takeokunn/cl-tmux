@@ -1136,6 +1136,13 @@
         ;; NIL for a boolean, which the string-based parsing chokes on).
         (cl-tmux/config:%apply-option-side-effects name value)))))
 
+(defun %cmd-set-window-option (session args)
+  "set-window-option / setw: like set-option but defaults to WINDOW scope (tmux
+   `setw` is `set -w`).  Prepends -w so a bare `setw mode-keys vi` is window-local;
+   an explicit -g still wins (global), since %cmd-set-option's (and windowp (not
+   globalp)) gate lets -g override the injected -w."
+  (%cmd-set-option session (cons "-w" args)))
+
 ;;; -- -e VAR=val environment flag parser ----------------------------------------
 ;;;
 ;;; new-window and split-window accept repeated -e VAR=val flags to set
@@ -2492,8 +2499,10 @@
    (cons '("set-hook" "hook")           #'%cmd-set-hook)
    (cons '("bind-key" "bind")           #'%cmd-bind-key-arg)
    (cons '("unbind-key" "unbind")       #'%cmd-unbind-key-arg)
-   (cons '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")
+   (cons '("set" "set-option" "sets" "set-session-option")
          #'%cmd-set-option)
+   ;; setw / set-window-option default to window scope (= set -w).
+   (cons '("setw" "set-window-option") #'%cmd-set-window-option)
    (cons '("rename-window" "renamew")   #'%cmd-rename-window)
    (cons '("rename-session" "rename")   #'%cmd-rename-session)
    (cons '("select-window" "selectw")   #'%cmd-select-window)

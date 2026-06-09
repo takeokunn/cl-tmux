@@ -1104,6 +1104,32 @@
       (is (null (cl-tmux/options:get-option "synchronize-panes"))
           "global synchronize-panes must remain NIL — 'set -w' must not touch it"))))
 
+(test cmd-set-window-option-defaults-to-window-scope
+  "setw / set-window-option (no -g) sets a WINDOW-local option, not global —
+   tmux's setw is `set -w`."
+  (with-isolated-config
+    (let* ((s   (make-fake-session))
+           (win (cl-tmux/model:session-active-window s)))
+      (cl-tmux/options:set-option "synchronize-panes" nil)
+      (cl-tmux::%cmd-set-window-option s '("synchronize-panes" "on"))
+      (is (eq t (cl-tmux/options:get-option-for-window "synchronize-panes" win))
+          "bare setw must set the window-local option to T")
+      (is (null (cl-tmux/options:get-option "synchronize-panes"))
+          "bare setw must NOT touch the global option"))))
+
+(test cmd-set-window-option-g-overrides-to-global
+  "setw -g sets the GLOBAL option (explicit -g wins over the injected -w)."
+  (with-isolated-config
+    (let* ((s   (make-fake-session))
+           (win (cl-tmux/model:session-active-window s)))
+      (cl-tmux/options:set-option "synchronize-panes" nil)
+      (cl-tmux::%cmd-set-window-option s '("-g" "synchronize-panes" "on"))
+      (is (eq t (cl-tmux/options:get-option "synchronize-panes"))
+          "setw -g must set the global option")
+      (is (null (nth-value 1 (gethash "synchronize-panes"
+                                      (cl-tmux/model:window-local-options win))))
+          "setw -g must NOT create a window-local override"))))
+
 (test cmd-set-option-p-routes-to-pane-local
   "'set -p' routes to the active pane's local options and leaves the global
    value unchanged."
