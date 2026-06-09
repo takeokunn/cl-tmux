@@ -156,6 +156,41 @@
       (is (= 5 *status-height*)
           "*status-height* should be 5, got ~A" *status-height*))))
 
+(test load-realistic-config-applies-all-directives
+  "A realistic multi-option .tmux.conf loads end-to-end: the wired options, the
+   clustered -ga/-gw flags, bind -n, and a prefix change all take effect.  Guards
+   the whole `.tmux.conf completely` path against regressions."
+  (with-isolated-config
+    (let ((applied
+            (load-config-from-string
+             (format nil "~
+# realistic config~%~
+set -g status-position top~%~
+set -g status-left-style fg=red~%~
+set -gw monitor-bell off~%~
+set -g alternate-screen off~%~
+set -ga @x a~%~
+set -ga @x b~%~
+bind -n F1 next-window~%~
+set -g prefix C-a~%"))))
+      (is (= 8 applied) "all 8 directives applied (comment/blank skipped), got ~A" applied)
+      (is (string= "top" (cl-tmux/options:get-option "status-position"))
+          "status-position took effect")
+      (is (string= "fg=red" (cl-tmux/options:get-option "status-left-style"))
+          "status-left-style took effect")
+      (is (null (cl-tmux/options:get-option "monitor-bell"))
+          "clustered -gw set monitor-bell off")
+      (is (null (cl-tmux/options:get-option "alternate-screen"))
+          "alternate-screen set off")
+      (is (string= "ab" (cl-tmux/options:get-option "@x"))
+          "clustered -ga appended a then b → \"ab\"")
+      (is (eq :next-window
+              (cl-tmux/config:key-table-command
+               (cl-tmux/config:key-table-lookup "root" "F1")))
+          "bind -n F1 bound F1 in the root table")
+      (is (= 1 cl-tmux/config:*prefix-key-code*)
+          "set -g prefix C-a changed the prefix to C-a (byte 1)"))))
+
 (test load-from-string-multichar-and-quote-key
   "A single-char quote key parses as the character."
   (with-isolated-config
