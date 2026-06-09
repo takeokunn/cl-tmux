@@ -1106,6 +1106,16 @@
           ;; #{cursor_x} / #{cursor_y}: 0-based cursor position.
           :cursor-x      cursor-x
           :cursor-y      cursor-y
+          ;; #{cursor_character}: the glyph currently under the cursor, as a
+          ;; one-character string; "" when there is no pane or the cursor is out
+          ;; of the grid.  Bounds-checked because screen-cell is a raw aref.
+          :cursor-character
+          (if (and pane-scr
+                   (< -1 cursor-x (cl-tmux/terminal:screen-width  pane-scr))
+                   (< -1 cursor-y (cl-tmux/terminal:screen-height pane-scr)))
+              (string (cl-tmux/terminal:cell-char
+                       (cl-tmux/terminal:screen-cell pane-scr cursor-x cursor-y)))
+              "")
           ;; #{pane_in_mode}: "1" when copy mode active, else "0".
           :pane-in-mode  pane-in-mode
           ;; #{pane_current_command}: foreground process name (TTL-cached via pgrep/ps).

@@ -1135,6 +1135,27 @@
     (is (= 0 (getf ctx :cursor-x))  ":cursor-x must default to 0")
     (is (= 0 (getf ctx :cursor-y))  ":cursor-y must default to 0")))
 
+(test format-context-cursor-character-empty-when-pane-nil
+  "#{cursor_character} is empty when there is no pane (out-of-grid safe)."
+  (let ((ctx (cl-tmux/format:format-context-from-session nil nil nil)))
+    (is (string= "" (cl-tmux/format:expand-format "#{cursor_character}" ctx))
+        "#{cursor_character} must be empty with no pane")))
+
+(test format-context-cursor-character-reads-glyph-under-cursor
+  "#{cursor_character} expands to the glyph in the cell under the cursor."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (scr  (cl-tmux/model:pane-screen pane)))
+    ;; make-fake-window panes are 20x5; place 'Z' at (2,1) and move there.
+    (setf (cl-tmux/terminal/types:screen-cell scr 2 1)
+          (cl-tmux/terminal/types:make-cell :char #\Z))
+    (setf (cl-tmux/terminal/types:screen-cursor-x scr) 2
+          (cl-tmux/terminal/types:screen-cursor-y scr) 1)
+    (let ((ctx (cl-tmux/format:format-context-from-session sess win pane)))
+      (is (string= "Z" (cl-tmux/format:expand-format "#{cursor_character}" ctx))
+          "#{cursor_character} must be the glyph under the cursor"))))
+
 (test format-context-pane-in-mode-not-in-copy-mode
   "format-context-from-session :pane-in-mode is \"0\" when pane is not in copy mode."
   (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
