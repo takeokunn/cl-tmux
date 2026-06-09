@@ -141,6 +141,38 @@
       (dolist (pane (all-panes session))
         (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))))
 
+(defun run-control-mode (&optional args)
+  "Control mode (-C): drive cl-tmux over the text protocol on stdin/stdout instead
+   of a curses UI (for iTerm2 / tmuxp / libtmux).  Sets up the initial session like
+   run-standalone (config load, fork, reader threads), emits the opening
+   %session-changed, then runs the control REPL until the client closes stdin.
+   The REPL framing + notifications are unit-tested via control-mode-loop; this is
+   the thin process-entry glue."
+  (declare (ignore args))
+  (require :sb-posix)
+  (cl-tmux/config:init-default-shell)
+  (setf cl-tmux/config:*config-condition-evaluator* (%make-format-condition-evaluator))
+  (setf cl-tmux/terminal:*history-limit-function*
+        (lambda () (cl-tmux/options:get-option "history-limit")))
+  (ignore-errors (load-config-file nil))
+  ;; A control client may have no controlling tty; fall back to 80x24.
+  (multiple-value-bind (r c) (ignore-errors (terminal-size))
+    (setf *term-rows* (or r 80) *term-cols* (or c 24)))
+  (let* ((session (create-initial-session *term-rows* *term-cols*))
+         (readers (progn (server-add-session session)
+                         (mapcar #'start-reader-thread (all-panes session)))))
+    (setf *running* t)
+    (write-line (cl-tmux/control:control-session-changed
+                 (session-id session) (session-name session))
+                *standard-output*)
+    (force-output *standard-output*)
+    (unwind-protect
+         (control-mode-loop session *standard-input* *standard-output*)
+      (setf *running* nil)
+      (stop-reader-threads readers)
+      (dolist (pane (all-panes session))
+        (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))))
+
 ;;; ── Flag-parser macro ────────────────────────────────────────────────────────
 ;;;
 ;;; define-flag-parser generates a parser for a set of boolean and value flags.
@@ -225,7 +257,10 @@
     ("ls"             . (run-list-sessions :raw-args-p t))
     ;; source-file: load a config file directly (useful for testing configs).
     ("source-file"    . (run-source-file :raw-args-p t))
-    ("source"         . (run-source-file :raw-args-p t)))
+    ("source"         . (run-source-file :raw-args-p t))
+    ;; -C / control: control mode — text protocol on stdin/stdout (iTerm2/tmuxp).
+    ("-C"             . (run-control-mode :raw-args-p t))
+    ("control"        . (run-control-mode :raw-args-p t)))
   "Mode-name → plist dispatch table for the binary entry point.
    Each entry is (mode-name . (handler-symbol &key :raw-args-p bool)).
    :raw-args-p T means the handler receives the full raw argv tail rather

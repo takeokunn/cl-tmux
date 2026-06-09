@@ -297,3 +297,16 @@
   "run-attach-with-flags is defined as a function."
   (is (fboundp 'cl-tmux::run-attach-with-flags)
       "run-attach-with-flags must be fbound"))
+
+(test dispatch-control-mode-flag
+  "argv (cl-tmux -C) routes to run-control-mode."
+  (let ((orig   (fdefinition 'cl-tmux::run-control-mode))
+        (called nil))
+    (unwind-protect
+         (progn
+           (setf (fdefinition 'cl-tmux::run-control-mode)
+                 (lambda (&rest a) (declare (ignore a)) (setf called t)))
+           (let ((sb-ext:*posix-argv* (list "cl-tmux" "-C")))
+             (cl-tmux::main))
+           (is-true called "main with -C must call run-control-mode"))
+      (setf (fdefinition 'cl-tmux::run-control-mode) orig))))
