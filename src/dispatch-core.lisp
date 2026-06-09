@@ -2711,6 +2711,29 @@
                          (pane-id pane)
                          (if (eq pane (window-active-pane win)) " (active)" ""))))))))))
 
+(defun %cmd-respawn-pane-arg (session args)
+  "respawn-pane [-k] [-c start-dir] [-e VAR=val] [-t target-pane] [command]: restart
+   the target pane's process (default: the active pane).
+   -k: kill the existing process first.  WITHOUT -k, respawning a pane whose process
+   is still running is an error (tmux behaviour) — use -k to force it.
+   -c/-e/command are accepted for compatibility; the respawn currently reuses the
+   pane's default shell (start-dir/env/command override is not yet modelled).
+   This is the scriptable form; the interactive :respawn-pane binding is unchanged."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "cet")
+    (declare (ignore positionals))
+    (let* ((win    (session-active-window session))
+           (pane   (%resolve-pane-in-window win (cdr (assoc #\t flags))))
+           (kill-p (assoc #\k flags)))
+      (when pane
+        (if (and (not kill-p) (> (cl-tmux/model:pane-fd pane) 0))
+            ;; tmux: respawn-pane without -k on a still-running pane is an error.
+            (show-overlay "respawn-pane: pane is active (use -k to force respawn)")
+            (let ((new-pane (respawn-pane pane)))
+              (when new-pane
+                (start-reader-thread new-pane)
+                (setf *dirty* t)
+                t)))))))
+
 (defun %cmd-pipe-pane-arg (session args)
   "pipe-pane [-IOo] [-t target-pane] [command]: open or close a pipe for the
    target pane (default: the active pane).
@@ -2864,6 +2887,8 @@
    (cons '("find-window" "findw")       #'%cmd-find-window-arg)
    ;; list-commands [command]: list all commands, or filter to one by name.
    (cons '("list-commands" "lscm")      #'%cmd-list-commands-arg)
+   ;; respawn-pane: scriptable -k/-t (restart a pane's process; -k forces).
+   (cons '("respawn-pane" "respawnp")   #'%cmd-respawn-pane-arg)
    ;; next/previous-window: scriptable -t target-session window cycling.
    (cons '("next-window" "next")        #'%cmd-next-window-arg)
    (cons '("previous-window" "prev")    #'%cmd-previous-window-arg)

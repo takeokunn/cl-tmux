@@ -1361,6 +1361,20 @@
       (is (null (cl-tmux/options:get-option-for-window "@wopt" w0))
           "the active window (id 0) must NOT have @wopt set"))))
 
+(test cmd-respawn-pane-without-k-errors-on-live-pane
+  "respawn-pane without -k on a still-running pane (fd > 0) is an error and does
+   NOT respawn — matching tmux (the model would otherwise fork unconditionally)."
+  (let* ((s    (make-fake-session :nwindows 1 :npanes 1))
+         (pane (window-active-pane (session-active-window s))))
+    (setf (cl-tmux/model:pane-fd pane) 5)        ; simulate a live PTY
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%cmd-respawn-pane-arg s '())
+        (is (overlay-active-p)
+            "respawn-pane without -k on a live pane must show an error overlay")
+        (is (= 5 (cl-tmux/model:pane-fd pane))
+            "the live pane must NOT be respawned (fd unchanged → no fork)")))))
+
 (test cmd-list-commands-filters-by-name
   "list-commands <name> shows only that command (tmux's filter); bare
    list-commands shows the full list."
