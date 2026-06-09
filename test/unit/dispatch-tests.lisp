@@ -1113,6 +1113,30 @@
       (is (string= "default-value" (cl-tmux/options:get-option "@plugin-opt"))
           "-o must set the option when it is currently unset"))))
 
+(test run-command-line-bind-with-args-binds-key
+  "Runtime 'bind <key> <command>' (with args) binds via the config directive path,
+   not the interactive prompt — so command-prompt / control-mode bind works."
+  (with-isolated-config
+    (let ((s (make-fake-session)))
+      (with-loop-state
+        (cl-tmux::%run-command-line s "bind y new-window")
+        (is (eq :new-window
+                (cl-tmux/config:key-table-command
+                 (cl-tmux/config:key-table-lookup "prefix" #\y)))
+            "runtime 'bind y new-window' must bind #\\y → :new-window in prefix")))))
+
+(test run-command-line-unbind-a-clears-prefix-table
+  "Runtime 'unbind -a' clears the prefix table (arg-bearing unbind routes through
+   the config directive logic, including the -a whole-table form)."
+  (with-isolated-config
+    (let ((s (make-fake-session)))
+      (with-loop-state
+        (is (not (null (cl-tmux/config:key-table-lookup "prefix" #\c)))
+            "prefix has bindings before unbind -a")
+        (cl-tmux::%run-command-line s "unbind -a")
+        (is (null (cl-tmux/config:key-table-lookup "prefix" #\c))
+            "runtime 'unbind -a' must clear the prefix table")))))
+
 (test cmd-set-option-clustered-ga-appends
   "'set -ga name val' (clustered -g -a) APPENDS — regression: the cluster was
    parsed as -g only, silently dropping -a and overwriting instead of appending."

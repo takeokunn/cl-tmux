@@ -2379,10 +2379,26 @@
            (when (assoc #\R flags)
              (run-command-hooks event session))))))))
 
+(defun %cmd-bind-key-arg (session args)
+  "bind / bind-key [-n] [-r] [-T table] [-N note] key command...: bind a key at
+   runtime (command-prompt / key binding / control mode).  Delegates to the config
+   directive logic so the full flag set is honoured — the same path .tmux.conf
+   uses.  The no-arg form falls through to the interactive :bind-key prompt."
+  (declare (ignore session))
+  (cl-tmux/config:apply-config-directive (cons "bind" args)))
+
+(defun %cmd-unbind-key-arg (session args)
+  "unbind / unbind-key [-a] [-n] [-T table] [key]: unbind a key (or, with -a, every
+   key in a table) at runtime, delegating to the config directive logic."
+  (declare (ignore session))
+  (cl-tmux/config:apply-config-directive (cons "unbind" args)))
+
 (defparameter *arg-command-table*
   (list
    (cons '("display-message" "display") #'%cmd-display-message)
    (cons '("set-hook" "hook")           #'%cmd-set-hook)
+   (cons '("bind-key" "bind")           #'%cmd-bind-key-arg)
+   (cons '("unbind-key" "unbind")       #'%cmd-unbind-key-arg)
    (cons '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")
          #'%cmd-set-option)
    (cons '("rename-window" "renamew")   #'%cmd-rename-window)
