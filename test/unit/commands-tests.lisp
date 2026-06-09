@@ -1646,6 +1646,39 @@
   (is (equal '(27 120) (coerce (cl-tmux/commands::%key-name-to-bytes "M-x") 'list))
       "M-x → ESC x"))
 
+(test split-key-modifiers-decodes-csi-modifier
+  "%split-key-modifiers strips C-/M-/S- prefixes into the CSI modifier code."
+  (flet ((mods (name) (multiple-value-list (cl-tmux/commands::%split-key-modifiers name))))
+    (is (equal '(1 "Up")   (mods "Up"))    "no modifier → 1")
+    (is (equal '(5 "Up")   (mods "C-Up"))  "Ctrl → 5")
+    (is (equal '(3 "Left") (mods "M-Left")) "Alt → 3")
+    (is (equal '(2 "Down") (mods "S-Down")) "Shift → 2")
+    (is (equal '(7 "Left") (mods "C-M-Left")) "Ctrl+Alt → 7")
+    (is (equal '(6 "Up")   (mods "C-S-Up")) "Ctrl+Shift → 6")))
+
+(test key-name-to-bytes-modified-arrows-and-nav
+  "%key-name-to-bytes encodes modified arrows / Home / End as ESC [ 1 ; mod final."
+  (flet ((bytes (name) (coerce (cl-tmux/commands::%key-name-to-bytes name) 'list)))
+    (is (equal '(27 91 49 59 53 65) (bytes "C-Up"))    "C-Up → ESC[1;5A")
+    (is (equal '(27 91 49 59 51 68) (bytes "M-Left"))  "M-Left → ESC[1;3D")
+    (is (equal '(27 91 49 59 50 66) (bytes "S-Down"))  "S-Down → ESC[1;2B")
+    (is (equal '(27 91 49 59 55 68) (bytes "C-M-Left")) "C-M-Left → ESC[1;7D")
+    (is (equal '(27 91 49 59 50 72) (bytes "S-Home"))  "S-Home → ESC[1;2H")))
+
+(test key-name-to-bytes-modified-function-keys
+  "%key-name-to-bytes encodes modified F-keys / page keys as ESC [ param ; mod ~."
+  (flet ((bytes (name) (coerce (cl-tmux/commands::%key-name-to-bytes name) 'list)))
+    (is (equal '(27 91 49 53 59 53 126) (bytes "C-F5"))     "C-F5 → ESC[15;5~")
+    (is (equal '(27 91 53 59 53 126)    (bytes "C-PageUp")) "C-PageUp → ESC[5;5~")
+    (is (equal '(27 91 51 59 50 126)    (bytes "S-Delete")) "S-Delete → ESC[3;2~")))
+
+(test key-name-to-bytes-modified-does-not-break-control-chars
+  "A C-/M- prefix on a plain char still yields the control/meta byte, not a CSI
+   sequence (the modified-special path only triggers for named special keys)."
+  (flet ((bytes (name) (coerce (cl-tmux/commands::%key-name-to-bytes name) 'list)))
+    (is (equal '(3)      (bytes "C-c")) "C-c stays the control byte")
+    (is (equal '(27 120) (bytes "M-x")) "M-x stays ESC x")))
+
 (test key-name-to-bytes-unknown-returns-nil
   "%key-name-to-bytes returns NIL for text that is not a key name."
   (is (null (cl-tmux/commands::%key-name-to-bytes "hello")))

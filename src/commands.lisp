@@ -266,14 +266,63 @@
   "Alist mapping tmux key-name strings to their literal byte sequence (as a
    string whose char-codes are the bytes — all < 128).")
 
+(defparameter *modified-send-keys*
+  '(;; letter-final keys → ESC [ 1 ; <mod> <final>
+    ("Up" :letter #\A) ("Down" :letter #\B) ("Right" :letter #\C) ("Left" :letter #\D)
+    ("Home" :letter #\H) ("End" :letter #\F)
+    ("F1" :letter #\P) ("F2" :letter #\Q) ("F3" :letter #\R) ("F4" :letter #\S)
+    ;; tilde keys → ESC [ <param> ; <mod> ~
+    ("F5" :tilde 15) ("F6" :tilde 17) ("F7" :tilde 18) ("F8" :tilde 19)
+    ("F9" :tilde 20) ("F10" :tilde 21) ("F11" :tilde 23) ("F12" :tilde 24)
+    ("PageUp" :tilde 5) ("PPage" :tilde 5) ("PageDown" :tilde 6) ("NPage" :tilde 6)
+    ("Insert" :tilde 2) ("IC" :tilde 2) ("Delete" :tilde 3) ("DC" :tilde 3))
+  "Base special keys that take a CSI modifier, with the byte-sequence shape used
+   when a modifier is present.  :letter keys encode as ESC [ 1 ; <mod> <final>;
+   :tilde keys as ESC [ <param> ; <mod> ~.  The inverse of the event loop's
+   modifier decoding, so send-keys C-Up round-trips with `bind -n C-Up`.")
+
+(defun %split-key-modifiers (name)
+  "Strip leading C-/M-/S- modifier prefixes from NAME.  Returns (values MOD-VALUE
+   BASE): MOD-VALUE is the CSI modifier code (1 + Shift + 2·Alt + 4·Ctrl), 1 when
+   no modifier prefix is present; BASE is the remaining key name."
+  (let ((bits 0) (i 0) (len (length name)))
+    (loop while (and (<= (+ i 2) len) (char= (char name (1+ i)) #\-))
+          for m = (char-upcase (char name i))
+          do (case m
+               (#\C (setf bits (logior bits 4)))
+               (#\M (setf bits (logior bits 2)))
+               (#\S (setf bits (logior bits 1)))
+               (otherwise (return)))
+             (incf i 2))
+    (values (1+ bits) (subseq name i))))
+
+(defun %modified-special-key-string (name)
+  "Escape string for a modified special key NAME (C-Up → ESC[1;5A, S-F5 →
+   ESC[15;2~, C-M-Left → ESC[1;7D), or NIL when NAME is not a modified special
+   key.  Modifiers map through %split-key-modifiers; the base must be a key in
+   *modified-send-keys* and at least one modifier must be present."
+  (multiple-value-bind (mod-value base) (%split-key-modifiers name)
+    (when (> mod-value 1)
+      (let ((entry (assoc base *modified-send-keys* :test #'string=)))
+        (when entry
+          (%escape-sequence
+           (ecase (second entry)
+             (:letter (format nil "[1;~D~C" mod-value (third entry)))
+             (:tilde  (format nil "[~D;~D~~" (third entry) mod-value)))))))))
+
 (defun %key-name-to-bytes (name)
-  "Return the octet vector for a tmux key NAME (Enter, Tab, Up, C-c, M-x, F5...),
-   or NIL when NAME is not a recognised key.
-   C-<char> → the control byte (logand char #x1f); M-<char> → ESC then <char>."
-  (let ((entry (assoc name *send-key-names* :test #'string=)))
+  "Return the octet vector for a tmux key NAME (Enter, Tab, Up, C-c, M-x, F5,
+   C-Up, S-F5...), or NIL when NAME is not a recognised key.
+   C-<char> → the control byte (logand char #x1f); M-<char> → ESC then <char>;
+   <mods>-<special> → the modified CSI sequence (see %modified-special-key-string)."
+  (let ((entry    (assoc name *send-key-names* :test #'string=))
+        (modified (%modified-special-key-string name)))
     (cond
       (entry
        (babel:string-to-octets (cdr entry) :encoding :utf-8))
+      ;; Modified special key (C-Up, S-F5, C-M-Left) before the C-/M-<char> paths.
+      (modified
+       (babel:string-to-octets modified :encoding :utf-8))
       ;; C-<char>: control byte.  C-a..C-z → 1..26, C-@ → 0, C-[ → 27, ...
       ((and (= (length name) 3) (string= (subseq name 0 2) "C-"))
        (make-array 1 :element-type '(unsigned-byte 8)
