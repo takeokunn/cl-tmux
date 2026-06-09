@@ -166,6 +166,19 @@
    ((values))  ; no-op set
    ((values))) ; no-op reset
 
+  ;; Mode 1047 — alternate screen buffer (the 1049 component without cursor
+  ;; save/restore).  Set switches to the alt screen, reset back to the primary.
+  (1047
+   ((enter-alt-screen screen))
+   ((exit-alt-screen screen)))
+
+  ;; Mode 1048 — save/restore cursor (the other 1049 component): set saves the
+  ;; cursor (like DECSC / ESC 7), reset restores it (like DECRC / ESC 8).  Some
+  ;; ncurses apps toggle 1047 and 1048 separately instead of the combined 1049.
+  (1048
+   ((save-cursor screen))
+   ((restore-cursor screen)))
+
   ;; Mode 1 — xterm cursor-key app mode is already handled (line 79-84).
   ;; Mode 12 — local echo mode (accepted silently, not modelled).
   (12

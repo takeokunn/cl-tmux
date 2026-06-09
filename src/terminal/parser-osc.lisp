@@ -185,8 +185,10 @@
         body)))
 
 (define-osc-rules
-  ;; OSC 0 / OSC 2: set window title
-  ((0 2)
+  ;; OSC 0 / OSC 1 / OSC 2: set the title.  OSC 0 sets icon + window title, OSC 1
+  ;; the icon name, OSC 2 the window title; cl-tmux keeps a single title, so all
+  ;; three set it (consistent with the existing 0/2 conflation).
+  ((0 1 2)
    (set-screen-title screen body))
 
   ;; OSC 7: report current working directory (file://host/path) → #{pane_current_path}

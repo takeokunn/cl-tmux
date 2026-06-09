@@ -43,6 +43,27 @@
         "primary content not restored after alt-screen round-trip: ~S"
         (row-string s 0 :end 5))))
 
+(test alt-screen-1047-save-restore
+  "ESC[?1047h / ESC[?1047l (alt screen buffer, the 1049 component) round-trips the
+   primary screen content."
+  (with-screen (s 10 5)
+    (feed s "hello")
+    (feed s (esc "[?1047h"))   ; enter alt screen
+    (feed s "ALT")
+    (feed s (esc "[?1047l"))   ; exit alt screen — primary restored
+    (is (string= "hello" (row-string s 0 :end 5))
+        "primary content not restored after ?1047 round-trip: ~S"
+        (row-string s 0 :end 5))))
+
+(test cursor-1048-save-restore
+  "ESC[?1048h saves the cursor and ESC[?1048l restores it (the 1049 component)."
+  (with-screen (s 20 5)
+    (feed s (esc "[3;6H"))     ; cursor -> (5, 2)
+    (feed s (esc "[?1048h"))   ; save cursor
+    (feed s (esc "[1;1H"))     ; cursor -> (0, 0)
+    (feed s (esc "[?1048l"))   ; restore cursor
+    (check-cursor s 5 2)))
+
 (test decsc-decrc
   "ESC 7 saves the cursor position and SGR state; ESC 8 restores them."
   (with-screen (s 20 5)

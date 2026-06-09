@@ -112,6 +112,17 @@
     (is (string= "xterm-title" (cl-tmux/terminal/types:screen-title s))
         "screen-title must be set to 'xterm-title' after OSC 2")))
 
+(test osc-1-sets-screen-title
+  "OSC 1 ; name BEL (icon name) also sets screen-title — cl-tmux keeps a single
+   title, so OSC 0/1/2 all set it."
+  (with-screen (s 20 5)
+    (screen-process-bytes s
+      (babel:string-to-octets
+        (format nil "~C]1;icon-name~C" #\Escape (code-char 7))
+        :encoding :utf-8))
+    (is (string= "icon-name" (cl-tmux/terminal/types:screen-title s))
+        "screen-title must be set to 'icon-name' after OSC 1")))
+
 (test osc-bel-no-crash
   "An OSC sequence terminated by BEL is consumed without crashing."
   (with-screen (s 10 2)
