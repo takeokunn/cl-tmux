@@ -278,3 +278,25 @@ is empty — no complete frame header can be read."
           ((= type +msg-bye+) (setf dispatched :bye)))
         (is (eq :eof dispatched)
             "empty stream must dispatch the nil-type (EOF) arm")))))
+
+(test read-command-reply-prints-reply-to-stdout
+  :description "%read-command-reply reads the server's +msg-reply+ frame and writes its
+text to *standard-output* — the client side of `cl-tmux display -p`."
+  (unless (unix-socket-available-p)
+    (skip "Unix-domain socket unavailable (sandbox)"))
+  (sb-ext:with-timeout 10
+    (let* ((path  (%client-test-socket-path))
+           (lstnr (make-listener path)))
+      (unwind-protect
+           (let* ((client (connect-to path))
+                  (server (accept-connection lstnr)))
+             (when server
+               (send-frame (socket-stream server) (msg-reply "OUTPUT-TEXT"))
+               (force-output (socket-stream server))
+               (let ((out (with-output-to-string (*standard-output*)
+                            (cl-tmux::%read-command-reply
+                             (socket-stream client) (cl-tmux/net:socket-fd client)))))
+                 (is (search "OUTPUT-TEXT" out)
+                     "%read-command-reply must print the reply text to stdout (got ~S)" out))))
+        (ignore-errors (close-socket lstnr))
+        (ignore-errors (delete-file path))))))
