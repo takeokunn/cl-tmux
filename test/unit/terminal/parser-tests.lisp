@@ -869,6 +869,53 @@
     (is (char= #\X (char-at s 0 0))
         "printable after DCS-ST must be placed at column 0")))
 
+;;; ── XTGETTCAP (DCS + q <hex caps> ST) ────────────────────────────────────────
+
+(defun %feed-dcs (s payload)
+  "Feed a DCS sequence (ESC P PAYLOAD ST) to screen S via screen-process-bytes."
+  (screen-process-bytes s
+    (babel:string-to-octets (format nil "~CP~A~C\\" #\Escape payload #\Escape)
+                            :encoding :utf-8)))
+
+(test hex-decode-encode-roundtrip
+  "%hex-decode-string / %hex-encode-string convert XTGETTCAP hex cap names."
+  (is (string= "Tc"   (cl-tmux/terminal/parser::%hex-decode-string "5463")) "5463 → Tc")
+  (is (string= "5463" (cl-tmux/terminal/parser::%hex-encode-string "Tc"))   "Tc → 5463")
+  (is (string= "256"  (cl-tmux/terminal/parser::%hex-decode-string "323536")) "323536 → 256")
+  (is (null (cl-tmux/terminal/parser::%hex-decode-string "5")) "odd-length hex → NIL"))
+
+(test xtgettcap-reports-truecolor-tc
+  "XTGETTCAP +q 5463 (Tc) replies DCS 1 + r 5463 ST — true-colour present."
+  (with-screen (s 20 5)
+    (%feed-dcs s "+q5463")
+    (is (string= (format nil "~CP1+r5463~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "Tc must be reported present as DCS 1+r 5463")))
+
+(test xtgettcap-reports-rgb
+  "XTGETTCAP +q 524742 (RGB) replies DCS 1 + r 524742 ST."
+  (with-screen (s 20 5)
+    (%feed-dcs s "+q524742")
+    (is (string= (format nil "~CP1+r524742~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "RGB must be reported present")))
+
+(test xtgettcap-reports-colors-256
+  "XTGETTCAP +q 636f6c6f7273 (colors) replies DCS 1 + r 636f6c6f7273=323536 ST (256)."
+  (with-screen (s 20 5)
+    (%feed-dcs s "+q636f6c6f7273")
+    (is (string= (format nil "~CP1+r636f6c6f7273=323536~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "colors must be reported as 256 (hex 323536)")))
+
+(test xtgettcap-unknown-cap-reports-failure
+  "XTGETTCAP for an unknown cap replies DCS 0 + r <hexname> ST (failure)."
+  (with-screen (s 20 5)
+    (%feed-dcs s "+q5878")    ; \"Xx\" — not a recognised capability
+    (is (string= (format nil "~CP0+r5878~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "an unknown cap must be reported as failure (0+r)")))
+
 ;;; ── ground-state control-byte coverage ──────────────────────────────────────
 
 (def-suite ground-state-control-bytes

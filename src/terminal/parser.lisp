@@ -286,13 +286,77 @@
        (= (aref buffer 3) 120)   ; x
        (= (aref buffer 4) 59)))  ; ;
 
+(defun %dcs-xtgettcap-prefix-p (buffer)
+  "T when BUFFER begins with \"+q\" — an XTGETTCAP terminfo-capability request."
+  (and (>= (fill-pointer buffer) 2)
+       (= (aref buffer 0) 43)     ; +
+       (= (aref buffer 1) 113)))  ; q
+
+(defun %hex-decode-string (hex)
+  "Decode an even-length hex string to its ASCII characters, or NIL if malformed.
+   XTGETTCAP encodes capability names in hex (\"Tc\" → \"5463\")."
+  (when (and (plusp (length hex)) (evenp (length hex)))
+    (ignore-errors
+      (with-output-to-string (out)
+        (loop for i from 0 below (length hex) by 2
+              do (write-char (code-char (parse-integer hex :start i :end (+ i 2)
+                                                        :radix 16))
+                             out))))))
+
+(defun %hex-encode-string (string)
+  "Hex-encode STRING's characters as lowercase hex (for XTGETTCAP reply values)."
+  (with-output-to-string (out)
+    (loop for ch across string do (format out "~(~2,'0X~)" (char-code ch)))))
+
+(defun %xtgettcap-value (capname)
+  "The XTGETTCAP answer for terminfo capability CAPNAME:
+   :BOOLEAN for a present boolean cap, a string for a numeric/string cap, or NIL
+   when unknown.  cl-tmux renders 24-bit colour, so it advertises Tc and RGB
+   (true-colour) and colors=256 — letting apps that probe via XTGETTCAP enable
+   true-colour output."
+  (cond
+    ((string= capname "Tc")     :boolean)   ; tmux/xterm true-colour flag
+    ((string= capname "RGB")    :boolean)   ; direct-colour flag
+    ((string= capname "colors") "256")
+    (t nil)))
+
+(defun %dcs-split-fields (string)
+  "Split STRING on ';' into fields (empty fields preserved)."
+  (loop with start = 0
+        for pos = (position #\; string :start start)
+        collect (subseq string start (or pos (length string)))
+        while pos do (setf start (1+ pos))))
+
+(defun %xtgettcap-reply-1 (hex-name)
+  "Build one XTGETTCAP DCS reply for the requested HEX-NAME (echoed verbatim):
+   known cap → ESC P 1 + r <hexname>[=<hexvalue>] ST; unknown → ESC P 0 + r <hexname> ST."
+  (let* ((name (%hex-decode-string hex-name))
+         (val  (and name (%xtgettcap-value name))))
+    (cond
+      ((null val)        (format nil "~CP0+r~A~C\\" #\Escape hex-name #\Escape))
+      ((eq val :boolean) (format nil "~CP1+r~A~C\\" #\Escape hex-name #\Escape))
+      (t                 (format nil "~CP1+r~A=~A~C\\" #\Escape hex-name
+                                 (%hex-encode-string val) #\Escape)))))
+
+(defun %handle-xtgettcap (screen request)
+  "Handle an XTGETTCAP request (the payload after \"+q\"): a ';'-separated list of
+   hex-encoded capability names.  Enqueue one DCS reply per requested cap onto
+   SCREEN's response-queue (drained to the PTY like DA1/DSR)."
+  (dolist (hex-name (%dcs-split-fields request))
+    (when (plusp (length hex-name))
+      (push (%xtgettcap-reply-1 hex-name) (screen-response-queue screen)))))
+
 (defun %finish-dcs (screen buffer)
   "Process a completed DCS payload in BUFFER (ESCs already un-doubled).
-   When it is a tmux passthrough payload (\"tmux;<inner>\"), push the inner
-   sequence string onto SCREEN's passthrough-queue.  Otherwise discard."
-  (when (%dcs-tmux-prefix-p buffer)
-    (let ((inner (map 'string #'code-char (subseq buffer 5))))
-      (push inner (screen-passthrough-queue screen)))))
+   - tmux passthrough (\"tmux;<inner>\") → push <inner> onto the passthrough-queue.
+   - XTGETTCAP (\"+q<hexcaps>\")         → enqueue capability replies (Tc/RGB/colors).
+   - anything else (e.g. Sixel)          → discard."
+  (cond
+    ((%dcs-tmux-prefix-p buffer)
+     (push (map 'string #'code-char (subseq buffer 5))
+           (screen-passthrough-queue screen)))
+    ((%dcs-xtgettcap-prefix-p buffer)
+     (%handle-xtgettcap screen (map 'string #'code-char (subseq buffer 2))))))
 
 (defun %dcs-accumulate (buffer byte)
   "Append BYTE to BUFFER unless the payload cap is reached (truncate silently)."
