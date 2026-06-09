@@ -206,6 +206,74 @@
     (is (= #x1000000 (cl-tmux/terminal/types:screen-cur-fg s))
         "true-black must be #x1000000 (bit 24 set, RGB=0)")))
 
+;;; ── colon-delimited (ISO 8613-6) SGR ─────────────────────────────────────────
+;;;
+;;; Modern apps (neovim, many TUIs) emit true-colour as 38:2:R:G:B and 256-colour
+;;; as 38:5:N with COLON separators, optionally with a colourspace-id field
+;;; (38:2:cs:R:G:B) which may be empty (38:2::R:G:B).  The parser groups a colon
+;;; parameter into a list so apply-sgr applies it (rather than dropping it).
+
+(test sgr-colon-group-direct-truecolor
+  "apply-sgr with a colon group (a list) sets the true-colour encoding."
+  (with-screen (s 10 2)
+    (cl-tmux/terminal/sgr:apply-sgr s '((38 2 255 128 0)))
+    (is (= (logior #x1000000 (ash 255 16) (ash 128 8) 0)
+           (cl-tmux/terminal/types:screen-cur-fg s))
+        "colon group (38 2 255 128 0) must encode #x1FF8000 in cur-fg")))
+
+(test sgr-colon-truecolor-fg-via-emulator
+  "ESC[38:2:255:128:0m (ISO 8613-6 colon true-colour) sets fg like the ; form."
+  (with-screen (s 10 2)
+    (feed s (esc "[38:2:255:128:0mX"))
+    (is (= (logior #x1000000 (ash 255 16) (ash 128 8) 0) (fg-at s 0 0))
+        "colon true-colour must encode #x1FF8000 in the cell fg")))
+
+(test sgr-colon-truecolor-empty-colorspace
+  "ESC[38:2::255:128:0m (empty colourspace-id field) still applies the RGB —
+   the RGB are taken as the last three sub-parameters, skipping the empty field."
+  (with-screen (s 10 2)
+    (feed s (esc "[38:2::255:128:0mX"))
+    (is (= (logior #x1000000 (ash 255 16) (ash 128 8) 0) (fg-at s 0 0))
+        "empty-colourspace colon true-colour must still encode the RGB")))
+
+(test sgr-colon-truecolor-explicit-colorspace
+  "ESC[38:2:1:255:128:0m (explicit colourspace-id 1) skips the CS field, applies RGB."
+  (with-screen (s 10 2)
+    (feed s (esc "[38:2:1:255:128:0mX"))
+    (is (= (logior #x1000000 (ash 255 16) (ash 128 8) 0) (fg-at s 0 0))
+        "explicit-colourspace colon true-colour must skip CS and encode the RGB")))
+
+(test sgr-colon-256color-via-emulator
+  "ESC[38:5:200m (colon 256-colour) sets fg=200."
+  (with-screen (s 10 2)
+    (feed s (esc "[38:5:200mX"))
+    (is (= 200 (fg-at s 0 0)) "colon 256-colour must set fg=200")))
+
+(test sgr-colon-truecolor-bg-via-emulator
+  "ESC[48:2:0:128:255m sets the background true-colour."
+  (with-screen (s 10 2)
+    (feed s (esc "[48:2:0:128:255mX"))
+    (is (= (logior #x1000000 (ash 0 16) (ash 128 8) 255) (bg-at s 0 0))
+        "colon true-colour must encode the bg")))
+
+(test sgr-colon-mixed-with-semicolon-params
+  "ESC[1;38:2:255:0:0m — a colon group amid ;-params: bold AND true-red fg."
+  (with-screen (s 10 2)
+    (feed s (esc "[1;38:2:255:0:0mX"))
+    (is (= (logior #x1000000 (ash 255 16)) (fg-at s 0 0))
+        "fg must be true red despite the leading bold ;-param")
+    (is-true (logbitp 0 (attrs-at s 0 0)) "bold bit (0) must also be set")))
+
+(test sgr-colon-undercurl-applies-underline
+  "A (4 3) colon group (undercurl) applies underline (4) — same pen attrs as SGR 4."
+  (with-screen (s 10 2)
+    (cl-tmux/terminal/sgr:apply-sgr s '(4))
+    (let ((plain-underline (cl-tmux/terminal/types:screen-cur-attrs s)))
+      (cl-tmux/terminal/sgr:apply-sgr s '(0))           ; reset pen
+      (cl-tmux/terminal/sgr:apply-sgr s '((4 3)))       ; undercurl colon group
+      (is (= plain-underline (cl-tmux/terminal/types:screen-cur-attrs s))
+          "(4 3) must set the same attrs as plain SGR 4"))))
+
 (test sgr-reset-clears-new-attrs
   "SGR 0 after setting italic, conceal, and strikethrough zeroes all attr bits."
   (with-screen (s 10 2)

@@ -33,8 +33,8 @@
      (declare (type screen screen)
               (type character final)
               (ignorable intermed private))
-     (let* ((p1  (or (first  params) 0))
-            (p2  (or (second params) 0))
+     (let* ((p1  (%csi-leading-int (first  params)))
+            (p2  (%csi-leading-int (second params)))
             (p1* (max 1 p1))
             (p2* (max 1 p2)))
        (declare (type fixnum p1 p2 p1* p2*) (ignorable p1 p2 p1* p2*))
@@ -44,6 +44,17 @@
                        `(,condition ,@body)))
                    rules)
          (t (values))))))
+
+(declaim (inline %csi-leading-int))
+(defun %csi-leading-int (param)
+  "The leading integer of a CSI PARAM for the scalar P1/P2 bindings.  A param
+   carrying colon sub-parameters arrives as a list (sub0 sub1 …) — non-SGR
+   handlers want only its leading value (sub0), matching pre-colon behaviour.
+   A plain integer is returned as-is; NIL → 0.  (apply-sgr keeps the raw list
+   so it can apply colon-form extended colour.)"
+  (cond ((consp param)    (or (first param) 0))
+        ((integerp param) param)
+        (t 0)))
 
 ;;; All grid mutations (insert/delete chars, scroll-region margins, alternate
 ;;; screen) live in cl-tmux/terminal/actions; the rule table below calls them

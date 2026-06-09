@@ -150,6 +150,35 @@
   (funcall setter (clamp (third parameter-tail) 0 255) screen)
   (cdddr parameter-tail))
 
+(defun %apply-sgr-group (screen group)
+  "Apply ONE colon-delimited SGR sub-parameter GROUP (a list whose head is the
+   leading SGR code), as produced by the parser for ISO 8613-6 colon syntax:
+     (38|48|58 2 [cs] R G B) → true-colour.  R G B are the LAST three values, so
+        an optional colourspace-id field — present (38:2:cs:R:G:B) or empty,
+        which arrives as 0 (38:2::R:G:B) — is skipped.
+     (38|48|58 5 [cs] N)     → 256-colour; N is the LAST value.
+   Any other group applies its leading value as a plain SGR code, so e.g.
+   4:3 (undercurl) → underline (4)."
+  (let ((lead (first group))
+        (kind (second group)))
+    (flet ((color-setter ()
+             (case lead
+               (38 #'(setf screen-cur-fg))
+               (48 #'(setf screen-cur-bg))
+               (58 #'(setf screen-cur-ul-color)))))
+      (cond
+        ((and (member lead '(38 48 58)) (eql kind 2) (>= (length group) 5))
+         (let ((rgb (last group 3)))
+           (funcall (color-setter)
+                    (logior #x1000000
+                            (ash (clamp (or (first  rgb) 0) 0 255) 16)
+                            (ash (clamp (or (second rgb) 0) 0 255) 8)
+                            (clamp (or (third rgb) 0) 0 255))
+                    screen)))
+        ((and (member lead '(38 48 58)) (eql kind 5) (>= (length group) 3))
+         (funcall (color-setter) (clamp (or (car (last group)) 0) 0 255) screen))
+        (t (%dispatch-sgr-code screen lead))))))
+
 (defun apply-sgr (screen params)
   "Apply a sequence of SGR codes to SCREEN.
    PARAMS is a list of fixnum SGR parameter values; an empty or nil list is
@@ -162,6 +191,12 @@
              (when parameter-tail
                (let ((p (first parameter-tail)))
                  (cond
+                   ;; A colon-grouped parameter (list): a self-contained colour or
+                   ;; styled code.  MUST be checked first — the integer branches
+                   ;; below would error on a list.
+                   ((consp p)
+                    (%apply-sgr-group screen p)
+                    (consume (rest parameter-tail)))
                    ;; 256-color foreground: 38;5;N
                    ((and (= p 38) (eql (second parameter-tail) 5) (third parameter-tail))
                     (consume (%consume-256-color-param screen
