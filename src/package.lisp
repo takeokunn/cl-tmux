@@ -295,11 +295,13 @@
    #:set-screen-title
    #:set-screen-cwd))
 
+;; sgr package: apply-sgr + the inverse %pen-to-sgr-params (DECRQSS reports)
 (defpackage #:cl-tmux/terminal/sgr
   (:use #:cl #:cl-tmux/terminal/types)
   (:export
    #:%dispatch-sgr-code
-   #:apply-sgr))
+   #:apply-sgr
+   #:%pen-to-sgr-params))
 
 (defpackage #:cl-tmux/terminal/csi
   (:use #:cl

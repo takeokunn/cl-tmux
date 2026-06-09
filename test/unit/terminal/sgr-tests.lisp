@@ -274,6 +274,30 @@
       (is (= plain-underline (cl-tmux/terminal/types:screen-cur-attrs s))
           "(4 3) must set the same attrs as plain SGR 4"))))
 
+;;; ── %pen-to-sgr-params (inverse SGR, for DECRQSS) ────────────────────────────
+
+(test pen-to-sgr-params-reset
+  "A default pen (fg 7, bg 0, no attrs) reconstructs to just \"0\"."
+  (is (string= "0" (cl-tmux/terminal/sgr:%pen-to-sgr-params 7 0 0 0))
+      "default pen → \"0\""))
+
+(test pen-to-sgr-params-bold-red
+  "Bold (attr bit 0) + red fg (1) reconstructs to \"0;1;31\"."
+  (is (string= "0;1;31" (cl-tmux/terminal/sgr:%pen-to-sgr-params 1 0 1 0))
+      "bold red → \"0;1;31\""))
+
+(test pen-to-sgr-params-truecolor-fg
+  "A true-colour fg reconstructs to 0;38;2;R;G;B."
+  (is (string= "0;38;2;255;128;0"
+               (cl-tmux/terminal/sgr:%pen-to-sgr-params
+                (logior #x1000000 (ash 255 16) (ash 128 8) 0) 0 0 0))
+      "truecolor fg → 0;38;2;255;128;0"))
+
+(test pen-to-sgr-params-bright-bg
+  "A bright bg (index 12) reconstructs to 0;104; default fg (7) is omitted."
+  (is (string= "0;104" (cl-tmux/terminal/sgr:%pen-to-sgr-params 7 12 0 0))
+      "bright bg 12 → \"0;104\""))
+
 (test sgr-reset-clears-new-attrs
   "SGR 0 after setting italic, conceal, and strikethrough zeroes all attr bits."
   (with-screen (s 10 2)

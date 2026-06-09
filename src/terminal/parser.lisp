@@ -346,17 +346,49 @@
     (when (plusp (length hex-name))
       (push (%xtgettcap-reply-1 hex-name) (screen-response-queue screen)))))
 
+(defun %dcs-decrqss-prefix-p (buffer)
+  "T when BUFFER begins with \"$q\" — a DECRQSS (request status string) query."
+  (and (>= (fill-pointer buffer) 2)
+       (= (aref buffer 0) 36)     ; $
+       (= (aref buffer 1) 113)))  ; q
+
+(defun %decrqss-reply (screen request)
+  "Build the DECRQSS reply for REQUEST (the setting queried, after \"$q\").
+   Valid → ESC P 1 $ r <value><request> ST; unsupported → ESC P 0 $ r ST.
+   Supported settings:
+     m    → current SGR pen        (ESC P 1 $ r <params> m ST)
+     r    → DECSTBM scroll region  (1-based top;bottom)
+     SP q → DECSCUSR cursor style  (the shape number)"
+  (cond
+    ((string= request "m")
+     (format nil "~CP1$r~Am~C\\" #\Escape
+             (cl-tmux/terminal/sgr:%pen-to-sgr-params
+              (screen-cur-fg screen) (screen-cur-bg screen)
+              (screen-cur-attrs screen) (screen-cur-attrs2 screen))
+             #\Escape))
+    ((string= request "r")
+     (format nil "~CP1$r~D;~Dr~C\\" #\Escape
+             (1+ (screen-scroll-top screen)) (1+ (screen-scroll-bottom screen))
+             #\Escape))
+    ((string= request " q")
+     (format nil "~CP1$r~D q~C\\" #\Escape (screen-cursor-shape screen) #\Escape))
+    (t (format nil "~CP0$r~C\\" #\Escape #\Escape))))
+
 (defun %finish-dcs (screen buffer)
   "Process a completed DCS payload in BUFFER (ESCs already un-doubled).
    - tmux passthrough (\"tmux;<inner>\") → push <inner> onto the passthrough-queue.
    - XTGETTCAP (\"+q<hexcaps>\")         → enqueue capability replies (Tc/RGB/colors).
+   - DECRQSS (\"$q<setting>\")           → enqueue a status-string reply (SGR/region/cursor).
    - anything else (e.g. Sixel)          → discard."
   (cond
     ((%dcs-tmux-prefix-p buffer)
      (push (map 'string #'code-char (subseq buffer 5))
            (screen-passthrough-queue screen)))
     ((%dcs-xtgettcap-prefix-p buffer)
-     (%handle-xtgettcap screen (map 'string #'code-char (subseq buffer 2))))))
+     (%handle-xtgettcap screen (map 'string #'code-char (subseq buffer 2))))
+    ((%dcs-decrqss-prefix-p buffer)
+     (push (%decrqss-reply screen (map 'string #'code-char (subseq buffer 2)))
+           (screen-response-queue screen)))))
 
 (defun %dcs-accumulate (buffer byte)
   "Append BYTE to BUFFER unless the payload cap is reached (truncate silently)."

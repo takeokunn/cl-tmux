@@ -916,6 +916,42 @@
                  (first (cl-tmux/terminal/types:screen-response-queue s)))
         "an unknown cap must be reported as failure (0+r)")))
 
+;;; ── DECRQSS (DCS $ q <setting> ST) ───────────────────────────────────────────
+
+(test decrqss-sgr-reports-current-pen
+  "DECRQSS $q m reports the current SGR pen: ESC P 1 $ r <params> m ST."
+  (with-screen (s 20 5)
+    (feed s (esc "[1;31m"))        ; bold red pen
+    (%feed-dcs s "$qm")
+    (is (string= (format nil "~CP1$r0;1;31m~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "DECRQSS m must report 0;1;31 for a bold-red pen")))
+
+(test decrqss-scroll-region-reports-margins
+  "DECRQSS $q r reports the scroll region (1-based): ESC P 1 $ r top;bottom r ST."
+  (with-screen (s 20 5)
+    (%feed-dcs s "$qr")
+    (is (string= (format nil "~CP1$r1;5r~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "DECRQSS r must report 1;5 for a full 5-row screen")))
+
+(test decrqss-cursor-style-reports-shape
+  "DECRQSS $q SP q reports the DECSCUSR cursor shape."
+  (with-screen (s 20 5)
+    (feed s (esc "[3 q"))          ; DECSCUSR shape 3
+    (%feed-dcs s "$q q")
+    (is (string= (format nil "~CP1$r3 q~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "DECRQSS SP q must report shape 3")))
+
+(test decrqss-unknown-reports-invalid
+  "DECRQSS for an unsupported setting replies ESC P 0 $ r ST (invalid)."
+  (with-screen (s 20 5)
+    (%feed-dcs s "$qx")
+    (is (string= (format nil "~CP0$r~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "an unsupported DECRQSS request must reply 0$r")))
+
 ;;; ── ground-state control-byte coverage ──────────────────────────────────────
 
 (def-suite ground-state-control-bytes
