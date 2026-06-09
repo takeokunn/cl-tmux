@@ -86,6 +86,10 @@
   ;; ~/.tmux.conf in priority order (NIL triggers auto-detection).
   (ignore-errors (load-config-file nil))
 
+  ;; Load persisted command-prompt history (history-file option), now that the
+  ;; config has set the option.
+  (ignore-errors (load-prompt-history))
+
   ;; Discover terminal dimensions before any fork so children inherit them.
   (multiple-value-setq (*term-rows* *term-cols*)
     (terminal-size))

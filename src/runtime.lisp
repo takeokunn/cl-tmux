@@ -109,12 +109,47 @@
   "A list of strings — the most recent command-prompt inputs, newest first.
    Populated by the :command-prompt handler; shown by :show-prompt-history.")
 
+(defun %prompt-history-path ()
+  "The configured history-file path (a non-empty string) or NIL when unset —
+   NIL means command-prompt history is in-memory only (no persistence)."
+  (let ((p (ignore-errors (cl-tmux/options:get-option "history-file"))))
+    (and (stringp p) (plusp (length p)) p)))
+
+(defun save-prompt-history ()
+  "Write *prompt-history* to the history-file, one entry per line, OLDEST first
+   (so a later load preserves recency order).  No-op when history-file is unset;
+   best-effort (I/O errors are ignored)."
+  (let ((path (%prompt-history-path)))
+    (when path
+      (ignore-errors
+        (with-open-file (s path :direction :output :if-exists :supersede
+                                :if-does-not-exist :create)
+          (dolist (entry (reverse *prompt-history*))
+            (write-line entry s)))))))
+
+(defun load-prompt-history ()
+  "Load *prompt-history* from the history-file (one entry per line, oldest first),
+   newest-first in memory, capped at +max-prompt-history+.  No-op when the option
+   is unset or the file is unreadable."
+  (let ((path (%prompt-history-path)))
+    (when (and path (probe-file path))
+      (ignore-errors
+        (with-open-file (s path :direction :input :if-does-not-exist nil)
+          (when s
+            (let ((entries nil))
+              (loop for line = (read-line s nil nil) while line
+                    do (when (plusp (length line)) (push line entries)))
+              (setf *prompt-history*
+                    (subseq entries 0 (min (length entries) +max-prompt-history+))))))))))
+
 (defun add-prompt-history (entry)
-  "Prepend ENTRY to *prompt-history*, capping at +max-prompt-history+."
+  "Prepend ENTRY to *prompt-history*, capping at +max-prompt-history+, and persist
+   to the history-file when that option is set."
   (when (and (stringp entry) (plusp (length entry)))
     (push entry *prompt-history*)
     (when (> (length *prompt-history*) +max-prompt-history+)
-      (setf *prompt-history* (subseq *prompt-history* 0 +max-prompt-history+)))))
+      (setf *prompt-history* (subseq *prompt-history* 0 +max-prompt-history+)))
+    (save-prompt-history)))
 
 ;;; -- Clock mode --------------------------------------------------------------
 

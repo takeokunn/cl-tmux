@@ -810,6 +810,8 @@
    ;; Prompt history (for :show-prompt-history / :clear-prompt-history)
    #:*prompt-history*
    #:add-prompt-history
+   #:save-prompt-history       ; persist *prompt-history* to history-file
+   #:load-prompt-history       ; load *prompt-history* from history-file at startup
    ;; Clock mode (for :clock-mode)
    #:*clock-mode-pane-id*
    ;; Reader thread lifecycle

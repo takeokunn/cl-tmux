@@ -201,6 +201,36 @@
         (is-true (cl-tmux/prompt:overlay-active-p)
                  "visual-silence must show an overlay when silence is detected")))))
 
+(test prompt-history-persists-to-history-file
+  "add-prompt-history saves to history-file and load-prompt-history restores it
+   (newest first)."
+  (with-fresh-options
+    (let ((path (format nil "~A/cl-tmux-hist-~D.txt"
+                        (string-right-trim "/" (or (sb-ext:posix-getenv "TMPDIR") "/tmp"))
+                        (get-universal-time))))
+      (unwind-protect
+           (progn
+             (let ((cl-tmux::*prompt-history* nil))
+               (cl-tmux/options:set-option "history-file" path)
+               (cl-tmux::add-prompt-history "first")
+               (cl-tmux::add-prompt-history "second"))
+             ;; Fresh in-memory history; loading from the file restores both.
+             (let ((cl-tmux::*prompt-history* nil))
+               (cl-tmux::load-prompt-history)
+               (is (equal '("second" "first") cl-tmux::*prompt-history*)
+                   "loaded history must be newest-first")))
+        (ignore-errors (delete-file path))))))
+
+(test prompt-history-no-file-is-in-memory-only
+  "With history-file unset (default \"\"), history stays in memory and add does not error."
+  (with-fresh-options
+    (let ((cl-tmux::*prompt-history* nil))
+      (is (null (cl-tmux::%prompt-history-path))
+          "no history path when history-file is empty")
+      (cl-tmux::add-prompt-history "x")
+      (is (equal '("x") cl-tmux::*prompt-history*)
+          "in-memory history still works without a file"))))
+
 (test alert-action-fires-p-policy-matrix
   "%alert-action-fires-p maps an activity/silence action × current-ness to a fire
    decision: none→never, current→only current, any→always, other→only non-current."
