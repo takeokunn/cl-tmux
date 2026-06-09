@@ -235,8 +235,10 @@
   ;; ── Charset designators: ESC ( designates G0, ESC ) designates G1 ──────────
   (#x28  (make-charset-designator-k :g0))          ; ESC ( → designate G0
   (#x29  (make-charset-designator-k :g1))          ; ESC ) → designate G1
-  (#x2A  (make-ignore-designator-k))               ; ESC * → designate G2 (not modeled)
-  (#x2B  (make-ignore-designator-k))               ; ESC + → designate G3 (not modeled)
+  (#x2A  (make-ignore-final-byte-k))               ; ESC * → designate G2 (not modeled)
+  (#x2B  (make-ignore-final-byte-k))               ; ESC + → designate G3 (not modeled)
+  (#x20  (make-ignore-final-byte-k))               ; ESC SP <f> → S7C1T/S8C1T/ANSI level
+  (#x25  (make-ignore-final-byte-k))               ; ESC % <f> → charset selection (UTF-8)
   ;; ESC # — DEC line-size / alignment: the next byte selects (8 = DECALN fill,
   ;; 3/4/5/6 = double-height/width/single-width line attrs, accepted+ignored).
   ;; Without this, ESC # aborted and the selector byte printed as a stray char.
@@ -457,11 +459,14 @@
     (designate-charset screen g (if (= byte #x30) :dec-graphics :ascii))
     #'ground-state))
 
-(defun make-ignore-designator-k ()
-  "Return a CPS state that consumes one charset DESIGNATOR byte and returns to
-   ground with no effect — for ESC * (designate G2) and ESC + (designate G3),
-   which cl-tmux accepts but does not model (only G0/G1 are tracked, via SO/SI).
-   Consuming the designator byte avoids it printing as a stray char."
+(defun make-ignore-final-byte-k ()
+  "Return a CPS state that consumes one trailing byte and returns to ground with
+   no effect — for two-byte ESC sequences cl-tmux accepts but does not model:
+     ESC *  / ESC +   designate G2 / G3 (only G0/G1 are tracked, via SO/SI)
+     ESC SP <final>   S7C1T / S8C1T (7/8-bit C1) and ANSI conformance levels
+     ESC %  <final>   charset selection (ESC % G = UTF-8, which cl-tmux already is)
+   Consuming the trailing byte avoids it printing as a stray char (the bug when
+   the introducer was unhandled and the sequence aborted)."
   (lambda (screen byte)
     (declare (ignore screen byte))
     #'ground-state))

@@ -314,6 +314,18 @@
     (is (char= #\b (char-at s 1 0))
         "'b' at column 1 — no stray '0' or 'B' from the G2/G3 designators")))
 
+(test esc-space-and-percent-two-byte-seqs-consumed-not-stray
+  "ESC SP F (S7C1T) and ESC % G (select UTF-8) consume their trailing byte without
+   printing it as a stray char."
+  (with-screen (s 10 2)
+    (feed s "a")
+    (feed s (esc " F"))        ; ESC SP F — S7C1T (consumes 'F')
+    (feed s (esc "%G"))        ; ESC % G — select UTF-8 (consumes 'G')
+    (feed s "b")
+    (is (char= #\a (char-at s 0 0)) "'a' at column 0")
+    (is (char= #\b (char-at s 1 0))
+        "'b' at column 1 — no stray 'F'/'G' from the two-byte ESC sequences")))
+
 (test csi-unknown
   "An unrecognised CSI final character is silently ignored; parser recovers."
   (with-screen (s 10 2)
