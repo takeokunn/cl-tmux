@@ -1598,18 +1598,21 @@
    -d: create the window but do not make it active (detached).
    -k: kill any existing window at the target index before creating the new one.
    -P: print the new pane's details (session:window.pane [WxH]) to overlay.
+   -F format: with -P, the format string for the printed info (instead of the
+     default session:window.pane [WxH]) — e.g. `new-window -dP -F '#{window_id}'`.
    -n name: name the new window.
    -t idx: insert at specific index (assigned as the window id).
    -a: insert after the current window.
    -c dir: start directory for the new pane's shell (format strings expanded).
    -e VAR=val: set environment variable in the new pane (repeatable)."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "ntce")
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "ntceF")
     (declare (ignore positionals))
     (let* ((extra-env  (%collect-env-flags flags))
            (name       (cdr (assoc #\n flags)))
            (detach-p   (assoc #\d flags))
            (kill-p     (assoc #\k flags))
            (print-p    (assoc #\P flags))
+           (print-fmt  (cdr (assoc #\F flags)))
            (after-p    (assoc #\a flags))
            (target-str (cdr (assoc #\t flags)))
            (raw-dir    (cdr (assoc #\c flags)))
@@ -1635,10 +1638,17 @@
                                       :detach (and detach-p t)
                                       :at-index at-idx
                                       :after-current (and after-p t))))
-        ;; -P: print new pane details to overlay.
+        ;; -P: print new pane details to overlay.  With -F, expand the custom
+        ;; format against the new window/pane; otherwise the default WxH summary.
         (when (and print-p new-win)
-          (show-transient-overlay
-           (%format-pane-info session new-win (window-active-pane new-win))))
+          (let ((new-pane (window-active-pane new-win)))
+            (show-transient-overlay
+             (if print-fmt
+                 (cl-tmux/format:expand-format
+                  print-fmt
+                  (cl-tmux/format:format-context-from-session
+                   session new-win new-pane))
+                 (%format-pane-info session new-win new-pane)))))
         new-win))))
 
 (defun %cmd-split-window (session args)

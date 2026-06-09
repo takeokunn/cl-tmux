@@ -3709,6 +3709,21 @@
           (is (string= "myname" (cl-tmux/model:window-name win))
               "new-window -n must set the window name"))))))
 
+(test new-window-P-F-uses-custom-format
+  "new-window -d -P -F '...' prints the CUSTOM format to the overlay instead of the
+   default session:window.pane [WxH] summary."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (when (pty-available-p)
+        (let ((*overlay* nil))
+          (cl-tmux::%run-command-line s "new-window -d -P -F MARK#{window_index}")
+          (stop-cl-tmux-threads)
+          (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+            (is (search "MARK" text)
+                "-F custom format must appear in the overlay (got ~S)" text)
+            (is (null (search "[" text))
+                "default [WxH] summary must NOT be used when -F is given (got ~S)" text)))))))
+
 ;;; ── show-window-options / show-session-options ───────────────────────────────
 
 (test dispatch-show-window-options-shows-overlay
