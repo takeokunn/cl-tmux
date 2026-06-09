@@ -376,6 +376,14 @@
       (is (some (lambda (r) (search ">1;" r)) q)
           "DA2 response must contain >1;"))))
 
+(test xtversion-reports-tmux-version
+  "CSI > q (XTVERSION) replies ESC P > | tmux 3.5 ST (cl-tmux's tmux 3.5 identity)."
+  (with-screen (s 20 5)
+    (feed s (esc "[>q"))       ; XTVERSION
+    (is (string= (format nil "~CP>|tmux 3.5~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "XTVERSION must report tmux 3.5")))
+
 ;;; ── DECRQM (request DEC private mode, CSI ? Ps $ p) ──────────────────────────
 
 (test decrqm-reports-set-mode

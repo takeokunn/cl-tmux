@@ -137,6 +137,14 @@
   (push (format nil "~C[?~D;~D$y" #\Escape mode (%decrqm-mode-state screen mode))
         (screen-response-queue screen)))
 
+(defun enqueue-xtversion-reply (screen)
+  "Push the XTVERSION report (CSI > q) onto SCREEN's response queue:
+   ESC P > | tmux 3.5 ST.  cl-tmux presents the tmux 3.5 identity (consistent with
+   #{version} and `tmux -V`), so an app querying the terminal version — as real
+   tmux 3.5 answers — sees tmux 3.5."
+  (push (format nil "~CP>|tmux 3.5~C\\" #\Escape #\Escape)
+        (screen-response-queue screen)))
+
 (defun enqueue-xtwinops-reply (screen op)
   "Push the XTWINOPS size REPORT for operation OP onto SCREEN's response queue:
      18 → text-area size in CHARACTERS: ESC [ 8 ; rows ; cols t
@@ -326,6 +334,10 @@
    (values))  ; push title — no-op (no title stack implemented)
   ((and (eql private #\<) (char= final #\t))
    (values))  ; pop title — no-op
+
+  ;; XTVERSION — query terminal name/version (CSI > q): reply ESC P > | tmux 3.5 ST
+  ((and (eql private #\>) (char= final #\q))
+   (enqueue-xtversion-reply screen))
 
   ;; DEC Private Mode Set (?...h) — e.g. ?1049h enters the alternate screen
   ((and (eql private #\?) (char= final #\h))
