@@ -207,9 +207,11 @@
   ;; Locking
   ("lock-command"             :string  "lock -np") ; accepted; external locker (INERT — cl-tmux
                                                    ; renders its own internal lock screen)
-  ;; status-format (tmux 3.2+ array-style; stored as a single string).  Accepted but
-  ;; INERT — cl-tmux composes the status line from status-left / the window list /
-  ;; status-right rather than expanding a raw status-format[] template.
+  ;; status-format (tmux 3.2+ array-style).  status-format[0], when set, IS now
+  ;; honoured: render-status-bar expands it and composes #[align=…] regions
+  ;; (see %compose-aligned-line) instead of the procedural left/window-list/right
+  ;; path.  This bare "status-format" key is the registry default; the per-row
+  ;; values are stored under the array keys status-format[0..N].
   ("status-format"            :string  "")
   ;; Popup defaults
   ("popup-border-lines"       :string  "single")

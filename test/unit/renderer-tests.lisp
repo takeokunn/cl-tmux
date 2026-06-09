@@ -56,6 +56,46 @@
       (is (search "1:1" out)
           "status bar should contain the active-window fragment 1:1 (got ~S)" out))))
 
+(test compose-aligned-line-positions-regions
+  "%compose-aligned-line places #[align=right] content flush-right and
+   #[align=centre] content centred, filling to the requested width."
+  (flet ((vis (s) (cl-ppcre:regex-replace-all
+                   (format nil "~C\\[[0-9;]*m" #\Escape) s "")))
+    (is (string= "AB      CD"
+                 (vis (cl-tmux/renderer::%compose-aligned-line "AB#[align=right]CD" "" 10)))
+        "left + right-aligned across width 10")
+    (is (string= "    XX    "
+                 (vis (cl-tmux/renderer::%compose-aligned-line "#[align=centre]XX" "" 10)))
+        "centred across width 10")
+    (is (= 10 (cl-tmux/renderer::%visible-length
+               (cl-tmux/renderer::%compose-aligned-line "L#[align=centre]C#[align=right]R" "" 10)))
+        "three regions fill exactly the width")))
+
+(test render-status-bar-uses-status-format0-template
+  "When status-format[0] is set, the bar renders from that template with
+   #[align=right] honoured, instead of the procedural left/window-list/right path."
+  (with-isolated-options ("status-format[0]" "LEFThere#[align=right]RIGHThere")
+    (let* ((sess (make-test-session 40 10 :content ""))
+           (out  (with-output-to-string (s)
+                   (cl-tmux/renderer::render-status-bar s sess 10 40)))
+           ;; Strip ALL CSI sequences (the leading cursor-move ESC[10;1H and any SGR).
+           (vis  (cl-ppcre:regex-replace-all
+                  (format nil "~C\\[[0-9;?]*[A-Za-z]" #\Escape) out ""))
+           (rpos (search "RIGHThere" vis)))
+      (is (eql 0 (search "LEFThere" vis)) "left content starts at column 0 (got ~S)" vis)
+      (is (and rpos (= (+ rpos (length "RIGHThere")) 40))
+          "right content ends at the terminal width (got ~S)" vis))))
+
+(test render-status-bar-status-format0-expands-W-window-list
+  "status-format[0] expands #{W:...}, so the window list appears in the template."
+  (with-isolated-options ("status-format[0]" "#{W:[#{window_index}]}")
+    (let* ((sess (make-test-session 40 10 :content ""))
+           (out  (with-output-to-string (s)
+                   (cl-tmux/renderer::render-status-bar s sess 10 40)))
+           (vis  (cl-ppcre:regex-replace-all
+                  (format nil "~C\\[[0-9;?]*[A-Za-z]" #\Escape) out "")))
+      (is (search "[" vis) "the #{W:} window list renders the bracketed window entry (got ~S)" vis))))
+
 (test status-bar-no-prompt-when-inactive
   "With *prompt* explicitly inactive, the status bar shows the normal status
    (window 1) and never the prompt text — pinning the active/inactive exclusion."

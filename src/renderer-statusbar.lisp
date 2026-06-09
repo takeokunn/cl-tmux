@@ -288,6 +288,83 @@
       text
       (format nil "~C[~Am~A~C[~Am" +esc+ seg-sgr text +esc+ base-sgr)))
 
+;;; ── #[align=…] regions + status-format[0] template path ─────────────────────
+;;;
+;;; tmux's status line is a single format whose #[align=left|centre|right] blocks
+;;; divide it into three regions positioned within the terminal width.  cl-tmux
+;;; normally renders the bar procedurally (status-left + window-list + status-
+;;; right); when status-format[0] is SET it instead expands that template and
+;;; composes the regions here.  The procedural default path is unchanged.
+
+(defun %split-align-attr (body)
+  "Parse a #[BODY] block's comma-separated attrs.  Returns (values ALIGN REST):
+   ALIGN is :left/:centre/:right when an align=… attr is present (else NIL), and
+   REST is the remaining attrs re-joined by commas (NIL when none) so combined
+   blocks like #[align=right,fg=red] keep their colour."
+  (let ((align nil) (rest nil))
+    (dolist (a (uiop:split-string body :separator '(#\,)))
+      (let ((at (string-trim " " a)))
+        (cond
+          ((member at '("align=left" "align=l")   :test #'string-equal) (setf align :left))
+          ((member at '("align=centre" "align=center" "align=c") :test #'string-equal)
+           (setf align :centre))
+          ((member at '("align=right" "align=r")  :test #'string-equal) (setf align :right))
+          ((plusp (length at)) (push at rest)))))
+    (values align (when rest (format nil "~{~A~^,~}" (nreverse rest))))))
+
+(defun %status-align-buckets (raw)
+  "Split RAW (a status format) into (values LEFT CENTRE RIGHT) raw substrings by
+   its #[align=…] markers.  Text before any marker is LEFT; a combined block's
+   non-align attrs are re-emitted as a #[…] prefix so colour is preserved."
+  (let ((buckets (list :left (make-string-output-stream)
+                       :centre (make-string-output-stream)
+                       :right  (make-string-output-stream)))
+        (current :left) (i 0) (len (length raw)))
+    (flet ((out () (getf buckets current)))
+      (loop while (< i len) do
+        (if (and (char= (char raw i) #\#) (< (1+ i) len) (char= (char raw (1+ i)) #\[))
+            (let ((close (position #\] raw :start (+ i 2))))
+              (if close
+                  (multiple-value-bind (align rest) (%split-align-attr (subseq raw (+ i 2) close))
+                    (cond
+                      (align (setf current align)
+                             (when rest (format (out) "#[~A]" rest)))
+                      (t (write-string (subseq raw i (1+ close)) (out))))
+                    (setf i (1+ close)))
+                  (progn (write-char (char raw i) (out)) (incf i))))
+            (progn (write-char (char raw i) (out)) (incf i)))))
+    (values (get-output-stream-string (getf buckets :left))
+            (get-output-stream-string (getf buckets :centre))
+            (get-output-stream-string (getf buckets :right)))))
+
+(defun %compose-aligned-line (raw base-sgr cols)
+  "Render a status format RAW with #[align=…] regions into a COLS-wide line:
+   the left region starts at column 0, the right region ends at COLS, and the
+   centre region is centred.  Regions carry their own #[…] colours (reset to
+   BASE-SGR after each).  Overlapping content is truncated to COLS."
+  (multiple-value-bind (lraw craw rraw) (%status-align-buckets raw)
+    (let* ((reset (format nil "~C[~Am" +esc+ base-sgr))
+           (l (if (plusp (length lraw)) (concatenate 'string (%status-expand-style-blocks lraw base-sgr) reset) ""))
+           (c (if (plusp (length craw)) (concatenate 'string (%status-expand-style-blocks craw base-sgr) reset) ""))
+           (r (if (plusp (length rraw)) (concatenate 'string (%status-expand-style-blocks rraw base-sgr) reset) ""))
+           (lw (%visible-length l)) (cw (%visible-length c)) (rw (%visible-length r)))
+      (%visible-truncate
+       (with-output-to-string (out)
+         (let ((col 0))
+           (flet ((pad-to (target)
+                    (when (> target col)
+                      (dotimes (_ (- target col)) (write-char #\Space out))
+                      (setf col target))))
+             (write-string l out) (incf col lw)
+             (when (plusp cw)
+               (pad-to (max col (floor (- cols cw) 2)))
+               (when (< col cols) (write-string c out) (incf col cw)))
+             (when (plusp rw)
+               (pad-to (max col (- cols rw)))
+               (when (< col cols) (write-string r out) (incf col rw)))
+             (pad-to cols))))
+       cols))))
+
 (defun render-status-bar (stream session terminal-rows terminal-cols
                           &key (status-row (1- terminal-rows)))
   "Draw the status bar at STATUS-ROW with dynamic format string expansion.
@@ -298,6 +375,30 @@
          (active-pane (session-active-pane session))
          ;; Pass terminal dimensions so #{client_width} / #{client_height} work
          ;; in status-left, status-right, and window-status-format strings.
+         (context     (cl-tmux/format:format-context-from-session
+                       session active-win active-pane
+                       :client-width  terminal-cols
+                       :client-height (max 0 (- terminal-rows 1))))
+         (sgr-code    (%status-sgr-from-style
+                       (cl-tmux/options:get-option "status-style" "")))
+         (status-fmt0 (cl-tmux/options:get-option "status-format[0]" "")))
+    ;; status-format[0] template path: when SET (and no prompt is active) the bar
+    ;; is rendered from that single format, with #[align=…] regions positioned by
+    ;; %compose-aligned-line and #{W:…}/#{…} expanded.  Otherwise fall through to
+    ;; the procedural status-left + window-list + status-right path below.
+    (when (and (stringp status-fmt0) (plusp (length status-fmt0))
+               (not (prompt-active-p)))
+      (let ((line (%compose-aligned-line
+                   (handler-case (cl-tmux/format:expand-format status-fmt0 context)
+                     (error () status-fmt0))
+                   sgr-code terminal-cols)))
+        (move-to stream status-row 0)
+        (format stream "~C[~Am" +esc+ sgr-code)
+        (write-string line stream)
+        (reset-attrs stream))
+      (return-from render-status-bar)))
+  (let* ((active-win  (session-active-window session))
+         (active-pane (session-active-pane session))
          (context     (cl-tmux/format:format-context-from-session
                        session active-win active-pane
                        :client-width  terminal-cols
