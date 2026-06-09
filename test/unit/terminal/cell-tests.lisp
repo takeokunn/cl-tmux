@@ -448,3 +448,43 @@
     (is (char= #\┘
                (cl-tmux/terminal/actions::%remap-charset-char s #\j))
         "In :dec-graphics mode, 'j' must map to lower-right corner")))
+
+;;; ── Background-colour erase (BCE) ────────────────────────────────────────────
+;;;
+;;; Cells cleared by ED/EL/ECH, the blanks from IL/DL/ICH/DCH, and lines exposed
+;;; by scrolling must take the CURRENT SGR background colour, not the default.
+
+(def-suite bce-suite :description "Background-colour erase" :in terminal-suite)
+(in-suite bce-suite)
+
+(test ed-clears-to-current-background
+  "ESC[44m then ESC[2J fills the display with the current background (bg=4)."
+  (with-screen (s 6 3)
+    (feed s (esc "[44m"))          ; SGR 44 → background colour 4
+    (feed s (esc "[2J"))           ; ED 2 → erase whole display
+    (is (= 4 (bg-at s 0 0)) "erased cell must carry the current bg (4)")
+    (is (= 4 (bg-at s 5 2)) "every erased cell carries the bg")
+    (is (char= #\Space (char-at s 0 0)) "erased cell is blank")))
+
+(test el-clears-to-current-background
+  "ESC[41m then ESC[K erases to end of line with the current background (bg=1)."
+  (with-screen (s 6 3)
+    (feed s (esc "[41m"))          ; background colour 1
+    (feed s (esc "[K"))            ; EL 0 → cursor to end of line
+    (is (= 1 (bg-at s 0 0)) "EL must erase to the current bg")))
+
+(test erase-without-background-is-default
+  "With no background set, erasing leaves default bg (0) — BCE is a no-op then."
+  (with-screen (s 6 3)
+    (feed s "abc")
+    (feed s (esc "[2J"))
+    (is (= 0 (bg-at s 0 0)) "default bg (0) when no SGR background was set")))
+
+(test bce-resets-foreground-and-attrs
+  "A BCE-erased cell carries only the background; fg and attrs reset to default."
+  (with-screen (s 6 3)
+    (feed s (esc "[1;31;44m"))     ; bold, fg red, bg blue
+    (feed s (esc "[2J"))
+    (is (= 4 (bg-at s 0 0))   "bg carries over")
+    (is (= 7 (fg-at s 0 0))   "fg resets to default (7)")
+    (is (= 0 (attrs-at s 0 0)) "attrs reset to 0 (no bold on erased cell)")))

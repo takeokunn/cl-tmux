@@ -17,10 +17,18 @@
     (setf (screen-cell screen col dst-row)
           (screen-cell screen col src-row))))
 
+(defun %erase-cell (screen)
+  "A blank cell carrying the current background colour (BCE — background colour
+   erase).  Cells cleared by ED/EL/ECH, the blanks introduced by IL/DL/ICH/DCH,
+   and lines exposed by scrolling take the current SGR background so a themed app
+   that sets a background then clears renders that colour, not the default.  Only
+   the background carries over; foreground and attributes reset to default."
+  (make-cell :bg (screen-cur-bg screen)))
+
 (defun %clear-row (screen row)
-  "Fill every cell in ROW with a blank cell."
+  "Fill every cell in ROW with a background-colour-erase blank (BCE)."
   (dotimes (col (screen-width screen))
-    (setf (screen-cell screen col row) (blank-cell))))
+    (setf (screen-cell screen col row) (%erase-cell screen))))
 
 ;;; ── Scroll operations ───────────────────────────────────────────────────────
 

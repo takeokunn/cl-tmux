@@ -47,7 +47,7 @@
          do (setf (screen-cell screen x cy)
                   (screen-cell screen (+ x n) cy)))
    (loop for x from (max cx (- w n)) to (1- w)
-         do (setf (screen-cell screen x cy) (blank-cell))))
+         do (setf (screen-cell screen x cy) (%erase-cell screen))))
 
   (insert-chars
    "ICH — insert N blank characters at the cursor, pushing existing chars right.
@@ -56,7 +56,7 @@
          do (setf (screen-cell screen x cy)
                   (screen-cell screen (- x n) cy)))
    (loop for x from cx to (min (1- w) (+ cx n -1))
-         do (setf (screen-cell screen x cy) (blank-cell)))))
+         do (setf (screen-cell screen x cy) (%erase-cell screen)))))
 
 ;;; ── Prolog-style line-edit dispatch macro ──────────────────────────────────
 ;;;

@@ -15,7 +15,7 @@
         do (let ((bx (if (= y y0) x0 0))
                  (ex (if (= y y1) x1 (1- (screen-width screen)))))
              (loop for x from bx to ex
-                   do (setf (screen-cell screen x y) (blank-cell)))))
+                   do (setf (screen-cell screen x y) (%erase-cell screen)))))
   (setf (screen-dirty-p screen) t))
 
 ;;; ── ED (erase-display) rule table ──────────────────────────────────────────
