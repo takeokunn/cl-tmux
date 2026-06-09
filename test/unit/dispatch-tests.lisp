@@ -1348,6 +1348,19 @@
         (is (string= "cur" (session-name cur))
             "the current session must be unchanged")))))
 
+(test cmd-set-window-option-t-targets-window
+  "setw -t 1 @wopt myval sets the WINDOW-LOCAL option on window-id 1, not the
+   active window — and -t no longer leaks into the option name."
+  (let* ((s  (make-fake-session :nwindows 2))
+         (w0 (first  (session-windows s)))     ; id 0, active
+         (w1 (second (session-windows s))))    ; id 1
+    (with-loop-state
+      (cl-tmux::%run-command-line s "setw -t 1 @wopt myval")
+      (is (string= "myval" (cl-tmux/options:get-option-for-window "@wopt" w1))
+          "window-id 1 must have the window-local @wopt = myval")
+      (is (null (cl-tmux/options:get-option-for-window "@wopt" w0))
+          "the active window (id 0) must NOT have @wopt set"))))
+
 (test run-command-line-rename-window-no-arg-opens-prompt
   "'rename-window' with no argument falls through to the prompt (name table)."
   (let ((s (make-fake-session :nwindows 1)))

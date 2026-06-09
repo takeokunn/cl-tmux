@@ -1109,8 +1109,9 @@
    `set -gF status-left '#{host}'` stores the resolved hostname).
    NOTE: this fixes `set -g status off`, which previously set an option literally
    named \"-g\"."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "")
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
     (let* ((name  (first positionals))
+           (target-str (cdr (assoc #\t flags)))
            (raw-value (format nil "~{~A~^ ~}" (rest positionals)))
            ;; -F: expand the value as a format string against the active context
            ;; before it is stored (one-shot resolution, vs. lazy status formats).
@@ -1142,10 +1143,18 @@
           ((and (assoc #\o flags)
                 (nth-value 1 (gethash name cl-tmux/options:*global-options*)))
            nil)
-          ;; normal set: route by scope flag.
+          ;; normal set: route by scope flag.  -t targets a specific window (-w)
+          ;; or pane (-p); without -t the active window/pane is used.
           (t
-           (let ((pane   (and panep   (not globalp) (session-active-pane session)))
-                 (window (and windowp (not globalp) (session-active-window session))))
+           (let ((pane   (and panep   (not globalp)
+                              (if target-str
+                                  (%resolve-pane-in-window (session-active-window session)
+                                                           target-str)
+                                  (session-active-pane session))))
+                 (window (and windowp (not globalp)
+                              (if target-str
+                                  (%resolve-window-target session target-str)
+                                  (session-active-window session)))))
              (cond
                ;; -p (and not -g): pane-local when an active pane exists.
                (pane
