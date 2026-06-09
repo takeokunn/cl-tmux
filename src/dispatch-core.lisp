@@ -2242,9 +2242,8 @@
    -t: target a specific pane by pane-id or 'session:window.pane' syntax.
    -l: send each positional literally (no key-name translation).
    -H: each positional is a hexadecimal character code (e.g. `send -H 1b 5b 41`).
-   -R (reset terminal state) and -M (mouse passthrough) are accepted but not acted
-   on — they are rare in .tmux.conf and need pane terminal-reset / mouse-bind
-   context respectively.
+   -R: reset the target pane's terminal state (RIS) before sending any keys.
+   -M (mouse passthrough) is accepted but not acted on (needs mouse-event context).
    Without -X: each positional is a key name or literal string typed into the pane."
   (multiple-value-bind (flags positionals) (%parse-command-flags args "tN")
     (let* ((target-str (cdr (assoc #\t flags)))
@@ -2264,6 +2263,12 @@
                   (declare (ignore _s _w))
                   pane)
                 (session-active-pane session))))
+      ;; -R: reset the target pane's terminal state (RIS — clears the grid, homes
+      ;; the cursor, resets SGR + modes) so a pane left in a confused state by a
+      ;; crashed full-screen app recovers.  Runs before any keys are sent.
+      (when (and (assoc #\R flags) target-pane (pane-screen target-pane))
+        (cl-tmux/terminal/actions:ris-action (pane-screen target-pane))
+        (setf *dirty* t))
       (cond
         ;; -X: dispatch the copy-mode command (first positional) COUNT times.
         (x-p

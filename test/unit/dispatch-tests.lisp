@@ -186,6 +186,21 @@
       (cl-tmux::dispatch-command s :copy-mode-enter nil)
       (is (cl-tmux::%copy-mode-active-p s)))))
 
+(test send-keys-R-resets-pane-terminal-state
+  "send-keys -R resets the target pane's terminal state (RIS): the cursor is homed."
+  (let* ((s    (make-fake-session :nwindows 1 :npanes 1))
+         (win  (cl-tmux/model:session-active-window s))
+         (pane (cl-tmux/model:window-active-pane win))
+         (scr  (cl-tmux/model:pane-screen pane)))
+    (with-loop-state
+      (setf (cl-tmux/terminal/types:screen-cursor-x scr) 5
+            (cl-tmux/terminal/types:screen-cursor-y scr) 3)
+      (cl-tmux::%cmd-send-keys-arg s '("-R"))
+      (is (= 0 (cl-tmux/terminal/types:screen-cursor-x scr))
+          "send-keys -R must home the cursor x")
+      (is (= 0 (cl-tmux/terminal/types:screen-cursor-y scr))
+          "send-keys -R must home the cursor y"))))
+
 ;;; ── send-keys -X copy-mode commands: cursor-left/right + rectangle-toggle ────
 
 (test send-keys-x-command-table-maps-cursor-and-rectangle
