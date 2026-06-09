@@ -2195,12 +2195,28 @@
     ("pipe-and-cancel"           . :copy-mode-yank))
   "Alist mapping send-keys -X command names to copy-mode dispatch keywords.")
 
-(defun %dispatch-send-keys-X (session command-name)
-  "Dispatch a send-keys -X COMMAND-NAME against the active pane's copy mode.
-   Returns T when handled, NIL otherwise."
+(defun %dispatch-send-keys-X (session command-name &optional target-pane target-window)
+  "Dispatch a send-keys -X COMMAND-NAME against TARGET-PANE's copy mode (default:
+   the active pane).  Copy-mode -X commands act on the session's ACTIVE screen, so
+   when TARGET-PANE is a non-active pane it is TEMPORARILY focused — a raw
+   active-slot swap (session-active + window-active), restored via unwind-protect,
+   with NO focus events or last-active updates — so the command operates on the
+   target while leaving the real focus unchanged.  Returns T when COMMAND-NAME is
+   a recognised copy-mode command."
   (let ((kw (cdr (assoc command-name *copy-mode-x-commands* :test #'string-equal))))
     (when kw
-      (dispatch-command session kw nil)
+      (if (and target-pane target-window
+               (not (eq target-pane (session-active-pane session))))
+          (let ((prev-win  (cl-tmux/model:session-active session))
+                (prev-pane (cl-tmux/model:window-active target-window)))
+            (unwind-protect
+                 (progn
+                   (setf (cl-tmux/model:session-active session)      target-window
+                         (cl-tmux/model:window-active   target-window) target-pane)
+                   (dispatch-command session kw nil))
+              (setf (cl-tmux/model:session-active session)       prev-win
+                    (cl-tmux/model:window-active  target-window) prev-pane)))
+          (dispatch-command session kw nil))
       t)))
 
 (defun %cmd-run-shell-arg (session args)
@@ -2557,17 +2573,19 @@
            (x-p        (and (assoc #\X flags) t))
            (count      (let ((n (cdr (assoc #\N flags))))
                          (max 1 (or (and n (parse-integer n :junk-allowed t)) 1))))
-           ;; Resolve -t to a specific pane; fall back to the active pane.
-           (target-pane
-            (if target-str
-                (multiple-value-bind (_s _w pane)
-                    (resolve-target *server-sessions* target-str
-                                    :current-session session
-                                    :current-window  (session-active-window session)
-                                    :current-pane    (session-active-pane session))
-                  (declare (ignore _s _w))
-                  pane)
-                (session-active-pane session))))
+           ;; Resolve -t to a specific window+pane; fall back to the active ones.
+           ;; The window is needed so a copy-mode -X command can be routed to a
+           ;; non-active target pane (see %dispatch-send-keys-X).
+           (target-resolved (and target-str
+                                 (multiple-value-list
+                                  (resolve-target *server-sessions* target-str
+                                                  :current-session session
+                                                  :current-window  (session-active-window session)
+                                                  :current-pane    (session-active-pane session)))))
+           (target-win  (if target-str (second target-resolved)
+                            (session-active-window session)))
+           (target-pane (if target-str (third target-resolved)
+                            (session-active-pane session))))
       ;; -R: reset the target pane's terminal state (RIS — clears the grid, homes
       ;; the cursor, resets SGR + modes) so a pane left in a confused state by a
       ;; crashed full-screen app recovers.  Runs before any keys are sent.
@@ -2579,7 +2597,7 @@
         (x-p
          (when (first positionals)
            (dotimes (_ count)
-             (%dispatch-send-keys-X session (first positionals)))))
+             (%dispatch-send-keys-X session (first positionals) target-pane target-win))))
         ;; Regular keys: send the whole positional sequence COUNT times.  With -H
         ;; each positional is a hex code → the literal character it names.
         ((and positionals target-pane)

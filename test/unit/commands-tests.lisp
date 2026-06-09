@@ -2516,6 +2516,29 @@
       ;; Clean up the forked cat process.
       (cl-tmux/commands:pipe-pane-close pb))))
 
+(test cmd-send-keys-X-t-targets-pane-copy-mode
+  "send-keys -X -t .%2 begin-selection acts on pane-id 2's copy mode, not the
+   active pane, and restores focus to the original active pane afterward."
+  (let* ((pa  (%make-test-pane :id 1)) (pb (%make-test-pane :id 2))
+         (win (make-window :id 1 :name "w" :width 20 :height 5
+                           :tree (make-layout-split :h (make-layout-leaf pa)
+                                                    (make-layout-leaf pb) 1/2)
+                           :panes (list pa pb)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window sess win)
+    (window-select-pane win pa)                       ; pane 1 active
+    (cl-tmux/commands::copy-mode-enter (pane-screen pa))
+    (cl-tmux/commands::copy-mode-enter (pane-screen pb))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess))))
+      (with-loop-state
+        (cl-tmux::%run-command-line sess "send-keys -X -t .%2 begin-selection")
+        (is-true (cl-tmux/terminal/types:screen-copy-selecting (pane-screen pb))
+            "pane 2 (the -t target) selection must be started")
+        (is-false (cl-tmux/terminal/types:screen-copy-selecting (pane-screen pa))
+            "the active pane 1 must be unaffected")
+        (is (eq pa (cl-tmux/model:window-active-pane win))
+            "focus must be restored to the original active pane (1)")))))
+
 (test pipe-pane-write-noop-when-no-pipe
   "pipe-pane-write is a no-op when pane has no open pipe."
   (let ((pane (%make-test-pane)))

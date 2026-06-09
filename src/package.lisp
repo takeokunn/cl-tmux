@@ -499,6 +499,7 @@
    #:window-panes
    #:window-tree
    #:window-active-pane
+   #:window-active
    #:window-select-pane
    #:window-split
    #:window-relayout
@@ -554,6 +555,7 @@
    #:session-name
    #:session-windows
    #:session-active-window
+   #:session-active
    #:session-select-window
    #:session-insert-window
    #:session-new-window
