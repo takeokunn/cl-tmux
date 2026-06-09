@@ -124,6 +124,9 @@
   (:copy-mode-word-forward     (%copy-mode-call session #'copy-mode-word-forward))
   (:copy-mode-word-backward    (%copy-mode-call session #'copy-mode-word-backward))
   (:copy-mode-word-end         (%copy-mode-call session #'copy-mode-word-end))
+  (:copy-mode-space-forward    (%copy-mode-call session #'copy-mode-space-forward))
+  (:copy-mode-space-backward   (%copy-mode-call session #'copy-mode-space-backward))
+  (:copy-mode-space-end        (%copy-mode-call session #'copy-mode-space-end))
   (:copy-mode-line-start       (%copy-mode-call session #'copy-mode-line-start))
   (:copy-mode-line-end         (%copy-mode-call session #'copy-mode-line-end))
   ;; Horizontal cursor movement and rectangle (block) selection toggle — the

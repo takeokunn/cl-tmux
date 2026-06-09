@@ -714,6 +714,9 @@
    #:copy-mode-word-forward
    #:copy-mode-word-backward
    #:copy-mode-word-end
+   #:copy-mode-space-forward
+   #:copy-mode-space-backward
+   #:copy-mode-space-end
    ;; Line navigation
    #:copy-mode-line-start
    #:copy-mode-line-end

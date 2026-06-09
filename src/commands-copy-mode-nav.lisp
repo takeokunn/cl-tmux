@@ -24,6 +24,12 @@
   (let ((seps (or (cl-tmux/options:get-option "word-separators") " -_@")))
     (find ch seps :test #'char=)))
 
+(defun %space-separator-p (ch)
+  "Return T when CH is whitespace.  Used by the WORD-motion commands (vi W/B/E),
+   which treat a WORD as a run of non-blank characters separated only by spaces —
+   independent of the 'word-separators' option that drives w/b/e."
+  (or (char= ch #\Space) (char= ch #\Tab)))
+
 ;;; ── Declarative word-navigation macro table ─────────────────────────────────
 ;;;
 ;;; define-copy-mode-word-command: Prolog-style facts table for word-motion
@@ -101,6 +107,43 @@
    ;; Advance to the last character of the word.
    (loop while (and (< new-col (1- width))
                     (not (%word-separator-p (aref chars (1+ new-col)))))
+         do (incf new-col))))
+
+;;; WORD motion (vi W/B/E): identical scans but blank-delimited (%space-separator-p)
+;;; rather than word-separators — a WORD spans punctuation, stopping only at spaces.
+(define-copy-mode-word-command
+  (copy-mode-space-forward
+   "Move cursor forward to the start of the next WORD (whitespace-delimited; vi W)."
+   (min (1- width) new-col)
+   (loop while (and (< new-col width)
+                    (not (%space-separator-p (aref chars new-col))))
+         do (incf new-col))
+   (loop while (and (< new-col width)
+                    (%space-separator-p (aref chars new-col)))
+         do (incf new-col)))
+
+  (copy-mode-space-backward
+   "Move cursor backward to the start of the previous/current WORD (vi B)."
+   (max 0 new-col)
+   (loop while (and (> new-col 0)
+                    (%space-separator-p (aref chars (1- new-col))))
+         do (decf new-col))
+   (loop while (and (> new-col 0)
+                    (not (%space-separator-p (aref chars (1- new-col)))))
+         do (decf new-col)))
+
+  (copy-mode-space-end
+   "Move cursor to the last character of the current/next WORD (vi E)."
+   (min (1- width) new-col)
+   (when (and (< new-col (1- width))
+              (not (%space-separator-p (aref chars new-col)))
+              (%space-separator-p (aref chars (1+ new-col))))
+     (incf new-col))
+   (loop while (and (< new-col (1- width))
+                    (%space-separator-p (aref chars new-col)))
+         do (incf new-col))
+   (loop while (and (< new-col (1- width))
+                    (not (%space-separator-p (aref chars (1+ new-col)))))
          do (incf new-col))))
 
 ;;; ── Line start / end ─────────────────────────────────────────────────────────

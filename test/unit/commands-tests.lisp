@@ -581,6 +581,47 @@
     (is (= 3 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
         "column must be preserved")))
 
+;;; ── WORD motion: copy-mode-space-{forward,backward,end} (vi W/B/E) ───────────
+
+(test copy-mode-space-motion-is-whitespace-delimited
+  "WORD motion (W/B/E) treats punctuation as part of the WORD — only whitespace
+   separates — unlike w/b/e which honour word-separators (here '-')."
+  (let ((s (%copy-mode-screen :content "foo-bar baz")))
+    ;; forward: w stops at 'bar' (col 4, '-' is a separator); W skips to 'baz' (8).
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-word-forward s)
+    (is (= 4 (cdr (cl-tmux/terminal/types:screen-copy-cursor s))) "w → start of 'bar'")
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-space-forward s)
+    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "W → start of 'baz' (foo-bar is one WORD)")
+    ;; backward from 'baz' (8): b → 'bar' (4); B → start of 'foo-bar' WORD (0).
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 8))
+    (cl-tmux/commands::copy-mode-word-backward s)
+    (is (= 4 (cdr (cl-tmux/terminal/types:screen-copy-cursor s))) "b → start of 'bar'")
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 8))
+    (cl-tmux/commands::copy-mode-space-backward s)
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "B → start of 'foo-bar' WORD")))
+
+(test copy-mode-space-end-lands-on-word-final-char
+  "copy-mode-space-end (vi E) moves to the last char of the current/next WORD."
+  (let ((s (%copy-mode-screen :content "foo-bar baz")))
+    ;; From col 0, E → last char of 'foo-bar' (col 6, the 'r').
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-space-end s)
+    (is (= 6 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "E → last char of the 'foo-bar' WORD")))
+
+(test copy-mode-x-word-vs-space-mappings
+  "send -X next-word/etc. map to word motion; next-space/etc. to WORD motion."
+  (flet ((x (name) (cdr (assoc name cl-tmux::*copy-mode-x-commands*
+                               :test #'string-equal))))
+    (is (eq :copy-mode-word-forward  (x "next-word")))
+    (is (eq :copy-mode-space-forward (x "next-space")))
+    (is (eq :copy-mode-space-backward (x "previous-space")))
+    (is (eq :copy-mode-space-end      (x "next-space-end")))))
+
 (test copy-mode-other-end-preserves-selection-text
   "Swapping the two ends must not change the selected text or normalised bounds —
    this is the defining invariant of other-end."
