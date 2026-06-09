@@ -451,13 +451,15 @@
                     session (session-active-window session)
                     (session-active-pane session)
                     :client-width terminal-cols))
-         (text     (if (and (stringp fmt) (plusp (length fmt)))
-                       (%status-expand-style-blocks
-                        (handler-case (cl-tmux/format:expand-format fmt context)
-                          (error () fmt))
-                        sgr-code)
+         ;; Expand #{...} (leaving #[...] markers intact) then compose via the
+         ;; same align-aware path as status-format[0], so #[align=right]/#[align=
+         ;; centre] work in the extra rows too.  An empty format composes to a
+         ;; blank styled row.
+         (expanded (if (and (stringp fmt) (plusp (length fmt)))
+                       (handler-case (cl-tmux/format:expand-format fmt context)
+                         (error () fmt))
                        ""))
-         (line     (%status-justify-line text "" terminal-cols "left")))
+         (line     (%compose-aligned-line expanded sgr-code terminal-cols)))
     (move-to stream row 0)
     (format stream "~C[~Am" +esc+ sgr-code)
     (write-string line stream)

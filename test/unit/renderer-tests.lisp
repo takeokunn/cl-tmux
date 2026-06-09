@@ -974,6 +974,20 @@
         (is (stringp out) "multi-line status with unset formats must still render")
         (is (plusp (length out)) "output must be non-empty")))))
 
+(test render-extra-status-line-honours-align
+  "An extra status row (status-format[N]) honours #[align=right] via the shared
+   align composer — consistent with status-format[0]."
+  (with-isolated-options ("status-format[1]" "L1#[align=right]R1")
+    (let* ((sess (make-test-session 30 10 :content ""))
+           (out  (with-output-to-string (s)
+                   (cl-tmux/renderer::render-extra-status-line s sess 30 8 1)))
+           (vis  (cl-ppcre:regex-replace-all
+                  (format nil "~C\\[[0-9;?]*[A-Za-z]" #\Escape) out ""))
+           (rpos (search "R1" vis)))
+      (is (eql 0 (search "L1" vis)) "left content at column 0 (got ~S)" vis)
+      (is (and rpos (= (+ rpos 2) 30))
+          "right content ends at the row width (got ~S)" vis))))
+
 ;;; ── BEL rendering ────────────────────────────────────────────────────────────
 
 (test render-emits-bel-when-bell-pending
