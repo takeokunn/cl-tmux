@@ -721,9 +721,11 @@
      separate sequential prompt.  On completion, each response replaces %%1, %%2,
      etc. in TEMPLATE and the expanded command is executed.
    Without -p: single prompt ':' that runs the typed command line (same as C-b :).
-   Without TEMPLATE: input is executed directly as a command line."
+   Without TEMPLATE: input is executed directly as a command line.
+   -1: single-key prompt — each prompt accepts ONE keypress (no Enter)."
   (multiple-value-bind (flags positionals) (%parse-command-flags args "p")
     (let* ((prompts-str (cdr (assoc #\p flags)))
+           (single-key  (and (assoc #\1 flags) t))   ; -1: one-keypress prompts
            (template    (format nil "~{~A~^ ~}" positionals))
            (prompt-list (when prompts-str
                           (mapcar (lambda (s) (string-trim " " s))
@@ -744,7 +746,8 @@
                           (let ((label (nth idx prompt-list)))
                             (prompt-start label "" (lambda (input)
                                                      (setf (aref answers idx) input)
-                                                     (ask-prompt (1+ idx))))))))
+                                                     (ask-prompt (1+ idx)))
+                                          :single-key single-key)))))
              (ask-prompt 0))))
         ;; -p without template: each prompt result is concatenated
         (prompt-list
@@ -753,14 +756,16 @@
                          (lambda (input)
                            (unless (string= input "")
                              (add-prompt-history input)
-                             (%run-command-line session input))))))
+                             (%run-command-line session input)))
+                         :single-key single-key)))
         ;; No -p: standard C-b : interactive prompt
         (t
          (prompt-start ": " ""
                        (lambda (input)
                          (unless (string= input "")
                            (add-prompt-history input)
-                           (%run-command-line session input)))))))))
+                           (%run-command-line session input)))
+                       :single-key single-key))))))
 
 (defun %substitute-percent (template args)
   "Expand a command-prompt template: %1..%9 are replaced by the 1st..9th element

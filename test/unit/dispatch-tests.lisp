@@ -1822,6 +1822,22 @@
         (is (string= "ORIG" (cl-tmux/options:get-option "status-left"))
             "a non-y key must NOT run the command")))))
 
+(test command-prompt-1-single-key-substitutes-one-keypress
+  "command-prompt -1 -p k: 'set -g status-left %1' is a single-key prompt: one
+   keypress (no Enter) is substituted for %1 and the command runs."
+  (with-isolated-config
+    (with-loop-state
+      (let ((cl-tmux/prompt:*prompt* nil)
+            (s (make-fake-session)))
+        (cl-tmux::%cmd-command-prompt-arg
+         s '("-1" "-p" "k:" "set -g status-left %1"))
+        (is (prompt-active-p) "command-prompt -1 must open a prompt")
+        (is-true (prompt-single-key *prompt*) "the prompt must be single-key")
+        (cl-tmux::handle-prompt-key (char-code #\Z))   ; one key, no Enter
+        (is (null (prompt-active-p)) "prompt must dismiss after one key")
+        (is (string= "Z" (cl-tmux/options:get-option "status-left"))
+            "%1 must be substituted with the single keypress 'Z'")))))
+
 ;;; ── %set-option-from-prompt helper ──────────────────────────────────────────
 
 (test set-option-from-prompt-helper-opens-prompt
