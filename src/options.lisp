@@ -102,6 +102,9 @@
   ("exit-unattached"          :boolean nil)
   ("pane-border-style"        :string  "")
   ("pane-active-border-style" :string  "fg=green")
+  ;; Border line glyphs: single (default light box-drawing), double, heavy,
+  ;; simple (ASCII).  number/padded fall back to single (glyph-only support).
+  ("pane-border-lines"        :string  "single")
   ("synchronize-panes"        :boolean nil)
   ("word-separators"          :string  " -_@")
   ("automatic-rename"         :boolean t)

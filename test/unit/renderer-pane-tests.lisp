@@ -139,6 +139,37 @@
         (is (plusp (length out)) "render-tree-borders must produce output")
         (is (find #\│ out) "vertical bar character must be present")))))
 
+(test pane-border-chars-follow-pane-border-lines
+  "%pane-border-chars selects glyph pairs by pane-border-lines; unknown/number
+   fall back to single."
+  (with-isolated-config
+    (flet ((chars () (multiple-value-list (cl-tmux/renderer::%pane-border-chars))))
+      (cl-tmux/options:set-option "pane-border-lines" "single")
+      (is (equal '(#\│ #\─) (chars)))
+      (cl-tmux/options:set-option "pane-border-lines" "double")
+      (is (equal '(#\║ #\═) (chars)))
+      (cl-tmux/options:set-option "pane-border-lines" "heavy")
+      (is (equal '(#\┃ #\━) (chars)))
+      (cl-tmux/options:set-option "pane-border-lines" "simple")
+      (is (equal '(#\| #\-) (chars)))
+      (cl-tmux/options:set-option "pane-border-lines" "number")
+      (is (equal '(#\│ #\─) (chars)) "number/unknown falls back to single"))))
+
+(test render-tree-borders-honours-pane-border-lines-double
+  "With pane-border-lines double, the vertical separator uses ║ not │."
+  (with-isolated-config
+    (cl-tmux/options:set-option "pane-border-lines" "double")
+    (let* ((l0   (tl-leaf 1 1 1))
+           (l1   (tl-leaf 2 1 1))
+           (tree (make-layout-split :h l0 l1)))
+      (cl-tmux/model::layout-assign tree 0 0 81 24)
+      (let* ((ap  (layout-leaf-pane l0))
+             (buf (make-string-output-stream)))
+        (cl-tmux/renderer::render-tree-borders buf tree ap 81)
+        (let ((out (get-output-stream-string buf)))
+          (is (find #\║ out) "double border must draw ║ (got ~S)" out)
+          (is (not (find #\│ out)) "double border must not draw the single-line │"))))))
+
 ;;; -- %apply-border-style branch coverage -------------------------------------
 ;;;
 ;;; %apply-border-style (stream style-string) has four reachable branches:

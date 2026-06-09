@@ -341,9 +341,22 @@
 
 ;;; ── Separator renderers (data layer — what each orientation draws) ──────────
 
+(defun %pane-border-chars ()
+  "Return (values VERTICAL HORIZONTAL) border glyphs for the pane-border-lines
+   option: single (default light box-drawing), double, heavy, simple (ASCII).
+   Unknown values — including `number`/`padded`, whose extra semantics are not
+   modelled — fall back to single."
+  (let ((lines (cl-tmux/options:get-option "pane-border-lines" "single")))
+    (cond
+      ((string-equal lines "double") (values #\║ #\═))
+      ((string-equal lines "heavy")  (values #\┃ #\━))
+      ((string-equal lines "simple") (values #\| #\-))
+      (t                             (values #\│ #\─)))))
+
 (defun %render-h-separator (stream node active-pane terminal-cols)
-  "Draw the │ column between the left and right children of an :h split.
-   Applies the pane-border-style / pane-active-border-style option."
+  "Draw the vertical column between the left and right children of an :h split.
+   Glyph follows pane-border-lines; colour follows pane-border-style /
+   pane-active-border-style."
   (let* ((a          (layout-split-first  node))
          (b          (layout-split-second node))
          (rect       (layout-subtree-rect a))
@@ -355,20 +368,24 @@
                          (cl-tmux/options:get-option "pane-border-style" "default"))))
     (when (< border-col terminal-cols)
       (%apply-border-style stream style)
-      (loop for row from (getf rect :y) below (+ (getf rect :y) (getf rect :h))
-            do (move-to stream row border-col)
-               (write-char #\│ stream))
+      (let ((v-char (%pane-border-chars)))
+        (loop for row from (getf rect :y) below (+ (getf rect :y) (getf rect :h))
+              do (move-to stream row border-col)
+                 (write-char v-char stream)))
       (reset-attrs stream))))
 
 (defun %render-v-separator (stream node terminal-cols)
-  "Draw the ─ row between the top and bottom children of a :v split."
+  "Draw the horizontal row between the top and bottom children of a :v split.
+   Glyph follows pane-border-lines."
   (let* ((rect       (layout-subtree-rect (layout-split-first node)))
          (border-row (+ (getf rect :y) (getf rect :h)))
          (x          (getf rect :x))
          (w          (min (getf rect :w) (- terminal-cols x))))
     (reset-attrs stream)
     (move-to stream border-row x)
-    (loop repeat (max 0 w) do (write-char #\─ stream))))
+    (multiple-value-bind (v-char h-char) (%pane-border-chars)
+      (declare (ignore v-char))
+      (loop repeat (max 0 w) do (write-char h-char stream)))))
 
 ;;; ── Pane border status line ──────────────────────────────────────────────────
 ;;;
