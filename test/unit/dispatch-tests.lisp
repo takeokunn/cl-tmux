@@ -978,6 +978,18 @@
           (is (search "hello world" text)
               "joined args 'hello world' must appear in the overlay (got ~S)" text))))))
 
+(test display-message-l-flag-shows-literal-format
+  "display-message -l shows ARGS verbatim, WITHOUT expanding #{...} formats —
+   the inverse of the default expansion path."
+  (let ((s (make-fake-session)))                 ; session name is \"0\"
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "display-message -l #{session_name}")
+        (is (overlay-active-p) "display-message -l must still open an overlay")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is (search "#{session_name}" text)
+              "-l must show the literal #{session_name}, not expand it (got ~S)" text))))))
+
 (test run-command-line-empty-is-noop
   "%run-command-line with blank input does not signal an error."
   (let ((s (make-fake-session)))

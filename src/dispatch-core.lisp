@@ -646,10 +646,13 @@
 ;;; falls through to the no-argument name table for everything else.
 
 (defun %cmd-display-message (session args)
-  "display-message [-d ms] [-t target] <fmt...>: expand the space-joined ARGS as a format string
+  "display-message [-l] [-d ms] [-t target] <fmt...>: expand the space-joined ARGS as a format string
    against the target (or active) session/window/pane, then log and show the result.
+   -l: literal — show ARGS verbatim WITHOUT expanding #{...} format variables.
    -d ms: display duration in milliseconds (overrides display-time option).
    -t target: build the format context from the target's session/window/pane.
+   -p/-v are tolerated (printing to stdout / verbose logging are no-ops in the
+   single-client UI; the message is still shown as an overlay).
    Uses show-transient-overlay so it auto-dismisses after the configured duration."
   (multiple-value-bind (flags positionals) (%parse-command-flags args "dt")
     (let* ((delay-str  (cdr (assoc #\d flags)))
@@ -671,8 +674,12 @@
     (let* ((win       tgt-win)
            (pane      tgt-pane)
            (ctx       (cl-tmux/format:format-context-from-session tgt-session win pane))
-           (text      (cl-tmux/format:expand-format
-                       (format nil "~{~A~^ ~}" positionals) ctx)))
+           (raw       (format nil "~{~A~^ ~}" positionals))
+           ;; -l: literal — emit ARGS unchanged, skipping #{...} expansion so a
+           ;; message containing literal '#' / '#{' is shown as typed.
+           (text      (if (assoc #\l flags)
+                          raw
+                          (cl-tmux/format:expand-format raw ctx))))
       (add-message-log text)
       (if delay-ms
           ;; Custom delay: temporarily override display-time for this message.
