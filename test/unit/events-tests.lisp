@@ -595,11 +595,19 @@
   (is (string= "S-Down"  (cl-tmux::%modifier-arrow-key-name 50 66)))
   (is (string= "C-Right" (cl-tmux::%modifier-arrow-key-name 53 67))))
 
+(test modifier-arrow-key-name-builds-combined-modifiers
+  "Combined modifiers resolve via %modifier-prefix in canonical C-/M-/S- order:
+   6=Ctrl+Shift, 7=Ctrl+Meta, 8=Ctrl+Meta+Shift, 4=Meta+Shift."
+  (is (string= "C-S-Up"   (cl-tmux::%modifier-arrow-key-name 54 65)))  ; 6
+  (is (string= "C-M-Up"   (cl-tmux::%modifier-arrow-key-name 55 65)))  ; 7
+  (is (string= "C-M-S-Up" (cl-tmux::%modifier-arrow-key-name 56 65)))  ; 8
+  (is (string= "M-S-Up"   (cl-tmux::%modifier-arrow-key-name 52 65)))) ; 4
+
 (test modifier-arrow-key-name-returns-nil-for-unknown
-  "%modifier-arrow-key-name returns NIL for an unknown modifier or non-arrow
-   final, so the caller forwards the sequence unchanged."
+  "%modifier-arrow-key-name returns NIL for a non-arrow final or a no-modifier
+   value, so the caller forwards the sequence unchanged."
   (is (null (cl-tmux::%modifier-arrow-key-name 53 72)))  ; Ctrl+Home — not arrow
-  (is (null (cl-tmux::%modifier-arrow-key-name 52 65)))) ; '4' (Shift+Alt) unmapped
+  (is (null (cl-tmux::%modifier-arrow-key-name 49 65)))) ; '1' = no modifier → NIL
 
 ;;; ── Modifier+arrow binding override (bind C-Up / bind -n M-Left) ────────────
 
@@ -1074,20 +1082,43 @@
 
 ;;; ── Function / navigation keys: ESC [ N ~ → key name → binding ───────────────
 
-(test csi-tilde-param-parses-single-and-multi-digit
-  "%csi-tilde-param reads the decimal parameter; a ';' (modified key) yields NIL."
-  ;; ESC [ 5 ~  → 5
-  (is (= 5 (cl-tmux::%csi-tilde-param
-            (make-array 4 :element-type '(unsigned-byte 8)
-                          :initial-contents '(27 91 53 126)) 4)))
-  ;; ESC [ 1 5 ~ → 15  (F5)
-  (is (= 15 (cl-tmux::%csi-tilde-param
-             (make-array 5 :element-type '(unsigned-byte 8)
-                           :initial-contents '(27 91 49 53 126)) 5)))
-  ;; ESC [ 1 ; 5 ~ → NIL (the ';' is not a digit → modified key, forward raw)
-  (is (null (cl-tmux::%csi-tilde-param
-             (make-array 6 :element-type '(unsigned-byte 8)
-                           :initial-contents '(27 91 49 59 53 126)) 6))))
+(test csi-tilde-parse-reads-param-and-modifier
+  "%csi-tilde-parse returns (values PARAM MOD); MOD defaults to 1 and a ';mod'
+   field carries the modifier (the modified-function-key form)."
+  ;; ESC [ 5 ~  → 5, 1  (unmodified)
+  (multiple-value-bind (p m)
+      (cl-tmux::%csi-tilde-parse
+       (make-array 4 :element-type '(unsigned-byte 8)
+                     :initial-contents '(27 91 53 126)) 4)
+    (is (= 5 p)) (is (= 1 m)))
+  ;; ESC [ 1 5 ~ → 15, 1  (F5)
+  (multiple-value-bind (p m)
+      (cl-tmux::%csi-tilde-parse
+       (make-array 5 :element-type '(unsigned-byte 8)
+                     :initial-contents '(27 91 49 53 126)) 5)
+    (is (= 15 p)) (is (= 1 m)))
+  ;; ESC [ 1 5 ; 5 ~ → 15, 5  (Ctrl+F5)
+  (multiple-value-bind (p m)
+      (cl-tmux::%csi-tilde-parse
+       (make-array 7 :element-type '(unsigned-byte 8)
+                     :initial-contents '(27 91 49 53 59 53 126)) 7)
+    (is (= 15 p)) (is (= 5 m)))
+  ;; ESC [ ~ (empty param) → NIL → raw forward
+  (is (null (cl-tmux::%csi-tilde-parse
+             (make-array 3 :element-type '(unsigned-byte 8)
+                           :initial-contents '(27 91 126)) 3))))
+
+(test csi-tilde-key-joins-base-and-modifier
+  "%csi-tilde-key combines base key + modifier prefix: F5, C-F5, S-Home."
+  (flet ((k (bytes) (cl-tmux::%csi-tilde-key
+                     (make-array (length bytes) :element-type '(unsigned-byte 8)
+                                                :initial-contents bytes)
+                     (length bytes))))
+    (is (string= "F5"     (k '(27 91 49 53 126))))         ; ESC [ 15 ~
+    (is (string= "C-F5"   (k '(27 91 49 53 59 53 126))))   ; ESC [ 15 ; 5 ~
+    (is (string= "S-Home" (k '(27 91 49 59 50 126))))      ; ESC [ 1 ; 2 ~
+    (is (null (k '(27 91 50 48 48 126)))                   ; ESC [ 200 ~ (paste)
+        "an unmapped parameter yields NIL so it is forwarded raw")))
 
 (test csi-tilde-key-name-maps-known-params
   "%csi-tilde-key-name maps vt parameters to canonical tmux key names."
@@ -1293,6 +1324,44 @@
             (cl-tmux::process-byte s byte state))
           (is (eq (second (session-windows s)) (session-active-window s))
               "C-b Up must still resolve to the prefix-table Up binding"))))))
+
+;;; ── Modified function keys & combined-modifier arrows (root bind -n) ─────────
+
+(test modified-function-key-root-binding-fires-from-byte-stream
+  "bind -n C-F5 fires when ESC [ 15 ; 5 ~ (Ctrl+F5) is fed through the machine —
+   the modified-function-key form the unmodified path previously dropped."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (let ((cl-tmux::*esc-accum-buffer* nil)
+            (state (cl-tmux::make-input-state)))
+        (key-table-bind "root" "C-F5" :next-window)
+        (unwind-protect
+             (progn
+               ;; ESC [ 1 5 ; 5 ~
+               (dolist (byte '(27 91 49 53 59 53 126))
+                 (cl-tmux::process-byte s byte state))
+               (is (eq (second (session-windows s)) (session-active-window s))
+                   "ESC [ 15 ; 5 ~ must resolve to C-F5 and fire its binding"))
+          (let ((tbl (gethash "root" *key-tables*)))
+            (when tbl (remhash "C-F5" tbl))))))))
+
+(test combined-modifier-arrow-root-binding-fires-from-byte-stream
+  "bind -n C-S-Up fires when ESC [ 1 ; 6 A (Ctrl+Shift+Up) is fed — combined
+   modifiers now resolve, matching the CSI-u path's handling of letter keys."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (let ((cl-tmux::*esc-accum-buffer* nil)
+            (state (cl-tmux::make-input-state)))
+        (key-table-bind "root" "C-S-Up" :next-window)
+        (unwind-protect
+             (progn
+               ;; ESC [ 1 ; 6 A
+               (dolist (byte (list 27 91 49 59 54 (char-code #\A)))
+                 (cl-tmux::process-byte s byte state))
+               (is (eq (second (session-windows s)) (session-active-window s))
+                   "ESC [ 1 ; 6 A must resolve to C-S-Up and fire its binding"))
+          (let ((tbl (gethash "root" *key-tables*)))
+            (when tbl (remhash "C-S-Up" tbl))))))))
 
 ;;; ── dispatch :select-layout-spread ─────────────────────────────────────────
 

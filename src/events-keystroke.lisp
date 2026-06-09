@@ -296,20 +296,30 @@
 (defconstant +byte-csi-mod-shift+ 50
   "CSI modifier '2' — Shift key (0x32), as in ESC [ 1 ; 2 A (Shift+Up).")
 
+(defun %modifier-prefix (mod-value)
+  "Build the canonical C-/M-/S- modifier prefix (always in that order) for a CSI
+   MOD-VALUE — 1 + a bitmask where bit0=Shift, bit1=Alt/Meta, bit2=Ctrl.  So 2→S-,
+   3→M-, 5→C-, 6→C-S-, 7→C-M-, 8→C-M-S-; returns \"\" for 1 (no modifier) or any
+   value with no recognised bit.  Shared by the CSI-u, modifier-arrow, and
+   modified-function-key paths so every modified key is named identically and
+   matches the string %parse-key-token stores for `bind C-S-Up`/`bind C-F5`."
+  (let ((bits (max 0 (- mod-value 1))))
+    (concatenate 'string
+                 (if (logbitp 2 bits) "C-" "")
+                 (if (logbitp 1 bits) "M-" "")
+                 (if (logbitp 0 bits) "S-" ""))))
+
 (defun %modifier-arrow-key-name (mod-byte final-byte)
   "Canonical tmux key name for a modifier+arrow CSI sequence — \"C-Up\",
-   \"M-Left\", \"S-Down\", etc.  MOD-BYTE is the digit from ESC [ 1 ; N FINAL:
-   2=Shift, 3=Meta/Alt, 5=Ctrl (the common single-modifier encodings).  Returns
-   NIL for an unrecognised modifier or a non-arrow final byte.  The result is the
-   exact string %parse-key-token produces for `bind C-Up ...`, so it serves
-   directly as a key-table lookup key."
-  (let ((base (%arrow-final-name final-byte))
-        (mod  (cond
-                ((= mod-byte +byte-csi-mod-ctrl+)  "C-")   ; '5'
-                ((= mod-byte +byte-csi-mod-meta+)  "M-")   ; '3'
-                ((= mod-byte +byte-csi-mod-shift+) "S-")   ; '2'
-                (t nil))))
-    (when (and base mod) (concatenate 'string mod base))))
+   \"M-Left\", \"S-Down\", \"C-S-Up\", etc.  MOD-BYTE is the digit byte from
+   ESC [ 1 ; N FINAL (2=Shift, 3=Meta, 5=Ctrl, 6=Ctrl+Shift, …); it is decoded
+   through %modifier-prefix so combined modifiers resolve too.  Returns NIL for a
+   non-arrow final byte or a MOD-BYTE carrying no modifier, leaving the sequence
+   to its built-in default / pane forward."
+  (let ((base   (%arrow-final-name final-byte))
+        (prefix (%modifier-prefix (- mod-byte +byte-digit-0+))))
+    (when (and base (plusp (length prefix)))
+      (concatenate 'string prefix base))))
 
 ;;; ── Extended keys (CSI u / fixterms) ────────────────────────────────────────
 ;;;
@@ -336,14 +346,9 @@
    MOD-VALUE is 1 + a (Shift=1, Alt=2, Ctrl=4) bitmask; the prefix is built in
    C-/M-/S- order (e.g. \"C-S-a\", \"M-Up\", \"C-Space\", \"S-Tab\", \"a\").  Returns
    NIL when the codepoint has no base key."
-  (let* ((bits (max 0 (- mod-value 1)))
-         (base (%csi-u-base-key codepoint)))
+  (let ((base (%csi-u-base-key codepoint)))
     (when base
-      (concatenate 'string
-                   (if (logbitp 2 bits) "C-" "")
-                   (if (logbitp 1 bits) "M-" "")
-                   (if (logbitp 0 bits) "S-" "")
-                   base))))
+      (concatenate 'string (%modifier-prefix mod-value) base))))
 
 (defun %csi-u-parse-params (buffer length)
   "Parse the numeric parameters of a u-terminated CSI sequence
@@ -538,7 +543,7 @@
         ((and (>= length 4) (= (aref buffer 1) +byte-csi-bracket+)
               (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)
               (= (aref buffer (1- length)) +byte-tilde+))
-         (let ((key (%csi-tilde-key-name (%csi-tilde-param buffer length))))
+         (let ((key (%csi-tilde-key buffer length)))
            (when key (%try-bound-string-key session +table-prefix+ key)))
          (values nil #'%ground-input-state))
         ;; Complete 3-byte CSI sequence: ESC [ FINAL
@@ -718,18 +723,37 @@
       (%dispatch-mouse-event session btn col row release-p)))
   (values nil #'%ground-input-state))
 
-(defun %csi-tilde-param (buffer length)
-  "Parse the decimal parameter of an ESC [ <digits> ~ sequence (the digits live
-   at indices 2..LENGTH-2).  Returns the integer, or NIL when any byte is not a
-   digit — e.g. a modified function key ESC [ 1 5 ; 2 ~ carries a ';' and so
-   yields NIL, falling through to a raw pane forward rather than a key binding."
-  (let ((value 0))
-    (loop for i from 2 below (1- length)
-          for byte = (aref buffer i)
-          do (if (<= +byte-digit-0+ byte +byte-digit-9+)
-                 (setf value (+ (* value 10) (- byte +byte-digit-0+)))
-                 (return-from %csi-tilde-param nil)))
-    value))
+(defun %csi-tilde-parse (buffer length)
+  "Parse an ESC [ <param> [ ; <mod> ] ~ sequence (the fields live at indices
+   2..LENGTH-2).  Returns (values PARAM MOD-VALUE); MOD-VALUE is 1 when no ';mod'
+   field is present (the unmodified key).  Returns NIL when a field is empty or
+   non-numeric, so a malformed sequence falls through to a raw pane forward.
+   The ';mod' field is what makes a modified function key — ESC [ 1 5 ; 5 ~ is
+   Ctrl+F5 (PARAM 15, MOD 5)."
+  (let ((semi (position +byte-csi-semi+ buffer :start 2 :end (1- length))))
+    (flet ((digits (start end)
+             (when (< start end)
+               (let ((value 0))
+                 (loop for i from start below end
+                       for byte = (aref buffer i)
+                       do (if (<= +byte-digit-0+ byte +byte-digit-9+)
+                              (setf value (+ (* value 10) (- byte +byte-digit-0+)))
+                              (return-from %csi-tilde-parse nil)))
+                 value))))
+      (if semi
+          (let ((param (digits 2 semi))
+                (mod   (digits (1+ semi) (1- length))))
+            (if (and param mod) (values param mod) nil))
+          (let ((param (digits 2 (1- length))))
+            (when param (values param 1)))))))
+
+(defun %csi-tilde-key (buffer length)
+  "Canonical key name for an ESC [ <param> [;<mod>] ~ sequence, or NIL.  Joins the
+   base navigation/function key (%csi-tilde-key-name) with any modifier prefix
+   (%modifier-prefix): ESC[15~ → \"F5\", ESC[15;5~ → \"C-F5\", ESC[1;2~ → \"S-Home\"."
+  (multiple-value-bind (param mod) (%csi-tilde-parse buffer length)
+    (let ((base (and param (%csi-tilde-key-name param))))
+      (when base (concatenate 'string (%modifier-prefix (or mod 1)) base)))))
 
 (defun %csi-tilde-key-name (param)
   "Map the numeric PARAM of an ESC [ <param> ~ sequence to its canonical tmux key
@@ -756,27 +780,28 @@
    behaviour is preserved: PageUp/PageDown scroll in copy mode, and any other or
    unbound key is forwarded raw so the pane's application still receives it.
    Returns (values nil #'%ground-input-state)."
-  (let* ((param (%csi-tilde-param buffer length))
-         (key   (and param (%csi-tilde-key-name param))))
-    (cond
-      ;; A user binding (`bind -n <key> <cmd>`) overrides every default below.
-      ((and key (%try-bound-string-key session +table-root+ key)))
-      ;; PageUp in copy mode: scroll up one screenful.
-      ((and (eql param 5) (%copy-mode-active-p session))
-       (let ((screen (%active-screen session)))
-         (when screen
-           (copy-mode-scroll screen (screen-height screen))
-           (setf *dirty* t))))
-      ;; PageDown in copy mode: scroll down one screenful.
-      ((and (eql param 6) (%copy-mode-active-p session))
-       (let ((screen (%active-screen session)))
-         (when screen
-           (copy-mode-scroll screen (- (screen-height screen)))
-           (setf *dirty* t))))
-      ;; Unbound and not a copy-mode scroll: forward raw bytes to the pane.
-      (t
-       (unless (%copy-mode-active-p session)
-         (%forward-octets session (subseq buffer 0 length))))))
+  (multiple-value-bind (param mod) (%csi-tilde-parse buffer length)
+    (let* ((base (and param (%csi-tilde-key-name param)))
+           (key  (and base (concatenate 'string (%modifier-prefix (or mod 1)) base))))
+      (cond
+        ;; A user binding (`bind -n F5`/`bind -n C-F5`/`bind -n PageUp`) wins.
+        ((and key (%try-bound-string-key session +table-root+ key)))
+        ;; PageUp in copy mode (unmodified only): scroll up one screenful.
+        ((and (eql param 5) (eql mod 1) (%copy-mode-active-p session))
+         (let ((screen (%active-screen session)))
+           (when screen
+             (copy-mode-scroll screen (screen-height screen))
+             (setf *dirty* t))))
+        ;; PageDown in copy mode (unmodified only): scroll down one screenful.
+        ((and (eql param 6) (eql mod 1) (%copy-mode-active-p session))
+         (let ((screen (%active-screen session)))
+           (when screen
+             (copy-mode-scroll screen (- (screen-height screen)))
+             (setf *dirty* t))))
+        ;; Unbound and not a copy-mode scroll: forward raw bytes to the pane.
+        (t
+         (unless (%copy-mode-active-p session)
+           (%forward-octets session (subseq buffer 0 length)))))))
   (values nil #'%ground-input-state))
 
 (defun %ss3-key-name (final-byte)
