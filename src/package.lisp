@@ -540,6 +540,7 @@
    ;; Session
    #:session
    #:make-session
+   #:*session-id-counter*
    #:session-id
    #:session-name
    #:session-windows

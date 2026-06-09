@@ -5215,6 +5215,50 @@
           (is (eq s2 (cl-tmux::server-find-session "2"))
               "the existing session 2 is intact"))))))
 
+;;; ── new-session -t: grouped sessions ─────────────────────────────────────────
+
+(test new-session-t-shares-target-windows
+  "new-session -t TARGET creates a GROUPED session that SHARES the target's
+   window list (tmux grouped sessions).  Built fork-free via make-session —
+   no orphaned PTY/reader-thread, because the shared panes keep the threads
+   already attached to them by the target session."
+  (with-loop-state
+    (let ((target (make-fake-session)) (caller (make-fake-session)))
+      (setf (cl-tmux::session-name target) "base")
+      (let ((cl-tmux::*server-sessions* (list (cons "base" target)))
+            (cl-tmux::*session-groups*  nil)
+            (*overlay* nil))
+        (let ((grouped (cl-tmux::%cmd-new-session-arg
+                        caller '("-d" "-s" "clone" "-t" "base"))))
+          (is (not (null grouped)) "a grouped session was created")
+          (is (not (eq grouped target)) "it is a distinct session object")
+          (is (eq (cl-tmux::session-windows grouped)
+                  (cl-tmux::session-windows target))
+              "grouped session SHARES the target's window list (same object)")
+          (is (eq (cl-tmux::session-active-window grouped)
+                  (cl-tmux::session-active-window target))
+              "grouped session's active window mirrors the target's")
+          (is (eq grouped (cl-tmux::server-find-session "clone"))
+              "grouped session is registered under its own name")
+          (is (and (cl-tmux::session-group grouped)
+                   (eql (cl-tmux::session-group grouped)
+                        (cl-tmux::session-group target)))
+              "both sessions share the same group id"))))))
+
+(test new-session-t-missing-target-refused
+  "new-session -t with an unknown target is refused (returns nil) and registers
+   no session — the partial group must not leak a half-built session."
+  (with-loop-state
+    (let ((caller (make-fake-session)))
+      (let ((cl-tmux::*server-sessions* nil)
+            (cl-tmux::*session-groups*  nil)
+            (*overlay* nil))
+        (is (null (cl-tmux::%cmd-new-session-arg
+                   caller '("-d" "-s" "clone" "-t" "ghost")))
+            "missing -t target is refused (returns nil)")
+        (is (null cl-tmux::*server-sessions*)
+            "no session was registered")))))
+
 ;;; ── control mode (-C) REPL ───────────────────────────────────────────────────
 
 (test control-run-command-frames-output

@@ -1873,13 +1873,16 @@
      default-size when -d).
    A DETACHED session (-d) has no client to size it, so — like tmux — it uses the
    default-size option (\"WxH\", default 80x24) when -x/-y are not given."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "sncxy")
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "sncxyt")
     (declare (ignore positionals))
     (let* ((name            (or (cdr (assoc #\s flags))
                                 (format nil "~D" (1+ (length *server-sessions*)))))
            (attach-if-exists (assoc #\A flags))
            (detach-p         (assoc #\d flags))
            (win-name         (cdr (assoc #\n flags)))
+           ;; -t <group>: the new session JOINS an existing session's group,
+           ;; sharing its window list (tmux "grouped sessions").
+           (group-target     (cdr (assoc #\t flags)))
            (start-dir        (cdr (assoc #\c flags)))
            (x-str            (cdr (assoc #\x flags)))
            (y-str            (cdr (assoc #\y flags)))
@@ -1912,6 +1915,26 @@
             (setf name (loop for i from 1
                              for candidate = (format nil "~D" i)
                              unless (server-find-session candidate) return candidate))))
+      ;; -t <group>: join an existing session's group instead of forking a new
+      ;; pane.  The grouped session SHARES the target's window list (and thus the
+      ;; live PTYs + reader threads already attached to those panes), so it must
+      ;; be built with a bare make-session — NOT new-session, which would fork an
+      ;; initial PTY + reader thread that %link-session-to-group then orphans.
+      (when group-target
+        (let ((target (server-find-session group-target)))
+          (unless target
+            (show-overlay (format nil "can't find session: ~A" group-target))
+            (return-from %cmd-new-session-arg nil))
+          (let ((grouped (make-session :id (incf *session-id-counter*)
+                                       :name name
+                                       :last-active (get-universal-time))))
+            (server-add-session grouped)
+            (server-new-session-in-group grouped target)
+            (when (not detach-p)
+              (setf *dirty* t)
+              (show-transient-overlay
+               (format nil "new session: ~A" (session-name grouped))))
+            (return-from %cmd-new-session-arg grouped))))
       ;; Create a new session
       (let ((new-sess (new-session name rows cols :start-dir start-dir)))
         ;; Apply window name if given
