@@ -3167,6 +3167,17 @@
         (cl-tmux::%cmd-select-pane s '("-m"))
         (is-true fired "after-select-pane hook must fire")))))
 
+(test cmd-select-window-fires-after-select-window-hook
+  "%cmd-select-window fires +hook-after-select-window+ (tmux's per-command hook)."
+  (with-isolated-hooks
+    (let ((s (make-fake-session :nwindows 2))
+          (fired nil))
+      (with-loop-state
+        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-select-window+
+                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+        (cl-tmux::%cmd-select-window s '("-n"))   ; select next window
+        (is-true fired "after-select-window hook must fire")))))
+
 (test resize-pane-fires-after-resize-pane-hook
   "resize-pane fires +hook-after-resize-pane+ (covers both the resize-pane command
    and the C-b H/J/K/L keybind path, which share this function)."

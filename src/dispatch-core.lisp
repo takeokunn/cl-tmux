@@ -1380,7 +1380,9 @@
                           (eq win (session-active-window session))
                           (session-last-window session))
                      (session-select-window session (session-last-window session))
-                     (session-select-window session win)))))))))))
+                     (session-select-window session win)))))))))
+    ;; after-select-window: tmux's per-command hook, fired after select-window.
+    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-window+ session)))
 
 (defun %cmd-select-pane (session args)
   "select-pane [-L|-R|-U|-D|-l|-d|-e|-m|-M] [-t target] [-T title]: select or configure a pane.

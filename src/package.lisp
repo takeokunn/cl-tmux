@@ -634,6 +634,7 @@
    #:+hook-pane-focus-in+
    #:+hook-pane-focus-out+
    #:+hook-after-select-pane+
+   #:+hook-after-select-window+
    #:+hook-window-renamed+
    #:+hook-session-renamed+
    #:+hook-after-resize-pane+

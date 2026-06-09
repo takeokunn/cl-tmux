@@ -48,6 +48,7 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
   (+hook-pane-focus-in+          "pane-focus-in"          "Fired when a pane gains focus")
   (+hook-pane-focus-out+         "pane-focus-out"         "Fired when a pane loses focus")
   (+hook-after-select-pane+      "after-select-pane"      "Fired after the select-pane command")
+  (+hook-after-select-window+    "after-select-window"    "Fired after the select-window command")
   (+hook-window-renamed+         "window-renamed"         "Fired when a window is renamed")
   (+hook-session-renamed+        "session-renamed"        "Fired when a session is renamed")
   (+hook-after-resize-pane+      "after-resize-pane"      "Fired after a pane is resized")
