@@ -1730,3 +1730,54 @@ bind-key r source-file /dev/null"))
       (is (= 2 (length (rest cmd)))
           "the sequence must hold both commands despite the inner comment (got ~S)"
           cmd))))
+
+;;; ── if-shell config directive: -F format conditions + flag stripping ─────────
+
+(test if-shell-directive-shell-condition-runs-then
+  "if-shell with a shell condition that exits 0 applies the THEN command."
+  (with-isolated-config
+    (cl-tmux/config::%apply-if-shell-directive
+     "if-shell" '("true" "set -g status-left THEN" "set -g status-left ELSE"))
+    (is (string= "THEN" (cl-tmux/options:get-option "status-left"))
+        "exit-0 shell condition must run the THEN command")))
+
+(test if-shell-directive-F-truthy-runs-then
+  "if-shell -F with a non-empty, non-zero format runs the THEN command (the -F
+   flag must be stripped, not treated as the condition)."
+  (with-isolated-config
+    (cl-tmux/config::%apply-if-shell-directive
+     "if-shell" '("-F" "1" "set -g status-left THEN" "set -g status-left ELSE"))
+    (is (string= "THEN" (cl-tmux/options:get-option "status-left"))
+        "-F with truthy format must run THEN")))
+
+(test if-shell-directive-F-zero-runs-else
+  "if-shell -F with a \"0\" format is false → runs the ELSE command."
+  (with-isolated-config
+    (cl-tmux/config::%apply-if-shell-directive
+     "if-shell" '("-F" "0" "set -g status-left THEN" "set -g status-left ELSE"))
+    (is (string= "ELSE" (cl-tmux/options:get-option "status-left"))
+        "-F with \"0\" must run ELSE")))
+
+(test if-shell-directive-F-format-expression
+  "if-shell -F evaluates a real format expression: #{==:a,a} → 1 → THEN."
+  (with-isolated-config
+    (cl-tmux/config::%apply-if-shell-directive
+     "if-shell" '("-F" "#{==:a,a}" "set -g status-left THEN" "set -g status-left ELSE"))
+    (is (string= "THEN" (cl-tmux/options:get-option "status-left"))
+        "#{==:a,a} expands to 1 (true) → THEN")))
+
+(test if-shell-directive-strips-background-flag
+  "if-shell -b (background) is stripped; the shell condition still drives the
+   branch rather than -b being parsed as the condition."
+  (with-isolated-config
+    (cl-tmux/config::%apply-if-shell-directive
+     "if-shell" '("-b" "true" "set -g status-left THEN" "set -g status-left ELSE"))
+    (is (string= "THEN" (cl-tmux/options:get-option "status-left"))
+        "-b must be stripped, leaving the shell condition to choose THEN")))
+
+(test if-shell-format-true-p-rules
+  "%if-shell-format-true-p: empty and \"0\" are false; other text is true."
+  (is-true  (cl-tmux/config::%if-shell-format-true-p "1"))
+  (is-true  (cl-tmux/config::%if-shell-format-true-p "yes"))
+  (is-false (cl-tmux/config::%if-shell-format-true-p "0"))
+  (is-false (cl-tmux/config::%if-shell-format-true-p "")))

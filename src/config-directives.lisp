@@ -852,25 +852,48 @@
 ;;; It runs the condition via /bin/sh, then applies THEN-CMD or ELSE-CMD.
 ;;; This is different from the run-time :if-shell dispatch (which is interactive).
 
+(defun %if-shell-format-true-p (condition)
+  "tmux -F truthiness for if-shell: expand CONDITION as a format and treat an
+   empty result or \"0\" as false, anything else as true.  A NIL context is used
+   (config-time has no pane); global-scoped formats still resolve."
+  (let ((result (ignore-errors (cl-tmux/format:expand-format condition nil))))
+    (and result
+         (not (string= result ""))
+         (not (string= result "0")))))
+
 (defun %apply-if-shell-directive (cmd args)
-  "Handle 'if-shell CONDITION THEN-CMD [ELSE-CMD]' config directives.
-   Runs CONDITION as a shell command; exit 0 means truthy.
-   Returns T when handled, NIL otherwise."
+  "Handle 'if-shell [-bF] [-t target] CONDITION THEN-CMD [ELSE-CMD]' directives.
+   Without -F, CONDITION is a shell command (exit 0 = true).  With -F, CONDITION
+   is a format string (true unless it expands to empty or \"0\").  -b (background)
+   and -t target are accepted and ignored at config time.  Returns T when CMD is
+   if-shell/if (handled), NIL otherwise."
   (when (member cmd '("if-shell" "if") :test #'string=)
-    (when (>= (length args) 2)
-      (let* ((condition (first args))
-             (then-cmd  (second args))
-             (else-cmd  (third args))
-             (exit-code (nth-value 2
-                          (ignore-errors
-                            (uiop:run-program
-                             (list "/bin/sh" "-c" condition)
-                             :ignore-error-status t))))
-             (truthy-p  (eql exit-code 0))
-             (apply-str (if truthy-p then-cmd else-cmd)))
-        (when apply-str
-          (apply-config-directive (%config-tokens apply-str)))
-        t))))
+    (let ((format-mode nil)
+          (remaining   args))
+      ;; Consume leading flag tokens (clusters like -bF are allowed; -t takes the
+      ;; next token).  Stop at the first non-flag token — the CONDITION.
+      (loop while (and remaining
+                       (let ((tok (first remaining)))
+                         (and (> (length tok) 1) (char= (char tok 0) #\-))))
+            do (let ((tok (pop remaining)))
+                 (cond
+                   ((string= tok "-t") (when remaining (pop remaining)))
+                   (t (when (find #\F tok) (setf format-mode t))))))
+      (when (>= (length remaining) 2)
+        (let* ((condition (first remaining))
+               (then-cmd  (second remaining))
+               (else-cmd  (third remaining))
+               (truthy-p  (if format-mode
+                              (%if-shell-format-true-p condition)
+                              (eql 0 (nth-value 2
+                                       (ignore-errors
+                                         (uiop:run-program
+                                          (list "/bin/sh" "-c" condition)
+                                          :ignore-error-status t :timeout 2))))))
+               (apply-str (if truthy-p then-cmd else-cmd)))
+          (when apply-str
+            (apply-config-directive (%config-tokens apply-str)))))
+      t)))
 
 ;;; ── command-alias array syntax handling ─────────────────────────────────────
 ;;;
