@@ -99,6 +99,27 @@
     (is (string= "@2" w))
     (is (string= "%3" p))))
 
+(test parse-target-bare-pane-sigil
+  "%parse-target with a bare %N treats it as a PANE id (not a session)."
+  (multiple-value-bind (s w p) (cl-tmux::%parse-target "%2")
+    (is (null s) "no session component")
+    (is (null w) "no window component")
+    (is (string= "%2" p) "%2 is the pane component")))
+
+(test parse-target-bare-window-sigil
+  "%parse-target with a bare @N treats it as a WINDOW id."
+  (multiple-value-bind (s w p) (cl-tmux::%parse-target "@3")
+    (is (null s) "no session component")
+    (is (string= "@3" w) "@3 is the window component")
+    (is (null p) "no pane component")))
+
+(test parse-target-bare-session-id-and-name-stay-session
+  "%parse-target keeps $N and plain names as the session component."
+  (multiple-value-bind (s w p) (cl-tmux::%parse-target "$1")
+    (is (string= "$1" s)) (is (null w)) (is (null p)))
+  (multiple-value-bind (s w p) (cl-tmux::%parse-target "work")
+    (is (string= "work" s)) (is (null w)) (is (null p))))
+
 ;;; ── find-session-by-target ───────────────────────────────────────────────────
 
 (test find-session-by-target-nil-target-returns-nil
@@ -281,6 +302,23 @@
           (cl-tmux::resolve-target registry "s:w.%2")
         (declare (ignore _rs _rw))
         (is (eq p2 rp) "pane must be resolved via %2 notation")))))
+
+(test resolve-target-bare-pane-sigil-resolves-pane
+  "resolve-target with a BARE %N resolves that pane in the current window —
+   tmux's position-independent pane id, not a session fallback."
+  (let* ((p1   (make-no-pty-pane 1  0 0 40 24))
+         (p2   (make-no-pty-pane 2 41 0 40 24))
+         (win  (make-window :id 1 :name "w" :width 81 :height 24
+                            :panes (list p1 p2)))
+         (sess (make-session :id 1 :name "s" :windows (list win))))
+    (window-select-pane win p1)
+    (session-select-window sess win)
+    (multiple-value-bind (_rs _rw rp)
+        (cl-tmux::resolve-target nil "%2"
+                                 :current-session sess :current-window win)
+      (declare (ignore _rs _rw))
+      (is (eq p2 rp)
+          "bare %2 must resolve to pane-id 2, not fall back to the active pane"))))
 
 (test resolve-target-unknown-session-falls-back-to-current
   "resolve-target falls back to current-session when target session is unknown."

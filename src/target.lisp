@@ -41,11 +41,22 @@
    Grammar: [SESSION][:WINDOW][.PANE]
    The SESSION portion is everything up to the first colon (if any).
    The WINDOW portion is between the first colon and the first dot (if any).
-   The PANE portion is everything after the first dot."
+   The PANE portion is everything after the first dot.
+   A BARE token (no ':' or '.') carrying an id sigil selects its component
+   directly, matching tmux's position-independent ids: %N → pane, @N → window
+   ($N or a plain name → session).  Without this, `-t %2` / `-t @3` were
+   mis-parsed as session names and silently fell back to the active object."
   (when (or (null target-string) (string= target-string ""))
     (return-from %parse-target (values nil nil nil)))
   (let* ((colon-pos (position #\: target-string))
-         (dot-pos   (position #\. target-string :start (or colon-pos 0)))
+         (dot-pos   (position #\. target-string :start (or colon-pos 0))))
+    (when (and (null colon-pos) (null dot-pos))
+      (return-from %parse-target
+        (case (char target-string 0)
+          (#\% (values nil nil target-string))     ; %N → pane-id
+          (#\@ (values nil target-string nil))     ; @N → window-id
+          (t   (values target-string nil nil)))))  ; $N session-id or plain name
+  (let* (
          (win-raw   (cond
                       ;; Both colon and dot: window is between them.
                       ((and colon-pos dot-pos)
@@ -58,7 +69,7 @@
          (pane-raw  (when dot-pos
                       (subseq target-string (1+ dot-pos))))
          (sess-str  (%parse-session-component target-string colon-pos dot-pos)))
-    (values sess-str (%non-empty win-raw) (%non-empty pane-raw))))
+    (values sess-str (%non-empty win-raw) (%non-empty pane-raw)))))
 
 ;;; ── define-target-lookup — Prolog-style sequential rule dispatch ─────────────
 ;;;
