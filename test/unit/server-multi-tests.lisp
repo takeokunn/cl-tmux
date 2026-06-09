@@ -152,6 +152,19 @@
                 (session-active-window s))
             "the forwarded next-window must advance the active window server-side")))))
 
+(test multi-handle-forwarded-command-with-arg-runs
+  "A forwarded command carrying ARGUMENTS is reconstructed (<name> args...) and run
+   server-side: `select-window -t 1` selects window-id 1 — verifying the arg path
+   of command forwarding, not just the bare-command path above."
+  (let ((s (make-fake-session :nwindows 2)))   ; window-ids 0,1
+    (with-loop-state
+      (let ((payload (cl-tmux/protocol::encode-command-payload
+                      :select-window :args '("-t" "1"))))
+        (cl-tmux::%handle-multi-client-message
+         cl-tmux::+msg-command+ payload s (%make-test-conn))
+        (is (= 1 (cl-tmux/model:window-id (session-active-window s)))
+            "forwarded `select-window -t 1` must select window-id 1 via the args")))))
+
 ;;; ── %drop-client: registry removal ───────────────────────────────────────────
 
 (test multi-drop-client-removes-from-registry
