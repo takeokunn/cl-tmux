@@ -2367,6 +2367,38 @@
         (dolist (subcmd sequences)
           (%run-command-tokens session subcmd)))))
 
+;;; -- Control mode (-C) REPL ------------------------------------------------
+;;;
+;;; A control client sends commands as text lines; each is run via %run-command-line
+;;; and the reply is framed by cl-tmux/control.  A command's textual output (what it
+;;; would show in an overlay — list-sessions, display-message, ...) is captured by
+;;; binding *overlay* around the run and reading it back into the reply body.
+
+(defun %control-run-command (session line number)
+  "Run control-mode command LINE for SESSION as command NUMBER and return the
+   framed %begin/.../%end reply string.  The command's overlay text is captured as
+   the reply body; a signalled error closes the block with %error."
+  (let ((cl-tmux/prompt:*overlay* nil)
+        (success t))
+    (handler-case (%run-command-line session line)
+      (error () (setf success nil)))
+    (cl-tmux/control:control-format-reply
+     number (or cl-tmux/prompt:*overlay* "") :success success)))
+
+(defun control-mode-loop (session input output)
+  "The control-mode (-C) REPL: read command lines from INPUT, run each as the next
+   numbered command, write its framed reply to OUTPUT, until EOF — then emit %exit.
+   Streams are parameters so the loop is testable without a real tty."
+  (loop with number = 0
+        for line = (read-line input nil nil)
+        while line
+        unless (string= "" (string-trim '(#\Space #\Tab #\Return) line))
+          do (incf number)
+             (write-line (%control-run-command session line number) output)
+             (force-output output))
+  (write-line (cl-tmux/control:control-exit) output)
+  (force-output output))
+
 ;;; -- dispatch-prefix-command -----------------------------------------------
 
 (defun dispatch-prefix-command (session byte)
