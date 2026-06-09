@@ -170,6 +170,13 @@
 
 ;;; ── Event-loop iteration ────────────────────────────────────────────────────
 
+(defun %exit-after-last-detach-p ()
+  "True when no clients remain attached AND the exit-unattached option is on — the
+   server should terminate (tmux exit-unattached).  Checked only after a real
+   client drop, so a freshly-started server with no clients yet never exits."
+  (and (null *clients*)
+       (cl-tmux/options:get-option "exit-unattached")))
+
 (defun %multi-serve-iteration (listener session)
   "One iteration of the multi-client server loop: broadcast a dirty frame, then
    select on the listener fd + every client fd; accept a new connection when the
@@ -195,7 +202,11 @@
                         (error () :drop))))
             (case disp
               (:quit (return-from %multi-serve-iteration :quit))
-              (:drop (%drop-client conn :bye t))
+              (:drop
+               (%drop-client conn :bye t)
+               ;; exit-unattached: terminate once the last client has detached.
+               (when (%exit-after-last-detach-p)
+                 (return-from %multi-serve-iteration :quit)))
               (:detach-others
                (dolist (other (copy-list *clients*))
                  (unless (eq other conn) (%drop-client other :bye t))))))))))

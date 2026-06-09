@@ -198,6 +198,25 @@
         (cl-tmux/net:close-socket listener)
         (ignore-errors (delete-file path))))))
 
+;;; ── exit-unattached: terminate when the last client detaches ─────────────────
+
+(test exit-after-last-detach-respects-option
+  "%exit-after-last-detach-p is true only when NO clients remain AND exit-unattached
+   is on; default (off) keeps the session alive across detaches."
+  (with-fresh-options
+    (let ((cl-tmux::*clients* nil))
+      (cl-tmux/options:set-option "exit-unattached" t)
+      (is-true (cl-tmux::%exit-after-last-detach-p)
+               "no clients + exit-unattached on → server should exit"))
+    (let ((cl-tmux::*clients* nil))
+      (cl-tmux/options:set-option "exit-unattached" nil)
+      (is-false (cl-tmux::%exit-after-last-detach-p)
+                "no clients + exit-unattached off (default) → keep running"))
+    (let ((cl-tmux::*clients* (list (cl-tmux::%make-client-conn))))
+      (cl-tmux/options:set-option "exit-unattached" t)
+      (is-false (cl-tmux::%exit-after-last-detach-p)
+                "clients still attached → keep running regardless of the option"))))
+
 ;;; ── Integration: a broadcast frame reaches every attached client ─────────────
 
 (test multi-broadcast-reaches-all-clients
