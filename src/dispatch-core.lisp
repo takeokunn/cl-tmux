@@ -497,7 +497,11 @@
                  (t nil))))
        (if kw
            (dispatch-command session kw nil)
-           (show-overlay (format nil "unknown command: ~A" cmd-name))))))
+           ;; Unknown name: show the error overlay AND return the :unknown-command
+           ;; sentinel so callers (e.g. control mode's %error framing) can detect
+           ;; the failure — the overlay value alone is not a reliable signal.
+           (progn (show-overlay (format nil "unknown command: ~A" cmd-name))
+                  :unknown-command)))))
 
 (define-named-command-table
   ("new-window"    :new-window)
@@ -2380,7 +2384,10 @@
    the reply body; a signalled error closes the block with %error."
   (let ((cl-tmux/prompt:*overlay* nil)
         (success t))
-    (handler-case (%run-command-line session line)
+    (handler-case
+        ;; An unknown command returns the :unknown-command sentinel → %error.
+        (when (eq :unknown-command (%run-command-line session line))
+          (setf success nil))
       (error () (setf success nil)))
     (cl-tmux/control:control-format-reply
      number (or cl-tmux/prompt:*overlay* "") :success success)))

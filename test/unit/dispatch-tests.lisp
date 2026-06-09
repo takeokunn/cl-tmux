@@ -4882,3 +4882,13 @@
                                (make-fake-window 7 "x"))
       (is (string= "" (get-output-stream-string out))
           "no notification after the callbacks are removed"))))
+
+(test control-run-command-unknown-is-error
+  "An unknown command closes the control-mode reply with %error, not %end."
+  (with-loop-state
+    (let* ((*overlay* nil)
+           (reply (cl-tmux::%control-run-command (make-fake-session)
+                                                 "bogus-command-xyz" 3)))
+      (is (search "%begin 0 3 1" reply) "reply opens with %begin")
+      (is (search "%error 0 3 1" reply) "unknown command closes with %error")
+      (is (search "unknown command" reply) "the error message is in the body"))))
