@@ -7,21 +7,46 @@
 ;;;; the server sends back.  It holds no session state — all prefix handling and
 ;;;; rendering happen server-side, so the client is the same for any session.
 
+(defconstant +command-reply-timeout-us+ 2000000
+  "Microseconds the CLI command client waits for the server's +msg-reply+ before
+   giving up (2 s) — bounds the wait so a hung server never blocks the client.")
+
+(defun %read-command-reply (stream fd)
+  "Read frames from STREAM until the server's +msg-reply+ arrives (skipping any
+   rendered +msg-frame+/bye the multi-client server may broadcast first), and
+   write its text to *standard-output*.  Gives up after +command-reply-timeout-us+
+   of silence or on EOF.  This is the stdout side of `cl-tmux display -p …`."
+  (loop
+    (unless (select-fds (list fd) +command-reply-timeout-us+)
+      (return))                          ; timed out waiting for a reply
+    (multiple-value-bind (type payload) (read-frame stream)
+      (cond
+        ((null type) (return))           ; EOF
+        ((= type +msg-reply+)
+         (let ((text (decode-text payload)))
+           (when (plusp (length text))
+             (write-string text)
+             (unless (char= (char text (1- (length text))) #\Newline) (terpri))
+             (force-output)))
+         (return))
+        ;; +msg-frame+ / +msg-bye+ etc.: a broadcast the command client ignores.
+        (t nil)))))
+
 (defun run-command-client (name args)
   "Forward ARGS — a command name followed by its arguments — to the running server
-   for session NAME as a single +msg-command+ frame, then exit.  This is the
-   `cl-tmux <command>` CLI path: it drives a server from outside instead of
-   attaching a terminal.  The server runs the command (server-multi.lisp,
-   %handle-multi-client-message) against its live session.
-   A target given as `-t <target>` flows through in ARGS — the server parses it
-   like any other flag — so no special target extraction is needed here."
+   for session NAME as a single +msg-command+ frame, then print the server's text
+   reply (the command's output, e.g. `cl-tmux display -p '#{session_name}'`) and
+   exit.  This is the `cl-tmux <command>` CLI path: it drives a server from outside
+   instead of attaching a terminal.  A target given as `-t <target>` flows through
+   in ARGS — the server parses it like any other flag."
   (require :sb-posix)
   (when args
     (let ((socket (connect-to (socket-path name))))
       (unwind-protect
            (let ((stream (socket-stream socket)))
              (send-frame stream (msg-command (first args) nil (rest args)))
-             (force-output stream))
+             (force-output stream)
+             (%read-command-reply stream (socket-fd socket)))
         (close-socket socket)))))
 
 (defun run-client (name &key detach-others)

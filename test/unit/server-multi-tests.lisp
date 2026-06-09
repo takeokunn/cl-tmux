@@ -181,6 +181,41 @@
 
 ;;; ── Command client: forwards a command to the server ────────────────────────
 
+(test command-client-receives-output-reply
+  "A forwarded display-message produces a +msg-reply+ carrying the command's output
+   text — the server side of the `cl-tmux display -p` stdout channel."
+  (when (cl-tmux/net:unix-socket-available-p)
+    (with-isolated-hooks
+      (with-loop-state
+        (let* ((s        (make-fake-session))
+               (path     (format nil "~A/cl-tmux-reply-~D.sock"
+                                 (string-right-trim "/" (or (sb-ext:posix-getenv "TMPDIR") "/tmp"))
+                                 (get-universal-time)))
+               (listener (cl-tmux/net:make-listener path :backlog 4)))
+          (unwind-protect
+               (let* ((client      (cl-tmux/net:connect-to path))
+                      (server-sock (cl-tmux/net:accept-connection listener))
+                      (cl-tmux::*clients* nil))
+                 (when server-sock
+                   (let ((conn    (cl-tmux::%add-client server-sock))
+                         (payload (cl-tmux/protocol::encode-command-payload
+                                   :display-message :args '("hello"))))
+                     ;; Run the forwarded command; the server replies with its output.
+                     (cl-tmux::%handle-multi-client-message
+                      cl-tmux::+msg-command+ payload s conn)
+                     (let ((ready (cl-tmux/pty:select-fds
+                                   (list (cl-tmux/net:socket-fd client)) 1000000)))
+                       (is-true ready "a command-output reply must arrive")
+                       (when ready
+                         (multiple-value-bind (type payload)
+                             (cl-tmux::read-frame (cl-tmux/net:socket-stream client))
+                           (is (eql cl-tmux::+msg-reply+ type)
+                               "the reply frame must be +msg-reply+")
+                           (is (search "hello" (cl-tmux::decode-text payload))
+                               "the reply must carry the display-message output")))))))
+            (cl-tmux/net:close-socket listener)
+            (ignore-errors (delete-file path))))))))
+
 (test command-client-sends-decodable-command-frame
   "run-command-client forwards a command to the server as a decodable
    +msg-command+ frame (the `cl-tmux <command>` CLI path).  A -t target rides

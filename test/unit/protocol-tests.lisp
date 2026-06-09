@@ -104,6 +104,14 @@
       (is (= +msg-frame+ type))
       (is (string= text (decode-text payload))))))
 
+(test reply-text-roundtrip
+  "msg-reply carries a forwarded command's UTF-8 output text (the display-message
+   -p / CLI command-output channel)."
+  (let ((text "session: 0  windows: 2"))
+    (multiple-value-bind (type payload) (decode-frame (msg-reply text))
+      (is (= +msg-reply+ type) "frame type is +msg-reply+")
+      (is (string= text (decode-text payload)) "payload round-trips the output text"))))
+
 ;;; ── Streaming: partial buffers ──────────────────────────────────────────────
 
 (test decode-incomplete-header-returns-nil

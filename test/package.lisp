@@ -121,10 +121,11 @@
                 #:clear-display)
   (:import-from #:cl-tmux/protocol
                 #:+msg-attach+ #:+msg-key+ #:+msg-resize+
-                #:+msg-detach+ #:+msg-frame+ #:+msg-bye+ #:+msg-command+ #:+header-size+
+                #:+msg-detach+ #:+msg-frame+ #:+msg-bye+ #:+msg-command+ #:+msg-reply+
+                #:+header-size+
                 #:encode-frame #:decode-frame
                 #:msg-attach #:msg-key #:msg-resize #:msg-detach #:msg-frame #:msg-bye
-                #:msg-command
+                #:msg-command #:msg-reply
                 #:encode-command-payload #:decode-command-payload
                 #:u16-octets-pair
                 #:decode-size #:decode-text #:to-octets)

@@ -25,6 +25,7 @@
 (defconstant +msg-frame+   5 "server→client: a rendered frame (UTF-8 payload)")
 (defconstant +msg-bye+     6 "server→client: server is closing (empty payload)")
 (defconstant +msg-command+ 7 "client→server: a named command with optional -t target; payload = NUL-delimited [target NUL] command-name NUL [args...]")
+(defconstant +msg-reply+   8 "server→client: a forwarded command's text output (UTF-8 payload), for the CLI command client (e.g. display-message -p).")
 
 (defconstant +header-size+ 5 "1 type byte + 4 length bytes.")
 
@@ -147,7 +148,9 @@
   (msg-frame   +msg-frame+   (string)     (babel:string-to-octets string :encoding :utf-8)
    "server→client frame carrying a rendered screen STRING (UTF-8 encoded).")
   (msg-bye     +msg-bye+     ()           #()
-   "server→client frame announcing the server is closing."))
+   "server→client frame announcing the server is closing.")
+  (msg-reply   +msg-reply+   (string)     (babel:string-to-octets string :encoding :utf-8)
+   "server→client frame carrying a forwarded command's text output (UTF-8)."))
 
 ;;; ── Typed command message constructor ────────────────────────────────────────
 
