@@ -4098,6 +4098,17 @@
         (finishes (funcall (prompt-on-submit *prompt*) "")
                   ":set-environment empty input must not error")))))
 
+(test cmd-set-environment-u-unsets-variable
+  "set-environment -u VAR unsets the variable (tmux's unset flag, previously only
+   -r was recognised)."
+  (let ((s    (make-fake-session))
+        (name "CLTMUX_TEST_ENV_VAR_U"))
+    (sb-posix:setenv name "hello" 1)
+    (is (string= "hello" (sb-ext:posix-getenv name)) "precondition: var is set")
+    (cl-tmux::%cmd-set-environment-prompt s (list "-u" name))
+    (is (null (sb-ext:posix-getenv name))
+        "set-environment -u must unset the variable")))
+
 (test dispatch-show-hooks-shows-overlay
   ":show-hooks opens an overlay describing registered command hooks."
   (let ((s (make-fake-session)))

@@ -2338,11 +2338,11 @@
           (t (pipe-pane-open ap command)))))))
 
 (defun %cmd-set-environment-prompt (session args)
-  "set-environment [-r] NAME [VALUE]: set or unset a process environment variable.
-   -r: unset the variable.  Without -r, VALUE is required."
+  "set-environment [-u|-r] NAME [VALUE]: set or unset a process environment variable.
+   -u (tmux's unset flag) or -r unsets the variable.  Otherwise VALUE is required."
   (declare (ignore session))
   (multiple-value-bind (flags positionals) (%parse-command-flags args "")
-    (let* ((remove-p (assoc #\r flags))
+    (let* ((remove-p (or (assoc #\u flags) (assoc #\r flags)))
            (name     (first positionals))
            (value    (format nil "~{~A~^ ~}" (rest positionals))))
       (when (and name (plusp (length name)))

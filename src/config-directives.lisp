@@ -797,19 +797,20 @@
 ;;; the unset form before the fixed-arity table gets a chance to reject it.
 
 (defun %apply-set-environment-directive (cmd args)
-  "Handle 'set-environment [-g] [-r] VAR [VALUE]' config directives.
-   -r unsets the variable (removes it from child-process environment).
+  "Handle 'set-environment [-g] [-u|-r] VAR [VALUE]' config directives.
+   -u unsets the variable (tmux's unset flag); -r is accepted as a synonym for
+   unset (cl-tmux has no separate update-environment list to remove from).
    -g is accepted and ignored (global scope is the only scope supported).
    Returns T when handled, NIL otherwise."
   (when (member cmd '("set-environment" "setenv") :test #'string=)
-    (let* (;; Consume optional flags: -g (global, default), -r (remove/unset).
+    (let* (;; Consume optional flags: -g (global, default), -u/-r (unset).
            (remove-p   nil)
            (remaining  args))
       (loop while (and remaining
                        (let ((tok (first remaining)))
                          (and (>= (length tok) 2) (char= (char tok 0) #\-))))
             do (let ((tok (pop remaining)))
-                 (when (find #\r tok) (setf remove-p t))))
+                 (when (or (find #\u tok) (find #\r tok)) (setf remove-p t))))
       (let ((var-name  (first remaining))
             (var-value (second remaining)))
         (when var-name

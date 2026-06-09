@@ -1343,6 +1343,18 @@
     (is (pathnamep result)
         "config-file-path must return a pathname, got ~S" result)))
 
+;;; ── set-environment -u (unset) ───────────────────────────────────────────
+
+(test apply-set-environment-u-unsets-variable
+  "'set-environment -u VAR' config directive unsets the variable (tmux unset flag)."
+  (let ((name "CLTMUX_TEST_ENV_VAR_CFG"))
+    (sb-posix:setenv name "x" 1)
+    (is (string= "x" (sb-ext:posix-getenv name)) "precondition: var is set")
+    (is (eq t (apply-config-directive (list "set-environment" "-u" name)))
+        "set-environment -u must be handled (return T)")
+    (is (null (sb-ext:posix-getenv name))
+        "config set-environment -u must unset the variable")))
+
 ;;; ── %apply-option-side-effects: prefix branch ────────────────────────────
 ;;;
 ;;; Tests that "set -g prefix C-a" updates *prefix-key-code* and registers
