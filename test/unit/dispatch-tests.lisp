@@ -1080,6 +1080,27 @@
       (is (eq t (cl-tmux/options:get-option-for-window "synchronize-panes" win))
           "get-option-for-window must fall back to the global value T"))))
 
+(test cmd-set-option-o-skips-when-already-set
+  "'set -o name value' is a no-op when the option already has a value — the
+   only-if-unset plugin idiom must NOT clobber a user override."
+  (with-isolated-config
+    (let ((s (make-fake-session)))
+      (cl-tmux/options:set-option "@plugin-opt" "user-value")
+      (cl-tmux::%cmd-set-option s '("-o" "@plugin-opt" "default-value"))
+      (is (string= "user-value" (cl-tmux/options:get-option "@plugin-opt"))
+          "-o must leave the existing value untouched"))))
+
+(test cmd-set-option-o-sets-when-unset
+  "'set -o name value' DOES set the option when it has no value yet (seeds a
+   default that a later plain set can still override)."
+  (with-isolated-config
+    (let ((s (make-fake-session)))
+      ;; Ensure no prior override exists.
+      (remhash "@plugin-opt" cl-tmux/options:*global-options*)
+      (cl-tmux::%cmd-set-option s '("-o" "@plugin-opt" "default-value"))
+      (is (string= "default-value" (cl-tmux/options:get-option "@plugin-opt"))
+          "-o must set the option when it is currently unset"))))
+
 (test run-command-line-rename-window
   "'rename-window <name>' renames the active window."
   (let ((s (make-fake-session :nwindows 1)))

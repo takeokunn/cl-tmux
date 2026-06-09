@@ -1030,8 +1030,12 @@
                         when there is no active window).
      -g  global / (default) — stores in the flat global option table.
    -p and -w are ignored when -g is also present (explicit global wins).
-   -s (server) and -o (only-if-unset) are accepted and treated as the global
-   store (cl-tmux keeps a flat option table).
+   -s (server) is accepted and treated as the global store (cl-tmux keeps a flat
+   option table).
+   -o (only-if-unset): when the option already has a value in the global store,
+   the set is skipped (a no-op) — the common `set -og @plugin_opt 'default'`
+   plugin idiom that must NOT clobber a user override.  Presence is checked on the
+   global store; combined with -a/-u, those take precedence.
    -a appends VALUE to the option's current global value; -u unsets the global
    option (removes the override, reverting to the registered default).  -a/-u
    always operate on the GLOBAL store regardless of -w/-p.
@@ -1055,6 +1059,11 @@
                               (princ-to-string
                                (or (cl-tmux/options:get-option name nil) ""))
                               value)))
+          ;; -o: only-if-unset — skip when an explicit value is already present in
+          ;; the global store (the user's override wins over the default-seed set).
+          ((and (assoc #\o flags)
+                (nth-value 1 (gethash name cl-tmux/options:*global-options*)))
+           nil)
           ;; normal set: route by scope flag.
           (t
            (let ((pane   (and panep   (not globalp) (session-active-pane session)))
