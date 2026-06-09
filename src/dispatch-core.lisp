@@ -2305,9 +2305,35 @@
               (let ((fn (find-symbol "SETENV" (find-package "SB-POSIX"))))
                 (when fn (funcall fn name value 1)))))))))
 
+(defun %cmd-set-hook (session args)
+  "set-hook [-g] [-a] [-R] [-u] event [command]: register or unset a command hook
+   at runtime (the same backend the .tmux.conf `set-hook` directive uses, now
+   reachable from command-prompt / key bindings / control mode).
+     -u  unset all command hooks for EVENT.
+     -R  run EVENT's hooks immediately (after setting, if a command is also given).
+     -g / -a  accepted (cl-tmux keeps a flat command-hook table — global/append are
+              the only behaviours), so `set-hook -g ...` works as written.
+   Without -u, the tokens after EVENT are joined into one command line and stored
+   as a raw string, expanded at hook-fire time via %run-command-line."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "")
+    (let ((event   (first positionals))
+          (cmd-str (when (rest positionals)
+                     (format nil "~{~A~^ ~}" (rest positionals)))))
+      (when event
+        (cond
+          ((assoc #\u flags)
+           (cl-tmux/hooks:clear-command-hooks event))
+          (t
+           (when cmd-str
+             (cl-tmux/hooks:set-command-hook event cmd-str))
+           ;; -R: fire the event's hooks now.
+           (when (assoc #\R flags)
+             (run-command-hooks event session))))))))
+
 (defparameter *arg-command-table*
   (list
    (cons '("display-message" "display") #'%cmd-display-message)
+   (cons '("set-hook" "hook")           #'%cmd-set-hook)
    (cons '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")
          #'%cmd-set-option)
    (cons '("rename-window" "renamew")   #'%cmd-rename-window)

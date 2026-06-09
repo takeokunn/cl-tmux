@@ -751,10 +751,16 @@
    are expanded at hook-fire time via %run-command-line.
    Returns T when handled, NIL otherwise."
   (when (or (string= cmd "set-hook") (string= cmd "hook"))
-    (let* ((remove-p (and (first args)
-                          (or (string= (first args) "-r")
-                              (string= (first args) "-u"))))
-           (rest     (if remove-p (rest args) args))
+    ;; Consume ALL leading -X flags (not just -r/-u): -g/-a/-R are accepted and
+    ;; skipped so `set-hook -g <event> <cmd>` registers EVENT, not "-g".
+    (let* ((remove-p nil)
+           (rest     (loop for tail on args
+                           while (let ((tok (first tail)))
+                                   (and (> (length tok) 1) (char= (char tok 0) #\-)))
+                           do (when (or (string= (first tail) "-r")
+                                        (string= (first tail) "-u"))
+                                (setf remove-p t))
+                           finally (return tail)))
            (event    (first rest))
            ;; The command may be a single quoted token or split across tokens;
            ;; join all remaining tokens as a single command line string.

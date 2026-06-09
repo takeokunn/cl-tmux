@@ -457,6 +457,40 @@
         (is (eq (second (session-windows s)) (session-active-window s))
             "run-command-hooks must dispatch :next-window, advancing the active window")))))
 
+;;; ── set-hook as a RUNTIME command (command-prompt / bind / control mode) ─────
+
+(test runtime-set-hook-command-registers-with-g-flag
+  "set-hook run at runtime via %run-command-line registers the command hook, and
+   the -g flag is skipped (EVENT is after-new-window, not \"-g\")."
+  (with-isolated-hooks
+    (let ((s (make-fake-session)))
+      (with-loop-state
+        (cl-tmux::%run-command-line s "set-hook -g after-new-window next-window")
+        (is (equal '("next-window") (cl-tmux/hooks:command-hooks "after-new-window"))
+            "runtime set-hook -g must register under the event, not under -g")
+        (is (null (cl-tmux/hooks:command-hooks "-g"))
+            "no hook may be registered under the literal flag -g")))))
+
+(test runtime-set-hook-u-unsets-command-hook
+  "set-hook -u <event> run at runtime clears the event's command hooks."
+  (with-isolated-hooks
+    (let ((s (make-fake-session)))
+      (with-loop-state
+        (cl-tmux/hooks:set-command-hook "after-new-window" "next-window")
+        (cl-tmux::%run-command-line s "set-hook -u after-new-window")
+        (is (null (cl-tmux/hooks:command-hooks "after-new-window"))
+            "runtime set-hook -u must clear the event's command hooks")))))
+
+(test config-set-hook-g-flag-registers-under-event
+  "set-hook -g <event> <cmd> in .tmux.conf registers under EVENT, not \"-g\"
+   (regression: leading flags other than -r/-u were previously taken as the event)."
+  (with-isolated-hooks
+    (cl-tmux/config:load-config-from-string "set-hook -g after-new-window next-window")
+    (is (equal '("next-window") (cl-tmux/hooks:command-hooks "after-new-window"))
+        "config set-hook -g must register under the event")
+    (is (null (cl-tmux/hooks:command-hooks "-g"))
+        "config set-hook must not register under the literal flag -g")))
+
 (test command-hook-fires-on-after-kill-pane-via-runner
   "Killing a pane fires the after-kill-pane command hook through the runner."
   (with-isolated-hooks
