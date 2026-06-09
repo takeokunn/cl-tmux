@@ -86,6 +86,36 @@
     (is (= 13 (pane-height p0)) "upper pane grows by amount")
     (is (= 7  (pane-height p1)) "lower pane shrinks by amount")))
 
+;;; ── resize-pane -x / -y: absolute size (command arg form) ────────────────────
+
+(test resize-pane-x-absolute-grows-active
+  "resize-pane -x N sets the active pane to an absolute width of N (grow case)."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first (window-panes win)))
+         (s   (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window s win)
+    (cl-tmux::%cmd-resize-pane-arg s '("-x" "25"))
+    (is (= 25 (pane-width p0)) "resize-pane -x 25 must make the active pane 25 wide")))
+
+(test resize-pane-x-absolute-shrinks-active
+  "resize-pane -x N shrinks the active pane when N < current width — verifies the
+   signed-delta border move shrinks as well as grows."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first (window-panes win)))
+         (s   (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window s win)
+    (cl-tmux::%cmd-resize-pane-arg s '("-x" "15"))
+    (is (= 15 (pane-width p0)) "resize-pane -x 15 must shrink the active pane to 15")))
+
+(test resize-pane-y-absolute-sets-height
+  "resize-pane -y N sets the active pane to an absolute height of N."
+  (let* ((win (%hsplit-window 10))
+         (p0  (first (window-panes win)))
+         (s   (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window s win)
+    (cl-tmux::%cmd-resize-pane-arg s '("-y" "13"))
+    (is (= 13 (pane-height p0)) "resize-pane -y 13 must make the active pane 13 tall")))
+
 ;;; ── copy-mode-scroll ─────────────────────────────────────────────────────────
 
 (defun %make-test-pane (&key (id 1) (x 0) (y 0) (w 20) (h 5))

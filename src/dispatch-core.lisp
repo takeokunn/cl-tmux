@@ -2168,13 +2168,20 @@
             (cl-tmux/buffer:add-paste-buffer content (cdr (assoc #\b flags))))))))
 
 (defun %cmd-resize-pane-arg (session args)
-  "resize-pane [-t target] [-L|-R|-U|-D|-Z] [amount]: resize a pane.
+  "resize-pane [-t target] [-L|-R|-U|-D|-Z] [-x width] [-y height] [amount]: resize a pane.
    -t target: target pane by pane-id or 'session:window.pane' (default: active pane).
    -L/-R/-U/-D: resize by AMOUNT (default 5) in the given direction.
+   -x N / -y N: resize to an ABSOLUTE width/height of N cells (computed as a delta
+   from the pane's current size and applied via the :right/:down border move; both
+   may be given together).
    -Z: zoom-toggle the target pane."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "txy")
     (let* ((amount-str (first positionals))
            (amount     (or (and amount-str (parse-integer amount-str :junk-allowed t)) 5))
+           (x-str      (cdr (assoc #\x flags)))
+           (y-str      (cdr (assoc #\y flags)))
+           (x-val      (and x-str (parse-integer x-str :junk-allowed t)))
+           (y-val      (and y-str (parse-integer y-str :junk-allowed t)))
            ;; Resolve target pane; fall back to active window for resize operations.
            (target-str (cdr (assoc #\t flags)))
            (win        (if target-str
@@ -2189,6 +2196,18 @@
       (cond
         ((assoc #\Z flags)
          (when win (window-zoom-toggle win)))
+        ;; -x/-y: absolute resize.  Move the relevant border by (target - current);
+        ;; a signed delta grows (positive) or shrinks (negative) the active pane.
+        ((or x-val y-val)
+         (when win
+           (let ((ap (window-active-pane win)))
+             (when ap
+               (when x-val
+                 (let ((dx (- x-val (cl-tmux/model:pane-width ap))))
+                   (unless (zerop dx) (resize-pane win :right dx))))
+               (when y-val
+                 (let ((dy (- y-val (cl-tmux/model:pane-height ap))))
+                   (unless (zerop dy) (resize-pane win :down dy))))))))
         ((assoc #\L flags) (when win (resize-pane win :left  amount)))
         ((assoc #\R flags) (when win (resize-pane win :right amount)))
         ((assoc #\U flags) (when win (resize-pane win :up    amount)))
