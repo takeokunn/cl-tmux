@@ -95,13 +95,25 @@
   (setf *paste-buffers* nil
         *buffer-auto-index* 0))
 
+(defun %osc52-inbound-clipboard (text)
+  "Inbound OSC 52 clipboard write from an application: add TEXT to the paste-buffer
+   ring UNLESS the set-clipboard option is \"off\", in which case tmux ignores
+   application clipboard writes entirely.  \"on\"/\"external\" (the default) accept
+   them.  The gate lives here (not in the terminal parser) so the parser layer
+   stays decoupled from the options layer."
+  (unless (string-equal (or (ignore-errors (cl-tmux/options:get-option "set-clipboard"))
+                            "on")
+                        "off")
+    (add-paste-buffer text)))
+
 (defun initialize-osc52-handler ()
   "Wire the OSC 52 clipboard handler to the paste buffer ring.
    Applications (e.g., vim, tmux copy-mode) can write clipboard data via
    ESC ] 52 ; c ; <base64> ST — decoded by parser-osc and forwarded here.
+   The handler honours set-clipboard (off → ignore inbound writes).
    Called once at load time; separated from top-level to make the coupling explicit
    and allow re-initialisation if the handler variable is reset."
-  (setf cl-tmux/terminal/parser:*osc52-handler* #'add-paste-buffer))
+  (setf cl-tmux/terminal/parser:*osc52-handler* #'%osc52-inbound-clipboard))
 
 ;; Wire OSC 52 handler at module load time via an explicit named call.
 (initialize-osc52-handler)

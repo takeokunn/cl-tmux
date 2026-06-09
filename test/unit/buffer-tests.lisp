@@ -16,6 +16,25 @@
     (cl-tmux/buffer:add-paste-buffer "hello")
     (is (string= "hello" (cl-tmux/buffer:get-paste-buffer 0)))))
 
+(test osc52-inbound-respects-set-clipboard-off
+  "Inbound OSC 52 (an application writing the clipboard) is IGNORED when
+   set-clipboard is off — tmux drops application clipboard writes then."
+  (with-empty-buffers
+    (with-fresh-options
+      (cl-tmux/options:set-option "set-clipboard" "off")
+      (cl-tmux/buffer::%osc52-inbound-clipboard "secret")
+      (is (null (cl-tmux/buffer:get-paste-buffer 0))
+          "set-clipboard off must drop the inbound clipboard write"))))
+
+(test osc52-inbound-accepted-when-set-clipboard-on
+  "Inbound OSC 52 adds to the paste-buffer ring when set-clipboard is on (default)."
+  (with-empty-buffers
+    (with-fresh-options
+      (cl-tmux/options:set-option "set-clipboard" "on")
+      (cl-tmux/buffer::%osc52-inbound-clipboard "copied")
+      (is (string= "copied" (cl-tmux/buffer:get-paste-buffer 0))
+          "set-clipboard on must accept the inbound clipboard write"))))
+
 (test buffer-lifo-order
   "Most recently added buffer is returned as index 0."
   (with-empty-buffers
