@@ -500,6 +500,55 @@
     (is-false (cl-tmux/terminal/types:screen-dirty-p s)
               "screen must not be marked dirty when no swap occurs")))
 
+;;; ── copy-mode-clear-selection (send -X clear-selection) ──────────────────────
+
+(test copy-mode-clear-selection-drops-selection-keeps-cursor
+  "copy-mode-clear-selection clears the mark + selection flags but keeps the
+   cursor and stays in copy mode (tmux clear-selection / default vi Escape)."
+  (let ((s (%copy-mode-screen)))
+    (setf (cl-tmux/terminal/types:screen-copy-selecting        s) t
+          (cl-tmux/terminal/types:screen-copy-mark             s) (cons 0 2)
+          (cl-tmux/terminal/types:screen-copy-cursor           s) (cons 0 5)
+          (cl-tmux/terminal/types:screen-copy-rect-select-p    s) t)
+    (cl-tmux/commands::copy-mode-clear-selection s)
+    (is-false (cl-tmux/terminal/types:screen-copy-selecting s)
+              "selection flag must be cleared")
+    (is (null (cl-tmux/terminal/types:screen-copy-mark s))
+        "mark must be dropped")
+    (is-false (cl-tmux/terminal/types:screen-copy-rect-select-p s)
+              "rectangle-select flag must be reset")
+    (is (equal (cons 0 5) (cl-tmux/terminal/types:screen-copy-cursor s))
+        "cursor position must be preserved (stay put in copy mode)")
+    (is-true (cl-tmux/terminal/types:screen-copy-mode-p s)
+             "must remain in copy mode (clear-selection does not cancel)")
+    (is-true (cl-tmux/terminal/types:screen-dirty-p s)
+             "screen must be dirty after clearing")))
+
+(test copy-mode-clear-selection-noop-without-selection
+  "copy-mode-clear-selection is a clean no-op when there is no selection/mark."
+  (let ((s (%copy-mode-screen)))
+    (setf (cl-tmux/terminal/types:screen-copy-selecting s) nil
+          (cl-tmux/terminal/types:screen-copy-mark      s) nil
+          (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 3)
+          (cl-tmux/terminal/types:screen-dirty-p        s) nil)
+    (finishes (cl-tmux/commands::copy-mode-clear-selection s))
+    (is (equal (cons 0 3) (cl-tmux/terminal/types:screen-copy-cursor s))
+        "cursor unchanged")
+    (is-false (cl-tmux/terminal/types:screen-dirty-p s)
+              "no dirty mark when there was nothing to clear")))
+
+(test copy-mode-clear-selection-x-command-mapped
+  "The send -X name clear-selection (and its alias stop-selection) map to the
+   :copy-mode-clear-selection dispatch keyword."
+  (is (eq :copy-mode-clear-selection
+          (cdr (assoc "clear-selection" cl-tmux::*copy-mode-x-commands*
+                      :test #'string-equal)))
+      "clear-selection must be a known send -X command")
+  (is (eq :copy-mode-clear-selection
+          (cdr (assoc "stop-selection" cl-tmux::*copy-mode-x-commands*
+                      :test #'string-equal)))
+      "stop-selection must alias clear-selection"))
+
 (test copy-mode-other-end-preserves-selection-text
   "Swapping the two ends must not change the selected text or normalised bounds —
    this is the defining invariant of other-end."

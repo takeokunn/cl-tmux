@@ -182,6 +182,21 @@
     (rotatef (screen-copy-cursor screen) (screen-copy-mark screen))
     (setf (screen-dirty-p screen) t)))
 
+(defun copy-mode-clear-selection (screen)
+  "Clear the active selection without leaving copy mode (tmux `clear-selection`,
+   the default copy-mode-vi Escape binding).  Drops the mark and the in-progress
+   selection / line / rectangle flags, but — unlike copy-mode-cancel-selection,
+   which is the full exit-path reset — KEEPS the cursor and scroll position so the
+   user stays put in copy mode.  No-op unless copy mode is active with a selection
+   or mark; marks the screen dirty when it clears."
+  (when (and (screen-copy-mode-p screen)
+             (or (screen-copy-selecting screen) (screen-copy-mark screen)))
+    (setf (screen-copy-selecting        screen) nil
+          (screen-copy-mark             screen) nil
+          (screen-copy-line-selection-p screen) nil
+          (screen-copy-rect-select-p    screen) nil
+          (screen-dirty-p               screen) t)))
+
 (defun copy-mode-select-word (screen)
   "Select the word under the copy-mode cursor (tmux copy-mode `select-word`).
    Word characters are defined by the same `word-separators` option used by the

@@ -707,6 +707,7 @@
    #:copy-mode-begin-selection
    #:copy-mode-cancel-selection
    #:copy-mode-other-end
+   #:copy-mode-clear-selection
    #:copy-mode-select-word
    #:copy-mode-yank
    ;; Word navigation

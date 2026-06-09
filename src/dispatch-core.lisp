@@ -2063,6 +2063,10 @@
   '(("begin-selection"           . :copy-mode-begin-selection)
     ("begin-selection-line"      . :copy-mode-begin-line-selection)
     ("begin-line-selection"      . :copy-mode-begin-line-selection)
+    ;; clear-selection: drop the selection but stay in copy mode (the default vi
+    ;; Escape binding); stop-selection is tmux's alias for the same action.
+    ("clear-selection"           . :copy-mode-clear-selection)
+    ("stop-selection"            . :copy-mode-clear-selection)
     ("copy-selection"            . :copy-mode-yank)
     ("copy-selection-and-cancel" . :copy-mode-yank)
     ("cancel"                    . :copy-mode-exit)
