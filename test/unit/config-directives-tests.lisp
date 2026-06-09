@@ -1598,3 +1598,42 @@ bind-key r source-file /dev/null"))
                         (list (namestring (merge-pathnames "*.conf" dir)))))
                  "source-files loads the globbed files without error")))
       (ignore-errors (uiop:delete-directory-tree dir :validate t)))))
+
+;;; ── # comment handling (inline, quote- and format-aware) ─────────────────────
+
+(test strip-config-comment-respects-quotes-and-formats
+  "%strip-config-comment removes a comment only outside quotes and not for #{/##."
+  (is (string= "set -g foo bar"
+               (cl-tmux/config::%strip-config-comment "set -g foo bar # note"))
+      "inline comment stripped")
+  (is (string= "" (cl-tmux/config::%strip-config-comment "# full line"))
+      "full-line comment → empty")
+  (is (string= "set x \"#{session_name}\""
+               (cl-tmux/config::%strip-config-comment "set x \"#{session_name}\""))
+      "# inside double quotes kept")
+  (is (string= "set x '# literal'"
+               (cl-tmux/config::%strip-config-comment "set x '# literal'"))
+      "# inside single quotes kept")
+  (is (string= "set x #{session_name}"
+               (cl-tmux/config::%strip-config-comment "set x #{session_name}"))
+      "unquoted #{ format kept")
+  (is (string= "set x ##y"
+               (cl-tmux/config::%strip-config-comment "set x ##y"))
+      "## escaped-literal not a comment")
+  (is (string= "set x bar"
+               (cl-tmux/config::%strip-config-comment "set x bar"))
+      "no comment → unchanged"))
+
+(test config-inline-comment-not-in-value
+  "An inline # comment is stripped before the directive is applied."
+  (with-isolated-options ()
+    (cl-tmux/config:load-config-from-string "set -g status-left foo # a comment")
+    (is (string= "foo" (cl-tmux/options:get-option "status-left"))
+        "the comment must not leak into the option value")))
+
+(test config-quoted-hash-preserved-in-value
+  "A #{...} inside a quoted value survives (not treated as a comment)."
+  (with-isolated-options ()
+    (cl-tmux/config:load-config-from-string "set -g status-left \"#{session_name}\"")
+    (is (string= "#{session_name}" (cl-tmux/options:get-option "status-left"))
+        "the #{...} format must survive as the option value")))

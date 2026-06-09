@@ -951,12 +951,38 @@
           (%apply-source-file-directive cmd args)
           (%apply-config-directive-inner tokens)))))
 
+(defun %strip-config-comment (line)
+  "Remove a trailing # comment from a config LINE.  Following tmux's lexer, a #
+   begins a comment only when it is OUTSIDE single/double quotes and is NOT part of
+   a format construct (#{ #( #[) nor an escaped ## .  Returns the line up to the
+   comment, right-trimmed (or the whole line when there is no comment)."
+  (let ((len (length line)) (i 0) (in-single nil) (in-double nil))
+    (loop while (< i len) do
+      (let ((c (char line i)))
+        (cond
+          (in-single (when (char= c #\') (setf in-single nil)))
+          (in-double (cond ((char= c #\\) (incf i))   ; skip escaped char
+                           ((char= c #\") (setf in-double nil))))
+          ((char= c #\') (setf in-single t))
+          ((char= c #\") (setf in-double t))
+          ((char= c #\#)
+           (cond
+             ;; ## — escaped literal #, not a comment.
+             ((and (< (1+ i) len) (char= (char line (1+ i)) #\#)) (incf i))
+             ;; #{ / #( / #[ — a format construct, not a comment.
+             ((and (< (1+ i) len) (member (char line (1+ i)) '(#\{ #\( #\[))) nil)
+             ;; Otherwise a comment begins here: drop the rest of the line.
+             (t (return-from %strip-config-comment
+                  (string-right-trim '(#\Space #\Tab) (subseq line 0 i))))))))
+      (incf i))
+    line))
+
 (defun apply-config-line (line)
-  "Apply a single config LINE.  Blank lines and #-comments are ignored.
-   Returns T when a directive was applied."
-  (let ((trimmed (string-trim '(#\Space #\Tab #\Return #\Newline) line)))
+  "Apply a single config LINE.  Blank lines and # comments (full-line and inline,
+   respecting quotes and #{...} formats) are ignored.  Returns T when applied."
+  (let ((trimmed (string-trim '(#\Space #\Tab #\Return #\Newline)
+                              (%strip-config-comment line))))
     (and (plusp (length trimmed))
-         (char/= (char trimmed 0) #\#)
          (apply-config-directive (%config-tokens trimmed)))))
 
 ;;; ── %if / %else / %endif preprocessor support ───────────────────────────────
@@ -1082,9 +1108,11 @@
     (flet ((active-p () (every (lambda (s) (eq s :active)) cond-stack)))
       (loop for raw = (read-line stream nil nil)
             while raw
-            ;; Join trailing-backslash continuation lines into one logical line
-            ;; before classifying it (so a continued directive is one directive).
-            for line = (%read-logical-config-line raw stream) do
+            ;; Join trailing-backslash continuation lines, then strip any inline #
+            ;; comment, before classifying — so a continued/commented directive (or
+            ;; `%if 1 # note`) is seen as one clean logical line.
+            for line = (%strip-config-comment
+                        (%read-logical-config-line raw stream)) do
         (let* ((trimmed (string-trim '(#\Space #\Tab #\Return #\Newline) line))
                (pp-type (%preprocessor-line-p trimmed)))
           (case pp-type
