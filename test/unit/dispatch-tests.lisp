@@ -4892,3 +4892,15 @@
       (is (search "%begin 0 3 1" reply) "reply opens with %begin")
       (is (search "%error 0 3 1" reply) "unknown command closes with %error")
       (is (search "unknown command" reply) "the error message is in the body"))))
+
+(test control-notifications-layout-change-on-resize
+  "after-resize-pane emits %layout-change @<window> with the window's layout string."
+  (with-isolated-hooks
+    (let* ((out      (make-string-output-stream))
+           (handlers (cl-tmux::%install-control-notifications out)))
+      (unwind-protect
+           (let ((win (make-fake-window 3 "w")))
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-resize-pane+ win)
+             (is (search "%layout-change @3" (get-output-stream-string out))
+                 "%layout-change emitted on resize"))
+        (cl-tmux::%remove-control-notifications handlers)))))

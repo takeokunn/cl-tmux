@@ -2398,7 +2398,18 @@
    list of (event . callback) pairs so %remove-control-notifications can unregister
    them when the client detaches.  Each callback is variadic so it tolerates the
    hook's argument list; the changed object is the first argument."
-  (flet ((emit (line) (write-line line output) (force-output output)))
+  (labels ((emit (line) (write-line line output) (force-output output))
+           ;; after-resize-pane fires with a WINDOW, after-split-window with a PANE;
+           ;; coerce either to its window so we can serialise its layout.
+           (window-of (obj)
+             (if (cl-tmux/model::pane-p obj) (cl-tmux/model:pane-window obj) obj))
+           (emit-layout (obj)
+             (let ((win (window-of obj)))
+               (when win
+                 (let ((layout (cl-tmux/model:layout->string win)))
+                   (emit (cl-tmux/control:control-layout-change
+                          (window-id win) layout layout
+                          (if (cl-tmux/model:window-zoom-p win) "Z" "*"))))))))
     (let ((handlers
             (list
              (cons cl-tmux/hooks:+hook-after-new-window+
@@ -2414,7 +2425,12 @@
              (cons cl-tmux/hooks:+hook-session-renamed+
                    (lambda (&rest a)
                      (emit (cl-tmux/control:control-session-renamed
-                            (session-id (first a)) (session-name (first a)))))))))
+                            (session-id (first a)) (session-name (first a))))))
+             ;; Layout changes: resize fires with the window, split with the pane.
+             (cons cl-tmux/hooks:+hook-after-resize-pane+
+                   (lambda (&rest a) (emit-layout (first a))))
+             (cons cl-tmux/hooks:+hook-after-split-window+
+                   (lambda (&rest a) (emit-layout (first a)))))))
       (dolist (h handlers) (cl-tmux/hooks:add-hook (car h) (cdr h)))
       handlers)))
 
