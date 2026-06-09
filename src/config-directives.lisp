@@ -1061,14 +1061,19 @@
   "FIRST-LINE has opened an unbalanced { ... } block; keep reading from STREAM
    until the brace depth returns to zero (or EOF), then return all the lines
    joined into one logical line with \" ; \" separators so the inner commands
-   become a semicolon sequence the bind parser already understands."
-  (let ((depth (%line-brace-delta first-line))
-        (parts (list first-line)))
+   become a semicolon sequence the bind parser already understands.
+   Each line's inline # comment is stripped FIRST — otherwise a comment on an
+   inner line would survive into the joined block and truncate it at that #, and
+   a brace inside a comment would corrupt the depth count."
+  (let* ((stripped-first (%strip-config-comment first-line))
+         (depth (%line-brace-delta stripped-first))
+         (parts (list stripped-first)))
     (loop while (> depth 0)
           for next = (read-line stream nil nil)
           while next
-          do (push next parts)
-             (incf depth (%line-brace-delta next)))
+          for stripped = (%strip-config-comment next)
+          do (push stripped parts)
+             (incf depth (%line-brace-delta stripped)))
     (format nil "~{~A~^ ; ~}" (nreverse parts))))
 
 (defun %line-continues-p (line)

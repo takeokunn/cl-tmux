@@ -1637,3 +1637,17 @@ bind-key r source-file /dev/null"))
     (cl-tmux/config:load-config-from-string "set -g status-left \"#{session_name}\"")
     (is (string= "#{session_name}" (cl-tmux/options:get-option "status-left"))
         "the #{...} format must survive as the option value")))
+
+(test config-brace-block-inner-comment-preserved
+  "An inline # comment on an inner line of a multi-line brace block does not
+   truncate the block — both commands still bind."
+  (with-isolated-config
+    (load-config-from-string
+     (format nil "bind r {~%new-window  # make a window~%next-window~%}"))
+    (let* ((entry (cl-tmux/config:key-table-lookup "prefix" #\r))
+           (cmd   (cl-tmux/config:key-table-command entry)))
+      (is (consp cmd) "command must be a list")
+      (is (eq :sequence (first cmd)) "must be a :sequence")
+      (is (= 2 (length (rest cmd)))
+          "the sequence must hold both commands despite the inner comment (got ~S)"
+          cmd))))
