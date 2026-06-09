@@ -1090,16 +1090,28 @@
   (let ((win (session-active-window session)))
     (when win (rename-window win (format nil "~{~A~^ ~}" args)))))
 
+(defun %rename-session-checked (session new-name)
+  "Rename SESSION to NEW-NAME, keeping *server-sessions* keyed by the new name and
+   firing +hook-session-renamed+.  REFUSES (returns NIL) when NEW-NAME is empty or
+   already used by a DIFFERENT session — tmux rejects a rename onto an existing name
+   (`duplicate session`) rather than silently orphaning the other session; renaming
+   to the session's CURRENT name is a harmless no-op that still succeeds.  The single
+   chokepoint both rename paths (arg command + interactive prompt) route through.
+   Returns T on success."
+  (when (and new-name (not (string= new-name "")))
+    (let ((existing (server-find-session new-name)))
+      (unless (and existing (not (eq existing session)))   ; a different session owns it
+        (server-remove-session (session-name session))
+        (rename-session session new-name)
+        (server-add-session session)
+        (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-renamed+ session)
+        t))))
+
 (defun %cmd-rename-session (session args)
-  "rename-session <name...>: rename SESSION to the joined ARGS.
-   Updates *server-sessions* so the registry stays consistent with the
-   new name (same invariant enforced by the interactive :rename-session handler)."
-  (let ((new-name (format nil "~{~A~^ ~}" args)))
-    (unless (string= new-name "")
-      (server-remove-session (session-name session))
-      (rename-session session new-name)
-      (server-add-session session)
-      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-renamed+ session))))
+  "rename-session <name...>: rename SESSION to the joined ARGS, updating the
+   registry key.  Refuses a name already used by another session (see
+   %rename-session-checked)."
+  (%rename-session-checked session (format nil "~{~A~^ ~}" args)))
 
 ;;; -- Flag parser (-t target, boolean flags) ----------------------------------
 ;;;

@@ -221,10 +221,9 @@
   (:rename-session
    (prompt-start "rename-session" (session-name session)
                  (lambda (name)
-                   (unless (string= name "")
-                     (server-remove-session (session-name session))
-                     (rename-session session name)
-                     (server-add-session session)))))
+                   ;; Refuses a duplicate name and fires session-renamed (shared
+                   ;; chokepoint with the rename-session command).
+                   (%rename-session-checked session name))))
   (:run-shell
    (prompt-start "run-shell" ""
                  (lambda (cmd)

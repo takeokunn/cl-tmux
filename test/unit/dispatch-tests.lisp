@@ -4672,3 +4672,50 @@
           (cl-tmux::%switch-to-session a)
           (is (cl-tmux::server-find-session "a")
               "switching to current destroys nothing"))))))
+
+;;; ── rename-session: registry key + duplicate-name refusal ────────────────────
+
+(test rename-session-checked-updates-registry-key
+  "%rename-session-checked re-keys *server-sessions* under the new name."
+  (with-loop-state
+    (let ((s (make-fake-session)))
+      (setf (cl-tmux::session-name s) "old")
+      (let ((cl-tmux::*server-sessions* (list (cons "old" s))))
+        (is (eq t (cl-tmux::%rename-session-checked s "new")) "rename succeeds")
+        (is (string= "new" (cl-tmux::session-name s)) "name updated")
+        (is (eq s (cl-tmux::server-find-session "new")) "findable under new name")
+        (is (null (cl-tmux::server-find-session "old")) "old key removed")))))
+
+(test rename-session-checked-refuses-duplicate-name
+  "Renaming onto a name already used by a DIFFERENT session is refused — the other
+   session must not be orphaned."
+  (with-loop-state
+    (let ((a (make-fake-session)) (b (make-fake-session)))
+      (setf (cl-tmux::session-name a) "a" (cl-tmux::session-name b) "b")
+      (let ((cl-tmux::*server-sessions* (list (cons "a" a) (cons "b" b))))
+        (is (null (cl-tmux::%rename-session-checked a "b"))
+            "rename a → existing name b is refused")
+        (is (string= "a" (cl-tmux::session-name a)) "a keeps its name")
+        (is (eq b (cl-tmux::server-find-session "b")) "b is not orphaned")
+        (is (eq a (cl-tmux::server-find-session "a")) "a still findable")))))
+
+(test rename-session-checked-to-own-name-noop-success
+  "Renaming a session to its own current name succeeds as a harmless no-op."
+  (with-loop-state
+    (let ((s (make-fake-session)))
+      (setf (cl-tmux::session-name s) "x")
+      (let ((cl-tmux::*server-sessions* (list (cons "x" s))))
+        (is (eq t (cl-tmux::%rename-session-checked s "x")) "self-rename succeeds")
+        (is (eq s (cl-tmux::server-find-session "x")) "still findable")))))
+
+(test rename-session-checked-fires-hook
+  "%rename-session-checked fires +hook-session-renamed+ on a successful rename."
+  (with-isolated-hooks
+    (with-loop-state
+      (let ((s (make-fake-session)) (fired nil))
+        (setf (cl-tmux::session-name s) "old")
+        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-session-renamed+
+                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+        (let ((cl-tmux::*server-sessions* (list (cons "old" s))))
+          (cl-tmux::%rename-session-checked s "new")
+          (is-true fired "the session-renamed hook fired"))))))
