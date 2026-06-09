@@ -1293,6 +1293,50 @@
         "capture-pane must emit exactly height (~D) newline characters (got ~D)"
         3 lines)))
 
+(test capture-pane-default-trims-trailing-spaces
+  "capture-pane's default (no -J) strips trailing whitespace from each line —
+   tmux's default behaviour.  A 'hi' on a 10-wide row captures as just \"hi\"."
+  (let* ((screen (make-screen 10 1))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 1
+                            :fd -1 :pid -1 :screen screen)))
+    (feed screen "hi")
+    (is (string= (format nil "hi~%") (capture-pane pane))
+        "default capture trims the 8 trailing spaces")))
+
+(test capture-pane-J-preserves-trailing-spaces
+  "capture-pane -J (:join t) PRESERVES trailing spaces — the row keeps full width."
+  (let* ((screen (make-screen 10 1))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 1
+                            :fd -1 :pid -1 :screen screen)))
+    (feed screen "hi")
+    (is (string= (format nil "hi        ~%") (capture-pane pane :join t))
+        "join capture keeps the row padded to its full width of 10")))
+
+(test capture-pane-blank-row-trims-to-empty-line
+  "A fully blank row trims to an empty captured line (just the newline) by default,
+   but stays full-width under -J."
+  (let* ((screen (make-screen 5 1))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 5 :height 1
+                            :fd -1 :pid -1 :screen screen)))
+    (is (string= (format nil "~%")      (capture-pane pane))
+        "blank row trims to an empty line")
+    (is (string= (format nil "     ~%") (capture-pane pane :join t))
+        "blank row stays 5 spaces wide under -J")))
+
+(test capture-pane-escapes-trims-trailing-by-default
+  "capture-pane -e also drops trailing blank cells by default — no trailing-space
+   run survives, and no stray reset is emitted for the trimmed region."
+  (let* ((screen (make-screen 10 1))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 1
+                            :fd -1 :pid -1 :screen screen)))
+    (feed screen "hi")
+    (let ((result (capture-pane pane :escapes t)))
+      (is (null (find #\Space result))
+          "escaped default capture has no trailing spaces (got ~S)" result)
+      (is-true (search "hi" result) "still contains the fed text")
+      (is-true (search (format nil "~C[0m" #\Escape) result)
+          "still ends the row with an SGR reset"))))
+
 ;;; ── copy-mode-line-start / copy-mode-line-end ────────────────────────────────
 
 (test copy-mode-line-start-moves-to-col-0
@@ -2661,16 +2705,19 @@
 ;;; ── %screen-row-string and %scrollback-row-string direct tests ───────────────
 
 (test screen-row-string-returns-full-row-as-string
-  "%screen-row-string returns a string of width characters for the given row."
+  "%screen-row-string trims trailing blanks by default (capture-pane default) but
+   returns the full width when TRIM is NIL (capture-pane -J)."
   (let ((s (make-screen 20 5)))
     (feed s "hello")
-    (let ((row-str (cl-tmux/commands::%screen-row-string s 0)))
-      (is (stringp row-str)
-          "%screen-row-string must return a string")
-      (is (= 20 (length row-str))
-          "%screen-row-string length must equal screen-width (20)")
-      (is (string= "hello" (subseq row-str 0 5))
-          "%screen-row-string must include the fed text at cols 0-4"))))
+    (let ((trimmed (cl-tmux/commands::%screen-row-string s 0))
+          (full    (cl-tmux/commands::%screen-row-string s 0 nil)))
+      (is (stringp trimmed) "%screen-row-string must return a string")
+      (is (string= "hello" trimmed)
+          "default trims the 15 trailing spaces down to the content")
+      (is (= 20 (length full))
+          "with TRIM NIL the row is the full screen-width (20)")
+      (is (string= "hello" (subseq full 0 5))
+          "the full-width row still has the fed text at cols 0-4"))))
 
 (test scrollback-row-string-converts-cell-vector
   "%scrollback-row-string returns a string built from a cell vector."

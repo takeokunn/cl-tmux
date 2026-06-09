@@ -83,57 +83,83 @@
     (format s ";~A;~A" (%capture-color-sgr fg nil) (%capture-color-sgr bg t))
     (write-char #\m s)))
 
+(defun %row-content-width (cell-at full-width trim)
+  "The number of columns to emit for a row of FULL-WIDTH cells (CELL-AT: col → cell).
+   When TRIM is true (capture-pane default), trailing blank cells (space character)
+   are dropped — tmux strips trailing whitespace from each captured line.  When TRIM
+   is NIL (capture-pane -J), the full width is kept so trailing spaces are preserved.
+   An all-blank row trims to width 0 (an empty captured line)."
+  (if (not trim)
+      full-width
+      (loop for col from (1- full-width) downto 0
+            unless (char= (cell-char (funcall cell-at col)) #\Space)
+              return (1+ col)
+            finally (return 0))))
+
 (defun %cells-to-sgr-string (cell-at width)
   "Build a row string with SGR escapes from WIDTH cells, CELL-AT being a function
    col → cell.  Emits a full SGR sequence whenever the colour/attrs change, then
-   the character, and a trailing reset.  Shared by visible and scrollback rows."
-  (with-output-to-string (out)
-    (let ((prev nil))
-      (dotimes (col width)
-        (let* ((cell (funcall cell-at col))
-               (key  (list (cell-fg cell) (cell-bg cell) (cell-attrs cell))))
-          (unless (equal key prev)
-            (write-string (%capture-cell-sgr (cell-fg cell) (cell-bg cell) (cell-attrs cell))
-                          out)
-            (setf prev key))
-          (write-char (cell-char cell) out)))
-      (format out "~C[0m" #\Escape))))
+   the character, and a trailing reset.  Shared by visible and scrollback rows.
+   WIDTH is the already-trimmed content width (see %row-content-width); a zero
+   width yields the empty string (no stray reset on a blank line)."
+  (if (zerop width)
+      ""
+      (with-output-to-string (out)
+        (let ((prev nil))
+          (dotimes (col width)
+            (let* ((cell (funcall cell-at col))
+                   (key  (list (cell-fg cell) (cell-bg cell) (cell-attrs cell))))
+              (unless (equal key prev)
+                (write-string (%capture-cell-sgr (cell-fg cell) (cell-bg cell) (cell-attrs cell))
+                              out)
+                (setf prev key))
+              (write-char (cell-char cell) out)))
+          (format out "~C[0m" #\Escape)))))
 
-(defun %screen-row-string-sgr (screen row)
+(defun %screen-row-string-sgr (screen row &optional (trim t))
   "Visible-row string with SGR escapes (capture-pane -e)."
-  (%cells-to-sgr-string (lambda (col) (screen-cell screen col row))
-                        (screen-width screen)))
+  (let ((cell-at (lambda (col) (screen-cell screen col row))))
+    (%cells-to-sgr-string cell-at
+                          (%row-content-width cell-at (screen-width screen) trim))))
 
-(defun %scrollback-row-string-sgr (cell-vector)
+(defun %scrollback-row-string-sgr (cell-vector &optional (trim t))
   "Scrollback-row string with SGR escapes (capture-pane -e)."
-  (%cells-to-sgr-string (lambda (col) (aref cell-vector col))
-                        (length cell-vector)))
+  (let ((cell-at (lambda (col) (aref cell-vector col))))
+    (%cells-to-sgr-string cell-at
+                          (%row-content-width cell-at (length cell-vector) trim))))
 
-(defun %screen-row-string (screen row)
-  "Return a string of WIDTH characters representing ROW in SCREEN's visible grid.
-   Each character is read directly from the cell at (col, ROW).
-   This is a pure data-to-string conversion; no side effects."
-  (let* ((width (screen-width screen))
-         (result (make-string width)))
+(defun %screen-row-string (screen row &optional (trim t))
+  "Return a string representing ROW in SCREEN's visible grid, character per cell.
+   When TRIM (the capture-pane default), trailing blank cells are dropped; when
+   NIL (capture-pane -J) the full width is kept.  Pure data-to-string conversion."
+  (let* ((cell-at (lambda (col) (screen-cell screen col row)))
+         (width   (%row-content-width cell-at (screen-width screen) trim))
+         (result  (make-string width)))
     (dotimes (col width result)
-      (setf (char result col)
-            (cell-char (screen-cell screen col row))))))
+      (setf (char result col) (cell-char (funcall cell-at col))))))
 
-(defun %scrollback-row-string (cell-vector)
-  "Return a string of characters from a scrollback row CELL-VECTOR (a simple-vector of cells)."
-  (let* ((n      (length cell-vector))
-         (result (make-string n)))
+(defun %scrollback-row-string (cell-vector &optional (trim t))
+  "Return a string of characters from a scrollback row CELL-VECTOR (a simple-vector
+   of cells).  TRIM drops trailing blank cells (capture-pane default)."
+  (let* ((cell-at (lambda (col) (aref cell-vector col)))
+         (n       (%row-content-width cell-at (length cell-vector) trim))
+         (result  (make-string n)))
     (dotimes (i n result)
-      (setf (char result i) (cell-char (aref cell-vector i))))))
+      (setf (char result i) (cell-char (funcall cell-at i))))))
 
-(defun capture-pane (pane &key (include-scrollback nil) (escapes nil))
+(defun capture-pane (pane &key (include-scrollback nil) (escapes nil) (join nil))
   "Dump the visible content of PANE as a string.
    When INCLUDE-SCROLLBACK is T, also include scrollback history above the visible area.
    When ESCAPES is T (capture-pane -e), each row is rendered with SGR escape
    sequences so colours/attributes are preserved; otherwise plain characters.
+   When JOIN is T (capture-pane -J), trailing spaces on each line are PRESERVED;
+   otherwise — tmux's default — trailing whitespace is stripped from each line.
+   (tmux's -J also joins wrapped lines into one logical line; that half requires
+   per-row wrap-state tracking the screen does not yet record, so it is not done.)
    The screen lock is held only for snapshot extraction; string rendering happens
    outside the lock so renderer threads are not blocked during I/O."
-  (let ((screen (pane-screen pane)))
+  (let ((screen (pane-screen pane))
+        (trim   (not join)))           ; default trims trailing spaces; -J preserves
     ;; Snapshot pure data under lock (I/O-synchronisation concern).
     (let ((scrollback-snapshot nil)
           (visible-rows nil))
@@ -143,14 +169,14 @@
         (setf visible-rows
               (loop for row from 0 below (screen-height screen)
                     collect (if escapes
-                                (%screen-row-string-sgr screen row)
-                                (%screen-row-string screen row)))))
+                                (%screen-row-string-sgr screen row trim)
+                                (%screen-row-string screen row trim)))))
       ;; Render to string outside the lock (pure I/O).
       (with-output-to-string (out)
         (dolist (row-cells scrollback-snapshot)
           (write-string (if escapes
-                            (%scrollback-row-string-sgr row-cells)
-                            (%scrollback-row-string row-cells))
+                            (%scrollback-row-string-sgr row-cells trim)
+                            (%scrollback-row-string row-cells trim))
                         out)
           (terpri out))
         (dolist (row-str visible-rows)
