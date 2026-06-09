@@ -101,11 +101,29 @@
         (pane-width  pane) width
         (pane-height pane) height))
 
+(defun %pane-border-status-reservation (height)
+  "Return (values CONTENT-Y-OFFSET CONTENT-HEIGHT) for a pane allocated HEIGHT rows,
+   reserving ONE row within the allocation for the pane-border-status title line
+   when the option is \"top\"/\"bottom\" and there is room (height > 1):
+     top    → offset 1 (title on the allocated top row), content height-1
+     bottom → offset 0 (title on the allocated bottom row), content height-1
+     off / too short → offset 0, full height (no reservation).
+   The pane's geometry becomes the CONTENT rectangle; the title row sits just
+   outside it (drawn by %render-pane-border-status)."
+  (let ((status (cl-tmux/options:get-option "pane-border-status" "off")))
+    (if (and (not (string= status "off")) (not (string= status "")) (> height 1))
+        (values (if (string= status "top") 1 0) (1- height))
+        (values 0 height))))
+
 (defun pane-reposition (pane x y width height)
   "Move and resize PANE to X,Y with WIDTH x HEIGHT.
-   Updates the geometry slots, then resizes the underlying PTY and virtual screen."
-  (%update-pane-geometry pane x y width height)
-  (set-pty-size (pane-fd pane) height width)
-  (let ((screen (pane-screen pane)))
-    (with-lock-held ((screen-lock screen))
-      (screen-resize screen width height))))
+   Updates the geometry slots, then resizes the underlying PTY and virtual screen.
+   When pane-border-status is on, one row of the allocation is reserved for the
+   title line, so the pane's CONTENT geometry (and the app's PTY/screen) is one
+   row shorter — the title no longer overwrites pane content."
+  (multiple-value-bind (cy-off cheight) (%pane-border-status-reservation height)
+    (%update-pane-geometry pane x (+ y cy-off) width cheight)
+    (set-pty-size (pane-fd pane) cheight width)
+    (let ((screen (pane-screen pane)))
+      (with-lock-held ((screen-lock screen))
+        (screen-resize screen width cheight)))))

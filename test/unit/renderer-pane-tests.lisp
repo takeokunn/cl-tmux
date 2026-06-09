@@ -584,27 +584,29 @@
     (is (string= "" out)
         "pane-border-status=off must produce no output (got ~S)" out)))
 
-(test render-pane-border-status-top-positions-on-first-row
-  "%render-pane-border-status with status=top places the label on pane-y."
+(test render-pane-border-status-top-positions-above-content
+  "%render-pane-border-status with status=top places the label on the RESERVED row
+   just above the content (pane-y - 1), so it never overwrites pane content."
   (let* ((pane (make-test-pane 20 5 :id 1 :y 3))
          (sess (make-fake-session :nwindows 1))
          (win  (first (cl-tmux/model:session-windows sess)))
          (out  (%border-status-output pane sess win "top" "TITLE")))
-    ;; The move-to sequence for row=3 is ESC[4;1H (1-based: 3+1=4)
-    (is (search (format nil "~C[4;" #\Escape) out)
-        "top status must position at row pane-y=3 → ESC[4;...H (got ~S)" out)
+    ;; Reserved row = pane-y - 1 = 2 → ESC[3;1H (1-based: 2+1=3)
+    (is (search (format nil "~C[3;" #\Escape) out)
+        "top status must position at the row above content (pane-y-1=2 → ESC[3;...H) (got ~S)" out)
     (is (search "TITLE" out)
         "top status must emit the format text (got ~S)" out)))
 
-(test render-pane-border-status-bottom-positions-on-last-row
-  "%render-pane-border-status with status=bottom places the label on pane-y + pane-height - 1."
+(test render-pane-border-status-bottom-positions-below-content
+  "%render-pane-border-status with status=bottom places the label on the RESERVED
+   row just below the content (pane-y + pane-height)."
   (let* ((pane (make-test-pane 20 5 :id 1 :y 0))
          (sess (make-fake-session :nwindows 1))
          (win  (first (cl-tmux/model:session-windows sess)))
          (out  (%border-status-output pane sess win "bottom" "BOT")))
-    ;; Bottom row: pane-y + pane-height - 1 = 0 + 5 - 1 = 4 → ESC[5;1H
-    (is (search (format nil "~C[5;" #\Escape) out)
-        "bottom status must position at row 4 → ESC[5;...H (got ~S)" out)
+    ;; Reserved row = pane-y + pane-height = 0 + 5 = 5 → ESC[6;1H
+    (is (search (format nil "~C[6;" #\Escape) out)
+        "bottom status must position at the row below content (5 → ESC[6;...H) (got ~S)" out)
     (is (search "BOT" out)
         "bottom status must emit the format text (got ~S)" out)))
 

@@ -56,6 +56,37 @@
     (is-true (progn (pane-reposition pane 0 0 10 10) t)
              "pane-reposition must complete without signalling")))
 
+(test pane-reposition-top-status-reserves-row
+  "pane-border-status top: pane-reposition reserves one row — the content geometry
+   and screen are one row shorter and shifted down by the reserved title row."
+  (with-fresh-options
+    (cl-tmux/options:set-option "pane-border-status" "top")
+    (let ((pane (make-no-pty-pane 1 0 0 20 5)))
+      (pane-reposition pane 0 0 80 24)
+      (is (= 1  (pane-y      pane)) "content y shifted down past the top title row")
+      (is (= 23 (pane-height pane)) "content height = allocated - 1 (title reserved)")
+      (is (= 23 (screen-height (pane-screen pane)))
+          "screen resized to the content height (the app sees one row less)"))))
+
+(test pane-reposition-bottom-status-reserves-row
+  "pane-border-status bottom: content y unchanged, height reduced by the reserved
+   bottom title row."
+  (with-fresh-options
+    (cl-tmux/options:set-option "pane-border-status" "bottom")
+    (let ((pane (make-no-pty-pane 1 0 0 20 5)))
+      (pane-reposition pane 0 0 80 24)
+      (is (= 0  (pane-y      pane)) "content y unchanged for bottom status")
+      (is (= 23 (pane-height pane)) "content height reduced by the reserved row"))))
+
+(test pane-reposition-off-status-reserves-nothing
+  "pane-border-status off (default): pane-reposition reserves no row — full height."
+  (with-fresh-options
+    (cl-tmux/options:set-option "pane-border-status" "off")
+    (let ((pane (make-no-pty-pane 1 0 0 20 5)))
+      (pane-reposition pane 0 0 80 24)
+      (is (= 0  (pane-y      pane)) "content y unchanged when status off")
+      (is (= 24 (pane-height pane)) "full allocated height when status off"))))
+
 ;;; ── next-pane-id direct tests (pure, no PTY) ─────────────────────────────
 
 (test next-pane-id-returns-base-index-for-empty-window

@@ -369,11 +369,13 @@
              ;; Truncate to pane width
              (maxw (pane-width pane))
              (disp (if (> (length text) maxw) (subseq text 0 maxw) text))
-             ;; Choose row: "top" draws on pane-y (pane's first row),
-             ;; "bottom" draws on pane-y + pane-height - 1 (last row).
-             (row  (if (string= status "top")
-                       (pane-y pane)
-                       (+ (pane-y pane) (pane-height pane) -1))))
+             ;; The title is drawn on the row RESERVED by pane-reposition, just
+             ;; OUTSIDE the content rectangle — so it never overwrites pane
+             ;; content: "top" on the row above (pane-y - 1), "bottom" on the row
+             ;; below (pane-y + pane-height).  Clamped to row >= 0 for safety.
+             (row  (max 0 (if (string= status "top")
+                              (1- (pane-y pane))
+                              (+ (pane-y pane) (pane-height pane))))))
         (reset-attrs stream)
         (move-to stream row (pane-x pane))
         ;; Overwrite cells with the status text (no SGR for now)
