@@ -3696,6 +3696,21 @@
           (is (> (length (cl-tmux/model:window-panes win)) before)
               "split-window -h must add a pane to the active window"))))))
 
+(test split-window-P-F-uses-custom-format
+  "split-window -d -P -F '...' prints the CUSTOM format for the new pane instead of
+   the default session:window.pane [WxH] summary."
+  (let ((s (make-fake-session :nwindows 1 :npanes 1)))
+    (with-loop-state
+      (when (pty-available-p)
+        (let ((*overlay* nil))
+          (cl-tmux::%run-command-line s "split-window -d -P -F MARK#{pane_id}")
+          (stop-cl-tmux-threads)
+          (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+            (is (search "MARK" text)
+                "-F custom format must appear in the overlay (got ~S)" text)
+            (is (null (search "[" text))
+                "default [WxH] summary must NOT be used when -F is given (got ~S)" text)))))))
+
 ;;; ── new-window -n name ───────────────────────────────────────────────────────
 
 (test run-command-line-new-window-with-name

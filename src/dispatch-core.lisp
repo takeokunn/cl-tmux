@@ -1661,8 +1661,11 @@
    -p N: size as a percentage of the parent pane (0-100).
    -l N: size in lines/columns (absolute integer).
    -c dir: start directory for the new pane's shell (format strings expanded).
-   -e VAR=val: set environment variable in the new pane (repeatable)."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "plcet")
+   -e VAR=val: set environment variable in the new pane (repeatable).
+   -P: print the new pane's details to overlay.
+   -F format: with -P, the format string for the printed info (instead of the
+     default session:window.pane [WxH]) — e.g. `split-window -dP -F '#{pane_id}'`."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "plcetF")
     (declare (ignore positionals))
     (let* ((extra-env    (%collect-env-flags flags))
            (horizontal-p (assoc #\h flags))
@@ -1713,10 +1716,17 @@
           (when (and detach-p target-str prev-win)
             (session-select-window session prev-win)
             (when prev-pane (window-select-pane prev-win prev-pane)))
-          ;; -P: print the new pane's details.
+          ;; -P: print the new pane's details.  With -F, expand the custom format
+          ;; against the new pane; otherwise the default WxH summary.
           (when (and print-p result)
-            (let ((win (pane-window result)))
-              (show-transient-overlay (%format-pane-info session win result))))
+            (let ((win       (pane-window result))
+                  (print-fmt (cdr (assoc #\F flags))))
+              (show-transient-overlay
+               (if print-fmt
+                   (cl-tmux/format:expand-format
+                    print-fmt
+                    (cl-tmux/format:format-context-from-session session win result))
+                   (%format-pane-info session win result)))))
           result)))))
 
 (defun %parse-wxh (str)
