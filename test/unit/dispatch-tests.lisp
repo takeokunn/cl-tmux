@@ -1312,6 +1312,19 @@
       (is (string= "mywin" (window-name (session-active-window s)))
           "active window must be renamed to 'mywin'"))))
 
+(test run-command-line-rename-window-t-targets-window
+  "'rename-window -t 1 newname' renames window-id 1, NOT the active window, and
+   does not fold the -t flag tokens into the new name."
+  (let* ((s  (make-fake-session :nwindows 2))
+         (w0 (first  (session-windows s)))     ; id 0, active
+         (w1 (second (session-windows s))))    ; id 1
+    (with-loop-state
+      (cl-tmux::%run-command-line s "rename-window -t 1 newname")
+      (is (string= "newname" (window-name w1))
+          "window-id 1 must be renamed to 'newname'")
+      (is (not (string= "newname" (window-name w0)))
+          "the active window (id 0) must be unchanged"))))
+
 (test run-command-line-rename-session
   "'rename-session <name>' renames the session."
   (let ((s (make-fake-session)))

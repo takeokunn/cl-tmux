@@ -1192,9 +1192,18 @@
                       (cons value "")))))
 
 (defun %cmd-rename-window (session args)
-  "rename-window <name...>: rename SESSION's active window to the joined ARGS."
-  (let ((win (session-active-window session)))
-    (when win (rename-window win (format nil "~{~A~^ ~}" args)))))
+  "rename-window [-t target-window] <name...>: rename the target window (default:
+   the active window) to the joined remaining ARGS.  Without -t parsing, a bare
+   `rename-window -t @2 foo` would fold the flag tokens into the name and rename
+   the wrong (active) window."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
+    (let* ((target-str (cdr (assoc #\t flags)))
+           (win        (if target-str
+                           (%resolve-window-target session target-str)
+                           (session-active-window session)))
+           (name       (format nil "~{~A~^ ~}" positionals)))
+      (when (and win (plusp (length name)))
+        (rename-window win name)))))
 
 (defun %rename-session-checked (session new-name)
   "Rename SESSION to NEW-NAME, keeping *server-sessions* keyed by the new name and
