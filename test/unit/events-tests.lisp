@@ -2822,3 +2822,30 @@
           (is (not (null (cl-tmux/config:key-table-lookup "copy-mode-vi" #\v)))
               "copy-mode-vi table must have 'v' binding")
           (cl-tmux/commands:copy-mode-exit screen))))))
+
+;;; ── Extended keys (CSI u) key-name parsing ───────────────────────────────────
+
+(test csi-u-key-name-modifier-combinations
+  "%csi-u-key-name maps a CSI-u codepoint+modifier to the canonical key name."
+  (is (string= "a"       (cl-tmux::%csi-u-key-name 97 1)) "plain a (mod 1)")
+  (is (string= "S-a"     (cl-tmux::%csi-u-key-name 97 2)) "Shift (mod 2)")
+  (is (string= "M-a"     (cl-tmux::%csi-u-key-name 97 3)) "Alt (mod 3)")
+  (is (string= "C-a"     (cl-tmux::%csi-u-key-name 97 5)) "Ctrl (mod 5)")
+  (is (string= "C-S-a"   (cl-tmux::%csi-u-key-name 97 6)) "Ctrl+Shift (mod 6)")
+  (is (string= "C-M-a"   (cl-tmux::%csi-u-key-name 97 7)) "Ctrl+Alt (mod 7)")
+  (is (string= "C-M-S-a" (cl-tmux::%csi-u-key-name 97 8)) "Ctrl+Alt+Shift (mod 8)"))
+
+(test csi-u-key-name-special-keys
+  "%csi-u-key-name names the special codepoints (Tab/Enter/Escape/Space/BSpace)."
+  (is (string= "Tab"     (cl-tmux::%csi-u-key-name 9 1)))
+  (is (string= "S-Tab"   (cl-tmux::%csi-u-key-name 9 2)))
+  (is (string= "Enter"   (cl-tmux::%csi-u-key-name 13 1)))
+  (is (string= "Escape"  (cl-tmux::%csi-u-key-name 27 1)))
+  (is (string= "C-Space" (cl-tmux::%csi-u-key-name 32 5)))
+  (is (string= "BSpace"  (cl-tmux::%csi-u-key-name 127 1))))
+
+(test csi-u-key-name-unhandled-codepoint
+  "An unhandled (control/out-of-range) codepoint yields NIL."
+  (is (null (cl-tmux::%csi-u-key-name 0 1))   "NUL → NIL")
+  (is (null (cl-tmux::%csi-u-key-name 7 5))   "BEL (control) → NIL")
+  (is (null (cl-tmux::%csi-u-base-key 200))   "out-of-ASCII base → NIL"))

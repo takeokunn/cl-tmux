@@ -311,6 +311,40 @@
                 (t nil))))
     (when (and base mod) (concatenate 'string mod base))))
 
+;;; ── Extended keys (CSI u / fixterms) ────────────────────────────────────────
+;;;
+;;; With extended-keys on, a terminal disambiguates keys that normally collapse to
+;;; one byte (C-i vs Tab, C-S-a vs C-a, ...) by sending ESC [ <codepoint> ; <mod> u.
+;;; MOD is 1 + a bitmask: bit0 Shift, bit1 Alt, bit2 Ctrl (so Shift=2, Alt=3, Ctrl=5,
+;;; Ctrl+Shift=6, Ctrl+Alt+Shift=8).  These helpers turn such a sequence into the
+;;; canonical tmux key name (C-/M-/S- order) used by the key-table lookup.
+
+(defun %csi-u-base-key (codepoint)
+  "Base key name for a CSI-u CODEPOINT: a named key for the specials (Tab, Enter,
+   Escape, Space, BSpace) else the literal character for a printable code; NIL for
+   an unhandled (control/out-of-range) codepoint."
+  (case codepoint
+    (9   "Tab")
+    (13  "Enter")
+    (27  "Escape")
+    (32  "Space")
+    (127 "BSpace")
+    (t   (when (<= 33 codepoint 126) (string (code-char codepoint))))))
+
+(defun %csi-u-key-name (codepoint mod-value)
+  "Canonical tmux key name for the CSI-u sequence ESC [ CODEPOINT ; MOD-VALUE u.
+   MOD-VALUE is 1 + a (Shift=1, Alt=2, Ctrl=4) bitmask; the prefix is built in
+   C-/M-/S- order (e.g. \"C-S-a\", \"M-Up\", \"C-Space\", \"S-Tab\", \"a\").  Returns
+   NIL when the codepoint has no base key."
+  (let* ((bits (max 0 (- mod-value 1)))
+         (base (%csi-u-base-key codepoint)))
+    (when base
+      (concatenate 'string
+                   (if (logbitp 2 bits) "C-" "")
+                   (if (logbitp 1 bits) "M-" "")
+                   (if (logbitp 0 bits) "S-" "")
+                   base))))
+
 (defun %meta-key-name (byte)
   "Canonical tmux key name for the Meta/Alt chord that arrives as ESC then BYTE.
    \"M-a\", \"M-1\", \"M-/\", and \"M-Space\" (byte 32).  Returns NIL for control
