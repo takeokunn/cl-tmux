@@ -86,6 +86,9 @@
   ;; "dim inactive panes" idiom sets a dimmer bg on window-style).
   ("window-style"             :string  "")
   ("window-active-style"      :string  "")
+  ;; Copy-mode selection highlight.  "reverse" (default) → reverse-video; a
+  ;; colour-based value (e.g. "bg=colour172") recolours the selection instead.
+  ("mode-style"               :string  "reverse")
   ;; Alert-state window-tab styles (applied to a non-active window in that state):
   ;; bell takes priority over activity, then last (previously active) window.
   ("window-status-activity-style" :string "reverse")

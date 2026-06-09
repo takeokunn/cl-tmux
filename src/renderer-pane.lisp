@@ -230,14 +230,17 @@
 (defun %render-cell-row (stream screen pane-col-count row
                          sel-active sel-start-row sel-end-row sel-start-col sel-end-col
                          prev-fg-cell prev-bg-cell prev-attrs-cell
-                         def-fg def-bg)
-  "Render one row of cells to STREAM, applying reverse-video for selected cells.
+                         def-fg def-bg ms-fg ms-bg)
+  "Render one row of cells to STREAM, highlighting selected cells.
    PREV-FG-CELL / PREV-BG-CELL / PREV-ATTRS-CELL are single-element lists used
    as mutable registers for SGR change-detection across the row.
    DEF-FG / DEF-BG (or NIL) are the pane's window-style default colours: a cell
    carrying the model default (fg=7 / bg=0) is recoloured to them, which dims an
-   inactive pane / highlights the active one.  Returns nothing; updates the
-   prev-* registers as a side-effect."
+   inactive pane / highlights the active one.
+   MS-FG / MS-BG (or NIL) are the mode-style selection colours: when either is
+   set, selected cells take those colours instead of the reverse-video default,
+   so `set -g mode-style bg=colour…` works.  Returns nothing; updates the prev-*
+   registers as a side-effect."
   (loop for col below pane-col-count
         for cell = (screen-display-cell screen col row)
         ;; A continuation cell (width 0) is the right half of a double-width
@@ -247,13 +250,18 @@
                     (raw-bg (cell-bg cell))
                     ;; window-style recolours only cells left at the model
                     ;; defaults (fg=7, bg=0); explicit colours are preserved.
-                    (fg    (if (and def-fg (= raw-fg 7)) def-fg raw-fg))
-                    (bg    (if (and def-bg (= raw-bg 0)) def-bg raw-bg))
+                    (base-fg (if (and def-fg (= raw-fg 7)) def-fg raw-fg))
+                    (base-bg (if (and def-bg (= raw-bg 0)) def-bg raw-bg))
                     (in-sel (and sel-active
                                  (in-selection-p row col
                                                  sel-start-row sel-end-row
                                                  sel-start-col sel-end-col)))
-                    (attrs (if in-sel
+                    ;; A colour-based mode-style highlights the selection with its
+                    ;; own fg/bg; otherwise selection falls back to reverse-video.
+                    (ms-colour (and in-sel (or ms-fg ms-bg)))
+                    (fg    (if ms-colour (or ms-fg base-fg) base-fg))
+                    (bg    (if ms-colour (or ms-bg base-bg) base-bg))
+                    (attrs (if (and in-sel (not ms-colour))
                                (logxor (cell-attrs cell) cl-tmux/terminal/types:+attr-reverse+)
                                (cell-attrs cell))))
                (unless (and (= fg  (car prev-fg-cell))
@@ -283,6 +291,10 @@
                           (if active-p "window-active-style" "window-style")
                           pane)))
           (%window-style-default-colors style))
+     (multiple-value-bind (ms-fg ms-bg)
+         ;; mode-style selection colours (a colour-based value overrides the
+         ;; reverse-video default highlight); "reverse" → NIL/NIL → reverse path.
+         (%window-style-default-colors (cl-tmux/options:get-option "mode-style" "reverse"))
       (with-lock-held ((screen-lock screen))
         ;; Hoist selection boundary computation outside the cell loop so it is
         ;; computed once per frame instead of once per cell (~1920 times).
@@ -299,8 +311,8 @@
                                 sel-active sel-start-row sel-end-row
                                 sel-start-col sel-end-col
                                 prev-fg-cell prev-bg-cell prev-attrs-cell
-                                def-fg def-bg))))
-        (screen-clear-dirty screen)))
+                                def-fg def-bg ms-fg ms-bg))))
+        (screen-clear-dirty screen))))
     ;; Clock-mode overlay: draw a digital clock if this pane is the clock pane.
     (when (eql cl-tmux::*clock-mode-pane-id* (pane-id pane))
       (draw-clock-to-screen stream origin-x origin-y pane-width pane-height))))

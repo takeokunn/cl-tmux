@@ -365,6 +365,28 @@
       (is (%reverse-video-p out)
           "single-row selection: reverse-video SGR must appear (got ~S)" out))))
 
+(test mode-style-default-reverse-keeps-reverse-video-selection
+  "With the default mode-style (reverse), a selection is still drawn with the
+   reverse-video SGR — the colour path stays opt-in."
+  (with-isolated-config
+    (let ((pane (%make-selecting-pane 8 4 "ABCDEFGHIJKLMNOP" 0 2 0 5)))
+      (cl-tmux/options:set-option "mode-style" "reverse")
+      (let ((out (%render-pane-string pane)))
+        (is (%reverse-video-p out)
+            "default mode-style must keep reverse-video selection (got ~S)" out)))))
+
+(test mode-style-colour-recolours-selection-without-reverse
+  "A colour-based mode-style highlights the selection with its bg instead of
+   reverse-video: bg=colour172 → 48;5;172 appears, the ;7 reverse code does not."
+  (with-isolated-config
+    (let ((pane (%make-selecting-pane 8 4 "ABCDEFGHIJKLMNOP" 0 2 0 5)))
+      (cl-tmux/options:set-option "mode-style" "bg=colour172")
+      (let ((out (%render-pane-string pane)))
+        (is (search "48;5;172" out)
+            "colour mode-style must emit bg colour172 on the selection (got ~S)" out)
+        (is (null (%reverse-video-p out))
+            "colour mode-style must NOT also reverse-video the selection (got ~S)" out)))))
+
 (test in-sel-branch-first-row
   "First row of a multi-row selection: cols >= sel-start-c are highlighted."
   (let* ((pane (%make-selecting-pane 8 4
