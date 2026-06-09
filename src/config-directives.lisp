@@ -733,6 +733,13 @@
     ((string= name "default-shell")
      (when (and (stringp value) (plusp (length value)))
        (setf *default-shell* value)))
+    ;; escape-time is a server option read from *server-options* by the event
+    ;; loop's ESC-flush, but it is overwhelmingly set via `set -g escape-time 0`
+    ;; (global store).  Sync the value into the server store so every form —
+    ;; `set -g`, `set -s`, bare, config or runtime — actually takes effect.
+    ((string= name "escape-time")
+     (when (and (stringp value) (plusp (length value)))
+       (cl-tmux/options:set-server-option "escape-time" value)))
     ;; status: off/on or a line count (tmux accepts 2..5 for a multi-line bar).
     ;; off/false/0 hides the bar; on/true or any positive integer shows it.
     ;; status: off/false/0 hides the bar; on/true shows 1 line; a numeric line

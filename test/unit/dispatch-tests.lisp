@@ -1171,6 +1171,21 @@
       (is (= 1 cl-tmux/config:*prefix-key-code*)
           "set -g prefix C-a must set *prefix-key-code* to ^A (1) at runtime"))))
 
+(test cmd-set-option-escape-time-syncs-to-server-store
+  "escape-time is read from the server store by the ESC-flush, but is commonly
+   set via `set -g escape-time 0` (global).  The side-effect syncs it across, so
+   the common form takes effect."
+  (with-isolated-config
+    (let ((s (make-fake-session)))
+      ;; -g writes the global store; the side-effect mirrors it into the server store.
+      (cl-tmux::%cmd-set-option s '("-g" "escape-time" "0"))
+      (is (= 0 (cl-tmux/options:get-server-option "escape-time"))
+          "set -g escape-time 0 must reach the server store the flush reads")
+      ;; bare set (no scope) also syncs.
+      (cl-tmux::%cmd-set-option s '("escape-time" "10"))
+      (is (= 10 (cl-tmux/options:get-server-option "escape-time"))
+          "bare set escape-time must also reach the server store"))))
+
 (test cmd-set-option-plain-routes-to-global
   "A plain 'set' (no -w/-p) still sets the global option."
   (with-isolated-config
