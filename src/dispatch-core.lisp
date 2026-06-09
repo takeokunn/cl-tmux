@@ -2734,6 +2734,33 @@
                 (setf *dirty* t)
                 t)))))))
 
+(defun %cmd-respawn-window-arg (session args)
+  "respawn-window [-k] [-c start-dir] [-e VAR=val] [-t target-window] [command]:
+   restart every pane's process in the target window (default: the active window).
+   -k: kill the existing processes first.  WITHOUT -k, respawning when ANY pane is
+   still running is an error (tmux behaviour) — use -k to force it.  -c/-e/command
+   are accepted for compatibility (override not yet modelled).  Scriptable form; the
+   interactive :respawn-window binding is unchanged."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "cet")
+    (declare (ignore positionals))
+    (let* ((target-str (cdr (assoc #\t flags)))
+           (win    (if target-str
+                       (%resolve-window-target session target-str)
+                       (session-active-window session)))
+           (kill-p (assoc #\k flags)))
+      (when win
+        (if (and (not kill-p)
+                 (some (lambda (p) (> (cl-tmux/model:pane-fd p) 0))
+                       (cl-tmux/model:window-panes win)))
+            ;; tmux: respawn-window without -k while panes are running is an error.
+            (show-overlay "respawn-window: window has active panes (use -k to force)")
+            (progn
+              (dolist (pane (cl-tmux/model:window-panes win))
+                (let ((new-pane (respawn-pane pane)))
+                  (when new-pane (start-reader-thread new-pane))))
+              (setf *dirty* t)
+              t))))))
+
 (defun %cmd-pipe-pane-arg (session args)
   "pipe-pane [-IOo] [-t target-pane] [command]: open or close a pipe for the
    target pane (default: the active pane).
@@ -2887,8 +2914,9 @@
    (cons '("find-window" "findw")       #'%cmd-find-window-arg)
    ;; list-commands [command]: list all commands, or filter to one by name.
    (cons '("list-commands" "lscm")      #'%cmd-list-commands-arg)
-   ;; respawn-pane: scriptable -k/-t (restart a pane's process; -k forces).
+   ;; respawn-pane / respawn-window: scriptable -k/-t (restart process(es); -k forces).
    (cons '("respawn-pane" "respawnp")   #'%cmd-respawn-pane-arg)
+   (cons '("respawn-window" "respawnw") #'%cmd-respawn-window-arg)
    ;; next/previous-window: scriptable -t target-session window cycling.
    (cons '("next-window" "next")        #'%cmd-next-window-arg)
    (cons '("previous-window" "prev")    #'%cmd-previous-window-arg)

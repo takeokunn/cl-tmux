@@ -1375,6 +1375,21 @@
         (is (= 5 (cl-tmux/model:pane-fd pane))
             "the live pane must NOT be respawned (fd unchanged → no fork)")))))
 
+(test cmd-respawn-window-without-k-errors-on-live-pane
+  "respawn-window without -k errors when ANY pane in the window is still running,
+   and does NOT respawn — matching tmux."
+  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
+         (win (session-active-window s))
+         (p1  (first (window-panes win))))
+    (setf (cl-tmux/model:pane-fd p1) 5)          ; one pane is live
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%cmd-respawn-window-arg s '())
+        (is (overlay-active-p)
+            "respawn-window without -k with a live pane must show an error overlay")
+        (is (= 5 (cl-tmux/model:pane-fd p1))
+            "the window must NOT be respawned (live pane fd unchanged → no fork)")))))
+
 (test cmd-list-commands-filters-by-name
   "list-commands <name> shows only that command (tmux's filter); bare
    list-commands shows the full list."
