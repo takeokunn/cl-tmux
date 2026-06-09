@@ -841,6 +841,41 @@
 
 ;;; ── status on/off ────────────────────────────────────────────────────────────
 
+(test status-segment-style-falls-back-to-base-when-unset
+  "%status-segment-style-sgr returns the base SGR when the segment style is unset
+   or \"default\"."
+  (with-isolated-options ("status-left-style" "")
+    (is (string= "44;97" (cl-tmux/renderer::%status-segment-style-sgr
+                           "status-left-style" "44;97"))
+        "empty status-left-style must fall back to the base SGR"))
+  (with-isolated-options ("status-left-style" "default")
+    (is (string= "44;97" (cl-tmux/renderer::%status-segment-style-sgr
+                           "status-left-style" "44;97"))
+        "\"default\" status-left-style must fall back to the base SGR")))
+
+(test apply-segment-style-wraps-and-reverts
+  "%apply-segment-style wraps TEXT in the segment SGR and reverts to the base."
+  (let ((out (cl-tmux/renderer::%apply-segment-style "TEXT" "31" "44")))
+    (is (search (format nil "~C[31m" #\Escape) out) "segment SGR (31) present")
+    (is (search "TEXT" out) "text preserved")
+    (is (search (format nil "~C[44m" #\Escape) out) "reverts to base SGR (44)")))
+
+(test apply-segment-style-noop-when-equal-to-base
+  "%apply-segment-style returns TEXT unchanged when the segment SGR equals the base."
+  (is (string= "TEXT" (cl-tmux/renderer::%apply-segment-style "TEXT" "44" "44"))
+      "no redundant SGR wrapping when segment style equals the base"))
+
+(test status-left-style-applied-in-rendered-bar
+  "status-left-style injects its SGR into the rendered status bar."
+  (with-isolated-options ("status-left" "L" "status-right" nil "status-style" ""
+                          "status-left-style" "fg=red")
+    (let* ((expected (cl-tmux/renderer::%status-sgr-from-style "fg=red"))
+           (sess     (make-test-session 20 5))
+           (out      (with-output-to-string (s)
+                       (cl-tmux/renderer::render-status-bar s sess 6 20))))
+      (is (search (format nil "~C[~Am" #\Escape expected) out)
+          "the rendered bar must include the status-left-style SGR (got ~S)" out))))
+
 (test status-off-no-status-bar
   "When the status option is nil/false, render-session-to-string emits no status bar."
   (with-isolated-options ("status" nil)

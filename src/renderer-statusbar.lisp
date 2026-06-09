@@ -270,6 +270,24 @@
 
 ;;; ── Status bar render entry point ────────────────────────────────────────────
 
+(defun %status-segment-style-sgr (option-name base-sgr)
+  "SGR parameter string for a status-segment style OPTION-NAME (status-left-style /
+   status-right-style), falling back to BASE-SGR (the status-style) when the option
+   is unset or \"default\"."
+  (let ((s (cl-tmux/options:get-option option-name "")))
+    (if (or (string= s "") (string-equal s "default"))
+        base-sgr
+        (%status-sgr-from-style s))))
+
+(defun %apply-segment-style (text seg-sgr base-sgr)
+  "Wrap a status-bar segment TEXT in its SEG-SGR style, reverting to BASE-SGR after
+   (so inter-segment padding keeps the base status style).  Returns TEXT unchanged
+   when SEG-SGR = BASE-SGR.  The wrapping SGR has zero visible length, so it does
+   not affect the justify padding (which uses %visible-length)."
+  (if (string= seg-sgr base-sgr)
+      text
+      (format nil "~C[~Am~A~C[~Am" +esc+ seg-sgr text +esc+ base-sgr)))
+
 (defun render-status-bar (stream session terminal-rows terminal-cols
                           &key (status-row (1- terminal-rows)))
   "Draw the status bar at STATUS-ROW with dynamic format string expansion.
@@ -299,10 +317,18 @@
                        (%status-format-or-default
                         "status-right" context #'cl-tmux/format::%current-time-string)
                        sgr-code))
-         (left        (%clamp-status-segment
-                       raw-left (cl-tmux/options:get-option "status-left-length" 40)))
-         (right-str   (%clamp-status-segment
-                       raw-right (cl-tmux/options:get-option "status-right-length" 40)))
+         ;; Per-segment styles: status-left-style / status-right-style override the
+         ;; base status-style for the left/right text (falling back to it).
+         (left-style-sgr  (%status-segment-style-sgr "status-left-style"  sgr-code))
+         (right-style-sgr (%status-segment-style-sgr "status-right-style" sgr-code))
+         (left        (%apply-segment-style
+                       (%clamp-status-segment
+                        raw-left (cl-tmux/options:get-option "status-left-length" 40))
+                       left-style-sgr sgr-code))
+         (right-str   (%apply-segment-style
+                       (%clamp-status-segment
+                        raw-right (cl-tmux/options:get-option "status-right-length" 40))
+                       right-style-sgr sgr-code))
          (justify     (cl-tmux/options:get-option "status-justify" "left"))
          (line        (%status-justify-line left right-str terminal-cols justify)))
     (move-to stream status-row 0)
