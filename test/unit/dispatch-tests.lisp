@@ -3810,6 +3810,22 @@
             (is (null (search "[" text))
                 "default [WxH] summary must NOT be used when -F is given (got ~S)" text)))))))
 
+(test split-window-f-full-spans-window-width
+  "split-window -f -v adds a pane spanning the FULL window width (a full-window
+   split at the layout root), not just the active pane's width."
+  (let* ((win (%vsplit-window 20))   ; p0|p1 side by side; window width 41
+         (s   (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window s win)
+    (with-loop-state
+      (when (pty-available-p)
+        (cl-tmux::%run-command-line s "split-window -f -v")
+        (stop-cl-tmux-threads)
+        (is (= 3 (length (window-panes win))) "a third pane was added")
+        (let ((newest (car (last (window-panes win)))))
+          (is (= (window-width win) (pane-width newest))
+              "the -f pane must span the full window width (~D), got ~D"
+              (window-width win) (pane-width newest)))))))
+
 ;;; ── new-window -n name ───────────────────────────────────────────────────────
 
 (test run-command-line-new-window-with-name

@@ -197,15 +197,17 @@
          (next  (funcall cycler panes (window-active-pane win))))
     (when next (%select-pane-with-focus win next))))
 
-(defun %cmd-split (session orient &key no-focus size start-dir before)
+(defun %cmd-split (session orient &key no-focus size start-dir before full)
   "Split the active pane of SESSION's active window in tree ORIENT (:h left/right,
    :v top/bottom).  Returns NIL when the pane is too small and no shell is forked.
    NO-FOCUS T skips focus change.  SIZE hints the new pane's extent.
    BEFORE T inserts the new pane before the active pane (split-window -b).
+   FULL T spans the whole window (split-window -f).
    START-DIR: when non-NIL, the new pane's shell starts in that directory."
   (let* ((win (session-active-window session))
          (new (window-split win orient :no-focus no-focus :size size
-                                       :start-dir start-dir :before before)))
+                                       :start-dir start-dir :before before
+                                       :full full)))
     (when new
       (start-reader-thread new)
       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-split-window+ new)
@@ -1705,10 +1707,12 @@
         new-win))))
 
 (defun %cmd-split-window (session args)
-  "split-window [-h|-v] [-b] [-d] [-t target] [-p percent] [-l size] [-c start-dir] [-e VAR=val].
+  "split-window [-h|-v] [-b] [-f] [-d] [-t target] [-p percent] [-l size] [-c start-dir] [-e VAR=val].
    -h: horizontal split (new pane to the right; side-by-side).
    -v: vertical split (new pane below — default).
    -b: insert before the active pane (left of / above) instead of after.
+   -f: full-window split — the new pane spans the whole window dimension (the split
+       is inserted at the layout root) instead of subdividing the active pane.
    -d: split but do not change focus (detached mode).
    -t target: split the target pane instead of the active pane.
    -p N: size as a percentage of the parent pane (0-100).
@@ -1723,6 +1727,7 @@
     (let* ((extra-env    (%collect-env-flags flags))
            (horizontal-p (assoc #\h flags))
            (before-p     (assoc #\b flags))
+           (full-p       (assoc #\f flags))
            (detach-p     (assoc #\d flags))
            (target-str   (cdr (assoc #\t flags)))
            (pct-str      (cdr (assoc #\p flags)))
@@ -1761,9 +1766,11 @@
                (result
                 (if horizontal-p
                     (%cmd-split session :h :size size :no-focus (and detach-p t)
-                                        :start-dir start-dir :before (and before-p t))
+                                        :start-dir start-dir :before (and before-p t)
+                                        :full (and full-p t))
                     (%cmd-split session :v :size size :no-focus (and detach-p t)
-                                        :start-dir start-dir :before (and before-p t)))))
+                                        :start-dir start-dir :before (and before-p t)
+                                        :full (and full-p t)))))
           ;; Restore original focus when -d (detach): the target had focus switched
           ;; transiently for the split but the user wants to stay in the prior window.
           (when (and detach-p target-str prev-win)

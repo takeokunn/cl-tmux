@@ -152,7 +152,7 @@
          (first-size   (- avail clamped-size 1)))
     (/ first-size avail)))
 
-(defun window-split (window direction &key no-focus size start-dir before)
+(defun window-split (window direction &key no-focus size start-dir before full)
   "Split the active pane of WINDOW along DIRECTION (:h left/right, :v top/bottom).
    Returns the new pane, or NIL when the active pane is too small.
    NO-FOCUS T keeps the current active pane selected (the new pane is created
@@ -160,33 +160,54 @@
    controls the new pane's initial size along the split axis.
    BEFORE T inserts the new pane before (left of / above) the active pane
    instead of after (right of / below) — matches split-window -b.
+   FULL T makes the new pane span the FULL window dimension (split-window -f): the
+   split is inserted at the tree ROOT, with the entire existing layout as one child
+   and the new pane as the other, instead of subdividing only the active pane.
    START-DIR: when non-NIL, the new pane's shell starts in that directory."
   (let ((active (window-active-pane window))
         (tree   (window-tree window)))
     (unless (and active tree) (return-from window-split nil))
     (let ((leaf (layout-find-leaf tree active)))
-      (unless (and leaf (%split-fits-p active direction))
+      ;; Fit check: a full split is measured against the WINDOW extent, a normal
+      ;; split against the active pane.
+      (unless (and leaf
+                   (if full
+                       (>= (if (eq direction :h)
+                               (window-width window) (window-height window))
+                           2)
+                       (%split-fits-p active direction)))
         (return-from window-split nil))
       (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
         (let* ((new-pane (%fork-pane (next-pane-id window) px py pw ph
                                      :start-dir start-dir))
-               (avail    (1- (%orient-pane-extent active direction)))
+               ;; A full split's extent is the whole window along the split axis;
+               ;; a normal split's is the active pane's extent.
+               (avail    (1- (if full
+                                 (if (eq direction :h)
+                                     (window-width window) (window-height window))
+                                 (%orient-pane-extent active direction))))
                (new-ratio (if size
                               (%ratio-from-size-hint size avail direction)
                               1/2))
+               ;; ANCHOR is the existing node that becomes the new pane's sibling:
+               ;; the whole TREE for a full split, else just the active pane's LEAF.
+               (anchor   (if full tree leaf))
                ;; When BEFORE is T: new pane is the first child; existing is second.
                ;; The ratio fraction refers to the FIRST child's share of the extent.
                ;; With BEFORE: ratio = new-pane's share = new-ratio.
-               ;; Without BEFORE: first=existing pane, second=new; ratio = (1 - new-ratio).
+               ;; Without BEFORE: first=existing, second=new; ratio = (1 - new-ratio).
                (split    (if before
                              (make-layout-split direction
                                                 (make-layout-leaf new-pane)
-                                                leaf
+                                                anchor
                                                 new-ratio)
-                             (make-layout-split direction leaf
+                             (make-layout-split direction anchor
                                                 (make-layout-leaf new-pane)
                                                 (- 1 new-ratio)))))
-          (%replace-in-tree window leaf split)
+          (if full
+              ;; Full split: the new split becomes the tree root.
+              (setf (window-tree window) split)
+              (%replace-in-tree window leaf split))
           (window-relayout window (window-height window) (window-width window))
           (unless no-focus
             (setf (window-active window) new-pane))
