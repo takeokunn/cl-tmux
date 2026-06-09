@@ -2082,8 +2082,11 @@
     ("search-reverse"            . :copy-mode-search-prev)
     ("search-forward"            . :copy-mode-search-forward-prompt)
     ("search-backward"           . :copy-mode-search-backward-prompt)
-    ("top-line"                  . :copy-mode-top)
-    ("bottom-line"               . :copy-mode-bottom)
+    ;; top/middle/bottom-line (vi H/M/L) move WITHIN the viewport, keeping the
+    ;; scroll position; history-top/bottom (vi g/G) jump to the scrollback extremes.
+    ("top-line"                  . :copy-mode-high)
+    ("middle-line"               . :copy-mode-middle)
+    ("bottom-line"               . :copy-mode-low)
     ("history-top"               . :copy-mode-top)
     ("history-bottom"            . :copy-mode-bottom)
     ("next-word"                 . :copy-mode-word-forward)

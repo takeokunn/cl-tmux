@@ -549,6 +549,38 @@
                       :test #'string-equal)))
       "stop-selection must alias clear-selection"))
 
+(test copy-mode-x-line-positions-vs-history-extremes
+  "top/middle/bottom-line (vi H/M/L) move within the viewport; history-top/bottom
+   (vi g/G) jump to the scrollback extremes — they must map to distinct actions."
+  (flet ((x (name) (cdr (assoc name cl-tmux::*copy-mode-x-commands*
+                               :test #'string-equal))))
+    (is (eq :copy-mode-high   (x "top-line"))    "top-line → high (viewport top)")
+    (is (eq :copy-mode-middle (x "middle-line")) "middle-line → middle (was missing)")
+    (is (eq :copy-mode-low    (x "bottom-line")) "bottom-line → low (viewport bottom)")
+    (is (eq :copy-mode-top    (x "history-top")) "history-top → scrollback top")
+    (is (eq :copy-mode-bottom (x "history-bottom")) "history-bottom → scrollback bottom")))
+
+(test copy-mode-high-middle-low-set-viewport-row
+  "copy-mode-high/middle/low move the cursor to viewport row 0 / mid / height-1
+   without changing the scroll offset."
+  (let ((s (%copy-mode-screen)))
+    (setf (cl-tmux/terminal/types:screen-copy-offset s) 7
+          (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 3))
+    (cl-tmux/commands::copy-mode-low s)
+    (is (= (1- (screen-height s)) (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "low → last viewport row")
+    (cl-tmux/commands::copy-mode-high s)
+    (is (= 0 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "high → viewport row 0")
+    (cl-tmux/commands::copy-mode-middle s)
+    (is (= (floor (screen-height s) 2)
+           (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "middle → middle viewport row")
+    (is (= 7 (cl-tmux/terminal/types:screen-copy-offset s))
+        "scroll offset must be unchanged (H/M/L do not scroll)")
+    (is (= 3 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "column must be preserved")))
+
 (test copy-mode-other-end-preserves-selection-text
   "Swapping the two ends must not change the selected text or normalised bounds —
    this is the defining invariant of other-end."
