@@ -488,6 +488,8 @@
    #:window-select-pane
    #:window-split
    #:window-relayout
+   #:%assign-window-tree    ; (window w h) → layout-assign with top-status y-offset
+   #:%status-top-offset     ; () → rows reserved at top for a top status bar
    #:window-remove-pane
    #:window-resize-active
    #:window-refresh-panes

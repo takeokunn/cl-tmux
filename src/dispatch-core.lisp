@@ -267,7 +267,7 @@
        (or (cl-tmux/options:get-option "main-pane-height") 24)
        (or (cl-tmux/options:get-option "other-pane-width") 0)
        (or (cl-tmux/options:get-option "other-pane-height") 0))
-      (layout-assign (window-tree win) 0 0 (window-width win) (window-height win)))))
+      (%assign-window-tree win (window-width win) (window-height win)))))
 
 ;;; -- Copy-mode dispatch helper --------------------------------------------
 ;;;

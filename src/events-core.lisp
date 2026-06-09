@@ -426,7 +426,7 @@
          (setf (layout-split-ratio split) new-ratio))))
     (let ((tree (window-tree window)))
       (when tree
-        (layout-assign tree 0 0 (window-width window) (window-height window))))))
+        (%assign-window-tree window (window-width window) (window-height window))))))
 
 (defun %mouse-key-name (btn release-p location)
   "Build the tmux mouse key name for a mouse event, e.g. \"WheelUpPane\",

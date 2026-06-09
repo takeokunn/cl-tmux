@@ -146,7 +146,7 @@
   (let ((win (session-active-window session)))
     (when win
       (cl-tmux/model:apply-named-layout win layout-name)
-      (layout-assign (window-tree win) 0 0 (window-width win) (window-height win)))))
+      (%assign-window-tree win (window-width win) (window-height win)))))
 
 ;;; -- Copy-mode dispatch helper --------------------------------------------
 ;;;

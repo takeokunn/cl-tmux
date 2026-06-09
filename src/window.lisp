@@ -213,12 +213,33 @@
             (setf (window-active window) new-pane))
           new-pane)))))
 
+(defun %status-top-offset ()
+  "Rows reserved at the TOP of the window for a top-positioned status bar:
+   cl-tmux/config:*status-height* when the status is on AND status-position is
+   \"top\", else 0.  Panes are laid out starting at this y so a top status bar
+   never overlaps them (and a bottom bar leaves the top flush at y=0).  Reads the
+   live status-height/option globals; safe because config loads before this file
+   and the option symbol exists from package.lisp."
+  (if (and (plusp cl-tmux/config:*status-height*)
+           (string-equal (or (cl-tmux/options:get-option "status-position") "bottom")
+                         "top"))
+      cl-tmux/config:*status-height*
+      0))
+
+(defun %assign-window-tree (window w h)
+  "Assign WINDOW's split tree into a W×H area, offset DOWN by the top status
+   reservation (%status-top-offset).  The single layout-assign chokepoint so a
+   top status bar shifts every pane below it — used by window-relayout, the named
+   layouts, and the resize handlers alike."
+  (when (window-tree window)
+    (layout-assign (window-tree window) 0 (%status-top-offset) w h)))
+
 (defun window-relayout (window rows cols)
   "Re-fit WINDOW's panes into ROWS x COLS using the binary split tree."
   (setf (window-width  window) cols
         (window-height window) rows)
   (when (window-tree window)
-    (layout-assign (window-tree window) 0 0 cols rows)
+    (%assign-window-tree window cols rows)
     (window-refresh-panes window)))
 
 (defun ensure-window-fits (window rows cols)

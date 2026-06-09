@@ -78,13 +78,13 @@
   "Apply the :even-horizontal layout: equal-width columns separated by 1-col borders.
    The pane count is derived from PANES; no separate count parameter is needed."
   (setf (window-tree window) (%build-flat-tree panes :h))
-  (layout-assign (window-tree window) 0 0 w h))
+  (%assign-window-tree window w h))
 
 (defun %layout-even-v (window panes w h)
   "Apply the :even-vertical layout: equal-height rows separated by 1-row borders.
    The pane count is derived from PANES; no separate count parameter is needed."
   (setf (window-tree window) (%build-flat-tree panes :v))
-  (layout-assign (window-tree window) 0 0 w h))
+  (%assign-window-tree window w h))
 
 ;;; ── %layout-main — unified main-horizontal / main-vertical ──────────────────
 ;;;
@@ -137,7 +137,7 @@
                                             ratio)
                          (make-layout-leaf (first panes)))))
     (setf (window-tree window) tree)
-    (layout-assign (window-tree window) 0 0 w h)))
+    (%assign-window-tree window w h)))
 
 ;;; ── %build-grid-tree ────────────────────────────────────────────────────────
 ;;;
@@ -164,7 +164,7 @@
                               (end   (min (* (1+ row-index) cols) n)))
                           (subseq panes start end)))))
     (setf (window-tree window) (%build-grid-tree row-pane-groups))
-    (layout-assign (window-tree window) 0 0 w h)))
+    (%assign-window-tree window w h)))
 
 ;;; ── apply-named-layout — declarative fact table ──────────────────────────────
 ;;;
