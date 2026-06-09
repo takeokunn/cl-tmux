@@ -302,6 +302,18 @@
     (is (char= #\b (char-at s 1 0))
         "'b' at column 1 — no stray '5' printed between them")))
 
+(test esc-star-plus-g2-g3-designator-consumed-not-stray
+  "ESC * X (designate G2) and ESC + X (designate G3) consume the designator byte
+   without printing it as a stray char (G2/G3 accepted but not modeled)."
+  (with-screen (s 10 2)
+    (feed s "a")
+    (feed s (esc "*0"))        ; designate G2 = DEC graphics (consumes '0')
+    (feed s (esc "+B"))        ; designate G3 = ASCII (consumes 'B')
+    (feed s "b")
+    (is (char= #\a (char-at s 0 0)) "'a' at column 0")
+    (is (char= #\b (char-at s 1 0))
+        "'b' at column 1 — no stray '0' or 'B' from the G2/G3 designators")))
+
 (test csi-unknown
   "An unrecognised CSI final character is silently ignored; parser recovers."
   (with-screen (s 10 2)

@@ -235,6 +235,8 @@
   ;; ── Charset designators: ESC ( designates G0, ESC ) designates G1 ──────────
   (#x28  (make-charset-designator-k :g0))          ; ESC ( → designate G0
   (#x29  (make-charset-designator-k :g1))          ; ESC ) → designate G1
+  (#x2A  (make-ignore-designator-k))               ; ESC * → designate G2 (not modeled)
+  (#x2B  (make-ignore-designator-k))               ; ESC + → designate G3 (not modeled)
   ;; ESC # — DEC line-size / alignment: the next byte selects (8 = DECALN fill,
   ;; 3/4/5/6 = double-height/width/single-width line attrs, accepted+ignored).
   ;; Without this, ESC # aborted and the selector byte printed as a stray char.
@@ -453,6 +455,15 @@
   (lambda (screen byte)
     (declare (type screen screen) (type (unsigned-byte 8) byte))
     (designate-charset screen g (if (= byte #x30) :dec-graphics :ascii))
+    #'ground-state))
+
+(defun make-ignore-designator-k ()
+  "Return a CPS state that consumes one charset DESIGNATOR byte and returns to
+   ground with no effect — for ESC * (designate G2) and ESC + (designate G3),
+   which cl-tmux accepts but does not model (only G0/G1 are tracked, via SO/SI).
+   Consuming the designator byte avoids it printing as a stray char."
+  (lambda (screen byte)
+    (declare (ignore screen byte))
     #'ground-state))
 
 (defun make-hash-line-size-k ()
