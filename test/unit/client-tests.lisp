@@ -300,3 +300,25 @@ text to *standard-output* — the client side of `cl-tmux display -p`."
                      "%read-command-reply must print the reply text to stdout (got ~S)" out))))
         (ignore-errors (close-socket lstnr))
         (ignore-errors (delete-file path))))))
+
+(test read-command-reply-returns-on-eof-without-output
+  :description "%read-command-reply returns promptly with NO output when the server
+closes without replying (a command that produces no output) — it must not hang."
+  (unless (unix-socket-available-p)
+    (skip "Unix-domain socket unavailable (sandbox)"))
+  (sb-ext:with-timeout 10
+    (let* ((path  (%client-test-socket-path))
+           (lstnr (make-listener path)))
+      (unwind-protect
+           (let* ((client (connect-to path))
+                  (server (accept-connection lstnr)))
+             (when server
+               ;; Server closes without sending a reply → client sees EOF.
+               (close-socket server)
+               (let ((out (with-output-to-string (*standard-output*)
+                            (cl-tmux::%read-command-reply
+                             (socket-stream client) (cl-tmux/net:socket-fd client)))))
+                 (is (string= "" out)
+                     "no reply → no output (got ~S)" out))))
+        (ignore-errors (close-socket lstnr))
+        (ignore-errors (delete-file path))))))
