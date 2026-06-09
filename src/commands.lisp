@@ -51,6 +51,64 @@
         (%swap-pane-geometry ap other)
         ap))))
 
+;;; ── capture-pane -e: reconstruct SGR escapes from cell attributes ───────────
+;;;
+;;; A self-contained cell→SGR encoder (the commands layer must not depend on the
+;;; renderer).  capture-pane -e emits these so a captured buffer keeps its colours
+;;; when re-displayed (e.g. the `capture-pane -ep` idiom, or session-restore tools).
+
+(defparameter +capture-sgr-attr-codes+
+  '((0 . 1) (1 . 2) (2 . 7) (3 . 4) (4 . 5) (5 . 3) (6 . 8) (7 . 9))
+  "Cell attribute bit → SGR code: bold/dim/reverse/underline/blink/italic/
+   conceal/strikethrough (mirrors the renderer's cell-attr table).")
+
+(defun %capture-color-sgr (color is-bg)
+  "SGR parameter fragment (a string) for a cell COLOR value; IS-BG selects the
+   background variant.  Handles 0-7 (standard), 8-15 (bright), 16-255 (256-colour)
+   and bit-24 true-colour, matching the cell colour encoding."
+  (cond
+    ((>= color #x1000000)                 ; true-colour: bit 24 set, RGB in low 24
+     (format nil "~D;2;~D;~D;~D" (if is-bg 48 38)
+             (ldb (byte 8 16) color) (ldb (byte 8 8) color) (ldb (byte 8 0) color)))
+    ((<= 0 color 7)   (format nil "~D" (+ color (if is-bg 40 30))))
+    ((<= 8 color 15)  (format nil "~D" (+ (- color 8) (if is-bg 100 90))))
+    (t                (format nil "~D;5;~D" (if is-bg 48 38) color))))
+
+(defun %capture-cell-sgr (fg bg attrs)
+  "Full SGR escape (reset + this cell's attributes and colours) for capture -e."
+  (with-output-to-string (s)
+    (format s "~C[0" #\Escape)            ; reset baseline, then re-apply
+    (loop for (bit . code) in +capture-sgr-attr-codes+
+          when (logbitp bit attrs) do (format s ";~D" code))
+    (format s ";~A;~A" (%capture-color-sgr fg nil) (%capture-color-sgr bg t))
+    (write-char #\m s)))
+
+(defun %cells-to-sgr-string (cell-at width)
+  "Build a row string with SGR escapes from WIDTH cells, CELL-AT being a function
+   col → cell.  Emits a full SGR sequence whenever the colour/attrs change, then
+   the character, and a trailing reset.  Shared by visible and scrollback rows."
+  (with-output-to-string (out)
+    (let ((prev nil))
+      (dotimes (col width)
+        (let* ((cell (funcall cell-at col))
+               (key  (list (cell-fg cell) (cell-bg cell) (cell-attrs cell))))
+          (unless (equal key prev)
+            (write-string (%capture-cell-sgr (cell-fg cell) (cell-bg cell) (cell-attrs cell))
+                          out)
+            (setf prev key))
+          (write-char (cell-char cell) out)))
+      (format out "~C[0m" #\Escape))))
+
+(defun %screen-row-string-sgr (screen row)
+  "Visible-row string with SGR escapes (capture-pane -e)."
+  (%cells-to-sgr-string (lambda (col) (screen-cell screen col row))
+                        (screen-width screen)))
+
+(defun %scrollback-row-string-sgr (cell-vector)
+  "Scrollback-row string with SGR escapes (capture-pane -e)."
+  (%cells-to-sgr-string (lambda (col) (aref cell-vector col))
+                        (length cell-vector)))
+
 (defun %screen-row-string (screen row)
   "Return a string of WIDTH characters representing ROW in SCREEN's visible grid.
    Each character is read directly from the cell at (col, ROW).
@@ -68,9 +126,11 @@
     (dotimes (i n result)
       (setf (char result i) (cell-char (aref cell-vector i))))))
 
-(defun capture-pane (pane &key (include-scrollback nil))
+(defun capture-pane (pane &key (include-scrollback nil) (escapes nil))
   "Dump the visible content of PANE as a string.
    When INCLUDE-SCROLLBACK is T, also include scrollback history above the visible area.
+   When ESCAPES is T (capture-pane -e), each row is rendered with SGR escape
+   sequences so colours/attributes are preserved; otherwise plain characters.
    The screen lock is held only for snapshot extraction; string rendering happens
    outside the lock so renderer threads are not blocked during I/O."
   (let ((screen (pane-screen pane)))
@@ -82,11 +142,16 @@
           (setf scrollback-snapshot (reverse (screen-scrollback screen))))
         (setf visible-rows
               (loop for row from 0 below (screen-height screen)
-                    collect (%screen-row-string screen row))))
+                    collect (if escapes
+                                (%screen-row-string-sgr screen row)
+                                (%screen-row-string screen row)))))
       ;; Render to string outside the lock (pure I/O).
       (with-output-to-string (out)
-        (dolist (row-str scrollback-snapshot)
-          (write-string (%scrollback-row-string row-str) out)
+        (dolist (row-cells scrollback-snapshot)
+          (write-string (if escapes
+                            (%scrollback-row-string-sgr row-cells)
+                            (%scrollback-row-string row-cells))
+                        out)
           (terpri out))
         (dolist (row-str visible-rows)
           (write-string row-str out)

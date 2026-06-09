@@ -2204,16 +2204,19 @@
    -E end: accepted (end line); the visible bottom is the end here.
    -b name: store the capture in the buffer named NAME (retrievable with
      paste-buffer -b NAME); without -b an automatic name is assigned.
-   -J (join wrapped lines) / -e (escapes) / -N (trailing spaces) / -a / -P:
+   -e: include SGR escape sequences so captured colours/attributes are preserved.
+   -J (join wrapped lines) / -N (trailing spaces) / -a / -P:
      accepted but not specially handled.
    -t target: target pane (standalone uses the active pane)."
   (multiple-value-bind (flags _positionals) (%parse-command-flags args "tSEb")
     (declare (ignore _positionals))
     (let* ((print-p (assoc #\p flags))
            (include-scrollback (assoc #\S flags))
+           (escapes  (assoc #\e flags))      ; -e: keep SGR colour/attr escapes
            (pane (session-active-pane session))
-           (content (and pane (capture-pane pane :include-scrollback
-                                            (and include-scrollback t)))))
+           (content (and pane (capture-pane pane
+                                            :include-scrollback (and include-scrollback t)
+                                            :escapes (and escapes t)))))
       (when content
         (if print-p
             ;; -p: stdout equivalent — show the content in an overlay.

@@ -1210,6 +1210,43 @@
     (is-true (search "ABC" result)
         "capture-pane output must contain the fed text \"ABC\" (got ~S)" result)))
 
+(test capture-color-sgr-encodes-cell-colours
+  "%capture-color-sgr maps a cell colour value to its SGR fragment."
+  (is (string= "31"  (cl-tmux/commands::%capture-color-sgr 1 nil))  "fg standard")
+  (is (string= "41"  (cl-tmux/commands::%capture-color-sgr 1 t))    "bg standard")
+  (is (string= "94"  (cl-tmux/commands::%capture-color-sgr 12 nil)) "fg bright")
+  (is (string= "104" (cl-tmux/commands::%capture-color-sgr 12 t))   "bg bright")
+  (is (string= "38;5;200" (cl-tmux/commands::%capture-color-sgr 200 nil)) "fg 256")
+  (is (string= "48;5;200" (cl-tmux/commands::%capture-color-sgr 200 t))   "bg 256")
+  (is (string= "38;2;255;128;0"
+               (cl-tmux/commands::%capture-color-sgr (logior #x1000000 #xff8000) nil))
+      "fg true-colour"))
+
+(test capture-cell-sgr-includes-attrs-and-colours
+  "%capture-cell-sgr emits reset + attrs + fg + bg."
+  (is (string= (format nil "~C[0;31;40m" #\Escape)
+               (cl-tmux/commands::%capture-cell-sgr 1 0 0))
+      "fg red, bg black, no attrs")
+  (is (string= (format nil "~C[0;1;31;40m" #\Escape)
+               (cl-tmux/commands::%capture-cell-sgr 1 0 1))
+      "bold (attr bit 0) adds SGR 1"))
+
+(test capture-pane-escapes-preserves-colour
+  "capture-pane :escapes t keeps SGR colour sequences; plain capture does not."
+  (let* ((screen (make-screen 10 2))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 2
+                            :fd -1 :pid -1 :screen screen)))
+    (feed screen (esc "[31m"))     ; foreground red
+    (feed screen "hi")
+    (let ((plain   (capture-pane pane))
+          (colored (capture-pane pane :escapes t)))
+      (is (search "hi" plain) "plain capture contains the text")
+      (is (not (find (code-char 27) plain)) "plain capture has no escape bytes")
+      (is (search "hi" colored) "colour capture contains the text")
+      (is (search "31" colored) "colour capture includes the fg=red SGR (31)")
+      (is (search (format nil "~C[0m" #\Escape) colored)
+          "colour capture ends each row with a reset"))))
+
 (test capture-pane-visible-only-excludes-scrollback
   "capture-pane without :include-scrollback only dumps visible rows, not scrollback."
   (let* ((screen (make-screen 20 5))
