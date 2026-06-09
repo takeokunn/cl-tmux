@@ -32,6 +32,37 @@
     (multiple-value-bind (rows cols) (cl-tmux::%effective-client-size)
       (is (= 30 rows)) (is (= 100 cols)))))
 
+(test multi-effective-size-largest-mode
+  "window-size \"largest\" sizes to the biggest attached client."
+  (with-fresh-options
+    (cl-tmux/options:set-option "window-size" "largest")
+    (let ((cl-tmux::*clients*
+            (list (cl-tmux::%make-client-conn :rows 50 :cols 200)
+                  (cl-tmux::%make-client-conn :rows 24 :cols 80))))
+      (multiple-value-bind (rows cols) (cl-tmux::%effective-client-size)
+        (is (= 50 rows) "largest rows") (is (= 200 cols) "largest cols")))))
+
+(test multi-effective-size-latest-mode
+  "window-size \"latest\" sizes to the most-recent client (front of *clients*)."
+  (with-fresh-options
+    (cl-tmux/options:set-option "window-size" "latest")
+    (let ((cl-tmux::*clients*
+            (list (cl-tmux::%make-client-conn :rows 40 :cols 120)   ; most recent
+                  (cl-tmux::%make-client-conn :rows 24 :cols 80))))
+      (multiple-value-bind (rows cols) (cl-tmux::%effective-client-size)
+        (is (= 40 rows) "latest rows") (is (= 120 cols) "latest cols")))))
+
+(test multi-effective-size-manual-mode-keeps-current
+  "window-size \"manual\" ignores client sizes and keeps *term-rows*/cols."
+  (with-fresh-options
+    (cl-tmux/options:set-option "window-size" "manual")
+    (let ((cl-tmux::*clients* (list (cl-tmux::%make-client-conn :rows 99 :cols 99)))
+          (cl-tmux::*term-rows* 30)
+          (cl-tmux::*term-cols* 100))
+      (multiple-value-bind (rows cols) (cl-tmux::%effective-client-size)
+        (is (= 30 rows) "manual keeps current rows")
+        (is (= 100 cols) "manual keeps current cols")))))
+
 ;;; ── %handle-multi-client-message: per-client dispatch ────────────────────────
 
 (defun %make-test-conn (&key (rows 24) (cols 80))
@@ -52,6 +83,23 @@
       ;; Single client → effective size equals that client's size.
       (is (= 40 cl-tmux::*term-rows*) "effective rows applied to *term-rows*")
       (is (= 100 cl-tmux::*term-cols*) "effective cols applied to *term-cols*"))))
+
+(test multi-resize-marks-client-latest
+  "A resize moves the client to the front of *clients* so window-size \"latest\"
+   tracks the just-resized client."
+  (with-fresh-options
+    (cl-tmux/options:set-option "window-size" "latest")
+    (with-loop-state
+      (let* ((s (make-fake-session))
+             (a (%make-test-conn :rows 24 :cols 80))
+             (b (%make-test-conn :rows 30 :cols 100))
+             (cl-tmux::*clients* (list a b))   ; a is front initially
+             (payload (cl-tmux/protocol::u16-octets-pair 50 150)))
+        (cl-tmux::%handle-multi-client-message cl-tmux::+msg-resize+ payload s b)
+        (is (eq b (first cl-tmux::*clients*)) "the resized client moves to the front")
+        (multiple-value-bind (rows cols) (cl-tmux::%effective-client-size)
+          (is (= 50 rows) "latest tracks the just-resized client's new rows")
+          (is (= 150 cols) "latest tracks the just-resized client's new cols"))))))
 
 (test multi-handle-key-detach-drops-client
   "A ^B d key message yields :drop (the client detaches; the session survives)."

@@ -73,13 +73,32 @@
 ;;; ── Effective geometry (smallest attached client) ───────────────────────────
 
 (defun %effective-client-size ()
-  "Return (values ROWS COLS) the session should render at: the SMALLEST attached
-   client's geometry so every client can display the full broadcast frame.  Falls
-   back to the current *term-rows*/*term-cols* when no clients are attached."
-  (if *clients*
-      (values (reduce #'min *clients* :key #'client-conn-rows)
-              (reduce #'min *clients* :key #'client-conn-cols))
-      (values *term-rows* *term-cols*)))
+  "Return (values ROWS COLS) the session should render at, per the `window-size`
+   option over the attached clients:
+     smallest — min over all clients (default; the only size every client can
+                fully display in cl-tmux's shared single-frame broadcast model);
+     largest  — max over all clients;
+     latest   — the most recently attached/resized client (*clients* is kept
+                most-recent-first);
+     manual   — keep the current *term-rows*/*term-cols* (no auto-resize).
+   Falls back to *term-rows*/*term-cols* when no clients are attached.
+   NOTE: largest/latest can exceed a smaller client's terminal — they are honoured
+   for parity, but smallest stays the safe default for the shared-frame design."
+  (if (null *clients*)
+      (values *term-rows* *term-cols*)
+      (let ((mode (or (cl-tmux/options:get-option "window-size") "smallest")))
+        (cond
+          ((string-equal mode "largest")
+           (values (reduce #'max *clients* :key #'client-conn-rows)
+                   (reduce #'max *clients* :key #'client-conn-cols)))
+          ((string-equal mode "latest")
+           (let ((c (first *clients*)))
+             (values (client-conn-rows c) (client-conn-cols c))))
+          ((string-equal mode "manual")
+           (values *term-rows* *term-cols*))
+          (t                            ; "smallest" and any unknown value
+           (values (reduce #'min *clients* :key #'client-conn-rows)
+                   (reduce #'min *clients* :key #'client-conn-cols)))))))
 
 (defun %apply-effective-size (session)
   "Set *term-rows*/*term-cols* to the effective (smallest-client) geometry,
@@ -121,6 +140,8 @@
      (multiple-value-bind (rows cols) (decode-size payload)
        (setf (client-conn-rows conn) rows
              (client-conn-cols conn) cols))
+     ;; Mark CONN most-recent so window-size "latest" tracks the active client.
+     (setf *clients* (cons conn (remove conn *clients*)))
      (%apply-effective-size session)
      nil)
     ((= type +msg-key+)

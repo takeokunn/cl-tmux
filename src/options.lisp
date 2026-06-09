@@ -173,6 +173,11 @@
   ("detach-on-destroy"        :string  "on")
   ;; Window sizing
   ("default-size"             :string  "80x24") ; default WxH for new sessions
+  ;; Multi-client sizing policy: smallest / largest / latest / manual.
+  ;; cl-tmux broadcasts ONE shared frame to all clients, so "smallest" (every
+  ;; client can display it) is the safe default — diverging from tmux's "latest"
+  ;; default, which in a shared-frame model could overflow smaller terminals.
+  ("window-size"              :string  "smallest")
   ;; Input handling
   ("extended-keys"            :string  "off")   ; off / on / always
   ("key-table"                :string  "prefix") ; default key table
