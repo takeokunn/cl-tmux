@@ -137,6 +137,13 @@
   (push (format nil "~C[?~D;~D$y" #\Escape mode (%decrqm-mode-state screen mode))
         (screen-response-queue screen)))
 
+(defun enqueue-da3-reply (screen)
+  "Push the Tertiary Device Attributes reply (DA3, CSI = c) onto SCREEN's response
+   queue: ESC P ! | 00000000 ST — the DECRPTUI report with a zero terminal unit id
+   (xterm-style; the id is informational and apps accept any 8-hex-digit value)."
+  (push (format nil "~CP!|00000000~C\\" #\Escape #\Escape)
+        (screen-response-queue screen)))
+
 (defun enqueue-xtversion-reply (screen)
   "Push the XTVERSION report (CSI > q) onto SCREEN's response queue:
    ESC P > | tmux 3.5 ST.  cl-tmux presents the tmux 3.5 identity (consistent with
@@ -338,6 +345,10 @@
   ;; XTVERSION — query terminal name/version (CSI > q): reply ESC P > | tmux 3.5 ST
   ((and (eql private #\>) (char= final #\q))
    (enqueue-xtversion-reply screen))
+
+  ;; DA3 — Tertiary Device Attributes (CSI = c): reply ESC P ! | <unit-id> ST
+  ((and (eql private #\=) (char= final #\c))
+   (enqueue-da3-reply screen))
 
   ;; DEC Private Mode Set (?...h) — e.g. ?1049h enters the alternate screen
   ((and (eql private #\?) (char= final #\h))

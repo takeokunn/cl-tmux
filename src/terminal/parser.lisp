@@ -141,6 +141,14 @@
       ;; > — secondary DA marker byte (selects secondary device attribute queries).
       ((= byte +csi-sec-da+)
        (make-csi-k params param-accumulator intermed #\> subparams))
+      ;; < and = — the remaining ECMA-48 private-parameter markers (0x3C / 0x3D):
+      ;; e.g. CSI < Ps t (XTPOPTITLE), CSI = c (tertiary DA / DA3).  Recorded in
+      ;; PRIVATE like ? and >.  Without these, the byte hit the catch-all and
+      ;; ABORTED the sequence, leaving the final byte to print as a stray char.
+      ((= byte #x3C)
+       (make-csi-k params param-accumulator intermed #\< subparams))
+      ((= byte #x3D)
+       (make-csi-k params param-accumulator intermed #\= subparams))
       ;; Intermediate bytes (SPACE through 0x2F): record as intermed.
       ;; SPACE (#x20) is the most common (used by DECSCUSR "CSI N SP q");
       ;; $ (#x24) appears in DECRQM.  Does NOT disturb the private marker.

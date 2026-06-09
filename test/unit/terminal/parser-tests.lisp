@@ -270,6 +270,18 @@
     (is (char= #\a (char-at s 0 0)))
     (is (char= #\b (char-at s 1 0)))))
 
+(test csi-private-lt-marker-consumed-not-stray
+  "CSI < t (XTPOPTITLE) and CSI = c (DA3) use the < / = private markers; the byte
+   must route to the marker slot, not abort the sequence and print the final byte
+   as a stray char."
+  (with-screen (s 10 2)
+    (feed s "a")
+    (feed s (esc "[<t"))       ; XTPOPTITLE — pop title (no-op), prints nothing
+    (feed s "b")
+    (is (char= #\a (char-at s 0 0)) "'a' at column 0")
+    (is (char= #\b (char-at s 1 0))
+        "'b' at column 1 — no stray 't' printed between them")))
+
 (test csi-unknown
   "An unrecognised CSI final character is silently ignored; parser recovers."
   (with-screen (s 10 2)

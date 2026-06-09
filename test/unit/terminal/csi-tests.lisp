@@ -384,6 +384,15 @@
                  (first (cl-tmux/terminal/types:screen-response-queue s)))
         "XTVERSION must report tmux 3.5")))
 
+(test da3-response
+  "CSI = c (DA3 / tertiary device attributes) queues the DECRPTUI reply."
+  (with-screen (s 20 5)
+    (feed s (esc "[=c"))       ; DA3
+    (let ((q (cl-tmux/terminal/types:screen-response-queue s)))
+      (is (consp q) "response-queue must be non-empty after CSI =c")
+      (is (some (lambda (r) (search "!|00000000" r)) q)
+          "DA3 reply must contain the unit-id report !|00000000"))))
+
 ;;; ── DECRQM (request DEC private mode, CSI ? Ps $ p) ──────────────────────────
 
 (test decrqm-reports-set-mode
