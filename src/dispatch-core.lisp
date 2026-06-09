@@ -2789,6 +2789,23 @@
   (declare (ignore session))
   (cl-tmux/config:apply-config-directive (cons "unbind" args)))
 
+(defun %cmd-list-commands-arg (session args)
+  "list-commands [command]: list the recognised commands one per line; with a
+   COMMAND name, show only that command (tmux's `list-commands <name>`).  Without a
+   name this matches the interactive :list-commands binding (the full list)."
+  (declare (ignore session))
+  (let* ((name     (first args))
+         (cmds     (sort (copy-list cl-tmux/config::*bindable-commands*)
+                         #'string< :key #'symbol-name))
+         (filtered (if (and name (plusp (length name)))
+                       (remove-if-not
+                        (lambda (c) (string-equal (symbol-name c) name)) cmds)
+                       cmds)))
+    (show-overlay
+     (with-output-to-string (s)
+       (dolist (cmd filtered)
+         (format s "~(~A~)~%" cmd))))))
+
 (defparameter *arg-command-table*
   (list
    (cons '("display-message" "display") #'%cmd-display-message)
@@ -2845,6 +2862,8 @@
    (cons '("rotate-window" "rotatew")   #'%cmd-rotate-window-arg)
    ;; find-window: scriptable search-and-select (match-string positional).
    (cons '("find-window" "findw")       #'%cmd-find-window-arg)
+   ;; list-commands [command]: list all commands, or filter to one by name.
+   (cons '("list-commands" "lscm")      #'%cmd-list-commands-arg)
    ;; next/previous-window: scriptable -t target-session window cycling.
    (cons '("next-window" "next")        #'%cmd-next-window-arg)
    (cons '("previous-window" "prev")    #'%cmd-previous-window-arg)

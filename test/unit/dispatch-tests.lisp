@@ -1361,6 +1361,19 @@
       (is (null (cl-tmux/options:get-option-for-window "@wopt" w0))
           "the active window (id 0) must NOT have @wopt set"))))
 
+(test cmd-list-commands-filters-by-name
+  "list-commands <name> shows only that command (tmux's filter); bare
+   list-commands shows the full list."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "list-commands new-window")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is-true (search "new-window" text)
+                   "list-commands new-window must list new-window")
+          (is (null (search "kill-pane" text))
+              "the filtered output must not contain unrelated commands (kill-pane)"))))))
+
 (test run-command-line-rename-window-no-arg-opens-prompt
   "'rename-window' with no argument falls through to the prompt (name table)."
   (let ((s (make-fake-session :nwindows 1)))
