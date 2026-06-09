@@ -260,12 +260,75 @@
       (let ((rgb (%parse-osc-color body)))
         (when rgb (funcall set-fn rgb)))))
 
+;;; ── OSC 4 palette colour queries ─────────────────────────────────────────────
+;;;
+;;; OSC 4 ; N ; ? queries palette entry N; some apps use it to read the terminal's
+;;; colours (e.g. to compute contrast).  A multiplexer cannot see the OUTER
+;;; terminal's actual palette, so — as with OSC 10/11 — cl-tmux answers with the
+;;; conventional xterm 256-colour defaults.  SET (OSC 4 ; N ; colour) is accepted
+;;; but not applied: cl-tmux renders the standard palette / passes indices through
+;;; to the outer terminal, so it always reports the standard palette (no stored,
+;;; unrendered override state).
+
+(defparameter +xterm-base16+
+  #(#x000000 #xcd0000 #x00cd00 #xcdcd00 #x0000ee #xcd00cd #x00cdcd #xe5e5e5
+    #x7f7f7f #xff0000 #x00ff00 #xffff00 #x5c5cff #xff00ff #x00ffff #xffffff)
+  "Standard xterm RGB (0xRRGGBB) for palette indices 0-15.")
+
+(defun %xterm-palette-rgb (n)
+  "The standard xterm 256-colour palette RGB (0xRRGGBB) for index N, or NIL when
+   N is out of 0-255.  0-15: base colours; 16-231: the 6x6x6 colour cube;
+   232-255: the 24-step grayscale ramp.  Used to answer OSC 4 queries."
+  (cond
+    ((not (<= 0 n 255)) nil)
+    ((< n 16) (aref +xterm-base16+ n))
+    ((< n 232)
+     (let* ((i      (- n 16))
+            (levels #(0 95 135 175 215 255))
+            (r      (aref levels (floor i 36)))
+            (g      (aref levels (mod (floor i 6) 6)))
+            (b      (aref levels (mod i 6))))
+       (logior (ash r 16) (ash g 8) b)))
+    (t (let ((v (+ 8 (* (- n 232) 10))))
+         (logior (ash v 16) (ash v 8) v)))))
+
+(defun %osc4-reply (index rgb)
+  "Build the OSC 4 colour report: ESC ] 4 ; INDEX ; rgb:RRRR/GGGG/BBBB ST."
+  (flet ((chan (c) (format nil "~(~4,'0X~)" (* c #x101))))
+    (let ((r (ldb (byte 8 16) rgb)) (g (ldb (byte 8 8) rgb)) (b (ldb (byte 8 0) rgb)))
+      (format nil "~C]4;~D;rgb:~A/~A/~A~C\\"
+              #\Escape index (chan r) (chan g) (chan b) #\Escape))))
+
+(defun %osc-split-fields (string)
+  "Split STRING on ';' into a list of fields (empty fields preserved)."
+  (loop with start = 0
+        for pos = (position #\; string :start start)
+        collect (subseq string start (or pos (length string)))
+        while pos
+        do (setf start (1+ pos))))
+
+(defun %handle-osc-4 (screen body)
+  "Handle OSC 4 (set/query palette colours).  BODY is a ';'-separated run of
+   INDEX ; SPEC pairs.  For each pair whose SPEC is \"?\", enqueue a reply
+   reporting that index's standard palette colour onto SCREEN's response-queue.
+   SET specs are accepted but not applied (see the section comment)."
+  (loop for (idx-str spec) on (%osc-split-fields body) by #'cddr
+        for index = (and idx-str (ignore-errors (parse-integer idx-str)))
+        when (and index spec (string= spec "?"))
+          do (let ((rgb (%xterm-palette-rgb index)))
+               (when rgb
+                 (push (%osc4-reply index rgb) (screen-response-queue screen))))))
+
 (define-osc-rules
   ;; OSC 0 / OSC 1 / OSC 2: set the title.  OSC 0 sets icon + window title, OSC 1
   ;; the icon name, OSC 2 the window title; cl-tmux keeps a single title, so all
   ;; three set it (consistent with the existing 0/2 conflation).
   ((0 1 2)
    (set-screen-title screen body))
+
+  ;; OSC 4: palette colour query (reports the standard xterm palette) / set (ignored)
+  (4
+   (%handle-osc-4 screen body))
 
   ;; OSC 7: report current working directory (file://host/path) → #{pane_current_path}
   (7

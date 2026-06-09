@@ -190,6 +190,42 @@
     (is (= #x000000 (cl-tmux/terminal/types:screen-osc-default-bg s))
         "OSC 111 resets the background to black")))
 
+;;; ── OSC 4 palette queries ────────────────────────────────────────────────────
+
+(test xterm-palette-rgb-values
+  "%xterm-palette-rgb maps indices to the standard xterm 256-colour palette."
+  (is (= #x000000 (cl-tmux/terminal/parser::%xterm-palette-rgb 0))   "index 0 = black")
+  (is (= #xffffff (cl-tmux/terminal/parser::%xterm-palette-rgb 15))  "index 15 = white")
+  (is (= #x000000 (cl-tmux/terminal/parser::%xterm-palette-rgb 16))  "cube origin = black")
+  (is (= #x0000ff (cl-tmux/terminal/parser::%xterm-palette-rgb 21))  "index 21 = pure blue")
+  (is (= #xff0000 (cl-tmux/terminal/parser::%xterm-palette-rgb 196)) "index 196 = pure red")
+  (is (= #xffffff (cl-tmux/terminal/parser::%xterm-palette-rgb 231)) "cube max = white")
+  (is (= #x080808 (cl-tmux/terminal/parser::%xterm-palette-rgb 232)) "grayscale ramp start")
+  (is (= #xeeeeee (cl-tmux/terminal/parser::%xterm-palette-rgb 255)) "grayscale ramp end")
+  (is (null (cl-tmux/terminal/parser::%xterm-palette-rgb 256)) "out of range → NIL"))
+
+(test osc-4-query-reports-palette-colour
+  "OSC 4 ; 196 ; ? reports palette index 196 as pure red (rgb:ffff/0000/0000)."
+  (with-screen (s 20 5)
+    (%feed-osc s "4;196;?")
+    (is (string= (format nil "~C]4;196;rgb:ffff/0000/0000~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "OSC 4 query must report index 196 as red")))
+
+(test osc-4-query-multiple-indices
+  "OSC 4 ; 0 ; ? ; 15 ; ? enqueues one reply per queried index."
+  (with-screen (s 20 5)
+    (%feed-osc s "4;0;?;15;?")
+    (is (= 2 (length (cl-tmux/terminal/types:screen-response-queue s)))
+        "two OSC 4 queries must enqueue two replies")))
+
+(test osc-4-set-does-not-reply
+  "OSC 4 ; 1 ; rgb:... (a SET, not a query) enqueues no reply (set is ignored)."
+  (with-screen (s 20 5)
+    (%feed-osc s "4;1;rgb:ffff/0000/ffff")
+    (is (null (cl-tmux/terminal/types:screen-response-queue s))
+        "an OSC 4 SET must not enqueue a reply")))
+
 (test osc-bel-no-crash
   "An OSC sequence terminated by BEL is consumed without crashing."
   (with-screen (s 10 2)
