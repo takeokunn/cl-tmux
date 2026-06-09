@@ -1117,6 +1117,19 @@
           :client-width  client-width
           :client-height client-height
           :client-tty    client-tty
+          ;; #{client_name}: the client's name.  tmux defaults a client's name to
+          ;; its tty path, so we mirror client-tty here (empty when no tty known).
+          :client-name   client-tty
+          ;; #{client_session}: name of the session this client is viewing (= #S).
+          :client-session session-name
+          ;; #{client_termname}: the client terminal's TERM (xterm-256color, …).
+          :client-termname (or (ignore-errors (sb-ext:posix-getenv "TERM")) "")
+          ;; #{client_pid}: PID of the client process.  cl-tmux is single-process,
+          ;; so the client and server share a PID (same idiom as #{server_pid}).
+          :client-pid    (let ((getpid (ignore-errors (find-symbol "GETPID" "SB-POSIX"))))
+                           (if getpid
+                               (format nil "~D" (ignore-errors (funcall getpid)))
+                               "0"))
           ;; #{version}: cl-tmux version string (matches tmux 3.x format for compat).
           :version       "3.5"
           ;; #{session_attached}: "1" when clients are attached, else "0".

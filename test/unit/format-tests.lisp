@@ -587,6 +587,49 @@
     (is (string= "" (getf ctx :client-tty))
         ":client-tty must default to empty string, got ~S" (getf ctx :client-tty))))
 
+;;; ── #{client_name}, #{client_session}, #{client_pid}, #{client_termname} ─────
+
+(test format-context-client-name-mirrors-tty
+  "#{client_name} defaults to the client tty path (tmux's default client name)."
+  (let* ((sess (make-fake-session :nwindows 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session
+                sess win pane :client-tty "/dev/ttys004")))
+    (is (string= "/dev/ttys004"
+                 (cl-tmux/format:expand-format "#{client_name}" ctx))
+        "#{client_name} must mirror the client tty")))
+
+(test format-context-client-session-is-session-name
+  "#{client_session} expands to the name of the session the client is viewing."
+  (let* ((sess (make-fake-session :nwindows 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    ;; make-fake-session names the session "0".
+    (is (string= (cl-tmux/model:session-name sess)
+                 (cl-tmux/format:expand-format "#{client_session}" ctx))
+        "#{client_session} must be the session name")))
+
+(test format-context-client-pid-is-numeric
+  "#{client_pid} expands to a non-empty numeric PID string (single-process model)."
+  (let* ((sess (make-fake-session :nwindows 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane))
+         (pid  (cl-tmux/format:expand-format "#{client_pid}" ctx)))
+    (is (plusp (length pid)) "#{client_pid} must be non-empty")
+    (is (every #'digit-char-p pid) "#{client_pid} must be all digits, got ~S" pid)))
+
+(test format-context-client-termname-is-string
+  "#{client_termname} expands to a string (the TERM env value or empty)."
+  (let* ((sess (make-fake-session :nwindows 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (is (stringp (cl-tmux/format:expand-format "#{client_termname}" ctx))
+        "#{client_termname} must expand to a string")))
+
 (test format-context-client-keyword-args-propagated
   "format-context-from-session forwards :client-width/:client-height/:client-tty."
   (let* ((sess (make-fake-session :nwindows 1))
