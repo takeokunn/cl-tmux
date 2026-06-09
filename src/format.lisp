@@ -1175,6 +1175,23 @@
                                      (cl-tmux/terminal:screen-copy-mode-p pane-scr)
                                      (cl-tmux/terminal:screen-copy-selecting pane-scr))
                                 "1" "0")
+          ;; #{selection_present}: "1" when a copy-mode selection has been started
+          ;; (tmux uses this to gate selection-dependent status text).  Same
+          ;; underlying state as selection_active in our single-selection model.
+          :selection-present (if (and pane-scr
+                                      (cl-tmux/terminal:screen-copy-mode-p pane-scr)
+                                      (cl-tmux/terminal:screen-copy-selecting pane-scr))
+                                 "1" "0")
+          ;; #{copy_cursor_x}/#{copy_cursor_y}: copy-mode cursor column/row, "" when
+          ;; the pane is not in copy mode.  screen-copy-cursor is a (col . row) cons.
+          :copy-cursor-x (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
+                             (format nil "~D"
+                                     (car (cl-tmux/terminal:screen-copy-cursor pane-scr)))
+                             "")
+          :copy-cursor-y (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
+                             (format nil "~D"
+                                     (cdr (cl-tmux/terminal:screen-copy-cursor pane-scr)))
+                             "")
           ;; #{pane_marked}: "1" when the pane is marked, else "0".
           :pane-marked (if (and pane (cl-tmux/model:pane-marked pane)) "1" "0")
           ;; #{pane_input_off}: "1" when pane input is disabled (select-pane -d).

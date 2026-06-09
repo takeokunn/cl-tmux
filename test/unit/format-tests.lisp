@@ -1156,6 +1156,37 @@
           ":pane-in-mode must be \"1\" when copy mode is active"))
     (setf (cl-tmux/terminal/types:screen-copy-mode-p scr) nil)))
 
+(test format-context-copy-cursor-empty-outside-copy-mode
+  "#{copy_cursor_x}/#{copy_cursor_y} are empty and #{selection_present} is 0 when
+   the pane is not in copy mode."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (is (string= "" (cl-tmux/format:expand-format "#{copy_cursor_x}" ctx)))
+    (is (string= "" (cl-tmux/format:expand-format "#{copy_cursor_y}" ctx)))
+    (is (string= "0" (cl-tmux/format:expand-format "#{selection_present}" ctx)))))
+
+(test format-context-copy-cursor-reports-position-in-copy-mode
+  "In copy mode #{copy_cursor_x}/#{copy_cursor_y} report the copy cursor (col . row)
+   and #{selection_present} is 1 once a selection is being made."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (scr  (cl-tmux/model:pane-screen pane)))
+    (setf (cl-tmux/terminal/types:screen-copy-mode-p scr) t
+          (cl-tmux/terminal/types:screen-copy-cursor scr) (cons 7 3)
+          (cl-tmux/terminal/types:screen-copy-selecting scr) t)
+    (let ((ctx (cl-tmux/format:format-context-from-session sess win pane)))
+      (is (string= "7" (cl-tmux/format:expand-format "#{copy_cursor_x}" ctx))
+          "#{copy_cursor_x} must be the copy cursor column")
+      (is (string= "3" (cl-tmux/format:expand-format "#{copy_cursor_y}" ctx))
+          "#{copy_cursor_y} must be the copy cursor row")
+      (is (string= "1" (cl-tmux/format:expand-format "#{selection_present}" ctx))
+          "#{selection_present} must be 1 while selecting"))
+    (setf (cl-tmux/terminal/types:screen-copy-mode-p scr) nil
+          (cl-tmux/terminal/types:screen-copy-selecting scr) nil)))
+
 (test format-context-window-layout-non-empty-for-window-with-panes
   "format-context-from-session :window-layout is a non-empty string for a window with a tree."
   (let* ((sess (make-fake-session :nwindows 1 :npanes 2))
