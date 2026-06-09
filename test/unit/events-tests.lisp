@@ -1244,6 +1244,56 @@
                 (cl-tmux::input-state-continuation state))
             "the state machine must return to ground after an unbound ESC O P")))))
 
+;;; ── Prefix-table function keys: C-b then F5 / F1 (bind F5, bind F1) ──────────
+
+(test prefix-function-key-csi-binding-fires
+  "bind F5 next-window fires on C-b then ESC [ 15 ~ — the prefix-table path now
+   resolves CSI function keys (previously the multi-digit tilde was swallowed)."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "F5" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((cl-tmux::*esc-accum-buffer* nil)
+              (state (cl-tmux::make-input-state)))
+          ;; C-b (2) then ESC [ 1 5 ~
+          (dolist (byte '(2 27 91 49 53 126))
+            (cl-tmux::process-byte s byte state))
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "C-b F5 must run the prefix-table binding")
+          (is (eq #'cl-tmux::%ground-input-state
+                  (cl-tmux::input-state-continuation state))
+              "the state machine must return to ground after C-b F5"))))))
+
+(test prefix-function-key-ss3-binding-fires
+  "bind F1 next-window fires on C-b then ESC O P — the prefix-table path now
+   resolves the SS3 function-key form too."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "F1" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((cl-tmux::*esc-accum-buffer* nil)
+              (state (cl-tmux::make-input-state)))
+          ;; C-b (2) then ESC O P
+          (dolist (byte (list 2 27 (char-code #\O) (char-code #\P)))
+            (cl-tmux::process-byte s byte state))
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "C-b F1 must run the prefix-table binding"))))))
+
+(test prefix-arrow-binding-still-fires-after-digit-change
+  "Regression guard: widening the 3-byte branch to accumulate on any digit final
+   must not break the plain arrow path — C-b then ESC [ A still selects up."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "Up" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((cl-tmux::*esc-accum-buffer* nil)
+              (state (cl-tmux::make-input-state)))
+          ;; C-b (2) then ESC [ A
+          (dolist (byte (list 2 27 91 (char-code #\A)))
+            (cl-tmux::process-byte s byte state))
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "C-b Up must still resolve to the prefix-table Up binding"))))))
+
 ;;; ── dispatch :select-layout-spread ─────────────────────────────────────────
 
 (test dispatch-select-layout-spread-applies-even-horizontal

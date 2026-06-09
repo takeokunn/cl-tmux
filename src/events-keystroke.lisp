@@ -515,14 +515,41 @@
   (lambda (_ignored-session byte)
     (declare (ignore _ignored-session))
     (vector-push-extend byte buffer)
+    ;; Publish the partial buffer so an escape-time timeout replays it whole
+    ;; (symmetry with make-escape-input-k); prevents dropping a stuck C-b ESC O.
+    (setf *esc-accum-buffer* buffer)
     (let ((length (fill-pointer buffer)))
       (cond
+        ;; ── SS3 introducer after prefix: ESC O — defer one byte ──────────
+        ;; ESC O P/Q/R/S (F1-F4) / ESC O H/F (Home/End) so `bind F1 <cmd>`
+        ;; works.  Deferred before the 2-byte meta branch below claims it.
+        ((and (= length 2) (= (aref buffer 1) +byte-ss3-o+))
+         (values nil (%make-prefix-csi-k session buffer)))
+        ;; ── SS3 function key after prefix: ESC O <final> ─────────────────
+        ((and (= length 3) (= (aref buffer 1) +byte-ss3-o+))
+         (let ((key (%ss3-key-name (aref buffer 2))))
+           (when key (%try-bound-string-key session +table-prefix+ key)))
+         (values nil #'%ground-input-state))
+        ;; ── Function / navigation key after prefix: ESC [ <digits> ~ ─────
+        ;; F5 ESC[15~ … F12, PageUp ESC[5~, Home ESC[1~, Delete ESC[3~, so
+        ;; `bind F5 <cmd>` / `bind PPage <cmd>` resolve in the prefix table.
+        ;; The tilde terminator keeps this disjoint from the ESC[1;MOD arrow
+        ;; branches below (those end in a letter).
+        ((and (>= length 4) (= (aref buffer 1) +byte-csi-bracket+)
+              (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)
+              (= (aref buffer (1- length)) +byte-tilde+))
+         (let ((key (%csi-tilde-key-name (%csi-tilde-param buffer length))))
+           (when key (%try-bound-string-key session +table-prefix+ key)))
+         (values nil #'%ground-input-state))
         ;; Complete 3-byte CSI sequence: ESC [ FINAL
         ((and (= length 3) (= (aref buffer 1) +byte-csi-bracket+))
          (let ((final-byte (aref buffer 2)))
            (cond
-             ;; ESC [ 1 may be start of ESC [ 1 ; MOD FINAL — keep accumulating
-             ((= final-byte +byte-csi-param-1+)
+             ;; A digit final begins a parameterised sequence — ESC [ 1 ; MOD
+             ;; FINAL (modifier-arrow) or ESC [ N ~ (function key).  Keep
+             ;; accumulating; the tilde / modifier branches resolve it.  (Was
+             ;; limited to '1', which dropped the '~' of ESC [ 5 ~ etc.)
+             ((<= +byte-digit-0+ final-byte +byte-digit-9+)
               (values nil (%make-prefix-csi-k session buffer)))
              (t
               ;; A user binding (`bind -T prefix Up <cmd>`) overrides the built-in
