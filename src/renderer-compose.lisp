@@ -288,3 +288,41 @@
    tracking (?1000l).  Flushes stdout immediately."
   (format t "~C[?1006l~C[?1002l~C[?1000l" +esc+ +esc+ +esc+)
   (force-output))
+
+;;; ── Extended-keys (CSI u / fixterms) reporting control ──────────────────────
+;;;
+;;; enable-extended-keys emits the xterm modifyOtherKeys sequence CSI > 4 ; N m,
+;;; asking the outer terminal to report modified keys as CSI-u sequences
+;;; (ESC [ <codepoint> ; <mod> u) rather than collapsing them to a single byte —
+;;; the input side of which is decoded by %handle-escape-csi-u:
+;;;   N=1 — only keys that would otherwise be ambiguous (extended-keys "on")
+;;;   N=2 — every key reported as CSI-u, incl. plain letters (extended-keys "always")
+;;; disable-extended-keys resets the terminal with CSI > 4 ; 0 m.  This mirrors
+;;; enable/disable-mouse-reporting: call once at startup (gated on the option) and
+;;; once at shutdown.
+
+(defun extended-keys-level (option-value)
+  "Map the `extended-keys` option value to the modifyOtherKeys level: \"on\" → 1,
+   \"always\" → 2, anything else (\"off\", NIL) → NIL (reporting stays off)."
+  (cond
+    ((null option-value) nil)
+    ((string-equal option-value "on")     1)
+    ((string-equal option-value "always") 2)
+    (t nil)))
+
+(defun enable-extended-keys (option-value)
+  "Emit CSI > 4 ; N m to enable extended (CSI-u) key reporting on the outer terminal
+   when OPTION-VALUE (the `extended-keys` option) is \"on\" (level 1) or \"always\"
+   (level 2).  Returns the level emitted, or NIL when reporting stayed off.  Flushes
+   stdout immediately."
+  (let ((level (extended-keys-level option-value)))
+    (when level
+      (format t "~C[>4;~Dm" +esc+ level)
+      (force-output))
+    level))
+
+(defun disable-extended-keys ()
+  "Emit CSI > 4 ; 0 m to reset extended-keys reporting on the outer terminal.
+   Flushes stdout immediately."
+  (format t "~C[>4;0m" +esc+)
+  (force-output))

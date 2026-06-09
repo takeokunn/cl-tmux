@@ -1186,6 +1186,52 @@
     (is (search (format nil "~C[?1000l" #\Escape) out)
         "disable-mouse-reporting must emit ?1000l (got ~S)" out)))
 
+;;; ── enable/disable-extended-keys (CSI u / modifyOtherKeys) ───────────────────
+
+(test extended-keys-level-mapping
+  "extended-keys-level maps the option value to a modifyOtherKeys level or NIL."
+  (is (= 1 (cl-tmux/renderer::extended-keys-level "on"))     "on → level 1")
+  (is (= 2 (cl-tmux/renderer::extended-keys-level "always")) "always → level 2")
+  (is (null (cl-tmux/renderer::extended-keys-level "off"))   "off → NIL")
+  (is (null (cl-tmux/renderer::extended-keys-level nil))     "NIL → NIL"))
+
+(test enable-extended-keys-on-emits-level-1
+  "enable-extended-keys with \"on\" writes CSI > 4 ; 1 m and returns level 1."
+  (let* ((level nil)
+         (out (let ((*standard-output* (make-string-output-stream)))
+                (setf level (cl-tmux/renderer::enable-extended-keys "on"))
+                (get-output-stream-string *standard-output*))))
+    (is (= 1 level) "returns the emitted level")
+    (is (search (format nil "~C[>4;1m" #\Escape) out)
+        "must emit CSI > 4 ; 1 m (got ~S)" out)))
+
+(test enable-extended-keys-always-emits-level-2
+  "enable-extended-keys with \"always\" writes CSI > 4 ; 2 m and returns level 2."
+  (let* ((level nil)
+         (out (let ((*standard-output* (make-string-output-stream)))
+                (setf level (cl-tmux/renderer::enable-extended-keys "always"))
+                (get-output-stream-string *standard-output*))))
+    (is (= 2 level) "returns the emitted level")
+    (is (search (format nil "~C[>4;2m" #\Escape) out)
+        "must emit CSI > 4 ; 2 m (got ~S)" out)))
+
+(test enable-extended-keys-off-emits-nothing
+  "enable-extended-keys with \"off\" writes no bytes and returns NIL."
+  (let* ((level :sentinel)
+         (out (let ((*standard-output* (make-string-output-stream)))
+                (setf level (cl-tmux/renderer::enable-extended-keys "off"))
+                (get-output-stream-string *standard-output*))))
+    (is (null level) "off → NIL (reporting stays off)")
+    (is (string= "" out) "off must emit nothing (got ~S)" out)))
+
+(test disable-extended-keys-emits-reset
+  "disable-extended-keys writes CSI > 4 ; 0 m to reset the outer terminal."
+  (let ((out (let ((*standard-output* (make-string-output-stream)))
+               (cl-tmux/renderer::disable-extended-keys)
+               (get-output-stream-string *standard-output*))))
+    (is (search (format nil "~C[>4;0m" #\Escape) out)
+        "disable-extended-keys must emit CSI > 4 ; 0 m (got ~S)" out)))
+
 ;;; ── render-lock-screen ───────────────────────────────────────────────────────
 
 (test render-lock-screen-fills-with-lock-message

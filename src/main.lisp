@@ -122,6 +122,11 @@
             ;; before the first render fires.
             (when (cl-tmux/options:get-option "mouse")
               (cl-tmux/renderer:enable-mouse-reporting))
+            ;; Enable extended (CSI-u) key reporting on the outer terminal when the
+            ;; "extended-keys" option is "on"/"always", so modified keys arrive as
+            ;; ESC [ <codepoint> ; <mod> u for %handle-escape-csi-u to decode.
+            (cl-tmux/renderer:enable-extended-keys
+             (cl-tmux/options:get-option "extended-keys"))
             (setf *running* t *dirty* t *resize-pending* nil)
             (event-loop session))
         (sb-posix:syscall-error (c)
@@ -134,7 +139,10 @@
                   "~&cl-tmux: unhandled error: ~A~%" c)
           (sb-ext:exit :code 1)))
 
-      ;; Cleanup: signal shutdown, join reader threads and status timer, then close fds.
+      ;; Cleanup: reset extended-keys reporting so the parent shell is not left
+      ;; receiving CSI-u sequences after cl-tmux exits, then signal shutdown, join
+      ;; reader threads and status timer, and close fds.
+      (ignore-errors (cl-tmux/renderer:disable-extended-keys))
       (stop-reader-threads (append reader-threads
                                    (when *status-timer* (list *status-timer*))))
       (setf *status-timer* nil)

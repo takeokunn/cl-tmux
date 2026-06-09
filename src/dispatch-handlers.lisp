@@ -734,8 +734,10 @@
                   (session-name session) *term-cols* *term-rows*)))))
   (:suspend-client
    ;; Send SIGTSTP to the running process to suspend the client, matching
-   ;; real tmux's C-b C-z behaviour.
+   ;; real tmux's C-b C-z behaviour.  Reset mouse and extended-keys reporting
+   ;; first so the parent shell is not left receiving them while suspended.
    (disable-mouse-reporting)
+   (disable-extended-keys)
    (ignore-errors (sb-posix:kill (sb-posix:getpid) sb-posix:sigtstp)))
   (:lock-server
    ;; Lock all sessions, not just the current one.
