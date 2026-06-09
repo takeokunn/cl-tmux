@@ -651,10 +651,14 @@
    -l: literal — show ARGS verbatim WITHOUT expanding #{...} format variables.
    -d ms: display duration in milliseconds (overrides display-time option).
    -t target: build the format context from the target's session/window/pane.
+   -c target-client: accepted (consumes its argument) but a no-op — cl-tmux has a
+   single client, so there is no other client to target.  This keeps
+   `display-message -c <client> <fmt>` from mis-reading the client name as part of
+   the format.
    -p/-v are tolerated (printing to stdout / verbose logging are no-ops in the
    single-client UI; the message is still shown as an overlay).
    Uses show-transient-overlay so it auto-dismisses after the configured duration."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "dt")
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "dtc")
     (let* ((delay-str  (cdr (assoc #\d flags)))
            (delay-ms   (and delay-str (parse-integer delay-str :junk-allowed t)))
            (target-str (cdr (assoc #\t flags)))

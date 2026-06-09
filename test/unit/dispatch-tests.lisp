@@ -990,6 +990,18 @@
           (is (search "#{session_name}" text)
               "-l must show the literal #{session_name}, not expand it (got ~S)" text))))))
 
+(test display-message-c-flag-consumes-client-arg
+  "display-message -c <client> consumes the client name (a no-op target) instead
+   of leaking it into the format text."
+  (let ((s (make-fake-session)))                 ; session name is \"0\"
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "display-message -c someclient #{session_name}")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is (search "0" text) "the expanded session name must appear")
+          (is (null (search "someclient" text))
+              "-c client name must NOT appear in the message (got ~S)" text))))))
+
 (test run-command-line-empty-is-noop
   "%run-command-line with blank input does not signal an error."
   (let ((s (make-fake-session)))
