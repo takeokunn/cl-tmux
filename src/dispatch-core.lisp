@@ -1335,64 +1335,60 @@
 
 (defun %cmd-select-pane (session args)
   "select-pane [-L|-R|-U|-D|-l|-d|-e|-m|-M] [-t target] [-T title]: select or configure a pane.
-   -L/-R/-U/-D: move in the given direction.
+   -L/-R/-U/-D: move in the given direction (relative to the active pane).
    -l: select the previously active (last) pane.
-   -d: disable keyboard input to the target pane (pane-input-disabled t).
-   -e: re-enable keyboard input to the target pane (pane-input-disabled nil).
-   -t target: select pane by pane-id in the active window.
-   -T title: set the title of the target (or active) pane.
-   -m: mark the selected pane; -M: clear the marked pane (unmark all)."
+   -d/-e: disable / re-enable keyboard input to the TARGET pane.
+   -T title: set the TARGET pane's title.
+   -m: mark the TARGET pane; -M: clear the marked pane (unmark all).
+   -t target: pane-id within the active window (default: the active pane).  The
+     pane-configuring forms (-d/-e/-T/-m) and plain selection all act on -t's pane,
+     not unconditionally the active one."
   (multiple-value-bind (flags _positionals) (%parse-command-flags args "tT")
     (declare (ignore _positionals))
-    (cond
-      ((assoc #\L flags) (%select-pane-in-direction session :left))
-      ((assoc #\R flags) (%select-pane-in-direction session :right))
-      ((assoc #\U flags) (%select-pane-in-direction session :up))
-      ((assoc #\D flags) (%select-pane-in-direction session :down))
-      ;; -d: disable pane input (keystrokes will be swallowed rather than sent)
-      ((assoc #\d flags)
-       (with-active-pane (ap session)
-         (setf (pane-input-disabled ap) t)))
-      ;; -e: enable pane input (re-enable after -d)
-      ((assoc #\e flags)
-       (with-active-pane (ap session)
-         (setf (pane-input-disabled ap) nil)))
-      ;; -T title: set the pane title (equivalent to OSC 0/2 renaming)
-      ((assoc #\T flags)
-       (let* ((title (cdr (assoc #\T flags)))
-              (pane  (session-active-pane session)))
-         (when (and pane title)
-           (setf (pane-title pane) title)
-           ;; Also update the screen title so #{pane_title} reflects the change.
-           (let ((screen (pane-screen pane)))
-             (when screen
-               (cl-tmux/terminal/actions:set-screen-title screen title))))))
-      ((assoc #\m flags)
-       ;; -m: mark the active pane
-       (with-active-pane (ap session)
-         (with-active-window (win session)
-           (dolist (p (window-panes win)) (setf (pane-marked p) nil)))
-         (setf (pane-marked ap) t)))
-      ;; -M: clear the marked pane (unmark all panes in the active window).
-      ((assoc #\M flags)
-       (with-active-window (win session)
-         (dolist (p (window-panes win)) (setf (pane-marked p) nil))))
-      ;; -l: select the previously active (last) pane in the active window.
-      ((assoc #\l flags)
-       (with-active-window (win session)
-         (let ((last (window-last-active win)))
-           (when last (%select-pane-with-focus win last)))))
-      (t
-       ;; Default: select by pane-id via -t
-       (let* ((target (cdr (assoc #\t flags)))
-              (n      (and target (parse-integer target :junk-allowed t)))
-              (win    (session-active-window session)))
-         (when (and n win)
-           (let ((pane (find n (window-panes win) :key #'pane-id)))
-             (when pane (%select-pane-with-focus win pane))))))))
-  ;; after-select-pane fires once after the select-pane command, regardless of
-  ;; which form (-L/-R/.../-t/-T/-m) it took.
-  (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-pane+ session))
+    (let* ((win    (session-active-window session))
+           (target (cdr (assoc #\t flags)))
+           ;; Resolve -t to a pane-id within the active window; default = active pane.
+           (target-pane
+            (or (and target win
+                     (let ((n (parse-integer target :junk-allowed t)))
+                       (and n (find n (window-panes win) :key #'pane-id))))
+                (session-active-pane session))))
+      (cond
+        ((assoc #\L flags) (%select-pane-in-direction session :left))
+        ((assoc #\R flags) (%select-pane-in-direction session :right))
+        ((assoc #\U flags) (%select-pane-in-direction session :up))
+        ((assoc #\D flags) (%select-pane-in-direction session :down))
+        ;; -d/-e: disable / enable input to the target pane.
+        ((assoc #\d flags) (when target-pane (setf (pane-input-disabled target-pane) t)))
+        ((assoc #\e flags) (when target-pane (setf (pane-input-disabled target-pane) nil)))
+        ;; -T title: set the target pane's title (and its screen title so
+        ;; #{pane_title} reflects it).
+        ((assoc #\T flags)
+         (let ((title (cdr (assoc #\T flags))))
+           (when (and target-pane title)
+             (setf (pane-title target-pane) title)
+             (let ((screen (pane-screen target-pane)))
+               (when screen
+                 (cl-tmux/terminal/actions:set-screen-title screen title))))))
+        ;; -m: mark the target pane (unmark the others in its window first).
+        ((assoc #\m flags)
+         (when (and win target-pane)
+           (dolist (p (window-panes win)) (setf (pane-marked p) nil))
+           (setf (pane-marked target-pane) t)))
+        ;; -M: clear the marked pane (unmark all panes in the active window).
+        ((assoc #\M flags)
+         (when win (dolist (p (window-panes win)) (setf (pane-marked p) nil))))
+        ;; -l: select the previously active (last) pane in the active window.
+        ((assoc #\l flags)
+         (when win
+           (let ((last (window-last-active win)))
+             (when last (%select-pane-with-focus win last)))))
+        ;; Default: select the target pane (no-op when it is already active).
+        (t
+         (when (and win target-pane (not (eq target-pane (window-active-pane win))))
+           (%select-pane-with-focus win target-pane))))
+      ;; after-select-pane fires once after the command, whichever form it took.
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-pane+ session))))
 
 (defun %cmd-kill-window (session args)
   "kill-window [-a] [-t target]: kill a window or all windows except the current.

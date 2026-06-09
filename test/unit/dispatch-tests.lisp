@@ -1381,6 +1381,30 @@
       (is (= 1 (pane-id (window-active-pane win)))
           "select-pane -l must return to the previously active pane (1)"))))
 
+(test run-command-line-select-pane-t-T-titles-target-pane
+  "'select-pane -t N -T title' sets pane N's title, NOT the active pane's."
+  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
+         (win (session-active-window s))
+         (p1  (window-active-pane win))                       ; pane 1 (active)
+         (p2  (find 2 (window-panes win) :key #'pane-id)))
+    (with-loop-state
+      (cl-tmux::%run-command-line s "select-pane -t 2 -T mytitle")
+      (is (string= "mytitle" (cl-tmux/model:pane-title p2))
+          "select-pane -t 2 -T must set pane 2's title")
+      (is (not (string= "mytitle" (cl-tmux/model:pane-title p1)))
+          "the active pane (1) title must be unchanged"))))
+
+(test run-command-line-select-pane-t-d-disables-target-pane-input
+  "'select-pane -t N -d' disables input on pane N, NOT the active pane."
+  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
+         (win (session-active-window s))
+         (p1  (window-active-pane win))
+         (p2  (find 2 (window-panes win) :key #'pane-id)))
+    (with-loop-state
+      (cl-tmux::%run-command-line s "select-pane -t 2 -d")
+      (is-true  (cl-tmux/model:pane-input-disabled p2) "pane 2 input disabled")
+      (is-false (cl-tmux/model:pane-input-disabled p1) "active pane 1 unaffected"))))
+
 (test run-command-line-select-pane-M-clears-mark
   "'select-pane -M' clears the marked pane (unmarks all panes in the window)."
   (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
