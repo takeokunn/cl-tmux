@@ -1212,11 +1212,13 @@
              (find target-str wins :key #'window-name :test #'string-equal)))))))
 
 (defun %cmd-select-window (session args)
-  "select-window [-t target] [-l] [-n] [-p]: select a window.
+  "select-window [-t target] [-l] [-n] [-p] [-T]: select a window.
    -t target: window-id, name, or special shorthand (:! last, :+ next, :- prev).
    -l: select the last (previously active) window (same as C-b l).
    -n: select the next window.
    -p: select the previous window.
+   -T: toggle — when the target is ALREADY the current window, behave like
+       last-window instead (the `bind Tab select-window -T` two-window toggle).
    Delivers ?1004 focus events on the switch."
   (multiple-value-bind (flags _pos) (%parse-command-flags args "t")
     (declare (ignore _pos))
@@ -1239,7 +1241,13 @@
          (when target
            (%with-window-focus-transition (session)
              (let ((win (%resolve-window-target session target)))
-               (when win (session-select-window session win))))))))))
+               (when win
+                 ;; -T toggle: already on the target → jump to last window instead.
+                 (if (and (assoc #\T flags)
+                          (eq win (session-active-window session))
+                          (session-last-window session))
+                     (session-select-window session (session-last-window session))
+                     (session-select-window session win)))))))))))
 
 (defun %cmd-select-pane (session args)
   "select-pane [-L|-R|-U|-D|-l|-d|-e|-m|-M] [-t target] [-T title]: select or configure a pane.

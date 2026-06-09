@@ -1174,6 +1174,27 @@
       (is (string= "alpha" (window-name (session-active-window s)))
           "select-window -t alpha must activate the window named 'alpha'"))))
 
+(test run-command-line-select-window-T-toggles-to-last
+  "'select-window -T -t N' toggles to the last window when already on window N,
+   but selects N normally when not currently on it."
+  (let* ((s  (make-fake-session :nwindows 2))   ; window-ids 0,1
+         (w0 (first  (cl-tmux/model:session-windows s)))
+         (w1 (second (cl-tmux/model:session-windows s))))
+    (with-loop-state
+      ;; session-last-window is recency-based (window-last-active-time, 1s
+      ;; granularity); seed distinct OLD stamps so the two same-second selects
+      ;; below produce an unambiguous last-window order (w0 older than w1's NOW).
+      (setf (cl-tmux/model:window-last-active-time w0) 100
+            (cl-tmux/model:window-last-active-time w1) 50)
+      ;; From w0, -T -t 1 is NOT on the target → select w1 normally.
+      (cl-tmux::%run-command-line s "select-window -T -t 1")
+      (is (eq w1 (session-active-window s))
+          "-T when not on the target must select the target (w1)")
+      ;; Now on w1 (w0 is last); -T -t 1 IS on the target → toggle to last (w0).
+      (cl-tmux::%run-command-line s "select-window -T -t 1")
+      (is (eq w0 (session-active-window s))
+          "-T when already on the target must toggle to the last window (w0)"))))
+
 (test run-command-line-select-pane-by-id
   "'select-pane -t N' selects the pane with pane-id N in the active window."
   (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
