@@ -144,7 +144,10 @@
               (not (eq new-cont #'%after-prefix-input-state)))
          (setf (input-state-esc-entered-at state) (get-internal-real-time)))
         ((eq new-cont #'%ground-input-state)
-         (setf (input-state-esc-entered-at state) nil))))
+         ;; Sequence completed or aborted: stop the escape-time timer and drop the
+         ;; replay buffer so a later flush can't resend a stale partial sequence.
+         (setf (input-state-esc-entered-at state) nil
+               *esc-accum-buffer* nil))))
     outcome))
 
 (defun %flush-esc-if-timed-out (state session)
@@ -158,15 +161,23 @@
                             (input-state-esc-entered-at state))
                          (/ internal-time-units-per-second 1000))))
       (when (>= elapsed esc-ms)
-        ;; Forward the lone ESC byte to the active pane.
-        (let* ((win  (session-active-window session))
-               (pane (and win (window-active-pane win))))
+        ;; Forward the full accumulated partial sequence to the active pane.  In
+        ;; the common vim case nothing has accumulated past the ESC, so this is a
+        ;; lone ESC — identical to the historical behaviour.  When a multi-byte
+        ;; partial is pending (e.g. a held Alt+O = ESC O), replaying the whole
+        ;; buffer keeps every byte instead of dropping all but the ESC.
+        (let* ((win   (session-active-window session))
+               (pane  (and win (window-active-pane win)))
+               (accum *esc-accum-buffer*)
+               (bytes (if (and accum (plusp (fill-pointer accum)))
+                          (subseq accum 0 (fill-pointer accum))
+                          (make-array 1 :element-type '(unsigned-byte 8)
+                                        :initial-element +byte-esc+))))
           (when (and pane (> (pane-fd pane) 0))
-            (pty-write (pane-fd pane)
-                       (make-array 1 :element-type '(unsigned-byte 8)
-                                     :initial-element +byte-esc+))))
+            (pty-write (pane-fd pane) bytes)))
         (setf (input-state-continuation state) #'%ground-input-state
-              (input-state-esc-entered-at state) nil)
+              (input-state-esc-entered-at state) nil
+              *esc-accum-buffer* nil)
         (setf *dirty* t)))))
 
 ;;; ── Synchronize-panes broadcast ─────────────────────────────────────────────

@@ -1172,6 +1172,78 @@
                 (cl-tmux::input-state-continuation state))
             "the state machine must return to ground after an unbound ESC [ 15 ~")))))
 
+;;; ── SS3 function keys: ESC O P/Q/R/S (F1-F4), ESC O H/F (Home/End) ───────────
+
+(test ss3-key-name-maps-f1-through-f4-and-home-end
+  "%ss3-key-name maps the SS3 finals to canonical key names; others are NIL."
+  (is (string= "F1"   (cl-tmux::%ss3-key-name (char-code #\P))))
+  (is (string= "F2"   (cl-tmux::%ss3-key-name (char-code #\Q))))
+  (is (string= "F3"   (cl-tmux::%ss3-key-name (char-code #\R))))
+  (is (string= "F4"   (cl-tmux::%ss3-key-name (char-code #\S))))
+  (is (string= "Home" (cl-tmux::%ss3-key-name (char-code #\H))))
+  (is (string= "End"  (cl-tmux::%ss3-key-name (char-code #\F))))
+  (is (null (cl-tmux::%ss3-key-name (char-code #\A)))
+      "SS3 arrows are out of scope here and must map to NIL (forwarded raw)")
+  (is (null (cl-tmux::%ss3-key-name (char-code #\Z)))
+      "an unrecognised SS3 final must map to NIL"))
+
+(test ss3-introducer-defers-one-byte-and-tracks-buffer
+  "ESC O does not resolve immediately (it could be F1-F4); the decoder keeps
+   accumulating and exposes the partial buffer for the escape-time flush replay."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((cl-tmux::*esc-accum-buffer* nil)
+            (state (cl-tmux::make-input-state)))
+        (cl-tmux::process-byte s 27 state)              ; ESC
+        (cl-tmux::process-byte s (char-code #\O) state) ; O
+        (is (not (eq #'cl-tmux::%ground-input-state
+                     (cl-tmux::input-state-continuation state)))
+            "ESC O must keep accumulating, not resolve as Alt+O at length 2")
+        (is (and cl-tmux::*esc-accum-buffer*
+                 (equalp (coerce (subseq cl-tmux::*esc-accum-buffer* 0
+                                         (fill-pointer cl-tmux::*esc-accum-buffer*))
+                                 'list)
+                         '(27 79)))
+            "the replay buffer must hold the full partial sequence ESC O")))))
+
+(test ss3-f1-root-binding-fires-from-byte-stream
+  "bind -n F1 fires when ESC O P is fed through the input state machine, and the
+   buffer-replay state is cleared once the sequence completes (back to ground)."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (let ((cl-tmux::*esc-accum-buffer* nil)
+            (state (cl-tmux::make-input-state)))
+        (key-table-bind "root" "F1" :next-window)
+        (unwind-protect
+             (progn
+               (dolist (byte (list 27 (char-code #\O) (char-code #\P)))
+                 (cl-tmux::process-byte s byte state))
+               (is (eq (second (session-windows s)) (session-active-window s))
+                   "ESC O P must resolve to F1 and fire its root binding")
+               (is (eq #'cl-tmux::%ground-input-state
+                       (cl-tmux::input-state-continuation state))
+                   "the state machine must return to ground after ESC O P")
+               (is (null cl-tmux::*esc-accum-buffer*)
+                   "the replay buffer must be cleared once back at ground"))
+          (let ((tbl (gethash "root" *key-tables*)))
+            (when tbl (remhash "F1" tbl))))))))
+
+(test ss3-unbound-f1-does-not-fire-and-returns-to-ground
+  "An unbound F1 (ESC O P) must not trigger a command and must leave the state
+   machine at ground — the raw key is forwarded to the pane for transparency."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (let ((cl-tmux::*esc-accum-buffer* nil)
+            (state  (cl-tmux::make-input-state))
+            (before (session-active-window s)))
+        (dolist (byte (list 27 (char-code #\O) (char-code #\P)))
+          (cl-tmux::process-byte s byte state))
+        (is (eq before (session-active-window s))
+            "an unbound F1 must not change the active window")
+        (is (eq #'cl-tmux::%ground-input-state
+                (cl-tmux::input-state-continuation state))
+            "the state machine must return to ground after an unbound ESC O P")))))
+
 ;;; ── dispatch :select-layout-spread ─────────────────────────────────────────
 
 (test dispatch-select-layout-spread-applies-even-horizontal

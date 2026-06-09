@@ -203,6 +203,21 @@
 (defconstant +byte-page-up-param+   53  "ESC [ 5 ~ PageUp parameter byte '5' (0x35)")
 (defconstant +byte-page-down-param+ 54  "ESC [ 6 ~ PageDown parameter byte '6' (0x36)")
 
+;;; ── SS3 introducer ──────────────────────────────────────────────────────────
+;;; ESC O <final> is the SS3 form xterm/screen/tmux terminals use for F1-F4
+;;; (ESC O P/Q/R/S) and Home/End (ESC O H/F).  It collides with Alt+O (a 2-byte
+;;; meta chord ESC O), so the decoder defers one byte after ESC O and lets
+;;; escape-time disambiguate — exactly as physical terminals do.
+(defconstant +byte-ss3-o+ 79 "ESC O SS3 introducer, ASCII 'O' (0x4F).")
+
+;;; Holds the in-progress escape-accumulation buffer (the same object the
+;;; make-escape-input-k closure is growing) so %flush-esc-if-timed-out can replay
+;;; the FULL partial sequence on an escape-time timeout instead of dropping every
+;;; byte after the leading ESC.  NIL when no escape sequence is being accumulated;
+;;; in that state the flush falls back to forwarding a lone ESC (vim insert-mode).
+(defvar *esc-accum-buffer* nil
+  "Octet vector currently accumulating after an ESC, or NIL at ground.")
+
 ;;; ── Mouse button-number constants ───────────────────────────────────────────
 ;;; These are X10-encoded button numbers (raw byte minus 32).
 (defconstant +mouse-btn-left+          0  "Left mouse button press (X10 btn 0).")

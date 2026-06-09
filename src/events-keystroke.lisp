@@ -752,6 +752,31 @@
          (%forward-octets session (subseq buffer 0 length))))))
   (values nil #'%ground-input-state))
 
+(defun %ss3-key-name (final-byte)
+  "Map the final byte of an SS3 sequence ESC O <final> to its canonical tmux key
+   name, or NIL when it is not a recognised bindable key.  Covers F1-F4 (the
+   xterm/screen encoding `ESC O P/Q/R/S`, which the ESC [ N ~ path does NOT carry)
+   and Home/End (ESC O H/F).  Names match %parse-key-token's bind-side output."
+  (case (code-char final-byte)
+    (#\P "F1") (#\Q "F2") (#\R "F3") (#\S "F4")
+    (#\H "Home") (#\F "End")
+    (otherwise nil)))
+
+(defun %handle-escape-ss3 (session buffer)
+  "Handle a complete 3-byte SS3 sequence ESC O <final> from BUFFER.  A root-table
+   binding for the canonical key name wins first, so `bind -n F1 <cmd>` fires;
+   otherwise the raw 3 bytes are forwarded to the pane so the application still
+   receives the function key (transparency).  Returns ground state.
+
+   Deferring ESC O to reach this point sacrifices a `bind -n M-O` *binding* (ESC O
+   is now read as an SS3 prefix, matching tmux's own resolution), but a held Alt+O
+   still reaches the pane: %flush-esc-if-timed-out replays the buffered ESC O."
+  (let ((key (%ss3-key-name (aref buffer 2))))
+    (unless (and key (%try-bound-string-key session +table-root+ key))
+      (unless (%copy-mode-active-p session)
+        (%forward-octets session (subseq buffer 0 3)))))
+  (values nil #'%ground-input-state))
+
 (defun %handle-escape-csi-3byte (session buffer)
   "Handle a 3-byte CSI sequence ESC [ FINAL from BUFFER (not X10 / not SGR).
    If the third byte is a digit, returns (values T NIL) meaning keep accumulating.
@@ -799,8 +824,20 @@
   (lambda (_ignored-session byte)
     (declare (ignore _ignored-session))
     (vector-push-extend byte buffer)
+    ;; Expose the growing buffer so %flush-esc-if-timed-out can replay the FULL
+    ;; partial sequence (e.g. a held ESC O) rather than dropping all but the ESC.
+    (setf *esc-accum-buffer* buffer)
     (let ((length (fill-pointer buffer)))
       (cond
+        ;; ── SS3 introducer: ESC O — defer one byte to disambiguate ───────
+        ;; ESC O P/Q/R/S (F1-F4) and ESC O H/F (Home/End) vs Alt+O.  Keep
+        ;; accumulating; if no third byte arrives, escape-time flushes the
+        ;; buffered ESC O to the pane (Alt+O passthrough preserved).
+        ((and (= length 2) (= (aref buffer 1) +byte-ss3-o+))
+         (values nil (make-escape-input-k session buffer)))
+        ;; ── SS3 function key complete: ESC O <final> ─────────────────────
+        ((and (= length 3) (= (aref buffer 1) +byte-ss3-o+))
+         (%handle-escape-ss3 session buffer))
         ;; ── X10 mouse: complete 6-byte sequence ESC [ M btn col row ──────
         ((and (= length 6)
               (= (aref buffer 1) +byte-csi-bracket+)
