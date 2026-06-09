@@ -215,14 +215,16 @@
   ;; client-resized hook: the client terminal changed size (SIGWINCH).
   (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-client-resized+))
 
-(defun %auto-rename-name (session window pane screen)
+(defun %auto-rename-name (session window pane screen &key (allow-title t))
   "Compute the new automatic window name using automatic-rename-format option.
    For panes with no real process (pid <= 0), prefer the OSC 0/2 screen title
    directly; the format-string result would just be the shell basename fallback.
-   Falls back to the OSC 0/2 screen title when the format yields an empty string."
+   Falls back to the OSC 0/2 screen title when the format yields an empty string.
+   ALLOW-TITLE NIL (allow-rename off) suppresses the OSC-title fallback, so
+   command-following still works but applications cannot rename via their title."
   (let* ((has-real-process (let ((pid (and pane (cl-tmux/model:pane-pid pane))))
                              (and pid (> pid 0))))
-         (osc-title (screen-title screen)))
+         (osc-title (if allow-title (screen-title screen) "")))
     (if (not has-real-process)
         ;; No real PTY: OSC title is more meaningful than the shell-basename fallback.
         (if (plusp (length osc-title)) osc-title "")
@@ -246,12 +248,17 @@
     (when (and screen active-window
                (window-automatic-rename-p active-window)
                ;; Per-window "automatic-rename" option (default on); honors
-               ;; `setw -w automatic-rename off`.  allow-rename stays a global
-               ;; (server-ish) read.
+               ;; `setw -w automatic-rename off`.  Independent of allow-rename:
+               ;; command-following must keep working even with allow-rename off
+               ;; (that option only governs app-set OSC titles, handled below).
                (cl-tmux/options:get-option-for-context
-                "automatic-rename" :window active-window)
-               (cl-tmux/options:get-option "allow-rename"))
-      (let ((new-name (%auto-rename-name session active-window active-pane screen)))
+                "automatic-rename" :window active-window))
+      ;; allow-rename (default on) gates only the app's OSC-title fallback inside
+      ;; %auto-rename-name; `set -g allow-rename off` stops apps renaming windows
+      ;; via their title without freezing automatic command-following.
+      (let ((new-name (%auto-rename-name session active-window active-pane screen
+                                         :allow-title (cl-tmux/options:get-option
+                                                       "allow-rename"))))
         (when (and (plusp (length new-name))
                    (not (string= new-name (window-name active-window))))
           ;; Auto-rename must NOT disable automatic-rename, or it would fire only

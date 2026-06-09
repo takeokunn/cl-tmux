@@ -2389,6 +2389,66 @@
         (is (string= "new-title" (window-name win))
             "window-name must update when window-local automatic-rename is on")))))
 
+(test allow-rename-off-keeps-command-following
+  "`set -g allow-rename off` must NOT freeze automatic command-following — it
+   governs only app-set titles.  With automatic-rename on and allow-rename off,
+   the command-based name (automatic-rename-format) still applies."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid 12345 :x 0 :y 0 :width 20 :height 5
+                             :screen screen))
+         (win    (make-window :id 1 :name "old" :width 20 :height 5
+                              :panes (list pane) :tree (make-layout-leaf pane)))
+         (sess   (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win pane)
+    (session-select-window sess win)
+    (setf (window-automatic-rename-p win) t)
+    (with-isolated-config
+      (cl-tmux/options:set-option "automatic-rename" t)
+      (cl-tmux/options:set-option "allow-rename" nil)        ; OFF
+      (cl-tmux/options:set-option "automatic-rename-format" "MYCMD")
+      (with-loop-state
+        (cl-tmux::%maybe-rename-window-from-title sess)
+        (is (string= "MYCMD" (window-name win))
+            "command-following must still apply with allow-rename off")))))
+
+(test allow-rename-off-suppresses-app-title
+  "With allow-rename off, an app's OSC title must NOT rename the window (the
+   title fallback is suppressed); command-following is unaffected."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                             :screen screen))
+         (win    (make-window :id 1 :name "keep" :width 20 :height 5
+                              :panes (list pane) :tree (make-layout-leaf pane)))
+         (sess   (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win pane)
+    (session-select-window sess win)
+    (setf (screen-title screen) "APPTITLE")
+    (setf (window-automatic-rename-p win) t)
+    (with-isolated-config
+      (cl-tmux/options:set-option "automatic-rename" t)
+      (cl-tmux/options:set-option "allow-rename" nil)        ; OFF
+      (with-loop-state
+        (cl-tmux::%maybe-rename-window-from-title sess)
+        (is (string= "keep" (window-name win))
+            "app OSC title must not rename the window when allow-rename is off")))))
+
+(test auto-rename-name-allow-title-nil-suppresses-osc-title
+  "%auto-rename-name with :allow-title NIL returns empty for a process-less pane
+   whose only name source is the OSC title; :allow-title t uses it."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                             :screen screen))
+         (win    (make-window :id 1 :name "w" :width 20 :height 5
+                              :panes (list pane) :tree (make-layout-leaf pane)))
+         (sess   (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win pane)
+    (session-select-window sess win)
+    (setf (screen-title screen) "T")
+    (is (string= "" (cl-tmux::%auto-rename-name sess win pane screen :allow-title nil))
+        ":allow-title nil suppresses the OSC title")
+    (is (string= "T" (cl-tmux::%auto-rename-name sess win pane screen :allow-title t))
+        ":allow-title t uses the OSC title")))
+
 (test maybe-rename-window-keeps-tracking-after-first-rename
   "Auto-rename must keep working after the first rename: %maybe-rename-window-
    from-title must NOT disable automatic-rename, so a later title change renames
