@@ -834,19 +834,31 @@
                (concatenate 'string existing data) name))
             (cl-tmux/buffer:add-paste-buffer data name))))))
 
+(defun %paste-buffer-text (raw no-replace)
+  "The text paste-buffer writes for buffer contents RAW.  tmux replaces LF with
+   CR by default so each pasted line submits like Enter; NO-REPLACE (-r) keeps the
+   raw bytes.  Returns NIL when RAW is NIL."
+  (and raw (if no-replace raw (substitute #\Return #\Newline raw))))
+
 (defun %cmd-paste-buffer-arg (session args)
   "paste-buffer [-d] [-p] [-r] [-b name] [-s sep] [-t target]: paste a buffer into
    the target pane.  -b name pastes the named buffer (else the most recent); -d
-   deletes the buffer after pasting.  -p (bracketed) / -r (no LF→CR) / -s sep are
-   accepted but not specially handled."
+   deletes the buffer after pasting.  By default newlines (LF) are replaced with
+   carriage returns (CR) so pasted lines act as Enter in a shell; -r disables that
+   replacement.  Bracketed paste is applied automatically by %paste-to-pane when
+   the application has enabled it.  -p / -s sep are accepted but not specially
+   handled."
   (multiple-value-bind (flags _positionals) (%parse-command-flags args "bst")
     (declare (ignore _positionals))
     (let* ((name       (cdr (assoc #\b flags)))
            (delete-p   (and (assoc #\d flags) t))
+           (no-replace (and (assoc #\r flags) t))
            (target-str (cdr (assoc #\t flags)))
-           (text       (if name
+           (raw        (if name
                            (cl-tmux/buffer:get-buffer-by-name name)
                            (cl-tmux/buffer:get-paste-buffer 0)))
+           ;; tmux default: LF → CR so a multi-line paste submits each line.
+           (text       (%paste-buffer-text raw no-replace))
            (target-pane (if target-str
                             (nth-value 2 (resolve-target
                                           *server-sessions* target-str

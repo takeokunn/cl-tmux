@@ -2401,6 +2401,20 @@
         (is (null cl-tmux/buffer:*paste-buffers*)
             ":delete-buffer must remove buffer 0 from the ring")))))
 
+(test paste-buffer-text-translates-lf-to-cr-by-default
+  "%paste-buffer-text replaces LF with CR by default so a multi-line paste
+   submits each line; -r (no-replace) keeps the raw bytes."
+  (is (string= (format nil "a~Cb~Cc" #\Return #\Return)
+               (cl-tmux::%paste-buffer-text (format nil "a~%b~%c") nil))
+      "default paste must translate LF → CR")
+  (is (string= (format nil "a~%b~%c")
+               (cl-tmux::%paste-buffer-text (format nil "a~%b~%c") t))
+      "-r must keep LF unchanged")
+  (is (string= "abc" (cl-tmux::%paste-buffer-text "abc" nil))
+      "text without newlines is unchanged")
+  (is (null (cl-tmux::%paste-buffer-text nil nil))
+      "NIL buffer contents → NIL"))
+
 ;;; ── :save-buffer / :load-buffer dispatch ─────────────────────────────────────
 
 (test dispatch-save-buffer-opens-prompt-when-buffer-exists
