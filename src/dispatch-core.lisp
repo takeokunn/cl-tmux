@@ -2307,9 +2307,10 @@
    -b name: store the capture in the buffer named NAME (retrievable with
      paste-buffer -b NAME); without -b an automatic name is assigned.
    -e: include SGR escape sequences so captured colours/attributes are preserved.
-   -J: preserve trailing spaces on each line (default strips them, like tmux).
-     (tmux's -J also joins wrapped lines; that half needs per-row wrap tracking
-     the screen does not record yet, so only the trailing-space half is done.)
+   -J: preserve trailing spaces AND rejoin lines that wrapped at the right margin
+     into one logical line (default strips trailing spaces and keeps every row a
+     separate line, like tmux).  Joining uses the screen's per-row wrap flags and
+     applies to the visible region (scrollback rows are not joined).
    -N / -a / -P: accepted but not specially handled.
    -t target: target pane (standalone uses the active pane)."
   (multiple-value-bind (flags _positionals) (%parse-command-flags args "tSEb")

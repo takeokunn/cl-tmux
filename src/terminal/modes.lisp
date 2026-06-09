@@ -30,6 +30,9 @@
     (setf (screen-cells screen)
           (%make-blank-cells (* (screen-width screen) (screen-height screen))))
     (set-cursor screen 0 0)
+    ;; The displayed grid changes entirely — drop the -J wrap flags (the main
+    ;; screen's are not preserved across the alt-screen switch).
+    (%clear-all-line-wrapped screen)
     (setf (screen-dirty-p screen) t)))
 
 (defun exit-alt-screen (screen)
@@ -41,6 +44,7 @@
             (screen-cursor-y   screen) (screen-alt-cursor-y screen)
             (screen-alt-cells  screen) nil)
       (erase-display screen 2))
+  (%clear-all-line-wrapped screen)
   (setf (screen-dirty-p screen) t))
 
 ;;; ── Prolog-like DEC PM rule table macro ─────────────────────────────────────

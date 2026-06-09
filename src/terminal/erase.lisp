@@ -12,7 +12,8 @@
   "Erase all cells from (X0,Y0) to (X1,Y1) inclusive, treating the range as
    a linear span across rows.  Sets screen-dirty-p whenever any cell is written."
   (loop for y from y0 to y1
-        do (let ((bx (if (= y y0) x0 0))
+        do (%clear-line-wrapped screen y)   ; erased content no longer wraps (capture -J)
+           (let ((bx (if (= y y0) x0 0))
                  (ex (if (= y y1) x1 (1- (screen-width screen)))))
              (loop for x from bx to ex
                    do (setf (screen-cell screen x y) (%erase-cell screen)))))

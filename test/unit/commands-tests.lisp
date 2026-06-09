@@ -1312,6 +1312,54 @@
     (is (string= (format nil "hi        ~%") (capture-pane pane :join t))
         "join capture keeps the row padded to its full width of 10")))
 
+(test capture-pane-J-joins-wrapped-lines
+  "capture-pane -J rejoins a line that wrapped at the right margin into one
+   logical line (no newline at the wrap boundary); default capture keeps them
+   on separate lines."
+  (let* ((screen (make-screen 5 3))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 5 :height 3
+                            :fd -1 :pid -1 :screen screen)))
+    (feed screen "ABCDEFGH")          ; wraps: row0 "ABCDE" → row1 "FGH"
+    (let ((joined  (capture-pane pane :join t))
+          (default (capture-pane pane)))
+      (is-true (search "ABCDEFGH" joined)
+          "with -J the wrapped line is one logical line ABCDEFGH (got ~S)" joined)
+      (is (null (search "ABCDEFGH" default))
+          "without -J the wrapped halves stay on separate lines (got ~S)" default))))
+
+(test capture-pane-J-keeps-unwrapped-lines-separate
+  "capture-pane -J does NOT join lines that did not wrap (a hard CR+LF break)."
+  (let* ((screen (make-screen 10 3))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 3
+                            :fd -1 :pid -1 :screen screen)))
+    (feed screen (format nil "foo~C~Cbar" #\Return #\Linefeed))
+    (let ((joined (capture-pane pane :join t)))
+      (is-true (search "foo" joined) "foo present")
+      (is-true (search "bar" joined) "bar present")
+      (is (null (search "foobar" joined))
+          "foo and bar did not wrap — they stay separate, not joined (got ~S)" joined))))
+
+(test shift-line-wrapped-up-moves-flags
+  "%shift-line-wrapped-up (scroll-up of the wrap flags): a flag at row Y in the
+   region moves to Y-1, mirroring the content shift."
+  (let ((s (make-screen 5 4)))
+    (cl-tmux/terminal/types:%mark-line-wrapped s 2)        ; row 2 wraps
+    (cl-tmux/terminal/types:%shift-line-wrapped-up s 0 3)  ; scroll region rows 0..3
+    (is-true  (cl-tmux/terminal/types:%line-wrapped-p s 1)
+              "the row-2 wrap flag moved up to row 1")
+    (is-false (cl-tmux/terminal/types:%line-wrapped-p s 2)
+              "row 2 no longer carries the flag")))
+
+(test line-wrapped-flag-cleared-on-erase
+  "Erasing a row clears its wrap flag (erase-region), so a rewritten short line
+   does not over-join under -J."
+  (let ((s (make-screen 5 3)))
+    (cl-tmux/terminal/types:%mark-line-wrapped s 0)
+    (is-true (cl-tmux/terminal/types:%line-wrapped-p s 0) "row 0 marked wrapped")
+    (cl-tmux/terminal/actions:erase-region s 0 0 4 0)      ; erase row 0
+    (is-false (cl-tmux/terminal/types:%line-wrapped-p s 0)
+              "erasing row 0 clears its wrap flag")))
+
 (test capture-pane-blank-row-trims-to-empty-line
   "A fully blank row trims to an empty captured line (just the newline) by default,
    but stays full-width under -J."

@@ -159,17 +159,20 @@
    When INCLUDE-SCROLLBACK is T, also include scrollback history above the visible area.
    When ESCAPES is T (capture-pane -e), each row is rendered with SGR escape
    sequences so colours/attributes are preserved; otherwise plain characters.
-   When JOIN is T (capture-pane -J), trailing spaces on each line are PRESERVED;
-   otherwise — tmux's default — trailing whitespace is stripped from each line.
-   (tmux's -J also joins wrapped lines into one logical line; that half requires
-   per-row wrap-state tracking the screen does not yet record, so it is not done.)
+   When JOIN is T (capture-pane -J), trailing spaces on each line are PRESERVED and
+   VISIBLE lines that wrapped at the right margin are rejoined into one logical
+   line (no newline at the wrap boundary), using the screen's per-row wrap flags.
+   Otherwise — tmux's default — trailing whitespace is stripped and every row ends
+   with a newline.  (Scrollback rows carry no wrap flag, so -J does not join across
+   the scrollback/visible boundary or within scrollback.)
    The screen lock is held only for snapshot extraction; string rendering happens
    outside the lock so renderer threads are not blocked during I/O."
   (let ((screen (pane-screen pane))
         (trim   (not join)))           ; default trims trailing spaces; -J preserves
     ;; Snapshot pure data under lock (I/O-synchronisation concern).
     (let ((scrollback-snapshot nil)
-          (visible-rows nil))
+          (visible-rows nil)
+          (wrapped-flags nil))
       (with-lock-held ((screen-lock screen))
         (when include-scrollback
           (setf scrollback-snapshot (reverse (screen-scrollback screen))))
@@ -177,7 +180,11 @@
               (loop for row from 0 below (screen-height screen)
                     collect (if escapes
                                 (%screen-row-string-sgr screen row trim)
-                                (%screen-row-string screen row trim)))))
+                                (%screen-row-string screen row trim))))
+        (when join
+          (setf wrapped-flags
+                (loop for row from 0 below (screen-height screen)
+                      collect (cl-tmux/terminal/types:%line-wrapped-p screen row)))))
       ;; Render to string outside the lock (pure I/O).
       (with-output-to-string (out)
         (dolist (row-cells scrollback-snapshot)
@@ -186,9 +193,15 @@
                             (%scrollback-row-string row-cells trim))
                         out)
           (terpri out))
-        (dolist (row-str visible-rows)
-          (write-string row-str out)
-          (terpri out))))))
+        (if join
+            ;; -J: suppress the newline between a wrapped row and its continuation.
+            (loop for rows on visible-rows
+                  for wrapped in wrapped-flags
+                  do (write-string (first rows) out)
+                     (unless (and wrapped (rest rows)) (terpri out)))
+            (dolist (row-str visible-rows)
+              (write-string row-str out)
+              (terpri out)))))))
 
 ;;; ── break-pane ─────────────────────────────────────────────────────────────
 ;;;

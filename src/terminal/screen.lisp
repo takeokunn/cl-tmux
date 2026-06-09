@@ -143,7 +143,13 @@
   (osc-default-bg #x000000 :type (unsigned-byte 24))
   ;; OSC 8 current hyperlink URI: set by OSC 8 ; params ; URI, cleared by OSC 8 ; ;.
   ;; Stamped onto each cell written while non-NIL (see %write-normal-cell).
-  (current-hyperlink nil :type (or null string)))
+  (current-hyperlink nil :type (or null string))
+  ;; Per-row line-wrap flags (a lazily-created hash-table row→T, or NIL): a row is
+  ;; marked when an autowrap actually carries its line onto the next row, so
+  ;; capture-pane -J can rejoin lines that wrapped at the right margin.  Cleared
+  ;; when a row is repositioned/erased; shifted on scroll.  Pure capture metadata
+  ;; — it never affects rendering or emulation.
+  (wrapped-rows nil :type (or null hash-table)))
 
 (defun %make-blank-cells (cell-count)
   "Allocate a simple vector of CELL-COUNT blank cells (space, default colour, no attrs).
@@ -165,6 +171,44 @@
     (setf (screen-parser screen)
           (lambda (s byte) (cl-tmux/terminal/parser:ground-state s byte)))
     screen))
+
+;;; ── Line-wrap flags (capture-pane -J metadata) ──────────────────────────────
+
+(defun %mark-line-wrapped (screen row)
+  "Mark that ROW's line wraps (continues onto ROW+1) — set when an autowrap
+   actually carries content to the next row."
+  (let ((ht (or (screen-wrapped-rows screen)
+                (setf (screen-wrapped-rows screen) (make-hash-table :test #'eql)))))
+    (setf (gethash row ht) t)))
+
+(defun %line-wrapped-p (screen row)
+  "T when ROW's line wraps onto ROW+1 (capture-pane -J join boundary)."
+  (let ((ht (screen-wrapped-rows screen)))
+    (and ht (gethash row ht) t)))
+
+(defun %clear-line-wrapped (screen row)
+  "Clear ROW's wrap flag — its content no longer continues (repositioned/erased)."
+  (let ((ht (screen-wrapped-rows screen)))
+    (when ht (remhash row ht))))
+
+(defun %clear-all-line-wrapped (screen)
+  "Drop all wrap flags — a coarse reset for erase-display / RIS / resize / alt-screen."
+  (let ((ht (screen-wrapped-rows screen)))
+    (when ht (clrhash ht))))
+
+(defun %shift-line-wrapped-up (screen top bottom)
+  "Shift wrap flags to track a scroll-up of region [TOP,BOTTOM]: a flag at row Y in
+   (TOP,BOTTOM] moves to Y-1; the flag at TOP scrolls off; BOTTOM's flag is cleared."
+  (let ((ht (screen-wrapped-rows screen)))
+    (when ht
+      (let ((new (make-hash-table :test #'eql)))
+        (maphash (lambda (y v)
+                   (declare (ignore v))
+                   (cond
+                     ((and (> y top) (<= y bottom)) (setf (gethash (1- y) new) t))
+                     ((or (< y top) (> y bottom))   (setf (gethash y new) t))))
+                 ht)
+        (setf (screen-wrapped-rows screen) new)))))
 
 ;;; ── Grid helpers ───────────────────────────────────────────────────────────
 
@@ -252,4 +296,6 @@
           (screen-cursor-x      screen) (clamp (screen-cursor-x screen) 0 (1- new-width))
           (screen-cursor-y      screen) (clamp (screen-cursor-y screen) 0 (1- new-height))
           (screen-dirty-p       screen) t)
+    ;; Content reflows on resize; drop the -J wrap flags (re-marked as new wraps occur).
+    (%clear-all-line-wrapped screen)
     screen))

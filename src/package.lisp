@@ -224,6 +224,13 @@
    #:screen-osc-default-bg
    ;; OSC 8 current hyperlink
    #:screen-current-hyperlink
+   ;; Line-wrap flags (capture-pane -J)
+   #:screen-wrapped-rows
+   #:%mark-line-wrapped
+   #:%line-wrapped-p
+   #:%clear-line-wrapped
+   #:%clear-all-line-wrapped
+   #:%shift-line-wrapped-up
    ;; Grid helpers
    #:screen-cell
    #:screen-clear-dirty

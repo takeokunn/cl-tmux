@@ -44,7 +44,10 @@
    Cancels a pending wrap (explicit positioning discards the last-column flag)."
   (%cancel-wrap screen)
   (setf (screen-cursor-x screen) (clamp x 0 (1- (screen-width  screen)))
-        (screen-cursor-y screen) (clamp y 0 (1- (screen-height screen)))))
+        (screen-cursor-y screen) (clamp y 0 (1- (screen-height screen))))
+  ;; Explicit positioning starts fresh content on the target row — its old wrap
+  ;; flag (if any) no longer applies.
+  (%clear-line-wrapped screen (screen-cursor-y screen)))
 
 (define-cursor-movements
   (cursor-up    "Move the cursor up N rows, clamping to the scroll-top boundary."
@@ -147,7 +150,10 @@
 (defun cursor-cr (screen)
   "Carriage return: move the cursor to column 0."
   (%cancel-wrap screen)
-  (setf (screen-cursor-x screen) 0))
+  (setf (screen-cursor-x screen) 0)
+  ;; CR returns to the line start to overwrite it (e.g. progress bars) — clear any
+  ;; stale wrap flag for this row.
+  (%clear-line-wrapped screen (screen-cursor-y screen)))
 
 (defun cursor-nel (screen)
   "NEL (ESC E) — Next Line: carriage return then line feed, i.e. move the cursor
@@ -331,6 +337,9 @@
   ;; Consume a deferred wrap: the previous write parked the cursor at the last
   ;; column with autowrap on; this next character triggers the wrap first.
   (when (screen-pending-wrap screen)
+    ;; The current row's line genuinely continues onto the next — record it for
+    ;; capture-pane -J (before cursor-down/scroll, which may shift the flags).
+    (%mark-line-wrapped screen (screen-cursor-y screen))
     (setf (screen-pending-wrap screen) nil
           (screen-cursor-x screen) 0)
     (cursor-down/scroll screen))

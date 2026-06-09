@@ -78,6 +78,8 @@
     (loop for row from top below bottom
           do (%copy-row screen row (1+ row)))
     (%clear-row screen bottom)
+    ;; Shift the capture-pane -J wrap flags in lockstep with the content.
+    (%shift-line-wrapped-up screen top bottom)
     ;; Enforce the scrollback cap after pushing the new entry so the policy
     ;; decision (cap size) stays at this logical boundary rather than inside
     ;; the raw grid-copy operations above.
@@ -96,6 +98,10 @@
     (loop for row from bottom above top
           do (%copy-row screen row (1- row)))
     (%clear-row screen top)
+    ;; Reverse index (RI) is rare; drop the -J wrap flags rather than track the
+    ;; downward shift (safe — capture-pane -J then degrades to no-join, never a
+    ;; wrong join).
+    (%clear-all-line-wrapped screen)
     (setf (screen-dirty-p screen) t)))
 
 ;;; ── Scroll region ──────────────────────────────────────────────────────────
