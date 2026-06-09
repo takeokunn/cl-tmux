@@ -768,6 +768,7 @@
    #:run-shell
    #:if-shell
    #:swap-pane
+   #:swap-two-panes
    #:capture-pane
    ;; Advanced pane commands
    #:break-pane

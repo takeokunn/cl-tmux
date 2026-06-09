@@ -699,12 +699,23 @@
             (cl-tmux/options:set-option "display-time" saved))
           (show-transient-overlay text))))))
 
+(defun %resolve-pane-in-window (win target-str)
+  "Resolve TARGET-STR (a pane-id integer) to a pane in WIN; default to WIN's
+   active pane when TARGET-STR is NIL or names no pane in WIN.  Shared by
+   select-pane and swap-pane for -s/-t resolution within the active window."
+  (or (and target-str win
+           (let ((n (parse-integer target-str :junk-allowed t)))
+             (and n (find n (window-panes win) :key #'pane-id))))
+      (and win (window-active-pane win))))
+
 (defun %cmd-swap-pane-arg (session args)
-  "swap-pane [-U|-D|-L|-R] [-Z]: swap the active pane with an adjacent one.
-   -U: swap with pane above.  -D: swap below.
-   -L: swap with pane to the left.  -R: swap with pane to the right.
-   Without direction flags: swap forward (same as C-b })."
-  (multiple-value-bind (flags _positionals) (%parse-command-flags args "")
+  "swap-pane [-dUDLRZ] [-s src-pane] [-t dst-pane]: swap two panes.
+   -s src / -t dst: swap those two panes (pane-ids in the active window; each
+     defaults to the active pane), e.g. swap-pane -s 1 -t 3.
+   -U/-D/-L/-R: swap the active pane with the adjacent pane in that direction.
+   -d (keep active) and -Z (keep zoom) are accepted.
+   With neither -s/-t nor a direction: swap forward (same as C-b })."
+  (multiple-value-bind (flags _positionals) (%parse-command-flags args "st")
     (declare (ignore _positionals))
     (with-active-window (win session)
       (cond
@@ -712,7 +723,12 @@
         ((assoc #\D flags) (swap-pane win :down))
         ((assoc #\L flags) (swap-pane win :left))
         ((assoc #\R flags) (swap-pane win :right))
-        ;; No direction: swap forward (default tmux behavior with no -d/-s flags)
+        ;; -s/-t: swap two specific panes (each defaults to the active pane).
+        ((or (assoc #\s flags) (assoc #\t flags))
+         (swap-two-panes win
+                         (%resolve-pane-in-window win (cdr (assoc #\s flags)))
+                         (%resolve-pane-in-window win (cdr (assoc #\t flags)))))
+        ;; No direction, no -s/-t: swap forward (default tmux behaviour).
         (t (swap-pane win :right))))))
 
 (defun %cmd-command-prompt-arg (session args)
@@ -1346,13 +1362,8 @@
   (multiple-value-bind (flags _positionals) (%parse-command-flags args "tT")
     (declare (ignore _positionals))
     (let* ((win    (session-active-window session))
-           (target (cdr (assoc #\t flags)))
            ;; Resolve -t to a pane-id within the active window; default = active pane.
-           (target-pane
-            (or (and target win
-                     (let ((n (parse-integer target :junk-allowed t)))
-                       (and n (find n (window-panes win) :key #'pane-id))))
-                (session-active-pane session))))
+           (target-pane (%resolve-pane-in-window win (cdr (assoc #\t flags)))))
       (cond
         ((assoc #\L flags) (%select-pane-in-direction session :left))
         ((assoc #\R flags) (%select-pane-in-direction session :right))

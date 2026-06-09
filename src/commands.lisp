@@ -18,6 +18,22 @@
                      (pane-width other) (pane-height other))
     (pane-reposition other ax ay aw ah)))
 
+(defun swap-two-panes (window pane-a pane-b)
+  "Swap PANE-A and PANE-B within WINDOW: exchange both their list positions and
+   their screen geometry, so the renderer sees the swap immediately.  No-op
+   (returns NIL) when either pane is missing, they are the same, or either is not
+   in WINDOW.  Does NOT change which pane is active.  Returns PANE-A on success."
+  (let* ((panes (window-panes window))
+         (ia    (and pane-a (position pane-a panes)))
+         (ib    (and pane-b (position pane-b panes))))
+    (when (and ia ib (/= ia ib))
+      (let ((new-panes (copy-list panes)))
+        (setf (nth ia new-panes) pane-b
+              (nth ib new-panes) pane-a
+              (window-panes window) new-panes))
+      (%swap-pane-geometry pane-a pane-b)
+      pane-a)))
+
 (defun swap-pane (window direction)
   "Swap the active pane with an adjacent pane in WINDOW.
    DIRECTION:
@@ -25,7 +41,7 @@
      :left  / :backward — previous in panes list (wraps around)
      :up    — spatially adjacent pane above (via pane-neighbor)
      :down  — spatially adjacent pane below (via pane-neighbor)
-   Swaps both list order and screen geometry."
+   Swaps both list order and screen geometry (via swap-two-panes)."
   (let* ((panes (window-panes window))
          (ap    (window-active-pane window))
          (idx   (position ap panes))
@@ -40,16 +56,7 @@
              (:up   (pane-neighbor window ap :up))
              (:down (pane-neighbor window ap :down)))))
       (when other
-        ;; Swap list positions.
-        (let ((other-idx (position other panes))
-              (new-panes (copy-list panes)))
-          (when other-idx
-            (setf (nth idx new-panes) other
-                  (nth other-idx new-panes) ap
-                  (window-panes window) new-panes)))
-        ;; Swap screen geometry.
-        (%swap-pane-geometry ap other)
-        ap))))
+        (swap-two-panes window ap other)))))
 
 ;;; ── capture-pane -e: reconstruct SGR escapes from cell attributes ───────────
 ;;;
