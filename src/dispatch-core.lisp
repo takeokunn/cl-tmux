@@ -2406,6 +2406,56 @@
           (setf *dirty* t)
           t)))))
 
+(defun %cmd-clear-history-arg (session args)
+  "clear-history [-H] [-t target-pane]: clear a pane's scrollback history.
+   -t target-pane: the pane to clear (default: the active pane); a window-only
+   target clears that window's active pane.
+   -H: accepted (tmux also drops the alternate-screen history); cl-tmux clears the
+   pane's scrollback regardless.  This is the scriptable form; the interactive
+   :clear-history keybinding (active pane) is unchanged."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
+    (declare (ignore positionals))
+    (let* ((target-str (cdr (assoc #\t flags)))
+           (cur-win    (session-active-window session))
+           (pane       (and cur-win (window-active-pane cur-win))))
+      (when target-str
+        (multiple-value-bind (s w p)
+            (resolve-target *server-sessions* target-str
+                            :current-session session :current-window cur-win
+                            :current-pane pane)
+          (declare (ignore s))
+          (when w
+            (setf pane (if (and p (member p (window-panes w))) p
+                           (window-active-pane w))))))
+      (when pane
+        (cl-tmux/terminal/actions:clear-scrollback (pane-screen pane))
+        (setf *dirty* t)
+        t))))
+
+(defun %cmd-rotate-window-arg (session args)
+  "rotate-window [-DUZ] [-t target-window]: rotate the pane order in a window.
+   -U (the default) rotates forward (the first pane moves to the end); -D rotates
+   backward.  -t target-window: the window to rotate (default: the active window).
+   -Z (keep zoom) is accepted but not specially handled.  This is the scriptable
+   form; the interactive :rotate-window / :rotate-window-reverse bindings are
+   unchanged."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
+    (declare (ignore positionals))
+    (let* ((target-str (cdr (assoc #\t flags)))
+           (dir        (if (assoc #\D flags) :down :up))
+           (cur-win    (session-active-window session))
+           (win        cur-win))
+      (when target-str
+        (multiple-value-bind (s w p)
+            (resolve-target *server-sessions* target-str
+                            :current-session session :current-window cur-win)
+          (declare (ignore s p))
+          (when w (setf win w))))
+      (when win
+        (window-rotate win dir)
+        (setf *dirty* t)
+        t))))
+
 (defun %send-keys-hex-to-string (hex)
   "Convert a send-keys -H argument (a hexadecimal character code like \"1b\" or
    \"41\") to the one-character string it names, or NIL when HEX is not a valid
@@ -2665,6 +2715,9 @@
    (cons '("move-pane" "movep")         #'%cmd-join-pane-arg)
    ;; break-pane: scriptable -d/-n/-s (move a pane out to its own new window).
    (cons '("break-pane" "breakp")       #'%cmd-break-pane-arg)
+   ;; clear-history / rotate-window: scriptable -t (and rotate -D/-U).
+   (cons '("clear-history" "clearhist") #'%cmd-clear-history-arg)
+   (cons '("rotate-window" "rotatew")   #'%cmd-rotate-window-arg)
    ;; confirm-before [-p prompt] cmd: gate COMMAND behind a y/n prompt.
    (cons '("confirm-before" "confirm")  #'%cmd-confirm-before-arg)
    ;; command-prompt [-p prompts] [template]: interactive prompt with substitution.

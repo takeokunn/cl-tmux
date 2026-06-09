@@ -2306,6 +2306,85 @@
         (is (string= "logs" (window-name new-win))
             "the new window must be named 'logs'")))))
 
+;;; ── clear-history (scriptable %cmd-clear-history-arg) ────────────────────────
+
+(defun %clear-history-fixture ()
+  "Single-pane window \"w\" in session \"0\" whose screen has a non-empty
+   scrollback.  Returns (values sess win screen)."
+  (let* ((screen (make-screen 10 3))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 3
+                            :fd -1 :pid -1 :screen screen))
+         (win    (make-window :id 1 :name "w" :width 10 :height 3
+                              :tree (make-layout-leaf pane) :panes (list pane)))
+         (sess   (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window sess win)
+    (window-select-pane win pane)
+    (setf (cl-tmux/terminal/types:screen-scrollback screen)
+          (list (make-array 10 :initial-element
+                            (cl-tmux/terminal/types:make-cell
+                             :char #\X :fg 7 :bg 0 :attrs 0 :width 1))))
+    (values sess win screen)))
+
+(test cmd-clear-history-clears-target-pane-scrollback
+  "clear-history -t :w clears the target pane's scrollback."
+  (multiple-value-bind (sess win screen) (%clear-history-fixture)
+    (declare (ignore win))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-clear-history-arg sess '("-t" ":w"))
+      (is (null (cl-tmux/terminal/types:screen-scrollback screen))
+          "clear-history -t must empty the target pane's scrollback"))))
+
+(test cmd-clear-history-defaults-to-active-pane
+  "clear-history with no -t clears the active pane's scrollback."
+  (multiple-value-bind (sess win screen) (%clear-history-fixture)
+    (declare (ignore win))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-clear-history-arg sess '())
+      (is (null (cl-tmux/terminal/types:screen-scrollback screen))
+          "clear-history must default to the active pane and empty its scrollback"))))
+
+;;; ── rotate-window (scriptable %cmd-rotate-window-arg) ────────────────────────
+
+(defun %rotate-window-fixture ()
+  "Three-pane window \"w\" (p0 p1 p2) in session \"0\".
+   Returns (values sess win p0 p1 p2)."
+  (let* ((p0 (%make-test-pane :id 1))
+         (p1 (%make-test-pane :id 2))
+         (p2 (%make-test-pane :id 3))
+         (win (make-window :id 1 :name "w" :width 30 :height 6
+                           :tree (make-layout-split :h (make-layout-leaf p0)
+                                   (make-layout-split :h (make-layout-leaf p1)
+                                                      (make-layout-leaf p2) 1/2)
+                                   1/2)
+                           :panes (list p0 p1 p2)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window sess win)
+    (values sess win p0 p1 p2)))
+
+(test cmd-rotate-window-rotates-forward-by-default
+  "rotate-window -t :w (no direction) rotates forward: first pane moves to the end."
+  (multiple-value-bind (sess win p0 p1 p2) (%rotate-window-fixture)
+    (declare (ignore p2))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-rotate-window-arg sess '("-t" ":w"))
+      (is (eq p1 (first (window-panes win)))
+          "forward rotate makes the second pane first")
+      (is (eq p0 (car (last (window-panes win))))
+          "the original first pane moves to the end"))))
+
+(test cmd-rotate-window-d-rotates-backward
+  "rotate-window -D -t :w rotates backward: the last pane moves to the front."
+  (multiple-value-bind (sess win p0 p1 p2) (%rotate-window-fixture)
+    (declare (ignore p0 p1))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-rotate-window-arg sess '("-D" "-t" ":w"))
+      (is (eq p2 (first (window-panes win)))
+          "-D (backward) makes the last pane first"))))
+
 ;;; ── pipe-pane-open / pipe-pane-close / pipe-pane-write ──────────────────────
 
 (test pipe-pane-open-returns-stream
