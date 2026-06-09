@@ -40,6 +40,63 @@
           "exactly one wide glyph should be printed (got ~D in ~S)"
           (count #\あ out) out))))
 
+;;; -- window-style / window-active-style (pane background recolour) -----------
+
+(test color-name-to-cell-color-maps-names-palette-and-truecolor
+  "%color-name-to-cell-color converts to the cell colour encoding; default/empty
+   yields NIL (no override)."
+  (is (= 1   (cl-tmux/renderer::%color-name-to-cell-color "red")))
+  (is (= 9   (cl-tmux/renderer::%color-name-to-cell-color "brightred")))
+  (is (= 235 (cl-tmux/renderer::%color-name-to-cell-color "colour235")))
+  (is (= (logior #x1000000 #xff8800)
+         (cl-tmux/renderer::%color-name-to-cell-color "#ff8800")))
+  (is (null (cl-tmux/renderer::%color-name-to-cell-color "default")))
+  (is (null (cl-tmux/renderer::%color-name-to-cell-color "")))
+  (is (null (cl-tmux/renderer::%color-name-to-cell-color nil))))
+
+(test window-style-default-colors-extracts-fg-bg
+  "%window-style-default-colors returns the fg/bg cell numbers a style sets, NIL
+   for ones it omits, and (NIL NIL) for an empty style."
+  (multiple-value-bind (fg bg)
+      (cl-tmux/renderer::%window-style-default-colors "fg=red,bg=colour235")
+    (is (= 1 fg)) (is (= 235 bg)))
+  (multiple-value-bind (fg bg)
+      (cl-tmux/renderer::%window-style-default-colors "bg=colour52")
+    (is (null fg)) (is (= 52 bg)))
+  (multiple-value-bind (fg bg)
+      (cl-tmux/renderer::%window-style-default-colors "")
+    (is (null fg)) (is (null bg))))
+
+(test render-pane-applies-window-style-to-default-cells
+  "With window-style set, a pane's default-bg (0) cells render with the style's
+   background SGR; unset, they do not — verifying the opt-in recolour."
+  (with-isolated-config
+    (let* ((sess (make-renderer-test-session 5 2 :content "hi"))
+           (pane (first (window-panes (session-active-window sess)))))
+      ;; Baseline: no window-style → no colour-52 background emitted.
+      (let ((out (with-output-to-string (s) (cl-tmux/renderer::render-pane s pane))))
+        (is (not (search "48;5;52" out))
+            "default render must not contain the window-style bg (got ~S)" out))
+      ;; Opt in: window-style recolours the default-bg cells.
+      (cl-tmux/options:set-option "window-style" "bg=colour52")
+      (let ((out (with-output-to-string (s) (cl-tmux/renderer::render-pane s pane))))
+        (is (search "48;5;52" out)
+            "pane must emit bg colour52 (48;5;52) for default cells (got ~S)" out)))))
+
+(test render-pane-window-style-preserves-explicit-colors
+  "window-style recolours only default cells: a cell with an explicit non-default
+   background keeps it (the bg=0 → style substitution is guarded on the default)."
+  (with-isolated-config
+    (let* ((sess (make-renderer-test-session 4 1))
+           (pane (first (window-panes (session-active-window sess))))
+           (screen (pane-screen pane)))
+      ;; Paint one cell with an explicit bg=colour200 (SGR 48;5;200) then text.
+      (feed screen (esc "[48;5;200mX"))
+      (cl-tmux/options:set-option "window-style" "bg=colour52")
+      (let ((out (with-output-to-string (s) (cl-tmux/renderer::render-pane s pane))))
+        (is (search "48;5;200" out)
+            "an explicit bg must survive window-style recolour (got ~S)" out)))))
+
 ;;; -- layout-subtree-rect and subtree-contains-p ------------------------------
 
 (test layout-subtree-rect-bounding-box

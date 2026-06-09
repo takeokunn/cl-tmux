@@ -169,6 +169,40 @@
                  (format nil "~D" (if is-bg (+ base 10) base)))
                (if is-bg "49" "39")))))))
 
+(defun %color-name-to-cell-color (name)
+  "Convert a tmux colour NAME to the cell fg/bg numeric encoding used by the
+   screen model — a palette index 0-255, or true-colour with bit 24 set.  Returns
+   NIL for an empty name or \"default\" (meaning: leave the cell's own colour as
+   is).  Mirrors the cell colour model in terminal/cell.lisp (0-7 standard, 8-15
+   bright, 16-255 extended, #x1000000+ true-colour)."
+  (let ((lname (and name (string-downcase (string-trim " " name)))))
+    (cond
+      ((or (null lname) (string= lname "") (string= lname "default")) nil)
+      ((and (> (length lname) 6) (string= (subseq lname 0 6) "colour"))
+       (let ((n (parse-integer lname :start 6 :junk-allowed t)))
+         (and n (<= 0 n 255) n)))
+      ((and (= (length lname) 7) (char= (char lname 0) #\#))
+       (let ((rgb (parse-integer lname :start 1 :radix 16 :junk-allowed t)))
+         (and rgb (logior #x1000000 rgb))))   ; bit 24 marks true-colour
+      (t (let ((entry (assoc lname *%color-name-table* :test #'string=)))
+           (when entry
+             ;; Table values are fg SGR codes: 30-37 → 0-7, 90-97 → 8-15.
+             (let ((sgr (parse-integer (cdr entry))))
+               (cond ((<= 30 sgr 37) (- sgr 30))
+                     ((<= 90 sgr 97) (+ 8 (- sgr 90)))
+                     (t nil)))))))))
+
+(defun %window-style-default-colors (style-string)
+  "Parse a window-style / window-active-style STYLE-STRING into the pane's default
+   (values FG BG) as cell colour numbers, each NIL when the style does not set it.
+   Used by the pane renderer to recolour cells that carry the model defaults
+   (fg=7, bg=0) — the tmux \"dim inactive panes\" behaviour."
+  (let ((parsed (parse-style-string style-string)))
+    (if parsed
+        (values (%color-name-to-cell-color (getf parsed :fg))
+                (%color-name-to-cell-color (getf parsed :bg)))
+        (values nil nil))))
+
 (defun %split-style-tokens (style)
   "Internal: split STYLE on commas. Used by parse-style-string."
   (let ((tokens nil)

@@ -81,6 +81,11 @@
   ("window-status-current-format" :string " #{window_index}:#{window_name}* ")
   ("window-status-style"      :string  "")
   ("window-status-current-style" :string "reverse")
+  ;; Pane background/foreground defaults: window-style applies to inactive panes,
+  ;; window-active-style to the active pane.  Empty = no override (the common
+  ;; "dim inactive panes" idiom sets a dimmer bg on window-style).
+  ("window-style"             :string  "")
+  ("window-active-style"      :string  "")
   ;; Alert-state window-tab styles (applied to a non-active window in that state):
   ;; bell takes priority over activity, then last (previously active) window.
   ("window-status-activity-style" :string "reverse")

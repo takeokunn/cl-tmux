@@ -229,18 +229,26 @@
 
 (defun %render-cell-row (stream screen pane-col-count row
                          sel-active sel-start-row sel-end-row sel-start-col sel-end-col
-                         prev-fg-cell prev-bg-cell prev-attrs-cell)
+                         prev-fg-cell prev-bg-cell prev-attrs-cell
+                         def-fg def-bg)
   "Render one row of cells to STREAM, applying reverse-video for selected cells.
    PREV-FG-CELL / PREV-BG-CELL / PREV-ATTRS-CELL are single-element lists used
    as mutable registers for SGR change-detection across the row.
-   Returns nothing; updates the prev-* registers as a side-effect."
+   DEF-FG / DEF-BG (or NIL) are the pane's window-style default colours: a cell
+   carrying the model default (fg=7 / bg=0) is recoloured to them, which dims an
+   inactive pane / highlights the active one.  Returns nothing; updates the
+   prev-* registers as a side-effect."
   (loop for col below pane-col-count
         for cell = (screen-display-cell screen col row)
         ;; A continuation cell (width 0) is the right half of a double-width
         ;; glyph the terminal already drew — emit nothing.
         unless (zerop (cell-width cell))
-          do (let* ((fg    (cell-fg   cell))
-                    (bg    (cell-bg   cell))
+          do (let* ((raw-fg (cell-fg cell))
+                    (raw-bg (cell-bg cell))
+                    ;; window-style recolours only cells left at the model
+                    ;; defaults (fg=7, bg=0); explicit colours are preserved.
+                    (fg    (if (and def-fg (= raw-fg 7)) def-fg raw-fg))
+                    (bg    (if (and def-bg (= raw-bg 0)) def-bg raw-bg))
                     (in-sel (and sel-active
                                  (in-selection-p row col
                                                  sel-start-row sel-end-row
@@ -265,23 +273,34 @@
          (pane-height (pane-height pane))
          (origin-x    (pane-x     pane))
          (origin-y    (pane-y     pane)))
-    (with-lock-held ((screen-lock screen))
-      ;; Hoist selection boundary computation outside the cell loop so it is
-      ;; computed once per frame instead of once per cell (~1920 times).
-      (multiple-value-bind (sel-active sel-start-row sel-end-row sel-start-col sel-end-col)
-          (%compute-selection-bounds screen)
-        ;; Use single-element lists as mutable SGR-state registers so
-        ;; %render-cell-row can update them without returning multiple values.
-        (let ((prev-fg-cell    (list -1))
-              (prev-bg-cell    (list -1))
-              (prev-attrs-cell (list -1)))
-          (loop for row below pane-height do
-            (move-to stream (+ origin-y row) origin-x)
-            (%render-cell-row stream screen pane-width row
-                              sel-active sel-start-row sel-end-row
-                              sel-start-col sel-end-col
-                              prev-fg-cell prev-bg-cell prev-attrs-cell))))
-      (screen-clear-dirty screen))
+    ;; window-style / window-active-style: the active pane uses window-active-style,
+    ;; every other pane window-style.  Empty (the default) → NIL defaults → no
+    ;; recolouring, so panes render exactly as before unless the user opts in.
+    (multiple-value-bind (def-fg def-bg)
+        (let* ((win      (pane-window pane))
+               (active-p (and win (eq pane (window-active-pane win))))
+               (style    (cl-tmux/options:get-option-for-pane
+                          (if active-p "window-active-style" "window-style")
+                          pane)))
+          (%window-style-default-colors style))
+      (with-lock-held ((screen-lock screen))
+        ;; Hoist selection boundary computation outside the cell loop so it is
+        ;; computed once per frame instead of once per cell (~1920 times).
+        (multiple-value-bind (sel-active sel-start-row sel-end-row sel-start-col sel-end-col)
+            (%compute-selection-bounds screen)
+          ;; Use single-element lists as mutable SGR-state registers so
+          ;; %render-cell-row can update them without returning multiple values.
+          (let ((prev-fg-cell    (list -1))
+                (prev-bg-cell    (list -1))
+                (prev-attrs-cell (list -1)))
+            (loop for row below pane-height do
+              (move-to stream (+ origin-y row) origin-x)
+              (%render-cell-row stream screen pane-width row
+                                sel-active sel-start-row sel-end-row
+                                sel-start-col sel-end-col
+                                prev-fg-cell prev-bg-cell prev-attrs-cell
+                                def-fg def-bg))))
+        (screen-clear-dirty screen)))
     ;; Clock-mode overlay: draw a digital clock if this pane is the clock pane.
     (when (eql cl-tmux::*clock-mode-pane-id* (pane-id pane))
       (draw-clock-to-screen stream origin-x origin-y pane-width pane-height))))
