@@ -162,6 +162,18 @@
       (setf (screen-copy-cursor screen) (cons row (1- (screen-width screen)))
             (screen-dirty-p screen) t))))
 
+(defun copy-mode-back-to-indentation (screen)
+  "Move cursor to the first non-blank character of the current row (tmux
+   `back-to-indentation`, vi ^).  Distinct from line-start (vi 0, column 0): on an
+   indented line ^ stops at the indent.  Falls back to column 0 when the row is
+   entirely blank.  Keeps the row; marks the screen dirty."
+  (when (screen-copy-mode-p screen)
+    (let* ((row   (car (screen-copy-cursor screen)))
+           (chars (%copy-mode-row-chars screen row))
+           (col   (or (position-if-not #'%space-separator-p chars) 0)))
+      (setf (screen-copy-cursor screen) (cons row col)
+            (screen-dirty-p screen) t))))
+
 ;;; ── Declarative cursor-jump and scroll-wrapper macro tables ─────────────────
 ;;;
 ;;; define-copy-mode-cursor-jump: prolog-style facts table for commands that

@@ -622,6 +622,36 @@
     (is (eq :copy-mode-space-backward (x "previous-space")))
     (is (eq :copy-mode-space-end      (x "next-space-end")))))
 
+;;; ── back-to-indentation (vi ^): first non-blank vs line-start (vi 0) ─────────
+
+(test copy-mode-back-to-indentation-stops-at-first-non-blank
+  "copy-mode-back-to-indentation (vi ^) moves to the first non-blank column —
+   unlike copy-mode-line-start (vi 0), which always goes to column 0."
+  (let ((s (%copy-mode-screen :content "   foo")))
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
+    (cl-tmux/commands::copy-mode-back-to-indentation s)
+    (is (= 3 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "^ must land on the first non-blank char (col 3)")
+    ;; line-start still goes to column 0 — the two are distinct.
+    (cl-tmux/commands::copy-mode-line-start s)
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "0 (line-start) must go to column 0")))
+
+(test copy-mode-back-to-indentation-blank-line-goes-to-zero
+  "On an all-blank row, ^ falls back to column 0."
+  (let ((s (%copy-mode-screen)))            ; default content is blank
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 4))
+    (cl-tmux/commands::copy-mode-back-to-indentation s)
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "an entirely blank row → column 0")))
+
+(test copy-mode-x-back-to-indentation-mapped
+  "send -X back-to-indentation maps to the distinct :copy-mode-back-to-indentation
+   action, not line-start."
+  (is (eq :copy-mode-back-to-indentation
+          (cdr (assoc "back-to-indentation" cl-tmux::*copy-mode-x-commands*
+                      :test #'string-equal)))))
+
 (test copy-mode-other-end-preserves-selection-text
   "Swapping the two ends must not change the selected text or normalised bounds —
    this is the defining invariant of other-end."

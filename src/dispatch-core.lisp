@@ -333,6 +333,7 @@
   (#\B :copy-mode-space-backward)
   (#\E :copy-mode-space-end)
   (#\0 :copy-mode-line-start)
+  (#\^ :copy-mode-back-to-indentation)
   (#\$ :copy-mode-line-end)
   (#\g :copy-mode-top)
   (#\G :copy-mode-bottom)
@@ -2103,7 +2104,7 @@
     ("copy-end-of-line"          . :copy-mode-copy-end-of-line)
     ("copy-line"                 . :copy-mode-copy-line)
     ("append-selection"          . :copy-mode-yank)
-    ("back-to-indentation"       . :copy-mode-line-start)
+    ("back-to-indentation"       . :copy-mode-back-to-indentation)
     ("start-of-line"             . :copy-mode-line-start)
     ("end-of-line"               . :copy-mode-line-end)
     ;; scroll variants

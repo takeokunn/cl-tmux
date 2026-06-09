@@ -128,6 +128,7 @@
   (:copy-mode-space-backward   (%copy-mode-call session #'copy-mode-space-backward))
   (:copy-mode-space-end        (%copy-mode-call session #'copy-mode-space-end))
   (:copy-mode-line-start       (%copy-mode-call session #'copy-mode-line-start))
+  (:copy-mode-back-to-indentation (%copy-mode-call session #'copy-mode-back-to-indentation))
   (:copy-mode-line-end         (%copy-mode-call session #'copy-mode-line-end))
   ;; Horizontal cursor movement and rectangle (block) selection toggle — the
   ;; proper targets for `send -X cursor-left`/`cursor-right`/`rectangle-toggle`

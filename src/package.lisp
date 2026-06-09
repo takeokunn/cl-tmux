@@ -719,6 +719,7 @@
    #:copy-mode-space-end
    ;; Line navigation
    #:copy-mode-line-start
+   #:copy-mode-back-to-indentation
    #:copy-mode-line-end
    ;; Jump to top/bottom
    #:copy-mode-top
