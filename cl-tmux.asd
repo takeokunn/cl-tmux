@@ -73,6 +73,7 @@
      (:file "events-loop")
      (:file "session-registry")  ; session registry + group management
      (:file "server")
+     (:file "server-multi")  ; multi-client select-multiplexed serve loop
      (:file "client")
      (:file "main"))))
   ;; Build a standalone binary: (asdf:make :cl-tmux)
@@ -131,6 +132,7 @@
        (:file "transport-tests")
        (:file "net-tests")
        (:file "server-tests")
+       (:file "server-multi-tests")
        (:file "pty-ffi-tests")
        (:file "pty-rawmode-tests")
        (:file "pty-tests")

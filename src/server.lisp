@@ -194,13 +194,12 @@
       (setf *status-timer* (start-status-timer (lambda () (setf *dirty* t))))
       (install-sigwinch-handler)
       (unwind-protect
-           (loop while *running*
-                 ;; Poll with timeout so *running* is checked between accepts.
-                 do (when (select-fds (list (socket-fd listener)) +accept-timeout-us+)
-                      ;; accept-connection may return NIL on a timeout (select→accept race).
-                      (let ((client (accept-connection listener)))
-                        (when (and client (eq :quit (serve-client session client)))
-                          (setf *running* nil)))))
+           ;; Multi-client event loop: a single select(2) over the listener fd +
+           ;; every attached client fd, serving them all concurrently
+           ;; (%run-multi-server-loop, server-multi.lisp).  The legacy
+           ;; single-client serve-client path above is retained for unit tests but
+           ;; is no longer the server's runtime loop.
+           (%run-multi-server-loop listener session)
         (close-socket listener)
         (ignore-errors (delete-file path))
         (dolist (pane (all-panes session))

@@ -12,7 +12,7 @@
     hooks-suite config-suite config-directives-suite renderer-suite
     dispatch-suite events-suite mouse-suite commands-suite
     overlay-suite prompt-suite protocol-suite transport-suite
-    net-suite server-suite pty-ffi-suite pty-rawmode-suite
+    net-suite server-suite server-multi-suite pty-ffi-suite pty-rawmode-suite
     pty-suite input-suite runtime-suite client-suite
     main-suite advanced-suite)
   "Every per-area suite, run in this order by RUN-TESTS.")
