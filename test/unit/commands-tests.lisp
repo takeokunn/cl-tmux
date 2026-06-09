@@ -2498,6 +2498,24 @@
     (finishes (cl-tmux/commands:pipe-pane-close pane)
               "pipe-pane-close with no pipe must not signal")))
 
+(test cmd-pipe-pane-t-pipes-target-pane
+  "pipe-pane -t 2 <cmd> opens the pipe on pane 2 (the -t target), NOT the active
+   pane — the scriptable -t target is honoured."
+  (let* ((pa  (%make-test-pane :id 1)) (pb (%make-test-pane :id 2))
+         (win (make-window :id 1 :name "w" :width 20 :height 5
+                           :tree (make-layout-split :h (make-layout-leaf pa)
+                                                    (make-layout-leaf pb) 1/2)
+                           :panes (list pa pb)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window sess win)
+    (window-select-pane win pa)              ; pane 1 is active
+    (with-loop-state
+      (cl-tmux::%run-command-line sess "pipe-pane -t 2 cat")
+      (is-true (pane-pipe-fd pb) "pane 2 (the -t target) must have an open pipe")
+      (is (null (pane-pipe-fd pa)) "the active pane 1 must NOT be piped")
+      ;; Clean up the forked cat process.
+      (cl-tmux/commands:pipe-pane-close pb))))
+
 (test pipe-pane-write-noop-when-no-pipe
   "pipe-pane-write is a no-op when pane has no open pipe."
   (let ((pane (%make-test-pane)))

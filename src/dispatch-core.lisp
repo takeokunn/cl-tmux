@@ -2660,22 +2660,26 @@
                          (if (eq pane (window-active-pane win)) " (active)" ""))))))))))
 
 (defun %cmd-pipe-pane-arg (session args)
-  "pipe-pane [-o] [command]: open or close pipe-pane for the active pane.
-   -o: only open a pipe if no current pipe is open (no-op when pipe already open).
-   Without command: close any open pipe.
-   With command: open a pipe to COMMAND."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "")
+  "pipe-pane [-IOo] [-t target-pane] [command]: open or close a pipe for the
+   target pane (default: the active pane).
+   -o: only open a pipe if none is currently open (no-op when one already is).
+   -t target: the pane to pipe (pane-id in the active window).
+   -I/-O (pipe pane input / output) are accepted; cl-tmux pipes pane OUTPUT.
+   Without a command: close any open pipe on the target pane."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
     (let* ((only-open (assoc #\o flags))
-           (command   (format nil "~{~A~^ ~}" positionals)))
-      (with-active-pane (ap session)
+           (command   (format nil "~{~A~^ ~}" positionals))
+           (win       (session-active-window session))
+           (pane      (%resolve-pane-in-window win (cdr (assoc #\t flags)))))
+      (when pane
         (cond
           ;; No command: close existing pipe
           ((zerop (length command))
-           (when (pane-pipe-fd ap) (pipe-pane-close ap)))
+           (when (pane-pipe-fd pane) (pipe-pane-close pane)))
           ;; -o: skip if already piped
-          ((and only-open (pane-pipe-fd ap)) nil)
+          ((and only-open (pane-pipe-fd pane)) nil)
           ;; Open the pipe
-          (t (pipe-pane-open ap command)))))))
+          (t (pipe-pane-open pane command)))))))
 
 (defun %cmd-set-environment-prompt (session args)
   "set-environment [-u|-r] NAME [VALUE]: set or unset a process environment variable.
