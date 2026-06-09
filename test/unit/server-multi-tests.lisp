@@ -91,6 +91,19 @@
                                 cl-tmux::+msg-command+ payload s (%make-test-conn)))
             "detach-other-clients command → :detach-others")))))
 
+(test multi-handle-forwarded-command-runs-server-side
+  "A general command message (e.g. next-window) is run server-side via
+   %run-command-tokens — the CLI / control command-forwarding path."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (let ((payload (cl-tmux/protocol::encode-command-payload :next-window)))
+        (is (null (cl-tmux::%handle-multi-client-message
+                   cl-tmux::+msg-command+ payload s (%make-test-conn)))
+            "a forwarded command returns NIL (keep serving)")
+        (is (eq (second (cl-tmux/model:session-windows s))
+                (session-active-window s))
+            "the forwarded next-window must advance the active window server-side")))))
+
 ;;; ── %drop-client: registry removal ───────────────────────────────────────────
 
 (test multi-drop-client-removes-from-registry

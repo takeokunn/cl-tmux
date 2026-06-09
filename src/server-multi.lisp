@@ -130,9 +130,20 @@
        (t       (setf *dirty* t) nil)))
     ((= type +msg-command+)
      (multiple-value-bind (cmd target args) (decode-command-payload payload)
-       (declare (ignore target args))
        (cond
+         ;; The one built-in control command: drop all OTHER clients (attach -d).
          ((eq cmd :detach-other-clients) :detach-others)
+         ;; Any other named command is run server-side — the CLI / control
+         ;; command-forwarding path (`cl-tmux <cmd>` against a running server).
+         ;; Reconstruct the token line: <name> [-t target] args..., and dispatch
+         ;; through the same %run-command-tokens the command-prompt uses.
+         (cmd
+          (let ((tokens (append (list (string-downcase (symbol-name cmd)))
+                                (when target (list "-t" target))
+                                args)))
+            (ignore-errors (%run-command-tokens session tokens)))
+          (setf *dirty* t)
+          nil)
          (t (setf *dirty* t) nil))))
     (t :drop)))
 
