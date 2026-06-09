@@ -23,7 +23,10 @@
   (cursor-index  0 :type fixnum)            ; insertion point: 0..length-of-buffer
   (on-submit   nil :type (or null function)) ; called with the final buffer string on Enter
   ;; Vi-mode: when status-keys = "vi", ESC enters normal mode instead of cancelling.
-  (vi-normal-p nil :type boolean))          ; T when in vi normal mode
+  (vi-normal-p nil :type boolean)           ; T when in vi normal mode
+  ;; Single-key mode (confirm-before, command-prompt -1): the first printable key
+  ;; IS the answer — submitted immediately, with no Enter required.
+  (single-key  nil :type boolean))
 
 (defvar *prompt* nil
   "The active PROMPT, or NIL when not prompting.
@@ -34,13 +37,16 @@
   "True when an input prompt is currently active."
   (and *prompt* t))
 
-(defun prompt-start (label initial on-submit)
+(defun prompt-start (label initial on-submit &key single-key)
   "Begin a prompt labelled LABEL, seeded with INITIAL text.  ON-SUBMIT is a
    function of one argument (the final buffer string) run when the user presses
-   Enter.  The cursor starts at the end of INITIAL."
+   Enter.  The cursor starts at the end of INITIAL.
+   SINGLE-KEY T (confirm-before, command-prompt -1) submits the first printable
+   key immediately as a one-character string — no Enter needed."
   (setf *prompt* (make-prompt :label label :buffer initial
                                :cursor-index (length initial)
-                               :on-submit on-submit)))
+                               :on-submit on-submit
+                               :single-key single-key)))
 
 ;;; -- Buffer editing -----------------------------------------------------------
 

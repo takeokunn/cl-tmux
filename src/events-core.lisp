@@ -118,6 +118,16 @@
   (23  (prompt-kill-word-back))             ; C-w — kill previous word
   ((or (= byte 127) (= byte 8))
    (prompt-backspace))                      ; Backspace / DEL
+  ;; Single-key prompt (confirm-before, command-prompt -1): the first printable
+  ;; key IS the answer — submit it immediately as a 1-char string, no Enter.
+  ;; Control keys (Esc, C-c) are < 32 and fall through to their cancel handlers.
+  ((and *prompt* (prompt-single-key *prompt*) (>= byte 32) (< byte 127))
+   (setf *prompt-utf8-acc* 0 *prompt-utf8-left* 0)
+   (let ((active-prompt *prompt*)
+         (ch            (code-char byte)))
+     (when (prompt-on-submit active-prompt)
+       (funcall (prompt-on-submit active-prompt) (string ch)))
+     (prompt-clear)))
   ;; Vi normal mode: intercept printable bytes before insert dispatch.
   ((%handle-vi-normal-key byte) nil)        ; consumed by vi-normal — already handled
   ((and (>= byte 32) (< byte 127))

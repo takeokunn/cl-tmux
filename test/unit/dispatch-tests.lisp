@@ -1794,6 +1794,34 @@
     (is (null (overlay-active-p))
         "on-submit with empty string must NOT show the overlay")))
 
+(test confirm-before-arg-is-single-key-and-y-runs-command
+  "confirm-before COMMAND opens a SINGLE-KEY prompt: one 'y' keypress (no Enter)
+   runs the command."
+  (with-isolated-config
+    (with-loop-state
+      (let ((cl-tmux/prompt:*prompt* nil)
+            (s (make-fake-session)))
+        (cl-tmux::%cmd-confirm-before-arg s '("set" "-g" "status-left" "YES"))
+        (is (prompt-active-p) "confirm-before must open a prompt")
+        (is-true (prompt-single-key *prompt*) "the prompt must be single-key")
+        (cl-tmux::handle-prompt-key (char-code #\y))   ; single key, no Enter
+        (is (null (prompt-active-p)) "prompt must dismiss after the single key")
+        (is (string= "YES" (cl-tmux/options:get-option "status-left"))
+            "'y' must run the confirmed command")))))
+
+(test confirm-before-arg-single-key-other-cancels
+  "A non-y single key cancels confirm-before without running the command."
+  (with-isolated-config
+    (with-loop-state
+      (let ((cl-tmux/prompt:*prompt* nil)
+            (s (make-fake-session)))
+        (cl-tmux/options:set-option "status-left" "ORIG")
+        (cl-tmux::%cmd-confirm-before-arg s '("set" "-g" "status-left" "YES"))
+        (cl-tmux::handle-prompt-key (char-code #\n))   ; 'n' cancels
+        (is (null (prompt-active-p)) "prompt must dismiss on a non-y key")
+        (is (string= "ORIG" (cl-tmux/options:get-option "status-left"))
+            "a non-y key must NOT run the command")))))
+
 ;;; ── %set-option-from-prompt helper ──────────────────────────────────────────
 
 (test set-option-from-prompt-helper-opens-prompt

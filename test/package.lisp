@@ -186,6 +186,7 @@
                 #:prompt-label
                 #:prompt-buffer
                 #:prompt-on-submit
+                #:prompt-single-key
                 #:prompt-cursor-index
                 #:prompt-cursor-bol
                 #:prompt-cursor-eol

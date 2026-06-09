@@ -428,7 +428,7 @@
   (:export
    #:prompt #:make-prompt #:prompt-p
    #:prompt-label #:prompt-buffer #:prompt-cursor-index #:prompt-on-submit
-   #:prompt-vi-normal-p
+   #:prompt-vi-normal-p #:prompt-single-key
    #:*prompt* #:prompt-active-p #:prompt-start
    #:prompt-input #:prompt-backspace #:prompt-clear #:prompt-text
    ;; Cursor navigation

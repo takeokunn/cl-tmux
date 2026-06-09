@@ -1020,10 +1020,13 @@
            (prompt-text   (or custom-prompt
                               (format nil "~A? (y/n)" cmd-line))))
       (when (plusp (length cmd-line))
+        ;; Single-key prompt like tmux: one 'y'/'Y' keypress confirms (no Enter);
+        ;; any other key cancels.
         (prompt-start prompt-text ""
                       (lambda (input)
                         (when (member input '("y" "Y") :test #'string=)
-                          (%run-command-line session cmd-line))))))))
+                          (%run-command-line session cmd-line)))
+                      :single-key t)))))
 
 (defun %cmd-list-keys-arg (session args)
   "list-keys [-T table] [-1] [key]: list key bindings.
