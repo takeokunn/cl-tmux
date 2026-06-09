@@ -759,22 +759,30 @@
                            (%run-command-line session input)))))))))
 
 (defun %substitute-percent (template args)
-  "Replace %%1, %%2, ... in TEMPLATE with ARGS list elements.
-   Used by command-prompt -p substitution."
-  (let ((result template))
-    (loop for val in args
-          for i from 1
-          for pat = (format nil "%%~D" i)
-          do (let ((out (make-string-output-stream)))
-               (let ((start 0))
-                 (loop for pos = (search pat result :start2 start)
-                       while pos
-                       do (write-string result out :start start :end pos)
-                          (write-string val out)
-                          (setf start (+ pos (length pat)))
-                       finally (write-string result out :start start)))
-               (setf result (get-output-stream-string out))))
-    result))
+  "Expand a command-prompt template: %1..%9 are replaced by the 1st..9th element
+   of ARGS (an empty string when that arg is absent, matching tmux), %% is a
+   literal percent, and any other %x is left verbatim.  Used by command-prompt -p.
+   A single left-to-right pass so %1 never matches inside %10 and %% is not itself
+   treated as an argument reference."
+  (let ((out (make-string-output-stream))
+        (n   (length template))
+        (i   0))
+    (loop while (< i n)
+          for ch = (char template i)
+          do (if (and (char= ch #\%) (< (1+ i) n))
+                 (let ((next (char template (1+ i))))
+                   (cond
+                     ((char= next #\%)               ; %% → literal %
+                      (write-char #\% out) (incf i 2))
+                     ((and (digit-char-p next) (char/= next #\0)) ; %1..%9 → arg
+                      (let ((idx (digit-char-p next)))
+                        (when (<= idx (length args))
+                          (write-string (nth (1- idx) args) out)))
+                      (incf i 2))
+                     (t                              ; %x (other) → verbatim
+                      (write-char ch out) (incf i))))
+                 (progn (write-char ch out) (incf i))))
+    (get-output-stream-string out)))
 
 (defun %cmd-last-pane-arg (session args)
   "last-pane [-Z]: jump to the previously active pane.

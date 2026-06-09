@@ -914,6 +914,30 @@
       (finishes (cl-tmux::dispatch-command s :paste-buffer nil))
       (is-true cl-tmux::*dirty* ":paste-buffer must mark *dirty*"))))
 
+;;; ── command-prompt %N template substitution ─────────────────────────────────
+
+(test substitute-percent-replaces-single-percent-args
+  "%substitute-percent replaces tmux-style %1/%2 (single percent) with the args —
+   the classic `command-prompt -p name: \"new-window -n '%1'\"` idiom."
+  (is (string= "new-window -n 'shell'"
+               (cl-tmux::%substitute-percent "new-window -n '%1'" '("shell")))
+      "%1 must be replaced by the first arg")
+  (is (string= "swap a b"
+               (cl-tmux::%substitute-percent "swap %1 %2" '("a" "b")))
+      "%1 and %2 must be replaced positionally"))
+
+(test substitute-percent-handles-literal-and-edge-cases
+  "%% is a literal percent; a missing arg expands to empty; %1 does not match
+   inside %10; a non-arg %x is left verbatim."
+  (is (string= "100% done" (cl-tmux::%substitute-percent "100%% done" '()))
+      "%% → literal %")
+  (is (string= "x" (cl-tmux::%substitute-percent "x%2" '("only-one")))
+      "a reference past the arg list expands to empty")
+  (is (string= "v0" (cl-tmux::%substitute-percent "%10" '("v")))
+      "%1 must not match inside %10 (single left-to-right pass)")
+  (is (string= "%z" (cl-tmux::%substitute-percent "%z" '("a")))
+      "a non-digit %x is left verbatim"))
+
 ;;; ── :command-prompt dispatch ─────────────────────────────────────────────────
 
 (test dispatch-command-prompt-opens-prompt
