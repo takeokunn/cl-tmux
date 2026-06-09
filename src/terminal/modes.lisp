@@ -271,7 +271,8 @@
         (screen-active-g       screen) :g0
         (screen-tab-stops      screen) :default
         (screen-origin-mode    screen) nil
-        (screen-autowrap       screen) t))
+        (screen-autowrap       screen) t
+        (screen-pending-wrap   screen) nil))
 
 (defun ris-action (screen)
   "RIS — ESC c: hard terminal reset.

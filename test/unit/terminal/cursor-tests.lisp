@@ -390,12 +390,40 @@
     (cl-tmux/terminal/actions::%advance-cursor s 3)
     (check-cursor s 3 0)))
 
-(test advance-cursor-wraps-to-next-line-at-right-edge
-  "%advance-cursor wraps cursor to column 0 of the next row when it would pass width."
+(test advance-cursor-defers-wrap-at-right-edge
+  "%advance-cursor at the right margin DEFERS the wrap (VT100 last-column flag):
+   the cursor parks at the last column and pending-wrap is set, rather than
+   wrapping immediately."
   (with-screen (s 5 3)
     (cl-tmux/terminal/actions:set-cursor s 4 0)  ; last column
     (cl-tmux/terminal/actions::%advance-cursor s 1)
-    (check-cursor s 0 1)))
+    (check-cursor s 4 0)                          ; parked, NOT wrapped
+    (is-true (cl-tmux/terminal/types:screen-pending-wrap s)
+             "pending-wrap must be set after advancing past the right margin")))
+
+(test deferred-wrap-next-char-wraps-and-clears
+  "A character written while pending-wrap is set wraps to col 0 of the next row
+   first, then writes there; pending-wrap is cleared."
+  (with-screen (s 3 3)
+    (feed s "abc")                  ; fills row 0; cursor parks at col 2, wrap pending
+    (is-true (cl-tmux/terminal/types:screen-pending-wrap s) "wrap pending after full row")
+    (check-cursor s 2 0)            ; parked at last column of row 0
+    (feed s "d")                    ; triggers the deferred wrap
+    (is (char= #\d (char-at s 0 1)) "next char must land at col 0 of row 1")
+    (check-cursor s 1 1)
+    (is-false (cl-tmux/terminal/types:screen-pending-wrap s) "pending-wrap cleared")))
+
+(test deferred-wrap-newline-no-spurious-blank-line
+  "Filling a row then CR/LF must NOT insert a blank line: the next write lands on
+   the immediately following row (the classic pending-wrap correctness case)."
+  (with-screen (s 3 4)
+    (feed s "abc")                  ; fills row 0 (pending wrap)
+    (feed s (format nil "~C~C" #\Return #\Linefeed))  ; CR LF
+    (feed s "d")
+    (is (char= #\a (char-at s 0 0)) "row 0 keeps its content")
+    (is (char= #\d (char-at s 0 1)) "d lands on row 1, col 0 — no blank line")
+    (is (char= #\Space (char-at s 1 1))
+        "row 1 has only 'd' at col 0 (no content pushed down a line)")))
 
 ;;; ── %advance-cursor no-wrap mode ─────────────────────────────────────────────
 ;;;

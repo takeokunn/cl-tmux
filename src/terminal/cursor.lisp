@@ -19,6 +19,13 @@
 ;;;
 ;;; Each spec: (name docstring accessor clamped-expression)
 
+(declaim (inline %cancel-wrap))
+(defun %cancel-wrap (screen)
+  "Cancel any pending (deferred) wrap.  Called by every explicit cursor movement:
+   moving the cursor discards the VT100 last-column flag, so a subsequent write
+   does not spuriously wrap.  See the screen-pending-wrap slot docstring."
+  (setf (screen-pending-wrap screen) nil))
+
 (defmacro define-cursor-movements (&rest specs)
   "Build cursor movement functions from a Prolog-like fact table.
    Each SPEC is (name docstring slot-accessor clamped-new-value-expr)."
@@ -28,11 +35,14 @@
           (destructuring-bind (name docstring accessor limit-expr) spec
             `(defun ,name (screen n)
                ,docstring
+               (%cancel-wrap screen)
                (setf (,accessor screen) ,limit-expr))))
         specs)))
 
 (defun set-cursor (screen x y)
-  "Move the cursor to (X, Y), clamping both coordinates into bounds."
+  "Move the cursor to (X, Y), clamping both coordinates into bounds.
+   Cancels a pending wrap (explicit positioning discards the last-column flag)."
+  (%cancel-wrap screen)
   (setf (screen-cursor-x screen) (clamp x 0 (1- (screen-width  screen)))
         (screen-cursor-y screen) (clamp y 0 (1- (screen-height screen)))))
 
@@ -55,6 +65,7 @@
 
 (defun cursor-lf (screen)
   "Line feed: move cursor down, scrolling the scroll region if at the bottom."
+  (%cancel-wrap screen)
   (cursor-down/scroll screen))
 
 (defun %materialize-tab-stops (screen)
@@ -99,6 +110,7 @@
 (defun cursor-ht (screen)
   "Horizontal tab: advance the cursor to the next tab stop (default: every
    +TAB-WIDTH+ columns; HTS/TBC can customise the stops), clamping to the last column."
+  (%cancel-wrap screen)
   (setf (screen-cursor-x screen)
         (%next-tab-stop (screen-tab-stops screen)
                         (screen-cursor-x screen)
@@ -113,6 +125,7 @@
 (defun cursor-cbt (screen n)
   "CBT — cursor backward N tab stops (CSI N Z).
    Move the cursor back to the Nth previous tab stop, stopping at column 0."
+  (%cancel-wrap screen)
   (dotimes (_ (max 1 n))
     (setf (screen-cursor-x screen)
           (%prev-tab-stop (screen-tab-stops screen)
@@ -120,17 +133,20 @@
 
 (defun cursor-bs (screen)
   "Backspace: move cursor left one column if not already at column 0."
+  (%cancel-wrap screen)
   (when (> (screen-cursor-x screen) 0)
     (decf (screen-cursor-x screen))))
 
 (defun cursor-ri (screen)
   "Reverse index (ESC M): move cursor up one line, scrolling down if at top."
+  (%cancel-wrap screen)
   (if (= (screen-cursor-y screen) (screen-scroll-top screen))
       (scroll-down-one screen)
       (decf (screen-cursor-y screen))))
 
 (defun cursor-cr (screen)
   "Carriage return: move the cursor to column 0."
+  (%cancel-wrap screen)
   (setf (screen-cursor-x screen) 0))
 
 (defun cursor-nel (screen)
@@ -147,19 +163,21 @@
   (setf (screen-dirty-p screen) t))
 
 (defun %advance-cursor (screen n)
-  "Advance the cursor N columns, wrapping to the next line (and scrolling the
-   scroll region if needed) when it would pass the right edge.
-   Respects the screen-autowrap flag: when autowrap is NIL and the cursor is at
-   the right edge, the cursor stays in place (the write overwrites the last cell)."
+  "Advance the cursor N columns after a write.  When the write reaches the right
+   margin with autowrap on, the wrap is DEFERRED (VT100 last-column flag): the
+   cursor stays parked at the last column and screen-pending-wrap is set, so the
+   wrap happens only when the next character arrives (see write-char-at-cursor).
+   With autowrap off the cursor clamps at the last column (the write overwrites)."
   (let ((next-x (+ (screen-cursor-x screen) n)))
     (cond
       ;; Advance: fits within the current row.
       ((< next-x (screen-width screen))
        (setf (screen-cursor-x screen) next-x))
-      ;; Wrap: reached the right margin and autowrap is on.
+      ;; Reached the right margin with autowrap on: defer the wrap, park at the
+      ;; last column.  The next printable char performs the wrap.
       ((screen-autowrap screen)
-       (setf (screen-cursor-x screen) 0)
-       (cursor-down/scroll screen))
+       (setf (screen-cursor-x screen) (1- (screen-width screen))
+             (screen-pending-wrap screen) t))
       ;; Clamp: reached the right margin and autowrap is off.
       (t
        (setf (screen-cursor-x screen) (1- (screen-width screen)))))))
@@ -308,6 +326,12 @@
   (when (combining-char-p ch)
     (%append-combining-char screen ch)
     (return-from write-char-at-cursor))
+  ;; Consume a deferred wrap: the previous write parked the cursor at the last
+  ;; column with autowrap on; this next character triggers the wrap first.
+  (when (screen-pending-wrap screen)
+    (setf (screen-pending-wrap screen) nil
+          (screen-cursor-x screen) 0)
+    (cursor-down/scroll screen))
   ;; Apply DEC special graphics remapping when active.
   (setf ch (%remap-charset-char screen ch))
   (setf (screen-last-char screen) ch)

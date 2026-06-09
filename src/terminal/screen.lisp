@@ -74,6 +74,13 @@
   (mouse-sgr-mode nil :type boolean)
   ;; Auto-wrap mode: T = wrap at right margin (?7h default), NIL = no wrap (?7l)
   (autowrap t :type boolean)
+  ;; Deferred (pending) wrap, a.k.a. the VT100 "last column flag": set after a
+  ;; character is written into the last column with autowrap on.  The cursor stays
+  ;; parked at the last column; the wrap to the next row happens only when the NEXT
+  ;; printable character arrives.  Any explicit cursor movement (set-cursor, CR,
+  ;; LF, BS, HT, …) cancels it.  Without this, writing exactly WIDTH characters
+  ;; then a newline inserts a spurious blank line.
+  (pending-wrap nil :type boolean)
   ;; Origin mode (DECOM, ?6): T = CUP/HVP rows are relative to the scroll region
   ;; (and the cursor is confined to it); NIL (default) = absolute positioning.
   (origin-mode nil :type boolean)

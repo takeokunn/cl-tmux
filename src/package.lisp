@@ -203,6 +203,7 @@
    #:screen-mouse-sgr-mode
    ;; Auto-wrap mode (?7h / ?7l)
    #:screen-autowrap
+   #:screen-pending-wrap
    #:screen-origin-mode
    ;; Focus event reporting (?1004h / ?1004l)
    #:screen-focus-events
@@ -395,6 +396,7 @@
    #:cell-width
    ;; Auto-wrap mode
    #:screen-autowrap
+   #:screen-pending-wrap
    ;; Active character set
    #:screen-charset
    ;; SGR pen extras
