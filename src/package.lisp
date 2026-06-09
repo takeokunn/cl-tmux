@@ -34,6 +34,7 @@
    #:load-config-file
    #:load-config-from-stream
    #:load-config-from-string
+   #:source-files
    #:apply-config-directive
    #:config-file-path
    ;; %if condition evaluator hook (set by top-level package)

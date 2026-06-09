@@ -1407,14 +1407,12 @@
         (session-swap-windows session (position src wins) (position dst wins))))))
 
 (defun %cmd-source-file (session args)
-  "source-file <path>: load the tmux config file at <path>.  Enables the
-   canonical reload binding (bind r source-file ~/.tmux.conf).  SESSION unused."
+  "source-file [-q] [-n] [-v] path...: load the tmux config file(s) at the given
+   path(s), expanding ~ and shell globs (* ? []).  Enables the canonical reload
+   binding (bind r source-file ~/.tmux.conf).  A missing file or parse error never
+   crashes the session.  SESSION unused."
   (declare (ignore session))
-  (let ((path (first args)))
-    (when path
-      ;; A missing file or parse error must not crash the session (tmux shows an
-      ;; error but keeps running).
-      (ignore-errors (cl-tmux/config:load-config-file path)))))
+  (cl-tmux/config:source-files args))
 
 (defun %cmd-move-window (session args)
   "move-window [-s src-window] [-t dst-index] [-r] [-a]: move/renumber a window.

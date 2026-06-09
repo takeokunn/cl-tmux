@@ -559,12 +559,9 @@
       (when keyword
         (cl-tmux/hooks:set-command-hook event-name keyword)
         t)))
-  ("source-file" 1 (path)
-    (ignore-errors (load-config-file (pathname path)))
-    t)
-  ("source" 1 (path)
-    (ignore-errors (load-config-file (pathname path)))
-    t)
+  ;; NOTE: source-file/source are handled entirely by %apply-source-file-directive
+  ;; (wired into apply-config-directive before this table) to support -q/-n/-v
+  ;; flags, glob patterns, and multiple paths.
   ;; NOTE: run-shell/run are handled entirely by %apply-run-shell-directive
   ;; (wired into apply-config-directive before this fixed-arity table), which
   ;; covers the bare 1-arg form as well as the flag-bearing forms.  No fixed-
@@ -906,6 +903,37 @@
                                  :ignore-error-status t :timeout 2)))
            t))))))
 
+(defun %glob-expand (path)
+  "Expand a shell glob PATH (one containing * ? or [) to the sorted namestrings of
+   the matching regular files.  A path with no glob metacharacters is returned
+   unchanged as a one-element list, so a plain (possibly missing) path still
+   reaches load-config-file."
+  (if (find-if (lambda (c) (member c '(#\* #\? #\[) :test #'char=)) path)
+      (sort (loop for p in (ignore-errors (directory (pathname path)))
+                  unless (ignore-errors (uiop:directory-pathname-p p))
+                    collect (namestring p))
+            #'string<)
+      (list path)))
+
+(defun source-files (args)
+  "Implement `source-file [-q] [-n] [-v] path...`: for each non-flag PATH, expand a
+   leading ~ and shell globs (* ? []), then load every matching config file.
+   Errors (missing file, parse failure) are swallowed so a bad source never crashes
+   the session — cl-tmux is therefore effectively -q whether or not -q is given.
+   Returns T."
+  (dolist (raw args)
+    (unless (and (plusp (length raw)) (char= (char raw 0) #\-))   ; skip -q/-n/-v
+      (dolist (file (%glob-expand (%expand-leading-tilde raw)))
+        (ignore-errors (load-config-file file)))))
+  t)
+
+(defun %apply-source-file-directive (cmd args)
+  "Intercept source-file / source: -q/-n/-v flags, glob patterns, and multiple
+   paths (the fixed-arity directive table only handled a single bare path).
+   Returns T when CMD is a source verb, else NIL."
+  (when (member cmd '("source-file" "source") :test #'string=)
+    (source-files args)))
+
 (defun apply-config-directive (tokens)
   "Apply one parsed config directive (list of string TOKENS) to live state.
    Returns T when applied, NIL for an unknown/invalid directive.
@@ -920,6 +948,7 @@
           (%apply-set-directive cmd args)
           (%apply-set-hook-directive cmd args)
           (%apply-run-shell-directive cmd args)
+          (%apply-source-file-directive cmd args)
           (%apply-config-directive-inner tokens)))))
 
 (defun apply-config-line (line)

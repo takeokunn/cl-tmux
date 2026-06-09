@@ -1563,3 +1563,38 @@ bind-key r source-file /dev/null"))
     (is (= 2 (cl-tmux/config:load-config-from-string
               (format nil "bind a new-window~%bind b next-window")))
         "two independent binds apply as two directives")))
+
+;;; ── source-file: -q flags, glob patterns, multiple paths ─────────────────────
+
+(test glob-expand-passthrough-non-glob
+  "%glob-expand returns a non-glob path unchanged as a one-element list."
+  (is (equal '("/etc/foo.conf") (cl-tmux/config::%glob-expand "/etc/foo.conf"))))
+
+(test glob-expand-empty-for-no-matches
+  "%glob-expand returns NIL for a glob that matches nothing."
+  (is (null (cl-tmux/config::%glob-expand "/nonexistent-cl-tmux-xyz-dir/*.conf"))))
+
+(test source-files-skips-flags-and-tolerates-missing
+  "source-files skips -q/-n/-v flags and ignores missing files (returns T, no error)."
+  (is (eq t (cl-tmux/config:source-files '("-q" "/no/such/cl-tmux-file.conf")))))
+
+(test source-files-glob-expands-and-loads-matching-files
+  "source-file with a glob loads every matching file; %glob-expand finds them."
+  (let ((dir (uiop:ensure-directory-pathname
+              (merge-pathnames "cl-tmux-glob-test/" (uiop:temporary-directory)))))
+    (ensure-directories-exist dir)
+    (unwind-protect
+         (progn
+           (with-open-file (f (merge-pathnames "a.conf" dir)
+                              :direction :output :if-exists :supersede)
+             (write-line "# cl-tmux glob test (no global mutation)" f))
+           (with-open-file (f (merge-pathnames "b.conf" dir)
+                              :direction :output :if-exists :supersede)
+             (write-line "# cl-tmux glob test (no global mutation)" f))
+           (let ((matches (cl-tmux/config::%glob-expand
+                           (namestring (merge-pathnames "*.conf" dir)))))
+             (is (= 2 (length matches)) "glob matched both .conf files (got ~A)" matches)
+             (is (eq t (cl-tmux/config:source-files
+                        (list (namestring (merge-pathnames "*.conf" dir)))))
+                 "source-files loads the globbed files without error")))
+      (ignore-errors (uiop:delete-directory-tree dir :validate t)))))
