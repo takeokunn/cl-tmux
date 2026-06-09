@@ -285,6 +285,16 @@
   (reset-sgr-pen screen)
   (reset-terminal-modes screen))
 
+(defun decaln-action (screen)
+  "DECALN — ESC # 8: fill the entire screen with 'E' (the VT100 screen-alignment
+   test pattern, used by vttest and terminal conformance suites), then home the
+   cursor.  Each cell becomes a default-attribute 'E'."
+  (dotimes (y (screen-height screen))
+    (dotimes (x (screen-width screen))
+      (setf (screen-cell screen x y) (make-cell :char #\E))))
+  (set-cursor screen 0 0)
+  (setf (screen-dirty-p screen) t))
+
 ;;; ── Display projection (copy-mode scrollback) ──────────────────────────────
 
 (defparameter *display-blank-cell* (blank-cell)

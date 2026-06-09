@@ -282,6 +282,26 @@
     (is (char= #\b (char-at s 1 0))
         "'b' at column 1 — no stray 't' printed between them")))
 
+(test esc-hash-8-decaln-fills-screen-with-e
+  "ESC # 8 (DECALN) fills the entire screen with 'E' (the VT100 alignment test)."
+  (with-screen (s 4 2)
+    (feed s (esc "#8"))
+    (dotimes (y 2)
+      (dotimes (x 4)
+        (is (char= #\E (char-at s x y))
+            "cell (~D,~D) must be 'E' after DECALN" x y)))))
+
+(test esc-hash-selector-consumed-not-stray
+  "ESC # <selector> consumes the selector byte; ESC # 5 (DECSWL, no-op) prints
+   nothing — the byte must not abort the sequence and print as a stray char."
+  (with-screen (s 10 2)
+    (feed s "a")
+    (feed s (esc "#5"))        ; DECSWL — single-width line, no-op
+    (feed s "b")
+    (is (char= #\a (char-at s 0 0)) "'a' at column 0")
+    (is (char= #\b (char-at s 1 0))
+        "'b' at column 1 — no stray '5' printed between them")))
+
 (test csi-unknown
   "An unrecognised CSI final character is silently ignored; parser recovers."
   (with-screen (s 10 2)

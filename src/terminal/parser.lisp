@@ -235,6 +235,10 @@
   ;; ── Charset designators: ESC ( designates G0, ESC ) designates G1 ──────────
   (#x28  (make-charset-designator-k :g0))          ; ESC ( → designate G0
   (#x29  (make-charset-designator-k :g1))          ; ESC ) → designate G1
+  ;; ESC # — DEC line-size / alignment: the next byte selects (8 = DECALN fill,
+  ;; 3/4/5/6 = double-height/width/single-width line attrs, accepted+ignored).
+  ;; Without this, ESC # aborted and the selector byte printed as a stray char.
+  (#x23  (make-hash-line-size-k))                  ; ESC # → DEC line-size selector
   ;; ── All unrecognized ESC sequences → ground (including DECKPAM #x3D, DECKPNM #x3E)
   (t     #'ground-state))
 
@@ -449,4 +453,19 @@
   (lambda (screen byte)
     (declare (type screen screen) (type (unsigned-byte 8) byte))
     (designate-charset screen g (if (= byte #x30) :dec-graphics :ascii))
+    #'ground-state))
+
+(defun make-hash-line-size-k ()
+  "Return a CPS state for ESC # — the next byte is a DEC line-size / alignment
+   selector:
+     #x38 '8' → DECALN: fill the screen with 'E' (the alignment test pattern).
+     '3'/'4'  → DECDHL (double-height line top/bottom) — accepted and ignored.
+     '5'      → DECSWL (single-width line) — accepted (the default).
+     '6'      → DECDWL (double-width line) — accepted and ignored.
+   cl-tmux does not model per-line double width/height; the selector is CONSUMED
+   either way so it is not printed as a stray char.  Returns to ground."
+  (lambda (screen byte)
+    (declare (type screen screen) (type (unsigned-byte 8) byte))
+    (when (= byte #x38)                ; '8' → DECALN
+      (decaln-action screen))
     #'ground-state))
