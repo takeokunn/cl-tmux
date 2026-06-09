@@ -7,6 +7,23 @@
 ;;;; the server sends back.  It holds no session state — all prefix handling and
 ;;;; rendering happen server-side, so the client is the same for any session.
 
+(defun run-command-client (name args)
+  "Forward ARGS — a command name followed by its arguments — to the running server
+   for session NAME as a single +msg-command+ frame, then exit.  This is the
+   `cl-tmux <command>` CLI path: it drives a server from outside instead of
+   attaching a terminal.  The server runs the command (server-multi.lisp,
+   %handle-multi-client-message) against its live session.
+   A target given as `-t <target>` flows through in ARGS — the server parses it
+   like any other flag — so no special target extraction is needed here."
+  (require :sb-posix)
+  (when args
+    (let ((socket (connect-to (socket-path name))))
+      (unwind-protect
+           (let ((stream (socket-stream socket)))
+             (send-frame stream (msg-command (first args) nil (rest args)))
+             (force-output stream))
+        (close-socket socket)))))
+
 (defun run-client (name &key detach-others)
   "Attach to the server at (socket-path NAME): forward stdin + resizes, render
    the frames the server returns, and exit on detach / server close.

@@ -409,5 +409,17 @@
           (if raw-args-p
               (funcall (symbol-function handler) rest)
               (funcall (symbol-function handler) (or (first rest) "0"))))
-        ;; Default: no recognized mode → standalone multiplexer.
-        (run-standalone))))
+        ;; No recognized mode: forward to a running server as a command client
+        ;; (`cl-tmux <command>` against an existing server), else run standalone.
+        (%dispatch-unknown-mode mode rest))))
+
+(defun %dispatch-unknown-mode (mode rest)
+  "Handle an argv whose first item is not a known startup mode.
+   When MODE names a command AND a default-session server is already running
+   (its socket exists), forward MODE + REST to it as a command client; otherwise
+   run the standalone multiplexer (the bare-invocation / no-server behaviour).
+   Guarding on an existing socket keeps `cl-tmux` (no args) and the no-server
+   case unchanged — only an explicit subcommand against a live server forwards."
+  (if (and mode (probe-file (socket-path "0")))
+      (run-command-client "0" (cons mode rest))
+      (run-standalone)))

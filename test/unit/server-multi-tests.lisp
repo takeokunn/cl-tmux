@@ -118,6 +118,38 @@
       (cl-tmux::%drop-client a)
       (is (equal (list b) cl-tmux::*clients*) "double-drop is a safe no-op"))))
 
+;;; ── Command client: forwards a command to the server ────────────────────────
+
+(test command-client-sends-decodable-command-frame
+  "run-command-client forwards a command to the server as a decodable
+   +msg-command+ frame (the `cl-tmux <command>` CLI path).  A -t target rides
+   along in the args for the server to parse."
+  (when (cl-tmux/net:unix-socket-available-p)
+    (let* ((name     (format nil "cmdtest-~D" (get-universal-time)))
+           (path     (cl-tmux::socket-path name))
+           (listener (cl-tmux/net:make-listener path :backlog 4)))
+      (unwind-protect
+           (progn
+             (cl-tmux::run-command-client name '("next-window" "-t" "2"))
+             (let ((server-sock (cl-tmux/net:accept-connection listener)))
+               (is-true server-sock "server accepts the command-client connection")
+               (when server-sock
+                 (let ((ready (cl-tmux/pty:select-fds
+                               (list (cl-tmux/net:socket-fd server-sock)) 1000000)))
+                   (is-true ready "the command frame must arrive")
+                   (when ready
+                     (multiple-value-bind (type payload)
+                         (cl-tmux::read-frame (cl-tmux/net:socket-stream server-sock))
+                       (is (eql cl-tmux::+msg-command+ type) "a +msg-command+ frame")
+                       (multiple-value-bind (cmd target args)
+                           (cl-tmux::decode-command-payload payload)
+                         (declare (ignore target))
+                         (is (eq :next-window cmd) "command decodes to :next-window")
+                         (is (equal '("-t" "2") args)
+                             "args carry the -t target through to the server"))))))))
+        (cl-tmux/net:close-socket listener)
+        (ignore-errors (delete-file path))))))
+
 ;;; ── Integration: a broadcast frame reaches every attached client ─────────────
 
 (test multi-broadcast-reaches-all-clients
