@@ -2456,6 +2456,42 @@
         (setf *dirty* t)
         t))))
 
+(defun %window-matches-pattern-p (window pattern &key name-only)
+  "T when WINDOW matches PATTERN by case-insensitive substring.  The window name
+   is always searched; unless NAME-ONLY, each pane's title and screen title are
+   searched too (approximating find-window's name/title/content scan).  Shared by
+   the scriptable find-window command and the interactive :find-window binding."
+  (or (search pattern (window-name window) :test #'char-equal)
+      (and (not name-only)
+           (some (lambda (p)
+                   (let ((title  (cl-tmux/model:pane-title p))
+                         (screen (cl-tmux/model:pane-screen p)))
+                     (or (and (plusp (length title))
+                              (search pattern title :test #'char-equal))
+                         (and screen
+                              (search pattern (cl-tmux/terminal:screen-title screen)
+                                      :test #'char-equal)))))
+                 (cl-tmux/model:window-panes window)))))
+
+(defun %cmd-find-window-arg (session args)
+  "find-window [-CNiTrZ] [-t target-pane] match-string: find the window whose name
+   (or, unless -N, a pane title/content) matches MATCH-STRING and select it.  With
+   several matches, the first is selected.  The match is case-insensitive substring
+   (as in the interactive find-window); -i/-r/-C/-T/-Z are accepted.  This is the
+   scriptable form; the interactive :find-window binding (which lists matches in an
+   overlay) is unchanged."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
+    (let* ((name-only (assoc #\N flags))
+           (pattern   (first positionals)))
+      (when (and pattern (plusp (length pattern)))
+        (let ((match (find-if (lambda (w)
+                                (%window-matches-pattern-p w pattern :name-only name-only))
+                              (session-windows session))))
+          (when match
+            (session-select-window session match)
+            (setf *dirty* t)
+            t))))))
+
 (defun %send-keys-hex-to-string (hex)
   "Convert a send-keys -H argument (a hexadecimal character code like \"1b\" or
    \"41\") to the one-character string it names, or NIL when HEX is not a valid
@@ -2718,6 +2754,8 @@
    ;; clear-history / rotate-window: scriptable -t (and rotate -D/-U).
    (cons '("clear-history" "clearhist") #'%cmd-clear-history-arg)
    (cons '("rotate-window" "rotatew")   #'%cmd-rotate-window-arg)
+   ;; find-window: scriptable search-and-select (match-string positional).
+   (cons '("find-window" "findw")       #'%cmd-find-window-arg)
    ;; confirm-before [-p prompt] cmd: gate COMMAND behind a y/n prompt.
    (cons '("confirm-before" "confirm")  #'%cmd-confirm-before-arg)
    ;; command-prompt [-p prompts] [template]: interactive prompt with substitution.

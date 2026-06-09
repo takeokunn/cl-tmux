@@ -2385,6 +2385,47 @@
       (is (eq p2 (first (window-panes win)))
           "-D (backward) makes the last pane first"))))
 
+;;; ── find-window (scriptable %cmd-find-window-arg) ────────────────────────────
+
+(defun %find-window-fixture ()
+  "Session \"0\" with three named windows alpha/beta/gamma (alpha current).
+   Returns (values sess wa wb wg)."
+  (let* ((pa (%make-test-pane :id 1)) (pb (%make-test-pane :id 2))
+         (pg (%make-test-pane :id 3))
+         (wa (make-window :id 1 :name "alpha" :width 20 :height 5
+                          :tree (make-layout-leaf pa) :panes (list pa)))
+         (wb (make-window :id 2 :name "beta" :width 20 :height 5
+                          :tree (make-layout-leaf pb) :panes (list pb)))
+         (wg (make-window :id 3 :name "gamma" :width 20 :height 5
+                          :tree (make-layout-leaf pg) :panes (list pg)))
+         (sess (make-session :id 1 :name "0" :windows (list wa wb wg))))
+    (session-select-window sess wa)
+    (values sess wa wb wg)))
+
+(test cmd-find-window-selects-matching-window
+  "find-window <pattern> selects the window whose name matches (case-insensitive)."
+  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+    (declare (ignore wa wg))
+    (let ((cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-find-window-arg sess '("BET"))
+      (is (eq wb (session-active-window sess))
+          "find-window BET must select the 'beta' window (case-insensitive)"))))
+
+(test cmd-find-window-no-match-leaves-active
+  "find-window with no matching window leaves the active window unchanged."
+  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+    (declare (ignore wb wg))
+    (cl-tmux::%cmd-find-window-arg sess '("zzz"))
+    (is (eq wa (session-active-window sess))
+        "no match must leave the original active window selected")))
+
+(test window-matches-pattern-p-name
+  "%window-matches-pattern-p matches the window name case-insensitively."
+  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+    (declare (ignore sess wb wg))
+    (is-true  (cl-tmux::%window-matches-pattern-p wa "ALP") "case-insensitive name match")
+    (is-false (cl-tmux::%window-matches-pattern-p wa "beta") "non-matching name → NIL")))
+
 ;;; ── pipe-pane-open / pipe-pane-close / pipe-pane-write ──────────────────────
 
 (test pipe-pane-open-returns-stream
