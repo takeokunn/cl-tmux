@@ -88,7 +88,10 @@
                ,docstring
                (let* ((top    (screen-cursor-y      screen))
                       (bottom (screen-scroll-bottom screen)))
-                 (when (<= top bottom)
+                 ;; IL/DL operate only when the cursor is INSIDE the scroll region:
+                 ;; ignored when above scroll-top (would shift rows outside the
+                 ;; region) or below scroll-bottom (top > bottom).  Per VT spec.
+                 (when (and (<= (screen-scroll-top screen) top) (<= top bottom))
                    (let ((count (min n (- bottom top -1))))
                      ,shift-loop
                      ,blank-loop

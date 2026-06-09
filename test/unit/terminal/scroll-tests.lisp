@@ -646,6 +646,27 @@
     (check-row s 0 "BB")
     (is (row-blank-p s 3) "bottom row must be blank after delete-lines 1 at row 0")))
 
+(test insert-lines-ignored-when-cursor-above-scroll-region
+  "IL is a no-op when the cursor is above the scroll-top (outside the region): it
+   must not shift rows that lie outside the scroll region."
+  (with-screen (s 5 5)
+    (feed-lines s "AA" "BB" "CC" "DD" "EE")
+    (feed s (esc "[3;5r"))      ; DECSTBM region rows 3-5 (0-based 2-4); homes cursor (0,0)
+    (check-cursor s 0 0)        ; cursor is above scroll-top (row 2)
+    (cl-tmux/terminal/actions:insert-lines s 1)
+    (check-row s 0 "AA")        ; rows above the region must be untouched
+    (check-row s 1 "BB")
+    (check-row s 2 "CC")))
+
+(test delete-lines-ignored-when-cursor-above-scroll-region
+  "DL is likewise a no-op above the scroll region."
+  (with-screen (s 5 5)
+    (feed-lines s "AA" "BB" "CC" "DD" "EE")
+    (feed s (esc "[3;5r"))      ; region rows 2-4 (0-based); cursor homed to (0,0)
+    (cl-tmux/terminal/actions:delete-lines s 1)
+    (check-row s 0 "AA")
+    (check-row s 1 "BB")))
+
 (test delete-lines-n-larger-than-region-blanks-all-region-rows
   "delete-lines with n >= region size blanks every row in the region."
   (with-screen (s 5 4)
