@@ -1185,6 +1185,29 @@
       (is (= 2 (pane-id (window-active-pane win)))
           "select-pane -t 2 must activate pane-id 2"))))
 
+(test run-command-line-select-pane-l-selects-last
+  "'select-pane -l' returns to the previously active pane."
+  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
+         (win (session-active-window s)))
+    (with-loop-state
+      ;; Start on pane 1, move to pane 2 (pane 1 becomes last-active).
+      (cl-tmux::%run-command-line s "select-pane -t 2")
+      (is (= 2 (pane-id (window-active-pane win))) "now on pane 2")
+      (cl-tmux::%run-command-line s "select-pane -l")
+      (is (= 1 (pane-id (window-active-pane win)))
+          "select-pane -l must return to the previously active pane (1)"))))
+
+(test run-command-line-select-pane-M-clears-mark
+  "'select-pane -M' clears the marked pane (unmarks all panes in the window)."
+  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
+         (win (session-active-window s)))
+    (with-loop-state
+      (let ((ap (window-active-pane win)))
+        (setf (pane-marked ap) t)
+        (cl-tmux::%run-command-line s "select-pane -M")
+        (is (null (pane-marked ap))
+            "select-pane -M must clear the pane mark")))))
+
 ;;; ── kill-window / kill-pane with -t target ───────────────────────────────────
 
 (test run-command-line-kill-window-by-target

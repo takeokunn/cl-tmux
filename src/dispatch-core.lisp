@@ -1242,13 +1242,14 @@
                (when win (session-select-window session win))))))))))
 
 (defun %cmd-select-pane (session args)
-  "select-pane [-L|-R|-U|-D|-d|-e|-m] [-t target] [-T title]: select or configure a pane.
+  "select-pane [-L|-R|-U|-D|-l|-d|-e|-m|-M] [-t target] [-T title]: select or configure a pane.
    -L/-R/-U/-D: move in the given direction.
+   -l: select the previously active (last) pane.
    -d: disable keyboard input to the target pane (pane-input-disabled t).
    -e: re-enable keyboard input to the target pane (pane-input-disabled nil).
    -t target: select pane by pane-id in the active window.
    -T title: set the title of the target (or active) pane.
-   -m: mark the selected pane."
+   -m: mark the selected pane; -M: clear the marked pane (unmark all)."
   (multiple-value-bind (flags _positionals) (%parse-command-flags args "tT")
     (declare (ignore _positionals))
     (cond
@@ -1280,6 +1281,15 @@
          (with-active-window (win session)
            (dolist (p (window-panes win)) (setf (pane-marked p) nil)))
          (setf (pane-marked ap) t)))
+      ;; -M: clear the marked pane (unmark all panes in the active window).
+      ((assoc #\M flags)
+       (with-active-window (win session)
+         (dolist (p (window-panes win)) (setf (pane-marked p) nil))))
+      ;; -l: select the previously active (last) pane in the active window.
+      ((assoc #\l flags)
+       (with-active-window (win session)
+         (let ((last (window-last-active win)))
+           (when last (%select-pane-with-focus win last)))))
       (t
        ;; Default: select by pane-id via -t
        (let* ((target (cdr (assoc #\t flags)))
