@@ -700,11 +700,16 @@
           (show-transient-overlay text))))))
 
 (defun %resolve-pane-in-window (win target-str)
-  "Resolve TARGET-STR (a pane-id integer) to a pane in WIN; default to WIN's
-   active pane when TARGET-STR is NIL or names no pane in WIN.  Shared by
-   select-pane and swap-pane for -s/-t resolution within the active window."
+  "Resolve TARGET-STR to a pane in WIN by pane-id; default to WIN's active pane
+   when TARGET-STR is NIL or names no pane in WIN.  Accepts both the bare id (\"2\")
+   and the tmux %N sigil (\"%2\") — a leading '%' is stripped before parsing.
+   Shared by select-pane, swap-pane and pipe-pane for -s/-t resolution."
   (or (and target-str win
-           (let ((n (parse-integer target-str :junk-allowed t)))
+           (let* ((digits (if (and (plusp (length target-str))
+                                   (char= (char target-str 0) #\%))
+                              (subseq target-str 1)
+                              target-str))
+                  (n      (parse-integer digits :junk-allowed t)))
              (and n (find n (window-panes win) :key #'pane-id))))
       (and win (window-active-pane win))))
 

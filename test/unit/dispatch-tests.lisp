@@ -1397,6 +1397,16 @@
       (is (= 2 (pane-id (window-active-pane win)))
           "select-pane -t 2 must activate pane-id 2"))))
 
+(test run-command-line-select-pane-by-pane-id-sigil
+  "'select-pane -t %2' (the %N pane-id sigil) selects pane-id 2, like -t 2."
+  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
+         (win (session-active-window s)))
+    (with-loop-state
+      (is (= 1 (pane-id (window-active-pane win))) "pane 1 is active initially")
+      (cl-tmux::%run-command-line s "select-pane -t %2")
+      (is (= 2 (pane-id (window-active-pane win)))
+          "select-pane -t %2 must activate pane-id 2 via the %N sigil"))))
+
 (test run-command-line-select-pane-l-selects-last
   "'select-pane -l' returns to the previously active pane."
   (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
