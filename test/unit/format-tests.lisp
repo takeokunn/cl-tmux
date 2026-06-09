@@ -98,6 +98,40 @@
     (is (= 3 (getf ctx :window-count))
         ":window-count expected 3 got ~D" (getf ctx :window-count))))
 
+(test format-W-modifier-iterates-windows
+  "#{W:fmt} expands fmt once per session window, joined by window-status-separator;
+   the inner format sees a per-window context."
+  (with-isolated-config
+    (let* ((sess (make-fake-session :nwindows 3))
+           (win  (cl-tmux/model:session-active-window sess))
+           (pane (first (cl-tmux/model:window-panes win)))
+           (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+      ;; Single format: repeated per window, joined by the default separator " ".
+      (is (string= "X X X" (cl-tmux/format:expand-format "#{W:X}" ctx))
+          "#{W:X} must repeat once per window")
+      ;; Per-window context: each window's own index is expanded — 3 single-digit
+      ;; indices joined by 2 separator spaces.
+      (let ((out (cl-tmux/format:expand-format "#{W:#{window_index}}" ctx)))
+        (is (= 2 (count #\Space out))
+            "#{W:#{window_index}} must join 3 per-window values with 2 separators (got ~S)"
+            out)))))
+
+(test format-W-modifier-active-vs-inactive
+  "#{W:active,inactive} applies the active format to the current window and the
+   inactive format to the others."
+  (with-isolated-config
+    (let* ((sess (make-fake-session :nwindows 3))
+           (win  (cl-tmux/model:session-active-window sess))
+           (ctx  (cl-tmux/format:format-context-from-session sess win nil))
+           (out  (cl-tmux/format:expand-format "#{W:A,I}" ctx)))
+      (is (= 1 (count #\A out)) "exactly one (current) window is active (got ~S)" out)
+      (is (= 2 (count #\I out)) "the other two windows are inactive (got ~S)" out))))
+
+(test format-W-modifier-no-session-is-empty
+  "#{W:...} with no session in the context yields the empty string (no error)."
+  (is (string= "" (cl-tmux/format:expand-format
+                   "#{W:X}" (cl-tmux/format:format-context-from-session nil nil nil)))))
+
 (test format-context-window-index-matches-window-id
   "format-context-from-session :window-index equals the window's numeric id.
    With make-fake-session (base-index=0), ids are 0, 1; :window-index follows."

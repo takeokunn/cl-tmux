@@ -427,6 +427,32 @@
         (write-char #\\ s))
       (write-char ch s))))
 
+(defun %expand-window-iteration (rest context)
+  "Expand a #{W:ACTIVE,INACTIVE} window-list modifier.  Iterates the windows of
+   the context's session (carried as :%session): the current window is formatted
+   with ACTIVE, the others with INACTIVE (defaults to ACTIVE when no comma is
+   present).  Each window gets a fresh per-window context; results are joined with
+   the window-status-separator option.  Returns \"\" when there is no session."
+  (let ((session (getf context :%session)))
+    (if (null session)
+        ""
+        (let* ((comma        (%top-level-comma rest 0))
+               (active-fmt   (if comma (subseq rest 0 comma) rest))
+               (inactive-fmt (if comma (subseq rest (1+ comma)) active-fmt))
+               (active-win   (cl-tmux/model:session-active-window session))
+               (separator    (or (cl-tmux/options:get-option "window-status-separator")
+                                 " ")))
+          (with-output-to-string (s)
+            (loop for win in (cl-tmux/model:session-windows session)
+                  for first = t then nil
+                  do (unless first (write-string separator s))
+                     (let* ((pane (cl-tmux/model:window-active-pane win))
+                            (ctx  (format-context-from-session session win pane)))
+                       (write-string
+                        (expand-format (if (eq win active-win) active-fmt inactive-fmt)
+                                       ctx)
+                        s))))))))
+
 (defun %expand-brace (template start context out)
   "Expand #{...} content starting at START (just past the '{').
    Writes to OUT and returns the index just past the closing '}'.
@@ -497,6 +523,12 @@
                  ;; logical operators: #{||:a,b} (either truthy) #{&&:a,b} (both)
                  ((%logical-op-p mod)
                   (write-string (%apply-logical mod rest context) out))
+                 ;; #{W:active,inactive} — iterate the session's windows, applying
+                 ;; ACTIVE to the current window and INACTIVE to the rest, joined by
+                 ;; window-status-separator.  The building block for custom window
+                 ;; lists (and, later, status-format[0]).
+                 ((string= mod "W")
+                  (write-string (%expand-window-iteration rest context) out))
                  ;; #{t:...} — timestamp / strftime modifier.  We first look REST
                  ;; up as a context variable: if it resolves to a positive integer
                  ;; (a CL universal-time, e.g. #{t:session_last_attached}) we format
@@ -1039,7 +1071,11 @@
          ;; and adjust rendering accordingly — same set as %if condition context.
          (term-program    (or (ignore-errors (sb-ext:posix-getenv "TERM_PROGRAM")) ""))
          (colorterm       (or (ignore-errors (sb-ext:posix-getenv "COLORTERM")) "")))
-    (list :session-name  session-name
+    (list ;; Raw SESSION object — carried so the #{W:...} window-iteration
+          ;; modifier can walk the session's windows and build a per-window
+          ;; context.  Internal (not a #{...} variable); ignored by lookups.
+          :%session      session
+          :session-name  session-name
           ;; #{session_id}: numeric session identifier.
           :session-id    (if session (cl-tmux/model:session-id session) 0)
           :window-index  window-index
