@@ -663,6 +663,10 @@
     (is (string= "1"  (cl-tmux/format:expand-format "#{pane_id}"     ctx)))
     (is (string= "0"  (cl-tmux/format:expand-format "#{pane_left}"   ctx)))
     (is (string= "0"  (cl-tmux/format:expand-format "#{pane_top}"    ctx)))
+    ;; #{pane_right}/#{pane_bottom}: inclusive far edge = origin + size - 1.
+    ;; A 20x5 pane at (0,0) → right column 19, bottom row 4.
+    (is (string= "19" (cl-tmux/format:expand-format "#{pane_right}"  ctx)))
+    (is (string= "4"  (cl-tmux/format:expand-format "#{pane_bottom}" ctx)))
     (is (string= "-1" (cl-tmux/format:expand-format "#{pane_pid}"    ctx)))))
 
 (test format-context-pane-variables-default-when-pane-nil
@@ -670,6 +674,8 @@
   (let ((ctx (cl-tmux/format:format-context-from-session nil nil nil)))
     (is (string= "0" (cl-tmux/format:expand-format "#{pane_width}"  ctx)))
     (is (string= "0" (cl-tmux/format:expand-format "#{pane_id}"     ctx)))
+    (is (string= "0" (cl-tmux/format:expand-format "#{pane_right}"  ctx)))
+    (is (string= "0" (cl-tmux/format:expand-format "#{pane_bottom}" ctx)))
     (is (string= "0" (cl-tmux/format:expand-format "#{pane_active}" ctx)))))
 
 (test format-context-pane-active-distinguishes-active-pane

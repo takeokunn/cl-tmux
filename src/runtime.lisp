@@ -310,6 +310,13 @@
                   (setf (cl-tmux/model:window-silence-flag win) t)
                   ;; Fire the alert-silence hook (matches real tmux).
                   (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-silence+ win)
+                  ;; visual-silence on: show a transient overlay naming the quiet
+                  ;; window (mirrors visual-activity in %mark-window-activity).
+                  (when (cl-tmux/options:get-option "visual-silence")
+                    (show-transient-overlay
+                     (format nil "Silence in window ~A (~A)"
+                             (cl-tmux/model:window-id win)
+                             (cl-tmux/model:window-name win))))
                   (funcall dirty-fn))))))))))
 
 (defun start-status-timer (dirty-fn &key session server-sessions-fn)

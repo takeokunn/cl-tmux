@@ -104,7 +104,17 @@
   ("bell-action"              :string  "any")
   ("visual-bell"              :boolean nil)
   ("visual-activity"          :boolean nil)
+  ("visual-silence"           :boolean nil)
   ("monitor-activity"         :boolean nil)
+  ;; monitor-silence is an INTEGER (seconds of PTY silence before a window
+  ;; alerts); 0 = off.  The %check-monitor-silence path (runtime.lisp) — set
+  ;; window-silence-flag + fire alert-silence (+ visual-silence overlay) — reads
+  ;; this option; registering it gives the correct default (0) and lists it in
+  ;; show-options, completing the monitor-* family alongside monitor-activity.
+  ("monitor-silence"          :integer 0)
+  ("monitor-bell"             :boolean t)
+  ("activity-action"          :string  "other")
+  ("silence-action"           :string  "other")
   ("buffer-limit"             :integer 50)
   ("focus-events"             :boolean nil)
   ("copy-command"             :string  "")

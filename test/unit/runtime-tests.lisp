@@ -165,6 +165,38 @@
         (is-true (cl-tmux/model:window-silence-flag win) "silence flag must be set")
         (is-true fired "the alert-silence hook must fire")))))
 
+(test monitor-silence-default-is-zero-no-op
+  :description "With the registered default monitor-silence = 0, %check-monitor-silence
+   is a no-op: no window crosses a (disabled) threshold, so no flag is set."
+  (with-isolated-config
+    (with-isolated-hooks
+      (let* ((sess (make-fake-session :nwindows 1))
+             (win  (cl-tmux/model:session-active-window sess)))
+        (is (eql 0 (cl-tmux/options:get-option "monitor-silence"))
+            "monitor-silence must default to 0 (registered)")
+        ;; Window has been silent for a long time, but monitoring is off (0).
+        (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
+              (cl-tmux/model:window-silence-flag win) nil)
+        (cl-tmux::%check-monitor-silence (list (cons 1 sess)) (lambda () nil))
+        (is-false (cl-tmux/model:window-silence-flag win)
+                  "monitor-silence 0 must not set the silence flag")))))
+
+(test monitor-silence-visual-silence-shows-overlay
+  :description "When visual-silence is on, crossing the silence threshold shows a
+   transient overlay naming the quiet window (mirrors visual-activity)."
+  (with-isolated-config
+    (with-isolated-hooks
+      (let* ((sess (make-fake-session :nwindows 1))
+             (win  (cl-tmux/model:session-active-window sess))
+             (cl-tmux/prompt:*overlay* nil))
+        (cl-tmux/options:set-option "monitor-silence" 5)
+        (cl-tmux/options:set-option "visual-silence" t)
+        (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
+              (cl-tmux/model:window-silence-flag win) nil)
+        (cl-tmux::%check-monitor-silence (list (cons 1 sess)) (lambda () nil))
+        (is-true (cl-tmux/prompt:overlay-active-p)
+                 "visual-silence must show an overlay when silence is detected")))))
+
 (test reader-remain-on-exit-state-returns-nil-when-not-running
   :description "reader-remain-on-exit-state returns NIL immediately when *running* is NIL."
   (let ((cl-tmux::*running* nil)

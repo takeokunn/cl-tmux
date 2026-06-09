@@ -1075,6 +1075,13 @@
           :pane-pid      (if pane (cl-tmux/model:pane-pid    pane) 0)
           :pane-left     (if pane (cl-tmux/model:pane-x      pane) 0)
           :pane-top      (if pane (cl-tmux/model:pane-y      pane) 0)
+          ;; #{pane_right}/#{pane_bottom}: the INCLUSIVE far-edge column/row of the
+          ;; pane (origin + size - 1), matching tmux's wp->xoff+sx-1 / yoff+sy-1.
+          ;; Complements pane_left/pane_top; used by geometry-aware status themes.
+          :pane-right    (if pane (+ (cl-tmux/model:pane-x pane)
+                                     (cl-tmux/model:pane-width pane) -1) 0)
+          :pane-bottom   (if pane (+ (cl-tmux/model:pane-y pane)
+                                     (cl-tmux/model:pane-height pane) -1) 0)
           ;; Geometry-derived variables: the window's layout dimensions and the
           ;; pane's adjacency to the window edges, all pure functions of the
           ;; window/pane structs.  pane_at_* are "1"/"0" flag strings (like
