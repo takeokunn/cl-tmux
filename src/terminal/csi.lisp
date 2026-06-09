@@ -137,6 +137,22 @@
   (push (format nil "~C[?~D;~D$y" #\Escape mode (%decrqm-mode-state screen mode))
         (screen-response-queue screen)))
 
+(defun enqueue-xtwinops-reply (screen op)
+  "Push the XTWINOPS size REPORT for operation OP onto SCREEN's response queue:
+     18 → text-area size in CHARACTERS: ESC [ 8 ; rows ; cols t
+     19 → screen size in characters:    ESC [ 9 ; rows ; cols t
+   Apps query these to learn the grid size.  Other XTWINOPS operations
+   (resize/move/iconify the window, or pixel-size reports cl-tmux cannot answer)
+   enqueue nothing — a multiplexer does not manipulate the outer window, and a
+   wrong pixel size would mislead callers more than no reply."
+  (case op
+    (18 (push (format nil "~C[8;~D;~Dt" #\Escape
+                      (screen-height screen) (screen-width screen))
+              (screen-response-queue screen)))
+    (19 (push (format nil "~C[9;~D;~Dt" #\Escape
+                      (screen-height screen) (screen-width screen))
+              (screen-response-queue screen)))))
+
 ;;; ── CSI rule table ─────────────────────────────────────────────────────────
 
 (define-csi-rules
@@ -323,6 +339,13 @@
   ;; current state (ESC [ ? Ps ; Pm $ y) so apps can detect feature support.
   ((and (eql private #\?) (eql intermed #\$) (char= final #\p))
    (enqueue-decrqm-reply screen p1))
+
+  ;; XTWINOPS — window operations / reports (CSI Ps ; … t, no private marker).
+  ;; We answer the size REPORTS (18 = text area in characters, 19 = screen in
+  ;; characters) so apps can learn the grid size; window-manipulation operations
+  ;; (resize/move/iconify) are no-ops for a multiplexer.
+  ((and (null private) (char= final #\t))
+   (enqueue-xtwinops-reply screen p1))
 
   ;; DECSCUSR — cursor shape: CSI N SP q (intermediate = space, final = q)
   ((and (eql intermed #\Space) (char= final #\q))

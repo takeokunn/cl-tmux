@@ -403,6 +403,37 @@
       (is (some (lambda (r) (search (format nil "~C[?9999;0$y" #\Escape) r)) q)
           "DECRQM unknown mode must report Pm=0 (got ~S)" q))))
 
+;;; ── XTWINOPS size reports (CSI Ps t) ─────────────────────────────────────────
+
+(def-suite xtwinops
+  :description "XTWINOPS size reports (CSI Ps t)"
+  :in terminal-suite)
+(in-suite xtwinops)
+
+(test xtwinops-18-reports-text-area-chars
+  "CSI 18 t reports the text-area size in characters: ESC [ 8 ; rows ; cols t."
+  (with-screen (s 20 5)
+    (feed s (esc "[18t"))
+    (let ((q (cl-tmux/terminal/types:screen-response-queue s)))
+      (is (some (lambda (r) (string= (format nil "~C[8;5;20t" #\Escape) r)) q)
+          "CSI 18 t must report ESC[8;5;20t for a 20x5 screen (got ~S)" q))))
+
+(test xtwinops-19-reports-screen-chars
+  "CSI 19 t reports the screen size in characters: ESC [ 9 ; rows ; cols t."
+  (with-screen (s 20 5)
+    (feed s (esc "[19t"))
+    (let ((q (cl-tmux/terminal/types:screen-response-queue s)))
+      (is (some (lambda (r) (string= (format nil "~C[9;5;20t" #\Escape) r)) q)
+          "CSI 19 t must report ESC[9;5;20t (got ~S)" q))))
+
+(test xtwinops-resize-op-no-reply
+  "A window-manipulation XTWINOPS op (CSI 8 ; 24 ; 80 t resize) enqueues no reply —
+   a multiplexer does not resize the outer window."
+  (with-screen (s 20 5)
+    (feed s (esc "[8;24;80t"))
+    (is (null (cl-tmux/terminal/types:screen-response-queue s))
+        "XTWINOPS resize (op 8) must not enqueue a reply")))
+
 ;;; ── CPR (cursor position report, CSI 6 n) ────────────────────────────────────
 
 (test cpr-at-home-replies-1-1
