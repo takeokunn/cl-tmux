@@ -1223,10 +1223,20 @@
         t))))
 
 (defun %cmd-rename-session (session args)
-  "rename-session <name...>: rename SESSION to the joined ARGS, updating the
-   registry key.  Refuses a name already used by another session (see
-   %rename-session-checked)."
-  (%rename-session-checked session (format nil "~{~A~^ ~}" args)))
+  "rename-session [-t target-session] <name...>: rename the target session (default:
+   the current one) to the joined remaining ARGS, updating the registry key.
+   Refuses a name already used by another session (see %rename-session-checked).
+   Without -t parsing, `rename-session -t old new` would fold the flag tokens into
+   the name and rename the wrong (current) session."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
+    (let* ((target-str (cdr (assoc #\t flags)))
+           (target     (if target-str
+                           (or (find-session-by-target *server-sessions* target-str)
+                               session)
+                           session))
+           (name       (format nil "~{~A~^ ~}" positionals)))
+      (when (plusp (length name))
+        (%rename-session-checked target name)))))
 
 ;;; -- Flag parser (-t target, boolean flags) ----------------------------------
 ;;;

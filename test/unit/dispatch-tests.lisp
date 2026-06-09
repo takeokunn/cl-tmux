@@ -1333,6 +1333,21 @@
       (is (string= "mysess" (session-name s))
           "session must be renamed to 'mysess'"))))
 
+(test run-command-line-rename-session-t-targets-session
+  "'rename-session -t other newname' renames the -t target session, not the
+   current one, and does not fold the flag tokens into the name."
+  (let* ((cur   (make-fake-session))
+         (other (make-fake-session)))
+    (setf (cl-tmux::session-name cur)   "cur"
+          (cl-tmux::session-name other) "other")
+    (let ((cl-tmux::*server-sessions* (list (cons "cur" cur) (cons "other" other))))
+      (with-loop-state
+        (cl-tmux::%run-command-line cur "rename-session -t other newname")
+        (is (string= "newname" (session-name other))
+            "the -t target session must be renamed to 'newname'")
+        (is (string= "cur" (session-name cur))
+            "the current session must be unchanged")))))
+
 (test run-command-line-rename-window-no-arg-opens-prompt
   "'rename-window' with no argument falls through to the prompt (name table)."
   (let ((s (make-fake-session :nwindows 1)))
