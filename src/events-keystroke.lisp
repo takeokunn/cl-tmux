@@ -691,28 +691,65 @@
       (%dispatch-mouse-event session btn col row release-p)))
   (values nil #'%ground-input-state))
 
-(defun %handle-escape-function-key (session buffer)
-  "Handle a complete 4-byte ESC [ N ~ function-key sequence from BUFFER.
-   Dispatches PageUp/PageDown in copy mode; forwards to pane otherwise.
+(defun %csi-tilde-param (buffer length)
+  "Parse the decimal parameter of an ESC [ <digits> ~ sequence (the digits live
+   at indices 2..LENGTH-2).  Returns the integer, or NIL when any byte is not a
+   digit — e.g. a modified function key ESC [ 1 5 ; 2 ~ carries a ';' and so
+   yields NIL, falling through to a raw pane forward rather than a key binding."
+  (let ((value 0))
+    (loop for i from 2 below (1- length)
+          for byte = (aref buffer i)
+          do (if (<= +byte-digit-0+ byte +byte-digit-9+)
+                 (setf value (+ (* value 10) (- byte +byte-digit-0+)))
+                 (return-from %csi-tilde-param nil)))
+    value))
+
+(defun %csi-tilde-key-name (param)
+  "Map the numeric PARAM of an ESC [ <param> ~ sequence to its canonical tmux key
+   name, or NIL when PARAM is not a recognised navigation/function key.  Covers
+   Home/End/Insert/Delete, PageUp/PageDown, and the vt-style F1–F12 finals.  The
+   names match those produced by %parse-key-token on the bind side (after its
+   alias normalisation), so `bind -n F5 <cmd>` / `bind -n PPage <cmd>` resolve."
+  (case param
+    ((1 7) "Home")
+    (2     "Insert")
+    (3     "Delete")
+    ((4 8) "End")
+    (5     "PageUp")
+    (6     "PageDown")
+    (11 "F1") (12 "F2") (13 "F3") (14 "F4")
+    (15 "F5") (17 "F6") (18 "F7") (19 "F8")
+    (20 "F9") (21 "F10") (23 "F11") (24 "F12")
+    (otherwise nil)))
+
+(defun %handle-escape-csi-tilde (session buffer length)
+  "Handle a complete ESC [ <param> ~ sequence at root (LENGTH bytes).  A root-table
+   binding for the canonical key name wins first, so `bind -n F5 <cmd>`,
+   `bind -n PageUp <cmd>`, `bind -n Home <cmd>` … fire.  Failing that the legacy
+   behaviour is preserved: PageUp/PageDown scroll in copy mode, and any other or
+   unbound key is forwarded raw so the pane's application still receives it.
    Returns (values nil #'%ground-input-state)."
-  (let ((parameter-byte (aref buffer 2)))
+  (let* ((param (%csi-tilde-param buffer length))
+         (key   (and param (%csi-tilde-key-name param))))
     (cond
-      ;; PageUp in copy mode: ESC [ 5 ~
-      ((and (= parameter-byte +byte-page-up-param+) (%copy-mode-active-p session))
+      ;; A user binding (`bind -n <key> <cmd>`) overrides every default below.
+      ((and key (%try-bound-string-key session +table-root+ key)))
+      ;; PageUp in copy mode: scroll up one screenful.
+      ((and (eql param 5) (%copy-mode-active-p session))
        (let ((screen (%active-screen session)))
          (when screen
            (copy-mode-scroll screen (screen-height screen))
            (setf *dirty* t))))
-      ;; PageDown in copy mode: ESC [ 6 ~
-      ((and (= parameter-byte +byte-page-down-param+) (%copy-mode-active-p session))
+      ;; PageDown in copy mode: scroll down one screenful.
+      ((and (eql param 6) (%copy-mode-active-p session))
        (let ((screen (%active-screen session)))
          (when screen
            (copy-mode-scroll screen (- (screen-height screen)))
            (setf *dirty* t))))
-      ;; Outside copy mode: forward raw bytes to pane
+      ;; Unbound and not a copy-mode scroll: forward raw bytes to the pane.
       (t
        (unless (%copy-mode-active-p session)
-         (%forward-octets session (subseq buffer 0 4))))))
+         (%forward-octets session (subseq buffer 0 length))))))
   (values nil #'%ground-input-state))
 
 (defun %handle-escape-csi-3byte (session buffer)
@@ -816,12 +853,18 @@
            (if keep-accumulating
                (values nil (make-escape-input-k session buffer))
                (values nil next-state))))
-        ;; ── 4-byte function key: ESC [ N ~ ────────────────────────────────
-        ;; PageUp = ESC [ 5 ~ (+byte-page-up-param+ / +byte-tilde+).
-        ;; PageDown = ESC [ 6 ~ (+byte-page-down-param+ / +byte-tilde+).
-        ((and (= length 4) (= (aref buffer 1) +byte-csi-bracket+)
-              (= (aref buffer 3) +byte-tilde+))
-         (%handle-escape-function-key session buffer))
+        ;; ── Function / navigation key: ESC [ <digits> ~ (any width) ──────
+        ;; Single-digit (Home ESC [ 1 ~, PageUp ESC [ 5 ~, Delete ESC [ 3 ~)
+        ;; and multi-digit (F5 ESC [ 15 ~ … F12 ESC [ 24 ~) alike.  Map the
+        ;; parameter to a canonical key name and run a root binding
+        ;; (`bind -n F5 <cmd>`); unbound keys scroll copy mode (PageUp/Down)
+        ;; or forward raw to the pane.  Placed ahead of the modifier-arrow
+        ;; (ESC [ 1 ; MOD …) branches — those end in a letter, not '~', so the
+        ;; tilde terminator keeps the two cohorts disjoint.
+        ((and (>= length 4) (= (aref buffer 1) +byte-csi-bracket+)
+              (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)
+              (= (aref buffer (1- length)) +byte-tilde+))
+         (%handle-escape-csi-tilde session buffer length))
         ;; ── Modifier+arrow at root: ESC [ 1 ; MOD FINAL (6 bytes) ─────────
         ;; A bare (no-prefix) C-Up / M-Left / S-Down etc.  Without this branch
         ;; the generic 4-byte forward below would ship "ESC [ 1 ;" to the pane

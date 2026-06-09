@@ -1072,6 +1072,106 @@
           (is (search "hi" text)
               "overlay must contain the bound command's output 'hi' (got ~S)" text))))))
 
+;;; ── Function / navigation keys: ESC [ N ~ → key name → binding ───────────────
+
+(test csi-tilde-param-parses-single-and-multi-digit
+  "%csi-tilde-param reads the decimal parameter; a ';' (modified key) yields NIL."
+  ;; ESC [ 5 ~  → 5
+  (is (= 5 (cl-tmux::%csi-tilde-param
+            (make-array 4 :element-type '(unsigned-byte 8)
+                          :initial-contents '(27 91 53 126)) 4)))
+  ;; ESC [ 1 5 ~ → 15  (F5)
+  (is (= 15 (cl-tmux::%csi-tilde-param
+             (make-array 5 :element-type '(unsigned-byte 8)
+                           :initial-contents '(27 91 49 53 126)) 5)))
+  ;; ESC [ 1 ; 5 ~ → NIL (the ';' is not a digit → modified key, forward raw)
+  (is (null (cl-tmux::%csi-tilde-param
+             (make-array 6 :element-type '(unsigned-byte 8)
+                           :initial-contents '(27 91 49 59 53 126)) 6))))
+
+(test csi-tilde-key-name-maps-known-params
+  "%csi-tilde-key-name maps vt parameters to canonical tmux key names."
+  (is (string= "Home"     (cl-tmux::%csi-tilde-key-name 1)))
+  (is (string= "Delete"   (cl-tmux::%csi-tilde-key-name 3)))
+  (is (string= "PageUp"   (cl-tmux::%csi-tilde-key-name 5)))
+  (is (string= "PageDown" (cl-tmux::%csi-tilde-key-name 6)))
+  (is (string= "F5"       (cl-tmux::%csi-tilde-key-name 15)))
+  (is (string= "F12"      (cl-tmux::%csi-tilde-key-name 24)))
+  (is (null (cl-tmux::%csi-tilde-key-name 99))
+      "an unknown parameter must map to NIL (forwarded raw, not bound)"))
+
+(test normalize-key-alias-collapses-navigation-spellings
+  "%normalize-key-alias maps tmux's aliases to the canonical input-side names."
+  (is (string= "PageUp"   (cl-tmux/config::%normalize-key-alias "PPage")))
+  (is (string= "PageDown" (cl-tmux/config::%normalize-key-alias "NPage")))
+  (is (string= "Insert"   (cl-tmux/config::%normalize-key-alias "IC")))
+  (is (string= "Delete"   (cl-tmux/config::%normalize-key-alias "DC")))
+  (is (string= "PageUp"   (cl-tmux/config::%normalize-key-alias "pgup"))
+      "alias matching is case-insensitive")
+  (is (null (cl-tmux/config::%normalize-key-alias "F5"))
+      "a non-alias token returns NIL so %parse-key-token keeps it verbatim"))
+
+(test parse-key-token-normalizes-aliases-to-canonical
+  "%parse-key-token collapses PPage→PageUp so bind-side and input-side keys match."
+  (is (string= "PageUp"   (cl-tmux/config::%parse-key-token "PPage")))
+  (is (string= "PageDown" (cl-tmux/config::%parse-key-token "NPage")))
+  (is (string= "Insert"   (cl-tmux/config::%parse-key-token "IC")))
+  (is (string= "F5"       (cl-tmux/config::%parse-key-token "F5"))
+      "a canonical/non-alias name passes through unchanged"))
+
+(test function-key-root-binding-fires-from-byte-stream
+  "bind -n F5 fires when ESC [ 1 5 ~ is fed through the input state machine."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (let ((state (cl-tmux::make-input-state)))
+        (key-table-bind "root" "F5" :next-window)
+        (unwind-protect
+             (progn
+               ;; ESC [ 1 5 ~  byte by byte.
+               (dolist (byte '(27 91 49 53 126))
+                 (cl-tmux::process-byte s byte state))
+               (is (eq (second (session-windows s)) (session-active-window s))
+                   "ESC [ 15 ~ must resolve to F5 and fire its root binding")
+               (is (eq #'cl-tmux::%ground-input-state
+                       (cl-tmux::input-state-continuation state))
+                   "the state machine must return to ground after ESC [ 15 ~"))
+          (let ((tbl (gethash "root" *key-tables*)))
+            (when tbl (remhash "F5" tbl))))))))
+
+(test page-up-alias-root-binding-fires-from-byte-stream
+  "bind -n PPage (alias of PageUp) fires when ESC [ 5 ~ is fed: the alias
+   normalisation and the input-side key name meet at the canonical \"PageUp\"."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (let ((state (cl-tmux::make-input-state))
+            (key   (cl-tmux/config::%parse-key-token "PPage")))
+        (key-table-bind "root" key :next-window)
+        (unwind-protect
+             (progn
+               ;; ESC [ 5 ~  byte by byte.
+               (dolist (byte '(27 91 53 126))
+                 (cl-tmux::process-byte s byte state))
+               (is (eq (second (session-windows s)) (session-active-window s))
+                   "ESC [ 5 ~ must resolve to PageUp and fire the PPage binding"))
+          (let ((tbl (gethash "root" *key-tables*)))
+            (when tbl (remhash key tbl))))))))
+
+(test unbound-function-key-forwards-to-pane-not-bindings
+  "An unbound F5 (ESC [ 15 ~) leaves the state machine at ground without firing a
+   binding — preserving transparency so the pane application receives the key."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (let ((state (cl-tmux::make-input-state))
+            (before (session-active-window s)))
+        ;; No binding installed for F5: feeding ESC [ 15 ~ must not switch windows.
+        (dolist (byte '(27 91 49 53 126))
+          (cl-tmux::process-byte s byte state))
+        (is (eq before (session-active-window s))
+            "an unbound F5 must not trigger any window command")
+        (is (eq #'cl-tmux::%ground-input-state
+                (cl-tmux::input-state-continuation state))
+            "the state machine must return to ground after an unbound ESC [ 15 ~")))))
+
 ;;; ── dispatch :select-layout-spread ─────────────────────────────────────────
 
 (test dispatch-select-layout-spread-applies-even-horizontal
@@ -2478,21 +2578,21 @@
         (is (eq #'cl-tmux::%ground-input-state next)
             "%handle-escape-x10-mouse must return ground-state as next state")))))
 
-;;; ── %handle-escape-function-key outside copy mode ───────────────────────────
+;;; ── %handle-escape-csi-tilde outside copy mode ──────────────────────────────
 
 (test handle-escape-function-key-forwards-outside-copy-mode
-  "%handle-escape-function-key forwards the 4-byte sequence when not in copy mode."
+  "%handle-escape-csi-tilde forwards the sequence when not in copy mode and unbound."
   (let ((s (make-fake-session)))
     (with-loop-state
-      ;; Build an ESC [ 5 ~ (PageUp) buffer — not in copy mode.
+      ;; Build an ESC [ 5 ~ (PageUp) buffer — not in copy mode, no binding.
       (let ((buf (make-array 4 :element-type '(unsigned-byte 8)
                                :initial-contents (list 27 91 53 126))))
         (multiple-value-bind (outcome next)
-            (cl-tmux::%handle-escape-function-key s buf)
+            (cl-tmux::%handle-escape-csi-tilde s buf 4)
           (is (null outcome)
-              "%handle-escape-function-key outside copy-mode must return NIL outcome")
+              "%handle-escape-csi-tilde outside copy-mode must return NIL outcome")
           (is (eq #'cl-tmux::%ground-input-state next)
-              "%handle-escape-function-key must return ground-state"))))))
+              "%handle-escape-csi-tilde must return ground-state"))))))
 
 ;;; ── %handle-escape-csi-3byte: keep-accumulating for digit ───────────────────
 
