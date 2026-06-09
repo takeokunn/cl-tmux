@@ -218,6 +218,9 @@
    #:screen-response-queue
    #:screen-passthrough-queue
    #:screen-clipboard-queue
+   ;; OSC 10/11 default foreground/background colours
+   #:screen-osc-default-fg
+   #:screen-osc-default-bg
    ;; Grid helpers
    #:screen-cell
    #:screen-clear-dirty

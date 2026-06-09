@@ -123,6 +123,73 @@
     (is (string= "icon-name" (cl-tmux/terminal/types:screen-title s))
         "screen-title must be set to 'icon-name' after OSC 1")))
 
+;;; ── OSC 10/11 dynamic colours ────────────────────────────────────────────────
+
+(defun %feed-osc (s payload)
+  "Feed an OSC sequence (ESC ] PAYLOAD ST) to screen S via screen-process-bytes."
+  (screen-process-bytes s
+    (babel:string-to-octets (format nil "~C]~A~C\\" #\Escape payload #\Escape)
+                            :encoding :utf-8)))
+
+(test parse-osc-color-forms
+  "%parse-osc-color parses #RRGGBB, #RGB and rgb:R/G/B; rejects junk."
+  (is (= #xFF8000 (cl-tmux/terminal/parser::%parse-osc-color "#ff8000")) "#RRGGBB")
+  (is (= #xFF0000 (cl-tmux/terminal/parser::%parse-osc-color "#f00")) "#RGB expands (0xF→0xFF)")
+  (is (= #xFF0000 (cl-tmux/terminal/parser::%parse-osc-color "rgb:ffff/0000/0000"))
+      "rgb: with 16-bit channels scales down to 8-bit")
+  (is (= #x00FF00 (cl-tmux/terminal/parser::%parse-osc-color "rgb:00/ff/00"))
+      "rgb: with 8-bit channels")
+  (is (null (cl-tmux/terminal/parser::%parse-osc-color "tomato")) "named colour → NIL")
+  (is (null (cl-tmux/terminal/parser::%parse-osc-color "rgb:zz/00/00")) "bad hex → NIL"))
+
+(test osc-11-query-reports-default-background
+  "OSC 11 ; ? queries the default background; cl-tmux replies on the response-queue
+   with the stored colour (black by default), so apps can detect a dark theme."
+  (with-screen (s 20 5)
+    (%feed-osc s "11;?")
+    (let ((replies (cl-tmux/terminal/types:screen-response-queue s)))
+      (is (= 1 (length replies)) "exactly one OSC 11 reply is enqueued")
+      (is (string= (format nil "~C]11;rgb:0000/0000/0000~C\\" #\Escape #\Escape)
+                   (first replies))
+          "reply reports black background (got ~S)" (first replies)))))
+
+(test osc-10-query-reports-default-foreground
+  "OSC 10 ; ? reports the default foreground (white) as rgb:ffff/ffff/ffff."
+  (with-screen (s 20 5)
+    (%feed-osc s "10;?")
+    (is (string= (format nil "~C]10;rgb:ffff/ffff/ffff~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "OSC 10 query reports white foreground")))
+
+(test osc-11-set-updates-default-background
+  "OSC 11 ; rgb:ffff/0000/0000 sets the stored background to 0xFF0000 and replies
+   to nothing (only queries reply)."
+  (with-screen (s 20 5)
+    (%feed-osc s "11;rgb:ffff/0000/0000")
+    (is (= #xFF0000 (cl-tmux/terminal/types:screen-osc-default-bg s))
+        "OSC 11 set updates screen-osc-default-bg to 0xFF0000")
+    (is (null (cl-tmux/terminal/types:screen-response-queue s))
+        "a SET must not enqueue a reply")))
+
+(test osc-11-query-after-set-roundtrips
+  "After OSC 11 sets the background, OSC 11 ; ? reports the new colour back."
+  (with-screen (s 20 5)
+    (%feed-osc s "11;#3366ff")
+    (%feed-osc s "11;?")
+    (is (string= (format nil "~C]11;rgb:3333/6666/ffff~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "query after #3366ff reports rgb:3333/6666/ffff")))
+
+(test osc-111-resets-default-background
+  "OSC 111 (no parameter) resets the default background to black after a set —
+   exercising the parameterless OSC dispatch path."
+  (with-screen (s 20 5)
+    (%feed-osc s "11;#ffffff")
+    (is (= #xFFFFFF (cl-tmux/terminal/types:screen-osc-default-bg s)) "bg set to white")
+    (%feed-osc s "111")
+    (is (= #x000000 (cl-tmux/terminal/types:screen-osc-default-bg s))
+        "OSC 111 resets the background to black")))
+
 (test osc-bel-no-crash
   "An OSC sequence terminated by BEL is consumed without crashing."
   (with-screen (s 10 2)

@@ -132,7 +132,15 @@
   ;; Copy-mode line-selection flag: T when V (line-select) mode is active
   (copy-line-selection-p nil :type boolean)
   ;; Copy-mode rectangle-select flag: T when 'r' toggles rectangle mode
-  (copy-rect-select-p nil :type boolean))
+  (copy-rect-select-p nil :type boolean)
+  ;; OSC 10 / OSC 11 default foreground / background colour, as 0xRRGGBB.
+  ;; Apps query these (OSC 10 ; ? / OSC 11 ; ?) to detect the terminal's
+  ;; light/dark theme and SET them (OSC 10 ; <colour>); OSC 110 / 111 reset to
+  ;; the defaults below.  Reported back through response-queue.  Defaults are the
+  ;; conventional white-on-black (must match +osc-default-fg+ / +osc-default-bg+
+  ;; in parser-osc.lisp, used by the 110/111 reset path).
+  (osc-default-fg #xFFFFFF :type (unsigned-byte 24))
+  (osc-default-bg #x000000 :type (unsigned-byte 24)))
 
 (defun %make-blank-cells (cell-count)
   "Allocate a simple vector of CELL-COUNT blank cells (space, default colour, no attrs).

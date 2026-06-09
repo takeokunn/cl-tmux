@@ -184,6 +184,82 @@
           (if slash (%percent-decode (subseq after-scheme slash)) "/"))
         body)))
 
+;;; ── OSC 10/11 dynamic colours (default fg/bg) ────────────────────────────────
+;;;
+;;; OSC 10 (foreground) and OSC 11 (background) let an application QUERY the
+;;; terminal's default colours (body "?") — commonly to detect a light vs dark
+;;; theme — or SET them (body a colour spec).  OSC 110/111 reset them.  cl-tmux is
+;;; the terminal from the inner app's view, so it must answer queries itself
+;;; (real tmux relays to the outer terminal); it reports the stored default,
+;;; white-on-black until an app changes it.  Replies go on the response-queue and
+;;; are written back to the PTY by the reader loop, exactly like the DA1/DSR path.
+
+(defconstant +osc-default-fg+ #xFFFFFF
+  "Default OSC 10 foreground (white); the OSC 110 reset target.")
+(defconstant +osc-default-bg+ #x000000
+  "Default OSC 11 background (black); the OSC 111 reset target.")
+
+(defun %scale-hex-channel (digits)
+  "Scale a 1-4 hex-digit colour channel string to 0-255 (xterm rgb: semantics:
+   normalise by the field's maximum 16^n-1).  NIL on a bad / out-of-range field."
+  (let ((n (length digits)))
+    (when (<= 1 n 4)
+      (let ((value (ignore-errors (parse-integer digits :radix 16))))
+        (when value
+          (round (* value 255) (1- (expt 16 n))))))))
+
+(defun %parse-hash-color (hex)
+  "Parse a #RGB or #RRGGBB hex string (without the leading #) to 0xRRGGBB, or NIL."
+  (flet ((hx (s) (ignore-errors (parse-integer s :radix 16))))
+    (case (length hex)
+      (6 (hx hex))
+      (3 (let ((r (hx (subseq hex 0 1))) (g (hx (subseq hex 1 2))) (b (hx (subseq hex 2 3))))
+           (when (and r g b)
+             (logior (ash (* r 17) 16) (ash (* g 17) 8) (* b 17)))))   ; 0xF → 0xFF
+      (t nil))))
+
+(defun %parse-rgb-color (channels)
+  "Parse an xterm 'R/G/B' channel string (each 1-4 hex digits) to 0xRRGGBB, or NIL."
+  (let ((slash1 (position #\/ channels)))
+    (when slash1
+      (let ((slash2 (position #\/ channels :start (1+ slash1))))
+        (when slash2
+          (let ((r (%scale-hex-channel (subseq channels 0 slash1)))
+                (g (%scale-hex-channel (subseq channels (1+ slash1) slash2)))
+                (b (%scale-hex-channel (subseq channels (1+ slash2)))))
+            (when (and r g b)
+              (logior (ash r 16) (ash g 8) b))))))))
+
+(defun %parse-osc-color (spec)
+  "Parse an X11/xterm colour SPEC to a 24-bit 0xRRGGBB integer, or NIL when it is
+   not a recognised form.  Handles #RGB, #RRGGBB and rgb:R/G/B (1-4 digits per
+   channel).  Named colours and other forms are not recognised."
+  (cond
+    ((and (plusp (length spec)) (char= (char spec 0) #\#))
+     (%parse-hash-color (subseq spec 1)))
+    ((and (>= (length spec) 4) (string= (subseq spec 0 4) "rgb:"))
+     (%parse-rgb-color (subseq spec 4)))
+    (t nil)))
+
+(defun %osc-color-reply (command rgb)
+  "Build the OSC reply reporting RGB (0xRRGGBB) for an OSC COMMAND query:
+   ESC ] <command> ; rgb:RRRR/GGGG/BBBB ST.  Each 8-bit channel is doubled to the
+   16-bit form xterm uses (0xFF → ffff), matching what apps expect to parse back."
+  (flet ((chan (c) (format nil "~(~4,'0X~)" (* c #x101))))
+    (let ((r (ldb (byte 8 16) rgb)) (g (ldb (byte 8 8) rgb)) (b (ldb (byte 8 0) rgb)))
+      (format nil "~C]~D;rgb:~A/~A/~A~C\\"
+              #\Escape command (chan r) (chan g) (chan b) #\Escape))))
+
+(defun %osc-color-command (screen command body current-rgb set-fn)
+  "Handle an OSC 10/11 colour command.  BODY \"?\" → enqueue a reply reporting
+   CURRENT-RGB onto SCREEN's response-queue; otherwise parse BODY as a colour and
+   apply it via SET-FN.  An unparseable colour is ignored (default left unchanged)."
+  (if (string= body "?")
+      (push (%osc-color-reply command current-rgb)
+            (screen-response-queue screen))
+      (let ((rgb (%parse-osc-color body)))
+        (when rgb (funcall set-fn rgb)))))
+
 (define-osc-rules
   ;; OSC 0 / OSC 1 / OSC 2: set the title.  OSC 0 sets icon + window title, OSC 1
   ;; the icon name, OSC 2 the window title; cl-tmux keeps a single title, so all
@@ -194,6 +270,20 @@
   ;; OSC 7: report current working directory (file://host/path) → #{pane_current_path}
   (7
    (set-screen-cwd screen (%osc7-path body)))
+
+  ;; OSC 10: query/set default foreground colour
+  (10
+   (%osc-color-command screen 10 body (screen-osc-default-fg screen)
+                       (lambda (rgb) (setf (screen-osc-default-fg screen) rgb))))
+
+  ;; OSC 11: query/set default background colour (light/dark theme detection)
+  (11
+   (%osc-color-command screen 11 body (screen-osc-default-bg screen)
+                       (lambda (rgb) (setf (screen-osc-default-bg screen) rgb))))
+
+  ;; OSC 110 / 111: reset foreground / background to the built-in defaults
+  (110 (setf (screen-osc-default-fg screen) +osc-default-fg+))
+  (111 (setf (screen-osc-default-bg screen) +osc-default-bg+))
 
   ;; OSC 52: clipboard write — handled by the dedicated helper
   (52
@@ -226,14 +316,19 @@
 (defun %dispatch-osc (screen payload-buffer)
   "Parse accumulated OSC payload PAYLOAD-BUFFER and apply side effects to SCREEN.
    Handles:
-     OSC 0 and OSC 2 — set the window title
-     OSC 52          — write clipboard data (Base64-encoded)"
+     OSC 0/1/2        — set the window title
+     OSC 7            — report current working directory
+     OSC 10/11        — query/set default foreground/background colour
+     OSC 110/111      — reset default foreground/background colour
+     OSC 52           — write clipboard data (Base64-encoded)
+   The command field is the integer before the first ';'; a payload with NO ';'
+   (e.g. OSC 110) is a parameterless command with an empty body."
   (let* ((payload  (babel:octets-to-string payload-buffer :encoding :utf-8 :errorp nil))
-         (semi-pos (position #\; payload)))
-    (when semi-pos
-      (let ((command (%parse-osc-command payload semi-pos))
-            (body    (subseq payload (1+ semi-pos))))
-        (%dispatch-osc-command screen command body)))))
+         (semi-pos (position #\; payload))
+         (command  (%parse-osc-command payload (or semi-pos (length payload))))
+         (body     (if semi-pos (subseq payload (1+ semi-pos)) "")))
+    (when command
+      (%dispatch-osc-command screen command body))))
 
 ;;; ── CPS OSC accumulator continuations ──────────────────────────────────────
 ;;;
