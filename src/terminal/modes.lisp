@@ -4,10 +4,26 @@
 
 ;;; ── Alt-screen helpers ──────────────────────────────────────────────────────
 
+(defvar *alternate-screen-enabled-function* nil
+  "A zero-argument function returning whether the `alternate-screen` option is on
+   (non-NIL = the alt screen is allowed).  Installed by the higher layer from the
+   option, mirroring *history-limit-function* — keeps this terminal layer free of
+   any options dependency.  When NIL (unset), the alt screen is allowed (the
+   default), so behaviour is unchanged unless a policy is installed.")
+
+(defun %alternate-screen-allowed-p ()
+  "True when entering the alternate screen is permitted: no policy installed
+   (default allow) or the installed policy reports the option enabled."
+  (or (null *alternate-screen-enabled-function*)
+      (funcall *alternate-screen-enabled-function*)))
+
 (defun enter-alt-screen (screen)
   "Save the current grid and cursor to the alt-screen slots, then install a
-   fresh blank grid.  No-op when the alt screen is already active."
-  (unless (screen-alt-cells screen)
+   fresh blank grid.  No-op when the alt screen is already active, or when the
+   `alternate-screen` option is off — full-screen apps then draw on the MAIN
+   screen (and their output stays in scrollback), matching tmux."
+  (unless (or (not (%alternate-screen-allowed-p))
+              (screen-alt-cells screen))
     (setf (screen-alt-cells  screen) (copy-seq (screen-cells screen))
           (screen-alt-cursor-x screen) (screen-cursor-x screen)
           (screen-alt-cursor-y screen) (screen-cursor-y screen))

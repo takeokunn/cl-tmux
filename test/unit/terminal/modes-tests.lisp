@@ -43,6 +43,32 @@
         "primary content not restored after alt-screen round-trip: ~S"
         (row-string s 0 :end 5))))
 
+(test alternate-screen-off-suppresses-alt-buffer
+  "When the alternate-screen policy reports off, ESC[?1049h does NOT switch to the
+   alt buffer — full-screen app output stays on the MAIN screen (and scrollback)."
+  (with-screen (s 10 5)
+    (let ((cl-tmux/terminal:*alternate-screen-enabled-function* (lambda () nil)))
+      (feed s "primary")
+      (feed s (esc "[?1049h"))   ; normally enters the alt screen — suppressed here
+      (feed s "ALT")
+      (is (null (cl-tmux/terminal/types::screen-alt-cells s))
+          "alternate-screen off must leave the alt buffer uninitialised")
+      (is (search "ALT" (row-string s 0 :end 10))
+          "app output must land on the main screen when alt screen is off (got ~S)"
+          (row-string s 0 :end 10)))))
+
+(test alternate-screen-on-still-enters-alt-buffer
+  "With the policy reporting on (default), ESC[?1049h still enters the alt screen."
+  (with-screen (s 10 5)
+    (let ((cl-tmux/terminal:*alternate-screen-enabled-function* (lambda () t)))
+      (feed s "hello")
+      (feed s (esc "[?1049h"))
+      (is (not (null (cl-tmux/terminal/types::screen-alt-cells s)))
+          "alternate-screen on must initialise the alt buffer")
+      (feed s (esc "[?1049l"))
+      (is (string= "hello" (row-string s 0 :end 5))
+          "primary content must be restored after the alt round-trip"))))
+
 (test alt-screen-1047-save-restore
   "ESC[?1047h / ESC[?1047l (alt screen buffer, the 1049 component) round-trips the
    primary screen content."

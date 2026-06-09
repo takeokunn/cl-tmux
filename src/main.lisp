@@ -77,6 +77,10 @@
   ;; Install the history-limit callback so scroll.lisp uses the option value.
   (setf cl-tmux/terminal:*history-limit-function*
         (lambda () (cl-tmux/options:get-option "history-limit")))
+  ;; Install the alternate-screen policy so the emulator honours the option:
+  ;; off → full-screen apps draw on the main screen (output stays in scrollback).
+  (setf cl-tmux/terminal:*alternate-screen-enabled-function*
+        (lambda () (cl-tmux/options:get-option "alternate-screen")))
 
   ;; Apply the user config file — searches cl-tmux config, XDG tmux config, and
   ;; ~/.tmux.conf in priority order (NIL triggers auto-detection).
@@ -169,6 +173,10 @@
   (setf cl-tmux/config:*config-condition-evaluator* (%make-format-condition-evaluator))
   (setf cl-tmux/terminal:*history-limit-function*
         (lambda () (cl-tmux/options:get-option "history-limit")))
+  ;; Install the alternate-screen policy so the emulator honours the option:
+  ;; off → full-screen apps draw on the main screen (output stays in scrollback).
+  (setf cl-tmux/terminal:*alternate-screen-enabled-function*
+        (lambda () (cl-tmux/options:get-option "alternate-screen")))
   (ignore-errors (load-config-file nil))
   ;; A control client may have no controlling tty; fall back to 80x24.
   (multiple-value-bind (r c) (ignore-errors (terminal-size))
