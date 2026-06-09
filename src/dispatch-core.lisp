@@ -131,7 +131,9 @@
          (let ((,new-win (session-active-window ,sess)))
            (unless (eq ,old-win ,new-win)
              (%notify-pane-focus ,old-pane nil)
-             (%notify-pane-focus (and ,new-win (window-active-pane ,new-win)) t)))))))
+             (%notify-pane-focus (and ,new-win (window-active-pane ,new-win)) t)
+             ;; tmux's session-window-changed event hook: the active window changed.
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-window-changed+ ,sess)))))))
 
 ;;; -- Private command helpers ------------------------------------------------
 

@@ -3178,6 +3178,19 @@
         (cl-tmux::%cmd-select-window s '("-n"))   ; select next window
         (is-true fired "after-select-window hook must fire")))))
 
+(test session-window-changed-hook-fires-on-window-switch
+  "session-window-changed fires when the active window actually changes (the
+   focus-transition diff covers any switch path, not just select-window)."
+  (with-isolated-hooks
+    (let ((s (make-fake-session :nwindows 2))
+          (fired nil))
+      (with-loop-state
+        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-session-window-changed+
+                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+        (cl-tmux::%cmd-select-window s '("-n"))   ; switch to the next window
+        (is-true fired
+                 "session-window-changed must fire when the active window changes")))))
+
 (test resize-pane-fires-after-resize-pane-hook
   "resize-pane fires +hook-after-resize-pane+ (covers both the resize-pane command
    and the C-b H/J/K/L keybind path, which share this function)."
