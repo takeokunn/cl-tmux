@@ -1113,6 +1113,25 @@
       (is (string= "default-value" (cl-tmux/options:get-option "@plugin-opt"))
           "-o must set the option when it is currently unset"))))
 
+(test cmd-set-option-clustered-ga-appends
+  "'set -ga name val' (clustered -g -a) APPENDS — regression: the cluster was
+   parsed as -g only, silently dropping -a and overwriting instead of appending."
+  (with-isolated-config
+    (let ((s (make-fake-session)))
+      (cl-tmux/options:set-option "@opt" "A")
+      (cl-tmux::%run-command-line s "set -ga @opt B")
+      (is (string= "AB" (cl-tmux/options:get-option "@opt"))
+          "set -ga must append B to A, yielding AB"))))
+
+(test cmd-set-option-F-expands-format-value
+  "'set -gF name #{...}' expands the format value once at set time."
+  (with-isolated-config
+    (let ((s (make-fake-session)))               ; session name is \"0\"
+      (with-loop-state
+        (cl-tmux::%run-command-line s "set -gF @opt #{session_name}")
+        (is (string= "0" (cl-tmux/options:get-option "@opt"))
+            "-F must store the expanded session name, not the literal #{...}")))))
+
 (test run-command-line-rename-window
   "'rename-window <name>' renames the active window."
   (let ((s (make-fake-session :nwindows 1)))
@@ -4133,29 +4152,57 @@
 
 ;;; ── %parse-flag-token helper ──────────────────────────────────────────────
 
+;;; %parse-flag-token returns a LIST of (char . value) entries (one per char in a
+;;; cluster), so each assertion reads (first entries) / (second entries).
+
 (test parse-flag-token-value-attached
   "%parse-flag-token with attached value (-t2) extracts value without consuming remaining."
-  (multiple-value-bind (entry new-rest)
+  (multiple-value-bind (entries new-rest)
       (cl-tmux::%parse-flag-token "-t2" "t" '("foo"))
-    (is (eql #\t (car entry)) "flag char must be #\\t")
-    (is (equal "2" (cdr entry)) "attached value must be \"2\"")
+    (is (eql #\t (car (first entries))) "flag char must be #\\t")
+    (is (equal "2" (cdr (first entries))) "attached value must be \"2\"")
     (is (equal '("foo") new-rest) "remaining tokens must be unchanged")))
 
 (test parse-flag-token-value-separate
   "%parse-flag-token with separate value (-t 2) consumes the next token."
-  (multiple-value-bind (entry new-rest)
+  (multiple-value-bind (entries new-rest)
       (cl-tmux::%parse-flag-token "-t" "t" '("2" "foo"))
-    (is (eql #\t (car entry)) "flag char must be #\\t")
-    (is (equal "2" (cdr entry)) "value must be \"2\" from next token")
+    (is (eql #\t (car (first entries))) "flag char must be #\\t")
+    (is (equal "2" (cdr (first entries))) "value must be \"2\" from next token")
     (is (equal '("foo") new-rest) "next token must be consumed")))
 
 (test parse-flag-token-boolean
   "%parse-flag-token with a boolean flag (-d) does not consume next token."
-  (multiple-value-bind (entry new-rest)
+  (multiple-value-bind (entries new-rest)
       (cl-tmux::%parse-flag-token "-d" "t" '("foo"))
-    (is (eql #\d (car entry)) "flag char must be #\\d")
-    (is (eq t (cdr entry)) "boolean flag value must be T")
+    (is (eql #\d (car (first entries))) "flag char must be #\\d")
+    (is (eq t (cdr (first entries))) "boolean flag value must be T")
     (is (equal '("foo") new-rest) "remaining tokens must be unchanged")))
+
+(test parse-flag-token-clusters-boolean-flags
+  "%parse-flag-token splits a cluster of boolean flags: -ga → -g -a."
+  (multiple-value-bind (entries new-rest)
+      (cl-tmux::%parse-flag-token "-ga" "" '("foo"))
+    (is (equal '(#\g #\a) (mapcar #'car entries)) "must yield both #\\g and #\\a")
+    (is (every (lambda (e) (eq t (cdr e))) entries) "both must be boolean T")
+    (is (equal '("foo") new-rest) "no token consumed for boolean cluster")))
+
+(test parse-flag-token-cluster-stops-at-value-flag
+  "A value-flag inside a cluster ends it and takes the remainder as its value:
+   -gp50 with p a value-flag → -g and (p . \"50\")."
+  (multiple-value-bind (entries new-rest)
+      (cl-tmux::%parse-flag-token "-gp50" "p" '("foo"))
+    (is (equal '(#\g #\p) (mapcar #'car entries)))
+    (is (eq t   (cdr (first entries)))  "-g is boolean")
+    (is (equal "50" (cdr (second entries))) "-p takes the attached remainder \"50\"")
+    (is (equal '("foo") new-rest) "attached value means no token consumed")))
+
+(test parse-command-flags-clustered-ga
+  "%parse-command-flags expands a clustered -ga into separate -g and -a entries."
+  (multiple-value-bind (flags positionals)
+      (cl-tmux::%parse-command-flags '("-ga" "name" "val") "")
+    (is (and (assoc #\g flags) (assoc #\a flags)) "both -g and -a must be present")
+    (is (equal '("name" "val") positionals) "positionals unaffected")))
 
 ;;; ── rename-session via command line updates *server-sessions* ───────────────
 

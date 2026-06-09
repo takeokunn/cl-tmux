@@ -1046,14 +1046,26 @@
    -a appends VALUE to the option's current global value; -u unsets the global
    option (removes the override, reverting to the registered default).  -a/-u
    always operate on the GLOBAL store regardless of -w/-p.
+   -F expands #{...} format variables in VALUE once, now, before storing (e.g.
+   `set -gF status-left '#{host}'` stores the resolved hostname).
    NOTE: this fixes `set -g status off`, which previously set an option literally
    named \"-g\"."
   (multiple-value-bind (flags positionals) (%parse-command-flags args "")
-    (let ((name  (first positionals))
-          (value (format nil "~{~A~^ ~}" (rest positionals)))
-          (globalp (and (assoc #\g flags) t))
-          (windowp (and (assoc #\w flags) t))
-          (panep   (and (assoc #\p flags) t)))
+    (let* ((name  (first positionals))
+           (raw-value (format nil "~{~A~^ ~}" (rest positionals)))
+           ;; -F: expand the value as a format string against the active context
+           ;; before it is stored (one-shot resolution, vs. lazy status formats).
+           (value (if (assoc #\F flags)
+                      (cl-tmux/format:expand-format
+                       raw-value
+                       (cl-tmux/format:format-context-from-session
+                        session
+                        (session-active-window session)
+                        (session-active-pane session)))
+                      raw-value))
+           (globalp (and (assoc #\g flags) t))
+           (windowp (and (assoc #\w flags) t))
+           (panep   (and (assoc #\p flags) t)))
       (when name
         (cond
           ;; -u: unset option — remove from hash table so the default is used.
@@ -1141,21 +1153,38 @@
 ;;; the rest are boolean (T).  Used by select-window/-pane and any future -t cmd.
 
 (defun %parse-flag-token (token value-flags remaining-tokens)
-  "Parse one flag TOKEN whose first char is #\\-.
-   Returns (values flag-entry new-remaining) where FLAG-ENTRY is (char . value)
-   and NEW-REMAINING is the residual token list after consuming a value argument
-   when the flag char is in VALUE-FLAGS.
-   TOKEN must have length >= 2 and token[0] = #\\-."
-  (let ((flag-char (char token 1)))
-    (if (find flag-char value-flags)
-        (let ((attached (when (> (length token) 2) (subseq token 2))))
-          (if attached
-              (values (cons flag-char attached) remaining-tokens)
-              (values (cons flag-char (if remaining-tokens
-                                          (first remaining-tokens)
-                                          ""))
-                      (if remaining-tokens (rest remaining-tokens) nil))))
-        (values (cons flag-char t) remaining-tokens))))
+  "Parse one flag TOKEN (token[0] = #\\- and token[1] != #\\-) into one or more
+   flag entries, supporting CLUSTERED boolean flags the way tmux does:
+   -ga = -g -a, -dP = -d -P, -gF = -g -F.  Returns (values FLAG-ENTRIES
+   NEW-REMAINING): FLAG-ENTRIES is a list of (char . value) conses; NEW-REMAINING
+   is the residual token list after a value-flag consumes its argument.
+   Clustering stops at the first value-flag char (one in VALUE-FLAGS): the rest of
+   the token becomes its attached value (e.g. -p50 → (#\\p . \"50\")), or the next
+   token is consumed when nothing is attached (e.g. -t target).  Boolean flags
+   before it each become their own (char . T) entry."
+  (let ((entries nil)
+        (len     (length token))
+        (i       1))
+    (block scan
+      (loop while (< i len) do
+        (let ((ch (char token i)))
+          (if (find ch value-flags)
+              ;; Value-flag: the remainder of the token is its attached value;
+              ;; otherwise consume the next whole token.  Ends the cluster.
+              (let ((attached (when (< (1+ i) len) (subseq token (1+ i)))))
+                (if attached
+                    (push (cons ch attached) entries)
+                    (progn
+                      (push (cons ch (if remaining-tokens (first remaining-tokens) ""))
+                            entries)
+                      (setf remaining-tokens (if remaining-tokens
+                                                 (rest remaining-tokens)
+                                                 nil))))
+                (return-from scan))
+              ;; Boolean flag: record it and continue clustering.
+              (progn (push (cons ch t) entries)
+                     (incf i))))))
+    (values (nreverse entries) remaining-tokens)))
 
 (defun %parse-command-flags (tokens &optional (value-flags ""))
   "Split TOKENS into (values FLAGS POSITIONALS).  A -X token is a flag; when X is
@@ -1170,9 +1199,11 @@
            (if (and (>= (length token) 2)
                     (char= (char token 0) #\-)
                     (char/= (char token 1) #\-))
-               (multiple-value-bind (entry new-rest)
+               (multiple-value-bind (entries new-rest)
                    (%parse-flag-token token value-flags rest)
-                 (push entry flags)
+                 ;; ENTRIES is a list (clustered boolean flags expand to several);
+                 ;; push each so the final NREVERSE restores declaration order.
+                 (dolist (e entries) (push e flags))
                  (setf rest new-rest))
                (push token positionals))
         finally (return (values (nreverse flags) (nreverse positionals)))))
