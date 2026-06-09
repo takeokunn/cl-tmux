@@ -140,7 +140,10 @@
   ;; conventional white-on-black (must match +osc-default-fg+ / +osc-default-bg+
   ;; in parser-osc.lisp, used by the 110/111 reset path).
   (osc-default-fg #xFFFFFF :type (unsigned-byte 24))
-  (osc-default-bg #x000000 :type (unsigned-byte 24)))
+  (osc-default-bg #x000000 :type (unsigned-byte 24))
+  ;; OSC 8 current hyperlink URI: set by OSC 8 ; params ; URI, cleared by OSC 8 ; ;.
+  ;; Stamped onto each cell written while non-NIL (see %write-normal-cell).
+  (current-hyperlink nil :type (or null string)))
 
 (defun %make-blank-cells (cell-count)
   "Allocate a simple vector of CELL-COUNT blank cells (space, default colour, no attrs).

@@ -509,7 +509,7 @@
 (test place-wide-char-writes-lead-and-continuation
   :description "%place-wide-char writes a width-2 lead cell and width-0 continuation."
   (with-screen (s 10 5)
-    (cl-tmux/terminal/actions::%place-wide-char s 0 0 #\中 7 0 0 0 0)
+    (cl-tmux/terminal/actions::%place-wide-char s 0 0 #\中 7 0 0 0 0 nil)
     (let ((lead (screen-cell s 0 0))
           (cont (screen-cell s 1 0)))
       (is (char= #\中 (cell-char lead)) "lead cell char must be 中")
@@ -520,7 +520,7 @@
   :description "%place-wide-char at the last column skips writing the continuation cell."
   (with-screen (s 5 5)
     ;; Place a wide char at x=4 (last column); x+1=5 >= width, so no continuation
-    (cl-tmux/terminal/actions::%place-wide-char s 4 0 #\中 7 0 0 0 0)
+    (cl-tmux/terminal/actions::%place-wide-char s 4 0 #\中 7 0 0 0 0 nil)
     (let ((lead (screen-cell s 4 0)))
       (is (char= #\中 (cell-char lead)) "lead cell must be 中 even at last column")
       (is (= 2 (cell-width lead))       "lead cell width must be 2"))))

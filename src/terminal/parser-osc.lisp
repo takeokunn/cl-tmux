@@ -334,6 +334,15 @@
   (7
    (set-screen-cwd screen (%osc7-path body)))
 
+  ;; OSC 8: hyperlink — OSC 8 ; params ; URI.  Set the screen's current hyperlink
+  ;; to URI (params, e.g. id=…, are ignored); an empty URI (OSC 8 ; ;) clears it.
+  ;; Subsequent cells carry the hyperlink; the renderer re-emits OSC 8 around them.
+  (8
+   (let* ((semi (position #\; body))
+          (uri  (if semi (subseq body (1+ semi)) "")))
+     (setf (screen-current-hyperlink screen)
+           (and (plusp (length uri)) uri))))
+
   ;; OSC 10: query/set default foreground colour
   (10
    (%osc-color-command screen 10 body (screen-osc-default-fg screen)

@@ -135,6 +135,7 @@
    #:cell-ul-color
    #:cell-combining
    #:cell-width
+   #:cell-hyperlink
    #:blank-cell
    #:clamp
    #:safe-code-char
@@ -221,6 +222,8 @@
    ;; OSC 10/11 default foreground/background colours
    #:screen-osc-default-fg
    #:screen-osc-default-bg
+   ;; OSC 8 current hyperlink
+   #:screen-current-hyperlink
    ;; Grid helpers
    #:screen-cell
    #:screen-clear-dirty
@@ -400,6 +403,7 @@
    #:cell-ul-color
    #:cell-combining
    #:cell-width
+   #:cell-hyperlink
    ;; Auto-wrap mode
    #:screen-autowrap
    #:screen-pending-wrap

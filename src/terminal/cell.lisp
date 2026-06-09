@@ -52,6 +52,10 @@
   ;; Combining characters appended after the base char (zero-width marks).
   ;; NIL when no combining chars are present; a list of characters otherwise.
   (combining nil :type list)
+  ;; OSC 8 hyperlink URI active when this cell was written, or NIL.  The renderer
+  ;; re-emits OSC 8 around runs of cells sharing a hyperlink so the outer terminal
+  ;; makes them clickable (transparency for ls --hyperlink, gcc, pagers, …).
+  (hyperlink nil :type (or null string))
   (width 1       :type (integer 0 2)))      ; 1 normal, 2 wide lead, 0 continuation
 
 (defun blank-cell ()

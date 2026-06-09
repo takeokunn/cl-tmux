@@ -40,6 +40,30 @@
           "exactly one wide glyph should be printed (got ~D in ~S)"
           (count #\あ out) out))))
 
+;;; -- OSC 8 hyperlinks re-emitted around their cell span ----------------------
+
+(test render-pane-emits-osc-8-hyperlink
+  "A cell written under OSC 8 is re-emitted with its hyperlink (set before the
+   cell, cleared after) so the outer terminal makes it clickable."
+  (let* ((pane   (make-test-pane 10 2))
+         (screen (pane-screen pane)))
+    (feed screen (format nil "~C]8;;https://x~C\\X" #\Escape #\Escape))
+    (let ((out (with-output-to-string (s) (cl-tmux/renderer::render-pane s pane))))
+      (is (search (format nil "~C]8;;https://x~C\\" #\Escape #\Escape) out)
+          "render-pane must emit OSC 8 set for the hyperlinked cell (got ~S)" out)
+      (is (search (format nil "~C]8;;~C\\" #\Escape #\Escape) out)
+          "render-pane must emit an OSC 8 clear after the link span (got ~S)" out))))
+
+(test render-pane-no-osc-8-without-hyperlink
+  "Plain content (no OSC 8) emits no OSC 8 sequence — existing render output is
+   unchanged for the common no-hyperlink case."
+  (let* ((pane   (make-test-pane 10 2))
+         (screen (pane-screen pane)))
+    (feed screen "plain")
+    (let ((out (with-output-to-string (s) (cl-tmux/renderer::render-pane s pane))))
+      (is (null (search (format nil "~C]8;" #\Escape) out))
+          "no OSC 8 must be emitted when no cell has a hyperlink (got ~S)" out))))
+
 ;;; -- window-style / window-active-style (pane background recolour) -----------
 
 (test color-name-to-cell-color-maps-names-palette-and-truecolor

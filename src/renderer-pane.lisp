@@ -229,7 +229,7 @@
 
 (defun %render-cell-row (stream screen pane-col-count row
                          sel-active sel-start-row sel-end-row sel-start-col sel-end-col
-                         prev-fg-cell prev-bg-cell prev-attrs-cell
+                         prev-fg-cell prev-bg-cell prev-attrs-cell prev-hyperlink-cell
                          def-fg def-bg ms-fg ms-bg)
   "Render one row of cells to STREAM, highlighting selected cells.
    PREV-FG-CELL / PREV-BG-CELL / PREV-ATTRS-CELL are single-element lists used
@@ -271,6 +271,13 @@
                  (setf (car prev-fg-cell)    fg
                        (car prev-bg-cell)    bg
                        (car prev-attrs-cell) attrs))
+               ;; OSC 8 hyperlink: re-emit when entering/leaving/changing a link
+               ;; span so the outer terminal makes those cells clickable.
+               (let ((hl (cell-hyperlink cell)))
+                 (unless (equal hl (car prev-hyperlink-cell))
+                   (write-string (format nil "~C]8;;~@[~A~]~C\\" #\Escape hl #\Escape)
+                                 stream)
+                   (setf (car prev-hyperlink-cell) hl)))
                (write-char (cell-char cell) stream))))
 
 (defun render-pane (stream pane)
@@ -304,14 +311,21 @@
           ;; %render-cell-row can update them without returning multiple values.
           (let ((prev-fg-cell    (list -1))
                 (prev-bg-cell    (list -1))
-                (prev-attrs-cell (list -1)))
+                (prev-attrs-cell (list -1))
+                ;; OSC 8 hyperlink register (NIL = no open link), threaded across
+                ;; rows so a link spanning rows stays open.
+                (prev-hyperlink-cell (list nil)))
             (loop for row below pane-height do
               (move-to stream (+ origin-y row) origin-x)
               (%render-cell-row stream screen pane-width row
                                 sel-active sel-start-row sel-end-row
                                 sel-start-col sel-end-col
                                 prev-fg-cell prev-bg-cell prev-attrs-cell
-                                def-fg def-bg ms-fg ms-bg))))
+                                prev-hyperlink-cell
+                                def-fg def-bg ms-fg ms-bg))
+            ;; Close any hyperlink still open at the end of the pane (OSC 8 ; ;).
+            (when (car prev-hyperlink-cell)
+              (write-string (format nil "~C]8;;~C\\" #\Escape #\Escape) stream))))
         (screen-clear-dirty screen))))
     ;; Clock-mode overlay: draw a digital clock if this pane is the clock pane.
     (when (eql cl-tmux::*clock-mode-pane-id* (pane-id pane))

@@ -226,6 +226,24 @@
     (is (null (cl-tmux/terminal/types:screen-response-queue s))
         "an OSC 4 SET must not enqueue a reply")))
 
+;;; ── OSC 8 hyperlinks ─────────────────────────────────────────────────────────
+
+(test osc-8-stamps-cell-hyperlink
+  "OSC 8 ; ; URI sets the current hyperlink so the next written cell carries it;
+   OSC 8 ; ; clears it (the following cell has no hyperlink)."
+  (with-screen (s 20 5)
+    (%feed-osc s "8;;https://example.com")
+    (feed s "X")
+    (%feed-osc s "8;;")        ; clear the hyperlink
+    (feed s "Y")
+    (is (string= "https://example.com"
+                 (cl-tmux/terminal/types:cell-hyperlink
+                  (cl-tmux/terminal/types:screen-cell s 0 0)))
+        "the cell written under OSC 8 must carry the hyperlink")
+    (is (null (cl-tmux/terminal/types:cell-hyperlink
+               (cl-tmux/terminal/types:screen-cell s 1 0)))
+        "the cell after OSC 8 ; ; must have no hyperlink")))
+
 (test osc-bel-no-crash
   "An OSC sequence terminated by BEL is consumed without crashing."
   (with-screen (s 10 2)

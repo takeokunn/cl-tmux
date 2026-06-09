@@ -182,16 +182,16 @@
       (t
        (setf (screen-cursor-x screen) (1- (screen-width screen)))))))
 
-(defun %place-wide-char (screen x y char fg bg attrs attrs2 ul-color)
+(defun %place-wide-char (screen x y char fg bg attrs attrs2 ul-color hyperlink)
   "Place a double-width character at (X,Y) and write its continuation cell.
    The continuation cell is written only if (1+ X) is within the screen."
   (setf (screen-cell screen x y)
         (make-cell :char char :fg fg :bg bg :attrs attrs :attrs2 attrs2
-                   :ul-color ul-color :width 2))
+                   :ul-color ul-color :hyperlink hyperlink :width 2))
   (when (< (1+ x) (screen-width screen))
     (setf (screen-cell screen (1+ x) y)
           (make-cell :char #\Space :fg fg :bg bg :attrs attrs :attrs2 attrs2
-                     :ul-color ul-color :width 0))))
+                     :ul-color ul-color :hyperlink hyperlink :width 0))))
 
 ;;; DEC special graphics character set (G1; activated by ESC ( 0).
 ;;; Maps ASCII code points (in the range used by line-drawing apps) to the
@@ -292,7 +292,8 @@
       (setf (screen-cursor-x screen) 0)
       (cursor-down/scroll screen))
     (%place-wide-char screen (screen-cursor-x screen) (screen-cursor-y screen)
-                      ch fg bg attrs attrs2 ul-color)
+                      ch fg bg attrs attrs2 ul-color
+                      (screen-current-hyperlink screen))
     (%mark-dirty screen)
     (%advance-cursor screen 2)))
 
@@ -307,7 +308,8 @@
         (ul-color (screen-cur-ul-color screen)))
     (setf (screen-cell screen x y)
           (make-cell :char ch :fg fg :bg bg :attrs attrs :attrs2 attrs2
-                     :ul-color ul-color :width 1))
+                     :ul-color ul-color :hyperlink (screen-current-hyperlink screen)
+                     :width 1))
     (%mark-dirty screen)
     (%advance-cursor screen 1)))
 
