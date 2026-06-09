@@ -955,9 +955,12 @@
         (cond
           ;; No command after flags: a flag-only invocation is a no-op but handled.
           ((null command) t)
-          ;; -C: run a tmux command, not a shell command.  Wiring tmux-command
-          ;; execution here is out of scope; treat as handled/no-op for now.
-          (tmux-command-p t)
+          ;; -C: the argument is a tmux command, not a shell command — run it
+          ;; through the config dispatcher (same path if-shell uses for its
+          ;; then/else commands).  e.g. `run-shell -C 'display-message hi'`.
+          (tmux-command-p
+           (ignore-errors (apply-config-directive (%config-tokens command)))
+           t)
           ;; Shell command: run it the same way the fixed-arity entries do.
           (t
            (let ((expanded (%expand-leading-tilde command)))

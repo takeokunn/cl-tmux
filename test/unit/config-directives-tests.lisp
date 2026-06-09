@@ -1781,3 +1781,23 @@ bind-key r source-file /dev/null"))
   (is-true  (cl-tmux/config::%if-shell-format-true-p "yes"))
   (is-false (cl-tmux/config::%if-shell-format-true-p "0"))
   (is-false (cl-tmux/config::%if-shell-format-true-p "")))
+
+;;; ── run-shell -C : run a tmux command, not a shell command ───────────────────
+
+(test run-shell-C-runs-tmux-command
+  "run-shell -C 'set -g status-left FOO' runs the tmux command via the config
+   dispatcher (was a documented no-op), and reports itself handled."
+  (with-isolated-config
+    (let ((handled (cl-tmux/config::%apply-run-shell-directive
+                    "run-shell" '("-C" "set -g status-left FOO"))))
+      (is (eq t handled) "run-shell must report handled")
+      (is (string= "FOO" (cl-tmux/options:get-option "status-left"))
+          "-C must execute the tmux command (set the option)"))))
+
+(test run-shell-C-alias-run-also-works
+  "The 'run' alias with -C executes the tmux command too."
+  (with-isolated-config
+    (cl-tmux/config::%apply-run-shell-directive
+     "run" '("-C" "set -g status-right BAR"))
+    (is (string= "BAR" (cl-tmux/options:get-option "status-right"))
+        "run -C must execute the tmux command")))
