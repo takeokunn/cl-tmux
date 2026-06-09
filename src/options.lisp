@@ -138,6 +138,10 @@
   ("terminal-overrides"       :string  "")
   ;; Window/pane defaults
   ("allow-rename"             :boolean t)
+  ;; aggressive-resize: accepted for .tmux.conf compatibility but INERT by design —
+  ;; cl-tmux's multi-client sizing is governed by the window-size option
+  ;; (smallest/largest/latest/manual), which subsumes the per-window aggressive
+  ;; behaviour.  Setting it parses cleanly and is intentionally a no-op.
   ("aggressive-resize"        :boolean nil)
   ("alternate-screen"         :boolean t)
   ;; main-horizontal / main-vertical layout: size of the main (first) pane.
@@ -180,14 +184,21 @@
   ("window-size"              :string  "smallest")
   ;; Input handling
   ("extended-keys"            :string  "off")   ; off / on / always
-  ("key-table"                :string  "prefix") ; default key table
+  ("key-table"                :string  "prefix") ; accepted; default key table (INERT —
+                                                 ; the active table is driven by the prefix
+                                                 ; and switch-client -T, not this option)
   ("prefix2"                  :string  "")      ; secondary prefix key
   ;; History / logging
-  ("history-file"             :string  "")      ; save command history here
-  ("fill-character"           :string  "")      ; char to fill empty areas
+  ("history-file"             :string  "")      ; save command-prompt history here (wired)
+  ;; fill-character: accepted for compat but INERT — cl-tmux's split tree tiles the
+  ;; whole window, so there is no unfilled area for a fill character to occupy.
+  ("fill-character"           :string  "")
   ;; Locking
-  ("lock-command"             :string  "lock -np") ; command to run on lock
-  ;; Status format (tmux 3.2+ array-style; stored as single string here)
+  ("lock-command"             :string  "lock -np") ; accepted; external locker (INERT — cl-tmux
+                                                   ; renders its own internal lock screen)
+  ;; status-format (tmux 3.2+ array-style; stored as a single string).  Accepted but
+  ;; INERT — cl-tmux composes the status line from status-left / the window list /
+  ;; status-right rather than expanding a raw status-format[] template.
   ("status-format"            :string  "")
   ;; Popup defaults
   ("popup-border-lines"       :string  "single")
