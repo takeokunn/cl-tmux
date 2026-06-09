@@ -80,7 +80,8 @@
 
 ;;; ── Parameterized state constructors ───────────────────────────────────────
 
-(defun make-csi-k (&optional (params '()) (param-accumulator nil) (intermed nil))
+(defun make-csi-k (&optional (params '()) (param-accumulator nil) (intermed nil)
+                             (private nil))
   "Return a continuation that collects CSI parameters then dispatches.
    Handles the standard VT/ECMA-48 CSI parameter syntax:
      param bytes        +csi-digit-low+ to +csi-digit-high+  (digits 0-9)
@@ -100,28 +101,30 @@
       ((and (>= byte +csi-digit-low+) (<= byte +csi-digit-high+))
        (make-csi-k params
                    (+ (* (or param-accumulator 0) 10) (- byte +csi-digit-low+))
-                   intermed))
+                   intermed private))
       ;; Semicolon: flush the accumulator as the current parameter, start fresh.
       ((= byte +csi-semicolon+)
-       (make-csi-k (cons (or param-accumulator 0) params) nil intermed))
+       (make-csi-k (cons (or param-accumulator 0) params) nil intermed private))
       ;; ? — DEC private-mode marker byte (selects DEC private sequences).
-      ;; This is a VT convention 'marker byte', stored in intermed like a true
-      ;; intermediate byte but not in the #x20-#x2F range.
+      ;; Recorded in the PRIVATE slot (separate from a true intermediate) so that
+      ;; sequences carrying BOTH — e.g. DECRQM "CSI ? Ps $ p" — keep the ? marker
+      ;; even when a #x20-#x2F intermediate ($) follows.
       ((= byte +csi-dec-marker+)
-       (make-csi-k params param-accumulator #\?))
+       (make-csi-k params param-accumulator intermed #\?))
       ;; > — secondary DA marker byte (selects secondary device attribute queries).
       ((= byte +csi-sec-da+)
-       (make-csi-k params param-accumulator #\>))
+       (make-csi-k params param-accumulator intermed #\>))
       ;; Intermediate bytes (SPACE through 0x2F): record as intermed.
-      ;; SPACE (#x20) is the most common (used by DECSCUSR "CSI N SP q").
+      ;; SPACE (#x20) is the most common (used by DECSCUSR "CSI N SP q");
+      ;; $ (#x24) appears in DECRQM.  Does NOT disturb the private marker.
       ((and (>= byte +csi-intermed-low+) (<= byte +csi-intermed-high+))
-       (make-csi-k params param-accumulator (code-char byte)))
+       (make-csi-k params param-accumulator (code-char byte) private))
       ;; Final byte (0x40-0x7E): flush accumulator, reverse collected params, dispatch.
       ((and (>= byte +csi-final-low+) (<= byte +csi-final-high+))
        (let ((all-params (nreverse (if param-accumulator
                                        (cons param-accumulator params)
                                        params))))
-         (execute-csi screen (code-char byte) intermed all-params))
+         (execute-csi screen (code-char byte) intermed private all-params))
        #'ground-state)
       ;; Anything else: abort CSI (e.g. C0 controls inside a sequence).
       (t #'ground-state))))

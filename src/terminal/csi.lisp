@@ -22,16 +22,17 @@
    Expands into a DEFUN for EXECUTE-CSI that dispatches via COND.
    Unknown final bytes or unrecognized (INTERMED, FINAL) combinations are
    silently ignored and return (values), matching real-terminal behaviour."
-  `(defun execute-csi (screen final intermed params)
+  `(defun execute-csi (screen final intermed private params)
      "Dispatch one complete CSI escape sequence to its terminal action.
       SCREEN is the target screen struct.  FINAL is the sequence's final byte as
-      a character.  INTERMED is the optional intermediate byte (e.g. #\\Space for
-      DECSCUSR, #\\? for DEC private sequences, #\\> for secondary DA), or NIL.
-      PARAMS is the list of integer parameters (possibly empty).
+      a character.  INTERMED is the optional true intermediate byte (#x20-#x2F,
+      e.g. #\\Space for DECSCUSR, #\\$ for DECRQM), or NIL.  PRIVATE is the optional
+      private/marker byte (#\\? for DEC private sequences, #\\> for secondary DA),
+      or NIL.  PARAMS is the list of integer parameters (possibly empty).
       Unknown sequences are silently ignored; no error is signalled."
      (declare (type screen screen)
               (type character final)
-              (ignorable intermed))
+              (ignorable intermed private))
      (let* ((p1  (or (first  params) 0))
             (p2  (or (second params) 0))
             (p1* (max 1 p1))
@@ -99,6 +100,30 @@
   "Push the Secondary Device Attributes response (ESC [ > 1 ; 10 ; 0 c)
    onto SCREEN's response queue."
   (push (format nil "~C[>1;10;0c" #\Escape)
+        (screen-response-queue screen)))
+
+(defun %decrqm-mode-state (screen mode)
+  "DECRQM reply value for DEC private MODE: 1 = set, 2 = reset, 0 = not recognised.
+   Reports from the screen's tracked mode flags so an application querying support
+   gets an accurate answer; an unknown mode reports 0 (so the app falls back)."
+  (flet ((b (x) (if x 1 2)))
+    (case mode
+      (1    (b (screen-app-cursor-keys screen)))            ; DECCKM
+      (6    (b (screen-origin-mode screen)))                ; DECOM
+      (25   (b (screen-cursor-visible screen)))             ; DECTCEM
+      (1000 (b (= (screen-mouse-mode screen) 1)))           ; X10/normal mouse
+      (1002 (b (= (screen-mouse-mode screen) 2)))           ; button-event mouse
+      (1003 (b (= (screen-mouse-mode screen) 3)))           ; any-event mouse
+      (1004 (b (screen-focus-events screen)))               ; focus reporting
+      ((47 1047 1049) (b (and (screen-alt-cells screen) t))) ; alternate screen
+      (2004 (b (screen-bracketed-paste screen)))            ; bracketed paste
+      (2026 2)   ; synchronized output: accepted but not a persistent mode → reset
+      (t    0))))
+
+(defun enqueue-decrqm-reply (screen mode)
+  "Push the DECRQM report (ESC [ ? MODE ; Pm $ y) onto SCREEN's response queue,
+   where Pm is %decrqm-mode-state for MODE."
+  (push (format nil "~C[?~D;~D$y" #\Escape mode (%decrqm-mode-state screen mode))
         (screen-response-queue screen)))
 
 ;;; ── CSI rule table ─────────────────────────────────────────────────────────
@@ -256,30 +281,37 @@
 
   ;; DA1 – Primary Device Attributes (CSI c or CSI 0 c)
   ;; Response: ESC [ ? 1 ; 2 c  (VT100 with AVO)
-  ((and (null intermed) (char= final #\c))
+  ;; DA1 (CSI c): require NO private marker so it does not shadow DA2 (CSI > c),
+  ;; whose '>' now lives in PRIVATE rather than INTERMED.
+  ((and (null intermed) (null private) (char= final #\c))
    (enqueue-da1-reply screen))
 
   ;; DA2 – Secondary Device Attributes (CSI > c or CSI > 0 c)
   ;; Response: ESC [ > 1 ; 10 ; 0 c
-  ((and (eql intermed #\>) (char= final #\c))
+  ((and (eql private #\>) (char= final #\c))
    (enqueue-da2-reply screen))
 
   ;; XTPUSHTITLE – push window title onto the title stack (CSI > Ps t)
   ;; XTPOPTITLE  – pop window title from the stack (CSI < Ps t)
   ;; These are accepted silently; our title is a single slot so we just no-op.
   ;; Applications use these to save/restore the window title across operations.
-  ((and (eql intermed #\>) (char= final #\t))
+  ((and (eql private #\>) (char= final #\t))
    (values))  ; push title — no-op (no title stack implemented)
-  ((and (eql intermed #\<) (char= final #\t))
+  ((and (eql private #\<) (char= final #\t))
    (values))  ; pop title — no-op
 
   ;; DEC Private Mode Set (?...h) — e.g. ?1049h enters the alternate screen
-  ((and (eql intermed #\?) (char= final #\h))
+  ((and (eql private #\?) (char= final #\h))
    (dec-pm-set screen params))
 
   ;; DEC Private Mode Reset (?...l) — e.g. ?1049l exits the alternate screen
-  ((and (eql intermed #\?) (char= final #\l))
+  ((and (eql private #\?) (char= final #\l))
    (dec-pm-reset screen params))
+
+  ;; DECRQM — Request DEC private Mode (CSI ? Ps $ p): reply with the mode's
+  ;; current state (ESC [ ? Ps ; Pm $ y) so apps can detect feature support.
+  ((and (eql private #\?) (eql intermed #\$) (char= final #\p))
+   (enqueue-decrqm-reply screen p1))
 
   ;; DECSCUSR — cursor shape: CSI N SP q (intermediate = space, final = q)
   ((and (eql intermed #\Space) (char= final #\q))

@@ -376,6 +376,33 @@
       (is (some (lambda (r) (search ">1;" r)) q)
           "DA2 response must contain >1;"))))
 
+;;; ── DECRQM (request DEC private mode, CSI ? Ps $ p) ──────────────────────────
+
+(test decrqm-reports-set-mode
+  "DECRQM CSI ? 25 $ p reports the cursor-visibility mode as SET (Pm=1) by default."
+  (with-screen (s 20 5)
+    (feed s (esc "[?25$p"))
+    (let ((q (cl-tmux/terminal/types:screen-response-queue s)))
+      (is (some (lambda (r) (search (format nil "~C[?25;1$y" #\Escape) r)) q)
+          "DECRQM ?25 must report set (Pm=1) when the cursor is visible (got ~S)" q))))
+
+(test decrqm-reports-reset-mode
+  "After ?25l (hide cursor) DECRQM reports the mode as RESET (Pm=2)."
+  (with-screen (s 20 5)
+    (feed s (esc "[?25l"))     ; hide cursor
+    (feed s (esc "[?25$p"))
+    (let ((q (cl-tmux/terminal/types:screen-response-queue s)))
+      (is (some (lambda (r) (search (format nil "~C[?25;2$y" #\Escape) r)) q)
+          "DECRQM ?25 must report reset (Pm=2) after ?25l (got ~S)" q))))
+
+(test decrqm-unknown-mode-reports-zero
+  "DECRQM for an unrecognised mode reports Pm=0 (not recognised)."
+  (with-screen (s 20 5)
+    (feed s (esc "[?9999$p"))
+    (let ((q (cl-tmux/terminal/types:screen-response-queue s)))
+      (is (some (lambda (r) (search (format nil "~C[?9999;0$y" #\Escape) r)) q)
+          "DECRQM unknown mode must report Pm=0 (got ~S)" q))))
+
 ;;; ── CPR (cursor position report, CSI 6 n) ────────────────────────────────────
 
 (test cpr-at-home-replies-1-1
@@ -667,21 +694,21 @@
 (test execute-csi-cup-direct
   "execute-csi called directly with final #\\H and params '(3 5) positions cursor."
   (with-screen (s 20 10)
-    (cl-tmux/terminal/csi:execute-csi s #\H nil '(3 5))
+    (cl-tmux/terminal/csi:execute-csi s #\H nil nil '(3 5))
     ;; CUP: row=3 (1-based) → y=2; col=5 (1-based) → x=4
     (check-cursor s 4 2)))
 
 (test execute-csi-sgr-direct
   "execute-csi with final #\\m and params '(31) sets foreground via the SGR path."
   (with-screen (s 20 10)
-    (cl-tmux/terminal/csi:execute-csi s #\m nil '(31))
+    (cl-tmux/terminal/csi:execute-csi s #\m nil nil '(31))
     (is (= 1 (cl-tmux/terminal/types:screen-cur-fg s))
         "execute-csi SGR 31 must set cur-fg to 1 (red)")))
 
 (test execute-csi-unknown-final-is-noop
   "execute-csi with an unrecognized final byte is silently ignored (no error, no state change)."
   (with-screen (s 20 10)
-    (finishes (cl-tmux/terminal/csi:execute-csi s #\z nil '()))
+    (finishes (cl-tmux/terminal/csi:execute-csi s #\z nil nil '()))
     ;; Screen state must be at defaults.
     (check-cursor s 0 0)
     (check-sgr-state s :fg 7 :bg 0 :attrs 0)))
@@ -690,7 +717,7 @@
   "execute-csi with a recognized final but unrecognized intermed byte is silently ignored."
   (with-screen (s 20 10)
     ;; #\! intermed with #\H final is not defined — should be a no-op.
-    (finishes (cl-tmux/terminal/csi:execute-csi s #\H #\! '(3 5)))
+    (finishes (cl-tmux/terminal/csi:execute-csi s #\H #\! nil '(3 5)))
     ;; Cursor must remain at origin (no CUP fired).
     (check-cursor s 0 0)))
 
