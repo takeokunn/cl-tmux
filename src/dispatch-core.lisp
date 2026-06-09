@@ -1742,6 +1742,17 @@
             (session-touch existing)
             (unless detach-p (setf *dirty* t))
             (return-from %cmd-new-session-arg existing))))
+      ;; Without -A, a name already in use cannot be taken over (server-add-session
+      ;; would orphan the existing session): an EXPLICIT -s duplicate is refused
+      ;; (tmux's "duplicate session"); an AUTO name bumps to the next free number.
+      (when (and (not attach-if-exists) (server-find-session name))
+        (if (cdr (assoc #\s flags))
+            (progn
+              (show-overlay (format nil "duplicate session: ~A" name))
+              (return-from %cmd-new-session-arg nil))
+            (setf name (loop for i from 1
+                             for candidate = (format nil "~D" i)
+                             unless (server-find-session candidate) return candidate))))
       ;; Create a new session
       (let ((new-sess (new-session name rows cols :start-dir start-dir)))
         ;; Apply window name if given

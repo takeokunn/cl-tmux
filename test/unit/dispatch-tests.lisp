@@ -4770,3 +4770,46 @@
       (is (= 1 (window-id w2)) "with -a, the window lands after index 0 = index 1")
       (is (= 3 (length (remove-duplicates (mapcar #'window-id (session-windows s)))))
           "indices remain distinct"))))
+
+;;; ── new-session -s duplicate-name handling ───────────────────────────────────
+
+(test new-session-explicit-duplicate-name-refused
+  "new-session -s NAME with an existing session NAME (no -A) is refused — the
+   existing session is not orphaned."
+  (with-loop-state
+    (let ((existing (make-fake-session)) (caller (make-fake-session)))
+      (setf (cl-tmux::session-name existing) "work")
+      (let ((cl-tmux::*server-sessions* (list (cons "work" existing)))
+            (*overlay* nil))
+        (is (null (cl-tmux::%cmd-new-session-arg caller '("-s" "work")))
+            "duplicate -s name is refused (returns nil)")
+        (is (eq existing (cl-tmux::server-find-session "work"))
+            "the existing session is intact, not orphaned")
+        (is (= 1 (length cl-tmux::*server-sessions*))
+            "no second session was created")))))
+
+(test new-session-A-attaches-to-existing
+  "new-session -A -s NAME attaches to (returns) the existing session NAME."
+  (with-loop-state
+    (let ((existing (make-fake-session)) (caller (make-fake-session)))
+      (setf (cl-tmux::session-name existing) "work")
+      (let ((cl-tmux::*server-sessions* (list (cons "work" existing))))
+        (is (eq existing (cl-tmux::%cmd-new-session-arg caller '("-A" "-s" "work")))
+            "-A returns the existing session")
+        (is (= 1 (length cl-tmux::*server-sessions*))
+            "no new session created")))))
+
+(test new-session-auto-name-avoids-collision
+  "An auto-generated session name that would collide bumps to the next free
+   number instead of orphaning the existing session."
+  (with-loop-state
+    (let ((s2 (make-fake-session)))
+      (setf (cl-tmux::session-name s2) "2")
+      (let ((cl-tmux::*server-sessions* (list (cons "2" s2)))
+            (*overlay* nil))
+        (let ((new (cl-tmux::%cmd-new-session-arg s2 '("-d"))))
+          (is (not (null new)) "a session was created")
+          (is (not (string= "2" (cl-tmux::session-name new)))
+              "the new session did not reuse the colliding name 2")
+          (is (eq s2 (cl-tmux::server-find-session "2"))
+              "the existing session 2 is intact"))))))
