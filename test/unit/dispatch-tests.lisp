@@ -3823,6 +3823,24 @@
 
 ;;; ── split-window arg command ─────────────────────────────────────────────────
 
+(test parse-split-size-absolute-vs-percentage
+  "%parse-split-size: a plain integer is absolute cells; an N% value is a real
+   fraction (modern tmux's `-l 30%`, equivalent to the deprecated `-p 30`)."
+  (is (eql 30 (cl-tmux::%parse-split-size "30"))
+      "\"30\" → 30 absolute cells (integer)")
+  (is (= 0.30 (cl-tmux::%parse-split-size "30%"))
+      "\"30%\" → 0.30 fraction")
+  (is (= 0.5 (cl-tmux::%parse-split-size "50%"))
+      "\"50%\" → 0.5 fraction")
+  (is (= 1.0 (cl-tmux::%parse-split-size "100%"))
+      "\"100%\" → 1.0 fraction")
+  (is (null (cl-tmux::%parse-split-size nil))
+      "NIL value → NIL")
+  (is (floatp (cl-tmux::%parse-split-size "30%"))
+      "a percentage must be a real (fraction), not an integer cell count")
+  (is (integerp (cl-tmux::%parse-split-size "30"))
+      "an absolute value must stay an integer (cells)"))
+
 (test run-command-line-split-window-default-vertical-stack
   "%run-command-line split-window (no flags) adds a new pane below."
   (let ((s (make-fake-session :nwindows 1 :npanes 1)))

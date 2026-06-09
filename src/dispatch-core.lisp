@@ -1730,6 +1730,17 @@
                  (%format-pane-info session new-win new-pane)))))
         new-win))))
 
+(defun %parse-split-size (lines-str)
+  "Parse a split-window/-l value: \"30\" → 30 (absolute cells, an integer), \"30%\"
+   → 0.30 (a real fraction of the parent, equivalent to -p 30).  Modern tmux folds
+   the deprecated -p into `-l N%`.  Returns NIL for a missing or non-numeric value."
+  (when lines-str
+    (let ((pct-pos (position #\% lines-str)))
+      (if pct-pos
+          (let ((n (parse-integer lines-str :end pct-pos :junk-allowed t)))
+            (and n (/ n 100.0)))
+          (parse-integer lines-str :junk-allowed t)))))
+
 (defun %cmd-split-window (session args)
   "split-window [-h|-v] [-b] [-f] [-d] [-t target] [-p percent] [-l size] [-c start-dir] [-e VAR=val].
    -h: horizontal split (new pane to the right; side-by-side).
@@ -1740,7 +1751,8 @@
    -d: split but do not change focus (detached mode).
    -t target: split the target pane instead of the active pane.
    -p N: size as a percentage of the parent pane (0-100).
-   -l N: size in lines/columns (absolute integer).
+   -l N: size in lines/columns (absolute integer), or -l N% as a percentage
+     (modern tmux folds the deprecated -p into -l N%).
    -c dir: start directory for the new pane's shell (format strings expanded).
    -e VAR=val: set environment variable in the new pane (repeatable).
    -P: print the new pane's details to overlay.
@@ -1766,8 +1778,8 @@
                                          session win pane)))
                              (cl-tmux/format:expand-format raw-dir ctx))))
            (pct          (and pct-str (parse-integer pct-str :junk-allowed t)))
-           (lines        (and lines-str (parse-integer lines-str :junk-allowed t)))
-           (size         (or (and pct (/ pct 100.0)) lines)))
+           ;; -l N → N cells; -l N% → fraction (modern tmux); -p N → fraction.
+           (size         (or (and pct (/ pct 100.0)) (%parse-split-size lines-str))))
       ;; -t target: temporarily make the target pane active so %cmd-split
       ;; operates on it.  Restore the previous active pane afterwards if -d.
       (let* ((prev-win  (session-active-window session))
