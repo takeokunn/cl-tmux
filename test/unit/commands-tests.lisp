@@ -2426,6 +2426,51 @@
     (is-true  (cl-tmux::%window-matches-pattern-p wa "ALP") "case-insensitive name match")
     (is-false (cl-tmux::%window-matches-pattern-p wa "beta") "non-matching name → NIL")))
 
+;;; ── next-window / previous-window (scriptable -t) ────────────────────────────
+
+(test cmd-next-window-cycles-current-session
+  "next-window (no -t) advances the current session's active window."
+  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)   ; alpha(active) beta gamma
+    (declare (ignore wa wg))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-next-window-arg sess '())
+      (is (eq wb (session-active-window sess))
+          "next-window advances alpha → beta"))))
+
+(test cmd-previous-window-wraps-backward
+  "previous-window from the first window wraps to the last."
+  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+    (declare (ignore wa wb))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-previous-window-arg sess '())
+      (is (eq wg (session-active-window sess))
+          "previous-window from alpha wraps to gamma"))))
+
+(test cmd-next-window-t-targets-named-session
+  "next-window -t NAME advances the NAMED session's window, leaving the current
+   session's active window unchanged."
+  (let* ((pc (%make-test-pane :id 1)) (poa (%make-test-pane :id 2))
+         (pob (%make-test-pane :id 3))
+         (cur-win (make-window :id 1 :name "cur" :width 20 :height 5
+                               :tree (make-layout-leaf pc) :panes (list pc)))
+         (cur     (make-session :id 1 :name "cur" :windows (list cur-win)))
+         (o-a (make-window :id 2 :name "oa" :width 20 :height 5
+                           :tree (make-layout-leaf poa) :panes (list poa)))
+         (o-b (make-window :id 3 :name "ob" :width 20 :height 5
+                           :tree (make-layout-leaf pob) :panes (list pob)))
+         (other (make-session :id 2 :name "other" :windows (list o-a o-b))))
+    (session-select-window cur cur-win)
+    (session-select-window other o-a)
+    (let ((cl-tmux::*server-sessions* (list (cons "cur" cur) (cons "other" other)))
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-next-window-arg cur '("-t" "other"))
+      (is (eq o-b (session-active-window other))
+          "next-window -t other advanced the OTHER session to its second window")
+      (is (eq cur-win (session-active-window cur))
+          "the current session's active window stays unchanged"))))
+
 ;;; ── pipe-pane-open / pipe-pane-close / pipe-pane-write ──────────────────────
 
 (test pipe-pane-open-returns-stream

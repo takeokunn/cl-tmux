@@ -2492,6 +2492,32 @@
             (setf *dirty* t)
             t))))))
 
+(defun %cycle-window-in-target (session args cycler)
+  "Resolve -t to a target session (default SESSION) and cycle its active window
+   with CYCLER (next-cyclic / prev-cyclic).  Shared by the scriptable
+   next-window / previous-window commands.  -a (next/prev window with an alert)
+   is accepted but, with no per-window activity tracking, behaves as plain cycling."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
+    (declare (ignore positionals))
+    (let* ((target-str (cdr (assoc #\t flags)))
+           (target     (or (and target-str
+                                 (find-session-by-target *server-sessions* target-str))
+                           session)))
+      (%cmd-cycle-window target cycler)
+      (setf *dirty* t)
+      t)))
+
+(defun %cmd-next-window-arg (session args)
+  "next-window [-a] [-t target-session]: select the next window in the target
+   session (default: the current session).  Scriptable form; the interactive
+   :next-window binding (current session) is unchanged."
+  (%cycle-window-in-target session args #'next-cyclic))
+
+(defun %cmd-previous-window-arg (session args)
+  "previous-window [-a] [-t target-session]: select the previous window in the
+   target session (default: the current session)."
+  (%cycle-window-in-target session args #'prev-cyclic))
+
 (defun %send-keys-hex-to-string (hex)
   "Convert a send-keys -H argument (a hexadecimal character code like \"1b\" or
    \"41\") to the one-character string it names, or NIL when HEX is not a valid
@@ -2756,6 +2782,9 @@
    (cons '("rotate-window" "rotatew")   #'%cmd-rotate-window-arg)
    ;; find-window: scriptable search-and-select (match-string positional).
    (cons '("find-window" "findw")       #'%cmd-find-window-arg)
+   ;; next/previous-window: scriptable -t target-session window cycling.
+   (cons '("next-window" "next")        #'%cmd-next-window-arg)
+   (cons '("previous-window" "prev")    #'%cmd-previous-window-arg)
    ;; confirm-before [-p prompt] cmd: gate COMMAND behind a y/n prompt.
    (cons '("confirm-before" "confirm")  #'%cmd-confirm-before-arg)
    ;; command-prompt [-p prompts] [template]: interactive prompt with substitution.
