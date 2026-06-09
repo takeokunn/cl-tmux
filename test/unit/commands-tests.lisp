@@ -2119,6 +2119,61 @@
   (is (null (cl-tmux/commands:join-pane nil nil nil nil :h))
       "join-pane with all-nil args must return NIL without signalling"))
 
+;;; ── join-pane / move-pane (scriptable %cmd-join-pane-arg) ────────────────────
+
+(defun %join-arg-fixture ()
+  "Two single-pane windows (\"src\", \"dst\") in one session, dst current.
+   Returns (values sess src-win src-pane dst-win dst-pane)."
+  (let* ((src-pane (%make-test-pane :id 1))
+         (dst-pane (%make-test-pane :id 2))
+         (src-win  (make-window :id 1 :name "src" :width 20 :height 6
+                                :tree (make-layout-leaf src-pane) :panes (list src-pane)))
+         (dst-win  (make-window :id 2 :name "dst" :width 20 :height 6
+                                :tree (make-layout-leaf dst-pane) :panes (list dst-pane)))
+         (sess     (make-session :id 1 :name "0" :windows (list src-win dst-win))))
+    (session-select-window sess dst-win)          ; current window = dst
+    (window-select-pane src-win src-pane)
+    (window-select-pane dst-win dst-pane)
+    (values sess src-win src-pane dst-win dst-pane)))
+
+(test cmd-join-pane-moves-source-into-destination
+  "join-pane -s SRC -t DST moves SRC's active pane into DST's window and, without
+   -d, makes the joined pane active.  The emptied source window is removed."
+  (multiple-value-bind (sess src-win src-pane dst-win dst-pane) (%join-arg-fixture)
+    (declare (ignore dst-pane))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-join-pane-arg sess '("-s" ":src" "-t" ":dst" "-v"))
+      (is (member src-pane (window-panes dst-win))
+          "src-pane must now be in dst-window")
+      (is-false (member src-win (session-windows sess))
+          "emptied src-window must be removed from the session")
+      (is (eq src-pane (window-active-pane dst-win))
+          "the joined pane becomes active (no -d)"))))
+
+(test cmd-join-pane-d-keeps-destination-active
+  "join-pane -d moves the pane but leaves the destination's original pane active."
+  (multiple-value-bind (sess src-win src-pane dst-win dst-pane) (%join-arg-fixture)
+    (declare (ignore src-win))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-join-pane-arg sess '("-s" ":src" "-t" ":dst" "-d"))
+      (is (member src-pane (window-panes dst-win))
+          "src-pane is still moved into dst-window with -d")
+      (is (eq dst-pane (window-active-pane dst-win))
+          "-d keeps the destination's original pane active"))))
+
+(test cmd-join-pane-same-window-is-noop
+  "join-pane with src and dst the same window is a no-op (guarded, no crash)."
+  (multiple-value-bind (sess src-win src-pane dst-win dst-pane) (%join-arg-fixture)
+    (declare (ignore src-pane dst-win dst-pane))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess))))
+      (cl-tmux::%cmd-join-pane-arg sess '("-s" ":src" "-t" ":src"))
+      (is (= 1 (length (window-panes src-win)))
+          "same-window join leaves the source pane in place")
+      (is (member src-win (session-windows sess))
+          "the source window is not removed by a same-window no-op"))))
+
 ;;; ── copy-mode-exit ───────────────────────────────────────────────────────────
 
 (test copy-mode-exit-resets-all-copy-state

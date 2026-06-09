@@ -2320,6 +2320,55 @@
         ((assoc #\U flags) (when win (resize-pane win :up    amount)))
         ((assoc #\D flags) (when win (resize-pane win :down  amount)))))))
 
+(defun %cmd-join-pane-arg (session args)
+  "join-pane / move-pane [-bdhv] [-l size] [-s src-pane] [-t dst-pane]: move
+   SRC-PANE out of its window and into DST-PANE's window as a new split.
+   -h splits left/right; -v (the default, as for split-window) splits top/bottom.
+   -s source pane (default: the active pane); -t destination pane, whose WINDOW
+   receives the split (default: the active window).
+   -d keeps the current pane active (no switch to the joined pane).  -b (insert
+   before) and -l (size) are accepted for compatibility; the split uses the
+   model's default placement and even sizing.
+   No-op when source and destination resolve to the same window (nothing to move).
+   This is the scriptable form; the interactive :join-pane / :move-pane keybindings
+   (which prompt for a window index) are unchanged."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "stl")
+    (declare (ignore positionals))
+    (let* ((src-str  (cdr (assoc #\s flags)))
+           (dst-str  (cdr (assoc #\t flags)))
+           (dir      (if (assoc #\h flags) :h :v))
+           (cur-win  (session-active-window session))
+           (src-win  cur-win)
+           (src-pane (and cur-win (window-active-pane cur-win)))
+           (dst-win  cur-win))
+      ;; -s: resolve the source pane (and its window).  When the target names a
+      ;; window but no pane, take THAT window's active pane (not the current
+      ;; window's, which is resolve-target's current-pane default).
+      (when src-str
+        (multiple-value-bind (s w p)
+            (resolve-target *server-sessions* src-str
+                            :current-session session :current-window cur-win
+                            :current-pane src-pane)
+          (declare (ignore s))
+          (when w
+            (setf src-win  w
+                  src-pane (if (and p (member p (window-panes w))) p
+                               (window-active-pane w))))))
+      ;; -t: resolve the destination — only its WINDOW matters (the split host).
+      (when dst-str
+        (multiple-value-bind (s w p)
+            (resolve-target *server-sessions* dst-str
+                            :current-session session :current-window cur-win)
+          (declare (ignore s p))
+          (setf dst-win w)))
+      (when (and src-win src-pane dst-win (not (eq src-win dst-win))
+                 (join-pane session src-win src-pane dst-win dir))
+        ;; tmux makes the joined pane active unless -d.
+        (unless (assoc #\d flags)
+          (window-select-pane dst-win src-pane))
+        (setf *dirty* t)
+        t))))
+
 (defun %send-keys-hex-to-string (hex)
   "Convert a send-keys -H argument (a hexadecimal character code like \"1b\" or
    \"41\") to the one-character string it names, or NIL when HEX is not a valid
@@ -2574,6 +2623,9 @@
    (cons '("list-keys" "lsk")           #'%cmd-list-keys-arg)
    ;; swap-pane [-U|-D|-L|-R]: directional swap including up/down.
    (cons '("swap-pane" "swapp")         #'%cmd-swap-pane-arg)
+   ;; join-pane / move-pane (move-pane is join-pane): scriptable -s/-t/-h/-v/-d.
+   (cons '("join-pane" "joinp")         #'%cmd-join-pane-arg)
+   (cons '("move-pane" "movep")         #'%cmd-join-pane-arg)
    ;; confirm-before [-p prompt] cmd: gate COMMAND behind a y/n prompt.
    (cons '("confirm-before" "confirm")  #'%cmd-confirm-before-arg)
    ;; command-prompt [-p prompts] [template]: interactive prompt with substitution.
