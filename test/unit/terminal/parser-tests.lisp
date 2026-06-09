@@ -1317,3 +1317,42 @@
     (finishes (cl-tmux/terminal/parser::%handle-osc-52 "nodatahere"))
     (is (eq :not-called received)
         "%handle-osc-52 with no semicolon must not invoke the handler")))
+
+;;; ── CSI colon sub-parameters (ISO 8613-6) ───────────────────────────────────
+;;;
+;;; A colon introduces sub-parameters within one CSI parameter (SGR 4:3 undercurl,
+;;; 38:2::R:G:B true-colour).  The parser keeps the leading value and skips the
+;;; rest, so such a sequence neither aborts (printing stray bytes) nor mis-applies.
+
+(def-suite csi-colon-subparams :description "CSI colon sub-parameter handling"
+  :in parser-suite)
+(in-suite csi-colon-subparams)
+
+(test csi-colon-undercurl-keeps-leading-underline
+  "CSI 4:3 m (undercurl) keeps the leading 4 → underline; no stray bytes print."
+  (with-screen (s 8 2)
+    (feed s (esc "[4:3m"))            ; undercurl via colon sub-parameter
+    (feed s "X")
+    (is (char= #\X (char-at s 0 0))
+        "X must be the first cell — the colon sequence printed nothing")
+    (is (logbitp 3 (attrs-at s 0 0))
+        "the leading 4 must set the underline attribute (bit 3)")))
+
+(test csi-colon-multi-param-mixed
+  "CSI 0;4:3;1 m applies reset, underline (from 4:3), bold — colon does not
+   bleed into the neighbouring parameters."
+  (with-screen (s 8 2)
+    (feed s (esc "[0;4:3;1m"))
+    (feed s "Y")
+    (is (char= #\Y (char-at s 0 0)) "Y is the first cell")
+    (is (logbitp 3 (attrs-at s 0 0)) "underline set (from 4:3)")
+    (is (logbitp 0 (attrs-at s 0 0)) "bold set (from the trailing ;1)")))
+
+(test csi-colon-truecolor-form-does-not-abort
+  "CSI 38:2::255:0:0 m (colon true-colour) must not abort and spew bytes; the
+   following text writes cleanly at column 0."
+  (with-screen (s 8 2)
+    (feed s (esc "[38:2::255:0:0m"))
+    (feed s "Z")
+    (is (char= #\Z (char-at s 0 0))
+        "Z must be the first cell — no stray sub-parameter bytes printed")))

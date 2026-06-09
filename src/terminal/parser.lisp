@@ -71,6 +71,11 @@
 (defconstant +csi-digit-low+   #x30 "Lowest decimal digit byte in a CSI sequence (ASCII '0').")
 (defconstant +csi-digit-high+  #x39 "Highest decimal digit byte in a CSI sequence (ASCII '9').")
 (defconstant +csi-semicolon+   #x3B "CSI parameter separator ';'.")
+(defconstant +csi-colon+       #x3A
+  "CSI sub-parameter separator ':' (ISO 8613-6).  Introduces colon-delimited
+   sub-parameters within one parameter, e.g. SGR 4:3 (undercurl) or
+   38:2::R:G:B (true-colour).  We keep the leading value and skip the rest so
+   such sequences neither abort (printing stray bytes) nor mis-apply.")
 (defconstant +csi-dec-marker+  #x3F "DEC private-mode marker '?'.")
 (defconstant +csi-sec-da+      #x3E "Secondary DA marker '>'.")
 (defconstant +csi-intermed-low+  #x20 "Lowest CSI intermediate byte (SPACE).")
@@ -81,7 +86,7 @@
 ;;; ── Parameterized state constructors ───────────────────────────────────────
 
 (defun make-csi-k (&optional (params '()) (param-accumulator nil) (intermed nil)
-                             (private nil))
+                             (private nil) (skip-subparam nil))
   "Return a continuation that collects CSI parameters then dispatches.
    Handles the standard VT/ECMA-48 CSI parameter syntax:
      param bytes        +csi-digit-low+ to +csi-digit-high+  (digits 0-9)
@@ -97,28 +102,39 @@
   (lambda (screen byte)
     (declare (type screen screen) (type (unsigned-byte 8) byte))
     (cond
-      ;; Digit 0-9: accumulate into the current parameter accumulator.
+      ;; Digit 0-9: accumulate into the current parameter accumulator — unless we
+      ;; are skipping a colon sub-parameter, in which case the digit is consumed
+      ;; and discarded (we keep only the parameter's leading value).
       ((and (>= byte +csi-digit-low+) (<= byte +csi-digit-high+))
-       (make-csi-k params
-                   (+ (* (or param-accumulator 0) 10) (- byte +csi-digit-low+))
-                   intermed private))
-      ;; Semicolon: flush the accumulator as the current parameter, start fresh.
+       (if skip-subparam
+           (make-csi-k params param-accumulator intermed private t)
+           (make-csi-k params
+                       (+ (* (or param-accumulator 0) 10) (- byte +csi-digit-low+))
+                       intermed private nil)))
+      ;; Colon: ISO 8613-6 sub-parameter separator.  Begin skipping the remaining
+      ;; sub-parameters of this parameter; the leading value already accumulated is
+      ;; kept.  So SGR 4:3 (undercurl) keeps 4 → underline, and 38:2::R:G:B keeps
+      ;; 38; the sequence neither aborts nor prints stray bytes.
+      ((= byte +csi-colon+)
+       (make-csi-k params param-accumulator intermed private t))
+      ;; Semicolon: flush the accumulator as the current parameter, start fresh
+      ;; (clearing any sub-parameter skip state).
       ((= byte +csi-semicolon+)
-       (make-csi-k (cons (or param-accumulator 0) params) nil intermed private))
+       (make-csi-k (cons (or param-accumulator 0) params) nil intermed private nil))
       ;; ? — DEC private-mode marker byte (selects DEC private sequences).
       ;; Recorded in the PRIVATE slot (separate from a true intermediate) so that
       ;; sequences carrying BOTH — e.g. DECRQM "CSI ? Ps $ p" — keep the ? marker
       ;; even when a #x20-#x2F intermediate ($) follows.
       ((= byte +csi-dec-marker+)
-       (make-csi-k params param-accumulator intermed #\?))
+       (make-csi-k params param-accumulator intermed #\? skip-subparam))
       ;; > — secondary DA marker byte (selects secondary device attribute queries).
       ((= byte +csi-sec-da+)
-       (make-csi-k params param-accumulator intermed #\>))
+       (make-csi-k params param-accumulator intermed #\> skip-subparam))
       ;; Intermediate bytes (SPACE through 0x2F): record as intermed.
       ;; SPACE (#x20) is the most common (used by DECSCUSR "CSI N SP q");
       ;; $ (#x24) appears in DECRQM.  Does NOT disturb the private marker.
       ((and (>= byte +csi-intermed-low+) (<= byte +csi-intermed-high+))
-       (make-csi-k params param-accumulator (code-char byte) private))
+       (make-csi-k params param-accumulator (code-char byte) private skip-subparam))
       ;; Final byte (0x40-0x7E): flush accumulator, reverse collected params, dispatch.
       ((and (>= byte +csi-final-low+) (<= byte +csi-final-high+))
        (let ((all-params (nreverse (if param-accumulator
