@@ -78,6 +78,37 @@
     (feed s (esc "[3;5f"))
     (check-cursor s 4 2)))
 
+(test hpa
+  "HPA ESC[5` moves the cursor to column 4 (1-based 5), like CHA."
+  (with-screen (s 20 10)
+    (feed s (esc "[4;4H"))   ; → (3, 3)
+    (feed s (esc "[5`"))     ; column 5 (1-based) → x=4
+    (check-cursor s 4 3)))
+
+(test hpr
+  "HPR ESC[4a moves the cursor right 4 columns, like CUF."
+  (with-screen (s 20 10)
+    (feed s (esc "[1;3H"))   ; → (2, 0)
+    (feed s (esc "[4a"))     ; right 4 → x=6
+    (check-cursor s 6 0)))
+
+(test vpr
+  "VPR ESC[3e moves the cursor down 3 rows, like CUD."
+  (with-screen (s 20 10)
+    (feed s (esc "[1;1H"))   ; → (0, 0)
+    (feed s (esc "[3e"))     ; down 3 → y=3
+    (check-cursor s 0 3)))
+
+(test scosc-scorc
+  "SCOSC ESC[s saves the cursor and SCORC ESC[u restores it (ANSI.SYS)."
+  (with-screen (s 20 10)
+    (feed s (esc "[4;6H"))   ; → (5, 3)
+    (feed s (esc "[s"))      ; save cursor
+    (feed s (esc "[1;1H"))   ; move away → (0, 0)
+    (check-cursor s 0 0)
+    (feed s (esc "[u"))      ; restore → (5, 3)
+    (check-cursor s 5 3)))
+
 (test clamp
   "Out-of-bounds CUP ESC[100;100H clamps to the last valid cell."
   (with-screen (s 10 5)

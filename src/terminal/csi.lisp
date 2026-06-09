@@ -133,6 +133,29 @@
   ((and (null intermed) (char= final #\G))
    (set-cursor screen (1- p1*) (screen-cursor-y screen)))
 
+  ;; HPA – Horizontal Position Absolute (CSI `; 1-based column, alias of CHA).
+  ((and (null intermed) (char= final #\`))
+   (set-cursor screen (1- p1*) (screen-cursor-y screen)))
+
+  ;; HPR – Horizontal Position Relative (CSI a; move right P1, alias of CUF).
+  ((and (null intermed) (char= final #\a))
+   (set-cursor screen (+ (screen-cursor-x screen) p1*) (screen-cursor-y screen)))
+
+  ;; VPR – Vertical Position Relative (CSI e; move down P1, alias of CUD).
+  ((and (null intermed) (char= final #\e))
+   (set-cursor screen (screen-cursor-x screen) (+ (screen-cursor-y screen) p1*)))
+
+  ;; SCOSC – Save Cursor Position (CSI s; ANSI.SYS, complements ESC 7 / DECSC).
+  ;; This is the OUTPUT (pane → screen) meaning.  On INPUT, CSI <code> u is the
+  ;; extended-keys decode handled in events-keystroke.lisp — a separate path, so
+  ;; there is no conflict with the CSI u (SCORC) restore below.
+  ((and (null intermed) (char= final #\s))
+   (save-cursor screen))
+
+  ;; SCORC – Restore Cursor Position (CSI u; ANSI.SYS, complements ESC 8 / DECRC).
+  ((and (null intermed) (char= final #\u))
+   (restore-cursor screen))
+
   ;; CUP – Cursor Position (row P1, col P2, 1-based; row is DECOM-aware)
   ((and (null intermed) (char= final #\H))
    (set-cursor screen (1- p2*) (%cup-row screen p1*)))
