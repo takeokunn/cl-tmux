@@ -2385,17 +2385,53 @@
     (cl-tmux/control:control-format-reply
      number (or cl-tmux/prompt:*overlay* "") :success success)))
 
+(defun %install-control-notifications (output)
+  "Register hook callbacks that write control-mode (-C) %-notifications to OUTPUT as
+   windows/sessions change (the asynchronous half of control mode).  Returns the
+   list of (event . callback) pairs so %remove-control-notifications can unregister
+   them when the client detaches.  Each callback is variadic so it tolerates the
+   hook's argument list; the changed object is the first argument."
+  (flet ((emit (line) (write-line line output) (force-output output)))
+    (let ((handlers
+            (list
+             (cons cl-tmux/hooks:+hook-after-new-window+
+                   (lambda (&rest a)
+                     (emit (cl-tmux/control:control-window-add (window-id (first a))))))
+             (cons cl-tmux/hooks:+hook-after-kill-window+
+                   (lambda (&rest a)
+                     (emit (cl-tmux/control:control-window-close (window-id (first a))))))
+             (cons cl-tmux/hooks:+hook-window-renamed+
+                   (lambda (&rest a)
+                     (emit (cl-tmux/control:control-window-renamed
+                            (window-id (first a)) (window-name (first a))))))
+             (cons cl-tmux/hooks:+hook-session-renamed+
+                   (lambda (&rest a)
+                     (emit (cl-tmux/control:control-session-renamed
+                            (session-id (first a)) (session-name (first a)))))))))
+      (dolist (h handlers) (cl-tmux/hooks:add-hook (car h) (cdr h)))
+      handlers)))
+
+(defun %remove-control-notifications (handlers)
+  "Unregister the control-mode notification callbacks installed by
+   %install-control-notifications (HANDLERS is its return value)."
+  (dolist (h handlers) (cl-tmux/hooks:remove-hook (car h) (cdr h))))
+
 (defun control-mode-loop (session input output)
   "The control-mode (-C) REPL: read command lines from INPUT, run each as the next
    numbered command, write its framed reply to OUTPUT, until EOF — then emit %exit.
-   Streams are parameters so the loop is testable without a real tty."
-  (loop with number = 0
-        for line = (read-line input nil nil)
-        while line
-        unless (string= "" (string-trim '(#\Space #\Tab #\Return) line))
-          do (incf number)
-             (write-line (%control-run-command session line number) output)
-             (force-output output))
+   While the loop runs, %-notifications are emitted to OUTPUT as windows/sessions
+   change (installed/removed around the loop).  Streams are parameters so the loop
+   is testable without a real tty."
+  (let ((handlers (%install-control-notifications output)))
+    (unwind-protect
+         (loop with number = 0
+               for line = (read-line input nil nil)
+               while line
+               unless (string= "" (string-trim '(#\Space #\Tab #\Return) line))
+                 do (incf number)
+                    (write-line (%control-run-command session line number) output)
+                    (force-output output))
+      (%remove-control-notifications handlers)))
   (write-line (cl-tmux/control:control-exit) output)
   (force-output output))
 

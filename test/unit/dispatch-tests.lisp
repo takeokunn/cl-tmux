@@ -4848,3 +4848,37 @@
       (is (search "%begin 0 1 1" out) "the one real command is command 1")
       (is (null (search "%begin 0 2 1" out))
           "blank lines did not advance the command number"))))
+
+(test control-notifications-emit-on-hooks
+  "Installed control-mode notifications write %window-add/-close/-renamed and
+   %session-renamed to the output stream when the matching hooks fire."
+  (with-isolated-hooks
+    (let* ((out      (make-string-output-stream))
+           (handlers (cl-tmux::%install-control-notifications out)))
+      (unwind-protect
+           (let ((win  (make-fake-window 5 "editor"))
+                 (sess (make-fake-session)))
+             (setf (cl-tmux::session-name sess) "work")
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+ win)
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-renamed+ win)
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-kill-window+ win)
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-renamed+ sess)
+             (let ((s (get-output-stream-string out)))
+               (is (search "%window-add @5" s)         "%window-add emitted")
+               (is (search "%window-renamed @5 editor" s) "%window-renamed emitted")
+               (is (search "%window-close @5" s)       "%window-close emitted")
+               (is (search (format nil "%session-renamed $~D work"
+                                   (cl-tmux::session-id sess)) s)
+                   "%session-renamed emitted")))
+        (cl-tmux::%remove-control-notifications handlers)))))
+
+(test control-notifications-removed-stop-emitting
+  "After %remove-control-notifications, a hook no longer writes to the stream."
+  (with-isolated-hooks
+    (let* ((out      (make-string-output-stream))
+           (handlers (cl-tmux::%install-control-notifications out)))
+      (cl-tmux::%remove-control-notifications handlers)
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+
+                               (make-fake-window 7 "x"))
+      (is (string= "" (get-output-stream-string out))
+          "no notification after the callbacks are removed"))))
