@@ -721,6 +721,26 @@
     (is (string= "0" (cl-tmux/format:expand-format "#{pane_bottom}" ctx)))
     (is (string= "0" (cl-tmux/format:expand-format "#{pane_active}" ctx)))))
 
+(test window-bell-flag-respects-monitor-bell
+  "#{window_bell_flag} shows ! only when monitor-bell is on (default); monitor-bell
+   off suppresses the bell alert even with a pending bell."
+  (with-fresh-options
+    (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+           (win  (first (cl-tmux/model:session-windows sess)))
+           (pane (first (cl-tmux/model:window-panes win))))
+      (setf (cl-tmux/terminal/types:screen-bell-pending
+             (cl-tmux/model:pane-screen pane)) t)
+      (cl-tmux/options:set-option "monitor-bell" t)
+      (is (string= "!" (cl-tmux/format:expand-format
+                        "#{window_bell_flag}"
+                        (cl-tmux/format:format-context-from-session sess win pane)))
+          "monitor-bell on must show the bell flag")
+      (cl-tmux/options:set-option "monitor-bell" nil)
+      (is (not (string= "!" (cl-tmux/format:expand-format
+                             "#{window_bell_flag}"
+                             (cl-tmux/format:format-context-from-session sess win pane))))
+          "monitor-bell off must suppress the bell flag"))))
+
 (test format-context-pane-active-distinguishes-active-pane
   "#{pane_active} is 1 for the window's active pane, 0 otherwise — and drives
    the #{?pane_active,t,f} conditional, the common real-world usage."

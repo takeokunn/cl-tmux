@@ -1019,10 +1019,12 @@
           (if (and window session-wins (eq window (first session-wins))) "1" "0"))
          (window-end-flag
           (if (and window session-wins (eq window (car (last session-wins)))) "1" "0"))
-         ;; #{window_bell_flag}: "!" when any pane in the window has a pending bell.
-         ;; Used by status themes to show an alert indicator in the window list.
+         ;; #{window_bell_flag}: "!" when any pane in the window has a pending bell
+         ;; AND monitor-bell is on for the window (default on).  Used by status
+         ;; themes to show an alert indicator; monitor-bell off suppresses it.
          (window-bell-flag
           (if (and window
+                   (cl-tmux/options:get-option-for-context "monitor-bell" :window window)
                    (some (lambda (p)
                            (let ((scr (cl-tmux/model:pane-screen p)))
                              (and scr (cl-tmux/terminal:screen-bell-pending scr))))
