@@ -157,6 +157,9 @@
              (win   (cl-tmux/model:session-active-window sess))
              (fired nil))
         (cl-tmux/options:set-option "monitor-silence" 5)
+        ;; silence-action "any" so the alert fires even for the (current) window
+        ;; under test (default "other" would suppress the current window).
+        (cl-tmux/options:set-option "silence-action" "any")
         (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
               (cl-tmux/model:window-silence-flag win) nil)
         (cl-tmux/hooks:add-hook "alert-silence"
@@ -190,12 +193,44 @@
              (win  (cl-tmux/model:session-active-window sess))
              (cl-tmux/prompt:*overlay* nil))
         (cl-tmux/options:set-option "monitor-silence" 5)
+        (cl-tmux/options:set-option "silence-action" "any")  ; fire for the current window
         (cl-tmux/options:set-option "visual-silence" t)
         (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
               (cl-tmux/model:window-silence-flag win) nil)
         (cl-tmux::%check-monitor-silence (list (cons 1 sess)) (lambda () nil))
         (is-true (cl-tmux/prompt:overlay-active-p)
                  "visual-silence must show an overlay when silence is detected")))))
+
+(test alert-action-fires-p-policy-matrix
+  "%alert-action-fires-p maps an activity/silence action × current-ness to a fire
+   decision: none→never, current→only current, any→always, other→only non-current."
+  (is-false (cl-tmux::%alert-action-fires-p "none" t))
+  (is-false (cl-tmux::%alert-action-fires-p "none" nil))
+  (is-true  (cl-tmux::%alert-action-fires-p "current" t))
+  (is-false (cl-tmux::%alert-action-fires-p "current" nil))
+  (is-true  (cl-tmux::%alert-action-fires-p "any" t))
+  (is-true  (cl-tmux::%alert-action-fires-p "any" nil))
+  (is-false (cl-tmux::%alert-action-fires-p "other" t))
+  (is-true  (cl-tmux::%alert-action-fires-p "other" nil)))
+
+(test silence-action-none-suppresses-alert
+  "silence-action none suppresses the silence alert (and flag) even when the
+   threshold is crossed."
+  (with-isolated-config
+    (with-isolated-hooks
+      (let* ((sess (make-fake-session :nwindows 1))
+             (win  (cl-tmux/model:session-active-window sess))
+             (fired nil))
+        (cl-tmux/options:set-option "monitor-silence" 5)
+        (cl-tmux/options:set-option "silence-action" "none")
+        (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
+              (cl-tmux/model:window-silence-flag win) nil)
+        (cl-tmux/hooks:add-hook "alert-silence"
+                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+        (cl-tmux::%check-monitor-silence (list (cons 1 sess)) (lambda () nil))
+        (is-false fired "silence-action none must suppress the alert hook")
+        (is-false (cl-tmux/model:window-silence-flag win)
+                  "silence-action none must not set the silence flag")))))
 
 (test reader-remain-on-exit-state-returns-nil-when-not-running
   :description "reader-remain-on-exit-state returns NIL immediately when *running* is NIL."

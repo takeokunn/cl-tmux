@@ -154,15 +154,38 @@
       #'reader-reading-state
       #'reader-idle-state))
 
+(defun %alert-action-fires-p (action current-p)
+  "Whether an activity/silence alert should fire given the ACTION
+   (none/current/other/any) and whether the window is the CURRENT (viewed) one:
+     none    → never;          current → only the current window;
+     any     → always;         other (default) → only non-current windows."
+  (cond
+    ((string-equal action "none")    nil)
+    ((string-equal action "current") current-p)
+    ((string-equal action "any")     t)
+    (t                               (not current-p))))
+
+(defun %window-is-current-p (win)
+  "True when WIN is the active (currently-viewed) window of any registered session.
+   Used to honour activity-action/silence-action's current-vs-other distinction."
+  (and win
+       (some (lambda (entry)
+               (eq win (cl-tmux/model:session-active-window (cdr entry))))
+             *server-sessions*)))
+
 (defun %mark-window-activity (win)
   "Mark WIN as having activity for monitor-activity: set the activity flag, fire
    the alert-activity hook, and show a visual-activity overlay when that option is
-   on.  No-op when WIN is NIL, monitor-activity is off for WIN, or the flag is
-   already set.  Extracted from reader-reading-state so the alert-activity firing
-   is unit-testable without a live PTY."
+   on.  No-op when WIN is NIL, monitor-activity is off for WIN, the flag is already
+   set, or activity-action says not to alert this window (none/current/other/any).
+   Extracted from reader-reading-state so the alert-activity firing is
+   unit-testable without a live PTY."
   (when (and win
              (cl-tmux/options:get-option-for-context "monitor-activity" :window win)
-             (not (cl-tmux/model:window-activity-flag win)))
+             (not (cl-tmux/model:window-activity-flag win))
+             (%alert-action-fires-p
+              (or (cl-tmux/options:get-option "activity-action") "other")
+              (%window-is-current-p win)))
     (setf (cl-tmux/model:window-activity-flag win) t)
     ;; Fire the alert-activity hook (matches real tmux).
     (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-activity+ win)
@@ -306,7 +329,11 @@
               (let ((last-out (cl-tmux/model:window-last-output-time win)))
                 (when (and (> last-out 0)
                            (not (cl-tmux/model:window-silence-flag win))
-                           (>= (- now last-out) silence-secs))
+                           (>= (- now last-out) silence-secs)
+                           ;; silence-action gates which windows alert.
+                           (%alert-action-fires-p
+                            (or (cl-tmux/options:get-option "silence-action") "other")
+                            (eq win (cl-tmux/model:session-active-window sess))))
                   (setf (cl-tmux/model:window-silence-flag win) t)
                   ;; Fire the alert-silence hook (matches real tmux).
                   (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-silence+ win)
