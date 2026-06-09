@@ -1272,14 +1272,18 @@
       (is (= 5 (window-id win))
           "active window must be renumbered to window-id 5"))))
 
-(test run-command-line-move-window-to-taken-number-is-noop
-  "'move-window -t N' is a no-op when N is already held by another window."
+(test run-command-line-move-window-to-taken-number-shifts-up
+  "'move-window -t N' onto a taken index moves the window there and shifts the
+   occupant up (tmux winlink_shuffle_up) — not a silent no-op."
   (let* ((s   (make-fake-session :nwindows 2))   ; ids 0 (active),1
-         (win (session-active-window s)))
+         (win (session-active-window s))
+         (w1  (find 1 (session-windows s) :key #'window-id)))
     (with-loop-state
       (cl-tmux::%run-command-line s "move-window -t 1")   ; 1 is taken
-      (is (= 0 (window-id win))
-          "active window must keep its id when the target number is taken"))))
+      (is (= 1 (window-id win))
+          "the active window takes the requested index 1")
+      (is (= 2 (window-id w1))
+          "the window formerly at 1 shifts up to 2"))))
 
 ;;; ── if-shell -F <cond> <then> [<else>] (format-conditional) ──────────────────
 
@@ -4719,3 +4723,46 @@
         (let ((cl-tmux::*server-sessions* (list (cons "old" s))))
           (cl-tmux::%rename-session-checked s "new")
           (is-true fired "the session-renamed hook fired"))))))
+
+;;; ── move-window: index collision shifts others up; -a inserts after ──────────
+
+(test window-id-occupied-and-shuffle-helpers
+  "%window-id-occupied-p and the exclude argument."
+  (with-loop-state
+    (let* ((s (make-fake-session :nwindows 3))
+           (w0 (find 0 (session-windows s) :key #'window-id)))
+      (is-true  (cl-tmux::%window-id-occupied-p s 1 nil) "index 1 is occupied")
+      (is-false (cl-tmux::%window-id-occupied-p s 9 nil) "index 9 is free")
+      (is-false (cl-tmux::%window-id-occupied-p s 0 w0)
+                "index 0 is free when its own window is excluded"))))
+
+(test move-window-to-free-index
+  "move-window -s W -t N to a free index just reassigns the id."
+  (with-loop-state
+    (let* ((s (make-fake-session :nwindows 2))
+           (w1 (find 1 (session-windows s) :key #'window-id)))
+      (cl-tmux::%cmd-move-window s '("-s" "1" "-t" "5"))
+      (is (= 5 (window-id w1)) "moved to free index 5")
+      (is (find 0 (session-windows s) :key #'window-id) "window 0 unchanged"))))
+
+(test move-window-to-occupied-index-shifts-up
+  "move-window onto an occupied index shifts the occupants up (no overwrite/no-op)."
+  (with-loop-state
+    (let* ((s  (make-fake-session :nwindows 3))            ; ids 0,1,2
+           (w0 (find 0 (session-windows s) :key #'window-id))
+           (w2 (find 2 (session-windows s) :key #'window-id)))
+      (cl-tmux::%cmd-move-window s '("-s" "2" "-t" "0"))
+      (is (= 0 (window-id w2)) "the moved window takes index 0")
+      (is (= 1 (window-id w0)) "the window formerly at 0 shifted to 1")
+      (is (= 3 (length (remove-duplicates (mapcar #'window-id (session-windows s)))))
+          "all window indices remain distinct (no collision)"))))
+
+(test move-window-a-inserts-after-target
+  "move-window -a -t N inserts after index N (at N+1), shifting if occupied."
+  (with-loop-state
+    (let* ((s  (make-fake-session :nwindows 3))            ; ids 0,1,2
+           (w2 (find 2 (session-windows s) :key #'window-id)))
+      (cl-tmux::%cmd-move-window s '("-s" "2" "-a" "-t" "0"))
+      (is (= 1 (window-id w2)) "with -a, the window lands after index 0 = index 1")
+      (is (= 3 (length (remove-duplicates (mapcar #'window-id (session-windows s)))))
+          "indices remain distinct"))))

@@ -1426,6 +1426,23 @@
   (declare (ignore session))
   (cl-tmux/config:source-files args))
 
+(defun %window-id-occupied-p (session id exclude)
+  "T when some window OTHER than EXCLUDE in SESSION already has window-id ID."
+  (loop for w in (session-windows session)
+        thereis (and (not (eq w exclude)) (= (window-id w) id))))
+
+(defun %shuffle-windows-up (session dst exclude)
+  "Make room at index DST by shifting windows up — tmux's winlink_shuffle_up.
+   Finds the first free index >= DST (ignoring EXCLUDE) and increments the id of
+   every other window in [DST, free) by one, highest-id first so no two windows
+   collide mid-shift."
+  (let ((free dst))
+    (loop while (%window-id-occupied-p session free exclude) do (incf free))
+    (dolist (w (sort (remove exclude (copy-list (session-windows session)))
+                     #'> :key #'window-id))
+      (when (<= dst (window-id w) (1- free))
+        (incf (window-id w))))))
+
 (defun %cmd-move-window (session args)
   "move-window [-s src-window] [-t dst-index] [-r] [-a]: move/renumber a window.
    -s src: source window (name or id); default is the active window.
@@ -1438,6 +1455,7 @@
     (let* ((src-str (cdr (assoc #\s flags)))
            (dst-str (cdr (assoc #\t flags)))
            (repack  (assoc #\r flags))
+           (after   (assoc #\a flags))
            (src-win (if src-str
                         (%resolve-window-target session src-str)
                         (session-active-window session)))
@@ -1452,14 +1470,18 @@
                  for i from base
                  do (setf (window-id win) i))
            (setf (session-windows session) sorted)))
-        ;; -s src + -t n: move a specific window to a new index
+        ;; -t n (with optional -s src / -a): move the window to index n.  -a
+        ;; inserts AFTER index n (n+1); the default/-b inserts AT n.  When the
+        ;; target index is occupied by ANOTHER window, the windows at and above it
+        ;; shift up to make room (tmux's winlink_shuffle_up) rather than the move
+        ;; being silently dropped or another window orphaned.
         ((and src-win dst-n)
-         (let ((holder (find dst-n (session-windows session) :key #'window-id)))
-           (when (or (null holder) (eq holder src-win))
-             (setf (window-id src-win) dst-n))))
-        ;; -t n only: renumber the source (active) window
-        ((and src-win dst-n)
-         (setf (window-id src-win) dst-n))))))
+         (let ((target (if after (1+ dst-n) dst-n)))
+           (when (%window-id-occupied-p session target src-win)
+             (%shuffle-windows-up session target src-win))
+           (setf (window-id src-win) target
+                 (session-windows session)
+                 (sort (copy-list (session-windows session)) #'< :key #'window-id))))))))
 
 (defun %cmd-if-shell (session args)
   "if-shell -F <cond> <then> [<else>]: when the format CONDITION expands to a
