@@ -1258,6 +1258,24 @@
     (is (search (format nil "~C[>4;0m" #\Escape) out)
         "disable-extended-keys must emit CSI > 4 ; 0 m (got ~S)" out)))
 
+;;; ── enable/disable-focus-reporting (?1004) ───────────────────────────────────
+
+(test enable-focus-reporting-emits-1004h
+  "enable-focus-reporting writes ?1004h to enable focus events on the outer terminal."
+  (let ((out (let ((*standard-output* (make-string-output-stream)))
+               (cl-tmux/renderer::enable-focus-reporting)
+               (get-output-stream-string *standard-output*))))
+    (is (search (format nil "~C[?1004h" #\Escape) out)
+        "enable-focus-reporting must emit ?1004h (got ~S)" out)))
+
+(test disable-focus-reporting-emits-1004l
+  "disable-focus-reporting writes ?1004l to disable focus events on the outer terminal."
+  (let ((out (let ((*standard-output* (make-string-output-stream)))
+               (cl-tmux/renderer::disable-focus-reporting)
+               (get-output-stream-string *standard-output*))))
+    (is (search (format nil "~C[?1004l" #\Escape) out)
+        "disable-focus-reporting must emit ?1004l (got ~S)" out)))
+
 ;;; ── render-lock-screen ───────────────────────────────────────────────────────
 
 (test render-lock-screen-fills-with-lock-message

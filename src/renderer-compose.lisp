@@ -326,3 +326,21 @@
    Flushes stdout immediately."
   (format t "~C[>4;0m" +esc+)
   (force-output))
+
+;;; ── Focus event reporting (?1004) ───────────────────────────────────────────
+;;;
+;;; enable-focus-reporting asks the outer terminal to report focus in/out as
+;;; ESC [ I / ESC [ O (DEC private mode ?1004), so cl-tmux learns when its window
+;;; gains or loses focus and can forward that to the active pane's application
+;;; (via %notify-pane-focus).  Mirrors enable/disable-mouse-reporting: call once at
+;;; startup when the focus-events option is on, and once at shutdown.
+
+(defun enable-focus-reporting ()
+  "Emit ?1004h to enable focus-event reporting on the outer terminal.  Flushes."
+  (format t "~C[?1004h" +esc+)
+  (force-output))
+
+(defun disable-focus-reporting ()
+  "Emit ?1004l to disable focus-event reporting on the outer terminal.  Flushes."
+  (format t "~C[?1004l" +esc+)
+  (force-output))

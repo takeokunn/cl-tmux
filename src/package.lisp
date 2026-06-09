@@ -669,6 +669,8 @@
    #:extended-keys-level       ; (option-value) → modifyOtherKeys level 1/2 or NIL
    #:enable-extended-keys      ; (option-value) → emit CSI >4;Nm; returns level or NIL
    #:disable-extended-keys     ; () → emit CSI >4;0m to reset extended-keys reporting
+   #:enable-focus-reporting    ; () → emit ?1004h to enable focus events on outer term
+   #:disable-focus-reporting   ; () → emit ?1004l to disable focus events on outer term
    #:parse-style-string        ; (style-str) → plist :fg :bg :bold :reverse etc.
    #:style-to-sgr              ; (parsed-style) → escape-sequence string
    #:%popup-border-charset))   ; () → (values tl tr bl br h v) for popup-border-lines

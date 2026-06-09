@@ -219,6 +219,8 @@
 (defconstant +byte-ascii-m+     77  "ASCII 'M' (0x4D) — X10 mouse intro and SGR press final.")
 (defconstant +byte-sgr-release+ 109 "ASCII 'm' (0x6D) — SGR mouse release final byte.")
 (defconstant +byte-ascii-u+    117 "ASCII 'u' (0x75) — CSI-u (fixterms extended-keys) final byte.")
+(defconstant +byte-focus-in+    73 "ASCII 'I' (0x49) — ESC [ I focus-gained report (?1004).")
+(defconstant +byte-focus-out+   79 "ASCII 'O' (0x4F) — ESC [ O focus-lost report (?1004).")
 
 ;;; ── Escape sequence dispatch macro ─────────────────────────────────────────
 

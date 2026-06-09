@@ -797,6 +797,16 @@
         ;; at the modifier-arrow-complete branch once the final letter arrives.
         ((%csi-u-accumulating-p buffer length)
          (values nil (make-escape-input-k session buffer)))
+        ;; ── Focus in/out: ESC [ I (gained) / ESC [ O (lost) from the outer ─
+        ;; terminal's ?1004 reporting.  Deliver the focus change to the active
+        ;; pane (its app gets ESC[I/ESC[O when it enabled ?1004); never forward
+        ;; the raw bytes.  Placed before the generic 3-byte CSI handling.
+        ((and (= length 3) (= (aref buffer 1) +byte-csi-bracket+)
+              (or (= (aref buffer 2) +byte-focus-in+)
+                  (= (aref buffer 2) +byte-focus-out+)))
+         (%notify-pane-focus (session-active-pane session)
+                             (= (aref buffer 2) +byte-focus-in+))
+         (values nil #'%ground-input-state))
         ;; ── 3-byte CSI: ESC [ FINAL — not X10 and not SGR ────────────────
         ((and (= length 3) (= (aref buffer 1) +byte-csi-bracket+)
               (/= (aref buffer 2) +byte-ascii-m+)

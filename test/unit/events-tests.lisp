@@ -282,6 +282,28 @@
     (is (eq p0 (window-active-pane win))
         "button release should not change the active pane")))
 
+(test process-byte-focus-in-fires-pane-focus-in
+  "ESC [ I (outer-terminal focus gained, ?1004) fires pane-focus-in on the active pane."
+  (with-isolated-hooks
+    (let ((s (make-fake-session)) (fired nil))
+      (with-loop-state
+        (cl-tmux/hooks:add-hook "pane-focus-in"
+                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(27 91 73)) (cl-tmux::process-byte s b state)))  ; ESC [ I
+        (is-true fired "ESC [ I must fire pane-focus-in")))))
+
+(test process-byte-focus-out-fires-pane-focus-out
+  "ESC [ O (outer-terminal focus lost, ?1004) fires pane-focus-out on the active pane."
+  (with-isolated-hooks
+    (let ((s (make-fake-session)) (fired nil))
+      (with-loop-state
+        (cl-tmux/hooks:add-hook "pane-focus-out"
+                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(27 91 79)) (cl-tmux::process-byte s b state)))  ; ESC [ O
+        (is-true fired "ESC [ O must fire pane-focus-out")))))
+
 (test x10-mouse-sequence-via-process-byte
   "X10 mouse press ESC [ M <btn+32> <col+33> <row+33> fed one byte at a time
    selects the pane at the encoded coordinates."

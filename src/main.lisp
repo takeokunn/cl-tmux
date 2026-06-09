@@ -127,6 +127,11 @@
             ;; ESC [ <codepoint> ; <mod> u for %handle-escape-csi-u to decode.
             (cl-tmux/renderer:enable-extended-keys
              (cl-tmux/options:get-option "extended-keys"))
+            ;; Request focus in/out reporting from the outer terminal when the
+            ;; focus-events option is on, so %notify-pane-focus can forward focus
+            ;; to the active pane's application.
+            (when (cl-tmux/options:get-option "focus-events")
+              (cl-tmux/renderer:enable-focus-reporting))
             (setf *running* t *dirty* t *resize-pending* nil)
             (event-loop session))
         (sb-posix:syscall-error (c)
@@ -143,6 +148,8 @@
       ;; receiving CSI-u sequences after cl-tmux exits, then signal shutdown, join
       ;; reader threads and status timer, and close fds.
       (ignore-errors (cl-tmux/renderer:disable-extended-keys))
+      (when (cl-tmux/options:get-option "focus-events")
+        (ignore-errors (cl-tmux/renderer:disable-focus-reporting)))
       (stop-reader-threads (append reader-threads
                                    (when *status-timer* (list *status-timer*))))
       (setf *status-timer* nil)
