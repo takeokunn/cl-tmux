@@ -1402,21 +1402,31 @@
         ((or ref-pane (null target-str))
          (%handle-kill-result (kill-pane session ref-pane)))))))
 
+(defun %swap-window-ids (session win-a win-b)
+  "Exchange the index numbers (window-id) of WIN-A and WIN-B and re-sort the
+   session's window list by id — tmux's swap-window, which trades the two windows'
+   INDICES (so #{window_index}, the status bar, and select-window -t follow the
+   content).  This is distinct from a list-position swap, which would leave the
+   indices out of order.  No-op when either window is NIL or they are the same.
+   Returns T when a swap occurred."
+  (when (and win-a win-b (not (eq win-a win-b)))
+    (rotatef (window-id win-a) (window-id win-b))
+    (setf (session-windows session)
+          (sort (copy-list (session-windows session)) #'< :key #'window-id))
+    t))
+
 (defun %cmd-swap-window (session args)
-  "swap-window [-s src] -t dst: exchange two windows in the session's list.  SRC
-   and DST are window-id/name targets; with no -s the active window is the source.
+  "swap-window [-s src] -t dst: exchange the index numbers of two windows.  SRC and
+   DST are window-id/name targets; with no -s the active window is the source.
    First command to use two value flags (-s and -t) at once."
   (multiple-value-bind (flags positionals) (%parse-command-flags args "st")
     (declare (ignore positionals))
-    (let* ((src-str (cdr (assoc #\s flags)))
-           (dst-str (cdr (assoc #\t flags)))
-           (src     (if src-str
-                        (%resolve-window-target session src-str)
-                        (session-active-window session)))
-           (dst     (and dst-str (%resolve-window-target session dst-str)))
-           (wins    (session-windows session)))
-      (when (and src dst (not (eq src dst)))
-        (session-swap-windows session (position src wins) (position dst wins))))))
+    (let ((src (if (cdr (assoc #\s flags))
+                   (%resolve-window-target session (cdr (assoc #\s flags)))
+                   (session-active-window session)))
+          (dst (and (cdr (assoc #\t flags))
+                    (%resolve-window-target session (cdr (assoc #\t flags))))))
+      (%swap-window-ids session src dst))))
 
 (defun %cmd-source-file (session args)
   "source-file [-q] [-n] [-v] path...: load the tmux config file(s) at the given

@@ -1194,35 +1194,39 @@
 
 ;;; ── swap-window -s -t (two value flags) ──────────────────────────────────────
 
-(test run-command-line-swap-window-by-targets
-  "'swap-window -s X -t Y' exchanges the two windows' positions in the list."
-  (let* ((s           (make-fake-session :nwindows 3))   ; ids 0,1,2 at pos 0,1,2
-         (wins-before (copy-list (session-windows s))))
+(test run-command-line-swap-window-exchanges-indices
+  "'swap-window -s X -t Y' exchanges the two windows' INDEX NUMBERS (ids): the
+   content at X and Y trade indices, the list stays sorted by id."
+  (let* ((s  (make-fake-session :nwindows 3))   ; ids 0,1,2
+         (w0 (find 0 (session-windows s) :key #'window-id))
+         (w1 (find 1 (session-windows s) :key #'window-id))
+         (w2 (find 2 (session-windows s) :key #'window-id)))
     (with-loop-state
       (cl-tmux::%run-command-line s "swap-window -s 0 -t 2")
-      (is (= 2 (window-id (first (session-windows s))))
-          "position 0 now holds window-id 2")
-      (is (= 0 (window-id (third (session-windows s))))
-          "position 2 now holds window-id 0")
-      (is (eq (second wins-before) (second (session-windows s)))
-          "the middle window is unchanged"))))
+      (is (= 2 (window-id w0)) "window formerly #0 now has index 2")
+      (is (= 0 (window-id w2)) "window formerly #2 now has index 0")
+      (is (= 1 (window-id w1)) "the middle window keeps index 1")
+      (is (equal '(0 1 2) (mapcar #'window-id (session-windows s)))
+          "the window list stays sorted by index"))))
 
 (test run-command-line-swap-window-default-source-is-active
   "'swap-window -t Y' uses the active window as the source."
-  (let ((s (make-fake-session :nwindows 2)))   ; active = id 0 at pos 0
+  (let* ((s      (make-fake-session :nwindows 2))   ; active = id 0
+         (active (session-active-window s))
+         (w1     (find 1 (session-windows s) :key #'window-id)))
     (with-loop-state
       (cl-tmux::%run-command-line s "swap-window -t 1")
-      (is (= 1 (window-id (first (session-windows s))))
-          "active window (pos 0) swapped to hold window-id 1"))))
+      (is (= 1 (window-id active)) "the active window's index becomes 1")
+      (is (= 0 (window-id w1)) "the other window's index becomes 0"))))
 
 (test run-command-line-swap-window-unknown-target-is-noop
-  "'swap-window -s 0 -t 99' (no such dst) leaves the window order unchanged."
+  "'swap-window -s 0 -t 99' (no such dst) leaves the window indices unchanged."
   (let* ((s           (make-fake-session :nwindows 3))
          (ids-before  (mapcar #'window-id (session-windows s))))
     (with-loop-state
       (cl-tmux::%run-command-line s "swap-window -s 0 -t 99")
       (is (equal ids-before (mapcar #'window-id (session-windows s)))
-          "a -t target that matches nothing must not reorder windows"))))
+          "a -t target that matches nothing must not change indices"))))
 
 ;;; ── arg-taking key bindings + source-file ────────────────────────────────────
 

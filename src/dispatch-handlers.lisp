@@ -319,13 +319,15 @@
                          (session-move-window session win idx)))))))
   (:swap-window
    (with-active-window (win session)
-     (let* ((wins    (session-windows session))
-            (src-idx (position win wins)))
-       (prompt-start "swap-window" ""
-                     (lambda (idx-str)
-                       (let ((dst (ignore-errors (parse-integer idx-str))))
-                         (when (and dst src-idx)
-                           (session-swap-windows session src-idx dst))))))))
+     (prompt-start "swap-window" ""
+                   (lambda (idx-str)
+                     ;; The typed value is a window INDEX (id), not a list position.
+                     (let ((dst-id (ignore-errors (parse-integer idx-str))))
+                       (when dst-id
+                         (%swap-window-ids
+                          session win
+                          (find dst-id (session-windows session)
+                                :key #'window-id))))))))
   (:rotate-window
    (with-active-window (win session)
      (window-rotate win :up)))
