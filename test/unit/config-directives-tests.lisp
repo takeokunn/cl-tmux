@@ -246,6 +246,38 @@
     (is (null (lookup-key-binding #\c))
         "#\\c should be unbound after the unbind directive")))
 
+(test apply-directive-unbind-a-clears-prefix-table
+  "unbind -a removes every binding in the prefix table (the real tmux whole-table
+   unbind, previously mis-parsed as a key literally named \"-a\")."
+  (with-isolated-config
+    (is (not (null (lookup-key-binding #\c))) "prefix has bindings before unbind -a")
+    (is (eq t (apply-config-directive '("unbind" "-a")))
+        "unbind -a must return T")
+    (is (null (lookup-key-binding #\c))
+        "after unbind -a the prefix table must be empty")))
+
+(test apply-directive-unbind-a-T-clears-named-table
+  "unbind -a -T <table> clears only that named table."
+  (with-isolated-config
+    (apply-config-directive '("bind" "-T" "mytable" "x" "new-window"))
+    (is (not (null (cl-tmux/config:key-table-lookup "mytable" #\x)))
+        "mytable has the x binding before unbind -a -T")
+    (is (eq t (apply-config-directive '("unbind" "-a" "-T" "mytable")))
+        "unbind -a -T mytable must return T")
+    (is (null (cl-tmux/config:key-table-lookup "mytable" #\x))
+        "mytable must be empty after unbind -a -T mytable")))
+
+(test apply-directive-unbind-a-n-clears-root-table
+  "unbind -a -n clears the root (no-prefix) key table."
+  (with-isolated-config
+    (apply-config-directive '("bind" "-n" "F1" "new-window"))
+    (is (not (null (cl-tmux/config:key-table-lookup "root" "F1")))
+        "root has the F1 binding before unbind -a -n")
+    (is (eq t (apply-config-directive '("unbind" "-a" "-n")))
+        "unbind -a -n must return T")
+    (is (null (cl-tmux/config:key-table-lookup "root" "F1"))
+        "root table must be empty after unbind -a -n")))
+
 ;;; set-status-height: tolerant parsing
 
 (test set-status-height-noninteger-is-tolerated

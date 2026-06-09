@@ -453,24 +453,32 @@
 
 (defun %parse-unbind-key-args (args)
   "Parse the ARGS list for an unbind directive (excludes the verb itself).
-   Returns (values table key) where TABLE is +TABLE-PREFIX+ by default,
-   or (values nil nil) on parse failure."
+   Returns (values TABLE KEY ALL-P): TABLE is +TABLE-PREFIX+ by default, -n selects
+   +TABLE-ROOT+, -T <table> a named table, and -a marks 'unbind every key in the
+   table' (KEY is then NIL — the real tmux `unbind -a [-T table]` form).  Returns
+   (values nil nil nil) on parse failure."
   (let ((table     +table-prefix+)
+        (all-p     nil)
         (remaining args))
     (loop
       (cond
-        ((null remaining) (return (values nil nil)))
+        ((null remaining)
+         ;; End of args: valid only when -a was given (whole-table unbind).
+         (return (if all-p (values table nil t) (values nil nil nil))))
         ((string= (first remaining) "-n")
          (setf table     +table-root+)
          (setf remaining (rest remaining)))
+        ((string= (first remaining) "-a")
+         (setf all-p     t)
+         (setf remaining (rest remaining)))
         ((string= (first remaining) "-T")
          (setf remaining (rest remaining))
-         (when (null remaining) (return (values nil nil)))
+         (when (null remaining) (return (values nil nil nil)))
          (setf table     (first remaining))
          (setf remaining (rest remaining)))
         (t
-         (unless (= (length remaining) 1) (return (values nil nil)))
-         (return (values table (%parse-key-token (first remaining)))))))))
+         (unless (= (length remaining) 1) (return (values nil nil nil)))
+         (return (values table (%parse-key-token (first remaining)) all-p)))))))
 
 ;;; ── Declarative bind/unbind verb dispatch ────────────────────────────────
 
@@ -499,12 +507,19 @@
        (key-table-bind table key command :repeatable repeatable :note note)
        t)))
   (("unbind" "unbind-key")
-   (multiple-value-bind (table key)
+   (multiple-value-bind (table key all-p)
        (%parse-unbind-key-args args)
-     (when (and table key)
-       (let ((tbl (gethash table *key-tables*)))
-         (when tbl (remhash key tbl)))
-       t)))
+     (cond
+       ;; -a: clear every binding in TABLE (the real tmux `unbind -a [-T t]`).
+       (all-p
+        (let ((inner (gethash table *key-tables*)))
+          (when inner (clrhash inner)))
+        t)
+       ((and table key)
+        (let ((tbl (gethash table *key-tables*)))
+          (when tbl (remhash key tbl)))
+        t)
+       (t nil))))
   ;; unbind-all [-T table]: clear all bindings in a key-table (default: prefix).
   ;; -T specifies the table; without -T the prefix table is cleared.
   (("unbind-all")
