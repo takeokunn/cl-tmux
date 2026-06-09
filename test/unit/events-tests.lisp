@@ -2849,3 +2849,150 @@
   (is (null (cl-tmux::%csi-u-key-name 0 1))   "NUL → NIL")
   (is (null (cl-tmux::%csi-u-key-name 7 5))   "BEL (control) → NIL")
   (is (null (cl-tmux::%csi-u-base-key 200))   "out-of-ASCII base → NIL"))
+
+;;; ── Extended keys (CSI u) parameter parsing / legacy fallback ────────────────
+
+(defun %csi-u-buf (&rest bytes)
+  "Build a CSI-u BUFFER (with a trailing 'u') from the parameter BYTES, prefixed
+   with ESC [, as the state machine accumulates it."
+  (let ((v (make-array (+ 3 (length bytes)) :element-type '(unsigned-byte 8)
+                                            :fill-pointer 0 :adjustable t)))
+    (vector-push-extend 27 v) (vector-push-extend 91 v)   ; ESC [
+    (dolist (b bytes) (vector-push-extend b v))
+    (vector-push-extend 117 v)                            ; u
+    v))
+
+(test csi-u-parse-params-cases
+  "%csi-u-parse-params reads <codepoint>[;<mod>] from a u-terminated buffer."
+  (multiple-value-bind (cp mod)
+      (cl-tmux::%csi-u-parse-params (%csi-u-buf 57 55 59 53) 7)  ; 97 ; 5
+    (is (= 97 cp)) (is (= 5 mod)))
+  (multiple-value-bind (cp mod)
+      (cl-tmux::%csi-u-parse-params (%csi-u-buf 49 51) 5)        ; 13 (no ; mod)
+    (is (= 13 cp)) (is (= 1 mod) "omitted mod defaults to 1"))
+  (multiple-value-bind (cp mod)
+      (cl-tmux::%csi-u-parse-params (%csi-u-buf 57 59 53 58 49) 8) ; 9 ; 5:1 (subparam)
+    (is (= 9 cp)) (is (= 5 mod) "kitty <mod>:<event> tolerated, leading int taken")))
+
+(test csi-u-control-byte-cases
+  "%csi-u-control-byte gives the legacy Ctrl byte (a→1, Space/@→0, [→27), else NIL."
+  (is (= 1  (cl-tmux::%csi-u-control-byte 97)))   ; C-a
+  (is (= 26 (cl-tmux::%csi-u-control-byte 122)))  ; C-z
+  (is (= 1  (cl-tmux::%csi-u-control-byte 65)))   ; C-A (upper) → 1
+  (is (= 0  (cl-tmux::%csi-u-control-byte 32)))   ; C-Space → NUL
+  (is (= 0  (cl-tmux::%csi-u-control-byte 64)))   ; C-@ → NUL
+  (is (= 27 (cl-tmux::%csi-u-control-byte 91)))   ; C-[ → ESC
+  (is (null (cl-tmux::%csi-u-control-byte 48))))  ; C-0 has no control byte
+
+(test csi-u-legacy-octets-cases
+  "%csi-u-legacy-octets reproduces the byte form a non-extended terminal sends."
+  (is (equalp #(97)    (cl-tmux::%csi-u-legacy-octets 97 0)) "plain a → 97")
+  (is (equalp #(97)    (cl-tmux::%csi-u-legacy-octets 97 1)) "S-a → 97 (shift only)")
+  (is (equalp #(1)     (cl-tmux::%csi-u-legacy-octets 97 4)) "C-a → ^A")
+  (is (equalp #(1)     (cl-tmux::%csi-u-legacy-octets 97 5)) "C-S-a → ^A (legacy collapse)")
+  (is (equalp #(27 97) (cl-tmux::%csi-u-legacy-octets 97 2)) "M-a → ESC a")
+  (is (equalp #(27 1)  (cl-tmux::%csi-u-legacy-octets 97 6)) "C-M-a → ESC ^A")
+  (is (null (cl-tmux::%csi-u-legacy-octets 9 1)) "Tab (no printable/ctrl legacy) → NIL"))
+
+(test csi-u-terminated-and-accumulating-predicates
+  "The state-machine predicates recognise CSI-u prefixes and full sequences,
+   and reject mouse / arrow CSI shapes."
+  (let ((full (%csi-u-buf 57 55 59 53)))                ; ESC [ 97 ; 5 u  (len 7)
+    (is-true  (cl-tmux::%csi-u-terminated-p full 7))
+    (is-false (cl-tmux::%csi-u-accumulating-p full 7) "a terminated buf is not accumulating"))
+  ;; ESC [ 9 7  — mid-accumulation digit prefix
+  (let ((v (make-array 8 :element-type '(unsigned-byte 8) :fill-pointer 0 :adjustable t)))
+    (dolist (b '(27 91 57 55)) (vector-push-extend b v))
+    (is-true  (cl-tmux::%csi-u-accumulating-p v 4))
+    (is-false (cl-tmux::%csi-u-terminated-p v 4)))
+  ;; ESC [ M …  (X10 mouse) and ESC [ <  (SGR) must NOT look like CSI-u
+  (let ((m (make-array 4 :element-type '(unsigned-byte 8) :fill-pointer 0 :adjustable t)))
+    (dolist (b '(27 91 77)) (vector-push-extend b m))    ; ESC [ M
+    (is-false (cl-tmux::%csi-u-accumulating-p m 3) "mouse intro is not CSI-u")))
+
+;;; ── Extended keys (CSI u) end-to-end through process-byte ────────────────────
+
+(test root-csi-u-name-binding-fires
+  "bind -n C-S-a next-window: a Ctrl+Shift+a extended-key (ESC [ 97 ; 6 u) runs
+   next-window at root.  C-S-a has no legacy byte, so this exercises the name path
+   — and the multi-digit codepoint 97 must not be dropped by the generic forward."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "-n" "C-S-a" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(27 91 57 55 59 54 117))  ; ESC [ 9 7 ; 6 u
+            (cl-tmux::process-byte s b state))
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "bound -n C-S-a must run next-window via the CSI-u name path"))))))
+
+(test root-csi-u-ctrl-letter-reinjects-to-control-byte
+  "bind -n C-a next-window: a Ctrl+a extended-key (ESC [ 97 ; 5 u) runs next-window.
+   C-a is stored under the control byte (^A), so this proves the legacy re-injection
+   path routes the synthesized byte back through the root table."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "-n" "C-a" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(27 91 57 55 59 53 117))  ; ESC [ 9 7 ; 5 u
+            (cl-tmux::process-byte s b state))
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "bound -n C-a must fire via re-injected control byte"))))))
+
+(test root-csi-u-shift-tab-single-digit-codepoint
+  "bind -n S-Tab next-window: Shift+Tab (ESC [ 9 ; 2 u) runs next-window.  The
+   single-digit codepoint 9 must accumulate past the 3-byte-CSI branch rather than
+   be misread as a bare ESC [ 9 arrow/copy escape."
+  (with-isolated-config
+    (cl-tmux/config:apply-config-directive '("bind" "-n" "S-Tab" "next-window"))
+    (let ((s (make-fake-session :nwindows 2)))
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(27 91 57 59 50 117))  ; ESC [ 9 ; 2 u
+            (cl-tmux::process-byte s b state))
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "bound -n S-Tab must run next-window via single-digit CSI-u"))))))
+
+(test csi-u-plain-printable-forwards-to-pane
+  "An unbound plain extended-key (ESC [ 97 u) is translated to its legacy byte 'a'
+   and forwarded transparently to the active pane's PTY (no byte dropped)."
+  (with-pipe-fds (rfd wfd)
+    (let ((s (make-fake-session :nwindows 1)))
+      (setf (pane-fd (window-active-pane (session-active-window s))) wfd)
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(27 91 57 55 117))  ; ESC [ 9 7 u  (plain 'a')
+            (cl-tmux::process-byte s b state))
+          (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))
+            (is-true ready "the translated byte must reach the pane's PTY")
+            (when ready
+              (cffi:with-foreign-object (buf :uint8 8)
+                (let ((n (cffi:foreign-funcall "read"
+                                               :int rfd :pointer buf :unsigned-long 8
+                                               :long)))
+                  (is (= 1 n) "exactly one byte forwarded (got ~D)" n)
+                  (is (= 97 (cffi:mem-aref buf :uint8 0))
+                      "plain CSI-u 'a' must arrive as byte 97"))))))))))
+
+(test csi-u-function-key-forwarded-raw-not-dropped
+  "A digit CSI that ends in '~' (F5 = ESC [ 15 ~), not 'u', is not a CSI-u chord:
+   the safety-net branch forwards the whole sequence raw to the pane rather than
+   accumulating it forever after CSI-u deferral."
+  (with-pipe-fds (rfd wfd)
+    (let ((s (make-fake-session :nwindows 1)))
+      (setf (pane-fd (window-active-pane (session-active-window s))) wfd)
+      (with-loop-state
+        (let ((state (cl-tmux::make-input-state)))
+          (dolist (b '(27 91 49 53 126))  ; ESC [ 1 5 ~
+            (cl-tmux::process-byte s b state))
+          (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))
+            (is-true ready "the function key must be forwarded, not swallowed")
+            (when ready
+              (cffi:with-foreign-object (buf :uint8 16)
+                (let ((n (cffi:foreign-funcall "read"
+                                               :int rfd :pointer buf :unsigned-long 16
+                                               :long)))
+                  (is (= 5 n) "all 5 bytes of ESC [ 1 5 ~ forwarded raw (got ~D)" n)
+                  (is (= 27  (cffi:mem-aref buf :uint8 0)))
+                  (is (= 126 (cffi:mem-aref buf :uint8 4)) "ends with '~'"))))))))))
