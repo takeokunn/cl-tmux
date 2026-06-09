@@ -194,12 +194,16 @@
 ;;;   set_sole_pane(NewWin, Pane),
 ;;;   select_window(Session, NewWin).
 
-(defun break-pane (session)
-  "Remove the active pane from its window and place it as the sole pane
-   of a new window.  When the source window has only one pane, break-pane
-   is a no-op (nothing to break out).  Returns the new window, or NIL."
-  (let* ((src-win (session-active-window session))
-         (pane    (and src-win (window-active-pane src-win))))
+(defun break-pane (session &key src-window pane name (select t))
+  "Remove PANE from SRC-WINDOW and place it as the sole pane of a new window.
+   SRC-WINDOW defaults to the session's active window and PANE to that window's
+   active pane (the no-argument interactive behaviour).  NAME, when given, names
+   the new window (break-pane -n); otherwise the shell basename is used.  When
+   SELECT is true (default) the session switches to the new window; NIL leaves the
+   current window active (break-pane -d).  When the source window has only one
+   pane, break-pane is a no-op.  Returns the new window, or NIL."
+  (let* ((src-win (or src-window (session-active-window session)))
+         (pane    (or pane (and src-win (window-active-pane src-win)))))
     (unless (and src-win pane) (return-from break-pane nil))
     ;; Must have at least 2 panes to break one out.
     (when (< (length (window-panes src-win)) 2)
@@ -214,8 +218,8 @@
     (let* ((rows    (window-height src-win))
            (cols    (window-width  src-win))
            (new-id  (cl-tmux/model::%next-window-id session))
-           (name    (cl-tmux/model::%shell-basename))
-           (new-win (make-window :id new-id :name name :width cols :height rows)))
+           (wname   (or name (cl-tmux/model::%shell-basename)))
+           (new-win (make-window :id new-id :name wname :width cols :height rows)))
       ;; Install the pane as the sole leaf in the new window's tree.
       (setf (window-panes new-win) (list pane)
             (window-tree  new-win) (make-layout-leaf pane))
@@ -224,7 +228,7 @@
       (pane-reposition pane 0 0 cols rows)
       ;; Attach the new window to the session via the model-layer helper.
       (session-insert-window session new-win)
-      (session-select-window session new-win)
+      (when select (session-select-window session new-win))
       (run-hooks +hook-after-new-window+ new-win)
       new-win)))
 

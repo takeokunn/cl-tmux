@@ -2254,6 +2254,58 @@
       (is (member p1 (window-panes win))
           "the source window must retain the non-active pane"))))
 
+;;; ── break-pane (scriptable %cmd-break-pane-arg) ──────────────────────────────
+
+(defun %break-arg-fixture ()
+  "A window \"w\" with two panes p0 (active), p1 in session \"0\".
+   Returns (values sess win p0 p1)."
+  (let* ((p0  (%make-test-pane :id 1 :w 10))
+         (p1  (%make-test-pane :id 2 :x 11 :w 10))
+         (win (make-window :id 1 :name "w" :width 21 :height 5
+                           :tree (make-layout-split :h (make-layout-leaf p0)
+                                                    (make-layout-leaf p1) 1/2)
+                           :panes (list p0 p1)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window sess win)
+    (window-select-pane win p0)
+    (values sess win p0 p1)))
+
+(test cmd-break-pane-moves-active-pane-and-switches
+  "break-pane (no -d) moves the active pane into a new window and switches to it."
+  (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
+    (declare (ignore p1))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-break-pane-arg sess '())
+      (is (= 2 (length (session-windows sess)))
+          "a new window is created (the session now has two)")
+      (let ((new-win (find-if (lambda (w) (not (eq w win))) (session-windows sess))))
+        (is (member p0 (window-panes new-win)) "the active pane moved to the new window")
+        (is (eq new-win (session-active-window sess))
+            "the session switches to the new window without -d")))))
+
+(test cmd-break-pane-d-stays-on-current-window
+  "break-pane -d creates the new window but does NOT switch to it."
+  (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
+    (declare (ignore p0 p1))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-break-pane-arg sess '("-d"))
+      (is (= 2 (length (session-windows sess))) "the new window is still created")
+      (is (eq win (session-active-window sess))
+          "-d keeps the current window active"))))
+
+(test cmd-break-pane-n-names-new-window
+  "break-pane -n NAME gives the new window that name."
+  (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
+    (declare (ignore p0 p1))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-break-pane-arg sess '("-n" "logs"))
+      (let ((new-win (find-if (lambda (w) (not (eq w win))) (session-windows sess))))
+        (is (string= "logs" (window-name new-win))
+            "the new window must be named 'logs'")))))
+
 ;;; ── pipe-pane-open / pipe-pane-close / pipe-pane-write ──────────────────────
 
 (test pipe-pane-open-returns-stream

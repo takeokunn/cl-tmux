@@ -2369,6 +2369,43 @@
         (setf *dirty* t)
         t))))
 
+(defun %cmd-break-pane-arg (session args)
+  "break-pane [-dP] [-n window-name] [-s src-pane] [-t dst-window] [-F format]:
+   move a pane out of its window into a new window of its own.
+   -d: don't switch to the new window (stay on the current one).
+   -n name: name the new window (default: the shell basename).
+   -s src-pane: the pane to break out (default: the active pane).
+   -t/-F/-P/-a: accepted for compatibility; target position and the -P/-F print
+   form are not specially handled (the new window goes at the next free id).
+   No-op when the source window has fewer than two panes.  This is the scriptable
+   form; the interactive :break-pane keybinding is unchanged."
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "nstF")
+    (declare (ignore positionals))
+    (let* ((detach   (assoc #\d flags))
+           (name     (cdr (assoc #\n flags)))
+           (src-str  (cdr (assoc #\s flags)))
+           (cur-win  (session-active-window session))
+           (src-win  cur-win)
+           (src-pane (and cur-win (window-active-pane cur-win))))
+      ;; -s: resolve the source pane (and its window); a window-only target uses
+      ;; that window's own active pane (not the current window's).
+      (when src-str
+        (multiple-value-bind (s w p)
+            (resolve-target *server-sessions* src-str
+                            :current-session session :current-window cur-win
+                            :current-pane src-pane)
+          (declare (ignore s))
+          (when w
+            (setf src-win  w
+                  src-pane (if (and p (member p (window-panes w))) p
+                               (window-active-pane w))))))
+      (let ((new-win (cl-tmux/commands:break-pane
+                      session :src-window src-win :pane src-pane
+                              :name name :select (not detach))))
+        (when new-win
+          (setf *dirty* t)
+          t)))))
+
 (defun %send-keys-hex-to-string (hex)
   "Convert a send-keys -H argument (a hexadecimal character code like \"1b\" or
    \"41\") to the one-character string it names, or NIL when HEX is not a valid
@@ -2626,6 +2663,8 @@
    ;; join-pane / move-pane (move-pane is join-pane): scriptable -s/-t/-h/-v/-d.
    (cons '("join-pane" "joinp")         #'%cmd-join-pane-arg)
    (cons '("move-pane" "movep")         #'%cmd-join-pane-arg)
+   ;; break-pane: scriptable -d/-n/-s (move a pane out to its own new window).
+   (cons '("break-pane" "breakp")       #'%cmd-break-pane-arg)
    ;; confirm-before [-p prompt] cmd: gate COMMAND behind a y/n prompt.
    (cons '("confirm-before" "confirm")  #'%cmd-confirm-before-arg)
    ;; command-prompt [-p prompts] [template]: interactive prompt with substitution.
