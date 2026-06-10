@@ -3296,6 +3296,33 @@
         (is (assoc "dave" cl-tmux::*server-access-list* :test #'string=)
             "-k must not prevent the -a add")))))
 
+;;; ── bare (no-arg) forms of list-commands / list-panes ───────────────────────
+
+(test bare-list-commands-lists-commands-not-unknown
+  "Bare `list-commands` (no args) must list commands, not error as unknown —
+   it falls through *arg-command-table* (args-only) to the named-command table."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "list-commands")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is (not (search "unknown command" text))
+              "bare list-commands must not be an unknown command")
+          (is (search "new-window" text)
+              "list-commands output must include a known command name"))))))
+
+(test bare-list-panes-lists-panes-not-unknown
+  "Bare `list-panes` (no args) must list the current window's panes."
+  (let ((s (make-fake-session :nwindows 1 :npanes 2)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "list-panes")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is (not (search "unknown command" text))
+              "bare list-panes must not be an unknown command")
+          (is (search "(active)" text)
+              "list-panes output must mark the active pane"))))))
+
 ;;; ── customize-mode: options/bindings customize tree ─────────────────────────
 
 (test customize-mode-renders-grouped-tree-with-option-values

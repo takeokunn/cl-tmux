@@ -559,6 +559,15 @@
   ("list-windows"  :list-windows)
   ("list-sessions" :list-sessions)
   ("list-keys"     :list-keys)
+  ;; Bare no-arg forms of two arg-commands whose bare invocation is meaningful in
+  ;; tmux: `list-panes` lists the current window's panes, `list-commands` lists all
+  ;; commands.  Their flag forms (-F/-a/-t, filter NAME) live in *arg-command-table*,
+  ;; but that table is only consulted WITH args — so the bare names need an entry
+  ;; here too or they error as "unknown command".
+  ("list-panes"    :list-panes)
+  ("lsp"           :list-panes)
+  ("list-commands" :list-commands)
+  ("lscm"          :list-commands)
   ("copy-mode"     :copy-mode-enter)
   ("paste-buffer"  :paste-buffer)
   ("list-buffers"  :list-buffers)
