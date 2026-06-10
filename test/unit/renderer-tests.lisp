@@ -790,6 +790,37 @@
              (is (search "line" out) "overlay text must appear in output")))
       (clear-overlay))))
 
+(test message-style-folds-deprecated-fg-bg
+  "The deprecated message-fg/message-bg/message-attr options fold into message-style
+   via %fold-deprecated-style — the exact call render-overlay makes (old .tmux.conf
+   compat)."
+  (with-isolated-options ("message-style" "bold" "message-fg" "white" "message-bg" "blue")
+    (let ((eff (cl-tmux/renderer::%fold-deprecated-style
+                (cl-tmux/options:get-option "message-style" "")
+                "message-fg" "message-bg" "message-attr")))
+      (is (search "bold" eff)     "message-style base preserved (got ~S)" eff)
+      (is (search "fg=white" eff) "message-fg folded in (got ~S)" eff)
+      (is (search "bg=blue" eff)  "message-bg folded in (got ~S)" eff))))
+
+(test render-overlay-wires-deprecated-message-bg
+  "render-overlay actually applies the folded message-bg: the rendered overlay SGR
+   differs from the unstyled overlay."
+  (flet ((render ()
+           (let ((*overlay* nil))
+             (show-overlay "hello")
+             (unwind-protect
+                  (let ((buf (make-string-output-stream)))
+                    (cl-tmux/renderer::render-overlay buf 20)
+                    (get-output-stream-string buf))
+               (clear-overlay)))))
+    (let ((styled   (with-isolated-options ("message-style" "" "message-bg" "red")
+                      (render)))
+          (unstyled (with-isolated-options ("message-style" "" "message-bg" "")
+                      (render))))
+      (is (not (string= styled unstyled))
+          "message-bg must change the overlay's rendered SGR (styled=~S unstyled=~S)"
+          styled unstyled))))
+
 ;;; ── DECTCEM cursor-visibility in rendered output ────────────────────────────
 
 (test render-session-hides-cursor-when-dectcem-off

@@ -147,6 +147,14 @@
   ("remain-on-exit"           :boolean nil)
   ("renumber-windows"         :boolean nil)
   ("message-style"            :string  "")
+  ;; Deprecated pre-2.9 message colour options (old .tmux.conf compat); folded
+  ;; into message-style / message-command-style by the renderer.
+  ("message-fg"               :string  "")
+  ("message-bg"               :string  "")
+  ("message-attr"             :string  "")
+  ("message-command-fg"       :string  "")
+  ("message-command-bg"       :string  "")
+  ("message-command-attr"     :string  "")
   ("update-environment"       :string  "DISPLAY SSH_ASKPASS SSH_AUTH_SOCK SSH_CONNECTION WINDOWID XAUTHORITY")
   ;; Display options
   ("display-time"             :integer 750)    ; ms to show messages / pane numbers
