@@ -1433,6 +1433,21 @@
                  "the set-hook window-pane-changed command must fire via session lookup")
         (cl-tmux/hooks:clear-command-hooks "window-pane-changed")))))
 
+(test set-hook-pane-focus-in-fires-config-command
+  "set-hook -g pane-focus-in <cmd> fires when a pane gains focus (config path via
+   the pane→session lookup at %notify-pane-focus)."
+  (let ((s (make-fake-session :nwindows 1 :npanes 2)))
+    (with-loop-state
+      (cl-tmux/hooks:clear-command-hooks "pane-focus-in")
+      (let ((cl-tmux::*server-sessions* (list (cons "0" s)))
+            (*overlay* nil))
+        (cl-tmux::%run-command-line
+         s "set-hook -g pane-focus-in \"display-message focused\"")
+        (cl-tmux::%run-command-line s "select-pane -t 2")
+        (is-true (search "focused" (format nil "~{~A~%~}" (overlay-lines)))
+                 "the set-hook pane-focus-in command must fire via session lookup")
+        (cl-tmux/hooks:clear-command-hooks "pane-focus-in")))))
+
 (test cmd-list-commands-filters-by-name
   "list-commands <name> shows only that command (tmux's filter); bare
    list-commands shows the full list."

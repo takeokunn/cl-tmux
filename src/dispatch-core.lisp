@@ -95,6 +95,14 @@
   (and win (loop for (nil . sess) in *server-sessions*
                  when (member win (session-windows sess)) return sess)))
 
+(defun %session-of-pane (pane)
+  "The session in *server-sessions* one of whose windows contains PANE, or NIL.
+   Lets %notify-pane-focus fire .tmux.conf set-hook command hooks from a pane."
+  (and pane (loop for (nil . sess) in *server-sessions*
+                  when (loop for w in (session-windows sess)
+                             thereis (member pane (window-panes w)))
+                    return sess)))
+
 (defun %notify-pane-focus (pane focused-p)
   "Notify PANE of a focus change: fire the pane-focus-in / pane-focus-out hook
    (independent of ?1004), then send the application its focus-tracking report
@@ -103,10 +111,13 @@
   (when pane
     ;; Hook fires on every focus transition, regardless of whether the app
     ;; enabled ?1004 focus reporting (matches tmux's pane-focus-in/out hooks).
-    (cl-tmux/hooks:run-hooks (if focused-p
-                                 cl-tmux/hooks:+hook-pane-focus-in+
-                                 cl-tmux/hooks:+hook-pane-focus-out+)
-                             pane))
+    ;; Fire both the add-hook and (via the owning session) the set-hook registries.
+    (let ((hook (if focused-p
+                    cl-tmux/hooks:+hook-pane-focus-in+
+                    cl-tmux/hooks:+hook-pane-focus-out+)))
+      (cl-tmux/hooks:run-hooks hook pane)
+      (let ((sess (%session-of-pane pane)))
+        (when sess (run-command-hooks hook sess)))))
   (when (and pane (> (pane-fd pane) 0))
     (let ((seq (cl-tmux/terminal/actions:focus-event-report
                 (pane-screen pane) focused-p)))
