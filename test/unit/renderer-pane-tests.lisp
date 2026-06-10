@@ -251,6 +251,19 @@
       (is (search "fg=green" active) "pane-active-border-fg folded (got ~S)" active)
       (is (search "bg=black" active) "pane-active-border-bg folded (got ~S)" active))))
 
+(test mode-style-folds-deprecated-fg-bg-attr
+  "The deprecated mode-fg/mode-bg/mode-attr options fold into mode-style via
+   %fold-deprecated-style — the call the copy-mode selection renderer makes
+   (old .tmux.conf compat; mode has an attribute, unlike borders)."
+  (with-isolated-options ("mode-style" "" "mode-fg" "black"
+                          "mode-bg" "yellow" "mode-attr" "bold")
+    (let ((eff (cl-tmux/renderer::%fold-deprecated-style
+                (cl-tmux/options:get-option "mode-style" "")
+                "mode-fg" "mode-bg" "mode-attr")))
+      (is (search "fg=black" eff)  "mode-fg folded in (got ~S)" eff)
+      (is (search "bg=yellow" eff) "mode-bg folded in (got ~S)" eff)
+      (is (search "bold" eff)      "mode-attr folded in (got ~S)" eff))))
+
 (test apply-border-style-fg-blue
   "\"fg=blue\" style emits reset then ESC[34m (SGR 34 = blue foreground)."
   (let ((out (%border-style-output "fg=blue")))

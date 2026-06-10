@@ -102,6 +102,11 @@
   ;; Copy-mode selection highlight.  "reverse" (default) → reverse-video; a
   ;; colour-based value (e.g. "bg=colour172") recolours the selection instead.
   ("mode-style"               :string  "reverse")
+  ;; Deprecated pre-2.9 copy-mode colour options (old .tmux.conf compat); folded
+  ;; into mode-style by the renderer.
+  ("mode-fg"                  :string  "")
+  ("mode-bg"                  :string  "")
+  ("mode-attr"                :string  "")
   ;; Alert-state window-tab styles (applied to a non-active window in that state):
   ;; bell takes priority over activity, then last (previously active) window.
   ("window-status-activity-style" :string "reverse")

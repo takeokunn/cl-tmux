@@ -301,7 +301,10 @@
      (multiple-value-bind (ms-fg ms-bg)
          ;; mode-style selection colours (a colour-based value overrides the
          ;; reverse-video default highlight); "reverse" → NIL/NIL → reverse path.
-         (%window-style-default-colors (cl-tmux/options:get-option "mode-style" "reverse"))
+         ;; The deprecated mode-fg/mode-bg/mode-attr are folded in for old-config compat.
+         (%window-style-default-colors
+          (%fold-deprecated-style (cl-tmux/options:get-option "mode-style" "reverse")
+                                  "mode-fg" "mode-bg" "mode-attr"))
       (with-lock-held ((screen-lock screen))
         ;; Hoist selection boundary computation outside the cell loop so it is
         ;; computed once per frame instead of once per cell (~1920 times).
