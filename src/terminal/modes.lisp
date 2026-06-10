@@ -290,6 +290,19 @@
   (reset-sgr-pen screen)
   (reset-terminal-modes screen))
 
+(defun decstr-action (screen)
+  "DECSTR — CSI ! p: soft terminal reset.  Restores modes and the SGR pen to their
+   power-on defaults but, unlike RIS, does NOT clear the screen or move the cursor.
+   Resets the SGR pen, the terminal modes (charset / origin / autowrap / insert /
+   scroll region / cursor visibility / pending wrap / tab stops via
+   reset-terminal-modes), application cursor keys, bracketed-paste mode, and the
+   DECSC saved-cursor (a later DECRC then homes, per xterm)."
+  (reset-sgr-pen screen)
+  (reset-terminal-modes screen)
+  (setf (screen-app-cursor-keys screen) nil
+        (screen-bracketed-paste screen) nil
+        (screen-saved-cursor    screen) nil))
+
 (defun decaln-action (screen)
   "DECALN — ESC # 8: fill the entire screen with 'E' (the VT100 screen-alignment
    test pattern, used by vttest and terminal conformance suites), then home the

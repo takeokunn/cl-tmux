@@ -898,3 +898,36 @@
     (feed s (esc "c"))             ; RIS
     (is (not (cl-tmux/terminal/types:screen-insert-mode s))
         "RIS must reset insert mode")))
+
+;;; ── DECSTR — Soft Terminal Reset (CSI ! p) ─────────────────────────────────
+
+(test decstr-resets-modes-but-preserves-screen-and-cursor
+  "DECSTR (CSI ! p) restores modes to defaults WITHOUT clearing the screen or
+   moving the cursor — the key distinction from RIS (ESC c)."
+  (with-screen (s 10 5)
+    (feed s "hello")                 ; content on row 0
+    (feed s (esc "[4h"))             ; IRM on
+    (feed s (esc "[?7l"))            ; autowrap off
+    (feed s (esc "[?25l"))           ; cursor hidden
+    (feed s (esc "[2;4r"))           ; scroll region rows 2..4 (DECSTBM homes cursor)
+    (feed s (esc "[1;6H"))           ; reposition cursor to row 1, col 6 (0-idx col 5)
+    (feed s (esc "[!p"))             ; DECSTR soft reset
+    ;; Modes reset:
+    (is (not (cl-tmux/terminal/types:screen-insert-mode s)) "DECSTR clears IRM")
+    (is-true (cl-tmux/terminal/types:screen-autowrap s)     "DECSTR restores autowrap")
+    (is-true (cl-tmux/terminal/types:screen-cursor-visible s) "DECSTR shows the cursor")
+    (is (= 0 (cl-tmux/terminal/types:screen-scroll-top s))    "DECSTR restores scroll top")
+    (is (= 4 (cl-tmux/terminal/types:screen-scroll-bottom s)) "DECSTR restores scroll bottom")
+    ;; Screen + cursor preserved (NOT erased / homed):
+    (is (string= "hello" (row-string s 0 :end 5))
+        "DECSTR must NOT clear the screen (got ~S)" (row-string s 0 :end 5))
+    (is (= 5 (cl-tmux/terminal/types:screen-cursor-x s))
+        "DECSTR must NOT move the cursor")))
+
+(test decstr-resets-sgr-pen
+  "DECSTR resets the SGR pen so subsequent text is drawn with default attributes."
+  (with-screen (s 10 5)
+    (feed s (esc "[1;31m"))          ; bold red
+    (feed s (esc "[!p"))             ; DECSTR
+    (is (= 0 (cl-tmux/terminal/types:screen-cur-attrs s))
+        "DECSTR must clear the active SGR attributes")))

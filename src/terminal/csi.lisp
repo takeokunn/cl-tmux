@@ -370,6 +370,11 @@
   ((and (null private) (null intermed) (char= final #\l))
    (reset-ansi-mode screen params))
 
+  ;; DECSTR — Soft Terminal Reset (CSI ! p): restore modes/SGR to defaults without
+  ;; clearing the screen or moving the cursor (cf. RIS, ESC c, which does both).
+  ((and (eql intermed #\!) (char= final #\p))
+   (decstr-action screen))
+
   ;; XTWINOPS — window operations / reports (CSI Ps ; … t, no private marker).
   ;; We answer the size REPORTS (18 = text area in characters, 19 = screen in
   ;; characters) so apps can learn the grid size; window-manipulation operations

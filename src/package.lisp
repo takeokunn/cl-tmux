@@ -292,6 +292,7 @@
    #:exit-alt-screen
    #:reset-terminal-modes
    #:ris-action
+   #:decstr-action
    #:decaln-action
    ;; DECSC / DECRC cursor save & restore
    #:save-cursor
