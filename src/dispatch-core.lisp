@@ -113,7 +113,9 @@
     (window-select-pane win new-pane)
     (unless (eq old new-pane)
       (%notify-pane-focus old nil)
-      (%notify-pane-focus new-pane t))))
+      (%notify-pane-focus new-pane t)
+      ;; tmux's window-pane-changed event hook: WIN's active pane changed.
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-pane-changed+ win))))
 
 (defmacro %with-window-focus-transition ((session) &body body)
   "Run BODY (which may change SESSION's active window by any means) and then

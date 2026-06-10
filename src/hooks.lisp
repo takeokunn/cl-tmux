@@ -50,6 +50,7 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
   (+hook-after-select-pane+      "after-select-pane"      "Fired after the select-pane command")
   (+hook-after-select-window+    "after-select-window"    "Fired after the select-window command")
   (+hook-session-window-changed+ "session-window-changed"  "Fired when a session's active window changes")
+  (+hook-window-pane-changed+    "window-pane-changed"     "Fired when the active pane in a window changes")
   (+hook-window-renamed+         "window-renamed"         "Fired when a window is renamed")
   (+hook-session-renamed+        "session-renamed"        "Fired when a session is renamed")
   (+hook-after-resize-pane+      "after-resize-pane"      "Fired after a pane is resized")

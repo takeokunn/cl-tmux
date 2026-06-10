@@ -3191,6 +3191,19 @@
         (is-true fired
                  "session-window-changed must fire when the active window changes")))))
 
+(test window-pane-changed-hook-fires-on-pane-switch
+  "window-pane-changed fires when a window's active pane changes (any select-pane
+   path routes through %select-pane-with-focus's diff)."
+  (with-isolated-hooks
+    (let ((s (make-fake-session :nwindows 1 :npanes 2))
+          (fired nil))
+      (with-loop-state
+        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-window-pane-changed+
+                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+        (cl-tmux::%run-command-line s "select-pane -t 2")   ; switch to pane 2
+        (is-true fired
+                 "window-pane-changed must fire when the active pane changes")))))
+
 (test resize-pane-fires-after-resize-pane-hook
   "resize-pane fires +hook-after-resize-pane+ (covers both the resize-pane command
    and the C-b H/J/K/L keybind path, which share this function)."
