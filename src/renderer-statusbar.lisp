@@ -46,11 +46,19 @@
    per-window via get-option-for-context, so alert styles can be set per-window."
   (flet ((opt (name) (cl-tmux/options:get-option-for-context name :window window)))
     (if active-p
-        (opt "window-status-current-style")
+        ;; Fold the deprecated window-status-current-fg/bg/attr into the current style.
+        (%fold-deprecated-style (opt "window-status-current-style")
+                                "window-status-current-fg"
+                                "window-status-current-bg"
+                                "window-status-current-attr")
         (let ((bell-style     (opt "window-status-bell-style"))
               (activity-style (opt "window-status-activity-style"))
               (last-style     (opt "window-status-last-style"))
-              (normal-style   (opt "window-status-style")))
+              ;; Fold the deprecated window-status-fg/bg/attr into the normal style.
+              (normal-style   (%fold-deprecated-style (opt "window-status-style")
+                                                      "window-status-fg"
+                                                      "window-status-bg"
+                                                      "window-status-attr")))
           (cond
             ((and (%window-has-bell-p window) (plusp (length bell-style)))
              bell-style)

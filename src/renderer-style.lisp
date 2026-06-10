@@ -257,23 +257,28 @@
    Returns the default blue-on-white SGR \"44;97\" when style-str is empty/nil."
   (style-to-sgr (parse-style-string style-str)))
 
-(defun %effective-status-style ()
-  "The effective status-bar style: the modern `status-style` option with the
-   DEPRECATED status-fg / status-bg / status-attr options folded in.  tmux removed
-   those separate options in 2.9 (merging them into status-style), but many older
-   .tmux.conf files and tutorials still set them — so each one that is present is
-   appended as its equivalent style token (fg=…, bg=…, or the attribute name),
-   overriding the matching component of status-style.  Returns the combined,
-   comma-joined style string (empty when nothing is set)."
-  (flet ((opt (name) (cl-tmux/options:get-option name ""))
+(defun %fold-deprecated-style (base-style fg-opt bg-opt attr-opt)
+  "Append the DEPRECATED fg/bg/attr options (each an option NAME, read globally) to
+   BASE-STYLE, an already-resolved style string, as fg=… / bg=… / <attr> tokens.
+   tmux removed the separate -fg/-bg/-attr options in 2.9 (merging them into the
+   matching -style option), but many older .tmux.conf files still set them; a set
+   token is appended so it overrides the matching component of BASE-STYLE.  Returns
+   the combined, comma-joined style string (empty when nothing is set).  Shared by
+   the status and window-status deprecated-option compatibility."
+  (flet ((opt (n) (and n (cl-tmux/options:get-option n "")))
          (setp (v) (and v (plusp (length v)) (not (string-equal v "default")))))
-    (let* ((style (opt "status-style"))
-           (fg    (opt "status-fg"))
-           (bg    (opt "status-bg"))
-           (attr  (opt "status-attr"))
+    (let* ((fg   (opt fg-opt))
+           (bg   (opt bg-opt))
+           (attr (opt attr-opt))
            (parts (remove nil
-                          (list (and (setp style) style)
+                          (list (and (setp base-style) base-style)
                                 (and (setp fg) (format nil "fg=~A" fg))
                                 (and (setp bg) (format nil "bg=~A" bg))
                                 (and (setp attr) attr)))))
       (format nil "~{~A~^,~}" parts))))
+
+(defun %effective-status-style ()
+  "The effective status-bar style: `status-style` with the deprecated
+   status-fg / status-bg / status-attr options folded in (old .tmux.conf compat)."
+  (%fold-deprecated-style (cl-tmux/options:get-option "status-style" "")
+                          "status-fg" "status-bg" "status-attr"))

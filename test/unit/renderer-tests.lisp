@@ -363,6 +363,28 @@
       (is (search (format nil "~C[0m" #\Escape) out)
           "%status-window-list-styled must emit SGR reset (got ~S)" out))))
 
+(test window-status-style-folds-deprecated-current-bg
+  "%window-status-style folds the deprecated window-status-current-bg into the
+   active window's style (old .tmux.conf compat)."
+  (with-isolated-options ("window-status-current-style" ""
+                          "window-status-current-bg" "red")
+    (let* ((sess  (make-test-session 20 5 :content ""))
+           (win   (session-active-window sess))
+           (style (cl-tmux/renderer::%window-status-style sess win t)))
+      (is (string= "bg=red" style)
+          "active window style must fold to bg=red (got ~S)" style))))
+
+(test window-status-style-folds-deprecated-normal-fg
+  "%window-status-style folds the deprecated window-status-fg into a non-active
+   window's normal style."
+  (with-isolated-options ("window-status-style" ""
+                          "window-status-fg" "green")
+    (let* ((sess  (make-test-session 20 5 :content ""))
+           (win   (session-active-window sess))
+           (style (cl-tmux/renderer::%window-status-style sess win nil)))
+      (is (string= "fg=green" style)
+          "non-active window style must fold to fg=green (got ~S)" style))))
+
 (test status-window-list-styled-no-style-no-sgr
   "When both style options are empty, %status-window-list-styled emits plain
    labels with no SGR wrapping."

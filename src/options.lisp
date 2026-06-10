@@ -86,6 +86,14 @@
   ("window-status-current-format" :string " #{window_index}:#{window_name}* ")
   ("window-status-style"      :string  "")
   ("window-status-current-style" :string "reverse")
+  ;; Deprecated pre-2.9 window-status colour options, kept for old .tmux.conf
+  ;; compatibility: folded into the matching window-status style by the renderer.
+  ("window-status-fg"          :string  "")
+  ("window-status-bg"          :string  "")
+  ("window-status-attr"        :string  "")
+  ("window-status-current-fg"  :string  "")
+  ("window-status-current-bg"  :string  "")
+  ("window-status-current-attr" :string "")
   ;; Pane background/foreground defaults: window-style applies to inactive panes,
   ;; window-active-style to the active pane.  Empty = no override (the common
   ;; "dim inactive panes" idiom sets a dimmer bg on window-style).
