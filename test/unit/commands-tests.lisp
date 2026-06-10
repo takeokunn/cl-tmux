@@ -3216,6 +3216,86 @@
       (resize-pane win :up 2)
       (is-true fired "after-resize-pane hook must fire"))))
 
+;;; ── server-access: access-control-list management ──────────────────────────
+
+(test server-access-add-records-user-read-write-by-default
+  "server-access -a USER adds USER to the access list as read-write."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
+        (cl-tmux::%run-command-line s "server-access -a alice")
+        (is (equal :read-write
+                   (cdr (assoc "alice" cl-tmux::*server-access-list* :test #'string=)))
+            "alice must be added with the default read-write permission")))))
+
+(test server-access-add-r-records-user-read-only
+  "server-access -a -r USER adds USER as read-only."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
+        (cl-tmux::%run-command-line s "server-access -a -r bob")
+        (is (equal :read-only
+                   (cdr (assoc "bob" cl-tmux::*server-access-list* :test #'string=)))
+            "-r must record bob as read-only")))))
+
+(test server-access-w-modifies-existing-user-permission
+  "A bare `server-access -w USER` (no -a/-d) upgrades an existing entry to read-write."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (let ((cl-tmux::*server-access-list* (list (cons "carol" :read-only)))
+            (*overlay* nil))
+        (cl-tmux::%run-command-line s "server-access -w carol")
+        (is (equal :read-write
+                   (cdr (assoc "carol" cl-tmux::*server-access-list* :test #'string=)))
+            "-w must upgrade carol from read-only to read-write")))))
+
+(test server-access-modify-unknown-user-is-error-no-entry-created
+  "Modifying (no -a) an unknown user is an error and must NOT create an entry,
+   matching tmux's `server-access user` semantics."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
+        (cl-tmux::%run-command-line s "server-access -w nobody")
+        (is (null cl-tmux::*server-access-list*)
+            "modifying an unknown user must not add it to the list")))))
+
+(test server-access-delete-removes-user
+  "server-access -d USER removes USER from the access list."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (let ((cl-tmux::*server-access-list*
+              (list (cons "alice" :read-write) (cons "bob" :read-only)))
+            (*overlay* nil))
+        (cl-tmux::%run-command-line s "server-access -d alice")
+        (is (null (assoc "alice" cl-tmux::*server-access-list* :test #'string=))
+            "alice must be removed")
+        (is (equal :read-only
+                   (cdr (assoc "bob" cl-tmux::*server-access-list* :test #'string=)))
+            "bob must be left untouched")))))
+
+(test server-access-l-lists-entries-in-overlay
+  "server-access -l renders each entry as `name: permission` in the overlay."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (let ((cl-tmux::*server-access-list*
+              (list (cons "alice" :read-write)))
+            (*overlay* nil))
+        (cl-tmux::%run-command-line s "server-access -l")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is (search "alice" text) "listing must contain the user name")
+          (is (search "read-write" text)
+              "listing must contain the user's permission"))))))
+
+(test server-access-k-flag-accepted-without-error
+  "server-access -k USER (kill clients) is accepted as a no-op in single-user
+   cl-tmux and still applies the add when combined with -a."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
+        (finishes (cl-tmux::%run-command-line s "server-access -a -k dave"))
+        (is (assoc "dave" cl-tmux::*server-access-list* :test #'string=)
+            "-k must not prevent the -a add")))))
+
 ;;; ── copy-mode-begin-line-selection: multi-row window ────────────────────────
 
 (test copy-mode-begin-line-selection-selects-correct-width

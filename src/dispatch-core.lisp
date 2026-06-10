@@ -2894,6 +2894,73 @@
        (dolist (cmd filtered)
          (format s "~(~A~)~%" cmd))))))
 
+;;; ── server-access ──────────────────────────────────────────────────────────
+;;; tmux's server-access maintains an access-control list for the (multi-user)
+;;; server socket.  cl-tmux is single-user and does not share its server over a
+;;; socket, so the list gates nothing — but modelling it faithfully lets a
+;;; `.tmux.conf` `server-access` directive load and round-trip, and lets the
+;;; behaviour be verified (add/delete/modify/list) like any other command.
+
+(defvar *server-access-list* nil
+  "Alist of (username . permission), permission being :read-write or :read-only.
+   The server access-control list managed by the `server-access` command.  Front
+   of the list is the most-recently-added user; %format-server-access-list emits
+   them in insertion order (oldest first).")
+
+(defun %format-server-access-list ()
+  "Render *server-access-list* as one `name: permission` line per entry, in
+   insertion order.  Empty list yields a single explanatory line."
+  (if (null *server-access-list*)
+      "server-access: no entries"
+      (with-output-to-string (s)
+        (dolist (entry (reverse *server-access-list*))
+          (format s "~A: ~(~A~)~%" (car entry) (cdr entry))))))
+
+(defun %cmd-server-access (session args)
+  "server-access [-l] [-a|-d] [-r|-w] [-k] [user]: manage the server access list.
+   -l       list the current access entries (name -> permission); also the
+            default when no user and no -a/-d is given.
+   -a user  add USER (read-write by default, read-only when -r is also given).
+   -d user  remove USER from the access list.
+   -r / -w  set the permission to read-only / read-write when adding or modifying.
+   -k       kill USER's clients — accepted for compatibility; single-user cl-tmux
+            has no remote clients to kill, so it is a no-op.
+   A bare `server-access -r user` (no -a/-d) modifies an existing entry; modifying
+   an unknown user is an error, matching tmux.  See *server-access-list*."
+  (declare (ignore session))
+  (multiple-value-bind (flags positionals) (%parse-command-flags args "")
+    (let* ((listp (assoc #\l flags))
+           (addp  (assoc #\a flags))
+           (delp  (assoc #\d flags))
+           (perm  (cond ((assoc #\r flags) :read-only)
+                        ((assoc #\w flags) :read-write)
+                        (t nil)))
+           (user  (first positionals)))
+      (cond
+        ;; -l, or no actionable arguments: list.
+        ((or listp (and (null addp) (null delp) (null user)))
+         (show-overlay (%format-server-access-list))
+         t)
+        ;; -d user: remove (a no-op if absent, like tmux).
+        ((and delp user)
+         (setf *server-access-list*
+               (remove user *server-access-list* :key #'car :test #'string=))
+         (show-overlay (format nil "server-access: removed ~A" user))
+         t)
+        ;; -a user, or bare `user` with -r/-w: add or modify.
+        (user
+         (let ((entry (assoc user *server-access-list* :test #'string=)))
+           (cond
+             (entry (when perm (setf (cdr entry) perm)))
+             (addp  (push (cons user (or perm :read-write)) *server-access-list*))
+             (t (show-overlay (format nil "server-access: unknown user ~A" user))
+                (return-from %cmd-server-access nil))))
+         (show-overlay
+          (format nil "server-access: ~A -> ~(~A~)" user
+                  (cdr (assoc user *server-access-list* :test #'string=))))
+         t)
+        (t nil)))))
+
 (defparameter *arg-command-table*
   (list
    (cons '("display-message" "display") #'%cmd-display-message)
@@ -2977,7 +3044,9 @@
    ;; switch-client -T <key-table>: activate a custom key table (modal keymaps).
    (cons '("switch-client" "switchc")   #'%cmd-switch-client)
    ;; last-pane [-Z]: select last pane, optionally toggling zoom.
-   (cons '("last-pane" "lastp")         #'%cmd-last-pane-arg))
+   (cons '("last-pane" "lastp")         #'%cmd-last-pane-arg)
+   ;; server-access [-adlrwk] [user]: manage the server access-control list.
+   (cons '("server-access")             #'%cmd-server-access))
   "Arg-taking commands: (list-of-names . handler), handler a function of
    (SESSION ARGS).  Consulted by %run-command-line before the no-argument
    %dispatch-named-command name table.")
