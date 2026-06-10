@@ -135,7 +135,9 @@
              (%notify-pane-focus ,old-pane nil)
              (%notify-pane-focus (and ,new-win (window-active-pane ,new-win)) t)
              ;; tmux's session-window-changed event hook: the active window changed.
-             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-window-changed+ ,sess)))))))
+             ;; Fire both the add-hook and the .tmux.conf set-hook registries.
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-window-changed+ ,sess)
+             (run-command-hooks cl-tmux/hooks:+hook-session-window-changed+ ,sess)))))))
 
 ;;; -- Private command helpers ------------------------------------------------
 
@@ -1385,8 +1387,10 @@
                           (session-last-window session))
                      (session-select-window session (session-last-window session))
                      (session-select-window session win)))))))))
-    ;; after-select-window: tmux's per-command hook, fired after select-window.
-    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-window+ session)))
+    ;; after-select-window: tmux's per-command hook.  Fire BOTH the programmatic
+    ;; (add-hook) and the .tmux.conf set-hook command registries.
+    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-window+ session)
+    (run-command-hooks cl-tmux/hooks:+hook-after-select-window+ session)))
 
 (defun %cmd-select-pane (session args)
   "select-pane [-L|-R|-U|-D|-l|-d|-e|-m|-M] [-t target] [-T title]: select or configure a pane.

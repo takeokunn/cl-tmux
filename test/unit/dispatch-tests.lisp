@@ -1390,6 +1390,21 @@
         (is (= 5 (cl-tmux/model:pane-fd p1))
             "the window must NOT be respawned (live pane fd unchanged → no fork)")))))
 
+(test set-hook-after-select-window-fires-config-command
+  "set-hook -g after-select-window <cmd> (the .tmux.conf path) fires the command
+   when select-window runs — i.e. the hook reaches run-command-hooks, not just the
+   programmatic add-hook registry."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (cl-tmux/hooks:clear-command-hooks "after-select-window")
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line
+         s "set-hook -g after-select-window \"display-message hooked\"")
+        (cl-tmux::%run-command-line s "select-window -n")
+        (is-true (search "hooked" (format nil "~{~A~%~}" (overlay-lines)))
+                 "the set-hook after-select-window command must fire (display 'hooked')")
+        (cl-tmux/hooks:clear-command-hooks "after-select-window")))))
+
 (test cmd-list-commands-filters-by-name
   "list-commands <name> shows only that command (tmux's filter); bare
    list-commands shows the full list."
