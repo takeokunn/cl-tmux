@@ -753,16 +753,18 @@
     pane))
 
 (defun make-selecting-screen (w h mark-row mark-col cursor-row cursor-col
-                              &key (offset 0))
+                              &key (offset 0) rect)
   "Build a screen of W x H in copy-mode with an active selection.
    MARK-ROW/COL and CURSOR-ROW/COL define the selection anchor and cursor.
-   OFFSET (default 0) sets the copy-mode scroll offset."
+   OFFSET (default 0) sets the copy-mode scroll offset.
+   RECT non-nil sets rectangle-select mode."
   (let ((screen (make-screen w h)))
-    (setf (cl-tmux/terminal/types:screen-copy-mode-p    screen) t
-          (cl-tmux/terminal/types:screen-copy-selecting screen) t
-          (cl-tmux/terminal/types:screen-copy-offset    screen) offset
-          (cl-tmux/terminal/types:screen-copy-mark      screen) (cons mark-row   mark-col)
-          (cl-tmux/terminal/types:screen-copy-cursor    screen) (cons cursor-row cursor-col))
+    (setf (cl-tmux/terminal/types:screen-copy-mode-p        screen) t
+          (cl-tmux/terminal/types:screen-copy-selecting     screen) t
+          (cl-tmux/terminal/types:screen-copy-offset        screen) offset
+          (cl-tmux/terminal/types:screen-copy-mark          screen) (cons mark-row   mark-col)
+          (cl-tmux/terminal/types:screen-copy-cursor        screen) (cons cursor-row cursor-col)
+          (cl-tmux/terminal/types:screen-copy-rect-select-p screen) (and rect t))
     screen))
 
 ;;; ---- Shared renderer session fixture ------------------------------------------

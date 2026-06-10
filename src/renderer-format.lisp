@@ -76,25 +76,56 @@
   (%emit-fg "foreground"              30    82    "38;5"   "38;2"   39)
   (%emit-bg "background"              40    92    "48;5"   "48;2"   49))
 
+;;; ── Underline colour (SGR 58) ────────────────────────────────────────────────
+;;;
+;;; Unlike fg/bg, the underline colour has no 30-37/40-47 "standard" short-form:
+;;; all indices use the 58;5;N 256-colour form or 58;2;R;G;B for true-colour.
+;;; 0 means "default" (inherit from fg) and is never emitted.
+
+(declaim (inline %emit-ul-color))
+(defun %emit-ul-color (stream n)
+  "Emit the SGR underline-colour fragment for N: ';58;5;N' for palette, ';58;2;R;G;B'
+   for true-colour (bit 24 set).  Skips emission when N is zero (default = inherit fg)."
+  (when (plusp n)
+    (if (logbitp 24 n)
+        (let ((rgb (logand n #xFFFFFF)))
+          (format stream ";58;2;~D;~D;~D"
+                  (ash rgb -16)
+                  (logand (ash rgb -8) #xFF)
+                  (logand rgb #xFF)))
+        (format stream ";58;5;~D" n))))
+
 ;;; ── Attribute rendering ─────────────────────────────────────────────────────
 ;;;
 ;;; define-cell-attr-renderer is a Prolog-like rule table:
 ;;;   render_attr(bold, stream)      :- write(stream, ";1").
 ;;;   render_attr(italic, stream)    :- write(stream, ";3").
 ;;;   ...
+;;;
+;;; ATTRS2 extended attributes (double-underline SGR 21, overline SGR 53) and
+;;; UL-COLOR (SGR 58) are optional; zero means "not set / default".
 
 (defmacro define-cell-attr-renderer (&rest bit-rules)
   "Build RENDER-CELL-ATTRS from a declarative table of (bit-index sgr-code) entries.
-   Attribute bits are checked in order and the corresponding SGR code is emitted."
-  `(defun render-cell-attrs (stream fg bg attrs)
-     "Emit an SGR escape sequence resetting then applying FG, BG, and ATTRS to STREAM."
+   Attribute bits are checked in order and the corresponding SGR code is emitted.
+   The generated function also accepts ATTRS2 (extended attributes: double-underline
+   and overline) and UL-COLOR (underline colour, SGR 58); both default to 0."
+  `(defun render-cell-attrs (stream fg bg attrs &optional (attrs2 0) (ul-color 0))
+     "Emit an SGR escape sequence resetting then applying FG, BG, ATTRS, ATTRS2 extended
+      attributes (double-underline SGR 21, overline SGR 53), and UL-COLOR underline colour."
+     (declare (type (unsigned-byte 8) attrs attrs2) (type (unsigned-byte 25) ul-color))
      (format stream "~C[0" +esc+)
      ,@(mapcar (lambda (rule)
                  `(when (logbitp ,(first rule) attrs)
                     (write-string ,(format nil ";~D" (second rule)) stream)))
                bit-rules)
+     ;; Extended attribute bits (attrs2): double-underline (bit 0) and overline (bit 1)
+     (when (logbitp 0 attrs2) (write-string ";21" stream)) ; SGR 21 — doubly underlined
+     (when (logbitp 1 attrs2) (write-string ";53" stream)) ; SGR 53 — overlined
      (%emit-fg stream fg)
      (%emit-bg stream bg)
+     ;; Underline colour (SGR 58); 0 = default (inherit fg) → no emission
+     (%emit-ul-color stream ul-color)
      (write-char #\m stream)))
 
 (define-cell-attr-renderer

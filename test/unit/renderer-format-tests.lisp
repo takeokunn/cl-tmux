@@ -10,9 +10,9 @@
 
 ;;; ── Helper ──────────────────────────────────────────────────────────────────
 
-(defun cell-attrs-string (fg bg attrs)
+(defun cell-attrs-string (fg bg attrs &optional (attrs2 0) (ul-color 0))
   (with-output-to-string (s)
-    (cl-tmux/renderer::render-cell-attrs s fg bg attrs)))
+    (cl-tmux/renderer::render-cell-attrs s fg bg attrs attrs2 ul-color)))
 
 ;;; ── move-to (1-based conversion) ────────────────────────────────────────────
 
@@ -415,6 +415,49 @@
         (let ((out (cell-attrs-string 0 0 attrs)))
           (is (search expected out)
               "~A (attrs ~D) must emit ~S (got ~S)" desc attrs expected out))))))
+
+;;; ── attrs2: double-underline and overline ────────────────────────────────────
+
+(test render-cell-attrs2-double-underline
+  "attrs2 bit 0 (+attr2-double-underline+) emits ;21 in the SGR string."
+  (let ((out (cell-attrs-string 0 0 0 1)))    ; attrs2 bit0 = double-underline
+    (is (search ";21" out) "double-underline (attrs2 bit0) must emit ;21 (got ~S)" out)))
+
+(test render-cell-attrs2-overline
+  "attrs2 bit 1 (+attr2-overline+) emits ;53 in the SGR string."
+  (let ((out (cell-attrs-string 0 0 0 2)))    ; attrs2 bit1 = overline
+    (is (search ";53" out) "overline (attrs2 bit1) must emit ;53 (got ~S)" out)))
+
+(test render-cell-attrs2-double-underline-and-overline
+  "attrs2 with both bits set emits both ;21 and ;53."
+  (let ((out (cell-attrs-string 0 0 0 3)))    ; attrs2 bits 0+1
+    (is (search ";21" out) "double-underline must be in combined attrs2 output (got ~S)" out)
+    (is (search ";53" out) "overline must be in combined attrs2 output (got ~S)" out)))
+
+(test render-cell-attrs2-zero-emits-nothing-extra
+  "attrs2 = 0 does not emit ;21 or ;53."
+  (let ((out (cell-attrs-string 0 0 0 0)))
+    (is (not (search ";21" out)) "no double-underline when attrs2=0 (got ~S)" out)
+    (is (not (search ";53" out)) "no overline when attrs2=0 (got ~S)" out)))
+
+;;; ── ul-color: underline colour (SGR 58) ─────────────────────────────────────
+
+(test render-cell-attrs-ul-color-zero-emits-nothing
+  "ul-color = 0 (default) does not emit any ;58 sequence."
+  (let ((out (cell-attrs-string 0 0 0 0 0)))
+    (is (not (search ";58" out)) "ul-color=0 must not emit ;58 (got ~S)" out)))
+
+(test render-cell-attrs-ul-color-palette
+  "ul-color = 200 emits ;58;5;200."
+  (let ((out (cell-attrs-string 0 0 0 0 200)))
+    (is (search ";58;5;200" out) "palette ul-color 200 must emit ;58;5;200 (got ~S)" out)))
+
+(test render-cell-attrs-ul-color-truecolor
+  "ul-color true-color (R=255 G=0 B=128) emits ;58;2;255;0;128."
+  (let* ((ul-color (logior #x1000000 (ash 255 16) (ash 0 8) 128))
+         (out (cell-attrs-string 0 0 0 0 ul-color)))
+    (is (search ";58;2;255;0;128" out)
+        "truecolor ul-color must emit ;58;2;255;0;128 (got ~S)" out)))
 
 ;;; ── move-to additional positions ─────────────────────────────────────────────
 

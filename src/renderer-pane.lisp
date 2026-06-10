@@ -12,15 +12,20 @@
 
 ;;; ── Pane ────────────────────────────────────────────────────────────────────
 
-(defun in-selection-p (row col sel-start-r sel-end-r sel-start-c sel-end-c)
-  "Return T when (ROW, COL) falls within the rectangular selection defined by
-   SEL-START-R/C and SEL-END-R/C.  Assumes sel-start-r <= sel-end-r."
-  (cond
-    ((= sel-start-r sel-end-r row)
-     (and (<= sel-start-c col) (< col sel-end-c)))
-    ((= row sel-start-r) (>= col sel-start-c))
-    ((= row sel-end-r)   (< col sel-end-c))
-    (t (and (> row sel-start-r) (< row sel-end-r)))))
+(defun in-selection-p (row col sel-start-r sel-end-r sel-start-c sel-end-c &optional rect-p)
+  "Return T when (ROW, COL) falls within the selection.
+   RECT-P non-nil: rectangle mode — any cell in [start-r..end-r] x [start-c..end-c).
+   Default (character mode): the standard stream-of-characters selection logic."
+  (if rect-p
+      (and (<= sel-start-r row sel-end-r)
+           (<= sel-start-c col)
+           (< col sel-end-c))
+      (cond
+        ((= sel-start-r sel-end-r row)
+         (and (<= sel-start-c col) (< col sel-end-c)))
+        ((= row sel-start-r) (>= col sel-start-c))
+        ((= row sel-end-r)   (< col sel-end-c))
+        (t (and (> row sel-start-r) (< row sel-end-r))))))
 
 ;;; ── Clock-mode ASCII digit font (3 rows tall) ───────────────────────────────
 ;;;
@@ -200,9 +205,10 @@
 
 (defun %compute-selection-bounds (screen)
   "Compute normalised selection boundary coordinates for SCREEN's copy-mode selection.
-   Returns (values sel-active sel-start-row sel-end-row sel-start-col sel-end-col).
+   Returns (values sel-active sel-start-row sel-end-row sel-start-col sel-end-col sel-rect-p).
    sel-active is NIL when the selection prerequisites (selecting flag, mark, cursor)
-   are not all present.  Rows are viewport-relative (live-grid row + copy-offset)."
+   are not all present.  Rows are viewport-relative (live-grid row + copy-offset).
+   sel-rect-p is T when rectangle-select mode is active (screen-copy-rect-select-p)."
   (if (and (screen-copy-selecting screen)
            (consp (screen-copy-mark   screen))
            (consp (screen-copy-cursor screen)))
@@ -213,27 +219,38 @@
              (cursor-row (car cursor))
              (cursor-col (cdr cursor))
              ;; Viewport row = live-grid row + copy-offset.
-             (offset     (screen-copy-offset screen)))
+             (offset     (screen-copy-offset screen))
+             (rect-p     (screen-copy-rect-select-p screen)))
         (values t
                 (+ (min mark-row cursor-row) offset)
                 (+ (max mark-row cursor-row) offset)
-                (if (< mark-row cursor-row)
-                    mark-col
-                    (if (> mark-row cursor-row) cursor-col (min mark-col cursor-col)))
-                (if (< mark-row cursor-row)
-                    cursor-col
-                    (if (> mark-row cursor-row) mark-col (max mark-col cursor-col)))))
-      (values nil 0 0 0 0)))
+                ;; Rectangle mode: uniform column range (min..max+1 exclusive).
+                ;; Character mode: start-col tracks the topmost selected row's column.
+                (if rect-p
+                    (min mark-col cursor-col)
+                    (if (< mark-row cursor-row)
+                        mark-col
+                        (if (> mark-row cursor-row) cursor-col (min mark-col cursor-col))))
+                (if rect-p
+                    (1+ (max mark-col cursor-col))
+                    (if (< mark-row cursor-row)
+                        cursor-col
+                        (if (> mark-row cursor-row) mark-col (max mark-col cursor-col))))
+                rect-p))
+      (values nil 0 0 0 0 nil)))
 
 ;;; ── Per-row cell rendering ───────────────────────────────────────────────────
 
 (defun %render-cell-row (stream screen pane-col-count row
                          sel-active sel-start-row sel-end-row sel-start-col sel-end-col
-                         prev-fg-cell prev-bg-cell prev-attrs-cell prev-hyperlink-cell
+                         sel-rect-p
+                         prev-fg-cell prev-bg-cell prev-attrs-cell prev-attrs2-cell
+                         prev-ul-color-cell prev-hyperlink-cell
                          def-fg def-bg ms-fg ms-bg)
   "Render one row of cells to STREAM, highlighting selected cells.
-   PREV-FG-CELL / PREV-BG-CELL / PREV-ATTRS-CELL are single-element lists used
-   as mutable registers for SGR change-detection across the row.
+   PREV-FG-CELL / PREV-BG-CELL / PREV-ATTRS-CELL / PREV-ATTRS2-CELL /
+   PREV-UL-COLOR-CELL are single-element lists used as mutable registers for SGR
+   change-detection across the row.
    DEF-FG / DEF-BG (or NIL) are the pane's window-style default colours: a cell
    carrying the model default (fg=7 / bg=0) is recoloured to them, which dims an
    inactive pane / highlights the active one.
@@ -257,7 +274,8 @@
                     (in-sel (and sel-active
                                  (in-selection-p row col
                                                  sel-start-row sel-end-row
-                                                 sel-start-col sel-end-col)))
+                                                 sel-start-col sel-end-col
+                                                 sel-rect-p)))
                     ;; A colour-based mode-style highlights the selection with its
                     ;; own fg/bg; otherwise selection falls back to reverse-video.
                     (ms-colour (and in-sel (or ms-fg ms-bg)))
@@ -269,14 +287,22 @@
                     (attrs (logxor (cell-attrs cell)
                                    (if (and in-sel (not ms-colour))
                                        cl-tmux/terminal/types:+attr-reverse+ 0)
-                                   (or rev-screen 0))))
-               (unless (and (= fg  (car prev-fg-cell))
-                            (= bg  (car prev-bg-cell))
-                            (= attrs (car prev-attrs-cell)))
-                 (render-cell-attrs stream fg bg attrs)
-                 (setf (car prev-fg-cell)    fg
-                       (car prev-bg-cell)    bg
-                       (car prev-attrs-cell) attrs))
+                                   (or rev-screen 0)))
+                    ;; Extended attributes and underline colour pass through without
+                    ;; modification (no selection / DECSCNM involvement).
+                    (attrs2   (cell-attrs2    cell))
+                    (ul-color (cell-ul-color  cell)))
+               (unless (and (= fg       (car prev-fg-cell))
+                            (= bg       (car prev-bg-cell))
+                            (= attrs    (car prev-attrs-cell))
+                            (= attrs2   (car prev-attrs2-cell))
+                            (= ul-color (car prev-ul-color-cell)))
+                 (render-cell-attrs stream fg bg attrs attrs2 ul-color)
+                 (setf (car prev-fg-cell)       fg
+                       (car prev-bg-cell)       bg
+                       (car prev-attrs-cell)    attrs
+                       (car prev-attrs2-cell)   attrs2
+                       (car prev-ul-color-cell) ul-color))
                ;; OSC 8 hyperlink: re-emit when entering/leaving/changing a link
                ;; span so the outer terminal makes those cells clickable.
                (let ((hl (cell-hyperlink cell)))
@@ -284,7 +310,10 @@
                    (write-string (format nil "~C]8;;~@[~A~]~C\\" #\Escape hl #\Escape)
                                  stream)
                    (setf (car prev-hyperlink-cell) hl)))
-               (write-char (cell-char cell) stream))))
+               (write-char (cell-char cell) stream)
+               ;; Unicode combining characters (zero-width marks) follow the base char.
+               (dolist (ch (cell-combining cell))
+                 (write-char ch stream)))))
 
 (defun render-pane (stream pane)
   "Draw the pane's screen into the real terminal at the pane's (x, y) offset.
@@ -314,13 +343,16 @@
       (with-lock-held ((screen-lock screen))
         ;; Hoist selection boundary computation outside the cell loop so it is
         ;; computed once per frame instead of once per cell (~1920 times).
-        (multiple-value-bind (sel-active sel-start-row sel-end-row sel-start-col sel-end-col)
+        (multiple-value-bind (sel-active sel-start-row sel-end-row sel-start-col sel-end-col
+                              sel-rect-p)
             (%compute-selection-bounds screen)
           ;; Use single-element lists as mutable SGR-state registers so
           ;; %render-cell-row can update them without returning multiple values.
-          (let ((prev-fg-cell    (list -1))
-                (prev-bg-cell    (list -1))
-                (prev-attrs-cell (list -1))
+          (let ((prev-fg-cell       (list -1))
+                (prev-bg-cell       (list -1))
+                (prev-attrs-cell    (list -1))
+                (prev-attrs2-cell   (list -1))  ; extended attrs: double-underline/overline
+                (prev-ul-color-cell (list -1))  ; underline colour (SGR 58)
                 ;; OSC 8 hyperlink register (NIL = no open link), threaded across
                 ;; rows so a link spanning rows stays open.
                 (prev-hyperlink-cell (list nil)))
@@ -329,7 +361,9 @@
               (%render-cell-row stream screen pane-width row
                                 sel-active sel-start-row sel-end-row
                                 sel-start-col sel-end-col
+                                sel-rect-p
                                 prev-fg-cell prev-bg-cell prev-attrs-cell
+                                prev-attrs2-cell prev-ul-color-cell
                                 prev-hyperlink-cell
                                 def-fg def-bg ms-fg ms-bg))
             ;; Close any hyperlink still open at the end of the pane (OSC 8 ; ;).

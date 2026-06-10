@@ -621,9 +621,9 @@
 ;;;
 ;;; in-selection-p is the innermost hot path: test all 4 cond branches directly.
 
-(defun %in-sel (row col sr er sc ec)
+(defun %in-sel (row col sr er sc ec &optional rect-p)
   "Call in-selection-p with positional args in a more readable order."
-  (cl-tmux/renderer::in-selection-p row col sr er sc ec))
+  (cl-tmux/renderer::in-selection-p row col sr er sc ec rect-p))
 
 (test in-selection-p-single-row-inside-range
   "Single-row selection: cell within [sel-start-c, sel-end-c) is included."
@@ -670,14 +670,52 @@
   (is-false (%in-sel 4 0 1 3 0 5)
             "row after sel-end-r must be excluded"))
 
+;;; -- in-selection-p rectangle mode -------------------------------------------
+
+(test in-selection-p-rect-inside-box
+  "Rectangle mode: cell inside the column × row box is selected."
+  (is-true (%in-sel 2 3 1 4 2 6 t)
+           "row=2 col=3 inside rect [rows 1-4, cols 2-6) must be T"))
+
+(test in-selection-p-rect-boundary-col-inclusive
+  "Rectangle mode: cell at start-c is included."
+  (is-true (%in-sel 2 2 1 4 2 6 t)
+           "col=start-c must be included in rectangle"))
+
+(test in-selection-p-rect-boundary-col-exclusive
+  "Rectangle mode: cell at end-c is excluded."
+  (is-false (%in-sel 2 6 1 4 2 6 t)
+            "col=end-c must be excluded from rectangle"))
+
+(test in-selection-p-rect-boundary-rows
+  "Rectangle mode: cells on both boundary rows are included if col is in range."
+  (is-true  (%in-sel 1 3 1 4 2 6 t) "start row must be included")
+  (is-true  (%in-sel 4 3 1 4 2 6 t) "end row must be included"))
+
+(test in-selection-p-rect-outside-col-range
+  "Rectangle mode: cells in the row range but outside the column range are excluded."
+  (is-false (%in-sel 2 1 1 4 2 6 t) "col before start-c must be excluded")
+  (is-false (%in-sel 2 7 1 4 2 6 t) "col after end-c must be excluded"))
+
+(test in-selection-p-rect-outside-row-range
+  "Rectangle mode: rows outside the row range are excluded regardless of column."
+  (is-false (%in-sel 0 3 1 4 2 6 t) "row before start must be excluded")
+  (is-false (%in-sel 5 3 1 4 2 6 t) "row after end must be excluded"))
+
+(test in-selection-p-rect-middle-row-only-in-col-range
+  "Rectangle mode: middle rows are NOT fully selected — only cells within the column range."
+  (is-true  (%in-sel 2 4 1 4 2 6 t) "col inside range on middle row must be T")
+  (is-false (%in-sel 2 0 1 4 2 6 t) "col 0 on middle row outside range must be F"))
+
 ;;; -- %compute-selection-bounds unit tests ------------------------------------
 
 (test compute-selection-bounds-active-selection
   "%compute-selection-bounds returns sel-active=T when all prerequisites are present."
   (let ((screen (make-selecting-screen 10 5 1 2 3 4)))
-    (multiple-value-bind (active sr er sc ec)
+    (multiple-value-bind (active sr er sc ec rect-p)
         (cl-tmux/renderer::%compute-selection-bounds screen)
-      (is-true active "sel-active must be T when all prerequisites present")
+      (is-true  active  "sel-active must be T when all prerequisites present")
+      (is-false rect-p  "rect-p must be NIL for non-rectangle selection")
       (is (= 1 sr) "start row must be min(mark-row, cursor-row)")
       (is (= 3 er) "end row must be max(mark-row, cursor-row)")
       (is (= 2 sc) "start col: mark-col when mark-row < cursor-row")
@@ -689,9 +727,9 @@
     (setf (cl-tmux/terminal/types:screen-copy-selecting screen) nil
           (cl-tmux/terminal/types:screen-copy-mark      screen) (cons 0 0)
           (cl-tmux/terminal/types:screen-copy-cursor    screen) (cons 1 1))
-    (multiple-value-bind (active sr er sc ec)
+    (multiple-value-bind (active sr er sc ec rect-p)
         (cl-tmux/renderer::%compute-selection-bounds screen)
-      (declare (ignore sr er sc ec))
+      (declare (ignore sr er sc ec rect-p))
       (is-false active "sel-active must be NIL when copy-selecting is NIL"))))
 
 (test compute-selection-bounds-nil-mark
@@ -700,17 +738,18 @@
     (setf (cl-tmux/terminal/types:screen-copy-selecting screen) t
           (cl-tmux/terminal/types:screen-copy-mark      screen) nil
           (cl-tmux/terminal/types:screen-copy-cursor    screen) (cons 1 1))
-    (multiple-value-bind (active sr er sc ec)
+    (multiple-value-bind (active sr er sc ec rect-p)
         (cl-tmux/renderer::%compute-selection-bounds screen)
-      (declare (ignore sr er sc ec))
+      (declare (ignore sr er sc ec rect-p))
       (is-false active "sel-active must be NIL when mark is NIL"))))
 
 (test compute-selection-bounds-reversed-rows-normalised
   "%compute-selection-bounds normalises row order so start <= end."
   ;; cursor above mark — rows should be swapped in the output
   (let ((screen (make-selecting-screen 10 5 3 5 1 2)))
-    (multiple-value-bind (active sr er sc ec)
+    (multiple-value-bind (active sr er sc ec rect-p)
         (cl-tmux/renderer::%compute-selection-bounds screen)
+      (declare (ignore rect-p))
       (is-true active "sel-active must be T")
       (is (<= sr er) "start row (~D) must be <= end row (~D)" sr er)
       (is (= 1 sr) "start row must be min(mark-row=3, cursor-row=1)=1")
@@ -722,8 +761,9 @@
 (test compute-selection-bounds-same-row-cols-normalised
   "%compute-selection-bounds normalises col order for same-row selections."
   (let ((screen (make-selecting-screen 10 5 2 7 2 3)))
-    (multiple-value-bind (active sr er sc ec)
+    (multiple-value-bind (active sr er sc ec rect-p)
         (cl-tmux/renderer::%compute-selection-bounds screen)
+      (declare (ignore rect-p))
       (is-true active "sel-active must be T")
       (is (= 2 sr) "both rows are 2")
       (is (= 2 er) "both rows are 2")
@@ -733,12 +773,36 @@
 (test compute-selection-bounds-copy-offset-applied
   "%compute-selection-bounds adds copy-offset to both row values."
   (let ((screen (make-selecting-screen 10 5 0 0 1 0 :offset 5)))
-    (multiple-value-bind (active sr er sc ec)
+    (multiple-value-bind (active sr er sc ec rect-p)
         (cl-tmux/renderer::%compute-selection-bounds screen)
-      (declare (ignore sc ec))
+      (declare (ignore sc ec rect-p))
       (is-true active "sel-active must be T")
       (is (= 5 sr) "start row must be min(0,1) + offset(5) = 5")
       (is (= 6 er) "end row must be max(0,1) + offset(5) = 6"))))
+
+(test compute-selection-bounds-rect-columns-symmetric
+  "%compute-selection-bounds uses min/max column symmetrically in rectangle mode."
+  ;; mark at (row=1, col=6), cursor at (row=4, col=2): rect cols [2,7) inclusive
+  (let ((screen (make-selecting-screen 10 6 1 6 4 2 :rect t)))
+    (multiple-value-bind (active sr er sc ec rect-p)
+        (cl-tmux/renderer::%compute-selection-bounds screen)
+      (is-true  active  "sel-active must be T")
+      (is-true  rect-p  "rect-p must be T when :rect t")
+      (is (= 1 sr) "start row = min(1,4) = 1")
+      (is (= 4 er) "end row = max(1,4) = 4")
+      (is (= 2 sc) "start col = min(mark-col=6, cursor-col=2) = 2")
+      (is (= 7 ec) "end col = 1+max(6,2) = 7 (exclusive)"))))
+
+(test compute-selection-bounds-rect-columns-reversed
+  "%compute-selection-bounds swaps columns correctly when cursor-col > mark-col in rect mode."
+  ;; mark at (row=2, col=3), cursor at (row=5, col=8)
+  (let ((screen (make-selecting-screen 10 8 2 3 5 8 :rect t)))
+    (multiple-value-bind (active sr er sc ec rect-p)
+        (cl-tmux/renderer::%compute-selection-bounds screen)
+      (declare (ignore sr er))
+      (is-true  rect-p  "rect-p must be T")
+      (is (= 3 sc) "start col = min(3,8) = 3")
+      (is (= 9 ec) "end col = 1+max(3,8) = 9"))))
 
 ;;; -- make-test-pane and make-selecting-screen fixture helpers -------------------
 
