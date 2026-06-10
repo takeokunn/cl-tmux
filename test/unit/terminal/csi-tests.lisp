@@ -420,6 +420,41 @@
       (is (some (lambda (r) (search (format nil "~C[?9999;0$y" #\Escape) r)) q)
           "DECRQM unknown mode must report Pm=0 (got ~S)" q))))
 
+(test decrqm-reports-decscnm-mode-5
+  "DECRQM ?5 reports DECSCNM (reverse-video screen): reset by default, set after ?5h."
+  (with-screen (s 20 5)
+    (feed s (esc "[?5$p"))
+    (is (some (lambda (r) (search (format nil "~C[?5;2$y" #\Escape) r))
+              (cl-tmux/terminal/types:screen-response-queue s))
+        "DECRQM ?5 must report reset (Pm=2) by default")
+    (feed s (esc "[?5h"))
+    (feed s (esc "[?5$p"))
+    (is (some (lambda (r) (search (format nil "~C[?5;1$y" #\Escape) r))
+              (cl-tmux/terminal/types:screen-response-queue s))
+        "DECRQM ?5 must report set (Pm=1) after ?5h")))
+
+(test decrqm-reports-decawm-mode-7
+  "DECRQM ?7 reports DECAWM (autowrap): set by default, reset after ?7l."
+  (with-screen (s 20 5)
+    (feed s (esc "[?7$p"))
+    (is (some (lambda (r) (search (format nil "~C[?7;1$y" #\Escape) r))
+              (cl-tmux/terminal/types:screen-response-queue s))
+        "DECRQM ?7 must report set (Pm=1, autowrap on) by default")
+    (feed s (esc "[?7l"))
+    (feed s (esc "[?7$p"))
+    (is (some (lambda (r) (search (format nil "~C[?7;2$y" #\Escape) r))
+              (cl-tmux/terminal/types:screen-response-queue s))
+        "DECRQM ?7 must report reset (Pm=2) after ?7l")))
+
+(test decrqm-reports-sgr-mouse-mode-1006
+  "DECRQM ?1006 reports the SGR mouse-encoding state, set after ?1006h."
+  (with-screen (s 20 5)
+    (feed s (esc "[?1006h"))
+    (feed s (esc "[?1006$p"))
+    (is (some (lambda (r) (search (format nil "~C[?1006;1$y" #\Escape) r))
+              (cl-tmux/terminal/types:screen-response-queue s))
+        "DECRQM ?1006 must report set (Pm=1) after ?1006h")))
+
 ;;; ── XTWINOPS size reports (CSI Ps t) ─────────────────────────────────────────
 
 (def-suite xtwinops

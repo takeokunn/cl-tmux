@@ -120,12 +120,15 @@
   (flet ((b (x) (if x 1 2)))
     (case mode
       (1    (b (screen-app-cursor-keys screen)))            ; DECCKM
+      (5    (b (screen-reverse-screen screen)))             ; DECSCNM reverse video
       (6    (b (screen-origin-mode screen)))                ; DECOM
+      (7    (b (screen-autowrap screen)))                   ; DECAWM autowrap
       (25   (b (screen-cursor-visible screen)))             ; DECTCEM
       (1000 (b (= (screen-mouse-mode screen) 1)))           ; X10/normal mouse
       (1002 (b (= (screen-mouse-mode screen) 2)))           ; button-event mouse
       (1003 (b (= (screen-mouse-mode screen) 3)))           ; any-event mouse
       (1004 (b (screen-focus-events screen)))               ; focus reporting
+      (1006 (b (screen-mouse-sgr-mode screen)))             ; SGR mouse encoding
       ((47 1047 1049) (b (and (screen-alt-cells screen) t))) ; alternate screen
       (2004 (b (screen-bracketed-paste screen)))            ; bracketed paste
       (2026 2)   ; synchronized output: accepted but not a persistent mode → reset
