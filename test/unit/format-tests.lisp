@@ -176,6 +176,23 @@
         (is (= 1 (count #\A out)) "exactly the current session is active (got ~S)" out)
         (is (= 1 (count #\I out)) "the other session is inactive (got ~S)" out)))))
 
+(test format-pane-pipe-reflects-pipe-state
+  "#{pane_pipe} is '1' when the pane is being piped (pipe-pane active), else '0'."
+  (with-isolated-config
+    (let* ((sess (make-fake-session :nwindows 1))
+           (win  (cl-tmux/model:session-active-window sess))
+           (pane (cl-tmux/model:window-active-pane win)))
+      (is (string= "0" (cl-tmux/format:expand-format
+                        "#{pane_pipe}"
+                        (cl-tmux/format:format-context-from-session sess win pane)))
+          "#{pane_pipe} must be 0 with no pipe active")
+      (setf (cl-tmux/model:pane-pipe-fd pane) (make-string-output-stream))
+      (is (string= "1" (cl-tmux/format:expand-format
+                        "#{pane_pipe}"
+                        (cl-tmux/format:format-context-from-session sess win pane)))
+          "#{pane_pipe} must be 1 when pipe-pane output is active")
+      (setf (cl-tmux/model:pane-pipe-fd pane) nil))))
+
 (test format-context-window-index-matches-window-id
   "format-context-from-session :window-index equals the window's numeric id.
    With make-fake-session (base-index=0), ids are 0, 1; :window-index follows."

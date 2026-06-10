@@ -1302,6 +1302,8 @@
           ;; #{pane_dead}: "1" when the pane's PTY has closed (remain-on-exit case).
           ;; A pane is dead when its fd is closed (fd <= 0) but it still exists.
           :pane-dead   (if (and pane (<= (cl-tmux/model:pane-fd pane) 0)) "1" "0")
+          ;; #{pane_pipe}: "1" when output is being piped (pipe-pane active), else "0".
+          :pane-pipe   (if (and pane (cl-tmux/model:pane-pipe-fd pane)) "1" "0")
           ;; #{session_count}: total number of sessions in *server-sessions*.
           ;; Accessed via qualified name because *server-sessions* lives in cl-tmux.
           ;; Falls back to 1 (this session) when the registry is empty or unbound.
