@@ -87,6 +87,14 @@
 ;;; the byte sequence; here we perform the PTY write.  Both are guarded by a live
 ;;; fd, so panes without a PTY (fd <= 0, e.g. in tests) are a harmless no-op.
 
+(defun %session-of-window (win)
+  "The session in *server-sessions* whose window list contains WIN, or NIL.
+   Lets chokepoints that only have a window (e.g. %select-pane-with-focus) fire
+   .tmux.conf set-hook command hooks, which run-command-hooks dispatches against a
+   session."
+  (and win (loop for (nil . sess) in *server-sessions*
+                 when (member win (session-windows sess)) return sess)))
+
 (defun %notify-pane-focus (pane focused-p)
   "Notify PANE of a focus change: fire the pane-focus-in / pane-focus-out hook
    (independent of ?1004), then send the application its focus-tracking report
@@ -115,7 +123,11 @@
       (%notify-pane-focus old nil)
       (%notify-pane-focus new-pane t)
       ;; tmux's window-pane-changed event hook: WIN's active pane changed.
-      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-pane-changed+ win))))
+      ;; Fire both the add-hook and (via the owning session) the set-hook registries.
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-pane-changed+ win)
+      (let ((sess (%session-of-window win)))
+        (when sess
+          (run-command-hooks cl-tmux/hooks:+hook-window-pane-changed+ sess))))))
 
 (defmacro %with-window-focus-transition ((session) &body body)
   "Run BODY (which may change SESSION's active window by any means) and then
@@ -1442,7 +1454,9 @@
          (when (and win target-pane (not (eq target-pane (window-active-pane win))))
            (%select-pane-with-focus win target-pane))))
       ;; after-select-pane fires once after the command, whichever form it took.
-      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-pane+ session))))
+      ;; Fire both the add-hook and the .tmux.conf set-hook command registries.
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-pane+ session)
+      (run-command-hooks cl-tmux/hooks:+hook-after-select-pane+ session))))
 
 (defun %cmd-kill-window (session args)
   "kill-window [-a] [-t target]: kill a window or all windows except the current.
