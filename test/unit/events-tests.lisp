@@ -419,19 +419,25 @@
         (is-false (screen-copy-mode-p screen)
             "plain q must exit copy mode")))))
 
-(test copy-mode-plain-esc-exits
-  "ESC followed by a non-CSI byte exits copy mode."
+(test copy-mode-plain-esc-clears-selection-stays-in-copy-mode
+  "ESC followed by a non-CSI byte clears the selection but STAYS in copy mode.
+   This matches tmux's default copy-mode-vi Escape → clear-selection binding.
+   Use q or i to exit copy mode."
   (let ((s (make-fake-session)))
     (with-loop-state
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        (is (screen-copy-mode-p screen) "copy mode entered")
+        (is (screen-copy-mode-p screen) "copy mode must be active after enter")
+        ;; Start a selection so we can verify it gets cleared.
+        (cl-tmux/commands::copy-mode-begin-selection screen)
+        (is (screen-copy-selecting screen) "selection must be active before ESC")
         ;; Feed ESC then a non-CSI byte (not '[')
         (cl-tmux::process-byte s 27 state)
         (cl-tmux::process-byte s (char-code #\x) state)
-        (is-false (screen-copy-mode-p screen)
-            "ESC + non-CSI must exit copy mode")))))
+        ;; Selection is cleared but copy-mode stays active.
+        (is-true  (screen-copy-mode-p   screen) "copy mode must remain active after ESC")
+        (is-false (screen-copy-selecting screen) "selection must be cleared by ESC")))))
 
 ;;; ── Copy-mode unprefixed vi navigation ───────────────────────────────────────
 

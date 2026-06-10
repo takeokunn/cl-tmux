@@ -153,8 +153,11 @@
   (:copy-mode-scroll-up-line   (%copy-mode-call session #'copy-mode-scroll-up-line))
   (:copy-mode-scroll-down-line (%copy-mode-call session #'copy-mode-scroll-down-line))
   (:copy-mode-begin-line-selection (%copy-mode-call session #'copy-mode-begin-line-selection))
-  (:copy-mode-copy-end-of-line (%copy-mode-call session #'copy-mode-copy-end-of-line))
-  (:copy-mode-copy-line        (%copy-mode-call session #'copy-mode-copy-line))
+  (:copy-mode-copy-end-of-line  (%copy-mode-call session #'copy-mode-copy-end-of-line))
+  (:copy-mode-copy-line         (%copy-mode-call session #'copy-mode-copy-line))
+  (:copy-mode-append-selection  (%copy-mode-call session #'copy-mode-append-selection))
+  (:copy-mode-copy-pipe-no-cancel
+   (%copy-mode-call session (lambda (s) (copy-mode-copy-pipe-no-cancel s nil))))
   (:copy-mode-search-next      (%copy-mode-call session #'copy-mode-search-next))
   (:copy-mode-search-prev      (%copy-mode-call session #'copy-mode-search-prev))
   (:copy-mode-search-forward-prompt

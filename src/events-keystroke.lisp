@@ -199,12 +199,20 @@
                  (repeat (lambda (s) (copy-mode-move-cursor s :up))))
                 ;; w — word forward
                 (119        (repeat #'copy-mode-word-forward))        ; w
+                ;; W — WORD forward (whitespace-delimited, vi W)
+                (87         (repeat #'copy-mode-space-forward))       ; W
                 ;; b — word backward
                 (98         (repeat #'copy-mode-word-backward))       ; b
+                ;; B — WORD backward (whitespace-delimited, vi B)
+                (66         (repeat #'copy-mode-space-backward))      ; B
                 ;; e — word end
                 (101        (repeat #'copy-mode-word-end))            ; e
+                ;; E — WORD end (whitespace-delimited, vi E)
+                (69         (repeat #'copy-mode-space-end))           ; E
                 ;; 0 — line start (bare '0' with no prefix)
                 (48         (copy-mode-line-start screen))            ; 0
+                ;; ^ — back-to-indentation (first non-blank, vi ^)
+                (94         (copy-mode-back-to-indentation screen))   ; ^
                 ;; $ — line end
                 (36         (copy-mode-line-end screen))              ; $
                 ;; g — jump to top (maximum scrollback)
@@ -241,6 +249,8 @@
                 (121        (copy-mode-yank screen))
                 ;; A — append selection to paste buffer
                 (65         (copy-mode-append-selection screen))      ; A
+                ;; o — swap mark and cursor ends of selection (vi o)
+                (111        (copy-mode-other-end screen))             ; o
                 ;; r — toggle rectangle select
                 (114        (copy-mode-toggle-rectangle screen))      ; r
                 ;; n — search next
@@ -996,15 +1006,16 @@
            (%forward-octets session (subseq buffer 0 length)))
          (values nil #'%ground-input-state))
         ;; ── 2-byte non-CSI sequence: ESC X ────────────────────────────────
-        ;; In copy mode, a lone ESC (or ESC + non-CSI byte) exits copy mode —
-        ;; copy mode keeps its own keymap, so meta lookup is gated below it.
+        ;; In copy mode, a lone ESC (or ESC + non-CSI byte) clears any active
+        ;; selection but STAYS in copy mode (tmux default: Escape → clear-selection).
+        ;; Use `q` or `i` to exit copy mode.
         ;; Outside copy mode, a `bind -n M-<key>` root binding (ESC <key>)
         ;; overrides forwarding; only when unbound do we forward to the pane.
         ((and (= length 2) (/= (aref buffer 1) +byte-csi-bracket+))
          (cond
            ((%copy-mode-active-p session)
             (let ((screen (%active-screen session)))
-              (when screen (copy-mode-exit screen))
+              (when screen (copy-mode-clear-selection screen))
               (setf *dirty* t)))
            ((%try-bound-string-key session +table-root+
                                    (%meta-key-name (aref buffer 1))))

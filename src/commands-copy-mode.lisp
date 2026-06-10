@@ -453,10 +453,9 @@
         (when (and (stringp option-cmd) (plusp (length option-cmd)))
           option-cmd))))
 
-(defun copy-mode-copy-pipe (screen cmd)
-  "Yank selected text to the paste buffer and pipe it to CMD (a shell string).
-   If CMD is empty or NIL the global \"copy-command\" option is used.
-   Exits copy mode after yanking."
+(defun %do-copy-pipe (screen cmd)
+  "Copy selection to paste buffer and pipe to CMD (or copy-command option if NIL).
+   Shared logic for copy-pipe variants; does NOT exit copy mode."
   (when (screen-copy-mode-p screen)
     (let ((text (if (screen-copy-rect-select-p screen)
                     (%rectangle-selection-text screen)
@@ -465,9 +464,24 @@
         (cl-tmux/buffer:add-paste-buffer text)
         (let ((effective-cmd (%resolve-copy-pipe-cmd cmd)))
           (when effective-cmd
-            (%run-shell-cmd-with-input effective-cmd text)))))
+            (%run-shell-cmd-with-input effective-cmd text)))))))
+
+(defun copy-mode-copy-pipe (screen cmd)
+  "Yank selected text to the paste buffer and pipe it to CMD (a shell string).
+   If CMD is empty or NIL the global \"copy-command\" option is used.
+   Exits copy mode after yanking (copy-pipe-and-cancel semantics)."
+  (%do-copy-pipe screen cmd)
+  (when (screen-copy-mode-p screen)
     (copy-mode-cancel-selection screen)
     (copy-mode-exit screen)))
+
+(defun copy-mode-copy-pipe-no-cancel (screen cmd)
+  "Yank selected text to the paste buffer and pipe it to CMD (a shell string).
+   If CMD is empty or NIL the global \"copy-command\" option is used.
+   Stays in copy mode after yanking (copy-pipe semantics, no cancel)."
+  (%do-copy-pipe screen cmd)
+  (when (screen-copy-mode-p screen)
+    (setf (screen-dirty-p screen) t)))
 
 ;;; Navigation (word/line/screen jumps) and search are in separate files:
 ;;;   commands-copy-mode-nav.lisp    — word-forward/backward/end, line-start/end,

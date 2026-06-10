@@ -2277,7 +2277,7 @@
     ("rectangle-toggle"          . :copy-mode-rectangle-toggle)
     ("copy-end-of-line"          . :copy-mode-copy-end-of-line)
     ("copy-line"                 . :copy-mode-copy-line)
-    ("append-selection"          . :copy-mode-yank)
+    ("append-selection"          . :copy-mode-append-selection)
     ("back-to-indentation"       . :copy-mode-back-to-indentation)
     ("start-of-line"             . :copy-mode-line-start)
     ("end-of-line"               . :copy-mode-line-end)
@@ -2288,7 +2288,13 @@
     ("scroll-down-half-page"     . :copy-mode-half-page-down)
     ;; emacs-style names
     ("select-word"               . :copy-mode-select-word)
-    ("copy-pipe"                 . :copy-mode-yank)
+    ;; copy-pipe: copy + pipe-to-cmd, stays in copy mode (no-cancel).
+    ;; copy-pipe-and-cancel: copy + pipe-to-cmd, exits copy mode.
+    ;; When send-keys -X copy-pipe "cmd" passes an explicit pipe command via
+    ;; extra-args, %dispatch-send-keys-X calls copy-mode-copy-pipe{,-no-cancel}
+    ;; directly with the argument.  These keyword fallbacks handle the no-arg case
+    ;; (using the copy-command global option).
+    ("copy-pipe"                 . :copy-mode-copy-pipe-no-cancel)
     ("copy-pipe-and-cancel"      . :copy-mode-yank)
     ;; mouse-wheel support
     ("scroll-mouse"              . :copy-mode-scroll-up-line)
@@ -2299,19 +2305,37 @@
     ;; other-end / toggle-position: swap the two ends of the selection (vi `o`).
     ("other-end"                 . :copy-mode-other-end)
     ("toggle-position"           . :copy-mode-other-end)
-    ;; pipe operations
-    ("pipe"                      . :copy-mode-yank)
+    ;; pipe / pipe-and-cancel: same semantics as copy-pipe variants.
+    ("pipe"                      . :copy-mode-copy-pipe-no-cancel)
     ("pipe-and-cancel"           . :copy-mode-yank))
   "Alist mapping send-keys -X command names to copy-mode dispatch keywords.")
 
-(defun %dispatch-send-keys-X (session command-name &optional target-pane target-window)
+(defun %dispatch-send-keys-X (session command-name &optional target-pane target-window extra-args)
   "Dispatch a send-keys -X COMMAND-NAME against TARGET-PANE's copy mode (default:
    the active pane).  Copy-mode -X commands act on the session's ACTIVE screen, so
    when TARGET-PANE is a non-active pane it is TEMPORARILY focused — a raw
    active-slot swap (session-active + window-active), restored via unwind-protect,
    with NO focus events or last-active updates — so the command operates on the
    target while leaving the real focus unchanged.  Returns T when COMMAND-NAME is
-   a recognised copy-mode command."
+   a recognised copy-mode command.
+   EXTRA-ARGS (a list of strings) holds any positional arguments after the command
+   name; used by copy-pipe / copy-pipe-and-cancel to carry the pipe-command string."
+  ;; copy-pipe / copy-pipe-and-cancel with an explicit pipe-command argument:
+  ;; bypass the keyword table (which cannot carry per-invocation args) and call
+  ;; the copy-mode function directly with the argument string.
+  (when (and extra-args
+             (member command-name '("copy-pipe" "copy-pipe-and-cancel"
+                                    "pipe" "pipe-and-cancel")
+                                 :test #'string-equal))
+    (let* ((pane   (or target-pane (session-active-pane session)))
+           (screen (and pane (cl-tmux/model:pane-screen pane))))
+      (when screen
+        (if (member command-name '("copy-pipe-and-cancel" "pipe-and-cancel")
+                                 :test #'string-equal)
+            (copy-mode-copy-pipe          screen (first extra-args))
+            (copy-mode-copy-pipe-no-cancel screen (first extra-args))))
+      (return-from %dispatch-send-keys-X (and screen t))))
+  ;; Standard keyword dispatch.
   (let ((kw (cdr (assoc command-name *copy-mode-x-commands* :test #'string-equal))))
     (when kw
       (if (and target-pane target-window
@@ -2735,7 +2759,8 @@
         (x-p
          (when (first positionals)
            (dotimes (_ count)
-             (%dispatch-send-keys-X session (first positionals) target-pane target-win))))
+             (%dispatch-send-keys-X session (first positionals) target-pane target-win
+                                    (rest positionals)))))
         ;; Regular keys: send the whole positional sequence COUNT times.  With -H
         ;; each positional is a hex code → the literal character it names.
         ((and positionals target-pane)
