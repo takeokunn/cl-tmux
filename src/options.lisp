@@ -190,6 +190,9 @@
   ;; behaviour.  Setting it parses cleanly and is intentionally a no-op.
   ("aggressive-resize"        :boolean nil)
   ("alternate-screen"         :boolean t)
+  ;; scroll-on-clear: when on (tmux default), clearing the whole screen (ED 2 /
+  ;; the `clear` command) first scrolls the visible content into the history.
+  ("scroll-on-clear"          :boolean t)
   ;; main-horizontal / main-vertical layout: size of the main (first) pane.
   ("main-pane-width"          :integer 80)
   ("main-pane-height"         :integer 24)

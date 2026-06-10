@@ -95,6 +95,41 @@
     (dotimes (y 3)
       (is (row-blank-p s y) "row ~D not blank after ED 2" y))))
 
+(test scroll-on-clear-on-pushes-screen-to-history
+  "With scroll-on-clear on, ESC[2J moves the visible content into the scrollback
+   before erasing, so a full-screen clear stays in history."
+  (let ((cl-tmux/terminal/actions::*scroll-on-clear-function* (lambda () t)))
+    (with-screen (s 5 3)
+      (fill-screen s)
+      (is (null (cl-tmux/terminal/types:screen-scrollback s))
+          "scrollback must be empty before the clear")
+      (feed s (esc "[2J"))
+      (is (= 3 (length (cl-tmux/terminal/types:screen-scrollback s)))
+          "all 3 visible rows must be pushed to scrollback (got ~D)"
+          (length (cl-tmux/terminal/types:screen-scrollback s)))
+      (dotimes (y 3)
+        (is (row-blank-p s y) "row ~D must be blank after the clear" y)))))
+
+(test scroll-on-clear-off-discards-content
+  "With scroll-on-clear off (no policy installed), ESC[2J erases without pushing to
+   the scrollback — the existing default behaviour."
+  (let ((cl-tmux/terminal/actions::*scroll-on-clear-function* nil))
+    (with-screen (s 5 3)
+      (fill-screen s)
+      (feed s (esc "[2J"))
+      (is (null (cl-tmux/terminal/types:screen-scrollback s))
+          "scrollback must stay empty when scroll-on-clear is off"))))
+
+(test scroll-on-clear-skips-alternate-screen
+  "scroll-on-clear does not push to history on the alternate screen (no scrollback)."
+  (let ((cl-tmux/terminal/actions::*scroll-on-clear-function* (lambda () t)))
+    (with-screen (s 5 3)
+      (feed s (esc "[?1049h"))      ; enter the alternate screen
+      (fill-screen s)
+      (feed s (esc "[2J"))
+      (is (null (cl-tmux/terminal/types:screen-scrollback s))
+          "an alt-screen clear must not push to the scrollback"))))
+
 (test erase-line-erases-to-end-of-line
   "ESC[K erases from the cursor to the end of the current line."
   (with-screen (s 10 2)

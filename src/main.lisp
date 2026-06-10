@@ -81,6 +81,10 @@
   ;; off → full-screen apps draw on the main screen (output stays in scrollback).
   (setf cl-tmux/terminal:*alternate-screen-enabled-function*
         (lambda () (cl-tmux/options:get-option "alternate-screen")))
+  ;; Install the scroll-on-clear policy: when on, a full-screen clear (ED 2)
+  ;; scrolls the visible content into history before erasing.
+  (setf cl-tmux/terminal:*scroll-on-clear-function*
+        (lambda () (cl-tmux/options:get-option "scroll-on-clear")))
 
   ;; Apply the user config file — searches cl-tmux config, XDG tmux config, and
   ;; ~/.tmux.conf in priority order (NIL triggers auto-detection).
@@ -181,6 +185,10 @@
   ;; off → full-screen apps draw on the main screen (output stays in scrollback).
   (setf cl-tmux/terminal:*alternate-screen-enabled-function*
         (lambda () (cl-tmux/options:get-option "alternate-screen")))
+  ;; Install the scroll-on-clear policy: when on, a full-screen clear (ED 2)
+  ;; scrolls the visible content into history before erasing.
+  (setf cl-tmux/terminal:*scroll-on-clear-function*
+        (lambda () (cl-tmux/options:get-option "scroll-on-clear")))
   (ignore-errors (load-config-file nil))
   ;; A control client may have no controlling tty; fall back to 80x24.
   (multiple-value-bind (r c) (ignore-errors (terminal-size))

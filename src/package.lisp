@@ -273,6 +273,7 @@
    #:clear-scrollback
    #:*history-limit-function*
    #:*alternate-screen-enabled-function*
+   #:*scroll-on-clear-function*
    ;; Focus event reporting (?1004)
    #:focus-event-report
    ;; Erase
@@ -445,7 +446,8 @@
    #:screen-copy-rect-select-p
    ;; Scroll history limit callback (injected at startup)
    #:*history-limit-function*
-   #:*alternate-screen-enabled-function*))
+   #:*alternate-screen-enabled-function*
+   #:*scroll-on-clear-function*))
 
 (defpackage #:cl-tmux/prompt
   (:use #:cl)

@@ -59,6 +59,34 @@
       (let ((tail (nthcdr (1- cap) (screen-scrollback screen))))
         (when tail (setf (cdr tail) nil))))))
 
+;;; scroll-on-clear: when the whole screen is cleared (ED 2 / the `clear` command),
+;;; tmux (option on by default) first scrolls the visible content into history so it
+;;; remains in the scrollback.  Mirrors the *history-limit-function* injection so the
+;;; terminal layer stays free of any options dependency.
+(defvar *scroll-on-clear-function* nil
+  "A zero-argument function returning whether the `scroll-on-clear` option is on,
+   or NIL.  Install (lambda () (cl-tmux/options:get-option \"scroll-on-clear\")) at
+   startup.  When NIL (unset) scroll-on-clear is treated as OFF, so the clear-erase
+   behaviour is unchanged until a policy is installed.")
+
+(defun %scroll-on-clear-p ()
+  "True when a scroll-on-clear policy is installed and reports the option enabled."
+  (and *scroll-on-clear-function* (funcall *scroll-on-clear-function*)))
+
+(defun scroll-screen-to-history (screen)
+  "Push every visible row of SCREEN into the scrollback (so a full-screen clear keeps
+   its content in history), then enforce the history cap.  No-op on the alternate
+   screen, which has no scrollback.  Backs scroll-on-clear before an ED-2 erase."
+  (unless (screen-alt-cells screen)
+    (let ((w (screen-width screen))
+          (h (screen-height screen)))
+      ;; Push rows top→bottom so the top row ends up oldest in the newest-first list.
+      (dotimes (row h)
+        (let ((saved (make-array w)))
+          (dotimes (col w) (setf (aref saved col) (screen-cell screen col row)))
+          (push saved (screen-scrollback screen))))
+      (trim-scroll-history screen))))
+
 (defun scroll-up-one (screen)
   "Scroll the scroll region up one line; the displaced top row is pushed onto
    the scrollback buffer and the new bottom line is cleared to blank cells.
