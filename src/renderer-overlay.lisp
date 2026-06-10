@@ -122,13 +122,15 @@
 
 ;;; ── Menu rendering ──────────────────────────────────────────────────────────
 
-(defun %render-menu-items (stream origin-x origin-y items box-width selected-index)
+(defun %render-menu-items (stream origin-x origin-y items box-width selected-index
+                           &optional (v-char #\│))
   "Draw each menu item row with a selection indicator (▶ for selected, space for others).
    ORIGIN-X       — terminal column of the box left edge.
    ORIGIN-Y       — terminal row of the top border (items start at ORIGIN-Y+1).
    ITEMS          — alist of (label . command) pairs.
    BOX-WIDTH      — total width of the box (item content width = BOX-WIDTH - 3).
-   SELECTED-INDEX — 0-based index of the highlighted item."
+   SELECTED-INDEX — 0-based index of the highlighted item.
+   V-CHAR         — vertical side glyph (from menu-border-lines; default single │)."
   ;; menu-style colours the item rows; menu-selected-style the highlighted item.
   ;; Empty options → NIL SGR → no colour (the ▶ indicator alone marks selection).
   (let ((base-sgr (let ((s (cl-tmux/options:get-option "menu-style" "")))
@@ -140,8 +142,8 @@
           for selectedp = (= item-index selected-index)
           for sgr = (if selectedp sel-sgr base-sgr)
           do (move-to stream (+ origin-y 1 item-index) origin-x)
-             (write-char #\│ stream)
-             ;; Style the item content (between the │ borders), reset afterwards.
+             (write-char v-char stream)
+             ;; Style the item content (between the side borders), reset afterwards.
              (when sgr (format stream "~C[~Am" #\Escape sgr))
              (write-char (if selectedp #\▶ #\Space) stream)
              (let* ((inner-width (- box-width 3))
@@ -150,7 +152,7 @@
                (write-string (subseq label 0 label-len) stream)
                (loop repeat fill do (write-char #\Space stream)))
              (when sgr (reset-attrs stream))
-             (write-char #\│ stream))))
+             (write-char v-char stream))))
 
 (defun render-menu (stream menu terminal-rows terminal-cols)
   "Draw the MENU overlay box.  Centred by default, or at MENU-X/MENU-Y when set
@@ -170,6 +172,13 @@
                              (max 0 (floor (- terminal-rows box-height) 2))))
          (selected-index (menu-selected-index menu)))
     (reset-attrs stream)
-    (%render-box-border-top    stream origin-x origin-y box-width title)
-    (%render-menu-items        stream origin-x origin-y items box-width selected-index)
-    (%render-box-border-bottom stream origin-x (+ origin-y item-count 1) box-width)))
+    ;; menu-border-lines selects the box glyphs; menu-border-style colours the border
+    ;; (NIL when empty → default single line, no colour — parallel to render-popup).
+    (multiple-value-bind (tl tr bl br h v) (%border-charset-for "menu-border-lines")
+      (let* ((style-str  (cl-tmux/options:get-option "menu-border-style" ""))
+             (border-sgr (when (and style-str (plusp (length style-str)))
+                           (style-to-sgr (parse-style-string style-str)))))
+        (%render-box-border-top stream origin-x origin-y box-width title tl tr h border-sgr)
+        (%render-menu-items     stream origin-x origin-y items box-width selected-index v)
+        (%render-box-border-bottom stream origin-x (+ origin-y item-count 1)
+                                   box-width bl br h border-sgr)))))

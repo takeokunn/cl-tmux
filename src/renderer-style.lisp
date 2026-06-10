@@ -117,13 +117,13 @@
     (when entry
       (parse-integer (cdr entry)))))
 
-(defun %popup-border-charset ()
-  "Return the popup box-drawing characters for the popup-border-lines option as
+(defun %border-charset-for (option-name)
+  "Return box-drawing characters for the *-border-lines option OPTION-NAME as
    (values TOP-LEFT TOP-RIGHT BOTTOM-LEFT BOTTOM-RIGHT HORIZONTAL VERTICAL):
    single (default), rounded, double, heavy, simple (ASCII +/-|), padded/none
-   (blank); an unknown value falls back to single.  The single source consumed by
-   both the popup box renderer (render-popup) and the text-overlay fallback."
-  (let ((style (cl-tmux/options:get-option "popup-border-lines" "single")))
+   (blank); an unknown value falls back to single.  Shared by the popup and menu
+   box renderers."
+  (let ((style (cl-tmux/options:get-option option-name "single")))
     (cond
       ((string= style "rounded") (values #\╭ #\╮ #\╰ #\╯ #\─ #\│))
       ((string= style "double")  (values #\╔ #\╗ #\╚ #\╝ #\═ #\║))
@@ -132,6 +132,11 @@
       ((or (string= style "padded") (string= style "none"))
        (values #\Space #\Space #\Space #\Space #\Space #\Space))
       (t (values #\┌ #\┐ #\└ #\┘ #\─ #\│)))))
+
+(defun %popup-border-charset ()
+  "The popup box-drawing characters for the popup-border-lines option.  The single
+   source consumed by render-popup and the text-overlay fallback."
+  (%border-charset-for "popup-border-lines"))
 
 ;;; ── Named SGR constants ──────────────────────────────────────────────────────
 ;;;

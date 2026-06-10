@@ -271,7 +271,11 @@
   ;; style to the highlighted item.  Empty (default) = no colour (the ▶ indicator
   ;; alone marks the selection), so applying these is opt-in.
   ("menu-style"               :string  "")
-  ("menu-selected-style"      :string  ""))
+  ("menu-selected-style"      :string  "")
+  ;; menu-border-lines selects the menu box glyphs (single/rounded/double/heavy/
+  ;; simple/padded/none); menu-border-style colours the border.
+  ("menu-border-lines"        :string  "single")
+  ("menu-border-style"        :string  ""))
 
 ;;; Server-option registry and defaults
 

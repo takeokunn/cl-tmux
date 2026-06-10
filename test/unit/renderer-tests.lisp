@@ -1353,6 +1353,28 @@
           "no menu-selected-style means no bg SGR (got ~S)" out)
       (is (search "Alpha" out) "labels are still drawn (got ~S)" out))))
 
+(test render-menu-border-lines-selects-glyphs
+  "menu-border-lines \"double\" draws the menu box with double-line glyphs (the
+   sides too); the default \"single\" uses ┌│└."
+  (with-isolated-options ("menu-border-lines" "double")
+    (let* ((items '(("Alpha" . nil) ("Beta" . nil)))
+           (menu  (make-menu :title "M" :items items :selected-index 0))
+           (out   (with-output-to-string (s)
+                    (cl-tmux/renderer::render-menu s menu 24 80))))
+      (is (find (code-char #x2554) out) "double → top-left ╔ (got ~S)" out)
+      (is (find (code-char #x2551) out) "double → vertical side ║ (got ~S)" out)
+      (is (null (find (code-char #x250C) out)) "no single ┌ when double (got ~S)" out))))
+
+(test render-menu-border-style-colours-border
+  "menu-border-style colours the menu box border SGR."
+  (with-isolated-options ("menu-border-style" "fg=red")
+    (let* ((items '(("Alpha" . nil)))
+           (menu  (make-menu :title "M" :items items :selected-index 0))
+           (out   (with-output-to-string (s)
+                    (cl-tmux/renderer::render-menu s menu 24 80))))
+      (is (search (format nil "~C[31m" #\Escape) out)
+          "menu-border-style fg=red must emit SGR 31 (got ~S)" out))))
+
 ;;; ── enable-mouse-reporting / disable-mouse-reporting ─────────────────────────
 
 (test enable-mouse-reporting-emits-dec-sequences
