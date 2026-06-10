@@ -233,6 +233,24 @@
     (is (search (format nil "~C[31m" #\Escape) out)
         "fg=red must emit ESC[31m (got ~S)" out)))
 
+(test pane-border-style-folds-deprecated-fg-bg
+  "The deprecated pane-border-fg/bg and pane-active-border-fg/bg options fold into
+   the matching -style via %fold-deprecated-style — the call the border renderer
+   makes (old .tmux.conf compat; borders carry no attribute, so attr-opt is NIL)."
+  (with-isolated-options ("pane-border-style" ""        "pane-border-fg" "red"
+                          "pane-active-border-style" "" "pane-active-border-fg" "green"
+                          "pane-active-border-bg" "black")
+    (let ((normal (cl-tmux/renderer::%fold-deprecated-style
+                   (cl-tmux/options:get-option "pane-border-style" "")
+                   "pane-border-fg" "pane-border-bg" nil))
+          (active (cl-tmux/renderer::%fold-deprecated-style
+                   (cl-tmux/options:get-option "pane-active-border-style" "")
+                   "pane-active-border-fg" "pane-active-border-bg" nil)))
+      (is (string= "fg=red" normal)
+          "pane-border-fg folds to fg=red (got ~S)" normal)
+      (is (search "fg=green" active) "pane-active-border-fg folded (got ~S)" active)
+      (is (search "bg=black" active) "pane-active-border-bg folded (got ~S)" active))))
+
 (test apply-border-style-fg-blue
   "\"fg=blue\" style emits reset then ESC[34m (SGR 34 = blue foreground)."
   (let ((out (%border-style-output "fg=blue")))

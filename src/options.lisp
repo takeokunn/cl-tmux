@@ -118,6 +118,12 @@
   ("exit-unattached"          :boolean nil)
   ("pane-border-style"        :string  "")
   ("pane-active-border-style" :string  "fg=green")
+  ;; Deprecated pre-2.9 pane-border colour options (old .tmux.conf compat); folded
+  ;; into the matching -style by the renderer.  Borders carry only fg/bg (no attr).
+  ("pane-border-fg"           :string  "")
+  ("pane-border-bg"           :string  "")
+  ("pane-active-border-fg"    :string  "")
+  ("pane-active-border-bg"    :string  "")
   ;; Border line glyphs: single (default light box-drawing), double, heavy,
   ;; simple (ASCII).  number/padded fall back to single (glyph-only support).
   ("pane-border-lines"        :string  "single")

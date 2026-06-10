@@ -389,9 +389,15 @@
          (border-col (+ (getf rect :x) (getf rect :w)))
          (activep    (or (subtree-contains-p a active-pane)
                          (subtree-contains-p b active-pane)))
+         ;; Fold the deprecated pane-(active-)border-fg/bg into the matching style
+         ;; (old .tmux.conf compat); borders carry no attribute, so pass NIL there.
          (style      (if activep
-                         (cl-tmux/options:get-option "pane-active-border-style" "fg=green")
-                         (cl-tmux/options:get-option "pane-border-style" "default"))))
+                         (%fold-deprecated-style
+                          (cl-tmux/options:get-option "pane-active-border-style" "fg=green")
+                          "pane-active-border-fg" "pane-active-border-bg" nil)
+                         (%fold-deprecated-style
+                          (cl-tmux/options:get-option "pane-border-style" "default")
+                          "pane-border-fg" "pane-border-bg" nil))))
     (when (< border-col terminal-cols)
       (%apply-border-style stream style)
       (let ((v-char (%pane-border-chars)))
