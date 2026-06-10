@@ -196,7 +196,7 @@
     ;; Scripting / hooks
     :run-shell :if-shell :command-prompt :wait-for
     ;; Client management
-    :choose-client :choose-tree :refresh-client :suspend-client
+    :choose-client :choose-tree :refresh-client :suspend-client :customize-mode
     ;; Server management
     :server-info :list-clients :lock-server :detach-all-clients
     :kill-server :start-server :lock-client

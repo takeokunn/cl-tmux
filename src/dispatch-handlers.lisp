@@ -605,6 +605,10 @@
             (%format-tree-entry stream current-name current-name
                                 (session-windows session)
                                 (session-active-window session)))))))
+  (:customize-mode
+   ;; Bare bind / keypress form: show the full customize tree (no filter).  The
+   ;; scriptable customize-mode -f/-F/-t form lives in *arg-command-table*.
+   (show-overlay (%format-customize-tree nil)))
   (:set-window-option  (%set-option-from-prompt "set-window-option"))
   (:set-session-option (%set-option-from-prompt "set-session-option"))
 

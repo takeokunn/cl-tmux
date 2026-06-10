@@ -3296,6 +3296,45 @@
         (is (assoc "dave" cl-tmux::*server-access-list* :test #'string=)
             "-k must not prevent the -a add")))))
 
+;;; ── customize-mode: options/bindings customize tree ─────────────────────────
+
+(test customize-mode-renders-grouped-tree-with-option-values
+  "customize-mode renders the customize tree: grouped Session/Window Options with
+   a known option name + value, plus the Key Bindings group."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "customize-mode")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is (search "Session/Window Options" text)
+              "tree must group the session/window options")
+          (is (search "mode-keys" text)
+              "tree must list a known registered option name")
+          (is (search "Key Bindings" text)
+              "tree must include the key-bindings group"))))))
+
+(test customize-mode-f-filter-restricts-to-matching-entries
+  "customize-mode -f FILTER keeps only entries whose name/line contains FILTER
+   (case-insensitive substring) and drops the rest."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "customize-mode -f mode-keys")
+        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+          (is (search "mode-keys" text)
+              "filter must keep the matching option")
+          (is (not (search "status-interval" text))
+              "filter must drop options that do not match"))))))
+
+(test customize-mode-keyword-dispatch-opens-overlay
+  "The bare :customize-mode keybinding form opens the customize overlay."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (let ((*overlay* nil))
+        (cl-tmux::dispatch-command s :customize-mode nil)
+        (is (overlay-active-p)
+            ":customize-mode must open an overlay")))))
+
 ;;; ── copy-mode-begin-line-selection: multi-row window ────────────────────────
 
 (test copy-mode-begin-line-selection-selects-correct-width
