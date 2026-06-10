@@ -63,6 +63,10 @@
   ;; When T, a printed character inserts at the cursor, shifting the rest of the
   ;; line right (rather than overwriting).  Reset by RIS / DECSTR.
   (insert-mode nil :type boolean)
+  ;; LNM — Line Feed/New Line Mode (CSI 20 h = newline, CSI 20 l = line feed;
+  ;; default off).  When T, a C0 line-feed (LF/VT/FF) also performs a carriage
+  ;; return (cursor to column 0).  Reset by RIS / DECSTR.
+  (newline-mode nil :type boolean)
   ;; Bracketed paste mode (?2004h = on, ?2004l = off)
   (bracketed-paste nil :type boolean)
   ;; Application cursor keys (?1h = on, ?1l = off)

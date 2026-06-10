@@ -277,6 +277,7 @@
         (screen-origin-mode    screen) nil
         (screen-autowrap       screen) t
         (screen-insert-mode    screen) nil
+        (screen-newline-mode   screen) nil
         (screen-pending-wrap   screen) nil))
 
 (defun ris-action (screen)
@@ -368,16 +369,21 @@
 ;;; (as parsed for dec-pm-set).
 
 (defun set-ansi-mode (screen params)
-  "ANSI Set Mode (CSI Ps h).  IRM (mode 4) turns on insert mode; printed chars
-   then shift the rest of the line right instead of overwriting."
+  "ANSI Set Mode (CSI Ps h).  IRM (mode 4) turns on insert mode (printed chars
+   shift the rest of the line right); LNM (mode 20) turns on newline mode (LF also
+   carriage-returns)."
   (when (member 4 params)
-    (setf (screen-insert-mode screen) t)))
+    (setf (screen-insert-mode screen) t))
+  (when (member 20 params)
+    (setf (screen-newline-mode screen) t)))
 
 (defun reset-ansi-mode (screen params)
-  "ANSI Reset Mode (CSI Ps l).  IRM (mode 4) turns off insert mode, restoring the
-   default replace/overwrite behaviour."
+  "ANSI Reset Mode (CSI Ps l).  IRM (mode 4) turns off insert mode (replace/
+   overwrite); LNM (mode 20) turns off newline mode (LF is a bare line feed)."
   (when (member 4 params)
-    (setf (screen-insert-mode screen) nil)))
+    (setf (screen-insert-mode screen) nil))
+  (when (member 20 params)
+    (setf (screen-newline-mode screen) nil)))
 
 ;;; ── Charset selection ────────────────────────────────────────────────────────
 ;;;

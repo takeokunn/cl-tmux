@@ -71,6 +71,14 @@
   (%cancel-wrap screen)
   (cursor-down/scroll screen))
 
+(defun cursor-nl (screen)
+  "Process a C0 line-feed control (LF / VT / FF): a line feed, plus a carriage
+   return when LNM (newline mode, CSI 20 h) is on so the cursor returns to column
+   0.  IND (ESC D) calls cursor-lf directly and is therefore never affected by LNM."
+  (cursor-lf screen)
+  (when (screen-newline-mode screen)
+    (setf (screen-cursor-x screen) 0)))
+
 (defun %materialize-tab-stops (screen)
   "Return SCREEN's tab stops as a concrete sorted list of columns, expanding the
    :DEFAULT sentinel into the standard every-8-columns stops for the width."

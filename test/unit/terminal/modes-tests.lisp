@@ -899,6 +899,47 @@
     (is (not (cl-tmux/terminal/types:screen-insert-mode s))
         "RIS must reset insert mode")))
 
+;;; ── LNM — Line Feed/New Line Mode (CSI 20 h / CSI 20 l) ─────────────────────
+
+(test lnm-newline-mode-lf-also-carriage-returns
+  "CSI 20 h (LNM on): a line feed also returns the cursor to column 0, so 'a' LF
+   'b' stacks vertically at column 0."
+  (with-screen (s 10 5)
+    (feed s (esc "[20h"))             ; LNM on
+    (feed s "a")
+    (feed s (string #\Linefeed))      ; LF
+    (feed s "b")
+    (is (char= #\a (char-at s 0 0)) "a at col 0 row 0")
+    (is (char= #\b (char-at s 0 1)) "b at col 0 row 1 (LF carriage-returned)")))
+
+(test lnm-off-lf-keeps-column
+  "Default (LNM off): a line feed moves down keeping the column, so 'b' lands in
+   the next column-position after 'a'."
+  (with-screen (s 10 5)
+    (feed s "a")
+    (feed s (string #\Linefeed))      ; LF
+    (feed s "b")
+    (is (char= #\a (char-at s 0 0)) "a at col 0 row 0")
+    (is (char= #\b (char-at s 1 1)) "b at col 1 row 1 (column preserved)")))
+
+(test lnm-set-and-reset-toggle-screen-flag
+  "CSI 20 h sets the newline-mode flag and CSI 20 l clears it."
+  (with-screen (s 10 5)
+    (feed s (esc "[20h"))
+    (is-true (cl-tmux/terminal/types:screen-newline-mode s)
+             "CSI 20 h must set screen-newline-mode")
+    (feed s (esc "[20l"))
+    (is (not (cl-tmux/terminal/types:screen-newline-mode s))
+        "CSI 20 l must clear screen-newline-mode")))
+
+(test lnm-reset-by-ris
+  "RIS (ESC c) clears newline mode."
+  (with-screen (s 10 5)
+    (feed s (esc "[20h"))
+    (feed s (esc "c"))                ; RIS
+    (is (not (cl-tmux/terminal/types:screen-newline-mode s))
+        "RIS must reset newline mode")))
+
 ;;; ── DECSTR — Soft Terminal Reset (CSI ! p) ─────────────────────────────────
 
 (test decstr-resets-modes-but-preserves-screen-and-cursor

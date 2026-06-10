@@ -194,6 +194,7 @@
    #:screen-copy-rect-select-p
    ;; IRM insert/replace mode
    #:screen-insert-mode
+   #:screen-newline-mode
    ;; Bracketed paste mode
    #:screen-bracketed-paste
    ;; Application cursor keys
@@ -252,6 +253,7 @@
    #:cursor-left
    #:set-cursor
    #:cursor-lf
+   #:cursor-nl
    #:cursor-ht
    #:cursor-cht
    #:cursor-cbt
@@ -379,6 +381,7 @@
    #:screen-cursor-shape
    ;; IRM insert/replace mode
    #:screen-insert-mode
+   #:screen-newline-mode
    ;; Bracketed paste mode
    #:screen-bracketed-paste
    ;; Application cursor keys

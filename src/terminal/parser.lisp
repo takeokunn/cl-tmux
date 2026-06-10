@@ -195,9 +195,9 @@
   ;; ── Escape and control ──────────────────────────────────────────────────
   (#x1B  #'escape-state)
   (#x0D  (cursor-cr screen) #'ground-state)
-  (#x0A  (cursor-lf screen) #'ground-state)
-  (#x0B  (cursor-lf screen) #'ground-state)        ; VT treated as LF
-  (#x0C  (cursor-lf screen) #'ground-state)        ; FF treated as LF
+  (#x0A  (cursor-nl screen) #'ground-state)        ; LF — +CR under LNM (mode 20)
+  (#x0B  (cursor-nl screen) #'ground-state)        ; VT treated as LF
+  (#x0C  (cursor-nl screen) #'ground-state)        ; FF treated as LF
   (#x08  (cursor-bs screen) #'ground-state)
   (#x09  (cursor-ht screen) #'ground-state)
   (#x07  (set-bell-pending screen)
