@@ -140,6 +140,21 @@
   (push (format nil "~C[?~D;~D$y" #\Escape mode (%decrqm-mode-state screen mode))
         (screen-response-queue screen)))
 
+(defun %decrqm-ansi-mode-state (screen mode)
+  "DECRQM reply value for an ANSI (non-private) MODE: 1 = set, 2 = reset, 0 = not
+   recognised.  Covers IRM (4) and LNM (20); other ANSI modes report 0."
+  (flet ((b (x) (if x 1 2)))
+    (case mode
+      (4  (b (screen-insert-mode screen)))     ; IRM — insert/replace mode
+      (20 (b (screen-newline-mode screen)))    ; LNM — line feed/new line mode
+      (t  0))))
+
+(defun enqueue-decrqm-ansi-reply (screen mode)
+  "Push the ANSI-mode DECRQM report (ESC [ MODE ; Pm $ y — NO ? marker) onto the
+   response queue, where Pm is %decrqm-ansi-mode-state for MODE."
+  (push (format nil "~C[~D;~D$y" #\Escape mode (%decrqm-ansi-mode-state screen mode))
+        (screen-response-queue screen)))
+
 (defun enqueue-da3-reply (screen)
   "Push the Tertiary Device Attributes reply (DA3, CSI = c) onto SCREEN's response
    queue: ESC P ! | 00000000 ST — the DECRPTUI report with a zero terminal unit id
@@ -365,6 +380,11 @@
   ;; current state (ESC [ ? Ps ; Pm $ y) so apps can detect feature support.
   ((and (eql private #\?) (eql intermed #\$) (char= final #\p))
    (enqueue-decrqm-reply screen p1))
+
+  ;; DECRQM for ANSI (non-private) modes (CSI Ps $ p): reply ESC [ Ps ; Pm $ y
+  ;; (no ? marker).  Covers IRM (4) and LNM (20).
+  ((and (null private) (eql intermed #\$) (char= final #\p))
+   (enqueue-decrqm-ansi-reply screen p1))
 
   ;; ANSI Set/Reset Mode — CSI Ps h / CSI Ps l (NO private marker).  IRM (mode 4)
   ;; toggles insert/replace; other ANSI modes are accepted and ignored.

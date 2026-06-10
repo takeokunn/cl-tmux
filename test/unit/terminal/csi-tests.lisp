@@ -455,6 +455,29 @@
               (cl-tmux/terminal/types:screen-response-queue s))
         "DECRQM ?1006 must report set (Pm=1) after ?1006h")))
 
+(test decrqm-ansi-reports-irm-mode-4
+  "ANSI-mode DECRQM (CSI 4 $ p, no ? marker) reports IRM: reset by default, set
+   after CSI 4 h.  Reply has NO ? marker (ESC [ 4 ; Pm $ y)."
+  (with-screen (s 20 5)
+    (feed s (esc "[4$p"))
+    (is (some (lambda (r) (search (format nil "~C[4;2$y" #\Escape) r))
+              (cl-tmux/terminal/types:screen-response-queue s))
+        "ANSI DECRQM 4 must report reset (Pm=2) by default")
+    (feed s (esc "[4h"))
+    (feed s (esc "[4$p"))
+    (is (some (lambda (r) (search (format nil "~C[4;1$y" #\Escape) r))
+              (cl-tmux/terminal/types:screen-response-queue s))
+        "ANSI DECRQM 4 must report set (Pm=1) after CSI 4 h")))
+
+(test decrqm-ansi-reports-lnm-mode-20
+  "ANSI-mode DECRQM (CSI 20 $ p) reports LNM: set after CSI 20 h."
+  (with-screen (s 20 5)
+    (feed s (esc "[20h"))
+    (feed s (esc "[20$p"))
+    (is (some (lambda (r) (search (format nil "~C[20;1$y" #\Escape) r))
+              (cl-tmux/terminal/types:screen-response-queue s))
+        "ANSI DECRQM 20 must report set (Pm=1) after CSI 20 h")))
+
 ;;; ── XTWINOPS size reports (CSI Ps t) ─────────────────────────────────────────
 
 (def-suite xtwinops
