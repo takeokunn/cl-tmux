@@ -262,6 +262,8 @@
   ;; Popup defaults
   ("popup-border-lines"       :string  "single")
   ("popup-border-style"       :string  "")
+  ;; popup-style colours the popup interior (the empty body of a text popup).
+  ("popup-style"              :string  "")
   ;; Passthrough: forward DCS/OSC sequences from pane to outer terminal.
   ;; Values: "off" (default), "on" (non-nested), "all" (always).
   ("allow-passthrough"        :string  "off")

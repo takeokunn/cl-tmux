@@ -80,18 +80,21 @@
     (%emit-sgr stream sgr) (write-char v stream) (when sgr (reset-attrs stream))))
 
 (defun %render-popup-content-empty (stream origin-x origin-y box-height box-width
-                                    &optional (v #\│) sgr)
+                                    &optional (v #\│) sgr body-sgr)
   "Render empty side bars inside a popup box that has no live pane.
    ORIGIN-X   — terminal column of the box left edge.
    ORIGIN-Y   — terminal row of the top border (content starts at ORIGIN-Y+1).
    BOX-HEIGHT — total height of the box (content rows = BOX-HEIGHT - 2).
    BOX-WIDTH  — total width of the box (content width = BOX-WIDTH - 2).
    V          — vertical side character (default single │).
-   SGR        — optional popup-border-style SGR for the side bars."
+   SGR        — optional popup-border-style SGR for the side bars.
+   BODY-SGR   — optional popup-style SGR colouring the empty interior."
   (loop for row below (- box-height 2) do
     (move-to stream (+ origin-y 1 row) origin-x)
     (%emit-sgr stream sgr) (write-char v stream) (when sgr (reset-attrs stream))
+    (%emit-sgr stream body-sgr)
     (loop repeat (- box-width 2) do (write-char #\Space stream))
+    (when body-sgr (reset-attrs stream))
     (%emit-sgr stream sgr) (write-char v stream) (when sgr (reset-attrs stream))))
 
 (defun render-popup (stream popup terminal-rows terminal-cols)
@@ -109,14 +112,20 @@
     (multiple-value-bind (tl tr bl br h v) (%popup-border-charset)
       (let* ((style-str  (cl-tmux/options:get-option "popup-border-style" ""))
              (border-sgr (when (and style-str (plusp (length style-str)))
-                           (style-to-sgr (parse-style-string style-str)))))
+                           (style-to-sgr (parse-style-string style-str))))
+             ;; popup-style colours the popup interior (applied to the empty body;
+             ;; a live pane renders its own cell colours).
+             (body-str   (cl-tmux/options:get-option "popup-style" ""))
+             (body-sgr   (when (and body-str (plusp (length body-str)))
+                           (style-to-sgr (parse-style-string body-str)))))
         (%render-box-border-top stream origin-x origin-y box-width title tl tr h border-sgr)
         (if (popup-pane popup)
             (let ((popup-screen (popup-screen popup)))
               (when popup-screen
                 (%render-popup-content-pane stream origin-x origin-y
                                             box-width box-height popup-screen v border-sgr)))
-            (%render-popup-content-empty stream origin-x origin-y box-height box-width v border-sgr))
+            (%render-popup-content-empty stream origin-x origin-y box-height box-width
+                                         v border-sgr body-sgr))
         (%render-box-border-bottom stream origin-x (+ origin-y box-height -1)
                                    box-width bl br h border-sgr)))))
 

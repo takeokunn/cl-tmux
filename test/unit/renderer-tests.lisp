@@ -1252,6 +1252,19 @@
     (is (search "Test" out)
         "render-popup must include the popup title (got ~S)" out)))
 
+(test render-popup-style-colours-empty-body
+  "popup-style colours the empty popup interior; with it unset the body has no SGR."
+  (let ((popup (make-popup :title "T" :x 0 :y 0 :width 20 :height 6
+                           :pane nil :screen nil :close-on-exit nil)))
+    (flet ((render () (with-output-to-string (s)
+                        (cl-tmux/renderer::render-popup s popup 24 80))))
+      (with-isolated-options ("popup-style" "bg=blue")
+        (is (search (format nil "~C[44m" #\Escape) (render))
+            "popup-style bg=blue must colour the body (SGR 44)"))
+      (with-isolated-options ("popup-style" "")
+        (is (null (search (format nil "~C[44m" #\Escape) (render)))
+            "no popup-style means no body bg SGR")))))
+
 (test render-popup-honours-border-lines-option
   "render-popup draws the box with the popup-border-lines characters (the whole
    box: corners and vertical sides), and not the single-line glyphs."
