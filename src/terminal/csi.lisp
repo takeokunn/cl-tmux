@@ -363,6 +363,13 @@
   ((and (eql private #\?) (eql intermed #\$) (char= final #\p))
    (enqueue-decrqm-reply screen p1))
 
+  ;; ANSI Set/Reset Mode — CSI Ps h / CSI Ps l (NO private marker).  IRM (mode 4)
+  ;; toggles insert/replace; other ANSI modes are accepted and ignored.
+  ((and (null private) (null intermed) (char= final #\h))
+   (set-ansi-mode screen params))
+  ((and (null private) (null intermed) (char= final #\l))
+   (reset-ansi-mode screen params))
+
   ;; XTWINOPS — window operations / reports (CSI Ps ; … t, no private marker).
   ;; We answer the size REPORTS (18 = text area in characters, 19 = screen in
   ;; characters) so apps can learn the grid size; window-manipulation operations

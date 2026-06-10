@@ -59,6 +59,10 @@
   ;; DECSCUSR cursor shape: 0/1=block blink, 2=block steady, 3=underline blink,
   ;; 4=underline steady, 5=bar blink, 6=bar steady
   (cursor-shape 1 :type (unsigned-byte 8))
+  ;; IRM — Insert/Replace Mode (CSI 4 h = insert, CSI 4 l = replace; default off).
+  ;; When T, a printed character inserts at the cursor, shifting the rest of the
+  ;; line right (rather than overwriting).  Reset by RIS / DECSTR.
+  (insert-mode nil :type boolean)
   ;; Bracketed paste mode (?2004h = on, ?2004l = off)
   (bracketed-paste nil :type boolean)
   ;; Application cursor keys (?1h = on, ?1l = off)

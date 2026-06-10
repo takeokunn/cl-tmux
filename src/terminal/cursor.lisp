@@ -365,6 +365,10 @@
   ;; Apply DEC special graphics remapping when active.
   (setf ch (%remap-charset-char screen ch))
   (setf (screen-last-char screen) ch)
+  ;; IRM (insert mode): open a gap of the character's width at the cursor so the
+  ;; new character pushes the rest of the line right instead of overwriting it.
+  (when (screen-insert-mode screen)
+    (insert-chars screen (char-width ch)))
   (if (= (char-width ch) 2)
       (%write-wide-cell   screen ch)
       (%write-normal-cell screen ch)))

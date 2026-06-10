@@ -276,6 +276,7 @@
         (screen-tab-stops      screen) :default
         (screen-origin-mode    screen) nil
         (screen-autowrap       screen) t
+        (screen-insert-mode    screen) nil
         (screen-pending-wrap   screen) nil))
 
 (defun ris-action (screen)
@@ -345,6 +346,25 @@
 (defun set-bell-pending (screen)
   "Mark SCREEN as having a pending BEL (bell event) to be processed by the renderer."
   (setf (screen-bell-pending screen) t))
+
+;;; ── ANSI (non-private) Set/Reset Mode — CSI Ps h / CSI Ps l ─────────────────
+;;;
+;;; The non-private SM/RM modes (no `?` prefix).  IRM (mode 4, insert/replace) is
+;;; the one with a visible effect; the rest are accepted and ignored so a stray
+;;; `CSI 20 h` etc. does not corrupt the display.  PARAMS is a list of mode ints
+;;; (as parsed for dec-pm-set).
+
+(defun set-ansi-mode (screen params)
+  "ANSI Set Mode (CSI Ps h).  IRM (mode 4) turns on insert mode; printed chars
+   then shift the rest of the line right instead of overwriting."
+  (when (member 4 params)
+    (setf (screen-insert-mode screen) t)))
+
+(defun reset-ansi-mode (screen params)
+  "ANSI Reset Mode (CSI Ps l).  IRM (mode 4) turns off insert mode, restoring the
+   default replace/overwrite behaviour."
+  (when (member 4 params)
+    (setf (screen-insert-mode screen) nil)))
 
 ;;; ── Charset selection ────────────────────────────────────────────────────────
 ;;;

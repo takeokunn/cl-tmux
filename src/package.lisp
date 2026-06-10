@@ -192,6 +192,8 @@
    #:screen-copy-line-selection-p
    ;; Copy-mode rectangle-select flag (r)
    #:screen-copy-rect-select-p
+   ;; IRM insert/replace mode
+   #:screen-insert-mode
    ;; Bracketed paste mode
    #:screen-bracketed-paste
    ;; Application cursor keys
@@ -299,6 +301,8 @@
    ;; Terminal state action helpers (DISPATCH layer calls these instead of mutating structs)
    #:set-cursor-shape
    #:set-bell-pending
+   #:set-ansi-mode
+   #:reset-ansi-mode
    #:set-charset
    #:designate-charset
    #:invoke-charset
@@ -371,6 +375,8 @@
    #:screen-cursor-visible
    ;; DECSCUSR cursor shape
    #:screen-cursor-shape
+   ;; IRM insert/replace mode
+   #:screen-insert-mode
    ;; Bracketed paste mode
    #:screen-bracketed-paste
    ;; Application cursor keys

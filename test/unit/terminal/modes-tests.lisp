@@ -855,3 +855,46 @@
         "scrollback must be NIL after erase-display mode 3")
     (is (row-blank-p s 0)
         "row 0 must be blank in the visible grid after erase-display mode 3")))
+
+;;; ── IRM — Insert/Replace Mode (CSI 4 h / CSI 4 l) ──────────────────────────
+
+(test irm-insert-mode-shifts-line-right
+  "CSI 4 h (IRM on): a printed character inserts at the cursor, pushing the rest
+   of the line to the right instead of overwriting it."
+  (with-screen (s 10 5)
+    (feed s "abc")
+    (feed s (esc "[H"))      ; cursor home (col 0)
+    (feed s (esc "[4h"))     ; IRM on
+    (feed s "XY")
+    (is (string= "XYabc" (row-string s 0 :end 5))
+        "insert mode must shift 'abc' right to yield 'XYabc' (got ~S)"
+        (row-string s 0 :end 5))))
+
+(test irm-replace-mode-overwrites
+  "Default (and CSI 4 l) replace mode overwrites at the cursor."
+  (with-screen (s 10 5)
+    (feed s "abc")
+    (feed s (esc "[H"))
+    (feed s (esc "[4l"))     ; IRM off (explicit)
+    (feed s "XY")
+    (is (string= "XYc" (row-string s 0 :end 3))
+        "replace mode must overwrite to yield 'XYc' (got ~S)"
+        (row-string s 0 :end 3))))
+
+(test irm-set-and-reset-toggle-screen-flag
+  "CSI 4 h sets the insert-mode flag and CSI 4 l clears it."
+  (with-screen (s 10 5)
+    (feed s (esc "[4h"))
+    (is-true (cl-tmux/terminal/types:screen-insert-mode s)
+             "CSI 4 h must set screen-insert-mode")
+    (feed s (esc "[4l"))
+    (is (not (cl-tmux/terminal/types:screen-insert-mode s))
+        "CSI 4 l must clear screen-insert-mode")))
+
+(test irm-reset-by-ris
+  "RIS (ESC c) clears insert mode so subsequent writes overwrite again."
+  (with-screen (s 10 5)
+    (feed s (esc "[4h"))            ; IRM on
+    (feed s (esc "c"))             ; RIS
+    (is (not (cl-tmux/terminal/types:screen-insert-mode s))
+        "RIS must reset insert mode")))
