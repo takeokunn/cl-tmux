@@ -154,7 +154,8 @@
     (dotimes (i n result)
       (setf (char result i) (cell-char (funcall cell-at i))))))
 
-(defun capture-pane (pane &key (include-scrollback nil) (escapes nil) (join nil))
+(defun capture-pane (pane &key (include-scrollback nil) (escapes nil) (join nil)
+                               (preserve-trailing nil))
   "Dump the visible content of PANE as a string.
    When INCLUDE-SCROLLBACK is T, also include scrollback history above the visible area.
    When ESCAPES is T (capture-pane -e), each row is rendered with SGR escape
@@ -162,13 +163,18 @@
    When JOIN is T (capture-pane -J), trailing spaces on each line are PRESERVED and
    VISIBLE lines that wrapped at the right margin are rejoined into one logical
    line (no newline at the wrap boundary), using the screen's per-row wrap flags.
+   When PRESERVE-TRAILING is T (capture-pane -N), trailing spaces are PRESERVED but
+   wrapped lines are NOT joined — the difference from -J.  Either flag disables the
+   default trailing-whitespace trimming; only JOIN rejoins wrapped rows.
    Otherwise — tmux's default — trailing whitespace is stripped and every row ends
    with a newline.  (Scrollback rows carry no wrap flag, so -J does not join across
    the scrollback/visible boundary or within scrollback.)
    The screen lock is held only for snapshot extraction; string rendering happens
    outside the lock so renderer threads are not blocked during I/O."
   (let ((screen (pane-screen pane))
-        (trim   (not join)))           ; default trims trailing spaces; -J preserves
+        ;; Default trims trailing spaces; -J (join) and -N (preserve-trailing) both
+        ;; keep them — only -J additionally rejoins wrapped rows.
+        (trim   (not (or join preserve-trailing))))
     ;; Snapshot pure data under lock (I/O-synchronisation concern).
     (let ((scrollback-snapshot nil)
           (visible-rows nil)

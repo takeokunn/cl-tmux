@@ -2387,19 +2387,22 @@
      into one logical line (default strips trailing spaces and keeps every row a
      separate line, like tmux).  Joining uses the screen's per-row wrap flags and
      applies to the visible region (scrollback rows are not joined).
-   -N / -a / -P: accepted but not specially handled.
+   -N: preserve trailing spaces WITHOUT joining wrapped lines (the difference from -J).
+   -a / -P: accepted but not specially handled.
    -t target: target pane (standalone uses the active pane)."
   (multiple-value-bind (flags _positionals) (%parse-command-flags args "tSEb")
     (declare (ignore _positionals))
     (let* ((print-p (assoc #\p flags))
            (include-scrollback (assoc #\S flags))
            (escapes  (assoc #\e flags))      ; -e: keep SGR colour/attr escapes
-           (join     (assoc #\J flags))      ; -J: preserve trailing spaces
+           (join     (assoc #\J flags))      ; -J: preserve trailing spaces + join wraps
+           (preserve (assoc #\N flags))      ; -N: preserve trailing spaces, no join
            (pane (session-active-pane session))
            (content (and pane (capture-pane pane
                                             :include-scrollback (and include-scrollback t)
                                             :escapes (and escapes t)
-                                            :join    (and join t)))))
+                                            :join    (and join t)
+                                            :preserve-trailing (and preserve t)))))
       (when content
         (if print-p
             ;; -p: stdout equivalent — show the content in an overlay.

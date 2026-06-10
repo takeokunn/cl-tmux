@@ -1312,6 +1312,31 @@
     (is (string= (format nil "hi        ~%") (capture-pane pane :join t))
         "join capture keeps the row padded to its full width of 10")))
 
+(test capture-pane-N-preserves-trailing-spaces
+  "capture-pane -N (:preserve-trailing t) keeps trailing spaces like -J — the row
+   stays padded to its full width."
+  (let* ((screen (make-screen 10 1))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 1
+                            :fd -1 :pid -1 :screen screen)))
+    (feed screen "hi")
+    (is (string= (format nil "hi        ~%") (capture-pane pane :preserve-trailing t))
+        "-N keeps the row padded to its full width of 10")))
+
+(test capture-pane-N-preserves-trailing-but-does-not-join
+  "capture-pane -N preserves trailing spaces but, unlike -J, does NOT rejoin a
+   wrapped line — the distinguishing behaviour between -N and -J."
+  (let* ((screen (make-screen 5 3))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 5 :height 3
+                            :fd -1 :pid -1 :screen screen)))
+    (feed screen "ABCDEFGH")            ; wraps: row0 "ABCDE" → row1 "FGH"
+    (let ((preserved (capture-pane pane :preserve-trailing t)))
+      (is-true (search "FGH  " preserved)
+               "-N keeps the FGH continuation row padded to full width (got ~S)"
+               preserved)
+      (is (null (search "ABCDEFGH" preserved))
+          "-N must NOT join the wrapped line into one logical line (got ~S)"
+          preserved))))
+
 (test capture-pane-J-joins-wrapped-lines
   "capture-pane -J rejoins a line that wrapped at the right margin into one
    logical line (no newline at the wrap boundary); default capture keeps them
