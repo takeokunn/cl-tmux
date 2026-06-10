@@ -111,13 +111,11 @@
   (when pane
     ;; Hook fires on every focus transition, regardless of whether the app
     ;; enabled ?1004 focus reporting (matches tmux's pane-focus-in/out hooks).
-    ;; Fire both the add-hook and (via the owning session) the set-hook registries.
-    (let ((hook (if focused-p
-                    cl-tmux/hooks:+hook-pane-focus-in+
-                    cl-tmux/hooks:+hook-pane-focus-out+)))
-      (cl-tmux/hooks:run-hooks hook pane)
-      (let ((sess (%session-of-pane pane)))
-        (when sess (run-command-hooks hook sess)))))
+    ;; run-hooks fires both the add-hook and (via the pane's session) set-hook.
+    (cl-tmux/hooks:run-hooks (if focused-p
+                                 cl-tmux/hooks:+hook-pane-focus-in+
+                                 cl-tmux/hooks:+hook-pane-focus-out+)
+                             pane))
   (when (and pane (> (pane-fd pane) 0))
     (let ((seq (cl-tmux/terminal/actions:focus-event-report
                 (pane-screen pane) focused-p)))
@@ -134,11 +132,8 @@
       (%notify-pane-focus old nil)
       (%notify-pane-focus new-pane t)
       ;; tmux's window-pane-changed event hook: WIN's active pane changed.
-      ;; Fire both the add-hook and (via the owning session) the set-hook registries.
-      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-pane-changed+ win)
-      (let ((sess (%session-of-window win)))
-        (when sess
-          (run-command-hooks cl-tmux/hooks:+hook-window-pane-changed+ sess))))))
+      ;; (run-hooks fires both registries, deriving the session from WIN.)
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-pane-changed+ win))))
 
 (defmacro %with-window-focus-transition ((session) &body body)
   "Run BODY (which may change SESSION's active window by any means) and then
@@ -158,27 +153,40 @@
              (%notify-pane-focus ,old-pane nil)
              (%notify-pane-focus (and ,new-win (window-active-pane ,new-win)) t)
              ;; tmux's session-window-changed event hook: the active window changed.
-             ;; Fire both the add-hook and the .tmux.conf set-hook registries.
-             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-window-changed+ ,sess)
-             (run-command-hooks cl-tmux/hooks:+hook-session-window-changed+ ,sess)))))))
+             ;; (run-hooks fires both the add-hook and set-hook registries.)
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-window-changed+ ,sess)))))))
 
 ;;; -- Private command helpers ------------------------------------------------
 
-(defun run-command-hooks (event-name session)
+(defun %derive-hook-session (target)
+  "Resolve a hook TARGET — a session, window, or pane — to its owning session, so
+   command hooks (which run against a session) can fire from any run-hooks call
+   regardless of what object the firing point had.  NIL when unresolvable."
+  (cond
+    ((null target) nil)
+    ((cl-tmux/model::session-p target) target)
+    ((cl-tmux/model::window-p  target) (%session-of-window target))
+    ((cl-tmux/model::pane-p    target) (%session-of-pane   target))
+    (t nil)))
+
+(defun run-command-hooks (event-name target)
   "Dispatch every command registered for hook EVENT-NAME (via the `set-hook`
-   directive) on SESSION.  A no-op when no command hooks are set.
+   directive) against the session derived from TARGET (a session/window/pane).
+   A no-op when no command hooks are set or no session can be derived.
    Hooks may be stored as keywords (legacy) OR as strings (from set-hook in
    .tmux.conf, e.g. 'display-message #{session_name}').  String hooks are
    run via %run-command-line so format expansion and argument parsing work."
-  (dolist (entry (cl-tmux/hooks:command-hooks event-name))
-    (cond
-      ((stringp entry)
-       ;; String hook from set-hook directive: run as a command line with full
-       ;; format expansion and argument parsing.
-       (ignore-errors (%run-command-line session entry)))
-      ((keywordp entry)
-       ;; Keyword hook from programmatic add-hook or legacy set-command-hook.
-       (dispatch-command session entry 0)))))
+  (let ((session (%derive-hook-session target)))
+    (when session
+      (dolist (entry (cl-tmux/hooks:command-hooks event-name))
+        (cond
+          ((stringp entry)
+           ;; String hook from set-hook directive: run as a command line with full
+           ;; format expansion and argument parsing.
+           (ignore-errors (%run-command-line session entry)))
+          ((keywordp entry)
+           ;; Keyword hook from programmatic add-hook or legacy set-command-hook.
+           (dispatch-command session entry 0)))))))
 
 ;; Install run-command-hooks as the command-hook runner so lower layers
 ;; (cl-tmux/commands kill-pane / kill-window) can fire command hooks too.
@@ -205,7 +213,6 @@
          (win  (session-new-window session win-name rows cols base start-dir)))
     (start-reader-thread (window-active-pane win))
     (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+ win)
-    (run-command-hooks cl-tmux/hooks:+hook-after-new-window+ session)
     (when (and detach prev-win)
       (session-select-window session prev-win))
     win))
@@ -242,8 +249,7 @@
       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-split-window+ new)
       ;; A split creates a new pane — fire after-new-pane too (was defined but
       ;; never fired).
-      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-pane+ new)
-      (run-command-hooks cl-tmux/hooks:+hook-after-split-window+ session))
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-pane+ new))
     new))
 
 (defun %active-screen (session)
@@ -445,7 +451,6 @@
     (dolist (pane (all-panes session))
       (start-reader-thread pane))
     (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-created+ session)
-    (run-command-hooks cl-tmux/hooks:+hook-session-created+ session)
     session))
 
 ;;; -- Signal-channel prompt helper --------------------------------------------
@@ -1410,10 +1415,9 @@
                           (session-last-window session))
                      (session-select-window session (session-last-window session))
                      (session-select-window session win)))))))))
-    ;; after-select-window: tmux's per-command hook.  Fire BOTH the programmatic
-    ;; (add-hook) and the .tmux.conf set-hook command registries.
-    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-window+ session)
-    (run-command-hooks cl-tmux/hooks:+hook-after-select-window+ session)))
+    ;; after-select-window: tmux's per-command hook (run-hooks now fires both the
+    ;; add-hook and the .tmux.conf set-hook registries).
+    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-window+ session)))
 
 (defun %cmd-select-pane (session args)
   "select-pane [-L|-R|-U|-D|-l|-d|-e|-m|-M] [-t target] [-T title]: select or configure a pane.
@@ -1464,10 +1468,9 @@
         (t
          (when (and win target-pane (not (eq target-pane (window-active-pane win))))
            (%select-pane-with-focus win target-pane))))
-      ;; after-select-pane fires once after the command, whichever form it took.
-      ;; Fire both the add-hook and the .tmux.conf set-hook command registries.
-      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-pane+ session)
-      (run-command-hooks cl-tmux/hooks:+hook-after-select-pane+ session))))
+      ;; after-select-pane fires once after the command (run-hooks now fires both
+      ;; the add-hook and the .tmux.conf set-hook registries).
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-pane+ session))))
 
 (defun %cmd-kill-window (session args)
   "kill-window [-a] [-t target]: kill a window or all windows except the current.

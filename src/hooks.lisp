@@ -85,7 +85,12 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
    A future *hooks-error-handler* hook-point could surface these at debug time."
   (dolist (cb (gethash event-name *hook-registry*))
     (handler-case (apply cb args)
-      (error () nil))))
+      (error () nil)))
+  ;; Also fire .tmux.conf set-hook command hooks for this event, against the
+  ;; session derived from the hook TARGET (the first arg — a session/window/pane).
+  ;; This unifies the two hook registries so every event supports `set-hook`, not
+  ;; just the ones whose firing point happened to call run-command-hooks directly.
+  (ignore-errors (run-command-hooks-via-runner event-name (first args))))
 
 (defun clear-hooks (event-name)
   "Remove all hooks registered for EVENT-NAME."

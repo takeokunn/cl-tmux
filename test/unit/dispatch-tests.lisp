@@ -1433,6 +1433,22 @@
                  "the set-hook window-pane-changed command must fire via session lookup")
         (cl-tmux/hooks:clear-command-hooks "window-pane-changed")))))
 
+(test set-hook-after-rename-window-fires-config-via-unified-run-hooks
+  "set-hook -g after-rename-window <cmd> fires on rename — proving the unified
+   run-hooks now drives .tmux.conf set-hook for hooks whose firing point only
+   called run-hooks (after-rename-window was previously config-broken)."
+  (let ((s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (cl-tmux/hooks:clear-command-hooks "after-rename-window")
+      (let ((cl-tmux::*server-sessions* (list (cons "0" s)))
+            (*overlay* nil))
+        (cl-tmux::%run-command-line
+         s "set-hook -g after-rename-window \"display-message renamed-hook\"")
+        (cl-tmux::%run-command-line s "rename-window newname")
+        (is-true (search "renamed-hook" (format nil "~{~A~%~}" (overlay-lines)))
+                 "after-rename-window set-hook must fire via the unified run-hooks")
+        (cl-tmux/hooks:clear-command-hooks "after-rename-window")))))
+
 (test set-hook-pane-focus-in-fires-config-command
   "set-hook -g pane-focus-in <cmd> fires when a pane gains focus (config path via
    the pane→session lookup at %notify-pane-focus)."
