@@ -2544,6 +2544,39 @@
       (is (eq cur-win (session-active-window cur))
           "the current session's active window stays unchanged"))))
 
+(test cmd-next-window-a-jumps-to-alerted-window
+  "next-window -a skips windows without an alert and selects the next window whose
+   activity (or silence) flag is set."
+  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)  ; alpha(active) beta gamma
+    (declare (ignore wa wb))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (setf (cl-tmux/model:window-activity-flag wg) t)   ; only gamma has an alert
+      (cl-tmux::%cmd-next-window-arg sess '("-a"))
+      (is (eq wg (session-active-window sess))
+          "next-window -a skips beta (no alert) and selects gamma"))))
+
+(test cmd-next-window-a-no-alerts-is-noop
+  "next-window -a with no alerted windows leaves the active window unchanged."
+  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+    (declare (ignore wb wg))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-next-window-arg sess '("-a"))
+      (is (eq wa (session-active-window sess))
+          "next-window -a with no alerts stays on the active window"))))
+
+(test cmd-previous-window-a-jumps-backward-to-alerted-window
+  "previous-window -a scans backward to the nearest window with an alert."
+  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)  ; alpha(active) beta gamma
+    (declare (ignore wa wg))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (setf (cl-tmux/model:window-silence-flag wb) t)    ; beta has a silence alert
+      (cl-tmux::%cmd-previous-window-arg sess '("-a"))
+      (is (eq wb (session-active-window sess))
+          "previous-window -a selects beta (the alerted window)"))))
+
 ;;; ── pipe-pane-open / pipe-pane-close / pipe-pane-write ──────────────────────
 
 (test pipe-pane-open-returns-stream

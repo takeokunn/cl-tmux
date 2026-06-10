@@ -2628,18 +2628,43 @@
             (setf *dirty* t)
             t))))))
 
+(defun %window-has-alert-p (win)
+  "T when WIN has a pending alert — activity (monitor-activity) or silence
+   (monitor-silence).  These are the windows next-window/previous-window -a jumps
+   between (cl-tmux tracks activity + silence at the window level)."
+  (and win (or (cl-tmux/model:window-activity-flag win)
+               (cl-tmux/model:window-silence-flag win))))
+
+(defun %cycle-to-alert-window (session cycler)
+  "Select the next/prev window (via CYCLER) that has an alert, scanning from the
+   active window and wrapping once.  Checks only the OTHER windows (never re-selects
+   the current one) and is a no-op when none of them has an alert."
+  (let* ((windows (session-windows session))
+         (start   (session-active-window session)))
+    (when (and windows start (> (length windows) 1))
+      (loop with cur = start
+            repeat (1- (length windows))      ; visit every OTHER window, at most once
+            do (setf cur (funcall cycler windows cur))
+               (when (%window-has-alert-p cur)
+                 (%with-window-focus-transition (session)
+                   (session-select-window session cur))
+                 (return t))
+            finally (return nil)))))
+
 (defun %cycle-window-in-target (session args cycler)
   "Resolve -t to a target session (default SESSION) and cycle its active window
    with CYCLER (next-cyclic / prev-cyclic).  Shared by the scriptable
-   next-window / previous-window commands.  -a (next/prev window with an alert)
-   is accepted but, with no per-window activity tracking, behaves as plain cycling."
+   next-window / previous-window commands.  -a cycles to the next/prev window with
+   an alert (activity or silence); without -a, plain window cycling."
   (multiple-value-bind (flags positionals) (%parse-command-flags args "t")
     (declare (ignore positionals))
     (let* ((target-str (cdr (assoc #\t flags)))
            (target     (or (and target-str
                                  (find-session-by-target *server-sessions* target-str))
                            session)))
-      (%cmd-cycle-window target cycler)
+      (if (assoc #\a flags)
+          (%cycle-to-alert-window target cycler)
+          (%cmd-cycle-window target cycler))
       (setf *dirty* t)
       t)))
 
