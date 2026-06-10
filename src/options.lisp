@@ -76,6 +76,11 @@
   ("status-left-length"       :integer 40)
   ("status-right-length"      :integer 40)
   ("status-style"             :string  "")
+  ;; Deprecated pre-2.9 status colour options, kept for old .tmux.conf
+  ;; compatibility: folded into the effective status-style by the renderer.
+  ("status-fg"                :string  "")
+  ("status-bg"                :string  "")
+  ("status-attr"              :string  "")
   ("status-justify"           :string  "left")
   ("window-status-format"     :string  " #{window_index}:#{window_name} ")
   ("window-status-current-format" :string " #{window_index}:#{window_name}* ")

@@ -380,7 +380,7 @@
                        :client-width  terminal-cols
                        :client-height (max 0 (- terminal-rows 1))))
          (sgr-code    (%status-sgr-from-style
-                       (cl-tmux/options:get-option "status-style" "")))
+                       (%effective-status-style)))
          (status-fmt0 (cl-tmux/options:get-option "status-format[0]" "")))
     ;; status-format[0] template path: when SET (and no prompt is active) the bar
     ;; is rendered from that single format, with #[align=…] regions positioned by
@@ -404,7 +404,7 @@
                        :client-width  terminal-cols
                        :client-height (max 0 (- terminal-rows 1))))
          (sgr-code    (%status-sgr-from-style
-                       (cl-tmux/options:get-option "status-style" "")))
+                       (%effective-status-style)))
          ;; Expand inline #[attr] style blocks into SGR escapes; #[default]
          ;; reverts to SGR-CODE (the base status style) so the bar's bg/fg returns.
          (raw-left    (%status-expand-style-blocks
@@ -446,7 +446,7 @@
   (let* ((fmt      (cl-tmux/options:get-option
                     (format nil "status-format[~D]" index) ""))
          (sgr-code (%status-sgr-from-style
-                    (cl-tmux/options:get-option "status-style" "")))
+                    (%effective-status-style)))
          (context  (cl-tmux/format:format-context-from-session
                     session (session-active-window session)
                     (session-active-pane session)

@@ -256,3 +256,24 @@
    Parses the style string via PARSE-STYLE-STRING / STYLE-TO-SGR.
    Returns the default blue-on-white SGR \"44;97\" when style-str is empty/nil."
   (style-to-sgr (parse-style-string style-str)))
+
+(defun %effective-status-style ()
+  "The effective status-bar style: the modern `status-style` option with the
+   DEPRECATED status-fg / status-bg / status-attr options folded in.  tmux removed
+   those separate options in 2.9 (merging them into status-style), but many older
+   .tmux.conf files and tutorials still set them — so each one that is present is
+   appended as its equivalent style token (fg=…, bg=…, or the attribute name),
+   overriding the matching component of status-style.  Returns the combined,
+   comma-joined style string (empty when nothing is set)."
+  (flet ((opt (name) (cl-tmux/options:get-option name ""))
+         (setp (v) (and v (plusp (length v)) (not (string-equal v "default")))))
+    (let* ((style (opt "status-style"))
+           (fg    (opt "status-fg"))
+           (bg    (opt "status-bg"))
+           (attr  (opt "status-attr"))
+           (parts (remove nil
+                          (list (and (setp style) style)
+                                (and (setp fg) (format nil "fg=~A" fg))
+                                (and (setp bg) (format nil "bg=~A" bg))
+                                (and (setp attr) attr)))))
+      (format nil "~{~A~^,~}" parts))))

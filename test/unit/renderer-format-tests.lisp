@@ -299,6 +299,36 @@
     (is (search "1" sgr)
         "%status-sgr-from-style 'bold' must include \"1\" (got ~S)" sgr)))
 
+;;; ── %effective-status-style (deprecated status-fg/bg/attr fold-in) ───────────
+
+(test effective-status-style-empty-when-nothing-set
+  "%effective-status-style is empty when neither status-style nor the deprecated
+   status-fg/bg/attr options are set."
+  (with-isolated-config
+    (is (string= "" (cl-tmux/renderer::%effective-status-style))
+        "no style options set must yield the empty string")))
+
+(test effective-status-style-folds-deprecated-bg-alone
+  "An old .tmux.conf setting only status-bg (no status-style) folds to bg=<colour>."
+  (with-isolated-config
+    (cl-tmux/options:set-option "status-bg" "black")
+    (is (string= "bg=black" (cl-tmux/renderer::%effective-status-style))
+        "status-bg alone must fold to \"bg=black\"")))
+
+(test effective-status-style-folds-deprecated-into-status-style
+  "%effective-status-style appends the deprecated status-fg/bg/attr options to the
+   modern status-style base so both are honoured."
+  (with-isolated-config
+    (cl-tmux/options:set-option "status-style" "bold")
+    (cl-tmux/options:set-option "status-fg" "white")
+    (cl-tmux/options:set-option "status-bg" "blue")
+    (cl-tmux/options:set-option "status-attr" "underscore")
+    (let ((eff (cl-tmux/renderer::%effective-status-style)))
+      (is (search "bold" eff)       "status-style base preserved (got ~S)" eff)
+      (is (search "fg=white" eff)   "status-fg folded in (got ~S)" eff)
+      (is (search "bg=blue" eff)    "status-bg folded in (got ~S)" eff)
+      (is (search "underscore" eff) "status-attr folded in (got ~S)" eff))))
+
 ;;; ── set-cursor-shape ─────────────────────────────────────────────────────────
 
 (test set-cursor-shape-emits-decscusr
