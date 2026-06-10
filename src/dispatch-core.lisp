@@ -1148,9 +1148,10 @@
    the set is skipped (a no-op) — the common `set -og @plugin_opt 'default'`
    plugin idiom that must NOT clobber a user override.  Presence is checked on the
    global store; combined with -a/-u, those take precedence.
-   -a appends VALUE to the option's current global value; -u unsets the global
-   option (removes the override, reverting to the registered default).  -a/-u
-   always operate on the GLOBAL store regardless of -w/-p.
+   -a appends VALUE to the option's current value; -u unsets the option (removes
+   the override, reverting to the registered default / inherited value).  -a and
+   -u are SCOPE-AWARE: with -w/-p (e.g. `setw -u mode-keys`, `set -ap @x v`) they
+   operate on the window-/pane-local store; otherwise on the global store.
    -F expands #{...} format variables in VALUE once, now, before storing (e.g.
    `set -gF status-left '#{host}'` stores the resolved hostname).
    NOTE: this fixes `set -g status off`, which previously set an option literally
@@ -1171,46 +1172,56 @@
                       raw-value))
            (globalp (and (assoc #\g flags) t))
            (windowp (and (assoc #\w flags) t))
-           (panep   (and (assoc #\p flags) t)))
+           (panep   (and (assoc #\p flags) t))
+           ;; Resolve the scope target ONCE (honouring -t / active fallback) so the
+           ;; -u/-a/normal-set branches all act on the same store.  -g forces global.
+           (pane   (and panep (not globalp)
+                        (if target-str
+                            (%resolve-pane-in-window (session-active-window session)
+                                                     target-str)
+                            (session-active-pane session))))
+           (window (and windowp (not globalp)
+                        (if target-str
+                            (%resolve-window-target session target-str)
+                            (session-active-window session)))))
       (when name
         (cond
-          ;; -u: unset option — remove from hash table so the default is used.
+          ;; -u: unset the option at its scope so the inherited/default value is
+          ;; used again (`setw -u mode-keys` clears a window-local override).
           ((assoc #\u flags)
-           (remhash name cl-tmux/options:*global-options*))
-          ;; -a: append value to existing (global store).
+           (cond
+             (pane   (remhash name (cl-tmux/model:pane-local-options pane)))
+             (window (remhash name (cl-tmux/model:window-local-options window)))
+             (t      (remhash name cl-tmux/options:*global-options*))))
+          ;; -a: append VALUE to the option's current value at its scope.  The
+          ;; current value reads through scope precedence (pane->window->global->
+          ;; default) so `set -aw` extends the inherited value, then stores local.
           ((assoc #\a flags)
-           (cl-tmux/options:set-option
-            name (concatenate 'string
-                              (princ-to-string
-                               (or (cl-tmux/options:get-option name nil) ""))
-                              value)))
+           (flet ((cur (v) (concatenate 'string (princ-to-string (or v "")) value)))
+             (cond
+               (pane   (cl-tmux/options:set-option-for-pane
+                        name (cur (cl-tmux/options:get-option-for-pane name pane)) pane))
+               (window (cl-tmux/options:set-option-for-window
+                        name (cur (cl-tmux/options:get-option-for-window name window)) window))
+               (t      (cl-tmux/options:set-option
+                        name (cur (cl-tmux/options:get-option name nil)))))))
           ;; -o: only-if-unset — skip when an explicit value is already present in
           ;; the global store (the user's override wins over the default-seed set).
           ((and (assoc #\o flags)
                 (nth-value 1 (gethash name cl-tmux/options:*global-options*)))
            nil)
-          ;; normal set: route by scope flag.  -t targets a specific window (-w)
-          ;; or pane (-p); without -t the active window/pane is used.
+          ;; normal set: route by the resolved scope target (-t / active fallback).
           (t
-           (let ((pane   (and panep   (not globalp)
-                              (if target-str
-                                  (%resolve-pane-in-window (session-active-window session)
-                                                           target-str)
-                                  (session-active-pane session))))
-                 (window (and windowp (not globalp)
-                              (if target-str
-                                  (%resolve-window-target session target-str)
-                                  (session-active-window session)))))
-             (cond
-               ;; -p (and not -g): pane-local when an active pane exists.
-               (pane
-                (cl-tmux/options:set-option-for-pane name value pane))
-               ;; -w (and not -g): window-local when an active window exists.
-               (window
-                (cl-tmux/options:set-option-for-window name value window))
-               ;; global (default, includes -g and the no-active-pane/window fallback).
-               (t
-                (cl-tmux/options:set-option name value))))))
+           (cond
+             ;; -p (and not -g): pane-local when an active pane exists.
+             (pane
+              (cl-tmux/options:set-option-for-pane name value pane))
+             ;; -w (and not -g): window-local when an active window exists.
+             (window
+              (cl-tmux/options:set-option-for-window name value window))
+             ;; global (default, includes -g and the no-active-pane/window fallback).
+             (t
+              (cl-tmux/options:set-option name value)))))
         ;; Apply runtime side-effects (prefix/prefix2/default-shell/status/
         ;; status-height/escape-time/history-limit) for the special options that
         ;; touch non-option state — the .tmux.conf path already does this, so the

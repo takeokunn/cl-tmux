@@ -4142,6 +4142,36 @@
         (is (not (gethash "status-left" cl-tmux/options:*global-options*))
             "set -u status-left must remove the key from *global-options*")))))
 
+(test set-option-w-unset-clears-window-local-not-global
+  "setw -u <opt> (= set -w -u) removes the WINDOW-local override, leaving the
+   global value intact (scope-aware -u, was always unsetting global)."
+  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal))
+        (s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (let ((win (cl-tmux/model:session-active-window s)))
+        (cl-tmux/options:set-option "mode-keys" "emacs")             ; global
+        (cl-tmux/options:set-option-for-window "mode-keys" "vi" win) ; window-local
+        (cl-tmux::%run-command-line s "setw -u mode-keys")
+        (is (not (nth-value 1 (gethash "mode-keys"
+                                       (cl-tmux/model:window-local-options win))))
+            "setw -u must remove the window-local override")
+        (is (equal "emacs" (cl-tmux/options:get-option "mode-keys"))
+            "the global value must remain untouched")))))
+
+(test set-option-a-w-appends-to-window-local-value
+  "set -aw <opt> X appends to the WINDOW-local value (scope-aware -a, was always
+   appending to the global store)."
+  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal))
+        (s (make-fake-session :nwindows 1)))
+    (with-loop-state
+      (let ((win (cl-tmux/model:session-active-window s)))
+        (cl-tmux/options:set-option-for-window "@x" "ab" win)
+        (cl-tmux::%run-command-line s "set -aw @x cd")
+        (is (equal "abcd" (cl-tmux/options:get-option-for-window "@x" win))
+            "set -aw must append to the window-local value")
+        (is (not (nth-value 1 (gethash "@x" cl-tmux/options:*global-options*)))
+            "the global store must not gain the option")))))
+
 ;;; ── list-panes arg command ───────────────────────────────────────────────────
 
 (test run-command-line-list-panes-shows-overlay
