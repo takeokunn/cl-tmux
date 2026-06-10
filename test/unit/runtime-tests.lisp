@@ -88,6 +88,30 @@
               "reader-eof-state must return the remain-on-exit parking state when the
                pane-local override is set, even though the global value is NIL"))))))
 
+(test remain-on-exit-banner-uses-format-option
+  :description "%remain-on-exit-banner expands remain-on-exit-format and wraps it in
+   reverse video; an empty format falls back to the built-in message."
+  (let ((pane (make-pane :id 1 :fd -1 :pid -1 :screen (make-screen 10 3))))
+    (with-isolated-options ("remain-on-exit-format" "DEAD")
+      (let ((banner (cl-tmux::%remain-on-exit-banner pane)))
+        (is (search "DEAD" banner) "banner must contain the format text (got ~S)" banner)
+        (is (search (format nil "~C[7m" #\Escape) banner)
+            "banner must be reverse-video (SGR 7)")))
+    (with-isolated-options ("remain-on-exit-format" "")
+      (is (string= cl-tmux::+remain-on-exit-message+
+                   (cl-tmux::%remain-on-exit-banner pane))
+          "empty format must fall back to the built-in message"))))
+
+(test reader-eof-state-writes-format-banner-to-screen
+  :description "reader-eof-state writes the remain-on-exit-format banner to the pane
+   screen when remain-on-exit is set."
+  (with-isolated-hooks
+    (let ((pane (make-pane :id 1 :fd -1 :pid -1 :screen (make-screen 10 3))))
+      (with-isolated-options ("remain-on-exit" t "remain-on-exit-format" "BYE")
+        (cl-tmux::reader-eof-state pane)
+        (is (search "BYE" (row-string (pane-screen pane) 0 :end 10))
+            "the pane screen must show the custom banner text")))))
+
 (test reader-reading-state-honors-window-local-monitor-activity
   :description "Pins the per-window resolution at the migrated reader-reading-state
    activity-flag site (src/runtime.lisp ~line 178): that site reads

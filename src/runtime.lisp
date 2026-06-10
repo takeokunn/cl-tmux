@@ -190,7 +190,23 @@
 ;;; requires EQL identity across reloads, which string values fail.
 (defvar +remain-on-exit-message+
   (format nil "~C[7m[Process exited]~C[m" #\Escape #\Escape)
-  "Reverse-video banner written to the pane screen when remain-on-exit is set.")
+  "Fallback reverse-video banner written to the pane screen when remain-on-exit is
+   set but remain-on-exit-format is empty or fails to expand.")
+
+(defun %remain-on-exit-banner (pane)
+  "The reverse-video banner for a pane kept open by remain-on-exit: the
+   remain-on-exit-format option expanded as a format string and wrapped in reverse
+   video.  Falls back to +remain-on-exit-message+ on any error or an empty result.
+   Expanded against a NIL context (literal text and global-scoped formats resolve;
+   a pane-thread context is intentionally not built here)."
+  (let* ((fmt  (ignore-errors
+                 (cl-tmux/options:get-option-for-context "remain-on-exit-format"
+                                                         :pane pane)))
+         (text (and fmt (plusp (length fmt))
+                    (ignore-errors (cl-tmux/format:expand-format fmt nil)))))
+    (if (and text (plusp (length text)))
+        (format nil "~C[7m~A~C[m" #\Escape text #\Escape)
+        +remain-on-exit-message+)))
 
 (defun reader-idle-state (pane)
   "Poll the pane PTY fd; transition to reading if data is available."
@@ -286,11 +302,11 @@
             (error () nil))))
     (cond
       (remain-on-exit
-       ;; Write [Process exited] banner to the pane screen.
+       ;; Write the remain-on-exit-format banner (reverse-video) to the pane screen.
        (let ((screen (pane-screen pane)))
          (when screen
            (let ((message-bytes
-                   (babel:string-to-octets +remain-on-exit-message+
+                   (babel:string-to-octets (%remain-on-exit-banner pane)
                                            :encoding :utf-8)))
              (cl-tmux/terminal/emulator:screen-process-bytes screen message-bytes))))
        (setf *dirty* t)
