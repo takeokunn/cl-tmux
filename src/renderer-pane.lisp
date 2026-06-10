@@ -241,7 +241,9 @@
    set, selected cells take those colours instead of the reverse-video default,
    so `set -g mode-style bg=colour…` works.  Returns nothing; updates the prev-*
    registers as a side-effect."
-  (loop for col below pane-col-count
+  (loop with rev-screen = (and (screen-reverse-screen screen)
+                               cl-tmux/terminal/types:+attr-reverse+)
+        for col below pane-col-count
         for cell = (screen-display-cell screen col row)
         ;; A continuation cell (width 0) is the right half of a double-width
         ;; glyph the terminal already drew — emit nothing.
@@ -261,9 +263,13 @@
                     (ms-colour (and in-sel (or ms-fg ms-bg)))
                     (fg    (if ms-colour (or ms-fg base-fg) base-fg))
                     (bg    (if ms-colour (or ms-bg base-bg) base-bg))
-                    (attrs (if (and in-sel (not ms-colour))
-                               (logxor (cell-attrs cell) cl-tmux/terminal/types:+attr-reverse+)
-                               (cell-attrs cell))))
+                    ;; DECSCNM (reverse-video screen) and the selection highlight
+                    ;; both toggle reverse; XOR both so a cell that is reverse for
+                    ;; two reasons renders normal (correct double-reverse).
+                    (attrs (logxor (cell-attrs cell)
+                                   (if (and in-sel (not ms-colour))
+                                       cl-tmux/terminal/types:+attr-reverse+ 0)
+                                   (or rev-screen 0))))
                (unless (and (= fg  (car prev-fg-cell))
                             (= bg  (car prev-bg-cell))
                             (= attrs (car prev-attrs-cell)))

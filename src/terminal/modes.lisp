@@ -96,6 +96,17 @@
    ((setf (screen-origin-mode screen) nil)
     (set-cursor screen 0 0)))
 
+  ;; Mode 5 — DECSCNM (reverse-video screen): while set, the whole grid renders
+  ;; with fg/bg swapped (a global reverse XORed with each cell's own reverse
+  ;; attribute).  Apps use it for a screen "flash" or a reverse theme.
+  (5
+   ;; Set (?5h): reverse-video screen on.
+   ((setf (screen-reverse-screen screen) t
+          (screen-dirty-p screen) t))
+   ;; Reset (?5l): reverse-video screen off.
+   ((setf (screen-reverse-screen screen) nil
+          (screen-dirty-p screen) t)))
+
   ;; Mode 1 — application cursor keys (?1h / ?1l)
   ;; When set, pane expects ESC O A-D instead of ESC [ A-D for arrow keys.
   (1
@@ -278,6 +289,7 @@
         (screen-autowrap       screen) t
         (screen-insert-mode    screen) nil
         (screen-newline-mode   screen) nil
+        (screen-reverse-screen screen) nil
         (screen-pending-wrap   screen) nil))
 
 (defun ris-action (screen)

@@ -28,6 +28,26 @@
     (is (search (format nil "~C[1;1H" #\Escape) out)
         "render-pane should position row 0 with ESC[1;1H (got ~S)" out)))
 
+(test render-pane-decscnm-reverses-output
+  "With DECSCNM (reverse-screen) on, render-pane emits the reverse attribute (SGR 7)
+   globally; the rendered output differs from the non-reversed render."
+  (let* ((sess   (make-renderer-test-session 5 2 :content "hi"))
+         (pane   (first (window-panes (session-active-window sess))))
+         (screen (pane-screen pane)))
+    (flet ((render () (with-output-to-string (s) (cl-tmux/renderer::render-pane s pane))))
+      (setf (cl-tmux/terminal/types:screen-reverse-screen screen) nil)
+      (let ((normal (render)))
+        (setf (cl-tmux/terminal/types:screen-reverse-screen screen) t)
+        (let ((reversed (render)))
+          (is (not (string= normal reversed))
+              "reverse-screen on must change the rendered output")
+          ;; render-cell-attrs emits the reverse attribute as the SGR token ";7"
+          ;; (default fg=7 emits ";37", which does not contain ";7").
+          (is (search ";7" reversed)
+              "reversed render must carry the reverse SGR ;7 (got ~S)" reversed)
+          (is (null (search ";7" normal))
+              "non-reversed render must not emit the reverse SGR ;7 (got ~S)" normal))))))
+
 ;;; -- double-width glyphs are not double-printed ------------------------------
 
 (test render-pane-double-width-not-duplicated

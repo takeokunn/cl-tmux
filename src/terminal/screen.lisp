@@ -67,6 +67,10 @@
   ;; default off).  When T, a C0 line-feed (LF/VT/FF) also performs a carriage
   ;; return (cursor to column 0).  Reset by RIS / DECSTR.
   (newline-mode nil :type boolean)
+  ;; DECSCNM — reverse-video screen (?5h on / ?5l off; default off).  When T the
+  ;; whole grid renders with fg/bg swapped (a global reverse, XORed per cell with
+  ;; the cell's own reverse attribute).  Reset by RIS.
+  (reverse-screen nil :type boolean)
   ;; Bracketed paste mode (?2004h = on, ?2004l = off)
   (bracketed-paste nil :type boolean)
   ;; Application cursor keys (?1h = on, ?1l = off)

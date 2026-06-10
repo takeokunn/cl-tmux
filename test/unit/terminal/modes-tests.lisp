@@ -940,6 +940,26 @@
     (is (not (cl-tmux/terminal/types:screen-newline-mode s))
         "RIS must reset newline mode")))
 
+;;; ── DECSCNM — reverse-video screen (CSI ?5h / ?5l) ──────────────────────────
+
+(test decscnm-set-and-reset-toggle-screen-flag
+  "CSI ?5h sets reverse-screen and CSI ?5l clears it."
+  (with-screen (s 10 5)
+    (feed s (esc "[?5h"))
+    (is-true (cl-tmux/terminal/types:screen-reverse-screen s)
+             "?5h must set screen-reverse-screen")
+    (feed s (esc "[?5l"))
+    (is (not (cl-tmux/terminal/types:screen-reverse-screen s))
+        "?5l must clear screen-reverse-screen")))
+
+(test decscnm-reset-by-ris
+  "RIS (ESC c) clears reverse-video screen mode."
+  (with-screen (s 10 5)
+    (feed s (esc "[?5h"))
+    (feed s (esc "c"))                ; RIS
+    (is (not (cl-tmux/terminal/types:screen-reverse-screen s))
+        "RIS must reset reverse-video screen")))
+
 ;;; ── DECSTR — Soft Terminal Reset (CSI ! p) ─────────────────────────────────
 
 (test decstr-resets-modes-but-preserves-screen-and-cursor

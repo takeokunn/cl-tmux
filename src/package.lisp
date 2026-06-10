@@ -195,6 +195,7 @@
    ;; IRM insert/replace mode
    #:screen-insert-mode
    #:screen-newline-mode
+   #:screen-reverse-screen
    ;; Bracketed paste mode
    #:screen-bracketed-paste
    ;; Application cursor keys
@@ -382,6 +383,7 @@
    ;; IRM insert/replace mode
    #:screen-insert-mode
    #:screen-newline-mode
+   #:screen-reverse-screen
    ;; Bracketed paste mode
    #:screen-bracketed-paste
    ;; Application cursor keys
