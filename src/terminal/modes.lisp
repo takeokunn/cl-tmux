@@ -244,8 +244,10 @@
 ;;; ── DECSC / DECRC (cursor save & restore) ──────────────────────────────────
 
 (defun save-cursor (screen)
-  "DECSC (ESC 7): save the cursor position and full SGR pen state.
-   Saves: cursor-x, cursor-y, cur-fg, cur-bg, cur-attrs, cur-attrs2, cur-ul-color."
+  "DECSC (ESC 7): save the cursor position, full SGR pen, charset state, and origin mode.
+   Mirrors tmux's input_save_state, which memcpy's the input cell (attrs/fg/bg) plus the
+   charset designation (set/g0set/g1set) and records s->mode (incl. MODE_ORIGIN).
+   Saves: cursor-x/y, cur-fg/bg/attrs/attrs2/ul-color, g0/g1/active charset, origin-mode."
   (setf (screen-saved-cursor screen)
         (list (screen-cursor-x     screen)
               (screen-cursor-y     screen)
@@ -253,24 +255,44 @@
               (screen-cur-bg       screen)
               (screen-cur-attrs    screen)
               (screen-cur-attrs2   screen)
-              (screen-cur-ul-color screen))))
+              (screen-cur-ul-color screen)
+              (screen-g0-charset   screen)
+              (screen-g1-charset   screen)
+              (screen-active-g     screen)
+              (screen-charset      screen)
+              (screen-origin-mode  screen))))
 
 (defun restore-cursor (screen)
-  "DECRC (ESC 8): restore the cursor position and full SGR pen state saved by DECSC.
-   With nothing previously saved, home the cursor and reset the SGR pen (VT100 default)."
+  "DECRC (ESC 8): restore the cursor position, SGR pen, charset state, and origin mode
+   saved by DECSC.  Mirrors tmux's input_restore_state.  With nothing previously saved,
+   home the cursor and reset the SGR pen, charset, and origin mode to VT100 defaults."
   (cond
     ((null (screen-saved-cursor screen))
      (set-cursor screen 0 0)
-     (reset-sgr-pen screen))
+     (reset-sgr-pen screen)
+     (setf (screen-g0-charset  screen) :ascii
+           (screen-g1-charset  screen) :ascii
+           (screen-active-g    screen) :g0
+           (screen-charset     screen) :ascii
+           (screen-origin-mode screen) nil))
     (t
-     (destructuring-bind (cursor-x cursor-y fg bg attrs attrs2 ul-color)
+     (destructuring-bind (cursor-x cursor-y fg bg attrs attrs2 ul-color
+                          g0-charset g1-charset active-g charset origin-mode)
          (screen-saved-cursor screen)
+       ;; set-cursor takes ABSOLUTE coordinates (it ignores origin mode, like tmux's
+       ;; screen_write_cursormove(..., 0)); the saved cursor-x/y are absolute, so the
+       ;; restore is exact regardless of the restored origin-mode value.
        (set-cursor screen cursor-x cursor-y)
-       (setf (screen-cur-fg       screen) fg
+       (setf (screen-origin-mode  screen) origin-mode
+             (screen-cur-fg       screen) fg
              (screen-cur-bg       screen) bg
              (screen-cur-attrs    screen) attrs
              (screen-cur-attrs2   screen) attrs2
-             (screen-cur-ul-color screen) ul-color)))))
+             (screen-cur-ul-color screen) ul-color
+             (screen-g0-charset   screen) g0-charset
+             (screen-g1-charset   screen) g1-charset
+             (screen-active-g     screen) active-g
+             (screen-charset      screen) charset)))))
 
 ;;; ── Full reset ─────────────────────────────────────────────────────────────
 

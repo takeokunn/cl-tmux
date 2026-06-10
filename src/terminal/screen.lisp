@@ -40,7 +40,8 @@
   (alt-cells nil)                           ; saved normal-screen cell grid, or nil
   (alt-cursor-x 0 :type fixnum)            ; cursor column saved on alt-screen entry
   (alt-cursor-y 0 :type fixnum)            ; cursor row saved on alt-screen entry
-  ;; DECSC/DECRC saved cursor: (cursor-x cursor-y fg bg attrs) or NIL when nothing saved
+  ;; DECSC/DECRC saved state, or NIL when nothing saved.  Mirrors tmux input_save_state:
+  ;; (cursor-x cursor-y fg bg attrs attrs2 ul-color g0-charset g1-charset active-g charset origin-mode)
   (saved-cursor nil :type list)
   ;; Copy / scroll-back mode
   (copy-mode-p  nil  :type boolean)

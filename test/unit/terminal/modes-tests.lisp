@@ -111,6 +111,61 @@
     (feed s (esc "8"))
     (check-cursor s 0 0)))
 
+(test decsc-decrc-preserves-g0-charset
+  "ESC 7 / ESC 8 round-trip the G0 charset designation (tmux input_save_state saves
+   the charset alongside the cursor, so a DECSC/DECRC pair must restore it)."
+  (with-screen (s 20 5)
+    (feed s (esc "(0"))                  ; G0 = DEC special graphics (line-drawing)
+    (feed s (esc "7"))                   ; DECSC -- save (incl. charset)
+    (feed s (esc "(B"))                  ; G0 = ASCII (change it)
+    (is (eq :ascii (cl-tmux/terminal/types:screen-g0-charset s))
+        "G0 must be ascii before restore")
+    (feed s (esc "8"))                   ; DECRC -- restore
+    (is (eq :dec-graphics (cl-tmux/terminal/types:screen-g0-charset s))
+        "DECRC must restore G0 = dec-graphics")
+    (is (eq :dec-graphics (cl-tmux/terminal/types:screen-charset s))
+        "DECRC must restore the effective charset (G0 active) = dec-graphics")))
+
+(test decsc-decrc-preserves-active-charset
+  "ESC 7 / ESC 8 round-trip the ACTIVE charset (which of G0/G1 is invoked via SO/SI)."
+  (with-screen (s 20 5)
+    (feed s (esc ")0"))                  ; G1 = DEC special graphics
+    (feed s (string (code-char #x0E)))   ; SO -- invoke G1 (charset -> graphics)
+    (feed s (esc "7"))                   ; DECSC -- save (active-g = g1)
+    (feed s (string (code-char #x0F)))   ; SI -- invoke G0 (charset -> ascii)
+    (is (eq :g0 (cl-tmux/terminal/types:screen-active-g s))
+        "active-g must be g0 before restore")
+    (feed s (esc "8"))                   ; DECRC -- restore
+    (is (eq :g1 (cl-tmux/terminal/types:screen-active-g s))
+        "DECRC must restore active-g = g1")
+    (is (eq :dec-graphics (cl-tmux/terminal/types:screen-charset s))
+        "DECRC must restore the effective charset (G1 active) = dec-graphics")))
+
+(test decsc-decrc-preserves-origin-mode
+  "ESC 7 / ESC 8 round-trip DECOM origin mode (tmux records s->mode, incl. MODE_ORIGIN)."
+  (with-screen (s 20 5)
+    (feed s (esc "[?6h"))                ; DECOM origin mode ON
+    (feed s (esc "7"))                   ; DECSC -- save (incl. origin mode)
+    (feed s (esc "[?6l"))                ; DECOM origin mode OFF
+    (is (not (cl-tmux/terminal/types:screen-origin-mode s))
+        "origin mode must be off before restore")
+    (feed s (esc "8"))                   ; DECRC -- restore
+    (is (cl-tmux/terminal/types:screen-origin-mode s)
+        "DECRC must restore origin mode = ON")))
+
+(test decrc-without-save-resets-charset-and-origin-mode
+  "ESC 8 with no prior DECSC resets charset and origin mode to VT100 defaults."
+  (with-screen (s 20 5)
+    (feed s (esc "(0"))                  ; G0 = dec-graphics
+    (feed s (esc "[?6h"))                ; origin mode ON
+    (feed s (esc "8"))                   ; DECRC with no prior save
+    (is (eq :ascii (cl-tmux/terminal/types:screen-g0-charset s))
+        "G0 must reset to ascii")
+    (is (eq :ascii (cl-tmux/terminal/types:screen-charset s))
+        "effective charset must reset to ascii")
+    (is (not (cl-tmux/terminal/types:screen-origin-mode s))
+        "origin mode must reset to off")))
+
 ;;; ── Direct modes function tests ──────────────────────────────────────────────
 
 (def-suite direct-modes-suite
