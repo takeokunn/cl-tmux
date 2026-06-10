@@ -132,6 +132,50 @@
   (is (string= "" (cl-tmux/format:expand-format
                    "#{W:X}" (cl-tmux/format:format-context-from-session nil nil nil)))))
 
+(test format-P-modifier-iterates-panes
+  "#{P:fmt} expands fmt once per pane of the current window, concatenated with no
+   auto-separator (tmux's P: loop behaviour)."
+  (with-isolated-config
+    (let* ((sess (make-fake-session :nwindows 1 :npanes 3))
+           (win  (cl-tmux/model:session-active-window sess))
+           (pane (first (cl-tmux/model:window-panes win)))
+           (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+      (is (string= "XXX" (cl-tmux/format:expand-format "#{P:X}" ctx))
+          "#{P:X} must repeat once per pane, concatenated")
+      (is (= 3 (length (cl-tmux/format:expand-format "#{P:#{pane_index}}" ctx)))
+          "#{P:#{pane_index}} must emit one (single-digit) index per pane"))))
+
+(test format-P-modifier-active-vs-inactive
+  "#{P:active,inactive} applies the active format to the window's active pane and
+   the inactive format to the others."
+  (with-isolated-config
+    (let* ((sess (make-fake-session :nwindows 1 :npanes 3))
+           (win  (cl-tmux/model:session-active-window sess))
+           (ctx  (cl-tmux/format:format-context-from-session sess win nil))
+           (out  (cl-tmux/format:expand-format "#{P:A,I}" ctx)))
+      (is (= 1 (count #\A out)) "exactly one (active) pane (got ~S)" out)
+      (is (= 2 (count #\I out)) "the other two panes are inactive (got ~S)" out))))
+
+(test format-P-modifier-no-window-is-empty
+  "#{P:...} with no session/window in the context yields the empty string."
+  (is (string= "" (cl-tmux/format:expand-format
+                   "#{P:X}" (cl-tmux/format:format-context-from-session nil nil nil)))))
+
+(test format-S-modifier-iterates-server-sessions
+  "#{S:fmt} expands fmt once per server session; the context's current session is
+   marked active.  Concatenated with no auto-separator."
+  (with-isolated-config
+    (let* ((s1  (make-fake-session :nwindows 1))
+           (s2  (make-fake-session :nwindows 1))
+           (cl-tmux::*server-sessions* (list (cons "a" s1) (cons "b" s2)))
+           (ctx (cl-tmux/format:format-context-from-session
+                 s1 (cl-tmux/model:session-active-window s1) nil)))
+      (is (string= "XX" (cl-tmux/format:expand-format "#{S:X}" ctx))
+          "#{S:X} must repeat once per server session")
+      (let ((out (cl-tmux/format:expand-format "#{S:A,I}" ctx)))
+        (is (= 1 (count #\A out)) "exactly the current session is active (got ~S)" out)
+        (is (= 1 (count #\I out)) "the other session is inactive (got ~S)" out)))))
+
 (test format-context-window-index-matches-window-id
   "format-context-from-session :window-index equals the window's numeric id.
    With make-fake-session (base-index=0), ids are 0, 1; :window-index follows."

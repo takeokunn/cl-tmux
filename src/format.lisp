@@ -453,6 +453,54 @@
                                        ctx)
                         s))))))))
 
+(defun %all-server-sessions ()
+  "The list of live session objects from cl-tmux's *server-sessions* registry,
+   read by runtime symbol lookup to avoid a compile-time dependency on the umbrella
+   package (the same indirection #{session_count} uses).  NIL when empty/unbound."
+  (ignore-errors
+    (mapcar #'cdr (symbol-value (find-symbol "*SERVER-SESSIONS*" "CL-TMUX")))))
+
+(defun %expand-session-iteration (rest context)
+  "Expand a #{S:ACTIVE,INACTIVE} session-list modifier.  Iterates every server
+   session: the context's current session is formatted with ACTIVE, the others with
+   INACTIVE (defaults to ACTIVE when no comma).  Results are concatenated with no
+   separator (tmux's S: loop inserts none; the format supplies any spacing).  Falls
+   back to the single context session when the registry is empty."
+  (let* ((comma        (%top-level-comma rest 0))
+         (active-fmt   (if comma (subseq rest 0 comma) rest))
+         (inactive-fmt (if comma (subseq rest (1+ comma)) active-fmt))
+         (cur-session  (getf context :%session))
+         (sessions     (or (%all-server-sessions)
+                           (and cur-session (list cur-session)))))
+    (with-output-to-string (s)
+      (dolist (sess sessions)
+        (let* ((win  (cl-tmux/model:session-active-window sess))
+               (pane (and win (cl-tmux/model:window-active-pane win)))
+               (ctx  (format-context-from-session sess win pane)))
+          (write-string
+           (expand-format (if (eq sess cur-session) active-fmt inactive-fmt) ctx)
+           s))))))
+
+(defun %expand-pane-iteration (rest context)
+  "Expand a #{P:ACTIVE,INACTIVE} pane-list modifier.  Iterates the panes of the
+   context's current window: the active pane is formatted with ACTIVE, the others
+   with INACTIVE (defaults to ACTIVE when no comma).  Results are concatenated with
+   no separator.  Returns \"\" when there is no window."
+  (let* ((session (getf context :%session))
+         (window  (and session (cl-tmux/model:session-active-window session))))
+    (if (null window)
+        ""
+        (let* ((comma        (%top-level-comma rest 0))
+               (active-fmt   (if comma (subseq rest 0 comma) rest))
+               (inactive-fmt (if comma (subseq rest (1+ comma)) active-fmt))
+               (active-pane  (cl-tmux/model:window-active-pane window)))
+          (with-output-to-string (s)
+            (dolist (pane (cl-tmux/model:window-panes window))
+              (let ((ctx (format-context-from-session session window pane)))
+                (write-string
+                 (expand-format (if (eq pane active-pane) active-fmt inactive-fmt) ctx)
+                 s))))))))
+
 (defun %expand-brace (template start context out)
   "Expand #{...} content starting at START (just past the '{').
    Writes to OUT and returns the index just past the closing '}'.
@@ -529,6 +577,13 @@
                  ;; lists (and, later, status-format[0]).
                  ((string= mod "W")
                   (write-string (%expand-window-iteration rest context) out))
+                 ;; #{S:active,inactive} — iterate every server session (analog of
+                 ;; W:); #{P:active,inactive} — iterate the current window's panes.
+                 ;; Both concatenate without an auto-separator (tmux S:/P: behaviour).
+                 ((string= mod "S")
+                  (write-string (%expand-session-iteration rest context) out))
+                 ((string= mod "P")
+                  (write-string (%expand-pane-iteration rest context) out))
                  ;; #{t:...} — timestamp / strftime modifier.  We first look REST
                  ;; up as a context variable: if it resolves to a positive integer
                  ;; (a CL universal-time, e.g. #{t:session_last_attached}) we format
