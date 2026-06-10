@@ -1328,6 +1328,31 @@
     (is (find (code-char #x25B6) out)
         "render-menu must emit ▶ for the selected item (got ~S)" out)))
 
+(test render-menu-applies-selected-and-item-styles
+  "render-menu colours the selected item with menu-selected-style and the others
+   with menu-style (when set)."
+  (with-isolated-options ("menu-style" "fg=blue" "menu-selected-style" "bg=red")
+    (let* ((items '(("Alpha" . nil) ("Beta" . nil)))
+           (menu  (make-menu :title "M" :items items :selected-index 1))
+           (out   (with-output-to-string (s)
+                    (cl-tmux/renderer::render-menu s menu 24 80))))
+      (is (search (format nil "~C[41m" #\Escape) out)
+          "selected item must use menu-selected-style bg=red (SGR 41, got ~S)" out)
+      (is (search (format nil "~C[34m" #\Escape) out)
+          "non-selected items must use menu-style fg=blue (SGR 34, got ~S)" out))))
+
+(test render-menu-no-style-emits-no-item-sgr
+  "With menu-style/menu-selected-style empty (default), render-menu emits no item
+   colour SGR — only the labels and box, preserving the plain appearance."
+  (with-isolated-options ("menu-style" "" "menu-selected-style" "")
+    (let* ((items '(("Alpha" . nil) ("Beta" . nil)))
+           (menu  (make-menu :title "M" :items items :selected-index 1))
+           (out   (with-output-to-string (s)
+                    (cl-tmux/renderer::render-menu s menu 24 80))))
+      (is (null (search (format nil "~C[41m" #\Escape) out))
+          "no menu-selected-style means no bg SGR (got ~S)" out)
+      (is (search "Alpha" out) "labels are still drawn (got ~S)" out))))
+
 ;;; ── enable-mouse-reporting / disable-mouse-reporting ─────────────────────────
 
 (test enable-mouse-reporting-emits-dec-sequences

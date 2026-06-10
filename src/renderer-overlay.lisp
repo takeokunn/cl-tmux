@@ -129,17 +129,28 @@
    ITEMS          — alist of (label . command) pairs.
    BOX-WIDTH      — total width of the box (item content width = BOX-WIDTH - 3).
    SELECTED-INDEX — 0-based index of the highlighted item."
-  (loop for (label . _cmd) in items
-        for item-index from 0
-        do (move-to stream (+ origin-y 1 item-index) origin-x)
-           (write-char #\│ stream)
-           (write-char (if (= item-index selected-index) #\▶ #\Space) stream)
-           (let* ((inner-width (- box-width 3))
-                  (label-len   (min (length label) inner-width))
-                  (fill        (max 0 (- inner-width label-len))))
-             (write-string (subseq label 0 label-len) stream)
-             (loop repeat fill do (write-char #\Space stream)))
-           (write-char #\│ stream)))
+  ;; menu-style colours the item rows; menu-selected-style the highlighted item.
+  ;; Empty options → NIL SGR → no colour (the ▶ indicator alone marks selection).
+  (let ((base-sgr (let ((s (cl-tmux/options:get-option "menu-style" "")))
+                    (and (plusp (length s)) (%status-sgr-from-style s))))
+        (sel-sgr  (let ((s (cl-tmux/options:get-option "menu-selected-style" "")))
+                    (and (plusp (length s)) (%status-sgr-from-style s)))))
+    (loop for (label . _cmd) in items
+          for item-index from 0
+          for selectedp = (= item-index selected-index)
+          for sgr = (if selectedp sel-sgr base-sgr)
+          do (move-to stream (+ origin-y 1 item-index) origin-x)
+             (write-char #\│ stream)
+             ;; Style the item content (between the │ borders), reset afterwards.
+             (when sgr (format stream "~C[~Am" #\Escape sgr))
+             (write-char (if selectedp #\▶ #\Space) stream)
+             (let* ((inner-width (- box-width 3))
+                    (label-len   (min (length label) inner-width))
+                    (fill        (max 0 (- inner-width label-len))))
+               (write-string (subseq label 0 label-len) stream)
+               (loop repeat fill do (write-char #\Space stream)))
+             (when sgr (reset-attrs stream))
+             (write-char #\│ stream))))
 
 (defun render-menu (stream menu terminal-rows terminal-cols)
   "Draw the MENU overlay box.  Centred by default, or at MENU-X/MENU-Y when set

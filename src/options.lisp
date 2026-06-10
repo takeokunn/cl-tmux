@@ -266,7 +266,12 @@
   ;; Values: "off" (default), "on" (non-nested), "all" (always).
   ("allow-passthrough"        :string  "off")
   ;; Command-prompt style (used when a : command-prompt overlay is active).
-  ("message-command-style"    :string  ""))
+  ("message-command-style"    :string  "")
+  ;; display-menu appearance: menu-style applies to the menu items, menu-selected-
+  ;; style to the highlighted item.  Empty (default) = no colour (the ▶ indicator
+  ;; alone marks the selection), so applying these is opt-in.
+  ("menu-style"               :string  "")
+  ("menu-selected-style"      :string  ""))
 
 ;;; Server-option registry and defaults
 
