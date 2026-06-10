@@ -2771,6 +2771,22 @@
   (is (null (cl-tmux::%paste-buffer-text nil nil))
       "NIL buffer contents → NIL"))
 
+(test paste-buffer-text-separator-overrides-default
+  "%paste-buffer-text -s SEPARATOR replaces LF with SEPARATOR instead of CR; -r
+   still wins (raw), and SEP may be empty or multi-character."
+  (is (string= "a-b-c"
+               (cl-tmux::%paste-buffer-text (format nil "a~%b~%c") nil "-"))
+      "-s '-' must replace each LF with '-'")
+  (is (string= "a, b, c"
+               (cl-tmux::%paste-buffer-text (format nil "a~%b~%c") nil ", "))
+      "-s ', ' must replace each LF with a multi-character separator")
+  (is (string= "abc"
+               (cl-tmux::%paste-buffer-text (format nil "a~%b~%c") nil ""))
+      "-s '' must strip the line breaks entirely")
+  (is (string= (format nil "a~%b~%c")
+               (cl-tmux::%paste-buffer-text (format nil "a~%b~%c") t "-"))
+      "-r must take precedence over -s and keep the raw bytes"))
+
 ;;; ── :save-buffer / :load-buffer dispatch ─────────────────────────────────────
 
 (test dispatch-save-buffer-opens-prompt-when-buffer-exists
