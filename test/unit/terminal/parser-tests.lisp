@@ -873,17 +873,30 @@
   (check-dec-graphics #\f #\° "f must map to degree symbol (°)")
   (check-dec-graphics #\g #\± "g must map to plus-minus (±)"))
 
-(test dec-graphics-dash-variants
-  "DEC graphics dash variants (o, p, r, s) all map to the horizontal line (─)."
-  (check-dec-graphics #\o #\─ "o must map to horizontal line")
-  (check-dec-graphics #\p #\─ "p must map to horizontal line")
-  (check-dec-graphics #\r #\─ "r must map to horizontal line")
-  (check-dec-graphics #\s #\─ "s must map to horizontal line"))
+(test dec-graphics-scan-lines
+  "DEC graphics horizontal scan lines (o,p,q,r,s) map to their distinct vertical
+   positions: q (scan line 5) is the box-drawing horizontal; o/p sit above, r/s below."
+  (check-dec-graphics #\o #\⎺ "o must map to scan line 1 (top)")
+  (check-dec-graphics #\p #\⎻ "p must map to scan line 3")
+  (check-dec-graphics #\q #\─ "q must map to scan line 5 (horizontal line)")
+  (check-dec-graphics #\r #\⎼ "r must map to scan line 7")
+  (check-dec-graphics #\s #\⎽ "s must map to scan line 9 (bottom)"))
+
+(test dec-graphics-math-and-symbol-characters
+  "Upper half of the DEC special-graphics set: relational/math symbols + others
+   (previously passed through literally, breaking apps that emit them)."
+  (check-dec-graphics #\y #\≤ "y must map to less-than-or-equal (≤)")
+  (check-dec-graphics #\z #\≥ "z must map to greater-than-or-equal (≥)")
+  (check-dec-graphics #\{ #\π "{ must map to pi (π)")
+  (check-dec-graphics #\| #\≠ "| must map to not-equal (≠)")
+  (check-dec-graphics #\} #\£ "} must map to UK pound sign (£)")
+  (check-dec-graphics #\~ #\· "~ must map to centred dot (·)")
+  (check-dec-graphics #\_ #\Space "_ must map to a blank"))
 
 (test dec-graphics-unmapped-char-returned-unchanged
-  "An unmapped character (not in the DEC special graphics set) is returned as-is."
-  ;; 'z' is not in the DEC graphics mapping — it should pass through unchanged.
-  (check-dec-graphics #\z #\z "unmapped 'z' must be returned unchanged")
+  "An unmapped character (not in the DEC special graphics set) is returned as-is.
+   Digits and uppercase letters are NOT part of the set, so they pass through."
+  (check-dec-graphics #\5 #\5 "unmapped '5' must be returned unchanged")
   (check-dec-graphics #\A #\A "unmapped 'A' must be returned unchanged"))
 
 (test dec-graphics-via-emulator-corner-chars

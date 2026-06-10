@@ -714,7 +714,16 @@
                  (#\q #\─ "horizontal line")
                  (#\x #\│ "vertical line")
                  (#\a #\▒ "checkerboard")
-                 (#\` #\◆ "diamond"))))
+                 (#\` #\◆ "diamond")
+                 ;; Upper half of the set — math/relational symbols + scan lines.
+                 (#\y #\≤ "less-than-or-equal")
+                 (#\z #\≥ "greater-than-or-equal")
+                 (#\{ #\π "pi")
+                 (#\| #\≠ "not-equal")
+                 (#\} #\£ "UK pound sign")
+                 (#\~ #\· "centred dot")
+                 (#\o #\⎺ "scan line 1")
+                 (#\s #\⎽ "scan line 9"))))
     (dolist (entry cases)
       (destructuring-bind (in expected desc) entry
         (with-screen (s 10 5)
@@ -728,10 +737,11 @@
   :description "Characters not in the DEC graphics table pass through unchanged."
   (with-screen (s 10 5)
     (cl-tmux/terminal/actions:set-charset s :dec-graphics)
-    ;; '#\z' is not in the DEC graphics table
-    (cl-tmux/terminal/actions:write-char-at-cursor s #\z)
-    (is (char= #\z (char-at s 0 0))
-        "unmapped DEC graphics char 'z' must pass through unchanged")))
+    ;; '#\5' (a digit) is not in the DEC special-graphics set — only certain
+    ;; lowercase letters and symbols are remapped, so digits/uppercase pass through.
+    (cl-tmux/terminal/actions:write-char-at-cursor s #\5)
+    (is (char= #\5 (char-at s 0 0))
+        "unmapped DEC graphics char '5' must pass through unchanged")))
 
 (test dec-graphics-activated-via-esc-sequence
   :description "ESC ( 0 activates DEC graphics charset; subsequent chars are remapped."

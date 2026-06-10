@@ -230,19 +230,38 @@
   (#\u #\┤ "right tee")
   (#\v #\┴ "bottom tee")
   (#\w #\┬ "top tee")
-  ;; Lines
-  (#\q #\─ "horizontal line")
+  ;; Vertical line + the nine horizontal scan lines.  The DEC set places nine
+  ;; horizontal rules at distinct vertical positions; q (scan line 5) is the
+  ;; middle = the box-drawing horizontal, o/p sit above it, r/s below.  Mapping
+  ;; each to its exact scan-line glyph (not all to ─) preserves the rule height an
+  ;; app intends (e.g. a double rule drawn with o + s).
   (#\x #\│ "vertical line")
+  (#\o #\⎺ "scan line 1 (top)")
+  (#\p #\⎻ "scan line 3")
+  (#\q #\─ "scan line 5 / horizontal line")
+  (#\r #\⎼ "scan line 7")
+  (#\s #\⎽ "scan line 9 (bottom)")
   ;; Special characters
   (#\a #\▒ "checkerboard")
   (#\` #\◆ "diamond")
   (#\f #\° "degree symbol")
   (#\g #\± "plus-minus")
-  ;; Dash variants — all map to horizontal line
-  (#\o #\─ "top horizontal dash")
-  (#\p #\─ "upper horizontal dash")
-  (#\r #\─ "lower horizontal dash")
-  (#\s #\─ "bottom horizontal dash"))
+  ;; Math / relational symbols (upper half of the DEC special-graphics set —
+  ;; these are emitted by real apps and were previously passed through literally).
+  (#\y #\≤ "less-than-or-equal")
+  (#\z #\≥ "greater-than-or-equal")
+  (#\{ #\π "pi")
+  (#\| #\≠ "not-equal")
+  (#\} #\£ "UK pound sign")
+  (#\~ #\· "centred dot / bullet")
+  (#\_ #\Space "blank")
+  ;; Control-code picture glyphs (rarely emitted; included to complete the set).
+  (#\b #\␉ "horizontal tab (HT)")
+  (#\c #\␌ "form feed (FF)")
+  (#\d #\␍ "carriage return (CR)")
+  (#\e #\␊ "line feed (LF)")
+  (#\h #\␤ "newline (NL)")
+  (#\i #\␋ "vertical tab (VT)"))
 
 ;;; Unicode combining character ranges (Category M*: combining marks).
 ;;; These code points have zero display width and should be appended to the
