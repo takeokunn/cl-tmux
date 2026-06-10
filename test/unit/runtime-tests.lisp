@@ -336,15 +336,25 @@ given a non-NIL initial state (loop while *running*)."
     (is (string= "hello" (cdr (first cl-tmux::*message-log*)))
         "log entry text must match what was added")))
 
-(test add-message-log-caps-at-max-entries
-  :description "add-message-log caps *message-log* at +max-message-log-entries+ entries."
-  (let ((cl-tmux::*message-log* nil)
-        (limit cl-tmux::+max-message-log-entries+))
-    (dotimes (i (+ limit 5))
-      (cl-tmux::add-message-log (format nil "msg-~D" i)))
-    (is (= limit (length cl-tmux::*message-log*))
-        "*message-log* must not exceed +max-message-log-entries+, got ~D"
-        (length cl-tmux::*message-log*))))
+(test add-message-log-caps-at-message-limit
+  :description "add-message-log caps *message-log* at the message-limit option."
+  (with-isolated-options ("message-limit" 5)
+    (let ((cl-tmux::*message-log* nil))
+      (dotimes (i 12)
+        (cl-tmux::add-message-log (format nil "msg-~D" i)))
+      (is (= 5 (length cl-tmux::*message-log*))
+          "*message-log* must be capped at message-limit (5), got ~D"
+          (length cl-tmux::*message-log*)))))
+
+(test add-prompt-history-caps-at-prompt-history-limit
+  :description "add-prompt-history caps *prompt-history* at the prompt-history-limit option."
+  (with-isolated-options ("prompt-history-limit" 4)
+    (let ((cl-tmux::*prompt-history* nil))
+      (dotimes (i 9)
+        (cl-tmux::add-prompt-history (format nil "cmd-~D" i)))
+      (is (= 4 (length cl-tmux::*prompt-history*))
+          "*prompt-history* must be capped at prompt-history-limit (4), got ~D"
+          (length cl-tmux::*prompt-history*)))))
 
 (test add-message-log-newest-first
   :description "add-message-log prepends: the most recently added entry is first."
@@ -507,14 +517,14 @@ given a non-NIL initial state (loop while *running*)."
     (is (string= "alpha" (cdr (third  cl-tmux::*message-log*))) "third entry is oldest")))
 
 (test add-message-log-truncates-to-exact-max
-  :description "Adding exactly +max-message-log-entries+ + 1 entries produces exactly
-   +max-message-log-entries+ entries in the log."
-  (let ((cl-tmux::*message-log* nil)
-        (limit cl-tmux::+max-message-log-entries+))
-    (dotimes (i (1+ limit))
-      (cl-tmux::add-message-log (format nil "~D" i)))
-    (is (= limit (length cl-tmux::*message-log*))
-        "log must be capped to +max-message-log-entries+ after one over the limit")))
+  :description "Adding exactly message-limit + 1 entries produces exactly
+   message-limit entries in the log (exact truncation, no off-by-one)."
+  (with-isolated-options ("message-limit" 8)
+    (let ((cl-tmux::*message-log* nil))
+      (dotimes (i 9)                      ; message-limit + 1
+        (cl-tmux::add-message-log (format nil "~D" i)))
+      (is (= 8 (length cl-tmux::*message-log*))
+          "log must be capped to message-limit (8) after one over the limit"))))
 
 ;;; ── add-prompt-history ────────────────────────────────────────────────────────
 

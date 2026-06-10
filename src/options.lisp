@@ -157,6 +157,9 @@
   ("set-titles-string"        :string  "#S:#I:#W")
   ("remain-on-exit"           :boolean nil)
   ("renumber-windows"         :boolean nil)
+  ;; Max messages kept in the message log, and max command-prompt history entries.
+  ("message-limit"            :integer 1000)
+  ("prompt-history-limit"     :integer 100)
   ("message-style"            :string  "")
   ;; Deprecated pre-2.9 message colour options (old .tmux.conf compat); folded
   ;; into message-style / message-command-style by the renderer.

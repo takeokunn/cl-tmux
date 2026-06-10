@@ -2075,14 +2075,14 @@
         "message text must be in cdr of first entry (got ~S)"
         (cdr (first cl-tmux::*message-log*)))))
 
-(test add-message-log-caps-at-100
-  "add-message-log caps *message-log* at 100 entries."
-  (let ((cl-tmux::*message-log* nil))
-    ;; Add 105 entries.
-    (loop repeat 105 do (cl-tmux::add-message-log "x"))
-    (is (= 100 (length cl-tmux::*message-log*))
-        "*message-log* must be capped at 100 entries (got ~D)"
-        (length cl-tmux::*message-log*))))
+(test add-message-log-caps-honors-message-limit-option
+  "add-message-log caps *message-log* at the message-limit option, not a constant."
+  (with-isolated-options ("message-limit" 3)
+    (let ((cl-tmux::*message-log* nil))
+      (loop repeat 10 do (cl-tmux::add-message-log "x"))
+      (is (= 3 (length cl-tmux::*message-log*))
+          "*message-log* must be capped at message-limit (3, got ~D)"
+          (length cl-tmux::*message-log*)))))
 
 (test add-message-log-ordering
   "add-message-log puts newest entry first."

@@ -95,10 +95,13 @@
   "A list of (timestamp . text) cons pairs for :show-messages.")
 
 (defun add-message-log (msg)
-  "Prepend MSG to *message-log*, capping the list at +max-message-log-entries+."
+  "Prepend MSG to *message-log*, capping the list at the `message-limit` option
+   (tmux default 1000), falling back to +max-message-log-entries+ when unset."
   (push (cons (get-universal-time) msg) *message-log*)
-  (when (> (length *message-log*) +max-message-log-entries+)
-    (setf *message-log* (subseq *message-log* 0 +max-message-log-entries+))))
+  (let ((limit (or (cl-tmux/options:get-option "message-limit")
+                   +max-message-log-entries+)))
+    (when (> (length *message-log*) limit)
+      (setf *message-log* (subseq *message-log* 0 limit)))))
 
 ;;; -- Prompt history ----------------------------------------------------------
 
@@ -140,15 +143,21 @@
               (loop for line = (read-line s nil nil) while line
                     do (when (plusp (length line)) (push line entries)))
               (setf *prompt-history*
-                    (subseq entries 0 (min (length entries) +max-prompt-history+))))))))))
+                    (subseq entries 0 (min (length entries) (%prompt-history-limit)))))))))))
+
+(defun %prompt-history-limit ()
+  "The effective command-prompt history cap: the `prompt-history-limit` option
+   (tmux default 100), falling back to +max-prompt-history+ when unset."
+  (or (cl-tmux/options:get-option "prompt-history-limit") +max-prompt-history+))
 
 (defun add-prompt-history (entry)
-  "Prepend ENTRY to *prompt-history*, capping at +max-prompt-history+, and persist
-   to the history-file when that option is set."
+  "Prepend ENTRY to *prompt-history*, capping at the prompt-history-limit option,
+   and persist to the history-file when that option is set."
   (when (and (stringp entry) (plusp (length entry)))
     (push entry *prompt-history*)
-    (when (> (length *prompt-history*) +max-prompt-history+)
-      (setf *prompt-history* (subseq *prompt-history* 0 +max-prompt-history+)))
+    (let ((limit (%prompt-history-limit)))
+      (when (> (length *prompt-history*) limit)
+        (setf *prompt-history* (subseq *prompt-history* 0 limit))))
     (save-prompt-history)))
 
 ;;; -- Clock mode --------------------------------------------------------------
