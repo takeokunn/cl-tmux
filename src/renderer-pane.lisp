@@ -382,16 +382,24 @@
       ((string-equal lines "simple") (values #\| #\-))
       (t                             (values #\│ #\─)))))
 
+(defun %border-indicators-colour-p ()
+  "T unless pane-border-indicators is \"off\".  cl-tmux colours the active pane's
+   border for \"colour\" (the default), \"both\", and \"arrows\" (the arrow glyphs
+   are not drawn, so \"arrows\" degrades to colour); \"off\" disables the highlight."
+  (not (string= (cl-tmux/options:get-option "pane-border-indicators" "colour") "off")))
+
 (defun %render-h-separator (stream node active-pane terminal-cols)
   "Draw the vertical column between the left and right children of an :h split.
    Glyph follows pane-border-lines; colour follows pane-border-style /
-   pane-active-border-style."
+   pane-active-border-style (suppressed when pane-border-indicators is \"off\")."
   (let* ((a          (layout-split-first  node))
          (b          (layout-split-second node))
          (rect       (layout-subtree-rect a))
          (border-col (+ (getf rect :x) (getf rect :w)))
-         (activep    (or (subtree-contains-p a active-pane)
-                         (subtree-contains-p b active-pane)))
+         ;; pane-border-indicators "off" suppresses the active-border highlight.
+         (activep    (and (or (subtree-contains-p a active-pane)
+                              (subtree-contains-p b active-pane))
+                          (%border-indicators-colour-p)))
          ;; Fold the deprecated pane-(active-)border-fg/bg into the matching style
          ;; (old .tmux.conf compat); borders carry no attribute, so pass NIL there.
          (style      (if activep

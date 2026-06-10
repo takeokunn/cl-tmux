@@ -123,6 +123,10 @@
   ("exit-unattached"          :boolean nil)
   ("pane-border-style"        :string  "")
   ("pane-active-border-style" :string  "fg=green")
+  ;; pane-border-indicators: how the active pane's border is indicated — "colour"
+  ;; (default), "both", and "arrows" colour it (cl-tmux does not draw the arrow
+  ;; glyphs, so "arrows" degrades to colour); "off" disables the highlight.
+  ("pane-border-indicators"   :string  "colour")
   ;; Deprecated pre-2.9 pane-border colour options (old .tmux.conf compat); folded
   ;; into the matching -style by the renderer.  Borders carry only fg/bg (no attr).
   ("pane-border-fg"           :string  "")

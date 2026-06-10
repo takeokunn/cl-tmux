@@ -163,6 +163,38 @@
         (is (plusp (length out)) "render-tree-borders must produce output")
         (is (find #\│ out) "vertical bar character must be present")))))
 
+(test border-indicators-colour-p-honours-option
+  "%border-indicators-colour-p is true unless pane-border-indicators is \"off\"."
+  (with-isolated-options ("pane-border-indicators" "off")
+    (is (not (cl-tmux/renderer::%border-indicators-colour-p)) "off → no colour"))
+  (with-isolated-options ("pane-border-indicators" "colour")
+    (is-true (cl-tmux/renderer::%border-indicators-colour-p) "colour → colour"))
+  (with-isolated-options ("pane-border-indicators" "both")
+    (is-true (cl-tmux/renderer::%border-indicators-colour-p) "both → colour"))
+  (with-isolated-options ("pane-border-indicators" "arrows")
+    (is-true (cl-tmux/renderer::%border-indicators-colour-p)
+             "arrows → colour (glyphs not drawn, degrades to colour)")))
+
+(test pane-border-indicators-off-suppresses-active-colour
+  "pane-border-indicators \"off\" suppresses the active-pane border colour; the
+   default (\"colour\") keeps it (pane-active-border-style fg=green → SGR 32)."
+  (let* ((l0   (tl-leaf 1 1 1))
+         (l1   (tl-leaf 2 1 1))
+         (tree (make-layout-split :h l0 l1)))
+    (cl-tmux/model::layout-assign tree 0 0 81 24)
+    (let ((ap (layout-leaf-pane l0)))
+      (flet ((render ()
+               (with-output-to-string (buf)
+                 (cl-tmux/renderer::render-tree-borders buf tree ap 81))))
+        (with-isolated-options ("pane-border-indicators" "colour"
+                                "pane-active-border-style" "fg=green")
+          (is (search (format nil "~C[32m" #\Escape) (render))
+              "default indicators must colour the active border green (32)"))
+        (with-isolated-options ("pane-border-indicators" "off"
+                                "pane-active-border-style" "fg=green")
+          (is (null (search (format nil "~C[32m" #\Escape) (render)))
+              "indicators off must NOT colour the active border"))))))
+
 (test pane-border-chars-follow-pane-border-lines
   "%pane-border-chars selects glyph pairs by pane-border-lines; unknown/number
    fall back to single."
