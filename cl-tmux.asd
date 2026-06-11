@@ -68,7 +68,8 @@
      (:file "input")
      (:file "runtime")
      (:file "dispatch-core")            ; dispatch macros, focus helpers, named-command table
-     (:file "dispatch-commands")         ; display/buffer/popup/option/rename %cmd-* handlers
+     (:file "dispatch-commands")          ; display/buffer/popup/option/rename/select %cmd-* handlers
+     (:file "dispatch-commands-lifecycle") ; kill/link/unlink/swap/move/source-file/if-shell %cmd-*
      (:file "dispatch-commands-pane")   ; layout/window/pane/session %cmd-* + copy-mode -X table
      (:file "dispatch-commands-auto")   ; automation %cmd-* (send-keys, run-shell, capture, etc.)
      (:file "dispatch-commands-runner") ; *arg-command-table* + %run-command-tokens + %run-command-line
