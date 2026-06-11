@@ -87,6 +87,16 @@
 (defconstant +buffer-preview-length+ 40
   "Maximum characters shown in a paste-buffer preview listing.")
 
+(defun %copy-mode-search-prompt (session prompt-char search-fn)
+  "Open a copy-mode search prompt with PROMPT-CHAR prefix and call SEARCH-FN
+   on the entered term when non-empty."
+  (let ((screen (%active-screen session)))
+    (when screen
+      (prompt-start prompt-char ""
+                    (lambda (term)
+                      (unless (string= term "")
+                        (funcall search-fn screen term)))))))
+
 (define-command-handlers
   (:detach :detach)
   (:new-window (%cmd-new-window session))
@@ -193,19 +203,9 @@
   (:copy-mode-search-next      (%copy-mode-call session #'copy-mode-search-next))
   (:copy-mode-search-prev      (%copy-mode-call session #'copy-mode-search-prev))
   (:copy-mode-search-forward-prompt
-   (let ((active-screen (%active-screen session)))
-     (when active-screen
-       (prompt-start "/" ""
-                     (lambda (term)
-                       (unless (string= term "")
-                         (copy-mode-search-forward active-screen term)))))))
+   (%copy-mode-search-prompt session "/" #'copy-mode-search-forward))
   (:copy-mode-search-backward-prompt
-   (let ((active-screen (%active-screen session)))
-     (when active-screen
-       (prompt-start "?" ""
-                     (lambda (term)
-                       (unless (string= term "")
-                         (copy-mode-search-backward active-screen term)))))))
+   (%copy-mode-search-prompt session "?" #'copy-mode-search-backward))
   (:copy-mode-search-forward-incremental
    (%copy-mode-call session #'copy-mode-search-forward-incremental))
   (:copy-mode-search-backward-incremental

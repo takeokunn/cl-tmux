@@ -65,8 +65,7 @@
   (mapcar #'car *paste-buffers*))
 
 (defun list-paste-buffers ()
-  "Return the buffer TEXTs, most recent first (strings, not (name . text) pairs —
-   backward-compatible with callers that predate named buffers)."
+  "Return the buffer TEXTs as strings, most recent first."
   (mapcar #'cdr *paste-buffers*))
 
 (defun list-paste-buffers-with-names ()

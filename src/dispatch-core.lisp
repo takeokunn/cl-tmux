@@ -170,22 +170,17 @@
     (t nil)))
 
 (defun run-command-hooks (event-name target)
-  "Dispatch every command registered for hook EVENT-NAME (via the `set-hook`
-   directive) against the session derived from TARGET (a session/window/pane).
-   A no-op when no command hooks are set or no session can be derived.
-   Hooks may be stored as keywords (legacy) OR as strings (from set-hook in
-   .tmux.conf, e.g. 'display-message #{session_name}').  String hooks are
-   run via %run-command-line so format expansion and argument parsing work."
+  "Dispatch every command registered for hook EVENT-NAME against the session
+   derived from TARGET (a session/window/pane).  String hooks (from set-hook
+   in .tmux.conf) run via %run-command-line for format expansion; keyword
+   hooks (programmatic set-command-hook calls) dispatch directly."
   (let ((session (%derive-hook-session target)))
     (when session
       (dolist (entry (cl-tmux/hooks:command-hooks event-name))
         (cond
           ((stringp entry)
-           ;; String hook from set-hook directive: run as a command line with full
-           ;; format expansion and argument parsing.
            (ignore-errors (%run-command-line session entry)))
           ((keywordp entry)
-           ;; Keyword hook from programmatic add-hook or legacy set-command-hook.
            (dispatch-command session entry 0)))))))
 
 ;; Install run-command-hooks as the command-hook runner so lower layers

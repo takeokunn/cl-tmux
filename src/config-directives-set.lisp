@@ -31,11 +31,8 @@
     2 (option-name option-value)
     (cl-tmux/options:set-option option-name option-value)
     t)
-  ("set-hook" 2 (event-name command-name)
-    (let ((keyword (%command-keyword command-name)))
-      (when keyword
-        (cl-tmux/hooks:set-command-hook event-name keyword)
-        t)))
+  ;; NOTE: set-hook is handled entirely by %apply-set-hook-directive (stores raw
+  ;; command strings for format expansion at fire time); no entry needed here.
   ;; NOTE: source-file/source are handled entirely by %apply-source-file-directive
   ;; (wired into apply-config-directive before this table) to support -q/-n/-v
   ;; flags, glob patterns, and multiple paths.

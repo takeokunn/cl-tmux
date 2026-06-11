@@ -5,6 +5,33 @@
 ;;;;  mark/layout, server management, environment, and miscellaneous.
 ;;;;  Registered into *command-dispatch-table* via define-command-handlers.
 
+(defconstant +named-layouts+
+  (if (boundp '+named-layouts+)
+      (symbol-value '+named-layouts+)
+      #(:even-horizontal :even-vertical :tiled :main-horizontal :main-vertical))
+  "The ordered cycle of named window layouts used by next-layout and previous-layout.")
+
+(defun %toggle-mark-pane (pane)
+  "Toggle PANE as the server-wide marked pane: un-marks it when already marked,
+   otherwise clears any prior mark and marks PANE."
+  (cond
+    ((eq pane *server-marked-pane*)
+     (setf (pane-marked pane) nil
+           *server-marked-pane* nil))
+    (t
+     (when *server-marked-pane*
+       (setf (pane-marked *server-marked-pane*) nil))
+     (setf (pane-marked pane)  t
+           *server-marked-pane* pane))))
+
+(defun %cycle-layout (session win direction)
+  "Cycle the layout of WIN in DIRECTION (:next or :prev) through +named-layouts+."
+  (let* ((current (cl-tmux/model:window-layout-cycle-index win))
+         (n       (length +named-layouts+))
+         (next    (mod (if (eq direction :next) (1+ current) (1- current)) n)))
+    (setf (cl-tmux/model:window-layout-cycle-index win) next)
+    (%apply-named-layout-to-session session (aref +named-layouts+ next))))
+
 (define-command-handlers
   ;; ── Popup / menu overlays ──────────────────────────────────────────────────
   (:display-popup
@@ -185,15 +212,7 @@
   ;; ── Mark / layout helpers ─────────────────────────────────────────────────
   (:mark-pane
    (with-active-pane (ap session)
-     (cond
-       ((eq ap *server-marked-pane*)
-        (setf (pane-marked ap) nil
-              *server-marked-pane* nil))
-       (t
-        (when *server-marked-pane*
-          (setf (pane-marked *server-marked-pane*) nil))
-        (setf (pane-marked ap)       t
-              *server-marked-pane*  ap)))))
+     (%toggle-mark-pane ap)))
   (:clear-mark
    (when *server-marked-pane*
      (setf (pane-marked *server-marked-pane*) nil
@@ -202,13 +221,7 @@
    (%apply-named-layout-to-session session :even-horizontal))
   (:next-layout
    (with-active-window (win session)
-     (let* ((layouts #(:even-horizontal :even-vertical :tiled
-                       :main-horizontal :main-vertical))
-            (current (cl-tmux/model:window-layout-cycle-index win))
-            (next    (mod (1+ current) (length layouts)))
-            (name    (aref layouts next)))
-       (setf (cl-tmux/model:window-layout-cycle-index win) next)
-       (%apply-named-layout-to-session session name))))
+     (%cycle-layout session win :next)))
   (:choose-client
    (show-overlay
     (with-output-to-string (stream)
@@ -439,13 +452,7 @@
   ;; Cycle backward through named layouts (inverse of next-layout).
   (:previous-layout
    (with-active-window (win session)
-     (let* ((layouts #(:even-horizontal :even-vertical :tiled
-                       :main-horizontal :main-vertical))
-            (current (cl-tmux/model:window-layout-cycle-index win))
-            (prev    (mod (1- current) (length layouts)))
-            (name    (aref layouts prev)))
-       (setf (cl-tmux/model:window-layout-cycle-index win) prev)
-       (%apply-named-layout-to-session session name))))
+     (%cycle-layout session win :prev)))
 
   ;; ── set-buffer ───────────────────────────────────────────────────────────
   ;; Set the contents of the most-recent paste buffer (setb alias).
@@ -485,15 +492,7 @@
   ;; :mark-pane already handles this; this alias keeps the tmux name.
   (:select-pane-mark
    (with-active-pane (ap session)
-     (cond
-       ((eq ap *server-marked-pane*)
-        (setf (pane-marked ap) nil
-              *server-marked-pane* nil))
-       (t
-        (when *server-marked-pane*
-          (setf (pane-marked *server-marked-pane*) nil))
-        (setf (pane-marked ap)       t
-              *server-marked-pane*  ap)))))
+     (%toggle-mark-pane ap)))
 
   ;; ── detach-client with -s (detach all clients attached to a session) ─────
   (:detach-client
