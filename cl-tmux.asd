@@ -132,12 +132,15 @@
          (:file "cursor-tests")   ; scroll-region-clamp, set-cursor, direct-action, tab-stops, ri, nel, wide-char, advance — part I
          (:file "cursor-tests-b") ; %place-wide-char, table-driven, combining-char-p, write-char combining, DEC graphics — part II
          (:file "scroll-tests")    ; scroll-ops/erase/scroll-region/delete-insert-chars — part I
-         (:file "scroll-tests-b")  ; direct-row-primitives, direct-action-erase — part II
+         (:file "scroll-tests-b")  ; direct-row-primitives, direct-action-erase, constrained-scroll, history-limit — part II
+         (:file "scroll-tests-c")  ; direct-line-edit (il/dl), scroll-screen-to-history, DEC-rect (DECERA/DECFRA/DECCRA) — part III
          (:file "modes-tests")    ; RIS/alt-screen/DECSC/mouse/bracketed-paste/focus — part I
-         (:file "modes-tests-b")  ; set-cursor-shape/bell-pending/charset/title/reset-modes — part II
+         (:file "modes-tests-b")  ; set-cursor-shape/bell-pending/set-charset/set-screen-title/reset-modes/alt-screen-direct — part II
+         (:file "modes-tests-c")  ; screen-invoked-charset/G0-G1, set-screen-cwd, erase-display-mode-3, IRM, LNM, DECSCNM, DECSTR — part III
          (:file "sgr-tests")    ; sgr suite: fg/bg tables, truecolor, colon SGR, pen-to-sgr-params — part I
          (:file "sgr-tests-b")  ; direct-action-sgr, sgr-extended, extra codes, define-sgr-rules, consume-256-color — part II
-         (:file "csi-tests")    ; cursor-movement/DECSCUSR/CBT/SU-SD/REP/DA-response — part I
+         (:file "csi-tests")    ; cursor-movement/DECSCUSR/CBT/SU-SD — part I
+         (:file "csi-tests-d")  ; REP/da-response/DECRQM/XTWINOPS/CPR/DA-table/REP-count-zero — part IV
          (:file "csi-tests-b")  ; ECH/DSR/ich-dch/decstbm/execute-csi-direct/%csi-decstbm-params — part II
          (:file "csi-tests-c")  ; csi-unknown-sequences/DECOM/cup-row/enqueue/XTPUSHTITLE/DEC-rect — part III
          (:file "parser-tests")    ; utf8/special/OSC/ESC-hash/private/dec-pm — part I
@@ -158,14 +161,16 @@
        (:file "format-tests")            ; format expansion — part I (shorthands, brace/conditional, context, window_flags, helpers)
        (:file "format-tests-d")          ; format expansion — part IV (shorthand-table, %expand-brace, %truthy-p, pane/client vars, structural, modifiers)
        (:file "format-tests-b")          ; format expansion — part II (path/substitute/nested/strftime/context/glob/regex)
-       (:file "format-tests-c")          ; format expansion — part III (arithmetic/variables/geometry/content-search/direct-unit-tests)
+       (:file "format-tests-c")          ; format expansion — part III (arithmetic/vars/geometry/pane_at_edges/pane-synchronized)
+       (:file "format-tests-e")          ; format expansion — part V (content-search, glob-match-p, pane-visible-lines, apply-pad-modifier, window-raw-flags)
        (:file "target-tests")      ; parse-session/window/pane/target, find-by-target, resolve-target — part I
        (:file "target-tests-b")    ; %sigil-id, %name-prefix-p, edge cases, table-driven parse-target, multi-digit ids — part II
        (:file "buffer-tests")
        (:file "control-mode-tests")
        (:file "options-tests")    ; option registry, coercions, boolean defaults, make-option-spec — part I
        (:file "options-tests-b")  ; define-option-accessor, type-coercions, scoped overrides, show-options — part II
-       (:file "hooks-tests")
+       (:file "hooks-tests")              ; hook-event-constants, hook-registry, add/run/remove/clear/list-hooks — part I
+       (:file "hooks-tests-b")            ; command hooks (set-hook), set-hook -u, list-command-hooks, runtime set-hook, show-hooks — part II
        (:file "config-tests")
        (:file "config-directives-tests")   ; directive parsing — part I (bindable-cmds, apply-directive, set flags, bind/unbind, load-config-from-stream)
        (:file "config-directives-tests-c") ; directive parsing — part III (load-config-file, command-keyword, parse-bind-args, key-table edge cases)
@@ -173,11 +178,13 @@
        (:file "config-directives-tests-d") ; directive parsing — part IV (set-g-status-off, bind-key-n, load-config, %elif, line-continuation, source-file-glob, if-shell)
        (:file "renderer-format-tests")           ; SGR codes, style tokens, border-color, cursor-shape, palette bounds — part I
        (:file "renderer-format-tests-b")         ; all-attrs table, attrs2, ul-color, style-token/emit remaining, parse-style, border-charset — part II
-       (:file "renderer-pane-tests")    ; render-pane/borders/clock/in-sel/display-panes — part I
+       (:file "renderer-pane-tests")    ; render-pane content/borders/window-style — part I
        (:file "renderer-pane-tests-b")  ; %clock-digit-rows, %render-v-separator, border/pane edge cases — part II
+       (:file "renderer-pane-tests-c")  ; %apply-border-style branches, draw-clock, render-pane-clock-mode, draw-pane-number, in-sel-branch — part III
        (:file "renderer-tests")            ; renderer — part I (status-bar, render-session, clear-display, status-indicators, window-list)
        (:file "renderer-tests-d")          ; renderer — part IV (per-window options, alert-tab-styles, status-bar-line, overlay, DECTCEM)
-       (:file "renderer-tests-b")          ; renderer — part II (status-bar, parse-style, render-popup/menu)
+       (:file "renderer-tests-b")          ; renderer — part II (status-bar, status-position, BEL rendering, status-left-expanded)
+       (:file "renderer-tests-f")          ; renderer — part VI (parse-style-string, style-to-sgr, status-length, window-status-format, render-popup/menu)
        (:file "renderer-tests-c")          ; renderer — part III (mouse/focus/keys, lock-screen, justify, cursor-shape, zoom-suppression)
        (:file "renderer-tests-e")          ; renderer — part V (%clamp-status-segment, cursor-shape in output, status-bar-line gap, inline-style, bell relay)
        (:file "dispatch-tests")               ; core dispatch — part I (cyclic helpers, window/pane select, copy-mode, detach, prefix)
@@ -207,13 +214,16 @@
        (:file "mouse-tests")
        (:file "commands-tests")          ; resize-pane, scroll, kill-pane, select/rename, begin-sel/yank/other-end — part I
        (:file "commands-tests-e")        ; copy-mode-clear-sel, WORD-motion, select-word, move-cursor — part II
-       (:file "commands-tests-f")        ; rename-window, kill-window, run/if-shell, selection-text, swap/capture-pane — part III
-       (:file "commands-tests-b")        ; copy-mode line/page/word motions, top/bottom, search — part IV
+       (:file "commands-tests-f")        ; rename-window, kill-window, run/if-shell, selection-text, swap-pane — part III
+       (:file "commands-tests-m")        ; swap-pane (cont), capture-pane, shift-line-wrapped, copy-mode scroll, resize-pane, split-window — part XIII
+       (:file "commands-tests-b")        ; copy-mode line-start/end, high/middle/low, scroll noop guards, word motions, top/bottom — part IV
+       (:file "commands-tests-k")        ; begin-line-selection, copy-end-of-line (D), copy-line (Y), search-forward/backward, wrap-search — part XI
        (:file "commands-tests-g")        ; send-keys, key-name, tokenize, kill-window-mru, join-pane — part V
        (:file "commands-tests-h")        ; copy-mode-exit, break-pane, clear-history, rotate, find, next/prev-win — part VI
        (:file "commands-tests-c")        ; pipe-pane, virtual-row, timeout, scroll helpers, word/paragraph nav — part VII
        (:file "commands-tests-j")        ; join-pane helpers, resize-pane up, noop guards, search, scroll, extract-chars, row-string — part X
-       (:file "commands-tests-d")        ; rename hooks, server-access, customize-mode, copy-mode-toggle/append/copy-pipe — part VIII
+       (:file "commands-tests-d")        ; rename/select hooks, server-access, customize-mode, begin-line-selection multi-row — part VIII
+       (:file "commands-tests-l")        ; copy-mode copy-line/copy-end-of-line, with-shell-timeout, kill hooks, toggle-rect, append-sel, copy-pipe, renumber-windows — part XII
        (:file "commands-tests-i")        ; rectangle-sel, run-copy-cmd, set-cursor, send-keys-l, jump-to-char, goto-line, search-incr — part IX
        (:file "overlay-tests")
        (:file "prompt-tests")
@@ -228,7 +238,8 @@
        (:file "pty-rawmode-tests")
        (:file "pty-tests")
        (:file "input-tests")
-       (:file "runtime-tests")
+       (:file "runtime-tests")             ; globals, pane-reader-loop, monitor-activity/silence, prompt-history, alert-action — part I
+       (:file "runtime-tests-c")          ; stop-reader-threads, add-message-log, add-prompt-history, wait-for-channel — part III
        (:file "runtime-tests-b")          ; add-message-log table-driven, add-prompt-history, wait-for-channel — part II
        (:file "client-tests")
        (:file "main-tests")
