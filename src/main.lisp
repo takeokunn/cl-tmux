@@ -54,17 +54,18 @@
    *config-condition-evaluator* before loading the config file so that .tmux.conf
    blocks like %if #{==:#{host},myserver} work correctly.
    The hostname is captured once when the closure is called, not at closure creation."
-  (lambda (cond-str)
+  (lambda (condition-string)
     (let ((context (%build-hostname-context)))
       (handler-case
-          (cl-tmux/format:expand-format cond-str context)
+          (cl-tmux/format:expand-format condition-string context)
         (error () "1")))))
 
-(defun run-standalone ()
-  "Standalone in-process multiplexer: own a session and run the event loop on
-   the local terminal (no socket).  This is the default mode."
-  (require :sb-posix)
-
+(defun %initialize-session-environment ()
+  "Set up the shared session environment before forking any panes.
+   Loads the default shell, wires the %if condition evaluator, installs
+   the history/alternate-screen/scroll-on-clear option callbacks, and applies
+   the user config file.  Called from both run-standalone and run-control-mode
+   to avoid duplicating the ~20-line initialization boilerplate."
   ;; Read $SHELL from the environment now that sb-posix is loaded.
   ;; init-default-shell is the ORCHESTRATE-layer call that was formerly
   ;; executed at module load time; doing it here keeps config.lisp pure.
@@ -88,7 +89,13 @@
 
   ;; Apply the user config file — searches cl-tmux config, XDG tmux config, and
   ;; ~/.tmux.conf in priority order (NIL triggers auto-detection).
-  (ignore-errors (load-config-file nil))
+  (ignore-errors (load-config-file nil)))
+
+(defun run-standalone ()
+  "Standalone in-process multiplexer: own a session and run the event loop on
+   the local terminal (no socket).  This is the default mode."
+  (require :sb-posix)
+  (%initialize-session-environment)
 
   ;; Load persisted command-prompt history (history-file option), now that the
   ;; config has set the option.
@@ -177,22 +184,10 @@
    the thin process-entry glue."
   (declare (ignore args))
   (require :sb-posix)
-  (cl-tmux/config:init-default-shell)
-  (setf cl-tmux/config:*config-condition-evaluator* (%make-format-condition-evaluator))
-  (setf cl-tmux/terminal:*history-limit-function*
-        (lambda () (cl-tmux/options:get-option "history-limit")))
-  ;; Install the alternate-screen policy so the emulator honours the option:
-  ;; off → full-screen apps draw on the main screen (output stays in scrollback).
-  (setf cl-tmux/terminal:*alternate-screen-enabled-function*
-        (lambda () (cl-tmux/options:get-option "alternate-screen")))
-  ;; Install the scroll-on-clear policy: when on, a full-screen clear (ED 2)
-  ;; scrolls the visible content into history before erasing.
-  (setf cl-tmux/terminal:*scroll-on-clear-function*
-        (lambda () (cl-tmux/options:get-option "scroll-on-clear")))
-  (ignore-errors (load-config-file nil))
+  (%initialize-session-environment)
   ;; A control client may have no controlling tty; fall back to 80x24.
-  (multiple-value-bind (r c) (ignore-errors (terminal-size))
-    (setf *term-rows* (or r 80) *term-cols* (or c 24)))
+  (multiple-value-bind (rows cols) (ignore-errors (terminal-size))
+    (setf *term-rows* (or rows 80) *term-cols* (or cols 24)))
   (let* ((session (create-initial-session *term-rows* *term-cols*))
          (readers (progn (server-add-session session)
                          (mapcar #'start-reader-thread (all-panes session)))))
@@ -216,43 +211,50 @@
 ;;;   (:value "flag-string"  variable-name)   — sets variable-name to the next arg
 ;;; The macro generates a loop over the args vector and produces a multi-value
 ;;; return of all variables in declaration order.
+;;;
+;;; The generated cond has a final (t (incf index)) fallback arm that silently
+;;; consumes any argument not matching a known flag.  This is intentional:
+;;; flag parsers must tolerate extra arguments (e.g., positional args following
+;;; flags) without signalling an error.  Unknown flags are thus silently skipped.
 
 (defmacro define-flag-parser (parser-name (&rest defaults) &rest flag-specs)
   "Define PARSER-NAME as a function (ARGS) → (values ...) that parses FLAGS.
    DEFAULTS is a list of (variable-name default-value) bindings.
-   FLAG-SPECS are (:bool FLAG VAR) or (:value FLAG VAR) declarations."
-  (let ((args-sym (gensym "ARGS"))
-        (i-sym    (gensym "I"))
-        (a-sym    (gensym "A"))
-        (var-names (mapcar #'first defaults)))
+   FLAG-SPECS are (:bool FLAG VAR) or (:value FLAG VAR) declarations.
+   Unknown flags are silently consumed (see the generated fallback arm)."
+  (let ((args-sym   (gensym "ARGS"))
+        (index-sym  (gensym "INDEX"))
+        (arg-sym    (gensym "ARG"))
+        (var-names  (mapcar #'first defaults)))
     `(defun ,parser-name (,args-sym)
        ,(format nil "Generated flag parser for: ~{~A~^, ~}"
                 (mapcar #'second flag-specs))
        (let (,@defaults
-             (,i-sym 0))
-         (loop while (< ,i-sym (length ,args-sym)) do
-           (let ((,a-sym (nth ,i-sym ,args-sym)))
+             (,index-sym 0))
+         (loop while (< ,index-sym (length ,args-sym)) do
+           (let ((,arg-sym (nth ,index-sym ,args-sym)))
              (cond
                ,@(mapcar
                   (lambda (spec)
                     (ecase (first spec)
                       (:bool
-                       (destructuring-bind (_ flag var) spec
+                       (destructuring-bind (_ flag variable) spec
                          (declare (ignore _))
-                         `((string= ,a-sym ,flag)
-                           (setf ,var t)
-                           (incf ,i-sym))))
+                         `((string= ,arg-sym ,flag)
+                           (setf ,variable t)
+                           (incf ,index-sym))))
                       (:value
-                       (destructuring-bind (_ flag var) spec
+                       (destructuring-bind (_ flag variable) spec
                          (declare (ignore _))
-                         `((string= ,a-sym ,flag)
-                           (incf ,i-sym)
-                           (when (< ,i-sym (length ,args-sym))
-                             (setf ,var (nth ,i-sym ,args-sym))
-                             (incf ,i-sym)))))))
+                         `((string= ,arg-sym ,flag)
+                           (incf ,index-sym)
+                           (when (< ,index-sym (length ,args-sym))
+                             (setf ,variable (nth ,index-sym ,args-sym))
+                             (incf ,index-sym)))))))
                   flag-specs)
-               ;; Unknown flags are silently consumed.
-               (t (incf ,i-sym)))))
+               ;; Unknown flags are silently consumed.  This is intentional:
+               ;; parsers must tolerate extra/positional arguments without error.
+               (t (incf ,index-sym)))))
          (values ,@var-names)))))
 
 (define-flag-parser %parse-attach-flags
@@ -309,6 +311,11 @@
 (defconstant +server-socket-poll-max-iterations+ 30
   "Maximum number of socket-existence probes (30 × 0.1 s = 3 s total wait).")
 
+(defconstant +server-launch-timeout-seconds+ 30
+  "Wall-clock timeout (seconds) passed to sb-ext:run-program when spawning a
+   background server process.  Bounds the subprocess launch time so a hung
+   spawn does not block the attach client indefinitely.")
+
 (defun %ensure-server-running (session-name)
   "Start a background server for SESSION-NAME if no socket exists.
    Uses sb-ext:run-program with *posix-argv* to spawn a separate process.
@@ -322,9 +329,12 @@
       ;; Guard: run-program may fail in test environments or when the
       ;; binary is not yet on PATH.  Only poll if the spawn succeeded.
       ;; :wait nil means non-blocking — run-program returns immediately after fork.
+      ;; :timeout bounds the subprocess launch time.
       (let ((launched (ignore-errors
                         (sb-ext:run-program exe args
-                                            :wait nil :output nil :error nil))))
+                                            :wait nil
+                                            :timeout +server-launch-timeout-seconds+
+                                            :output nil :error nil))))
         ;; Poll only when we actually attempted a launch.  This avoids the
         ;; unconditional 3-second dead-time when run-program silently failed.
         (when launched
@@ -347,12 +357,9 @@
 
 (defun run-attach-with-flags (raw-args)
   "Parse attach flags from RAW-ARGS and attach to the named session.
-   Note: the -r (read-only) flag is parsed by %parse-attach-flags but is not
-   yet enforced — run-client does not currently propagate a read-only constraint
-   to the server.  It is intentionally a no-op until server-side enforcement is
-   implemented."
+   -r sets *client-read-only* so no keystrokes or mouse events reach panes."
   (multiple-value-bind (name detach-p readonly-p) (%parse-attach-flags raw-args)
-    (declare (ignore readonly-p))
+    (setf *client-read-only* readonly-p)
     (%ensure-server-running name)
     (run-client name :detach-others detach-p)))
 
@@ -365,22 +372,25 @@
 
 (defun run-new-session (raw-args)
   "Create a new session (optionally named via -s) and attach to it.
-   Ensures the server is running; sends new-session command via the socket."
+   Ensures the server is running; sends new-session command via the socket.
+   The -n (window name) and -c (start directory) flags are parsed but currently
+   unused — they are consumed to avoid unknown-flag errors, and will be wired
+   through once the server-side new-session handler supports them."
   (multiple-value-bind (name _win-name detach _start-dir)
       (%parse-new-session-flags raw-args)
     (declare (ignore _win-name _start-dir))
-    (let* ((sess-name (or name "0")))
+    (let* ((session-name (or name "0")))
       ;; Start the server if not already running.
-      (%ensure-server-running sess-name)
+      (%ensure-server-running session-name)
       ;; Attach; if the session doesn't exist the server creates it on first attach.
       (unless detach
-        (run-client sess-name)))))
+        (run-client session-name)))))
 
 (defun run-has-session (raw-args)
   "Exit 0 when a session named by -t exists, exit 1 otherwise.
-   Connects to the server to query the session list."
-  (let* ((target (loop for (a b) on raw-args by #'cddr
-                       when (string= a "-t") return b))
+   Checks for the server socket file (no live connection required)."
+  (let* ((target (loop for (flag value) on raw-args by #'cddr
+                       when (string= flag "-t") return value))
          (name   (or target "0"))
          (socket (socket-path name)))
     (if (probe-file socket)
@@ -388,19 +398,18 @@
         (sb-ext:exit :code 1))))
 
 (defun run-kill-server (raw-args)
-  "Send kill-server command via the socket, then exit."
+  "Send kill-server command via the socket, then exit.
+   In standalone mode the server socket is not accessible from this process;
+   this is a best-effort stub that exits cleanly."
   (declare (ignore raw-args))
-  ;; In standalone mode, we can't reach the server socket from this process.
-  ;; This is a best-effort implementation.
   (format t "kill-server: not supported in standalone mode~%")
   (sb-ext:exit :code 0))
 
 (defun run-list-sessions (raw-args)
   "Print a list of active sessions to stdout and exit.
-   Reads the server socket to query sessions."
+   In standalone mode the server socket is not accessible; this stub prints
+   a diagnostic and exits cleanly."
   (declare (ignore raw-args))
-  ;; In standalone mode, we cannot query the server.
-  ;; Best effort: list any session whose socket file exists.
   (format t "(no server running or session listing requires attach)~%")
   (sb-ext:exit :code 0))
 

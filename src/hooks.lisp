@@ -115,15 +115,13 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
 ;;; needs DISPATCH-COMMAND and a session; this layer only stores the bindings.
 
 (defvar *command-hooks* (make-hash-table :test #'equal)
-  "Maps event-name (string) to an ordered list of commands to dispatch
-   when the corresponding hook fires.  Each entry is either a keyword
-   (legacy programmatic hook) or a raw command-line string (from
-   set-hook in .tmux.conf).  String hooks support format expansion.")
+  "Maps event-name (string) to an ordered list of raw command-line strings
+   to dispatch when the corresponding hook fires.  Populated by the
+   set-hook config directive and the set-hook runtime command.
+   String hooks support #{format} variable expansion at fire time.")
 
 (defun set-command-hook (event-name command)
-  "Append COMMAND to the list dispatched when hook EVENT-NAME fires.
-   COMMAND may be a keyword (built-in command) or a string (command line,
-   potentially with arguments and #{format} variables).
+  "Append COMMAND (a raw command-line string) to the dispatch list for EVENT-NAME.
    Appending preserves declaration order across multiple set-hook calls."
   (setf (gethash event-name *command-hooks*)
         (append (gethash event-name *command-hooks*) (list command))))
@@ -136,23 +134,28 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
   "Remove all command hooks registered for EVENT-NAME."
   (remhash event-name *command-hooks*))
 
-(defun %list-command-hooks ()
-  "Return an alist of (event-name . command-keyword-list) for all command hooks.
-   Internal helper; callers that need a sorted copy must sort the result themselves."
+(defun list-command-hooks ()
+  "Return an alist of (event-name . command-list) for all registered command hooks.
+   Callers that need a sorted copy must sort the result themselves."
   (let (result)
-    (maphash (lambda (name kws) (push (cons name kws) result)) *command-hooks*)
+    (maphash (lambda (name commands) (push (cons name commands) result)) *command-hooks*)
     result))
 
+(defun %format-command-hook-entry (out entry)
+  "Write a single command-hook alist ENTRY to stream OUT as '  <event> -> <cmd>, ...'."
+  (format out "~%  ~A -> ~{~(~A~)~^, ~}" (car entry) (cdr entry)))
+
 (defun describe-command-hooks ()
-  "Return a newline-separated, event-sorted listing of the registered command
-   hooks (\"<event> -> <command>, ...\" per line) for the show-hooks overlay."
-  (let ((entries (sort (copy-list (%list-command-hooks)) #'string< :key #'car)))
+  "Return a newline-separated, event-sorted listing of registered command hooks.
+   Each line has the form '<event> -> <command>, ...'.
+   Returns the string 'no command hooks set' when the registry is empty."
+  (let ((entries (sort (copy-list (list-command-hooks)) #'string< :key #'car)))
     (if (null entries)
         "no command hooks set"
         (with-output-to-string (out)
           (write-string "command hooks:" out)
           (dolist (entry entries)
-            (format out "~%  ~A -> ~{~(~A~)~^, ~}" (car entry) (cdr entry)))))))
+            (%format-command-hook-entry out entry))))))
 
 ;;; The command-hook RUNNER breaks a package layering cycle: kill-pane and
 ;;; kill-window live in cl-tmux/commands, which cannot reference the cl-tmux

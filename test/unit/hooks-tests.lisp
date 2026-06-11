@@ -372,18 +372,18 @@
       (is (null (cl-tmux/hooks:command-hooks "after-new-window"))
           "set-hook -u must leave the event with no command hooks"))))
 
-;;; ── %list-command-hooks (internal helper) ────────────────────────────────────
+;;; ── list-command-hooks ────────────────────────────────────────────────────────
 
-(test internal-list-command-hooks-returns-alist
-  "%list-command-hooks returns an alist of (event-name . command-keyword-list)
+(test list-command-hooks-returns-alist
+  "list-command-hooks returns an alist of (event-name . command-keyword-list)
    for every registered command hook event."
   (with-isolated-hooks
     (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
     (cl-tmux/hooks:set-command-hook "after-new-window" :rename-window)
     (cl-tmux/hooks:set-command-hook "pane-exited"      :kill-pane)
-    (let ((alist (cl-tmux/hooks:%list-command-hooks)))
+    (let ((alist (cl-tmux/hooks:list-command-hooks)))
       (is (= 2 (length alist))
-          "%list-command-hooks must return one entry per registered event")
+          "list-command-hooks must return one entry per registered event")
       (let ((nw-entry (assoc "after-new-window" alist :test #'string=))
             (pe-entry (assoc "pane-exited"      alist :test #'string=)))
         (is (not (null nw-entry))
@@ -395,20 +395,20 @@
         (is (equal '(:kill-pane) (cdr pe-entry))
             "pane-exited must list its single command")))))
 
-(test internal-list-command-hooks-empty-registry
-  "%list-command-hooks returns NIL on an empty *command-hooks* table."
+(test list-command-hooks-empty-registry
+  "list-command-hooks returns NIL on an empty *command-hooks* table."
   (with-isolated-hooks
-    (is (null (cl-tmux/hooks:%list-command-hooks))
-        "%list-command-hooks must return NIL when no command hooks are registered")))
+    (is (null (cl-tmux/hooks:list-command-hooks))
+        "list-command-hooks must return NIL when no command hooks are registered")))
 
-(test internal-list-command-hooks-does-not-mutate-on-sort
-  "Sorting the result of %list-command-hooks does not corrupt *command-hooks*.
+(test list-command-hooks-does-not-mutate-on-sort
+  "Sorting the result of list-command-hooks does not corrupt *command-hooks*.
    (Ensures the caller — describe-command-hooks — uses copy-list before sorting.)"
   (with-isolated-hooks
     (cl-tmux/hooks:set-command-hook "z-event" :next-window)
     (cl-tmux/hooks:set-command-hook "a-event" :prev-window)
     ;; Sort the result in place (worst-case destructive caller).
-    (sort (cl-tmux/hooks:%list-command-hooks) #'string< :key #'car)
+    (sort (cl-tmux/hooks:list-command-hooks) #'string< :key #'car)
     ;; Both events must still be retrievable from the live registry.
     (is (equal '(:next-window) (cl-tmux/hooks:command-hooks "z-event"))
         "z-event must survive a destructive sort of the alist snapshot")
@@ -496,13 +496,16 @@
   (with-isolated-hooks
     (let ((s (make-fake-session :nwindows 2 :npanes 2)))
       (with-loop-state
-        (cl-tmux/hooks:set-command-hook "after-kill-pane" :next-window)
-        ;; kill-pane removes window 0's active pane (a survivor remains), fires
-        ;; after-kill-pane, and the runner dispatches :next-window.  No fork: the
-        ;; fake panes have fd -1 so pty-close is a guarded no-op.
-        (cl-tmux/commands:kill-pane s)
-        (is (eq (second (session-windows s)) (session-active-window s))
-            "after-kill-pane command hook (:next-window) must advance the active window")))))
+        ;; Register s in *server-sessions* so %session-of-pane can find it when
+        ;; the command hook runner needs to dispatch :next-window against a session.
+        (let ((cl-tmux::*server-sessions* (list (cons (cl-tmux::session-name s) s))))
+          (cl-tmux/hooks:set-command-hook "after-kill-pane" :next-window)
+          ;; kill-pane fires after-kill-pane (now before window-remove-pane so the
+          ;; pane is still in *server-sessions*), then the runner dispatches :next-window.
+          ;; No fork: fake panes have fd -1 so pty-close is a guarded no-op.
+          (cl-tmux/commands:kill-pane s)
+          (is (eq (second (session-windows s)) (session-active-window s))
+              "after-kill-pane command hook (:next-window) must advance the active window"))))))
 
 ;;; ── show-hooks (inspect registered command hooks) ─────────────────────────────
 

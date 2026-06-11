@@ -72,15 +72,6 @@
           (screen-copy-cursor screen)  (cons crow col)
           (screen-dirty-p screen) t)))
 
-;;; ── Viewport-relative row string (backward compatibility) ───────────────────
-
-(defun %copy-mode-row-string (screen row)
-  "Content of viewport row ROW as a string, honoring copy-offset.
-   ROW is 0-based viewport-relative (0 = top of viewport); delegates to
-   %copy-mode-virtual-row-string for the actual cell lookup."
-  (let ((vrow (+ (length (screen-scrollback screen))
-                 (- row (screen-copy-offset screen)))))
-    (%copy-mode-virtual-row-string screen vrow)))
 
 ;;; ── Matcher factory ──────────────────────────────────────────────────────────
 

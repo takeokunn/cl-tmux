@@ -117,26 +117,42 @@
     (when entry
       (parse-integer (cdr entry)))))
 
+;;; ── Border-charset declarative dispatch table ───────────────────────────────
+
+(defmacro define-border-charset-table (&rest rules)
+  "Build %DISPATCH-BORDER-CHARSET from a declarative (style tl tr bl br h v) fact table.
+   Any unknown style falls back to single (┌┐└┘─│)."
+  `(defun %dispatch-border-charset (style)
+     "Return (values TL TR BL BR H V) box-drawing chars for the given border STYLE string."
+     (cond
+       ,@(mapcar (lambda (rule)
+                   (destructuring-bind (style-str tl tr bl br h v) rule
+                     `((string= style ,style-str)
+                       (values ,tl ,tr ,bl ,br ,h ,v))))
+                 rules)
+       (t (values #\┌ #\┐ #\└ #\┘ #\─ #\│)))))
+
+(define-border-charset-table
+  ("rounded" #\╭ #\╮ #\╰ #\╯ #\─ #\│)
+  ("double"  #\╔ #\╗ #\╚ #\╝ #\═ #\║)
+  ("heavy"   #\┏ #\┓ #\┗ #\┛ #\━ #\┃)
+  ("simple"  #\+ #\+ #\+ #\+ #\- #\|)
+  ("padded"  #\Space #\Space #\Space #\Space #\Space #\Space)
+  ("none"    #\Space #\Space #\Space #\Space #\Space #\Space))
+
 (defun %border-charset-for (option-name)
   "Return box-drawing characters for the *-border-lines option OPTION-NAME as
    (values TOP-LEFT TOP-RIGHT BOTTOM-LEFT BOTTOM-RIGHT HORIZONTAL VERTICAL):
    single (default), rounded, double, heavy, simple (ASCII +/-|), padded/none
    (blank); an unknown value falls back to single.  Shared by the popup and menu
    box renderers."
-  (let ((style (cl-tmux/options:get-option option-name "single")))
-    (cond
-      ((string= style "rounded") (values #\╭ #\╮ #\╰ #\╯ #\─ #\│))
-      ((string= style "double")  (values #\╔ #\╗ #\╚ #\╝ #\═ #\║))
-      ((string= style "heavy")   (values #\┏ #\┓ #\┗ #\┛ #\━ #\┃))
-      ((string= style "simple")  (values #\+ #\+ #\+ #\+ #\- #\|))
-      ((or (string= style "padded") (string= style "none"))
-       (values #\Space #\Space #\Space #\Space #\Space #\Space))
-      (t (values #\┌ #\┐ #\└ #\┘ #\─ #\│)))))
+  (%dispatch-border-charset (cl-tmux/options:get-option option-name "single")))
 
 (defun %popup-border-charset ()
-  "The popup box-drawing characters for the popup-border-lines option.  The single
-   source consumed by render-popup and the text-overlay fallback."
+  "Return box-drawing characters for the popup-border-lines option.
+   Delegates to %BORDER-CHARSET-FOR with \"popup-border-lines\"."
   (%border-charset-for "popup-border-lines"))
+
 
 ;;; ── Named SGR constants ──────────────────────────────────────────────────────
 ;;;
@@ -254,28 +270,7 @@
    Returns the default blue-on-white SGR \"44;97\" when style-str is empty/nil."
   (style-to-sgr (parse-style-string style-str)))
 
-(defun %fold-deprecated-style (base-style fg-opt bg-opt attr-opt)
-  "Append the DEPRECATED fg/bg/attr options (each an option NAME, read globally) to
-   BASE-STYLE, an already-resolved style string, as fg=… / bg=… / <attr> tokens.
-   tmux removed the separate -fg/-bg/-attr options in 2.9 (merging them into the
-   matching -style option), but many older .tmux.conf files still set them; a set
-   token is appended so it overrides the matching component of BASE-STYLE.  Returns
-   the combined, comma-joined style string (empty when nothing is set).  Shared by
-   the status and window-status deprecated-option compatibility."
-  (flet ((opt (n) (and n (cl-tmux/options:get-option n "")))
-         (setp (v) (and v (plusp (length v)) (not (string-equal v "default")))))
-    (let* ((fg   (opt fg-opt))
-           (bg   (opt bg-opt))
-           (attr (opt attr-opt))
-           (parts (remove nil
-                          (list (and (setp base-style) base-style)
-                                (and (setp fg) (format nil "fg=~A" fg))
-                                (and (setp bg) (format nil "bg=~A" bg))
-                                (and (setp attr) attr)))))
-      (format nil "~{~A~^,~}" parts))))
-
 (defun %effective-status-style ()
-  "The effective status-bar style: `status-style` with the deprecated
-   status-fg / status-bg / status-attr options folded in (old .tmux.conf compat)."
-  (%fold-deprecated-style (cl-tmux/options:get-option "status-style" "")
-                          "status-fg" "status-bg" "status-attr"))
+  "Return the current status-bar style string from the `status-style` option.
+   Returns an empty string when the option is unset."
+  (cl-tmux/options:get-option "status-style" ""))

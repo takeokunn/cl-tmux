@@ -5,6 +5,7 @@
   (:use #:cl)
   (:export
    #:+prefix-key-code+
+   #:+ctrl-mask+
    ;; Standard key-table name constants
    #:+table-prefix+
    #:+table-root+
@@ -40,6 +41,8 @@
    #:config-file-path
    ;; %if condition evaluator hook (set by top-level package)
    #:*config-condition-evaluator*
+   ;; Mouse-reporting callback hook (set by orchestrate/events-loop layer)
+   #:*mouse-reporting-hook*
    ;; Dynamic prefix key (primary and secondary)
    #:*prefix-key-code*
    #:*prefix2-key-code*
@@ -121,6 +124,10 @@
    ;; Extended attribute bits (attrs2 slot: double-underline, overline)
    #:+attr2-double-underline+
    #:+attr2-overline+
+   ;; True-colour encoding sentinel (bit 24 of a colour slot)
+   #:+true-color-flag+
+   ;; XTPUSHTITLE/XTPOPTITLE stack depth limit (matches xterm)
+   #:+title-stack-max-depth+
    ;; Grid allocation helper
    #:%make-blank-cells
    ;; Cell struct + helpers
@@ -274,6 +281,7 @@
    ;; Scroll
    #:scroll-up-one
    #:scroll-down-one
+   #:scroll-screen-to-history
    #:trim-scroll-history
    #:clear-scrollback
    #:*history-limit-function*
@@ -479,7 +487,7 @@
    #:prompt-delete-char
    ;; Dismissible overlay (list-keys help, …)
    #:*overlay* #:*overlay-scroll-offset* #:*display-panes-active*
-   #:overlay-active-p #:show-overlay #:show-transient-overlay
+   #:overlay-active-p #:overlay-shown-at #:show-overlay #:show-transient-overlay
    #:clear-overlay #:overlay-lines
    #:overlay-scroll #:*overlay-shown-at*
    ;; Popup overlay
@@ -678,8 +686,8 @@
    #:set-command-hook
    #:command-hooks
    #:clear-command-hooks
+   #:list-command-hooks
    #:describe-command-hooks
-   #:%list-command-hooks
    #:*command-hook-runner*
    #:run-command-hooks-via-runner))
 
@@ -861,6 +869,8 @@
    #:main
    ;; Session registry (server)
    #:*server-sessions*
+   #:*server-marked-pane*
+   #:*client-read-only*
    #:server-add-session
    #:server-find-session
    #:server-remove-session

@@ -84,7 +84,7 @@
         (vector-push-extend byte buffer)
         (setf *dirty* t)
         (return-from %ground-input-state
-          (values nil (make-overlay-escape-k buffer)))))
+          (values nil (%overlay-escape-second-byte buffer)))))
      ;; all other keys: swallow (keep overlay open)
      (t nil))
    (values nil #'%ground-input-state))
@@ -182,7 +182,15 @@
               (unless handled
             (flet ((repeat (fn)
                      "Call FN COUNT times on SCREEN."
-                     (dotimes (_ count) (funcall fn screen))))
+                     (dotimes (_ count) (funcall fn screen)))
+                   (make-char-jump-k (jump-fn sc n)
+                     "Return a CPS continuation that reads one byte then calls JUMP-FN
+                      on SC for that char N times, then returns to %ground-input-state."
+                     (lambda (_s2 byte2)
+                       (declare (ignore _s2))
+                       (dotimes (_ n) (funcall jump-fn sc (code-char byte2)))
+                       (setf *dirty* t)
+                       (values nil #'%ground-input-state))))
               (case byte
                 ;; q / C-c (3) / Q — exit copy mode (cancel)
                 (#.+byte-q+  (copy-mode-exit screen))
@@ -290,49 +298,25 @@
                 (18  (copy-mode-search-backward-incremental screen))
                 ;; f — jump forward to char on line (vi f<char>): need 2nd byte.
                 ;; Count prefix (e.g. 3f<char>) repeats the jump COUNT times.
-                (102
-                 (let ((sc screen) (n count))
-                   (setf *dirty* t)
-                   (return-from %ground-input-state
-                     (values nil
-                             (lambda (_s2 byte2)
-                               (declare (ignore _s2))
-                               (dotimes (_ n) (copy-mode-jump-forward sc (code-char byte2)))
-                               (setf *dirty* t)
-                               (values nil #'%ground-input-state))))))
+                (#.+byte-f+
+                 (setf *dirty* t)
+                 (return-from %ground-input-state
+                   (values nil (make-char-jump-k #'copy-mode-jump-forward screen count))))
                 ;; F — jump backward to char on line (vi F<char>)
-                (70
-                 (let ((sc screen) (n count))
-                   (setf *dirty* t)
-                   (return-from %ground-input-state
-                     (values nil
-                             (lambda (_s2 byte2)
-                               (declare (ignore _s2))
-                               (dotimes (_ n) (copy-mode-jump-backward sc (code-char byte2)))
-                               (setf *dirty* t)
-                               (values nil #'%ground-input-state))))))
+                (#.+byte-capital-f+
+                 (setf *dirty* t)
+                 (return-from %ground-input-state
+                   (values nil (make-char-jump-k #'copy-mode-jump-backward screen count))))
                 ;; t — jump to just before next char (vi t<char>)
-                (116
-                 (let ((sc screen) (n count))
-                   (setf *dirty* t)
-                   (return-from %ground-input-state
-                     (values nil
-                             (lambda (_s2 byte2)
-                               (declare (ignore _s2))
-                               (dotimes (_ n) (copy-mode-jump-to sc (code-char byte2)))
-                               (setf *dirty* t)
-                               (values nil #'%ground-input-state))))))
+                (#.+byte-t+
+                 (setf *dirty* t)
+                 (return-from %ground-input-state
+                   (values nil (make-char-jump-k #'copy-mode-jump-to screen count))))
                 ;; T — jump to just after previous char (vi T<char>)
-                (84
-                 (let ((sc screen) (n count))
-                   (setf *dirty* t)
-                   (return-from %ground-input-state
-                     (values nil
-                             (lambda (_s2 byte2)
-                               (declare (ignore _s2))
-                               (dotimes (_ n) (copy-mode-jump-to-backward sc (code-char byte2)))
-                               (setf *dirty* t)
-                               (values nil #'%ground-input-state))))))
+                (#.+byte-capital-t+
+                 (setf *dirty* t)
+                 (return-from %ground-input-state
+                   (values nil (make-char-jump-k #'copy-mode-jump-to-backward screen count))))
                 ;; { — previous-paragraph (jump to nearest blank line above; vi {)
                 (123 (repeat #'copy-mode-previous-paragraph))
                 ;; } — next-paragraph (jump to nearest blank line below; vi })
@@ -358,26 +342,38 @@
                                                :initial-element byte))
    (values nil #'%ground-input-state)))
 
-(defun %prefix-csi-arrow-cmd (final-byte)
-  "Map a CSI arrow final byte to a pane-select command keyword, or NIL."
-  (case final-byte
-    (#.+byte-arrow-up+    :select-pane-up)
-    (#.+byte-arrow-down+  :select-pane-down)
-    (#.+byte-arrow-right+ :select-pane-right)
-    (#.+byte-arrow-left+  :select-pane-left)
-    (otherwise nil)))
+;;; ── Arrow-key fact table (Prolog-style) ──────────────────────────────────────
+;;;
+;;; One table encodes all three facets of an arrow key:
+;;;   arrow_key(byte, "Name", :select-cmd).
+;;; %prefix-csi-arrow-cmd and %arrow-final-name are projections of this single
+;;; fact table, guaranteeing that adding or renaming an arrow key is a one-line
+;;; change and the two functions stay in sync automatically.
 
-(defun %arrow-final-name (final-byte)
-  "Base tmux key name for an arrow FINAL-BYTE — \"Up\"/\"Down\"/\"Left\"/\"Right\"
-   — or NIL when FINAL-BYTE is not an arrow.  These strings match exactly what
-   %parse-key-token stores for a `bind Up ...`-style directive, so they double as
-   key-table lookup keys."
-  (cond
-    ((= final-byte +byte-arrow-up+)    "Up")
-    ((= final-byte +byte-arrow-down+)  "Down")
-    ((= final-byte +byte-arrow-left+)  "Left")
-    ((= final-byte +byte-arrow-right+) "Right")
-    (t nil)))
+(defmacro define-arrow-key-table (&rest specs)
+  "Build %PREFIX-CSI-ARROW-CMD and %ARROW-FINAL-NAME from a unified fact table.
+   Each SPEC is (final-byte-constant key-name pane-select-command)."
+  `(progn
+     (defun %prefix-csi-arrow-cmd (final-byte)
+       "Map a CSI arrow FINAL-BYTE to a pane-select command keyword, or NIL."
+       (cond ,@(mapcar (lambda (spec)
+                         `((= final-byte ,(first spec)) ,(third spec)))
+                       specs)
+             (t nil)))
+     (defun %arrow-final-name (final-byte)
+       "Canonical tmux key name (\"Up\"/\"Down\"/\"Left\"/\"Right\") for FINAL-BYTE,
+        or NIL when not an arrow.  Matches what %parse-key-token stores for
+        `bind Up ...` directives — used as key-table lookup keys."
+       (cond ,@(mapcar (lambda (spec)
+                         `((= final-byte ,(first spec)) ,(second spec)))
+                       specs)
+             (t nil)))))
+
+(define-arrow-key-table
+  (+byte-arrow-up+    "Up"    :select-pane-up)
+  (+byte-arrow-down+  "Down"  :select-pane-down)
+  (+byte-arrow-right+ "Right" :select-pane-right)
+  (+byte-arrow-left+  "Left"  :select-pane-left))
 
 (defconstant +byte-csi-mod-shift+ 50
   "CSI modifier '2' — Shift key (0x32), as in ESC [ 1 ; 2 A (Shift+Up).")
@@ -706,11 +702,8 @@
 ;;; Terminated by 'M' (press) or 'm' (release).
 ;;;
 ;;; ASCII 'M' = 77.  It serves as both the X10 mouse-sequence intro final byte
-;;; and the SGR press final byte.  A single named constant covers both roles.
-
-(defconstant +byte-ascii-m+     77  "ASCII 'M' (0x4D) — X10 mouse intro and SGR press final.")
-(defconstant +byte-sgr-press+   77  "ASCII 'M' (0x4D) — SGR mouse press final byte.")
-(defconstant +byte-sgr-release+ 109 "ASCII 'm' (0x6D) — SGR mouse release final byte.")
+;;; and the SGR press final byte.  +byte-ascii-m+ and +byte-sgr-release+ are
+;;; defined canonically in events-core.lisp and reused here.
 
 (defun %parse-sgr-mouse (buffer length)
   "Parse an SGR mouse sequence from BUFFER (of LENGTH bytes).
@@ -749,7 +742,7 @@
   "True when BUFFER ends with 'M' (press) or 'm' (release) — SGR mouse final byte."
   (when (> length 3)
     (let ((last-byte (aref buffer (1- length))))
-      (or (= last-byte +byte-sgr-press+)
+      (or (= last-byte +byte-ascii-m+)
           (= last-byte +byte-sgr-release+)))))
 
 (defun %csi-u-terminated-p (buffer length)
@@ -841,23 +834,38 @@
     (let ((base (and param (%csi-tilde-key-name param))))
       (when base (concatenate 'string (%modifier-prefix (or mod 1)) base)))))
 
-(defun %csi-tilde-key-name (param)
-  "Map the numeric PARAM of an ESC [ <param> ~ sequence to its canonical tmux key
-   name, or NIL when PARAM is not a recognised navigation/function key.  Covers
-   Home/End/Insert/Delete, PageUp/PageDown, and the vt-style F1–F12 finals.  The
-   names match those produced by %parse-key-token on the bind side (after its
-   alias normalisation), so `bind -n F5 <cmd>` / `bind -n PPage <cmd>` resolve."
-  (case param
-    ((1 7) "Home")
-    (2     "Insert")
-    (3     "Delete")
-    ((4 8) "End")
-    (5     "PageUp")
-    (6     "PageDown")
-    (11 "F1") (12 "F2") (13 "F3") (14 "F4")
-    (15 "F5") (17 "F6") (18 "F7") (19 "F8")
-    (20 "F9") (21 "F10") (23 "F11") (24 "F12")
-    (otherwise nil)))
+;;; ── Tilde / SS3 key-name fact tables (Prolog-style) ─────────────────────────
+;;;
+;;; define-tilde-key-table builds %csi-tilde-key-name from a declarative (param name)
+;;; fact table.  Home and End each appear twice (tmux encodes them as both ESC[1~/ESC[7~
+;;; and ESC[4~/ESC[8~ depending on terminal type) — listing each as its own row mirrors
+;;; the underlying fact "param(1,Home) :- true." without needing multi-param case arms.
+
+(defmacro define-tilde-key-table (&rest specs)
+  "Build %CSI-TILDE-KEY-NAME from a declarative (param name) fact table.
+   Each SPEC is (numeric-param key-name-string); multiple rows with the same NAME
+   express alternate encodings of the same key (e.g. Home at params 1 and 7)."
+  `(defun %csi-tilde-key-name (param)
+     "Map the numeric PARAM of an ESC [ <param> ~ sequence to its canonical tmux key
+      name, or NIL when PARAM is not a recognised navigation/function key.  Covers
+      Home/End/Insert/Delete, PageUp/PageDown, and the vt-style F1–F12 finals.  The
+      names match those produced by %parse-key-token on the bind side (after its
+      alias normalisation), so `bind -n F5 <cmd>` / `bind -n PPage <cmd>` resolve."
+     (cond ,@(mapcar (lambda (spec)
+                       `((eql param ,(first spec)) ,(second spec)))
+                     specs)
+           (t nil))))
+
+(define-tilde-key-table
+  (1  "Home")    (7  "Home")
+  (2  "Insert")
+  (3  "Delete")
+  (4  "End")     (8  "End")
+  (5  "PageUp")
+  (6  "PageDown")
+  (11 "F1")  (12 "F2")  (13 "F3")  (14 "F4")
+  (15 "F5")  (17 "F6")  (18 "F7")  (19 "F8")
+  (20 "F9")  (21 "F10") (23 "F11") (24 "F12"))
 
 (defun %handle-escape-csi-tilde (session buffer length)
   "Handle a complete ESC [ <param> ~ sequence at root (LENGTH bytes).  A root-table
@@ -890,15 +898,25 @@
            (%forward-octets-synchronized session (subseq buffer 0 length)))))))
   (values nil #'%ground-input-state))
 
-(defun %ss3-key-name (final-byte)
-  "Map the final byte of an SS3 sequence ESC O <final> to its canonical tmux key
-   name, or NIL when it is not a recognised bindable key.  Covers F1-F4 (the
-   xterm/screen encoding `ESC O P/Q/R/S`, which the ESC [ N ~ path does NOT carry)
-   and Home/End (ESC O H/F).  Names match %parse-key-token's bind-side output."
-  (case (code-char final-byte)
-    (#\P "F1") (#\Q "F2") (#\R "F3") (#\S "F4")
-    (#\H "Home") (#\F "End")
-    (otherwise nil)))
+;;; define-ss3-key-table builds %ss3-key-name from a declarative (char name) fact table.
+;;; ESC O P/Q/R/S carry F1-F4 (xterm/screen; NOT the ESC[N~ path); ESC O H/F carry Home/End.
+
+(defmacro define-ss3-key-table (&rest specs)
+  "Build %SS3-KEY-NAME from a declarative (char name) fact table.
+   Each SPEC is (character-literal key-name-string) matching the final byte of ESC O <final>."
+  `(defun %ss3-key-name (final-byte)
+     "Map the final byte of an SS3 sequence ESC O <final> to its canonical tmux key
+      name, or NIL when it is not a recognised bindable key.  Covers F1-F4 (the
+      xterm/screen encoding ESC O P/Q/R/S, which the ESC[N~ path does NOT carry)
+      and Home/End (ESC O H/F).  Names match %parse-key-token's bind-side output."
+     (cond ,@(mapcar (lambda (spec)
+                       `((char= (code-char final-byte) ,(first spec)) ,(second spec)))
+                     specs)
+           (t nil))))
+
+(define-ss3-key-table
+  (#\P "F1") (#\Q "F2") (#\R "F3") (#\S "F4")
+  (#\H "Home") (#\F "End"))
 
 (defun %handle-escape-ss3 (session buffer)
   "Handle a complete 3-byte SS3 sequence ESC O <final> from BUFFER.  A root-table

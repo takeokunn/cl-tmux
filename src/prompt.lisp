@@ -164,24 +164,25 @@
       (setf (prompt-cursor-index p) 0)))
   (prompt-notify-change))
 
-(defun %skip-while-left (buffer scan predicate)
-  "Walk SCAN leftward while PREDICATE holds for (char buffer (1- scan)).
-   SCAN is a cursor position — it points between characters, so (1- scan) is
-   the character immediately to the left.  Returns the new cursor index; clamps at 0."
-  (loop while (and (> scan 0)
-                   (funcall predicate (char buffer (1- scan))))
-        do (decf scan)
-        finally (return scan)))
+(defun %skip-while-left (buffer cursor-pos predicate)
+  "Walk CURSOR-POS leftward while PREDICATE holds for the character immediately left.
+   CURSOR-POS points between characters: position N means N characters precede it,
+   so (1- cursor-pos) is the index of the character immediately to the left.
+   Returns the new cursor index; clamps at 0."
+  (loop while (and (> cursor-pos 0)
+                   (funcall predicate (char buffer (1- cursor-pos))))
+        do (decf cursor-pos)
+        finally (return cursor-pos)))
 
 (defun %word-kill-start (buffer end-index)
   "Return the new cursor index after a backward word-kill from END-INDEX.
-   Matches readline/emacs C-w: skip trailing spaces left, then skip word chars left."
+   Matches readline/emacs C-w: skip trailing spaces leftward, then skip word chars leftward."
   (if (zerop end-index)
       0
       (let* ((after-spaces (%skip-while-left buffer end-index
-                                             (lambda (c) (char= c #\Space))))
+                                             (lambda (ch) (char= ch #\Space))))
              (after-word   (%skip-while-left buffer after-spaces
-                                             (lambda (c) (char/= c #\Space)))))
+                                             (lambda (ch) (char/= ch #\Space)))))
         after-word)))
 
 (defun prompt-kill-word-back ()
@@ -199,9 +200,17 @@
 
 ;;; -- Vi-mode character deletion -----------------------------------------------
 
+(defun %clamp-cursor-after-delete (prompt old-index old-len)
+  "Clamp PROMPT's cursor-index so it does not exceed (1- OLD-LEN) after deletion.
+   OLD-INDEX is the cursor position before deletion; OLD-LEN is the pre-deletion buffer length."
+  (let ((new-len (1- old-len)))
+    (when (> old-index new-len)
+      (setf (prompt-cursor-index prompt) (max 0 new-len)))))
+
 (defun prompt-delete-char ()
-  "Delete the character at the cursor (vi `x`): removes the char under the cursor.
-   Clamps cursor to stay within the buffer after deletion."
+  "Delete the character at the cursor (vi `x`): removes the character under the cursor.
+   Clamps the cursor to stay within the shortened buffer after deletion.
+   No-op when the cursor is at the end of the buffer or the prompt is inactive."
   (with-active-prompt (p)
     (let* ((buffer (prompt-buffer p))
            (index  (prompt-cursor-index p))
@@ -211,10 +220,7 @@
               (concatenate 'string
                            (subseq buffer 0 index)
                            (subseq buffer (1+ index))))
-        ;; After deletion, clamp cursor so it doesn't go past end-1.
-        (let ((new-len (1- len)))
-          (when (> index new-len)
-            (setf (prompt-cursor-index p) (max 0 new-len))))))))
+        (%clamp-cursor-after-delete p index len)))))
 
 ;;; -- Dismiss and display -----------------------------------------------------
 

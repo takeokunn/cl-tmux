@@ -109,7 +109,7 @@
     (reset-attrs stream)
     ;; popup-border-lines selects the box characters; popup-border-style colours the
     ;; border (NIL when the option is empty → no colour).  Menus pass neither.
-    (multiple-value-bind (tl tr bl br h v) (%popup-border-charset)
+    (multiple-value-bind (tl tr bl br h v) (%border-charset-for "popup-border-lines")
       (let* ((style-str  (cl-tmux/options:get-option "popup-border-style" ""))
              (border-sgr (when (and style-str (plusp (length style-str)))
                            (style-to-sgr (parse-style-string style-str))))

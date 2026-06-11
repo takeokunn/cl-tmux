@@ -55,7 +55,8 @@
          (pane (%fork-pane pane-base-index 0 0 cols rows :start-dir start-dir)))
     (setf (window-panes  window) (list pane)
           (window-active window) pane
-          (window-tree   window) (make-layout-leaf pane))))
+          (window-tree   window) (make-layout-leaf pane)
+          (pane-window   pane)   window)))
 
 (defun %next-window-id (session &optional (base-index 0))
   "Return the smallest integer >= BASE-INDEX not already used by any window in SESSION.

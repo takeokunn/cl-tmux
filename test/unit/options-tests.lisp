@@ -138,16 +138,14 @@
 
 (test set-server-option-stores-value
   "set-server-option stores a value in *server-options*."
-  (let ((cl-tmux/options:*server-options* (make-hash-table :test #'equal))
-        (cl-tmux/options:*server-option-registry* cl-tmux/options:*server-option-registry*))
+  (with-fresh-server-options
     (cl-tmux/options:set-server-option "escape-time" "100")
     (is (= 100 (cl-tmux/options:get-server-option "escape-time"))
         "escape-time must be 100 after set-server-option")))
 
 (test set-server-option-boolean-coercion
   "set-server-option coerces boolean values."
-  (let ((cl-tmux/options:*server-options* (make-hash-table :test #'equal))
-        (cl-tmux/options:*server-option-registry* cl-tmux/options:*server-option-registry*))
+  (with-fresh-server-options
     (cl-tmux/options:set-server-option "exit-empty" "off")
     (is (null (cl-tmux/options:get-server-option "exit-empty"))
         "exit-empty must be NIL after setting to off")))
@@ -375,13 +373,13 @@
 
 (test get-server-option-returns-default-when-absent
   "get-server-option returns the supplied default when the key is absent."
-  (let ((cl-tmux/options:*server-options* (make-hash-table :test #'equal)))
+  (with-fresh-server-options
     (is (= 99 (cl-tmux/options:get-server-option "nonexistent-server-opt" 99))
         "get-server-option must return the default for an absent key")))
 
 (test get-server-option-returns-nil-when-absent-no-default
   "get-server-option returns NIL for an absent key when no default is given."
-  (let ((cl-tmux/options:*server-options* (make-hash-table :test #'equal)))
+  (with-fresh-server-options
     (is (null (cl-tmux/options:get-server-option "nonexistent-server-opt"))
         "get-server-option must return NIL when absent and no default supplied")))
 
@@ -389,8 +387,7 @@
 
 (test set-server-option-unknown-stores-as-is
   "set-server-option for an unregistered option stores the value without coercion."
-  (let ((cl-tmux/options:*server-options*          (make-hash-table :test #'equal))
-        (cl-tmux/options:*server-option-registry*  cl-tmux/options:*server-option-registry*))
+  (with-fresh-server-options
     (cl-tmux/options:set-server-option "custom-server-opt" "raw-value")
     (is (string= "raw-value"
                  (cl-tmux/options:get-server-option "custom-server-opt"))
@@ -563,7 +560,7 @@
 
 (test show-option-server-scope-absent
   "show-option :server for an absent server option says 'not set'."
-  (let ((cl-tmux/options:*server-options* (make-hash-table :test #'equal)))
+  (with-fresh-server-options
     (let ((out (cl-tmux/options:show-option "nonexistent-server-opt" :server)))
       (is (search "nonexistent-server-opt" out)
           "show-option :server absent must include option name (got ~S)" out))))

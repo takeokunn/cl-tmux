@@ -21,6 +21,12 @@
 (defvar *term-cols* 80)
 (defvar *server-sessions* nil
   "Alist mapping session-name (string) to session object for the running server.")
+(defvar *server-marked-pane* nil
+  "The single server-wide marked pane (set by mark-pane / select-pane -m).
+   NIL when no pane is marked.  Mirrors tmux's global marked-pane singleton.")
+(defvar *client-read-only* nil
+  "When non-NIL the attached client is read-only: keystrokes and mouse events
+   are NOT forwarded to panes.  Set by attach-session -r.")
 (defvar *status-timer* nil "Background thread for status-interval redraws.")
 
 ;;; -- Named constants --------------------------------------------------------
@@ -37,6 +43,14 @@
   "Seconds before wait-for-channel gives up waiting for a signal.
    A bounded wait prevents indefinite blocking when signal-channel is
    never called (e.g., after an unexpected server shutdown).")
+
+(defconstant +default-display-time-ms+ 750
+  "Default overlay display time in milliseconds when the display-time option is
+   unset.  The status timer checks every +status-timer-poll-seconds+, so actual
+   dismiss may lag up to that granularity.")
+
+(defconstant +ms-per-second+ 1000.0
+  "Milliseconds per second; used to convert display-time (ms) to seconds.")
 
 ;;; -- Wait-for channel synchronization ----------------------------------------
 
@@ -130,6 +144,11 @@
           (dolist (entry (reverse *prompt-history*))
             (write-line entry s)))))))
 
+(defun %effective-prompt-history-limit ()
+  "The effective command-prompt history cap: the `prompt-history-limit` option
+   (tmux default 100), falling back to +max-prompt-history+ when unset."
+  (or (cl-tmux/options:get-option "prompt-history-limit") +max-prompt-history+))
+
 (defun load-prompt-history ()
   "Load *prompt-history* from the history-file (one entry per line, oldest first),
    newest-first in memory, capped at +max-prompt-history+.  No-op when the option
@@ -143,19 +162,14 @@
               (loop for line = (read-line s nil nil) while line
                     do (when (plusp (length line)) (push line entries)))
               (setf *prompt-history*
-                    (subseq entries 0 (min (length entries) (%prompt-history-limit)))))))))))
-
-(defun %prompt-history-limit ()
-  "The effective command-prompt history cap: the `prompt-history-limit` option
-   (tmux default 100), falling back to +max-prompt-history+ when unset."
-  (or (cl-tmux/options:get-option "prompt-history-limit") +max-prompt-history+))
+                    (subseq entries 0 (min (length entries) (%effective-prompt-history-limit)))))))))))
 
 (defun add-prompt-history (entry)
   "Prepend ENTRY to *prompt-history*, capping at the prompt-history-limit option,
    and persist to the history-file when that option is set."
   (when (and (stringp entry) (plusp (length entry)))
     (push entry *prompt-history*)
-    (let ((limit (%prompt-history-limit)))
+    (let ((limit (%effective-prompt-history-limit)))
       (when (> (length *prompt-history*) limit)
         (setf *prompt-history* (subseq *prompt-history* 0 limit))))
     (save-prompt-history)))
@@ -208,22 +222,53 @@
         (format nil "~C[7m~A~C[m" #\Escape text #\Escape)
         +remain-on-exit-message+)))
 
+(defun %write-remain-on-exit-banner (pane)
+  "Write the remain-on-exit banner bytes to PANE's screen.
+   This is a side-effectful helper extracted from reader-eof-state so the CPS
+   state function itself remains pure (only returns the next state)."
+  (let ((screen (pane-screen pane)))
+    (when screen
+      (let ((banner-bytes (babel:string-to-octets (%remain-on-exit-banner pane)
+                                                  :encoding :utf-8)))
+        (cl-tmux/terminal/emulator:screen-process-bytes screen banner-bytes)))))
+
 (defun reader-idle-state (pane)
   "Poll the pane PTY fd; transition to reading if data is available."
   (if (select-fds (list (pane-fd pane)) +pty-poll-timeout-us+)
       #'reader-reading-state
       #'reader-idle-state))
 
-(defun %alert-action-fires-p (action current-p)
-  "Whether an activity/silence alert should fire given the ACTION
+;;; -- Alert-action dispatch table -------------------------------------------
+;;;
+;;; Maps (action current-p) to a fire decision.
+;;; none → never, current → only current window, any → always,
+;;; other (default) → only non-current windows.
+
+(defmacro define-alert-action-rules (&rest rules)
+  "Define %alert-action-fires-p as a cond dispatch over ACTION/CURRENT-P.
+   Each RULE is (action-string result-form) where RESULT-FORM may reference
+   the CURRENT-P variable.  A final (t ...) fallback arm handles the 'other'
+   default."
+  (let ((action-sym  (gensym "ACTION"))
+        (current-sym (gensym "CURRENT-P")))
+    `(defun %alert-action-fires-p (,action-sym ,current-sym)
+       "Whether an activity/silence alert should fire given the ACTION
    (none/current/other/any) and whether the window is the CURRENT (viewed) one:
      none    → never;          current → only the current window;
      any     → always;         other (default) → only non-current windows."
-  (cond
-    ((string-equal action "none")    nil)
-    ((string-equal action "current") current-p)
-    ((string-equal action "any")     t)
-    (t                               (not current-p))))
+       (cond
+         ,@(mapcar (lambda (rule)
+                     (destructuring-bind (action-str result) rule
+                       `((string-equal ,action-sym ,action-str)
+                         ,(subst current-sym 'current-p result))))
+                   rules)))))
+
+(define-alert-action-rules
+  ("none"    nil)
+  ("current" current-p)
+  ("any"     t)
+  ;; "other" (default): fires only for non-current windows.
+  ("other"   (not current-p)))
 
 (defun %window-is-current-p (win)
   "True when WIN is the active (currently-viewed) window of any registered session.
@@ -257,6 +302,20 @@
                (cl-tmux/model:window-id win)
                (cl-tmux/model:window-name win))))))
 
+(defun %update-window-on-pane-output (win)
+  "Update window-level state when new bytes arrive on a pane's PTY.
+   Stamps last-output-time, clears the silence flag (new output resets the
+   silence timer), and fires the activity alert logic.
+   Extracted from reader-reading-state to keep the CPS state function focused
+   on I/O dispatch."
+  (when win
+    ;; Always update last-output-time (used by monitor-silence timer).
+    (setf (cl-tmux/model:window-last-output-time win) (get-universal-time))
+    ;; Clear silence flag: new output resets the silence state.
+    (setf (cl-tmux/model:window-silence-flag win) nil)
+    ;; Activity flag + alert-activity hook + visual overlay.
+    (%mark-window-activity win)))
+
 (defun reader-reading-state (pane)
   "Read one PTY chunk and feed it to PANE; transition to eof if EOF."
   (let ((bytes (pty-read-blocking (pane-fd pane) +pty-buf-size+)))
@@ -267,28 +326,24 @@
        (when (pane-pipe-fd pane)
          (pipe-pane-write pane bytes))
        (pane-feed pane bytes)
-       ;; monitor-activity: set the window's activity flag when bytes arrive
-       ;; in a background window and monitor-activity is enabled.
-       ;; Also stamp last-output-time for monitor-silence and clear silence-flag
-       ;; (receiving output resets the silence timer for this window).
-       (let ((win (cl-tmux/model:pane-window pane)))
-         (when win
-           ;; Always update last-output-time (used by monitor-silence timer).
-           (setf (cl-tmux/model:window-last-output-time win) (get-universal-time))
-           ;; Clear silence flag: new output resets the silence state.
-           (setf (cl-tmux/model:window-silence-flag win) nil)
-           ;; Activity flag + alert-activity hook + visual overlay.
-           (%mark-window-activity win)))
+       (%update-window-on-pane-output (cl-tmux/model:pane-window pane))
        (setf *dirty* t)
        #'reader-idle-state))))
+
+(defconstant +remain-on-exit-poll-seconds+ 0.1
+  "Sleep granularity (seconds) for the remain-on-exit parking spin loop.
+   Derived from +status-timer-poll-seconds+ for consistency: both loops yield
+   the CPU at the same cadence.")
 
 (defun reader-remain-on-exit-state (pane)
   "CPS spin state: park the reader thread while *running* is true.
    Returns itself to keep the driver loop alive, or NIL when *running* clears.
-   Uses a short sleep so the loop yields the CPU; the pane stays visible."
+   Uses a short sleep so the loop yields the CPU; the pane stays visible.
+   The loop is bounded by the *running* sentinel: when the server shuts down,
+   stop-reader-threads sets *running* NIL and joins this thread with a timeout."
   (declare (ignore pane))
   (if *running*
-      (progn (sleep 0.1) #'reader-remain-on-exit-state)
+      (progn (sleep +remain-on-exit-poll-seconds+) #'reader-remain-on-exit-state)
       nil))
 
 (defun reader-eof-state (pane)
@@ -315,12 +370,7 @@
     (cond
       (remain-on-exit
        ;; Write the remain-on-exit-format banner (reverse-video) to the pane screen.
-       (let ((screen (pane-screen pane)))
-         (when screen
-           (let ((message-bytes
-                   (babel:string-to-octets (%remain-on-exit-banner pane)
-                                           :encoding :utf-8)))
-             (cl-tmux/terminal/emulator:screen-process-bytes screen message-bytes))))
+       (%write-remain-on-exit-banner pane)
        (setf *dirty* t)
        ;; Return the parking state: the driver loop calls it on each tick.
        #'reader-remain-on-exit-state)
@@ -359,13 +409,15 @@
 
 (defun %maybe-auto-dismiss-overlay ()
   "Auto-dismiss the active overlay when display-time milliseconds have elapsed.
-   display-time is in ms (default 750); the timer resolution is 0.1s so actual
-   dismiss may lag up to 100ms.  Only affects transient overlays shown without
-   :no-timer; long-lived paged overlays (list-keys, list-sessions) use :no-timer."
+   display-time is in ms (default +default-display-time-ms+); the timer
+   resolution is +status-timer-poll-seconds+ so actual dismiss may lag up to
+   that amount.  Only affects transient overlays shown without :no-timer;
+   long-lived paged overlays (list-keys, list-sessions) use :no-timer."
   (when (cl-tmux/prompt:overlay-active-p)
-    (let* ((display-time-ms (or (cl-tmux/options:get-option "display-time") 750))
-           (display-secs    (/ display-time-ms 1000.0))
-           (shown-at        cl-tmux/prompt::*overlay-shown-at*)
+    (let* ((display-time-ms (or (cl-tmux/options:get-option "display-time")
+                                +default-display-time-ms+))
+           (display-secs    (/ display-time-ms +ms-per-second+))
+           (shown-at        (cl-tmux/prompt:overlay-shown-at))
            (elapsed         (- (get-universal-time) shown-at)))
       (when (and (plusp shown-at) (>= elapsed display-secs))
         (cl-tmux/prompt:clear-overlay)
@@ -388,6 +440,23 @@
         (setf (cl-tmux/model:session-locked-p session) t)
         (funcall dirty-fn)))))
 
+(defun %fire-silence-alert (win dirty-fn)
+  "Set the silence flag, fire the alert-silence hook, and show a visual overlay
+   for WIN.  Calls DIRTY-FN to request a repaint.
+   Extracted from %check-monitor-silence to reduce nesting and separate the
+   traversal logic (in the caller) from the per-window action."
+  (setf (cl-tmux/model:window-silence-flag win) t)
+  ;; Fire the alert-silence hook (matches real tmux).
+  (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-silence+ win)
+  ;; visual-silence on: show a transient overlay naming the quiet window
+  ;; (mirrors visual-activity in %mark-window-activity).
+  (when (cl-tmux/options:get-option "visual-silence")
+    (show-transient-overlay
+     (format nil "Silence in window ~A (~A)"
+             (cl-tmux/model:window-id win)
+             (cl-tmux/model:window-name win))))
+  (funcall dirty-fn))
+
 (defun %check-monitor-silence (sessions dirty-fn)
   "For each window in SESSIONS with monitor-silence enabled, set
    window-silence-flag when no PTY output has arrived for monitor-silence seconds.
@@ -398,25 +467,40 @@
         (dolist (entry sessions)
           (let ((sess (cdr entry)))
             (dolist (win (cl-tmux/model:session-windows sess))
-              (let ((last-out (cl-tmux/model:window-last-output-time win)))
-                (when (and (> last-out 0)
+              (let ((last-output-time (cl-tmux/model:window-last-output-time win)))
+                (when (and (> last-output-time 0)
                            (not (cl-tmux/model:window-silence-flag win))
-                           (>= (- now last-out) silence-secs)
+                           (>= (- now last-output-time) silence-secs)
                            ;; silence-action gates which windows alert.
                            (%alert-action-fires-p
                             (or (cl-tmux/options:get-option "silence-action") "other")
                             (eq win (cl-tmux/model:session-active-window sess))))
-                  (setf (cl-tmux/model:window-silence-flag win) t)
-                  ;; Fire the alert-silence hook (matches real tmux).
-                  (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-silence+ win)
-                  ;; visual-silence on: show a transient overlay naming the quiet
-                  ;; window (mirrors visual-activity in %mark-window-activity).
-                  (when (cl-tmux/options:get-option "visual-silence")
-                    (show-transient-overlay
-                     (format nil "Silence in window ~A (~A)"
-                             (cl-tmux/model:window-id win)
-                             (cl-tmux/model:window-name win))))
-                  (funcall dirty-fn))))))))))
+                  (%fire-silence-alert win dirty-fn))))))))))
+
+(defun %timer-tick-overlay (dirty-fn)
+  "Check if the active overlay has expired; dismiss it and call DIRTY-FN if so."
+  (when (%maybe-auto-dismiss-overlay) (funcall dirty-fn)))
+
+(defun %timer-tick-status-interval (elapsed dirty-fn)
+  "Refresh the status bar when ELAPSED seconds have met or exceeded status-interval.
+   Returns the new elapsed value (reset to 0 if interval fired, else unchanged).
+   status-interval 0 disables the periodic redraw (tmux semantics)."
+  (let ((interval (cl-tmux/options:get-option "status-interval")))
+    (if (and *running* (integerp interval) (> interval 0)
+             (>= elapsed interval))
+        (progn (funcall dirty-fn) 0)
+        elapsed)))
+
+(defun %timer-tick-lock (session dirty-fn)
+  "Check lock-after-time inactivity for SESSION; no-op when SESSION is NIL."
+  (when (and *running* session)
+    (ignore-errors (%check-lock-after-time session dirty-fn))))
+
+(defun %timer-tick-silence (server-sessions-fn dirty-fn)
+  "Check monitor-silence thresholds; no-op when SERVER-SESSIONS-FN is NIL."
+  (when (and *running* server-sessions-fn)
+    (ignore-errors
+      (%check-monitor-silence (funcall server-sessions-fn) dirty-fn))))
 
 (defun start-status-timer (dirty-fn &key session server-sessions-fn)
   "Start a background thread that drives periodic session maintenance:
@@ -432,22 +516,8 @@
        (loop while *running*
              do (sleep +status-timer-poll-seconds+)
                 (incf elapsed +status-timer-poll-seconds+)
-                ;; Auto-dismiss transient overlays after display-time ms.
-                (when (%maybe-auto-dismiss-overlay) (funcall dirty-fn))
-                ;; Status-interval: refresh the status bar every N seconds.
-                ;; status-interval 0 DISABLES the periodic redraw entirely (tmux
-                ;; semantics) — the status bar then only updates on other dirty
-                ;; events, not on a timer.  A positive value fires every N seconds.
-                (let ((interval (cl-tmux/options:get-option "status-interval")))
-                  (when (and *running* (integerp interval) (> interval 0)
-                             (>= elapsed interval))
-                    (setf elapsed 0)
-                    (funcall dirty-fn)))
-                ;; lock-after-time: auto-lock on inactivity.
-                (when (and *running* session)
-                  (ignore-errors (%check-lock-after-time session dirty-fn)))
-                ;; monitor-silence: flag windows with no recent PTY output.
-                (when (and *running* server-sessions-fn)
-                  (ignore-errors
-                    (%check-monitor-silence (funcall server-sessions-fn) dirty-fn))))))
+                (%timer-tick-overlay dirty-fn)
+                (setf elapsed (%timer-tick-status-interval elapsed dirty-fn))
+                (%timer-tick-lock session dirty-fn)
+                (%timer-tick-silence server-sessions-fn dirty-fn))))
    :name "cl-tmux-status-timer"))

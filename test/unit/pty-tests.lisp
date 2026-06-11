@@ -272,3 +272,42 @@
       (is (= 0 (length result)) "zero-len result must be empty")
       (is (typep result '(simple-array (unsigned-byte 8) (*)))
           "result must be an octet vector"))))
+
+;;; ── New coverage: fork sentinel and microsecond constants ─────────────────────
+
+(test fork-child-pid-is-zero
+  "+fork-child-pid+ is 0 (POSIX fork return value in the child)."
+  (is (= 0 cl-tmux/pty::+fork-child-pid+)
+      "+fork-child-pid+ must be 0"))
+
+(test fork-error-pid-is-negative-one
+  "+fork-error-pid+ is -1 (POSIX fork return value on error)."
+  (is (= -1 cl-tmux/pty::+fork-error-pid+)
+      "+fork-error-pid+ must be -1"))
+
+(test microseconds-per-second-is-one-million
+  "+microseconds-per-second+ is 1000000."
+  (is (= 1000000 cl-tmux/pty::+microseconds-per-second+)
+      "+microseconds-per-second+ must be 1000000"))
+
+(test setup-timeval-decomposes-correctly
+  "%setup-timeval decomposes microseconds into (seconds, remainder) correctly.
+   1500000 us = 1 second + 500000 us."
+  (cffi:with-foreign-object (tv :long 2)
+    (cl-tmux/pty::%setup-timeval tv 1500000)
+    (is (= 1 (cffi:mem-aref tv :long 0)) "seconds component must be 1")
+    (is (= 500000 (cffi:mem-aref tv :long 1)) "microseconds component must be 500000")))
+
+(test setup-timeval-zero-timeout
+  "%setup-timeval with 0 produces (0, 0) — purely non-blocking."
+  (cffi:with-foreign-object (tv :long 2)
+    (cl-tmux/pty::%setup-timeval tv 0)
+    (is (= 0 (cffi:mem-aref tv :long 0)) "seconds must be 0")
+    (is (= 0 (cffi:mem-aref tv :long 1)) "microseconds must be 0")))
+
+(test setup-timeval-sub-second-timeout
+  "%setup-timeval with 50000 us (50 ms) produces (0, 50000)."
+  (cffi:with-foreign-object (tv :long 2)
+    (cl-tmux/pty::%setup-timeval tv 50000)
+    (is (= 0 (cffi:mem-aref tv :long 0)) "seconds must be 0 for sub-second timeout")
+    (is (= 50000 (cffi:mem-aref tv :long 1)) "microseconds must be 50000")))

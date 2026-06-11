@@ -1,6 +1,12 @@
 (in-package #:cl-tmux/test)
 
-;;;; Command dispatch tests (src/dispatch-core.lisp, src/dispatch-handlers.lisp,
+;;;; Command dispatch tests (src/dispatch-core.lisp,
+;;;;                         src/dispatch-commands.lisp,
+;;;;                         src/dispatch-commands-pane.lisp,
+;;;;                         src/dispatch-commands-auto.lisp,
+;;;;                         src/dispatch-commands-runner.lisp,
+;;;;                         src/dispatch-control.lisp,
+;;;;                         src/dispatch-handlers.lisp,
 ;;;;                         src/dispatch-handlers-buffer.lisp).
 ;;;; Tests: dispatch-suite — dispatch-command, dispatch-prefix-command,
 ;;;; next-cyclic, prev-cyclic, %copy-mode-active-p.
@@ -48,20 +54,18 @@
 
 (test dispatch-next-window-cycles
   "C-b n moves to the next window and wraps around."
-  (let ((s (make-fake-session :nwindows 2)))
-    (with-loop-state
-      (cl-tmux::dispatch-command s :next-window nil)
-      (is (eq (second (session-windows s)) (session-active-window s)))
-      (cl-tmux::dispatch-command s :next-window nil)
-      (is (eq (first (session-windows s)) (session-active-window s))
-          "second :next-window should wrap back to window 1"))))
+  (with-fake-session (s :nwindows 2)
+    (cl-tmux::dispatch-command s :next-window nil)
+    (is (eq (second (session-windows s)) (session-active-window s)))
+    (cl-tmux::dispatch-command s :next-window nil)
+    (is (eq (first (session-windows s)) (session-active-window s))
+        "second :next-window should wrap back to window 1")))
 
 (test dispatch-prev-window-wraps
   "C-b p from the first window wraps to the last."
-  (let ((s (make-fake-session :nwindows 2)))
-    (with-loop-state
-      (cl-tmux::dispatch-command s :prev-window nil)
-      (is (eq (second (session-windows s)) (session-active-window s))))))
+  (with-fake-session (s :nwindows 2)
+    (cl-tmux::dispatch-command s :prev-window nil)
+    (is (eq (second (session-windows s)) (session-active-window s)))))
 
 (test notify-pane-focus-fires-focus-hooks
   "%notify-pane-focus fires pane-focus-in / pane-focus-out independent of ?1004."
@@ -96,29 +100,26 @@
 (test run-command-tokens-abbrev-next-dispatches
   "%run-command-tokens resolves the tmux abbreviation 'next' (no-arg named-table
    path) to :next-window."
-  (let ((s (make-fake-session :nwindows 2)))
-    (with-loop-state
-      (cl-tmux::%run-command-tokens s '("next"))
-      (is (eq (second (session-windows s)) (session-active-window s))
-          "abbrev 'next' must advance to the next window"))))
+  (with-fake-session (s :nwindows 2)
+    (cl-tmux::%run-command-tokens s '("next"))
+    (is (eq (second (session-windows s)) (session-active-window s))
+        "abbrev 'next' must advance to the next window")))
 
 (test run-command-tokens-abbrev-prev-dispatches
   "%run-command-tokens resolves the abbreviation 'prev' (no-arg named-table path)
    to :prev-window, which from the first window wraps to the last."
-  (let ((s (make-fake-session :nwindows 2)))
-    (with-loop-state
-      (cl-tmux::%run-command-tokens s '("prev"))
-      (is (eq (second (session-windows s)) (session-active-window s))
-          "abbrev 'prev' must wrap to the last window"))))
+  (with-fake-session (s :nwindows 2)
+    (cl-tmux::%run-command-tokens s '("prev"))
+    (is (eq (second (session-windows s)) (session-active-window s))
+        "abbrev 'prev' must wrap to the last window")))
 
 (test run-command-tokens-abbrev-renamew-with-arg
   "%run-command-tokens resolves the arg-bearing abbreviation 'renamew' through
    *arg-command-table* to rename the active window."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (cl-tmux::%run-command-tokens s '("renamew" "myname"))
-      (is (string= "myname" (window-name (session-active-window s)))
-          "renamew must rename the active window via the arg-table alias"))))
+  (with-fake-session (s :nwindows 1)
+    (cl-tmux::%run-command-tokens s '("renamew" "myname"))
+    (is (string= "myname" (window-name (session-active-window s)))
+        "renamew must rename the active window via the arg-table alias")))
 
 (test dispatch-next-pane-cycles
   "C-b o moves to the next pane within the active window."
@@ -133,58 +134,52 @@
 
 (test dispatch-select-window-by-digit
   "C-b <n>: :select-window uses the pressed digit byte to pick the window."
-  (let ((s (make-fake-session :nwindows 3)))
-    (with-loop-state
-      (cl-tmux::dispatch-command s :select-window (char-code #\2))
-      (is (eq (third (session-windows s)) (session-active-window s)))
-      (cl-tmux::dispatch-command s :select-window (char-code #\0))
-      (is (eq (first (session-windows s)) (session-active-window s))))))
+  (with-fake-session (s :nwindows 3)
+    (cl-tmux::dispatch-command s :select-window (char-code #\2))
+    (is (eq (third (session-windows s)) (session-active-window s)))
+    (cl-tmux::dispatch-command s :select-window (char-code #\0))
+    (is (eq (first (session-windows s)) (session-active-window s)))))
 
 (test dispatch-unknown-command-passes-through
   "An unrecognized command falls through to the passthrough branch: it returns
    NIL (no quit), doesn't error, and still marks the session dirty."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (is (null (cl-tmux::dispatch-command s :no-such-command (char-code #\a))))
-      (is-true cl-tmux::*dirty* "dispatch marks dirty even on passthrough"))))
+  (with-fake-session (s)
+    (is (null (cl-tmux::dispatch-command s :no-such-command (char-code #\a))))
+    (is-true cl-tmux::*dirty* "dispatch marks dirty even on passthrough")))
 
 ;;; ── Rename ──────────────────────────────────────────────────────────────────
 
 (test dispatch-rename-window-opens-prompt
   "C-b , opens a rename prompt seeded with the active window's name, and its
    on-submit closure renames the active window."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (let ((*prompt* nil))
-        (cl-tmux::dispatch-command s :rename-window nil)
-        (is (prompt-active-p) "rename should open a prompt")
-        (is (string= "0" (prompt-buffer *prompt*))
-            "prompt seeded with current window name")
-        (is (functionp (prompt-on-submit *prompt*))
-            "prompt should carry an on-submit closure")
-        ;; Running the closure with a new name renames the active window.
-        (funcall (prompt-on-submit *prompt*) "renamed")
-        (is (string= "renamed" (window-name (session-active-window s)))
-            "on-submit closure should rename the active window")))))
+  (with-fake-session (s :nwindows 1)
+    (let ((*prompt* nil))
+      (cl-tmux::dispatch-command s :rename-window nil)
+      (is (prompt-active-p) "rename should open a prompt")
+      (is (string= "0" (prompt-buffer *prompt*))
+          "prompt seeded with current window name")
+      (is (functionp (prompt-on-submit *prompt*))
+          "prompt should carry an on-submit closure")
+      (funcall (prompt-on-submit *prompt*) "renamed")
+      (is (string= "renamed" (window-name (session-active-window s)))
+          "on-submit closure should rename the active window"))))
 
 ;;; ── Copy mode ───────────────────────────────────────────────────────────────
 
 (test dispatch-copy-mode-enter-exit
   "C-b [ enters copy mode on the active screen; exit clears it."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (is (screen-copy-mode-p (active-screen s)) "copy mode should be on after enter")
-      (cl-tmux::dispatch-command s :copy-mode-exit nil)
-      (is-false (screen-copy-mode-p (active-screen s)) "copy mode should be off after exit"))))
+  (with-fake-session (s)
+    (cl-tmux::dispatch-command s :copy-mode-enter nil)
+    (is (screen-copy-mode-p (active-screen s)) "copy mode should be on after enter")
+    (cl-tmux::dispatch-command s :copy-mode-exit nil)
+    (is-false (screen-copy-mode-p (active-screen s)) "copy mode should be off after exit")))
 
 (test copy-mode-active-p-reflects-state
   "%copy-mode-active-p tracks the active screen's copy-mode flag."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (is-false (cl-tmux::%copy-mode-active-p s))
-      (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (is (cl-tmux::%copy-mode-active-p s)))))
+  (with-fake-session (s)
+    (is-false (cl-tmux::%copy-mode-active-p s))
+    (cl-tmux::dispatch-command s :copy-mode-enter nil)
+    (is (cl-tmux::%copy-mode-active-p s))))
 
 (test send-keys-R-resets-pane-terminal-state
   "send-keys -R resets the target pane's terminal state (RIS): the cursor is homed."
@@ -239,86 +234,75 @@
 (test send-keys-x-cursor-left-right-move-cursor
   "send -X cursor-right / cursor-left move the copy-mode cursor horizontally
    (previously both mis-mapped to begin-selection, which did not move it)."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (let ((screen (active-screen s)))
-        (cl-tmux::%dispatch-send-keys-X s "cursor-right")
-        (is (= 1 (cdr (screen-copy-cursor screen)))
-            "cursor-right moves the cursor to column 1 (from the initial column 0)")
-        (cl-tmux::%dispatch-send-keys-X s "cursor-left")
-        (is (= 0 (cdr (screen-copy-cursor screen)))
-            "cursor-left moves the cursor back to column 0")))))
+  (with-fake-session (s)
+    (cl-tmux::dispatch-command s :copy-mode-enter nil)
+    (let ((screen (active-screen s)))
+      (cl-tmux::%dispatch-send-keys-X s "cursor-right")
+      (is (= 1 (cdr (screen-copy-cursor screen)))
+          "cursor-right moves the cursor to column 1 (from the initial column 0)")
+      (cl-tmux::%dispatch-send-keys-X s "cursor-left")
+      (is (= 0 (cdr (screen-copy-cursor screen)))
+          "cursor-left moves the cursor back to column 0"))))
 
 (test send-keys-x-cursor-up-down-move-cursor-vertically
   "send -X cursor-up / cursor-down move the copy cursor vertically (the -X names
    previously only scrolled a line, inconsistent with the arrow-key path)."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (let* ((screen (active-screen s))
-             (h      (screen-height screen)))
-        ;; The cursor initializes to the bottom-left (row h-1); cursor-up moves
-        ;; it to h-2, and cursor-down returns it to h-1.
-        (cl-tmux::%dispatch-send-keys-X s "cursor-up")
-        (is (= (- h 2) (car (screen-copy-cursor screen)))
-            "cursor-up moves the cursor one row up from the bottom")
-        (cl-tmux::%dispatch-send-keys-X s "cursor-down")
-        (is (= (- h 1) (car (screen-copy-cursor screen)))
-            "cursor-down moves the cursor back to the bottom row")))))
+  (with-fake-session (s)
+    (cl-tmux::dispatch-command s :copy-mode-enter nil)
+    (let* ((screen (active-screen s))
+           (h      (screen-height screen)))
+      (cl-tmux::%dispatch-send-keys-X s "cursor-up")
+      (is (= (- h 2) (car (screen-copy-cursor screen)))
+          "cursor-up moves the cursor one row up from the bottom")
+      (cl-tmux::%dispatch-send-keys-X s "cursor-down")
+      (is (= (- h 1) (car (screen-copy-cursor screen)))
+          "cursor-down moves the cursor back to the bottom row"))))
 
 ;;; ── Detach / kill ───────────────────────────────────────────────────────────
 
 (test dispatch-detach-returns-detach
   "C-b d returns :detach and does NOT clear *running* itself (the caller decides:
    standalone stops, a server merely disconnects the client)."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (is (eq :detach (cl-tmux::dispatch-command s :detach nil)))
-      (is-true cl-tmux::*running* "dispatch-command must not clear *running*"))))
+  (with-fake-session (s)
+    (is (eq :detach (cl-tmux::dispatch-command s :detach nil)))
+    (is-true cl-tmux::*running* "dispatch-command must not clear *running*")))
 
 (test dispatch-kill-last-window-quits
   "Killing the only window ends the session (:quit)."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (is (eq :quit (cl-tmux::dispatch-command s :kill-window nil))))))
+  (with-fake-session (s :nwindows 1)
+    (is (eq :quit (cl-tmux::dispatch-command s :kill-window nil)))))
 
 (test dispatch-kill-one-of-two-windows-survives
   "Killing one of two windows leaves the session running with the other."
-  (let ((s (make-fake-session :nwindows 2)))
-    (with-loop-state
-      (is (null (cl-tmux::dispatch-command s :kill-window nil)))
-      (is (= 1 (length (session-windows s)))))))
+  (with-fake-session (s :nwindows 2)
+    (is (null (cl-tmux::dispatch-command s :kill-window nil)))
+    (is (= 1 (length (session-windows s))))))
 
 (test dispatch-kill-last-pane-quits
   "Killing the sole pane of the sole window ends the session (:quit)."
-  (let ((s (make-fake-session :nwindows 1 :npanes 1)))
-    (with-loop-state
-      (is (eq :quit (cl-tmux::dispatch-command s :kill-pane nil))))))
+  (with-fake-session (s :nwindows 1 :npanes 1)
+    (is (eq :quit (cl-tmux::dispatch-command s :kill-pane nil)))))
 
 ;;; ── Prefix routing ──────────────────────────────────────────────────────────
 
 (test dispatch-prefix-routes-binding
   "dispatch-prefix-command looks the byte up in the binding table (d → detach)."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (is (eq :detach (cl-tmux::dispatch-prefix-command s (char-code #\d)))))))
+  (with-fake-session (s)
+    (is (eq :detach (cl-tmux::dispatch-prefix-command s (char-code #\d))))))
 
 (test prefix-q-exits-copy-mode
   "In copy mode, the prefix-routed 'q' exits copy mode."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (cl-tmux::dispatch-prefix-command s (char-code #\q))
-      (is-false (screen-copy-mode-p (active-screen s))))))
+  (with-fake-session (s)
+    (cl-tmux::dispatch-command s :copy-mode-enter nil)
+    (cl-tmux::dispatch-prefix-command s (char-code #\q))
+    (is-false (screen-copy-mode-p (active-screen s)))))
 
 ;;; ── %active-screen ───────────────────────────────────────────────────────────
 
 (test active-screen-returns-active-pane-screen
   "%active-screen returns the screen of the session's active pane."
-  (let* ((s  (make-fake-session))
-         (ap (session-active-pane s)))
-    (with-loop-state
+  (with-fake-session (s)
+    (let ((ap (session-active-pane s)))
       (is (eq (pane-screen ap)
               (cl-tmux::%active-screen s))
           "%active-screen must return the active pane's screen"))))
@@ -1603,12 +1587,13 @@
       (is-false (cl-tmux/model:pane-input-disabled p1) "active pane 1 unaffected"))))
 
 (test run-command-line-select-pane-M-clears-mark
-  "'select-pane -M' clears the marked pane (unmarks all panes in the window)."
+  "'select-pane -M' on a marked pane clears the server-wide mark (toggle)."
   (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
          (win (session-active-window s)))
     (with-loop-state
       (let ((ap (window-active-pane win)))
-        (setf (pane-marked ap) t)
+        (cl-tmux::dispatch-command s :mark-pane nil)
+        (is (pane-marked ap) "pane must be marked before select-pane -M")
         (cl-tmux::%run-command-line s "select-pane -M")
         (is (null (pane-marked ap))
             "select-pane -M must clear the pane mark")))))
@@ -2622,23 +2607,53 @@
         (is-true (pane-marked ap) ":mark-pane must set pane-marked to T")))))
 
 (test dispatch-mark-pane-toggles-off
-  ":mark-pane on an already-marked pane clears the mark."
+  ":mark-pane on an already-marked pane clears the mark (toggle)."
   (let ((s (make-fake-session)))
     (with-loop-state
       (let ((ap (session-active-pane s)))
-        (setf (pane-marked ap) t)
+        (cl-tmux::dispatch-command s :mark-pane nil)
+        (is-true (pane-marked ap) ":mark-pane must set the mark first")
         (cl-tmux::dispatch-command s :mark-pane nil)
         (is-false (pane-marked ap) ":mark-pane on marked pane must clear the mark")))))
 
-(test dispatch-clear-mark-clears-all-pane-marks
-  ":clear-mark clears the mark on all panes in the active window."
-  (let ((s (make-fake-session :nwindows 1 :npanes 2)))
+(test dispatch-clear-mark-clears-server-marked-pane
+  ":clear-mark clears the server-wide marked pane."
+  (let ((s (make-fake-session :nwindows 1 :npanes 1)))
     (with-loop-state
-      (let ((panes (window-panes (session-active-window s))))
-        (dolist (p panes) (setf (pane-marked p) t))
+      (let ((ap (session-active-pane s)))
+        (cl-tmux::dispatch-command s :mark-pane nil)
+        (is-true (pane-marked ap) ":mark-pane must mark the active pane")
         (cl-tmux::dispatch-command s :clear-mark nil)
-        (is-false (some #'pane-marked panes)
-                  ":clear-mark must clear all pane marks")))))
+        (is-false (pane-marked ap)
+                  ":clear-mark must clear the server-wide marked pane")))))
+
+(test dispatch-mark-pane-sets-server-marked-pane
+  ":mark-pane updates *server-marked-pane* to the active pane."
+  (let ((s (make-fake-session)))
+    (with-loop-state
+      (let ((ap (session-active-pane s)))
+        (cl-tmux::dispatch-command s :mark-pane nil)
+        (is (eq ap cl-tmux::*server-marked-pane*)
+            "*server-marked-pane* must point to the newly marked pane")))))
+
+(test dispatch-mark-pane-cross-window-clears-previous
+  ":mark-pane in a second window clears the mark from a pane in the first window."
+  (let ((s (make-fake-session :nwindows 2)))
+    (with-loop-state
+      (let* ((win1 (first  (session-windows s)))
+             (win2 (second (session-windows s)))
+             (p1   (window-active-pane win1))
+             (p2   (window-active-pane win2)))
+        (session-select-window s win1)
+        (cl-tmux::dispatch-command s :mark-pane nil)
+        (is (pane-marked p1) "p1 must be marked in window 1")
+        (session-select-window s win2)
+        (cl-tmux::dispatch-command s :mark-pane nil)
+        (is-false (pane-marked p1)
+                  "p1 in window 1 must be unmarked when window 2 pane is marked")
+        (is (pane-marked p2) "p2 in window 2 must be marked")
+        (is (eq p2 cl-tmux::*server-marked-pane*)
+            "*server-marked-pane* must point to p2 after cross-window mark")))))
 
 ;;; ── :next-layout dispatch ─────────────────────────────────────────────────────
 

@@ -73,19 +73,24 @@
   "True when a scroll-on-clear policy is installed and reports the option enabled."
   (and *scroll-on-clear-function* (funcall *scroll-on-clear-function*)))
 
+(defun %push-row-to-scrollback (screen row)
+  "Copy ROW of SCREEN into a new vector and prepend it to the scrollback list.
+   Enforces the history cap via TRIM-SCROLL-HISTORY after the push.
+   Used by SCROLL-UP-ONE and SCROLL-SCREEN-TO-HISTORY."
+  (let* ((w (screen-width screen))
+         (saved (make-array w)))
+    (dotimes (col w) (setf (aref saved col) (screen-cell screen col row)))
+    (push saved (screen-scrollback screen))
+    (trim-scroll-history screen)))
+
 (defun scroll-screen-to-history (screen)
   "Push every visible row of SCREEN into the scrollback (so a full-screen clear keeps
    its content in history), then enforce the history cap.  No-op on the alternate
-   screen, which has no scrollback.  Backs scroll-on-clear before an ED-2 erase."
+   screen, which has no scrollback.  Backs scroll-on-clear before an ED-2 erase.
+   Rows are pushed top→bottom so the top row ends up oldest in the newest-first list."
   (unless (screen-alt-cells screen)
-    (let ((w (screen-width screen))
-          (h (screen-height screen)))
-      ;; Push rows top→bottom so the top row ends up oldest in the newest-first list.
-      (dotimes (row h)
-        (let ((saved (make-array w)))
-          (dotimes (col w) (setf (aref saved col) (screen-cell screen col row)))
-          (push saved (screen-scrollback screen))))
-      (trim-scroll-history screen))))
+    (dotimes (row (screen-height screen))
+      (%push-row-to-scrollback screen row))))
 
 (defun scroll-up-one (screen)
   "Scroll the scroll region up one line; the displaced top row is pushed onto
@@ -98,15 +103,11 @@
    splices off the tail cons of the list, keeping the operation O(limit).
    The list is maintained newest-first so the tail is always the oldest entry."
   (let* ((top    (screen-scroll-top    screen))
-         (bottom (screen-scroll-bottom screen))
-         (w      (screen-width         screen)))
+         (bottom (screen-scroll-bottom screen)))
     ;; Only the primary screen with a full-top scroll region contributes to
     ;; the scrollback history (mirrors tmux grid_scroll_history_up logic).
     (when (and (zerop top) (null (screen-alt-cells screen)))
-      (let ((saved-row (make-array w)))
-        (dotimes (col w) (setf (aref saved-row col) (screen-cell screen col top)))
-        (push saved-row (screen-scrollback screen))
-        (trim-scroll-history screen)))
+      (%push-row-to-scrollback screen top))
     ;; Copy row+1 → row (shift content upward within the scroll region).
     (loop for row from top below bottom
           do (%copy-row screen row (1+ row)))

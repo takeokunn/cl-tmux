@@ -146,12 +146,14 @@
                  (is (= expected-type type)
                      "round-trip type mismatch: expected ~D got ~S"
                      expected-type type))))))
-    (round-trip (msg-attach  24 80)    +msg-attach+)
-    (round-trip (msg-key     #(27 65)) +msg-key+)
-    (round-trip (msg-resize  30 100)   +msg-resize+)
-    (round-trip (msg-detach)           +msg-detach+)
-    (round-trip (msg-frame   "hi")     +msg-frame+)
-    (round-trip (msg-bye)              +msg-bye+)))
+    (round-trip (msg-attach  24 80)           +msg-attach+)
+    (round-trip (msg-key     #(27 65))        +msg-key+)
+    (round-trip (msg-resize  30 100)          +msg-resize+)
+    (round-trip (msg-detach)                  +msg-detach+)
+    (round-trip (msg-frame   "hi")            +msg-frame+)
+    (round-trip (msg-bye)                     +msg-bye+)
+    (round-trip (msg-reply   "output text")   +msg-reply+)
+    (round-trip (msg-command :new-window nil nil) +msg-command+)))
 
 ;;; ── Transport constant value ─────────────────────────────────────────────────
 
@@ -236,7 +238,7 @@
 
 (test transport-typed-constructors-payload-roundtrip
   "Each typed constructor's payload survives send-frame / read-frame intact."
-  (flet ((rt (frame check-fn)
+  (flet ((round-trip (frame check-fn)
            (with-temp-octet-file (path)
              (write-frames-to-file path frame)
              (with-open-file (in path :element-type '(unsigned-byte 8))
@@ -244,27 +246,40 @@
                  (declare (ignore type))
                  (funcall check-fn payload))))))
     ;; msg-attach: decode-size must recover rows and cols
-    (rt (msg-attach 15 60)
-        (lambda (payload)
-          (multiple-value-bind (rows cols) (cl-tmux/protocol:decode-size payload)
-            (is (= 15 rows) "attach rows must survive transport")
-            (is (= 60 cols) "attach cols must survive transport"))))
+    (round-trip (msg-attach 15 60)
+                (lambda (payload)
+                  (multiple-value-bind (rows cols) (cl-tmux/protocol:decode-size payload)
+                    (is (= 15 rows) "attach rows must survive transport")
+                    (is (= 60 cols) "attach cols must survive transport"))))
     ;; msg-key: payload bytes must be preserved verbatim
-    (rt (msg-key #(27 91 65))
-        (lambda (payload)
-          (is (equalp #(27 91 65) payload)
-              "key payload bytes must survive transport")))
+    (round-trip (msg-key #(27 91 65))
+                (lambda (payload)
+                  (is (equalp #(27 91 65) payload)
+                      "key payload bytes must survive transport")))
     ;; msg-resize: decode-size must recover rows and cols
-    (rt (msg-resize 50 200)
-        (lambda (payload)
-          (multiple-value-bind (rows cols) (cl-tmux/protocol:decode-size payload)
-            (is (= 50 rows)  "resize rows must survive transport")
-            (is (= 200 cols) "resize cols must survive transport"))))
+    (round-trip (msg-resize 50 200)
+                (lambda (payload)
+                  (multiple-value-bind (rows cols) (cl-tmux/protocol:decode-size payload)
+                    (is (= 50 rows)  "resize rows must survive transport")
+                    (is (= 200 cols) "resize cols must survive transport"))))
     ;; msg-frame: decode-text must recover the Unicode string
-    (rt (msg-frame "こんにちは")
-        (lambda (payload)
-          (is (string= "こんにちは" (cl-tmux/protocol:decode-text payload))
-              "frame UTF-8 payload must survive transport")))))
+    (round-trip (msg-frame "こんにちは")
+                (lambda (payload)
+                  (is (string= "こんにちは" (cl-tmux/protocol:decode-text payload))
+                      "frame UTF-8 payload must survive transport")))
+    ;; msg-reply: decode-text must recover the UTF-8 reply text
+    (round-trip (msg-reply "output: 42")
+                (lambda (payload)
+                  (is (string= "output: 42" (cl-tmux/protocol:decode-text payload))
+                      "reply UTF-8 payload must survive transport")))
+    ;; msg-command: decode-command-payload must recover command, target, and args
+    (round-trip (msg-command :new-window "$0" '("-d"))
+                (lambda (payload)
+                  (multiple-value-bind (command target args)
+                      (cl-tmux/protocol:decode-command-payload payload)
+                    (is (eq :new-window command) "command keyword must survive transport")
+                    (is (string= "$0" target)    "target string must survive transport")
+                    (is (equal '("-d") args)     "args list must survive transport"))))))
 
 ;;; ── %read-exact direct contract tests ───────────────────────────────────────
 ;;;

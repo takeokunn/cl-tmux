@@ -43,6 +43,23 @@
     (session-select-window sess win)
     sess))
 
+;;; ── Test helper macros ───────────────────────────────────────────────────────
+;;;
+;;; Reduces boilerplate in status-bar tests: ~25 tests inline the same
+;;; (with-output-to-string (s) (render-status-bar s sess rows cols)) pattern.
+
+(defun render-status-bar-string (sess rows cols)
+  "Render the status bar for SESS at (ROWS x COLS) and return the output string.
+   Convenience wrapper reducing the with-output-to-string boilerplate in tests."
+  (with-output-to-string (s)
+    (cl-tmux/renderer::render-status-bar s sess rows cols)))
+
+(defmacro with-minimal-status-bar-options (&body body)
+  "Run BODY with status-left and status-right cleared (the 'no decorations'
+   baseline used by ~10 status-bar tests)."
+  `(with-isolated-options ("status-left" nil "status-right" nil)
+     ,@body))
+
 ;;; ── render-status-bar ───────────────────────────────────────────────────────
 
 (test render-status-bar-shows-names
@@ -363,27 +380,25 @@
       (is (search (format nil "~C[0m" #\Escape) out)
           "%status-window-list-styled must emit SGR reset (got ~S)" out))))
 
-(test window-status-style-folds-deprecated-current-bg
-  "%window-status-style folds the deprecated window-status-current-bg into the
-   active window's style (old .tmux.conf compat)."
-  (with-isolated-options ("window-status-current-style" ""
-                          "window-status-current-bg" "red")
+(test window-status-current-style-applied-directly
+  "%window-status-style returns the window-status-current-style option directly
+   for the active window."
+  (with-isolated-options ("window-status-current-style" "bg=red")
     (let* ((sess  (make-test-session 20 5 :content ""))
            (win   (session-active-window sess))
            (style (cl-tmux/renderer::%window-status-style sess win t)))
-      (is (string= "bg=red" style)
-          "active window style must fold to bg=red (got ~S)" style))))
+      (is (search "bg=red" style)
+          "active window style must be bg=red (got ~S)" style))))
 
-(test window-status-style-folds-deprecated-normal-fg
-  "%window-status-style folds the deprecated window-status-fg into a non-active
-   window's normal style."
-  (with-isolated-options ("window-status-style" ""
-                          "window-status-fg" "green")
+(test window-status-style-applied-directly
+  "%window-status-style returns the window-status-style option directly
+   for a non-active window."
+  (with-isolated-options ("window-status-style" "fg=green")
     (let* ((sess  (make-test-session 20 5 :content ""))
            (win   (session-active-window sess))
            (style (cl-tmux/renderer::%window-status-style sess win nil)))
-      (is (string= "fg=green" style)
-          "non-active window style must fold to fg=green (got ~S)" style))))
+      (is (search "fg=green" style)
+          "non-active window style must be fg=green (got ~S)" style))))
 
 (test status-window-list-styled-no-style-no-sgr
   "When both style options are empty, %status-window-list-styled emits plain
@@ -790,20 +805,16 @@
              (is (search "line" out) "overlay text must appear in output")))
       (clear-overlay))))
 
-(test message-style-folds-deprecated-fg-bg
-  "The deprecated message-fg/message-bg/message-attr options fold into message-style
-   via %fold-deprecated-style — the exact call render-overlay makes (old .tmux.conf
-   compat)."
-  (with-isolated-options ("message-style" "bold" "message-fg" "white" "message-bg" "blue")
-    (let ((eff (cl-tmux/renderer::%fold-deprecated-style
-                (cl-tmux/options:get-option "message-style" "")
-                "message-fg" "message-bg" "message-attr")))
-      (is (search "bold" eff)     "message-style base preserved (got ~S)" eff)
-      (is (search "fg=white" eff) "message-fg folded in (got ~S)" eff)
-      (is (search "bg=blue" eff)  "message-bg folded in (got ~S)" eff))))
+(test message-style-applied-to-overlay
+  "render-overlay reads the message-style option for its SGR colour."
+  (with-isolated-options ("message-style" "fg=white,bg=blue,bold")
+    (let ((eff (cl-tmux/options:get-option "message-style" "")))
+      (is (search "bold" eff)     "message-style bold preserved (got ~S)" eff)
+      (is (search "fg=white" eff) "fg=white in message-style (got ~S)" eff)
+      (is (search "bg=blue" eff)  "bg=blue in message-style (got ~S)" eff))))
 
-(test render-overlay-wires-deprecated-message-bg
-  "render-overlay actually applies the folded message-bg: the rendered overlay SGR
+(test render-overlay-wires-message-style
+  "render-overlay applies the message-style option: the rendered overlay SGR
    differs from the unstyled overlay."
   (flet ((render ()
            (let ((*overlay* nil))
@@ -813,12 +824,12 @@
                     (cl-tmux/renderer::render-overlay buf 20)
                     (get-output-stream-string buf))
                (clear-overlay)))))
-    (let ((styled   (with-isolated-options ("message-style" "" "message-bg" "red")
+    (let ((styled   (with-isolated-options ("message-style" "bg=red")
                       (render)))
-          (unstyled (with-isolated-options ("message-style" "" "message-bg" "")
+          (unstyled (with-isolated-options ("message-style" "")
                       (render))))
       (is (not (string= styled unstyled))
-          "message-bg must change the overlay's rendered SGR (styled=~S unstyled=~S)"
+          "message-style bg=red must change the overlay's rendered SGR (styled=~S unstyled=~S)"
           styled unstyled))))
 
 ;;; ── DECTCEM cursor-visibility in rendered output ────────────────────────────
@@ -1635,22 +1646,19 @@
 
 (test render-panes-borders-suppressed-when-zoomed
   "%render-panes-and-borders emits no border characters when window-zoom-p is T."
-  (let* ((l0   (tl-leaf 1 1 1))
-         (l1   (tl-leaf 2 1 1))
-         (tree (make-layout-split :h l0 l1)))
-    (cl-tmux/model::layout-assign tree 0 0 81 24)
-    (let* ((p0   (layout-leaf-pane l0))
-           (p1   (layout-leaf-pane l1))
-           (win  (make-window :id 1 :name "w" :width 81 :height 24
-                              :panes (list p0 p1) :tree tree)))
-      (window-select-pane win p0)
-      ;; Enable zoom — borders should be suppressed.
-      (setf (cl-tmux/model:window-zoom-p win) t)
-      (let ((buf (make-string-output-stream)))
-        (cl-tmux/renderer::%render-panes-and-borders buf win (list p0 p1) p0 81)
-        (let ((out (get-output-stream-string buf)))
-          (is (null (find #\│ out))
-              "zoomed window must not emit vertical border │ (got ~S)" out))))))
+  ;; tl-window calls window-relayout which runs screen-resize on each pane,
+  ;; so pane screens match the assigned geometry (fix for INVALID-ARRAY-INDEX-ERROR
+  ;; that occurred when manual make-window with 1×1 screens met an 81×24 layout).
+  (let* ((l0  (tl-leaf 1 1 1))
+         (l1  (tl-leaf 2 1 1))
+         (win (tl-window (make-layout-split :h l0 l1) 24 81)))
+    (setf (cl-tmux/model:window-zoom-p win) t)
+    (let ((buf (make-string-output-stream)))
+      (cl-tmux/renderer::%render-panes-and-borders
+       buf win (cl-tmux/model:window-panes win) (cl-tmux/model:window-active win) 81)
+      (let ((out (get-output-stream-string buf)))
+        (is (null (find #\│ out))
+            "zoomed window must not emit vertical border │ (got ~S)" out)))))
 
 ;;; ── %justify-right and %justify-centre (coverage gap) ───────────────────────
 

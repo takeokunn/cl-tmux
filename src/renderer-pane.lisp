@@ -64,12 +64,19 @@
                         (cl-tmux/options:get-option "clock-mode-colour" "blue"))
                        96)))
 
+;;; +min-clock-width+ : minimum terminal columns required to render the HH:MM clock.
+;;; The clock occupies 3-char digits with 1-char spacing: 3+1+3+1+1+1+3+1+3 = 17 chars
+;;; rendered, but the minimal HH:MM glyph block is 13 columns wide (two 3-wide digits,
+;;; one 1-wide colon, two 1-wide spaces, two more 3-wide digits, no trailing space).
+(defconstant +min-clock-width+ 13
+  "Minimum pane width in columns required to render the clock-mode HH:MM display.")
+
 (defun draw-clock-to-screen (stream ox oy pw ph)
   "Render the current time HH:MM as 3-row ASCII digits centred in the pane
    at terminal offset (OX, OY), clipping to the pane rectangle (PW x PH).
    Honours clock-mode-style (12/24-hour) and clock-mode-colour (digit colour).
-   Only renders if the pane is at least 13 columns wide and 3 rows tall."
-  (when (and (>= pw 13) (>= ph 3))
+   Only renders if the pane is at least +MIN-CLOCK-WIDTH+ columns wide and 3 rows tall."
+  (when (and (>= pw +min-clock-width+) (>= ph 3))
     (multiple-value-bind (sec min hour) (get-decoded-time)
       (declare (ignore sec))
       (setf hour (%clock-display-hour hour))
@@ -81,14 +88,15 @@
              (h1 (mod   hour 10))
              (m0 (floor min  10))
              (m1 (mod   min  10))
+             ;; Colon glyph rows: centre row lights a block, top/bottom are blank.
+             (colon-separator-rows '("   " " █ " "   "))
              ;; Build row strings for the 3 display rows
-             (sep-rows '("   " " █ " "   "))  ; colon separator rows
              (rows (loop for row-idx from 0 below 3
                          collect (concatenate 'string
                                    (nth row-idx (%clock-digit-rows h0))
                                    " "
                                    (nth row-idx (%clock-digit-rows h1))
-                                   (nth row-idx sep-rows)
+                                   (nth row-idx colon-separator-rows)
                                    (nth row-idx (%clock-digit-rows m0))
                                    " "
                                    (nth row-idx (%clock-digit-rows m1)))))
@@ -258,7 +266,7 @@
                          sel-rect-p
                          prev-fg-cell prev-bg-cell prev-attrs-cell prev-attrs2-cell
                          prev-ul-color-cell prev-hyperlink-cell
-                         def-fg def-bg ms-fg ms-bg)
+                         def-fg def-bg mode-style-fg mode-style-bg)
   "Render one row of cells to STREAM, highlighting selected cells.
    PREV-FG-CELL / PREV-BG-CELL / PREV-ATTRS-CELL / PREV-ATTRS2-CELL /
    PREV-UL-COLOR-CELL are single-element lists used as mutable registers for SGR
@@ -266,10 +274,10 @@
    DEF-FG / DEF-BG (or NIL) are the pane's window-style default colours: a cell
    carrying the model default (fg=7 / bg=0) is recoloured to them, which dims an
    inactive pane / highlights the active one.
-   MS-FG / MS-BG (or NIL) are the mode-style selection colours: when either is
-   set, selected cells take those colours instead of the reverse-video default,
-   so `set -g mode-style bg=colour…` works.  Returns nothing; updates the prev-*
-   registers as a side-effect."
+   MODE-STYLE-FG / MODE-STYLE-BG (or NIL) are the mode-style selection colours:
+   when either is set, selected cells take those colours instead of the
+   reverse-video default, so `set -g mode-style bg=colour…` works.
+   Returns nothing; updates the prev-* registers as a side-effect."
   (loop with rev-screen = (and (screen-reverse-screen screen)
                                cl-tmux/terminal/types:+attr-reverse+)
         for col below pane-col-count
@@ -290,14 +298,14 @@
                                                  sel-rect-p)))
                     ;; A colour-based mode-style highlights the selection with its
                     ;; own fg/bg; otherwise selection falls back to reverse-video.
-                    (ms-colour (and in-sel (or ms-fg ms-bg)))
-                    (fg    (if ms-colour (or ms-fg base-fg) base-fg))
-                    (bg    (if ms-colour (or ms-bg base-bg) base-bg))
+                    (mode-style-colour (and in-sel (or mode-style-fg mode-style-bg)))
+                    (fg    (if mode-style-colour (or mode-style-fg base-fg) base-fg))
+                    (bg    (if mode-style-colour (or mode-style-bg base-bg) base-bg))
                     ;; DECSCNM (reverse-video screen) and the selection highlight
                     ;; both toggle reverse; XOR both so a cell that is reverse for
                     ;; two reasons renders normal (correct double-reverse).
                     (attrs (logxor (cell-attrs cell)
-                                   (if (and in-sel (not ms-colour))
+                                   (if (and in-sel (not mode-style-colour))
                                        cl-tmux/terminal/types:+attr-reverse+ 0)
                                    (or rev-screen 0)))
                     ;; Extended attributes and underline colour pass through without
@@ -345,13 +353,11 @@
                           (if active-p "window-active-style" "window-style")
                           pane)))
           (%window-style-default-colors style))
-     (multiple-value-bind (ms-fg ms-bg)
+     (multiple-value-bind (mode-style-fg mode-style-bg)
          ;; mode-style selection colours (a colour-based value overrides the
          ;; reverse-video default highlight); "reverse" → NIL/NIL → reverse path.
-         ;; The deprecated mode-fg/mode-bg/mode-attr are folded in for old-config compat.
          (%window-style-default-colors
-          (%fold-deprecated-style (cl-tmux/options:get-option "mode-style" "reverse")
-                                  "mode-fg" "mode-bg" "mode-attr"))
+          (cl-tmux/options:get-option "mode-style" "reverse"))
       (with-lock-held ((screen-lock screen))
         ;; Hoist selection boundary computation outside the cell loop so it is
         ;; computed once per frame instead of once per cell (~1920 times).
@@ -377,7 +383,7 @@
                                 prev-fg-cell prev-bg-cell prev-attrs-cell
                                 prev-attrs2-cell prev-ul-color-cell
                                 prev-hyperlink-cell
-                                def-fg def-bg ms-fg ms-bg))
+                                def-fg def-bg mode-style-fg mode-style-bg))
             ;; Close any hyperlink still open at the end of the pane (OSC 8 ; ;).
             (when (car prev-hyperlink-cell)
               (write-string (format nil "~C]8;;~C\\" #\Escape #\Escape) stream))))
@@ -420,19 +426,39 @@
          (format stream "~C[~Dm" +esc+ code))))
     (t (reset-attrs stream))))
 
+;;; ── Pane border character dispatch table (Prolog-like fact table) ───────────
+;;;
+;;; define-pane-border-chars-table builds %dispatch-pane-border-chars from a
+;;; declarative (style-string vertical horizontal) fact table, following the
+;;; define-border-charset-table pattern used in renderer-style.lisp.
+;;; Unknown styles (including "number"/"padded") fall back to single-line glyphs.
+
+(defmacro define-pane-border-chars-table (&rest rules)
+  "Build %DISPATCH-PANE-BORDER-CHARS from a declarative (style-str vertical horizontal)
+   fact table.  Unknown styles fall back to single-line box-drawing characters."
+  `(defun %dispatch-pane-border-chars (style)
+     "Return (values VERTICAL HORIZONTAL) border glyphs for pane border STYLE string.
+      Falls back to single-line characters for unrecognised styles."
+     (cond
+       ,@(mapcar (lambda (rule)
+                   (destructuring-bind (style-str vertical horizontal) rule
+                     `((string-equal style ,style-str) (values ,vertical ,horizontal))))
+                 rules)
+       (t (values #\│ #\─)))))
+
+(define-pane-border-chars-table
+  ("double" #\║ #\═)
+  ("heavy"  #\┃ #\━)
+  ("simple" #\| #\-))
+
 ;;; ── Separator renderers (data layer — what each orientation draws) ──────────
 
 (defun %pane-border-chars ()
-  "Return (values VERTICAL HORIZONTAL) border glyphs for the pane-border-lines
-   option: single (default light box-drawing), double, heavy, simple (ASCII).
-   Unknown values — including `number`/`padded`, whose extra semantics are not
-   modelled — fall back to single."
-  (let ((lines (cl-tmux/options:get-option "pane-border-lines" "single")))
-    (cond
-      ((string-equal lines "double") (values #\║ #\═))
-      ((string-equal lines "heavy")  (values #\┃ #\━))
-      ((string-equal lines "simple") (values #\| #\-))
-      (t                             (values #\│ #\─)))))
+  "Return (values VERTICAL HORIZONTAL) border glyphs for the pane-border-lines option.
+   Delegates to %dispatch-pane-border-chars with the current option value.
+   Unknown values — including number/padded — fall back to single-line glyphs."
+  (%dispatch-pane-border-chars
+   (cl-tmux/options:get-option "pane-border-lines" "single")))
 
 (defun %border-indicators-colour-p ()
   "T unless pane-border-indicators is \"off\".  cl-tmux colours the active pane's
@@ -452,15 +478,9 @@
          (activep    (and (or (subtree-contains-p a active-pane)
                               (subtree-contains-p b active-pane))
                           (%border-indicators-colour-p)))
-         ;; Fold the deprecated pane-(active-)border-fg/bg into the matching style
-         ;; (old .tmux.conf compat); borders carry no attribute, so pass NIL there.
          (style      (if activep
-                         (%fold-deprecated-style
-                          (cl-tmux/options:get-option "pane-active-border-style" "fg=green")
-                          "pane-active-border-fg" "pane-active-border-bg" nil)
-                         (%fold-deprecated-style
-                          (cl-tmux/options:get-option "pane-border-style" "default")
-                          "pane-border-fg" "pane-border-bg" nil))))
+                         (cl-tmux/options:get-option "pane-active-border-style" "fg=green")
+                         (cl-tmux/options:get-option "pane-border-style" "default"))))
     (when (< border-col terminal-cols)
       (%apply-border-style stream style)
       (let ((v-char (%pane-border-chars)))

@@ -145,6 +145,31 @@
             (setf (screen-cell screen x y) cell))))
       (setf (screen-dirty-p screen) t))))
 
+(defun %copy-rect-buffered (screen src-top src-left rows cols tgt-top tgt-left)
+  "Copy a ROWS × COLS rectangle from (SRC-TOP, SRC-LEFT) to (TGT-TOP, TGT-LEFT).
+   All coordinates are 0-based.  Source cells are buffered before writing so that
+   overlapping source/target regions are handled correctly.  Marks screen dirty."
+  (let* ((w   (screen-width  screen))
+         (h   (screen-height screen))
+         (tb0 (min (1- h) (+ tgt-top  rows -1)))
+         (tr0 (min (1- w) (+ tgt-left cols -1)))
+         (buffer (make-array (* rows cols))))
+    ;; Read phase: buffer all source cells before any writes.
+    (loop for sy from src-top to (+ src-top rows -1)
+          for ri from 0 do
+      (loop for sx from src-left to (+ src-left cols -1)
+            for ci from 0 do
+        (setf (aref buffer (+ (* ri cols) ci))
+              (screen-cell screen sx sy))))
+    ;; Write phase: copy buffer to target rectangle.
+    (loop for ty from tgt-top to tb0
+          for ri from 0 do
+      (loop for tx from tgt-left to tr0
+            for ci from 0 do
+        (setf (screen-cell screen tx ty)
+              (aref buffer (+ (* ri cols) ci)))))
+    (setf (screen-dirty-p screen) t)))
+
 (defun deccra (screen src-top1 src-left1 src-bottom1 src-right1
                       tgt-top1 tgt-left1)
   "DECCRA — Copy Rectangular Area (CSI Pt;Pl;Pb;Pr;Pp;Ptp;Plp;Ppp $ v).
@@ -156,25 +181,6 @@
     (when (and (<= st sb) (<= sl sr))
       (let* ((rows (1+ (- sb st)))
              (cols (1+ (- sr sl)))
-             (w    (screen-width  screen))
-             (h    (screen-height screen))
              (tt0  (1- (max 1 tgt-top1)))
-             (tl0  (1- (max 1 tgt-left1)))
-             (tb0  (min (1- h) (+ tt0 rows -1)))
-             (tr0  (min (1- w) (+ tl0 cols -1))))
-        ;; Buffer source cells (handles overlapping src/tgt regions).
-        (let ((buf (make-array (* rows cols))))
-          (loop for sy from st to sb
-                for ri from 0 do
-            (loop for sx from sl to sr
-                  for ci from 0 do
-              (setf (aref buf (+ (* ri cols) ci))
-                    (screen-cell screen sx sy))))
-          ;; Write to target.
-          (loop for ty from tt0 to tb0
-                for ri from 0 do
-            (loop for tx from tl0 to tr0
-                  for ci from 0 do
-              (setf (screen-cell screen tx ty)
-                    (aref buf (+ (* ri cols) ci))))))
-        (setf (screen-dirty-p screen) t)))))
+             (tl0  (1- (max 1 tgt-left1))))
+        (%copy-rect-buffered screen st sl rows cols tt0 tl0)))))

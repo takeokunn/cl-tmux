@@ -34,9 +34,11 @@
 
 (defun %dispatch-byte-result (result)
   "Map a single process-byte RESULT to a serve-loop disposition.
-   Returns :quit (also clears *running*), :detach, or NIL (continue).
-   This is the continuation passed between bytes in the key-processing stream."
-  (cond ((eq result :quit)   (setf *running* nil) :quit)
+   Returns :quit, :detach, or NIL (continue).
+   This is a pure predicate: it does NOT mutate *running*.
+   The caller (%handle-client-message) is responsible for clearing *running*
+   when the disposition is :quit."
+  (cond ((eq result :quit)   :quit)
         ((eq result :detach) :detach)
         (t                   nil)))
 
@@ -57,7 +59,7 @@
   "Feed a client key PAYLOAD through `process-byte` (the shared keystroke
    pipeline) one byte at a time via a CPS walker, updating keystroke STATE.
    Returns the serve-loop disposition:
-     :quit   — a command ended the session (also clears *running*);
+     :quit   — a command ended the session (caller must clear *running*);
      :detach — the user requested detach (the client should disconnect);
      NIL     — keep serving (the caller should mark the screen dirty).
    Takes the already-decoded PAYLOAD (not a socket), so the serve loop's
@@ -84,8 +86,9 @@
      handle_msg(msg_key,     p, s, k) :- process_client_keys(s, p, k)."
   `(defun %handle-client-message (type payload session state)
      "Dispatch one incoming client message by TYPE.
-      Returns :quit (session ends), :detach (client disconnects cleanly),
-      :disconnect (EOF / unknown-type teardown), or NIL (continue serving).
+      Returns :quit (session ends, caller must clear *running*), :detach
+      (client disconnects cleanly), :disconnect (EOF / unknown-type teardown),
+      or NIL (continue serving).
       SESSION is the current session; STATE is the per-client keystroke state."
      (declare (ignorable state))
      (cond
@@ -107,9 +110,12 @@
    (setf *dirty* t)
    nil)
   ;; Keystroke: run through the shared prefix/copy-mode pipeline.
+  ;; :quit arm also clears *running* here (effect boundary: %handle-client-message
+  ;; is the outermost pure-ish boundary; the caller %run-multi-server-loop may
+  ;; also act on :quit, but *running* must be cleared before that loop next polls).
   ((= type +msg-key+)
    (case (process-client-keys session payload state)
-     (:quit   :quit)
+     (:quit   (setf *running* nil) :quit)
      (:detach :detach)
      (t       (setf *dirty* t) nil)))
   ;; Unknown message type: treat as a graceful disconnect.

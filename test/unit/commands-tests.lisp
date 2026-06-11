@@ -2818,26 +2818,29 @@
       (is-true ok
                "bytes written via pipe-pane-write must reach the subprocess (within 8 attempts)"))))
 
-;;; ── %copy-mode-row-string (direct unit tests) ───────────────────────────────
+;;; ── %copy-mode-virtual-row-string (direct unit tests) ───────────────────────
 
-(test copy-mode-row-string-returns-row-content
-  "%copy-mode-row-string returns the string content of the requested row."
+(test copy-mode-virtual-row-string-returns-row-content
+  "%copy-mode-virtual-row-string returns the content of the requested virtual row."
   (let ((s (make-screen 20 5)))
     (feed s "hello")
     (cl-tmux/commands::copy-mode-enter s)
-    (let ((row-str (cl-tmux/commands::%copy-mode-row-string s 0)))
+    (let* ((vrow (+ (length (cl-tmux/terminal:screen-scrollback s))
+                    (- 0 (cl-tmux/terminal:screen-copy-offset s))))
+           (row-str (cl-tmux/commands::%copy-mode-virtual-row-string s vrow)))
       (is (stringp row-str)
-          "%copy-mode-row-string must return a string")
+          "%copy-mode-virtual-row-string must return a string")
       (is (and (>= (length row-str) 5)
                (string= "hello" (subseq row-str 0 5)))
-          "%copy-mode-row-string must include the fed text at cols 0-4"))))
+          "%copy-mode-virtual-row-string must include the fed text at cols 0-4"))))
 
-(test copy-mode-row-string-length-equals-screen-width
-  "%copy-mode-row-string always returns a string of length = screen-width."
+(test copy-mode-virtual-row-string-length-equals-screen-width
+  "%copy-mode-virtual-row-string always returns a string of length = screen-width."
   (let ((s (make-screen 20 5)))
     (cl-tmux/commands::copy-mode-enter s)
-    (is (= 20 (length (cl-tmux/commands::%copy-mode-row-string s 0)))
-        "%copy-mode-row-string length must equal screen-width")))
+    (let ((vrow (length (cl-tmux/terminal:screen-scrollback s))))
+      (is (= 20 (length (cl-tmux/commands::%copy-mode-virtual-row-string s vrow)))
+          "%copy-mode-virtual-row-string length must equal screen-width"))))
 
 ;;; ── %run-with-timeout ────────────────────────────────────────────────────────
 

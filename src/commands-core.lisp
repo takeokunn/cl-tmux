@@ -26,8 +26,10 @@
          (was-active (eq target (window-active-pane win))))
     (when target
       (ignore-errors (pty-close (pane-fd target) (pane-pid target))))
+    ;; Fire before window-remove-pane so *server-sessions* lookup in the command
+    ;; hook runner can still find the pane (it is removed from the window below).
+    (run-hooks +hook-after-kill-pane+ target)
     (let ((survivor (window-remove-pane win target)))
-      (run-hooks +hook-after-kill-pane+ target)
       (if (null (window-panes win))
           (kill-window session win)
           (progn
@@ -98,8 +100,10 @@
          (remaining (remove target (session-windows session))))
     (dolist (pane (window-panes target))
       (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
-    (setf (session-windows session) remaining)
+    ;; Fire before setf session-windows so *server-sessions* lookup in the command
+    ;; hook runner can still find this window under its session.
     (run-hooks +hook-after-kill-window+ target)
+    (setf (session-windows session) remaining)
     (unless remaining (return-from kill-window :quit))
     (when (eq (session-active-window session) target)
       (session-select-window session (%window-after-kill remaining killed-id)))

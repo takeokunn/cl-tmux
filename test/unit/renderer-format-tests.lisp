@@ -299,35 +299,22 @@
     (is (search "1" sgr)
         "%status-sgr-from-style 'bold' must include \"1\" (got ~S)" sgr)))
 
-;;; ── %effective-status-style (deprecated status-fg/bg/attr fold-in) ───────────
+;;; ── %effective-status-style ─────────────────────────────────────────────────
 
 (test effective-status-style-empty-when-nothing-set
-  "%effective-status-style is empty when neither status-style nor the deprecated
-   status-fg/bg/attr options are set."
+  "%effective-status-style is empty when status-style is not set."
   (with-isolated-config
     (is (string= "" (cl-tmux/renderer::%effective-status-style))
-        "no style options set must yield the empty string")))
+        "no status-style set must yield the empty string")))
 
-(test effective-status-style-folds-deprecated-bg-alone
-  "An old .tmux.conf setting only status-bg (no status-style) folds to bg=<colour>."
+(test effective-status-style-returns-status-style
+  "%effective-status-style returns the status-style option value directly."
   (with-isolated-config
-    (cl-tmux/options:set-option "status-bg" "black")
-    (is (string= "bg=black" (cl-tmux/renderer::%effective-status-style))
-        "status-bg alone must fold to \"bg=black\"")))
-
-(test effective-status-style-folds-deprecated-into-status-style
-  "%effective-status-style appends the deprecated status-fg/bg/attr options to the
-   modern status-style base so both are honoured."
-  (with-isolated-config
-    (cl-tmux/options:set-option "status-style" "bold")
-    (cl-tmux/options:set-option "status-fg" "white")
-    (cl-tmux/options:set-option "status-bg" "blue")
-    (cl-tmux/options:set-option "status-attr" "underscore")
+    (cl-tmux/options:set-option "status-style" "fg=white,bg=blue,bold")
     (let ((eff (cl-tmux/renderer::%effective-status-style)))
-      (is (search "bold" eff)       "status-style base preserved (got ~S)" eff)
-      (is (search "fg=white" eff)   "status-fg folded in (got ~S)" eff)
-      (is (search "bg=blue" eff)    "status-bg folded in (got ~S)" eff)
-      (is (search "underscore" eff) "status-attr folded in (got ~S)" eff))))
+      (is (search "bold" eff)       "status-style bold preserved (got ~S)" eff)
+      (is (search "fg=white" eff)   "status-style fg=white (got ~S)" eff)
+      (is (search "bg=blue" eff)    "status-style bg=blue (got ~S)" eff))))
 
 ;;; ── set-cursor-shape ─────────────────────────────────────────────────────────
 
@@ -633,3 +620,41 @@
     (dolist (c cases)
       (is (= (cdr c) (cl-tmux/renderer::%border-color-sgr (car c)))
           "%border-color-sgr ~S must return ~D" (car c) (cdr c)))))
+
+;;; ── %dispatch-border-charset padded/none styles ──────────────────────────────
+;;;
+;;; The 'padded' and 'none' styles both return all-space characters.
+;;; These were previously untested (only rounded/double/heavy/single/simple covered).
+
+(test dispatch-border-charset-padded-all-spaces
+  "%dispatch-border-charset 'padded' returns all space characters."
+  (multiple-value-bind (tl tr bl br h v)
+      (cl-tmux/renderer::%dispatch-border-charset "padded")
+    (is (char= #\Space tl) "padded tl must be space")
+    (is (char= #\Space tr) "padded tr must be space")
+    (is (char= #\Space bl) "padded bl must be space")
+    (is (char= #\Space br) "padded br must be space")
+    (is (char= #\Space h)  "padded h must be space")
+    (is (char= #\Space v)  "padded v must be space")))
+
+(test dispatch-border-charset-none-all-spaces
+  "%dispatch-border-charset 'none' returns all space characters."
+  (multiple-value-bind (tl tr bl br h v)
+      (cl-tmux/renderer::%dispatch-border-charset "none")
+    (is (char= #\Space tl) "none tl must be space")
+    (is (char= #\Space tr) "none tr must be space")
+    (is (char= #\Space bl) "none bl must be space")
+    (is (char= #\Space br) "none br must be space")
+    (is (char= #\Space h)  "none h must be space")
+    (is (char= #\Space v)  "none v must be space")))
+
+(test dispatch-border-charset-unknown-falls-back-to-single
+  "%dispatch-border-charset with an unknown style returns the single-line characters."
+  (multiple-value-bind (tl tr bl br h v)
+      (cl-tmux/renderer::%dispatch-border-charset "this-is-unknown")
+    (is (char= #\┌ tl) "unknown style tl falls back to ┌")
+    (is (char= #\┐ tr) "unknown style tr falls back to ┐")
+    (is (char= #\└ bl) "unknown style bl falls back to └")
+    (is (char= #\┘ br) "unknown style br falls back to ┘")
+    (is (char= #\─ h)  "unknown style h falls back to ─")
+    (is (char= #\│ v)  "unknown style v falls back to │")))

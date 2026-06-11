@@ -285,36 +285,24 @@
     (is (search (format nil "~C[31m" #\Escape) out)
         "fg=red must emit ESC[31m (got ~S)" out)))
 
-(test pane-border-style-folds-deprecated-fg-bg
-  "The deprecated pane-border-fg/bg and pane-active-border-fg/bg options fold into
-   the matching -style via %fold-deprecated-style — the call the border renderer
-   makes (old .tmux.conf compat; borders carry no attribute, so attr-opt is NIL)."
-  (with-isolated-options ("pane-border-style" ""        "pane-border-fg" "red"
-                          "pane-active-border-style" "" "pane-active-border-fg" "green"
-                          "pane-active-border-bg" "black")
-    (let ((normal (cl-tmux/renderer::%fold-deprecated-style
-                   (cl-tmux/options:get-option "pane-border-style" "")
-                   "pane-border-fg" "pane-border-bg" nil))
-          (active (cl-tmux/renderer::%fold-deprecated-style
-                   (cl-tmux/options:get-option "pane-active-border-style" "")
-                   "pane-active-border-fg" "pane-active-border-bg" nil)))
-      (is (string= "fg=red" normal)
-          "pane-border-fg folds to fg=red (got ~S)" normal)
-      (is (search "fg=green" active) "pane-active-border-fg folded (got ~S)" active)
-      (is (search "bg=black" active) "pane-active-border-bg folded (got ~S)" active))))
+(test pane-border-style-applied-directly
+  "pane-border-style and pane-active-border-style are read directly from global options."
+  (with-isolated-options ("pane-border-style" "fg=red"
+                          "pane-active-border-style" "fg=green,bg=black")
+    (let ((normal (cl-tmux/options:get-option "pane-border-style" ""))
+          (active (cl-tmux/options:get-option "pane-active-border-style" "")))
+      (is (search "fg=red" normal)
+          "pane-border-style fg=red (got ~S)" normal)
+      (is (search "fg=green" active) "pane-active-border-style fg=green (got ~S)" active)
+      (is (search "bg=black" active) "pane-active-border-style bg=black (got ~S)" active))))
 
-(test mode-style-folds-deprecated-fg-bg-attr
-  "The deprecated mode-fg/mode-bg/mode-attr options fold into mode-style via
-   %fold-deprecated-style — the call the copy-mode selection renderer makes
-   (old .tmux.conf compat; mode has an attribute, unlike borders)."
-  (with-isolated-options ("mode-style" "" "mode-fg" "black"
-                          "mode-bg" "yellow" "mode-attr" "bold")
-    (let ((eff (cl-tmux/renderer::%fold-deprecated-style
-                (cl-tmux/options:get-option "mode-style" "")
-                "mode-fg" "mode-bg" "mode-attr")))
-      (is (search "fg=black" eff)  "mode-fg folded in (got ~S)" eff)
-      (is (search "bg=yellow" eff) "mode-bg folded in (got ~S)" eff)
-      (is (search "bold" eff)      "mode-attr folded in (got ~S)" eff))))
+(test mode-style-applied-directly
+  "mode-style is read directly from the global option (no deprecated-option fold-in)."
+  (with-isolated-options ("mode-style" "fg=black,bg=yellow,bold")
+    (let ((eff (cl-tmux/options:get-option "mode-style" "")))
+      (is (search "fg=black" eff)  "fg=black in mode-style (got ~S)" eff)
+      (is (search "bg=yellow" eff) "bg=yellow in mode-style (got ~S)" eff)
+      (is (search "bold" eff)      "bold in mode-style (got ~S)" eff))))
 
 (test apply-border-style-fg-blue
   "\"fg=blue\" style emits reset then ESC[34m (SGR 34 = blue foreground)."
@@ -949,3 +937,44 @@
            (frame     (cl-tmux/renderer:render-session-to-string s 24 81)))
       (is (null (search (format nil "~C[~Am" #\Escape match-sgr) frame))
           "no search term → no match highlighting"))))
+
+;;; -- +min-clock-width+ constant -----------------------------------------------
+
+(test min-clock-width-constant-is-13
+  "+min-clock-width+ equals 13 — the documented minimum column count for the clock."
+  (is (= 13 cl-tmux/renderer::+min-clock-width+)
+      "+min-clock-width+ must be 13 (got ~D)" cl-tmux/renderer::+min-clock-width+))
+
+(test draw-clock-at-min-width-renders
+  "draw-clock-to-screen renders when the pane is exactly +min-clock-width+ wide."
+  (let ((out (with-output-to-string (s)
+               (cl-tmux/renderer::draw-clock-to-screen
+                s 0 0 cl-tmux/renderer::+min-clock-width+ 3))))
+    (is (plusp (length out))
+        "clock must render at exactly +min-clock-width+ columns (got empty string)")))
+
+(test draw-clock-below-min-width-suppressed
+  "draw-clock-to-screen emits nothing when pane width is +min-clock-width+ - 1."
+  (let ((out (with-output-to-string (s)
+               (cl-tmux/renderer::draw-clock-to-screen
+                s 0 0 (1- cl-tmux/renderer::+min-clock-width+) 3))))
+    (is (string= "" out)
+        "clock must NOT render when width is +min-clock-width+ - 1 (got ~S)" out)))
+
+;;; -- %dispatch-pane-border-chars table ----------------------------------------
+
+(test dispatch-pane-border-chars-single-is-default
+  "%dispatch-pane-border-chars with unknown style falls back to single-line glyphs."
+  (multiple-value-bind (v h)
+      (cl-tmux/renderer::%dispatch-pane-border-chars "unknown-style")
+    (is (char= #\│ v) "unknown style v must fall back to │")
+    (is (char= #\─ h) "unknown style h must fall back to ─")))
+
+(test dispatch-pane-border-chars-all-styles
+  "%dispatch-pane-border-chars returns the expected glyphs for each named style."
+  (flet ((chars (style) (multiple-value-list
+                         (cl-tmux/renderer::%dispatch-pane-border-chars style))))
+    (is (equal '(#\│ #\─) (chars "single")) "single fallback matches default")
+    (is (equal '(#\║ #\═) (chars "double")) "double: ║ ═")
+    (is (equal '(#\┃ #\━) (chars "heavy"))  "heavy: ┃ ━")
+    (is (equal '(#\| #\-) (chars "simple")) "simple: | -")))

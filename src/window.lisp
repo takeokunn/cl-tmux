@@ -221,6 +221,7 @@
               ;; Full split: the new split becomes the tree root.
               (setf (window-tree window) split)
               (%replace-in-tree window leaf split))
+          (setf (pane-window new-pane) window)
           (window-relayout window (window-height window) (window-width window))
           (unless no-focus
             (setf (window-active window) new-pane))
@@ -248,12 +249,19 @@
     (layout-assign (window-tree window) 0 (%status-top-offset) w h)))
 
 (defun window-relayout (window rows cols)
-  "Re-fit WINDOW's panes into ROWS x COLS using the binary split tree."
+  "Re-fit WINDOW's panes into ROWS x COLS using the binary split tree.
+   After assigning geometry via the tree, each pane's screen and PTY are
+   notified via pane-reposition — completing the data/logic separation:
+   layout-assign owns geometry, pane-reposition owns the I/O side effects."
   (setf (window-width  window) cols
         (window-height window) rows)
   (when (window-tree window)
     (%assign-window-tree window cols rows)
-    (window-refresh-panes window)))
+    (window-refresh-panes window)
+    (dolist (pane (window-panes window))
+      (pane-reposition pane
+                       (pane-x pane) (pane-y pane)
+                       (pane-width pane) (pane-height pane)))))
 
 (defun ensure-window-fits (window rows cols)
   "Relayout WINDOW only when its stored size differs from ROWS x COLS."
@@ -270,6 +278,7 @@
     (unless leaf
       (return-from window-remove-pane (first (window-panes window))))
     (multiple-value-bind (parent which) (layout-find-parent tree leaf)
+      (setf (pane-window pane) nil)
       (cond
         ;; LEAF was the sole root — window becomes empty.
         ((null parent)

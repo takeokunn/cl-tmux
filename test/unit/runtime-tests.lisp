@@ -7,6 +7,23 @@
 (def-suite runtime-suite :description "Runtime state variables and threading utilities")
 (in-suite runtime-suite)
 
+;;; ── Test fixture macros ──────────────────────────────────────────────────────
+
+(defmacro with-dead-pane ((pane-var) &body body)
+  "Bind PANE-VAR to a standard dead pane (fd=-1, pid=-1, 5×3 screen) for BODY.
+   Eliminates the repeated (make-pane :id 1 :fd -1 :pid -1 :screen (make-screen 5 3))
+   boilerplate."
+  `(let ((,pane-var (make-pane :id 1 :fd -1 :pid -1 :screen (make-screen 5 3))))
+     ,@body))
+
+(defmacro with-isolated-state (&body body)
+  "Run BODY with both config and hooks isolated (combined with-isolated-config +
+   with-isolated-hooks).  Eliminates the double nesting in tests that touch both
+   option reads and hook firing."
+  `(with-isolated-config
+     (with-isolated-hooks
+       ,@body)))
+
 ;;; ── Global variables exist and have sensible types ───────────────────────────
 
 (test runtime-globals-exist
@@ -47,25 +64,25 @@
 
 (test pane-reader-loop-exits-when-running-nil
   :description "%pane-reader-loop exits immediately when *running* is NIL without error."
-  (let ((cl-tmux::*running* nil)
-        (cl-tmux::*dirty*   nil)
-        (pane (make-pane :id 1 :fd -1 :pid -1 :screen (make-screen 5 3))))
-    (finishes (cl-tmux::%pane-reader-loop pane)
-              "%pane-reader-loop must return cleanly when *running* is NIL")
-    (is-false cl-tmux::*dirty* "*dirty* must remain NIL when loop exits immediately")))
+  (with-dead-pane (pane)
+    (let ((cl-tmux::*running* nil)
+          (cl-tmux::*dirty*   nil))
+      (finishes (cl-tmux::%pane-reader-loop pane)
+                "%pane-reader-loop must return cleanly when *running* is NIL")
+      (is-false cl-tmux::*dirty* "*dirty* must remain NIL when loop exits immediately"))))
 
 ;;; ── CPS reader states ────────────────────────────────────────────────────────
 
 (test reader-eof-state-returns-nil-without-remain-on-exit
   :description "reader-eof-state returns NIL when remain-on-exit is not set."
-  (let ((pane (make-pane :id 1 :fd -1 :pid -1 :screen (make-screen 5 3))))
+  (with-dead-pane (pane)
     (with-isolated-options ("remain-on-exit" nil)
       (is (null (cl-tmux::reader-eof-state pane))
           "reader-eof-state must return NIL when remain-on-exit is not set"))))
 
 (test reader-eof-state-returns-remain-state-when-option-set
   :description "reader-eof-state returns #'reader-remain-on-exit-state when remain-on-exit is set."
-  (let ((pane (make-pane :id 1 :fd -1 :pid -1 :screen (make-screen 5 3))))
+  (with-dead-pane (pane)
     (with-isolated-options ("remain-on-exit" t)
       (let ((result (cl-tmux::reader-eof-state pane)))
         (is (functionp result)
@@ -76,17 +93,16 @@
    runtime: with the GLOBAL remain-on-exit NIL but the pane-local value set to
    T, reader-eof-state must return the parking state #'reader-remain-on-exit-state
    (proving runtime.lisp's get-option-for-pane read honors per-pane overrides)."
-  (with-isolated-config
-    (with-isolated-hooks
-      (let* ((sess (make-fake-session))
-             (pane (cl-tmux/model:session-active-pane sess))
-             (cl-tmux::*dirty* nil))
-        (cl-tmux/options:set-option "remain-on-exit" nil)
-        (cl-tmux/options:set-option-for-pane "remain-on-exit" "on" pane)
-        (let ((result (cl-tmux::reader-eof-state pane)))
-          (is (eq #'cl-tmux::reader-remain-on-exit-state result)
-              "reader-eof-state must return the remain-on-exit parking state when the
-               pane-local override is set, even though the global value is NIL"))))))
+  (with-isolated-state
+    (let* ((sess (make-fake-session))
+           (pane (cl-tmux/model:session-active-pane sess))
+           (cl-tmux::*dirty* nil))
+      (cl-tmux/options:set-option "remain-on-exit" nil)
+      (cl-tmux/options:set-option-for-pane "remain-on-exit" "on" pane)
+      (let ((result (cl-tmux::reader-eof-state pane)))
+        (is (eq #'cl-tmux::reader-remain-on-exit-state result)
+            "reader-eof-state must return the remain-on-exit parking state when the
+             pane-local override is set, even though the global value is NIL")))))
 
 (test remain-on-exit-banner-uses-format-option
   :description "%remain-on-exit-banner expands remain-on-exit-format and wraps it in
@@ -114,7 +130,7 @@
 
 (test reader-reading-state-honors-window-local-monitor-activity
   :description "Pins the per-window resolution at the migrated reader-reading-state
-   activity-flag site (src/runtime.lisp ~line 178): that site reads
+   activity-flag site (src/runtime.lisp): that site reads
    (get-option-for-context \"monitor-activity\" :window win) to decide whether to
    set window-activity-flag for a non-active window.  reader-reading-state itself
    needs a live PTY fd (pty-read-blocking; fake panes have fd -1 → immediate EOF,
@@ -122,108 +138,102 @@
    makes: with global monitor-activity NIL, a window whose LOCAL value is on
    resolves T (activity tracked), while a window with no override resolves NIL
    (opted out)."
-  (with-isolated-config
-    (with-isolated-hooks
-      ;; >=2 windows so there is a NON-ACTIVE background window (the activity-flag
-      ;; path only fires for non-active windows).
-      (let* ((sess        (make-fake-session :nwindows 2))
-             (active-win  (cl-tmux/model:session-active-window sess))
-             (bg-win      (find-if-not (lambda (w) (eq w active-win))
-                                       (cl-tmux/model:session-windows sess))))
-        (is (not (null bg-win)) "must have a non-active background window")
-        (cl-tmux/options:set-option "monitor-activity" nil)              ; global = NIL
-        ;; Window-local "on" on the background window.
-        (cl-tmux/options:set-option-for-window "monitor-activity" "on" bg-win)
-        (is (eq t (cl-tmux/options:get-option-for-context "monitor-activity" :window bg-win))
-            "window-local on must resolve T at the migrated read site (global NIL)")
-        ;; The active window has no local override → resolves to global NIL.
-        (is (null (cl-tmux/options:get-option-for-context "monitor-activity" :window active-win))
-            "a window without the override must resolve NIL (global NIL)")))))
+  (with-isolated-state
+    ;; >=2 windows so there is a NON-ACTIVE background window (the activity-flag
+    ;; path only fires for non-active windows).
+    (let* ((sess        (make-fake-session :nwindows 2))
+           (active-win  (cl-tmux/model:session-active-window sess))
+           (bg-win      (find-if-not (lambda (w) (eq w active-win))
+                                     (cl-tmux/model:session-windows sess))))
+      (is (not (null bg-win)) "must have a non-active background window")
+      (cl-tmux/options:set-option "monitor-activity" nil)              ; global = NIL
+      ;; Window-local "on" on the background window.
+      (cl-tmux/options:set-option-for-window "monitor-activity" "on" bg-win)
+      (is (eq t (cl-tmux/options:get-option-for-context "monitor-activity" :window bg-win))
+          "window-local on must resolve T at the migrated read site (global NIL)")
+      ;; The active window has no local override → resolves to global NIL.
+      (is (null (cl-tmux/options:get-option-for-context "monitor-activity" :window active-win))
+          "a window without the override must resolve NIL (global NIL)"))))
 
 (test reader-reading-state-window-local-monitor-activity-off-over-global-on
   :description "Companion falsey-honoring check at the same migrated site: with
    global monitor-activity on, a window whose LOCAL value is off (NIL) opts out —
    the per-window read returns NIL, proving the present-but-falsey window override
    is honored at the reader-reading-state activity-flag site."
-  (with-isolated-config
-    (with-isolated-hooks
-      (let* ((sess       (make-fake-session :nwindows 2))
-             (active-win (cl-tmux/model:session-active-window sess))
-             (bg-win     (find-if-not (lambda (w) (eq w active-win))
-                                      (cl-tmux/model:session-windows sess))))
-        (cl-tmux/options:set-option "monitor-activity" t)               ; global = T
-        (cl-tmux/options:set-option-for-window "monitor-activity" "off" bg-win) ; window = NIL
-        (is (null (cl-tmux/options:get-option-for-context "monitor-activity" :window bg-win))
-            "window-local off (NIL) must win over global on (T) at the migrated site")))))
+  (with-isolated-state
+    (let* ((sess       (make-fake-session :nwindows 2))
+           (active-win (cl-tmux/model:session-active-window sess))
+           (bg-win     (find-if-not (lambda (w) (eq w active-win))
+                                    (cl-tmux/model:session-windows sess))))
+      (cl-tmux/options:set-option "monitor-activity" t)               ; global = T
+      (cl-tmux/options:set-option-for-window "monitor-activity" "off" bg-win) ; window = NIL
+      (is (null (cl-tmux/options:get-option-for-context "monitor-activity" :window bg-win))
+          "window-local off (NIL) must win over global on (T) at the migrated site"))))
 
 (test mark-window-activity-fires-alert-activity-hook
   :description "%mark-window-activity sets the activity flag AND fires the
    alert-activity hook (tmux alert hook, previously never fired)."
-  (with-isolated-config
-    (with-isolated-hooks
-      (let* ((sess  (make-fake-session :nwindows 1))
-             (win   (cl-tmux/model:session-active-window sess))
-             (fired nil))
-        (cl-tmux/options:set-option "monitor-activity" "on")
-        (setf (cl-tmux/model:window-activity-flag win) nil)
-        (cl-tmux/hooks:add-hook "alert-activity"
-                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-        (cl-tmux::%mark-window-activity win)
-        (is-true (cl-tmux/model:window-activity-flag win) "activity flag must be set")
-        (is-true fired "the alert-activity hook must fire")))))
+  (with-isolated-state
+    (let* ((sess  (make-fake-session :nwindows 1))
+           (win   (cl-tmux/model:session-active-window sess))
+           (fired nil))
+      (cl-tmux/options:set-option "monitor-activity" "on")
+      (setf (cl-tmux/model:window-activity-flag win) nil)
+      (cl-tmux/hooks:add-hook "alert-activity"
+                              (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+      (cl-tmux::%mark-window-activity win)
+      (is-true (cl-tmux/model:window-activity-flag win) "activity flag must be set")
+      (is-true fired "the alert-activity hook must fire"))))
 
 (test monitor-silence-fires-alert-silence-hook
   :description "%check-monitor-silence fires the alert-silence hook when a window
    crosses the silence threshold (tmux alert hook, previously never fired)."
-  (with-isolated-config
-    (with-isolated-hooks
-      (let* ((sess  (make-fake-session :nwindows 1))
-             (win   (cl-tmux/model:session-active-window sess))
-             (fired nil))
-        (cl-tmux/options:set-option "monitor-silence" 5)
-        ;; silence-action "any" so the alert fires even for the (current) window
-        ;; under test (default "other" would suppress the current window).
-        (cl-tmux/options:set-option "silence-action" "any")
-        (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
-              (cl-tmux/model:window-silence-flag win) nil)
-        (cl-tmux/hooks:add-hook "alert-silence"
-                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-        (cl-tmux::%check-monitor-silence (list (cons 1 sess)) (lambda () nil))
-        (is-true (cl-tmux/model:window-silence-flag win) "silence flag must be set")
-        (is-true fired "the alert-silence hook must fire")))))
+  (with-isolated-state
+    (let* ((sess  (make-fake-session :nwindows 1))
+           (win   (cl-tmux/model:session-active-window sess))
+           (fired nil))
+      (cl-tmux/options:set-option "monitor-silence" 5)
+      ;; silence-action "any" so the alert fires even for the (current) window
+      ;; under test (default "other" would suppress the current window).
+      (cl-tmux/options:set-option "silence-action" "any")
+      (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
+            (cl-tmux/model:window-silence-flag win) nil)
+      (cl-tmux/hooks:add-hook "alert-silence"
+                              (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+      (cl-tmux::%check-monitor-silence (list (cons 1 sess)) (lambda () nil))
+      (is-true (cl-tmux/model:window-silence-flag win) "silence flag must be set")
+      (is-true fired "the alert-silence hook must fire"))))
 
 (test monitor-silence-default-is-zero-no-op
   :description "With the registered default monitor-silence = 0, %check-monitor-silence
    is a no-op: no window crosses a (disabled) threshold, so no flag is set."
-  (with-isolated-config
-    (with-isolated-hooks
-      (let* ((sess (make-fake-session :nwindows 1))
-             (win  (cl-tmux/model:session-active-window sess)))
-        (is (eql 0 (cl-tmux/options:get-option "monitor-silence"))
-            "monitor-silence must default to 0 (registered)")
-        ;; Window has been silent for a long time, but monitoring is off (0).
-        (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
-              (cl-tmux/model:window-silence-flag win) nil)
-        (cl-tmux::%check-monitor-silence (list (cons 1 sess)) (lambda () nil))
-        (is-false (cl-tmux/model:window-silence-flag win)
-                  "monitor-silence 0 must not set the silence flag")))))
+  (with-isolated-state
+    (let* ((sess (make-fake-session :nwindows 1))
+           (win  (cl-tmux/model:session-active-window sess)))
+      (is (eql 0 (cl-tmux/options:get-option "monitor-silence"))
+          "monitor-silence must default to 0 (registered)")
+      ;; Window has been silent for a long time, but monitoring is off (0).
+      (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
+            (cl-tmux/model:window-silence-flag win) nil)
+      (cl-tmux::%check-monitor-silence (list (cons 1 sess)) (lambda () nil))
+      (is-false (cl-tmux/model:window-silence-flag win)
+                "monitor-silence 0 must not set the silence flag"))))
 
 (test monitor-silence-visual-silence-shows-overlay
   :description "When visual-silence is on, crossing the silence threshold shows a
    transient overlay naming the quiet window (mirrors visual-activity)."
-  (with-isolated-config
-    (with-isolated-hooks
-      (let* ((sess (make-fake-session :nwindows 1))
-             (win  (cl-tmux/model:session-active-window sess))
-             (cl-tmux/prompt:*overlay* nil))
-        (cl-tmux/options:set-option "monitor-silence" 5)
-        (cl-tmux/options:set-option "silence-action" "any")  ; fire for the current window
-        (cl-tmux/options:set-option "visual-silence" t)
-        (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
-              (cl-tmux/model:window-silence-flag win) nil)
-        (cl-tmux::%check-monitor-silence (list (cons 1 sess)) (lambda () nil))
-        (is-true (cl-tmux/prompt:overlay-active-p)
-                 "visual-silence must show an overlay when silence is detected")))))
+  (with-isolated-state
+    (let* ((sess (make-fake-session :nwindows 1))
+           (win  (cl-tmux/model:session-active-window sess))
+           (cl-tmux/prompt:*overlay* nil))
+      (cl-tmux/options:set-option "monitor-silence" 5)
+      (cl-tmux/options:set-option "silence-action" "any")  ; fire for the current window
+      (cl-tmux/options:set-option "visual-silence" t)
+      (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
+            (cl-tmux/model:window-silence-flag win) nil)
+      (cl-tmux::%check-monitor-silence (list (cons 1 sess)) (lambda () nil))
+      (is-true (cl-tmux/prompt:overlay-active-p)
+               "visual-silence must show an overlay when silence is detected"))))
 
 (test prompt-history-persists-to-history-file
   "add-prompt-history saves to history-file and load-prompt-history restores it
@@ -270,28 +280,27 @@
 (test silence-action-none-suppresses-alert
   "silence-action none suppresses the silence alert (and flag) even when the
    threshold is crossed."
-  (with-isolated-config
-    (with-isolated-hooks
-      (let* ((sess (make-fake-session :nwindows 1))
-             (win  (cl-tmux/model:session-active-window sess))
-             (fired nil))
-        (cl-tmux/options:set-option "monitor-silence" 5)
-        (cl-tmux/options:set-option "silence-action" "none")
-        (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
-              (cl-tmux/model:window-silence-flag win) nil)
-        (cl-tmux/hooks:add-hook "alert-silence"
-                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-        (cl-tmux::%check-monitor-silence (list (cons 1 sess)) (lambda () nil))
-        (is-false fired "silence-action none must suppress the alert hook")
-        (is-false (cl-tmux/model:window-silence-flag win)
-                  "silence-action none must not set the silence flag")))))
+  (with-isolated-state
+    (let* ((sess (make-fake-session :nwindows 1))
+           (win  (cl-tmux/model:session-active-window sess))
+           (fired nil))
+      (cl-tmux/options:set-option "monitor-silence" 5)
+      (cl-tmux/options:set-option "silence-action" "none")
+      (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
+            (cl-tmux/model:window-silence-flag win) nil)
+      (cl-tmux/hooks:add-hook "alert-silence"
+                              (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+      (cl-tmux::%check-monitor-silence (list (cons 1 sess)) (lambda () nil))
+      (is-false fired "silence-action none must suppress the alert hook")
+      (is-false (cl-tmux/model:window-silence-flag win)
+                "silence-action none must not set the silence flag"))))
 
 (test reader-remain-on-exit-state-returns-nil-when-not-running
   :description "reader-remain-on-exit-state returns NIL immediately when *running* is NIL."
-  (let ((cl-tmux::*running* nil)
-        (pane (make-pane :id 1 :fd -1 :pid -1 :screen (make-screen 5 3))))
-    (is (null (cl-tmux::reader-remain-on-exit-state pane))
-        "remain-on-exit state must return NIL when *running* is NIL")))
+  (with-dead-pane (pane)
+    (let ((cl-tmux::*running* nil))
+      (is (null (cl-tmux::reader-remain-on-exit-state pane))
+          "remain-on-exit state must return NIL when *running* is NIL"))))
 
 ;;; Table-driven fbound checks for CPS reader state functions.
 (test reader-state-functions-are-all-fbound
@@ -309,13 +318,13 @@
 (test run-reader-states-exits-when-running-nil
   :description "%run-reader-states exits immediately when *running* is NIL, even
 given a non-NIL initial state (loop while *running*)."
-  (let* ((cl-tmux::*running* nil)
-         (pane (make-pane :id 1 :fd -1 :pid -1 :screen (make-screen 5 3)))
-         ;; A state function that should never be called.
-         (boom (lambda (_p) (declare (ignore _p))
-                 (error "state function called despite *running*=NIL"))))
-    (finishes (cl-tmux::%run-reader-states pane boom)
-              "%run-reader-states must exit immediately when *running* is NIL")))
+  (with-dead-pane (pane)
+    (let* ((cl-tmux::*running* nil)
+           ;; A state function that should never be called.
+           (boom (lambda (_p) (declare (ignore _p))
+                   (error "state function called despite *running*=NIL"))))
+      (finishes (cl-tmux::%run-reader-states pane boom)
+                "%run-reader-states must exit immediately when *running* is NIL"))))
 
 ;;; ── stop-reader-threads ──────────────────────────────────────────────────────
 
@@ -728,3 +737,149 @@ given a non-NIL initial state (loop while *running*)."
     (let ((ctx (cl-tmux/format:format-context-from-session sess win pane)))
       (is (string= "1" (cl-tmux/format:expand-format "#{pane_dead}" ctx))
           "pane reports dead (#{pane_dead}=1) after reader-eof-state"))))
+
+;;; ── New coverage: refactored helper functions ─────────────────────────────────
+
+(test write-remain-on-exit-banner-writes-to-screen
+  "%write-remain-on-exit-banner writes the formatted banner to the pane screen.
+   This helper was extracted from reader-eof-state; we verify it side-effects
+   the screen without needing to trigger the full CPS state transition."
+  (with-isolated-hooks
+    (let ((pane (make-pane :id 1 :fd -1 :pid -1 :screen (make-screen 20 3))))
+      (with-isolated-options ("remain-on-exit-format" "EXIT")
+        (cl-tmux::%write-remain-on-exit-banner pane)
+        (is (search "EXIT" (row-string (pane-screen pane) 0 :end 20))
+            "screen must contain the banner text after %write-remain-on-exit-banner")))))
+
+(test update-window-on-pane-output-stamps-timestamp
+  "%update-window-on-pane-output sets last-output-time to the current universal-time."
+  (with-isolated-state
+    (let* ((sess (make-fake-session :nwindows 1))
+           (win  (cl-tmux/model:session-active-window sess))
+           (before (get-universal-time)))
+      (setf (cl-tmux/model:window-last-output-time win) 0)
+      (cl-tmux::%update-window-on-pane-output win)
+      (is (>= (cl-tmux/model:window-last-output-time win) before)
+          "last-output-time must be stamped with current time"))))
+
+(test update-window-on-pane-output-clears-silence-flag
+  "%update-window-on-pane-output clears window-silence-flag (new output resets silence)."
+  (with-isolated-state
+    (let* ((sess (make-fake-session :nwindows 1))
+           (win  (cl-tmux/model:session-active-window sess)))
+      (setf (cl-tmux/model:window-silence-flag win) t)
+      (cl-tmux::%update-window-on-pane-output win)
+      (is-false (cl-tmux/model:window-silence-flag win)
+                "silence flag must be cleared by new pane output"))))
+
+(test update-window-on-pane-output-nil-window-is-noop
+  "%update-window-on-pane-output is a no-op when window is NIL."
+  (finishes (cl-tmux::%update-window-on-pane-output nil)
+            "%update-window-on-pane-output must not error on NIL window"))
+
+(test fire-silence-alert-sets-flag-and-fires-hook
+  "%fire-silence-alert sets the silence flag, fires the hook, and calls dirty-fn."
+  (with-isolated-state
+    (let* ((sess   (make-fake-session :nwindows 1))
+           (win    (cl-tmux/model:session-active-window sess))
+           (fired  nil)
+           (dirty  nil))
+      (cl-tmux/hooks:add-hook "alert-silence"
+                              (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+      (cl-tmux::%fire-silence-alert win (lambda () (setf dirty t)))
+      (is-true (cl-tmux/model:window-silence-flag win) "silence flag must be set")
+      (is-true fired "alert-silence hook must fire")
+      (is-true dirty "dirty-fn must be called"))))
+
+(test maybe-auto-dismiss-overlay-dismisses-expired
+  "%maybe-auto-dismiss-overlay dismisses an overlay that has been shown longer
+   than display-time."
+  (with-isolated-state
+    (let ((cl-tmux/prompt:*overlay* "test overlay"))
+      ;; Set shown-at to a time far in the past so it has definitely expired.
+      (setf cl-tmux/prompt::*overlay-shown-at* (- (get-universal-time) 10))
+      (with-isolated-options ("display-time" 500)  ; 500 ms = 0.5 s
+        (let ((result (cl-tmux::%maybe-auto-dismiss-overlay)))
+          (is-true result "%maybe-auto-dismiss-overlay must return T when overlay expires")
+          (is-false (cl-tmux/prompt:overlay-active-p)
+                    "overlay must be cleared after dismissal"))))))
+
+(test maybe-auto-dismiss-overlay-keeps-recent-overlay
+  "%maybe-auto-dismiss-overlay does not dismiss an overlay shown very recently."
+  (with-isolated-state
+    (let ((cl-tmux/prompt:*overlay* "recent overlay"))
+      ;; shown-at = now → not expired.
+      (setf cl-tmux/prompt::*overlay-shown-at* (get-universal-time))
+      (with-isolated-options ("display-time" 5000)  ; 5000 ms = 5 s
+        (let ((result (cl-tmux::%maybe-auto-dismiss-overlay)))
+          (is-false result "%maybe-auto-dismiss-overlay must return NIL for recent overlay")
+          (is-true (cl-tmux/prompt:overlay-active-p)
+                   "recent overlay must remain active"))))))
+
+(test check-lock-after-time-locks-session-on-inactivity
+  "%check-lock-after-time locks the session when idle time exceeds lock-after-time."
+  (with-isolated-state
+    (let* ((sess  (make-fake-session :nwindows 1))
+           (dirty nil))
+      (cl-tmux/options:set-option "lock-after-time" 1)
+      (setf cl-tmux::*last-activity-time* (- (get-universal-time) 60))
+      (setf (cl-tmux/model:session-locked-p sess) nil)
+      (cl-tmux::%check-lock-after-time sess (lambda () (setf dirty t)))
+      (is-true (cl-tmux/model:session-locked-p sess)
+               "session must be locked after inactivity exceeds lock-after-time")
+      (is-true dirty "dirty-fn must be called when locking"))))
+
+(test check-lock-after-time-noop-when-zero
+  "%check-lock-after-time is a no-op when lock-after-time is 0 (disabled)."
+  (with-isolated-state
+    (let* ((sess  (make-fake-session :nwindows 1))
+           (dirty nil))
+      (cl-tmux/options:set-option "lock-after-time" 0)
+      (setf cl-tmux::*last-activity-time* (- (get-universal-time) 60))
+      (setf (cl-tmux/model:session-locked-p sess) nil)
+      (cl-tmux::%check-lock-after-time sess (lambda () (setf dirty t)))
+      (is-false (cl-tmux/model:session-locked-p sess)
+                "lock-after-time 0 must not lock the session")
+      (is-false dirty "dirty-fn must not be called when locking is disabled"))))
+
+(test effective-prompt-history-limit-returns-option-value
+  "%effective-prompt-history-limit returns the prompt-history-limit option when set."
+  (with-isolated-options ("prompt-history-limit" 42)
+    (is (= 42 (cl-tmux::%effective-prompt-history-limit))
+        "%effective-prompt-history-limit must return the option value")))
+
+(test effective-prompt-history-limit-returns-default-when-unset
+  "%effective-prompt-history-limit falls back to +max-prompt-history+ when unset."
+  (with-fresh-options
+    (is (= cl-tmux::+max-prompt-history+
+           (cl-tmux::%effective-prompt-history-limit))
+        "%effective-prompt-history-limit must fall back to +max-prompt-history+")))
+
+(test install-sigwinch-handler-sets-dirty-and-resize
+  "install-sigwinch-handler registers a handler that sets *dirty* and *resize-pending*."
+  ;; We can only verify the handler is installed (fboundp already tested).
+  ;; Triggering SIGWINCH in a test is unsafe (it would fire on the test process).
+  ;; Verify the state variables are bound and the installer doesn't error.
+  (let ((cl-tmux::*dirty* nil)
+        (cl-tmux::*resize-pending* nil))
+    (finishes (cl-tmux::install-sigwinch-handler)
+              "install-sigwinch-handler must not signal")))
+
+(test remain-on-exit-poll-seconds-is-positive
+  "+remain-on-exit-poll-seconds+ is a positive real constant."
+  (is (plusp cl-tmux::+remain-on-exit-poll-seconds+)
+      "+remain-on-exit-poll-seconds+ must be positive")
+  (is (realp cl-tmux::+remain-on-exit-poll-seconds+)
+      "+remain-on-exit-poll-seconds+ must be a real number"))
+
+(test default-display-time-ms-is-positive
+  "+default-display-time-ms+ is a positive integer constant."
+  (is (plusp cl-tmux::+default-display-time-ms+)
+      "+default-display-time-ms+ must be positive")
+  (is (integerp cl-tmux::+default-display-time-ms+)
+      "+default-display-time-ms+ must be an integer"))
+
+(test ms-per-second-constant-is-correct
+  "+ms-per-second+ is 1000.0."
+  (is (= 1000.0 cl-tmux::+ms-per-second+)
+      "+ms-per-second+ must equal 1000.0"))

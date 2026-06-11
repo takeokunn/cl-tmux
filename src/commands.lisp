@@ -71,33 +71,40 @@
 ;;; bit 3 = underline (SGR 4), bit 4 = blink (SGR 5), bit 5 = italic (SGR 3),
 ;;; bit 6 = conceal (SGR 8), bit 7 = strikethrough (SGR 9).
 ;;; Mirrors the renderer's cell-attr table — changes to that table must be
-;;; reflected here.  Using eval-when + defconstant avoids the list non-EQL
-;;; redefinition error while communicating immutability to readers.
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (defconstant +capture-sgr-attr-codes+
-    (if (boundp '+capture-sgr-attr-codes+)
-        (symbol-value '+capture-sgr-attr-codes+)
-        '((0 . 1) (1 . 2) (2 . 7) (3 . 4) (4 . 5) (5 . 3) (6 . 8) (7 . 9)))
-    "Cell attribute bit → SGR code: bold/dim/reverse/underline/blink/italic/
-   conceal/strikethrough (mirrors the renderer's cell-attr table)."))
+;;; reflected here.
+(defparameter *capture-sgr-attr-codes*
+  '((0 . 1) (1 . 2) (2 . 7) (3 . 4) (4 . 5) (5 . 3) (6 . 8) (7 . 9))
+  "Cell attribute bit → SGR code: bold/dim/reverse/underline/blink/italic/
+   conceal/strikethrough (mirrors the renderer's cell-attr table).")
+
+;;; Bit 24 of a cell color value indicates a 24-bit true-colour (0xRRGGBB packed
+;;; into the low 24 bits).  Values below this threshold use the 256-colour palette
+;;; or the 16 standard/bright colours.
+(defconstant +true-color-bit+ #x1000000
+  "Flag bit in a cell color integer indicating a 24-bit true-colour value.
+   When set, the low 24 bits encode R (bits 23-16), G (bits 15-8), B (bits 7-0).")
 
 (defun %capture-color-sgr (color is-bg)
   "SGR parameter fragment (a string) for a cell COLOR value; IS-BG selects the
    background variant.  Handles 0-7 (standard), 8-15 (bright), 16-255 (256-colour)
-   and bit-24 true-colour, matching the cell colour encoding."
+   and +true-color-bit+ true-colour, matching the cell colour encoding."
   (cond
-    ((>= color #x1000000)                 ; true-colour: bit 24 set, RGB in low 24
+    ;; Branch 1: 24-bit true-colour — +true-color-bit+ set, RGB in low 24 bits.
+    ((>= color +true-color-bit+)
      (format nil "~D;2;~D;~D;~D" (if is-bg 48 38)
              (ldb (byte 8 16) color) (ldb (byte 8 8) color) (ldb (byte 8 0) color)))
+    ;; Branch 2: standard ANSI colours 0-7 (30-37 fg, 40-47 bg).
     ((<= 0 color 7)   (format nil "~D" (+ color (if is-bg 40 30))))
+    ;; Branch 3: bright colours 8-15 (90-97 fg, 100-107 bg).
     ((<= 8 color 15)  (format nil "~D" (+ (- color 8) (if is-bg 100 90))))
+    ;; Branch 4: 256-colour palette (SGR 38;5;N or 48;5;N).
     (t                (format nil "~D;5;~D" (if is-bg 48 38) color))))
 
 (defun %capture-cell-sgr (fg bg attrs)
   "Full SGR escape (reset + this cell's attributes and colours) for capture -e."
   (with-output-to-string (s)
     (format s "~C[0" #\Escape)            ; reset baseline, then re-apply
-    (loop for (bit . code) in +capture-sgr-attr-codes+
+    (loop for (bit . code) in *capture-sgr-attr-codes*
           when (logbitp bit attrs) do (format s ";~D" code))
     (format s ";~A;~A" (%capture-color-sgr fg nil) (%capture-color-sgr bg t))
     (write-char #\m s)))
@@ -260,7 +267,8 @@
            (new-win (make-window :id new-id :name wname :width cols :height rows)))
       ;; Install the pane as the sole leaf in the new window's tree.
       (setf (window-panes new-win) (list pane)
-            (window-tree  new-win) (make-layout-leaf pane))
+            (window-tree  new-win) (make-layout-leaf pane)
+            (pane-window  pane)    new-win)
       (window-select-pane new-win pane)
       ;; Reposition the pane to fill the new window.
       (pane-reposition pane 0 0 cols rows)
@@ -300,7 +308,8 @@
                                             (make-layout-leaf src-pane) 1/2)))
           (cl-tmux/model::%replace-in-tree dst-window active-leaf new-split)
           (setf (window-panes dst-window)
-                (layout-leaves (window-tree dst-window)))
+                (layout-leaves (window-tree dst-window))
+                (pane-window src-pane) dst-window)
           (window-relayout dst-window
                            (window-height dst-window)
                            (window-width  dst-window))
@@ -362,14 +371,15 @@
 ;;; (meta/alt) are handled algorithmically.  Escape sequences use the normal
 ;;; (non-application) xterm encodings, matching what send-keys emits by default.
 
-;; String constants are not EQL-able, so DEFCONSTANT causes SBCL to signal a
-;; redefinition error every time the fasl is loaded.  DEFVAR avoids the check.
-(defvar +escape-string+ (load-time-value (string (code-char 27)) t)
+;;; ESC as a single-character string.  defparameter rather than defconstant because
+;;; string literals are not EQL-comparable and SBCL would signal a redefinition
+;;; error on every fasl reload with defconstant.
+(defparameter *escape-string* (string (code-char 27))
   "The ESC character (ASCII 27) as a single-character string.")
 
 (defun %escape-sequence (&rest tail)
   "Build a string beginning with ESC followed by TAIL strings concatenated."
-  (apply #'concatenate 'string +escape-string+ tail))
+  (apply #'concatenate 'string *escape-string* tail))
 
 (defparameter *send-key-names*
   (list
@@ -377,7 +387,7 @@
    (cons "Enter"  (string #\Return)) (cons "C-m" (string #\Return))
    (cons "Tab"    (string #\Tab))    (cons "C-i" (string #\Tab))
    (cons "Space"  " ")
-   (cons "Escape" +escape-string+)   (cons "Esc" +escape-string+)
+   (cons "Escape" *escape-string*)   (cons "Esc" *escape-string*)
    (cons "BSpace" (string (code-char 127)))
    (cons "BTab"   (%escape-sequence "[Z"))
    ;; arrows (normal cursor mode)
@@ -400,19 +410,21 @@
    string whose char-codes are the bytes — all < 128).")
 
 (defparameter *modified-send-keys*
-  '(;; letter-final keys → ESC [ 1 ; <mod> <final>
+  '(;; :letter keys encode as ESC [ 1 ; <mod> <final-char>
+    ;; e.g. C-Up → ESC[1;5A  (mod=5=Ctrl), S-Left → ESC[1;2D (mod=2=Shift)
     ("Up" :letter #\A) ("Down" :letter #\B) ("Right" :letter #\C) ("Left" :letter #\D)
     ("Home" :letter #\H) ("End" :letter #\F)
     ("F1" :letter #\P) ("F2" :letter #\Q) ("F3" :letter #\R) ("F4" :letter #\S)
-    ;; tilde keys → ESC [ <param> ; <mod> ~
+    ;; :tilde keys encode as ESC [ <param> ; <mod> ~
+    ;; e.g. C-F5 → ESC[15;5~  (param=15), S-PageUp → ESC[5;2~ (param=5)
     ("F5" :tilde 15) ("F6" :tilde 17) ("F7" :tilde 18) ("F8" :tilde 19)
     ("F9" :tilde 20) ("F10" :tilde 21) ("F11" :tilde 23) ("F12" :tilde 24)
     ("PageUp" :tilde 5) ("PPage" :tilde 5) ("PageDown" :tilde 6) ("NPage" :tilde 6)
     ("Insert" :tilde 2) ("IC" :tilde 2) ("Delete" :tilde 3) ("DC" :tilde 3))
-  "Base special keys that take a CSI modifier, with the byte-sequence shape used
-   when a modifier is present.  :letter keys encode as ESC [ 1 ; <mod> <final>;
-   :tilde keys as ESC [ <param> ; <mod> ~.  The inverse of the event loop's
-   modifier decoding, so send-keys C-Up round-trips with `bind -n C-Up`.")
+  "Base special keys that accept a CSI modifier prefix, with their byte-sequence
+   shape.  The modifier code is 1+Shift+2*Alt+4*Ctrl (so Ctrl=5, Shift=2, etc.).
+   The inverse of the event loop's modifier decoding, so send-keys C-Up
+   round-trips with `bind -n C-Up`.")
 
 (defun %split-key-modifiers (name)
   "Strip leading C-/M-/S- modifier prefixes from NAME.  Returns (values MOD-VALUE

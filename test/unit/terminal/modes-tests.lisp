@@ -256,9 +256,17 @@
     ;; Screen is unchanged.
     (check-row s 0 "hello")))
 
-(test define-dec-pm-rules-macro-is-defined
-  "define-dec-pm-rules is a defined macro in the actions package."
-  (is (macro-function 'cl-tmux/terminal/actions::define-dec-pm-rules)))
+(test dec-pm-mode-6-origin-mode-set-and-reset
+  "dec-pm-set/reset with param 6 toggles DECOM origin-mode: set → T, reset → NIL."
+  (with-screen (s 20 5)
+    (is-false (cl-tmux/terminal/types:screen-origin-mode s)
+              "origin-mode must be NIL by default")
+    (cl-tmux/terminal/actions:dec-pm-set s '(6))
+    (is-true (cl-tmux/terminal/types:screen-origin-mode s)
+             "origin-mode must be T after dec-pm-set 6")
+    (cl-tmux/terminal/actions:dec-pm-reset s '(6))
+    (is-false (cl-tmux/terminal/types:screen-origin-mode s)
+              "origin-mode must be NIL after dec-pm-reset 6")))
 
 (test dectcem-hide-cursor
   "ESC[?25l (DEC PM reset 25) sets screen-cursor-visible to NIL."
@@ -357,15 +365,7 @@
 
 (test bracketed-paste-mode-toggle
   "ESC[?2004h sets bracketed-paste to T; ESC[?2004l resets it to NIL."
-  (with-screen (s 20 5)
-    (is-false (cl-tmux/terminal/types:screen-bracketed-paste s)
-              "bracketed-paste must be NIL by default")
-    (feed s (esc "[?2004h"))
-    (is (cl-tmux/terminal/types:screen-bracketed-paste s)
-        "bracketed-paste must be T after ESC[?2004h")
-    (feed s (esc "[?2004l"))
-    (is-false (cl-tmux/terminal/types:screen-bracketed-paste s)
-              "bracketed-paste must be NIL after ESC[?2004l")))
+  (test-dec-pm-toggle-boolean 2004 #'cl-tmux/terminal/types:screen-bracketed-paste))
 
 (test bracketed-paste-direct-set-reset
   "dec-pm-set/reset with param 2004 toggles bracketed-paste directly."
@@ -375,15 +375,7 @@
 
 (test focus-events-mode-toggle
   "ESC[?1004h sets focus-events to T; ESC[?1004l resets it to NIL."
-  (with-screen (s 20 5)
-    (is-false (cl-tmux/terminal/types:screen-focus-events s)
-              "focus-events must be NIL by default")
-    (feed s (esc "[?1004h"))
-    (is (cl-tmux/terminal/types:screen-focus-events s)
-        "focus-events must be T after ESC[?1004h")
-    (feed s (esc "[?1004l"))
-    (is-false (cl-tmux/terminal/types:screen-focus-events s)
-              "focus-events must be NIL after ESC[?1004l")))
+  (test-dec-pm-toggle-boolean 1004 #'cl-tmux/terminal/types:screen-focus-events))
 
 (test focus-events-direct-set-reset
   "dec-pm-set/reset with param 1004 toggles focus-events directly."
@@ -409,15 +401,7 @@
 
 (test app-cursor-keys-toggle
   "ESC[?1h sets app-cursor-keys to T; ESC[?1l resets it to NIL."
-  (with-screen (s 20 5)
-    (is-false (cl-tmux/terminal/types:screen-app-cursor-keys s)
-              "app-cursor-keys must be NIL by default")
-    (feed s (esc "[?1h"))
-    (is (cl-tmux/terminal/types:screen-app-cursor-keys s)
-        "app-cursor-keys must be T after ESC[?1h")
-    (feed s (esc "[?1l"))
-    (is-false (cl-tmux/terminal/types:screen-app-cursor-keys s)
-              "app-cursor-keys must be NIL after ESC[?1l")))
+  (test-dec-pm-toggle-boolean 1 #'cl-tmux/terminal/types:screen-app-cursor-keys))
 
 ;;; ── Auto-wrap mode (?7h / ?7l) ───────────────────────────────────────────────
 
@@ -428,7 +412,9 @@
         "autowrap must be T by default")))
 
 (test autowrap-disable-toggle
-  "ESC[?7l disables auto-wrap; ESC[?7h re-enables it."
+  "ESC[?7l disables auto-wrap; ESC[?7h re-enables it.
+   Note: screen-autowrap is T by default, so the default-off check in
+   test-dec-pm-toggle-boolean does not apply here — we test the round-trip directly."
   (with-screen (s 10 5)
     (feed s (esc "[?7l"))
     (is-false (cl-tmux/terminal/types:screen-autowrap s)

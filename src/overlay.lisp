@@ -33,6 +33,13 @@
   "True when an overlay is currently displayed."
   (and *overlay* t))
 
+(defun overlay-shown-at ()
+  "Return the universal-time when the most recent transient overlay was shown.
+   Returns 0 when no transient overlay has been shown in this session.
+   Provided as a package-boundary accessor so callers never read the private
+   *overlay-shown-at* variable directly."
+  *overlay-shown-at*)
+
 (defun show-overlay (text)
   "Display TEXT as an overlay; navigated with j/k, dismissed with q or Esc."
   (setf *overlay* text)
@@ -96,17 +103,17 @@
 
 (defun show-popup (popup)
   "Register POPUP as the active popup overlay.
-   Callers should use this instead of directly mutating *active-popup* so that
-   the lifecycle boundary stays inside this module."
+   If another popup is already active it is silently replaced — the old popup
+   is not closed or cleaned up.  Callers requiring teardown must call close-popup first."
   (setf *active-popup* popup))
 
 (defun close-popup ()
-  "Dismiss the active popup overlay.
-   Callers should use this instead of directly setting *active-popup* to NIL."
+  "Dismiss the active popup overlay, setting *active-popup* to NIL.
+   Safe to call when no popup is active (no-op)."
   (setf *active-popup* nil))
 
 (defun popup-active-p ()
-  "True when a popup overlay is currently displayed."
+  "Return T when a popup overlay is currently displayed, NIL otherwise."
   (and *active-popup* t))
 
 ;;; -- Menu overlay ------------------------------------------------------------

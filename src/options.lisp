@@ -80,24 +80,11 @@
   ("status-left-length"       :integer 40)
   ("status-right-length"      :integer 40)
   ("status-style"             :string  "")
-  ;; Deprecated pre-2.9 status colour options, kept for old .tmux.conf
-  ;; compatibility: folded into the effective status-style by the renderer.
-  ("status-fg"                :string  "")
-  ("status-bg"                :string  "")
-  ("status-attr"              :string  "")
   ("status-justify"           :string  "left")
   ("window-status-format"     :string  " #{window_index}:#{window_name} ")
   ("window-status-current-format" :string " #{window_index}:#{window_name}* ")
   ("window-status-style"      :string  "")
   ("window-status-current-style" :string "reverse")
-  ;; Deprecated pre-2.9 window-status colour options, kept for old .tmux.conf
-  ;; compatibility: folded into the matching window-status style by the renderer.
-  ("window-status-fg"          :string  "")
-  ("window-status-bg"          :string  "")
-  ("window-status-attr"        :string  "")
-  ("window-status-current-fg"  :string  "")
-  ("window-status-current-bg"  :string  "")
-  ("window-status-current-attr" :string "")
   ;; Pane background/foreground defaults: window-style applies to inactive panes,
   ;; window-active-style to the active pane.  Empty = no override (the common
   ;; "dim inactive panes" idiom sets a dimmer bg on window-style).
@@ -106,11 +93,6 @@
   ;; Copy-mode selection highlight.  "reverse" (default) → reverse-video; a
   ;; colour-based value (e.g. "bg=colour172") recolours the selection instead.
   ("mode-style"               :string  "reverse")
-  ;; Deprecated pre-2.9 copy-mode colour options (old .tmux.conf compat); folded
-  ;; into mode-style by the renderer.
-  ("mode-fg"                  :string  "")
-  ("mode-bg"                  :string  "")
-  ("mode-attr"                :string  "")
   ;; Alert-state window-tab styles (applied to a non-active window in that state):
   ;; bell takes priority over activity, then last (previously active) window.
   ("window-status-activity-style" :string "reverse")
@@ -131,12 +113,6 @@
   ;; (default), "both", and "arrows" colour it (cl-tmux does not draw the arrow
   ;; glyphs, so "arrows" degrades to colour); "off" disables the highlight.
   ("pane-border-indicators"   :string  "colour")
-  ;; Deprecated pre-2.9 pane-border colour options (old .tmux.conf compat); folded
-  ;; into the matching -style by the renderer.  Borders carry only fg/bg (no attr).
-  ("pane-border-fg"           :string  "")
-  ("pane-border-bg"           :string  "")
-  ("pane-active-border-fg"    :string  "")
-  ("pane-active-border-bg"    :string  "")
   ;; Border line glyphs: single (default light box-drawing), double, heavy,
   ;; simple (ASCII).  number/padded fall back to single (glyph-only support).
   ("pane-border-lines"        :string  "single")
@@ -173,14 +149,6 @@
   ("message-limit"            :integer 1000)
   ("prompt-history-limit"     :integer 100)
   ("message-style"            :string  "")
-  ;; Deprecated pre-2.9 message colour options (old .tmux.conf compat); folded
-  ;; into message-style / message-command-style by the renderer.
-  ("message-fg"               :string  "")
-  ("message-bg"               :string  "")
-  ("message-attr"             :string  "")
-  ("message-command-fg"       :string  "")
-  ("message-command-bg"       :string  "")
-  ("message-command-attr"     :string  "")
   ("update-environment"       :string  "DISPLAY SSH_ASKPASS SSH_AUTH_SOCK SSH_CONNECTION WINDOWID XAUTHORITY")
   ;; Display options
   ("display-time"             :integer 750)    ; ms to show messages / pane numbers
@@ -196,11 +164,6 @@
   ("terminal-overrides"       :string  "")
   ;; Window/pane defaults
   ("allow-rename"             :boolean t)
-  ;; aggressive-resize: accepted for .tmux.conf compatibility but INERT by design —
-  ;; cl-tmux's multi-client sizing is governed by the window-size option
-  ;; (smallest/largest/latest/manual), which subsumes the per-window aggressive
-  ;; behaviour.  Setting it parses cleanly and is intentionally a no-op.
-  ("aggressive-resize"        :boolean nil)
   ("alternate-screen"         :boolean t)
   ;; scroll-on-clear: when on (tmux default), clearing the whole screen (ED 2 /
   ;; the `clear` command) first scrolls the visible content into the history.
@@ -248,12 +211,6 @@
   ("prefix2"                  :string  "")      ; secondary prefix key
   ;; History / logging
   ("history-file"             :string  "")      ; save command-prompt history here (wired)
-  ;; fill-character: accepted for compat but INERT — cl-tmux's split tree tiles the
-  ;; whole window, so there is no unfilled area for a fill character to occupy.
-  ("fill-character"           :string  "")
-  ;; Locking
-  ("lock-command"             :string  "lock -np") ; accepted; external locker (INERT — cl-tmux
-                                                   ; renders its own internal lock screen)
   ;; status-format (tmux 3.2+ array-style).  status-format[0], when set, IS now
   ;; honoured: render-status-bar expands it and composes #[align=…] regions
   ;; (see %compose-aligned-line) instead of the procedural left/window-list/right

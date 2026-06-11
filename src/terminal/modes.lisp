@@ -192,7 +192,6 @@
    ((values))  ; no-op set
    ((values))) ; no-op reset
 
-  ;; Mode 2004 - duplicate entry silently overrides (already handled above).
   ;; Mode 47 — alternate screen (older form of 1049, without save/restore)
   (47
    ((enter-alt-screen screen))
@@ -219,7 +218,6 @@
    ((save-cursor screen))
    ((restore-cursor screen)))
 
-  ;; Mode 1 — xterm cursor-key app mode is already handled (line 79-84).
   ;; Mode 12 — local echo mode (accepted silently, not modelled).
   (12
    ((values))
@@ -271,37 +269,43 @@
               (screen-charset      screen)
               (screen-origin-mode  screen))))
 
+(defun %restore-cursor-to-defaults (screen)
+  "Restore cursor and SGR state to VT100 power-on defaults (no prior DECSC snapshot).
+   Homes the cursor, resets the SGR pen, clears origin mode, and resets the G0/G1
+   charset designations and the effective charset to :ascii."
+  (set-cursor screen 0 0)
+  (reset-sgr-pen screen)
+  (setf (screen-origin-mode  screen) nil
+        (screen-g0-charset   screen) :ascii
+        (screen-g1-charset   screen) :ascii
+        (screen-active-g     screen) :g0
+        (screen-charset      screen) :ascii))
+
+(defun %restore-cursor-from-snapshot (screen snapshot)
+  "Restore cursor and SGR state from a DECSC SNAPSHOT (a list produced by SAVE-CURSOR).
+   Applies cursor-x/y, SGR pen (fg/bg/attrs/attrs2/ul-color), charset designations
+   (G0/G1/active-g/charset), and origin-mode from the snapshot in order."
+  (destructuring-bind (cx cy fg bg attrs attrs2 ul-color g0 g1 active-g charset origin-mode)
+      snapshot
+    (set-cursor screen cx cy)
+    (setf (screen-cur-fg       screen) fg
+          (screen-cur-bg       screen) bg
+          (screen-cur-attrs    screen) attrs
+          (screen-cur-attrs2   screen) attrs2
+          (screen-cur-ul-color screen) ul-color
+          (screen-g0-charset   screen) g0
+          (screen-g1-charset   screen) g1
+          (screen-active-g     screen) active-g
+          (screen-charset      screen) charset
+          (screen-origin-mode  screen) origin-mode)))
+
 (defun restore-cursor (screen)
   "DECRC (ESC 8): restore the cursor position, SGR pen, charset state, and origin mode
    saved by DECSC.  Mirrors tmux's input_restore_state.  With nothing previously saved,
    home the cursor and reset the SGR pen, charset, and origin mode to VT100 defaults."
-  (cond
-    ((null (screen-saved-cursor screen))
-     (set-cursor screen 0 0)
-     (reset-sgr-pen screen)
-     (setf (screen-g0-charset  screen) :ascii
-           (screen-g1-charset  screen) :ascii
-           (screen-active-g    screen) :g0
-           (screen-charset     screen) :ascii
-           (screen-origin-mode screen) nil))
-    (t
-     (destructuring-bind (cursor-x cursor-y fg bg attrs attrs2 ul-color
-                          g0-charset g1-charset active-g charset origin-mode)
-         (screen-saved-cursor screen)
-       ;; set-cursor takes ABSOLUTE coordinates (it ignores origin mode, like tmux's
-       ;; screen_write_cursormove(..., 0)); the saved cursor-x/y are absolute, so the
-       ;; restore is exact regardless of the restored origin-mode value.
-       (set-cursor screen cursor-x cursor-y)
-       (setf (screen-origin-mode  screen) origin-mode
-             (screen-cur-fg       screen) fg
-             (screen-cur-bg       screen) bg
-             (screen-cur-attrs    screen) attrs
-             (screen-cur-attrs2   screen) attrs2
-             (screen-cur-ul-color screen) ul-color
-             (screen-g0-charset   screen) g0-charset
-             (screen-g1-charset   screen) g1-charset
-             (screen-active-g     screen) active-g
-             (screen-charset      screen) charset)))))
+  (if (null (screen-saved-cursor screen))
+      (%restore-cursor-to-defaults screen)
+      (%restore-cursor-from-snapshot screen (screen-saved-cursor screen))))
 
 ;;; ── Full reset ─────────────────────────────────────────────────────────────
 
@@ -410,23 +414,38 @@
 ;;; the one with a visible effect; the rest are accepted and ignored so a stray
 ;;; `CSI 20 h` etc. does not corrupt the display.  PARAMS is a list of mode ints
 ;;; (as parsed for dec-pm-set).
+;;;
+;;; define-ansi-mode-rules mirrors define-dec-pm-rules but generates SET-ANSI-MODE
+;;; and RESET-ANSI-MODE from one symmetric declarative table.  Each SPEC is
+;;; (param-number slot-accessor) where slot-accessor names the boolean screen slot
+;;; that the mode maps to.  Set → T, Reset → NIL.
+;;;
+;;; Prolog-like facts:
+;;;   ansi_mode(4,  screen-insert-mode).
+;;;   ansi_mode(20, screen-newline-mode).
 
-(defun set-ansi-mode (screen params)
-  "ANSI Set Mode (CSI Ps h).  IRM (mode 4) turns on insert mode (printed chars
+(defmacro define-ansi-mode-rules (&rest specs)
+  "Generate SET-ANSI-MODE and RESET-ANSI-MODE from a symmetric declarative table.
+   Each SPEC is (param-number slot-accessor).
+   Set writes T to the slot; Reset writes NIL."
+  `(progn
+     (defun set-ansi-mode (screen params)
+       "ANSI Set Mode (CSI Ps h).  IRM (mode 4) turns on insert mode (printed chars
    shift the rest of the line right); LNM (mode 20) turns on newline mode (LF also
    carriage-returns)."
-  (when (member 4 params)
-    (setf (screen-insert-mode screen) t))
-  (when (member 20 params)
-    (setf (screen-newline-mode screen) t)))
-
-(defun reset-ansi-mode (screen params)
-  "ANSI Reset Mode (CSI Ps l).  IRM (mode 4) turns off insert mode (replace/
+       (dolist (param params)
+         (case param
+           ,@(mapcar (lambda (s) `(,(car s) (setf (,(cadr s) screen) t))) specs))))
+     (defun reset-ansi-mode (screen params)
+       "ANSI Reset Mode (CSI Ps l).  IRM (mode 4) turns off insert mode (replace/
    overwrite); LNM (mode 20) turns off newline mode (LF is a bare line feed)."
-  (when (member 4 params)
-    (setf (screen-insert-mode screen) nil))
-  (when (member 20 params)
-    (setf (screen-newline-mode screen) nil)))
+       (dolist (param params)
+         (case param
+           ,@(mapcar (lambda (s) `(,(car s) (setf (,(cadr s) screen) nil))) specs))))))
+
+(define-ansi-mode-rules
+  (4  screen-insert-mode)
+  (20 screen-newline-mode))
 
 ;;; ── Charset selection ────────────────────────────────────────────────────────
 ;;;

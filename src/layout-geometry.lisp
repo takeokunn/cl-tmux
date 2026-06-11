@@ -42,9 +42,10 @@
 (defun layout-assign (node x y w h)
   "Walk NODE, updating every leaf's pane geometry to fit the X,Y,W,H rectangle.
    Reserves one row/column for the separator at each internal split node.
-   This function is a pure geometry walk: it calls %update-pane-geometry on leaves
-   so that callers (window-relayout) can drive the PTY/screen resize as a separate
-   ORCHESTRATE-layer step after the full tree has been repositioned."
+   This is an ORCHESTRATE-layer function: it calls %update-pane-geometry (a DATA
+   slot mutation in pane.lisp) on every leaf, so callers such as window-relayout
+   can drive the PTY/screen resize as a separate step after the full tree has been
+   repositioned.  It is NOT a pure transform — it mutates pane slots in place."
   (etypecase node
     (layout-leaf  (%update-pane-geometry (layout-leaf-pane node) x y (max 1 w) (max 1 h)))
     (layout-split (%assign-split node x y w h))))

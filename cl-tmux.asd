@@ -43,7 +43,8 @@
      (:file "window-neighbor") ; directional pane navigation (uses window-panes)
      (:file "window-layout")   ; named layouts (apply-named-layout, uses window accessors)
      (:file "session")  ; session management (uses window)
-     (:file "format")   ; tmux-style format string expansion
+     (:file "format")         ; tmux-style format string expansion (engine only)
+     (:file "format-context") ; context builder: model objects → expand-format plist
      (:file "target")   ; session/window/pane target resolution (-t flag)
      (:file "options")  ; global option registry
      (:file "buffer")   ; paste-buffer ring (uses options for buffer-limit)
@@ -65,7 +66,12 @@
      (:file "renderer")           ; documentation stub (intentionally empty)
      (:file "input")
      (:file "runtime")
-     (:file "dispatch-core")            ; dispatch macros, helpers, and core logic
+     (:file "dispatch-core")            ; dispatch macros, focus helpers, named-command table
+     (:file "dispatch-commands")         ; display/buffer/popup/option/rename %cmd-* handlers
+     (:file "dispatch-commands-pane")   ; layout/window/pane/session %cmd-* + copy-mode -X table
+     (:file "dispatch-commands-auto")   ; automation %cmd-* (send-keys, run-shell, capture, etc.)
+     (:file "dispatch-commands-runner") ; *arg-command-table* + %run-command-tokens + %run-command-line
+     (:file "dispatch-control")         ; control-mode REPL + dispatch-prefix-command
      (:file "dispatch-handlers")        ; command handler rule table (define-command-handlers)
      (:file "dispatch-handlers-buffer") ; paste-buffer command handler helpers
      (:file "events-core")

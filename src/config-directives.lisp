@@ -110,9 +110,9 @@
      (let ((c (char-upcase (char rest 0))))
        (cond
          ((char= c #\@) (code-char 0))
-         ((char<= #\A c #\Z) (code-char (logand (char-code c) #x1f)))
+         ((char<= #\A c #\Z) (code-char (logand (char-code c) +ctrl-mask+)))
          ((member c '(#\[ #\\ #\] #\^ #\_) :test #'char=)
-          (code-char (logand (char-code c) #x1f)))
+          (code-char (logand (char-code c) +ctrl-mask+)))
          (t nil))))
     (t nil)))
 
@@ -292,21 +292,47 @@
       (let ((keyword (find-symbol (string-upcase name) :keyword)))
         (and keyword (member keyword *bindable-commands*) keyword))))
 
+;;; ── Runtime sb-posix helpers ─────────────────────────────────────────────────
+;;;
+;;; Resolved once at load time so the three former inline find-package/find-symbol
+;;; calls (in %config-setenv, %apply-set-environment-directive) collapse to a
+;;; single lookup.  Each defvar is NIL when sb-posix is absent.
+
+(defvar %sb-posix-setenv
+  (let ((pkg (find-package "SB-POSIX")))
+    (and pkg (find-symbol "SETENV" pkg)))
+  "Function designator for SB-POSIX:SETENV, resolved at load time; NIL when absent.")
+
+(defvar %sb-posix-unsetenv
+  (let ((pkg (find-package "SB-POSIX")))
+    (and pkg (find-symbol "UNSETENV" pkg)))
+  "Function designator for SB-POSIX:UNSETENV, resolved at load time; NIL when absent.")
+
+;;; ── Renderer mouse-reporting hook ────────────────────────────────────────────
+;;;
+;;; %apply-option-side-effects must call the renderer to enable/disable mouse
+;;; reporting when the 'mouse' option changes, but the config layer cannot carry
+;;; a compile-time dependency on cl-tmux/renderer (circular).  A registered
+;;; callback (consistent with *command-hook-runner*) is the solution: the
+;;; renderer/orchestrate layer sets this at startup; config calls it without
+;;; knowing who owns the terminal.
+
+(defvar *mouse-reporting-hook* nil
+  "When non-NIL, a function (enable-p) called whenever the 'mouse' option changes.
+   ENABLE-P is T to enable mouse reporting, NIL to disable it.  Set by the
+   orchestrate layer (events-loop or main.lisp) to cl-tmux/renderer:enable/disable.")
+
 ;;; ── Environment-variable helper ─────────────────────────────────────────────
 ;;;
 ;;; set-environment / setenv directives need to mutate the process environment.
-;;; We use sb-posix:setenv resolved at runtime (not compile time) so that the
-;;; config package does not need a compile-time dependency on sb-posix.
+;;; We use sb-posix:setenv resolved at load time (via %sb-posix-setenv above)
+;;; so the config package does not need a compile-time dependency on sb-posix.
 
 (defun %config-setenv (name value)
   "Set environment variable NAME to VALUE for child processes.
-   Resolves sb-posix:setenv at runtime so the call is safe even when sb-posix
-   has not been loaded at compile time.  A no-op when sb-posix is absent."
-  (let ((pkg (find-package "SB-POSIX")))
-    (when pkg
-      (let ((fn (find-symbol "SETENV" pkg)))
-        (when fn
-          (ignore-errors (funcall fn name value 1)))))))
+   Uses %sb-posix-setenv resolved at load time.  A no-op when sb-posix is absent."
+  (when %sb-posix-setenv
+    (ignore-errors (funcall %sb-posix-setenv name value 1))))
 
 ;;; ── run-shell tilde expansion helper ─────────────────────────────────────────
 
@@ -602,35 +628,40 @@
 ;;;   -g global (default)  -s server  -w window  -o only-if-unset
 ;;;   -a append  -u unset
 ;;; -s routes the write to *server-options* instead of *global-options*.
+;;;
+;;; The set-verb list is derived from the :aliases declaration in define-config-
+;;; directives rather than maintained as a separate defparameter.
 
-(defparameter *set-directive-names*
-  '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")
-  "Config directive verbs that forward to the global option store.")
+(defun %set-directive-p (cmd)
+  "Return T when CMD is one of the standard set-option directive verbs."
+  (member cmd '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")
+          :test #'string=))
 
 (defun %strip-set-flags (args)
   "Consume leading -X flag tokens from a set directive's ARGS.
-   Returns (values HAD-FLAG APPEND-P SERVER-P UNSET-P POSITIONALS):
-     HAD-FLAG  – T when any flag was present
-     APPEND-P  – T when -a appeared (append to existing value)
-     SERVER-P  – T when -s appeared (route to server-options)
-     UNSET-P   – T when -u appeared (remove the option)
+   Returns (values FLAG-PRESENT-P APPEND-P SERVER-P UNSET-P FORMAT-P POSITIONALS):
+     FLAG-PRESENT-P – T when any flag was present
+     APPEND-P       – T when -a appeared (append to existing value)
+     SERVER-P       – T when -s appeared (route to server-options)
+     UNSET-P        – T when -u appeared (remove the option)
+     FORMAT-P       – T when -F appeared (expand value as format string)
    Recognised but currently treated as global: -g (global), -w (window),
    -p (pane), -o (only-if-unset — accepted, not enforced).  These scope
    flags cannot be applied to per-object instances at config-load time
    because no window or pane context exists yet; options fall through to
    the global store so they take effect at the nearest practical scope.
    POSITIONALS is the remaining non-flag tokens (name and optional value)."
-  (let ((had-flag   nil)
-        (append-p   nil)
-        (server-p   nil)
-        (unset-p    nil)
-        (format-p   nil)
-        (remaining  args))
+  (let ((flag-present-p nil)
+        (append-p       nil)
+        (server-p       nil)
+        (unset-p        nil)
+        (format-p       nil)
+        (remaining      args))
     (loop while (and remaining
                      (let ((tok (first remaining)))
                        (and (>= (length tok) 2) (char= (char tok 0) #\-))))
           do (let ((tok (pop remaining)))
-               (setf had-flag t)
+               (setf flag-present-p t)
                (when (find #\a tok) (setf append-p t))
                (when (find #\s tok) (setf server-p t))
                (when (find #\u tok) (setf unset-p  t))
@@ -638,134 +669,128 @@
                (when (find #\F tok) (setf format-p t))
                ;; -g, -w, -p, -o, -q: accepted silently.
                ))
-    (values had-flag append-p server-p unset-p format-p remaining)))
+    (values flag-present-p append-p server-p unset-p format-p remaining)))
+
+(defun %coerce-set-value (raw-value format-p)
+  "Coerce RAW-VALUE for storage.  When FORMAT-P is T, expand it as a format
+   string using a minimal context (hostname + version); on expansion failure
+   the raw string is returned unchanged.  Pure: no side-effects."
+  (if format-p
+      (let ((ctx (list :hostname (machine-instance) :version "3.5")))
+        (handler-case
+            (cl-tmux/format:expand-format raw-value ctx)
+          (error () raw-value)))
+      raw-value))
+
+(defun %route-set-value (name value server-p append-p unset-p)
+  "Store VALUE under NAME in the appropriate option table, handling -u/-s/-a/-sa.
+   Pure routing: all value coercion has already happened."
+  (cond
+    (unset-p
+     (if server-p
+         (remhash name cl-tmux/options:*server-options*)
+         (remhash name cl-tmux/options:*global-options*)))
+    ((and server-p append-p)
+     (cl-tmux/options:set-server-option
+      name (cl-tmux/options:append-option-value
+            name (cl-tmux/options:get-server-option name nil) value)))
+    (server-p
+     (cl-tmux/options:set-server-option name value))
+    (append-p
+     (cl-tmux/options:set-option
+      name (cl-tmux/options:append-option-value
+            name (cl-tmux/options:get-option name nil) value)))
+    (t
+     (cl-tmux/options:set-option name value))))
 
 (defun %apply-set-directive (cmd args)
   "Apply a flag-bearing set-family directive (e.g. `set -g status off`,
    `set -s escape-time 0`, `set -ag word-separators x`).
    Routes -s writes to *server-options*; handles -a (append) and -u (unset).
    Returns T when applied; NIL when CMD is not a set verb or carries no flags."
-  (when (member cmd *set-directive-names* :test #'string=)
-    (multiple-value-bind (had-flag append-p server-p unset-p format-p positionals)
+  (when (%set-directive-p cmd)
+    (multiple-value-bind (flag-present-p append-p server-p unset-p format-p positionals)
         (%strip-set-flags args)
-      (when (and had-flag (first positionals))
+      (when (and flag-present-p (first positionals))
         (let* ((name      (first positionals))
                (raw-value (format nil "~{~A~^ ~}" (rest positionals)))
-               ;; -F: expand value as a format string with basic hostname context.
-               (value     (if format-p
-                              (let ((ctx (list :hostname (machine-instance)
-                                               :version "3.5")))
-                                (handler-case
-                                    (cl-tmux/format:expand-format raw-value ctx)
-                                  (error () raw-value)))
-                              raw-value)))
-          (cond
-            ;; -u: unset option — remove override, revert to registered default.
-            (unset-p
-             (if server-p
-                 (remhash name cl-tmux/options:*server-options*)
-                 (remhash name cl-tmux/options:*global-options*)))
-            ;; -s + -a: append to server option (style options use a ',' separator).
-            ((and server-p append-p)
-             (cl-tmux/options:set-server-option
-              name (cl-tmux/options:append-option-value
-                    name (cl-tmux/options:get-server-option name nil) value)))
-            ;; -s: server option (escape-time, exit-empty, exit-unattached, etc.)
-            (server-p
-             (cl-tmux/options:set-server-option name value))
-            ;; -a: append to global option (style options use a ',' separator so
-            ;; `set -ag status-style fg=blue` extends rather than corrupts the value).
-            (append-p
-             (cl-tmux/options:set-option
-              name (cl-tmux/options:append-option-value
-                    name (cl-tmux/options:get-option name nil) value)))
-            ;; Default: set global option.
-            (t
-             (cl-tmux/options:set-option name value)))
+               (value     (%coerce-set-value raw-value format-p)))
+          (%route-set-value name value server-p append-p unset-p)
           ;; Special: command-alias[N] alias=expansion array syntax.
           (%apply-command-alias-directive name value)
           ;; Side-effect: intercept special options that need runtime state updates.
           (%apply-option-side-effects name value)
           t)))))
 
-(defun %apply-option-side-effects (name value)
-  "Apply runtime side-effects for options that touch non-option state.
-   Handles: prefix, prefix2 (key routing), default-shell, escape-time,
-            status (status-bar height), mouse (renderer reporting),
-            update-environment (model variable), terminal-overrides/features
-            (silently accepted — cl-tmux always emits 24-bit SGR)."
-  (cond
-    ((string= name "prefix")
-     (let ((byte (%parse-prefix-key value)))
-       (when byte
-         (setf *prefix-key-code* byte)
-         (key-table-bind +table-prefix+ (code-char byte) :send-prefix))))
-    ;; prefix2: a second prefix key that arms the prefix table (same as primary prefix).
-    ;; Stores the byte in *prefix2-key-code* so %ground-input-state transitions to
-    ;; %after-prefix-input-state when this key is pressed — same as pressing C-b.
-    ;; Real tmux: pressing prefix2 arms the prefix table; C-b and prefix2 are equivalent.
-    ((string= name "prefix2")
-     (let ((byte (%parse-prefix-key value)))
-       (when byte
-         (setf *prefix2-key-code* byte)
-         ;; Also bind prefix2 in prefix table → send-prefix so C-b prefix2
-         ;; (i.e., pressing prefix2 AFTER the prefix) sends prefix2 to the pane.
-         (key-table-bind +table-prefix+ (code-char byte) :send-prefix))))
-    ;; default-shell: update the shell used for new panes immediately.
-    ((string= name "default-shell")
-     (when (and (stringp value) (plusp (length value)))
-       (setf *default-shell* value)))
-    ;; escape-time is a server option read from *server-options* by the event
-    ;; loop's ESC-flush, but it is overwhelmingly set via `set -g escape-time 0`
-    ;; (global store).  Sync the value into the server store so every form —
-    ;; `set -g`, `set -s`, bare, config or runtime — actually takes effect.
-    ((string= name "escape-time")
-     (when (and (stringp value) (plusp (length value)))
-       (cl-tmux/options:set-server-option "escape-time" value)))
-    ;; status: off/on or a line count (tmux accepts 2..5 for a multi-line bar).
-    ;; off/false/0 hides the bar; on/true or any positive integer shows it.
-    ;; status: off/false/0 hides the bar; on/true shows 1 line; a numeric line
-    ;; count 1..5 reserves that many rows (tmux caps at 5).  The renderer draws
-    ;; the main bar on the outer line and status-format[1..N-1] on the rest.
-    ((string= name "status")
-     (let* ((off-p (member value '("off" "false" "0") :test #'equal))
-            (n     (parse-integer value :junk-allowed t)))
-       (setf *status-height*
-             (cond (off-p 0)
-                   ((and n (> n 0)) (min n 5))  ; numeric line count (tmux max 5)
-                   (t 1)))))                     ; on/true/other truthy → 1 line
-    ;; mouse: on/off enables/disables mouse reporting on the outer terminal.
-    ;; We call the renderer's mouse-reporting functions via symbol lookup to
-    ;; avoid a compile-time circular dependency.
-    ((string= name "mouse")
-     (let ((on-p (member value '("on" "true" "1") :test #'equal))
-           (pkg   (find-package "CL-TMUX/RENDERER")))
-       (when pkg
-         (let ((fn (find-symbol (if on-p "ENABLE-MOUSE-REPORTING"
-                                        "DISABLE-MOUSE-REPORTING")
-                                pkg)))
-           (when fn (ignore-errors (funcall fn)))))))
-    ;; update-environment: propagate the space-separated name list into
-    ;; *update-environment* so that get-update-environment-vars picks it up
-    ;; via the dynamic variable rather than re-parsing the option on every call.
-    ((string= name "update-environment")
-     (when (and (stringp value) (plusp (length value)))
-       (setf cl-tmux/model:*update-environment*
-             (remove-if (lambda (s) (zerop (length s)))
-                        (uiop:split-string value :separator '(#\Space))))))
-    ;; status-position: top or bottom adjusts status bar position.
-    ;; (stored in options; renderer reads it at render time — no extra side effect needed.)
-    ;; terminal-overrides / terminal-features: parse known capability flags.
-    ;; The most common use is setting Tc (true-color) or RGB for 24-bit support.
-    ;; We accept these silently; the outer terminal already supports true-color,
-    ;; so the actual rendering path always uses 24-bit when the color requires it.
-    ;; Logging the intent preserves compatibility without behavioral impact.
-    ((member name '("terminal-overrides" "terminal-features") :test #'string=)
-     ;; No runtime side-effect needed: cl-tmux always emits 24-bit SGR sequences
-     ;; when the color is true-color (the renderer handles this transparently).
-     ;; The option is stored in *global-options* / *server-options* by the caller.
-     nil)
-    ))
+;;; ── Declarative option-side-effect dispatch ──────────────────────────────────
+;;;
+;;; define-option-side-effect-handlers builds %apply-option-side-effects from a
+;;; Prolog-style fact table: one (NAME-STRING &body BODY) arm per option.  Each arm
+;;; is guarded by (string= name NAME-STRING); VALUE is bound in BODY.  This matches
+;;; define-csi-rules / define-config-directives in style.
+
+(defmacro define-option-side-effect-handlers (&rest rules)
+  "Build %APPLY-OPTION-SIDE-EFFECTS from a declarative table of RULES.
+   Each RULE has the form:
+     (NAME-STRING &body BODY)   — NAME-STRING matched via STRING=; VALUE bound in BODY.
+     (:any-of (NAME...) &body BODY) — VALUE bound in BODY when NAME is one of the list.
+   Generates a COND dispatch over NAME."
+  (flet ((expand-rule (rule)
+           (if (eq (first rule) :any-of)
+               (destructuring-bind (names &body body) (rest rule)
+                 `((member name ',names :test #'string=) ,@body))
+               (destructuring-bind (name-string &body body) rule
+                 `((string= name ,name-string) ,@body)))))
+    `(defun %apply-option-side-effects (name value)
+       "Apply runtime side-effects for options that touch non-option state.
+        Dispatches on NAME; VALUE holds the new option value string."
+       (declare (ignorable value))
+       (cond
+         ,@(mapcar #'expand-rule rules)))))
+
+(define-option-side-effect-handlers
+  ;; prefix: update *prefix-key-code* and register the new key in the prefix table.
+  ("prefix"
+   (let ((byte (%parse-prefix-key value)))
+     (when byte
+       (setf *prefix-key-code* byte)
+       (key-table-bind +table-prefix+ (code-char byte) :send-prefix))))
+  ;; prefix2: a second prefix key that arms the prefix table.
+  ("prefix2"
+   (let ((byte (%parse-prefix-key value)))
+     (when byte
+       (setf *prefix2-key-code* byte)
+       (key-table-bind +table-prefix+ (code-char byte) :send-prefix))))
+  ;; default-shell: update the shell used for new panes immediately.
+  ("default-shell"
+   (when (and (stringp value) (plusp (length value)))
+     (setf *default-shell* value)))
+  ;; escape-time: sync into server-options so every set form takes effect.
+  ("escape-time"
+   (when (and (stringp value) (plusp (length value)))
+     (cl-tmux/options:set-server-option "escape-time" value)))
+  ;; status: off/false/0 hides the bar; numeric line count (capped at 5) or on/true → 1.
+  ("status"
+   (let* ((off-p (member value '("off" "false" "0") :test #'equal))
+          (n     (parse-integer value :junk-allowed t)))
+     (setf *status-height*
+           (cond (off-p 0)
+                 ((and n (> n 0)) (min n 5))
+                 (t 1)))))
+  ;; mouse: delegate to *mouse-reporting-hook* so config and renderer stay decoupled.
+  ("mouse"
+   (when *mouse-reporting-hook*
+     (let ((on-p (member value '("on" "true" "1") :test #'equal)))
+       (ignore-errors (funcall *mouse-reporting-hook* (and on-p t))))))
+  ;; update-environment: propagate the space-separated variable list into the model.
+  ("update-environment"
+   (when (and (stringp value) (plusp (length value)))
+     (setf cl-tmux/model:*update-environment*
+           (remove-if (lambda (s) (zerop (length s)))
+                      (uiop:split-string value :separator '(#\Space))))))
+  ;; terminal-overrides / terminal-features: accepted silently — cl-tmux always
+  ;; emits 24-bit SGR; the option is stored by the caller for show-options.
+  (:any-of ("terminal-overrides" "terminal-features") nil))
 
 (defun %apply-set-hook-directive (cmd args)
   "Handle 'set-hook [-r] [-u] event [command]' directives.
@@ -824,11 +849,9 @@
             (var-value (second remaining)))
         (when var-name
           (if remove-p
-              ;; Unset: remove from process environment if sb-posix available.
-              (let ((pkg (find-package "SB-POSIX")))
-                (when pkg
-                  (let ((fn (find-symbol "UNSETENV" pkg)))
-                    (when fn (ignore-errors (funcall fn var-name))))))
+              ;; Unset: remove from process environment via load-time resolved helper.
+              (when %sb-posix-unsetenv
+                (ignore-errors (funcall %sb-posix-unsetenv var-name)))
               ;; Set: value required for non-remove form.
               (when var-value
                 (%config-setenv var-name var-value)))
@@ -893,11 +916,16 @@
         (let* ((condition (first remaining))
                (truthy-p  (if format-mode
                               (%if-shell-format-true-p condition)
-                              (eql 0 (nth-value 2
-                                       (ignore-errors
-                                         (uiop:run-program
-                                          (list "/bin/sh" "-c" condition)
-                                          :ignore-error-status t :timeout 2)))))))
+                              ;; Run the condition shell command; treat any error
+                              ;; (including a timeout signal from UIOP) as non-zero
+                              ;; (falsy).  :timeout 30 guards against a hanging command
+                              ;; blocking config loading indefinitely.
+                              (handler-case
+                                  (eql 0 (nth-value 2
+                                           (uiop:run-program
+                                            (list "/bin/sh" "-c" condition)
+                                            :ignore-error-status t :timeout 30)))
+                                (error () nil)))))
           ;; THEN/ELSE bodies are each either a brace block { ... } (tmux 3.x) or a
           ;; single quoted command token.  %take-brace-or-command consumes one unit
           ;; and returns its command(s) as ready-to-apply token-lists.
@@ -978,11 +1006,14 @@
           ;; Shell command: run it the same way the fixed-arity entries do.
           (t
            (let ((expanded (%expand-leading-tilde command)))
-             (ignore-errors
-               ;; :timeout guards against a hanging run-shell command blocking
-               ;; config loading (mirrors %expand-paren in format.lisp).
-               (uiop:run-program (list "/bin/sh" "-c" expanded)
-                                 :ignore-error-status t :timeout 2)))
+             ;; :timeout 30 guards against a hanging run-shell blocking config loading.
+             ;; handler-case makes a timeout signal (UIOP:SUBPROCESS-ERROR or similar)
+             ;; explicit: the command is abandoned and loading continues rather than
+             ;; silently treating the timeout as a non-zero exit.
+             (handler-case
+                 (uiop:run-program (list "/bin/sh" "-c" expanded)
+                                   :ignore-error-status t :timeout 30)
+               (error () nil)))
            t))))))
 
 (defun %glob-expand (path)

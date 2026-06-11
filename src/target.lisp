@@ -56,20 +56,19 @@
           (#\% (values nil nil target-string))     ; %N → pane-id
           (#\@ (values nil target-string nil))     ; @N → window-id
           (t   (values target-string nil nil)))))  ; $N session-id or plain name
-  (let* (
-         (win-raw   (cond
-                      ;; Both colon and dot: window is between them.
-                      ((and colon-pos dot-pos)
-                       (subseq target-string (1+ colon-pos) dot-pos))
-                      ;; Colon but no dot: window is everything after colon.
-                      (colon-pos
-                       (subseq target-string (1+ colon-pos)))
-                      ;; No colon — no window component.
-                      (t nil)))
-         (pane-raw  (when dot-pos
-                      (subseq target-string (1+ dot-pos))))
-         (sess-str  (%parse-session-component target-string colon-pos dot-pos)))
-    (values sess-str (%non-empty win-raw) (%non-empty pane-raw)))))
+    (let* ((win-raw  (cond
+                       ;; Both colon and dot: window is between them.
+                       ((and colon-pos dot-pos)
+                        (subseq target-string (1+ colon-pos) dot-pos))
+                       ;; Colon but no dot: window is everything after colon.
+                       (colon-pos
+                        (subseq target-string (1+ colon-pos)))
+                       ;; No colon — no window component.
+                       (t nil)))
+           (pane-raw (when dot-pos
+                       (subseq target-string (1+ dot-pos))))
+           (sess-str (%parse-session-component target-string colon-pos dot-pos)))
+      (values sess-str (%non-empty win-raw) (%non-empty pane-raw)))))
 
 ;;; ── define-target-lookup — Prolog-style sequential rule dispatch ─────────────
 ;;;
@@ -86,15 +85,16 @@
      (TEST-EXPR)        -- return TEST-EXPR when it is non-NIL
    Rules are tried in order.  Returns NIL when no rule matches."
   (let* ((docstring    (when (stringp (first rules)) (first rules)))
-         (actual-rules (if docstring (rest rules) rules)))
+         (actual-rules (if docstring (rest rules) rules))
+         (result-sym   (gensym "RESULT")))
     `(defun ,name ,lambda-list
        ,@(when docstring (list docstring))
        ,@(mapcar
           (lambda (rule)
             (if (eq (car rule) :nil-guard)
                 `(unless ,(cadr rule) (return-from ,name nil))
-                `(let ((%result% ,(car rule)))
-                   (when %result% (return-from ,name %result%)))))
+                `(let ((,result-sym ,(car rule)))
+                   (when ,result-sym (return-from ,name ,result-sym)))))
           actual-rules)
        nil)))
 

@@ -335,6 +335,39 @@
     (session-select-window sess (first windows))
     sess))
 
+(defmacro with-fake-session ((var &rest make-args) &body body)
+  "Bind VAR to a fresh fake session built from MAKE-ARGS and run BODY inside
+   WITH-LOOP-STATE isolation.  Composes MAKE-FAKE-SESSION with WITH-LOOP-STATE
+   to eliminate the repeated (let ((s (make-fake-session ...))) (with-loop-state ...))
+   pattern in dispatch-tests and events-tests.
+   MAKE-ARGS are passed verbatim to MAKE-FAKE-SESSION (e.g. :nwindows 2 :npanes 3)."
+  `(let ((,var (make-fake-session ,@make-args)))
+     (with-loop-state
+       ,@body)))
+
+(defmacro with-minimal-session ((pane-var win-var sess-var
+                                 &key (width 20) (height 5)) &body body)
+  "Bind PANE-VAR, WIN-VAR, SESS-VAR to a fresh single-pane session of WIDTH×HEIGHT.
+   The pane has :fd -1 and :pid -1 (no real PTY).  The window and session are
+   selected so session-active-window / window-active-pane work immediately.
+   Eliminates the repetitive let*/window-select-pane/session-select-window scaffold
+   that appears throughout events-tests.lisp."
+  (let ((w-sym (gensym "W")) (h-sym (gensym "H")))
+    `(let* ((,w-sym ,width)
+            (,h-sym ,height)
+            (,pane-var (make-pane :id 1 :fd -1 :pid -1
+                                  :x 0 :y 0 :width ,w-sym :height ,h-sym
+                                  :screen (make-screen ,w-sym ,h-sym)))
+            (,win-var  (make-window :id 1 :name "w"
+                                    :width ,w-sym :height ,h-sym
+                                    :panes (list ,pane-var)
+                                    :tree  (make-layout-leaf ,pane-var)))
+            (,sess-var (make-session :id 1 :name "s"
+                                     :windows (list ,win-var))))
+       (window-select-pane ,win-var ,pane-var)
+       (session-select-window ,sess-var ,win-var)
+       (locally ,@body))))
+
 (defun active-screen (session)
   (pane-screen (window-active-pane (session-active-window session))))
 
@@ -408,6 +441,8 @@
   `(let ((cl-tmux::*dirty* nil)
          (cl-tmux::*last-mouse-click* nil)
          (cl-tmux::*key-table* nil)
+         (cl-tmux::*server-marked-pane* nil)
+         (cl-tmux::*client-read-only* nil)
          (cl-tmux/prompt:*active-menu* nil)
          (cl-tmux/prompt:*active-popup* nil))
      (with-global-running t
@@ -710,6 +745,13 @@
           (let ((ht (make-hash-table :test #'equal)))
             (setf (gethash ,name ht) ,value)
             ht)))
+     ,@body))
+
+(defmacro with-fresh-server-options (&body body)
+  "Run BODY with an empty, isolated *server-options* hash-table.
+   Changes do not leak back to the real *server-options* table."
+  `(let ((cl-tmux/options:*server-options* (make-hash-table :test #'equal))
+         (cl-tmux/options:*server-option-registry* cl-tmux/options:*server-option-registry*))
      ,@body))
 
 (defmacro with-single-server-option ((name value) &body body)

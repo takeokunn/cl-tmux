@@ -1012,3 +1012,42 @@
   (let ((win (make-window :id 1 :name "w" :width 120 :height 40)))
     (is (= 120 (window-width  win)) "window-width must return 120")
     (is (= 40  (window-height win)) "window-height must return 40")))
+
+;;; ── pane-window back-pointer wiring ──────────────────────────────────────────
+;;;
+;;; pane-window is set by window-split and %attach-full-screen-pane (production),
+;;; and cleared by window-remove-pane.  The tests below verify the clear path
+;;; without requiring a real PTY.  The split/attach set path is verified by the
+;;; PTY-gated test below.
+
+(test window-remove-pane-clears-pane-window-sole-pane
+  "window-remove-pane on the sole pane sets pane-window to NIL."
+  (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
+         (win (make-window :id 1 :name "w" :width 80 :height 24
+                           :panes (list p0)
+                           :tree (make-layout-leaf p0))))
+    (setf (pane-window p0) win)
+    (window-remove-pane win p0)
+    (is (null (pane-window p0))
+        "pane-window of the sole removed pane must be NIL after removal")))
+
+(test window-remove-pane-clears-pane-window-preserves-survivor
+  "window-remove-pane clears pane-window only for the removed pane."
+  (with-h-split-window (win p0 p1)
+    (setf (pane-window p0) win
+          (pane-window p1) win)
+    (window-remove-pane win p0)
+    (is (null (pane-window p0))
+        "pane-window of the removed pane must be NIL")
+    (is (eq win (pane-window p1))
+        "pane-window of the surviving pane must remain pointing to its window")))
+
+(test window-split-sets-pane-window-back-pointer
+  "window-split wires pane-window on the new pane to the parent window."
+  (unless (pty-available-p)
+    (skip "no PTY available (sandboxed environment)"))
+  (with-session (session 24 80)
+    (let* ((win   (session-active-window session))
+           (p-new (window-split win :h)))
+      (is (eq win (pane-window p-new))
+          "new pane's pane-window must point to its window after split"))))

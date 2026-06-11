@@ -215,19 +215,21 @@
   (is (= 4 (length (cl-tmux/protocol:u32-octets #xFFFFFFFF))) "u32(max) = 4 bytes"))
 
 (test msg-constructors-produce-correct-frames
-  "All six typed message constructors produce frames that decode to the expected type."
+  "All eight typed message constructors produce frames that decode to the expected type."
   ;; Verify each constructor actually produces a decodable frame with the right tag.
   (flet ((frame-type (frame)
            (multiple-value-bind (type payload next)
                (decode-frame frame)
              (declare (ignore payload next))
              type)))
-    (is (= +msg-attach+ (frame-type (msg-attach 24 80)))   "msg-attach produces +msg-attach+")
-    (is (= +msg-key+    (frame-type (msg-key #(65))))       "msg-key produces +msg-key+")
-    (is (= +msg-resize+ (frame-type (msg-resize 24 80)))   "msg-resize produces +msg-resize+")
-    (is (= +msg-detach+ (frame-type (msg-detach)))         "msg-detach produces +msg-detach+")
-    (is (= +msg-frame+  (frame-type (msg-frame "hi")))     "msg-frame produces +msg-frame+")
-    (is (= +msg-bye+    (frame-type (msg-bye)))            "msg-bye produces +msg-bye+")))
+    (is (= +msg-attach+  (frame-type (msg-attach 24 80)))             "msg-attach produces +msg-attach+")
+    (is (= +msg-key+     (frame-type (msg-key #(65))))                "msg-key produces +msg-key+")
+    (is (= +msg-resize+  (frame-type (msg-resize 24 80)))             "msg-resize produces +msg-resize+")
+    (is (= +msg-detach+  (frame-type (msg-detach)))                   "msg-detach produces +msg-detach+")
+    (is (= +msg-frame+   (frame-type (msg-frame "hi")))               "msg-frame produces +msg-frame+")
+    (is (= +msg-bye+     (frame-type (msg-bye)))                      "msg-bye produces +msg-bye+")
+    (is (= +msg-reply+   (frame-type (msg-reply "output")))           "msg-reply produces +msg-reply+")
+    (is (= +msg-command+ (frame-type (msg-command :new-window nil nil))) "msg-command produces +msg-command+")))
 
 ;;; ── msg-command constructor ──────────────────────────────────────────────────
 
@@ -537,6 +539,7 @@
   (is (= 5 +msg-frame+)   "+msg-frame+ must equal 5")
   (is (= 6 +msg-bye+)     "+msg-bye+ must equal 6")
   (is (= 7 +msg-command+) "+msg-command+ must equal 7")
+  (is (= 8 +msg-reply+)   "+msg-reply+ must equal 8")
   (is (= 5 +header-size+) "+header-size+ must equal 5"))
 
 ;;; ── u16-octets-pair with max values ─────────────────────────────────────────

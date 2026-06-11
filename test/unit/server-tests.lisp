@@ -55,28 +55,32 @@ It does NOT set *dirty* — that is the caller's responsibility (data/logic sepa
 
 ;;; ── %dispatch-byte-result (table-driven) ────────────────────────────────────
 ;;;
-;;; The four cases below differ only in input and expected disposition:
-;;; consolidate them into a single table-driven test instead of four nearly
-;;; identical bodies.
+;;; %dispatch-byte-result is now a PURE predicate: it classifies a process-byte
+;;; result as a disposition (:quit, :detach, NIL) without mutating *running*.
+;;; *running* is cleared by %handle-client-message when it acts on :quit.
+;;; The four cases differ only in input and expected disposition.
 
 (test dispatch-byte-result-table
-  :description "%dispatch-byte-result maps :quit→:quit (clears *running*), :detach→:detach,
-NIL→NIL, and any other value→NIL."
-  ;; Cases: (input expected-disposition running-after)
-  (let ((cases '((:quit    :quit   nil)
-                 (:detach  :detach t)
-                 (nil      nil     t)
-                 (:other   nil     t))))
+  :description "%dispatch-byte-result maps :quit→:quit, :detach→:detach,
+NIL→NIL, and any other value→NIL.  It is a pure predicate and does NOT
+mutate *running* — that is the caller's (%handle-client-message) responsibility."
+  ;; Cases: (input expected-disposition)
+  ;; *running* must remain T in every case — mutation is the caller's job.
+  (let ((cases '((:quit    :quit)
+                 (:detach  :detach)
+                 (nil      nil)
+                 (:other   nil))))
     (dolist (c cases)
-      (destructuring-bind (input expected running-after) c
+      (destructuring-bind (input expected) c
         (with-loop-state
           (let ((disp (cl-tmux::%dispatch-byte-result input)))
             (is (eq expected disp)
                 "input ~S: expected disposition ~S, got ~S"
                 input expected disp)
-            (is (eq running-after cl-tmux::*running*)
-                "input ~S: expected *running* ~S, got ~S"
-                input running-after cl-tmux::*running*)))))))
+            ;; Pure predicate contract: *running* is never touched by %dispatch-byte-result.
+            (is-true cl-tmux::*running*
+                     "input ~S: %dispatch-byte-result must not mutate *running*"
+                     input)))))))
 
 ;;; ── process-client-keys: the serve loop's quit/detach disposition ────────────
 ;;;

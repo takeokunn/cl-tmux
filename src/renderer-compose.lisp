@@ -40,14 +40,8 @@
    Applies the message-style option (or message-command-style when a prompt is
    active) so overlays respect the user's colour scheme."
   (let* ((style-opt (if (prompt-active-p)
-                        ;; Fold the deprecated message-command-fg/bg/attr into the style.
-                        (%fold-deprecated-style
-                         (cl-tmux/options:get-option "message-command-style" "")
-                         "message-command-fg" "message-command-bg" "message-command-attr")
-                        ;; Fold the deprecated message-fg/bg/attr into the style.
-                        (%fold-deprecated-style
-                         (cl-tmux/options:get-option "message-style" "")
-                         "message-fg" "message-bg" "message-attr")))
+                        (cl-tmux/options:get-option "message-command-style" "")
+                        (cl-tmux/options:get-option "message-style" "")))
          (sgr-code  (when (and style-opt (plusp (length style-opt)))
                       (%status-sgr-from-style style-opt))))
     (if sgr-code

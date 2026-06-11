@@ -279,6 +279,13 @@ is empty — no complete frame header can be read."
         (is (eq :eof dispatched)
             "empty stream must dispatch the nil-type (EOF) arm")))))
 
+;;; ── %read-command-reply socket-roundtrip tests ───────────────────────────────
+;;;
+;;; These tests require the raw socket-fd via cl-tmux/net:socket-fd, so they
+;;; cannot use with-guarded-socket-test directly (which does not expose socket
+;;; objects).  The full socket lifecycle is contained once in each test body
+;;; with an unwind-protect.
+
 (test read-command-reply-prints-reply-to-stdout
   :description "%read-command-reply reads the server's +msg-reply+ frame and writes its
 text to *standard-output* — the client side of `cl-tmux display -p`."
@@ -291,13 +298,17 @@ text to *standard-output* — the client side of `cl-tmux display -p`."
            (let* ((client (connect-to path))
                   (server (accept-connection lstnr)))
              (when server
-               (send-frame (socket-stream server) (msg-reply "OUTPUT-TEXT"))
-               (force-output (socket-stream server))
-               (let ((out (with-output-to-string (*standard-output*)
-                            (cl-tmux::%read-command-reply
-                             (socket-stream client) (cl-tmux/net:socket-fd client)))))
-                 (is (search "OUTPUT-TEXT" out)
-                     "%read-command-reply must print the reply text to stdout (got ~S)" out))))
+               (unwind-protect
+                    (progn
+                      (send-frame (socket-stream server) (msg-reply "OUTPUT-TEXT"))
+                      (force-output (socket-stream server))
+                      (let ((out (with-output-to-string (*standard-output*)
+                                   (cl-tmux::%read-command-reply
+                                    (socket-stream client) (cl-tmux/net:socket-fd client)))))
+                        (is (search "OUTPUT-TEXT" out)
+                            "%read-command-reply must print the reply text to stdout (got ~S)" out)))
+                 (ignore-errors (close-socket server))
+                 (ignore-errors (close-socket client)))))
         (ignore-errors (close-socket lstnr))
         (ignore-errors (delete-file path))))))
 
@@ -313,12 +324,101 @@ closes without replying (a command that produces no output) — it must not hang
            (let* ((client (connect-to path))
                   (server (accept-connection lstnr)))
              (when server
-               ;; Server closes without sending a reply → client sees EOF.
-               (close-socket server)
-               (let ((out (with-output-to-string (*standard-output*)
-                            (cl-tmux::%read-command-reply
-                             (socket-stream client) (cl-tmux/net:socket-fd client)))))
-                 (is (string= "" out)
-                     "no reply → no output (got ~S)" out))))
+               (unwind-protect
+                    (progn
+                      ;; Server closes without sending a reply → client sees EOF.
+                      (close-socket server)
+                      (let ((out (with-output-to-string (*standard-output*)
+                                   (cl-tmux::%read-command-reply
+                                    (socket-stream client) (cl-tmux/net:socket-fd client)))))
+                        (is (string= "" out)
+                            "no reply → no output (got ~S)" out)))
+                 (ignore-errors (close-socket client)))))
         (ignore-errors (close-socket lstnr))
         (ignore-errors (delete-file path))))))
+
+;;; ── run-command-client nil-args guard ────────────────────────────────────────
+;;;
+;;; run-command-client has an early-exit when ARGS is NIL: it does nothing
+;;; (no socket connection, no frame sent).  This is intentional defensive
+;;; programming — the test confirms it is a deliberate no-op, not a bug.
+
+(test run-command-client-nil-args-is-noop
+  :description "run-command-client with NIL args returns immediately without
+opening a socket or signalling — the early-exit (when args ...) guard."
+  ;; We verify the nil-args branch by confirming the call completes without
+  ;; error even when no server is listening (no connection attempt is made).
+  (finishes (cl-tmux::run-command-client "no-such-session" nil)))
+
+;;; ── %maybe-send-resize behavior ──────────────────────────────────────────────
+;;;
+;;; %maybe-send-resize encapsulates the resize-pending check that was inline in
+;;; run-client.  It is tested here using a socket pair so the msg-resize frame
+;;; can be observed without a live terminal.
+
+(test maybe-send-resize-sends-frame-when-pending
+  :description "%maybe-send-resize sends a +msg-resize+ frame and clears *resize-pending*
+when *resize-pending* is T — verifies the resize-dispatch path extracted from run-client."
+  (with-guarded-socket-test
+    ;; Set resize-pending and known dimensions.
+    (let ((cl-tmux::*resize-pending* t)
+          (cl-tmux::*term-rows*      24)
+          (cl-tmux::*term-cols*      80))
+      ;; Call the helper with server-side as the stream to write on.
+      (cl-tmux::%maybe-send-resize server-side)
+      (force-output server-side)
+      ;; The helper clears *resize-pending*.
+      (is-false cl-tmux::*resize-pending*
+                "%maybe-send-resize must clear *resize-pending*")
+      ;; A +msg-resize+ frame must be readable from the other end.
+      (with-incoming-frame (type payload client-side)
+        ((null type) (fail "%maybe-send-resize: got EOF instead of resize frame"))
+        ((= type +msg-resize+)
+         (multiple-value-bind (rows cols) (decode-size payload)
+           (is (= cl-tmux::*term-rows* rows) "resize frame rows must match *term-rows*")
+           (is (= cl-tmux::*term-cols* cols) "resize frame cols must match *term-cols*")))
+        (t (fail "%maybe-send-resize: unexpected frame type ~D" type))))))
+
+(test maybe-send-resize-does-nothing-when-not-pending
+  :description "%maybe-send-resize is a no-op when *resize-pending* is NIL."
+  (let ((cl-tmux::*resize-pending* nil))
+    (is-false (cl-tmux::%maybe-send-resize nil)
+              "%maybe-send-resize with *resize-pending* NIL must return NIL without I/O")))
+
+;;; ── %receive-server-frame behavior ──────────────────────────────────────────
+
+(test receive-server-frame-returns-exit-on-bye
+  :description "%receive-server-frame returns :exit when the server sends +msg-bye+."
+  (with-guarded-socket-test
+    (send-frame server-side (msg-bye))
+    (force-output server-side)
+    (is (eq :exit (cl-tmux::%receive-server-frame client-side))
+        "%receive-server-frame must return :exit for +msg-bye+")))
+
+(test receive-server-frame-returns-exit-on-eof
+  :description "%receive-server-frame returns :exit on EOF (server closed the stream)."
+  (with-guarded-socket-test
+    ;; Close the server-side stream to simulate server disconnect.
+    (close server-side)
+    ;; Give the stream close a moment to propagate across the socket.
+    (sleep 0.05)
+    (is (eq :exit (cl-tmux::%receive-server-frame client-side))
+        "%receive-server-frame must return :exit on EOF")))
+
+(test receive-server-frame-paints-msg-frame-and-returns-nil
+  :description "%receive-server-frame writes +msg-frame+ content to *standard-output*
+and returns NIL (continue the event loop)."
+  (with-guarded-socket-test
+    (send-frame server-side (msg-frame "HELLO"))
+    (force-output server-side)
+    ;; Keep `is` assertions OUTSIDE with-output-to-string: FiveAM writes a progress
+    ;; dot via (format *test-dribble* ".") — and *test-dribble* defaults to T
+    ;; (= *standard-output*) — so a passing `is` inside the capture body would
+    ;; contaminate painted with "." making it "HELLO." instead of "HELLO".
+    (let (result)
+      (let ((painted (with-output-to-string (*standard-output*)
+                       (setf result (cl-tmux::%receive-server-frame client-side)))))
+        (is (null result)
+            "%receive-server-frame must return NIL for +msg-frame+")
+        (is (string= "HELLO" painted)
+            "%receive-server-frame must write the frame text to *standard-output*")))))

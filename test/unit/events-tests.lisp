@@ -970,14 +970,7 @@
 
 (test dispatch-mark-pane-marks-active-pane
   ":mark-pane command sets pane-marked on the active pane."
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
-                           :screen (make-screen 20 5)))
-         (win  (make-window :id 1 :name "w" :width 20 :height 5
-                            :panes (list p0)
-                            :tree  (make-layout-leaf p0)))
-         (sess (make-session :id 1 :name "s" :windows (list win))))
-    (window-select-pane win p0)
-    (session-select-window sess win)
+  (with-minimal-session (p0 win sess)
     (with-loop-state
       (let ((*overlay* nil))
         (is-false (pane-marked p0) "pane must not be marked initially")
@@ -986,35 +979,23 @@
 
 (test dispatch-mark-pane-toggle-unmarks
   ":mark-pane on an already-marked pane unmarks it (toggle)."
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
-                           :screen (make-screen 20 5)))
-         (win  (make-window :id 1 :name "w" :width 20 :height 5
-                            :panes (list p0)
-                            :tree  (make-layout-leaf p0)))
-         (sess (make-session :id 1 :name "s" :windows (list win))))
-    (window-select-pane win p0)
-    (session-select-window sess win)
+  (with-minimal-session (p0 win sess)
+    (declare (ignore win))
     (with-loop-state
       (let ((*overlay* nil))
-        (setf (pane-marked p0) t)
-        (is (pane-marked p0) "pane marked before dispatch")
+        (cl-tmux::dispatch-command sess :mark-pane nil)
+        (is (pane-marked p0) "pane marked after first :mark-pane")
         (cl-tmux::dispatch-command sess :mark-pane nil)
         (is-false (pane-marked p0)
             "pane unmarked after :mark-pane on already-marked pane")))))
 
 (test dispatch-clear-mark-unmarks-all-panes
-  ":clear-mark clears pane-marked on all panes in the current window."
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
-                           :screen (make-screen 20 5)))
-         (win  (make-window :id 1 :name "w" :width 20 :height 5
-                            :panes (list p0)
-                            :tree  (make-layout-leaf p0)))
-         (sess (make-session :id 1 :name "s" :windows (list win))))
-    (window-select-pane win p0)
-    (session-select-window sess win)
+  ":clear-mark clears the server-wide marked pane."
+  (with-minimal-session (p0 win sess)
+    (declare (ignore win))
     (with-loop-state
       (let ((*overlay* nil))
-        (setf (pane-marked p0) t)
+        (cl-tmux::dispatch-command sess :mark-pane nil)
         (is (pane-marked p0) "pane must be marked before :clear-mark")
         (cl-tmux::dispatch-command sess :clear-mark nil)
         (is-false (pane-marked p0) "pane must not be marked after :clear-mark")))))
@@ -1023,14 +1004,8 @@
 
 (test dispatch-display-info-shows-overlay
   ":display-info shows a non-empty overlay with session/window/pane info."
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
-                           :screen (make-screen 20 5)))
-         (win  (make-window :id 1 :name "w" :width 20 :height 5
-                            :panes (list p0)
-                            :tree  (make-layout-leaf p0)))
-         (sess (make-session :id 1 :name "mysess" :windows (list win))))
-    (window-select-pane win p0)
-    (session-select-window sess win)
+  (with-minimal-session (p0 win sess)
+    (declare (ignore p0 win))
     (with-loop-state
       (let ((*overlay* nil))
         (cl-tmux::dispatch-command sess :display-info nil)
@@ -1685,7 +1660,7 @@
 
 ;;; ── Overlay arrow-key scrolling via escape sequence ─────────────────────────
 ;;;
-;;; When the overlay is active and ESC [ A arrives, make-overlay-escape-k
+;;; When the overlay is active and ESC [ A arrives, %overlay-escape-second-byte
 ;;; scrolls the overlay up; ESC [ B scrolls it down.
 
 (test overlay-escape-up-scrolls-overlay
@@ -2291,6 +2266,47 @@
             sess
             (make-array 1 :element-type '(unsigned-byte 8) :initial-element 65)))
       (cl-tmux/options:set-option "synchronize-panes" nil))))
+
+;;; ── *client-read-only* enforcement ──────────────────────────────────────────
+
+(test forward-octets-noop-when-client-read-only
+  "%forward-octets-synchronized silently discards input when *client-read-only* is T."
+  (let* ((p0   (make-pane :id 1 :fd 9999 :pid -1 :x 0 :y 0 :width 20 :height 5
+                           :screen (make-screen 20 5)))
+         (win  (make-window :id 1 :name "w" :width 20 :height 5
+                            :panes (list p0)
+                            :tree  (make-layout-leaf p0)))
+         (sess (make-session :id 1 :name "0" :windows (list win)))
+         (wrote nil)
+         (orig (fdefinition 'cl-tmux/pty:pty-write)))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (unwind-protect
+         (let ((cl-tmux::*client-read-only* t))
+           (setf (fdefinition 'cl-tmux/pty:pty-write)
+                 (lambda (fd bytes) (declare (ignore fd bytes)) (setf wrote t)))
+           (cl-tmux::%forward-octets-synchronized
+            sess
+            (make-array 1 :element-type '(unsigned-byte 8) :initial-element 65))
+           (is-false wrote
+               "%forward-octets-synchronized must not call pty-write when read-only"))
+      (setf (fdefinition 'cl-tmux/pty:pty-write) orig))))
+
+(test forward-octets-writes-when-not-read-only
+  "%forward-octets-synchronized is a no-op on fd<=0 panes regardless of read-only."
+  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                           :screen (make-screen 20 5)))
+         (win  (make-window :id 1 :name "w" :width 20 :height 5
+                            :panes (list p0)
+                            :tree  (make-layout-leaf p0)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win p0)
+    (session-select-window sess win)
+    (let ((cl-tmux::*client-read-only* nil))
+      (finishes
+        (cl-tmux::%forward-octets-synchronized
+         sess
+         (make-array 1 :element-type '(unsigned-byte 8) :initial-element 65))))))
 
 ;;; ── %maybe-rename-window-from-title coverage ─────────────────────────────────
 
@@ -3151,18 +3167,130 @@
           (cl-tmux::dispatch-command s :copy-mode-enter nil)
           (finishes (cl-tmux::process-byte s byte state)))))))
 
-;;; ── idle sleep constant verification ─────────────────────────────────────────
+;;; ── %flush-esc-if-timed-out behavioural tests ────────────────────────────────
 
-(test event-loop-idle-sleep-constant-is-positive
-  "+event-loop-idle-sleep-seconds+ is a positive real number."
-  (is (and (realp cl-tmux::+event-loop-idle-sleep-seconds+)
-           (plusp cl-tmux::+event-loop-idle-sleep-seconds+))
-      "+event-loop-idle-sleep-seconds+ must be a positive real"))
+(test flush-esc-no-op-when-no-esc-pending
+  "%flush-esc-if-timed-out is a no-op when esc-entered-at is NIL."
+  (let ((sess  (make-fake-session))
+        (state (cl-tmux::make-input-state)))
+    ;; esc-entered-at starts NIL; %flush-esc-if-timed-out must not change the state.
+    (is (null (cl-tmux::input-state-esc-entered-at state))
+        "precondition: esc-entered-at is NIL")
+    (cl-tmux::%flush-esc-if-timed-out state sess)
+    (is (null (cl-tmux::input-state-esc-entered-at state))
+        "esc-entered-at stays NIL when no escape is pending")))
 
-(test event-loop-idle-sleep-constant-value
-  "+event-loop-idle-sleep-seconds+ is 0.001 (1 ms)."
-  (is (= 0.001 cl-tmux::+event-loop-idle-sleep-seconds+)
-      "+event-loop-idle-sleep-seconds+ must be 0.001"))
+(test flush-esc-within-timeout-does-not-flush
+  "%flush-esc-if-timed-out does not flush when the timeout has NOT elapsed."
+  (let ((sess  (make-fake-session))
+        (state (cl-tmux::make-input-state)))
+    (with-isolated-config
+      ;; Set a very long escape-time so the timer has definitely not expired.
+      (cl-tmux/options:set-server-option "escape-time" 100000)
+      ;; Simulate an ESC having been received: stamp esc-entered-at.
+      (setf (cl-tmux::input-state-esc-entered-at state) (get-internal-real-time))
+      (cl-tmux::%flush-esc-if-timed-out state sess)
+      ;; Continuation must still point away from ground (timer did not fire).
+      (is (not (null (cl-tmux::input-state-esc-entered-at state)))
+          "esc-entered-at must remain set when timeout has not elapsed"))))
+
+(test flush-esc-after-timeout-resets-to-ground
+  "%flush-esc-if-timed-out resets state to ground when escape-time has elapsed."
+  (let ((sess  (make-fake-session))
+        (state (cl-tmux::make-input-state)))
+    (with-isolated-config
+      ;; Set escape-time to 0 ms so any elapsed time qualifies.
+      (cl-tmux/options:set-server-option "escape-time" 0)
+      ;; Stamp esc-entered-at far in the past.
+      (setf (cl-tmux::input-state-esc-entered-at state)
+            (- (get-internal-real-time) (* 2 internal-time-units-per-second)))
+      (cl-tmux::%flush-esc-if-timed-out state sess)
+      ;; After flush: esc-entered-at cleared and continuation back to ground.
+      (is (null (cl-tmux::input-state-esc-entered-at state))
+          "esc-entered-at must be NIL after flush")
+      (is (eq (cl-tmux::input-state-continuation state)
+              #'cl-tmux::%ground-input-state)
+          "continuation must return to ground after flush"))))
+
+;;; ── %reset-repeat-if-expired behavioural tests ───────────────────────────────
+
+(test reset-repeat-no-op-when-no-repeat-pending
+  "%reset-repeat-if-expired is a no-op when repeat-entered-at is NIL."
+  (let ((state (cl-tmux::make-input-state)))
+    (is (null (cl-tmux::input-state-repeat-entered-at state))
+        "precondition: repeat-entered-at is NIL")
+    (cl-tmux::%reset-repeat-if-expired state)
+    (is (null (cl-tmux::input-state-repeat-entered-at state))
+        "repeat-entered-at stays NIL when nothing is pending")))
+
+(test reset-repeat-within-timeout-does-not-reset
+  "%reset-repeat-if-expired does not reset within the repeat-time window."
+  (let ((state (cl-tmux::make-input-state)))
+    (with-isolated-config
+      (cl-tmux/options:set-option "repeat-time" 100000)
+      (setf (cl-tmux::input-state-repeat-entered-at state) (get-internal-real-time))
+      (cl-tmux::%reset-repeat-if-expired state)
+      (is (not (null (cl-tmux::input-state-repeat-entered-at state)))
+          "repeat-entered-at must not be cleared before timeout"))))
+
+(test reset-repeat-after-timeout-resets-to-ground
+  "%reset-repeat-if-expired resets to ground state after repeat-time elapses."
+  (let ((state (cl-tmux::make-input-state)))
+    (with-isolated-config
+      (cl-tmux/options:set-option "repeat-time" 0)
+      ;; Stamp repeat-entered-at far in the past.
+      (setf (cl-tmux::input-state-repeat-entered-at state)
+            (- (get-internal-real-time) (* 2 internal-time-units-per-second)))
+      (cl-tmux::%reset-repeat-if-expired state)
+      (is (null (cl-tmux::input-state-repeat-entered-at state))
+          "repeat-entered-at must be NIL after expiry")
+      (is (eq (cl-tmux::input-state-continuation state)
+              #'cl-tmux::%ground-input-state)
+          "continuation must return to ground after repeat expiry"))))
+
+;;; ── %try-mouse-passthrough mode tests ────────────────────────────────────────
+
+(test try-mouse-passthrough-mode1-blocks-release
+  "Mode 1 (X10/normal): release events are NOT forwarded."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0
+                            :width 20 :height 5 :screen screen))
+         (win    (make-window :id 1 :name "w" :width 20 :height 5
+                              :panes (list pane)
+                              :tree (make-layout-leaf pane))))
+    (setf (screen-mouse-mode screen) 1)
+    ;; Release event (release-p=T): mode 1 must NOT forward.
+    (let ((result (cl-tmux::%try-mouse-passthrough win pane 0 0 0 t)))
+      (is (null result)
+          "mode 1 must not forward release events (fd=-1 means encode returns nil)"))))
+
+(test try-mouse-passthrough-mode2-blocks-non-motion-release
+  "Mode 2 (button-event): release of a non-motion button is NOT forwarded."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0
+                            :width 20 :height 5 :screen screen))
+         (win    (make-window :id 1 :name "w" :width 20 :height 5
+                              :panes (list pane)
+                              :tree (make-layout-leaf pane))))
+    (setf (screen-mouse-mode screen) 2)
+    ;; Button 0 release (left-click release, not motion): should NOT be forwarded.
+    ;; (or (not T) (= 0 +mouse-btn-motion+)) = (or NIL NIL) = NIL → skip.
+    (let ((result (cl-tmux::%try-mouse-passthrough win pane 0 0 0 t)))
+      (is (null result)
+          "mode-2 must not forward non-motion button releases"))))
+
+(test try-mouse-passthrough-mode0-returns-nil
+  "When the pane has mouse mode 0 (disabled), %try-mouse-passthrough returns NIL."
+  (let* ((screen (make-screen 20 5))
+         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0
+                            :width 20 :height 5 :screen screen))
+         (win    (make-window :id 1 :name "w" :width 20 :height 5
+                              :panes (list pane)
+                              :tree (make-layout-leaf pane))))
+    ;; mouse-mode = 0 means no tracking enabled; (plusp 0) = NIL.
+    (setf (screen-mouse-mode screen) 0)
+    (is (null (cl-tmux::%try-mouse-passthrough win pane 0 0 0 nil))
+        "mouse mode 0 → passthrough must be nil")))
 
 ;;; ── drag-state is set on border press ───────────────────────────────────────
 

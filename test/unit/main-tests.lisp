@@ -310,3 +310,125 @@
              (cl-tmux::main))
            (is-true called "main with -C must call run-control-mode"))
       (setf (fdefinition 'cl-tmux::run-control-mode) orig))))
+
+;;; ── Coverage: stub handler functions ─────────────────────────────────────────
+;;;
+;;; sb-ext:exit terminates the process rather than signalling a condition.
+;;; We stub it to capture the exit code for testing.
+
+(defmacro with-stubbed-exit ((code-var) &body body)
+  "Stub sb-ext:exit to capture the exit code in CODE-VAR instead of exiting.
+   CODE-VAR is bound to NIL initially; after the stub is called it holds the
+   integer code passed to sb-ext:exit :code."
+  (let ((orig-sym (gensym "ORIG-EXIT")))
+    `(let ((,code-var nil)
+           (,orig-sym (fdefinition 'sb-ext:exit)))
+       (unwind-protect
+            (progn
+              (setf (fdefinition 'sb-ext:exit)
+                    (lambda (&rest args &key (code 0) &allow-other-keys)
+                      (declare (ignore args))
+                      (setf ,code-var code)))
+              ,@body)
+         (setf (fdefinition 'sb-ext:exit) ,orig-sym)))))
+
+(test run-kill-server-exits
+  "run-kill-server captures exit code 0."
+  (with-stubbed-exit (exit-code)
+    (cl-tmux::run-kill-server nil)
+    (is (eql 0 exit-code)
+        "run-kill-server must exit with code 0")))
+
+(test run-list-sessions-exits
+  "run-list-sessions captures exit code 0."
+  (with-stubbed-exit (exit-code)
+    (cl-tmux::run-list-sessions nil)
+    (is (eql 0 exit-code)
+        "run-list-sessions must exit with code 0")))
+
+(test run-source-file-nonexistent-path-exits-cleanly
+  "run-source-file with a nonexistent path exits cleanly (code 0)."
+  (with-stubbed-exit (exit-code)
+    (cl-tmux::run-source-file (list "/nonexistent/no-such-file.conf"))
+    (is (eql 0 exit-code)
+        "run-source-file with nonexistent path must exit cleanly")))
+
+(test run-has-session-no-socket-exits-1
+  "run-has-session with a nonexistent socket path exits with code 1."
+  (with-stubbed-exit (exit-code)
+    (cl-tmux::run-has-session (list "-t" "no-such-session-xyz"))
+    (is (eql 1 exit-code)
+        "run-has-session without socket must exit 1")))
+
+(test run-kill-server-is-fbound
+  "run-kill-server is a defined function."
+  (is (fboundp 'cl-tmux::run-kill-server)
+      "run-kill-server must be fbound"))
+
+(test run-list-sessions-is-fbound
+  "run-list-sessions is a defined function."
+  (is (fboundp 'cl-tmux::run-list-sessions)
+      "run-list-sessions must be fbound"))
+
+(test run-source-file-is-fbound
+  "run-source-file is a defined function."
+  (is (fboundp 'cl-tmux::run-source-file)
+      "run-source-file must be fbound"))
+
+(test run-has-session-is-fbound
+  "run-has-session is a defined function."
+  (is (fboundp 'cl-tmux::run-has-session)
+      "run-has-session must be fbound"))
+
+;;; ── Coverage: hostname / environment helpers ─────────────────────────────────
+
+(test hostname-short-strips-dot-suffix
+  "%hostname-short returns the part before the first dot."
+  (is (string= "myhost" (cl-tmux::%hostname-short "myhost.example.com"))
+      "%hostname-short must strip the domain suffix")
+  (is (string= "solo" (cl-tmux::%hostname-short "solo"))
+      "%hostname-short must return the full string when no dot present"))
+
+(test hostname-short-empty-string
+  "%hostname-short handles an empty hostname without error."
+  (is (string= "" (cl-tmux::%hostname-short ""))
+      "%hostname-short on empty string must return empty string"))
+
+(test safe-getenv-returns-string
+  "%safe-getenv returns a string for any variable name."
+  (let ((result (cl-tmux::%safe-getenv "PATH")))
+    (is (stringp result) "%safe-getenv must return a string"))
+  (let ((result (cl-tmux::%safe-getenv "NONEXISTENT_VAR_XYZ_123")))
+    (is (stringp result) "%safe-getenv must return a string for missing var")
+    (is (string= "" result) "%safe-getenv must return empty string for missing var")))
+
+(test build-hostname-context-has-expected-keys
+  "%build-hostname-context returns a plist with :hostname, :term, :version, etc."
+  (let ((ctx (cl-tmux::%build-hostname-context)))
+    (is (stringp (getf ctx :hostname))  ":hostname must be a string")
+    (is (stringp (getf ctx :version))   ":version must be a string")
+    (is (stringp (getf ctx :term))      ":term must be a string")
+    (is (string= "3.5" (getf ctx :version))
+        ":version must be \"3.5\" for compatibility")))
+
+(test make-format-condition-evaluator-returns-function
+  "%make-format-condition-evaluator returns a callable closure."
+  (let ((evaluator (cl-tmux::%make-format-condition-evaluator)))
+    (is (functionp evaluator)
+        "%make-format-condition-evaluator must return a function")))
+
+(test make-format-condition-evaluator-returns-string
+  "The closure returned by %make-format-condition-evaluator returns a string."
+  (let ((evaluator (cl-tmux::%make-format-condition-evaluator)))
+    (let ((result (funcall evaluator "1")))
+      (is (stringp result)
+          "format condition evaluator must return a string"))))
+
+;;; ── Coverage: server-launch timeout constant ─────────────────────────────────
+
+(test server-launch-timeout-constant-is-positive
+  "+server-launch-timeout-seconds+ is a positive integer."
+  (is (plusp cl-tmux::+server-launch-timeout-seconds+)
+      "+server-launch-timeout-seconds+ must be positive")
+  (is (integerp cl-tmux::+server-launch-timeout-seconds+)
+      "+server-launch-timeout-seconds+ must be an integer"))

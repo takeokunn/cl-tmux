@@ -172,19 +172,23 @@
 (defconstant +byte-w+          119  "Lowercase 'w' — vi word-forward (0x77)")
 (defconstant +byte-b+           98  "Lowercase 'b' — vi word-backward (0x62)")
 (defconstant +byte-e+          101  "Lowercase 'e' — vi word-end (0x65)")
+(defconstant +byte-f+          102  "Lowercase 'f' — vi jump-forward-to-char (0x66)")
 (defconstant +byte-g+          103  "Lowercase 'g' — vi jump-to-top (0x67)")
 (defconstant +byte-i+          105  "Lowercase 'i' — exit copy mode (insert, 0x69)")
 (defconstant +byte-n+          110  "Lowercase 'n' — search next (0x6E)")
 (defconstant +byte-r+          114  "Lowercase 'r' — rectangle select toggle (0x72)")
+(defconstant +byte-t+          116  "Lowercase 't' — vi jump-to-before-char (0x74)")
 (defconstant +byte-v+          118  "Lowercase 'v' — begin selection (0x76)")
 (defconstant +byte-y+          121  "Lowercase 'y' — yank/copy (0x79)")
 (defconstant +byte-capital-a+   65  "Uppercase 'A' — append selection (0x41)")
 (defconstant +byte-capital-d+   68  "Uppercase 'D' — copy to end of line (0x44)")
+(defconstant +byte-capital-f+   70  "Uppercase 'F' — vi jump-backward-to-char (0x46)")
 (defconstant +byte-capital-g+   71  "Uppercase 'G' — jump to bottom (0x47)")
 (defconstant +byte-capital-h+   72  "Uppercase 'H' — cursor to top of screen (0x48)")
 (defconstant +byte-capital-l+   76  "Uppercase 'L' — cursor to bottom of screen (0x4C)")
 (defconstant +byte-capital-m+   77  "Uppercase 'M' — cursor to middle of screen (0x4D)")
 (defconstant +byte-capital-n+   78  "Uppercase 'N' — search prev (0x4E)")
+(defconstant +byte-capital-t+   84  "Uppercase 'T' — vi jump-to-after-prev-char (0x54)")
 (defconstant +byte-capital-v+   86  "Uppercase 'V' — begin line selection (0x56)")
 (defconstant +byte-capital-y+   89  "Uppercase 'Y' — copy current line (0x59)")
 (defconstant +byte-dollar+      36  "Dollar sign '$' — go to line end (0x24)")
@@ -306,15 +310,6 @@
               `(,condition ,@body)))
           rules))))
 
-;;; ── PTY forwarding helpers ───────────────────────────────────────────────────
-
-(defun %forward-octets (session octets)
-  "Forward raw OCTETS (an octet vector) to SESSION's active-pane PTY.
-   Used by escape-sequence handlers and the copy-mode passthrough path.
-   Does nothing if the active pane has no live PTY (fd = -1)."
-  (with-active-pane (active-pane session)
-    (pty-write (pane-fd active-pane) octets)))
-
 (defun %arrow-final-to-ss3-bytes (final-byte)
   "Given a CSI arrow-key final byte (65=A/66=B/67=C/68=D), return the
    corresponding SS3 sequence bytes (ESC O A/B/C/D) as an octet vector,
@@ -359,7 +354,7 @@
                         (code-char enc-btn)
                         (code-char enc-col)
                         (code-char enc-row))))))
-    (when (and encoded (> (pane-fd pane) 0))
+    (when (and encoded (> (pane-fd pane) 0) (not *client-read-only*))
       (pty-write (pane-fd pane) encoded)
       t)))
 
@@ -377,8 +372,8 @@
              (cond
                ;; mode 1 (X10 / normal): button press only, not release
                ((= mode 1) (not release-p))
-               ;; mode 2 (button-event): press, release, button-drag (btn 32)
-               ((= mode 2) (or (not release-p) release-p))
+               ;; mode 2 (button-event): press, release, button-motion (btn = +mouse-btn-motion+)
+               ((= mode 2) (or (not release-p) (= btn +mouse-btn-motion+)))
                ;; mode 3 (any-event): all including pure motion
                ((= mode 3) t)
                (t nil))))
@@ -714,10 +709,3 @@
        (setf *dirty* t)
        (values nil #'%ground-input-state)))))
 
-(defun make-overlay-escape-k (buffer)
-  "CPS continuation factory: accumulate an ESC sequence for the overlay pager.
-   The returned closure has the CPS signature (SESSION BYTE) → (values OUTCOME NEXT).
-   SESSION is not needed — the overlay is global — so the closure ignores it.
-   Handles ESC [ A (Up) → scroll -1, ESC [ B (Down) → scroll +1.
-   Any other sequence (including bare ESC) dismisses the overlay."
-  (%overlay-escape-second-byte buffer))

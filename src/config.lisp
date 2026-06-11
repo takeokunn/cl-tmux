@@ -3,6 +3,14 @@
 ;;; ASCII 2 = ^B.  tmux uses C-b as the default prefix.
 (defconstant +prefix-key-code+ 2)
 
+;;; Control-character mask: (logand char-code +ctrl-mask+) yields the
+;;; corresponding ASCII control byte.  Appears in prefix-key parsing and
+;;; control-character table lookup; a single named constant avoids the magic
+;;; literal #x1f from appearing in three separate source locations.
+(defconstant +ctrl-mask+ #x1f
+  "Bitmask used to convert an ASCII letter to its control-character code.
+   (logand char-code +ctrl-mask+) = byte sent when Ctrl is held with that key.")
+
 ;;; ── Runtime-modifiable prefix key ────────────────────────────────────────
 ;;;
 ;;; *prefix-key-code* shadows +prefix-key-code+ for the event loop so that
@@ -25,7 +33,7 @@
     ((and (= (length key-str) 3)
           (char-equal (char key-str 0) #\C)
           (char= (char key-str 1) #\-))
-     (logand (char-code (char key-str 2)) #x1f))
+     (logand (char-code (char key-str 2)) +ctrl-mask+))
     ((= (length key-str) 1)
      (char-code (char key-str 0)))
     (t nil)))

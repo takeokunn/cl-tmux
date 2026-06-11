@@ -35,6 +35,22 @@
                           :pointer ws
                           :int)))
 
+;;; ── exec argument-vector size constants ────────────────────────────────────
+
+(defconstant +sh-argc+ 4
+  "Number of pointers in the argv array for 'sh -c CMD NULL': /bin/sh, -c, cmd, NULL.")
+
+(defconstant +shell-argc+ 2
+  "Number of pointers in the argv array for 'shell NULL': shell-path, NULL.")
+
+;;; ── Fork sentinel constants ────────────────────────────────────────────────
+
+(defconstant +fork-child-pid+ 0
+  "Return value of fork(2) in the child process (POSIX standard).")
+
+(defconstant +fork-error-pid+ -1
+  "Return value of fork(2) on failure (POSIX standard).")
+
 ;;; ── Private: forkpty helpers ───────────────────────────────────────────────
 
 (defun %child-setup-tty (slave-path master-fd)
@@ -66,6 +82,31 @@
                             :int 1
                             :int))))
 
+(defun %exec-command (command)
+  "Replace the current process image with /bin/sh -c COMMAND.
+   Builds a +sh-argc+-element argv: [\"/bin/sh\", \"-c\", command, NULL].
+   MUST be called only in the child process after fork — NEVER from the parent."
+  (cffi:with-foreign-string (sh-ptr "/bin/sh")
+    (cffi:with-foreign-string (dash-c-ptr "-c")
+      (cffi:with-foreign-string (cmd-ptr command)
+        (cffi:with-foreign-object (argv :pointer +sh-argc+)
+          (setf (cffi:mem-aref argv :pointer 0) sh-ptr
+                (cffi:mem-aref argv :pointer 1) dash-c-ptr
+                (cffi:mem-aref argv :pointer 2) cmd-ptr
+                (cffi:mem-aref argv :pointer 3) (cffi:null-pointer))
+          (cffi:foreign-funcall "execv" :pointer sh-ptr :pointer argv :int))))))
+
+(defun %exec-shell (shell-path)
+  "Replace the current process image with SHELL-PATH directly.
+   Builds a +shell-argc+-element argv: [shell-path, NULL].
+   MUST be called only in the child process after fork — NEVER from the parent."
+  (cffi:with-foreign-string (path-ptr shell-path)
+    (cffi:with-foreign-string (arg0-ptr shell-path)
+      (cffi:with-foreign-object (argv :pointer +shell-argc+)
+        (setf (cffi:mem-aref argv :pointer 0) arg0-ptr
+              (cffi:mem-aref argv :pointer 1) (cffi:null-pointer))
+        (cffi:foreign-funcall "execv" :pointer path-ptr :pointer argv :int)))))
+
 (defun %child-exec-shell (&optional start-dir term default-command extra-env)
   "Replace the current process image with a shell or default-command.
    When START-DIR is a non-empty string, chdir to it before execv.
@@ -84,24 +125,8 @@
     (when (and (consp pair) (stringp (car pair)) (stringp (cdr pair)))
       (%child-setenv (car pair) (cdr pair))))
   (if (and default-command (plusp (length default-command)))
-      ;; Run: /bin/sh -c "default-command"
-      (cffi:with-foreign-string (sh-ptr "/bin/sh")
-        (cffi:with-foreign-string (dash-c-ptr "-c")
-          (cffi:with-foreign-string (cmd-ptr default-command)
-            (cffi:with-foreign-object (argv :pointer 4)
-              (setf (cffi:mem-aref argv :pointer 0) sh-ptr
-                    (cffi:mem-aref argv :pointer 1) dash-c-ptr
-                    (cffi:mem-aref argv :pointer 2) cmd-ptr
-                    (cffi:mem-aref argv :pointer 3) (cffi:null-pointer))
-              (cffi:foreign-funcall "execv" :pointer sh-ptr :pointer argv :int)))))
-      ;; Run the default shell directly.
-      (let ((shell cl-tmux/config:*default-shell*))
-        (cffi:with-foreign-string (path-ptr shell)
-          (cffi:with-foreign-string (arg0-ptr shell)
-            (cffi:with-foreign-object (argv :pointer 2)
-              (setf (cffi:mem-aref argv :pointer 0) arg0-ptr
-                    (cffi:mem-aref argv :pointer 1) (cffi:null-pointer))
-              (cffi:foreign-funcall "execv" :pointer path-ptr :pointer argv :int))))))
+      (%exec-command default-command)
+      (%exec-shell cl-tmux/config:*default-shell*))
   ;; execv failed — fall through to _exit.
   (cffi:foreign-funcall "_exit" :int 1 :void))
 
@@ -118,8 +143,8 @@
   (multiple-value-bind (master slave-path) (open-pty rows cols)
     (let ((pid (sb-posix:fork)))
       (cond
-        ((< pid 0) (error "fork failed"))
-        ((= pid 0)                             ; child
+        ((= pid +fork-error-pid+) (error "fork failed"))
+        ((= pid +fork-child-pid+)              ; child
          (%child-setup-tty slave-path master)
          (%child-exec-shell start-dir term default-command extra-env))
         (t                                     ; parent
@@ -183,10 +208,15 @@
 
 ;;; ── Public: select-based I/O multiplexing ─────────────────────────────────
 
+(defconstant +microseconds-per-second+ 1000000
+  "Number of microseconds in one second; used in struct timeval decomposition.")
+
 (defun %setup-timeval (tv timeout-us)
-  "Write TIMEOUT-US microseconds into the struct timeval at foreign pointer TV."
-  (setf (cffi:mem-aref tv :long 0) (floor timeout-us 1000000)
-        (cffi:mem-aref tv :long 1) (mod   timeout-us 1000000)))
+  "Write TIMEOUT-US microseconds into the struct timeval at foreign pointer TV.
+   Decomposes timeout into (seconds, remainder-microseconds) using
+   +microseconds-per-second+."
+  (setf (cffi:mem-aref tv :long 0) (floor timeout-us +microseconds-per-second+)
+        (cffi:mem-aref tv :long 1) (mod   timeout-us +microseconds-per-second+)))
 
 (defun %collect-ready-fds (fds rset)
   "Return the sub-list of FDS whose bits are set in read-set RSET."

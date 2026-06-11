@@ -652,17 +652,19 @@
   ;; ── Mark / layout helpers ─────────────────────────────────────────────────
   (:mark-pane
    (with-active-pane (ap session)
-     (if (pane-marked ap)
-         (setf (pane-marked ap) nil)
-         (progn
-           (with-active-window (win session)
-             (dolist (p (window-panes win))
-               (setf (pane-marked p) nil)))
-           (setf (pane-marked ap) t)))))
+     (cond
+       ((eq ap *server-marked-pane*)
+        (setf (pane-marked ap) nil
+              *server-marked-pane* nil))
+       (t
+        (when *server-marked-pane*
+          (setf (pane-marked *server-marked-pane*) nil))
+        (setf (pane-marked ap)       t
+              *server-marked-pane*  ap)))))
   (:clear-mark
-   (with-active-window (win session)
-     (dolist (p (window-panes win))
-       (setf (pane-marked p) nil))))
+   (when *server-marked-pane*
+     (setf (pane-marked *server-marked-pane*) nil
+           *server-marked-pane* nil)))
   (:select-layout-spread
    (%apply-named-layout-to-session session :even-horizontal))
   (:next-layout
@@ -950,13 +952,15 @@
   ;; :mark-pane already handles this; this alias keeps the tmux name.
   (:select-pane-mark
    (with-active-pane (ap session)
-     (if (pane-marked ap)
-         (setf (pane-marked ap) nil)
-         (progn
-           (with-active-window (win session)
-             (dolist (p (window-panes win))
-               (setf (pane-marked p) nil)))
-           (setf (pane-marked ap) t)))))
+     (cond
+       ((eq ap *server-marked-pane*)
+        (setf (pane-marked ap) nil
+              *server-marked-pane* nil))
+       (t
+        (when *server-marked-pane*
+          (setf (pane-marked *server-marked-pane*) nil))
+        (setf (pane-marked ap)       t
+              *server-marked-pane*  ap)))))
 
   ;; ── detach-client with -s (detach all clients attached to a session) ─────
   (:detach-client

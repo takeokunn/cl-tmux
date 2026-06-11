@@ -11,18 +11,26 @@
 ;;;   V-split: "WxH,X,Y[first,second]"
 ;;; The 4-hex-digit checksum prefix is computed from the string.
 
-;;; tmux rolling checksum multiplier -- matches the algorithm in tmux's layout.c.
+;;; tmux rolling checksum constants -- match the algorithm in tmux's layout.c.
 (defconstant +checksum-multiplier+ 61
   "Multiplier for the tmux rolling 16-bit layout checksum (from tmux layout.c).")
+(defconstant +checksum-mask+ #xFFFF
+  "16-bit mask applied at each step of the tmux rolling layout checksum.")
+(defconstant +checksum-hex-digits+ 4
+  "Number of hex digits in a tmux layout checksum (e.g. \"A1B2\").")
+(defconstant +checksum-prefix-length+ 5
+  "Total prefix length to skip when a checksum is present: 4 hex digits + 1 comma.")
 
 (defun %layout-checksum (str)
   "Compute the tmux-style 16-bit checksum of STR.
    Algorithm: rolling multiply-add on character codes (multiplier = +checksum-multiplier+).
    Returns a 4-hex-digit string."
-  (let ((csum 0))
-    (loop for ch across str
-          do (setf csum (logand #xFFFF (+ (* csum +checksum-multiplier+) (char-code ch)))))
-    (format nil "~4,'0X" csum)))
+  (format nil "~4,'0X"
+          (reduce (lambda (accumulator ch)
+                    (logand +checksum-mask+
+                            (+ (* accumulator +checksum-multiplier+) (char-code ch))))
+                  str
+                  :initial-value 0)))
 
 (defun %split-bounding-box (node)
   "Derive (values min-x min-y width height) for a LAYOUT-SPLIT node from its leaves.
@@ -46,8 +54,8 @@
                     (pane-width leaf-pane) (pane-height leaf-pane)
                     (pane-x leaf-pane) (pane-y leaf-pane)
                     (pane-id leaf-pane))
-  :on-split (let ((open-bracket  (if (eq split-orient :v) #\[ #\{))
-                  (close-bracket (if (eq split-orient :v) #\] #\})))
+  :on-split (let ((open-bracket  (ecase split-orient (:h #\{) (:v #\[)))
+                  (close-bracket (ecase split-orient (:h #\}) (:v #\]))))
                (multiple-value-bind (min-x min-y width height) (%split-bounding-box node)
                  (format nil "~Dx~D,~D,~D~C~A,~A~C"
                          width height min-x min-y
@@ -78,10 +86,11 @@
 (defun %skip-checksum (str)
   "If STR starts with a 4-char hex checksum followed by a comma, skip it.
    Returns the remaining string."
-  (if (and (>= (length str) 5)
-           (char= (char str 4) #\,)
-           (every (lambda (ch) (digit-char-p ch 16)) (subseq str 0 4)))
-      (subseq str 5)
+  (if (and (>= (length str) +checksum-prefix-length+)
+           (char= (char str +checksum-hex-digits+) #\,)
+           (every (lambda (ch) (digit-char-p ch 16))
+                  (subseq str 0 +checksum-hex-digits+)))
+      (subseq str +checksum-prefix-length+)
       str))
 
 (defun %read-digits (str pos)
@@ -126,19 +135,19 @@
 (defun %parse-split-body (str panes pos close-ch orient)
   "Parse two child nodes starting at POS, expecting CLOSE-CH (} or ]) after second.
    Returns (values split-node end-pos)."
-  (multiple-value-bind (child1 child1-end)
-      (%parse-node str panes pos)
-    (let ((child2-start (if (and (< child1-end (length str))
-                                 (char= (char str child1-end) #\,))
-                            (1+ child1-end)
-                            child1-end)))
-      (multiple-value-bind (child2 child2-end)
-          (%parse-node str panes child2-start)
-        (let ((close-end (if (and (< child2-end (length str))
-                                  (char= (char str child2-end) close-ch))
-                             (1+ child2-end)
-                             child2-end)))
-          (values (make-layout-split orient child1 child2) close-end))))))
+  (let* ((child1-pos    pos)
+         (str-length    (length str)))
+    (multiple-value-bind (child1 child1-end) (%parse-node str panes child1-pos)
+      (let* ((child2-start (if (and (< child1-end str-length)
+                                    (char= (char str child1-end) #\,))
+                               (1+ child1-end)
+                               child1-end)))
+        (multiple-value-bind (child2 child2-end) (%parse-node str panes child2-start)
+          (let* ((close-end (if (and (< child2-end str-length)
+                                     (char= (char str child2-end) close-ch))
+                                (1+ child2-end)
+                                child2-end)))
+            (values (make-layout-split orient child1 child2) close-end)))))))
 
 (defun %parse-node (str panes pos)
   "Parse one layout node starting at POS in STR.
@@ -169,7 +178,11 @@
 (defun string->layout (layout-string panes)
   "Decode LAYOUT-STRING (tmux format, checksum optional) and rebuild the layout
    tree.  PANES is a list of existing pane objects matched by pane-id.
-   Returns the root layout node, or NIL on parse failure."
+   Returns the root layout node, or NIL on parse failure.
+
+   NOTE: This function is currently exercised only in tests.  It is exported as
+   future infrastructure for session restore (persisting and replaying a window's
+   layout without re-running the PTY diff).  No production src/ caller exists yet."
   (handler-case
       (let ((str (%skip-checksum layout-string)))
         (multiple-value-bind (node end)

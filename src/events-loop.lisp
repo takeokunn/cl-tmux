@@ -173,7 +173,7 @@
                           (subseq accum 0 (fill-pointer accum))
                           (make-array 1 :element-type '(unsigned-byte 8)
                                         :initial-element +byte-esc+))))
-          (when (and pane (> (pane-fd pane) 0))
+          (when (and pane (> (pane-fd pane) 0) (not *client-read-only*))
             (pty-write (pane-fd pane) bytes)))
         (setf (input-state-continuation state) #'%ground-input-state
               (input-state-esc-entered-at state) nil
@@ -188,7 +188,9 @@
 (defun %forward-octets-synchronized (session octets)
   "Forward OCTETS to the active pane.  If synchronize-panes is enabled on
    the active window, also write to all other panes in the window.
-   Panes with pane-input-disabled set (select-pane -d) receive no input."
+   Panes with pane-input-disabled set (select-pane -d) receive no input.
+   No-op when *client-read-only* is set (attach-session -r)."
+  (when *client-read-only* (return-from %forward-octets-synchronized nil))
   (let* ((window      (session-active-window session))
          (active-pane (and window (window-active-pane window))))
     (when (and active-pane
