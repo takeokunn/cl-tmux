@@ -127,8 +127,10 @@
         :serial t
         :components
         ((:file "cell-tests")     ; declares terminal-suite parent; double-width sub-suite
-         (:file "screen-tests")   ; resize sub-suite
-         (:file "cursor-tests")
+         (:file "screen-tests")   ; construction/p/cell-access/cursor/resize/dirty/sgr-pen/bell — part I
+         (:file "screen-tests-b") ; copy-mode slots, alt-screen, mouse-sgr, response-queue, origin-mode, tab-stops, lock, cells/parser — part II
+         (:file "cursor-tests")   ; scroll-region-clamp, set-cursor, direct-action, tab-stops, ri, nel, wide-char, advance — part I
+         (:file "cursor-tests-b") ; %place-wide-char, table-driven, combining-char-p, write-char combining, DEC graphics — part II
          (:file "scroll-tests")    ; scroll-ops/erase/scroll-region/delete-insert-chars — part I
          (:file "scroll-tests-b")  ; direct-row-primitives, direct-action-erase — part II
          (:file "modes-tests")    ; RIS/alt-screen/DECSC/mouse/bracketed-paste/focus — part I
@@ -136,8 +138,9 @@
          (:file "sgr-tests")
          (:file "csi-tests")    ; cursor-movement/DECSCUSR/CBT/SU-SD/REP/DA-response — part I
          (:file "csi-tests-b")  ; ECH/DECRQM/XTWINOPS/CPR/REP-0/VPR/ICH/DCH/ED/EL/IL/DL — part II
-         (:file "parser-tests")    ; utf8/special/basic-text/CPS parser suites — part I
+         (:file "parser-tests")    ; utf8/special/OSC/ESC-hash/private/dec-pm — part I
          (:file "parser-tests-b")  ; combining-chars/ACS/DCS/OSC suites — part II
+         (:file "parser-tests-c")  ; basic-text, inline-predicates, CPS state functions, define-state — part III
          (:file "emulator-tests")))
        (:file "layout-tests")      ; layout-tree core: leaves/split/resize/collapse/persistence — part I
        (:file "layout-tests-b")    ; named-layout helpers, apply-named-layout, persistence internals — part II
@@ -169,16 +172,21 @@
        (:file "renderer-tests-b")          ; renderer — part II (status-bar, parse-style, render-popup/menu)
        (:file "renderer-tests-c")          ; renderer — part III (mouse/focus/keys, lock-screen, justify, cursor-shape, overlay, inline-style)
        (:file "dispatch-tests")               ; core dispatch — part I (cyclic helpers, window/pane select, copy-mode, detach, prefix)
-       (:file "dispatch-tests-b")            ; core dispatch — part II (swap-pane, kill-pane-confirm, select-layout, zoom, resize, rotate)
+       (:file "dispatch-tests-c")             ; core dispatch — part III (focus events window-switch, list-keys, select-pane, zoom, list-windows/sessions)
+       (:file "dispatch-tests-b")            ; core dispatch — part II (swap-pane, kill-pane-confirm, command-prompt, run-command-line, set-option)
+       (:file "dispatch-tests-d")            ; core dispatch — part IV (%cmd-set-option scope, side-effects, bind/unbind/rename, set-hook)
        (:file "dispatch-tests-commands")     ; arg-taking command tests: flag parsing, kill/swap/move/-t, confirm
        (:file "dispatch-tests-commands-b")   ; named-command handlers, display/buffer/session dispatch
        (:file "dispatch-tests-commands-c")   ; helper tests, on-submit paths, cyclic nav, break/join/run/if
+       (:file "dispatch-tests-commands-d")   ; has-session, find-window/select-window-prompt, move/swap-window, bind/unbind-key, kill-pane, split, new-window
        (:file "dispatch-tests-session")    ; copy-mode paging dispatch tests
-       (:file "dispatch-tests-session-b")  ; coverage: untested handlers, send-keys, capture-pane, paste-buffer
+       (:file "dispatch-tests-session-b")  ; coverage: untested handlers, parse-flag-token, rename/new-window/split-window flags
        (:file "dispatch-tests-session-c")  ; options, session management, control mode, server-lifecycle
+       (:file "dispatch-tests-session-d")  ; display-popup, send-keys -N/-H, capture-pane, named paste-buffer, join-pane, wait-for-arg
        (:file "events-tests")            ; keystroke pipeline — part I (escape, process-byte, mouse, key-table, copy-mode vi-nav)
        (:file "events-tests-f")          ; keystroke pipeline — part VI (PageUp/Down, prefix-arrow, send-prefix, modifier+arrow, meta/alt)
        (:file "events-tests-b")          ; locked-session, drag/modifier, copy-mode cursor, vi nav — part II
+       (:file "events-tests-h")          ; byte-constants, make-input-state, forward-octets, maybe-rename-window — part VIII
        (:file "events-tests-c")          ; app-cursor-keys, prompt-key, copy-mode nav, SGR, border-check — part III
        (:file "events-tests-e")          ; status-col, SGR-nil, copy-nav, flush-esc, reset-repeat, CSI-u — part IV
        (:file "events-tests-d")          ; app-cursor-keys (ss3), new bindings, :mark-pane, root table, fn-keys — part V
@@ -190,7 +198,8 @@
        (:file "commands-tests-b")        ; copy-mode line/page/word motions, top/bottom, search — part IV
        (:file "commands-tests-g")        ; send-keys, key-name, tokenize, kill-window-mru, join-pane — part V
        (:file "commands-tests-h")        ; copy-mode-exit, break-pane, clear-history, rotate, find, next/prev-win — part VI
-       (:file "commands-tests-c")        ; pipe-pane, virtual-row, timeout, scroll helpers, extract-chars — part VII
+       (:file "commands-tests-c")        ; pipe-pane, virtual-row, timeout, scroll helpers, word/paragraph nav — part VII
+       (:file "commands-tests-j")        ; join-pane helpers, resize-pane up, noop guards, search, scroll, extract-chars, row-string — part X
        (:file "commands-tests-d")        ; rename hooks, server-access, customize-mode, copy-mode-toggle/append/copy-pipe — part VIII
        (:file "commands-tests-i")        ; rectangle-sel, run-copy-cmd, set-cursor, send-keys-l, jump-to-char, goto-line, search-incr — part IX
        (:file "overlay-tests")
