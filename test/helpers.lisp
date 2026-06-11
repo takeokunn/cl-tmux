@@ -345,6 +345,16 @@
      (with-loop-state
        ,@body)))
 
+(defmacro with-option-session ((var &rest make-args) &body body)
+  "Bind VAR to a fresh fake session and run BODY inside WITH-ISOLATED-CONFIG.
+   Use this when the test exercises option/config mutations (set-option, prefix,
+   key-table rewrites) that must not leak between tests.  Unlike WITH-FAKE-SESSION
+   this does NOT wrap in WITH-LOOP-STATE; add it explicitly when needed:
+     (with-option-session (s) (with-loop-state ...))"
+  `(with-isolated-config
+     (let ((,var (make-fake-session ,@make-args)))
+       ,@body)))
+
 (defmacro with-minimal-session ((pane-var win-var sess-var
                                  &key (width 20) (height 5)) &body body)
   "Bind PANE-VAR, WIN-VAR, SESS-VAR to a fresh single-pane session of WIDTH×HEIGHT.

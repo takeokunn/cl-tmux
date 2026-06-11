@@ -316,47 +316,54 @@
 ;;; sb-ext:exit terminates the process rather than signalling a condition.
 ;;; We stub it to capture the exit code for testing.
 
-(defmacro with-stubbed-exit ((code-var) &body body)
-  "Stub sb-ext:exit to capture the exit code in CODE-VAR instead of exiting.
-   CODE-VAR is bound to NIL initially; after the stub is called it holds the
-   integer code passed to sb-ext:exit :code."
-  (let ((orig-sym (gensym "ORIG-EXIT")))
-    `(let ((,code-var nil)
-           (,orig-sym (fdefinition 'sb-ext:exit)))
-       (unwind-protect
-            (progn
-              (setf (fdefinition 'sb-ext:exit)
-                    (lambda (&rest args &key (code 0) &allow-other-keys)
-                      (declare (ignore args))
-                      (setf ,code-var code)))
-              ,@body)
-         (setf (fdefinition 'sb-ext:exit) ,orig-sym)))))
+(defmacro with-stubbed-exit (code-var &body body)
+  "Stub sb-ext:exit so it captures the :code argument in the existing variable
+   CODE-VAR and non-locally exits the body via THROW (matching sb-ext:exit's
+   declared return type of NIL — a returning stub triggers SIMPLE-CONTROL-ERROR).
+   Assertions should follow the macro form, where CODE-VAR holds the captured
+   value.  Uses WITHOUT-PACKAGE-LOCKS because SB-EXT is a locked package."
+  (let ((tag     (gensym "EXIT-TAG"))
+        (orig    (gensym "ORIG-EXIT")))
+    `(sb-ext:without-package-locks
+       (let ((,orig (fdefinition 'sb-ext:exit)))
+         (setf (fdefinition 'sb-ext:exit)
+               (lambda (&rest args &key (code 0) &allow-other-keys)
+                 (declare (ignore args))
+                 (setf ,code-var code)
+                 (throw ',tag nil)))
+         (unwind-protect
+              (catch ',tag ,@body)
+           (setf (fdefinition 'sb-ext:exit) ,orig))))))
 
 (test run-kill-server-exits
   "run-kill-server captures exit code 0."
-  (with-stubbed-exit (exit-code)
-    (cl-tmux::run-kill-server nil)
+  (let (exit-code)
+    (with-stubbed-exit exit-code
+      (cl-tmux::run-kill-server nil))
     (is (eql 0 exit-code)
         "run-kill-server must exit with code 0")))
 
 (test run-list-sessions-exits
   "run-list-sessions captures exit code 0."
-  (with-stubbed-exit (exit-code)
-    (cl-tmux::run-list-sessions nil)
+  (let (exit-code)
+    (with-stubbed-exit exit-code
+      (cl-tmux::run-list-sessions nil))
     (is (eql 0 exit-code)
         "run-list-sessions must exit with code 0")))
 
 (test run-source-file-nonexistent-path-exits-cleanly
   "run-source-file with a nonexistent path exits cleanly (code 0)."
-  (with-stubbed-exit (exit-code)
-    (cl-tmux::run-source-file (list "/nonexistent/no-such-file.conf"))
+  (let (exit-code)
+    (with-stubbed-exit exit-code
+      (cl-tmux::run-source-file (list "/nonexistent/no-such-file.conf")))
     (is (eql 0 exit-code)
         "run-source-file with nonexistent path must exit cleanly")))
 
 (test run-has-session-no-socket-exits-1
   "run-has-session with a nonexistent socket path exits with code 1."
-  (with-stubbed-exit (exit-code)
-    (cl-tmux::run-has-session (list "-t" "no-such-session-xyz"))
+  (let (exit-code)
+    (with-stubbed-exit exit-code
+      (cl-tmux::run-has-session (list "-t" "no-such-session-xyz")))
     (is (eql 1 exit-code)
         "run-has-session without socket must exit 1")))
 

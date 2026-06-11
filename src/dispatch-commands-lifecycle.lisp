@@ -5,8 +5,7 @@
    -a: kill ALL windows in the session EXCEPT the target (or active) window.
    -t target: target window by id or name.
    No flags: kill the active window."
-  (multiple-value-bind (flags _pos) (%parse-command-flags args "t")
-    (declare (ignore _pos))
+  (with-command-flags (flags args "t")
     (let* ((target-str  (cdr (assoc #\t flags)))
            (kill-others (assoc #\a flags))
            (ref-win     (if target-str
@@ -35,8 +34,7 @@
    -k: kill any window already occupying the destination index first.
    The window object is SHARED — it appears in both sessions at the same index
    (cl-tmux stores the index in the window struct, so linked windows share it)."
-  (multiple-value-bind (flags _pos) (%parse-command-flags args "st")
-    (declare (ignore _pos))
+  (with-command-flags (flags args "st")
     (let* ((src-str (cdr (assoc #\s flags)))
            (dst-str (cdr (assoc #\t flags)))
            (kill-p  (assoc #\k flags))
@@ -78,8 +76,7 @@
    The window is removed from the resolved session only when it is also linked in
    at least one OTHER session (so it is not orphaned).  When it exists in only
    one session, -k is required to actually destroy it (matches tmux)."
-  (multiple-value-bind (flags _pos) (%parse-command-flags args "t")
-    (declare (ignore _pos))
+  (with-command-flags (flags args "t")
     (let* ((target-str (cdr (assoc #\t flags)))
            (kill-p     (assoc #\k flags))
            (win        (if target-str
@@ -109,8 +106,7 @@
    -a: kill all panes in the active window EXCEPT the target (or active) pane.
    -t target: target pane by pane-id.
    No -t: target is the active pane.  A -t that matches nothing is a no-op."
-  (multiple-value-bind (flags _pos) (%parse-command-flags args "t")
-    (declare (ignore _pos))
+  (with-command-flags (flags args "t")
     (let* ((target-str (cdr (assoc #\t flags)))
            (kill-all   (assoc #\a flags))
            (n          (and target-str (parse-integer target-str :junk-allowed t)))
@@ -147,7 +143,7 @@
   "swap-window [-s src] -t dst: exchange the index numbers of two windows.  SRC and
    DST are window-id/name targets; with no -s the active window is the source.
    First command to use two value flags (-s and -t) at once."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "st")
+  (with-command-flags+pos (flags positionals args "st")
     (declare (ignore positionals))
     (let ((src (if (cdr (assoc #\s flags))
                    (%resolve-window-target session (cdr (assoc #\s flags)))
@@ -188,7 +184,7 @@
    -r: renumber all windows sequentially from base-index (repack gaps).
    -a: insert after the current window (used with -t for relative positioning.
    Without -s/-t: prompts interactively (no-op in arg-command path)."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "st")
+  (with-command-flags+pos (flags positionals args "st")
     (declare (ignore positionals))
     (let* ((src-str (cdr (assoc #\s flags)))
            (dst-str (cdr (assoc #\t flags)))
@@ -226,7 +222,7 @@
    truthy value (non-empty and not \"0\"), run the THEN command line; otherwise
    run ELSE if given.  Only the -F (format, no shell fork) form is handled; a
    plain shell-condition if-shell is a no-op here (would require a fork)."
-  (multiple-value-bind (flags positionals) (%parse-command-flags args "")
+  (with-command-flags+pos (flags positionals args "")
     (when (assoc #\F flags)
       (let ((cond-str (first  positionals))
             (then     (second positionals))

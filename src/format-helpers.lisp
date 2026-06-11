@@ -1,0 +1,127 @@
+(in-package #:cl-tmux/format)
+
+;;; -- Pure data helpers + format shorthand/arithmetic tables -----------------
+;;;
+;;; This file contains the purely functional utilities and data-table macros
+;;; used by the rest of the format engine.  Nothing here calls expand-format,
+;;; %expand-step, or the brace expansion functions; it is safe to load first.
+
+;;; ── Pure data helpers ────────────────────────────────────────────────────────
+
+(defun %lookup (context key)
+  "Retrieve KEY from the plist CONTEXT.
+   When not found in CONTEXT, falls back to *global-options* so that user-defined
+   options (#{@my-var}) and any registered tmux option (#{word_separators}) work.
+   The fallback uses the hyphenated option name that %variable-to-keyword produces
+   (underscores in the template map to hyphens in the keyword and option registry).
+   Returns an empty string when absent everywhere."
+  (let ((val (getf context key)))
+    (if val
+        (princ-to-string val)
+        ;; The keyword's symbol-name is already the hyphenated option name
+        ;; (e.g. WORD-SEPARATORS from word_separators, or @MY-VAR from @my-var).
+        ;; Lowercasing it gives the option-registry key directly.
+        (let* ((opt-name (string-downcase (symbol-name key)))
+               (opt-val  (cl-tmux/options:get-option opt-name nil)))
+          (if opt-val (princ-to-string opt-val) "")))))
+
+(defun %variable-to-keyword (name)
+  "Convert a variable name string to a context keyword.
+   Underscores → hyphens, then upcase and intern in the KEYWORD package."
+  (intern (string-upcase (substitute #\- #\_ name)) :keyword))
+
+(defun %truthy-p (str)
+  "T when STR is truthy: non-empty, not \"0\", not \"false\"."
+  (and (plusp (length str))
+       (not (string= str "0"))
+       (not (string-equal str "false"))))
+
+(defun %top-level-comma (content start)
+  "Index of the next comma in CONTENT at/after START that is NOT inside a nested
+   #{...}, or NIL.  Commas inside a nested format belong to it, not the splitter."
+  (let ((depth 0) (i start) (n (length content)))
+    (loop while (< i n) do
+      (let ((c (char content i)))
+        (cond
+          ((and (char= c #\#) (< (1+ i) n) (char= (char content (1+ i)) #\{))
+           (incf depth) (incf i 2))
+          ((and (char= c #\}) (plusp depth)) (decf depth) (incf i))
+          ((and (char= c #\,) (zerop depth)) (return-from %top-level-comma i))
+          (t (incf i)))))
+    nil))
+
+(defun %split-conditional (content)
+  "Split CONTENT (text after '?') into (values cond true-branch false-branch).
+   Splits on TOP-LEVEL commas only, so a comma inside a nested #{...} (e.g. the
+   condition #{==:#{x},y}) stays part of that nested format."
+  (let ((comma1 (%top-level-comma content 0)))
+    (if (null comma1)
+        (values content "" "")
+        (let* ((cond-str (subseq content 0 comma1))
+               (comma2   (%top-level-comma content (1+ comma1))))
+          (if (null comma2)
+              (values cond-str (subseq content (1+ comma1)) "")
+              (values cond-str
+                      (subseq content (1+ comma1) comma2)
+                      (subseq content (1+ comma2))))))))
+
+;;; ── Shorthand character table (data layer) ───────────────────────────────────
+;;;
+;;; Prolog-like fact table — each row is one format shorthand:
+;;;   format_char(#\S) :- lookup(:session-name).
+;;;   format_char(#\I) :- lookup(:window-index).
+;;;   format_char(#\W) :- lookup(:window-name).
+;;;   format_char(#\P) :- lookup(:pane-index).
+;;;   format_char(#\H) :- lookup(:hostname).
+;;;   format_char(#\#) :- write(#\#).        -- literal hash
+
+(defmacro define-format-shorthands (&rest specs)
+  "Build %EXPAND-SHORTHAND from a declarative (char context-key) fact table.
+   Returns T when CH is a known shorthand (so the caller can advance by 2),
+   NIL when unknown."
+  `(defun %expand-shorthand (ch context out)
+     "Expand single-character shorthand CH to OUT via CONTEXT lookup.
+      Returns T on match, NIL when CH is not a recognized shorthand."
+     (case ch
+       ,@(mapcar (lambda (spec)
+                   (destructuring-bind (char key) spec
+                     `(,char (write-string (%lookup context ,key) out) t)))
+                 specs)
+       (#\# (write-char #\# out) t)
+       (otherwise nil))))
+
+(define-format-shorthands
+  (#\S :session-name)
+  (#\I :window-index)
+  (#\W :window-name)
+  (#\P :pane-index)
+  (#\H :hostname))
+
+;;; ── Arithmetic operator dispatch table (Prolog-like fact table) ─────────────
+;;;
+;;; define-arithmetic-op-table builds %dispatch-arithmetic-op from a declarative
+;;; (op-string expr) fact table, following the define-csi-rules / define-strftime-code-table
+;;; pattern.  A is the left operand integer, B the right; RESULT receives the output.
+
+(defmacro define-arithmetic-op-table (&rest rules)
+  "Build %DISPATCH-ARITHMETIC-OP from a declarative (op-string expr) fact table.
+   Each EXPR is evaluated with integer variables A and B in scope and should
+   return the integer result.  Division and remainder guard against zero B.
+   Returns the computed integer, or NIL when OP-STRING is not recognised."
+  `(defun %dispatch-arithmetic-op (op a b)
+     "Evaluate arithmetic operator OP on integers A and B.
+      Returns the integer result, or NIL when OP is not a recognised operator."
+     (cond
+       ,@(mapcar (lambda (rule)
+                   (destructuring-bind (op-string expr) rule
+                     `((string= op ,op-string) ,expr)))
+                 rules)
+       (t nil))))
+
+(define-arithmetic-op-table
+  ("+" (+ a b))
+  ("-" (- a b))
+  ("*" (* a b))
+  ("/" (if (zerop b) 0 (truncate a b)))
+  ("%" (if (zerop b) 0 (rem a b))))
+

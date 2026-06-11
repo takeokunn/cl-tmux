@@ -4,8 +4,8 @@
 ;;;
 ;;; *arg-command-table* maps (list-of-names . #'handler) pairs; consulted by
 ;;; %run-command-tokens before the no-arg named-command table.  Defined LAST so
-;;; all #'%cmd-* function object references are resolved at load time after their
-;;; respective handler definitions.
+;;; all #'%cmd-* function references are resolved after their definitions in
+;;; dispatch-commands{,-buffer,-option,-lifecycle,-pane,-shell,-auto}.lisp.
 
 (defparameter *arg-command-table*
   (list
