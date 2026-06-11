@@ -1,0 +1,488 @@
+(in-package #:cl-tmux/test)
+
+;;;; rectangle-sel-text, run-copy-command, set-cursor, send-keys-l, jump-to-char, goto-line, search-incr — part IX
+
+(in-suite commands-suite)
+
+;;; ── %rectangle-selection-text (direct unit tests) ────────────────────────────
+;;;
+;;; %rectangle-selection-text is exercised transitively through copy-mode-yank
+;;; with rect-select=T.  These direct tests make boundary conditions explicit.
+
+(test rectangle-selection-text-returns-nil-when-no-selection
+  "%rectangle-selection-text returns NIL when no selection is active."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-selecting s) nil)
+    (is (null (cl-tmux/commands::%rectangle-selection-text s))
+        "%rectangle-selection-text must return NIL when copy-selecting is NIL")))
+
+(test rectangle-selection-text-returns-nil-when-mark-nil
+  "%rectangle-selection-text returns NIL when mark is NIL even if selecting is T."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
+          (cl-tmux/terminal/types:screen-copy-mark      s) nil
+          (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 5))
+    (is (null (cl-tmux/commands::%rectangle-selection-text s))
+        "%rectangle-selection-text must return NIL when mark is NIL")))
+
+(test rectangle-selection-text-single-row
+  "%rectangle-selection-text returns the correct column slice for a single-row selection."
+  ;; Feed "hello world" to row 0; rectangle from col 0 to col 5 on row 0 only.
+  (let ((s (make-screen 20 5)))
+    (feed s "hello world")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-selecting    s) t
+          (cl-tmux/terminal/types:screen-copy-mark         s) (cons 0 0)
+          (cl-tmux/terminal/types:screen-copy-cursor       s) (cons 0 5))
+    (let ((text (cl-tmux/commands::%rectangle-selection-text s)))
+      (is (stringp text) "%rectangle-selection-text must return a string")
+      (is (string= "hello" text)
+          "%rectangle-selection-text must return cols 0-4 (got ~S)" text))))
+
+(test rectangle-selection-text-multi-row-fixed-columns
+  "%rectangle-selection-text extracts the same column range on every row."
+  ;; Row 0 = "abcde", row 1 = "ABCDE"; rectangle col 1-3 (2 chars per row).
+  (let ((s (make-screen 10 5)))
+    (feed s (format nil "abcde~C~CABCDE" #\Return #\Linefeed))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
+          (cl-tmux/terminal/types:screen-copy-mark      s) (cons 0 1)
+          (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 1 3))
+    (let ((text (cl-tmux/commands::%rectangle-selection-text s)))
+      (is (stringp text) "%rectangle-selection-text must return a string")
+      (is (search "bc" text)
+          "%rectangle-selection-text must include cols 1-2 from row 0 (got ~S)" text)
+      (is (search "BC" text)
+          "%rectangle-selection-text must include cols 1-2 from row 1 (got ~S)" text)
+      (is (find #\Newline text)
+          "%rectangle-selection-text must separate rows with newlines"))))
+
+;;; ── %run-copy-command (direct unit tests) ────────────────────────────────────
+;;;
+;;; %run-copy-command is exercised only transitively through copy-mode-yank when
+;;; the 'copy-command' option is set.  These direct tests cover the no-op branch
+;;; (empty option / empty text) and the error-handling contract.
+
+(test run-copy-command-noop-when-text-is-nil
+  "%run-copy-command is a no-op when TEXT is NIL."
+  (finishes (cl-tmux/commands::%run-copy-command nil)
+            "%run-copy-command with nil text must not signal"))
+
+(test run-copy-command-noop-when-text-is-empty
+  "%run-copy-command is a no-op when TEXT is an empty string."
+  (finishes (cl-tmux/commands::%run-copy-command "")
+            "%run-copy-command with empty text must not signal"))
+
+(test run-copy-command-noop-when-option-unset
+  "%run-copy-command is a no-op when the 'copy-command' option is not set."
+  ;; Fresh option table: 'copy-command' is absent.
+  (with-fresh-global-options
+    (finishes (cl-tmux/commands::%run-copy-command "some text")
+              "%run-copy-command with no copy-command option must not signal")))
+
+(test run-copy-command-does-not-crash-on-bad-command
+  "%run-copy-command swallows errors from a malformed copy-command."
+  ;; Set copy-command to a command that will fail (exit non-zero or not found).
+  (let ((cl-tmux/options:*global-options*
+         (let ((h (make-hash-table :test #'equal)))
+           (setf (gethash "copy-command" h) "false")
+           h)))
+    (finishes (cl-tmux/commands::%run-copy-command "hello")
+              "%run-copy-command must not signal when the copy-command fails")))
+
+;;; ── copy-mode-set-cursor (direct unit tests in commands group) ───────────────
+;;;
+;;; copy-mode-set-cursor is exported from cl-tmux/commands and tested in
+;;; events-tests.lisp (via keystroke dispatch), but that test lives outside the
+;;; commands audit scope.  Direct tests here make the commands group self-contained.
+
+(test copy-mode-set-cursor-positions-cursor
+  "copy-mode-set-cursor sets the cursor to the given row and column."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (cl-tmux/commands:copy-mode-set-cursor s 2 7)
+    (is (equal (cons 2 7) (cl-tmux/terminal/types:screen-copy-cursor s))
+        "copy-mode-set-cursor must set cursor to (2 . 7)")))
+
+(test copy-mode-set-cursor-clamps-row-to-bounds
+  "copy-mode-set-cursor clamps the row to [0, height-1]."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (cl-tmux/commands:copy-mode-set-cursor s 99 0)
+    (is (= 4 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "row > height-1 must clamp to height-1=4")
+    (cl-tmux/commands:copy-mode-set-cursor s -1 0)
+    (is (= 0 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "row < 0 must clamp to 0")))
+
+(test copy-mode-set-cursor-clamps-col-to-bounds
+  "copy-mode-set-cursor clamps the column to [0, width-1]."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (cl-tmux/commands:copy-mode-set-cursor s 0 99)
+    (is (= 19 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "col > width-1 must clamp to width-1=19")
+    (cl-tmux/commands:copy-mode-set-cursor s 0 -1)
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "col < 0 must clamp to 0")))
+
+(test copy-mode-set-cursor-noop-outside-copy-mode
+  "copy-mode-set-cursor is a no-op when not in copy mode."
+  (let ((s (make-screen 20 5)))
+    ;; Do NOT enter copy mode.
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 1 1))
+    (cl-tmux/commands:copy-mode-set-cursor s 3 7)
+    (is (equal (cons 1 1) (cl-tmux/terminal/types:screen-copy-cursor s))
+        "cursor must be unchanged outside copy mode")))
+
+;;; ── send-keys -l (literal) vs translated ────────────────────────────────────
+;;;
+;;; send-keys-to-pane (pane string &key literal) is the production entry point,
+;;; but it needs a pane with a real PTY (fd > -1) to observe output; fake panes
+;;; have fd -1, where pty-write is a harmless no-op.  We therefore test the
+;;; byte-production logic that distinguishes the two modes:
+;;;   - non-literal: %translate-send-keys maps the key name "Enter" → CR (13).
+;;;   - literal (-l): the string is emitted as raw UTF-8 bytes, so "Enter"
+;;;     stays the 5 bytes E-n-t-e-r with no key-name interpretation.
+
+(test send-keys-translated-enter-produces-cr
+  "Without -l, %translate-send-keys maps the key name \"Enter\" to a single CR byte (13)."
+  (let ((bytes (cl-tmux/commands::%translate-send-keys "Enter")))
+    (is (= 1 (length bytes))
+        "translated \"Enter\" must be exactly one byte (got length ~D)" (length bytes))
+    (is (= 13 (aref bytes 0))
+        "translated \"Enter\" must be CR (char code 13), got ~D" (aref bytes 0))))
+
+(test send-keys-literal-enter-stays-five-bytes
+  "With -l, the string \"Enter\" is written as raw UTF-8 bytes — five literal
+   characters E-n-t-e-r — NOT translated to a CR.  This is the byte payload
+   send-keys-to-pane writes when :literal is true."
+  (let ((literal-bytes (babel:string-to-octets "Enter")))
+    (is (= 5 (length literal-bytes))
+        "literal \"Enter\" must be five bytes (got length ~D)" (length literal-bytes))
+    (is (equalp #(69 110 116 101 114) literal-bytes)
+        "literal \"Enter\" must be the ASCII bytes for E,n,t,e,r")
+    ;; The literal payload must differ from the translated (single-CR) payload.
+    (is (not (equalp literal-bytes
+                     (cl-tmux/commands::%translate-send-keys "Enter")))
+        "literal mode must NOT equal the translated single-CR payload")))
+
+(test send-keys-literal-multibyte-utf8-preserves-bytes
+  "With -l, a multi-byte UTF-8 string is emitted as its raw UTF-8 octets:
+   \"café\" is 4 characters but encodes to 5 bytes (é = 2 bytes), so literal
+   mode preserves the multi-byte encoding rather than counting characters."
+  (let ((literal-bytes (babel:string-to-octets "café" :encoding :utf-8)))
+    (is (= 5 (length literal-bytes))
+        "literal \"café\" must be 5 UTF-8 bytes (got length ~D)" (length literal-bytes))
+    (is (> (length literal-bytes) (length "café"))
+        "byte count (~D) must exceed the 4-character count, proving multi-byte preservation"
+        (length literal-bytes))
+    ;; The é (U+00E9) encodes to the two-byte sequence C3 A9; assert the tail.
+    (is (equalp #(195 169) (subseq literal-bytes 3))
+        "the é must encode to the two UTF-8 bytes C3 A9 (got ~S)"
+        (subseq literal-bytes 3))))
+
+;;; ── Jump-to-char (vi f/F/t/T/;/,) ──────────────────────────────────────────
+
+(defun %jump-screen (&optional (content "hello world"))
+  "Return a copy-mode screen with CONTENT on row 0 and cursor at col 0."
+  (let ((s (%copy-mode-screen :w 20 :h 3 :content content)))
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    s))
+
+(test copy-mode-jump-forward-finds-char
+  "jump-forward moves cursor to the next occurrence of the target char on the line."
+  (let ((s (%jump-screen "hello world")))
+    (cl-tmux/commands::copy-mode-jump-forward s #\l)
+    (is (= 2 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "jump-forward 'l' from col 0 must land on col 2 (first 'l')")))
+
+(test copy-mode-jump-forward-no-match-stays-put
+  "jump-forward does not move the cursor when the char is not found ahead."
+  (let ((s (%jump-screen "hello world")))
+    (setf (cdr (cl-tmux/terminal/types:screen-copy-cursor s)) 10) ; col 10 = 'd'
+    (cl-tmux/commands::copy-mode-jump-forward s #\z)
+    (is (= 10 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "no-match forward must leave cursor unchanged")))
+
+(test copy-mode-jump-backward-finds-char
+  "jump-backward moves cursor to the previous occurrence of the target char."
+  (let ((s (%jump-screen "hello world")))
+    (setf (cdr (cl-tmux/terminal/types:screen-copy-cursor s)) 10) ; start near end
+    (cl-tmux/commands::copy-mode-jump-backward s #\l)
+    (is (= 9 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "jump-backward 'l' from col 10 must land on col 9 ('l' in 'world')")))
+
+(test copy-mode-jump-to-stops-before-char
+  "jump-to (vi t) lands one column BEFORE the target char (till)."
+  (let ((s (%jump-screen "hello world")))
+    (cl-tmux/commands::copy-mode-jump-to s #\l)
+    (is (= 1 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "jump-to 'l' from col 0 must land on col 1 (one before col 2)")))
+
+(test copy-mode-jump-again-repeats-last
+  "jump-again (vi ;) repeats the last jump-forward."
+  (let ((s (%jump-screen "hello world")))
+    (cl-tmux/commands::copy-mode-jump-forward s #\l)   ; lands col 2
+    (cl-tmux/commands::copy-mode-jump-again s)         ; next 'l'
+    (is (= 3 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "jump-again must advance to col 3 (second 'l')")))
+
+(test copy-mode-jump-reverse-reverses-forward
+  "jump-reverse (vi ,) performs the jump in the opposite direction."
+  (let ((s (%jump-screen "hello world")))
+    (cl-tmux/commands::copy-mode-jump-forward s #\l)   ; lands col 2
+    (cl-tmux/commands::copy-mode-jump-again  s)        ; lands col 3
+    (cl-tmux/commands::copy-mode-jump-reverse s)       ; back to col 2
+    (is (= 2 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "jump-reverse after two forward jumps must return to col 2")))
+
+;;; ── copy-mode-set-mark ───────────────────────────────────────────────────────
+
+(test copy-mode-set-mark-stores-current-cursor
+  "copy-mode-set-mark stores the current cursor position as the mark."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-mode-p s)  t
+          (screen-copy-offset s)  2
+          (cl-tmux/terminal/types:screen-copy-cursor s) (cons 3 7)
+          (cl-tmux/terminal/types:screen-copy-mark   s) nil
+          (cl-tmux/terminal/types:screen-copy-mark-offset s) 0)
+    (cl-tmux/commands::copy-mode-set-mark s)
+    (is (equal (cons 3 7) (cl-tmux/terminal/types:screen-copy-mark s))
+        "mark must be set to current cursor position (row=3, col=7)")
+    (is (= 2 (cl-tmux/terminal/types:screen-copy-mark-offset s))
+        "mark-offset must match the current copy-offset")))
+
+(test copy-mode-set-mark-does-not-start-selection
+  "copy-mode-set-mark must NOT begin a visual selection."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-mode-p s)  t
+          (screen-copy-offset s)  0
+          (cl-tmux/terminal/types:screen-copy-cursor s)    (cons 1 4)
+          (cl-tmux/terminal/types:screen-copy-selecting s) nil)
+    (cl-tmux/commands::copy-mode-set-mark s)
+    (is-false (cl-tmux/terminal/types:screen-copy-selecting s)
+              "set-mark must not activate selection mode")))
+
+(test copy-mode-set-mark-noop-outside-copy-mode
+  "copy-mode-set-mark is a no-op when not in copy mode."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-mode-p s)  nil
+          (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0)
+          (cl-tmux/terminal/types:screen-copy-mark   s) nil)
+    (cl-tmux/commands::copy-mode-set-mark s)
+    (is-false (cl-tmux/terminal/types:screen-copy-mark s)
+              "mark must remain nil when not in copy mode")))
+
+(test copy-mode-set-mark-noop-without-cursor
+  "copy-mode-set-mark is a no-op when copy-cursor is nil."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-mode-p s)  t
+          (cl-tmux/terminal/types:screen-copy-cursor s) nil
+          (cl-tmux/terminal/types:screen-copy-mark   s) nil)
+    (cl-tmux/commands::copy-mode-set-mark s)
+    (is-false (cl-tmux/terminal/types:screen-copy-mark s)
+              "mark must remain nil when cursor is nil")))
+
+;;; ── copy-mode-goto-line ──────────────────────────────────────────────────────
+
+(test copy-mode-goto-line-jumps-to-live-row
+  "copy-mode-goto-line N with no scrollback jumps to viewport row N-1."
+  ;; 10-wide, 5-row screen, no scrollback: vrow = viewport-row (offset=0, sb-n=0).
+  ;; goto-line 3 = vrow 2 = viewport row 2.
+  (let ((s (make-screen 10 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-goto-line s 3)
+    (is (= 2 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "goto-line 3 with no scrollback must land on viewport row 2 (vrow 2)")))
+
+(test copy-mode-goto-line-clamps-over-max
+  "copy-mode-goto-line clamps to the last valid row when N exceeds total rows."
+  (let ((s (make-screen 10 3)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    ;; 999 is way past the total row count (3-row screen, no scrollback = vrows 0-2)
+    (cl-tmux/commands::copy-mode-goto-line s 999)
+    ;; After clamping, cursor row must be within [0, height-1]
+    (is (<= 0 (car (cl-tmux/terminal/types:screen-copy-cursor s)) 2)
+        "goto-line out-of-range must clamp cursor to a valid viewport row")))
+
+(test copy-mode-goto-line-noop-outside-copy-mode
+  "copy-mode-goto-line is a no-op when not in copy mode."
+  (let ((s (make-screen 10 5)))
+    (setf (screen-copy-mode-p s)  nil
+          (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    ;; Should not signal any error, screen must stay out of copy mode.
+    (cl-tmux/commands::copy-mode-goto-line s 1)
+    (is-false (cl-tmux/terminal/types:screen-copy-mode-p s)
+              "screen must remain out of copy mode")))
+
+;;; ── copy-mode-search-forward-incremental ─────────────────────────────────────
+
+(test copy-mode-search-forward-incremental-noop-outside-copy-mode
+  "Does not open a prompt when not in copy mode."
+  (let ((s (make-screen 10 5)))
+    (setf (screen-copy-mode-p s) nil
+          *prompt* nil
+          cl-tmux/commands::*copy-mode-isearch-origin* nil)
+    (cl-tmux/commands::copy-mode-search-forward-incremental s)
+    (is-false *prompt* "no prompt must open outside copy mode")))
+
+(test copy-mode-search-forward-incremental-opens-prompt
+  "Opens a prompt labelled search-forward when in copy mode."
+  (let ((s (make-screen 10 5)))
+    (setf (screen-copy-mode-p s)  t
+          (screen-copy-cursor  s)  (cons 2 3)
+          (screen-copy-offset  s)  0
+          *prompt* nil
+          cl-tmux/commands::*copy-mode-isearch-origin* nil)
+    (unwind-protect
+        (progn
+          (cl-tmux/commands::copy-mode-search-forward-incremental s)
+          (is-true  *prompt* "prompt must be open")
+          (is (string= "search-forward" (prompt-label *prompt*))
+              "prompt label must be search-forward"))
+      (setf *prompt* nil
+            cl-tmux/commands::*copy-mode-isearch-origin* nil))))
+
+(test copy-mode-search-forward-incremental-saves-origin
+  "Saves cursor+offset in *copy-mode-isearch-origin* when prompt opens."
+  (let ((s (make-screen 10 5)))
+    (setf (screen-copy-mode-p s)  t
+          (screen-copy-cursor  s)  (cons 2 3)
+          (screen-copy-offset  s)  5
+          *prompt* nil
+          cl-tmux/commands::*copy-mode-isearch-origin* nil)
+    (unwind-protect
+        (progn
+          (cl-tmux/commands::copy-mode-search-forward-incremental s)
+          (let ((origin cl-tmux/commands::*copy-mode-isearch-origin*))
+            (is-true origin "origin must be non-nil after prompt open")
+            (is (equal (cons 2 3) (car origin)) "origin cursor must match pre-search cursor")
+            (is (= 5 (cdr origin))              "origin offset must match pre-search offset")))
+      (setf *prompt* nil
+            cl-tmux/commands::*copy-mode-isearch-origin* nil))))
+
+(test copy-mode-search-forward-incremental-cancel-restores-cursor
+  "prompt-clear (ESC/C-g) restores cursor and offset to pre-search position."
+  (let ((s (make-screen 10 5)))
+    (setf (screen-copy-mode-p s)  t
+          (screen-copy-cursor  s)  (cons 2 3)
+          (screen-copy-offset  s)  0
+          *prompt* nil
+          cl-tmux/commands::*copy-mode-isearch-origin* nil)
+    (cl-tmux/commands::copy-mode-search-forward-incremental s)
+    ;; Simulate the search having moved the cursor away.
+    (setf (screen-copy-cursor s) (cons 0 1)
+          (screen-copy-offset s) 2)
+    ;; Cancel — must invoke the on-cancel closure which restores origin.
+    (prompt-clear)
+    (is (equal (cons 2 3) (screen-copy-cursor s))
+        "cursor must be restored to pre-search position after cancel")
+    (is (= 0 (screen-copy-offset s))
+        "offset must be restored to pre-search value after cancel")
+    (is-false cl-tmux/commands::*copy-mode-isearch-origin*
+              "isearch origin must be cleared after cancel")))
+
+;;; ── copy-mode-search-backward-incremental ────────────────────────────────────
+
+(test copy-mode-search-backward-incremental-noop-outside-copy-mode
+  "Does not open a prompt when not in copy mode."
+  (let ((s (make-screen 10 5)))
+    (setf (screen-copy-mode-p s) nil
+          *prompt* nil
+          cl-tmux/commands::*copy-mode-isearch-origin* nil)
+    (cl-tmux/commands::copy-mode-search-backward-incremental s)
+    (is-false *prompt* "no prompt must open outside copy mode")))
+
+(test copy-mode-search-backward-incremental-opens-prompt
+  "Opens a prompt labelled search-backward when in copy mode."
+  (let ((s (make-screen 10 5)))
+    (setf (screen-copy-mode-p s)  t
+          (screen-copy-cursor  s)  (cons 3 5)
+          (screen-copy-offset  s)  0
+          *prompt* nil
+          cl-tmux/commands::*copy-mode-isearch-origin* nil)
+    (unwind-protect
+        (progn
+          (cl-tmux/commands::copy-mode-search-backward-incremental s)
+          (is-true  *prompt* "prompt must be open")
+          (is (string= "search-backward" (prompt-label *prompt*))
+              "prompt label must be search-backward"))
+      (setf *prompt* nil
+            cl-tmux/commands::*copy-mode-isearch-origin* nil))))
+
+(test copy-mode-search-backward-incremental-cancel-restores-cursor
+  "prompt-clear (ESC/C-g) restores cursor and offset when backward search is cancelled."
+  (let ((s (make-screen 10 5)))
+    (setf (screen-copy-mode-p s)  t
+          (screen-copy-cursor  s)  (cons 3 5)
+          (screen-copy-offset  s)  1
+          *prompt* nil
+          cl-tmux/commands::*copy-mode-isearch-origin* nil)
+    (cl-tmux/commands::copy-mode-search-backward-incremental s)
+    ;; Simulate search having moved the cursor away.
+    (setf (screen-copy-cursor s) (cons 1 0)
+          (screen-copy-offset s) 3)
+    (prompt-clear)
+    (is (equal (cons 3 5) (screen-copy-cursor s))
+        "cursor must be restored to pre-search position after cancel")
+    (is (= 1 (screen-copy-offset s))
+        "offset must be restored to pre-search value after cancel")
+    (is-false cl-tmux/commands::*copy-mode-isearch-origin*
+              "isearch origin must be cleared after cancel")))
+
+;;; ── copy-mode-next-matching-bracket ─────────────────────────────────────────
+
+(test copy-mode-next-matching-bracket-open-paren-finds-close
+  "When cursor is on '(' the bracket scan jumps to the matching ')'."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-mode-p s) t)
+    ;; Write "( foo )" directly into row 2 cells.
+    (dotimes (i 7)
+      (setf (cl-tmux/terminal/types:screen-cell s i 2)
+            (cl-tmux/terminal/types:make-cell :char (char "( foo )" i))))
+    (setf (screen-copy-cursor s) (cons 2 0)   ; on the '('
+          (screen-copy-offset  s) 0)
+    (cl-tmux/commands::copy-mode-next-matching-bracket s)
+    (is (= 6 (cdr (screen-copy-cursor s)))
+        "cursor column must be on the ')' at col 6")))
+
+(test copy-mode-next-matching-bracket-close-paren-finds-open
+  "When cursor is on ')' the bracket scan jumps backward to the matching '('."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-mode-p s) t)
+    (dotimes (i 7)
+      (setf (cl-tmux/terminal/types:screen-cell s i 2)
+            (cl-tmux/terminal/types:make-cell :char (char "( foo )" i))))
+    (setf (screen-copy-cursor s) (cons 2 6)   ; on the ')'
+          (screen-copy-offset  s) 0)
+    (cl-tmux/commands::copy-mode-next-matching-bracket s)
+    (is (= 0 (cdr (screen-copy-cursor s)))
+        "cursor column must be on the '(' at col 0")))
+
+(test copy-mode-next-matching-bracket-nested-brackets
+  "Nested brackets: cursor on outer '(' jumps to the outer matching ')'."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-mode-p s) t)
+    ;; Write "(a(b)c)" at row 0.
+    (dotimes (i 7)
+      (setf (cl-tmux/terminal/types:screen-cell s i 0)
+            (cl-tmux/terminal/types:make-cell :char (char "(a(b)c)" i))))
+    (setf (screen-copy-cursor s) (cons 0 0)
+          (screen-copy-offset  s) 0)
+    (cl-tmux/commands::copy-mode-next-matching-bracket s)
+    (is (= 6 (cdr (screen-copy-cursor s)))
+        "cursor must land on the outer ')' at column 6")))
+
+(test copy-mode-next-matching-bracket-noop-outside-copy-mode
+  "Bracket matching is a no-op when not in copy mode."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-mode-p s) nil
+          (screen-copy-cursor  s) (cons 0 3))
+    (cl-tmux/commands::copy-mode-next-matching-bracket s)
+    (is (equal (cons 0 3) (screen-copy-cursor s))
+        "cursor must remain at (0,3) when not in copy mode")))

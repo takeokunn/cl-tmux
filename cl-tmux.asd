@@ -147,7 +147,8 @@
        (:file "window-tests-b")    ; apply-named-layout/move/swap/rotate/find/format/auto-rename — part II
        (:file "session-tests")
        (:file "format-tests")            ; format expansion — part I (shorthands, context, modifiers, brace/conditional up to line 972)
-       (:file "format-tests-b")          ; format expansion — part II (path/substitute/nested/strftime/arithmetic/geometry/content-search)
+       (:file "format-tests-b")          ; format expansion — part II (path/substitute/nested/strftime/context/glob/regex)
+       (:file "format-tests-c")          ; format expansion — part III (arithmetic/variables/geometry/content-search/direct-unit-tests)
        (:file "target-tests")
        (:file "buffer-tests")
        (:file "control-mode-tests")
@@ -161,7 +162,8 @@
        (:file "renderer-pane-tests")    ; render-pane/borders/clock/in-sel/display-panes — part I
        (:file "renderer-pane-tests-b")  ; %clock-digit-rows, %render-v-separator, border/pane edge cases — part II
        (:file "renderer-tests")            ; renderer — part I (fixtures, status-bar, render-session, clear-display, window-list up to line 867)
-       (:file "renderer-tests-b")          ; renderer — part II (status-bar formats, style, length, popup/menu, mouse/focus seqs, lock-screen, justify)
+       (:file "renderer-tests-b")          ; renderer — part II (status-bar, parse-style, render-popup/menu)
+       (:file "renderer-tests-c")          ; renderer — part III (mouse/focus/keys, lock-screen, justify, cursor-shape, overlay, inline-style)
        (:file "dispatch-tests")               ; core dispatch — part I (cyclic helpers, window/pane select, copy-mode, detach, prefix)
        (:file "dispatch-tests-b")            ; core dispatch — part II (swap-pane, kill-pane-confirm, select-layout, zoom, resize, rotate)
        (:file "dispatch-tests-commands")     ; arg-taking command tests: flag parsing, kill/swap/move/-t, confirm
@@ -183,7 +185,8 @@
        (:file "commands-tests-g")        ; send-keys, key-name, tokenize, kill-window-mru, join-pane — part V
        (:file "commands-tests-h")        ; copy-mode-exit, break-pane, clear-history, rotate, find, next/prev-win — part VI
        (:file "commands-tests-c")        ; pipe-pane, virtual-row, timeout, scroll helpers, extract-chars — part VII
-       (:file "commands-tests-d")        ; rename hooks, server-access, copy-mode rect/search, jump-to-char — part VIII
+       (:file "commands-tests-d")        ; rename hooks, server-access, customize-mode, copy-mode-toggle/append/copy-pipe — part VIII
+       (:file "commands-tests-i")        ; rectangle-sel, run-copy-cmd, set-cursor, send-keys-l, jump-to-char, goto-line, search-incr — part IX
        (:file "overlay-tests")
        (:file "prompt-tests")
        (:file "protocol-tests")
