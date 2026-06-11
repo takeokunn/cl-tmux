@@ -176,8 +176,10 @@
        (:file "events-tests-e")          ; status-col, SGR-nil, copy-nav, flush-esc, reset-repeat, CSI-u — part IV
        (:file "events-tests-d")          ; app-cursor-keys (ss3), new bindings, :mark-pane, root table, fn-keys — part V
        (:file "mouse-tests")
-       (:file "commands-tests")          ; pane/copy-mode/kill/select/rename — part I (fixtures + lines 1-1440)
-       (:file "commands-tests-b")        ; copy-mode motions, send-keys, tokenize, join/break-pane — part II
+       (:file "commands-tests")          ; resize-pane, scroll, kill-pane, select/rename, begin-sel/yank/other-end — part I
+       (:file "commands-tests-e")        ; copy-mode-clear-sel, WORD-motion, select-word, move-cursor — part II
+       (:file "commands-tests-f")        ; rename-window, kill-window, run/if-shell, selection-text, swap/capture-pane — part III
+       (:file "commands-tests-b")        ; copy-mode motions, send-keys, tokenize, join/break-pane — part IV
        (:file "commands-tests-c")        ; pipe-pane, virtual-row, timeout, scroll helpers, extract-chars — part III
        (:file "commands-tests-d")        ; rename hooks, server-access, copy-mode rect/search, jump-to-char — part IV
        (:file "overlay-tests")
