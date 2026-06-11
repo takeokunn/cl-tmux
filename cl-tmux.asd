@@ -156,7 +156,8 @@
        (:file "config-directives-tests")   ; directive parsing — part I (key-table, bind/unbind, load-config up to line 993)
        (:file "config-directives-tests-b") ; directive parsing — part II (parse-bind-args, tokenizer edge cases, set/source/run/preproc/if-shell)
        (:file "renderer-format-tests")
-       (:file "renderer-pane-tests")
+       (:file "renderer-pane-tests")    ; render-pane/borders/clock/in-sel/display-panes — part I
+       (:file "renderer-pane-tests-b")  ; %clock-digit-rows, %render-v-separator, border/pane edge cases — part II
        (:file "renderer-tests")            ; renderer — part I (fixtures, status-bar, render-session, clear-display, window-list up to line 867)
        (:file "renderer-tests-b")          ; renderer — part II (status-bar formats, style, length, popup/menu, mouse/focus seqs, lock-screen, justify)
        (:file "dispatch-tests")               ; core dispatch — part I (cyclic helpers, window/pane select, copy-mode, detach, prefix)
