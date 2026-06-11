@@ -146,7 +146,8 @@
        (:file "window-tests")      ; window-relayout/split/resize/zoom/lock/pane-neighbor — part I
        (:file "window-tests-b")    ; apply-named-layout/move/swap/rotate/find/format/auto-rename — part II
        (:file "session-tests")
-       (:file "format-tests")            ; format expansion — part I (shorthands, context, modifiers, brace/conditional up to line 972)
+       (:file "format-tests")            ; format expansion — part I (shorthands, brace/conditional, context, window_flags, helpers)
+       (:file "format-tests-d")          ; format expansion — part IV (shorthand-table, %expand-brace, %truthy-p, pane/client vars, structural, modifiers)
        (:file "format-tests-b")          ; format expansion — part II (path/substitute/nested/strftime/context/glob/regex)
        (:file "format-tests-c")          ; format expansion — part III (arithmetic/variables/geometry/content-search/direct-unit-tests)
        (:file "target-tests")
@@ -156,7 +157,8 @@
        (:file "options-tests-b")  ; define-option-accessor, type-coercions, scoped overrides, show-options — part II
        (:file "hooks-tests")
        (:file "config-tests")
-       (:file "config-directives-tests")   ; directive parsing — part I (key-table, bind/unbind, load-config up to line 993)
+       (:file "config-directives-tests")   ; directive parsing — part I (bindable-cmds, apply-directive, set flags, bind/unbind, load-config-from-stream)
+       (:file "config-directives-tests-c") ; directive parsing — part III (load-config-file, command-keyword, parse-bind-args, key-table edge cases)
        (:file "config-directives-tests-b") ; directive parsing — part II (parse-bind-args, tokenizer edge cases, set/source/run/preproc/if-shell)
        (:file "renderer-format-tests")
        (:file "renderer-pane-tests")    ; render-pane/borders/clock/in-sel/display-panes — part I
@@ -172,7 +174,8 @@
        (:file "dispatch-tests-session")    ; copy-mode paging dispatch tests
        (:file "dispatch-tests-session-b")  ; coverage: untested handlers, send-keys, capture-pane, paste-buffer
        (:file "dispatch-tests-session-c")  ; options, session management, control mode, server-lifecycle
-       (:file "events-tests")            ; keystroke pipeline — part I (escape, process-byte, mouse, key-table)
+       (:file "events-tests")            ; keystroke pipeline — part I (escape, process-byte, mouse, key-table, copy-mode vi-nav)
+       (:file "events-tests-f")          ; keystroke pipeline — part VI (PageUp/Down, prefix-arrow, send-prefix, modifier+arrow, meta/alt)
        (:file "events-tests-b")          ; locked-session, drag/modifier, copy-mode cursor, vi nav — part II
        (:file "events-tests-c")          ; app-cursor-keys, prompt-key, copy-mode nav, SGR, border-check — part III
        (:file "events-tests-e")          ; status-col, SGR-nil, copy-nav, flush-esc, reset-repeat, CSI-u — part IV
@@ -193,6 +196,7 @@
        (:file "transport-tests")
        (:file "net-tests")
        (:file "server-tests")
+       (:file "server-tests-b")          ; list-sessions, rename-session, switch-client, last-session — part II
        (:file "server-multi-tests")
        (:file "pty-ffi-tests")
        (:file "pty-rawmode-tests")
