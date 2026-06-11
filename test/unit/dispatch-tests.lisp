@@ -123,11 +123,10 @@
 
 (test dispatch-next-pane-cycles
   "C-b o moves to the next pane within the active window."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s))
-         (p0  (first  (window-panes win)))
-         (p1  (second (window-panes win))))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s))
+           (p0  (first  (window-panes win)))
+           (p1  (second (window-panes win))))
       (is (eq p0 (window-active-pane win)))
       (cl-tmux::dispatch-command s :next-pane nil)
       (is (eq p1 (window-active-pane win))))))
@@ -183,11 +182,10 @@
 
 (test send-keys-R-resets-pane-terminal-state
   "send-keys -R resets the target pane's terminal state (RIS): the cursor is homed."
-  (let* ((s    (make-fake-session :nwindows 1 :npanes 1))
-         (win  (cl-tmux/model:session-active-window s))
-         (pane (cl-tmux/model:window-active-pane win))
-         (scr  (cl-tmux/model:pane-screen pane)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 1)
+    (let* ((win  (cl-tmux/model:session-active-window s))
+           (pane (cl-tmux/model:window-active-pane win))
+           (scr  (cl-tmux/model:pane-screen pane)))
       (setf (cl-tmux/terminal/types:screen-cursor-x scr) 5
             (cl-tmux/terminal/types:screen-cursor-y scr) 3)
       (cl-tmux::%cmd-send-keys-arg s '("-R"))
@@ -316,10 +314,9 @@
 
 (test cmd-cycle-window-advances-selection
   "%cmd-cycle-window advances the active window via CYCLER."
-  (let* ((s  (make-fake-session :nwindows 3))
-         (w1 (first  (session-windows s)))
-         (w2 (second (session-windows s))))
-    (with-loop-state
+  (with-fake-session (s :nwindows 3)
+    (let* ((w1 (first  (session-windows s)))
+           (w2 (second (session-windows s))))
       (is (eq w1 (session-active-window s)))
       (cl-tmux::%cmd-cycle-window s #'cl-tmux::next-cyclic)
       (is (eq w2 (session-active-window s))))))
@@ -328,11 +325,10 @@
 
 (test cmd-cycle-pane-advances-pane-selection
   "%cmd-cycle-pane advances the active pane via CYCLER."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s))
-         (p0  (first  (window-panes win)))
-         (p1  (second (window-panes win))))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s))
+           (p0  (first  (window-panes win)))
+           (p1  (second (window-panes win))))
       (is (eq p0 (window-active-pane win)))
       (cl-tmux::%cmd-cycle-pane s #'cl-tmux::next-cyclic)
       (is (eq p1 (window-active-pane win))))))
@@ -383,13 +379,12 @@
 (test select-pane-with-focus-switches-and-tolerates-no-pty
   "%select-pane-with-focus changes the active pane and runs the focus-notify path
    without error even when panes have no PTY and focus events are enabled."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s))
-         (p0  (first  (window-panes win)))
-         (p1  (second (window-panes win))))
-    (setf (cl-tmux/terminal/types:screen-focus-events (pane-screen p0)) t)
-    (setf (cl-tmux/terminal/types:screen-focus-events (pane-screen p1)) t)
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s))
+           (p0  (first  (window-panes win)))
+           (p1  (second (window-panes win))))
+      (setf (cl-tmux/terminal/types:screen-focus-events (pane-screen p0)) t)
+      (setf (cl-tmux/terminal/types:screen-focus-events (pane-screen p1)) t)
       (is (eq p0 (window-active-pane win)))
       (finishes (cl-tmux::%select-pane-with-focus win p1))
       (is (eq p1 (window-active-pane win))
