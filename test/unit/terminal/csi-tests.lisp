@@ -529,6 +529,20 @@
       (is (some (lambda (r) (search "[3;5R" r)) q)
           "CPR after CUP 3;5 must report [3;5R"))))
 
+(test cpr-in-decom-mode-reports-relative-row
+  "In DECOM origin mode, CPR row is relative to the scroll-top margin (row 1 = margin top)."
+  ;; Set a 10-row screen, scroll region rows 3..8 (0-based 2..7), enable DECOM,
+  ;; place cursor at absolute row 5 (0-based 4) → relative row 3 (4-2+1=3).
+  (with-screen (s 20 10)
+    (feed s (esc "[3;8r"))    ; DECSTBM: scroll region rows 3..8 (1-based)
+    (feed s (esc "[?6h"))     ; DECOM on — cursor is now relative to margin
+    ;; CUP in DECOM mode: row 3 col 1 (1-based relative) → absolute row 4 (0-based)
+    (feed s (esc "[3;1H"))
+    (feed s (esc "[6n"))      ; CPR
+    (let ((q (cl-tmux/terminal/types:screen-response-queue s)))
+      (is (some (lambda (r) (search "[3;1R" r)) q)
+          "CPR in DECOM mode must report margin-relative row 3, not absolute row 4"))))
+
 ;;; ── DA response table: both responses enqueue without error ──────────────────
 ;;;
 ;;; The two DA variants (DA1/DA2) both follow the same pattern: feed the
@@ -1018,3 +1032,163 @@
     (is (some (lambda (r) (search ">1;" r))
               (cl-tmux/terminal/types:screen-response-queue s))
         "enqueue-da2-reply must push a string containing '>1;'")))
+
+;;; ── XTPUSHTITLE / XTPOPTITLE (CSI > Ps t / CSI < Ps t) ─────────────────────
+
+(test xtpushtitle-saves-current-title
+  "CSI > t (XTPUSHTITLE) pushes the current title onto the title stack."
+  (with-screen (s 20 5)
+    (setf (cl-tmux/terminal/types:screen-title s) "initial")
+    (feed s (esc "[>t"))   ; push
+    (is (equal '("initial") (cl-tmux/terminal/types:screen-title-stack s))
+        "title-stack must contain the saved title after a push")))
+
+(test xtpoptitle-restores-saved-title
+  "CSI < t (XTPOPTITLE) pops and restores the most recently pushed title."
+  (with-screen (s 20 5)
+    (setf (cl-tmux/terminal/types:screen-title s) "original")
+    (feed s (esc "[>t"))          ; push "original"
+    (setf (cl-tmux/terminal/types:screen-title s) "changed")
+    (feed s (esc "[<t"))          ; pop → restore "original"
+    (is (string= "original" (cl-tmux/terminal/types:screen-title s))
+        "title must be restored to 'original' after pop")
+    (is (null (cl-tmux/terminal/types:screen-title-stack s))
+        "title-stack must be empty after the pop")))
+
+(test xtpoptitle-on-empty-stack-is-noop
+  "CSI < t (XTPOPTITLE) on an empty stack is a no-op: title unchanged."
+  (with-screen (s 20 5)
+    (setf (cl-tmux/terminal/types:screen-title s) "kept")
+    (feed s (esc "[<t"))          ; pop on empty stack — no-op
+    (is (string= "kept" (cl-tmux/terminal/types:screen-title s))
+        "title must remain 'kept' after pop on empty stack")))
+
+(test xtpushtitle-stack-bounded-at-8
+  "XTPUSHTITLE discards the oldest entry when the stack exceeds 8 entries."
+  (with-screen (s 20 5)
+    ;; Push 9 times — stack cap is 8.
+    (dotimes (i 9)
+      (setf (cl-tmux/terminal/types:screen-title s) (format nil "t~D" i))
+      (feed s (esc "[>t")))
+    (is (<= (length (cl-tmux/terminal/types:screen-title-stack s)) 8)
+        "title-stack must never exceed 8 entries")))
+
+;;; ── DEC Rectangle operations (DECERA / DECFRA / DECCRA) ─────────────────────
+
+(def-suite dec-rect-ops
+  :description "DECERA ($ z) / DECFRA ($ x) / DECCRA ($ v) rectangle operations"
+  :in terminal-suite)
+(in-suite dec-rect-ops)
+
+;; ── DECERA ───────────────────────────────────────────────────────────────────
+
+(test decera-erases-interior-rectangle
+  "DECERA ($ z) replaces cells inside the rectangle with blanks."
+  (with-screen (s 10 5)
+    ;; Fill entire screen with 'A'.
+    (dotimes (y 5)
+      (dotimes (x 10)
+        (setf (cl-tmux/terminal/types:screen-cell s x y)
+              (cl-tmux/terminal/types:make-cell :char #\A))))
+    ;; Erase rows 2-3 (1-based), columns 3-6 (1-based) → 0-based: rows 1-2, cols 2-5.
+    (feed s (esc "[2;3;3;6$z"))
+    ;; Cells inside the rectangle must be spaces.
+    (loop for y from 1 to 2 do
+      (loop for x from 2 to 5 do
+        (is (char= #\Space (cl-tmux/terminal/types:cell-char
+                            (cl-tmux/terminal/types:screen-cell s x y)))
+            "cell (~D,~D) must be erased to space" x y)))
+    ;; Cells outside must still be 'A'.
+    (is (char= #\A (cl-tmux/terminal/types:cell-char
+                    (cl-tmux/terminal/types:screen-cell s 0 0)))
+        "cell (0,0) outside rect must remain A")
+    (is (char= #\A (cl-tmux/terminal/types:cell-char
+                    (cl-tmux/terminal/types:screen-cell s 9 4)))
+        "cell (9,4) outside rect must remain A")))
+
+(test decera-degenerate-rect-is-noop
+  "DECERA with top > bottom or left > right does not modify the screen."
+  (with-screen (s 10 5)
+    (dotimes (y 5)
+      (dotimes (x 10)
+        (setf (cl-tmux/terminal/types:screen-cell s x y)
+              (cl-tmux/terminal/types:make-cell :char #\B))))
+    ;; top=3 > bottom=1 → degenerate, no erase.
+    (feed s (esc "[3;1;1;5$z"))
+    (is (char= #\B (cl-tmux/terminal/types:cell-char
+                    (cl-tmux/terminal/types:screen-cell s 0 0)))
+        "cell (0,0) must remain B when rect is degenerate")))
+
+;; ── DECFRA ───────────────────────────────────────────────────────────────────
+
+(test decfra-fills-rectangle-with-character
+  "DECFRA ($ x) fills a rectangle with the given character."
+  (with-screen (s 10 5)
+    ;; Fill rectangle rows 1-3 (1-based), cols 2-5 (1-based) with '*' (code 42).
+    (feed s (esc "[42;1;2;3;5$x"))
+    ;; 0-based: rows 0-2, cols 1-4.
+    (loop for y from 0 to 2 do
+      (loop for x from 1 to 4 do
+        (is (char= #\* (cl-tmux/terminal/types:cell-char
+                        (cl-tmux/terminal/types:screen-cell s x y)))
+            "cell (~D,~D) must be * after DECFRA" x y)))
+    ;; Outside the rect: still default space.
+    (is (char= #\Space (cl-tmux/terminal/types:cell-char
+                        (cl-tmux/terminal/types:screen-cell s 0 0)))
+        "cell (0,0) outside rect must remain space")))
+
+(test decfra-zero-char-code-uses-space
+  "DECFRA with char-code 0 defaults to space (guard against null character)."
+  (with-screen (s 10 5)
+    ;; char=0 → should fill with space, not null byte.
+    (feed s (esc "[0;1;1;2;2$x"))
+    (is (char= #\Space (cl-tmux/terminal/types:cell-char
+                        (cl-tmux/terminal/types:screen-cell s 0 0)))
+        "char-code 0 must produce space in filled cell")))
+
+;; ── DECCRA ───────────────────────────────────────────────────────────────────
+
+(test deccra-copies-rectangle-to-target
+  "DECCRA ($ v) copies source rectangle to target position."
+  (with-screen (s 20 5)
+    ;; Write 'A' at rows 0-1 (0-based), cols 0-2 (0-based).
+    (dotimes (y 2)
+      (dotimes (x 3)
+        (setf (cl-tmux/terminal/types:screen-cell s x y)
+              (cl-tmux/terminal/types:make-cell :char #\A))))
+    ;; DECCRA: src top=1 left=1 bottom=2 right=3 page=0, tgt top=3 left=6 page=0.
+    ;; 0-based src: rows 0-1, cols 0-2. Target 0-based: row 2, col 5.
+    (feed s (esc "[1;1;2;3;0;3;6;0$v"))
+    ;; Target cells (0-based rows 2-3, cols 5-7) must now be 'A'.
+    (loop for y from 2 to 3 do
+      (loop for x from 5 to 7 do
+        (is (char= #\A (cl-tmux/terminal/types:cell-char
+                        (cl-tmux/terminal/types:screen-cell s x y)))
+            "target cell (~D,~D) must be A after DECCRA" x y)))
+    ;; Source cells must be unchanged.
+    (loop for y from 0 to 1 do
+      (loop for x from 0 to 2 do
+        (is (char= #\A (cl-tmux/terminal/types:cell-char
+                        (cl-tmux/terminal/types:screen-cell s x y)))
+            "source cell (~D,~D) must remain A after DECCRA" x y)))))
+
+(test deccra-overlapping-regions-are-correct
+  "DECCRA handles overlapping src/tgt by buffering — avoids partial-copy corruption."
+  (with-screen (s 20 5)
+    ;; Write distinct chars in a row: 'A' 'B' 'C' 'D' 'E' at row 0, cols 0-4.
+    (loop for x from 0 to 4 do
+      (setf (cl-tmux/terminal/types:screen-cell s x 0)
+            (cl-tmux/terminal/types:make-cell :char (code-char (+ (char-code #\A) x)))))
+    ;; Copy src row=1 col=1 to row=1 col=3 (0-based: row 0, cols 0-2)
+    ;; to target row=1 col=2 (1-based) — target overlaps source starting at col 1.
+    ;; After: row 0 cols 1-3 = 'A' 'B' 'C'
+    (feed s (esc "[1;1;1;3;0;1;2;0$v"))
+    (is (char= #\A (cl-tmux/terminal/types:cell-char (cl-tmux/terminal/types:screen-cell s 1 0)))
+        "target col 1 must be A")
+    (is (char= #\B (cl-tmux/terminal/types:cell-char (cl-tmux/terminal/types:screen-cell s 2 0)))
+        "target col 2 must be B")
+    (is (char= #\C (cl-tmux/terminal/types:cell-char (cl-tmux/terminal/types:screen-cell s 3 0)))
+        "target col 3 must be C")
+    ;; Source col 0 (outside tgt) must still be A.
+    (is (char= #\A (cl-tmux/terminal/types:cell-char (cl-tmux/terminal/types:screen-cell s 0 0)))
+        "source col 0 must remain A")))

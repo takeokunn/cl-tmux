@@ -98,14 +98,14 @@
   "Replace NODE's position in WINDOW's tree with NEW-VALUE.
    If NODE has a parent, updates that parent's child link (preserving side);
    if NODE is the root, replaces the root directly."
-  (let ((parent (gensym "PARENT"))
-        (which  (gensym "WHICH")))
-    `(multiple-value-bind (,parent ,which)
+  (let ((parent-node  (gensym "PARENT-NODE"))
+        (side-keyword (gensym "SIDE-KEYWORD")))
+    `(multiple-value-bind (,parent-node ,side-keyword)
          (layout-find-parent (window-tree ,window) ,node)
-       (if ,parent
-           (ecase ,which
-             (:first  (setf (layout-split-first  ,parent) ,new-value))
-             (:second (setf (layout-split-second ,parent) ,new-value)))
+       (if ,parent-node
+           (ecase ,side-keyword
+             (:first  (setf (layout-split-first  ,parent-node) ,new-value))
+             (:second (setf (layout-split-second ,parent-node) ,new-value)))
            (setf (window-tree ,window) ,new-value)))))
 
 (defun %replace-in-tree (window leaf replacement)
@@ -120,6 +120,19 @@
                      (layout-split-first  parent))))
     (%set-tree-link window parent sibling)
     sibling))
+
+;;; ── Window-level axis extent ────────────────────────────────────────────────
+;;;
+;;; The axis of a split measured at the WINDOW level (used by window-split :full):
+;;;   :h → window-width   (how many columns the whole window spans)
+;;;   :v → window-height  (how many rows the whole window spans)
+
+(defun %window-axis-extent (window direction)
+  "Return the WINDOW dimension along DIRECTION's split axis.
+   :h → window-width (columns); :v → window-height (rows)."
+  (if (eq direction :h)
+      (window-width  window)
+      (window-height window)))
 
 ;;; ── Size-hint conversion ────────────────────────────────────────────────────
 ;;;

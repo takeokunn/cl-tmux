@@ -17,13 +17,17 @@
   (or (null *alternate-screen-enabled-function*)
       (funcall *alternate-screen-enabled-function*)))
 
-(defun enter-alt-screen (screen)
-  "Save the current grid and cursor to the alt-screen slots, then install a
-   fresh blank grid.  No-op when the alt screen is already active, or when the
-   `alternate-screen` option is off — full-screen apps then draw on the MAIN
-   screen (and their output stays in scrollback), matching tmux."
+(defun enter-alt-screen (screen &key save-cursor-p)
+  "Save the current grid and cursor x/y to the alt-screen slots, then install a
+   fresh blank grid.  When SAVE-CURSOR-P is T (mode 1049), also save the FULL
+   cursor state (SGR attrs, charset, origin mode) via SAVE-CURSOR — matching
+   tmux's ?1049h behaviour which is equivalent to ?1047h + ?1048h (DECSC).
+   No-op when the alt screen is already active, or when the `alternate-screen`
+   option is off — full-screen apps then draw on the MAIN screen (and their
+   output stays in scrollback), matching tmux."
   (unless (or (not (%alternate-screen-allowed-p))
               (screen-alt-cells screen))
+    (when save-cursor-p (save-cursor screen))
     (setf (screen-alt-cells  screen) (copy-seq (screen-cells screen))
           (screen-alt-cursor-x screen) (screen-cursor-x screen)
           (screen-alt-cursor-y screen) (screen-cursor-y screen))
@@ -35,15 +39,18 @@
     (%clear-all-line-wrapped screen)
     (setf (screen-dirty-p screen) t)))
 
-(defun exit-alt-screen (screen)
+(defun exit-alt-screen (screen &key restore-cursor-p)
   "Restore the saved primary grid and cursor from the alt-screen slots.
-   Falls back to erase-display mode 2 when nothing was saved."
+   When RESTORE-CURSOR-P is T (mode 1049), also restore the FULL cursor state
+   (SGR attrs, charset, origin mode) via RESTORE-CURSOR — equivalent to ?1047l
+   + ?1048l (DECRC).  Falls back to erase-display mode 2 when nothing was saved."
   (if (screen-alt-cells screen)
       (setf (screen-cells      screen) (screen-alt-cells    screen)
             (screen-cursor-x   screen) (screen-alt-cursor-x screen)
             (screen-cursor-y   screen) (screen-alt-cursor-y screen)
             (screen-alt-cells  screen) nil)
       (erase-display screen 2))
+  (when restore-cursor-p (restore-cursor screen))
   (%clear-all-line-wrapped screen)
   (setf (screen-dirty-p screen) t))
 
@@ -169,11 +176,13 @@
    ((setf (screen-focus-events screen) nil)))
 
   ;; Mode 1049 — alternate screen (?1049h enters, ?1049l exits)
+  ;; Equivalent to ?1047h + ?1048h (DECSC): saves full cursor state (SGR attrs,
+  ;; charset, origin-mode) in addition to the grid swap, matching tmux and xterm.
   (1049
-   ;; Set: save current grid + cursor, replace with a fresh blank grid.
-   ((enter-alt-screen screen))
-   ;; Reset: restore saved grid + cursor, or clear if nothing was saved.
-   ((exit-alt-screen screen)))
+   ;; Set: save full cursor state (DECSC) + grid, replace with a fresh blank grid.
+   ((enter-alt-screen screen :save-cursor-p t))
+   ;; Reset: restore saved grid + full cursor state (DECRC), or clear if unsaved.
+   ((exit-alt-screen screen :restore-cursor-p t)))
 
   ;; Mode 2026 — Synchronized Output (?2026h / ?2026l)
   ;; Applications batch terminal updates between ?2026h and ?2026l.

@@ -1304,7 +1304,7 @@
     (is (string= "0" (cl-tmux/format:expand-format "#{selection_present}" ctx)))))
 
 (test format-context-copy-cursor-reports-position-in-copy-mode
-  "In copy mode #{copy_cursor_x}/#{copy_cursor_y} report the copy cursor (col . row)
+  "In copy mode #{copy_cursor_x}/#{copy_cursor_y} report the copy cursor (row . col)
    and #{selection_present} is 1 once a selection is being made."
   (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
          (win  (first (cl-tmux/model:session-windows sess)))
@@ -1314,10 +1314,10 @@
           (cl-tmux/terminal/types:screen-copy-cursor scr) (cons 7 3)
           (cl-tmux/terminal/types:screen-copy-selecting scr) t)
     (let ((ctx (cl-tmux/format:format-context-from-session sess win pane)))
-      (is (string= "7" (cl-tmux/format:expand-format "#{copy_cursor_x}" ctx))
-          "#{copy_cursor_x} must be the copy cursor column")
-      (is (string= "3" (cl-tmux/format:expand-format "#{copy_cursor_y}" ctx))
-          "#{copy_cursor_y} must be the copy cursor row")
+      (is (string= "3" (cl-tmux/format:expand-format "#{copy_cursor_x}" ctx))
+          "#{copy_cursor_x} must be the copy cursor column (cdr of (row . col))")
+      (is (string= "7" (cl-tmux/format:expand-format "#{copy_cursor_y}" ctx))
+          "#{copy_cursor_y} must be the copy cursor row (car of (row . col))")
       (is (string= "1" (cl-tmux/format:expand-format "#{selection_present}" ctx))
           "#{selection_present} must be 1 while selecting"))
     (setf (cl-tmux/terminal/types:screen-copy-mode-p scr) nil
@@ -1332,6 +1332,23 @@
     (let ((layout (getf ctx :window-layout)))
       (is (stringp layout) ":window-layout must be a string")
       (is (plusp (length layout)) ":window-layout must be non-empty for a window with panes"))))
+
+(test format-context-window-last-flag-correct
+  "#{window_last_flag} is \"1\" for the previously active window and \"0\" for all others.
+   Regression: a duplicate plist key shadowed the conditional, always returning \"0\"."
+  (let* ((sess (make-fake-session :nwindows 2))
+         (win0 (first  (cl-tmux/model:session-windows sess)))
+         (win1 (second (cl-tmux/model:session-windows sess))))
+    ;; Simulate: win0 was active first (lower time), win1 is now active (higher time).
+    (setf (cl-tmux/model:window-last-active-time win0) 100
+          (cl-tmux/model:window-last-active-time win1) 200)
+    (cl-tmux/model:session-select-window sess win1)
+    (let ((ctx0 (cl-tmux/format:format-context-from-session sess win0 nil))
+          (ctx1 (cl-tmux/format:format-context-from-session sess win1 nil)))
+      (is (string= "1" (getf ctx0 :window-last-flag))
+          "the previously active window must have window_last_flag = \"1\"")
+      (is (string= "0" (getf ctx1 :window-last-flag))
+          "the currently active window must have window_last_flag = \"0\""))))
 
 ;;; ── Modifier chaining ────────────────────────────────────────────────────────
 

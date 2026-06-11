@@ -49,6 +49,7 @@
   (scrollback   nil  :type list)            ; list of row-vectors, newest first
   ;; Copy-mode selection state (nil when no selection is active)
   (copy-mark    nil  :type list)            ; (row . col) mark position, NIL = no selection
+  (copy-mark-offset 0 :type fixnum)         ; copy-offset in effect when copy-mark was set
   (copy-cursor  nil  :type list)            ; (row . col) cursor position in copy mode, NIL = not in copy mode
   (copy-selecting nil :type boolean)        ; T when selection is being built
   ;; copy-mode -e: when T, scrolling down to the live bottom (offset 0) auto-exits
@@ -78,6 +79,10 @@
   (app-cursor-keys nil :type boolean)
   ;; OSC 0/2 window title
   (title "" :type string)
+  ;; XTPUSHTITLE / XTPOPTITLE (CSI > Ps t / CSI < Ps t): a stack of saved
+  ;; title strings.  Push saves the current title; pop restores the most
+  ;; recently saved one.  The stack is bounded to 8 entries to match xterm.
+  (title-stack nil :type list)
   ;; OSC 7 current working directory (file://host/path reported by the shell);
   ;; surfaces as #{pane_current_path}.  Empty until the shell reports it.
   (cwd "" :type string)

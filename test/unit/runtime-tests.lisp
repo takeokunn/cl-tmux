@@ -683,3 +683,48 @@ given a non-NIL initial state (loop while *running*)."
                  (setf cl-tmux::*running* nil))))
         ;; Restore original status-interval.
         (cl-tmux/options:set-option "status-interval" original-interval))))))
+
+;;; ── remain-on-exit dead-pane marking ─────────────────────────────────────────
+;;;
+;;; When a pane's process exits, reader-eof-state must mark the pane DEAD: close
+;;; the now-EOF master fd and reset pane-fd/pane-pid to -1.  #{pane_dead} keys on
+;;; (<= pane-fd 0), and respawn-pane (without -k) is gated on the pane being dead;
+;;; previously the reader never reset the fd so both were wrong.  The tests use a
+;;; high synthetic fd (closing it yields EBADF, swallowed by pty-close's
+;;; ignore-errors) and pid -1 (no signal is ever sent).
+
+(test reader-eof-state-marks-pane-dead-under-remain-on-exit
+  "On EOF with remain-on-exit set, the pane is kept visible AND marked dead
+   (pane-fd/pane-pid reset to -1)."
+  (let ((pane (make-pane :id 1 :fd 9999 :pid -1 :screen (make-screen 5 3))))
+    (with-isolated-options ("remain-on-exit" t)
+      (is (functionp (cl-tmux::reader-eof-state pane))
+          "remain-on-exit keeps the pane parked (returns the remain state)"))
+    (is (= -1 (pane-fd pane))  "pane-fd reset to -1 (dead)")
+    (is (= -1 (pane-pid pane)) "pane-pid reset to -1 (no stale-pid re-signal)")))
+
+(test reader-eof-state-marks-pane-dead-without-remain-on-exit
+  "The dead-marking happens on EVERY process exit, independent of remain-on-exit;
+   the reader still stops (returns NIL) when remain-on-exit is off."
+  (let ((pane (make-pane :id 1 :fd 9999 :pid -1 :screen (make-screen 5 3))))
+    (with-isolated-options ("remain-on-exit" nil)
+      (is (null (cl-tmux::reader-eof-state pane))
+          "returns NIL (reader loop stops) when remain-on-exit is off"))
+    (is (= -1 (pane-fd pane)) "pane still marked dead (fd -1)")))
+
+(test pane-dead-format-reflects-reader-eof
+  "#{pane_dead} flips 0 -> 1 once reader-eof-state marks the pane dead (end-to-end,
+   no fork)."
+  (let* ((pane (make-pane :id 1 :fd 9999 :pid -1 :screen (make-screen 5 3)))
+         (win  (make-window :id 0 :name "w" :width 5 :height 3 :panes (list pane)))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (window-select-pane win pane)
+    (session-select-window sess win)
+    (let ((ctx (cl-tmux/format:format-context-from-session sess win pane)))
+      (is (string= "0" (cl-tmux/format:expand-format "#{pane_dead}" ctx))
+          "pane reports alive (#{pane_dead}=0) before exit"))
+    (with-isolated-options ("remain-on-exit" t)
+      (cl-tmux::reader-eof-state pane))
+    (let ((ctx (cl-tmux/format:format-context-from-session sess win pane)))
+      (is (string= "1" (cl-tmux/format:expand-format "#{pane_dead}" ctx))
+          "pane reports dead (#{pane_dead}=1) after reader-eof-state"))))

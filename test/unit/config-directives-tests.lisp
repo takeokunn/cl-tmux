@@ -87,8 +87,8 @@
   (with-isolated-options ()
     (is (eq t (apply-config-directive '("set" "-g" "status" "off")))
         "set -g status off must return T (applied)")
-    (is (null (cl-tmux/options:get-option "status"))
-        "status option must be NIL (boolean coercion of 'off')")
+    (is (string= "off" (cl-tmux/options:get-option "status"))
+        "status stores the choice string \"off\" (status-line-count maps it to 0)")
     (is (null (cl-tmux/options:get-option "-g"))
         "must NOT create an option literally named '-g'")))
 
@@ -106,8 +106,8 @@
   (with-isolated-options ()
     (is (eq t (apply-config-directive '("set" "status" "off")))
         "plain set must still return T")
-    (is (null (cl-tmux/options:get-option "status"))
-        "plain set status off must set status to NIL")))
+    (is (string= "off" (cl-tmux/options:get-option "status"))
+        "plain set status off stores the choice string \"off\"")))
 
 ;;; bind key to a command LINE (arg-taking key bindings)
 
@@ -1151,6 +1151,44 @@ set -g prefix C-a~%"))))
     (is (eq t (apply-config-directive '("source-file" "/nonexistent-cl-tmux-config-abc.conf")))
         "source-file on a missing file must return T (error silently ignored)")))
 
+(test source-file-n-parse-only-does-not-execute
+  "source-file -n parses the file but executes NOTHING (tmux CMD_PARSE_PARSEONLY).
+   Asserts via an OPTION the file would set (a key like z has a DEFAULT binding, so
+   'unbound' is not a reliable 'not executed' signal)."
+  (with-isolated-config
+    (with-temp-config-file (p "set -g status-left PARSEONLY")
+      (is (eq t (apply-config-directive (list "source-file" "-n" (namestring p))))
+          "source-file -n returns T")
+      (is (not (string= "PARSEONLY" (cl-tmux/options:get-option "status-left")))
+          "-n must NOT execute: the option is left unchanged"))))
+
+(test source-file-without-n-executes-control
+  "Control: WITHOUT -n the same file DOES set the option — isolating that -n is what
+   suppresses execution."
+  (with-isolated-config
+    (with-temp-config-file (p "set -g status-left EXECUTED")
+      (apply-config-directive (list "source-file" (namestring p)))
+      (is (string= "EXECUTED" (cl-tmux/options:get-option "status-left"))
+          "without -n the option is set"))))
+
+(test source-file-clustered-qn-does-not-execute
+  "Clustered -qn is also parse-only (q tolerated, n suppresses execution)."
+  (with-isolated-config
+    (with-temp-config-file (p "set -g status-left QNFLAG")
+      (apply-config-directive (list "source-file" "-qn" (namestring p)))
+      (is (not (string= "QNFLAG" (cl-tmux/options:get-option "status-left")))
+          "-qn must not execute"))))
+
+(test parse-source-file-flags-clustered
+  "%parse-source-file-flags parses clustered -Fnqv and returns the path positionals."
+  (multiple-value-bind (n q v f rest)
+      (cl-tmux/config::%parse-source-file-flags '("-Fnqv" "/path/to.conf"))
+    (is-true  n "parse-only (n)")
+    (is-true  q "quiet (q)")
+    (is-true  v "verbose (v)")
+    (is-true  f "format (F)")
+    (is (equal '("/path/to.conf") rest) "positionals = the path")))
+
 ;;; ── run-shell / run directive ─────────────────────────────────────────────
 
 (test run-shell-directive-returns-t
@@ -1782,6 +1820,55 @@ bind-key r source-file /dev/null"))
   (is-false (cl-tmux/config::%if-shell-format-true-p "0"))
   (is-false (cl-tmux/config::%if-shell-format-true-p "")))
 
+;;; ── if-shell brace-block then/else bodies (tmux 3.x { ... } syntax) ──────────
+
+(test if-shell-directive-F-brace-then-runs-block
+  "if-shell -F with a brace-block THEN runs the block when the condition is truthy."
+  (with-isolated-config
+    (cl-tmux/config::%apply-if-shell-directive
+     "if-shell" '("-F" "1" "{" "set" "-g" "status-left" "THEN" "}"
+                  "{" "set" "-g" "status-left" "ELSE" "}"))
+    (is (string= "THEN" (cl-tmux/options:get-option "status-left"))
+        "truthy -F runs the THEN brace block")))
+
+(test if-shell-directive-F-brace-else-runs-block
+  "if-shell -F 0 runs the ELSE brace block."
+  (with-isolated-config
+    (cl-tmux/config::%apply-if-shell-directive
+     "if-shell" '("-F" "0" "{" "set" "-g" "status-left" "THEN" "}"
+                  "{" "set" "-g" "status-left" "ELSE" "}"))
+    (is (string= "ELSE" (cl-tmux/options:get-option "status-left"))
+        "falsy -F runs the ELSE brace block")))
+
+(test if-shell-directive-F-brace-multi-command
+  "A brace THEN block with multiple ;-separated commands runs ALL of them."
+  (with-isolated-config
+    (cl-tmux/config::%apply-if-shell-directive
+     "if-shell" '("-F" "1" "{" "set" "-g" "status-left" "A" ";"
+                  "set" "-g" "status-right" "B" "}"))
+    (is (string= "A" (cl-tmux/options:get-option "status-left")) "first cmd ran")
+    (is (string= "B" (cl-tmux/options:get-option "status-right")) "second cmd ran")))
+
+(test if-shell-directive-F-brace-no-else-is-safe
+  "if-shell -F 0 with only a THEN brace block (no else) runs nothing — no error."
+  (with-isolated-config
+    (cl-tmux/config::%apply-if-shell-directive
+     "if-shell" '("-F" "0" "{" "set" "-g" "status-left" "THEN" "}"))
+    (is (not (string= "THEN" (cl-tmux/options:get-option "status-left")))
+        "false condition + no else block → the THEN block does NOT run")))
+
+(test take-brace-or-command-splits-block-and-bare
+  "%take-brace-or-command: a { ... ; ... } block → inner command lists + rest; a
+   bare token → one re-tokenised command + rest."
+  (multiple-value-bind (cmds rest)
+      (cl-tmux/config::%take-brace-or-command '("{" "a" "b" ";" "c" "d" "}" "tail"))
+    (is (equal '(("a" "b") ("c" "d")) cmds) "two ;-separated commands extracted")
+    (is (equal '("tail") rest) "rest is the tokens after the closing brace"))
+  (multiple-value-bind (cmds rest)
+      (cl-tmux/config::%take-brace-or-command '("set -g x Y" "more"))
+    (is (equal '(("set" "-g" "x" "Y")) cmds) "bare token re-tokenised into one command")
+    (is (equal '("more") rest) "rest is the remaining tokens")))
+
 ;;; ── run-shell -C : run a tmux command, not a shell command ───────────────────
 
 (test run-shell-C-runs-tmux-command
@@ -1801,3 +1888,60 @@ bind-key r source-file /dev/null"))
      "run" '("-C" "set -g status-right BAR"))
     (is (string= "BAR" (cl-tmux/options:get-option "status-right"))
         "run -C must execute the tmux command")))
+
+;;; ── Mid-token '#' is a literal, not a comment ────────────────────────────────
+;;;
+;;; tmux's lexer only begins a comment when '#' is the first character of a token
+;;; (line start or just after whitespace).  A '#' in the middle of an unquoted
+;;; word — most commonly a hex colour like bg=#0000ff — is a literal character.
+;;; Previously %strip-config-comment truncated such values to "bg=".
+
+(test strip-config-comment-keeps-mid-token-hash
+  "A '#' in the middle of an unquoted token is literal; only a token-start '#'
+   begins a comment."
+  (is (string= "set -g status-style bg=#0000ff"
+               (cl-tmux/config::%strip-config-comment "set -g status-style bg=#0000ff"))
+      "mid-token hex colour kept verbatim")
+  (is (string= "set -g @c fg=#ff0000"
+               (cl-tmux/config::%strip-config-comment "set -g @c fg=#ff0000"))
+      "mid-token hex in a user (@) option kept")
+  (is (string= "set -g status-style bg=#0000ff"
+               (cl-tmux/config::%strip-config-comment
+                "set -g status-style bg=#0000ff # trailing note"))
+      "mid-token hex kept AND a real trailing comment still stripped")
+  (is (string= "set -g foo"
+               (cl-tmux/config::%strip-config-comment "set -g foo #bar"))
+      "a '#' at a token start (after whitespace) still begins a comment"))
+
+(test apply-config-line-keeps-hash-colour-end-to-end
+  "End-to-end: an unquoted hex colour survives apply-config-line into the option
+   value (it used to be truncated by comment stripping)."
+  (with-isolated-options ("status-style" "")
+    (cl-tmux/config::apply-config-line "set -g status-style bg=#1e1e1e")
+    (is (string= "bg=#1e1e1e" (cl-tmux/options:get-option "status-style"))
+        "hex colour reaches the option store intact")))
+
+;;; ── set -ag on style options inserts a ',' separator ─────────────────────────
+;;;
+;;; tmux marks *-style options OPTIONS_TABLE_IS_STYLE; `set -a` appends to them
+;;; with a comma so incremental theming (bg first, fg later) composes.  Plain
+;;; string options keep separator-less concatenation.
+
+(test apply-set-directive-append-style-comma
+  "'set -ag <name>-style v' comma-joins; plain string options still concat."
+  ;; Style option with a non-empty current value: comma-joined.
+  (with-isolated-options ("status-style" "bg=red")
+    (is (eq t (apply-config-directive '("set" "-ag" "status-style" "fg=blue")))
+        "set -ag must return T")
+    (is (string= "bg=red,fg=blue" (cl-tmux/options:get-option "status-style"))
+        "style append must insert a ',' separator"))
+  ;; Style option appended onto an empty value: no leading comma.
+  (with-isolated-options ("mode-style" "")
+    (apply-config-directive '("set" "-ag" "mode-style" "fg=green"))
+    (is (string= "fg=green" (cl-tmux/options:get-option "mode-style"))
+        "appending onto an empty style value adds no stray comma"))
+  ;; Non-style string option: still plain (no comma).
+  (with-isolated-options ("status-left" "A")
+    (apply-config-directive '("set" "-ag" "status-left" "B"))
+    (is (string= "AB" (cl-tmux/options:get-option "status-left"))
+        "non-style option keeps separator-less concatenation")))

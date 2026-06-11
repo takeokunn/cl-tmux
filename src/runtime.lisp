@@ -297,6 +297,18 @@
    transition to reader-remain-on-exit-state so the pane stays visible.
    Otherwise return NIL to stop the reader loop immediately."
   (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-exited+ pane)
+  ;; The child has exited and the master fd is now at EOF.  Mark the pane DEAD:
+  ;; close the master fd (nothing else closes it on the remain-on-exit path — a
+  ;; leak) and reset pane-fd/pane-pid to -1.  #{pane_dead} keys on (<= pane-fd 0)
+  ;; (format.lisp), and respawn-pane (without -k) is gated on the pane being dead —
+  ;; both were wrong because the reader never reset the fd.  Resetting pane-pid too
+  ;; prevents a later teardown (e.g. %destroy-session) from re-signalling a stale
+  ;; (possibly OS-reused) pid; respawn-pane re-establishes both slots.  pty-close
+  ;; guards non-positive fd/pid, so no-PTY panes (fd -1) are an untouched no-op.
+  (when (> (pane-fd pane) 0)
+    (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))
+    (setf (pane-fd pane) -1
+          (pane-pid pane) -1))
   (let ((remain-on-exit
           (handler-case (cl-tmux/options:get-option-for-context "remain-on-exit" :pane pane)
             (error () nil))))

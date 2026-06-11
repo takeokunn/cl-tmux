@@ -600,6 +600,30 @@
     (is (= 4 (cl-tmux/terminal/types:screen-alt-cursor-y s))
         "alt-cursor-y must be saved row 4")))
 
+(test alt-screen-1049-saves-and-restores-full-cursor-state
+  "Mode ?1049h saves the full cursor state (SGR attrs) and ?1049l restores it.
+   Apps like neovim rely on this to restore their primary-screen rendering state."
+  (with-screen (s 40 24)
+    ;; Set SGR: bold + foreground red (colour 1)
+    (feed s (esc "[1;31m"))
+    (let ((saved-attrs (cl-tmux/terminal/types:screen-cur-attrs s))
+          (saved-fg    (cl-tmux/terminal/types:screen-cur-fg    s)))
+      ;; Enter alt screen (1049h should save the SGR state via DECSC)
+      (feed s (esc "[?1049h"))
+      ;; In the alt screen: reset SGR and move cursor
+      (feed s (esc "[m"))          ; reset attributes
+      (feed s (esc "[10;5H"))      ; move cursor
+      ;; Exit alt screen (1049l should restore SGR via DECRC)
+      (feed s (esc "[?1049l"))
+      ;; Cursor position restored from alt-cursor-x/y
+      (is (= 0 (cl-tmux/terminal/types:screen-cursor-x s))
+          "cursor x must be restored to 0 (the saved primary position)")
+      ;; SGR state restored: bold + red should be back
+      (is (= saved-attrs (cl-tmux/terminal/types:screen-cur-attrs s))
+          "screen-cur-attrs must be restored after ?1049l")
+      (is (= saved-fg (cl-tmux/terminal/types:screen-cur-fg s))
+          "screen-cur-fg must be restored to red after ?1049l"))))
+
 ;;; ── SUITE: mouse-sgr-mode slot ───────────────────────────────────────────────
 
 (def-suite mouse-sgr-mode-suite

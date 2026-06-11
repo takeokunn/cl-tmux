@@ -23,34 +23,40 @@
 ;;; Used for OSC 52 clipboard payloads.  We use a simple table-driven approach
 ;;; rather than depending on an external Base64 library.
 
-(defun %base64-char-index (b64-table character)
-  "Return the 6-bit index of CHARACTER in the Base64 lookup table B64-TABLE, or NIL."
-  (position character b64-table))
-
 (defun %decode-base64-group (alphabet encoded-string group-start)
   "Decode one 4-character Base64 group starting at GROUP-START in ENCODED-STRING.
    Returns (values byte0-or-nil byte1-or-nil byte2-or-nil).
-   A NIL value means the corresponding output byte is absent (padding or truncation)."
-  (let* ((input-length (length encoded-string))
-         (index0 (%base64-char-index alphabet (char encoded-string group-start)))
-         (index1 (and (< (+ group-start 1) input-length)
-                      (%base64-char-index alphabet (char encoded-string (+ group-start 1)))))
-         (index2 (and (< (+ group-start 2) input-length)
-                      (%base64-char-index alphabet (char encoded-string (+ group-start 2)))))
-         (index3 (and (< (+ group-start 3) input-length)
-                      (%base64-char-index alphabet (char encoded-string (+ group-start 3)))))
-         ;; byte0: high 6 bits of index0 | high 2 bits of index1
-         (byte0  (and index0 index1
-                      (logior (ash index0 2) (ash index1 -4))))
-         ;; byte1: low 4 bits of index1 | high 4 bits of index2
-         (byte1  (and index1 index2
-                      (logand #xFF (logior (ash (logand index1 #xF) 4)
-                                           (ash index2 -2)))))
-         ;; byte2: low 2 bits of index2 | all 6 bits of index3
-         (byte2  (and index2 index3
-                      (logand #xFF (logior (ash (logand index2 #x3) 6)
-                                           index3)))))
-    (values byte0 byte1 byte2)))
+   A NIL value means the corresponding output byte is absent (padding or truncation).
+
+   RFC 4648 bit layout for a group (a b c d) → three bytes:
+     byte0 = (a << 2) | (b >> 4)
+     byte1 = ((b & 0xF) << 4) | (c >> 2)
+     byte2 = ((c & 0x3) << 6) | d"
+  (flet (;; Resolve one alphabet-indexed character, returning NIL for out-of-range.
+         (alphabet-index (offset)
+           (and (< (+ group-start offset) (length encoded-string))
+                (position (char encoded-string (+ group-start offset)) alphabet)))
+         ;; Assemble the first output byte from Base64 indices a and b.
+         (b64-byte0 (index-a index-b)
+           (and index-a index-b
+                (logior (ash index-a 2) (ash index-b -4))))
+         ;; Assemble the second output byte from Base64 indices b and c.
+         (b64-byte1 (index-b index-c)
+           (and index-b index-c
+                (logand #xFF (logior (ash (logand index-b #xF) 4)
+                                     (ash index-c -2)))))
+         ;; Assemble the third output byte from Base64 indices c and d.
+         (b64-byte2 (index-c index-d)
+           (and index-c index-d
+                (logand #xFF (logior (ash (logand index-c #x3) 6)
+                                     index-d)))))
+    (let* ((index-a (alphabet-index 0))
+           (index-b (alphabet-index 1))
+           (index-c (alphabet-index 2))
+           (index-d (alphabet-index 3)))
+      (values (b64-byte0 index-a index-b)
+              (b64-byte1 index-b index-c)
+              (b64-byte2 index-c index-d)))))
 
 (defun %base64-decode (encoded-string)
   "Decode Base64-encoded ENCODED-STRING into a byte vector.

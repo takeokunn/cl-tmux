@@ -512,13 +512,13 @@
          (when suffix
            (pty-write (pane-fd ap) (babel:string-to-octets suffix :encoding :utf-8)))))))
   (:send-prefix
-   ;; Send exactly one literal prefix byte (0x02) to the active pane's PTY.
-   ;; This is the C-b C-b → literal C-b passthrough, matching real tmux behaviour.
+   ;; Send the currently configured prefix key byte.  *prefix-key-code* tracks
+   ;; `set prefix C-x` at runtime; +prefix-key-code+ is the compile-time default.
    (flet ((byte-vec (b)
             (make-array 1 :element-type '(unsigned-byte 8) :initial-element b)))
      (with-active-pane (ap session)
        (when (> (pane-fd ap) 0)
-         (pty-write (pane-fd ap) (byte-vec +prefix-key-code+))))))
+         (pty-write (pane-fd ap) (byte-vec cl-tmux/config:*prefix-key-code*))))))
   (:select-layout-even-h  (%apply-named-layout-to-session session :even-horizontal))
   (:select-layout-even-v  (%apply-named-layout-to-session session :even-vertical))
   (:select-layout-tiled   (%apply-named-layout-to-session session :tiled))

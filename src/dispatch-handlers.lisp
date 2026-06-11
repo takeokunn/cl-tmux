@@ -118,6 +118,9 @@
   (:copy-mode-exit             (%copy-mode-call session #'copy-mode-exit))
   (:copy-mode-begin-selection  (%copy-mode-call session #'copy-mode-begin-selection))
   (:copy-mode-other-end        (%copy-mode-call session #'copy-mode-other-end))
+  ;; Jump-to-char repeat/reverse (vi ; and ,)
+  (:copy-mode-jump-again        (%copy-mode-call session #'copy-mode-jump-again))
+  (:copy-mode-jump-reverse      (%copy-mode-call session #'copy-mode-jump-reverse))
   (:copy-mode-clear-selection  (%copy-mode-call session #'copy-mode-clear-selection))
   (:copy-mode-select-word      (%copy-mode-call session #'copy-mode-select-word))
   (:copy-mode-yank             (%copy-mode-call session #'copy-mode-yank))
@@ -152,10 +155,18 @@
   (:copy-mode-half-page-down   (%copy-mode-call session #'copy-mode-half-page-down))
   (:copy-mode-scroll-up-line   (%copy-mode-call session #'copy-mode-scroll-up-line))
   (:copy-mode-scroll-down-line (%copy-mode-call session #'copy-mode-scroll-down-line))
+  (:copy-mode-scroll-middle    (%copy-mode-call session #'copy-mode-scroll-middle))
+  (:copy-mode-jump-to-mark     (%copy-mode-call session #'copy-mode-jump-to-mark))
+  (:copy-mode-set-mark         (%copy-mode-call session #'copy-mode-set-mark))
+  (:copy-mode-refresh-from-pane (values))  ; no-op — copy mode always reads live pane
+  (:copy-mode-prev-paragraph   (%copy-mode-call session #'copy-mode-previous-paragraph))
+  (:copy-mode-next-paragraph   (%copy-mode-call session #'copy-mode-next-paragraph))
   (:copy-mode-begin-line-selection (%copy-mode-call session #'copy-mode-begin-line-selection))
   (:copy-mode-copy-end-of-line  (%copy-mode-call session #'copy-mode-copy-end-of-line))
   (:copy-mode-copy-line         (%copy-mode-call session #'copy-mode-copy-line))
   (:copy-mode-append-selection  (%copy-mode-call session #'copy-mode-append-selection))
+  (:copy-mode-append-selection-and-cancel
+   (%copy-mode-call session #'copy-mode-append-selection-and-cancel))
   (:copy-mode-copy-pipe-no-cancel
    (%copy-mode-call session (lambda (s) (copy-mode-copy-pipe-no-cancel s nil))))
   (:copy-mode-search-next      (%copy-mode-call session #'copy-mode-search-next))
@@ -174,6 +185,17 @@
                      (lambda (term)
                        (unless (string= term "")
                          (copy-mode-search-backward active-screen term)))))))
+  (:copy-mode-search-forward-incremental
+   (%copy-mode-call session #'copy-mode-search-forward-incremental))
+  (:copy-mode-search-backward-incremental
+   (%copy-mode-call session #'copy-mode-search-backward-incremental))
+  (:copy-mode-next-matching-bracket
+   (%copy-mode-call session #'copy-mode-next-matching-bracket))
+  ;; search-forward-text / search-backward-text: handled via extra-args in
+  ;; %dispatch-send-keys-X; these keyword stubs are never invoked but must
+  ;; exist so the keyword table lookup does not fall through to "unrecognised".
+  (:copy-mode-search-forward-text  (values))
+  (:copy-mode-search-backward-text (values))
   (:copy-mode-choose-buffer
    (show-overlay
     (with-output-to-string (stream)
@@ -201,11 +223,13 @@
           (ap   (and win (window-active-pane win))))
      (%paste-to-pane ap text)))
   (:send-prefix
+   ;; Send the currently configured prefix key byte, not the compile-time default.
+   ;; *prefix-key-code* is updated when `set prefix` runs; +prefix-key-code+ is fixed.
    (flet ((byte-vec (b)
             (make-array 1 :element-type '(unsigned-byte 8) :initial-element b)))
      (with-active-pane (ap session)
        (when (> (pane-fd ap) 0)
-         (pty-write (pane-fd ap) (byte-vec +prefix-key-code+))))))
+         (pty-write (pane-fd ap) (byte-vec cl-tmux/config:*prefix-key-code*))))))
 
   ;; ── Layout commands ────────────────────────────────────────────────────────
   (:select-layout-even-h    (%apply-named-layout-to-session session :even-horizontal))

@@ -31,6 +31,7 @@
    scrolled back down to the live bottom (offset 0)."
   (setf (screen-copy-mode-p        screen) t
         (screen-copy-mark          screen) nil
+        (screen-copy-mark-offset   screen) 0
         (screen-copy-selecting     screen) nil
         (screen-copy-exit-on-bottom screen) (and exit-on-bottom t))
   (if scroll-to-top
@@ -47,6 +48,7 @@
   (setf (screen-copy-mode-p        screen) nil
         (screen-copy-offset         screen) 0
         (screen-copy-mark           screen) nil
+        (screen-copy-mark-offset    screen) 0
         (screen-copy-cursor         screen) nil
         (screen-copy-selecting      screen) nil
         (screen-copy-line-selection-p screen) nil
@@ -164,10 +166,21 @@
   "Begin a text selection at the current copy-mode cursor position."
   (when (screen-copy-mode-p screen)
     (let ((cur (or (screen-copy-cursor screen) (cons 0 0))))
-      (setf (screen-copy-mark      screen) cur
-            (screen-copy-cursor    screen) cur
-            (screen-copy-selecting screen) t
-            (screen-dirty-p        screen) t))))
+      (setf (screen-copy-mark        screen) cur
+            (screen-copy-mark-offset screen) (screen-copy-offset screen)
+            (screen-copy-cursor      screen) cur
+            (screen-copy-selecting   screen) t
+            (screen-dirty-p          screen) t))))
+
+(defun copy-mode-set-mark (screen)
+  "Set the copy-mode mark at the current cursor position without starting a selection.
+   Implements tmux's `set-mark` send-keys -X command: the mark can later be
+   jumped to with `jump-to-mark` without having gone through begin-selection.
+   No-op when copy mode is inactive or there is no cursor."
+  (when (and (screen-copy-mode-p screen) (screen-copy-cursor screen))
+    (setf (screen-copy-mark        screen) (screen-copy-cursor screen)
+          (screen-copy-mark-offset screen) (screen-copy-offset screen)
+          (screen-dirty-p          screen) t)))
 
 (defun copy-mode-other-end (screen)
   "Swap the two ends of the active selection (tmux copy-mode `other-end`, vi `o`).
@@ -179,8 +192,29 @@
              (screen-copy-selecting screen)
              (screen-copy-mark   screen)
              (screen-copy-cursor screen))
+    ;; After swapping, the new mark is the old cursor; it was at the current offset.
     (rotatef (screen-copy-cursor screen) (screen-copy-mark screen))
-    (setf (screen-dirty-p screen) t)))
+    (setf (screen-copy-mark-offset screen) (screen-copy-offset screen)
+          (screen-dirty-p          screen) t)))
+
+(defun copy-mode-jump-to-mark (screen)
+  "Move the copy-mode cursor to the selection mark without swapping (tmux
+   `jump-to-mark`).  When a selection is active, teleports the cursor to the
+   anchor position so the user can re-examine the start of a selection.  No-op
+   when copy mode is inactive or no mark has been set."
+  (when (and (screen-copy-mode-p screen)
+             (screen-copy-mark screen))
+    (let ((mark        (screen-copy-mark screen))
+          (mark-offset (screen-copy-mark-offset screen))
+          (cur-offset  (screen-copy-offset screen)))
+      ;; If the mark was set at a different viewport offset, adjust the cursor
+      ;; row to account for the difference so it points to the same virtual row.
+      (let* ((row-delta (- mark-offset cur-offset))
+             (raw-row   (+ (car mark) row-delta))
+             (h         (screen-height screen))
+             (clamped   (max 0 (min (1- h) raw-row))))
+        (setf (screen-copy-cursor screen) (cons clamped (cdr mark))
+              (screen-dirty-p     screen) t)))))
 
 (defun copy-mode-clear-selection (screen)
   "Clear the active selection without leaving copy mode (tmux `clear-selection`,
@@ -193,6 +227,7 @@
              (or (screen-copy-selecting screen) (screen-copy-mark screen)))
     (setf (screen-copy-selecting        screen) nil
           (screen-copy-mark             screen) nil
+          (screen-copy-mark-offset      screen) 0
           (screen-copy-line-selection-p screen) nil
           (screen-copy-rect-select-p    screen) nil
           (screen-dirty-p               screen) t)))
@@ -241,12 +276,14 @@
             (setf (screen-copy-mark   screen) (cons row start)
                   ;; Exclusive end may reach width so the last word char is kept.
                   (screen-copy-cursor screen) (cons row (min w (1+ end))))))
-      (setf (screen-copy-selecting screen) t
-            (screen-dirty-p        screen) t))))
+      (setf (screen-copy-mark-offset screen) (screen-copy-offset screen)
+            (screen-copy-selecting   screen) t
+            (screen-dirty-p          screen) t))))
 
 (defun copy-mode-cancel-selection (screen)
   "Cancel any active copy-mode selection."
   (setf (screen-copy-mark           screen) nil
+        (screen-copy-mark-offset    screen) 0
         (screen-copy-cursor         screen) nil
         (screen-copy-selecting      screen) nil
         (screen-copy-line-selection-p screen) nil
@@ -259,35 +296,66 @@
 ;;; Both are private (percent-prefixed) and independently testable.
 
 (defun %selection-bounds (screen)
-  "Return (values start-row end-row start-col end-col) for the current copy-mode
-   selection in SCREEN, normalising mark and cursor order so start <= end.
+  "Return (values start-vrow end-vrow start-col end-col) for the current copy-mode
+   selection in SCREEN.  Rows are VIRTUAL (0 = oldest scrollback, increasing toward
+   the live grid bottom) so the selection is invariant to subsequent viewport scrolling.
    Assumes mark and cursor are already set."
-  (let* ((mark       (screen-copy-mark   screen))
-         (cursor     (screen-copy-cursor screen))
-         (mark-row   (car mark))
-         (mark-col   (cdr mark))
-         (cursor-row (car cursor))
-         (cursor-col (cdr cursor))
-         (start-row  (min mark-row cursor-row))
-         (end-row    (max mark-row cursor-row))
-         (start-col  (cond ((< mark-row cursor-row) mark-col)
-                           ((> mark-row cursor-row) cursor-col)
-                           (t                       (min mark-col cursor-col))))
-         (end-col    (cond ((< mark-row cursor-row) cursor-col)
-                           ((> mark-row cursor-row) mark-col)
-                           (t                       (max mark-col cursor-col)))))
-    (values start-row end-row start-col end-col)))
+  (let* ((sb-n        (length (screen-scrollback screen)))
+         (mark        (screen-copy-mark   screen))
+         (cursor      (screen-copy-cursor screen))
+         (mark-offset (screen-copy-mark-offset screen))
+         (cur-offset  (screen-copy-offset screen))
+         ;; Convert viewport rows to virtual rows using the offset in effect at placement.
+         (mark-vrow   (+ sb-n (car mark)   (- mark-offset)))
+         (cur-vrow    (+ sb-n (car cursor) (- cur-offset)))
+         (mark-col    (cdr mark))
+         (cursor-col  (cdr cursor))
+         (start-vrow  (min mark-vrow cur-vrow))
+         (end-vrow    (max mark-vrow cur-vrow))
+         (start-col   (cond ((< mark-vrow cur-vrow) mark-col)
+                            ((> mark-vrow cur-vrow) cursor-col)
+                            (t                      (min mark-col cursor-col))))
+         (end-col     (cond ((< mark-vrow cur-vrow) cursor-col)
+                            ((> mark-vrow cur-vrow) mark-col)
+                            (t                      (max mark-col cursor-col)))))
+    (values start-vrow end-vrow start-col end-col)))
 
 ;;; %extract-row-chars reads characters from a rectangular range as a string.
+;;; It accepts either a virtual row (via %copy-mode-virtual-row-string, used by
+;;; the selection path where %selection-bounds now returns virtual rows) or a
+;;; viewport row (used by %copy-row-range-to-paste-buffer in the nav module).
+;;; The selection path uses the virtual-row overload; nav uses viewport overload.
 ;;; Pure data extraction — no I/O side effects.
+
+(defun %extract-vrow-chars (screen vrow from-col to-col)
+  "Return a string of characters from SCREEN at VIRTUAL row VROW (0=oldest
+   scrollback, increasing toward live grid), columns FROM-COL to TO-COL (exclusive).
+   Inlines the virtual-row lookup so this file has no forward-reference to
+   commands-copy-mode-search.  Pure data extraction."
+  (if (>= from-col to-col)
+      ""
+      (let* ((sb    (screen-scrollback screen))
+             (sb-n  (length sb))
+             (n     (- to-col from-col))
+             (result (make-array n :element-type 'character :initial-element #\Space)))
+        (dotimes (i n result)
+          (let ((col (+ from-col i)))
+            (setf (char result i)
+                  (if (< vrow sb-n)
+                      ;; Scrollback: vrow 0 = oldest = nth(sb-n-1), newest = nth(0).
+                      (let ((vec (nth (- sb-n 1 vrow) sb)))
+                        (if (and vec (< col (length vec)))
+                            (cell-char (aref vec col))
+                            #\Space))
+                      ;; Live grid row.
+                      (cell-char (screen-cell screen col (- vrow sb-n))))))))))
 
 (defun %extract-row-chars (screen row from-col to-col)
   "Return a string of characters from SCREEN at viewport ROW, columns FROM-COL to
    TO-COL (exclusive).  Reads through screen-display-cell so the projection honours
-   the copy-mode scroll offset: when scrolled back, rows above the offset come from
-   the scrollback buffer.  ROW is a viewport row (matching screen-copy-cursor/-mark),
-   NOT a raw live-grid row — this is what makes a selection yanked while scrolled
-   back return the text the user actually sees.  Pure data extraction."
+   the copy-mode scroll offset.  ROW is a VIEWPORT row (0-based, same units as
+   screen-copy-cursor when copy-offset is 0).  Used by %copy-row-range-to-paste-buffer.
+   The selection path uses %extract-vrow-chars instead.  Pure data extraction."
   (let* ((n      (- to-col from-col))
          (result (make-string n)))
     (dotimes (i n result)
@@ -303,20 +371,20 @@
                (screen-copy-mark   screen)
                (screen-copy-cursor screen))
     (return-from %selection-text nil))
-  (multiple-value-bind (start-row end-row start-col end-col)
+  (multiple-value-bind (start-vrow end-vrow start-col end-col)
       (%selection-bounds screen)
     (let* ((w    (screen-width screen))
            (text (with-output-to-string (out)
-                   (loop for row from start-row to end-row do
-                     (let* ((col-from (if (= row start-row) start-col 0))
-                            (col-to   (if (= row end-row)   end-col   w))
-                            (row-str  (%extract-row-chars screen row col-from col-to)))
+                   (loop for vrow from start-vrow to end-vrow do
+                     (let* ((col-from (if (= vrow start-vrow) start-col 0))
+                            (col-to   (if (= vrow end-vrow)   end-col   w))
+                            (row-str  (%extract-vrow-chars screen vrow col-from col-to)))
                        ;; Trim trailing spaces from intermediate rows.
-                       (write-string (if (< row end-row)
+                       (write-string (if (< vrow end-vrow)
                                          (string-right-trim " " row-str)
                                          row-str)
                                      out)
-                       (when (< row end-row)
+                       (when (< vrow end-vrow)
                          (write-char #\Newline out)))))))
       (if (plusp (length text)) text nil))))
 
@@ -336,14 +404,14 @@
                (screen-copy-mark   screen)
                (screen-copy-cursor screen))
     (return-from %rectangle-selection-text nil))
-  (multiple-value-bind (start-row end-row start-col end-col)
+  (multiple-value-bind (start-vrow end-vrow start-col end-col)
       (%selection-bounds screen)
     (let* ((text (with-output-to-string (out)
-                   (loop for row from start-row to end-row do
-                     (let* ((row-str  (%extract-row-chars screen row start-col end-col))
-                            (trimmed  (string-right-trim " " row-str)))
+                   (loop for vrow from start-vrow to end-vrow do
+                     (let* ((row-str (%extract-vrow-chars screen vrow start-col end-col))
+                            (trimmed (string-right-trim " " row-str)))
                        (write-string trimmed out)
-                       (when (< row end-row)
+                       (when (< vrow end-vrow)
                          (write-char #\Newline out)))))))
       (if (plusp (length text)) text nil))))
 
@@ -417,7 +485,9 @@
 ;;; buffer is empty, it behaves like a normal yank.
 
 (defun copy-mode-append-selection (screen)
-  "Append selected text to the most recent paste buffer entry, then exit copy mode.
+  "Append selected text to the most recent paste buffer entry; stay in copy mode.
+   This matches tmux's `append-selection` send-keys -X command: the selection
+   remains highlighted so the user can chain further append operations.
    If the paste buffer is empty the selection is pushed as a new entry.
    Rectangle-select mode is honoured."
   (when (screen-copy-mode-p screen)
@@ -427,14 +497,20 @@
       (when (and text (plusp (length text)))
         (let ((existing (cl-tmux/buffer:get-paste-buffer 0)))
           (if existing
-              ;; Replace the most recent entry with old + new text.
               (progn
                 (cl-tmux/buffer:delete-paste-buffer 0)
                 (cl-tmux/buffer:add-paste-buffer (concatenate 'string existing text)))
               (cl-tmux/buffer:add-paste-buffer text)))
         (%run-copy-command text)))
-    (copy-mode-cancel-selection screen)
-    (copy-mode-exit screen)))
+    ;; Do NOT exit copy mode — tmux append-selection keeps the user in copy mode.
+    (setf (screen-dirty-p screen) t)))
+
+(defun copy-mode-append-selection-and-cancel (screen)
+  "Append selected text to the paste buffer, cancel selection, and exit copy mode.
+   Equivalent to tmux's `append-selection-and-cancel` send-keys -X command."
+  (copy-mode-append-selection screen)
+  (copy-mode-cancel-selection screen)
+  (copy-mode-exit screen))
 
 ;;; ── copy-pipe (yank + pipe) ─────────────────────────────────────────────────
 ;;;

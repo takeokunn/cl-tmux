@@ -97,6 +97,16 @@
   "`%layout-change @<id> <layout> <visible-layout> <raw-flags>`."
   (format nil "%layout-change @~D ~A ~A ~A" window-id layout visible-layout raw-flags))
 
+(defun control-window-pane-changed (window-id pane-id)
+  "`%window-pane-changed @<window-id> %<pane-id>` — the active pane within a window
+   changed (tmux control_notify_window_pane_changed)."
+  (format nil "%window-pane-changed @~D %~D" window-id pane-id))
+
+(defun control-session-window-changed (session-id window-id)
+  "`%session-window-changed $<session-id> @<window-id>` — a session's active window
+   changed (tmux control_notify_session_window_changed)."
+  (format nil "%session-window-changed $~D @~D" session-id window-id))
+
 (defun control-unlinked-window-add (window-id)
   "`%unlinked-window-add @<id>` — a window was linked but NOT to the client's session."
   (format nil "%unlinked-window-add @~D" window-id))

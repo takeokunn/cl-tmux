@@ -4,6 +4,7 @@
 ;;;;
 ;;;; This file contains only pure, stateless definitions:
 ;;;;   - attribute bit constants
+;;;;   - named constants for cross-file magic values and terminal geometry
 ;;;;   - the CELL defstruct and BLANK-CELL constructor
 ;;;;   - CLAMP and SAFE-CODE-CHAR utilities
 ;;;;   - the DEFINE-WIDE-CHAR-RANGES macro and its invocation
@@ -29,6 +30,34 @@
 (defconstant +attr2-double-underline+ #b00000001)  ; SGR 21
 (defconstant +attr2-overline+         #b00000010)  ; SGR 53
 
+;;; ── Named constants for cross-file magic values ────────────────────────────
+;;;
+;;; These are the single source of truth for values used across multiple files.
+;;; Consumers (sgr.lisp, parser.lisp) reference these symbols rather than
+;;; repeating the numeric literals.
+
+(defconstant +true-color-flag+ #x1000000
+  "Bit 24 of a colour slot: when set, bits 23-16 are R, 15-8 are G, 7-0 are B.
+   Values 0-255 are palette indices; values >= +true-color-flag+ are true-colour RGB.")
+
+(defconstant +unicode-replacement-char+ #xFFFD
+  "Unicode code point U+FFFD REPLACEMENT CHARACTER.
+   Used as a fallback for invalid or unrepresentable code points.")
+
+;;; ── Default terminal geometry ──────────────────────────────────────────────
+;;;
+;;; These are the canonical VT100 / xterm default dimensions used as initforms
+;;; in the screen defstruct and as cross-file reference values.
+
+(defconstant +default-screen-width+  80
+  "Default virtual terminal width in columns (VT100 standard).")
+
+(defconstant +default-screen-height+ 24
+  "Default virtual terminal height in rows (VT100 standard).")
+
+(defconstant +title-stack-max-depth+ 8
+  "Maximum depth of the XTPUSHTITLE / XTPOPTITLE title stack (matches xterm).")
+
 ;;; ── Cell ───────────────────────────────────────────────────────────────────
 
 (defstruct cell
@@ -37,13 +66,14 @@
    WIDTH encodes East-Asian double-width handling:
      1 — normal single-column cell
      2 — lead cell of a double-width character
-     0 — continuation placeholder occupied by the wide char to its left"
+     0 — continuation placeholder occupied by the wide char to its left
+
+   Color encoding (fg, bg, ul-color):
+     0-255            — palette index (0-7 standard, 8-15 bright, 16-255 extended)
+     >= +true-color-flag+ — true-colour RGB: bits 23-16 R, 15-8 G, 7-0 B"
   (char  #\Space :type character)
-  ;; Color encoding: 0-255 = palette (0-7 standard, 8-15 bright, 16-255 extended 256-color);
-  ;; bit 24 set (#x1000000+) = true-color: bits 16-23 R, bits 8-15 G, bits 0-7 B.
-  ;; Default fg = 7, default bg = 0.
-  (fg    7       :type (unsigned-byte 25))
-  (bg    0       :type (unsigned-byte 25))
+  (fg    7       :type (unsigned-byte 25))  ; see color encoding above; default white
+  (bg    0       :type (unsigned-byte 25))  ; see color encoding above; default black
   (attrs 0       :type (unsigned-byte 8))   ; bit-field: see +attr-* constants
   ;; Extended attributes: double-underline (bit 0), overline (bit 1)
   (attrs2 0      :type (unsigned-byte 8))
@@ -54,7 +84,7 @@
   (combining nil :type list)
   ;; OSC 8 hyperlink URI active when this cell was written, or NIL.  The renderer
   ;; re-emits OSC 8 around runs of cells sharing a hyperlink so the outer terminal
-  ;; makes them clickable (transparency for ls --hyperlink, gcc, pagers, …).
+  ;; makes them clickable (transparency for ls --hyperlink, gcc, pagers, ...).
   (hyperlink nil :type (or null string))
   (width 1       :type (integer 0 2)))      ; 1 normal, 2 wide lead, 0 continuation
 
@@ -70,7 +100,7 @@
 (defun safe-code-char (cp)
   "CODE-CHAR guarded against invalid code points; falls back to U+FFFD."
   (or (and (< cp char-code-limit) (code-char cp))
-      (code-char #xFFFD)))
+      (code-char +unicode-replacement-char+)))
 
 (defmacro define-wide-char-ranges (&rest ranges)
   "Generate CHAR-WIDTH from a declarative Unicode wide-char range table.

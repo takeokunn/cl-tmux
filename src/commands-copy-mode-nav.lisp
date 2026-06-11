@@ -30,121 +30,111 @@
    independent of the 'word-separators' option that drives w/b/e."
   (or (char= ch #\Space) (char= ch #\Tab)))
 
-;;; ── Declarative word-navigation macro table ─────────────────────────────────
+;;; ── Multi-line word-navigation helpers ──────────────────────────────────────
 ;;;
-;;; define-copy-mode-word-command: Prolog-style facts table for word-motion
-;;; commands.  All three share the same outer structure:
-;;;   (when copy-mode-p) guard → let* decomposing cursor → scan body → setf cursor dirty-p.
-;;; Only the scan body (the inner loop sequence) differs between commands.
+;;; Real tmux copy-mode `w`/`b`/`e` (and W/B/E) cross line boundaries.  Three
+;;; private helpers implement the scans parameterised on a separator predicate;
+;;; the public defuns are thin wrappers that supply the right predicate.
 ;;;
-;;;   (define-copy-mode-word-command (name docstring clamp-expr &rest scan-body) ...)
-;;;
-;;; CLAMP-EXPR wraps new-col in the final setf (e.g. (min (1- width) new-col) or
-;;; (max 0 new-col)).  SCAN-BODY is a sequence of forms executed between the
-;;; initial let* binding and the final setf.
+;;; When a forward scan exhausts the current row it calls %scroll-down-one-line
+;;; to advance to the next row.  The "saved cursor" idiom detects the no-op
+;;; case (already at the bottom of history) and stops rather than looping.
+;;; Backward wrapping mirrors the same pattern via %scroll-up-one-line.
 
-(defmacro define-copy-mode-word-command (&rest rules)
-  "Generate one copy-mode word-navigation defun per rule.
-   Each RULE is (function-name docstring clamp-expr scan-body...).
-   CLAMP-EXPR is the column expression for the final cursor position;
-   SCAN-BODY are the loop forms that advance/retreat new-col.
-   The generated function guards on copy-mode-p and marks the screen dirty."
-  `(progn
-     ,@(mapcar (lambda (rule)
-                 (destructuring-bind (name docstring clamp-expr &rest scan-body) rule
-                   `(defun ,name (screen)
-                      ,docstring
-                      (when (screen-copy-mode-p screen)
-                        (let* ((row     (car (screen-copy-cursor screen)))
-                               (col     (cdr (screen-copy-cursor screen)))
-                               (width   (screen-width screen))
-                               (chars   (%copy-mode-row-chars screen row))
-                               (new-col col))
-                          (declare (ignorable width))
-                          ,@scan-body
-                          (setf (screen-copy-cursor screen) (cons row ,clamp-expr)
-                                (screen-dirty-p screen) t))))))
-               rules)))
+(defun %word-forward-impl (screen sep-pred)
+  "Move the cursor forward to the start of the next word, crossing lines.
+   SEP-PRED classifies separator characters."
+  (when (screen-copy-mode-p screen)
+    (let* ((row   (car (screen-copy-cursor screen)))
+           (col   (cdr (screen-copy-cursor screen)))
+           (width (screen-width screen))
+           (chars (%copy-mode-row-chars screen row)))
+      ;; Skip over the current word characters (non-separator run).
+      (loop while (and (< col width)
+                       (not (funcall sep-pred (aref chars col))))
+            do (incf col))
+      ;; Skip over separators to reach the next word start.
+      (loop while (and (< col width)
+                       (funcall sep-pred (aref chars col)))
+            do (incf col))
+      ;; If the scan fell off the end of the row, wrap down to BOL of next row.
+      (if (>= col width)
+          (let ((saved (screen-copy-cursor screen)))
+            (%scroll-down-one-line screen row 0 (screen-height screen))
+            ;; If scroll was a no-op (bottom of history), stay at last col.
+            (when (equal saved (screen-copy-cursor screen))
+              (setf (screen-copy-cursor screen) (cons row (1- width)))))
+          (setf (screen-copy-cursor screen) (cons row col)))
+      (setf (screen-dirty-p screen) t))))
 
-(define-copy-mode-word-command
-  (copy-mode-word-forward
-   "Move cursor forward to the start of the next word.
-    Word boundaries are defined by the 'word-separators' option (default: space, -, _, @)."
-   (min (1- width) new-col)
-   ;; Step over the current word characters (non-separator run).
-   (loop while (and (< new-col width)
-                    (not (%word-separator-p (aref chars new-col))))
-         do (incf new-col))
-   ;; Step over the trailing separators to reach the next word start.
-   (loop while (and (< new-col width)
-                    (%word-separator-p (aref chars new-col)))
-         do (incf new-col)))
+(defun %word-backward-impl (screen sep-pred)
+  "Move the cursor backward to the start of the current/previous word, crossing lines.
+   SEP-PRED classifies separator characters."
+  (when (screen-copy-mode-p screen)
+    (let* ((row     (car (screen-copy-cursor screen)))
+           (col     (cdr (screen-copy-cursor screen)))
+           (max-off (length (screen-scrollback screen))))
+      ;; At BOL: wrap to EOL of the previous row before scanning.
+      (when (= col 0)
+        (let ((saved (screen-copy-cursor screen)))
+          (%scroll-up-one-line screen row (1- (screen-width screen)) max-off)
+          (unless (equal saved (screen-copy-cursor screen))
+            (let ((cur (screen-copy-cursor screen)))
+              (setf row (car cur)
+                    col (cdr cur))))))
+      ;; Scan backward over separators then over word characters.
+      (let ((chars (%copy-mode-row-chars screen row)))
+        (loop while (and (> col 0) (funcall sep-pred (aref chars (1- col))))
+              do (decf col))
+        (loop while (and (> col 0) (not (funcall sep-pred (aref chars (1- col)))))
+              do (decf col))
+        (setf (screen-copy-cursor screen) (cons row (max 0 col))
+              (screen-dirty-p screen) t)))))
 
-  (copy-mode-word-backward
-   "Move cursor backward to the start of the previous or current word."
-   (max 0 new-col)
-   ;; Step back over any leading separators.
-   (loop while (and (> new-col 0)
-                    (%word-separator-p (aref chars (1- new-col))))
-         do (decf new-col))
-   ;; Step back over word characters to reach the word start.
-   (loop while (and (> new-col 0)
-                    (not (%word-separator-p (aref chars (1- new-col)))))
-         do (decf new-col)))
+(defun %word-end-impl (screen sep-pred)
+  "Move the cursor to the last character of the current/next word, crossing lines.
+   SEP-PRED classifies separator characters."
+  (when (screen-copy-mode-p screen)
+    (let* ((row   (car (screen-copy-cursor screen)))
+           (col   (cdr (screen-copy-cursor screen)))
+           (width (screen-width screen))
+           (chars (%copy-mode-row-chars screen row)))
+      ;; If at the last char of a word, step once to cross into separator territory.
+      (when (and (< col (1- width))
+                 (not (funcall sep-pred (aref chars col)))
+                 (funcall sep-pred (aref chars (1+ col))))
+        (incf col))
+      ;; Skip separators; wrap to the next row when the current row is exhausted.
+      (loop
+        (loop while (and (< col width) (funcall sep-pred (aref chars col)))
+              do (incf col))
+        (when (< col width) (return))
+        ;; Fell off EOL during separator scan — try to wrap down.
+        (let ((saved (screen-copy-cursor screen)))
+          (%scroll-down-one-line screen row 0 (screen-height screen))
+          (if (equal saved (screen-copy-cursor screen))
+              (return)  ; at history bottom, stop
+              (let ((cur (screen-copy-cursor screen)))
+                (setf row (car cur)
+                      col (cdr cur)
+                      chars (%copy-mode-row-chars screen row))))))
+      ;; Advance to the last character of the word.
+      (loop while (and (< col (1- width))
+                       (not (funcall sep-pred (aref chars (1+ col)))))
+            do (incf col))
+      (setf (screen-copy-cursor screen) (cons row (min (1- width) col))
+            (screen-dirty-p screen) t))))
 
-  (copy-mode-word-end
-   "Move cursor to the last character of the current or next word."
-   (min (1- width) new-col)
-   ;; If already at end of a word, cross the boundary into the next word.
-   (when (and (< new-col (1- width))
-              (not (%word-separator-p (aref chars new-col)))
-              (%word-separator-p (aref chars (1+ new-col))))
-     (incf new-col))
-   ;; Skip over separators to reach the next word.
-   (loop while (and (< new-col (1- width))
-                    (%word-separator-p (aref chars new-col)))
-         do (incf new-col))
-   ;; Advance to the last character of the word.
-   (loop while (and (< new-col (1- width))
-                    (not (%word-separator-p (aref chars (1+ new-col)))))
-         do (incf new-col))))
+;;; Public API: word (w/b/e) and WORD (W/B/E) motions.
 
-;;; WORD motion (vi W/B/E): identical scans but blank-delimited (%space-separator-p)
-;;; rather than word-separators — a WORD spans punctuation, stopping only at spaces.
-(define-copy-mode-word-command
-  (copy-mode-space-forward
-   "Move cursor forward to the start of the next WORD (whitespace-delimited; vi W)."
-   (min (1- width) new-col)
-   (loop while (and (< new-col width)
-                    (not (%space-separator-p (aref chars new-col))))
-         do (incf new-col))
-   (loop while (and (< new-col width)
-                    (%space-separator-p (aref chars new-col)))
-         do (incf new-col)))
+(defun copy-mode-word-forward  (screen) (%word-forward-impl  screen #'%word-separator-p))
+(defun copy-mode-word-backward (screen) (%word-backward-impl screen #'%word-separator-p))
+(defun copy-mode-word-end      (screen) (%word-end-impl      screen #'%word-separator-p))
 
-  (copy-mode-space-backward
-   "Move cursor backward to the start of the previous/current WORD (vi B)."
-   (max 0 new-col)
-   (loop while (and (> new-col 0)
-                    (%space-separator-p (aref chars (1- new-col))))
-         do (decf new-col))
-   (loop while (and (> new-col 0)
-                    (not (%space-separator-p (aref chars (1- new-col)))))
-         do (decf new-col)))
-
-  (copy-mode-space-end
-   "Move cursor to the last character of the current/next WORD (vi E)."
-   (min (1- width) new-col)
-   (when (and (< new-col (1- width))
-              (not (%space-separator-p (aref chars new-col)))
-              (%space-separator-p (aref chars (1+ new-col))))
-     (incf new-col))
-   (loop while (and (< new-col (1- width))
-                    (%space-separator-p (aref chars new-col)))
-         do (incf new-col))
-   (loop while (and (< new-col (1- width))
-                    (not (%space-separator-p (aref chars (1+ new-col)))))
-         do (incf new-col))))
+;;; WORD motion (vi W/B/E): blank-delimited — a WORD spans punctuation, stops only at spaces.
+(defun copy-mode-space-forward  (screen) (%word-forward-impl  screen #'%space-separator-p))
+(defun copy-mode-space-backward (screen) (%word-backward-impl screen #'%space-separator-p))
+(defun copy-mode-space-end      (screen) (%word-end-impl      screen #'%space-separator-p))
 
 ;;; ── Line start / end ─────────────────────────────────────────────────────────
 
@@ -255,6 +245,110 @@
    "Jump to the live view bottom (scroll-offset = 0)."
    +scroll-to-newest+))
 
+;;; ── Scroll-middle (vi z) ─────────────────────────────────────────────────────
+
+(defun copy-mode-scroll-middle (screen)
+  "Scroll the viewport so the cursor row is centered (tmux copy-mode-vi z).
+   Adjusts the copy-offset so the current cursor row appears at the middle of
+   the viewport, then moves the cursor row to that center row.  If the history
+   limit prevents full centering the offset is clamped and the cursor is placed
+   at the achievable nearest-center row."
+  (when (screen-copy-mode-p screen)
+    (let* ((row     (car (screen-copy-cursor screen)))
+           (h       (screen-height screen))
+           (sb-n    (length (screen-scrollback screen)))
+           (center  (floor h 2))
+           (offset  (screen-copy-offset screen))
+           (new-off (max 0 (min sb-n (+ offset (- center row)))))
+           (delta   (- new-off offset))
+           (new-row (max 0 (min (1- h) (+ row delta)))))
+      (setf (screen-copy-offset screen) new-off
+            (screen-copy-cursor screen) (cons new-row (cdr (screen-copy-cursor screen)))
+            (screen-dirty-p screen) t))))
+
+;;; ── Paragraph motion (vi { and }) ───────────────────────────────────────────
+;;;
+;;; Real tmux's copy-mode `{` / `}` jump to the nearest blank line above / below
+;;; the cursor (a "paragraph boundary").  A blank line is a viewport row where
+;;; every cell is a space character.  If no blank line is found in the direction
+;;; of travel, the cursor moves to the top / bottom of the virtual history.
+
+(defun %copy-mode-row-blank-p (screen vrow)
+  "Return T if VROW (virtual row, 0 = oldest scrollback) is entirely blank.
+   Uses the same virtual-to-display mapping as %extract-vrow-chars."
+  (let* ((sb    (screen-scrollback screen))
+         (sb-n  (length sb))
+         (width (screen-width screen)))
+    (dotimes (col width t)
+      (let ((ch (if (< vrow sb-n)
+                    (let ((vec (nth (- sb-n 1 vrow) sb)))
+                      (if (and vec (< col (length vec)))
+                          (cell-char (aref vec col))
+                          #\Space))
+                    (cell-char (screen-cell screen col (- vrow sb-n))))))
+        (unless (or (char= ch #\Space) (char= ch (code-char 0)))
+          (return-from %copy-mode-row-blank-p nil))))))
+
+(defun %cursor-vrow (screen)
+  "Return the virtual row of the current copy-mode cursor."
+  (let ((row    (car (screen-copy-cursor screen)))
+        (offset (screen-copy-offset screen))
+        (sb-n   (length (screen-scrollback screen))))
+    (+ sb-n row (- offset))))
+
+(defun %set-cursor-vrow (screen vrow)
+  "Move the copy-mode cursor to VROW (virtual row), adjusting the viewport
+   offset as needed so the cursor row lands in [0, height-1].  Clamps to the
+   valid virtual-row range [0, sb-n+height-1].
+   Formula: viewport_row = vrow - sb-n + offset."
+  (let* ((sb-n    (length (screen-scrollback screen)))
+         (h       (screen-height screen))
+         (total   (+ sb-n h))
+         (clamped (max 0 (min (1- total) vrow)))
+         (offset  (screen-copy-offset screen))
+         (col     (cdr (screen-copy-cursor screen)))
+         ;; viewport row of CLAMPED at the current offset
+         (nat-row (+ clamped (- sb-n) offset)))
+    (if (and (>= nat-row 0) (< nat-row h))
+        ;; Target is already visible — just move the cursor
+        (setf (screen-copy-cursor screen) (cons nat-row col))
+        ;; Target is outside the viewport — scroll to center it
+        (let* ((desired  (floor h 2))
+               ;; new-off satisfies: clamped - sb-n + new-off = desired
+               (new-off  (max 0 (min sb-n (+ desired sb-n (- clamped)))))
+               ;; actual cursor row with the clamped offset
+               (new-row  (max 0 (min (1- h) (+ clamped (- sb-n) new-off)))))
+          (setf (screen-copy-offset screen) new-off
+                (screen-copy-cursor screen)  (cons new-row col))))
+    (setf (screen-dirty-p screen) t)))
+
+(defun copy-mode-previous-paragraph (screen)
+  "Jump to the nearest blank-line paragraph boundary above (vi {)."
+  (when (screen-copy-mode-p screen)
+    (let* ((cur-vrow (%cursor-vrow screen))
+           (target   nil))
+      ;; Walk upward from cur-vrow - 1, skipping any blanks immediately above,
+      ;; then stopping at the first blank line found.
+      (loop for vrow downfrom (1- cur-vrow) to 0
+            do (when (%copy-mode-row-blank-p screen vrow)
+                 (setf target vrow)
+                 (return)))
+      (%set-cursor-vrow screen (or target 0)))))
+
+(defun copy-mode-next-paragraph (screen)
+  "Jump to the nearest blank-line paragraph boundary below (vi })."
+  (when (screen-copy-mode-p screen)
+    (let* ((sb-n     (length (screen-scrollback screen)))
+           (h        (screen-height screen))
+           (total    (+ sb-n h))
+           (cur-vrow (%cursor-vrow screen))
+           (target   nil))
+      (loop for vrow from (1+ cur-vrow) below total
+            do (when (%copy-mode-row-blank-p screen vrow)
+                 (setf target vrow)
+                 (return)))
+      (%set-cursor-vrow screen (or target (1- total))))))
+
 ;;; ── Copy-mode selection: line-select (V) ────────────────────────────────────
 
 (defun copy-mode-begin-line-selection (screen)
@@ -267,6 +361,7 @@
            (mark   (cons row 0))
            (cursor (cons row (1- (screen-width screen)))))
       (setf (screen-copy-mark             screen) mark
+            (screen-copy-mark-offset      screen) (screen-copy-offset screen)
             (screen-copy-cursor           screen) cursor
             (screen-copy-selecting        screen) t
             (screen-copy-line-selection-p screen) t
@@ -281,6 +376,84 @@
   (let ((trimmed (string-right-trim " " (%extract-row-chars screen row from-col to-col))))
     (when (plusp (length trimmed))
       (cl-tmux/buffer:add-paste-buffer trimmed))))
+
+;;; ── Line jump-to-char (vi f/F/t/T) ──────────────────────────────────────────
+;;;
+;;; f<ch> — jump forward on the current line to the next occurrence of CH.
+;;; F<ch> — jump backward on the current line to the previous occurrence.
+;;; t<ch> — like f but land one column before the target (till).
+;;; T<ch> — like F but land one column after the target (till backward).
+;;; ;     — repeat the last jump with the same direction, char, and mode.
+;;; ,     — reverse the last jump.
+;;;
+;;; The last jump is stored in the dynamic variable *copy-mode-last-jump*,
+;;; a list (direction char till-p) where direction is :forward or :backward.
+
+(defvar *copy-mode-last-jump* nil
+  "Most recent jump-to-char state: (direction char till-p).
+   NIL when no jump has been performed yet.")
+
+(defun %copy-mode-jump (screen direction char till-p)
+  "Move the cursor on the current line to the nearest CHAR in DIRECTION.
+   TILL-P: if T, stop one column before (forward) or after (backward) the match.
+   Records the jump in *copy-mode-last-jump* for ; / , repeat.
+   Returns T if a match was found."
+  (when (screen-copy-mode-p screen)
+    (setf *copy-mode-last-jump* (list direction char till-p))
+    (let* ((row   (car (screen-copy-cursor screen)))
+           (col   (cdr (screen-copy-cursor screen)))
+           (chars (%copy-mode-row-chars screen row))
+           (w     (length chars)))
+      (if (eq direction :forward)
+          (loop for c from (1+ col) below w
+                when (char= (aref chars c) char)
+                  do (setf (cdr (screen-copy-cursor screen))
+                           (if till-p (max col (1- c)) c))
+                     (return t))
+          (loop for c downfrom (1- col) to 0
+                when (char= (aref chars c) char)
+                  do (setf (cdr (screen-copy-cursor screen))
+                           (if till-p (min (1- w) (1+ c)) c))
+                     (return t))))))
+
+(defun copy-mode-jump-forward (screen char)
+  "Jump to the next occurrence of CHAR on the current line (vi f<char>)."
+  (%copy-mode-jump screen :forward char nil))
+
+(defun copy-mode-jump-backward (screen char)
+  "Jump to the previous occurrence of CHAR on the current line (vi F<char>)."
+  (%copy-mode-jump screen :backward char nil))
+
+(defun copy-mode-jump-to (screen char)
+  "Jump to just before the next occurrence of CHAR on the line (vi t<char>)."
+  (%copy-mode-jump screen :forward char t))
+
+(defun copy-mode-jump-to-backward (screen char)
+  "Jump to just after the previous occurrence of CHAR on the line (vi T<char>)."
+  (%copy-mode-jump screen :backward char t))
+
+(defun copy-mode-jump-again (screen)
+  "Repeat the last jump-to-char with the same direction, char, and mode (vi ;)."
+  (when *copy-mode-last-jump*
+    (destructuring-bind (dir ch till) *copy-mode-last-jump*
+      ;; jump-again resets the stored jump so it stays at the original params
+      (let ((*copy-mode-last-jump* *copy-mode-last-jump*))
+        (%copy-mode-jump screen dir ch till)))))
+
+(defun copy-mode-jump-reverse (screen)
+  "Reverse the last jump-to-char (vi ,): same char, opposite direction."
+  (when *copy-mode-last-jump*
+    (destructuring-bind (dir ch till) *copy-mode-last-jump*
+      (let ((*copy-mode-last-jump* *copy-mode-last-jump*))
+        (%copy-mode-jump screen (if (eq dir :forward) :backward :forward) ch till)))))
+
+(defun copy-mode-goto-line (screen line-number)
+  "Jump to LINE-NUMBER (1-based: 1 = oldest scrollback row) in copy mode.
+   Out-of-range values are clamped to [1, total-rows]."
+  (when (and (screen-copy-mode-p screen)
+             (integerp line-number)
+             (> line-number 0))
+    (%set-cursor-vrow screen (1- line-number))))
 
 (defun copy-mode-copy-end-of-line (screen)
   "Copy from the current cursor column to the end of the line, then exit copy mode."

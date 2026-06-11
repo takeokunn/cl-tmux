@@ -1249,9 +1249,6 @@
                                      (format nil "~D"
                                              (cl-tmux/model:session-last-active session))
                                      "0")
-          ;; #{window_last_flag}: "*" when window was last active, else " ".
-          ;; #{window_flag} is the active indicator ("*" = active, "-" = last, " " = other).
-          :window-last-flag " "
           ;; #{pane_format}: always "1" in context (we have a pane).
           :pane-format (if pane "1" "0")
           ;; #{window_format}: always "1" in context.
@@ -1286,14 +1283,14 @@
                                       (cl-tmux/terminal:screen-copy-selecting pane-scr))
                                  "1" "0")
           ;; #{copy_cursor_x}/#{copy_cursor_y}: copy-mode cursor column/row, "" when
-          ;; the pane is not in copy mode.  screen-copy-cursor is a (col . row) cons.
+          ;; the pane is not in copy mode.  screen-copy-cursor is a (row . col) cons.
           :copy-cursor-x (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
                              (format nil "~D"
-                                     (car (cl-tmux/terminal:screen-copy-cursor pane-scr)))
+                                     (cdr (cl-tmux/terminal:screen-copy-cursor pane-scr)))
                              "")
           :copy-cursor-y (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
                              (format nil "~D"
-                                     (cdr (cl-tmux/terminal:screen-copy-cursor pane-scr)))
+                                     (car (cl-tmux/terminal:screen-copy-cursor pane-scr)))
                              "")
           ;; #{pane_marked}: "1" when the pane is marked, else "0".
           :pane-marked (if (and pane (cl-tmux/model:pane-marked pane)) "1" "0")

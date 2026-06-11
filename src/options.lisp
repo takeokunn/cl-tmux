@@ -68,7 +68,11 @@
 ;;; Registered options
 
 (define-tmux-options
-  ("status"                   :boolean t)
+  ;; tmux 2.9+: `status` is a CHOICE/number {off,on,2,3,4,5}, NOT a boolean — an
+  ;; integer N selects an N-row multi-line status bar (capped at 5).  Registered
+  ;; :string so "2".."5"/"on"/"off" survive set-option unchanged; status-line-count
+  ;; (renderer) and the *status-height* side-effect both parse the string.
+  ("status"                   :string  "on")
   ("status-position"          :string  "bottom")
   ("status-interval"          :integer 15)
   ("status-left"              :string  "[#{session_name}]")
@@ -213,9 +217,6 @@
   ("mode-keys"                :string  "vi")     ; vi or emacs copy-mode keys
   ("status-left-style"        :string  "")
   ("status-right-style"       :string  "")
-  ;; Pane display
-  ("other-pane-height"        :integer 0)
-  ("other-pane-width"         :integer 0)
   ;; Pane border status line (top / bottom / off)
   ("pane-border-status"       :string  "off")
   ("pane-border-format"       :string  " #{pane_index} ")
@@ -406,6 +407,32 @@
 (defun option-defined-p (name)
   "Return T if NAME is a registered option in *OPTION-REGISTRY*."
   (not (null (gethash name *option-registry*))))
+
+(defun style-option-p (name)
+  "True when NAME is a tmux STYLE option (its value is a comma-separated style
+   string such as \"fg=red,bg=black,bold\").  tmux marks these OPTIONS_TABLE_IS_STYLE
+   and `set -a` appends to them with a ',' separator, unlike plain string options
+   which concatenate directly.  Every style option's name ends in \"-style\" EXCEPT
+   clock-mode-style — a 12/24-hour choice that merely shares the suffix."
+  (and (stringp name)
+       (let* ((suffix "-style") (sl (length suffix)) (nl (length name)))
+         ;; nl > sl (strict): a style option must have a real name BEFORE the
+         ;; "-style" suffix, so the bare suffix "-style" is not a style option.
+         (and (> nl sl)
+              (string= name suffix :start1 (- nl sl))
+              (not (string= name "clock-mode-style"))))))
+
+(defun append-option-value (name old value)
+  "Compute the new value for `set -a NAME` given the option's current OLD value and
+   the appended VALUE.  For STYLE options with a non-empty current value, tmux
+   inserts a ',' separator (so `status-style bg=red` then `set -ag status-style
+   fg=blue` yields `bg=red,fg=blue`); plain string options concatenate with no
+   separator.  An empty OLD or empty VALUE never introduces a stray comma."
+  (let ((old-str (princ-to-string (or old "")))
+        (val-str (princ-to-string (or value ""))))
+    (if (and (style-option-p name) (plusp (length old-str)) (plusp (length val-str)))
+        (concatenate 'string old-str "," val-str)
+        (concatenate 'string old-str val-str))))
 
 (defun all-options ()
   "Return an alist of (name . value) for every entry in *GLOBAL-OPTIONS*.

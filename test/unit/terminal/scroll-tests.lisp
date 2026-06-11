@@ -38,6 +38,33 @@
       (is (<= (length (cl-tmux/terminal/types:screen-scrollback s)) cap)
           "scrollback must not exceed the effective history-limit (~D)" cap))))
 
+(test scroll-up-partial-region-does-not-push-to-scrollback
+  "Scrolling within a partial scroll region (scroll-top > 0) must NOT add to the
+   scrollback: only full-top-of-screen scrolling contributes to history, matching
+   real tmux grid_scroll_history_up semantics."
+  (with-screen (s 5 5)
+    ;; Set scroll region to rows 2..4 (1-based), i.e. 0-based rows 1..3.
+    (feed s (esc "[2;4r"))
+    ;; Position cursor at row 4 (bottom of region, 0-based 3) and force a scroll.
+    (feed s (esc "[4;1H"))
+    (feed s (string #\Newline))
+    (is (null (cl-tmux/terminal/types:screen-scrollback s))
+        "partial scroll-region scrolling must not populate scrollback")))
+
+(test scroll-up-alt-screen-does-not-push-to-scrollback
+  "Scrolling in the alternate screen must not pollute the primary scrollback."
+  (with-screen (s 5 3)
+    (feed s "line0")
+    ;; Enter alt screen, then force a scroll.
+    (feed s (esc "[?1049h"))
+    (feed s "altline0")
+    (feed s (string #\Newline))
+    (feed s (string #\Newline))
+    (feed s (string #\Newline))
+    ;; Alt screen may or may not scroll, but even if it does the scrollback must stay nil.
+    (is (null (cl-tmux/terminal/types:screen-scrollback s))
+        "alt-screen scrolling must not push to the primary scrollback")))
+
 (test scroll-down-one-inserts-blank-top-row
   "scroll-down-one moves content down; the new top row is blank."
   (with-screen (s 5 3)

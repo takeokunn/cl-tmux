@@ -381,7 +381,7 @@
     (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
     (cl-tmux/hooks:set-command-hook "after-new-window" :rename-window)
     (cl-tmux/hooks:set-command-hook "pane-exited"      :kill-pane)
-    (let ((alist (cl-tmux/hooks::%list-command-hooks)))
+    (let ((alist (cl-tmux/hooks:%list-command-hooks)))
       (is (= 2 (length alist))
           "%list-command-hooks must return one entry per registered event")
       (let ((nw-entry (assoc "after-new-window" alist :test #'string=))
@@ -398,7 +398,7 @@
 (test internal-list-command-hooks-empty-registry
   "%list-command-hooks returns NIL on an empty *command-hooks* table."
   (with-isolated-hooks
-    (is (null (cl-tmux/hooks::%list-command-hooks))
+    (is (null (cl-tmux/hooks:%list-command-hooks))
         "%list-command-hooks must return NIL when no command hooks are registered")))
 
 (test internal-list-command-hooks-does-not-mutate-on-sort
@@ -408,7 +408,7 @@
     (cl-tmux/hooks:set-command-hook "z-event" :next-window)
     (cl-tmux/hooks:set-command-hook "a-event" :prev-window)
     ;; Sort the result in place (worst-case destructive caller).
-    (sort (cl-tmux/hooks::%list-command-hooks) #'string< :key #'car)
+    (sort (cl-tmux/hooks:%list-command-hooks) #'string< :key #'car)
     ;; Both events must still be retrievable from the live registry.
     (is (equal '(:next-window) (cl-tmux/hooks:command-hooks "z-event"))
         "z-event must survive a destructive sort of the alist snapshot")

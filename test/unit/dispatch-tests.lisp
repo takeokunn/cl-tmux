@@ -1077,15 +1077,17 @@
                 "blank command line must be a safe no-op"))))
 
 (test run-command-line-set-option-coerces-boolean
-  "'set status off' stores NIL and 'set status on' stores T (type-coerced)."
+  "'set monitor-activity off' stores NIL and 'set ... on' stores T (type-coerced).
+   Uses monitor-activity — a side-effect-free :boolean option — because `status` is
+   now a choice/string option (off|on|2..5), not a boolean."
   (let ((s (make-fake-session)))
     (with-isolated-options ()
-      (cl-tmux::%run-command-line s "set status off")
-      (is (null (cl-tmux/options:get-option "status"))
-          "set status off → NIL (boolean coercion)")
-      (cl-tmux::%run-command-line s "set status on")
-      (is (eq t (cl-tmux/options:get-option "status"))
-          "set status on → T"))))
+      (cl-tmux::%run-command-line s "set monitor-activity off")
+      (is (null (cl-tmux/options:get-option "monitor-activity"))
+          "set monitor-activity off → NIL (boolean coercion)")
+      (cl-tmux::%run-command-line s "set monitor-activity on")
+      (is (eq t (cl-tmux/options:get-option "monitor-activity"))
+          "set monitor-activity on → T"))))
 
 (test run-command-line-set-option-string-and-quoted
   "'set' stores string option values, and a quoted value keeps its spaces/format."
@@ -1104,8 +1106,8 @@
   (let ((s (make-fake-session)))
     (with-isolated-options ()
       (cl-tmux::%run-command-line s "set -g status off")
-      (is (null (cl-tmux/options:get-option "status"))
-          "set -g status off must set 'status' to NIL")
+      (is (string= "off" (cl-tmux/options:get-option "status"))
+          "set -g status off must set 'status' to the choice string \"off\"")
       (is (null (cl-tmux/options:get-option "-g"))
           "must NOT create an option literally named '-g'"))))
 
@@ -1714,7 +1716,7 @@
                (write-line "set -g status off" out))
              (cl-tmux::%run-command-line (make-fake-session)
                                          (format nil "source-file ~A" path))
-             (is (null (cl-tmux/options:get-option "status"))
+             (is (string= "off" (cl-tmux/options:get-option "status"))
                  "source-file must apply 'set -g status off' from the file"))
         (ignore-errors (delete-file path))))))
 
@@ -5613,4 +5615,65 @@
              (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-resize-pane+ win)
              (is (search "%layout-change @3" (get-output-stream-string out))
                  "%layout-change emitted on resize"))
+        (cl-tmux::%remove-control-notifications handlers)))))
+
+;;; ── Server-lifecycle command-name reachability ───────────────────────────────
+;;;
+;;; Regression: kill-server / start-server / send-prefix all have working
+;;; dispatch handlers (dispatch-handlers.lisp) but were absent from
+;;; define-named-command-table, so %dispatch-named-command returned the
+;;; :unknown-command sentinel and they could not be invoked from the `C-b :`
+;;; prompt or control mode.  These assert the name → keyword wiring exists.
+
+(test named-commands-server-lifecycle-reachable
+  "kill-server / start-server / send-prefix are reachable by command name."
+  (let ((cl-tmux::*running* t)
+        (cl-tmux::*server-sessions* nil)
+        (*overlay* nil))
+    (with-empty-session (s)
+      ;; start-server: recognised → no-op overlay, NOT the unknown sentinel.
+      (is (not (eq :unknown-command
+                   (cl-tmux::%dispatch-named-command s "start-server")))
+          "start-server must be a recognised command name")
+      ;; send-prefix: recognised; an empty session has no active pane → safe no-op.
+      (is (not (eq :unknown-command
+                   (cl-tmux::%dispatch-named-command s "send-prefix")))
+          "send-prefix must be a recognised command name")
+      ;; kill-server: recognised → dispatches :kill-server, returns :quit and
+      ;; clears *running*.
+      (is (eq :quit (cl-tmux::%dispatch-named-command s "kill-server"))
+          "kill-server must dispatch to :kill-server (returns :quit)")
+      (is (null cl-tmux::*running*)
+          "kill-server clears *running*")
+      ;; Control: a genuinely unknown name still returns the :unknown-command
+      ;; sentinel, confirming the assertions above are meaningful.
+      (is (eq :unknown-command
+              (cl-tmux::%dispatch-named-command s "definitely-not-a-command-xyz"))
+          "unknown names still return :unknown-command"))))
+
+;;; ── Control-mode active-change notifications (%window-pane-changed / -session-) ──
+
+(test control-notifications-window-pane-changed
+  "+hook-window-pane-changed+ emits %window-pane-changed @<win> %<active-pane> to a
+   control client."
+  (with-isolated-hooks
+    (let* ((out      (make-string-output-stream))
+           (handlers (cl-tmux::%install-control-notifications out)))
+      (unwind-protect
+           (let ((win (make-fake-window 5 "w")))   ; window id 5, active pane id 1
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-pane-changed+ win)
+             (is (search "%window-pane-changed @5 %1" (get-output-stream-string out))
+                 "emitted with the window id and its active pane id"))
+        (cl-tmux::%remove-control-notifications handlers)))))
+
+(test control-notifications-session-window-changed
+  "+hook-session-window-changed+ emits %session-window-changed $<sess> @<active-win>."
+  (with-isolated-hooks
+    (let* ((out      (make-string-output-stream))
+           (handlers (cl-tmux::%install-control-notifications out)))
+      (unwind-protect
+           (let ((sess (make-fake-session :nwindows 2)))  ; session id 1, active win id 0
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-window-changed+ sess)
+             (is (search "%session-window-changed $1 @0" (get-output-stream-string out))
+                 "emitted with the session id and its active window id"))
         (cl-tmux::%remove-control-notifications handlers)))))

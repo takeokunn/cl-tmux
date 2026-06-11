@@ -51,8 +51,8 @@
   "Fork a shell and install it as WINDOW's sole full-screen leaf pane.
    START-DIR: when non-NIL, the shell starts in that directory.
    The initial pane id respects the pane-base-index option."
-  (let* ((base (or (cl-tmux/options:get-option "pane-base-index") 0))
-         (pane (%fork-pane base 0 0 cols rows :start-dir start-dir)))
+  (let* ((pane-base-index (or (cl-tmux/options:get-option "pane-base-index") 0))
+         (pane (%fork-pane pane-base-index 0 0 cols rows :start-dir start-dir)))
     (setf (window-panes  window) (list pane)
           (window-active window) pane
           (window-tree   window) (make-layout-leaf pane))))
@@ -174,15 +174,9 @@
    Mirrors tmux's update-environment server option.  Used as a fallback when
    the option string has not been set.")
 
-(defun %parse-update-environment ()
-  "Return the list of env var names from *UPDATE-ENVIRONMENT*.
-   The 'update-environment' option populates this variable via side-effects
-   in %apply-option-side-effects so that dynamic rebinding in tests works."
-  *update-environment*)
-
 (defun get-update-environment-vars ()
   "Return an alist of (name . value) for each variable in the update-environment
    option that is set in the current process environment.  Unset vars omitted."
-  (loop for name in (%parse-update-environment)
+  (loop for name in *update-environment*
         for value = (ignore-errors (sb-ext:posix-getenv name))
         when value collect (cons name value)))

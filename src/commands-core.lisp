@@ -28,7 +28,6 @@
       (ignore-errors (pty-close (pane-fd target) (pane-pid target))))
     (let ((survivor (window-remove-pane win target)))
       (run-hooks +hook-after-kill-pane+ target)
-      (run-command-hooks-via-runner +hook-after-kill-pane+ session)
       (if (null (window-panes win))
           (kill-window session win)
           (progn
@@ -41,18 +40,40 @@
                 (window-select-pane win chosen)))
             nil)))))
 
-(defun %nearest-window (windows killed-id)
-  "Return the window from WINDOWS whose id is numerically closest to KILLED-ID.
-   When two windows are equidistant, the one with the larger id (next neighbour)
-   is preferred.  Falls back to (first windows) when the list is empty."
-  (reduce (lambda (best w)
-            (let ((d-best (abs (- killed-id (window-id best))))
-                  (d-w    (abs (- killed-id (window-id w)))))
-              (cond ((< d-w d-best) w)
-                    ((and (= d-w d-best) (> (window-id w) killed-id)) w)
-                    (t best))))
-          (rest windows)
-          :initial-value (first windows)))
+(defun %previous-window-by-index (windows killed-id)
+  "tmux session_previous: the window in WINDOWS (the non-empty remaining list)
+   with the greatest id strictly LESS than KILLED-ID, wrapping to the greatest id
+   overall when none is lower."
+  (flet ((max-by-id (ws)
+           (reduce (lambda (a b) (if (> (window-id b) (window-id a)) b a)) ws)))
+    (let ((lower (remove-if-not (lambda (w) (< (window-id w) killed-id)) windows)))
+      (max-by-id (or lower windows)))))
+
+(defun %mru-window (windows)
+  "The unambiguously most-recently-active window in WINDOWS — the one with the
+   strictly greatest POSITIVE last-active-time (the top of tmux's lastw stack).
+   NIL when no window has been focused (all timestamps 0) or the greatest time is
+   tied, i.e. there is no unambiguous last-used window (tmux's lastw is empty)."
+  (let* ((sorted (sort (copy-list windows) #'> :key #'window-last-active-time))
+         (top    (first sorted))
+         (next   (second sorted)))
+    (when (and top
+               (> (window-last-active-time top) 0)
+               (or (null next)
+                   (> (window-last-active-time top) (window-last-active-time next))))
+      top)))
+
+(defun %window-after-kill (windows killed-id)
+  "Choose the window to activate after the current window (KILLED-ID) is killed,
+   matching tmux's session_detach reselection order: the last-used (MRU) window
+   first (session_last), else the previous window by index — wrapping to the
+   highest id — (session_previous).  tmux's session_next (next-by-index) fallback
+   is unreachable here because session_previous always succeeds on a non-empty
+   list (it wraps).  WINDOWS is the remaining-windows list; returns NIL only when
+   WINDOWS is empty."
+  (when windows
+    (or (%mru-window windows)
+        (%previous-window-by-index windows killed-id))))
 
 (defun %maybe-renumber-windows (session)
   "If the 'renumber-windows' option is set, renumber all windows in SESSION
@@ -66,8 +87,9 @@
 (defun kill-window (session &optional window)
   "Destroy WINDOW (default: active window of SESSION).
    Kills all panes in it and removes the window from SESSION.
-   After killing the active window, selects the numerically nearest remaining
-   window (next higher id if available, otherwise next lower).
+   After killing the active window, reselects like tmux session_detach: the
+   last-used (MRU) window first, otherwise the previous window by index (wrapping
+   to the highest id) — see %window-after-kill.
    If 'renumber-windows' is set, renumbers the remaining windows starting from
    the 'base-index' option.
    Returns :quit if no windows remain, NIL otherwise."
@@ -78,10 +100,9 @@
       (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
     (setf (session-windows session) remaining)
     (run-hooks +hook-after-kill-window+ target)
-    (run-command-hooks-via-runner +hook-after-kill-window+ session)
     (unless remaining (return-from kill-window :quit))
     (when (eq (session-active-window session) target)
-      (session-select-window session (%nearest-window remaining killed-id)))
+      (session-select-window session (%window-after-kill remaining killed-id)))
     (%maybe-renumber-windows session)
     nil))
 

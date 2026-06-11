@@ -204,8 +204,10 @@
         (is (stringp (cdar result))
             "entry value must be a string")))))
 
-(test kill-window-selects-nearest-id
-  "After killing the active window, the window with the nearest id is selected."
+(test kill-window-selects-previous-by-index
+  "After killing the active window with no MRU history (timestamps tie at 0), tmux
+   session_detach selects the PREVIOUS window by index — the greatest id strictly
+   less than the killed id (here w0, id 0 < killed id 1)."
   (let* ((w0 (make-window :id 0 :name "a" :width 20 :height 5
                           :panes (list (make-no-pty-pane 1 0 0 20 5))))
          (w1 (make-window :id 1 :name "b" :width 20 :height 5
@@ -215,9 +217,10 @@
          (sess (make-session :id 1 :name "0" :windows (list w0 w1 w3))))
     (session-select-window sess w1)       ; kill the middle window (id=1)
     (cl-tmux/commands:kill-window sess)
-    ;; nearest to id=1 among {0,3}: w0 (distance=1) wins over w3 (distance=2)
+    ;; No unambiguous MRU (only w1 was focused, and it is gone) → previous-by-index:
+    ;; greatest id < 1 among {0,3} is w0.
     (is (eq w0 (session-active-window sess))
-        "after killing id=1, id=0 (nearest) must become active")))
+        "after killing id=1, the previous-by-index window id=0 must become active")))
 
 ;;; ── session-touch ────────────────────────────────────────────────────────────
 

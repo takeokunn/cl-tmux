@@ -69,6 +69,14 @@
   (is (string= "%unlinked-window-add @9"
                (cl-tmux/control:control-unlinked-window-add 9))))
 
+(test control-active-change-notifications
+  "%window-pane-changed and %session-window-changed use the @ / % / $ id sigils
+   (tmux control_notify_window_pane_changed / _session_window_changed)."
+  (is (string= "%window-pane-changed @4 %2"
+               (cl-tmux/control:control-window-pane-changed 4 2)))
+  (is (string= "%session-window-changed $1 @3"
+               (cl-tmux/control:control-session-window-changed 1 3))))
+
 (test control-layout-and-client-and-exit
   "layout-change, client-session-changed, and exit notifications."
   (is (string= "%layout-change @1 abcd,80x24,0,0 abcd,80x24,0,0 *"

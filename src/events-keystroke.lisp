@@ -184,11 +184,16 @@
                      "Call FN COUNT times on SCREEN."
                      (dotimes (_ count) (funcall fn screen))))
               (case byte
-                ;; q / i — exit copy mode
-                (#.+byte-q+ (copy-mode-exit screen))
-                (105        (copy-mode-exit screen))               ; i
-                ;; h — move cursor left
-                (104        (repeat (lambda (s) (copy-mode-move-cursor s :left))))  ; h
+                ;; q / C-c (3) / Q — exit copy mode (cancel)
+                (#.+byte-q+  (copy-mode-exit screen))
+                (81          (copy-mode-exit screen))               ; Q
+                (3           (copy-mode-exit screen))               ; C-c
+                ;; Enter (13) / C-j (10) — copy selection and cancel
+                ((13 10)     (copy-mode-yank screen))
+                ;; i — exit copy mode (non-standard but kept for compat)
+                (105         (copy-mode-exit screen))               ; i
+                ;; h / C-h (8) — move cursor left
+                ((104 8)     (repeat (lambda (s) (copy-mode-move-cursor s :left))))  ; h / C-h
                 ;; l — move cursor right
                 (108        (repeat (lambda (s) (copy-mode-move-cursor s :right)))) ; l
                 ;; j / C-n (14) — move cursor down (viewport follows at edge)
@@ -197,6 +202,10 @@
                 ;; k / C-p (16) — move cursor up (viewport follows at edge)
                 ((#.+byte-k+ 16)
                  (repeat (lambda (s) (copy-mode-move-cursor s :up))))
+                ;; J — scroll-down (viewport scrolls toward newer, cursor stays; vi J = C-e)
+                (74         (repeat #'copy-mode-scroll-down-line))  ; J
+                ;; K — scroll-up (viewport scrolls toward older, cursor stays; vi K = C-y)
+                (75         (repeat #'copy-mode-scroll-up-line))    ; K
                 ;; w — word forward
                 (119        (repeat #'copy-mode-word-forward))        ; w
                 ;; W — WORD forward (whitespace-delimited, vi W)
@@ -247,12 +256,16 @@
                 ((32 118)   (copy-mode-begin-selection screen))
                 ;; y — yank selection
                 (121        (copy-mode-yank screen))
-                ;; A — append selection to paste buffer
+                ;; A — append selection to paste buffer and cancel
                 (65         (copy-mode-append-selection screen))      ; A
-                ;; o — swap mark and cursor ends of selection (vi o)
-                (111        (copy-mode-other-end screen))             ; o
-                ;; r — toggle rectangle select
-                (114        (copy-mode-toggle-rectangle screen))      ; r
+                ;; o / O — swap mark and cursor ends of selection (vi o / O)
+                ((111 79)   (copy-mode-other-end screen))             ; o, O
+                ;; C-v (22) — toggle rectangle select (real tmux default)
+                (22         (copy-mode-toggle-rectangle screen))      ; C-v
+                ;; r — refresh-from-pane (real tmux default; no-op here, kept for compat)
+                ;; (114 nil) — no action
+                ;; z — scroll-middle: scroll viewport so cursor row is centered (vi z)
+                (122        (copy-mode-scroll-middle screen))         ; z
                 ;; n — search next
                 (110        (copy-mode-search-next screen))           ; n
                 ;; N — search prev
@@ -271,6 +284,69 @@
                                  (setf *dirty* t)
                                  (when (and (stringp term) (plusp (length term)))
                                    (copy-mode-search-backward screen term)))))
+                ;; C-s (19) — incremental forward search (tmux search-forward-incremental)
+                (19  (copy-mode-search-forward-incremental screen))
+                ;; C-r (18) — incremental backward search (tmux search-backward-incremental)
+                (18  (copy-mode-search-backward-incremental screen))
+                ;; f — jump forward to char on line (vi f<char>): need 2nd byte.
+                ;; Count prefix (e.g. 3f<char>) repeats the jump COUNT times.
+                (102
+                 (let ((sc screen) (n count))
+                   (setf *dirty* t)
+                   (return-from %ground-input-state
+                     (values nil
+                             (lambda (_s2 byte2)
+                               (declare (ignore _s2))
+                               (dotimes (_ n) (copy-mode-jump-forward sc (code-char byte2)))
+                               (setf *dirty* t)
+                               (values nil #'%ground-input-state))))))
+                ;; F — jump backward to char on line (vi F<char>)
+                (70
+                 (let ((sc screen) (n count))
+                   (setf *dirty* t)
+                   (return-from %ground-input-state
+                     (values nil
+                             (lambda (_s2 byte2)
+                               (declare (ignore _s2))
+                               (dotimes (_ n) (copy-mode-jump-backward sc (code-char byte2)))
+                               (setf *dirty* t)
+                               (values nil #'%ground-input-state))))))
+                ;; t — jump to just before next char (vi t<char>)
+                (116
+                 (let ((sc screen) (n count))
+                   (setf *dirty* t)
+                   (return-from %ground-input-state
+                     (values nil
+                             (lambda (_s2 byte2)
+                               (declare (ignore _s2))
+                               (dotimes (_ n) (copy-mode-jump-to sc (code-char byte2)))
+                               (setf *dirty* t)
+                               (values nil #'%ground-input-state))))))
+                ;; T — jump to just after previous char (vi T<char>)
+                (84
+                 (let ((sc screen) (n count))
+                   (setf *dirty* t)
+                   (return-from %ground-input-state
+                     (values nil
+                             (lambda (_s2 byte2)
+                               (declare (ignore _s2))
+                               (dotimes (_ n) (copy-mode-jump-to-backward sc (code-char byte2)))
+                               (setf *dirty* t)
+                               (values nil #'%ground-input-state))))))
+                ;; { — previous-paragraph (jump to nearest blank line above; vi {)
+                (123 (repeat #'copy-mode-previous-paragraph))
+                ;; } — next-paragraph (jump to nearest blank line below; vi })
+                (125 (repeat #'copy-mode-next-paragraph))
+                ;; % — jump to matching bracket (vi %)
+                (37  (copy-mode-next-matching-bracket screen))
+                ;; ; — repeat last jump (vi ;)
+                (59 (dotimes (_ count) (copy-mode-jump-again screen)))
+                ;; , — reverse last jump (vi ,)
+                (44 (dotimes (_ count) (copy-mode-jump-reverse screen)))
+                ;; m — set mark at current cursor position (vi m)
+                (109 (copy-mode-set-mark screen))
+                ;; ' — jump to mark (vi ')
+                (39  (copy-mode-jump-to-mark screen))
                 ;; Any other byte is consumed without forwarding (no passthrough in copy mode)
                 (otherwise nil)))))))))
      (setf *dirty* t))
@@ -438,14 +514,14 @@
       (cond
         ((null key)
          (unless (%copy-mode-active-p session)
-           (%forward-octets session (subseq buffer 0 length))))
+           (%forward-octets-synchronized session (subseq buffer 0 length))))
         ((%try-bound-string-key session +table-root+ key))
         (t
          (let ((octets (%csi-u-legacy-octets codepoint bits)))
            (if octets
                (%feed-octets-through-ground session octets)
                (unless (%copy-mode-active-p session)
-                 (%forward-octets session (subseq buffer 0 length))))))))))
+                 (%forward-octets-synchronized session (subseq buffer 0 length))))))))))
 
 (defun %meta-key-name (byte)
   "Canonical tmux key name for the Meta/Alt chord that arrives as ESC then BYTE.
@@ -811,7 +887,7 @@
         ;; Unbound and not a copy-mode scroll: forward raw bytes to the pane.
         (t
          (unless (%copy-mode-active-p session)
-           (%forward-octets session (subseq buffer 0 length)))))))
+           (%forward-octets-synchronized session (subseq buffer 0 length)))))))
   (values nil #'%ground-input-state))
 
 (defun %ss3-key-name (final-byte)
@@ -836,7 +912,7 @@
   (let ((key (%ss3-key-name (aref buffer 2))))
     (unless (and key (%try-bound-string-key session +table-root+ key))
       (unless (%copy-mode-active-p session)
-        (%forward-octets session (subseq buffer 0 3)))))
+        (%forward-octets-synchronized session (subseq buffer 0 3)))))
   (values nil #'%ground-input-state))
 
 (defun %handle-escape-csi-3byte (session buffer)
@@ -859,8 +935,8 @@
                      (app-keys (and screen (screen-app-cursor-keys screen)))
                      (ss3-seq  (and app-keys (%arrow-final-to-ss3-bytes third-byte))))
                 (if ss3-seq
-                    (%forward-octets session ss3-seq)
-                    (%forward-octets session (subseq buffer 0 3))))))
+                    (%forward-octets-synchronized session ss3-seq)
+                    (%forward-octets-synchronized session (subseq buffer 0 3))))))
           (values nil #'%ground-input-state)))))
 
 (defun make-escape-input-k (session buffer)
@@ -983,7 +1059,7 @@
          (let ((key (%modifier-arrow-key-name (aref buffer 4) (aref buffer 5))))
            (unless (%try-bound-string-key session +table-root+ key)
              (unless (%copy-mode-active-p session)
-               (%forward-octets session (subseq buffer 0 length)))))
+               (%forward-octets-synchronized session (subseq buffer 0 length)))))
          (values nil #'%ground-input-state))
         ;; ── Digit-leading CSI with a non-'u' terminator — forward raw ─────
         ;; Reached after the arrow/function-key handlers above declined it: an
@@ -996,14 +1072,14 @@
               (= (aref buffer 1) +byte-csi-bracket+)
               (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+))
          (unless (%copy-mode-active-p session)
-           (%forward-octets session (subseq buffer 0 length)))
+           (%forward-octets-synchronized session (subseq buffer 0 length)))
          (values nil #'%ground-input-state))
         ;; ── 4-byte accumulation: ESC [ N (not yet '~') — keep buffering ───
         ((and (= length 4) (= (aref buffer 1) +byte-csi-bracket+)
               (/= (aref buffer 3) +byte-tilde+))
          ;; Forward if no terminating ~ and not copy mode, return to ground
          (unless (%copy-mode-active-p session)
-           (%forward-octets session (subseq buffer 0 length)))
+           (%forward-octets-synchronized session (subseq buffer 0 length)))
          (values nil #'%ground-input-state))
         ;; ── 2-byte non-CSI sequence: ESC X ────────────────────────────────
         ;; In copy mode, a lone ESC (or ESC + non-CSI byte) clears any active
@@ -1013,19 +1089,29 @@
         ;; overrides forwarding; only when unbound do we forward to the pane.
         ((and (= length 2) (/= (aref buffer 1) +byte-csi-bracket+))
          (cond
+           ;; In copy mode: check copy-mode-vi / copy-mode key tables for an
+           ;; M-<key> binding first (emacs meta bindings: M-f, M-b, M-w, …).
+           ;; Only fall through to clear-selection if no table entry matches.
            ((%copy-mode-active-p session)
-            (let ((screen (%active-screen session)))
-              (when screen (copy-mode-clear-selection screen))
-              (setf *dirty* t)))
+            (let* ((meta-name (%meta-key-name (aref buffer 1)))
+                   (entry     (or (and meta-name (key-table-lookup "copy-mode-vi" meta-name))
+                                  (and meta-name (key-table-lookup "copy-mode"    meta-name)))))
+              (if entry
+                  (progn (%run-key-table-binding session entry nil)
+                         (setf *dirty* t))
+                  ;; No table binding: ESC clears the active selection.
+                  (let ((screen (%active-screen session)))
+                    (when screen (copy-mode-clear-selection screen))
+                    (setf *dirty* t)))))
            ((%try-bound-string-key session +table-root+
                                    (%meta-key-name (aref buffer 1))))
            (t
-            (%forward-octets session (subseq buffer 0 length))))
+            (%forward-octets-synchronized session (subseq buffer 0 length))))
          (values nil #'%ground-input-state))
         ;; ── Buffer overflow guard (> 32 unrecognised bytes) ───────────────
         ((> length 32)
          (unless (%copy-mode-active-p session)
-           (%forward-octets session (subseq buffer 0 length)))
+           (%forward-octets-synchronized session (subseq buffer 0 length)))
          (values nil #'%ground-input-state))
         ;; ── Still accumulating ─────────────────────────────────────────────
         (t (values nil (make-escape-input-k session buffer)))))))

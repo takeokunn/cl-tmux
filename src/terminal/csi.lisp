@@ -95,9 +95,12 @@
 
 (defun enqueue-cpr-reply (screen)
   "Push a Cursor Position Report (ESC [ row ; col R, 1-based) onto SCREEN's
-   response queue, reflecting the current cursor position."
+   response queue.  In DECOM origin mode (?6) the row is relative to the scroll
+   region top margin (row 1 = top margin); otherwise it is absolute."
   (push (format nil "~C[~D;~DR" #\Escape
-                (1+ (screen-cursor-y screen))
+                (if (screen-origin-mode screen)
+                    (1+ (- (screen-cursor-y screen) (screen-scroll-top screen)))
+                    (1+ (screen-cursor-y screen)))
                 (1+ (screen-cursor-x screen)))
         (screen-response-queue screen)))
 
@@ -351,14 +354,22 @@
   ((and (eql private #\>) (char= final #\c))
    (enqueue-da2-reply screen))
 
-  ;; XTPUSHTITLE – push window title onto the title stack (CSI > Ps t)
-  ;; XTPOPTITLE  – pop window title from the stack (CSI < Ps t)
-  ;; These are accepted silently; our title is a single slot so we just no-op.
-  ;; Applications use these to save/restore the window title across operations.
+  ;; XTPUSHTITLE – push window title onto the title stack (CSI > Ps t).
+  ;; Saves the current title so it can be restored later.  The stack is
+  ;; bounded to 8 entries (xterm limit) — the oldest entry is discarded when
+  ;; the limit is exceeded.  Used by neovim and other TUIs.
   ((and (eql private #\>) (char= final #\t))
-   (values))  ; push title — no-op (no title stack implemented)
+   (let ((stack (screen-title-stack screen)))
+     (setf (screen-title-stack screen)
+           (cons (screen-title screen) (if (>= (length stack) 8) (butlast stack) stack)))))
+
+  ;; XTPOPTITLE – pop and restore the most recently pushed title (CSI < Ps t).
+  ;; A pop on an empty stack is a no-op, matching xterm.
   ((and (eql private #\<) (char= final #\t))
-   (values))  ; pop title — no-op
+   (let ((stack (screen-title-stack screen)))
+     (when stack
+       (setf (screen-title screen) (car stack)
+             (screen-title-stack screen) (cdr stack)))))
 
   ;; XTVERSION — query terminal name/version (CSI > q): reply ESC P > | tmux 3.5 ST
   ((and (eql private #\>) (char= final #\q))
@@ -385,6 +396,33 @@
   ;; (no ? marker).  Covers IRM (4) and LNM (20).
   ((and (null private) (eql intermed #\$) (char= final #\p))
    (enqueue-decrqm-ansi-reply screen p1))
+
+  ;; DECERA — Erase Rectangular Area (CSI Pt ; Pl ; Pb ; Pr $ z).
+  ;; Fills the rectangle with BCE (background-colour-erase) blanks.
+  ;; Parameters: top left bottom right (all 1-based inclusive).
+  ((and (null private) (eql intermed #\$) (char= final #\z))
+   (let ((p3 (%csi-leading-int (third  params)))
+         (p4 (%csi-leading-int (fourth params))))
+     (decera screen p1 p2 p3 p4)))
+
+  ;; DECFRA — Fill Rectangular Area (CSI Pc ; Pt ; Pl ; Pb ; Pr $ x).
+  ;; Fills the rectangle with character code Pc, using the current SGR pen.
+  ;; Parameters: char-code top left bottom right (all 1-based; Pc is the char).
+  ((and (null private) (eql intermed #\$) (char= final #\x))
+   (let ((p3 (%csi-leading-int (third  params)))
+         (p4 (%csi-leading-int (fourth params)))
+         (p5 (%csi-leading-int (fifth  params))))
+     (decfra screen p1 p2 p3 p4 p5)))
+
+  ;; DECCRA — Copy Rectangular Area (CSI Pt ; Pl ; Pb ; Pr ; Pp ; Ptp ; Plp ; Ppp $ v).
+  ;; Copies source rectangle to target.  Page parameters (Pp, Ppp) are ignored.
+  ;; Parameters: src-top src-left src-bottom src-right src-page tgt-top tgt-left tgt-page.
+  ((and (null private) (eql intermed #\$) (char= final #\v))
+   (let ((p3 (%csi-leading-int (third  params)))
+         (p4 (%csi-leading-int (fourth params)))
+         (p6 (%csi-leading-int (sixth  params)))
+         (p7 (%csi-leading-int (seventh params))))
+     (deccra screen p1 p2 p3 p4 p6 p7)))
 
   ;; ANSI Set/Reset Mode — CSI Ps h / CSI Ps l (NO private marker).  IRM (mode 4)
   ;; toggles insert/replace; other ANSI modes are accepted and ignored.

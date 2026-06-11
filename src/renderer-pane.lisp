@@ -207,35 +207,47 @@
   "Compute normalised selection boundary coordinates for SCREEN's copy-mode selection.
    Returns (values sel-active sel-start-row sel-end-row sel-start-col sel-end-col sel-rect-p).
    sel-active is NIL when the selection prerequisites (selecting flag, mark, cursor)
-   are not all present.  Rows are viewport-relative (live-grid row + copy-offset).
+   are not all present.  Rows are VIEWPORT rows (0..height-1) so in-selection-p and
+   screen-display-cell work directly.  The computation uses virtual rows internally so
+   a selection started before scrolling highlights the correct cells after scrolling.
    sel-rect-p is T when rectangle-select mode is active (screen-copy-rect-select-p)."
   (if (and (screen-copy-selecting screen)
            (consp (screen-copy-mark   screen))
            (consp (screen-copy-cursor screen)))
-      (let* ((mark       (screen-copy-mark   screen))
-             (cursor     (screen-copy-cursor screen))
-             (mark-row   (car mark))
-             (mark-col   (cdr mark))
-             (cursor-row (car cursor))
-             (cursor-col (cdr cursor))
-             ;; Viewport row = live-grid row + copy-offset.
-             (offset     (screen-copy-offset screen))
-             (rect-p     (screen-copy-rect-select-p screen)))
+      (let* ((mark        (screen-copy-mark   screen))
+             (cursor      (screen-copy-cursor screen))
+             (mark-col    (cdr mark))
+             (cursor-col  (cdr cursor))
+             (sb-n        (length (screen-scrollback screen)))
+             (mark-offset (screen-copy-mark-offset screen))
+             (cur-offset  (screen-copy-offset screen))
+             (h           (screen-height screen))
+             ;; Convert viewport rows (stored at their respective offsets) to virtual rows.
+             (mark-vrow   (+ sb-n (car mark)   (- mark-offset)))
+             (cur-vrow    (+ sb-n (car cursor) (- cur-offset)))
+             ;; Convert virtual rows back to viewport rows at the CURRENT offset,
+             ;; clamped so that off-screen anchors highlight the nearest edge.
+             (start-vrow  (min mark-vrow cur-vrow))
+             (end-vrow    (max mark-vrow cur-vrow))
+             (start-vp    (max 0 (min (1- h) (+ start-vrow cur-offset (- sb-n)))))
+             (end-vp      (max 0 (min (1- h) (+ end-vrow   cur-offset (- sb-n)))))
+             (rect-p      (screen-copy-rect-select-p screen))
+             ;; Column orientation: which virtual end is topmost?
+             (mark-is-start (< mark-vrow cur-vrow))
+             (mark-is-end   (> mark-vrow cur-vrow)))
         (values t
-                (+ (min mark-row cursor-row) offset)
-                (+ (max mark-row cursor-row) offset)
+                start-vp
+                end-vp
                 ;; Rectangle mode: uniform column range (min..max+1 exclusive).
-                ;; Character mode: start-col tracks the topmost selected row's column.
+                ;; Character mode: start-col tracks the topmost-virtual end's column.
                 (if rect-p
                     (min mark-col cursor-col)
-                    (if (< mark-row cursor-row)
-                        mark-col
-                        (if (> mark-row cursor-row) cursor-col (min mark-col cursor-col))))
+                    (if mark-is-start mark-col
+                        (if mark-is-end cursor-col (min mark-col cursor-col))))
                 (if rect-p
                     (1+ (max mark-col cursor-col))
-                    (if (< mark-row cursor-row)
-                        cursor-col
-                        (if (> mark-row cursor-row) mark-col (max mark-col cursor-col))))
+                    (if mark-is-start cursor-col
+                        (if mark-is-end mark-col (max mark-col cursor-col))))
                 rect-p))
       (values nil 0 0 0 0 nil)))
 

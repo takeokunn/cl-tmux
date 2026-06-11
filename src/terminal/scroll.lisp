@@ -89,29 +89,30 @@
 
 (defun scroll-up-one (screen)
   "Scroll the scroll region up one line; the displaced top row is pushed onto
-   the scrollback buffer and the new bottom line is cleared to blank cells.
-   The scrollback cap (history-limit) is enforced by the caller or by the
-   post-scroll trim below — keeping policy out of the primitive operation itself.
+   the scrollback buffer ONLY when the scroll region starts at the top of the
+   screen (scroll-top = 0) and we are on the primary screen (not alt-screen).
+   This matches real tmux: partial-region scrolling and alt-screen scrolling
+   never add to the scrollback history.
 
    Scrollback cap note: the cap is enforced by trim-scroll-history which
    splices off the tail cons of the list, keeping the operation O(limit).
    The list is maintained newest-first so the tail is always the oldest entry."
-  (let* ((top       (screen-scroll-top    screen))
-         (bottom    (screen-scroll-bottom screen))
-         (w         (screen-width         screen))
-         (saved-row (make-array w)))
-    (dotimes (col w) (setf (aref saved-row col) (screen-cell screen col top)))
-    (push saved-row (screen-scrollback screen))
-    ;; Copy row+1 → row (shift content upward; top row was already saved above).
+  (let* ((top    (screen-scroll-top    screen))
+         (bottom (screen-scroll-bottom screen))
+         (w      (screen-width         screen)))
+    ;; Only the primary screen with a full-top scroll region contributes to
+    ;; the scrollback history (mirrors tmux grid_scroll_history_up logic).
+    (when (and (zerop top) (null (screen-alt-cells screen)))
+      (let ((saved-row (make-array w)))
+        (dotimes (col w) (setf (aref saved-row col) (screen-cell screen col top)))
+        (push saved-row (screen-scrollback screen))
+        (trim-scroll-history screen)))
+    ;; Copy row+1 → row (shift content upward within the scroll region).
     (loop for row from top below bottom
           do (%copy-row screen row (1+ row)))
     (%clear-row screen bottom)
     ;; Shift the capture-pane -J wrap flags in lockstep with the content.
     (%shift-line-wrapped-up screen top bottom)
-    ;; Enforce the scrollback cap after pushing the new entry so the policy
-    ;; decision (cap size) stays at this logical boundary rather than inside
-    ;; the raw grid-copy operations above.
-    (trim-scroll-history screen)
     (setf (screen-dirty-p screen) t)))
 
 (defun clear-scrollback (screen)

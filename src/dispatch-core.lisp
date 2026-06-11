@@ -635,6 +635,12 @@
   ("suspend-client"    :suspend-client)
   ("suspendc"          :suspend-client)
   ("lock-server"       :lock-server)
+  ;; Server lifecycle: handlers exist (dispatch-handlers.lisp) but were never
+  ;; reachable by name from the C-b : prompt or control mode until registered here.
+  ("kill-server"       :kill-server)
+  ("start-server"      :start-server)
+  ;; send-prefix: forward the prefix key to the active pane (the literal C-b form).
+  ("send-prefix"       :send-prefix)
   ;; Window management (additional)
   ("resize-window"     :resize-window)
   ("resizew"           :resize-window)
@@ -1212,7 +1218,9 @@
           ;; current value reads through scope precedence (pane->window->global->
           ;; default) so `set -aw` extends the inherited value, then stores local.
           ((assoc #\a flags)
-           (flet ((cur (v) (concatenate 'string (princ-to-string (or v "")) value)))
+           ;; Style options (e.g. status-style) append with a ',' separator;
+           ;; append-option-value applies that rule, plain concat for the rest.
+           (flet ((cur (v) (cl-tmux/options:append-option-value name v value)))
              (cond
                (pane   (cl-tmux/options:set-option-for-pane
                         name (cur (cl-tmux/options:get-option-for-pane name pane)) pane))
@@ -2132,15 +2140,25 @@
           (second (sort (copy-list sessions) #'> :key #'session-last-active))))))))
 
 (defun %destroy-session (session)
-  "Tear down SESSION: close every pane's PTY, remove it from the server registry,
+  "Tear down SESSION: close its panes' PTYs, remove it from the server registry,
    and fire the session-closed hook.  The single chokepoint for session
    DESTRUCTION (every kill-session path routes through here) — deliberately
    distinct from rename-session, which also removes+re-adds the registry entry but
-   must NOT fire session-closed.  Returns the session name."
+   must NOT fire session-closed.  Returns the session name.
+
+   PTY teardown is REFERENCE-COUNTED: grouped/linked sessions share the SAME window
+   structs (session-registry %link-session-to-group aliases the window list), so a
+   window still referenced by another live session must keep its PTYs open or the
+   survivors lose the panes they display.  SESSION is still in *server-sessions*
+   here, so an UNSHARED window has %window-session-count = 1 (close it) and a SHARED
+   window has >= 2 (leave it) — identical to the old unconditional close for the
+   common single-session case."
   (when session
     (let ((name (session-name session)))
-      (dolist (pane (all-panes session))
-        (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
+      (dolist (win (session-windows session))
+        (when (<= (%window-session-count win) 1)
+          (dolist (pane (window-panes win))
+            (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))))
       (server-remove-session name)
       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-closed+ session)
       name)))
@@ -2260,6 +2278,9 @@
     ("search-reverse"            . :copy-mode-search-prev)
     ("search-forward"            . :copy-mode-search-forward-prompt)
     ("search-backward"           . :copy-mode-search-backward-prompt)
+    ;; Incremental (live) search: cursor jumps on every keystroke (C-s / C-r).
+    ("search-forward-incremental"  . :copy-mode-search-forward-incremental)
+    ("search-backward-incremental" . :copy-mode-search-backward-incremental)
     ;; top/middle/bottom-line (vi H/M/L) move WITHIN the viewport, keeping the
     ;; scroll position; history-top/bottom (vi g/G) jump to the scrollback extremes.
     ("top-line"                  . :copy-mode-high)
@@ -2278,12 +2299,14 @@
     ("copy-end-of-line"          . :copy-mode-copy-end-of-line)
     ("copy-line"                 . :copy-mode-copy-line)
     ("append-selection"          . :copy-mode-append-selection)
+    ("append-selection-and-cancel" . :copy-mode-append-selection-and-cancel)
     ("back-to-indentation"       . :copy-mode-back-to-indentation)
     ("start-of-line"             . :copy-mode-line-start)
     ("end-of-line"               . :copy-mode-line-end)
     ;; scroll variants
     ("scroll-up"                 . :copy-mode-scroll-up-line)
     ("scroll-down"               . :copy-mode-scroll-down-line)
+    ("scroll-middle"             . :copy-mode-scroll-middle)
     ("scroll-up-half-page"       . :copy-mode-half-page-up)
     ("scroll-down-half-page"     . :copy-mode-half-page-down)
     ;; emacs-style names
@@ -2299,15 +2322,38 @@
     ;; mouse-wheel support
     ("scroll-mouse"              . :copy-mode-scroll-up-line)
     ;; vi-style movement
-    ("previous-paragraph"        . :copy-mode-page-up)
-    ("next-paragraph"            . :copy-mode-page-down)
-    ("jump-to-mark"              . :copy-mode-line-start)
+    ("previous-paragraph"        . :copy-mode-prev-paragraph)
+    ("next-paragraph"            . :copy-mode-next-paragraph)
+    ("jump-to-mark"              . :copy-mode-jump-to-mark)
+    ("set-mark"                  . :copy-mode-set-mark)
+    ;; select-line: start a line-granularity selection (same as V in copy-mode-vi)
+    ("select-line"               . :copy-mode-begin-line-selection)
+    ;; stop-selection: cancel selection without exiting copy mode (alias for clear-selection)
+    ("stop-selection"            . :copy-mode-clear-selection)
+    ;; refresh-from-pane: copy mode always reads from pane live in this implementation.
+    ("refresh-from-pane"         . :copy-mode-refresh-from-pane)
+    ;; jump-to-char: vi f/F/t/T repeat/reverse (;/,)
+    ;; The char-argument variants (jump-forward, jump-backward, jump-to,
+    ;; jump-to-backward) need a char arg and are handled specially in
+    ;; %dispatch-send-keys-X; the argless ;/, repeat commands map to keywords.
+    ("jump-again"                . :copy-mode-jump-again)
+    ("jump-reverse"              . :copy-mode-jump-reverse)
     ;; other-end / toggle-position: swap the two ends of the selection (vi `o`).
     ("other-end"                 . :copy-mode-other-end)
     ("toggle-position"           . :copy-mode-other-end)
-    ;; pipe / pipe-and-cancel: same semantics as copy-pipe variants.
+    ;; pipe / pipe-and-cancel / pipe-no-clear: same semantics as copy-pipe variants.
     ("pipe"                      . :copy-mode-copy-pipe-no-cancel)
-    ("pipe-and-cancel"           . :copy-mode-yank))
+    ("pipe-and-cancel"           . :copy-mode-yank)
+    ("pipe-no-clear"             . :copy-mode-copy-pipe-no-cancel)
+    ;; search-forward-text / search-backward-text (tmux 3.2+): scripted search
+    ;; with the text passed as an extra-arg instead of an interactive prompt.
+    ;; Handled specially in %dispatch-send-keys-X via the extra-args path.
+    ("search-forward-text"       . :copy-mode-search-forward-text)
+    ("search-backward-text"      . :copy-mode-search-backward-text)
+    ;; Bracket matching (vi %): jump to matching bracket.
+    ;; Both names call the same function (direction determined by char under cursor).
+    ("next-matching-bracket"     . :copy-mode-next-matching-bracket)
+    ("previous-matching-bracket" . :copy-mode-next-matching-bracket))
   "Alist mapping send-keys -X command names to copy-mode dispatch keywords.")
 
 (defun %dispatch-send-keys-X (session command-name &optional target-pane target-window extra-args)
@@ -2320,12 +2366,57 @@
    a recognised copy-mode command.
    EXTRA-ARGS (a list of strings) holds any positional arguments after the command
    name; used by copy-pipe / copy-pipe-and-cancel to carry the pipe-command string."
+  ;; jump-forward/backward/to/to-backward: require a char argument (the target).
+  ;; `send -X jump-forward a` passes "a" as the first extra-arg.
+  (when (and extra-args
+             (member command-name '("jump-forward" "jump-backward"
+                                    "jump-to" "jump-to-backward")
+                                 :test #'string-equal))
+    (let* ((char-arg (first extra-args))
+           (target-ch (and char-arg (plusp (length char-arg)) (char char-arg 0)))
+           (pane   (or target-pane (session-active-pane session)))
+           (screen (and pane (cl-tmux/model:pane-screen pane))))
+      (when (and screen target-ch)
+        (cond
+          ((string-equal command-name "jump-forward")
+           (copy-mode-jump-forward screen target-ch))
+          ((string-equal command-name "jump-backward")
+           (copy-mode-jump-backward screen target-ch))
+          ((string-equal command-name "jump-to")
+           (copy-mode-jump-to screen target-ch))
+          ((string-equal command-name "jump-to-backward")
+           (copy-mode-jump-to-backward screen target-ch))))
+      (return-from %dispatch-send-keys-X (and screen target-ch t))))
+  ;; goto-line N: requires a numeric line-number argument.
+  ;; `send -X goto-line 42` passes "42" as the first extra-arg.
+  (when (string-equal command-name "goto-line")
+    (let* ((pane   (or target-pane (session-active-pane session)))
+           (screen (and pane (cl-tmux/model:pane-screen pane)))
+           (n-str  (first extra-args))
+           (n      (and n-str (plusp (length n-str))
+                        (ignore-errors (parse-integer n-str)))))
+      (when (and screen (integerp n))
+        (copy-mode-goto-line screen n))
+      (return-from %dispatch-send-keys-X (and screen (integerp n) t))))
+  ;; search-forward-text / search-backward-text: scripted search with the text
+  ;; passed as extra-args (no interactive prompt).  `send -X search-forward-text "foo"`
+  (when (and extra-args
+             (member command-name '("search-forward-text" "search-backward-text")
+                                 :test #'string-equal))
+    (let* ((pane   (or target-pane (session-active-pane session)))
+           (screen (and pane (cl-tmux/model:pane-screen pane)))
+           (term   (first extra-args)))
+      (when (and screen term (plusp (length term)))
+        (if (string-equal command-name "search-forward-text")
+            (copy-mode-search-forward  screen term)
+            (copy-mode-search-backward screen term)))
+      (return-from %dispatch-send-keys-X (and screen term t))))
   ;; copy-pipe / copy-pipe-and-cancel with an explicit pipe-command argument:
   ;; bypass the keyword table (which cannot carry per-invocation args) and call
   ;; the copy-mode function directly with the argument string.
   (when (and extra-args
              (member command-name '("copy-pipe" "copy-pipe-and-cancel"
-                                    "pipe" "pipe-and-cancel")
+                                    "pipe" "pipe-and-cancel" "pipe-no-clear")
                                  :test #'string-equal))
     (let* ((pane   (or target-pane (session-active-pane session)))
            (screen (and pane (cl-tmux/model:pane-screen pane))))
@@ -3308,6 +3399,22 @@
                    (lambda (&rest a)
                      (emit (cl-tmux/control:control-session-renamed
                             (session-id (first a)) (session-name (first a))))))
+             ;; Active-pane changed within a window (%window-pane-changed) and a
+             ;; session's active window changed (%session-window-changed).  Guard the
+             ;; NIL active-pane / active-window case so a partially-torn-down object
+             ;; can't emit a malformed "@N %NIL" line.
+             (cons cl-tmux/hooks:+hook-window-pane-changed+
+                   (lambda (&rest a)
+                     (let* ((win (first a)) (ap (and win (window-active-pane win))))
+                       (when ap
+                         (emit (cl-tmux/control:control-window-pane-changed
+                                (window-id win) (pane-id ap)))))))
+             (cons cl-tmux/hooks:+hook-session-window-changed+
+                   (lambda (&rest a)
+                     (let* ((sess (first a)) (win (and sess (session-active-window sess))))
+                       (when win
+                         (emit (cl-tmux/control:control-session-window-changed
+                                (session-id sess) (window-id win)))))))
              ;; Layout changes: resize fires with the window, split with the pane.
              (cons cl-tmux/hooks:+hook-after-resize-pane+
                    (lambda (&rest a) (emit-layout (first a))))

@@ -40,10 +40,13 @@
            (layout-assign (layout-split-second node)  x (+ y first-extent 1)  w  second-extent)))))
 
 (defun layout-assign (node x y w h)
-  "Walk NODE, repositioning every leaf's pane to fill the X,Y,W,H rectangle.
-   Reserves one row/column for the separator at each internal split node."
+  "Walk NODE, updating every leaf's pane geometry to fit the X,Y,W,H rectangle.
+   Reserves one row/column for the separator at each internal split node.
+   This function is a pure geometry walk: it calls %update-pane-geometry on leaves
+   so that callers (window-relayout) can drive the PTY/screen resize as a separate
+   ORCHESTRATE-layer step after the full tree has been repositioned."
   (etypecase node
-    (layout-leaf  (pane-reposition (layout-leaf-pane node) x y (max 1 w) (max 1 h)))
+    (layout-leaf  (%update-pane-geometry (layout-leaf-pane node) x y (max 1 w) (max 1 h)))
     (layout-split (%assign-split node x y w h))))
 
 ;;; ── Pane neighbor lookup and hit testing — see window-neighbor.lisp ─────────

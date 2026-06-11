@@ -276,6 +276,60 @@ and leaves *running* untouched."
         (cl-tmux::%destroy-session s)
         (is-true fired "session-closed hook must fire on destroy")))))
 
+;;; ── Reference-counted PTY teardown for session groups ────────────────────────
+;;;
+;;; Grouped sessions (new-session -t) SHARE the same window structs.  Destroying
+;;; one grouped session must not close the shared windows' PTYs while another
+;;; session still references them.  The fix iterates session-windows and only
+;;; closes a window's PTYs when %window-session-count <= 1.  These tests spy on
+;;; pty-close (its only observable effect is the call itself — it does not mutate
+;;; pane-fd) by temporarily replacing its fdefinition.
+
+(test destroy-grouped-session-keeps-shared-window-ptys-open
+  "Destroying ONE session in a group must NOT close the PTYs of a window another
+   grouped session still shares."
+  (with-empty-registry
+    (let ((target  (make-fake-session :nwindows 1))
+          (grouped (make-fake-session :nwindows 1))
+          (closed  0))
+      (setf (cl-tmux::session-name target)  "base"
+            (cl-tmux::session-name grouped) "clone"
+            ;; grouped SHARES target's window list (same structs), like `new-session -t base`.
+            (cl-tmux::session-windows grouped) (cl-tmux::session-windows target))
+      (cl-tmux::server-add-session target)
+      (cl-tmux::server-add-session grouped)
+      (let ((orig (fdefinition 'cl-tmux/pty:pty-close)))
+        (unwind-protect
+             (progn
+               (setf (fdefinition 'cl-tmux/pty:pty-close)
+                     (lambda (fd pid) (declare (ignore fd pid)) (incf closed)))
+               (cl-tmux::%destroy-session grouped))
+          (setf (fdefinition 'cl-tmux/pty:pty-close) orig)))
+      (is (zerop closed)
+          "shared window's PTYs must NOT be closed while 'base' still references them")
+      (is (null (cl-tmux::server-find-session "clone"))
+          "the destroyed grouped session is removed from the registry")
+      (is (not (null (cl-tmux::server-find-session "base")))
+          "the surviving grouped session remains"))))
+
+(test destroy-ungrouped-session-closes-its-ptys
+  "Regression guard: an ungrouped (single-reference) session's PTYs ARE still
+   closed on destroy — the reference-counted guard does not change the common case."
+  (with-empty-registry
+    (let ((sess   (make-fake-session :nwindows 1 :npanes 2))
+          (closed  0))
+      (setf (cl-tmux::session-name sess) "solo")
+      (cl-tmux::server-add-session sess)
+      (let ((orig (fdefinition 'cl-tmux/pty:pty-close)))
+        (unwind-protect
+             (progn
+               (setf (fdefinition 'cl-tmux/pty:pty-close)
+                     (lambda (fd pid) (declare (ignore fd pid)) (incf closed)))
+               (cl-tmux::%destroy-session sess))
+          (setf (fdefinition 'cl-tmux/pty:pty-close) orig)))
+      (is (= 2 closed)
+          "both panes of the unshared window are closed (window-session-count = 1)"))))
+
 (test rename-session-does-not-fire-session-closed
   "rename-session removes+re-adds its registry entry but must NOT fire
    session-closed (only actual destruction does)."

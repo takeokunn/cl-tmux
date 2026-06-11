@@ -332,6 +332,58 @@
 ;;; press (btn 0) to focus pane or begin selection, status bar clicks, and
 ;;; wheel-scroll enter/exit of copy-mode.
 ;;; All mouse handling is gated behind the "mouse" session option.
+;;;
+;;; MOUSE PASSTHROUGH: when a pane app has enabled mouse tracking (?1000h /
+;;; ?1002h / ?1003h / ?1006h), mouse events are translated to pane-local
+;;; coordinates and forwarded to the pane's PTY *before* any tmux-UI handling.
+
+(defun %encode-mouse-for-pane (pane screen btn col row release-p)
+  "Encode a mouse event in the format the pane app requested and write to PTY.
+   COL/ROW are 0-based screen coordinates; translated to pane-local 1-based.
+   Returns T if the event was forwarded."
+  (let* ((pane-col (1+ (- col (pane-x pane))))   ; 1-based pane-local column
+         (pane-row (1+ (- row (pane-y pane))))    ; 1-based pane-local row
+         (encoded
+          (if (screen-mouse-sgr-mode screen)
+              ;; SGR: ESC [ < btn ; col ; row M|m  (btn is raw, final M=press m=release)
+              (format nil "~C[<~D;~D;~D~C"
+                      #\Escape btn pane-col pane-row
+                      (if release-p #\m #\M))
+              ;; X10: ESC [ M <btn+32> <col+32> <row+32>  (1-based coords)
+              ;; Release events use btn=3 (X10 release marker byte = 35 = 3+32).
+              (let ((enc-btn (if release-p 35 (+ btn 32)))
+                    (enc-col (min 255 (+ pane-col 32)))
+                    (enc-row (min 255 (+ pane-row 32))))
+                (format nil "~C[M~C~C~C"
+                        #\Escape
+                        (code-char enc-btn)
+                        (code-char enc-col)
+                        (code-char enc-row))))))
+    (when (and encoded (> (pane-fd pane) 0))
+      (pty-write (pane-fd pane) encoded)
+      t)))
+
+(defun %try-mouse-passthrough (active-window active-pane btn col row release-p)
+  "When the pane under COL/ROW (or ACTIVE-PANE for motion events) has enabled
+   mouse tracking, translate the event to pane-local coordinates and forward it.
+   Returns T if the event was consumed by a pane, NIL if tmux should handle it."
+  (let* ((target-pane (or (and active-window
+                               (pane-at-position active-window col row))
+                          active-pane))
+         (target-screen (and target-pane (pane-screen target-pane)))
+         (mode (and target-screen (screen-mouse-mode target-screen))))
+    (when (and target-pane target-screen (plusp (or mode 0)))
+      (let ((should-forward
+             (cond
+               ;; mode 1 (X10 / normal): button press only, not release
+               ((= mode 1) (not release-p))
+               ;; mode 2 (button-event): press, release, button-drag (btn 32)
+               ((= mode 2) (or (not release-p) release-p))
+               ;; mode 3 (any-event): all including pure motion
+               ((= mode 3) t)
+               (t nil))))
+        (when should-forward
+          (%encode-mouse-for-pane target-pane target-screen btn col row release-p))))))
 
 ;;; ── Status bar column → window index mapping ─────────────────────────────────
 
@@ -489,6 +541,14 @@
   (unless (cl-tmux/options:get-option "mouse")
     (setf *dirty* t)
     (return-from %dispatch-mouse-event nil))
+  (let* ((active-window  (session-active-window session))
+         (active-pane    (session-active-pane session)))
+    ;; When the pane under the pointer has requested mouse tracking, translate
+    ;; and forward the event to the pane's PTY.  This takes priority over all
+    ;; tmux-UI mouse handling (copy-mode, resize, pane-select).
+    (when (%try-mouse-passthrough active-window active-pane btn col row release-p)
+      (setf *dirty* t)
+      (return-from %dispatch-mouse-event nil)))
   (let* ((active-window  (session-active-window session))
          (active-pane    (session-active-pane session))
          (status-row     (1- *term-rows*))  ; status bar is always bottom row

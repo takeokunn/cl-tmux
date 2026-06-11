@@ -771,14 +771,21 @@
       (is (= 7 ec) "end col = max(mark-col=7, cursor-col=3)=7"))))
 
 (test compute-selection-bounds-copy-offset-applied
-  "%compute-selection-bounds adds copy-offset to both row values."
-  (let ((screen (make-selecting-screen 10 5 0 0 1 0 :offset 5)))
+  "%compute-selection-bounds maps virtual rows to viewport rows using the CURRENT offset.
+   When the mark was placed at offset=0 (mark-offset=0, the default) and the viewport
+   has since scrolled to offset=2, the mark at viewport row 4 now resolves to viewport
+   row 4+2=6 (off-screen, clamped to height-1=4).  The cursor at viewport row 2 with
+   offset=2 resolves to virtual row 0, which at offset=2 is viewport row 2.
+   Selection: viewport rows 2-4 (mark is clamped to the bottom edge)."
+  ;; No scrollback.  mark=(4,0) was set when offset=0 (mark-offset=0 by default).
+  ;; Current offset=2, cursor=(2,0).
+  (let ((screen (make-selecting-screen 10 5 4 0 2 0 :offset 2)))
     (multiple-value-bind (active sr er sc ec rect-p)
         (cl-tmux/renderer::%compute-selection-bounds screen)
       (declare (ignore sc ec rect-p))
       (is-true active "sel-active must be T")
-      (is (= 5 sr) "start row must be min(0,1) + offset(5) = 5")
-      (is (= 6 er) "end row must be max(0,1) + offset(5) = 6"))))
+      (is (= 2 sr) "start row: cursor vrow=0 → viewport 0-0+2=2")
+      (is (= 4 er) "end row: mark vrow=4 → viewport 4-0+2=6, clamped to height-1=4"))))
 
 (test compute-selection-bounds-rect-columns-symmetric
   "%compute-selection-bounds uses min/max column symmetrically in rectangle mode."

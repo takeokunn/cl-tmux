@@ -22,6 +22,11 @@
   (buffer       "" :type string)            ; the text typed so far
   (cursor-index  0 :type fixnum)            ; insertion point: 0..length-of-buffer
   (on-submit   nil :type (or null function)) ; called with the final buffer string on Enter
+  ;; Incremental-search: called with the current buffer string after every edit.
+  (on-change   nil :type (or null function))
+  ;; Incremental-search cancel: called (no args) when the prompt is dismissed by
+  ;; ESC / C-c / C-g so the caller can restore the pre-search cursor position.
+  (on-cancel   nil :type (or null function))
   ;; Vi-mode: when status-keys = "vi", ESC enters normal mode instead of cancelling.
   (vi-normal-p nil :type boolean)           ; T when in vi normal mode
   ;; Single-key mode (confirm-before, command-prompt -1): the first printable key
@@ -37,16 +42,31 @@
   "True when an input prompt is currently active."
   (and *prompt* t))
 
-(defun prompt-start (label initial on-submit &key single-key)
+(defun prompt-start (label initial on-submit &key single-key on-change on-cancel)
   "Begin a prompt labelled LABEL, seeded with INITIAL text.  ON-SUBMIT is a
    function of one argument (the final buffer string) run when the user presses
    Enter.  The cursor starts at the end of INITIAL.
    SINGLE-KEY T (confirm-before, command-prompt -1) submits the first printable
-   key immediately as a one-character string — no Enter needed."
+   key immediately as a one-character string — no Enter needed.
+   ON-CHANGE is a function of one argument called after every buffer edit —
+   used by incremental search to jump to the nearest match while the user types.
+   ON-CANCEL is a no-argument function called when the prompt is dismissed by
+   ESC / C-c — used by incremental search to restore the pre-search cursor."
   (setf *prompt* (make-prompt :label label :buffer initial
                                :cursor-index (length initial)
                                :on-submit on-submit
+                               :on-change  on-change
+                               :on-cancel  on-cancel
                                :single-key single-key)))
+
+;;; -- Change notification helper ----------------------------------------------
+
+(defun prompt-notify-change ()
+  "Call the active prompt's ON-CHANGE callback (if any) with the current buffer.
+   Used by incremental search to jump to the nearest match after each edit."
+  (with-active-prompt (p)
+    (when (prompt-on-change p)
+      (funcall (prompt-on-change p) (prompt-buffer p)))))
 
 ;;; -- Buffer editing -----------------------------------------------------------
 
@@ -61,7 +81,8 @@
                                 (string ch)
                                 (subseq buffer index))))
       (setf (prompt-buffer       p) new)
-      (setf (prompt-cursor-index p) (1+ index)))))
+      (setf (prompt-cursor-index p) (1+ index))))
+  (prompt-notify-change))
 
 (defun prompt-backspace ()
   "Delete the character immediately before the cursor, if any.
@@ -74,7 +95,8 @@
               (concatenate 'string
                            (subseq buffer 0 (1- index))
                            (subseq buffer index)))
-        (setf (prompt-cursor-index p) (1- index))))))
+        (setf (prompt-cursor-index p) (1- index)))))
+  (prompt-notify-change))
 
 ;;; -- Cursor navigation -- declarative table ----------------------------------
 ;;;
@@ -130,7 +152,8 @@
   "Kill (delete) all characters from the cursor to the end of the buffer."
   (with-active-prompt (p)
     (let ((index (prompt-cursor-index p)))
-      (setf (prompt-buffer p) (subseq (prompt-buffer p) 0 index)))))
+      (setf (prompt-buffer p) (subseq (prompt-buffer p) 0 index))))
+  (prompt-notify-change))
 
 (defun prompt-kill-to-start ()
   "Kill (delete) all characters from the start of the buffer to the cursor."
@@ -138,7 +161,8 @@
     (let* ((buffer (prompt-buffer p))
            (index  (prompt-cursor-index p)))
       (setf (prompt-buffer       p) (subseq buffer index))
-      (setf (prompt-cursor-index p) 0))))
+      (setf (prompt-cursor-index p) 0)))
+  (prompt-notify-change))
 
 (defun %skip-while-left (buffer scan predicate)
   "Walk SCAN leftward while PREDICATE holds for (char buffer (1- scan)).
@@ -170,7 +194,8 @@
             (concatenate 'string
                          (subseq buffer 0 start-index)
                          (subseq buffer end-index)))
-      (setf (prompt-cursor-index p) start-index))))
+      (setf (prompt-cursor-index p) start-index)))
+  (prompt-notify-change))
 
 ;;; -- Vi-mode character deletion -----------------------------------------------
 
@@ -194,8 +219,11 @@
 ;;; -- Dismiss and display -----------------------------------------------------
 
 (defun prompt-clear ()
-  "Dismiss the active prompt."
-  (setf *prompt* nil))
+  "Dismiss the active prompt, calling on-cancel if set."
+  (let ((p *prompt*))
+    (setf *prompt* nil)
+    (when (and p (prompt-on-cancel p))
+      (funcall (prompt-on-cancel p)))))
 
 (defun prompt-text ()
   "Status-bar display string with cursor indicator, or NIL when inactive.

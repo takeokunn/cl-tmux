@@ -24,6 +24,7 @@
                 #:screen-scrollback
                 #:screen-copy-selecting
                 #:screen-copy-mark
+                #:screen-copy-mark-offset
                 #:screen-copy-cursor
                 #:screen-mouse-mode
                 #:screen-mouse-sgr-mode

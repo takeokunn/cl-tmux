@@ -21,10 +21,22 @@
   (local-options (make-hash-table :test #'equal) :type hash-table)) ; per-pane option overrides
 
 (defun pane-feed (pane bytes)
-  "Feed raw PTY bytes into PANE's screen, holding the screen lock."
+  "Feed raw PTY bytes into PANE's screen, then drain any device-report replies
+   (DA1/DA2/CPR/DSR/DECRQM/XTGETTCAP/DECRQSS/OSC-color) back to the PTY.
+   The response queue is populated by the CPS parser under the screen lock;
+   it is drained outside the lock so pty-write never blocks while holding it."
   (let ((screen (pane-screen pane)))
     (with-lock-held ((screen-lock screen))
-      (screen-process-bytes screen bytes))))
+      (screen-process-bytes screen bytes)))
+  ;; Drain pending terminal-query responses (queue is newest-first; reverse
+  ;; before writing so replies arrive in the order they were enqueued).
+  (let ((screen (pane-screen pane)))
+    (when (screen-response-queue screen)
+      (let ((replies (nreverse (screen-response-queue screen))))
+        (setf (screen-response-queue screen) nil)
+        (when (> (pane-fd pane) 0)
+          (dolist (reply replies)
+            (pty-write (pane-fd pane) reply)))))))
 
 ;;; ── PTY-backed pane factory ─────────────────────────────────────────────────
 ;;;

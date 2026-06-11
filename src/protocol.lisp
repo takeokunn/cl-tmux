@@ -178,9 +178,9 @@
 ;;; When target is NIL the target field is omitted entirely.
 ;;; The command keyword name is encoded without the leading colon.
 
-;;; The NUL byte (ASCII 0) is used as the field delimiter in +msg-command+ payloads.
-;;; It is used only in encode-fields-to-buffer below; the literal 0 is used directly
-;;; rather than a named constant to avoid a single-use defconstant with no reuse value.
+(defconstant +field-delimiter+ 0
+  "ASCII NUL byte used to separate fields in a +msg-command+ payload.
+   Every field in the NUL-delimited encoding is terminated by this byte.")
 
 ;;; ── Target-sigil detection macro ─────────────────────────────────────────────
 ;;;
@@ -229,17 +229,16 @@
 
 (defun encode-fields-to-buffer (field-octets)
   "Pack FIELD-OCTETS (a list of octet vectors) into a fresh buffer.
-   Each field is written followed by a NUL byte; the total length equals
-   the sum of all field lengths plus one NUL per field."
-  (let* ((field-count (length field-octets))
-         (data-bytes  (reduce #'+ field-octets :key #'length :initial-value 0))
-         (total-len   (+ data-bytes field-count))
-         (buffer      (make-array total-len :element-type '(unsigned-byte 8))))
+   Each field is written followed by a +field-delimiter+ (NUL) byte; the total
+   length equals the sum of all field lengths plus one delimiter per field."
+  (let* ((data-bytes (reduce #'+ field-octets :key #'length :initial-value 0))
+         (total-len  (+ data-bytes (length field-octets)))
+         (buffer     (make-array total-len :element-type '(unsigned-byte 8))))
     (loop with write-pos = 0
           for field-bytes in field-octets
           do (replace buffer field-bytes :start1 write-pos)
              (incf write-pos (length field-bytes))
-             (setf (aref buffer write-pos) 0) ; ASCII NUL field delimiter
+             (setf (aref buffer write-pos) +field-delimiter+)
              (incf write-pos))
     buffer))
 

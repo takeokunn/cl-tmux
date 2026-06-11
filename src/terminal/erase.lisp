@@ -94,3 +94,87 @@
   (0  cx     (1- w))   ; from cursor to end
   (1  0       cx)      ; from start to cursor
   (2  0      (1- w)))
+
+;;; ── DEC Rectangle operations ─────────────────────────────────────────────────
+;;;
+;;; DECERA/DECFRA/DECCRA are xterm extensions used by full-screen TUI apps.
+;;; Parameters arrive 1-based; helpers convert to 0-based and clamp to bounds.
+
+(defun %rect-bounds (screen top1 left1 bottom1 right1)
+  "Convert 1-based inclusive DEC rectangle parameters to 0-based inclusive bounds
+   clamped to the screen, returning (values t0 l0 b0 r0).
+   A degenerate rectangle (top > bottom or left > right) returns (values 0 0 -1 -1)."
+  (let* ((w (screen-width  screen))
+         (h (screen-height screen))
+         (t0 (1- (max 1 top1)))
+         (l0 (1- (max 1 left1)))
+         (b0 (min (1- h) (1- (if (zerop bottom1) h bottom1))))
+         (r0 (min (1- w) (1- (if (zerop right1)  w right1)))))
+    (if (or (> t0 b0) (> l0 r0))
+        (values 0 0 -1 -1)
+        (values t0 l0 b0 r0))))
+
+(defun decera (screen top1 left1 bottom1 right1)
+  "DECERA — Erase Rectangular Area (CSI Pt;Pl;Pb;Pr $ z).
+   Parameters are 1-based and inclusive.  Cells are replaced with BCE blanks
+   (background-colour-erase), matching DECERA semantics in xterm."
+  (multiple-value-bind (t0 l0 b0 r0)
+      (%rect-bounds screen top1 left1 bottom1 right1)
+    (when (and (<= t0 b0) (<= l0 r0))
+      (loop for y from t0 to b0 do
+        (loop for x from l0 to r0 do
+          (setf (screen-cell screen x y) (%erase-cell screen))))
+      (setf (screen-dirty-p screen) t))))
+
+(defun decfra (screen char-code top1 left1 bottom1 right1)
+  "DECFRA — Fill Rectangular Area (CSI Pc;Pt;Pl;Pb;Pr $ x).
+   CHAR-CODE is the character to fill with (e.g. 65 for 'A').
+   Uses the current SGR pen for fg/bg/attrs so themed apps render correctly."
+  (multiple-value-bind (t0 l0 b0 r0)
+      (%rect-bounds screen top1 left1 bottom1 right1)
+    (when (and (<= t0 b0) (<= l0 r0))
+      (let* ((ch   (safe-code-char (if (zerop char-code) 32 char-code)))
+             (cell (make-cell :char     ch
+                              :fg       (screen-cur-fg       screen)
+                              :bg       (screen-cur-bg       screen)
+                              :attrs    (screen-cur-attrs    screen)
+                              :attrs2   (screen-cur-attrs2   screen)
+                              :ul-color (screen-cur-ul-color screen))))
+        (loop for y from t0 to b0 do
+          (loop for x from l0 to r0 do
+            (setf (screen-cell screen x y) cell))))
+      (setf (screen-dirty-p screen) t))))
+
+(defun deccra (screen src-top1 src-left1 src-bottom1 src-right1
+                      tgt-top1 tgt-left1)
+  "DECCRA — Copy Rectangular Area (CSI Pt;Pl;Pb;Pr;Pp;Ptp;Plp;Ppp $ v).
+   Page parameters are ignored (only page 0 exists).
+   Source and target rectangles are clamped independently; overlapping regions
+   are handled correctly by buffering source cells before writing."
+  (multiple-value-bind (st sl sb sr)
+      (%rect-bounds screen src-top1 src-left1 src-bottom1 src-right1)
+    (when (and (<= st sb) (<= sl sr))
+      (let* ((rows (1+ (- sb st)))
+             (cols (1+ (- sr sl)))
+             (w    (screen-width  screen))
+             (h    (screen-height screen))
+             (tt0  (1- (max 1 tgt-top1)))
+             (tl0  (1- (max 1 tgt-left1)))
+             (tb0  (min (1- h) (+ tt0 rows -1)))
+             (tr0  (min (1- w) (+ tl0 cols -1))))
+        ;; Buffer source cells (handles overlapping src/tgt regions).
+        (let ((buf (make-array (* rows cols))))
+          (loop for sy from st to sb
+                for ri from 0 do
+            (loop for sx from sl to sr
+                  for ci from 0 do
+              (setf (aref buf (+ (* ri cols) ci))
+                    (screen-cell screen sx sy))))
+          ;; Write to target.
+          (loop for ty from tt0 to tb0
+                for ri from 0 do
+            (loop for tx from tl0 to tr0
+                  for ci from 0 do
+              (setf (screen-cell screen tx ty)
+                    (aref buf (+ (* ri cols) ci))))))
+        (setf (screen-dirty-p screen) t)))))

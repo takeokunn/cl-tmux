@@ -70,16 +70,31 @@
 (test boolean-coercion-on-string
   "Setting a :boolean option with on/true/1 coerces to T."
   (with-fresh-global-options
-    (is (eq t (cl-tmux/options:set-option "status" "on")))
-    (is (eq t (cl-tmux/options:set-option "status" "true")))
-    (is (eq t (cl-tmux/options:set-option "status" "1")))))
+    (is (eq t (cl-tmux/options:set-option "mouse" "on")))
+    (is (eq t (cl-tmux/options:set-option "mouse" "true")))
+    (is (eq t (cl-tmux/options:set-option "mouse" "1")))))
 
 (test boolean-coercion-false-strings
   "Setting a :boolean option with any other string coerces to NIL."
   (with-fresh-global-options
-    (is (null (cl-tmux/options:set-option "status" "off")))
-    (is (null (cl-tmux/options:set-option "status" "0")))
-    (is (null (cl-tmux/options:set-option "status" "false")))))
+    (is (null (cl-tmux/options:set-option "mouse" "off")))
+    (is (null (cl-tmux/options:set-option "mouse" "0")))
+    (is (null (cl-tmux/options:set-option "mouse" "false")))))
+
+(test status-numeric-value-survives-coercion
+  "The `status` option is a CHOICE/number (off|on|2..5), NOT a boolean: a line
+   count is stored UNCHANGED so the renderer's status-line-count sees it.  The old
+   :boolean type coerced \"2\" to NIL, hiding a bar whose rows the layout still
+   reserved via *status-height* — the multi-line-status bug."
+  (with-fresh-global-options
+    (is (string= "2" (cl-tmux/options:set-option "status" "2"))
+        "set-option returns the raw \"2\" (no boolean coercion to NIL)")
+    (is (string= "2" (cl-tmux/options:get-option "status"))
+        "get-option returns \"2\" so status-line-count reserves 2 rows")
+    (is (string= "off" (cl-tmux/options:set-option "status" "off"))
+        "off is stored verbatim (status-line-count maps it to 0)")
+    (is (string= "on" (cl-tmux/options:set-option "status" "on"))
+        "on is stored verbatim (status-line-count maps it to 1)")))
 
 (test integer-coercion
   "Setting a :integer option with a numeric string coerces correctly."
@@ -335,10 +350,10 @@
         "status must be a registered option")
     (is (string= "status" (cl-tmux/options:option-spec-name spec))
         "option-spec-name must return \"status\"")
-    (is (eq :boolean (cl-tmux/options:option-spec-type spec))
-        "option-spec-type for status must be :boolean")
-    (is (eq t (cl-tmux/options:option-spec-default spec))
-        "option-spec-default for status must be T")))
+    (is (eq :string (cl-tmux/options:option-spec-type spec))
+        "option-spec-type for status must be :string (choice off|on|2..5)")
+    (is (string= "on" (cl-tmux/options:option-spec-default spec))
+        "option-spec-default for status must be \"on\"")))
 
 (test option-spec-integer-type
   "option-spec-type for an integer option is :integer."
@@ -459,10 +474,10 @@
 
 ;;; ── set-option and get-option for boolean status defaults ────────────────
 
-(test status-boolean-default-true
-  "The status option defaults to T (enabled)."
-  (is (eq t (cl-tmux/options:get-option "status"))
-      "status default must be T"))
+(test status-default-is-on-string
+  "The status option defaults to the string \"on\" (enabled; status-line-count → 1)."
+  (is (string= "on" (cl-tmux/options:get-option "status"))
+      "status default must be \"on\""))
 
 ;;; ── make-option-spec constructor ─────────────────────────────────────────
 
@@ -561,7 +576,7 @@
     (let ((result (cl-tmux/options:set-option "history-limit" "1234")))
       (is (= 1234 result)
           "set-option must return the coerced integer 1234, got ~S" result))
-    (let ((result (cl-tmux/options:set-option "status" "on")))
+    (let ((result (cl-tmux/options:set-option "mouse" "on")))
       (is (eq t result)
           "set-option must return T for boolean on, got ~S" result))
     (let ((result (cl-tmux/options:set-option "status-left" "text")))
@@ -635,9 +650,9 @@
    both the local hash and *global-options*."
   (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
         (cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
-    ;; status defaults to T in the spec table
-    (is (eq t (cl-tmux/options:get-option-for-window "status" win))
-        "get-option-for-window must return spec default T for status")))
+    ;; status defaults to the string "on" in the spec table
+    (is (string= "on" (cl-tmux/options:get-option-for-window "status" win))
+        "get-option-for-window must return spec default \"on\" for status")))
 
 ;;; ── Per-pane scoped option tests ─────────────────────────────────────────
 
@@ -918,3 +933,33 @@
   (let ((cl-tmux/options:*command-aliases* (make-hash-table :test #'equal)))
     (is (null (cl-tmux/options:list-command-aliases))
         "list-command-aliases must return NIL when registry is empty")))
+
+;;; ── Style-option classification + style-aware append ─────────────────────────
+
+(test style-option-p-classification
+  "style-option-p recognises *-style options but excludes clock-mode-style (a
+   12/24-hour choice that merely shares the suffix)."
+  (is-true  (cl-tmux/options:style-option-p "status-style"))
+  (is-true  (cl-tmux/options:style-option-p "window-status-current-style"))
+  (is-true  (cl-tmux/options:style-option-p "pane-active-border-style"))
+  (is-true  (cl-tmux/options:style-option-p "mode-style"))
+  (is-false (cl-tmux/options:style-option-p "clock-mode-style"))
+  (is-false (cl-tmux/options:style-option-p "status-left"))
+  (is-false (cl-tmux/options:style-option-p "status"))
+  (is-false (cl-tmux/options:style-option-p "-style")))
+
+(test append-option-value-style-vs-plain
+  "append-option-value comma-joins non-empty style values, plain-concats other
+   options, and never emits a stray comma when an operand is empty."
+  (is (string= "bg=red,fg=blue"
+               (cl-tmux/options:append-option-value "status-style" "bg=red" "fg=blue"))
+      "non-empty style append → comma separator")
+  (is (string= "fg=blue"
+               (cl-tmux/options:append-option-value "status-style" "" "fg=blue"))
+      "empty old style value → no leading comma")
+  (is (string= "bg=red"
+               (cl-tmux/options:append-option-value "status-style" "bg=red" ""))
+      "empty appended value → no trailing comma")
+  (is (string= "AB"
+               (cl-tmux/options:append-option-value "status-left" "A" "B"))
+      "non-style option → separator-less concatenation"))

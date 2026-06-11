@@ -571,22 +571,8 @@
       (when (and height (plusp height))
         (setf *status-height* height)
         t)))
-  ("set" 2 (option-name option-value)
-    (cl-tmux/options:set-option option-name option-value)
-    t)
-  ("set-option" 2 (option-name option-value)
-    (cl-tmux/options:set-option option-name option-value)
-    t)
-  ("setw" 2 (option-name option-value)
-    (cl-tmux/options:set-option option-name option-value)
-    t)
-  ("set-window-option" 2 (option-name option-value)
-    (cl-tmux/options:set-option option-name option-value)
-    t)
-  ("sets" 2 (option-name option-value)
-    (cl-tmux/options:set-option option-name option-value)
-    t)
-  ("set-session-option" 2 (option-name option-value)
+  (:aliases ("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")
+    2 (option-name option-value)
     (cl-tmux/options:set-option option-name option-value)
     t)
   ("set-hook" 2 (event-name command-name)
@@ -604,10 +590,7 @@
   ;; set-environment / setenv 2-arg form: VAR VALUE (no flags).
   ;; The %apply-set-environment-directive handler in apply-config-directive
   ;; intercepts this first (handling -r/-g flags); these entries are fallbacks.
-  ("set-environment" 2 (var-name var-value)
-    (%config-setenv var-name var-value)
-    t)
-  ("setenv" 2 (var-name var-value)
+  (:aliases ("set-environment" "setenv") 2 (var-name var-value)
     (%config-setenv var-name var-value)
     t))
 
@@ -682,23 +665,20 @@
              (if server-p
                  (remhash name cl-tmux/options:*server-options*)
                  (remhash name cl-tmux/options:*global-options*)))
-            ;; -s + -a: append to server option.
+            ;; -s + -a: append to server option (style options use a ',' separator).
             ((and server-p append-p)
              (cl-tmux/options:set-server-option
-              name (concatenate 'string
-                                (princ-to-string
-                                 (or (cl-tmux/options:get-server-option name nil) ""))
-                                value)))
+              name (cl-tmux/options:append-option-value
+                    name (cl-tmux/options:get-server-option name nil) value)))
             ;; -s: server option (escape-time, exit-empty, exit-unattached, etc.)
             (server-p
              (cl-tmux/options:set-server-option name value))
-            ;; -a: append to global option.
+            ;; -a: append to global option (style options use a ',' separator so
+            ;; `set -ag status-style fg=blue` extends rather than corrupts the value).
             (append-p
              (cl-tmux/options:set-option
-              name (concatenate 'string
-                                (princ-to-string
-                                 (or (cl-tmux/options:get-option name nil) ""))
-                                value)))
+              name (cl-tmux/options:append-option-value
+                    name (cl-tmux/options:get-option name nil) value)))
             ;; Default: set global option.
             (t
              (cl-tmux/options:set-option name value)))
@@ -710,8 +690,10 @@
 
 (defun %apply-option-side-effects (name value)
   "Apply runtime side-effects for options that touch non-option state.
-   Handles: prefix, prefix2 (key routing), default-shell, status-height,
-            escape-time, history-limit."
+   Handles: prefix, prefix2 (key routing), default-shell, escape-time,
+            status (status-bar height), mouse (renderer reporting),
+            update-environment (model variable), terminal-overrides/features
+            (silently accepted — cl-tmux always emits 24-bit SGR)."
   (cond
     ((string= name "prefix")
      (let ((byte (%parse-prefix-key value)))
@@ -868,6 +850,27 @@
          (not (string= result ""))
          (not (string= result "0")))))
 
+(defun %take-brace-or-command (tokens)
+  "Consume one command UNIT from the front of TOKENS (an if-shell then/else body).
+   A unit is either a brace block { ... } — its inner tokens are split into command
+   token-lists via %split-on-semicolons (depth-tracked for nesting; a missing close
+   brace is tolerated, end-of-list closes) — or a single bare token, a complete
+   quoted command string re-tokenised into one command.  Returns
+   (values COMMAND-TOKEN-LISTS REST), each list ready for apply-config-directive."
+  (cond
+    ((null tokens) (values nil nil))
+    ((string= (first tokens) "{")
+     (let ((depth 1) (inner '()) (rest (rest tokens)))
+       (loop for tok = (pop rest)
+             while tok do
+               (cond ((string= tok "{") (incf depth) (push tok inner))
+                     ((string= tok "}") (decf depth)
+                      (if (zerop depth) (return) (push tok inner)))
+                     (t (push tok inner))))
+       (values (%split-on-semicolons (nreverse inner)) rest)))
+    (t
+     (values (list (%config-tokens (first tokens))) (rest tokens)))))
+
 (defun %apply-if-shell-directive (cmd args)
   "Handle 'if-shell [-bF] [-t target] CONDITION THEN-CMD [ELSE-CMD]' directives.
    Without -F, CONDITION is a shell command (exit 0 = true).  With -F, CONDITION
@@ -888,18 +891,22 @@
                    (t (when (find #\F tok) (setf format-mode t))))))
       (when (>= (length remaining) 2)
         (let* ((condition (first remaining))
-               (then-cmd  (second remaining))
-               (else-cmd  (third remaining))
                (truthy-p  (if format-mode
                               (%if-shell-format-true-p condition)
                               (eql 0 (nth-value 2
                                        (ignore-errors
                                          (uiop:run-program
                                           (list "/bin/sh" "-c" condition)
-                                          :ignore-error-status t :timeout 2))))))
-               (apply-str (if truthy-p then-cmd else-cmd)))
-          (when apply-str
-            (apply-config-directive (%config-tokens apply-str)))))
+                                          :ignore-error-status t :timeout 2)))))))
+          ;; THEN/ELSE bodies are each either a brace block { ... } (tmux 3.x) or a
+          ;; single quoted command token.  %take-brace-or-command consumes one unit
+          ;; and returns its command(s) as ready-to-apply token-lists.
+          (multiple-value-bind (then-cmds after-then)
+              (%take-brace-or-command (rest remaining))
+            (let ((else-cmds (and after-then
+                                  (nth-value 0 (%take-brace-or-command after-then)))))
+              (dolist (line (if truthy-p then-cmds else-cmds))
+                (apply-config-directive line))))))
       t)))
 
 ;;; ── command-alias array syntax handling ─────────────────────────────────────
@@ -990,16 +997,53 @@
             #'string<)
       (list path)))
 
+(defun %parse-source-file-flags (args)
+  "Parse the leading -Fnqv flags of source-file.  Returns
+   (values PARSE-ONLY-P QUIET-P VERBOSE-P FORMAT-P POSITIONALS).  Clustered flags
+   (e.g. -qn) are supported; scanning stops at the first non-flag token (a path)."
+  (let ((parse-only nil) (quiet nil) (verbose nil) (format-p nil) (rest args))
+    (loop while (and rest
+                     (let ((tok (first rest)))
+                       (and (> (length tok) 1) (char= (char tok 0) #\-))))
+          do (let ((tok (pop rest)))
+               (when (find #\n tok) (setf parse-only t))
+               (when (find #\q tok) (setf quiet t))
+               (when (find #\v tok) (setf verbose t))
+               (when (find #\F tok) (setf format-p t))))
+    (values parse-only quiet verbose format-p rest)))
+
+(defun %parse-config-file-only (file)
+  "Parse-only loader for `source-file -n`: read FILE and tokenise each logical line
+   (honouring # comments) WITHOUT applying any directive, so NO command executes —
+   tmux's CMD_PARSE_PARSEONLY syntax check.  Errors are swallowed (lenient, like
+   load-config-file)."
+  (ignore-errors
+    (with-open-file (in file :if-does-not-exist nil)
+      (when in
+        (loop for line = (read-line in nil nil)
+              while line
+              do (%config-tokens (%strip-config-comment line)))))))
+
 (defun source-files (args)
-  "Implement `source-file [-q] [-n] [-v] path...`: for each non-flag PATH, expand a
-   leading ~ and shell globs (* ? []), then load every matching config file.
-   Errors (missing file, parse failure) are swallowed so a bad source never crashes
-   the session — cl-tmux is therefore effectively -q whether or not -q is given.
-   Returns T."
-  (dolist (raw args)
-    (unless (and (plusp (length raw)) (char= (char raw 0) #\-))   ; skip -q/-n/-v
-      (dolist (file (%glob-expand (%expand-leading-tilde raw)))
-        (ignore-errors (load-config-file file)))))
+  "Implement `source-file [-Fnqv] path...`: for each non-flag PATH, optionally
+   expand it as a format string (-F), then expand a leading ~ and shell globs
+   (* ? []), and load every matching config file.  With -n (parse-only), each file
+   is read and tokenised but NO command runs (tmux's CMD_PARSE_PARSEONLY syntax
+   check).  Errors (missing file, parse failure) are always swallowed, so cl-tmux is
+   effectively -q whether or not -q is given; -v is accepted (no client sink to echo
+   to).  Returns T."
+  (multiple-value-bind (parse-only quiet verbose format-p positionals)
+      (%parse-source-file-flags args)
+    (declare (ignore quiet verbose))
+    (dolist (raw positionals)
+      (let ((path (if format-p
+                      (or (ignore-errors (cl-tmux/format:expand-format raw nil)) raw)
+                      raw)))
+        (when (plusp (length path))
+          (dolist (file (%glob-expand (%expand-leading-tilde path)))
+            (if parse-only
+                (%parse-config-file-only file)
+                (ignore-errors (load-config-file file))))))))
   t)
 
 (defun %apply-source-file-directive (cmd args)
@@ -1046,6 +1090,16 @@
              ((and (< (1+ i) len) (char= (char line (1+ i)) #\#)) (incf i))
              ;; #{ / #( / #[ — a format construct, not a comment.
              ((and (< (1+ i) len) (member (char line (1+ i)) '(#\{ #\( #\[))) nil)
+             ;; A # begins a comment only at the START of a token (line start or
+             ;; right after whitespace).  A # in the MIDDLE of an unquoted word —
+             ;; e.g. a hex colour bg=#0000ff or @var=#abc — is a literal character,
+             ;; matching tmux's lexer, which only enters comment scanning at a token
+             ;; boundary (cmd-parse.y yylex).  Without this guard such values were
+             ;; silently truncated to "bg=" unless the user quoted them.
+             ((and (> i 0)
+                   (let ((p (char line (1- i))))
+                     (not (or (char= p #\Space) (char= p #\Tab)))))
+              nil)
              ;; Otherwise a comment begins here: drop the rest of the line.
              (t (return-from %strip-config-comment
                   (string-right-trim '(#\Space #\Tab) (subseq line 0 i))))))))

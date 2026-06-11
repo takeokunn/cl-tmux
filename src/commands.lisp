@@ -8,15 +8,17 @@
 ;;;                              (scrollback(Opts) -> emit_scrollback ; true),
 ;;;                              emit_visible_rows.
 
-(defun %swap-pane-geometry (ap other)
-  "Exchange the screen positions of two panes AP and OTHER in-place.
+(defun %swap-pane-geometry (active-pane other)
+  "Exchange the screen positions of two panes ACTIVE-PANE and OTHER in-place.
    Updates both pane structs so the renderer sees the swapped layout immediately."
-  (let ((ax (pane-x ap)) (ay (pane-y ap))
-        (aw (pane-width ap)) (ah (pane-height ap)))
-    (pane-reposition ap
+  (let ((saved-x      (pane-x      active-pane))
+        (saved-y      (pane-y      active-pane))
+        (saved-width  (pane-width  active-pane))
+        (saved-height (pane-height active-pane)))
+    (pane-reposition active-pane
                      (pane-x other) (pane-y other)
                      (pane-width other) (pane-height other))
-    (pane-reposition other ax ay aw ah)))
+    (pane-reposition other saved-x saved-y saved-width saved-height)))
 
 (defun swap-two-panes (window pane-a pane-b)
   "Swap PANE-A and PANE-B within WINDOW: exchange both their list positions and
@@ -64,10 +66,20 @@
 ;;; renderer).  capture-pane -e emits these so a captured buffer keeps its colours
 ;;; when re-displayed (e.g. the `capture-pane -ep` idiom, or session-restore tools).
 
-(defparameter +capture-sgr-attr-codes+
-  '((0 . 1) (1 . 2) (2 . 7) (3 . 4) (4 . 5) (5 . 3) (6 . 8) (7 . 9))
-  "Cell attribute bit → SGR code: bold/dim/reverse/underline/blink/italic/
-   conceal/strikethrough (mirrors the renderer's cell-attr table).")
+;;; Cell attribute bit → SGR code mapping.
+;;; Bit 0 = bold (SGR 1), bit 1 = dim (SGR 2), bit 2 = reverse (SGR 7),
+;;; bit 3 = underline (SGR 4), bit 4 = blink (SGR 5), bit 5 = italic (SGR 3),
+;;; bit 6 = conceal (SGR 8), bit 7 = strikethrough (SGR 9).
+;;; Mirrors the renderer's cell-attr table — changes to that table must be
+;;; reflected here.  Using eval-when + defconstant avoids the list non-EQL
+;;; redefinition error while communicating immutability to readers.
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defconstant +capture-sgr-attr-codes+
+    (if (boundp '+capture-sgr-attr-codes+)
+        (symbol-value '+capture-sgr-attr-codes+)
+        '((0 . 1) (1 . 2) (2 . 7) (3 . 4) (4 . 5) (5 . 3) (6 . 8) (7 . 9)))
+    "Cell attribute bit → SGR code: bold/dim/reverse/underline/blink/italic/
+   conceal/strikethrough (mirrors the renderer's cell-attr table)."))
 
 (defun %capture-color-sgr (color is-bg)
   "SGR parameter fragment (a string) for a cell COLOR value; IS-BG selects the
@@ -267,7 +279,7 @@
 
 (defun %join-pane-kill-empty-src (session src-window)
   "Remove SRC-WINDOW from SESSION when it has no panes remaining.
-   Switches the active window to the nearest survivor if needed."
+   Switches the active window to the first surviving window if needed."
   (when (null (window-panes src-window))
     (let ((remaining (remove src-window (session-windows session))))
       (setf (session-windows session) remaining)

@@ -173,10 +173,12 @@
   (#\H :resize-left)
   (#\J :resize-down)
   (#\K :resize-up)
+  ;; #\L and #\! carry tmux-incorrect placeholders here; events-loop.lisp
+  ;; overrides them to their real defaults (last-session and break-pane).
   (#\L :resize-right)
-  (#\Z :zoom-toggle)
+  (#\Z :zoom-toggle)        ; uppercase alias; events-loop.lisp adds lowercase z
   (#\$ :rename-session)
-  (#\! :if-shell)
+  (#\! :if-shell)           ; events-loop.lisp overrides to :break-pane
   (:digits :select-window))
 
 ;;; ── Key-binding accessors (thin wrappers over key-tables) ─────────────────
@@ -261,6 +263,29 @@
   (let ((tbl (gethash +table-prefix+ *key-tables*)))
     (when tbl (remhash key tbl))))
 
+;;; ── Default emacs copy-mode bindings ─────────────────────────────────────
+
+(defun install-default-copy-mode-bindings ()
+  "Populate the 'copy-mode' (emacs) key table with tmux 3.x default bindings.
+   Meta bindings use names like \"M-f\" so they match what %meta-key-name produces
+   when ESC+key arrives in the input stream.  Idempotent."
+  ;; word navigation
+  (key-table-bind +table-copy-mode+ "M-f" :copy-mode-word-forward)
+  (key-table-bind +table-copy-mode+ "M-b" :copy-mode-word-backward)
+  (key-table-bind +table-copy-mode+ "M-e" :copy-mode-word-end)
+  ;; history extremes
+  (key-table-bind +table-copy-mode+ "M-<" :copy-mode-top)
+  (key-table-bind +table-copy-mode+ "M->" :copy-mode-bottom)
+  ;; page scrolling
+  (key-table-bind +table-copy-mode+ "M-v" :copy-mode-page-up)
+  ;; within-viewport movement
+  (key-table-bind +table-copy-mode+ "M-r" :copy-mode-middle)
+  (key-table-bind +table-copy-mode+ "M-R" :copy-mode-high)
+  ;; selection copy (emacs M-w = copy without cut)
+  (key-table-bind +table-copy-mode+ "M-w" :copy-mode-yank)
+  ;; back-to-indentation (emacs M-m)
+  (key-table-bind +table-copy-mode+ "M-m" :copy-mode-back-to-indentation))
+
 ;;; ── Initialisation ────────────────────────────────────────────────────────
 
 (defun initialize-default-key-tables ()
@@ -270,7 +295,8 @@
   (install-default-prefix-bindings)
   (set-key-binding (code-char +prefix-key-code+) :send-prefix)
   (ensure-key-table +table-root+)
-  (ensure-key-table +table-copy-mode+))
+  (ensure-key-table +table-copy-mode+)
+  (install-default-copy-mode-bindings))
 
 ;;; Initialise tables at load time.
 (initialize-default-key-tables)

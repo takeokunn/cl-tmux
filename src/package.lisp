@@ -176,6 +176,7 @@
    #:screen-scrollback
    ;; Copy-mode selection state
    #:screen-copy-mark
+   #:screen-copy-mark-offset
    #:screen-copy-cursor
    #:screen-copy-selecting
    ;; copy-mode -e: auto-exit when scrolled to live bottom
@@ -200,8 +201,9 @@
    #:screen-bracketed-paste
    ;; Application cursor keys
    #:screen-app-cursor-keys
-   ;; OSC 0/2 window title
+   ;; OSC 0/2 window title + XTPUSHTITLE/XTPOPTITLE stack
    #:screen-title
+   #:screen-title-stack
    ;; OSC 7 current working directory
    #:screen-cwd
    ;; Mouse reporting mode
@@ -283,6 +285,10 @@
    #:erase-region
    #:erase-display
    #:erase-line
+   ;; DEC Rectangle operations (DECERA/DECFRA/DECCRA)
+   #:decera
+   #:decfra
+   #:deccra
    ;; Edit (insert/delete characters and lines)
    #:delete-chars
    #:insert-chars
@@ -411,6 +417,7 @@
    #:screen-scrollback
    ;; Copy-mode selection state
    #:screen-copy-mark
+   #:screen-copy-mark-offset
    #:screen-copy-cursor
    #:screen-copy-selecting
    ;; copy-mode -e: auto-exit when scrolled to live bottom
@@ -462,6 +469,7 @@
    #:prompt-vi-normal-p #:prompt-single-key
    #:*prompt* #:prompt-active-p #:prompt-start
    #:prompt-input #:prompt-backspace #:prompt-clear #:prompt-text
+   #:prompt-notify-change
    ;; Cursor navigation
    #:prompt-cursor-bol #:prompt-cursor-eol
    #:prompt-cursor-back #:prompt-cursor-forward
@@ -626,6 +634,7 @@
            #:control-session-changed #:control-session-renamed
            #:control-window-add #:control-window-close #:control-window-renamed
            #:control-layout-change #:control-unlinked-window-add
+           #:control-window-pane-changed #:control-session-window-changed
            #:control-client-session-changed #:control-exit))
 
 (defpackage #:cl-tmux/hooks
@@ -670,6 +679,7 @@
    #:command-hooks
    #:clear-command-hooks
    #:describe-command-hooks
+   #:%list-command-hooks
    #:*command-hook-runner*
    #:run-command-hooks-via-runner))
 
@@ -683,6 +693,7 @@
            #:define-tmux-options
            #:get-option #:set-option
            #:option-defined-p #:all-options
+           #:style-option-p #:append-option-value
            ;; Server options
            #:*server-options* #:*server-option-registry*
            #:define-server-options
@@ -747,6 +758,7 @@
    #:copy-mode-begin-selection
    #:copy-mode-cancel-selection
    #:copy-mode-other-end
+   #:copy-mode-jump-to-mark
    #:copy-mode-clear-selection
    #:copy-mode-select-word
    #:copy-mode-yank
@@ -775,22 +787,44 @@
    #:copy-mode-half-page-down
    #:copy-mode-scroll-up-line
    #:copy-mode-scroll-down-line
+   #:copy-mode-scroll-middle
+   #:copy-mode-previous-paragraph
+   #:copy-mode-next-paragraph
    ;; Line selection (V)
    #:copy-mode-begin-line-selection
+   ;; Goto absolute line number (send-keys -X goto-line N)
+   #:copy-mode-goto-line
    ;; Copy variants
    #:copy-mode-copy-end-of-line
    #:copy-mode-copy-line
+   ;; Jump-to-char (vi f/F/t/T/;/,)
+   #:copy-mode-jump-forward
+   #:copy-mode-jump-backward
+   #:copy-mode-jump-to
+   #:copy-mode-jump-to-backward
+   #:copy-mode-jump-again
+   #:copy-mode-jump-reverse
+   #:*copy-mode-last-jump*
    ;; Search
    #:copy-mode-search-forward
    #:copy-mode-search-backward
    #:copy-mode-search-next
    #:copy-mode-search-prev
+   ;; Incremental search (C-s / C-r in copy-mode-vi and copy-mode)
+   #:copy-mode-search-forward-incremental
+   #:copy-mode-search-backward-incremental
+   ;; Bracket matching (vi %)
+   #:copy-mode-next-matching-bracket
    ;; Rectangle select
    #:copy-mode-toggle-rectangle
+   ;; Mark management
+   #:copy-mode-set-mark
    ;; Append selection
    #:copy-mode-append-selection
+   #:copy-mode-append-selection-and-cancel
    ;; Copy-pipe (yank + pipe to shell command)
    #:copy-mode-copy-pipe
+   #:copy-mode-copy-pipe-no-cancel
    #:rename-session
    #:run-shell
    #:if-shell
