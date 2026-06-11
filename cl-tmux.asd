@@ -135,26 +135,32 @@
          (:file "scroll-tests-b")  ; direct-row-primitives, direct-action-erase — part II
          (:file "modes-tests")    ; RIS/alt-screen/DECSC/mouse/bracketed-paste/focus — part I
          (:file "modes-tests-b")  ; set-cursor-shape/bell-pending/charset/title/reset-modes — part II
-         (:file "sgr-tests")
+         (:file "sgr-tests")    ; sgr suite: fg/bg tables, truecolor, colon SGR, pen-to-sgr-params — part I
+         (:file "sgr-tests-b")  ; direct-action-sgr, sgr-extended, extra codes, define-sgr-rules, consume-256-color — part II
          (:file "csi-tests")    ; cursor-movement/DECSCUSR/CBT/SU-SD/REP/DA-response — part I
-         (:file "csi-tests-b")  ; ECH/DECRQM/XTWINOPS/CPR/REP-0/VPR/ICH/DCH/ED/EL/IL/DL — part II
+         (:file "csi-tests-b")  ; ECH/DSR/ich-dch/decstbm/execute-csi-direct/%csi-decstbm-params — part II
+         (:file "csi-tests-c")  ; csi-unknown-sequences/DECOM/cup-row/enqueue/XTPUSHTITLE/DEC-rect — part III
          (:file "parser-tests")    ; utf8/special/OSC/ESC-hash/private/dec-pm — part I
          (:file "parser-tests-b")  ; combining-chars/ACS/dcs-parsing/xtgettcap/decrqss/ground-state/direct-dcs/direct-osc — part II
          (:file "parser-tests-d")  ; osc-dispatch-edge-cases/osc52/osc7/parser-suite/base64/csi-colon — part IV
          (:file "parser-tests-c")  ; basic-text, inline-predicates, CPS state functions, define-state — part III
          (:file "emulator-tests")))
        (:file "layout-tests")      ; layout-tree core: leaves/split/resize/collapse/persistence — part I
-       (:file "layout-tests-b")    ; named-layout helpers, apply-named-layout, persistence internals — part II
-       (:file "layout-geometry-tests")
+       (:file "layout-tests-b")    ; named-layout helpers, apply-named-layout — part II
+       (:file "layout-tests-c")    ; layout persistence internals: split-bounding-box, node-to-string, read-digits, round-trips — part III
+       (:file "layout-geometry-tests")  ; orientation helpers, layout-assign, resize-find-split, pane-at-position, split-child — part I
+       (:file "layout-geometry-tests-b") ; %ranges-overlap-p, pane-center, closest-to-center, define-axis-rules, nested min-extent — part II
        (:file "pane-tests")
        (:file "window-tests")      ; window-relayout/split/resize/zoom/lock/pane-neighbor — part I
-       (:file "window-tests-b")    ; apply-named-layout/move/swap/rotate/find/format/auto-rename — part II
+       (:file "window-tests-b")    ; apply-named-layout (5 layouts), last-window/move/swap/rotate — part II
+       (:file "window-tests-c")    ; find-window-by-name, list-windows-format, auto-rename-from-osc — part III
        (:file "session-tests")
        (:file "format-tests")            ; format expansion — part I (shorthands, brace/conditional, context, window_flags, helpers)
        (:file "format-tests-d")          ; format expansion — part IV (shorthand-table, %expand-brace, %truthy-p, pane/client vars, structural, modifiers)
        (:file "format-tests-b")          ; format expansion — part II (path/substitute/nested/strftime/context/glob/regex)
        (:file "format-tests-c")          ; format expansion — part III (arithmetic/variables/geometry/content-search/direct-unit-tests)
-       (:file "target-tests")
+       (:file "target-tests")      ; parse-session/window/pane/target, find-by-target, resolve-target — part I
+       (:file "target-tests-b")    ; %sigil-id, %name-prefix-p, edge cases, table-driven parse-target, multi-digit ids — part II
        (:file "buffer-tests")
        (:file "control-mode-tests")
        (:file "options-tests")    ; option registry, coercions, boolean defaults, make-option-spec — part I
@@ -172,7 +178,8 @@
        (:file "renderer-tests")            ; renderer — part I (status-bar, render-session, clear-display, status-indicators, window-list)
        (:file "renderer-tests-d")          ; renderer — part IV (per-window options, alert-tab-styles, status-bar-line, overlay, DECTCEM)
        (:file "renderer-tests-b")          ; renderer — part II (status-bar, parse-style, render-popup/menu)
-       (:file "renderer-tests-c")          ; renderer — part III (mouse/focus/keys, lock-screen, justify, cursor-shape, overlay, inline-style)
+       (:file "renderer-tests-c")          ; renderer — part III (mouse/focus/keys, lock-screen, justify, cursor-shape, zoom-suppression)
+       (:file "renderer-tests-e")          ; renderer — part V (%clamp-status-segment, cursor-shape in output, status-bar-line gap, inline-style, bell relay)
        (:file "dispatch-tests")               ; core dispatch — part I (cyclic helpers, window/pane select, copy-mode, detach, prefix)
        (:file "dispatch-tests-c")             ; core dispatch — part III (focus events window-switch, list-keys, select-pane, zoom, list-windows/sessions)
        (:file "dispatch-tests-b")            ; core dispatch — part II (swap-pane, kill-pane-confirm, command-prompt, run-command-line, set-option)
@@ -210,7 +217,8 @@
        (:file "commands-tests-i")        ; rectangle-sel, run-copy-cmd, set-cursor, send-keys-l, jump-to-char, goto-line, search-incr — part IX
        (:file "overlay-tests")
        (:file "prompt-tests")
-       (:file "protocol-tests")
+       (:file "protocol-tests")            ; octets/frame-header/round-trips/msg-command — part I
+       (:file "protocol-tests-b")          ; read-u32, split-on-nul, encode/decode-command-payload, target-field-p — part II
        (:file "transport-tests")
        (:file "net-tests")
        (:file "server-tests")
