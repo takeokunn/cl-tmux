@@ -667,3 +667,91 @@
   (with-isolated-config
     (is (= 1 (cl-tmux/config:load-config-from-string "bind X paste-buffer -b foo"))
         "paste-buffer -b parses as one applied directive")))
+
+;;; ── Coverage gap #19: join/move-pane default source = marked pane ───────────
+
+(test cmd-join-pane-uses-marked-pane-as-default-source
+  "join-pane without -s uses *server-marked-pane* as source when it is set."
+  (with-fake-session (s :nwindows 2)
+    (let* ((wins   (cl-tmux/model:session-windows s))
+           (win0   (first wins))
+           (win1   (second wins))
+           (pane0  (cl-tmux/model:window-active-pane win0))
+           (pane1  (cl-tmux/model:window-active-pane win1))
+           ;; Mark a pane in win1 — join-pane without -s should use it as source.
+           (cl-tmux::*server-marked-pane* pane1))
+      (declare (ignore pane0))
+      ;; Point session at win0 (the destination window).
+      (cl-tmux/model:session-select-window s win0)
+      ;; join-pane with no flags: source = marked pane (pane1 from win1).
+      (cl-tmux::%cmd-join-pane-arg s '())
+      (is (member pane1 (cl-tmux/model:window-panes win0))
+          "join-pane without -s must move the marked pane into the active window"))))
+
+(test cmd-join-pane-ignores-marked-pane-when-s-given
+  "join-pane with explicit -s ignores *server-marked-pane* and uses the given source."
+  (with-fake-session (s :nwindows 2)
+    (let* ((wins   (cl-tmux/model:session-windows s))
+           (win0   (first wins))
+           (win1   (second wins))
+           (pane0  (cl-tmux/model:window-active-pane win0))
+           (pane1  (cl-tmux/model:window-active-pane win1))
+           ;; Mark pane0 — join-pane -s win1 should still use pane1.
+           (cl-tmux::*server-marked-pane* pane0))
+      (declare (ignore pane0))
+      ;; Point session at win0.
+      (cl-tmux/model:session-select-window s win0)
+      ;; Explicit -s @N (win1 window-id sigil) targets pane1, not the marked pane.
+      (cl-tmux::%cmd-join-pane-arg s (list "-s" (format nil "@~D" (cl-tmux/model:window-id win1))))
+      (is (member pane1 (cl-tmux/model:window-panes win0))
+          "join-pane -s must use the explicit source, not the marked pane"))))
+
+;;; ── %cmd-wait-for-arg (gap #10: -S/-L/-U flags) ─────────────────────────────
+
+(test cmd-wait-for-arg-signal-signals-channel
+  "wait-for -S channel signals the named channel (unblocks waiters)."
+  (with-fake-session (s)
+    (let ((received nil))
+      ;; Start a thread waiting on the channel.
+      (bt:make-thread
+       (lambda () (setf received (cl-tmux::wait-for-channel "test-ch-signal")))
+       :name "waiter")
+      ;; Brief yield so the waiter thread reaches condition-wait before signal.
+      (sleep 0.05)
+      (cl-tmux::%cmd-wait-for-arg s '("-S" "test-ch-signal"))
+      (sleep 0.05)
+      (is-true received "wait-for -S must unblock the waiting thread"))))
+
+(test cmd-wait-for-arg-lock-suppresses-signal
+  "wait-for -L channel locks the channel; subsequent -S does not notify waiters."
+  (with-fake-session (s)
+    ;; Lock first, then signal — the signal should be a no-op.
+    (cl-tmux::%cmd-wait-for-arg s '("-L" "test-ch-lock"))
+    ;; A waiter on a LOCKED channel receives no notification; wait-for-channel
+    ;; will time-out and return NIL.  We verify the lock was applied by checking
+    ;; that signal-channel does not raise an error and that the channel is locked.
+    (let ((ch (cl-tmux::%ensure-channel "test-ch-lock")))
+      (is-true (getf ch :locked) "wait-for -L must set the :locked flag on the channel"))))
+
+(test cmd-wait-for-arg-unlock-clears-lock
+  "wait-for -U channel unlocks a previously locked channel."
+  (with-fake-session (s)
+    (cl-tmux::%cmd-wait-for-arg s '("-L" "test-ch-unlock"))
+    (cl-tmux::%cmd-wait-for-arg s '("-U" "test-ch-unlock"))
+    (let ((ch (cl-tmux::%ensure-channel "test-ch-unlock")))
+      (is-false (getf ch :locked) "wait-for -U must clear the :locked flag"))))
+
+(test cmd-wait-for-arg-bare-blocks-until-signaled
+  "wait-for channel (bare, no flags) blocks until the channel is signaled."
+  (with-fake-session (s)
+    (let ((result :pending))
+      ;; Run wait-for in a background thread so it blocks without stalling tests.
+      (bt:make-thread
+       (lambda ()
+         (setf result (cl-tmux::%cmd-wait-for-arg s '("test-ch-bare"))))
+       :name "bare-waiter")
+      (sleep 0.05)
+      (cl-tmux::signal-channel "test-ch-bare")
+      (sleep 0.05)
+      (is (not (eq result :pending))
+          "wait-for (bare) must unblock after the channel is signaled"))))

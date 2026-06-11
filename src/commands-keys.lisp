@@ -1,4 +1,4 @@
-(in-package #:cl-tmux)
+(in-package #:cl-tmux/commands)
 
 ;;;; send-keys key-name translation, command-string tokeniser,
 ;;;;  send-keys-to-pane, and shell helpers (run-shell, if-shell).

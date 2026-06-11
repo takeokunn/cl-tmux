@@ -94,7 +94,9 @@
    ;; server-access [-adlrwk] [user]: manage the server access-control list.
    (cons '("server-access")             #'%cmd-server-access)
    ;; customize-mode [-NF f -f filter -t pane]: options/bindings customize tree.
-   (cons '("customize-mode" "customize") #'%cmd-customize-mode))
+   (cons '("customize-mode" "customize") #'%cmd-customize-mode)
+   ;; wait-for [-SLU] channel: channel-synchronization (block/signal/lock/unlock).
+   (cons '("wait-for")                   #'%cmd-wait-for-arg))
   "Arg-taking commands: (list-of-names . handler), handler a function of
    (SESSION ARGS).  Consulted by %run-command-line before the no-argument
    %dispatch-named-command name table.")

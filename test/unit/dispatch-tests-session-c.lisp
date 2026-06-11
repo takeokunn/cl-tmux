@@ -565,3 +565,51 @@
              (is (search "%session-window-changed $1 @0" (get-output-stream-string out))
                  "emitted with the session id and its active window id"))
         (cl-tmux::%remove-control-notifications handlers)))))
+
+;;; ── control-mode %output relay (#17) ─────────────────────────────────────────
+
+(test control-notifications-pane-output-emits-percent-output
+  "+hook-pane-output+ emits %output %<pane-id> <escaped-data> to a control client."
+  (with-isolated-hooks
+    (let* ((out      (make-string-output-stream))
+           (handlers (cl-tmux::%install-control-notifications out)))
+      (unwind-protect
+           (let ((pane (%make-test-pane :id 7)))
+             ;; Fire the hook with an octet vector (as runtime.lisp does).
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-output+
+                                      pane
+                                      (coerce '(104 101 108 108 111) ; "hello"
+                                              '(vector (unsigned-byte 8))))
+             (is (search "%output %7 hello" (get-output-stream-string out))
+                 "%output notification emitted with pane id and escaped bytes"))
+        (cl-tmux::%remove-control-notifications handlers)))))
+
+(test control-notifications-pane-output-escapes-non-printable
+  "+hook-pane-output+ escapes non-printable bytes in the %output notification."
+  (with-isolated-hooks
+    (let* ((out      (make-string-output-stream))
+           (handlers (cl-tmux::%install-control-notifications out)))
+      (unwind-protect
+           (let ((pane (%make-test-pane :id 3)))
+             ;; ESC (27 = octal 033) followed by 'A' (65).
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-output+
+                                      pane
+                                      (coerce '(27 65)
+                                              '(vector (unsigned-byte 8))))
+             (is (search "%output %3 \\033A" (get-output-stream-string out))
+                 "ESC byte is escaped to \\033 in %output notification"))
+        (cl-tmux::%remove-control-notifications handlers)))))
+
+(test control-notifications-pane-output-noop-on-empty
+  "+hook-pane-output+ does not emit when the byte vector is empty."
+  (with-isolated-hooks
+    (let* ((out      (make-string-output-stream))
+           (handlers (cl-tmux::%install-control-notifications out)))
+      (unwind-protect
+           (let ((pane (%make-test-pane :id 2)))
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-output+
+                                      pane
+                                      (make-array 0 :element-type '(unsigned-byte 8)))
+             (is (string= "" (get-output-stream-string out))
+                 "empty byte vector must not emit %output"))
+        (cl-tmux::%remove-control-notifications handlers)))))

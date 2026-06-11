@@ -130,33 +130,47 @@
                     (+ (pane-y active-pane) (screen-cursor-y screen))
                     (+ (pane-x active-pane) (screen-cursor-x screen)))))))))
 
+(defun %emit-bell (buffer visual-bell)
+  "Write one BEL event to BUFFER: reverse-video flash when VISUAL-BELL is set,
+   otherwise the BEL character (ASCII 7).  Fires the alert-bell hook in both cases."
+  (if visual-bell
+      (format buffer "~C[7m~C[0m" +esc+ +esc+)
+      (write-char (code-char 7) buffer))
+  (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-bell+))
+
 (defun %render-bell-and-cursor (buffer active-pane)
   "Emit a pending BEL from ACTIVE-PANE (if any) and restore cursor visibility.
-   Bell consumption is gated on the 'bell-action' option:
-   - 'any' (default): relay BEL from any pane
-   - 'current': relay only from active pane (already filtered here since active-pane is the active one)
-   - 'none': swallow all BELs silently
-   - 'other': relay from non-active panes (not applicable here — active-pane IS active)
-   Fires the alert-bell hook when a BEL is consumed."
+   bell-action 'none' swallows all BELs; 'other' skips the active pane (handled
+   by %render-background-bells instead); 'any'/'current' relay the active pane bell."
   (when active-pane
     (let* ((bell-pending (screen-consume-bell (pane-screen active-pane)))
            (bell-action  (or (cl-tmux/options:get-option "bell-action") "any"))
-           ;; Check if visual-bell is on — emit reverse-video flash instead of BEL
            (visual-bell  (cl-tmux/options:get-option "visual-bell"))
            (relay-bell   (and bell-pending
-                              (not (string= bell-action "none")))))
-      (when relay-bell
-        (if visual-bell
-            ;; Visual bell: brief reverse-video flash (SGR 7 + SGR 0)
-            (format buffer "~C[7m~C[0m" +esc+ +esc+)
-            ;; Audible bell: BEL character
-            (write-char (code-char 7) buffer))
-        (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-bell+))))
+                              (not (string= bell-action "none"))
+                              (not (string= bell-action "other")))))
+      (when relay-bell (%emit-bell buffer visual-bell))))
   (when (or (null active-pane)
             (screen-cursor-visible (pane-screen active-pane)))
     (cursor-visible buffer)
     (when active-pane
       (set-cursor-shape buffer (screen-cursor-shape (pane-screen active-pane))))))
+
+(defun %render-background-bells (buffer session active-window)
+  "Drain and relay BEL characters from all non-active windows.
+   bell-action 'any': relay bells from every non-active window pane.
+   bell-action 'other': same (non-active is by definition 'other').
+   bell-action 'current'/'none': no relay from background windows."
+  (let* ((bell-action  (or (cl-tmux/options:get-option "bell-action") "any"))
+         (visual-bell  (cl-tmux/options:get-option "visual-bell"))
+         (relay-p      (member bell-action '("any" "other") :test #'string=)))
+    (when relay-p
+      (dolist (win (session-windows session))
+        (unless (eq win active-window)
+          (dolist (pane (window-panes win))
+            (when (and (pane-screen pane)
+                       (screen-consume-bell (pane-screen pane)))
+              (%emit-bell buffer visual-bell))))))))
 
 (defun %render-passthrough (buffer panes)
   "Drain each pane's passthrough-queue and emit the inner sequences to BUFFER
@@ -240,6 +254,8 @@
     (when panes (%render-passthrough buffer panes))
     (when panes (%render-clipboard buffer panes))
     (%render-bell-and-cursor buffer active-pane)
+    ;; Relay bells from background windows (bell-action 'any'/'other').
+    (%render-background-bells buffer session window)
     ;; set-titles: emit OSC 0 to set the outer terminal window title.
     (when (cl-tmux/options:get-option "set-titles")
       (let* ((title-fmt (cl-tmux/options:get-option "set-titles-string" "#W"))

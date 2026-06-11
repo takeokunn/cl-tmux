@@ -91,7 +91,8 @@
      (:file "dispatch-commands-server") ; server-access ACL + customize-mode tree browser
      (:file "dispatch-commands-runner") ; *arg-command-table* + %run-command-tokens + %run-command-line
      (:file "dispatch-control")         ; control-mode REPL + dispatch-prefix-command
-     (:file "dispatch-handlers")        ; command handler rule table (define-command-handlers)
+     (:file "dispatch-handlers")        ; command handler rule table part I (detach through wait-for)
+     (:file "dispatch-handlers-b")     ; command handler rule table part II (popup/menu through detach-client)
      (:file "dispatch-handlers-buffer") ; paste-buffer command handler helpers
      (:file "events-core")
      (:file "events-mouse")   ; mouse event dispatch + overlay pager escape handler
@@ -139,17 +140,20 @@
        (:file "pane-tests")
        (:file "window-tests")
        (:file "session-tests")
-       (:file "format-tests")
+       (:file "format-tests")            ; format expansion — part I (shorthands, context, modifiers, brace/conditional up to line 972)
+       (:file "format-tests-b")          ; format expansion — part II (path/substitute/nested/strftime/arithmetic/geometry/content-search)
        (:file "target-tests")
        (:file "buffer-tests")
        (:file "control-mode-tests")
        (:file "options-tests")
        (:file "hooks-tests")
        (:file "config-tests")
-       (:file "config-directives-tests")
+       (:file "config-directives-tests")   ; directive parsing — part I (key-table, bind/unbind, load-config up to line 993)
+       (:file "config-directives-tests-b") ; directive parsing — part II (parse-bind-args, tokenizer edge cases, set/source/run/preproc/if-shell)
        (:file "renderer-format-tests")
        (:file "renderer-pane-tests")
-       (:file "renderer-tests")
+       (:file "renderer-tests")            ; renderer — part I (fixtures, status-bar, render-session, clear-display, window-list up to line 867)
+       (:file "renderer-tests-b")          ; renderer — part II (status-bar formats, style, length, popup/menu, mouse/focus seqs, lock-screen, justify)
        (:file "dispatch-tests")
        (:file "dispatch-tests-commands")     ; arg-taking command tests: flag parsing, kill/swap/move/-t, confirm
        (:file "dispatch-tests-commands-b")   ; named-command handlers, display/buffer/session dispatch
@@ -157,9 +161,14 @@
        (:file "dispatch-tests-session")    ; copy-mode paging dispatch tests
        (:file "dispatch-tests-session-b")  ; coverage: untested handlers, send-keys, capture-pane, paste-buffer
        (:file "dispatch-tests-session-c")  ; options, session management, control mode, server-lifecycle
-       (:file "events-tests")
+       (:file "events-tests")            ; keystroke pipeline — part I (escape, process-byte, mouse, bindings)
+       (:file "events-tests-b")          ; locked-session, drag/modifier, copy-mode cursor, vi nav — part II
+       (:file "events-tests-c")          ; app-cursor-keys, prompt-key, copy-mode yank, SGR, CSI-u — part III
        (:file "mouse-tests")
-       (:file "commands-tests")
+       (:file "commands-tests")          ; pane/copy-mode/kill/select/rename — part I (fixtures + lines 1-1440)
+       (:file "commands-tests-b")        ; copy-mode motions, send-keys, tokenize, join/break-pane — part II
+       (:file "commands-tests-c")        ; pipe-pane, virtual-row, timeout, scroll helpers, extract-chars — part III
+       (:file "commands-tests-d")        ; rename hooks, server-access, copy-mode rect/search, jump-to-char — part IV
        (:file "overlay-tests")
        (:file "prompt-tests")
        (:file "protocol-tests")

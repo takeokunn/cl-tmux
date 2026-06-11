@@ -75,7 +75,17 @@
              (cons cl-tmux/hooks:+hook-after-resize-pane+
                    (lambda (&rest a) (emit-layout (first a))))
              (cons cl-tmux/hooks:+hook-after-split-window+
-                   (lambda (&rest a) (emit-layout (first a)))))))
+                   (lambda (&rest a) (emit-layout (first a))))
+             ;; Pane PTY output: emit %output %<pane-id> <escaped-bytes>.
+             (cons cl-tmux/hooks:+hook-pane-output+
+                   (lambda (&rest a)
+                     (let* ((pane  (first a))
+                            (raw   (second a))
+                            (data  (if (stringp raw) raw
+                                       (map 'string #'code-char raw))))
+                       (when (and pane (plusp (length data)))
+                         (emit (cl-tmux/control:control-output
+                                (cl-tmux/model:pane-id pane) data)))))))))
       (dolist (h handlers) (cl-tmux/hooks:add-hook (car h) (cdr h)))
       handlers)))
 

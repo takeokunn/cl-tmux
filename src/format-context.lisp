@@ -12,7 +12,7 @@
 ;;;; OS introspection (pgrep/ps for pane_current_command, lsof/proc for cwd)
 ;;;; is intentionally co-located here: both are context-building concerns.
 
-;;; ── Context builder ─────────────────────────────────────────────────────────
+;;; ── Context builder helpers ─────────────────────────────────────────────────
 
 (defun %window-raw-flags (window session-active-window session)
   "Compute the raw window flag string for WINDOW within a SESSION context.
@@ -156,6 +156,35 @@
               (cdr cached)))
         (cl-tmux/model::%shell-basename))))
 
+;;; ── Context plist helpers ───────────────────────────────────────────────────
+;;;
+;;; These helpers extract sub-computations from format-context-from-session to
+;;; keep that function readable.  Each is a focused unit covering one domain.
+
+(defun %window-has-pending-bell-p (window)
+  "True when WINDOW has monitor-bell on and at least one pane has a pending bell."
+  (and window
+       (cl-tmux/options:get-option-for-context "monitor-bell" :window window)
+       (some (lambda (p)
+               (let ((scr (cl-tmux/model:pane-screen p)))
+                 (and scr (cl-tmux/terminal:screen-bell-pending scr))))
+             (cl-tmux/model:window-panes window))))
+
+(defun %process-pid-string ()
+  "Current process PID as a decimal string, or \"0\" when unavailable.
+   Used for both #{client_pid} and #{server_pid} in the single-process model."
+  (let ((getpid (ignore-errors (find-symbol "GETPID" "SB-POSIX"))))
+    (if getpid (format nil "~D" (ignore-errors (funcall getpid))) "0")))
+
+(defun %server-session-count-string ()
+  "Total sessions in *server-sessions* as a decimal string, minimum 1.
+   Accesses cl-tmux:*server-sessions* by name to avoid a circular package dependency."
+  (format nil "~D"
+          (max 1 (ignore-errors
+                   (length (symbol-value (find-symbol "*SERVER-SESSIONS*" "CL-TMUX")))))))
+
+;;; ── Context builder ─────────────────────────────────────────────────────────
+
 (defun format-context-from-session (session window pane
                                     &key (client-width 0) (client-height 0)
                                          (client-tty ""))
@@ -168,322 +197,169 @@
      :CLIENT-HEIGHT  — terminal height reported to the client (default 0)
      :CLIENT-TTY     — path to the client tty device (default \"\")
 
-   Returns a plist of context keys; the body below is the authoritative list,
-   with a per-key ;; comment naming the #{...} variable each one backs (e.g.
-   :pane-at-top -> #{pane_at_top}).  An explicit enumeration here repeatedly
-   drifted out of date as variables were added, so it is intentionally omitted —
-   read the format-context-from-session body (and EXPAND-FORMAT) for the
-   current, complete set."
-  ;; session-active-window is the session's current window — distinct from
-  ;; the WINDOW argument which is the window whose context we are building.
-  ;; Naming it explicitly avoids confusion when both appear in the same binding.
-  (let* ((session-name    (if session (cl-tmux/model:session-name session) ""))
-         (session-wins    (if session (cl-tmux/model:session-windows session) nil))
+   Returns a plist of context keys.  The authoritative list of all #{...}
+   variables is the set of keywords in the returned plist — read the append
+   sections below for the current, complete set."
+  (let* ((session-wins          (if session (cl-tmux/model:session-windows session) nil))
          (session-active-window (if session (cl-tmux/model:session-active-window session) nil))
-         (window-count    (length session-wins))
-         ;; #{window_index}: the window's numeric id (respects base-index).
-         (window-index    (if window (cl-tmux/model:window-id window) 0))
-         (window-name     (if window (cl-tmux/model:window-name window) ""))
-         (window-active   (if (and window session-active-window
-                                   (eq window session-active-window)) "1" "0"))
-         ;; #{window_raw_flags}: composite flag string (*=active, -=last, Z=zoomed),
-         ;; "" when no flags apply (no single-space padding fallback).
-         (window-raw-flags (%window-raw-flags window session-active-window session))
-         ;; #{window_flags}: same as raw flags but padded to a single space when empty.
-         (window-flags
-          (if (zerop (length window-raw-flags)) " " window-raw-flags))
-         ;; #{window_zoomed_flag}: "Z" when the window is zoomed, else " ".
-         (window-zoomed-flag (if (and window (cl-tmux/model:window-zoom-p window)) "Z" " "))
-         (window-panes    (if window (cl-tmux/model:window-panes window) nil))
-         ;; #{pane_index}: the pane's numeric id (respects pane-base-index).
-         (pane-index      (if pane (cl-tmux/model:pane-id pane) 0))
-         ;; pane-title: prefer the explicit pane-title slot; fall back to the
-         ;; screen-title set via OSC 0/2 when the pane has a live screen.
-         (pane-title      (cond
-                            ((null pane) "")
-                            ((and (plusp (length (cl-tmux/model:pane-title pane))))
-                             (cl-tmux/model:pane-title pane))
-                            ((cl-tmux/model:pane-screen pane)
-                             (cl-tmux/terminal:screen-title
-                              (cl-tmux/model:pane-screen pane)))
-                            (t "")))
-         ;; #{pane_current_path}: OSC 7 cwd reported by the shell.
-         ;; Falls back to OS proc query (lsof on macOS, /proc on Linux) when
-         ;; the shell has not reported its cwd via OSC 7.
-         (pane-current-path (let* ((scr (and pane (cl-tmux/model:pane-screen pane)))
-                                   (osc-cwd (and scr (cl-tmux/terminal:screen-cwd scr))))
-                              (if (and osc-cwd (plusp (length osc-cwd)))
-                                  osc-cwd
-                                  (%pane-cwd-from-os pane))))
-         ;; #{pane_current_command}: foreground process name (via pgrep/ps, TTL-cached).
-         (pane-current-command (%pane-current-command pane))
-         ;; #{cursor_x} / #{cursor_y}: cursor position in the active pane screen.
-         (pane-scr        (and pane (cl-tmux/model:pane-screen pane)))
-         (cursor-x        (if pane-scr (cl-tmux/terminal:screen-cursor-x pane-scr) 0))
-         (cursor-y        (if pane-scr (cl-tmux/terminal:screen-cursor-y pane-scr) 0))
-         ;; #{pane_in_mode}: "1" when pane is in copy mode, else "0".
-         (pane-in-mode    (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                              "1" "0"))
-         ;; #{window_layout}: tmux layout string (checksum,geometry).
-         (window-layout   (or (and window (cl-tmux/model:layout->string window)) ""))
-         ;; #{pane_synchronized}: "1" when synchronize-panes option is on, else "0".
-         ;; Prefer the window-local override (falls back to global then default);
-         ;; fall back to the global read when WINDOW is nil.
-         (pane-synchronized (if (cl-tmux/options:get-option-for-context
-                                 "synchronize-panes" :window window)
-                                "1" "0"))
-         ;; #{window_activity_flag}: "#" when the window has unseen activity
-         ;; (monitor-activity was triggered).  Cleared when the window is focused.
-         (window-activity-flag
-          (if (and window (cl-tmux/model:window-activity-flag window)) "#" " "))
-         ;; #{window_silence_flag}: "~" when monitor-silence threshold exceeded.
-         (window-silence-flag
-          (if (and window (cl-tmux/model:window-silence-flag window)) "~" " "))
-         ;; #{window_start_flag} / #{window_end_flag}: "1" for first/last window
-         ;; in the session list.  Used by themes for list-end decorators.
-         (window-start-flag
-          (if (and window session-wins (eq window (first session-wins))) "1" "0"))
-         (window-end-flag
-          (if (and window session-wins (eq window (car (last session-wins)))) "1" "0"))
-         ;; #{window_bell_flag}: "!" when any pane in the window has a pending bell
-         ;; AND monitor-bell is on for the window (default on).  Used by status
-         ;; themes to show an alert indicator; monitor-bell off suppresses it.
-         (window-bell-flag
-          (if (and window
-                   (cl-tmux/options:get-option-for-context "monitor-bell" :window window)
-                   (some (lambda (p)
-                           (let ((scr (cl-tmux/model:pane-screen p)))
-                             (and scr (cl-tmux/terminal:screen-bell-pending scr))))
-                         (cl-tmux/model:window-panes window)))
-              "!"
-              " "))
-         (hostname        (machine-instance))
-         (time-str        (%current-time-string))
-         (host-short      (%short-hostname hostname))
-         ;; Environment variables available as format variables.
-         ;; These allow theme files to detect the outer terminal (iTerm2, kitty, etc.)
-         ;; and adjust rendering accordingly — same set as %if condition context.
-         (term-program    (or (ignore-errors (sb-ext:posix-getenv "TERM_PROGRAM")) ""))
-         (colorterm       (or (ignore-errors (sb-ext:posix-getenv "COLORTERM")) "")))
-    (list ;; Raw SESSION object — carried so the #{W:...} window-iteration
-          ;; modifier can walk the session's windows and build a per-window
-          ;; context.  Internal (not a #{...} variable); ignored by lookups.
-          :%session      session
-          :session-name  session-name
-          ;; #{session_id}: numeric session identifier.
-          :session-id    (if session (cl-tmux/model:session-id session) 0)
-          :window-index  window-index
-          ;; #{window_id}: numeric window identifier (window-id slot).
-          :window-id     (if window (cl-tmux/model:window-id window) 0)
-          :window-name   window-name
-          :window-count  window-count
-          ;; #{session_windows}: tmux's name for the window count.
-          :session-windows window-count
-          :window-active window-active
-          :window-flags  window-flags
-          ;; #{window_raw_flags}: same flags but "" (not " ") when empty.
-          :window-raw-flags window-raw-flags
-          ;; #{window_zoomed_flag}: "Z" when the active pane is zoomed.
-          :window-zoomed-flag window-zoomed-flag
-          ;; #{window_panes}: number of panes in this window.
-          :window-panes  (length window-panes)
-          ;; #{window_layout}: layout serialization string.
-          :window-layout window-layout
-          :pane-index    pane-index
-          :pane-title    pane-title
-          ;; #{pane_tty}: the pane's slave PTY device path (e.g. /dev/pts/3).
-          :pane-tty      (if pane (cl-tmux/model:pane-tty pane) "")
-          ;; Internal: the pane object itself, used ONLY by the #{C:term} content
-          ;; search to read the visible grid lazily (it is never surfaced as a
-          ;; #{...} variable — %variable-to-keyword cannot produce a "%"-prefixed
-          ;; keyword, so there is no collision with a user format name).
-          :%c-search-pane pane
-          ;; #{pane_current_path}: OSC 7 cwd reported by the shell.
-          :pane-current-path pane-current-path
-          ;; Structural pane variables, all pure functions of the pane struct.
-          :pane-id       (if pane (cl-tmux/model:pane-id     pane) 0)
-          :pane-width    (if pane (cl-tmux/model:pane-width  pane) 0)
-          :pane-height   (if pane (cl-tmux/model:pane-height pane) 0)
-          :pane-pid      (if pane (cl-tmux/model:pane-pid    pane) 0)
-          :pane-left     (if pane (cl-tmux/model:pane-x      pane) 0)
-          :pane-top      (if pane (cl-tmux/model:pane-y      pane) 0)
-          ;; #{pane_right}/#{pane_bottom}: the INCLUSIVE far-edge column/row of the
-          ;; pane (origin + size - 1), matching tmux's wp->xoff+sx-1 / yoff+sy-1.
-          ;; Complements pane_left/pane_top; used by geometry-aware status themes.
-          :pane-right    (if pane (+ (cl-tmux/model:pane-x pane)
-                                     (cl-tmux/model:pane-width pane) -1) 0)
-          :pane-bottom   (if pane (+ (cl-tmux/model:pane-y pane)
-                                     (cl-tmux/model:pane-height pane) -1) 0)
-          ;; Geometry-derived variables: the window's layout dimensions and the
-          ;; pane's adjacency to the window edges, all pure functions of the
-          ;; window/pane structs.  pane_at_* are "1"/"0" flag strings (like
-          ;; pane_active).  pane_at_bottom/right compare the pane's far edge
-          ;; (origin + size) against the window's height/width.
-          :window-width   (if window (cl-tmux/model:window-width  window) 0)
-          :window-height  (if window (cl-tmux/model:window-height window) 0)
-          :pane-at-top    (if (and pane (= (cl-tmux/model:pane-y pane) 0)) "1" "0")
-          :pane-at-left   (if (and pane (= (cl-tmux/model:pane-x pane) 0)) "1" "0")
-          :pane-at-bottom (if (and pane window
-                                   (= (+ (cl-tmux/model:pane-y pane) (cl-tmux/model:pane-height pane))
-                                      (cl-tmux/model:window-height window)))
-                              "1" "0")
-          :pane-at-right  (if (and pane window
-                                   (= (+ (cl-tmux/model:pane-x pane) (cl-tmux/model:pane-width pane))
-                                      (cl-tmux/model:window-width window)))
-                              "1" "0")
-          ;; #{pane_active}: "1" when PANE is its window's active pane, else "0".
-          :pane-active   (if (and pane window
-                                  (eq pane (cl-tmux/model:window-active-pane window)))
-                             "1" "0")
-          ;; #{cursor_x} / #{cursor_y}: 0-based cursor position.
-          :cursor-x      cursor-x
-          :cursor-y      cursor-y
-          ;; #{cursor_character}: the glyph currently under the cursor, as a
-          ;; one-character string; "" when there is no pane or the cursor is out
-          ;; of the grid.  Bounds-checked because screen-cell is a raw aref.
-          :cursor-character
-          (if (and pane-scr
-                   (< -1 cursor-x (cl-tmux/terminal:screen-width  pane-scr))
-                   (< -1 cursor-y (cl-tmux/terminal:screen-height pane-scr)))
-              (string (cl-tmux/terminal:cell-char
-                       (cl-tmux/terminal:screen-cell pane-scr cursor-x cursor-y)))
-              "")
-          ;; #{pane_in_mode}: "1" when copy mode active, else "0".
-          :pane-in-mode  pane-in-mode
-          ;; #{pane_current_command}: foreground process name (TTL-cached via pgrep/ps).
-          :pane-current-command pane-current-command
-          :hostname      hostname
-          :host          hostname
-          :host-short    host-short
-          :time          time-str
-          :client-width  client-width
-          :client-height client-height
-          :client-tty    client-tty
-          ;; #{client_name}: the client's name.  tmux defaults a client's name to
-          ;; its tty path, so we mirror client-tty here (empty when no tty known).
-          :client-name   client-tty
-          ;; #{client_session}: name of the session this client is viewing (= #S).
-          :client-session session-name
-          ;; #{client_termname}: the client terminal's TERM (xterm-256color, …).
-          :client-termname (or (ignore-errors (sb-ext:posix-getenv "TERM")) "")
-          ;; #{client_pid}: PID of the client process.  cl-tmux is single-process,
-          ;; so the client and server share a PID (same idiom as #{server_pid}).
-          :client-pid    (let ((getpid (ignore-errors (find-symbol "GETPID" "SB-POSIX"))))
-                           (if getpid
-                               (format nil "~D" (ignore-errors (funcall getpid)))
-                               "0"))
-          ;; #{version}: cl-tmux version string (matches tmux 3.x format for compat).
-          :version       "3.5"
-          ;; #{session_attached}: "1" when clients are attached, else "0".
-          :session-attached (if (and session
-                                     (cl-tmux/model:session-clients session))
-                                "1" "0")
-          ;; #{server_pid}: PID of the cl-tmux server process (via sb-posix when available).
-          :server-pid    (let ((getpid (ignore-errors (find-symbol "GETPID" "SB-POSIX"))))
-                           (if getpid
-                               (format nil "~D" (ignore-errors (funcall getpid)))
-                               "0"))
-          ;; #{session_last_attached}: universal-time of last access.
-          :session-last-attached (if session
-                                     (format nil "~D"
-                                             (cl-tmux/model:session-last-active session))
-                                     "0")
-          ;; #{pane_format}: always "1" in context (we have a pane).
-          :pane-format (if pane "1" "0")
-          ;; #{window_format}: always "1" in context.
-          :window-format (if window "1" "0")
-          ;; #{pane_synchronized}: reflects synchronize-panes option.
-          :pane-synchronized pane-synchronized
-          ;; #{window_bell_flag}: "!" when a pane in the window has a pending bell.
-          :window-bell-flag window-bell-flag
-          ;; #{window_activity_flag}: "#" when monitor-activity was triggered.
-          :window-activity-flag window-activity-flag
-          ;; #{window_silence_flag}: "~" when monitor-silence threshold exceeded.
-          :window-silence-flag window-silence-flag
-          ;; #{window_start_flag} / #{window_end_flag}: first/last in session list.
-          :window-start-flag window-start-flag
-          :window-end-flag   window-end-flag
-          ;; #{scroll_position}: scrollback offset in copy mode, else "".
-          :scroll-position (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                               (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr))
-                               "")
-          ;; #{selection_active}: "1" when copy mode has an active selection.
-          :selection-active (if (and pane-scr
-                                     (cl-tmux/terminal:screen-copy-mode-p pane-scr)
-                                     (cl-tmux/terminal:screen-copy-selecting pane-scr))
-                                "1" "0")
-          ;; #{selection_present}: "1" when a copy-mode selection has been started
-          ;; (tmux uses this to gate selection-dependent status text).  Same
-          ;; underlying state as selection_active in our single-selection model.
-          :selection-present (if (and pane-scr
-                                      (cl-tmux/terminal:screen-copy-mode-p pane-scr)
-                                      (cl-tmux/terminal:screen-copy-selecting pane-scr))
-                                 "1" "0")
-          ;; #{copy_cursor_x}/#{copy_cursor_y}: copy-mode cursor column/row, "" when
-          ;; the pane is not in copy mode.  screen-copy-cursor is a (row . col) cons.
-          :copy-cursor-x (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                             (format nil "~D"
-                                     (cdr (cl-tmux/terminal:screen-copy-cursor pane-scr)))
-                             "")
-          :copy-cursor-y (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                             (format nil "~D"
-                                     (car (cl-tmux/terminal:screen-copy-cursor pane-scr)))
-                             "")
-          ;; #{pane_marked}: "1" when the pane is marked, else "0".
-          :pane-marked (if (and pane (cl-tmux/model:pane-marked pane)) "1" "0")
-          ;; #{pane_input_off}: "1" when pane input is disabled (select-pane -d).
-          :pane-input-off (if (and pane (cl-tmux/model:pane-input-disabled pane)) "1" "0")
-          ;; #{pane_dead}: "1" when the pane's PTY has closed (remain-on-exit case).
-          ;; A pane is dead when its fd is closed (fd <= 0) but it still exists.
-          :pane-dead   (if (and pane (<= (cl-tmux/model:pane-fd pane) 0)) "1" "0")
-          ;; #{pane_pipe}: "1" when output is being piped (pipe-pane active), else "0".
-          :pane-pipe   (if (and pane (cl-tmux/model:pane-pipe-fd pane)) "1" "0")
-          ;; #{session_count}: total number of sessions in *server-sessions*.
-          ;; Accessed via qualified name because *server-sessions* lives in cl-tmux.
-          ;; Falls back to 1 (this session) when the registry is empty or unbound.
-          :session-count (format nil "~D"
-                                 (max 1 (ignore-errors
-                                          (length (symbol-value
-                                                   (find-symbol "*SERVER-SESSIONS*"
-                                                                "CL-TMUX"))))))
-          ;; #{session_group}: session group identifier (empty string when not grouped).
-          :session-group (if (and session (cl-tmux/model:session-group session))
-                             (format nil "~A" (cl-tmux/model:session-group session))
-                             "")
-          ;; #{pane_mode}: mode name when the pane is in a special mode.
-          ;; "copy-mode" when in copy mode, "" otherwise.
-          :pane-mode   (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                           "copy-mode" "")
-          ;; Environment variables for terminal detection in themes.
-          :term-program term-program
-          :colorterm    colorterm
-          ;; #{client_prefix}: "1" when the prefix key has been pressed and we're
-          ;; waiting for the next key; "0" otherwise.  Used by prefix-highlight plugins.
-          ;; Reads *prefix-active* from events-loop.lisp (accessed via qualified name).
-          :client-prefix (if (ignore-errors
-                               (symbol-value
-                                (find-symbol "*PREFIX-ACTIVE*" "CL-TMUX")))
-                             "1" "0")
-          ;; #{client_last_session}: name of the previously active session.
-          ;; Used by some plugins to show a "back" indicator.
-          :client-last-session ""
-          ;; #{window_visible_layout}: layout string for the visible portion.
-          ;; Same as #{window_layout} in our implementation.
-          :window-visible-layout (or (and window (cl-tmux/model:layout->string window)) "")
-          ;; #{session_path}: initial working directory for the session.
-          :session-path (ignore-errors (sb-posix:getcwd))
-          ;; #{history_size}: number of lines in the active pane's scrollback.
-          :history-size (format nil "~D"
-                                (if pane-scr
-                                    (length (cl-tmux/terminal:screen-scrollback pane-scr))
-                                    0))
-          ;; #{history_limit}: configured history limit.
-          :history-limit (format nil "~D"
-                                 (or (cl-tmux/options:get-option "history-limit") 2000))
-          ;; #{window_last_flag}: "1" when this is the last (previously active) window.
-          :window-last-flag (if (and window session
-                                     (eq window (cl-tmux/model:session-last-window session)))
-                                "1" "0"))))
+         (window-count          (length session-wins))
+         (window-raw-flags      (%window-raw-flags window session-active-window session))
+         (window-flags          (if (zerop (length window-raw-flags)) " " window-raw-flags))
+         (window-panes          (if window (cl-tmux/model:window-panes window) nil))
+         (window-layout         (or (and window (cl-tmux/model:layout->string window)) ""))
+         ;; pane-title: prefer explicit slot; fall back to OSC 0/2 screen-title.
+         (pane-title            (cond
+                                  ((null pane) "")
+                                  ((plusp (length (cl-tmux/model:pane-title pane)))
+                                   (cl-tmux/model:pane-title pane))
+                                  ((cl-tmux/model:pane-screen pane)
+                                   (cl-tmux/terminal:screen-title (cl-tmux/model:pane-screen pane)))
+                                  (t "")))
+         ;; pane-current-path: OSC 7 → OS proc query fallback.
+         (pane-current-path     (let* ((scr (and pane (cl-tmux/model:pane-screen pane)))
+                                       (osc-cwd (and scr (cl-tmux/terminal:screen-cwd scr))))
+                                  (if (and osc-cwd (plusp (length osc-cwd)))
+                                      osc-cwd (%pane-cwd-from-os pane))))
+         (pane-scr              (and pane (cl-tmux/model:pane-screen pane)))
+         (cursor-x              (if pane-scr (cl-tmux/terminal:screen-cursor-x pane-scr) 0))
+         (cursor-y              (if pane-scr (cl-tmux/terminal:screen-cursor-y pane-scr) 0))
+         (pane-synchronized     (if (cl-tmux/options:get-option-for-context
+                                     "synchronize-panes" :window window) "1" "0"))
+         (hostname              (machine-instance))
+         (pid-str               (%process-pid-string)))
+    (append
+      ;; ── Session-scoped variables ──────────────────────────────────────────
+      (list :%session              session
+            :session-id            (if session (cl-tmux/model:session-id session) 0)
+            :session-name          (if session (cl-tmux/model:session-name session) "")
+            :session-windows       window-count
+            :session-attached      (if (and session (cl-tmux/model:session-clients session)) "1" "0")
+            :session-last-attached (if session
+                                       (format nil "~D" (cl-tmux/model:session-last-active session))
+                                       "0")
+            :session-group         (if (and session (cl-tmux/model:session-group session))
+                                       (format nil "~A" (cl-tmux/model:session-group session)) "")
+            :session-count         (%server-session-count-string)
+            :session-path          (ignore-errors (sb-posix:getcwd))
+            :client-session        (if session (cl-tmux/model:session-name session) ""))
+      ;; ── Window-scoped variables ───────────────────────────────────────────
+      (list :window-index          (if window (cl-tmux/model:window-id window) 0)
+            :window-id             (if window (cl-tmux/model:window-id window) 0)
+            :window-name           (if window (cl-tmux/model:window-name window) "")
+            :window-count          window-count
+            :window-active         (if (and window session-active-window
+                                            (eq window session-active-window)) "1" "0")
+            :window-flags          window-flags
+            :window-raw-flags      window-raw-flags
+            :window-zoomed-flag    (if (and window (cl-tmux/model:window-zoom-p window)) "Z" " ")
+            :window-panes          (length window-panes)
+            :window-layout         window-layout
+            :window-visible-layout window-layout
+            :window-width          (if window (cl-tmux/model:window-width  window) 0)
+            :window-height         (if window (cl-tmux/model:window-height window) 0)
+            :window-format         (if window "1" "0")
+            :window-bell-flag      (if (%window-has-pending-bell-p window) "!" " ")
+            :window-activity-flag  (if (and window (cl-tmux/model:window-activity-flag window)) "#" " ")
+            :window-silence-flag   (if (and window (cl-tmux/model:window-silence-flag window)) "~" " ")
+            :window-start-flag     (if (and window session-wins (eq window (first session-wins))) "1" "0")
+            :window-end-flag       (if (and window session-wins
+                                            (eq window (car (last session-wins)))) "1" "0")
+            :window-last-flag      (if (and window session
+                                            (eq window (cl-tmux/model:session-last-window session)))
+                                       "1" "0"))
+      ;; ── Pane structural variables ─────────────────────────────────────────
+      (list :%c-search-pane       pane
+            :pane-index           (if pane (cl-tmux/model:pane-id pane) 0)
+            :pane-id              (if pane (cl-tmux/model:pane-id pane) 0)
+            :pane-title           pane-title
+            :pane-tty             (if pane (cl-tmux/model:pane-tty pane) "")
+            :pane-current-path    pane-current-path
+            :pane-current-command (%pane-current-command pane)
+            :pane-format          (if pane "1" "0")
+            :pane-active          (if (and pane window
+                                           (eq pane (cl-tmux/model:window-active-pane window)))
+                                      "1" "0")
+            :pane-synchronized    pane-synchronized
+            :pane-marked          (if (and pane (cl-tmux/model:pane-marked pane)) "1" "0")
+            :pane-input-off       (if (and pane (cl-tmux/model:pane-input-disabled pane)) "1" "0")
+            :pane-dead            (if (and pane (<= (cl-tmux/model:pane-fd pane) 0)) "1" "0")
+            :pane-pipe            (if (and pane (cl-tmux/model:pane-pipe-fd pane)) "1" "0"))
+      ;; ── Pane geometry variables ───────────────────────────────────────────
+      (list :pane-width           (if pane (cl-tmux/model:pane-width  pane) 0)
+            :pane-height          (if pane (cl-tmux/model:pane-height pane) 0)
+            :pane-pid             (if pane (cl-tmux/model:pane-pid    pane) 0)
+            :pane-left            (if pane (cl-tmux/model:pane-x      pane) 0)
+            :pane-top             (if pane (cl-tmux/model:pane-y      pane) 0)
+            :pane-right           (if pane (+ (cl-tmux/model:pane-x pane)
+                                              (cl-tmux/model:pane-width pane) -1) 0)
+            :pane-bottom          (if pane (+ (cl-tmux/model:pane-y pane)
+                                              (cl-tmux/model:pane-height pane) -1) 0)
+            :pane-at-top          (if (and pane (= (cl-tmux/model:pane-y pane) 0)) "1" "0")
+            :pane-at-left         (if (and pane (= (cl-tmux/model:pane-x pane) 0)) "1" "0")
+            :pane-at-bottom       (if (and pane window
+                                           (= (+ (cl-tmux/model:pane-y    pane)
+                                                 (cl-tmux/model:pane-height pane))
+                                              (cl-tmux/model:window-height window)))
+                                      "1" "0")
+            :pane-at-right        (if (and pane window
+                                           (= (+ (cl-tmux/model:pane-x   pane)
+                                                 (cl-tmux/model:pane-width pane))
+                                              (cl-tmux/model:window-width window)))
+                                      "1" "0"))
+      ;; ── Screen / copy-mode variables ──────────────────────────────────────
+      (list :cursor-x             cursor-x
+            :cursor-y             cursor-y
+            :cursor-character
+            (if (and pane-scr
+                     (< -1 cursor-x (cl-tmux/terminal:screen-width  pane-scr))
+                     (< -1 cursor-y (cl-tmux/terminal:screen-height pane-scr)))
+                (string (cl-tmux/terminal:cell-char
+                         (cl-tmux/terminal:screen-cell pane-scr cursor-x cursor-y)))
+                "")
+            :pane-in-mode         (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr)) "1" "0")
+            :pane-mode            (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr)) "copy-mode" "")
+            :scroll-position      (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
+                                      (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr))
+                                      "")
+            :selection-active     (if (and pane-scr
+                                           (cl-tmux/terminal:screen-copy-mode-p pane-scr)
+                                           (cl-tmux/terminal:screen-copy-selecting pane-scr))
+                                      "1" "0")
+            :selection-present    (if (and pane-scr
+                                           (cl-tmux/terminal:screen-copy-mode-p pane-scr)
+                                           (cl-tmux/terminal:screen-copy-selecting pane-scr))
+                                      "1" "0")
+            :copy-cursor-x        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
+                                      (format nil "~D" (cdr (cl-tmux/terminal:screen-copy-cursor pane-scr)))
+                                      "")
+            :copy-cursor-y        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
+                                      (format nil "~D" (car (cl-tmux/terminal:screen-copy-cursor pane-scr)))
+                                      "")
+            :history-size         (format nil "~D"
+                                          (if pane-scr
+                                              (length (cl-tmux/terminal:screen-scrollback pane-scr))
+                                              0)))
+      ;; ── Client, server, host, and environment variables ──────────────────
+      (list :client-width         client-width
+            :client-height        client-height
+            :client-tty           client-tty
+            :client-name          client-tty
+            :client-termname      (or (ignore-errors (sb-ext:posix-getenv "TERM")) "")
+            :client-pid           pid-str
+            :client-prefix        (if (ignore-errors
+                                        (symbol-value (find-symbol "*PREFIX-ACTIVE*" "CL-TMUX")))
+                                      "1" "0")
+            :client-last-session  ""
+            :server-pid           pid-str
+            :version              "3.5"
+            :hostname             hostname
+            :host                 hostname
+            :host-short           (%short-hostname hostname)
+            :time                 (%current-time-string)
+            :term-program         (or (ignore-errors (sb-ext:posix-getenv "TERM_PROGRAM")) "")
+            :colorterm            (or (ignore-errors (sb-ext:posix-getenv "COLORTERM")) "")
+            :history-limit        (format nil "~D"
+                                          (or (cl-tmux/options:get-option "history-limit") 2000))))))
 
 (defun format-context-from-window (session window
                                    &key (client-width 0) (client-height 0)

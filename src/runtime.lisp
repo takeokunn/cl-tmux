@@ -326,6 +326,7 @@
        (when (pane-pipe-fd pane)
          (pipe-pane-write pane bytes))
        (pane-feed pane bytes)
+       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-output+ pane bytes)
        (%update-window-on-pane-output (cl-tmux/model:pane-window pane))
        (setf *dirty* t)
        #'reader-idle-state))))

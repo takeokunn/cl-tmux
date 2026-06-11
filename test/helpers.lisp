@@ -322,8 +322,11 @@
                                   (build (rest ps))
                                   1/2))))
                   (build panes))))
-    (make-window :id id :name name :width 20 :height 5
-                 :panes panes :tree tree :active (first panes))))
+    (let ((win (make-window :id id :name name :width 20 :height 5
+                            :panes panes :tree tree :active (first panes))))
+      ;; Wire each pane's back-pointer so pane-window returns the real window.
+      (dolist (p panes) (setf (cl-tmux/model:pane-window p) win))
+      win)))
 
 (defun make-fake-session (&key (nwindows 1) (npanes 1))
   "A session of NWINDOWS fake windows (each with NPANES fake panes), no PTYs.

@@ -372,3 +372,19 @@
        (dolist (cmd filtered)
          (format s "~(~A~)~%" cmd))))))
 
+(defun %cmd-wait-for-arg (session args)
+  "wait-for [-SLU] channel: channel synchronization.
+   Bare: block the calling thread until CHANNEL is signaled (or timeout elapses).
+   -S: signal (unblock) all threads waiting on CHANNEL.
+   -L: lock CHANNEL so subsequent signal calls are suppressed.
+   -U: unlock CHANNEL, re-enabling signal-channel."
+  (declare (ignore session))
+  (with-command-flags+pos (flags positionals args)  ; S/L/U are boolean (no value)
+    (let ((channel (first positionals)))
+      (when (and channel (plusp (length channel)))
+        (cond
+          ((assoc #\S flags) (signal-channel channel))
+          ((assoc #\L flags) (lock-channel   channel))
+          ((assoc #\U flags) (unlock-channel channel))
+          (t                 (wait-for-channel channel)))))))
+
