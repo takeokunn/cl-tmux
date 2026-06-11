@@ -130,16 +130,20 @@
          (:file "screen-tests")   ; resize sub-suite
          (:file "cursor-tests")
          (:file "scroll-tests")
-         (:file "modes-tests")
+         (:file "modes-tests")    ; RIS/alt-screen/DECSC/mouse/bracketed-paste/focus — part I
+         (:file "modes-tests-b")  ; set-cursor-shape/bell-pending/charset/title/reset-modes — part II
          (:file "sgr-tests")
-         (:file "csi-tests")
+         (:file "csi-tests")    ; cursor-movement/DECSCUSR/CBT/SU-SD/REP/DA-response — part I
+         (:file "csi-tests-b")  ; ECH/DECRQM/XTWINOPS/CPR/REP-0/VPR/ICH/DCH/ED/EL/IL/DL — part II
          (:file "parser-tests")    ; utf8/special/basic-text/CPS parser suites — part I
          (:file "parser-tests-b")  ; combining-chars/ACS/DCS/OSC suites — part II
          (:file "emulator-tests")))
-       (:file "layout-tests")
+       (:file "layout-tests")      ; layout-tree core: leaves/split/resize/collapse/persistence — part I
+       (:file "layout-tests-b")    ; named-layout helpers, apply-named-layout, persistence internals — part II
        (:file "layout-geometry-tests")
        (:file "pane-tests")
-       (:file "window-tests")
+       (:file "window-tests")      ; window-relayout/split/resize/zoom/lock/pane-neighbor — part I
+       (:file "window-tests-b")    ; apply-named-layout/move/swap/rotate/find/format/auto-rename — part II
        (:file "session-tests")
        (:file "format-tests")            ; format expansion — part I (shorthands, context, modifiers, brace/conditional up to line 972)
        (:file "format-tests-b")          ; format expansion — part II (path/substitute/nested/strftime/arithmetic/geometry/content-search)
