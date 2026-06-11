@@ -45,9 +45,8 @@
 
 (test input-state-continuation-is-reset-after-complete-sequence
   "After a complete 3-byte ESC [ A sequence, the continuation returns to ground."
-  (let ((s     (make-fake-session))
-        (state (cl-tmux::make-input-state)))
-    (with-loop-state
+  (with-fake-session (s)
+    (let ((state (cl-tmux::make-input-state)))
       ;; Feed ESC — transitions to escape accumulator
       (cl-tmux::process-byte s 27 state)
       (is (not (eq #'cl-tmux::%ground-input-state

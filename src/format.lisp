@@ -103,9 +103,9 @@
                do (incf start-p))
          (when (= start-p np) (return t))         ; trailing * matches rest
          ;; Try matching rest of pattern at each position in remaining string
-         (loop for i from start-s to ns
-               when (%glob-match-p pattern string :start-p start-p :start-s i)
-                 do (return-from %glob-match-p t))
+         (when (loop for i from start-s to ns
+                     thereis (%glob-match-p pattern string :start-p start-p :start-s i))
+           (return t))
          (return nil))
         ((= start-s ns) (return nil))
         ((or (char= (char pattern start-p) #\?)
@@ -253,17 +253,14 @@
    For brace-free content this is just the first }, so non-nested formats are
    delimited exactly as before."
   (let ((depth 1) (i start) (n (length template)))
-    (loop while (< i n) do
-      (let ((c (char template i)))
-        (cond
-          ((and (char= c #\#) (< (1+ i) n) (char= (char template (1+ i)) #\{))
-           (incf depth) (incf i 2))
-          ((char= c #\})
-           (decf depth)
-           (when (zerop depth) (return-from %matching-close-brace i))
-           (incf i))
-          (t (incf i)))))
-    nil))
+    (loop while (< i n)
+          for c = (char template i)
+          if (and (char= c #\#) (< (1+ i) n) (char= (char template (1+ i)) #\{))
+            do (progn (incf depth) (incf i 2))
+          else if (char= c #\})
+            do (progn (decf depth)
+                      (if (zerop depth) (return i) (incf i)))
+          else do (incf i))))
 
 (defun %resolve-format-value (s context)
   "Resolve S to a value for a modifier operand.
@@ -290,22 +287,22 @@
    are expanded (a bare word is literal, #{...} expands), so #{==:#{host},server}
    compares the host value to the literal \"server\" and #{>:#{client_width},100}
    compares numerically."
-  (let* ((comma (%top-level-comma rest 0))
-         (a     (expand-format (if comma (subseq rest 0 comma) rest) context))
-         (b     (expand-format (if comma (subseq rest (1+ comma)) "") context)))
-    (flet ((bit01 (truth) (if truth "1" "0")))
-      (cond
-        ((string= op "==") (bit01 (string= a b)))
-        ((string= op "!=") (bit01 (not (string= a b))))
-        (t
-         (let ((na (or (parse-integer a :junk-allowed t) 0))
-               (nb (or (parse-integer b :junk-allowed t) 0)))
-           (bit01 (cond
-                    ((string= op "<")  (<  na nb))
-                    ((string= op ">")  (>  na nb))
-                    ((string= op "<=") (<= na nb))
-                    ((string= op ">=") (>= na nb))
-                    (t nil)))))))))
+  (multiple-value-bind (lhs rhs) (%split-two rest)
+    (let ((a (expand-format lhs context))
+          (b (expand-format rhs context)))
+      (flet ((bit01 (truth) (if truth "1" "0")))
+        (cond
+          ((string= op "==") (bit01 (string= a b)))
+          ((string= op "!=") (bit01 (not (string= a b))))
+          (t
+           (let ((na (or (parse-integer a :junk-allowed t) 0))
+                 (nb (or (parse-integer b :junk-allowed t) 0)))
+             (bit01 (cond
+                      ((string= op "<")  (<  na nb))
+                      ((string= op ">")  (>  na nb))
+                      ((string= op "<=") (<= na nb))
+                      ((string= op ">=") (>= na nb))
+                      (t nil))))))))))
 
 (defun %logical-op-p (mod)
   "True when MOD is a logical operator (|| or &&)."
@@ -317,12 +314,12 @@
    (non-empty and not \"0\").  || returns \"1\" when either operand is truthy;
    && returns \"1\" only when both are.  Mirrors tmux's logical format operators,
    commonly nested inside a conditional: #{?#{||:#{a},#{b}},yes,no}."
-  (let* ((comma (%top-level-comma rest 0))
-         (a     (%truthy-p (expand-format (if comma (subseq rest 0 comma) rest) context)))
-         (b     (%truthy-p (expand-format (if comma (subseq rest (1+ comma)) "") context))))
-    (if (string= op "||")
-        (if (or a b) "1" "0")
-        (if (and a b) "1" "0"))))
+  (multiple-value-bind (lhs rhs) (%split-two rest)
+    (let ((a (%truthy-p (expand-format lhs context)))
+          (b (%truthy-p (expand-format rhs context))))
+      (if (string= op "||")
+          (if (or a b) "1" "0")
+          (if (and a b) "1" "0")))))
 
 (defun %quote-format-value (value)
   "Backslash-escape characters in VALUE that are special to the shell, matching
@@ -345,22 +342,18 @@
   (let ((session (getf context :%session)))
     (if (null session)
         ""
-        (let* ((comma        (%top-level-comma rest 0))
-               (active-fmt   (if comma (subseq rest 0 comma) rest))
-               (inactive-fmt (if comma (subseq rest (1+ comma)) active-fmt))
-               (active-win   (cl-tmux/model:session-active-window session))
-               (separator    (or (cl-tmux/options:get-option "window-status-separator")
-                                 " ")))
-          (with-output-to-string (s)
-            (loop for win in (cl-tmux/model:session-windows session)
-                  for first = t then nil
-                  do (unless first (write-string separator s))
-                     (let* ((pane (cl-tmux/model:window-active-pane win))
-                            (ctx  (format-context-from-session session win pane)))
-                       (write-string
-                        (expand-format (if (eq win active-win) active-fmt inactive-fmt)
-                                       ctx)
-                        s))))))))
+        (multiple-value-bind (active-fmt inactive-fmt) (%split-active-inactive rest)
+          (let ((active-win (cl-tmux/model:session-active-window session))
+                (separator  (or (cl-tmux/options:get-option "window-status-separator") " ")))
+            (with-output-to-string (s)
+              (loop for win in (cl-tmux/model:session-windows session)
+                    for first = t then nil
+                    do (unless first (write-string separator s))
+                       (let* ((pane (cl-tmux/model:window-active-pane win))
+                              (ctx  (format-context-from-session session win pane)))
+                         (write-string
+                          (expand-format (if (eq win active-win) active-fmt inactive-fmt) ctx)
+                          s)))))))))
 
 (defun %all-server-sessions ()
   "The list of live session objects from cl-tmux's *server-sessions* registry,
@@ -375,20 +368,18 @@
    INACTIVE (defaults to ACTIVE when no comma).  Results are concatenated with no
    separator (tmux's S: loop inserts none; the format supplies any spacing).  Falls
    back to the single context session when the registry is empty."
-  (let* ((comma        (%top-level-comma rest 0))
-         (active-fmt   (if comma (subseq rest 0 comma) rest))
-         (inactive-fmt (if comma (subseq rest (1+ comma)) active-fmt))
-         (cur-session  (getf context :%session))
-         (sessions     (or (%all-server-sessions)
-                           (and cur-session (list cur-session)))))
-    (with-output-to-string (s)
-      (dolist (sess sessions)
-        (let* ((win  (cl-tmux/model:session-active-window sess))
-               (pane (and win (cl-tmux/model:window-active-pane win)))
-               (ctx  (format-context-from-session sess win pane)))
-          (write-string
-           (expand-format (if (eq sess cur-session) active-fmt inactive-fmt) ctx)
-           s))))))
+  (multiple-value-bind (active-fmt inactive-fmt) (%split-active-inactive rest)
+    (let* ((cur-session (getf context :%session))
+           (sessions    (or (%all-server-sessions)
+                            (and cur-session (list cur-session)))))
+      (with-output-to-string (s)
+        (dolist (sess sessions)
+          (let* ((win  (cl-tmux/model:session-active-window sess))
+                 (pane (and win (cl-tmux/model:window-active-pane win)))
+                 (ctx  (format-context-from-session sess win pane)))
+            (write-string
+             (expand-format (if (eq sess cur-session) active-fmt inactive-fmt) ctx)
+             s)))))))
 
 (defun %expand-pane-iteration (rest context)
   "Expand a #{P:ACTIVE,INACTIVE} pane-list modifier.  Iterates the panes of the
@@ -399,14 +390,14 @@
          (window  (and session (cl-tmux/model:session-active-window session))))
     (if (null window)
         ""
-        (let* ((comma        (%top-level-comma rest 0))
-               (active-fmt   (if comma (subseq rest 0 comma) rest))
-               (inactive-fmt (if comma (subseq rest (1+ comma)) active-fmt))
-               (active-pane  (cl-tmux/model:window-active-pane window)))
-          (with-output-to-string (s)
-            (dolist (pane (cl-tmux/model:window-panes window))
-              (let ((ctx (format-context-from-session session window pane)))
-                (write-string
-                 (expand-format (if (eq pane active-pane) active-fmt inactive-fmt) ctx)
-                 s))))))))
+        (multiple-value-bind (active-fmt inactive-fmt) (%split-active-inactive rest)
+          (let ((active-pane (cl-tmux/model:window-active-pane window)))
+            (with-output-to-string (s)
+              (dolist (pane (cl-tmux/model:window-panes window))
+                (let ((ctx (format-context-from-session session window pane)))
+                  (write-string
+                   (expand-format (if (eq pane active-pane) active-fmt inactive-fmt) ctx)
+                   s)))))))))
+
+
 

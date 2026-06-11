@@ -137,15 +137,14 @@
 (defmacro with-confirm-before-prompt ((on-submit-var) &body body)
   "Activate a confirm-before prompt in an isolated environment and bind
    ON-SUBMIT-VAR to the prompt's on-submit function, then execute BODY."
-  `(let ((sess (make-fake-session)))
-     (with-loop-state
-       (with-clean-prompt
-         (let ((*overlay* nil))
-           (cl-tmux::dispatch-command sess :confirm-before nil)
-           (is-true (prompt-active-p)
-                    "dispatch-command :confirm-before must activate a prompt")
-           (let ((,on-submit-var (prompt-on-submit *prompt*)))
-             ,@body))))))
+  `(with-fake-session (sess)
+     (with-clean-prompt
+       (let ((*overlay* nil))
+         (cl-tmux::dispatch-command sess :confirm-before nil)
+         (is-true (prompt-active-p)
+                  "dispatch-command :confirm-before must activate a prompt")
+         (let ((,on-submit-var (prompt-on-submit *prompt*)))
+           ,@body)))))
 
 (test confirm-before-y-dispatches
   "dispatch-command :confirm-before activates a prompt; submitting \"y\" shows the overlay."

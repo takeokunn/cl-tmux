@@ -14,82 +14,74 @@
    a recognised copy-mode command.
    EXTRA-ARGS (a list of strings) holds any positional arguments after the command
    name; used by copy-pipe / copy-pipe-and-cancel to carry the pipe-command string."
-  ;; jump-forward/backward/to/to-backward: require a char argument (the target).
-  ;; `send -X jump-forward a` passes "a" as the first extra-arg.
-  (when (and extra-args
-             (member command-name '("jump-forward" "jump-backward"
-                                    "jump-to" "jump-to-backward")
-                                 :test #'string-equal))
-    (let* ((char-arg (first extra-args))
-           (target-ch (and char-arg (plusp (length char-arg)) (char char-arg 0)))
-           (pane   (or target-pane (session-active-pane session)))
-           (screen (and pane (cl-tmux/model:pane-screen pane))))
-      (when (and screen target-ch)
-        (cond
-          ((string-equal command-name "jump-forward")
-           (copy-mode-jump-forward screen target-ch))
-          ((string-equal command-name "jump-backward")
-           (copy-mode-jump-backward screen target-ch))
-          ((string-equal command-name "jump-to")
-           (copy-mode-jump-to screen target-ch))
-          ((string-equal command-name "jump-to-backward")
-           (copy-mode-jump-to-backward screen target-ch))))
-      (return-from %dispatch-send-keys-X (and screen target-ch t))))
-  ;; goto-line N: requires a numeric line-number argument.
-  ;; `send -X goto-line 42` passes "42" as the first extra-arg.
-  (when (string-equal command-name "goto-line")
-    (let* ((pane   (or target-pane (session-active-pane session)))
-           (screen (and pane (cl-tmux/model:pane-screen pane)))
-           (n-str  (first extra-args))
-           (n      (and n-str (plusp (length n-str))
-                        (ignore-errors (parse-integer n-str)))))
-      (when (and screen (integerp n))
-        (copy-mode-goto-line screen n))
-      (return-from %dispatch-send-keys-X (and screen (integerp n) t))))
-  ;; search-forward-text / search-backward-text: scripted search with the text
-  ;; passed as extra-args (no interactive prompt).  `send -X search-forward-text "foo"`
-  (when (and extra-args
-             (member command-name '("search-forward-text" "search-backward-text")
-                                 :test #'string-equal))
-    (let* ((pane   (or target-pane (session-active-pane session)))
-           (screen (and pane (cl-tmux/model:pane-screen pane)))
-           (term   (first extra-args)))
-      (when (and screen term (plusp (length term)))
-        (if (string-equal command-name "search-forward-text")
-            (copy-mode-search-forward  screen term)
-            (copy-mode-search-backward screen term)))
-      (return-from %dispatch-send-keys-X (and screen term t))))
-  ;; copy-pipe / copy-pipe-and-cancel with an explicit pipe-command argument:
-  ;; bypass the keyword table (which cannot carry per-invocation args) and call
-  ;; the copy-mode function directly with the argument string.
-  (when (and extra-args
-             (member command-name '("copy-pipe" "copy-pipe-and-cancel"
-                                    "pipe" "pipe-and-cancel" "pipe-no-clear")
-                                 :test #'string-equal))
-    (let* ((pane   (or target-pane (session-active-pane session)))
-           (screen (and pane (cl-tmux/model:pane-screen pane))))
-      (when screen
-        (if (member command-name '("copy-pipe-and-cancel" "pipe-and-cancel")
-                                 :test #'string-equal)
-            (copy-mode-copy-pipe          screen (first extra-args))
-            (copy-mode-copy-pipe-no-cancel screen (first extra-args))))
-      (return-from %dispatch-send-keys-X (and screen t))))
-  ;; Standard keyword dispatch.
-  (let ((kw (cdr (assoc command-name *copy-mode-x-commands* :test #'string-equal))))
-    (when kw
-      (if (and target-pane target-window
-               (not (eq target-pane (session-active-pane session))))
-          (let ((prev-win  (cl-tmux/model:session-active session))
-                (prev-pane (cl-tmux/model:window-active target-window)))
-            (unwind-protect
-                 (progn
-                   (setf (cl-tmux/model:session-active session)      target-window
-                         (cl-tmux/model:window-active   target-window) target-pane)
-                   (dispatch-command session kw nil))
-              (setf (cl-tmux/model:session-active session)       prev-win
-                    (cl-tmux/model:window-active  target-window) prev-pane)))
-          (dispatch-command session kw nil))
-      t)))
+  (let* ((pane   (or target-pane (session-active-pane session)))
+         (screen (and pane (cl-tmux/model:pane-screen pane))))
+    (cond
+      ;; jump-forward/backward/to/to-backward: require a char argument (the target).
+      ;; `send -X jump-forward a` passes "a" as the first extra-arg.
+      ((and extra-args
+            (member command-name '("jump-forward" "jump-backward"
+                                   "jump-to" "jump-to-backward")
+                                :test #'string-equal))
+       (let* ((char-arg  (first extra-args))
+              (target-ch (and char-arg (plusp (length char-arg)) (char char-arg 0))))
+         (when (and screen target-ch)
+           (cond
+             ((string-equal command-name "jump-forward")   (copy-mode-jump-forward  screen target-ch))
+             ((string-equal command-name "jump-backward")  (copy-mode-jump-backward screen target-ch))
+             ((string-equal command-name "jump-to")        (copy-mode-jump-to       screen target-ch))
+             ((string-equal command-name "jump-to-backward") (copy-mode-jump-to-backward screen target-ch))))
+         (and screen target-ch t)))
+      ;; goto-line N: requires a numeric line-number argument.
+      ;; `send -X goto-line 42` passes "42" as the first extra-arg.
+      ((string-equal command-name "goto-line")
+       (let* ((n-str (first extra-args))
+              (n     (and n-str (plusp (length n-str))
+                          (ignore-errors (parse-integer n-str)))))
+         (when (and screen (integerp n))
+           (copy-mode-goto-line screen n))
+         (and screen (integerp n) t)))
+      ;; search-forward-text / search-backward-text: scripted search with the text
+      ;; passed as extra-args (no interactive prompt).
+      ((and extra-args
+            (member command-name '("search-forward-text" "search-backward-text")
+                                :test #'string-equal))
+       (let ((term (first extra-args)))
+         (when (and screen term (plusp (length term)))
+           (if (string-equal command-name "search-forward-text")
+               (copy-mode-search-forward  screen term)
+               (copy-mode-search-backward screen term)))
+         (and screen term t)))
+      ;; copy-pipe / copy-pipe-and-cancel with an explicit pipe-command argument:
+      ;; bypass the keyword table (which cannot carry per-invocation args) and call
+      ;; the copy-mode function directly with the argument string.
+      ((and extra-args
+            (member command-name '("copy-pipe" "copy-pipe-and-cancel"
+                                   "pipe" "pipe-and-cancel" "pipe-no-clear")
+                                :test #'string-equal))
+       (when screen
+         (if (member command-name '("copy-pipe-and-cancel" "pipe-and-cancel")
+                                  :test #'string-equal)
+             (copy-mode-copy-pipe           screen (first extra-args))
+             (copy-mode-copy-pipe-no-cancel screen (first extra-args))))
+       (and screen t))
+      ;; Standard keyword dispatch.
+      (t
+       (let ((kw (cdr (assoc command-name *copy-mode-x-commands* :test #'string-equal))))
+         (when kw
+           (if (and target-pane target-window
+                    (not (eq target-pane (session-active-pane session))))
+               (let ((prev-win  (cl-tmux/model:session-active session))
+                     (prev-pane (cl-tmux/model:window-active target-window)))
+                 (unwind-protect
+                      (progn
+                        (setf (cl-tmux/model:session-active session)       target-window
+                              (cl-tmux/model:window-active  target-window) target-pane)
+                        (dispatch-command session kw nil))
+                   (setf (cl-tmux/model:session-active session)       prev-win
+                         (cl-tmux/model:window-active  target-window) prev-pane)))
+               (dispatch-command session kw nil))
+           t))))))
 
 (defun %cmd-run-shell-arg (session args)
   "run-shell [-b] command: run COMMAND in a shell and show the output.

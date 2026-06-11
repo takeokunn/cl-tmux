@@ -103,67 +103,61 @@
 
 (test multi-handle-key-detach-drops-client
   "A ^B d key message yields :drop (the client detaches; the session survives)."
-  (let ((s (make-fake-session)))
+  (with-fake-session (s)
     (with-isolated-config
-      (with-loop-state
-        (let ((conn    (%make-test-conn))
-              (payload (make-array 2 :element-type '(unsigned-byte 8)
-                                     :initial-contents (list 2 (char-code #\d)))))
-          (is (eq :drop (cl-tmux::%handle-multi-client-message
-                         cl-tmux::+msg-key+ payload s conn))
-              "^B d must produce :drop")
-          (is-true cl-tmux::*running* "a detach must not end the session"))))))
+      (let ((conn    (%make-test-conn))
+            (payload (make-array 2 :element-type '(unsigned-byte 8)
+                                   :initial-contents (list 2 (char-code #\d)))))
+        (is (eq :drop (cl-tmux::%handle-multi-client-message
+                       cl-tmux::+msg-key+ payload s conn))
+            "^B d must produce :drop")
+        (is-true cl-tmux::*running* "a detach must not end the session")))))
 
 (test multi-handle-detach-message-drops-client
   "An explicit +msg-detach+ message yields :drop."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (is (eq :drop (cl-tmux::%handle-multi-client-message
-                     cl-tmux::+msg-detach+ #() s (%make-test-conn)))))))
+  (with-fake-session (s)
+    (is (eq :drop (cl-tmux::%handle-multi-client-message
+                   cl-tmux::+msg-detach+ #() s (%make-test-conn))))))
 
 (test multi-handle-nil-and-unknown-type-drop
   "EOF (NIL type) and an unknown message type both yield :drop."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (is (eq :drop (cl-tmux::%handle-multi-client-message nil #() s (%make-test-conn)))
-          "NIL type (EOF) → :drop")
-      (is (eq :drop (cl-tmux::%handle-multi-client-message 99 #() s (%make-test-conn)))
-          "unknown type → :drop"))))
+  (with-fake-session (s)
+    (is (eq :drop (cl-tmux::%handle-multi-client-message nil #() s (%make-test-conn)))
+        "NIL type (EOF) → :drop")
+    (is (eq :drop (cl-tmux::%handle-multi-client-message 99 #() s (%make-test-conn)))
+        "unknown type → :drop")))
 
 (test multi-handle-detach-other-clients-command
   "A detach-other-clients command message yields :detach-others."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((payload (cl-tmux/protocol::encode-command-payload :detach-other-clients)))
-        (is (eq :detach-others (cl-tmux::%handle-multi-client-message
-                                cl-tmux::+msg-command+ payload s (%make-test-conn)))
-            "detach-other-clients command → :detach-others")))))
+  (with-fake-session (s)
+    (let ((payload (cl-tmux/protocol::encode-command-payload :detach-other-clients)))
+      (is (eq :detach-others (cl-tmux::%handle-multi-client-message
+                              cl-tmux::+msg-command+ payload s (%make-test-conn)))
+          "detach-other-clients command → :detach-others"))))
 
 (test multi-handle-forwarded-command-runs-server-side
   "A general command message (e.g. next-window) is run server-side via
    %run-command-tokens — the CLI / control command-forwarding path."
-  (let ((s (make-fake-session :nwindows 2)))
-    (with-loop-state
-      (let ((payload (cl-tmux/protocol::encode-command-payload :next-window)))
-        (is (null (cl-tmux::%handle-multi-client-message
-                   cl-tmux::+msg-command+ payload s (%make-test-conn)))
-            "a forwarded command returns NIL (keep serving)")
-        (is (eq (second (cl-tmux/model:session-windows s))
-                (session-active-window s))
-            "the forwarded next-window must advance the active window server-side")))))
+  (with-fake-session (s :nwindows 2)
+    (let ((payload (cl-tmux/protocol::encode-command-payload :next-window)))
+      (is (null (cl-tmux::%handle-multi-client-message
+                 cl-tmux::+msg-command+ payload s (%make-test-conn)))
+          "a forwarded command returns NIL (keep serving)")
+      (is (eq (second (cl-tmux/model:session-windows s))
+              (session-active-window s))
+          "the forwarded next-window must advance the active window server-side"))))
 
 (test multi-handle-forwarded-command-with-arg-runs
   "A forwarded command carrying ARGUMENTS is reconstructed (<name> args...) and run
    server-side: `select-window -t 1` selects window-id 1 — verifying the arg path
    of command forwarding, not just the bare-command path above."
-  (let ((s (make-fake-session :nwindows 2)))   ; window-ids 0,1
-    (with-loop-state
-      (let ((payload (cl-tmux/protocol::encode-command-payload
-                      :select-window :args '("-t" "1"))))
-        (cl-tmux::%handle-multi-client-message
-         cl-tmux::+msg-command+ payload s (%make-test-conn))
-        (is (= 1 (cl-tmux/model:window-id (session-active-window s)))
-            "forwarded `select-window -t 1` must select window-id 1 via the args")))))
+  (with-fake-session (s :nwindows 2)            ; window-ids 0,1
+    (let ((payload (cl-tmux/protocol::encode-command-payload
+                    :select-window :args '("-t" "1"))))
+      (cl-tmux::%handle-multi-client-message
+       cl-tmux::+msg-command+ payload s (%make-test-conn))
+      (is (= 1 (cl-tmux/model:window-id (session-active-window s)))
+          "forwarded `select-window -t 1` must select window-id 1 via the args"))))
 
 ;;; ── %drop-client: registry removal ───────────────────────────────────────────
 

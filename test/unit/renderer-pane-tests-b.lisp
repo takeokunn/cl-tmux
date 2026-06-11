@@ -401,7 +401,7 @@
 (test copy-mode-search-matches-highlighted-in-frame
   "When copy mode has a search term, render-session-to-string overdraws matches in
    copy-mode-match-style."
-  (let ((s (make-fake-session)))
+  (with-fake-session (s)
     (feed (active-screen s) "hello world hello")
     (cl-tmux/commands::copy-mode-enter (active-screen s))
     (setf (cl-tmux/terminal/types:screen-copy-search-term (active-screen s)) "hello")
@@ -413,7 +413,7 @@
 
 (test copy-mode-no-search-term-no-highlight
   "With copy mode active but no search term, no match-style SGR is emitted."
-  (let ((s (make-fake-session)))
+  (with-fake-session (s)
     (feed (active-screen s) "hello world")
     (cl-tmux/commands::copy-mode-enter (active-screen s))
     (setf (cl-tmux/terminal/types:screen-copy-search-term (active-screen s)) nil)

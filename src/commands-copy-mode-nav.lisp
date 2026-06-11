@@ -127,42 +127,56 @@
 
 ;;; Public API: word (w/b/e) and WORD (W/B/E) motions.
 
-(defun copy-mode-word-forward  (screen) (%word-forward-impl  screen #'%word-separator-p))
-(defun copy-mode-word-backward (screen) (%word-backward-impl screen #'%word-separator-p))
-(defun copy-mode-word-end      (screen) (%word-end-impl      screen #'%word-separator-p))
+(defmacro define-word-motion-suite (prefix sep-pred forward-name backward-name end-name)
+  "Generate three word-motion functions sharing SEP-PRED: FORWARD-NAME, BACKWARD-NAME, END-NAME."
+  (declare (ignore prefix))
+  `(progn
+     (defun ,forward-name  (screen) (%word-forward-impl  screen ,sep-pred))
+     (defun ,backward-name (screen) (%word-backward-impl screen ,sep-pred))
+     (defun ,end-name      (screen) (%word-end-impl      screen ,sep-pred))))
+
+;;; word motion (vi w/b/e): punctuation-delimited word.
+(define-word-motion-suite word #'%word-separator-p
+  copy-mode-word-forward copy-mode-word-backward copy-mode-word-end)
 
 ;;; WORD motion (vi W/B/E): blank-delimited — a WORD spans punctuation, stops only at spaces.
-(defun copy-mode-space-forward  (screen) (%word-forward-impl  screen #'%space-separator-p))
-(defun copy-mode-space-backward (screen) (%word-backward-impl screen #'%space-separator-p))
-(defun copy-mode-space-end      (screen) (%word-end-impl      screen #'%space-separator-p))
+(define-word-motion-suite space #'%space-separator-p
+  copy-mode-space-forward copy-mode-space-backward copy-mode-space-end)
 
 ;;; ── Line start / end ─────────────────────────────────────────────────────────
+;;;
+;;; define-line-jump-commands: prolog-style table for commands that jump the
+;;; cursor column while keeping the current row.  COL-EXPR has ROW and SCREEN
+;;; bound (ROW from (car (screen-copy-cursor screen)), SCREEN is the argument).
 
-(defun copy-mode-line-start (screen)
-  "Move cursor to column 0 of the current row."
-  (when (screen-copy-mode-p screen)
-    (let ((row (car (screen-copy-cursor screen))))
-      (setf (screen-copy-cursor screen) (cons row 0)
-            (screen-dirty-p screen) t))))
+(defmacro define-line-jump-commands (&rest specs)
+  "Generate copy-mode column-jump functions from a declarative (name doc col-expr) table.
+   COL-EXPR may reference SCREEN and the current ROW."
+  `(progn
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (name doc col-expr) spec
+                   `(defun ,name (screen)
+                      ,doc
+                      (when (screen-copy-mode-p screen)
+                        (let ((row (car (screen-copy-cursor screen))))
+                          (declare (ignorable row))
+                          (setf (screen-copy-cursor screen)
+                                (cons row ,col-expr)
+                                (screen-dirty-p screen) t))))))
+               specs)))
 
-(defun copy-mode-line-end (screen)
-  "Move cursor to the last column of the current row."
-  (when (screen-copy-mode-p screen)
-    (let ((row (car (screen-copy-cursor screen))))
-      (setf (screen-copy-cursor screen) (cons row (1- (screen-width screen)))
-            (screen-dirty-p screen) t))))
-
-(defun copy-mode-back-to-indentation (screen)
-  "Move cursor to the first non-blank character of the current row (tmux
-   `back-to-indentation`, vi ^).  Distinct from line-start (vi 0, column 0): on an
-   indented line ^ stops at the indent.  Falls back to column 0 when the row is
-   entirely blank.  Keeps the row; marks the screen dirty."
-  (when (screen-copy-mode-p screen)
-    (let* ((row   (car (screen-copy-cursor screen)))
-           (chars (%copy-mode-row-chars screen row))
-           (col   (or (position-if-not #'%space-separator-p chars) 0)))
-      (setf (screen-copy-cursor screen) (cons row col)
-            (screen-dirty-p screen) t))))
+(define-line-jump-commands
+  (copy-mode-line-start
+   "Move cursor to column 0 of the current row (vi 0)."
+   0)
+  (copy-mode-line-end
+   "Move cursor to the last column of the current row (vi $)."
+   (1- (screen-width screen)))
+  (copy-mode-back-to-indentation
+   "Move cursor to the first non-blank character of the current row (vi ^).
+    Distinct from line-start: on an indented line ^ stops at the indent.
+    Falls back to column 0 when the row is entirely blank."
+   (or (position-if-not #'%space-separator-p (%copy-mode-row-chars screen row)) 0)))
 
 ;;; ── Declarative cursor-jump and scroll-wrapper macro tables ─────────────────
 ;;;
@@ -279,15 +293,14 @@
   (let* ((sb    (screen-scrollback screen))
          (sb-n  (length sb))
          (width (screen-width screen)))
-    (dotimes (col width t)
-      (let ((ch (if (< vrow sb-n)
-                    (let ((vec (nth (- sb-n 1 vrow) sb)))
-                      (if (and vec (< col (length vec)))
-                          (cell-char (aref vec col))
-                          #\Space))
-                    (cell-char (screen-cell screen col (- vrow sb-n))))))
-        (unless (or (char= ch #\Space) (char= ch (code-char 0)))
-          (return-from %copy-mode-row-blank-p nil))))))
+    (loop for col from 0 below width
+          for ch = (if (< vrow sb-n)
+                       (let ((vec (nth (- sb-n 1 vrow) sb)))
+                         (if (and vec (< col (length vec)))
+                             (cell-char (aref vec col))
+                             #\Space))
+                       (cell-char (screen-cell screen col (- vrow sb-n))))
+          always (or (char= ch #\Space) (char= ch (code-char 0))))))
 
 (defun %cursor-vrow (screen)
   "Return the virtual row of the current copy-mode cursor."

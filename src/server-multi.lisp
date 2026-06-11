@@ -212,24 +212,23 @@
         (let ((sock (accept-connection listener)))
           (when sock (%add-client sock))))
       ;; Readable clients: read + dispatch one frame each.
-      (dolist (conn (copy-list *clients*))
-        (when (member (client-conn-fd conn) ready)
-          (let ((disp (handler-case
-                          (multiple-value-bind (type payload)
-                              (read-frame (client-conn-stream conn))
-                            (%handle-multi-client-message type payload session conn))
-                        (error () :drop))))
-            (case disp
-              (:quit (return-from %multi-serve-iteration :quit))
-              (:drop
-               (%drop-client conn :bye t)
-               ;; exit-unattached: terminate once the last client has detached.
-               (when (%exit-after-last-detach-p)
-                 (return-from %multi-serve-iteration :quit)))
-              (:detach-others
-               (dolist (other (copy-list *clients*))
-                 (unless (eq other conn) (%drop-client other :bye t))))))))))
-  nil)
+      (loop for conn in (copy-list *clients*)
+            when (member (client-conn-fd conn) ready)
+              do (let ((disp (handler-case
+                                  (multiple-value-bind (type payload)
+                                      (read-frame (client-conn-stream conn))
+                                    (%handle-multi-client-message type payload session conn))
+                                (error () :drop))))
+                   (case disp
+                     (:quit (return :quit))
+                     (:drop
+                      (%drop-client conn :bye t)
+                      ;; exit-unattached: terminate once the last client has detached.
+                      (when (%exit-after-last-detach-p)
+                        (return :quit)))
+                     (:detach-others
+                      (dolist (other (copy-list *clients*))
+                        (unless (eq other conn) (%drop-client other :bye t))))))))))
 
 (defun %run-multi-server-loop (listener session)
   "Drive %multi-serve-iteration until *running* clears or a command ends the

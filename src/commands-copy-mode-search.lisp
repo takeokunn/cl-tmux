@@ -92,13 +92,12 @@
   (let ((total (%copy-mode-total-rows screen))
         (match (%copy-mode-make-matcher term)))
     (loop for vrow from start-vrow below total
-          do (let* ((row-str  (%copy-mode-virtual-row-string screen vrow))
-                    (from-col (if (= vrow start-vrow) start-col 0)))
-               (when (<= from-col (length row-str))
-                 (let ((pos (funcall match row-str from-col)))
-                   (when pos
-                     (return-from %copy-mode-find-forward (values vrow pos)))))))
-    (values nil nil)))
+          for row-str  = (%copy-mode-virtual-row-string screen vrow)
+          for from-col = (if (= vrow start-vrow) start-col 0)
+          for pos      = (and (<= from-col (length row-str))
+                              (funcall match row-str from-col))
+          when pos return (values vrow pos)
+          finally (return (values nil nil)))))
 
 (defun %copy-mode-find-backward (screen term start-vrow start-col)
   "Scan backward through the full virtual buffer from (START-VROW, START-COL).
@@ -106,20 +105,16 @@
    Returns (values vrow col) or (values nil nil)."
   (let ((match (%copy-mode-make-matcher term)))
     (loop for vrow from start-vrow downto 0
-          do (let* ((row-str (%copy-mode-virtual-row-string screen vrow))
-                    (end-col (if (= vrow start-vrow) start-col (length row-str)))
-                    (best    nil)
-                    (from    0))
-               ;; Walk all matches left-to-right, keep the last start < end-col.
-               (loop
-                 (let ((pos (and (<= from (length row-str))
-                                 (funcall match row-str from))))
-                   (cond
-                     ((or (null pos) (>= pos end-col)) (return))
-                     (t (setf best pos) (setf from (1+ pos))))))
-               (when best
-                 (return-from %copy-mode-find-backward (values vrow best)))))
-    (values nil nil)))
+          for row-str = (%copy-mode-virtual-row-string screen vrow)
+          for end-col = (if (= vrow start-vrow) start-col (length row-str))
+          ;; Walk all matches left-to-right, keep the last start < end-col.
+          for best = (loop with b = nil and from = 0
+                           for pos = (and (<= from (length row-str))
+                                          (funcall match row-str from))
+                           if (or (null pos) (>= pos end-col)) return b
+                           else do (setf b pos from (1+ pos)))
+          when best return (values vrow best)
+          finally (return (values nil nil)))))
 
 ;;; ── Wrap-search option ───────────────────────────────────────────────────────
 

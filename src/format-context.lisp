@@ -107,34 +107,36 @@
 (defun %pane-cwd-from-os (pane)
   "Query the OS for the current working directory of PANE's shell process.
    On Linux reads /proc/PID/cwd via readlink; on macOS uses lsof -p PID -a -d cwd.
-   Returns a path string, or empty string on failure (no PID, OS error, timeout)."
+   Returns a non-empty path string, or NIL on failure (no PID, OS error, timeout)."
   (let ((pid (and pane (cl-tmux/model:pane-pid pane))))
-    (unless (and pid (> pid 0)) (return-from %pane-cwd-from-os ""))
-    ;; Linux: /proc/PID/cwd is a symlink to the cwd.
-    (let ((proc-path (format nil "/proc/~D/cwd" pid)))
-      (when (probe-file proc-path)
-        (let ((cwd (handler-case
-                       (string-trim " \t\n\r"
-                                    (uiop:run-program
-                                     (list "readlink" proc-path)
-                                     :output :string :ignore-error-status t
-                                     :timeout 1))
-                     (error () ""))))
-          (when (plusp (length cwd)) (return-from %pane-cwd-from-os cwd)))))
-    ;; macOS: lsof reports the cwd as file descriptor 'cwd'.
-    ;; Try both full path (/usr/sbin/lsof) and bare name in case PATH varies.
-    (handler-case
-        (let* ((lsof-binary (or (and (probe-file "/usr/sbin/lsof") "/usr/sbin/lsof")
-                                "lsof"))
-               (lsof-output (string-trim " \t\n\r"
-                              (uiop:run-program
-                               (list lsof-binary "-p" (format nil "~D" pid)
-                                     "-a" "-d" "cwd" "-Fn")
-                               :output :string :ignore-error-status t
-                               :timeout 2)))
-               (extracted-path (%lsof-extract-cwd lsof-output)))
-          (or extracted-path ""))
-      (error () ""))))
+    (when (and pid (> pid 0))
+      (or
+       ;; Linux: /proc/PID/cwd is a symlink to the cwd.
+       (let ((proc-path (format nil "/proc/~D/cwd" pid)))
+         (when (probe-file proc-path)
+           (let ((cwd (handler-case
+                          (string-trim " \t\n\r"
+                                       (uiop:run-program
+                                        (list "readlink" proc-path)
+                                        :output :string :ignore-error-status t
+                                        :timeout 1))
+                        (error () ""))))
+             (when (plusp (length cwd)) cwd))))
+       ;; macOS: lsof reports the cwd as file descriptor 'cwd'.
+       ;; Try both full path (/usr/sbin/lsof) and bare name in case PATH varies.
+       (handler-case
+           (let* ((lsof-binary (or (and (probe-file "/usr/sbin/lsof") "/usr/sbin/lsof")
+                                   "lsof"))
+                  (lsof-output (string-trim " \t\n\r"
+                                 (uiop:run-program
+                                  (list lsof-binary "-p" (format nil "~D" pid)
+                                        "-a" "-d" "cwd" "-Fn")
+                                  :output :string :ignore-error-status t
+                                  :timeout 2)))
+                  (extracted-path (%lsof-extract-cwd lsof-output)))
+             (when (and extracted-path (plusp (length extracted-path)))
+               extracted-path))
+         (error () nil))))))
 
 (defun %pane-current-command (pane)
   "Return the foreground command name for PANE's PTY process.

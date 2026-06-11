@@ -40,15 +40,31 @@
   "Index of the next comma in CONTENT at/after START that is NOT inside a nested
    #{...}, or NIL.  Commas inside a nested format belong to it, not the splitter."
   (let ((depth 0) (i start) (n (length content)))
-    (loop while (< i n) do
-      (let ((c (char content i)))
-        (cond
-          ((and (char= c #\#) (< (1+ i) n) (char= (char content (1+ i)) #\{))
-           (incf depth) (incf i 2))
-          ((and (char= c #\}) (plusp depth)) (decf depth) (incf i))
-          ((and (char= c #\,) (zerop depth)) (return-from %top-level-comma i))
-          (t (incf i)))))
-    nil))
+    (loop while (< i n)
+          do (let ((c (char content i)))
+               (cond
+                 ((and (char= c #\#) (< (1+ i) n) (char= (char content (1+ i)) #\{))
+                  (incf depth) (incf i 2))
+                 ((and (char= c #\}) (plusp depth)) (decf depth) (incf i))
+                 ((and (char= c #\,) (zerop depth)) (return i))
+                 (t (incf i))))
+          finally (return nil))))
+
+(defun %split-two (rest)
+  "Split REST on the first top-level comma into (values first second).
+   When no comma is present, SECOND defaults to the empty string."
+  (let ((comma (%top-level-comma rest 0)))
+    (if comma
+        (values (subseq rest 0 comma) (subseq rest (1+ comma)))
+        (values rest ""))))
+
+(defun %split-active-inactive (rest)
+  "Split REST on the first top-level comma into (values active-fmt inactive-fmt).
+   When no comma is present, INACTIVE defaults to ACTIVE (both use the same format)."
+  (let ((comma (%top-level-comma rest 0)))
+    (if comma
+        (values (subseq rest 0 comma) (subseq rest (1+ comma)))
+        (values rest rest))))
 
 (defun %split-conditional (content)
   "Split CONTENT (text after '?') into (values cond true-branch false-branch).

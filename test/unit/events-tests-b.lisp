@@ -9,14 +9,13 @@
 
 (test process-byte-unlocks-locked-session
   "Any byte unlocks a locked session; subsequent bytes are processed normally."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (setf (session-locked-p s) t)
-      (let ((state (cl-tmux::make-input-state)))
-        (is (null (cl-tmux::process-byte s (char-code #\a) state))
-            "first byte on locked session returns NIL (unlocks)")
-        (is-false (session-locked-p s)
-                  "session must be unlocked after any byte")))))
+  (with-fake-session (s)
+    (setf (session-locked-p s) t)
+    (let ((state (cl-tmux::make-input-state)))
+      (is (null (cl-tmux::process-byte s (char-code #\a) state))
+          "first byte on locked session returns NIL (unlocks)")
+      (is-false (session-locked-p s)
+                "session must be unlocked after any byte"))))
 
 ;;; ── %sgr-mouse-sequence-p edge cases ────────────────────────────────────────
 
@@ -78,63 +77,59 @@
 
 (test dispatch-modifier-arrow-ctrl-arrow-resizes-one-cell
   "C-arrow (mod-byte=53) dispatches resize-pane with amount=1 without signaling."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      ;; Feed C-b ESC [ 1 ; 5 A (C-Up) through process-byte.
-      ;; Expect no error and NIL return.
-      (let ((state (cl-tmux::make-input-state)))
-        (cl-tmux::process-byte s 2   state)   ; C-b prefix
-        (cl-tmux::process-byte s 27  state)   ; ESC
-        (cl-tmux::process-byte s 91  state)   ; [
-        (cl-tmux::process-byte s 49  state)   ; 1
-        (cl-tmux::process-byte s 59  state)   ; ;
-        (cl-tmux::process-byte s 53  state)   ; 5 (Ctrl)
-        (is (null (cl-tmux::process-byte s 65 state))   ; A (Up)
-            "C-b C-Up must return NIL (no quit/detach)")))))
+  (with-fake-session (s)
+    ;; Feed C-b ESC [ 1 ; 5 A (C-Up) through process-byte.
+    ;; Expect no error and NIL return.
+    (let ((state (cl-tmux::make-input-state)))
+      (cl-tmux::process-byte s 2   state)   ; C-b prefix
+      (cl-tmux::process-byte s 27  state)   ; ESC
+      (cl-tmux::process-byte s 91  state)   ; [
+      (cl-tmux::process-byte s 49  state)   ; 1
+      (cl-tmux::process-byte s 59  state)   ; ;
+      (cl-tmux::process-byte s 53  state)   ; 5 (Ctrl)
+      (is (null (cl-tmux::process-byte s 65 state))   ; A (Up)
+          "C-b C-Up must return NIL (no quit/detach)"))))
 
 (test dispatch-modifier-arrow-meta-arrow-dispatches-resize-command
   "M-arrow (mod-byte=51) dispatches :resize-* command without signaling."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((state (cl-tmux::make-input-state)))
-        (cl-tmux::process-byte s 2   state)   ; C-b prefix
-        (cl-tmux::process-byte s 27  state)   ; ESC
-        (cl-tmux::process-byte s 91  state)   ; [
-        (cl-tmux::process-byte s 49  state)   ; 1
-        (cl-tmux::process-byte s 59  state)   ; ;
-        (cl-tmux::process-byte s 51  state)   ; 3 (Meta)
-        (is (null (cl-tmux::process-byte s 66 state))   ; B (Down)
-            "C-b M-Down must return NIL (no quit/detach)")))))
+  (with-fake-session (s)
+    (let ((state (cl-tmux::make-input-state)))
+      (cl-tmux::process-byte s 2   state)   ; C-b prefix
+      (cl-tmux::process-byte s 27  state)   ; ESC
+      (cl-tmux::process-byte s 91  state)   ; [
+      (cl-tmux::process-byte s 49  state)   ; 1
+      (cl-tmux::process-byte s 59  state)   ; ;
+      (cl-tmux::process-byte s 51  state)   ; 3 (Meta)
+      (is (null (cl-tmux::process-byte s 66 state))   ; B (Down)
+          "C-b M-Down must return NIL (no quit/detach)"))))
 
 ;;; ── copy-mode-set-cursor command coverage ────────────────────────────────────
 
 (test copy-mode-set-cursor-updates-cursor-position
   "copy-mode-set-cursor sets the copy-mode cursor to the given (row, col)."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((screen (active-screen s)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        (is (screen-copy-mode-p screen) "copy mode entered")
-        ;; Place cursor at (3, 5)
-        (cl-tmux/commands::copy-mode-set-cursor screen 3 5)
-        (is (equal (cons 3 5) (screen-copy-cursor screen))
-            "copy-mode-set-cursor must set cursor to (row . col)")))))
+  (with-fake-session (s)
+    (let ((screen (active-screen s)))
+      (cl-tmux::dispatch-command s :copy-mode-enter nil)
+      (is (screen-copy-mode-p screen) "copy mode entered")
+      ;; Place cursor at (3, 5)
+      (cl-tmux/commands::copy-mode-set-cursor screen 3 5)
+      (is (equal (cons 3 5) (screen-copy-cursor screen))
+          "copy-mode-set-cursor must set cursor to (row . col)"))))
 
 (test copy-mode-set-cursor-clamps-to-screen-bounds
   "copy-mode-set-cursor clamps row/col to [0, height-1] / [0, width-1]."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((screen (active-screen s)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        ;; Attempt to set cursor far out of bounds.
-        (cl-tmux/commands::copy-mode-set-cursor screen 999 999)
-        (let* ((cursor (screen-copy-cursor screen))
-               (row    (car cursor))
-               (col    (cdr cursor)))
-          (is (<= 0 row (1- (screen-height screen)))
-              "clamped row must be within [0, height-1]")
-          (is (<= 0 col (1- (screen-width screen)))
-              "clamped col must be within [0, width-1]"))))))
+  (with-fake-session (s)
+    (let ((screen (active-screen s)))
+      (cl-tmux::dispatch-command s :copy-mode-enter nil)
+      ;; Attempt to set cursor far out of bounds.
+      (cl-tmux/commands::copy-mode-set-cursor screen 999 999)
+      (let* ((cursor (screen-copy-cursor screen))
+             (row    (car cursor))
+             (col    (cdr cursor)))
+        (is (<= 0 row (1- (screen-height screen)))
+            "clamped row must be within [0, height-1]")
+        (is (<= 0 col (1- (screen-width screen)))
+            "clamped col must be within [0, width-1]")))))
 
 ;;; ── copy-mode cursor-in-interior no-op (negative path) ─────────────────────
 

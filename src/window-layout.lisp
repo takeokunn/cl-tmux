@@ -60,12 +60,12 @@
             (h     (window-height window)))
        (declare (ignorable main-pane-width main-pane-height
                            other-pane-width other-pane-height))
-       (when (zerop n) (return-from apply-named-layout nil))
-       (ecase layout-name
-         ,@(mapcar (lambda (rule)
-                     (destructuring-bind (keyword call-form) rule
-                       `(,keyword ,call-form)))
-                   rules)))))
+       (when (plusp n)
+         (ecase layout-name
+           ,@(mapcar (lambda (rule)
+                       (destructuring-bind (keyword call-form) rule
+                         `(,keyword ,call-form)))
+                     rules))))))
 
 ;;; ── %layout-even-h / %layout-even-v ────────────────────────────────────────
 ;;;

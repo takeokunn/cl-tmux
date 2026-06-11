@@ -247,14 +247,18 @@
      (%parse-rgb-color (subseq spec 4)))
     (t nil)))
 
+(defun %osc-hex-channel (byte)
+  "Format BYTE (0–255) as a 4-char lowercase hex string at the xterm 16-bit channel
+   scale (0xFF → \"ffff\") used in OSC colour reports."
+  (format nil "~(~4,'0X~)" (* byte #x101)))
+
 (defun %osc-color-reply (command rgb)
   "Build the OSC reply reporting RGB (0xRRGGBB) for an OSC COMMAND query:
    ESC ] <command> ; rgb:RRRR/GGGG/BBBB ST.  Each 8-bit channel is doubled to the
    16-bit form xterm uses (0xFF → ffff), matching what apps expect to parse back."
-  (flet ((chan (c) (format nil "~(~4,'0X~)" (* c #x101))))
-    (let ((r (ldb (byte 8 16) rgb)) (g (ldb (byte 8 8) rgb)) (b (ldb (byte 8 0) rgb)))
-      (format nil "~C]~D;rgb:~A/~A/~A~C\\"
-              #\Escape command (chan r) (chan g) (chan b) #\Escape))))
+  (let ((r (ldb (byte 8 16) rgb)) (g (ldb (byte 8 8) rgb)) (b (ldb (byte 8 0) rgb)))
+    (format nil "~C]~D;rgb:~A/~A/~A~C\\"
+            #\Escape command (%osc-hex-channel r) (%osc-hex-channel g) (%osc-hex-channel b) #\Escape)))
 
 (defun %osc-color-command (screen command body current-rgb set-fn)
   "Handle an OSC 10/11 colour command.  BODY \"?\" → enqueue a reply reporting
@@ -300,10 +304,9 @@
 
 (defun %osc4-reply (index rgb)
   "Build the OSC 4 colour report: ESC ] 4 ; INDEX ; rgb:RRRR/GGGG/BBBB ST."
-  (flet ((chan (c) (format nil "~(~4,'0X~)" (* c #x101))))
-    (let ((r (ldb (byte 8 16) rgb)) (g (ldb (byte 8 8) rgb)) (b (ldb (byte 8 0) rgb)))
-      (format nil "~C]4;~D;rgb:~A/~A/~A~C\\"
-              #\Escape index (chan r) (chan g) (chan b) #\Escape))))
+  (let ((r (ldb (byte 8 16) rgb)) (g (ldb (byte 8 8) rgb)) (b (ldb (byte 8 0) rgb)))
+    (format nil "~C]4;~D;rgb:~A/~A/~A~C\\"
+            #\Escape index (%osc-hex-channel r) (%osc-hex-channel g) (%osc-hex-channel b) #\Escape)))
 
 (defun %osc-split-fields (string)
   "Split STRING on ';' into a list of fields (empty fields preserved)."

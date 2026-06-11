@@ -212,8 +212,8 @@
   "A key bound to a command line runs it: bind X display-message hi, then prefix+X
    shows 'hi' in an overlay (verifies dispatch-prefix-command's token-list path)."
   (with-isolated-config
-    (with-loop-state
-      (let ((s (make-fake-session)) (*overlay* nil))
+    (with-fake-session (s)
+      (let ((*overlay* nil))
         (cl-tmux/config:apply-config-directive '("bind" "X" "display-message" "hi"))
         (cl-tmux::dispatch-prefix-command s (char-code #\X))
         (is (overlay-active-p) "the bound display-message must open an overlay")

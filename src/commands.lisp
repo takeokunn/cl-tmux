@@ -48,17 +48,17 @@
          (ap    (window-active-pane window))
          (idx   (position ap panes))
          (n     (length panes)))
-    (unless (> n 1) (return-from swap-pane nil))
-    (let ((other
-           (ecase direction
-             ((:right :forward)
-              (nth (mod (1+ idx) n) panes))
-             ((:left :backward)
-              (nth (mod (1- idx) n) panes))
-             (:up   (pane-neighbor window ap :up))
-             (:down (pane-neighbor window ap :down)))))
-      (when other
-        (swap-two-panes window ap other)))))
+    (when (> n 1)
+      (let ((other
+             (ecase direction
+               ((:right :forward)
+                (nth (mod (1+ idx) n) panes))
+               ((:left :backward)
+                (nth (mod (1- idx) n) panes))
+               (:up   (pane-neighbor window ap :up))
+               (:down (pane-neighbor window ap :down)))))
+        (when other
+          (swap-two-panes window ap other))))))
 
 ;;; ── capture-pane -e: reconstruct SGR escapes from cell attributes ───────────
 ;;;
@@ -249,11 +249,8 @@
    pane, break-pane is a no-op.  Returns the new window, or NIL."
   (let* ((src-win (or src-window (session-active-window session)))
          (pane    (or pane (and src-win (window-active-pane src-win)))))
-    (unless (and src-win pane) (return-from break-pane nil))
-    ;; Must have at least 2 panes to break one out.
-    (when (< (length (window-panes src-win)) 2)
-      (return-from break-pane nil))
-    ;; Remove pane from its current window (collapses the tree).
+    (when (and src-win pane (>= (length (window-panes src-win)) 2))
+      ;; Remove pane from its current window (collapses the tree).
     (window-remove-pane src-win pane)
     ;; After removal, re-select a pane in the source window.
     (when (window-panes src-win)
@@ -276,7 +273,7 @@
       (session-insert-window session new-win)
       (when select (session-select-window session new-win))
       (run-hooks +hook-after-new-window+ new-win)
-      new-win)))
+      new-win))))
 
 ;;; ── join-pane / move-pane ───────────────────────────────────────────────────
 ;;;

@@ -8,12 +8,11 @@
 
 (test dispatch-select-layout-spread-applies-even-horizontal
   ":select-layout-spread applies the even-horizontal layout without signaling."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (is (null (handler-case
-                    (cl-tmux::dispatch-command s :select-layout-spread nil)
-                  (error (e) e)))
-          ":select-layout-spread must not signal an error"))))
+  (with-fake-session (s)
+    (is (null (handler-case
+                  (cl-tmux::dispatch-command s :select-layout-spread nil)
+                (error (e) e)))
+        ":select-layout-spread must not signal an error")))
 
 ;;; ── New key bindings: z, ', and grouping ────────────────────────────────────
 
@@ -38,34 +37,31 @@
 (test dispatch-zoom-toggle-via-lowercase-z
   "C-b z dispatches :zoom-toggle without error."
   (with-isolated-config
-    (let ((s (make-fake-session)))
-      (with-loop-state
-        (let ((state (cl-tmux::make-input-state)))
-          (cl-tmux::process-byte s 2 state)
-          (is (null (cl-tmux::process-byte s (char-code #\z) state))
-              "C-b z must dispatch :zoom-toggle and return NIL"))))))
+    (with-fake-session (s)
+      (let ((state (cl-tmux::make-input-state)))
+        (cl-tmux::process-byte s 2 state)
+        (is (null (cl-tmux::process-byte s (char-code #\z) state))
+            "C-b z must dispatch :zoom-toggle and return NIL")))))
 
 (test dispatch-select-window-prompt-opens-prompt
   ":select-window-prompt opens a prompt without signaling."
-  (let ((s (make-fake-session :nwindows 2)))
-    (with-loop-state
-      (let ((*prompt* nil))
-        (cl-tmux::dispatch-command s :select-window-prompt nil)
-        (is (prompt-active-p)
-            ":select-window-prompt must open a prompt")))))
+  (with-fake-session (s :nwindows 2)
+    (let ((*prompt* nil))
+      (cl-tmux::dispatch-command s :select-window-prompt nil)
+      (is (prompt-active-p)
+          ":select-window-prompt must open a prompt"))))
 
 ;;; ── choose-window uses menu system ──────────────────────────────────────────
 
 (test dispatch-choose-window-shows-menu-overlay
   ":choose-window shows a menu overlay for j/k navigation without a prompt."
-  (let ((s (make-fake-session :nwindows 2)))
-    (with-loop-state
-      (let ((*overlay* nil) (*prompt* nil))
-        (cl-tmux::dispatch-command s :choose-window nil)
-        (is (overlay-active-p) ":choose-window must show an overlay")
-        ;; choose-window now uses j/k menu navigation, not a text prompt.
-        (is (not (null cl-tmux/prompt:*active-menu*))
-            ":choose-window must set *active-menu* for navigation")))))
+  (with-fake-session (s :nwindows 2)
+    (let ((*overlay* nil) (*prompt* nil))
+      (cl-tmux::dispatch-command s :choose-window nil)
+      (is (overlay-active-p) ":choose-window must show an overlay")
+      ;; choose-window now uses j/k menu navigation, not a text prompt.
+      (is (not (null cl-tmux/prompt:*active-menu*))
+          ":choose-window must set *active-menu* for navigation"))))
 
 ;;; ── Mouse reporting helpers ──────────────────────────────────────────────────
 

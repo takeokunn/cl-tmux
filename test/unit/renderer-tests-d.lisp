@@ -51,18 +51,18 @@
   ;; Capture WITHOUT any override.
   (let ((without
           (with-isolated-config
-            (let ((sess (make-fake-session :nwindows 2)))
+            (with-fake-session (sess :nwindows 2)
               (cl-tmux/renderer::%status-window-list-styled
                sess (cl-tmux/model:session-active-window sess)))))
         ;; Capture WITH a window-local fg=red on window 2 (inactive).
         (with
           (with-isolated-config
-            (let* ((sess (make-fake-session :nwindows 2))
-                   (win2 (second (cl-tmux/model:session-windows sess))))
-              (cl-tmux/options:set-option-for-window
-               "window-status-style" "fg=red" win2)
-              (cl-tmux/renderer::%status-window-list-styled
-               sess (cl-tmux/model:session-active-window sess))))))
+            (with-fake-session (sess :nwindows 2)
+              (let ((win2 (second (cl-tmux/model:session-windows sess))))
+                (cl-tmux/options:set-option-for-window
+                 "window-status-style" "fg=red" win2)
+                (cl-tmux/renderer::%status-window-list-styled
+                 sess (cl-tmux/model:session-active-window sess)))))))
     ;; fg=red is SGR 31; the styled output must emit a CSI escape and "31".
     (is (search (format nil "~C[" #\Escape) with)
         "per-window fg=red must emit an SGR escape sequence (got ~S)" with)
@@ -125,18 +125,18 @@
   ;; Capture WITHOUT any override.
   (let ((without
           (with-isolated-config
-            (let ((sess (make-fake-session :nwindows 2)))
+            (with-fake-session (sess :nwindows 2)
               (cl-tmux/renderer::%status-window-list-styled
                sess (cl-tmux/model:session-active-window sess)))))
         ;; Capture WITH a window-local fg=red on window 1 (active).
         (with
           (with-isolated-config
-            (let* ((sess (make-fake-session :nwindows 2))
-                   (win1 (first (cl-tmux/model:session-windows sess))))
-              (cl-tmux/options:set-option-for-window
-               "window-status-current-style" "fg=red" win1)
-              (cl-tmux/renderer::%status-window-list-styled
-               sess (cl-tmux/model:session-active-window sess))))))
+            (with-fake-session (sess :nwindows 2)
+              (let ((win1 (first (cl-tmux/model:session-windows sess))))
+                (cl-tmux/options:set-option-for-window
+                 "window-status-current-style" "fg=red" win1)
+                (cl-tmux/renderer::%status-window-list-styled
+                 sess (cl-tmux/model:session-active-window sess)))))))
     ;; fg=red is SGR 31; the styled output must emit a CSI escape and "31".
     (is (search (format nil "~C[" #\Escape) with)
         "per-window current-style fg=red must emit an SGR escape sequence (got ~S)" with)

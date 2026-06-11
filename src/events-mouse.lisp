@@ -74,17 +74,15 @@
   "Return the window at column COL of the status bar, or NIL.
    Mirrors the layout produced by %status-window-list: active window is
    ' [Name] ' (4 + name length chars), inactive windows are '  Name ' (4 + name)."
-  (let ((current-col 0))
-    ;; Skip the leading session-name prefix: \" <name>\".
-    (incf current-col (+ 1 (length (session-name session))))
-    (dolist (window (session-windows session))
-      (let* (;; Active:   " [" name "] " = 4 extra chars; inactive: "  " name " " = 4 extra
-             ;; Both formats use 4 + name-length total characters.
-             (entry-len (+ 4 (length (window-name window)))))
-        (when (and (>= col current-col) (< col (+ current-col entry-len)))
-          (return-from %status-col-to-window window))
-        (incf current-col entry-len)))
-    nil))
+  ;; Skip the leading session-name prefix: " <name>".
+  ;; Active:   " [" name "] " = 4 extra chars; inactive: "  " name " " = 4 extra.
+  ;; Both formats use 4 + name-length total characters.
+  (let ((current-col (+ 1 (length (session-name session)))))
+    (loop for window in (session-windows session)
+          for entry-len = (+ 4 (length (window-name window)))
+          when (and (>= col current-col) (< col (+ current-col entry-len)))
+            return window
+          do (incf current-col entry-len))))
 
 (defun %mouse-status-bar-click (session col)
   "Handle a click at COL on the status bar row: select the clicked window."
@@ -130,34 +128,36 @@
     (layout-leaf (values nil nil))
     (layout-split
      ;; Check children first, then this split's own border.
-     (multiple-value-bind (split orientation)
+     (multiple-value-bind (split1 orientation1)
          (%border-check-node col row (layout-split-first node))
-       (when split (return-from %border-check-node (values split orientation))))
-     (multiple-value-bind (split orientation)
-         (%border-check-node col row (layout-split-second node))
-       (when split (return-from %border-check-node (values split orientation))))
-     (let* ((orient      (layout-split-orientation node))
-            (first-leaves (layout-leaves (layout-split-first node)))
-            (all-leaves   (layout-leaves node)))
-       (ecase orient
-         (:h
-          (let* ((sep-col (reduce #'max first-leaves
-                                  :key (lambda (pane) (+ (pane-x pane) (pane-width pane)))))
-                 (min-y   (reduce #'min all-leaves :key #'pane-y))
-                 (max-y   (reduce #'max all-leaves
-                                  :key (lambda (pane) (+ (pane-y pane) (pane-height pane))))))
-            (if (and (= col sep-col) (<= min-y row) (< row max-y))
-                (values node :h)
-                (values nil nil))))
-         (:v
-          (let* ((sep-row (reduce #'max first-leaves
-                                  :key (lambda (pane) (+ (pane-y pane) (pane-height pane)))))
-                 (min-x   (reduce #'min all-leaves :key #'pane-x))
-                 (max-x   (reduce #'max all-leaves
-                                  :key (lambda (pane) (+ (pane-x pane) (pane-width pane))))))
-            (if (and (= row sep-row) (<= min-x col) (< col max-x))
-                (values node :v)
-                (values nil nil)))))))))
+       (if split1
+           (values split1 orientation1)
+           (multiple-value-bind (split2 orientation2)
+               (%border-check-node col row (layout-split-second node))
+             (if split2
+                 (values split2 orientation2)
+                 (let* ((orient       (layout-split-orientation node))
+                        (first-leaves (layout-leaves (layout-split-first node)))
+                        (all-leaves   (layout-leaves node)))
+                   (ecase orient
+                     (:h
+                      (let* ((sep-col (reduce #'max first-leaves
+                                              :key (lambda (pane) (+ (pane-x pane) (pane-width pane)))))
+                             (min-y   (reduce #'min all-leaves :key #'pane-y))
+                             (max-y   (reduce #'max all-leaves
+                                              :key (lambda (pane) (+ (pane-y pane) (pane-height pane))))))
+                        (if (and (= col sep-col) (<= min-y row) (< row max-y))
+                            (values node :h)
+                            (values nil nil))))
+                     (:v
+                      (let* ((sep-row (reduce #'max first-leaves
+                                              :key (lambda (pane) (+ (pane-y pane) (pane-height pane)))))
+                             (min-x   (reduce #'min all-leaves :key #'pane-x))
+                             (max-x   (reduce #'max all-leaves
+                                              :key (lambda (pane) (+ (pane-x pane) (pane-width pane))))))
+                        (if (and (= row sep-row) (<= min-x col) (< col max-x))
+                            (values node :v)
+                            (values nil nil)))))))))))))
 
 (defun %border-at-position (window col row)
   "Return (values layout-split orientation) when (COL, ROW) is on a pane separator,
@@ -221,40 +221,39 @@
    copy-mode`) takes precedence over the built-in behaviour; only when the
    reconstructed mouse key name is unbound do we fall through to the hardcoded
    scroll/click/drag handling below."
-  (unless (cl-tmux/options:get-option "mouse")
-    (setf *dirty* t)
-    (return-from %dispatch-mouse-event nil))
-  (let* ((active-window  (session-active-window session))
-         (active-pane    (session-active-pane session)))
-    ;; When the pane under the pointer has requested mouse tracking, translate
-    ;; and forward the event to the pane's PTY.  This takes priority over all
-    ;; tmux-UI mouse handling (copy-mode, resize, pane-select).
-    (when (%try-mouse-passthrough active-window active-pane btn col row release-p)
-      (setf *dirty* t)
-      (return-from %dispatch-mouse-event nil)))
-  (let* ((active-window  (session-active-window session))
-         (active-pane    (session-active-pane session))
-         (status-row     (1- *term-rows*))  ; status bar is always bottom row
-         (in-status      (= row status-row))
-         (location       (cond (in-status "Status")
-                               ((and active-window
-                                     (%border-at-position active-window col row))
-                                "Border")
-                               (t "Pane")))
-         (mouse-key      (%mouse-key-name btn release-p location))
-         ;; When the active pane is in copy mode, a copy-mode-table mouse binding
-         ;; (e.g. `bind -T copy-mode-vi WheelUpPane send -X halfpage-up`) takes
-         ;; precedence over both the root binding and the built-in handling.
-         (active-screen  (and active-pane (pane-screen active-pane)))
-         (in-copy        (and active-screen (screen-copy-mode-p active-screen)))
-         (copy-table     (if (equal (cl-tmux/options:get-option "mode-keys" "vi") "vi")
-                             "copy-mode-vi" +table-copy-mode+)))
-    ;; User mouse binding wins over the built-in handling: copy-mode table first
-    ;; (when in copy mode), then the root table.
-    (when (or (and in-copy (%try-bound-string-key session copy-table mouse-key))
-              (%try-bound-string-key session +table-root+ mouse-key))
-      (return-from %dispatch-mouse-event nil))
+  (let* ((active-window (session-active-window session))
+         (active-pane   (session-active-pane session)))
     (cond
+      ;; Mouse option disabled — mark dirty (redraws are gated on it) and bail.
+      ((not (cl-tmux/options:get-option "mouse"))
+       (setf *dirty* t))
+      ;; When the pane under the pointer has requested mouse tracking, translate
+      ;; and forward the event to the pane's PTY.  This takes priority over all
+      ;; tmux-UI mouse handling (copy-mode, resize, pane-select).
+      ((%try-mouse-passthrough active-window active-pane btn col row release-p)
+       (setf *dirty* t))
+      ;; Built-in / user-binding handling.
+      (t
+       (let* ((status-row    (1- *term-rows*))
+              (in-status     (= row status-row))
+              (location      (cond (in-status "Status")
+                                   ((and active-window
+                                         (%border-at-position active-window col row))
+                                    "Border")
+                                   (t "Pane")))
+              (mouse-key     (%mouse-key-name btn release-p location))
+              ;; When the active pane is in copy mode, a copy-mode-table mouse binding
+              ;; (e.g. `bind -T copy-mode-vi WheelUpPane send -X halfpage-up`) takes
+              ;; precedence over both the root binding and the built-in handling.
+              (active-screen (and active-pane (pane-screen active-pane)))
+              (in-copy       (and active-screen (screen-copy-mode-p active-screen)))
+              (copy-table    (if (equal (cl-tmux/options:get-option "mode-keys" "vi") "vi")
+                                 "copy-mode-vi" +table-copy-mode+)))
+         ;; User mouse binding wins over the built-in handling: copy-mode table first
+         ;; (when in copy mode), then the root table.
+         (unless (or (and in-copy (%try-bound-string-key session copy-table mouse-key))
+                     (%try-bound-string-key session +table-root+ mouse-key))
+           (cond
       ;; ── Status bar click ────────────────────────────────────────────────────
       ((and in-status (not release-p) (= btn +mouse-btn-left+))
        (%mouse-status-bar-click session col))
@@ -350,7 +349,7 @@
                    (copy-mode-set-cursor screen pane-row pane-col)))))))
 
       (t nil))
-    (setf *dirty* t)))
+           (setf *dirty* t)))))))
 
 ;;; ── Overlay pager escape-sequence handler ────────────────────────────────────
 ;;;

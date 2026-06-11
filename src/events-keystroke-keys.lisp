@@ -230,27 +230,26 @@
    back to the built-in default — C-arrow resizes 1 cell, M-arrow resizes 5."
   ;; User override in the prefix table wins over the hardcoded default.
   (let ((key (%modifier-arrow-key-name mod-byte final-byte)))
-    (when (%try-bound-string-key session +table-prefix+ key)
-      (return-from %dispatch-modifier-arrow)))
-  (let ((window (session-active-window session)))
-    (when window
-      (cond
-        ;; C-arrow: ESC [ 1 ; 5 FINAL  → resize 1 cell
-        ((= mod-byte +byte-csi-mod-ctrl+)
-         (case final-byte
-           (#.+byte-arrow-up+    (resize-pane window :up    1))
-           (#.+byte-arrow-down+  (resize-pane window :down  1))
-           (#.+byte-arrow-right+ (resize-pane window :right 1))
-           (#.+byte-arrow-left+  (resize-pane window :left  1))))
-        ;; M-arrow: ESC [ 1 ; 3 FINAL  → resize 5 cells (standard :resize-* amount)
-        ((= mod-byte +byte-csi-mod-meta+)
-         (let ((command (case final-byte
-                          (#.+byte-arrow-up+    :resize-up)
-                          (#.+byte-arrow-down+  :resize-down)
-                          (#.+byte-arrow-right+ :resize-right)
-                          (#.+byte-arrow-left+  :resize-left)
-                          (otherwise nil))))
-           (when command (dispatch-command session command nil))))))))
+    (unless (%try-bound-string-key session +table-prefix+ key)
+      (let ((window (session-active-window session)))
+        (when window
+          (cond
+            ;; C-arrow: ESC [ 1 ; 5 FINAL  → resize 1 cell
+            ((= mod-byte +byte-csi-mod-ctrl+)
+             (case final-byte
+               (#.+byte-arrow-up+    (resize-pane window :up    1))
+               (#.+byte-arrow-down+  (resize-pane window :down  1))
+               (#.+byte-arrow-right+ (resize-pane window :right 1))
+               (#.+byte-arrow-left+  (resize-pane window :left  1))))
+            ;; M-arrow: ESC [ 1 ; 3 FINAL  → resize 5 cells (standard :resize-* amount)
+            ((= mod-byte +byte-csi-mod-meta+)
+             (let ((command (case final-byte
+                              (#.+byte-arrow-up+    :resize-up)
+                              (#.+byte-arrow-down+  :resize-down)
+                              (#.+byte-arrow-right+ :resize-right)
+                              (#.+byte-arrow-left+  :resize-left)
+                              (otherwise nil))))
+               (when command (dispatch-command session command nil))))))))))
 
 (defun %make-prefix-csi-k (session buffer)
   "CPS continuation: accumulate ESC [ FINAL for post-prefix arrow key sequences.

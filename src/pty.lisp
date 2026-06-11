@@ -232,7 +232,7 @@
    SIGCHLD) it returns -1 and leaves the read-set UNDEFINED.  We therefore gate on
    the return value and never inspect stale bits — without this, an EINTR could
    make an idle fd spuriously report readable (an intermittent false positive)."
-  (when (null fds) (return-from select-fds nil))
+  (when fds
   (let ((maxfd (reduce #'max fds)))
     (cffi:with-foreign-objects ((rset :uint32 +fd-set-words+)
                                 (tv   :long   2))
@@ -249,7 +249,7 @@
                                  (cffi:null-pointer)))))
         ;; Only a positive count leaves a valid read-set to inspect.
         (when (> nready 0)
-          (%collect-ready-fds fds rset))))))
+          (%collect-ready-fds fds rset)))))))
 
 ;;; ── Public: terminal geometry ──────────────────────────────────────────────
 

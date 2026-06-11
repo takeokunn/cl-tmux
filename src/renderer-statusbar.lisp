@@ -337,6 +337,12 @@
             (get-output-stream-string (getf buckets :centre))
             (get-output-stream-string (getf buckets :right)))))
 
+(defun %expand-segment-or-empty (raw base-sgr reset)
+  "Expand inline #[…] style blocks in RAW then append RESET; returns \"\" when RAW is empty."
+  (if (plusp (length raw))
+      (concatenate 'string (%status-expand-style-blocks raw base-sgr) reset)
+      ""))
+
 (defun %compose-aligned-line (raw base-sgr cols)
   "Render a status format RAW with #[align=…] regions into a COLS-wide line:
    the left region starts at column 0, the right region ends at COLS, and the
@@ -344,9 +350,9 @@
    BASE-SGR after each).  Overlapping content is truncated to COLS."
   (multiple-value-bind (lraw craw rraw) (%status-align-buckets raw)
     (let* ((reset (format nil "~C[~Am" +esc+ base-sgr))
-           (l (if (plusp (length lraw)) (concatenate 'string (%status-expand-style-blocks lraw base-sgr) reset) ""))
-           (c (if (plusp (length craw)) (concatenate 'string (%status-expand-style-blocks craw base-sgr) reset) ""))
-           (r (if (plusp (length rraw)) (concatenate 'string (%status-expand-style-blocks rraw base-sgr) reset) ""))
+           (l (%expand-segment-or-empty lraw base-sgr reset))
+           (c (%expand-segment-or-empty craw base-sgr reset))
+           (r (%expand-segment-or-empty rraw base-sgr reset))
            (lw (%visible-length l)) (cw (%visible-length c)) (rw (%visible-length r)))
       (%visible-truncate
        (with-output-to-string (out)
@@ -365,6 +371,13 @@
              (pad-to cols))))
        cols))))
 
+(defun %render-status-line (stream status-row sgr-code line)
+  "Emit a fully-composed status LINE at STATUS-ROW, wrapped in SGR-CODE, then reset."
+  (move-to stream status-row 0)
+  (format stream "~C[~Am" +esc+ sgr-code)
+  (write-string line stream)
+  (reset-attrs stream))
+
 (defun render-status-bar (stream session terminal-rows terminal-cols
                           &key (status-row (1- terminal-rows)))
   "Draw the status bar at STATUS-ROW with dynamic format string expansion.
@@ -379,63 +392,45 @@
                        session active-win active-pane
                        :client-width  terminal-cols
                        :client-height (max 0 (- terminal-rows 1))))
-         (sgr-code    (%status-sgr-from-style
-                       (%effective-status-style)))
+         (sgr-code    (%status-sgr-from-style (%effective-status-style)))
          (status-fmt0 (cl-tmux/options:get-option "status-format[0]" "")))
     ;; status-format[0] template path: when SET (and no prompt is active) the bar
     ;; is rendered from that single format, with #[align=…] regions positioned by
-    ;; %compose-aligned-line and #{W:…}/#{…} expanded.  Otherwise fall through to
-    ;; the procedural status-left + window-list + status-right path below.
-    (when (and (stringp status-fmt0) (plusp (length status-fmt0))
-               (not (prompt-active-p)))
-      (let ((line (%compose-aligned-line
-                   (handler-case (cl-tmux/format:expand-format status-fmt0 context)
-                     (error () status-fmt0))
-                   sgr-code terminal-cols)))
-        (move-to stream status-row 0)
-        (format stream "~C[~Am" +esc+ sgr-code)
-        (write-string line stream)
-        (reset-attrs stream))
-      (return-from render-status-bar)))
-  (let* ((active-win  (session-active-window session))
-         (active-pane (session-active-pane session))
-         (context     (cl-tmux/format:format-context-from-session
-                       session active-win active-pane
-                       :client-width  terminal-cols
-                       :client-height (max 0 (- terminal-rows 1))))
-         (sgr-code    (%status-sgr-from-style
-                       (%effective-status-style)))
-         ;; Expand inline #[attr] style blocks into SGR escapes; #[default]
-         ;; reverts to SGR-CODE (the base status style) so the bar's bg/fg returns.
-         (raw-left    (%status-expand-style-blocks
-                       (if (prompt-active-p)
-                           (prompt-text)
-                           (%status-format-or-default
-                            "status-left" context
-                            (lambda () (%status-left-text session active-win active-pane))))
-                       sgr-code))
-         (raw-right   (%status-expand-style-blocks
-                       (%status-format-or-default
-                        "status-right" context #'cl-tmux/format::%current-time-string)
-                       sgr-code))
-         ;; Per-segment styles: status-left-style / status-right-style override the
-         ;; base status-style for the left/right text (falling back to it).
-         (left-style-sgr  (%status-segment-style-sgr "status-left-style"  sgr-code))
-         (right-style-sgr (%status-segment-style-sgr "status-right-style" sgr-code))
-         (left        (%apply-segment-style
-                       (%clamp-status-segment
-                        raw-left (cl-tmux/options:get-option "status-left-length" 40))
-                       left-style-sgr sgr-code))
-         (right-str   (%apply-segment-style
-                       (%clamp-status-segment
-                        raw-right (cl-tmux/options:get-option "status-right-length" 40))
-                       right-style-sgr sgr-code))
-         (justify     (cl-tmux/options:get-option "status-justify" "left"))
-         (line        (%status-justify-line left right-str terminal-cols justify)))
-    (move-to stream status-row 0)
-    (format stream "~C[~Am" +esc+ sgr-code)
-    (write-string line stream)
-    (reset-attrs stream)))
+    ;; %compose-aligned-line and #{W:…}/#{…} expanded.  Procedural path follows.
+    (cond
+      ((and (stringp status-fmt0) (plusp (length status-fmt0)) (not (prompt-active-p)))
+       (%render-status-line stream status-row sgr-code
+                            (%compose-aligned-line
+                             (handler-case (cl-tmux/format:expand-format status-fmt0 context)
+                               (error () status-fmt0))
+                             sgr-code terminal-cols)))
+      (t
+       ;; Expand inline #[attr] style blocks into SGR escapes; #[default] reverts to
+       ;; SGR-CODE (the base status style) so the bar's bg/fg returns between segments.
+       (let* ((raw-left    (%status-expand-style-blocks
+                            (if (prompt-active-p)
+                                (prompt-text)
+                                (%status-format-or-default
+                                 "status-left" context
+                                 (lambda () (%status-left-text session active-win active-pane))))
+                            sgr-code))
+              (raw-right   (%status-expand-style-blocks
+                            (%status-format-or-default
+                             "status-right" context #'cl-tmux/format::%current-time-string)
+                            sgr-code))
+              (left-style-sgr  (%status-segment-style-sgr "status-left-style"  sgr-code))
+              (right-style-sgr (%status-segment-style-sgr "status-right-style" sgr-code))
+              (left        (%apply-segment-style
+                            (%clamp-status-segment
+                             raw-left (cl-tmux/options:get-option "status-left-length" 40))
+                            left-style-sgr sgr-code))
+              (right-str   (%apply-segment-style
+                            (%clamp-status-segment
+                             raw-right (cl-tmux/options:get-option "status-right-length" 40))
+                            right-style-sgr sgr-code))
+              (justify     (cl-tmux/options:get-option "status-justify" "left")))
+         (%render-status-line stream status-row sgr-code
+                              (%status-justify-line left right-str terminal-cols justify)))))))
 
 (defun render-extra-status-line (stream session terminal-cols row index)
   "Render the INDEX-th extra status line (INDEX >= 1) at ROW from the option
@@ -460,10 +455,7 @@
                          (error () fmt))
                        ""))
          (line     (%compose-aligned-line expanded sgr-code terminal-cols)))
-    (move-to stream row 0)
-    (format stream "~C[~Am" +esc+ sgr-code)
-    (write-string line stream)
-    (reset-attrs stream)))
+    (%render-status-line stream row sgr-code line)))
 
 (defun status-line-count ()
   "Number of status rows requested by the `status` option, 0..5.

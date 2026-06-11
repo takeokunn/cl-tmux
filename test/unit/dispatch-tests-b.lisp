@@ -322,7 +322,7 @@
   "'set monitor-activity off' stores NIL and 'set ... on' stores T (type-coerced).
    Uses monitor-activity — a side-effect-free :boolean option — because `status` is
    now a choice/string option (off|on|2..5), not a boolean."
-  (let ((s (make-fake-session)))
+  (with-fake-session (s)
     (with-isolated-options ()
       (cl-tmux::%run-command-line s "set monitor-activity off")
       (is (null (cl-tmux/options:get-option "monitor-activity"))
@@ -333,7 +333,7 @@
 
 (test run-command-line-set-option-string-and-quoted
   "'set' stores string option values, and a quoted value keeps its spaces/format."
-  (let ((s (make-fake-session)))
+  (with-fake-session (s)
     (with-isolated-options ()
       (cl-tmux::%run-command-line s "set status-left bar")
       (is (string= "bar" (cl-tmux/options:get-option "status-left"))
@@ -345,7 +345,7 @@
 (test run-command-line-set-option-scope-flag
   "'set -g status off' sets the 'status' option (not an option literally named
    '-g') — the canonical tmux form must work."
-  (let ((s (make-fake-session)))
+  (with-fake-session (s)
     (with-isolated-options ()
       (cl-tmux::%run-command-line s "set -g status off")
       (is (string= "off" (cl-tmux/options:get-option "status"))
@@ -355,7 +355,7 @@
 
 (test run-command-line-set-option-append-flag
   "'set -a <name> <value>' appends to the option's current value."
-  (let ((s (make-fake-session)))
+  (with-fake-session (s)
     (with-isolated-options ("status-left" "A")
       (cl-tmux::%run-command-line s "set -a status-left B")
       (is (string= "AB" (cl-tmux/options:get-option "status-left"))

@@ -55,18 +55,16 @@
          (let ((h (make-hash-table :test #'equal)))
            (setf (gethash "status-left" h) "my-value")
            h)))
-    (let ((s (make-fake-session)))
-      (with-loop-state
-        (cl-tmux::%run-command-line s "set -u status-left")
-        (is (not (gethash "status-left" cl-tmux/options:*global-options*))
-            "set -u status-left must remove the key from *global-options*")))))
+    (with-fake-session (s)
+      (cl-tmux::%run-command-line s "set -u status-left")
+      (is (not (gethash "status-left" cl-tmux/options:*global-options*))
+          "set -u status-left must remove the key from *global-options*"))))
 
 (test set-option-w-unset-clears-window-local-not-global
   "setw -u <opt> (= set -w -u) removes the WINDOW-local override, leaving the
    global value intact (scope-aware -u, was always unsetting global)."
-  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal))
-        (s (make-fake-session :nwindows 1)))
-    (with-loop-state
+  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+    (with-fake-session (s :nwindows 1)
       (let ((win (cl-tmux/model:session-active-window s)))
         (cl-tmux/options:set-option "mode-keys" "emacs")             ; global
         (cl-tmux/options:set-option-for-window "mode-keys" "vi" win) ; window-local
@@ -80,9 +78,8 @@
 (test set-option-a-w-appends-to-window-local-value
   "set -aw <opt> X appends to the WINDOW-local value (scope-aware -a, was always
    appending to the global store)."
-  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal))
-        (s (make-fake-session :nwindows 1)))
-    (with-loop-state
+  (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+    (with-fake-session (s :nwindows 1)
       (let ((win (cl-tmux/model:session-active-window s)))
         (cl-tmux/options:set-option-for-window "@x" "ab" win)
         (cl-tmux::%run-command-line s "set -aw @x cd")
@@ -240,11 +237,10 @@
 
 (test dispatch-lock-server-locks-all-sessions
   ":lock-server sets locked-p on all sessions."
-  (let ((s1 (make-fake-session))
-        (s2 (make-fake-session)))
-    (let ((cl-tmux::*server-sessions*
-           (list (cons "a" s1) (cons "b" s2))))
-      (with-loop-state
+  (with-fake-session (s1)
+    (let ((s2 (make-fake-session)))
+      (let ((cl-tmux::*server-sessions*
+             (list (cons "a" s1) (cons "b" s2))))
         (cl-tmux::dispatch-command s1 :lock-server nil)
         (is (cl-tmux/model:session-locked-p s1)
             ":lock-server must lock s1")
@@ -279,17 +275,16 @@
 
 (test command-alias-dispatch-expands-and-runs
   "A registered command alias is expanded and dispatched."
-  (let ((s (make-fake-session)))
+  (with-fake-session (s)
     (let ((cl-tmux/options:*command-aliases* (make-hash-table :test #'equal)))
       (cl-tmux/options:register-command-alias "nw" "new-window")
-      (with-loop-state
-        (when (pty-available-p)
-          (let* ((win    (cl-tmux/model:session-active-window s))
-                 (before (length (cl-tmux/model:session-windows s))))
-            (cl-tmux::%run-command-line s "nw")
-            (stop-cl-tmux-threads)
-            (is (> (length (cl-tmux/model:session-windows s)) before)
-                "alias 'nw' → new-window must create a new window")))))))
+      (when (pty-available-p)
+        (let* ((win    (cl-tmux/model:session-active-window s))
+               (before (length (cl-tmux/model:session-windows s))))
+          (cl-tmux::%run-command-line s "nw")
+          (stop-cl-tmux-threads)
+          (is (> (length (cl-tmux/model:session-windows s)) before)
+              "alias 'nw' → new-window must create a new window"))))))
 
 ;;; ── new-window -d (detached) ─────────────────────────────────────────────────
 

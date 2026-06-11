@@ -104,11 +104,14 @@
     ;; hook runner can still find this window under its session.
     (run-hooks +hook-after-kill-window+ target)
     (setf (session-windows session) remaining)
-    (unless remaining (return-from kill-window :quit))
-    (when (eq (session-active-window session) target)
-      (session-select-window session (%window-after-kill remaining killed-id)))
-    (%maybe-renumber-windows session)
-    nil))
+    (if remaining
+        (progn
+          (when (eq (session-active-window session) target)
+            (session-select-window session (%window-after-kill remaining killed-id)))
+          (%maybe-renumber-windows session)
+          nil)
+        :quit)))
+
 
 ;;; ── Rename / Select ────────────────────────────────────────────────────────
 ;;;

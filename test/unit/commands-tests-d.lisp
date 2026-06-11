@@ -57,9 +57,8 @@
 (test cmd-select-pane-fires-after-select-pane-hook
   "%cmd-select-pane fires +hook-after-select-pane+ regardless of which form it took."
   (with-isolated-hooks
-    (let ((s (make-fake-session :nwindows 1 :npanes 2))
-          (fired nil))
-      (with-loop-state
+    (with-fake-session (s :nwindows 1 :npanes 2)
+      (let ((fired nil))
         (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-select-pane+
                                 (lambda (&rest _) (declare (ignore _)) (setf fired t)))
         (cl-tmux::%cmd-select-pane s '("-m"))
@@ -68,9 +67,8 @@
 (test cmd-select-window-fires-after-select-window-hook
   "%cmd-select-window fires +hook-after-select-window+ (tmux's per-command hook)."
   (with-isolated-hooks
-    (let ((s (make-fake-session :nwindows 2))
-          (fired nil))
-      (with-loop-state
+    (with-fake-session (s :nwindows 2)
+      (let ((fired nil))
         (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-select-window+
                                 (lambda (&rest _) (declare (ignore _)) (setf fired t)))
         (cl-tmux::%cmd-select-window s '("-n"))   ; select next window
@@ -80,9 +78,8 @@
   "session-window-changed fires when the active window actually changes (the
    focus-transition diff covers any switch path, not just select-window)."
   (with-isolated-hooks
-    (let ((s (make-fake-session :nwindows 2))
-          (fired nil))
-      (with-loop-state
+    (with-fake-session (s :nwindows 2)
+      (let ((fired nil))
         (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-session-window-changed+
                                 (lambda (&rest _) (declare (ignore _)) (setf fired t)))
         (cl-tmux::%cmd-select-window s '("-n"))   ; switch to the next window
@@ -93,9 +90,8 @@
   "window-pane-changed fires when a window's active pane changes (any select-pane
    path routes through %select-pane-with-focus's diff)."
   (with-isolated-hooks
-    (let ((s (make-fake-session :nwindows 1 :npanes 2))
-          (fired nil))
-      (with-loop-state
+    (with-fake-session (s :nwindows 1 :npanes 2)
+      (let ((fired nil))
         (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-window-pane-changed+
                                 (lambda (&rest _) (declare (ignore _)) (setf fired t)))
         (cl-tmux::%run-command-line s "select-pane -t 2")   ; switch to pane 2
@@ -106,156 +102,144 @@
   "resize-pane fires +hook-after-resize-pane+ (covers both the resize-pane command
    and the C-b H/J/K/L keybind path, which share this function)."
   (with-isolated-hooks
-    (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-           (win (cl-tmux/model:session-active-window s))
-           (fired nil))
+    (with-fake-session (s :nwindows 1 :npanes 2)
+      (let* ((win (cl-tmux/model:session-active-window s))
+             (fired nil))
       (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-resize-pane+
                               (lambda (&rest _) (declare (ignore _)) (setf fired t)))
       (resize-pane win :up 2)
-      (is-true fired "after-resize-pane hook must fire"))))
+      (is-true fired "after-resize-pane hook must fire")))))
 
 ;;; ── server-access: access-control-list management ──────────────────────────
 
 (test server-access-add-records-user-read-write-by-default
   "server-access -a USER adds USER to the access list as read-write."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
-        (cl-tmux::%run-command-line s "server-access -a alice")
-        (is (equal :read-write
-                   (cdr (assoc "alice" cl-tmux::*server-access-list* :test #'string=)))
-            "alice must be added with the default read-write permission")))))
+  (with-fake-session (s :nwindows 1)
+    (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
+      (cl-tmux::%run-command-line s "server-access -a alice")
+      (is (equal :read-write
+                 (cdr (assoc "alice" cl-tmux::*server-access-list* :test #'string=)))
+          "alice must be added with the default read-write permission"))))
 
 (test server-access-add-r-records-user-read-only
   "server-access -a -r USER adds USER as read-only."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
-        (cl-tmux::%run-command-line s "server-access -a -r bob")
-        (is (equal :read-only
-                   (cdr (assoc "bob" cl-tmux::*server-access-list* :test #'string=)))
-            "-r must record bob as read-only")))))
+  (with-fake-session (s :nwindows 1)
+    (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
+      (cl-tmux::%run-command-line s "server-access -a -r bob")
+      (is (equal :read-only
+                 (cdr (assoc "bob" cl-tmux::*server-access-list* :test #'string=)))
+          "-r must record bob as read-only"))))
 
 (test server-access-w-modifies-existing-user-permission
   "A bare `server-access -w USER` (no -a/-d) upgrades an existing entry to read-write."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (let ((cl-tmux::*server-access-list* (list (cons "carol" :read-only)))
-            (*overlay* nil))
-        (cl-tmux::%run-command-line s "server-access -w carol")
-        (is (equal :read-write
-                   (cdr (assoc "carol" cl-tmux::*server-access-list* :test #'string=)))
-            "-w must upgrade carol from read-only to read-write")))))
+  (with-fake-session (s :nwindows 1)
+    (let ((cl-tmux::*server-access-list* (list (cons "carol" :read-only)))
+          (*overlay* nil))
+      (cl-tmux::%run-command-line s "server-access -w carol")
+      (is (equal :read-write
+                 (cdr (assoc "carol" cl-tmux::*server-access-list* :test #'string=)))
+          "-w must upgrade carol from read-only to read-write"))))
 
 (test server-access-modify-unknown-user-is-error-no-entry-created
   "Modifying (no -a) an unknown user is an error and must NOT create an entry,
    matching tmux's `server-access user` semantics."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
-        (cl-tmux::%run-command-line s "server-access -w nobody")
-        (is (null cl-tmux::*server-access-list*)
-            "modifying an unknown user must not add it to the list")))))
+  (with-fake-session (s :nwindows 1)
+    (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
+      (cl-tmux::%run-command-line s "server-access -w nobody")
+      (is (null cl-tmux::*server-access-list*)
+          "modifying an unknown user must not add it to the list"))))
 
 (test server-access-delete-removes-user
   "server-access -d USER removes USER from the access list."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (let ((cl-tmux::*server-access-list*
-              (list (cons "alice" :read-write) (cons "bob" :read-only)))
-            (*overlay* nil))
-        (cl-tmux::%run-command-line s "server-access -d alice")
-        (is (null (assoc "alice" cl-tmux::*server-access-list* :test #'string=))
-            "alice must be removed")
-        (is (equal :read-only
-                   (cdr (assoc "bob" cl-tmux::*server-access-list* :test #'string=)))
-            "bob must be left untouched")))))
+  (with-fake-session (s :nwindows 1)
+    (let ((cl-tmux::*server-access-list*
+            (list (cons "alice" :read-write) (cons "bob" :read-only)))
+          (*overlay* nil))
+      (cl-tmux::%run-command-line s "server-access -d alice")
+      (is (null (assoc "alice" cl-tmux::*server-access-list* :test #'string=))
+          "alice must be removed")
+      (is (equal :read-only
+                 (cdr (assoc "bob" cl-tmux::*server-access-list* :test #'string=)))
+          "bob must be left untouched"))))
 
 (test server-access-l-lists-entries-in-overlay
   "server-access -l renders each entry as `name: permission` in the overlay."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (let ((cl-tmux::*server-access-list*
-              (list (cons "alice" :read-write)))
-            (*overlay* nil))
-        (cl-tmux::%run-command-line s "server-access -l")
-        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-          (is (search "alice" text) "listing must contain the user name")
-          (is (search "read-write" text)
-              "listing must contain the user's permission"))))))
+  (with-fake-session (s :nwindows 1)
+    (let ((cl-tmux::*server-access-list*
+            (list (cons "alice" :read-write)))
+          (*overlay* nil))
+      (cl-tmux::%run-command-line s "server-access -l")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "alice" text) "listing must contain the user name")
+        (is (search "read-write" text)
+            "listing must contain the user's permission")))))
 
 (test server-access-k-flag-accepted-without-error
   "server-access -k USER (kill clients) is accepted as a no-op in single-user
    cl-tmux and still applies the add when combined with -a."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
-        (finishes (cl-tmux::%run-command-line s "server-access -a -k dave"))
-        (is (assoc "dave" cl-tmux::*server-access-list* :test #'string=)
-            "-k must not prevent the -a add")))))
+  (with-fake-session (s :nwindows 1)
+    (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
+      (finishes (cl-tmux::%run-command-line s "server-access -a -k dave"))
+      (is (assoc "dave" cl-tmux::*server-access-list* :test #'string=)
+          "-k must not prevent the -a add"))))
 
 ;;; ── bare (no-arg) forms of list-commands / list-panes ───────────────────────
 
 (test bare-list-commands-lists-commands-not-unknown
   "Bare `list-commands` (no args) must list commands, not error as unknown —
    it falls through *arg-command-table* (args-only) to the named-command table."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (let ((*overlay* nil))
-        (cl-tmux::%run-command-line s "list-commands")
-        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-          (is (not (search "unknown command" text))
-              "bare list-commands must not be an unknown command")
-          (is (search "new-window" text)
-              "list-commands output must include a known command name"))))))
+  (with-fake-session (s :nwindows 1)
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line s "list-commands")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (not (search "unknown command" text))
+            "bare list-commands must not be an unknown command")
+        (is (search "new-window" text)
+            "list-commands output must include a known command name")))))
 
 (test bare-list-panes-lists-panes-not-unknown
   "Bare `list-panes` (no args) must list the current window's panes."
-  (let ((s (make-fake-session :nwindows 1 :npanes 2)))
-    (with-loop-state
-      (let ((*overlay* nil))
-        (cl-tmux::%run-command-line s "list-panes")
-        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-          (is (not (search "unknown command" text))
-              "bare list-panes must not be an unknown command")
-          (is (search "(active)" text)
-              "list-panes output must mark the active pane"))))))
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line s "list-panes")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (not (search "unknown command" text))
+            "bare list-panes must not be an unknown command")
+        (is (search "(active)" text)
+            "list-panes output must mark the active pane")))))
 
 ;;; ── customize-mode: options/bindings customize tree ─────────────────────────
 
 (test customize-mode-renders-grouped-tree-with-option-values
   "customize-mode renders the customize tree: grouped Session/Window Options with
    a known option name + value, plus the Key Bindings group."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (let ((*overlay* nil))
-        (cl-tmux::%run-command-line s "customize-mode")
-        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-          (is (search "Session/Window Options" text)
-              "tree must group the session/window options")
-          (is (search "mode-keys" text)
-              "tree must list a known registered option name")
-          (is (search "Key Bindings" text)
-              "tree must include the key-bindings group"))))))
+  (with-fake-session (s :nwindows 1)
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line s "customize-mode")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "Session/Window Options" text)
+            "tree must group the session/window options")
+        (is (search "mode-keys" text)
+            "tree must list a known registered option name")
+        (is (search "Key Bindings" text)
+            "tree must include the key-bindings group")))))
 
 (test customize-mode-f-filter-restricts-to-matching-entries
   "customize-mode -f FILTER keeps only entries whose name/line contains FILTER
    (case-insensitive substring) and drops the rest."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (let ((*overlay* nil))
-        (cl-tmux::%run-command-line s "customize-mode -f mode-keys")
-        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-          (is (search "mode-keys" text)
-              "filter must keep the matching option")
-          (is (not (search "status-interval" text))
-              "filter must drop options that do not match"))))))
+  (with-fake-session (s :nwindows 1)
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line s "customize-mode -f mode-keys")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "mode-keys" text)
+            "filter must keep the matching option")
+        (is (not (search "status-interval" text))
+            "filter must drop options that do not match")))))
 
 (test customize-mode-keyword-dispatch-opens-overlay
   "The bare :customize-mode keybinding form opens the customize overlay."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (let ((*overlay* nil))
-        (cl-tmux::dispatch-command s :customize-mode nil)
-        (is (overlay-active-p)
-            ":customize-mode must open an overlay")))))
+  (with-fake-session (s :nwindows 1)
+    (let ((*overlay* nil))
+      (cl-tmux::dispatch-command s :customize-mode nil)
+      (is (overlay-active-p)
+          ":customize-mode must open an overlay"))))

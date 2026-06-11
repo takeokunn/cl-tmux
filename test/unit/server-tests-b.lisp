@@ -32,12 +32,11 @@
 (test rename-session-updates-registry
   :description "Renaming a session via :rename-session also updates the server registry key."
   (with-empty-registry
-    (let ((s (make-fake-session :nwindows 1)))
+    (with-fake-session (s :nwindows 1)
       (cl-tmux::server-add-session s)
-      (with-loop-state
-        (let ((*prompt* nil))
-          (cl-tmux::dispatch-command s :rename-session nil)
-          (funcall (prompt-on-submit *prompt*) "renamed-sess")))
+      (let ((*prompt* nil))
+        (cl-tmux::dispatch-command s :rename-session nil)
+        (funcall (prompt-on-submit *prompt*) "renamed-sess"))
       (is (eq s (cl-tmux::server-find-session "renamed-sess"))
           "registry must index session under new name")
       (is (null (cl-tmux::server-find-session "0"))
@@ -94,7 +93,7 @@ and marks *dirty* so the server re-renders."
 
 (test display-message-sets-overlay
   :description ":display-message prompts for a message and sets the overlay when submitted."
-  (let ((s (make-fake-session :nwindows 1)))
+  (with-fake-session (s :nwindows 1)
     (let ((*overlay* nil) (*prompt* nil)
           (cl-tmux::*dirty* nil) (cl-tmux::*running* t))
       (cl-tmux::dispatch-command s :display-message nil)
@@ -108,13 +107,12 @@ and marks *dirty* so the server re-renders."
 
 (test source-file-prompts-for-path
   :description ":source-file opens a prompt (source-file) for a file path."
-  (let ((s (make-fake-session :nwindows 1)))
-    (with-loop-state
-      (let ((*prompt* nil))
-        (cl-tmux::dispatch-command s :source-file nil)
-        (is (prompt-active-p) ":source-file must open a prompt")
-        (is (string= "source-file" (prompt-label *prompt*))
-            "prompt label must be 'source-file'")))))
+  (with-fake-session (s :nwindows 1)
+    (let ((*prompt* nil))
+      (cl-tmux::dispatch-command s :source-file nil)
+      (is (prompt-active-p) ":source-file must open a prompt")
+      (is (string= "source-file" (prompt-label *prompt*))
+          "prompt label must be 'source-file'"))))
 
 ;;; ── attach-session flag parsing ──────────────────────────────────────────────
 
@@ -244,25 +242,23 @@ Positional (non-flag) args are silently ignored; use -t to set the session name.
 
 (test handle-client-message-nil-type-returns-disconnect
   :description "%handle-client-message returns :disconnect for a NIL type (EOF)."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((state (cl-tmux::make-input-state)))
-        (is (eq :disconnect
-                (cl-tmux::%handle-client-message nil #() s state))
-            "NIL type must return :disconnect")))))
+  (with-fake-session (s)
+    (let ((state (cl-tmux::make-input-state)))
+      (is (eq :disconnect
+              (cl-tmux::%handle-client-message nil #() s state))
+          "NIL type must return :disconnect"))))
 
 (test handle-client-message-detach-type-returns-detach
   :description "%handle-client-message returns :detach for +msg-detach+."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((state (cl-tmux::make-input-state)))
-        (is (eq :detach
-                (cl-tmux::%handle-client-message +msg-detach+ #() s state))
-            "+msg-detach+ must return :detach")))))
+  (with-fake-session (s)
+    (let ((state (cl-tmux::make-input-state)))
+      (is (eq :detach
+              (cl-tmux::%handle-client-message +msg-detach+ #() s state))
+          "+msg-detach+ must return :detach"))))
 
 (test handle-client-message-resize-returns-nil-and-marks-dirty
   :description "%handle-client-message +msg-resize+ resizes the session and marks *dirty*."
-  (let ((s (make-fake-session)))
+  (with-fake-session (s)
     (let ((cl-tmux::*term-rows* 24)
           (cl-tmux::*term-cols* 80)
           (cl-tmux::*dirty*    nil)
@@ -278,18 +274,17 @@ Positional (non-flag) args are silently ignored; use -t to set the session name.
 
 (test handle-client-message-unknown-type-returns-disconnect
   :description "%handle-client-message returns :disconnect for an unrecognized type."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((state (cl-tmux::make-input-state)))
-        (is (eq :disconnect
-                (cl-tmux::%handle-client-message 9999 #() s state))
-            "unknown type must return :disconnect")))))
+  (with-fake-session (s)
+    (let ((state (cl-tmux::make-input-state)))
+      (is (eq :disconnect
+              (cl-tmux::%handle-client-message 9999 #() s state))
+          "unknown type must return :disconnect"))))
 
 ;;; ── handle-client-message +msg-attach+ arm ───────────────────────────────────
 
 (test handle-client-message-attach-applies-size-and-marks-dirty
   :description "%handle-client-message +msg-attach+ applies client dimensions and marks *dirty*."
-  (let ((s (make-fake-session)))
+  (with-fake-session (s)
     (let ((cl-tmux::*term-rows* 24)
           (cl-tmux::*term-cols* 80)
           (cl-tmux::*dirty*    nil)

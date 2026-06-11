@@ -83,111 +83,112 @@
 
 ;;; ── Response-queue action helpers ─────────────────────────────────────────
 ;;;
-;;; DSR, CPR, DA1, and DA2 all push a response string onto the screen's
+;;; All response-enqueue functions ultimately push a string onto the screen's
 ;;; response-queue so the PTY loop can drain it back to the application.
-;;; Extracting named helpers moves the format/push I/O concern out of the
-;;; declarative CSI rule table and into named, testable action functions.
+;;; %enqueue-reply is the single primitive; define-fixed-reply-enqueuers
+;;; generates the static-string variants as a Prolog-style fact table so the
+;;; escape strings are interned once at load time (load-time-value).
 
-(defun enqueue-dsr-reply (screen)
-  "Push the Device Status Report OK reply (ESC [ 0 n) onto SCREEN's response queue."
-  (push (format nil "~C[0n" #\Escape)
-        (screen-response-queue screen)))
+(declaim (inline %enqueue-reply))
+(defun %enqueue-reply (screen reply)
+  "Push REPLY string onto SCREEN's response queue."
+  (push reply (screen-response-queue screen)))
+
+(defmacro define-fixed-reply-enqueuers (&rest specs)
+  "Generate enqueuer functions for static (load-time) reply strings.
+   Each SPEC is (fn-name reply-form docstring).
+   REPLY-FORM is evaluated once at load time via load-time-value."
+  `(progn
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (name reply doc) spec
+                   `(defun ,name (screen)
+                      ,doc
+                      (%enqueue-reply screen (load-time-value ,reply t)))))
+               specs)))
+
+(define-fixed-reply-enqueuers
+  (enqueue-dsr-reply
+   (format nil "~C[0n" #\Escape)
+   "Push Device Status Report OK (ESC[0n) onto SCREEN's response queue.")
+  (enqueue-da1-reply
+   (format nil "~C[?1;2c" #\Escape)
+   "Push Primary Device Attributes (ESC[?1;2c — VT100 with AVO) onto SCREEN's response queue.")
+  (enqueue-da2-reply
+   (format nil "~C[>1;10;0c" #\Escape)
+   "Push Secondary Device Attributes (ESC[>1;10;0c) onto SCREEN's response queue.")
+  (enqueue-da3-reply
+   (format nil "~CP!|00000000~C\\" #\Escape #\Escape)
+   "Push Tertiary Device Attributes (DCS P!|00000000 ST) onto SCREEN's response queue.")
+  (enqueue-xtversion-reply
+   (format nil "~CP>|tmux 3.5~C\\" #\Escape #\Escape)
+   "Push XTVERSION reply (DCS>|tmux 3.5 ST) onto SCREEN's response queue."))
 
 (defun enqueue-cpr-reply (screen)
   "Push a Cursor Position Report (ESC [ row ; col R, 1-based) onto SCREEN's
    response queue.  In DECOM origin mode (?6) the row is relative to the scroll
    region top margin (row 1 = top margin); otherwise it is absolute."
-  (push (format nil "~C[~D;~DR" #\Escape
-                (if (screen-origin-mode screen)
-                    (1+ (- (screen-cursor-y screen) (screen-scroll-top screen)))
-                    (1+ (screen-cursor-y screen)))
-                (1+ (screen-cursor-x screen)))
-        (screen-response-queue screen)))
+  (%enqueue-reply screen
+                  (format nil "~C[~D;~DR" #\Escape
+                          (if (screen-origin-mode screen)
+                              (1+ (- (screen-cursor-y screen) (screen-scroll-top screen)))
+                              (1+ (screen-cursor-y screen)))
+                          (1+ (screen-cursor-x screen)))))
 
-(defun enqueue-da1-reply (screen)
-  "Push the Primary Device Attributes response (ESC [ ? 1 ; 2 c — VT100 with AVO)
-   onto SCREEN's response queue."
-  (push (format nil "~C[?1;2c" #\Escape)
-        (screen-response-queue screen)))
-
-(defun enqueue-da2-reply (screen)
-  "Push the Secondary Device Attributes response (ESC [ > 1 ; 10 ; 0 c)
-   onto SCREEN's response queue."
-  (push (format nil "~C[>1;10;0c" #\Escape)
-        (screen-response-queue screen)))
+(defun %decrqm-boolean (x)
+  "Encode a flag for a DECRQM reply: T → 1 (set), NIL → 2 (reset)."
+  (if x 1 2))
 
 (defun %decrqm-mode-state (screen mode)
   "DECRQM reply value for DEC private MODE: 1 = set, 2 = reset, 0 = not recognised.
    Reports from the screen's tracked mode flags so an application querying support
    gets an accurate answer; an unknown mode reports 0 (so the app falls back)."
-  (flet ((b (x) (if x 1 2)))
-    (case mode
-      (1    (b (screen-app-cursor-keys screen)))            ; DECCKM
-      (5    (b (screen-reverse-screen screen)))             ; DECSCNM reverse video
-      (6    (b (screen-origin-mode screen)))                ; DECOM
-      (7    (b (screen-autowrap screen)))                   ; DECAWM autowrap
-      (25   (b (screen-cursor-visible screen)))             ; DECTCEM
-      (1000 (b (= (screen-mouse-mode screen) 1)))           ; X10/normal mouse
-      (1002 (b (= (screen-mouse-mode screen) 2)))           ; button-event mouse
-      (1003 (b (= (screen-mouse-mode screen) 3)))           ; any-event mouse
-      (1004 (b (screen-focus-events screen)))               ; focus reporting
-      (1006 (b (screen-mouse-sgr-mode screen)))             ; SGR mouse encoding
-      ((47 1047 1049) (b (and (screen-alt-cells screen) t))) ; alternate screen
-      (2004 (b (screen-bracketed-paste screen)))            ; bracketed paste
-      (2026 2)   ; synchronized output: accepted but not a persistent mode → reset
-      (t    0))))
+  (case mode
+    (1    (%decrqm-boolean (screen-app-cursor-keys screen)))            ; DECCKM
+    (5    (%decrqm-boolean (screen-reverse-screen screen)))             ; DECSCNM reverse video
+    (6    (%decrqm-boolean (screen-origin-mode screen)))                ; DECOM
+    (7    (%decrqm-boolean (screen-autowrap screen)))                   ; DECAWM autowrap
+    (25   (%decrqm-boolean (screen-cursor-visible screen)))             ; DECTCEM
+    (1000 (%decrqm-boolean (= (screen-mouse-mode screen) 1)))           ; X10/normal mouse
+    (1002 (%decrqm-boolean (= (screen-mouse-mode screen) 2)))           ; button-event mouse
+    (1003 (%decrqm-boolean (= (screen-mouse-mode screen) 3)))           ; any-event mouse
+    (1004 (%decrqm-boolean (screen-focus-events screen)))               ; focus reporting
+    (1006 (%decrqm-boolean (screen-mouse-sgr-mode screen)))             ; SGR mouse encoding
+    ((47 1047 1049) (%decrqm-boolean (and (screen-alt-cells screen) t))) ; alternate screen
+    (2004 (%decrqm-boolean (screen-bracketed-paste screen)))            ; bracketed paste
+    (2026 2)   ; synchronized output: accepted but not a persistent mode → reset
+    (t    0)))
 
 (defun enqueue-decrqm-reply (screen mode)
   "Push the DECRQM report (ESC [ ? MODE ; Pm $ y) onto SCREEN's response queue,
    where Pm is %decrqm-mode-state for MODE."
-  (push (format nil "~C[?~D;~D$y" #\Escape mode (%decrqm-mode-state screen mode))
-        (screen-response-queue screen)))
+  (%enqueue-reply screen
+                  (format nil "~C[?~D;~D$y" #\Escape mode (%decrqm-mode-state screen mode))))
 
 (defun %decrqm-ansi-mode-state (screen mode)
   "DECRQM reply value for an ANSI (non-private) MODE: 1 = set, 2 = reset, 0 = not
    recognised.  Covers IRM (4) and LNM (20); other ANSI modes report 0."
-  (flet ((b (x) (if x 1 2)))
-    (case mode
-      (4  (b (screen-insert-mode screen)))     ; IRM — insert/replace mode
-      (20 (b (screen-newline-mode screen)))    ; LNM — line feed/new line mode
-      (t  0))))
+  (case mode
+    (4  (%decrqm-boolean (screen-insert-mode screen)))     ; IRM — insert/replace mode
+    (20 (%decrqm-boolean (screen-newline-mode screen)))    ; LNM — line feed/new line mode
+    (t  0)))
 
 (defun enqueue-decrqm-ansi-reply (screen mode)
   "Push the ANSI-mode DECRQM report (ESC [ MODE ; Pm $ y — NO ? marker) onto the
    response queue, where Pm is %decrqm-ansi-mode-state for MODE."
-  (push (format nil "~C[~D;~D$y" #\Escape mode (%decrqm-ansi-mode-state screen mode))
-        (screen-response-queue screen)))
-
-(defun enqueue-da3-reply (screen)
-  "Push the Tertiary Device Attributes reply (DA3, CSI = c) onto SCREEN's response
-   queue: ESC P ! | 00000000 ST — the DECRPTUI report with a zero terminal unit id
-   (xterm-style; the id is informational and apps accept any 8-hex-digit value)."
-  (push (format nil "~CP!|00000000~C\\" #\Escape #\Escape)
-        (screen-response-queue screen)))
-
-(defun enqueue-xtversion-reply (screen)
-  "Push the XTVERSION report (CSI > q) onto SCREEN's response queue:
-   ESC P > | tmux 3.5 ST.  cl-tmux presents the tmux 3.5 identity (consistent with
-   #{version} and `tmux -V`), so an app querying the terminal version — as real
-   tmux 3.5 answers — sees tmux 3.5."
-  (push (format nil "~CP>|tmux 3.5~C\\" #\Escape #\Escape)
-        (screen-response-queue screen)))
+  (%enqueue-reply screen
+                  (format nil "~C[~D;~D$y" #\Escape mode (%decrqm-ansi-mode-state screen mode))))
 
 (defun enqueue-xtwinops-reply (screen op)
   "Push the XTWINOPS size REPORT for operation OP onto SCREEN's response queue:
-     18 → text-area size in CHARACTERS: ESC [ 8 ; rows ; cols t
-     19 → screen size in characters:    ESC [ 9 ; rows ; cols t
-   Apps query these to learn the grid size.  Other XTWINOPS operations
-   (resize/move/iconify the window, or pixel-size reports cl-tmux cannot answer)
-   enqueue nothing — a multiplexer does not manipulate the outer window, and a
-   wrong pixel size would mislead callers more than no reply."
-  (case op
-    (18 (push (format nil "~C[8;~D;~Dt" #\Escape
-                      (screen-height screen) (screen-width screen))
-              (screen-response-queue screen)))
-    (19 (push (format nil "~C[9;~D;~Dt" #\Escape
-                      (screen-height screen) (screen-width screen))
-              (screen-response-queue screen)))))
+     18 → text-area in CHARACTERS: ESC [ 8 ; rows ; cols t
+     19 → screen    in characters:  ESC [ 9 ; rows ; cols t
+   Only ops 18/19 (grid-size queries) produce a reply; other XTWINOPS operations
+   (resize/move/iconify) are silently ignored — a multiplexer cannot resize the
+   outer window and a wrong pixel size would mislead callers more than no reply."
+  (let ((code (case op (18 8) (19 9))))
+    (when code
+      (%enqueue-reply screen (format nil "~C[~D;~D;~Dt" #\Escape
+                                     code (screen-height screen) (screen-width screen))))))
 
 ;;; ── CSI rule table ─────────────────────────────────────────────────────────
 

@@ -14,20 +14,19 @@
    Returns a string, or NIL when no valid selection exists.
    In rectangle mode each row between start-row and end-row is extracted
    between fixed column bounds (min/max of mark-col and cursor-col)."
-  (unless (and (screen-copy-selecting screen)
-               (screen-copy-mark   screen)
-               (screen-copy-cursor screen))
-    (return-from %rectangle-selection-text nil))
-  (multiple-value-bind (start-vrow end-vrow start-col end-col)
-      (%selection-bounds screen)
-    (let* ((text (with-output-to-string (out)
-                   (loop for vrow from start-vrow to end-vrow do
-                     (let* ((row-str (%extract-vrow-chars screen vrow start-col end-col))
-                            (trimmed (string-right-trim " " row-str)))
-                       (write-string trimmed out)
-                       (when (< vrow end-vrow)
-                         (write-char #\Newline out)))))))
-      (if (plusp (length text)) text nil))))
+  (when (and (screen-copy-selecting screen)
+             (screen-copy-mark   screen)
+             (screen-copy-cursor screen))
+    (multiple-value-bind (start-vrow end-vrow start-col end-col)
+        (%selection-bounds screen)
+      (let* ((text (with-output-to-string (out)
+                     (loop for vrow from start-vrow to end-vrow do
+                       (let* ((row-str (%extract-vrow-chars screen vrow start-col end-col))
+                              (trimmed (string-right-trim " " row-str)))
+                         (write-string trimmed out)
+                         (when (< vrow end-vrow)
+                           (write-char #\Newline out)))))))
+        (if (plusp (length text)) text nil)))))
 
 ;;; ── copy-pipe helper ─────────────────────────────────────────────────────────
 ;;;

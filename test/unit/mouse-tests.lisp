@@ -272,25 +272,23 @@
     (cl-tmux/options:set-option "mouse" t)
     (cl-tmux/config:apply-config-directive
      '("bind" "-n" "WheelUpPane" "next-window"))
-    (let ((s (make-fake-session :nwindows 2)))
-      (with-loop-state
-        (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
-          (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
-          (is (eq (second (session-windows s)) (session-active-window s))
-              "bound WheelUpPane must run next-window")
-          (is-false (screen-copy-mode-p (active-screen s))
-              "the binding overrides the default copy-mode scroll"))))))
+    (with-fake-session (s :nwindows 2)
+      (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
+        (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
+        (is (eq (second (session-windows s)) (session-active-window s))
+            "bound WheelUpPane must run next-window")
+        (is-false (screen-copy-mode-p (active-screen s))
+            "the binding overrides the default copy-mode scroll")))))
 
 (test mouse-unbound-wheel-up-keeps-default-behavior
   "With no WheelUpPane binding, wheel-up still enters copy mode (default)."
   (with-isolated-config
     (cl-tmux/options:set-option "mouse" t)
-    (let ((s (make-fake-session :nwindows 1)))
-      (with-loop-state
-        (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
-          (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
-          (is-true (screen-copy-mode-p (active-screen s))
-              "unbound wheel-up falls through to the built-in copy-mode scroll"))))))
+    (with-fake-session (s :nwindows 1)
+      (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
+        (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
+        (is-true (screen-copy-mode-p (active-screen s))
+            "unbound wheel-up falls through to the built-in copy-mode scroll")))))
 
 (test mouse-copy-mode-table-binding-fires
   "In copy mode, a copy-mode-vi mouse binding fires, overriding the built-in
@@ -300,13 +298,12 @@
     (cl-tmux/options:set-option "mode-keys" "vi")
     (cl-tmux/config:apply-config-directive
      '("bind" "-T" "copy-mode-vi" "WheelUpPane" "next-window"))
-    (let ((s (make-fake-session :nwindows 2)))
-      (with-loop-state
-        (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
-          (cl-tmux/commands:copy-mode-enter (active-screen s))
-          (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
-          (is (eq (second (session-windows s)) (session-active-window s))
-              "copy-mode-vi WheelUpPane must run next-window"))))))
+    (with-fake-session (s :nwindows 2)
+      (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
+        (cl-tmux/commands:copy-mode-enter (active-screen s))
+        (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
+        (is (eq (second (session-windows s)) (session-active-window s))
+            "copy-mode-vi WheelUpPane must run next-window")))))
 
 ;;; ── Double / triple click detection ─────────────────────────────────────────
 
@@ -333,16 +330,15 @@
   "Two quick left-clicks at the same cell select the word under the pointer."
   (with-isolated-config
     (cl-tmux/options:set-option "mouse" t)
-    (let ((s (make-fake-session :nwindows 1)))
-      (with-loop-state
-        (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
-          (feed (active-screen s) "foo bar baz")
-          ;; Two presses at col 5 row 0 (inside "bar"); the rapid succession is
-          ;; naturally within double-click-time (500ms).
-          (cl-tmux::%dispatch-mouse-event s 0 5 0 nil)
-          (cl-tmux::%dispatch-mouse-event s 0 5 0 nil)
-          (is (string= "bar" (cl-tmux/commands::%selection-text (active-screen s)))
-              "double-click selects the word 'bar'"))))))
+    (with-fake-session (s :nwindows 1)
+      (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
+        (feed (active-screen s) "foo bar baz")
+        ;; Two presses at col 5 row 0 (inside "bar"); the rapid succession is
+        ;; naturally within double-click-time (500ms).
+        (cl-tmux::%dispatch-mouse-event s 0 5 0 nil)
+        (cl-tmux::%dispatch-mouse-event s 0 5 0 nil)
+        (is (string= "bar" (cl-tmux/commands::%selection-text (active-screen s)))
+            "double-click selects the word 'bar'")))))
 
 ;;; ── Border-at-position ───────────────────────────────────────────────────────
 

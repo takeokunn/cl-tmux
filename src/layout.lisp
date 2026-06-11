@@ -124,14 +124,15 @@
 (defun layout-find-parent (node child)
   "Return (values PARENT WHICH) for CHILD's immediate parent LAYOUT-SPLIT,
    where WHICH is :first or :second.  Returns (values NIL NIL) when not found."
-  (unless (layout-split-p node) (return-from layout-find-parent (values nil nil)))
-  ;; Check direct children.  Note: OR cannot be used here — it only propagates
-  ;; the primary value, discarding the secondary :first/:second.
-  (multiple-value-bind (p s) (%direct-child-side node child)
-    (when p (return-from layout-find-parent (values p s))))
-  (multiple-value-bind (p s) (layout-find-parent (layout-split-first node) child)
-    (if p (values p s)
-        (layout-find-parent (layout-split-second node) child))))
+  (when (layout-split-p node)
+    ;; Check direct children.  Note: OR cannot be used here — it only propagates
+    ;; the primary value, discarding the secondary :first/:second.
+    (multiple-value-bind (p s) (%direct-child-side node child)
+      (if p
+          (values p s)
+          (multiple-value-bind (p2 s2) (layout-find-parent (layout-split-first node) child)
+            (if p2 (values p2 s2)
+                (layout-find-parent (layout-split-second node) child)))))))
 
 ;;; ── Tree geometry: assign rectangles ───────────────────────────────────────
 

@@ -290,9 +290,9 @@
 
    Callers that share the screen with a reader thread must hold SCREEN's
    lock; this function does no locking of its own."
-  (when (and (= new-width  (screen-width  screen))
-             (= new-height (screen-height screen)))
-    (return-from screen-resize screen))
+  (if (and (= new-width  (screen-width  screen))
+           (= new-height (screen-height screen)))
+      screen
   (let* ((old-width  (screen-width  screen))
          (old-height (screen-height screen))
          (old-cells  (screen-cells  screen))
@@ -316,4 +316,4 @@
           (screen-dirty-p       screen) t)
     ;; Content reflows on resize; drop the -J wrap flags (re-marked as new wraps occur).
     (%clear-all-line-wrapped screen)
-    screen))
+    screen)))

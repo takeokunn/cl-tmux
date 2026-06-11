@@ -95,46 +95,46 @@
 
 (test flush-esc-no-op-when-no-esc-pending
   "%flush-esc-if-timed-out is a no-op when esc-entered-at is NIL."
-  (let ((sess  (make-fake-session))
-        (state (cl-tmux::make-input-state)))
-    ;; esc-entered-at starts NIL; %flush-esc-if-timed-out must not change the state.
-    (is (null (cl-tmux::input-state-esc-entered-at state))
-        "precondition: esc-entered-at is NIL")
-    (cl-tmux::%flush-esc-if-timed-out state sess)
-    (is (null (cl-tmux::input-state-esc-entered-at state))
-        "esc-entered-at stays NIL when no escape is pending")))
+  (with-fake-session (sess)
+    (let ((state (cl-tmux::make-input-state)))
+      ;; esc-entered-at starts NIL; %flush-esc-if-timed-out must not change the state.
+      (is (null (cl-tmux::input-state-esc-entered-at state))
+          "precondition: esc-entered-at is NIL")
+      (cl-tmux::%flush-esc-if-timed-out state sess)
+      (is (null (cl-tmux::input-state-esc-entered-at state))
+          "esc-entered-at stays NIL when no escape is pending"))))
 
 (test flush-esc-within-timeout-does-not-flush
   "%flush-esc-if-timed-out does not flush when the timeout has NOT elapsed."
-  (let ((sess  (make-fake-session))
-        (state (cl-tmux::make-input-state)))
-    (with-isolated-config
-      ;; Set a very long escape-time so the timer has definitely not expired.
-      (cl-tmux/options:set-server-option "escape-time" 100000)
-      ;; Simulate an ESC having been received: stamp esc-entered-at.
-      (setf (cl-tmux::input-state-esc-entered-at state) (get-internal-real-time))
-      (cl-tmux::%flush-esc-if-timed-out state sess)
-      ;; Continuation must still point away from ground (timer did not fire).
-      (is (not (null (cl-tmux::input-state-esc-entered-at state)))
-          "esc-entered-at must remain set when timeout has not elapsed"))))
+  (with-fake-session (sess)
+    (let ((state (cl-tmux::make-input-state)))
+      (with-isolated-config
+        ;; Set a very long escape-time so the timer has definitely not expired.
+        (cl-tmux/options:set-server-option "escape-time" 100000)
+        ;; Simulate an ESC having been received: stamp esc-entered-at.
+        (setf (cl-tmux::input-state-esc-entered-at state) (get-internal-real-time))
+        (cl-tmux::%flush-esc-if-timed-out state sess)
+        ;; Continuation must still point away from ground (timer did not fire).
+        (is (not (null (cl-tmux::input-state-esc-entered-at state)))
+            "esc-entered-at must remain set when timeout has not elapsed")))))
 
 (test flush-esc-after-timeout-resets-to-ground
   "%flush-esc-if-timed-out resets state to ground when escape-time has elapsed."
-  (let ((sess  (make-fake-session))
-        (state (cl-tmux::make-input-state)))
-    (with-isolated-config
-      ;; Set escape-time to 0 ms so any elapsed time qualifies.
-      (cl-tmux/options:set-server-option "escape-time" 0)
-      ;; Stamp esc-entered-at far in the past.
-      (setf (cl-tmux::input-state-esc-entered-at state)
-            (- (get-internal-real-time) (* 2 internal-time-units-per-second)))
-      (cl-tmux::%flush-esc-if-timed-out state sess)
-      ;; After flush: esc-entered-at cleared and continuation back to ground.
-      (is (null (cl-tmux::input-state-esc-entered-at state))
-          "esc-entered-at must be NIL after flush")
+  (with-fake-session (sess)
+    (let ((state (cl-tmux::make-input-state)))
+      (with-isolated-config
+        ;; Set escape-time to 0 ms so any elapsed time qualifies.
+        (cl-tmux/options:set-server-option "escape-time" 0)
+        ;; Stamp esc-entered-at far in the past.
+        (setf (cl-tmux::input-state-esc-entered-at state)
+              (- (get-internal-real-time) (* 2 internal-time-units-per-second)))
+        (cl-tmux::%flush-esc-if-timed-out state sess)
+        ;; After flush: esc-entered-at cleared and continuation back to ground.
+        (is (null (cl-tmux::input-state-esc-entered-at state))
+            "esc-entered-at must be NIL after flush")
       (is (eq (cl-tmux::input-state-continuation state)
               #'cl-tmux::%ground-input-state)
-          "continuation must return to ground after flush"))))
+          "continuation must return to ground after flush")))))
 
 ;;; ── %reset-repeat-if-expired behavioural tests ───────────────────────────────
 

@@ -46,29 +46,28 @@
    directly, matching tmux's position-independent ids: %N → pane, @N → window
    ($N or a plain name → session).  Without this, `-t %2` / `-t @3` were
    mis-parsed as session names and silently fell back to the active object."
-  (when (or (null target-string) (string= target-string ""))
-    (return-from %parse-target (values nil nil nil)))
-  (let* ((colon-pos (position #\: target-string))
-         (dot-pos   (position #\. target-string :start (or colon-pos 0))))
-    (when (and (null colon-pos) (null dot-pos))
-      (return-from %parse-target
-        (case (char target-string 0)
-          (#\% (values nil nil target-string))     ; %N → pane-id
-          (#\@ (values nil target-string nil))     ; @N → window-id
-          (t   (values target-string nil nil)))))  ; $N session-id or plain name
-    (let* ((win-raw  (cond
-                       ;; Both colon and dot: window is between them.
-                       ((and colon-pos dot-pos)
-                        (subseq target-string (1+ colon-pos) dot-pos))
-                       ;; Colon but no dot: window is everything after colon.
-                       (colon-pos
-                        (subseq target-string (1+ colon-pos)))
-                       ;; No colon — no window component.
-                       (t nil)))
-           (pane-raw (when dot-pos
-                       (subseq target-string (1+ dot-pos))))
-           (sess-str (%parse-session-component target-string colon-pos dot-pos)))
-      (values sess-str (%non-empty win-raw) (%non-empty pane-raw)))))
+  (if (or (null target-string) (string= target-string ""))
+      (values nil nil nil)
+      (let* ((colon-pos (position #\: target-string))
+             (dot-pos   (position #\. target-string :start (or colon-pos 0))))
+        (if (and (null colon-pos) (null dot-pos))
+            (case (char target-string 0)
+              (#\% (values nil nil target-string))     ; %N → pane-id
+              (#\@ (values nil target-string nil))     ; @N → window-id
+              (t   (values target-string nil nil)))    ; $N session-id or plain name
+            (let* ((win-raw  (cond
+                               ;; Both colon and dot: window is between them.
+                               ((and colon-pos dot-pos)
+                                (subseq target-string (1+ colon-pos) dot-pos))
+                               ;; Colon but no dot: window is everything after colon.
+                               (colon-pos
+                                (subseq target-string (1+ colon-pos)))
+                               ;; No colon — no window component.
+                               (t nil)))
+                   (pane-raw (when dot-pos
+                               (subseq target-string (1+ dot-pos))))
+                   (sess-str (%parse-session-component target-string colon-pos dot-pos)))
+              (values sess-str (%non-empty win-raw) (%non-empty pane-raw)))))))
 
 ;;; ── define-target-lookup — Prolog-style sequential rule dispatch ─────────────
 ;;;
@@ -83,20 +82,19 @@
    Each remaining RULE is either:
      (:nil-guard EXPR)  -- return NIL early when EXPR is NIL
      (TEST-EXPR)        -- return TEST-EXPR when it is non-NIL
-   Rules are tried in order.  Returns NIL when no rule matches."
+   Rules are tried in order via a cond.  Returns NIL when no rule matches."
   (let* ((docstring    (when (stringp (first rules)) (first rules)))
-         (actual-rules (if docstring (rest rules) rules))
-         (result-sym   (gensym "RESULT")))
+         (actual-rules (if docstring (rest rules) rules)))
     `(defun ,name ,lambda-list
        ,@(when docstring (list docstring))
-       ,@(mapcar
-          (lambda (rule)
-            (if (eq (car rule) :nil-guard)
-                `(unless ,(cadr rule) (return-from ,name nil))
-                `(let ((,result-sym ,(car rule)))
-                   (when ,result-sym (return-from ,name ,result-sym)))))
-          actual-rules)
-       nil)))
+       (cond
+         ,@(mapcar
+            (lambda (rule)
+              (if (eq (car rule) :nil-guard)
+                  `((null ,(cadr rule)) nil)
+                  `(,(car rule))))
+            actual-rules)
+         (t nil)))))
 
 ;;; ── Sigil helpers (pure) ─────────────────────────────────────────────────────
 

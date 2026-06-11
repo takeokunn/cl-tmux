@@ -293,20 +293,32 @@
   "Maximum DCS passthrough payload bytes buffered (1 MiB).  Beyond this the
    payload is truncated — a safety bound against a runaway/malformed stream.")
 
-(defun %dcs-tmux-prefix-p (buffer)
-  "T when BUFFER begins with the ASCII bytes for \"tmux;\" (the passthrough tag)."
-  (and (>= (fill-pointer buffer) 5)
-       (= (aref buffer 0) 116)   ; t
-       (= (aref buffer 1) 109)   ; m
-       (= (aref buffer 2) 117)   ; u
-       (= (aref buffer 3) 120)   ; x
-       (= (aref buffer 4) 59)))  ; ;
+(defun %buffer-prefix-p (buffer &rest expected)
+  "T when BUFFER's first (length EXPECTED) bytes match EXPECTED."
+  (and (>= (fill-pointer buffer) (length expected))
+       (loop for b in expected
+             for i from 0
+             always (= (aref buffer i) b))))
 
-(defun %dcs-xtgettcap-prefix-p (buffer)
-  "T when BUFFER begins with \"+q\" — an XTGETTCAP terminfo-capability request."
-  (and (>= (fill-pointer buffer) 2)
-       (= (aref buffer 0) 43)     ; +
-       (= (aref buffer 1) 113)))  ; q
+(defmacro define-buffer-prefix-checkers (&rest specs)
+  "Generate buffer prefix predicate functions from a declarative fact table.
+   Each SPEC is (fn-name docstring byte...) — the bytes are matched literally."
+  `(progn
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (name doc &rest bytes) spec
+                   `(defun ,name (buffer) ,doc (%buffer-prefix-p buffer ,@bytes))))
+               specs)))
+
+(define-buffer-prefix-checkers
+  (%dcs-tmux-prefix-p
+   "T when BUFFER begins with ASCII \"tmux;\" (DCS passthrough tag)."
+   116 109 117 120 59)       ; t m u x ;
+  (%dcs-xtgettcap-prefix-p
+   "T when BUFFER begins with \"+q\" (XTGETTCAP terminfo capability request)."
+   43 113)                   ; + q
+  (%dcs-decrqss-prefix-p
+   "T when BUFFER begins with \"$q\" (DECRQSS request status string query)."
+   36 113))                  ; $ q  ; q
 
 (defun %hex-decode-string (hex)
   "Decode an even-length hex string to its ASCII characters, or NIL if malformed.
@@ -343,16 +355,19 @@
         collect (subseq string start (or pos (length string)))
         while pos do (setf start (1+ pos))))
 
+(defun %dcs-reply (ok-p body)
+  "Build a DCS string-terminator reply: ESC P {1=ok/0=err} BODY ST."
+  (format nil "~CP~D~A~C\\" #\Escape (if ok-p 1 0) body #\Escape))
+
 (defun %xtgettcap-reply-1 (hex-name)
   "Build one XTGETTCAP DCS reply for the requested HEX-NAME (echoed verbatim):
    known cap → ESC P 1 + r <hexname>[=<hexvalue>] ST; unknown → ESC P 0 + r <hexname> ST."
   (let* ((name (%hex-decode-string hex-name))
          (val  (and name (%xtgettcap-value name))))
     (cond
-      ((null val)        (format nil "~CP0+r~A~C\\" #\Escape hex-name #\Escape))
-      ((eq val :boolean) (format nil "~CP1+r~A~C\\" #\Escape hex-name #\Escape))
-      (t                 (format nil "~CP1+r~A=~A~C\\" #\Escape hex-name
-                                 (%hex-encode-string val) #\Escape)))))
+      ((null val)        (%dcs-reply nil (format nil "+r~A" hex-name)))
+      ((eq val :boolean) (%dcs-reply t   (format nil "+r~A" hex-name)))
+      (t                 (%dcs-reply t   (format nil "+r~A=~A" hex-name (%hex-encode-string val)))))))
 
 (defun %handle-xtgettcap (screen request)
   "Handle an XTGETTCAP request (the payload after \"+q\"): a ';'-separated list of
@@ -361,12 +376,6 @@
   (dolist (hex-name (%dcs-split-fields request))
     (when (plusp (length hex-name))
       (push (%xtgettcap-reply-1 hex-name) (screen-response-queue screen)))))
-
-(defun %dcs-decrqss-prefix-p (buffer)
-  "T when BUFFER begins with \"$q\" — a DECRQSS (request status string) query."
-  (and (>= (fill-pointer buffer) 2)
-       (= (aref buffer 0) 36)     ; $
-       (= (aref buffer 1) 113)))  ; q
 
 (defun %decrqss-reply (screen request)
   "Build the DECRQSS reply for REQUEST (the setting queried, after \"$q\").
@@ -377,18 +386,16 @@
      SP q → DECSCUSR cursor style  (the shape number)"
   (cond
     ((string= request "m")
-     (format nil "~CP1$r~Am~C\\" #\Escape
-             (cl-tmux/terminal/sgr:%pen-to-sgr-params
-              (screen-cur-fg screen) (screen-cur-bg screen)
-              (screen-cur-attrs screen) (screen-cur-attrs2 screen))
-             #\Escape))
+     (%dcs-reply t (format nil "$r~Am"
+                           (cl-tmux/terminal/sgr:%pen-to-sgr-params
+                            (screen-cur-fg screen) (screen-cur-bg screen)
+                            (screen-cur-attrs screen) (screen-cur-attrs2 screen)))))
     ((string= request "r")
-     (format nil "~CP1$r~D;~Dr~C\\" #\Escape
-             (1+ (screen-scroll-top screen)) (1+ (screen-scroll-bottom screen))
-             #\Escape))
+     (%dcs-reply t (format nil "$r~D;~Dr"
+                           (1+ (screen-scroll-top screen)) (1+ (screen-scroll-bottom screen)))))
     ((string= request " q")
-     (format nil "~CP1$r~D q~C\\" #\Escape (screen-cursor-shape screen) #\Escape))
-    (t (format nil "~CP0$r~C\\" #\Escape #\Escape))))
+     (%dcs-reply t (format nil "$r~D q" (screen-cursor-shape screen))))
+    (t (%dcs-reply nil "$r"))))
 
 (defun %finish-dcs (screen buffer)
   "Process a completed DCS payload in BUFFER (ESCs already un-doubled).

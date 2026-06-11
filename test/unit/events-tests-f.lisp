@@ -8,81 +8,76 @@
 
 (test copy-mode-pageup-scrolls-one-page
   "ESC [ 5 ~ (PageUp) fed one byte at a time scrolls up by screen-height lines."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        (seed-scrollback screen 30)
-        (is (zerop (screen-copy-offset screen)))
-        ;; ESC [ 5 ~  = 27 91 53 126
-        (cl-tmux::process-byte s 27  state)
-        (cl-tmux::process-byte s 91  state)
-        (cl-tmux::process-byte s 53  state)
-        (cl-tmux::process-byte s 126 state)
-        (let ((h (screen-height screen)))
-          (is (= (min h 30) (screen-copy-offset screen))
-              "PageUp must scroll copy-offset by screen-height lines"))))))
+  (with-fake-session (s)
+    (let ((screen (active-screen s))
+          (state  (cl-tmux::make-input-state)))
+      (cl-tmux::dispatch-command s :copy-mode-enter nil)
+      (seed-scrollback screen 30)
+      (is (zerop (screen-copy-offset screen)))
+      ;; ESC [ 5 ~  = 27 91 53 126
+      (cl-tmux::process-byte s 27  state)
+      (cl-tmux::process-byte s 91  state)
+      (cl-tmux::process-byte s 53  state)
+      (cl-tmux::process-byte s 126 state)
+      (let ((h (screen-height screen)))
+        (is (= (min h 30) (screen-copy-offset screen))
+            "PageUp must scroll copy-offset by screen-height lines")))))
 
 (test copy-mode-pagedown-scrolls-one-page
   "ESC [ 6 ~ (PageDown) fed one byte at a time scrolls down by screen-height lines."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        (seed-scrollback screen 30)
-        ;; Pre-scroll up by 2*screen-height (clamped to scrollback length = 30)
-        (let* ((h     (screen-height screen))
-               (start (min (* 2 h) 30)))
-          (cl-tmux/commands::copy-mode-scroll screen start)
-          (is (= start (screen-copy-offset screen)) "pre-scroll verified")
-          ;; ESC [ 6 ~  = 27 91 54 126
-          (cl-tmux::process-byte s 27  state)
-          (cl-tmux::process-byte s 91  state)
-          (cl-tmux::process-byte s 54  state)
-          (cl-tmux::process-byte s 126 state)
-          ;; After PageDown the offset decreases by h (clamped to 0).
-          (let ((expected (max 0 (- start h))))
-            (is (= expected (screen-copy-offset screen))
-                "PageDown must scroll copy-offset down by screen-height lines")))))))
+  (with-fake-session (s)
+    (let ((screen (active-screen s))
+          (state  (cl-tmux::make-input-state)))
+      (cl-tmux::dispatch-command s :copy-mode-enter nil)
+      (seed-scrollback screen 30)
+      ;; Pre-scroll up by 2*screen-height (clamped to scrollback length = 30)
+      (let* ((h     (screen-height screen))
+             (start (min (* 2 h) 30)))
+        (cl-tmux/commands::copy-mode-scroll screen start)
+        (is (= start (screen-copy-offset screen)) "pre-scroll verified")
+        ;; ESC [ 6 ~  = 27 91 54 126
+        (cl-tmux::process-byte s 27  state)
+        (cl-tmux::process-byte s 91  state)
+        (cl-tmux::process-byte s 54  state)
+        (cl-tmux::process-byte s 126 state)
+        ;; After PageDown the offset decreases by h (clamped to 0).
+        (let ((expected (max 0 (- start h))))
+          (is (= expected (screen-copy-offset screen))
+              "PageDown must scroll copy-offset down by screen-height lines"))))))
 
 ;;; ── Prefix arrow keys select pane ────────────────────────────────────────────
 
 (test prefix-arrow-up-selects-pane-up
   "C-b Up (prefix then ESC [ A) dispatches :select-pane-up."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((state (cl-tmux::make-input-state)))
-        ;; Feed C-b (prefix) then ESC [ A
-        (cl-tmux::process-byte s 2   state)
-        (cl-tmux::process-byte s 27  state)
-        (cl-tmux::process-byte s 91  state)
-        ;; Final byte — returns to ground state, no crash.
-        (is (null (cl-tmux::process-byte s 65 state))
-            "C-b Up arrow must return NIL (no quit/detach)")))))
+  (with-fake-session (s)
+    (let ((state (cl-tmux::make-input-state)))
+      ;; Feed C-b (prefix) then ESC [ A
+      (cl-tmux::process-byte s 2   state)
+      (cl-tmux::process-byte s 27  state)
+      (cl-tmux::process-byte s 91  state)
+      ;; Final byte — returns to ground state, no crash.
+      (is (null (cl-tmux::process-byte s 65 state))
+          "C-b Up arrow must return NIL (no quit/detach)"))))
 
 (test prefix-arrow-down-selects-pane-down
   "C-b Down (prefix then ESC [ B) dispatches :select-pane-down."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((state (cl-tmux::make-input-state)))
-        (cl-tmux::process-byte s 2   state)
-        (cl-tmux::process-byte s 27  state)
-        (cl-tmux::process-byte s 91  state)
-        (is (null (cl-tmux::process-byte s 66 state))
-            "C-b Down arrow must return NIL (no quit/detach)")))))
+  (with-fake-session (s)
+    (let ((state (cl-tmux::make-input-state)))
+      (cl-tmux::process-byte s 2   state)
+      (cl-tmux::process-byte s 27  state)
+      (cl-tmux::process-byte s 91  state)
+      (is (null (cl-tmux::process-byte s 66 state))
+          "C-b Down arrow must return NIL (no quit/detach)"))))
 
 ;;; ── C-b C-b send-prefix ──────────────────────────────────────────────────────
 
 (test prefix-then-prefix-byte-sends-send-prefix
   "C-b C-b (byte 2 twice) dispatches :send-prefix (no crash, returns NIL)."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((state (cl-tmux::make-input-state)))
-        (cl-tmux::process-byte s 2 state)  ; prefix
-        (is (null (cl-tmux::process-byte s 2 state))
-            "C-b C-b must dispatch :send-prefix and return NIL")))))
+  (with-fake-session (s)
+    (let ((state (cl-tmux::make-input-state)))
+      (cl-tmux::process-byte s 2 state)  ; prefix
+      (is (null (cl-tmux::process-byte s 2 state))
+          "C-b C-b must dispatch :send-prefix and return NIL"))))
 
 ;;; ── Modifier+arrow key-name helpers ────────────────────────────────────────
 
@@ -127,89 +122,82 @@
    instead of the hardcoded resize-pane default."
   (with-isolated-config
     (cl-tmux/config:apply-config-directive '("bind" "C-Up" "next-window"))
-    (let ((s (make-fake-session :nwindows 2)))
-      (with-loop-state
+    (with-fake-session (s :nwindows 2)
         (let ((state (cl-tmux::make-input-state)))
           (dolist (b '(2 27 91 49 59 53 65))  ; C-b ESC [ 1 ; 5 A
             (cl-tmux::process-byte s b state))
           (is (eq (second (session-windows s)) (session-active-window s))
-              "bound C-Up must run next-window, not resize"))))))
+              "bound C-Up must run next-window, not resize")))))
 
 (test prefix-m-up-binding-overrides-resize
   "bind M-Up next-window makes C-b then Alt+Up (ESC [ 1 ; 3 A) run next-window
    instead of the hardcoded :resize-up default."
   (with-isolated-config
     (cl-tmux/config:apply-config-directive '("bind" "M-Up" "next-window"))
-    (let ((s (make-fake-session :nwindows 2)))
-      (with-loop-state
+    (with-fake-session (s :nwindows 2)
         (let ((state (cl-tmux::make-input-state)))
           (dolist (b '(2 27 91 49 59 51 65))  ; C-b ESC [ 1 ; 3 A
             (cl-tmux::process-byte s b state))
           (is (eq (second (session-windows s)) (session-active-window s))
-              "bound M-Up must run next-window, not resize"))))))
+              "bound M-Up must run next-window, not resize")))))
 
 (test prefix-plain-arrow-binding-overrides-select-pane
   "bind Up next-window makes C-b Up (ESC [ A) run next-window instead of the
    hardcoded :select-pane-up default."
   (with-isolated-config
     (cl-tmux/config:apply-config-directive '("bind" "Up" "next-window"))
-    (let ((s (make-fake-session :nwindows 2)))
-      (with-loop-state
+    (with-fake-session (s :nwindows 2)
         (let ((state (cl-tmux::make-input-state)))
           (dolist (b '(2 27 91 65))  ; C-b ESC [ A
             (cl-tmux::process-byte s b state))
           (is (eq (second (session-windows s)) (session-active-window s))
-              "bound Up must run next-window, not select-pane"))))))
+              "bound Up must run next-window, not select-pane")))))
 
 (test unbound-prefix-c-up-leaves-active-window
   "With no C-Up binding, C-b Ctrl+Up takes the resize fallback and must NOT
    change the active window (the override is purely additive)."
   (with-isolated-config
-    (let ((s (make-fake-session :nwindows 2)))
-      (with-loop-state
+    (with-fake-session (s :nwindows 2)
         (let ((state (cl-tmux::make-input-state)))
           (dolist (b '(2 27 91 49 59 53 65))  ; C-b ESC [ 1 ; 5 A
             (cl-tmux::process-byte s b state))
           (is (eq (first (session-windows s)) (session-active-window s))
-              "unbound C-Up must leave the first window active"))))))
+              "unbound C-Up must leave the first window active")))))
 
 (test root-m-left-binding-fires-without-prefix
   "bind -n M-Left next-window makes a bare Alt+Left (ESC [ 1 ; 3 D) run
    next-window with no prefix — the root-table modifier+arrow path."
   (with-isolated-config
     (cl-tmux/config:apply-config-directive '("bind" "-n" "M-Left" "next-window"))
-    (let ((s (make-fake-session :nwindows 2)))
-      (with-loop-state
+    (with-fake-session (s :nwindows 2)
         (let ((state (cl-tmux::make-input-state)))
           (dolist (b '(27 91 49 59 51 68))  ; ESC [ 1 ; 3 D  (no prefix)
             (cl-tmux::process-byte s b state))
           (is (eq (second (session-windows s)) (session-active-window s))
-              "bound -n M-Left must run next-window at root"))))))
+              "bound -n M-Left must run next-window at root")))))
 
 (test root-c-up-binding-fires-without-prefix
   "bind -n C-Up next-window makes a bare Ctrl+Up (ESC [ 1 ; 5 A) run
    next-window with no prefix."
   (with-isolated-config
     (cl-tmux/config:apply-config-directive '("bind" "-n" "C-Up" "next-window"))
-    (let ((s (make-fake-session :nwindows 2)))
-      (with-loop-state
+    (with-fake-session (s :nwindows 2)
         (let ((state (cl-tmux::make-input-state)))
           (dolist (b '(27 91 49 59 53 65))  ; ESC [ 1 ; 5 A  (no prefix)
             (cl-tmux::process-byte s b state))
           (is (eq (second (session-windows s)) (session-active-window s))
-              "bound -n C-Up must run next-window at root"))))))
+              "bound -n C-Up must run next-window at root")))))
 
 (test unbound-root-c-up-leaves-active-window
   "With no -n C-Up binding, a bare Ctrl+Up is forwarded to the pane and must
    NOT change the active window."
   (with-isolated-config
-    (let ((s (make-fake-session :nwindows 2)))
-      (with-loop-state
+    (with-fake-session (s :nwindows 2)
         (let ((state (cl-tmux::make-input-state)))
           (dolist (b '(27 91 49 59 53 65))  ; ESC [ 1 ; 5 A  (no prefix, unbound)
             (cl-tmux::process-byte s b state))
           (is (eq (first (session-windows s)) (session-active-window s))
-              "unbound bare C-Up must leave the first window active"))))))
+              "unbound bare C-Up must leave the first window active")))))
 
 ;;; ── Meta/Alt key-name helper and bind override (bind -n M-h / bind M-j) ─────
 
@@ -234,58 +222,53 @@
    prefix — the root-table meta path overrides forwarding to the pane."
   (with-isolated-config
     (cl-tmux/config:apply-config-directive '("bind" "-n" "M-h" "next-window"))
-    (let ((s (make-fake-session :nwindows 2)))
-      (with-loop-state
+    (with-fake-session (s :nwindows 2)
         (let ((state (cl-tmux::make-input-state)))
           (dolist (b '(27 104))  ; ESC h  (no prefix)
             (cl-tmux::process-byte s b state))
           (is (eq (second (session-windows s)) (session-active-window s))
-              "bound -n M-h must run next-window at root"))))))
+              "bound -n M-h must run next-window at root")))))
 
 (test prefix-m-j-binding-fires
   "bind M-j next-window makes C-b then Alt+j (ESC j) run next-window — the
    after-prefix meta path."
   (with-isolated-config
     (cl-tmux/config:apply-config-directive '("bind" "M-j" "next-window"))
-    (let ((s (make-fake-session :nwindows 2)))
-      (with-loop-state
+    (with-fake-session (s :nwindows 2)
         (let ((state (cl-tmux::make-input-state)))
           (dolist (b '(2 27 106))  ; C-b ESC j
             (cl-tmux::process-byte s b state))
           (is (eq (second (session-windows s)) (session-active-window s))
-              "bound M-j must run next-window after prefix"))))))
+              "bound M-j must run next-window after prefix")))))
 
 (test unbound-root-meta-key-forwards-and-leaves-window
   "With no -n M-x binding, a bare Alt+x is forwarded to the pane and must NOT
    change the active window (the override is purely additive)."
   (with-isolated-config
-    (let ((s (make-fake-session :nwindows 2)))
-      (with-loop-state
+    (with-fake-session (s :nwindows 2)
         (let ((state (cl-tmux::make-input-state)))
           (dolist (b '(27 120))  ; ESC x  (no prefix, unbound)
             (cl-tmux::process-byte s b state))
           (is (eq (first (session-windows s)) (session-active-window s))
-              "unbound bare M-x must leave the first window active"))))))
+              "unbound bare M-x must leave the first window active")))))
 
 ;;; ── Custom key tables (switch-client -T <table>) ────────────────────────────
 
 (test cmd-switch-client-T-sets-and-resets-key-table
   "switch-client -T <table> sets *key-table*; -T root resets it to NIL."
-  (with-loop-state
-    (let ((s (make-fake-session :nwindows 1)))
+  (with-fake-session (s :nwindows 1)
       (cl-tmux::%cmd-switch-client s '("-T" "resize"))
       (is (string= "resize" cl-tmux::*key-table*)
           "switch-client -T resize activates the custom table")
       (cl-tmux::%cmd-switch-client s '("-T" "root"))
       (is (null cl-tmux::*key-table*)
-          "switch-client -T root returns to the normal flow"))))
+          "switch-client -T root returns to the normal flow")))
 
 (test custom-key-table-dispatches-from-active-table-and-persists
   "In a custom key table, a bound key dispatches from THAT table and the table
    persists (modal mode)."
   (with-isolated-config
-    (let ((s (make-fake-session :nwindows 2)))
-      (with-loop-state
+    (with-fake-session (s :nwindows 2)
         (cl-tmux/config:apply-config-directive '("bind" "-T" "resize" "x" "next-window"))
         (setf cl-tmux::*key-table* "resize")
         (let ((state (cl-tmux::make-input-state)))
@@ -293,20 +276,19 @@
           (is (eq (second (session-windows s)) (session-active-window s))
               "a key bound in the active custom table runs its binding")
           (is (string= "resize" cl-tmux::*key-table*)
-              "the custom table persists after a key (modal)"))))))
+              "the custom table persists after a key (modal)")))))
 
 (test custom-key-table-binding-can-switch-back-to-root
   "A binding in a custom table running 'switch-client -T root' exits the table."
   (with-isolated-config
-    (let ((s (make-fake-session :nwindows 1)))
-      (with-loop-state
+    (with-fake-session (s :nwindows 1)
         (cl-tmux/config:apply-config-directive
          '("bind" "-T" "resize" "q" "switch-client" "-T" "root"))
         (setf cl-tmux::*key-table* "resize")
         (let ((state (cl-tmux::make-input-state)))
           (cl-tmux::process-byte s 113 state)  ; 'q'
           (is (null cl-tmux::*key-table*)
-              "switch-client -T root from within the table exits it"))))))
+              "switch-client -T root from within the table exits it")))))
 
 ;;; ── switch-client session selection (-t / -n / -p / -l) ─────────────────────
 
@@ -387,12 +369,11 @@
   "C-b then Alt+1 (ESC 1) runs the bound select-layout even-horizontal on a
    two-pane window without error (the after-prefix meta path fires the default)."
   (with-isolated-config
-    (let ((s (make-fake-session :nwindows 1 :npanes 2)))
-      (with-loop-state
+    (with-fake-session (s :nwindows 1 :npanes 2)
         (let ((state (cl-tmux::make-input-state)))
           (dolist (b '(2 27 49))  ; C-b ESC 1
             (cl-tmux::process-byte s b state))
           ;; Layout applied: the window still has its two panes and a usable tree.
           (is (= 2 (length (window-panes (session-active-window s))))
-              "select-layout via C-b M-1 must preserve both panes"))))))
+              "select-layout via C-b M-1 must preserve both panes")))))
 

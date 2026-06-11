@@ -190,20 +190,20 @@
    the active window, also write to all other panes in the window.
    Panes with pane-input-disabled set (select-pane -d) receive no input.
    No-op when *client-read-only* is set (attach-session -r)."
-  (when *client-read-only* (return-from %forward-octets-synchronized nil))
-  (let* ((window      (session-active-window session))
-         (active-pane (and window (window-active-pane window))))
-    (when (and active-pane
-               ;; select-pane -d: input disabled for this pane — swallow keystrokes.
-               (not (pane-input-disabled active-pane)))
-      (pty-write (pane-fd active-pane) octets)
-      ;; Broadcast when synchronize-panes is enabled, skipping disabled panes.
-      ;; Read the window-local override (falls back to global then default).
-      (when (cl-tmux/options:get-option-for-context "synchronize-panes" :window window)
-        (dolist (pane (window-panes window))
-          (unless (or (eq pane active-pane)
-                      (pane-input-disabled pane))
-            (ignore-errors (pty-write (pane-fd pane) octets))))))))
+  (unless *client-read-only*
+    (let* ((window      (session-active-window session))
+           (active-pane (and window (window-active-pane window))))
+      (when (and active-pane
+                 ;; select-pane -d: input disabled for this pane — swallow keystrokes.
+                 (not (pane-input-disabled active-pane)))
+        (pty-write (pane-fd active-pane) octets)
+        ;; Broadcast when synchronize-panes is enabled, skipping disabled panes.
+        ;; Read the window-local override (falls back to global then default).
+        (when (cl-tmux/options:get-option-for-context "synchronize-panes" :window window)
+          (dolist (pane (window-panes window))
+            (unless (or (eq pane active-pane)
+                        (pane-input-disabled pane))
+              (ignore-errors (pty-write (pane-fd pane) octets)))))))))
 
 ;;; -- Main event loop --------------------------------------------------------
 

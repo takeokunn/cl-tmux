@@ -357,29 +357,29 @@
 
    When the screen's charset is :dec-graphics, CH is remapped through the DEC
    special graphics table before being written."
-  ;; Combining character: append to the previous cell, no cursor advance.
-  (when (combining-char-p ch)
-    (%append-combining-char screen ch)
-    (return-from write-char-at-cursor))
-  ;; Consume a deferred wrap: the previous write parked the cursor at the last
-  ;; column with autowrap on; this next character triggers the wrap first.
-  (when (screen-pending-wrap screen)
-    ;; The current row's line genuinely continues onto the next — record it for
-    ;; capture-pane -J (before cursor-down/scroll, which may shift the flags).
-    (%mark-line-wrapped screen (screen-cursor-y screen))
-    (setf (screen-pending-wrap screen) nil
-          (screen-cursor-x screen) 0)
-    (cursor-down/scroll screen))
-  ;; Apply DEC special graphics remapping when active.
-  (setf ch (%remap-charset-char screen ch))
-  (setf (screen-last-char screen) ch)
-  ;; IRM (insert mode): open a gap of the character's width at the cursor so the
-  ;; new character pushes the rest of the line right instead of overwriting it.
-  (when (screen-insert-mode screen)
-    (insert-chars screen (char-width ch)))
-  (if (= (char-width ch) 2)
-      (%write-wide-cell   screen ch)
-      (%write-normal-cell screen ch)))
+  (if (combining-char-p ch)
+      ;; Combining character: append to the previous cell, no cursor advance.
+      (%append-combining-char screen ch)
+      (progn
+        ;; Consume a deferred wrap: the previous write parked the cursor at the last
+        ;; column with autowrap on; this next character triggers the wrap first.
+        (when (screen-pending-wrap screen)
+          ;; The current row's line genuinely continues onto the next — record it for
+          ;; capture-pane -J (before cursor-down/scroll, which may shift the flags).
+          (%mark-line-wrapped screen (screen-cursor-y screen))
+          (setf (screen-pending-wrap screen) nil
+                (screen-cursor-x screen) 0)
+          (cursor-down/scroll screen))
+        ;; Apply DEC special graphics remapping when active.
+        (setf ch (%remap-charset-char screen ch))
+        (setf (screen-last-char screen) ch)
+        ;; IRM (insert mode): open a gap of the character's width at the cursor so the
+        ;; new character pushes the rest of the line right instead of overwriting it.
+        (when (screen-insert-mode screen)
+          (insert-chars screen (char-width ch)))
+        (if (= (char-width ch) 2)
+            (%write-wide-cell   screen ch)
+            (%write-normal-cell screen ch)))))
 
 (defun write-codepoint (screen cp)
   "Write Unicode code point CP at the cursor, converting it via SAFE-CODE-CHAR."

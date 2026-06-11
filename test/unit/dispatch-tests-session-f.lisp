@@ -11,8 +11,8 @@
 (test new-session-explicit-duplicate-name-refused
   "new-session -s NAME with an existing session NAME (no -A) is refused — the
    existing session is not orphaned."
-  (with-loop-state
-    (let ((existing (make-fake-session)) (caller (make-fake-session)))
+  (with-fake-session (existing)
+    (let ((caller (make-fake-session)))
       (setf (cl-tmux::session-name existing) "work")
       (let ((cl-tmux::*server-sessions* (list (cons "work" existing)))
             (*overlay* nil))
@@ -25,8 +25,8 @@
 
 (test new-session-A-attaches-to-existing
   "new-session -A -s NAME attaches to (returns) the existing session NAME."
-  (with-loop-state
-    (let ((existing (make-fake-session)) (caller (make-fake-session)))
+  (with-fake-session (existing)
+    (let ((caller (make-fake-session)))
       (setf (cl-tmux::session-name existing) "work")
       (let ((cl-tmux::*server-sessions* (list (cons "work" existing))))
         (is (eq existing (cl-tmux::%cmd-new-session-arg caller '("-A" "-s" "work")))
@@ -37,17 +37,16 @@
 (test new-session-auto-name-avoids-collision
   "An auto-generated session name that would collide bumps to the next free
    number instead of orphaning the existing session."
-  (with-loop-state
-    (let ((s2 (make-fake-session)))
-      (setf (cl-tmux::session-name s2) "2")
-      (let ((cl-tmux::*server-sessions* (list (cons "2" s2)))
-            (*overlay* nil))
-        (let ((new (cl-tmux::%cmd-new-session-arg s2 '("-d"))))
-          (is (not (null new)) "a session was created")
-          (is (not (string= "2" (cl-tmux::session-name new)))
-              "the new session did not reuse the colliding name 2")
-          (is (eq s2 (cl-tmux::server-find-session "2"))
-              "the existing session 2 is intact"))))))
+  (with-fake-session (s2)
+    (setf (cl-tmux::session-name s2) "2")
+    (let ((cl-tmux::*server-sessions* (list (cons "2" s2)))
+          (*overlay* nil))
+      (let ((new (cl-tmux::%cmd-new-session-arg s2 '("-d"))))
+        (is (not (null new)) "a session was created")
+        (is (not (string= "2" (cl-tmux::session-name new)))
+            "the new session did not reuse the colliding name 2")
+        (is (eq s2 (cl-tmux::server-find-session "2"))
+            "the existing session 2 is intact")))))
 
 ;;; ── new-session -t: grouped sessions ─────────────────────────────────────────
 
@@ -56,8 +55,8 @@
    window list (tmux grouped sessions).  Built fork-free via make-session —
    no orphaned PTY/reader-thread, because the shared panes keep the threads
    already attached to them by the target session."
-  (with-loop-state
-    (let ((target (make-fake-session)) (caller (make-fake-session)))
+  (with-fake-session (target)
+    (let ((caller (make-fake-session)))
       (setf (cl-tmux::session-name target) "base")
       (let ((cl-tmux::*server-sessions* (list (cons "base" target)))
             (cl-tmux::*session-groups*  nil)
@@ -82,16 +81,15 @@
 (test new-session-t-missing-target-refused
   "new-session -t with an unknown target is refused (returns nil) and registers
    no session — the partial group must not leak a half-built session."
-  (with-loop-state
-    (let ((caller (make-fake-session)))
-      (let ((cl-tmux::*server-sessions* nil)
-            (cl-tmux::*session-groups*  nil)
-            (*overlay* nil))
-        (is (null (cl-tmux::%cmd-new-session-arg
-                   caller '("-d" "-s" "clone" "-t" "ghost")))
-            "missing -t target is refused (returns nil)")
-        (is (null cl-tmux::*server-sessions*)
-            "no session was registered")))))
+  (with-fake-session (caller)
+    (let ((cl-tmux::*server-sessions* nil)
+          (cl-tmux::*session-groups*  nil)
+          (*overlay* nil))
+      (is (null (cl-tmux::%cmd-new-session-arg
+                 caller '("-d" "-s" "clone" "-t" "ghost")))
+          "missing -t target is refused (returns nil)")
+      (is (null cl-tmux::*server-sessions*)
+          "no session was registered"))))
 
 ;;; ── control mode (-C) REPL ───────────────────────────────────────────────────
 

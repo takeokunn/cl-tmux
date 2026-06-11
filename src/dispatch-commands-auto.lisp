@@ -166,21 +166,14 @@
    -F format: custom format string (default: shows name, windows, attached).
    Shows overlay in standalone mode."
   (with-command-flags (flags args "F")
-    (let* ((fmt (cdr (assoc #\F flags))))
+    (let ((fmt (cdr (assoc #\F flags))))
       (if fmt
-          ;; Custom format: expand for each session
           (show-overlay
            (with-output-to-string (s)
-             (if *server-sessions*
-                 (dolist (entry *server-sessions*)
-                   (let ((sess (cdr entry)))
-                     (let ((ctx (cl-tmux/format:format-context-from-session
-                                 sess (session-active-window sess) nil)))
-                       (format s "~A~%" (cl-tmux/format:expand-format fmt ctx)))))
-                 (let ((ctx (cl-tmux/format:format-context-from-session
-                             session (session-active-window session) nil)))
-                   (format s "~A~%" (cl-tmux/format:expand-format fmt ctx))))))
-          ;; Default format
+             (dolist (sess (or (mapcar #'cdr *server-sessions*) (list session)))
+               (let* ((ctx (cl-tmux/format:format-context-from-session
+                            sess (session-active-window sess) nil)))
+                 (format s "~A~%" (cl-tmux/format:expand-format fmt ctx))))))
           (show-overlay (%format-session-list session))))))
 
 (defun %cmd-list-windows-arg (session args)
@@ -299,6 +292,13 @@
           ;; Open the pipe
           (t (pipe-pane-open pane command)))))))
 
+(defun %call-sbcl-posix (name &rest args)
+  "Call the SB-POSIX function named NAME with ARGS, ignoring errors.
+   Safe no-op on non-SBCL implementations or when SB-POSIX is unavailable."
+  (ignore-errors
+    (let ((fn (find-symbol name "SB-POSIX")))
+      (when fn (apply fn args)))))
+
 (defun %cmd-set-environment-prompt (session args)
   "set-environment [-u|-r] NAME [VALUE]: set or unset a process environment variable.
    -u (tmux's unset flag) or -r unsets the variable.  Otherwise VALUE is required."
@@ -309,12 +309,8 @@
            (value    (format nil "~{~A~^ ~}" (rest positionals))))
       (when (and name (plusp (length name)))
         (if remove-p
-            (ignore-errors
-              (let ((fn (find-symbol "UNSETENV" (find-package "SB-POSIX"))))
-                (when fn (funcall fn name))))
-            (ignore-errors
-              (let ((fn (find-symbol "SETENV" (find-package "SB-POSIX"))))
-                (when fn (funcall fn name value 1)))))))))
+            (%call-sbcl-posix "UNSETENV" name)
+            (%call-sbcl-posix "SETENV" name value 1))))))
 
 (defun %cmd-set-hook (session args)
   "set-hook [-g] [-a] [-R] [-u] event [command]: register or unset a command hook

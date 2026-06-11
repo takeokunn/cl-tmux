@@ -127,12 +127,11 @@
 (test run-command-hooks-dispatches-registered-commands
   "run-command-hooks dispatches each registered command keyword on the session."
   (with-isolated-hooks
-    (let ((s (make-fake-session :nwindows 2)))
-      (with-loop-state
-        (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
-        (cl-tmux::run-command-hooks "after-new-window" s)
-        (is (eq (second (session-windows s)) (session-active-window s))
-            "run-command-hooks must dispatch :next-window, advancing the active window")))))
+    (with-fake-session (s :nwindows 2)
+      (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
+      (cl-tmux::run-command-hooks "after-new-window" s)
+      (is (eq (second (session-windows s)) (session-active-window s))
+          "run-command-hooks must dispatch :next-window, advancing the active window"))))
 
 ;;; ── set-hook as a RUNTIME command (command-prompt / bind / control mode) ─────
 
@@ -140,23 +139,21 @@
   "set-hook run at runtime via %run-command-line registers the command hook, and
    the -g flag is skipped (EVENT is after-new-window, not \"-g\")."
   (with-isolated-hooks
-    (let ((s (make-fake-session)))
-      (with-loop-state
-        (cl-tmux::%run-command-line s "set-hook -g after-new-window next-window")
-        (is (equal '("next-window") (cl-tmux/hooks:command-hooks "after-new-window"))
-            "runtime set-hook -g must register under the event, not under -g")
-        (is (null (cl-tmux/hooks:command-hooks "-g"))
-            "no hook may be registered under the literal flag -g")))))
+    (with-fake-session (s)
+      (cl-tmux::%run-command-line s "set-hook -g after-new-window next-window")
+      (is (equal '("next-window") (cl-tmux/hooks:command-hooks "after-new-window"))
+          "runtime set-hook -g must register under the event, not under -g")
+      (is (null (cl-tmux/hooks:command-hooks "-g"))
+          "no hook may be registered under the literal flag -g"))))
 
 (test runtime-set-hook-u-unsets-command-hook
   "set-hook -u <event> run at runtime clears the event's command hooks."
   (with-isolated-hooks
-    (let ((s (make-fake-session)))
-      (with-loop-state
-        (cl-tmux/hooks:set-command-hook "after-new-window" "next-window")
-        (cl-tmux::%run-command-line s "set-hook -u after-new-window")
-        (is (null (cl-tmux/hooks:command-hooks "after-new-window"))
-            "runtime set-hook -u must clear the event's command hooks")))))
+    (with-fake-session (s)
+      (cl-tmux/hooks:set-command-hook "after-new-window" "next-window")
+      (cl-tmux::%run-command-line s "set-hook -u after-new-window")
+      (is (null (cl-tmux/hooks:command-hooks "after-new-window"))
+          "runtime set-hook -u must clear the event's command hooks"))))
 
 (test config-set-hook-g-flag-registers-under-event
   "set-hook -g <event> <cmd> in .tmux.conf registers under EVENT, not \"-g\"
@@ -171,18 +168,17 @@
 (test command-hook-fires-on-after-kill-pane-via-runner
   "Killing a pane fires the after-kill-pane command hook through the runner."
   (with-isolated-hooks
-    (let ((s (make-fake-session :nwindows 2 :npanes 2)))
-      (with-loop-state
-        ;; Register s in *server-sessions* so %session-of-pane can find it when
-        ;; the command hook runner needs to dispatch :next-window against a session.
-        (let ((cl-tmux::*server-sessions* (list (cons (cl-tmux::session-name s) s))))
-          (cl-tmux/hooks:set-command-hook "after-kill-pane" :next-window)
-          ;; kill-pane fires after-kill-pane (now before window-remove-pane so the
-          ;; pane is still in *server-sessions*), then the runner dispatches :next-window.
-          ;; No fork: fake panes have fd -1 so pty-close is a guarded no-op.
-          (cl-tmux/commands:kill-pane s)
-          (is (eq (second (session-windows s)) (session-active-window s))
-              "after-kill-pane command hook (:next-window) must advance the active window"))))))
+    (with-fake-session (s :nwindows 2 :npanes 2)
+      ;; Register s in *server-sessions* so %session-of-pane can find it when
+      ;; the command hook runner needs to dispatch :next-window against a session.
+      (let ((cl-tmux::*server-sessions* (list (cons (cl-tmux::session-name s) s))))
+        (cl-tmux/hooks:set-command-hook "after-kill-pane" :next-window)
+        ;; kill-pane fires after-kill-pane (now before window-remove-pane so the
+        ;; pane is still in *server-sessions*), then the runner dispatches :next-window.
+        ;; No fork: fake panes have fd -1 so pty-close is a guarded no-op.
+        (cl-tmux/commands:kill-pane s)
+        (is (eq (second (session-windows s)) (session-active-window s))
+            "after-kill-pane command hook (:next-window) must advance the active window")))))
 
 ;;; ── show-hooks (inspect registered command hooks) ─────────────────────────────
 
@@ -203,10 +199,10 @@
 (test dispatch-show-hooks-opens-overlay
   ":show-hooks dispatches without error and opens an overlay listing the hooks."
   (with-isolated-hooks
-    (let ((s (make-fake-session))
-          (*overlay* nil))
-      (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
-      (cl-tmux::dispatch-command s :show-hooks nil)
-      (is (overlay-active-p) ":show-hooks must open an overlay")
-      (is (search "after-new-window" (or *overlay* ""))
-          "the overlay must list the registered hook"))))
+    (with-fake-session (s)
+      (let ((*overlay* nil))
+        (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
+        (cl-tmux::dispatch-command s :show-hooks nil)
+        (is (overlay-active-p) ":show-hooks must open an overlay")
+        (is (search "after-new-window" (or *overlay* ""))
+            "the overlay must list the registered hook")))))

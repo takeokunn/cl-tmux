@@ -68,10 +68,10 @@
   "Serialize WINDOW's layout tree to a tmux-format layout string with checksum.
    Returns NIL when the window has no tree."
   (let ((tree (window-tree window)))
-    (unless tree (return-from layout->string nil))
-    (let* ((body     (%node->string tree))
-           (checksum (%layout-checksum body)))
-      (format nil "~A,~A" checksum body))))
+    (when tree
+      (let* ((body     (%node->string tree))
+             (checksum (%layout-checksum body)))
+        (format nil "~A,~A" checksum body)))))
 
 ;;; -- String -> layout decoder --------------------------------------------------
 ;;;

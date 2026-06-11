@@ -179,18 +179,17 @@
    START-DIR: when non-NIL, the new pane's shell starts in that directory."
   (let ((active (window-active-pane window))
         (tree   (window-tree window)))
-    (unless (and active tree) (return-from window-split nil))
-    (let ((leaf (layout-find-leaf tree active)))
-      ;; Fit check: a full split is measured against the WINDOW extent, a normal
-      ;; split against the active pane.
-      (unless (and leaf
+    (when (and active tree)
+      (let ((leaf (layout-find-leaf tree active)))
+        ;; Fit check: a full split is measured against the WINDOW extent, a normal
+        ;; split against the active pane.
+        (when (and leaf
                    (if full
                        (>= (if (eq direction :h)
                                (window-width window) (window-height window))
                            2)
                        (%split-fits-p active direction)))
-        (return-from window-split nil))
-      (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
+          (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
         (let* ((new-pane (%fork-pane (next-pane-id window) px py pw ph
                                      :start-dir start-dir))
                ;; A full split's extent is the whole window along the split axis;
@@ -225,7 +224,7 @@
           (window-relayout window (window-height window) (window-width window))
           (unless no-focus
             (setf (window-active window) new-pane))
-          new-pane)))))
+          new-pane)))))))
 
 (defun %status-top-offset ()
   "Rows reserved at the TOP of the window for a top-positioned status bar:
@@ -275,21 +274,21 @@
    (for MRU-style reselection), or NIL when WINDOW becomes empty."
   (let* ((tree (window-tree window))
          (leaf (layout-find-leaf tree pane)))
-    (unless leaf
-      (return-from window-remove-pane (first (window-panes window))))
-    (multiple-value-bind (parent which) (layout-find-parent tree leaf)
-      (setf (pane-window pane) nil)
-      (cond
-        ;; LEAF was the sole root — window becomes empty.
-        ((null parent)
-         (setf (window-tree  window) nil
-               (window-panes window) nil)
-         nil)
-        ;; Normal case: collapse the parent split and relayout.
-        (t
-         (let ((sibling (%collapse-parent window parent which)))
-           (window-relayout window (window-height window) (window-width window))
-           (first (layout-leaves sibling))))))))
+    (if (not leaf)
+        (first (window-panes window))
+        (multiple-value-bind (parent which) (layout-find-parent tree leaf)
+          (setf (pane-window pane) nil)
+          (cond
+            ;; LEAF was the sole root — window becomes empty.
+            ((null parent)
+             (setf (window-tree  window) nil
+                   (window-panes window) nil)
+             nil)
+            ;; Normal case: collapse the parent split and relayout.
+            (t
+             (let ((sibling (%collapse-parent window parent which)))
+               (window-relayout window (window-height window) (window-width window))
+               (first (layout-leaves sibling)))))))))
 
 ;;; ── Resize via the tree ──────────────────────────────────────────────────
 
@@ -318,20 +317,20 @@
   (let* ((tree   (window-tree window))
          (active (window-active-pane window))
          (orient (resize-direction-orientation direction)))
-    (unless (and tree active) (return-from window-resize-active nil))
-    (let ((leaf (layout-find-leaf tree active)))
-      (unless leaf (return-from window-resize-active nil))
-      (multiple-value-bind (split side) (resize-find-split tree leaf orient)
-        (unless split (return-from window-resize-active nil))
-        (let* ((avail      (max 1 (- (layout-split-axis-extent split orient) 1)))
-               (grow-first (%grow-first-p side direction))
-               (new-ratio  (%new-split-ratio orient avail
-                                             (layout-split-ratio split)
-                                             delta grow-first)))
-          (when new-ratio
-            (setf (layout-split-ratio split) new-ratio)
-            (window-relayout window (window-height window) (window-width window))
-            active))))))
+    (when (and tree active)
+      (let ((leaf (layout-find-leaf tree active)))
+        (when leaf
+          (multiple-value-bind (split side) (resize-find-split tree leaf orient)
+            (when split
+              (let* ((avail      (max 1 (- (layout-split-axis-extent split orient) 1)))
+                     (grow-first (%grow-first-p side direction))
+                     (new-ratio  (%new-split-ratio orient avail
+                                                   (layout-split-ratio split)
+                                                   delta grow-first)))
+                (when new-ratio
+                  (setf (layout-split-ratio split) new-ratio)
+                  (window-relayout window (window-height window) (window-width window))
+                  active)))))))))
 
 ;;; ── Rotate-window ────────────────────────────────────────────────────────────
 ;;;

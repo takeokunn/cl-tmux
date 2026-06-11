@@ -32,6 +32,33 @@
     (setf (cl-tmux/model:window-layout-cycle-index win) next)
     (%apply-named-layout-to-session session (aref +named-layouts+ next))))
 
+(defun %step-menu (menu step)
+  "Advance MENU's selected index by STEP (positive = forward), wrapping around, then redisplay."
+  (let ((n (length (menu-items menu))))
+    (setf (menu-selected-index menu)
+          (mod (+ (menu-selected-index menu) step) n))
+    (show-overlay (%format-menu menu))))
+
+(defun %execute-menu-cmd (session byte cmd)
+  "Dispatch CMD chosen from a menu in SESSION.
+   Keywords dispatch directly; strings run via command-line; lists encode
+   structured commands (:select-window N, :switch-client name, or raw tokens)."
+  (cond
+    ((keywordp cmd)
+     (dispatch-command session cmd byte))
+    ((stringp cmd)
+     (%run-command-line session cmd))
+    ((and (consp cmd) (keywordp (first cmd)))
+     (case (first cmd)
+       (:select-window
+        (%with-window-focus-transition (session)
+          (select-window-by-number session (second cmd))))
+       (:switch-client
+        (let ((target (server-find-session (second cmd))))
+          (when target (%switch-to-session target))))
+       (otherwise
+        (%run-command-tokens session cmd))))))
+
 (define-command-handlers
   ;; ── Popup / menu overlays ──────────────────────────────────────────────────
   (:display-popup
@@ -58,48 +85,15 @@
                       (cons "Detach"        :detach))))
      (show-menu (make-menu :title "Menu" :items items :selected-index 0))
      (show-overlay (%format-menu *active-menu*))))
-  (:menu-next
-   (when *active-menu*
-     (let ((n (length (menu-items *active-menu*))))
-       (setf (menu-selected-index *active-menu*)
-             (mod (1+ (menu-selected-index *active-menu*)) n))
-       (show-overlay (%format-menu *active-menu*)))))
-  (:menu-prev
-   (when *active-menu*
-     (let ((n (length (menu-items *active-menu*))))
-       (setf (menu-selected-index *active-menu*)
-             (mod (1- (menu-selected-index *active-menu*)) n))
-       (show-overlay (%format-menu *active-menu*)))))
+  (:menu-next   (when *active-menu* (%step-menu *active-menu*  1)))
+  (:menu-prev   (when *active-menu* (%step-menu *active-menu* -1)))
   (:menu-select
    (when *active-menu*
      (let* ((idx  (menu-selected-index *active-menu*))
-            (item (nth idx (menu-items *active-menu*)))
-            (cmd  (cdr item)))
+            (cmd  (cdr (nth idx (menu-items *active-menu*)))))
        (close-menu)
        (clear-overlay)
-       (when cmd
-         (cond
-           ;; Built-in keyword command: dispatch directly.
-           ((keywordp cmd)
-            (dispatch-command session cmd byte))
-           ;; String command: run via command-line dispatcher.
-           ((stringp cmd)
-            (%run-command-line session cmd))
-           ;; List command: (keyword arg) — dispatch with argument.
-           ((and (consp cmd) (keywordp (first cmd)))
-            (case (first cmd)
-              ;; (:select-window N) — select window by id
-              (:select-window
-               (%with-window-focus-transition (session)
-                 (select-window-by-number session (second cmd))))
-              ;; (:switch-client name) — switch to named session
-              (:switch-client
-               (let ((target (server-find-session (second cmd))))
-                 (when target
-                   (%switch-to-session target))))
-              ;; Default list: try running as command tokens
-              (otherwise
-               (%run-command-tokens session cmd)))))))))
+       (when cmd (%execute-menu-cmd session byte cmd)))))
   (:menu-dismiss
    (close-menu)
    (clear-overlay))
@@ -334,9 +328,7 @@
                             (name  (first parts))
                             (value (format nil "~{~A~^ ~}" (rest parts))))
                        (when (and name (plusp (length name)))
-                         (ignore-errors
-                           (let ((fn (find-symbol "SETENV" (find-package "SB-POSIX"))))
-                             (when fn (funcall fn name value 1))))
+                         (%call-sbcl-posix "SETENV" name value 1)
                          (show-overlay (format nil "set ~A=~A" name value))))))))
 
   ;; ── resize-window ────────────────────────────────────────────────────────

@@ -32,7 +32,7 @@
   :description "apply-client-size is a pure resize transform: it decodes a rows,cols payload,
 updates *term-rows*/*term-cols*, and relayouts the active window.
 It does NOT set *dirty* — that is the caller's responsibility (data/logic separation)."
-  (let ((s (make-fake-session)))
+  (with-fake-session (s)
     (let ((cl-tmux::*term-rows* 24)
           (cl-tmux::*term-cols* 80)
           (cl-tmux::*dirty* nil))
@@ -88,44 +88,41 @@ mutate *running* — that is the caller's (%handle-client-message) responsibilit
   :description "A prefix+detach key payload (^B d) returns :detach and leaves *running* T —
 a detach disconnects the client but the session must survive for re-attach."
   ;; Isolate the key-tables so the default #\d → :detach binding is present.
-  (let ((s (make-fake-session)))
+  (with-fake-session (s)
     (with-isolated-config
-      (with-loop-state
-        (let ((state   (cl-tmux::make-input-state))
-              (payload (make-array 2 :element-type '(unsigned-byte 8)
-                                     :initial-contents (list 2 (char-code #\d)))))
-          (is (eq :detach (cl-tmux::process-client-keys s payload state))
-              "^B d should yield the :detach disposition")
-          (is-true cl-tmux::*running*
-                   "a detach must not clear *running* (session survives)"))))))
+      (let ((state   (cl-tmux::make-input-state))
+            (payload (make-array 2 :element-type '(unsigned-byte 8)
+                                   :initial-contents (list 2 (char-code #\d)))))
+        (is (eq :detach (cl-tmux::process-client-keys s payload state))
+            "^B d should yield the :detach disposition")
+        (is-true cl-tmux::*running*
+                 "a detach must not clear *running* (session survives)")))))
 
 (test process-client-keys-quit-keystroke-returns-quit
   :description "A prefix+kill-window key payload (^B &) now shows a confirm-before prompt
 instead of killing immediately.  The session is NOT ended until the user
 confirms with 'y'; *running* stays T and the prompt is active after the keystroke."
-  (let ((s (make-fake-session :nwindows 1 :npanes 1)))
-    (with-loop-state
-      (let ((*prompt* nil))
-        (let ((state   (cl-tmux::make-input-state))
-              (payload (make-array 2 :element-type '(unsigned-byte 8)
-                                     :initial-contents (list 2 (char-code #\&)))))
-          (cl-tmux::process-client-keys s payload state)
-          (is (prompt-active-p)
-              "^B & on the last window should open a confirm-before prompt")
-          (is-true cl-tmux::*running*
-                   "*running* must stay T before the user confirms the kill"))))))
+  (with-fake-session (s :nwindows 1 :npanes 1)
+    (let ((*prompt* nil))
+      (let ((state   (cl-tmux::make-input-state))
+            (payload (make-array 2 :element-type '(unsigned-byte 8)
+                                   :initial-contents (list 2 (char-code #\&)))))
+        (cl-tmux::process-client-keys s payload state)
+        (is (prompt-active-p)
+            "^B & on the last window should open a confirm-before prompt")
+        (is-true cl-tmux::*running*
+                 "*running* must stay T before the user confirms the kill")))))
 
 (test process-client-keys-empty-payload-returns-nil
   :description "An empty key payload runs the byte loop zero times: returns NIL (keep serving)
 and leaves *running* untouched."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((state   (cl-tmux::make-input-state))
-            (payload (make-array 0 :element-type '(unsigned-byte 8))))
-        (is (null (cl-tmux::process-client-keys s payload state))
-            "an empty payload yields NIL (no quit, no detach)")
-        (is-true cl-tmux::*running*
-                 "no quit keystroke means *running* stays T")))))
+  (with-fake-session (s)
+    (let ((state   (cl-tmux::make-input-state))
+          (payload (make-array 0 :element-type '(unsigned-byte 8))))
+      (is (null (cl-tmux::process-client-keys s payload state))
+          "an empty payload yields NIL (no quit, no detach)")
+      (is-true cl-tmux::*running*
+               "no quit keystroke means *running* stays T"))))
 
 ;;; ── Session registry tests ───────────────────────────────────────────────────
 
@@ -263,13 +260,13 @@ and leaves *running* untouched."
   "%destroy-session removes the session AND fires +hook-session-closed+."
   (with-empty-registry
     (with-isolated-hooks
-      (let ((s (make-fake-session :nwindows 1))
-            (fired nil))
-        (cl-tmux::server-add-session s)
-        (cl-tmux/hooks:add-hook "session-closed"
-                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-        (cl-tmux::%destroy-session s)
-        (is-true fired "session-closed hook must fire on destroy")))))
+      (let ((fired nil))
+        (with-fake-session (s :nwindows 1)
+          (cl-tmux::server-add-session s)
+          (cl-tmux/hooks:add-hook "session-closed"
+                                  (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+          (cl-tmux::%destroy-session s)
+          (is-true fired "session-closed hook must fire on destroy"))))))
 
 ;;; ── Reference-counted PTY teardown for session groups ────────────────────────
 ;;;

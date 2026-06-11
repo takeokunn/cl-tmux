@@ -326,10 +326,9 @@
 
 (test dispatch-display-panes-marks-dirty
   ":display-panes sets *dirty* to T."
-  (let ((sess (make-fake-session :nwindows 1 :npanes 1)))
-    (with-loop-state
-      (let ((*overlay* nil))
-        (cl-tmux::dispatch-command sess :display-panes nil)
-        (is-true cl-tmux::*dirty*
-                 ":display-panes must mark *dirty*")))))
+  (with-fake-session (sess :nwindows 1 :npanes 1)
+    (let ((*overlay* nil))
+      (cl-tmux::dispatch-command sess :display-panes nil)
+      (is-true cl-tmux::*dirty*
+               ":display-panes must mark *dirty*"))))
 

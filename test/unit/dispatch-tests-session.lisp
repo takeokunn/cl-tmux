@@ -16,12 +16,11 @@
 (defmacro with-copy-mode-active ((session-var) &body body)
   "Enter copy mode on a fresh fake session bound to SESSION-VAR, run BODY.
    Used to test copy-mode dispatch commands in isolation."
-  `(let ((,session-var (make-fake-session)))
-     (with-loop-state
-       (cl-tmux::dispatch-command ,session-var :copy-mode-enter nil)
-       (is (cl-tmux::%copy-mode-active-p ,session-var)
-           "copy mode must be on before testing copy-mode commands")
-       ,@body)))
+  `(with-fake-session (,session-var)
+     (cl-tmux::dispatch-command ,session-var :copy-mode-enter nil)
+     (is (cl-tmux::%copy-mode-active-p ,session-var)
+         "copy mode must be on before testing copy-mode commands")
+     ,@body))
 
 (test copy-mode-page-up-scrolls-viewport-back
   ":copy-mode-page-up scrolls the copy-mode viewport toward the beginning of history."

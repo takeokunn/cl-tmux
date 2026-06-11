@@ -23,35 +23,34 @@
    a format construct (#{ #( #[) nor an escaped ## .  Returns the line up to the
    comment, right-trimmed (or the whole line when there is no comment)."
   (let ((len (length line)) (i 0) (in-single nil) (in-double nil))
-    (loop while (< i len) do
-      (let ((c (char line i)))
-        (cond
-          (in-single (when (char= c #\') (setf in-single nil)))
-          (in-double (cond ((char= c #\\) (incf i))   ; skip escaped char
-                           ((char= c #\") (setf in-double nil))))
-          ((char= c #\') (setf in-single t))
-          ((char= c #\") (setf in-double t))
-          ((char= c #\#)
-           (cond
-             ;; ## — escaped literal #, not a comment.
-             ((and (< (1+ i) len) (char= (char line (1+ i)) #\#)) (incf i))
-             ;; #{ / #( / #[ — a format construct, not a comment.
-             ((and (< (1+ i) len) (member (char line (1+ i)) '(#\{ #\( #\[))) nil)
-             ;; A # begins a comment only at the START of a token (line start or
-             ;; right after whitespace).  A # in the MIDDLE of an unquoted word —
-             ;; e.g. a hex colour bg=#0000ff or @var=#abc — is a literal character,
-             ;; matching tmux's lexer, which only enters comment scanning at a token
-             ;; boundary (cmd-parse.y yylex).  Without this guard such values were
-             ;; silently truncated to "bg=" unless the user quoted them.
-             ((and (> i 0)
-                   (let ((p (char line (1- i))))
-                     (not (or (char= p #\Space) (char= p #\Tab)))))
-              nil)
-             ;; Otherwise a comment begins here: drop the rest of the line.
-             (t (return-from %strip-config-comment
-                  (string-right-trim '(#\Space #\Tab) (subseq line 0 i))))))))
-      (incf i))
-    line))
+    (loop while (< i len)
+          do (let ((c (char line i)))
+               (cond
+                 (in-single (when (char= c #\') (setf in-single nil)))
+                 (in-double (cond ((char= c #\\) (incf i))   ; skip escaped char
+                                  ((char= c #\") (setf in-double nil))))
+                 ((char= c #\') (setf in-single t))
+                 ((char= c #\") (setf in-double t))
+                 ((char= c #\#)
+                  (cond
+                    ;; ## — escaped literal #, not a comment.
+                    ((and (< (1+ i) len) (char= (char line (1+ i)) #\#)) (incf i))
+                    ;; #{ / #( / #[ — a format construct, not a comment.
+                    ((and (< (1+ i) len) (member (char line (1+ i)) '(#\{ #\( #\[))) nil)
+                    ;; A # begins a comment only at the START of a token (line start or
+                    ;; right after whitespace).  A # in the MIDDLE of an unquoted word —
+                    ;; e.g. a hex colour bg=#0000ff or @var=#abc — is a literal character,
+                    ;; matching tmux's lexer, which only enters comment scanning at a token
+                    ;; boundary (cmd-parse.y yylex).  Without this guard such values were
+                    ;; silently truncated to "bg=" unless the user quoted them.
+                    ((and (> i 0)
+                          (let ((p (char line (1- i))))
+                            (not (or (char= p #\Space) (char= p #\Tab)))))
+                     nil)
+                    ;; Otherwise a comment begins here: drop the rest of the line.
+                    (t (return (string-right-trim '(#\Space #\Tab) (subseq line 0 i)))))))
+             (incf i))
+          finally (return line))))
 
 (defun apply-config-line (line)
   "Apply a single config LINE.  Blank lines and # comments (full-line and inline,

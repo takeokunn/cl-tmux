@@ -109,7 +109,7 @@
 (test format-window-list-includes-active-marker
   "%format-window-list includes an asterisk on the active window line and
    lists each window by id and name."
-  (let ((s (make-fake-session :nwindows 2)))
+  (with-fake-session (s :nwindows 2)
     (let* ((text (cl-tmux::%format-window-list s))
            (aw   (session-active-window s)))
       (is (stringp text) "%format-window-list must return a string")
@@ -120,7 +120,7 @@
 
 (test format-window-list-shows-pane-count
   "%format-window-list includes the pane count for each window."
-  (let ((s (make-fake-session :nwindows 1 :npanes 2)))
+  (with-fake-session (s :nwindows 1 :npanes 2)
     (let ((text (cl-tmux::%format-window-list s)))
       ;; The format string ends each line with "[N pane(s)]".
       (is (search "pane" text)
@@ -131,7 +131,7 @@
 (test format-session-list-fallback-uses-session-name
   "%format-session-list with empty *server-sessions* falls back to the
    session-name one-line entry."
-  (let ((s (make-fake-session :nwindows 1)))
+  (with-fake-session (s :nwindows 1)
     (let ((cl-tmux::*server-sessions* nil))
       (let ((text (cl-tmux::%format-session-list s)))
         (is (stringp text) "%format-session-list must return a string")
@@ -141,9 +141,9 @@
 (test format-session-list-marks-current-session
   "%format-session-list with a populated *server-sessions* marks the current
    session with an asterisk."
-  (let* ((s    (make-fake-session :nwindows 1))
-         (name (session-name s)))
-    (let ((cl-tmux::*server-sessions* (list (cons name s))))
+  (with-fake-session (s :nwindows 1)
+    (let* ((name (session-name s))
+           (cl-tmux::*server-sessions* (list (cons name s))))
       (let ((text (cl-tmux::%format-session-list s)))
         (is (search "*" text) "current session must be marked with an asterisk")
         (is (search name text) "output must contain the session name")))))

@@ -87,6 +87,13 @@
 (defconstant +buffer-preview-length+ 40
   "Maximum characters shown in a paste-buffer preview listing.")
 
+(defun %confirm-prompt (msg ok-fn)
+  "Show MSG as a y/n prompt; call OK-FN (no args) when the user types y/Y."
+  (prompt-start msg ""
+                (lambda (input)
+                  (when (string-equal input "y")
+                    (funcall ok-fn)))))
+
 (defun %copy-mode-search-prompt (session prompt-char search-fn)
   "Open a copy-mode search prompt with PROMPT-CHAR prefix and call SEARCH-FN
    on the entered term when non-empty."
@@ -96,6 +103,10 @@
                     (lambda (term)
                       (unless (string= term "")
                         (funcall search-fn screen term)))))))
+
+(defun %copy-mode-cursor-fn (direction)
+  "Return a one-arg function that moves the copy-mode cursor in DIRECTION."
+  (lambda (s) (copy-mode-move-cursor s direction)))
 
 (define-command-handlers
   (:detach :detach)
@@ -111,24 +122,15 @@
   (:kill-pane   (%handle-kill-result (kill-pane session)))
   (:kill-window (%handle-kill-result (kill-window session (session-active-window session))))
   (:kill-pane-confirm
-   ;; Show a y/n prompt; call kill-pane only when the user enters "y"/"Y".
    (with-active-window (win session)
      (let* ((ap  (window-active-pane win))
-            (msg (if ap
-                     (format nil "kill-pane ~D? (y/n)" (pane-id ap))
-                     "kill-pane? (y/n)")))
-       (prompt-start msg ""
-                     (lambda (input)
-                       (when (string-equal input "y")
-                         (%handle-kill-result (kill-pane session))))))))
+            (msg (if ap (format nil "kill-pane ~D? (y/n)" (pane-id ap)) "kill-pane? (y/n)")))
+       (%confirm-prompt msg (lambda () (%handle-kill-result (kill-pane session)))))))
   (:kill-window-confirm
    (with-active-window (win session)
-     (let ((msg (format nil "kill-window ~A? (y/n)" (window-name win))))
-       (prompt-start msg ""
-                     (lambda (input)
-                       (when (string-equal input "y")
-                         (%handle-kill-result
-                          (kill-window session (session-active-window session)))))))))
+     (%confirm-prompt (format nil "kill-window ~A? (y/n)" (window-name win))
+                      (lambda () (%handle-kill-result
+                                  (kill-window session (session-active-window session)))))))
   (:respawn-pane
    (with-active-window (win session)
      (let ((ap (window-active-pane win)))
@@ -168,12 +170,12 @@
   ;; proper targets for `send -X cursor-left`/`cursor-right`/`rectangle-toggle`
   ;; (previously mis-mapped to begin-selection).  copy-mode-move-cursor takes a
   ;; direction, so it is wrapped in a one-arg lambda for %copy-mode-call.
-  (:copy-mode-cursor-left      (%copy-mode-call session (lambda (s) (copy-mode-move-cursor s :left))))
-  (:copy-mode-cursor-right     (%copy-mode-call session (lambda (s) (copy-mode-move-cursor s :right))))
+  (:copy-mode-cursor-left      (%copy-mode-call session (%copy-mode-cursor-fn :left)))
+  (:copy-mode-cursor-right     (%copy-mode-call session (%copy-mode-cursor-fn :right)))
   ;; cursor-up/down move the copy cursor (scrolling the viewport at the edges),
   ;; matching the arrow-key path; the -X names previously only scrolled a line.
-  (:copy-mode-cursor-up        (%copy-mode-call session (lambda (s) (copy-mode-move-cursor s :up))))
-  (:copy-mode-cursor-down      (%copy-mode-call session (lambda (s) (copy-mode-move-cursor s :down))))
+  (:copy-mode-cursor-up        (%copy-mode-call session (%copy-mode-cursor-fn :up)))
+  (:copy-mode-cursor-down      (%copy-mode-call session (%copy-mode-cursor-fn :down)))
   (:copy-mode-rectangle-toggle (%copy-mode-call session #'copy-mode-toggle-rectangle))
   (:copy-mode-top              (%copy-mode-call session #'copy-mode-top))
   (:copy-mode-bottom           (%copy-mode-call session #'copy-mode-bottom))
@@ -439,16 +441,8 @@
            (setf *dirty* t))))))
 
   ;; ── Client switching ───────────────────────────────────────────────────────
-  (:switch-client-next
-   (let* ((sessions (mapcar #'cdr *server-sessions*))
-          (next     (and sessions (next-cyclic sessions session))))
-     (when (and next (not (eq next session)))
-       (%switch-to-session next))))
-  (:switch-client-prev
-   (let* ((sessions (mapcar #'cdr *server-sessions*))
-          (prev     (and sessions (prev-cyclic sessions session))))
-     (when (and prev (not (eq prev session)))
-       (%switch-to-session prev))))
+  (:switch-client-next (%cmd-cycle-session session #'next-cyclic))
+  (:switch-client-prev (%cmd-cycle-session session #'prev-cyclic))
   (:last-session
    (let* ((sessions (sort (mapcar #'cdr *server-sessions*) #'>
                           :key #'session-last-active))

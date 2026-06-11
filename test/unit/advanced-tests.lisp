@@ -213,7 +213,7 @@
 
 (test choose-session-shows-overlay
   ":choose-session opens an overlay listing sessions."
-  (let ((sess (make-fake-session :nwindows 1)))
+  (with-fake-session (sess :nwindows 1)
     (let ((*overlay* nil)
           (cl-tmux::*dirty* nil)
           (cl-tmux::*running* t)

@@ -222,16 +222,14 @@
 
 (defun %parse-wxh (str)
   "Parse a \"WxH\" size string (e.g. the default-size option \"80x24\") into
-   (values W H), or (values NIL NIL) when STR is not of that form or either
-   dimension is not a positive integer."
+   (values W H), or NIL when STR is not of that form or either dimension
+   is not a positive integer."
   (when (stringp str)
-    (let ((x (position #\x str :test #'char-equal)))
-      (when x
-        (let ((w (parse-integer str :end x :junk-allowed t))
-              (h (parse-integer str :start (1+ x) :junk-allowed t)))
-          (when (and w h (plusp w) (plusp h))
-            (return-from %parse-wxh (values w h))))))
-    (values nil nil)))
+    (let* ((x (position #\x str :test #'char-equal))
+           (w (and x (parse-integer str :end x :junk-allowed t)))
+           (h (and x (parse-integer str :start (1+ x) :junk-allowed t))))
+      (when (and w h (plusp w) (plusp h))
+        (values w h)))))
 
 (defun %cmd-new-session-arg (session args)
   "new-session [-A] [-d] [-s name] [-n window-name] [-c start-dir] [-x width] [-y height]: create a new session.

@@ -223,47 +223,47 @@
          (status-on   (> status-lines 0))
          (status-pos  (cl-tmux/options:get-option "status-position" "bottom")))
     (cursor-invisible buffer)
-    (when (session-locked-p session)
-      (render-lock-screen buffer terminal-rows terminal-cols)
-      (return-from render-session-to-string (get-output-stream-string buffer)))
-    (%render-panes-and-borders buffer window panes active-pane terminal-cols)
-    ;; pane-border-status title lines (drawn after borders so they overwrite border cells)
-    (when (and window panes
-               (not (string= (cl-tmux/options:get-option "pane-border-status" "off") "off")))
-      (dolist (pane panes)
-        (%render-pane-border-status buffer pane session window)))
-    ;; display-panes (C-b q): big per-pane numbers while the display-panes overlay
-    ;; is active, coloured by display-panes-(active-)colour.  Drawn after borders so
-    ;; the numbers overlay the pane content, before the top overlay layer.
-    (when (and cl-tmux/prompt:*display-panes-active* (overlay-active-p) window panes)
-      (dolist (pane panes)
-        (%draw-pane-number-to-screen buffer (pane-x pane) (pane-y pane)
-                                     (pane-width pane) (pane-height pane)
-                                     (pane-id pane) (eq pane active-pane))))
-    ;; copy-mode search-match highlighting on the active pane (it is the one that
-    ;; can be in copy mode), overdrawn after panes/borders.
-    (when (and active-pane (pane-screen active-pane)
-               (screen-copy-mode-p (pane-screen active-pane)))
-      (%render-copy-search-matches buffer active-pane))
-    (%render-overlay-layer buffer active-pane terminal-rows terminal-cols)
-    (when status-on
-      (render-status-region buffer session terminal-rows terminal-cols
-                            status-lines status-pos))
-    (%render-mouse-sequences buffer active-pane)
-    ;; allow-passthrough: emit any DCS-passthrough sequences (images, nested tmux).
-    (when panes (%render-passthrough buffer panes))
-    (when panes (%render-clipboard buffer panes))
-    (%render-bell-and-cursor buffer active-pane)
-    ;; Relay bells from background windows (bell-action 'any'/'other').
-    (%render-background-bells buffer session window)
-    ;; set-titles: emit OSC 0 to set the outer terminal window title.
-    (when (cl-tmux/options:get-option "set-titles")
-      (let* ((title-fmt (cl-tmux/options:get-option "set-titles-string" "#W"))
-             (win        (session-active-window session))
-             (pane       (session-active-pane session))
-             (ctx        (cl-tmux/format:format-context-from-session session win pane))
-             (title      (cl-tmux/format:expand-format title-fmt ctx)))
-        (format buffer "~C]0;~A~C" +esc+ title (code-char 7))))
+    (if (session-locked-p session)
+        (render-lock-screen buffer terminal-rows terminal-cols)
+        (progn
+          (%render-panes-and-borders buffer window panes active-pane terminal-cols)
+          ;; pane-border-status title lines (drawn after borders so they overwrite border cells)
+          (when (and window panes
+                     (not (string= (cl-tmux/options:get-option "pane-border-status" "off") "off")))
+            (dolist (pane panes)
+              (%render-pane-border-status buffer pane session window)))
+          ;; display-panes (C-b q): big per-pane numbers while the display-panes overlay
+          ;; is active, coloured by display-panes-(active-)colour.  Drawn after borders so
+          ;; the numbers overlay the pane content, before the top overlay layer.
+          (when (and cl-tmux/prompt:*display-panes-active* (overlay-active-p) window panes)
+            (dolist (pane panes)
+              (%draw-pane-number-to-screen buffer (pane-x pane) (pane-y pane)
+                                           (pane-width pane) (pane-height pane)
+                                           (pane-id pane) (eq pane active-pane))))
+          ;; copy-mode search-match highlighting on the active pane (it is the one that
+          ;; can be in copy mode), overdrawn after panes/borders.
+          (when (and active-pane (pane-screen active-pane)
+                     (screen-copy-mode-p (pane-screen active-pane)))
+            (%render-copy-search-matches buffer active-pane))
+          (%render-overlay-layer buffer active-pane terminal-rows terminal-cols)
+          (when status-on
+            (render-status-region buffer session terminal-rows terminal-cols
+                                  status-lines status-pos))
+          (%render-mouse-sequences buffer active-pane)
+          ;; allow-passthrough: emit any DCS-passthrough sequences (images, nested tmux).
+          (when panes (%render-passthrough buffer panes))
+          (when panes (%render-clipboard buffer panes))
+          (%render-bell-and-cursor buffer active-pane)
+          ;; Relay bells from background windows (bell-action 'any'/'other').
+          (%render-background-bells buffer session window)
+          ;; set-titles: emit OSC 0 to set the outer terminal window title.
+          (when (cl-tmux/options:get-option "set-titles")
+            (let* ((title-fmt (cl-tmux/options:get-option "set-titles-string" "#W"))
+                   (win        (session-active-window session))
+                   (pane       (session-active-pane session))
+                   (ctx        (cl-tmux/format:format-context-from-session session win pane))
+                   (title      (cl-tmux/format:expand-format title-fmt ctx)))
+              (format buffer "~C]0;~A~C" +esc+ title (code-char 7))))))
     (get-output-stream-string buffer)))
 
 (defun render-session (session terminal-rows terminal-cols)

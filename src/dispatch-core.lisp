@@ -228,6 +228,14 @@
          (next  (funcall cycler panes (window-active-pane win))))
     (when next (%select-pane-with-focus win next))))
 
+(defun %cmd-cycle-session (session cycler)
+  "Switch to the adjacent session using CYCLER (next-cyclic or prev-cyclic).
+   No-op when SESSION is the only session or the cycler wraps back to it."
+  (let* ((sessions (mapcar #'cdr *server-sessions*))
+         (target   (and sessions (funcall cycler sessions session))))
+    (when (and target (not (eq target session)))
+      (%switch-to-session target))))
+
 (defun %cmd-split (session orient &key no-focus size start-dir before full)
   "Split the active pane of SESSION's active window in tree ORIENT (:h left/right,
    :v top/bottom).  Returns NIL when the pane is too small and no shell is forked.

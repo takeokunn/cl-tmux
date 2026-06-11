@@ -119,10 +119,10 @@
                (let ((value 0))
                  (loop for i from start below end
                        for byte = (aref buffer i)
-                       do (if (<= +byte-digit-0+ byte +byte-digit-9+)
-                              (setf value (+ (* value 10) (- byte +byte-digit-0+)))
-                              (return-from %csi-tilde-parse nil)))
-                 value))))
+                       if (<= +byte-digit-0+ byte +byte-digit-9+)
+                         do (setf value (+ (* value 10) (- byte +byte-digit-0+)))
+                       else return nil
+                       finally (return value))))))
       (if semi
           (let ((param (digits 2 semi))
                 (mod   (digits (1+ semi) (1- length))))
@@ -184,17 +184,14 @@
       (cond
         ;; A user binding (`bind -n F5`/`bind -n C-F5`/`bind -n PageUp`) wins.
         ((and key (%try-bound-string-key session +table-root+ key)))
-        ;; PageUp in copy mode (unmodified only): scroll up one screenful.
-        ((and (eql param 5) (eql mod 1) (%copy-mode-active-p session))
+        ;; PageUp/PageDown in copy mode (unmodified only): scroll one screenful.
+        ;; param=5 → up (positive delta), param=6 → down (negative delta).
+        ((and (member param '(5 6)) (eql mod 1) (%copy-mode-active-p session))
          (let ((screen (%active-screen session)))
            (when screen
-             (copy-mode-scroll screen (screen-height screen))
-             (setf *dirty* t))))
-        ;; PageDown in copy mode (unmodified only): scroll down one screenful.
-        ((and (eql param 6) (eql mod 1) (%copy-mode-active-p session))
-         (let ((screen (%active-screen session)))
-           (when screen
-             (copy-mode-scroll screen (- (screen-height screen)))
+             (copy-mode-scroll screen (if (eql param 5)
+                                          (screen-height screen)
+                                          (- (screen-height screen))))
              (setf *dirty* t))))
         ;; Unbound and not a copy-mode scroll: forward raw bytes to the pane.
         (t

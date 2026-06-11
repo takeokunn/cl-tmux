@@ -295,6 +295,14 @@
 ;;; user anchored first.  %selection-text builds the string from that rectangle.
 ;;; Both are private (percent-prefixed) and independently testable.
 
+(defun %selection-col-range (mark-vrow mark-col cur-vrow cursor-col)
+  "Return (values start-col end-col) for a selection spanning MARK-VROW/MARK-COL
+   to CUR-VROW/CURSOR-COL.  When mark is topmost, mark-col is start; when cursor
+   is topmost, cursor-col is start; when on the same row, min/max applies."
+  (cond ((< mark-vrow cur-vrow) (values mark-col cursor-col))
+        ((> mark-vrow cur-vrow) (values cursor-col mark-col))
+        (t (values (min mark-col cursor-col) (max mark-col cursor-col)))))
+
 (defun %selection-bounds (screen)
   "Return (values start-vrow end-vrow start-col end-col) for the current copy-mode
    selection in SCREEN.  Rows are VIRTUAL (0 = oldest scrollback, increasing toward
@@ -307,18 +315,11 @@
          (cur-offset  (screen-copy-offset screen))
          ;; Convert viewport rows to virtual rows using the offset in effect at placement.
          (mark-vrow   (+ sb-n (car mark)   (- mark-offset)))
-         (cur-vrow    (+ sb-n (car cursor) (- cur-offset)))
-         (mark-col    (cdr mark))
-         (cursor-col  (cdr cursor))
-         (start-vrow  (min mark-vrow cur-vrow))
-         (end-vrow    (max mark-vrow cur-vrow))
-         (start-col   (cond ((< mark-vrow cur-vrow) mark-col)
-                            ((> mark-vrow cur-vrow) cursor-col)
-                            (t                      (min mark-col cursor-col))))
-         (end-col     (cond ((< mark-vrow cur-vrow) cursor-col)
-                            ((> mark-vrow cur-vrow) mark-col)
-                            (t                      (max mark-col cursor-col)))))
-    (values start-vrow end-vrow start-col end-col)))
+         (cur-vrow    (+ sb-n (car cursor) (- cur-offset))))
+    (multiple-value-bind (start-col end-col)
+        (%selection-col-range mark-vrow (cdr mark) cur-vrow (cdr cursor))
+      (values (min mark-vrow cur-vrow) (max mark-vrow cur-vrow)
+              start-col end-col))))
 
 ;;; %extract-row-chars reads characters from a rectangular range as a string.
 ;;; It accepts either a virtual row (via %copy-mode-virtual-row-string, used by
@@ -367,24 +368,23 @@
    Returns a string, or NIL when no valid selection exists.
    Intermediate rows (not the last) are right-trimmed of trailing spaces.
    Pure data extraction: no lock held, no I/O."
-  (unless (and (screen-copy-selecting screen)
-               (screen-copy-mark   screen)
-               (screen-copy-cursor screen))
-    (return-from %selection-text nil))
-  (multiple-value-bind (start-vrow end-vrow start-col end-col)
-      (%selection-bounds screen)
-    (let* ((w    (screen-width screen))
-           (text (with-output-to-string (out)
-                   (loop for vrow from start-vrow to end-vrow do
-                     (let* ((col-from (if (= vrow start-vrow) start-col 0))
-                            (col-to   (if (= vrow end-vrow)   end-col   w))
-                            (row-str  (%extract-vrow-chars screen vrow col-from col-to)))
-                       ;; Trim trailing spaces from intermediate rows.
-                       (write-string (if (< vrow end-vrow)
-                                         (string-right-trim " " row-str)
-                                         row-str)
-                                     out)
-                       (when (< vrow end-vrow)
-                         (write-char #\Newline out)))))))
-      (if (plusp (length text)) text nil))))
+  (when (and (screen-copy-selecting screen)
+             (screen-copy-mark   screen)
+             (screen-copy-cursor screen))
+    (multiple-value-bind (start-vrow end-vrow start-col end-col)
+        (%selection-bounds screen)
+      (let* ((w    (screen-width screen))
+             (text (with-output-to-string (out)
+                     (loop for vrow from start-vrow to end-vrow do
+                       (let* ((col-from (if (= vrow start-vrow) start-col 0))
+                              (col-to   (if (= vrow end-vrow)   end-col   w))
+                              (row-str  (%extract-vrow-chars screen vrow col-from col-to)))
+                         ;; Trim trailing spaces from intermediate rows.
+                         (write-string (if (< vrow end-vrow)
+                                           (string-right-trim " " row-str)
+                                           row-str)
+                                       out)
+                         (when (< vrow end-vrow)
+                           (write-char #\Newline out)))))))
+        (when (plusp (length text)) text)))))
 

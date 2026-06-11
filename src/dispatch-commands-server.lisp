@@ -57,16 +57,16 @@
          t)
         ;; -a user, or bare `user` with -r/-w: add or modify.
         (user
-         (let ((entry (assoc user *server-access-list* :test #'string=)))
-           (cond
-             (entry (when perm (setf (cdr entry) perm)))
-             (addp  (push (cons user (or perm :read-write)) *server-access-list*))
-             (t (show-overlay (format nil "server-access: unknown user ~A" user))
-                (return-from %cmd-server-access nil))))
-         (show-overlay
-          (format nil "server-access: ~A -> ~(~A~)" user
-                  (cdr (assoc user *server-access-list* :test #'string=))))
-         t)
+         (let* ((entry (assoc user *server-access-list* :test #'string=))
+                (valid (cond
+                         (entry (when perm (setf (cdr entry) perm)) t)
+                         (addp  (push (cons user (or perm :read-write)) *server-access-list*) t)
+                         (t (show-overlay (format nil "server-access: unknown user ~A" user)) nil))))
+           (when valid
+             (show-overlay
+              (format nil "server-access: ~A -> ~(~A~)" user
+                      (cdr (assoc user *server-access-list* :test #'string=))))
+             t)))
         (t nil)))))
 
 ;;; ── customize-mode ─────────────────────────────────────────────────────────

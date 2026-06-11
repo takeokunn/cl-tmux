@@ -232,20 +232,19 @@
    :fg :bg :bold :dim :reverse :underline :italics :blink :conceal :strikethrough
    Color values are strings (e.g. \"red\", \"colour4\"), attribute values are T/NIL.
    Returns NIL for NIL or empty STYLE."
-  (when (or (null style) (string= style ""))
-    (return-from parse-style-string nil))
-  ;; Wrap the result plist in a cons cell so %dispatch-style-token can mutate
-  ;; the binding via (setf (getf (car cell) key) value).
-  (let ((result-cell (list nil)))
-    (dolist (token (%split-style-tokens style))
-      (let ((tok (string-downcase (string-trim " " token))))
-        (cond
-          ((and (>= (length tok) 3) (string= (subseq tok 0 3) "fg="))
-           (setf (getf (car result-cell) :fg) (subseq tok 3)))
-          ((and (>= (length tok) 3) (string= (subseq tok 0 3) "bg="))
-           (setf (getf (car result-cell) :bg) (subseq tok 3)))
-          (t (%dispatch-style-token tok result-cell)))))
-    (car result-cell)))
+  (unless (or (null style) (string= style ""))
+    ;; Wrap the result plist in a cons cell so %dispatch-style-token can mutate
+    ;; the binding via (setf (getf (car cell) key) value).
+    (let ((result-cell (list nil)))
+      (dolist (token (%split-style-tokens style))
+        (let ((tok (string-downcase (string-trim " " token))))
+          (cond
+            ((and (>= (length tok) 3) (string= (subseq tok 0 3) "fg="))
+             (setf (getf (car result-cell) :fg) (subseq tok 3)))
+            ((and (>= (length tok) 3) (string= (subseq tok 0 3) "bg="))
+             (setf (getf (car result-cell) :bg) (subseq tok 3)))
+            (t (%dispatch-style-token tok result-cell)))))
+      (car result-cell))))
 
 (defun style-to-sgr (parsed-style)
   "Convert a parsed style plist (from PARSE-STYLE-STRING) to an SGR sequence string.

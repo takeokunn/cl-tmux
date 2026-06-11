@@ -23,20 +23,19 @@
   (let ((entries nil)
         (len     (length token))
         (i       1))
-    (block scan
-      (loop while (< i len) do
-        (let ((ch (char token i)))
-          (if (find ch value-flags)
-              (let ((attached (when (< (1+ i) len) (subseq token (1+ i)))))
-                (if attached
-                    (push (cons ch attached) entries)
-                    (progn
-                      (push (cons ch (if remaining-tokens (first remaining-tokens) ""))
-                            entries)
-                      (setf remaining-tokens (rest remaining-tokens))))
-                (return-from scan))
-              (progn (push (cons ch t) entries)
-                     (incf i))))))
+    (loop while (< i len) do
+      (let ((ch (char token i)))
+        (if (find ch value-flags)
+            (let ((attached (when (< (1+ i) len) (subseq token (1+ i)))))
+              (if attached
+                  (push (cons ch attached) entries)
+                  (progn
+                    (push (cons ch (if remaining-tokens (first remaining-tokens) ""))
+                          entries)
+                    (setf remaining-tokens (rest remaining-tokens))))
+              (return))
+            (progn (push (cons ch t) entries)
+                   (incf i)))))
     (values (nreverse entries) remaining-tokens)))
 
 (defun %parse-command-flags (tokens &optional (value-flags ""))

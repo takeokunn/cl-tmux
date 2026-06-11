@@ -29,25 +29,21 @@
      2. $N notation (session id)
      3. Name prefix match (first matching session wins)
    Returns the session or NIL."
-  (unless (and name (plusp (length name))) (return-from server-find-session nil))
-  ;; 1. Exact name match
-  (let ((exact (cdr (assoc name *server-sessions* :test #'string=))))
-    (when exact (return-from server-find-session exact)))
-  ;; 2. $N: match by session id
-  (when (char= (char name 0) #\$)
-    (let ((id (ignore-errors (parse-integer (subseq name 1)))))
-      (when id
-        (let ((by-id (find id (mapcar #'cdr *server-sessions*)
-                           :key #'session-id)))
-          (when by-id (return-from server-find-session by-id))))))
-  ;; 3. Name prefix match — guard already ensures (length (car pair)) >= (length name),
-  ;;    so :end2 (length name) is the correct clamp without the redundant min.
-  (dolist (pair *server-sessions*)
-    (when (and (stringp (car pair))
-               (>= (length (car pair)) (length name))
-               (string= name (car pair) :end2 (length name)))
-      (return-from server-find-session (cdr pair))))
-  nil)
+  (when (and name (plusp (length name)))
+    (or
+     ;; 1. Exact name match
+     (cdr (assoc name *server-sessions* :test #'string=))
+     ;; 2. $N: match by session id
+     (when (char= (char name 0) #\$)
+       (let ((id (ignore-errors (parse-integer (subseq name 1)))))
+         (when id
+           (find id (mapcar #'cdr *server-sessions*) :key #'session-id))))
+     ;; 3. Name prefix match
+     (loop for (key . sess) in *server-sessions*
+           when (and (stringp key)
+                     (>= (length key) (length name))
+                     (string= name key :end2 (length name)))
+             return sess))))
 
 (defun server-current-session ()
   "Return the most recently active session (highest session-last-active).
