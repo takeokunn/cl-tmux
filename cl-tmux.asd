@@ -129,7 +129,8 @@
         ((:file "cell-tests")     ; declares terminal-suite parent; double-width sub-suite
          (:file "screen-tests")   ; resize sub-suite
          (:file "cursor-tests")
-         (:file "scroll-tests")
+         (:file "scroll-tests")    ; scroll-ops/erase/scroll-region/delete-insert-chars — part I
+         (:file "scroll-tests-b")  ; direct-row-primitives, direct-action-erase — part II
          (:file "modes-tests")    ; RIS/alt-screen/DECSC/mouse/bracketed-paste/focus — part I
          (:file "modes-tests-b")  ; set-cursor-shape/bell-pending/charset/title/reset-modes — part II
          (:file "sgr-tests")
@@ -150,7 +151,8 @@
        (:file "target-tests")
        (:file "buffer-tests")
        (:file "control-mode-tests")
-       (:file "options-tests")
+       (:file "options-tests")    ; option registry, coercions, boolean defaults, make-option-spec — part I
+       (:file "options-tests-b")  ; define-option-accessor, type-coercions, scoped overrides, show-options — part II
        (:file "hooks-tests")
        (:file "config-tests")
        (:file "config-directives-tests")   ; directive parsing — part I (key-table, bind/unbind, load-config up to line 993)
