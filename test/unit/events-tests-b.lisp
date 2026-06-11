@@ -136,8 +136,7 @@
 (test copy-mode-j-at-interior-row-moves-cursor-not-scrolls
   "Plain 'j' when cursor is at an interior row (not bottom) moves cursor down without
    scrolling the viewport.  The offset must remain unchanged."
-  (let ((s (make-fake-session)))
-    (with-loop-state
+  (with-fake-session (s)
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
@@ -153,13 +152,12 @@
           (is (= initial-offset (screen-copy-offset screen))
               "j at interior row must not change copy-offset")
           (let ((new-row (car (screen-copy-cursor screen))))
-            (is (= 1 new-row) "j must move cursor down by 1 row")))))))
+            (is (= 1 new-row) "j must move cursor down by 1 row"))))))
 
 (test copy-mode-k-at-interior-row-moves-cursor-not-scrolls
   "Plain 'k' when cursor is at an interior row (not top) moves cursor up without
    scrolling the viewport.  The offset must remain unchanged."
-  (let ((s (make-fake-session)))
-    (with-loop-state
+  (with-fake-session (s)
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
@@ -174,7 +172,7 @@
           (is (= initial-offset (screen-copy-offset screen))
               "k at interior row must not change copy-offset")
           (let ((new-row (car (screen-copy-cursor screen))))
-            (is (= 4 new-row) "k must move cursor up by 1 row")))))))
+            (is (= 4 new-row) "k must move cursor up by 1 row"))))))
 
 ;;; ── %prefix-csi-arrow-cmd direct tests ──────────────────────────────────────
 
@@ -297,8 +295,7 @@
 
 (test copy-mode-h-moves-cursor-left
   "Plain 'h' (byte 104) moves the copy-mode cursor left by one column."
-  (let ((s (make-fake-session)))
-    (with-loop-state
+  (with-fake-session (s)
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
@@ -306,12 +303,11 @@
         (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 3))
         (cl-tmux::process-byte s 104 state)   ; h
         (let ((col (cdr (screen-copy-cursor screen))))
-          (is (= 2 col) "h must move cursor left by 1 column"))))))
+          (is (= 2 col) "h must move cursor left by 1 column")))))
 
 (test copy-mode-l-moves-cursor-right
   "Plain 'l' (byte 108) moves the copy-mode cursor right by one column."
-  (let ((s (make-fake-session)))
-    (with-loop-state
+  (with-fake-session (s)
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
@@ -319,24 +315,22 @@
         (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
         (cl-tmux::process-byte s 108 state)   ; l
         (let ((col (cdr (screen-copy-cursor screen))))
-          (is (= 1 col) "l must move cursor right by 1 column"))))))
+          (is (= 1 col) "l must move cursor right by 1 column")))))
 
 (test copy-mode-i-exits-copy-mode
   "Plain 'i' (byte 105) exits copy mode without needing the C-b prefix."
-  (let ((s (make-fake-session)))
-    (with-loop-state
+  (with-fake-session (s)
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
         (is (screen-copy-mode-p screen) "copy mode entered")
         (cl-tmux::process-byte s 105 state)   ; i
         (is-false (screen-copy-mode-p screen)
-            "i must exit copy mode")))))
+            "i must exit copy mode"))))
 
 (test copy-mode-zero-moves-to-line-start
   "Plain '0' (byte 48) moves the cursor to the start of the current line."
-  (let ((s (make-fake-session)))
-    (with-loop-state
+  (with-fake-session (s)
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
@@ -344,12 +338,11 @@
         (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 2 5))
         (cl-tmux::process-byte s 48 state)   ; 0
         (let ((col (cdr (screen-copy-cursor screen))))
-          (is (= 0 col) "0 must move cursor column to 0"))))))
+          (is (= 0 col) "0 must move cursor column to 0")))))
 
 (test copy-mode-dollar-moves-to-line-end
   "Plain '$' (byte 36) moves the cursor to the end of the current line."
-  (let ((s (make-fake-session)))
-    (with-loop-state
+  (with-fake-session (s)
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
@@ -358,12 +351,11 @@
         (cl-tmux::process-byte s 36 state)   ; $
         (let* ((col   (cdr (screen-copy-cursor screen)))
                (width (screen-width screen)))
-          (is (= (1- width) col) "$ must move cursor column to width-1"))))))
+          (is (= (1- width) col) "$ must move cursor column to width-1")))))
 
 (test copy-mode-ctrl-n-scrolls-down
   "C-n (byte 14) moves the cursor down by 1 in copy mode (same as j)."
-  (let ((s (make-fake-session)))
-    (with-loop-state
+  (with-fake-session (s)
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
@@ -374,12 +366,11 @@
         (let ((offset-before (screen-copy-offset screen)))
           (cl-tmux::process-byte s 14 state)   ; C-n
           (is (= (1- offset-before) (screen-copy-offset screen))
-              "C-n at bottom row must scroll viewport down by 1"))))))
+              "C-n at bottom row must scroll viewport down by 1")))))
 
 (test copy-mode-ctrl-p-scrolls-up
   "C-p (byte 16) moves the cursor up by 1 in copy mode (same as k)."
-  (let ((s (make-fake-session)))
-    (with-loop-state
+  (with-fake-session (s)
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
@@ -388,12 +379,11 @@
         (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
         (cl-tmux::process-byte s 16 state)   ; C-p
         (is (= 1 (screen-copy-offset screen))
-            "C-p at top row must scroll viewport up by 1")))))
+            "C-p at top row must scroll viewport up by 1"))))
 
 (test copy-mode-H-moves-cursor-to-high
   "Plain 'H' (byte 72) moves the copy-mode cursor to the top row of the screen."
-  (let ((s (make-fake-session)))
-    (with-loop-state
+  (with-fake-session (s)
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
@@ -401,12 +391,11 @@
         (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 3 0))
         (cl-tmux::process-byte s 72 state)   ; H
         (let ((row (car (screen-copy-cursor screen))))
-          (is (= 0 row) "H must move cursor to row 0 (top of screen)"))))))
+          (is (= 0 row) "H must move cursor to row 0 (top of screen)")))))
 
 (test copy-mode-L-moves-cursor-to-low
   "Plain 'L' (byte 76) moves the copy-mode cursor to the bottom row of the screen."
-  (let ((s (make-fake-session)))
-    (with-loop-state
+  (with-fake-session (s)
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
@@ -415,12 +404,11 @@
         (cl-tmux::process-byte s 76 state)   ; L
         (let* ((row    (car (screen-copy-cursor screen)))
                (height (screen-height screen)))
-          (is (= (1- height) row) "L must move cursor to last row"))))))
+          (is (= (1- height) row) "L must move cursor to last row")))))
 
 (test copy-mode-V-begins-line-selection
   "Plain 'V' (byte 86) starts line-selection mode in copy mode without signaling."
-  (let ((s (make-fake-session)))
-    (with-loop-state
+  (with-fake-session (s)
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
@@ -428,15 +416,14 @@
         ;; V activates either regular selection or line-selection — check both.
         (is (or (screen-copy-selecting screen)
                 (screen-copy-line-selection-p screen))
-            "V must activate some form of selection in copy mode")))))
+            "V must activate some form of selection in copy mode"))))
 
 (test copy-mode-space-begins-selection
   "Plain Space (byte 32) starts selection in copy mode."
-  (let ((s (make-fake-session)))
-    (with-loop-state
+  (with-fake-session (s)
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
         (finishes (cl-tmux::process-byte s 32 state))
         (is (screen-copy-selecting screen)
-            "Space must activate copy selection")))))
+            "Space must activate copy selection"))))
