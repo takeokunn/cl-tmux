@@ -348,6 +348,24 @@
      (with-loop-state
        ,@body)))
 
+(defmacro with-copy-mode-state ((session-var screen-var state-var) &body body)
+  "Run BODY with SESSION-VAR bound to a fresh fake session in copy mode,
+   SCREEN-VAR bound to its active screen, and STATE-VAR bound to a fresh input-state.
+   Wraps everything in WITH-LOOP-STATE for proper event-loop isolation.
+   Leading DECLARE forms in BODY are hoisted before the copy-mode-enter dispatch
+   so they remain valid (CL prohibits declare after an executable form)."
+  (let* ((decls (loop for f in body
+                      while (and (consp f) (eq (car f) 'declare))
+                      collect f))
+         (forms (nthcdr (length decls) body)))
+    `(let ((,session-var (make-fake-session)))
+       (with-loop-state
+         (let ((,screen-var (active-screen ,session-var))
+               (,state-var  (cl-tmux::make-input-state)))
+           ,@decls
+           (cl-tmux::dispatch-command ,session-var :copy-mode-enter nil)
+           ,@forms)))))
+
 (defmacro with-option-session ((var &rest make-args) &body body)
   "Bind VAR to a fresh fake session and run BODY inside WITH-ISOLATED-CONFIG.
    Use this when the test exercises option/config mutations (set-option, prefix,

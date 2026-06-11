@@ -172,8 +172,9 @@
        (:file "dispatch-tests-session-c")  ; options, session management, control mode, server-lifecycle
        (:file "events-tests")            ; keystroke pipeline — part I (escape, process-byte, mouse, key-table)
        (:file "events-tests-b")          ; locked-session, drag/modifier, copy-mode cursor, vi nav — part II
-       (:file "events-tests-c")          ; app-cursor-keys, prompt-key, copy-mode yank, SGR, CSI-u — part III
-       (:file "events-tests-d")          ; app-cursor-keys (ss3), new bindings, :mark-pane, root table, fn-keys — part IV
+       (:file "events-tests-c")          ; app-cursor-keys, prompt-key, copy-mode nav, SGR, border-check — part III
+       (:file "events-tests-e")          ; status-col, SGR-nil, copy-nav, flush-esc, reset-repeat, CSI-u — part IV
+       (:file "events-tests-d")          ; app-cursor-keys (ss3), new bindings, :mark-pane, root table, fn-keys — part V
        (:file "mouse-tests")
        (:file "commands-tests")          ; pane/copy-mode/kill/select/rename — part I (fixtures + lines 1-1440)
        (:file "commands-tests-b")        ; copy-mode motions, send-keys, tokenize, join/break-pane — part II
