@@ -13,7 +13,8 @@
     :components
     ((:file "package")
      (:file "config")
-     (:file "config-directives")   ; config-file parsing + directive processing
+     (:file "config-tokenizer")    ; config tokenizer + key/command parse tables
+     (:file "config-directives")   ; directive handlers + option side-effects + loader
      (:file "pty-ffi")       ; FFI declarations and platform constants
      (:file "pty-rawmode")   ; terminal raw mode management
      (:file "pty")           ; PTY lifecycle, I/O, multiplexing
