@@ -159,11 +159,13 @@
        (:file "config-tests")
        (:file "config-directives-tests")   ; directive parsing — part I (bindable-cmds, apply-directive, set flags, bind/unbind, load-config-from-stream)
        (:file "config-directives-tests-c") ; directive parsing — part III (load-config-file, command-keyword, parse-bind-args, key-table edge cases)
-       (:file "config-directives-tests-b") ; directive parsing — part II (parse-bind-args, tokenizer edge cases, set/source/run/preproc/if-shell)
+       (:file "config-directives-tests-b") ; directive parsing — part II (%parse-bind-args, tokenizer, source-file, run-shell, %expand-tilde, if/elif, unbind-all)
+       (:file "config-directives-tests-d") ; directive parsing — part IV (set-g-status-off, bind-key-n, load-config, %elif, line-continuation, source-file-glob, if-shell)
        (:file "renderer-format-tests")
        (:file "renderer-pane-tests")    ; render-pane/borders/clock/in-sel/display-panes — part I
        (:file "renderer-pane-tests-b")  ; %clock-digit-rows, %render-v-separator, border/pane edge cases — part II
-       (:file "renderer-tests")            ; renderer — part I (fixtures, status-bar, render-session, clear-display, window-list up to line 867)
+       (:file "renderer-tests")            ; renderer — part I (status-bar, render-session, clear-display, status-indicators, window-list)
+       (:file "renderer-tests-d")          ; renderer — part IV (per-window options, alert-tab-styles, status-bar-line, overlay, DECTCEM)
        (:file "renderer-tests-b")          ; renderer — part II (status-bar, parse-style, render-popup/menu)
        (:file "renderer-tests-c")          ; renderer — part III (mouse/focus/keys, lock-screen, justify, cursor-shape, overlay, inline-style)
        (:file "dispatch-tests")               ; core dispatch — part I (cyclic helpers, window/pane select, copy-mode, detach, prefix)
@@ -180,6 +182,7 @@
        (:file "events-tests-c")          ; app-cursor-keys, prompt-key, copy-mode nav, SGR, border-check — part III
        (:file "events-tests-e")          ; status-col, SGR-nil, copy-nav, flush-esc, reset-repeat, CSI-u — part IV
        (:file "events-tests-d")          ; app-cursor-keys (ss3), new bindings, :mark-pane, root table, fn-keys — part V
+       (:file "events-tests-g")          ; select-layout-spread, new key bindings, choose-window, mouse-reporting, tmux defaults — part VII
        (:file "mouse-tests")
        (:file "commands-tests")          ; resize-pane, scroll, kill-pane, select/rename, begin-sel/yank/other-end — part I
        (:file "commands-tests-e")        ; copy-mode-clear-sel, WORD-motion, select-word, move-cursor — part II
@@ -203,6 +206,7 @@
        (:file "pty-tests")
        (:file "input-tests")
        (:file "runtime-tests")
+       (:file "runtime-tests-b")          ; add-message-log table-driven, add-prompt-history, wait-for-channel — part II
        (:file "client-tests")
        (:file "main-tests")
        (:file "advanced-tests")))
