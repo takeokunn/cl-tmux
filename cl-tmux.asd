@@ -179,9 +179,11 @@
        (:file "commands-tests")          ; resize-pane, scroll, kill-pane, select/rename, begin-sel/yank/other-end — part I
        (:file "commands-tests-e")        ; copy-mode-clear-sel, WORD-motion, select-word, move-cursor — part II
        (:file "commands-tests-f")        ; rename-window, kill-window, run/if-shell, selection-text, swap/capture-pane — part III
-       (:file "commands-tests-b")        ; copy-mode motions, send-keys, tokenize, join/break-pane — part IV
-       (:file "commands-tests-c")        ; pipe-pane, virtual-row, timeout, scroll helpers, extract-chars — part III
-       (:file "commands-tests-d")        ; rename hooks, server-access, copy-mode rect/search, jump-to-char — part IV
+       (:file "commands-tests-b")        ; copy-mode line/page/word motions, top/bottom, search — part IV
+       (:file "commands-tests-g")        ; send-keys, key-name, tokenize, kill-window-mru, join-pane — part V
+       (:file "commands-tests-h")        ; copy-mode-exit, break-pane, clear-history, rotate, find, next/prev-win — part VI
+       (:file "commands-tests-c")        ; pipe-pane, virtual-row, timeout, scroll helpers, extract-chars — part VII
+       (:file "commands-tests-d")        ; rename hooks, server-access, copy-mode rect/search, jump-to-char — part VIII
        (:file "overlay-tests")
        (:file "prompt-tests")
        (:file "protocol-tests")
