@@ -44,10 +44,9 @@
 (test run-command-line-select-window-T-toggles-to-last
   "'select-window -T -t N' toggles to the last window when already on window N,
    but selects N normally when not currently on it."
-  (let* ((s  (make-fake-session :nwindows 2))   ; window-ids 0,1
-         (w0 (first  (cl-tmux/model:session-windows s)))
-         (w1 (second (cl-tmux/model:session-windows s))))
-    (with-loop-state
+  (with-fake-session (s :nwindows 2)
+    (let* ((w0 (first  (cl-tmux/model:session-windows s)))
+           (w1 (second (cl-tmux/model:session-windows s))))
       ;; session-last-window is recency-based (window-last-active-time, 1s
       ;; granularity); seed distinct OLD stamps so the two same-second selects
       ;; below produce an unambiguous last-window order (w0 older than w1's NOW).
@@ -64,10 +63,9 @@
 
 (test run-command-line-select-pane-by-id
   "'select-pane -t N' selects the pane with pane-id N in the active window."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s)))
-    ;; make-fake-window panes have ids 1,2; the first is active.
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s)))
+      ;; make-fake-window panes have ids 1,2; the first is active.
       (is (= 1 (pane-id (window-active-pane win))) "pane 1 is active initially")
       (cl-tmux::%run-command-line s "select-pane -t 2")
       (is (= 2 (pane-id (window-active-pane win)))
@@ -75,9 +73,8 @@
 
 (test run-command-line-select-pane-by-pane-id-sigil
   "'select-pane -t %2' (the %N pane-id sigil) selects pane-id 2, like -t 2."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s)))
       (is (= 1 (pane-id (window-active-pane win))) "pane 1 is active initially")
       (cl-tmux::%run-command-line s "select-pane -t %2")
       (is (= 2 (pane-id (window-active-pane win)))
@@ -85,9 +82,8 @@
 
 (test run-command-line-select-pane-l-selects-last
   "'select-pane -l' returns to the previously active pane."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s)))
       ;; Start on pane 1, move to pane 2 (pane 1 becomes last-active).
       (cl-tmux::%run-command-line s "select-pane -t 2")
       (is (= 2 (pane-id (window-active-pane win))) "now on pane 2")
@@ -97,11 +93,10 @@
 
 (test run-command-line-select-pane-t-T-titles-target-pane
   "'select-pane -t N -T title' sets pane N's title, NOT the active pane's."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s))
-         (p1  (window-active-pane win))                       ; pane 1 (active)
-         (p2  (find 2 (window-panes win) :key #'pane-id)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s))
+           (p1  (window-active-pane win))
+           (p2  (find 2 (window-panes win) :key #'pane-id)))
       (cl-tmux::%run-command-line s "select-pane -t 2 -T mytitle")
       (is (string= "mytitle" (cl-tmux/model:pane-title p2))
           "select-pane -t 2 -T must set pane 2's title")
@@ -110,20 +105,18 @@
 
 (test run-command-line-select-pane-t-d-disables-target-pane-input
   "'select-pane -t N -d' disables input on pane N, NOT the active pane."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s))
-         (p1  (window-active-pane win))
-         (p2  (find 2 (window-panes win) :key #'pane-id)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s))
+           (p1  (window-active-pane win))
+           (p2  (find 2 (window-panes win) :key #'pane-id)))
       (cl-tmux::%run-command-line s "select-pane -t 2 -d")
       (is-true  (cl-tmux/model:pane-input-disabled p2) "pane 2 input disabled")
       (is-false (cl-tmux/model:pane-input-disabled p1) "active pane 1 unaffected"))))
 
 (test run-command-line-select-pane-M-clears-mark
   "'select-pane -M' on a marked pane clears the server-wide mark (toggle)."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s)))
       (let ((ap (window-active-pane win)))
         (cl-tmux::dispatch-command s :mark-pane nil)
         (is (pane-marked ap) "pane must be marked before select-pane -M")
@@ -143,9 +136,8 @@
 
 (test run-command-line-kill-pane-by-target
   "'kill-pane -t N' kills the pane with pane-id N in the active window."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s)))   ; pane-ids 1,2
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s)))   ; pane-ids 1,2
       (cl-tmux::%run-command-line s "kill-pane -t 2")
       (is (= 1 (length (window-panes win))) "one pane must be removed")
       (is (null (find 2 (window-panes win) :key #'pane-id))
@@ -153,18 +145,16 @@
 
 (test run-command-line-kill-pane-invalid-target-is-noop
   "'kill-pane -t <nonexistent>' must NOT kill the active pane by accident."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s)))
       (cl-tmux::%run-command-line s "kill-pane -t 99")
       (is (= 2 (length (window-panes win)))
           "no pane may be removed for a -t target that matches nothing"))))
 
 (test run-command-line-kill-window-no-arg-kills-active
   "'kill-window' with no -t kills the active window (name-table fallthrough)."
-  (let* ((s      (make-fake-session :nwindows 2))
-         (active (session-active-window s)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 2)
+    (let* ((active (session-active-window s)))
       (cl-tmux::%run-command-line s "kill-window")
       (is (= 1 (length (session-windows s))) "the active window must be removed")
       (is (null (find active (session-windows s)))
@@ -175,11 +165,10 @@
 (test run-command-line-swap-window-exchanges-indices
   "'swap-window -s X -t Y' exchanges the two windows' INDEX NUMBERS (ids): the
    content at X and Y trade indices, the list stays sorted by id."
-  (let* ((s  (make-fake-session :nwindows 3))   ; ids 0,1,2
-         (w0 (find 0 (session-windows s) :key #'window-id))
-         (w1 (find 1 (session-windows s) :key #'window-id))
-         (w2 (find 2 (session-windows s) :key #'window-id)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 3)
+    (let* ((w0 (find 0 (session-windows s) :key #'window-id))
+           (w1 (find 1 (session-windows s) :key #'window-id))
+           (w2 (find 2 (session-windows s) :key #'window-id)))
       (cl-tmux::%run-command-line s "swap-window -s 0 -t 2")
       (is (= 2 (window-id w0)) "window formerly #0 now has index 2")
       (is (= 0 (window-id w2)) "window formerly #2 now has index 0")
@@ -189,19 +178,17 @@
 
 (test run-command-line-swap-window-default-source-is-active
   "'swap-window -t Y' uses the active window as the source."
-  (let* ((s      (make-fake-session :nwindows 2))   ; active = id 0
-         (active (session-active-window s))
-         (w1     (find 1 (session-windows s) :key #'window-id)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 2)
+    (let* ((active (session-active-window s))
+           (w1     (find 1 (session-windows s) :key #'window-id)))
       (cl-tmux::%run-command-line s "swap-window -t 1")
       (is (= 1 (window-id active)) "the active window's index becomes 1")
       (is (= 0 (window-id w1)) "the other window's index becomes 0"))))
 
 (test run-command-line-swap-window-unknown-target-is-noop
   "'swap-window -s 0 -t 99' (no such dst) leaves the window indices unchanged."
-  (let* ((s           (make-fake-session :nwindows 3))
-         (ids-before  (mapcar #'window-id (session-windows s))))
-    (with-loop-state
+  (with-fake-session (s :nwindows 3)
+    (let* ((ids-before  (mapcar #'window-id (session-windows s))))
       (cl-tmux::%run-command-line s "swap-window -s 0 -t 99")
       (is (equal ids-before (mapcar #'window-id (session-windows s)))
           "a -t target that matches nothing must not change indices"))))
@@ -247,9 +234,8 @@
 
 (test run-command-line-move-window-to-free-number
   "'move-window -t N' renumbers the active window to window-id N when N is free."
-  (let* ((s   (make-fake-session :nwindows 2))   ; window-ids 0,1; active = 0
-         (win (session-active-window s)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 2)
+    (let* ((win (session-active-window s)))
       (cl-tmux::%run-command-line s "move-window -t 5")
       (is (= 5 (window-id win))
           "active window must be renumbered to window-id 5"))))
@@ -257,10 +243,9 @@
 (test run-command-line-move-window-to-taken-number-shifts-up
   "'move-window -t N' onto a taken index moves the window there and shifts the
    occupant up (tmux winlink_shuffle_up) — not a silent no-op."
-  (let* ((s   (make-fake-session :nwindows 2))   ; ids 0 (active),1
-         (win (session-active-window s))
-         (w1  (find 1 (session-windows s) :key #'window-id)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 2)
+    (let* ((win (session-active-window s))
+           (w1  (find 1 (session-windows s) :key #'window-id)))
       (cl-tmux::%run-command-line s "move-window -t 1")   ; 1 is taken
       (is (= 1 (window-id win))
           "the active window takes the requested index 1")
