@@ -76,7 +76,8 @@
      (:file "dispatch-handlers")        ; command handler rule table (define-command-handlers)
      (:file "dispatch-handlers-buffer") ; paste-buffer command handler helpers
      (:file "events-core")
-     (:file "events-keystroke")
+     (:file "events-keystroke-escape")  ; escape/mouse sequence decoder + make-escape-input-k
+     (:file "events-keystroke")         ; ground-state + after-prefix-state + arrow key tables
      (:file "events-loop")
      (:file "session-registry")  ; session registry + group management
      (:file "server")
