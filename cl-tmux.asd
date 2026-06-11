@@ -133,7 +133,8 @@
          (:file "modes-tests")
          (:file "sgr-tests")
          (:file "csi-tests")
-         (:file "parser-tests")
+         (:file "parser-tests")    ; utf8/special/basic-text/CPS parser suites — part I
+         (:file "parser-tests-b")  ; combining-chars/ACS/DCS/OSC suites — part II
          (:file "emulator-tests")))
        (:file "layout-tests")
        (:file "layout-geometry-tests")
@@ -154,16 +155,18 @@
        (:file "renderer-pane-tests")
        (:file "renderer-tests")            ; renderer — part I (fixtures, status-bar, render-session, clear-display, window-list up to line 867)
        (:file "renderer-tests-b")          ; renderer — part II (status-bar formats, style, length, popup/menu, mouse/focus seqs, lock-screen, justify)
-       (:file "dispatch-tests")
+       (:file "dispatch-tests")               ; core dispatch — part I (cyclic helpers, window/pane select, copy-mode, detach, prefix)
+       (:file "dispatch-tests-b")            ; core dispatch — part II (swap-pane, kill-pane-confirm, select-layout, zoom, resize, rotate)
        (:file "dispatch-tests-commands")     ; arg-taking command tests: flag parsing, kill/swap/move/-t, confirm
        (:file "dispatch-tests-commands-b")   ; named-command handlers, display/buffer/session dispatch
        (:file "dispatch-tests-commands-c")   ; helper tests, on-submit paths, cyclic nav, break/join/run/if
        (:file "dispatch-tests-session")    ; copy-mode paging dispatch tests
        (:file "dispatch-tests-session-b")  ; coverage: untested handlers, send-keys, capture-pane, paste-buffer
        (:file "dispatch-tests-session-c")  ; options, session management, control mode, server-lifecycle
-       (:file "events-tests")            ; keystroke pipeline — part I (escape, process-byte, mouse, bindings)
+       (:file "events-tests")            ; keystroke pipeline — part I (escape, process-byte, mouse, key-table)
        (:file "events-tests-b")          ; locked-session, drag/modifier, copy-mode cursor, vi nav — part II
        (:file "events-tests-c")          ; app-cursor-keys, prompt-key, copy-mode yank, SGR, CSI-u — part III
+       (:file "events-tests-d")          ; app-cursor-keys (ss3), new bindings, :mark-pane, root table, fn-keys — part IV
        (:file "mouse-tests")
        (:file "commands-tests")          ; pane/copy-mode/kill/select/rename — part I (fixtures + lines 1-1440)
        (:file "commands-tests-b")        ; copy-mode motions, send-keys, tokenize, join/break-pane — part II
