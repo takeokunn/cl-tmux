@@ -139,7 +139,8 @@
          (:file "csi-tests")    ; cursor-movement/DECSCUSR/CBT/SU-SD/REP/DA-response — part I
          (:file "csi-tests-b")  ; ECH/DECRQM/XTWINOPS/CPR/REP-0/VPR/ICH/DCH/ED/EL/IL/DL — part II
          (:file "parser-tests")    ; utf8/special/OSC/ESC-hash/private/dec-pm — part I
-         (:file "parser-tests-b")  ; combining-chars/ACS/DCS/OSC suites — part II
+         (:file "parser-tests-b")  ; combining-chars/ACS/dcs-parsing/xtgettcap/decrqss/ground-state/direct-dcs/direct-osc — part II
+         (:file "parser-tests-d")  ; osc-dispatch-edge-cases/osc52/osc7/parser-suite/base64/csi-colon — part IV
          (:file "parser-tests-c")  ; basic-text, inline-predicates, CPS state functions, define-state — part III
          (:file "emulator-tests")))
        (:file "layout-tests")      ; layout-tree core: leaves/split/resize/collapse/persistence — part I
@@ -164,7 +165,8 @@
        (:file "config-directives-tests-c") ; directive parsing — part III (load-config-file, command-keyword, parse-bind-args, key-table edge cases)
        (:file "config-directives-tests-b") ; directive parsing — part II (%parse-bind-args, tokenizer, source-file, run-shell, %expand-tilde, if/elif, unbind-all)
        (:file "config-directives-tests-d") ; directive parsing — part IV (set-g-status-off, bind-key-n, load-config, %elif, line-continuation, source-file-glob, if-shell)
-       (:file "renderer-format-tests")
+       (:file "renderer-format-tests")           ; SGR codes, style tokens, border-color, cursor-shape, palette bounds — part I
+       (:file "renderer-format-tests-b")         ; all-attrs table, attrs2, ul-color, style-token/emit remaining, parse-style, border-charset — part II
        (:file "renderer-pane-tests")    ; render-pane/borders/clock/in-sel/display-panes — part I
        (:file "renderer-pane-tests-b")  ; %clock-digit-rows, %render-v-separator, border/pane edge cases — part II
        (:file "renderer-tests")            ; renderer — part I (status-bar, render-session, clear-display, status-indicators, window-list)
@@ -175,14 +177,18 @@
        (:file "dispatch-tests-c")             ; core dispatch — part III (focus events window-switch, list-keys, select-pane, zoom, list-windows/sessions)
        (:file "dispatch-tests-b")            ; core dispatch — part II (swap-pane, kill-pane-confirm, command-prompt, run-command-line, set-option)
        (:file "dispatch-tests-d")            ; core dispatch — part IV (%cmd-set-option scope, side-effects, bind/unbind/rename, set-hook)
-       (:file "dispatch-tests-commands")     ; arg-taking command tests: flag parsing, kill/swap/move/-t, confirm
-       (:file "dispatch-tests-commands-b")   ; named-command handlers, display/buffer/session dispatch
-       (:file "dispatch-tests-commands-c")   ; helper tests, on-submit paths, cyclic nav, break/join/run/if
-       (:file "dispatch-tests-commands-d")   ; has-session, find-window/select-window-prompt, move/swap-window, bind/unbind-key, kill-pane, split, new-window
-       (:file "dispatch-tests-session")    ; copy-mode paging dispatch tests
-       (:file "dispatch-tests-session-b")  ; coverage: untested handlers, parse-flag-token, rename/new-window/split-window flags
-       (:file "dispatch-tests-session-c")  ; options, session management, control mode, server-lifecycle
-       (:file "dispatch-tests-session-d")  ; display-popup, send-keys -N/-H, capture-pane, named paste-buffer, join-pane, wait-for-arg
+       (:file "dispatch-tests-commands")     ; flag-parse, select-window/pane, kill, swap-window, source-file, move-window, if-shell-F, dispatch-named-command, show-messages — part I
+       (:file "dispatch-tests-commands-f")  ; display-message-logs, clock-mode, capture-pane, send-keys, choose-tree, confirm-before, paste-to-pane, format-tree-entry — part VI
+       (:file "dispatch-tests-commands-b")  ; synchronize, lock, last-window, show-options, respawn, pipe-pane, last-pane, format helpers, popup/menu — part II
+       (:file "dispatch-tests-commands-e")  ; switch-client, last-session, new-session, kill-session, mark-pane, next-layout, bind/unbind-key, list/choose-buffer, wait-for — part V
+       (:file "dispatch-tests-commands-c")   ; helper tests, on-submit paths, cyclic nav, break/join/run/if — part III
+       (:file "dispatch-tests-commands-d")   ; has-session, find-window/select-window-prompt, move/swap-window, bind/unbind-key, kill-pane, split, new-window — part IV
+       (:file "dispatch-tests-session")    ; copy-mode paging, with-active-pane, format-menu, named-layout, kill-result, command-dispatch-outcome — part I
+       (:file "dispatch-tests-session-e")  ; named-command table, select-layout, set-option -u, split-window, new-window, server-management, prefix, aliases — part V
+       (:file "dispatch-tests-session-b")  ; coverage: untested handlers, parse-flag-token, rename/new-window/split-window flags — part II
+       (:file "dispatch-tests-session-c")  ; options, move-window, new-session -s/-A/-t, control-mode REPL — part III
+       (:file "dispatch-tests-session-f")  ; new-session duplicate, grouped sessions, control-mode notifications, server-lifecycle, %output relay — part VI
+       (:file "dispatch-tests-session-d")  ; display-popup, send-keys -N/-H, capture-pane, named paste-buffer, join-pane, wait-for-arg — part IV
        (:file "events-tests")            ; keystroke pipeline — part I (escape, process-byte, mouse, key-table, copy-mode vi-nav)
        (:file "events-tests-f")          ; keystroke pipeline — part VI (PageUp/Down, prefix-arrow, send-prefix, modifier+arrow, meta/alt)
        (:file "events-tests-b")          ; locked-session, drag/modifier, copy-mode cursor, vi nav — part II
