@@ -96,10 +96,8 @@
             (let ((output (run-shell command)))
               ;; Show output when non-empty; show "(no output)" when empty
               ;; so users know the command ran successfully.
-              (let ((text (if (and output (plusp (length output)))
-                              output
-                              "(run-shell: no output)")))
-                (show-overlay text))))))))
+              (show-overlay (or (and output (plusp (length output)) output)
+                              "(run-shell: no output)"))))))))
 
 (defun %cmd-if-shell-arg (session args)
   "if-shell [-F] condition [then-cmd] [else-cmd]: conditional command execution.
@@ -116,10 +114,10 @@
             (let* ((win    (session-active-window session))
                    (pane   (session-active-pane session))
                    (ctx    (cl-tmux/format:format-context-from-session session win pane))
-                   (result (cl-tmux/format:expand-format cond-str ctx))
-                   (truthy (and result (plusp (length result)) (not (string= result "0")))))
-              (when truthy (when then-str (%run-command-line session then-str)))
-              (unless truthy (when else-str (%run-command-line session else-str))))
+                   (result (cl-tmux/format:expand-format cond-str ctx)))
+              (if (not (member result '("" "0") :test #'string=))
+                  (when then-str (%run-command-line session then-str))
+                  (when else-str (%run-command-line session else-str))))
             ;; Plain shell: run condition and check exit code
             (if-shell cond-str
                       (lambda () (when then-str (%run-command-line session then-str)))
@@ -243,7 +241,7 @@
           (declare (ignore s))
           (when w
             (setf src-win  w
-                  src-pane (if (and p (member p (window-panes w))) p
+                  src-pane (or (and p (member p (window-panes w)) p)
                                (window-active-pane w))))))
       ;; -t: resolve the destination — only its WINDOW matters (the split host).
       (when dst-str
@@ -288,7 +286,7 @@
           (declare (ignore s))
           (when w
             (setf src-win  w
-                  src-pane (if (and p (member p (window-panes w))) p
+                  src-pane (or (and p (member p (window-panes w)) p)
                                (window-active-pane w))))))
       (let ((new-win (cl-tmux/commands:break-pane
                       session :src-window src-win :pane src-pane
@@ -316,7 +314,7 @@
                             :current-pane pane)
           (declare (ignore s))
           (when w
-            (setf pane (if (and p (member p (window-panes w))) p
+            (setf pane (or (and p (member p (window-panes w)) p)
                            (window-active-pane w))))))
       (when pane
         (cl-tmux/terminal/actions:clear-scrollback (pane-screen pane))
