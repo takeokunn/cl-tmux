@@ -407,15 +407,15 @@
            ;; Only fall through to clear-selection if no table entry matches.
            ((%copy-mode-active-p session)
             (let* ((meta-name (%meta-key-name (aref buffer 1)))
-                   (entry     (or (and meta-name (key-table-lookup "copy-mode-vi" meta-name))
-                                  (and meta-name (key-table-lookup "copy-mode"    meta-name)))))
+                   (entry     (when meta-name
+                                (or (key-table-lookup "copy-mode-vi" meta-name)
+                                    (key-table-lookup "copy-mode"    meta-name)))))
               (if entry
-                  (progn (%run-key-table-binding session entry nil)
-                         (setf *dirty* t))
+                  (%run-key-table-binding session entry nil)
                   ;; No table binding: ESC clears the active selection.
                   (let ((screen (%active-screen session)))
-                    (when screen (copy-mode-clear-selection screen))
-                    (setf *dirty* t)))))
+                    (when screen (copy-mode-clear-selection screen))))
+              (setf *dirty* t)))
            ((%try-bound-string-key session +table-root+
                                    (%meta-key-name (aref buffer 1))))
            (t

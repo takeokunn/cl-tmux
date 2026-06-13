@@ -320,19 +320,14 @@
   (:choose-session
    (let* ((sessions (or *server-sessions*
                         (list (cons (session-name session) session))))
-          (items    (mapcar
-                     (lambda (entry)
-                       (let ((name (car entry))
-                             (sess (cdr entry)))
-                         (cons (format nil "~A~A (~D window~:P)"
-                                       (if (eq sess session) "*" " ")
-                                       name
-                                       (length (cl-tmux/model:session-windows sess)))
-                               ;; Command: switch-client via prompt-aware %run-command-line.
-                               ;; Store as a cons (switch-to-session . name) handled by
-                               ;; :menu-select dispatch extension.
-                               (list :switch-client name))))
-                     sessions)))
+          (items    (loop for (name . sess) in sessions
+                          collect (cons (format nil "~A~A (~D window~:P)"
+                                                (if (eq sess session) "*" " ")
+                                                name
+                                                (length (cl-tmux/model:session-windows sess)))
+                                        ;; Command stored as (:switch-client name),
+                                        ;; dispatched by :menu-select.
+                                        (list :switch-client name)))))
      (%show-jk-menu "choose-session (j/k, Enter)" items)))
   (:new-session
    (let* ((rows (- *term-rows* *status-height*))
