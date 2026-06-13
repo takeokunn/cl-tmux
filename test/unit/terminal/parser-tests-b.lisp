@@ -60,23 +60,15 @@
     (is (eq :ascii (cl-tmux/terminal/types:screen-charset s))
         "charset must return to :ascii after ESC ( B")))
 
-(test acs-line-drawing-maps-q-to-horizontal-bar
-  "In DEC graphics mode, writing 'q' places the horizontal bar character U+2500 (─)."
-  (with-screen (s 20 5)
-    ;; Switch to DEC graphics
-    (feed s (format nil "~C(0" #\Escape))
-    (feed s "q")
-    ;; Should have written ─ (U+2500 = horizontal bar)
-    (is (char= #\─ (char-at s 0 0))
-        "DEC graphics 'q' must map to ─ (U+2500)")))
-
-(test acs-line-drawing-maps-x-to-vertical-bar
-  "In DEC graphics mode, writing 'x' places the vertical bar character U+2502 (│)."
-  (with-screen (s 20 5)
-    (feed s (format nil "~C(0" #\Escape))
-    (feed s "x")
-    (is (char= #\│ (char-at s 0 0))
-        "DEC graphics 'x' must map to │ (U+2502)")))
+(test acs-line-drawing-maps-chars-table
+  "In DEC graphics mode, each ASCII char maps to the correct box-drawing Unicode codepoint."
+  (dolist (row '(("q" #\─ "DEC graphics 'q' → ─ (U+2500)")
+                 ("x" #\│ "DEC graphics 'x' → │ (U+2502)")))
+    (destructuring-bind (input expected desc) row
+      (with-screen (s 20 5)
+        (feed s (format nil "~C(0" #\Escape))
+        (feed s input)
+        (is (char= expected (char-at s 0 0)) "~A" desc)))))
 
 (test acs-ascii-mode-unaffected
   "In ASCII mode (default), 'q' writes literal 'q'."

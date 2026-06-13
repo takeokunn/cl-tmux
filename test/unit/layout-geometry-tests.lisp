@@ -293,27 +293,18 @@
 ;;; vanishes when the ratio is extreme (near 0 or near 1).  These tests exercise
 ;;; both extremes to confirm the clamping invariant holds.
 
-(test assign-split-extreme-ratio-near-zero-clamps-first-child
-  "%assign-split clamps a near-zero ratio so the first child has at least 1 cell."
-  ;; ratio = 1/100: avail = 80-1 = 79, round(79/100) = 1 → first-extent = max(1, ...) = 1.
-  (with-two-1x1-panes (p0 p1)
-    (let ((tree (make-layout-split :h (make-layout-leaf p0) (make-layout-leaf p1) 1/100)))
-      (cl-tmux/model::layout-assign tree 0 0 80 24)
-      (is (>= (pane-width p0) 1)  "first child must be at least 1 cell wide")
-      (is (>= (pane-width p1) 1)  "second child must be at least 1 cell wide")
-      (is (= 79 (+ (pane-width p0) (pane-width p1)))
-          "first + second children must equal avail (80-1=79)"))))
-
-(test assign-split-extreme-ratio-near-one-clamps-second-child
-  "%assign-split clamps a near-unity ratio so the second child has at least 1 cell."
-  ;; ratio = 99/100: avail = 80-1 = 79, round(79*99/100) = 78 → second-extent = 79-78 = 1.
-  (with-two-1x1-panes (p0 p1)
-    (let ((tree (make-layout-split :h (make-layout-leaf p0) (make-layout-leaf p1) 99/100)))
-      (cl-tmux/model::layout-assign tree 0 0 80 24)
-      (is (>= (pane-width p0) 1)  "first child must be at least 1 cell wide")
-      (is (>= (pane-width p1) 1)  "second child must be at least 1 cell wide")
-      (is (= 79 (+ (pane-width p0) (pane-width p1)))
-          "first + second children must equal avail (80-1=79)"))))
+(test assign-split-extreme-ratio-clamping-table
+  "%assign-split clamps extreme ratios so neither child vanishes (>= 1 cell each)."
+  (dolist (row '((1/100  "near-zero ratio: first child clamped to >= 1")
+                 (99/100 "near-unity ratio: second child clamped to >= 1")))
+    (destructuring-bind (ratio desc) row
+      (with-two-1x1-panes (p0 p1)
+        (let ((tree (make-layout-split :h (make-layout-leaf p0) (make-layout-leaf p1) ratio)))
+          (cl-tmux/model::layout-assign tree 0 0 80 24)
+          (is (>= (pane-width p0) 1)  "~A: first child must be at least 1 cell wide" desc)
+          (is (>= (pane-width p1) 1)  "~A: second child must be at least 1 cell wide" desc)
+          (is (= 79 (+ (pane-width p0) (pane-width p1)))
+              "~A: widths must sum to avail (80-1=79)" desc)))))
 
 (test assign-split-exact-half-ratio-distributes-evenly
   "%assign-split with ratio=1/2 on an even avail gives equal children."
