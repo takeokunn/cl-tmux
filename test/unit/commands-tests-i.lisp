@@ -322,14 +322,16 @@
 
 ;;; ── copy-mode-search-forward-incremental ─────────────────────────────────────
 
-(test copy-mode-search-forward-incremental-noop-outside-copy-mode
-  "Does not open a prompt when not in copy mode."
-  (let ((s (make-screen 10 5)))
-    (setf (screen-copy-mode-p s) nil
-          *prompt* nil
-          cl-tmux/commands::*copy-mode-isearch-origin* nil)
-    (cl-tmux/commands::copy-mode-search-forward-incremental s)
-    (is-false *prompt* "no prompt must open outside copy mode")))
+(test copy-mode-search-incremental-noop-outside-copy-mode
+  "Neither incremental search function opens a prompt when not in copy mode."
+  (dolist (fn '(cl-tmux/commands::copy-mode-search-forward-incremental
+                cl-tmux/commands::copy-mode-search-backward-incremental))
+    (let ((s (make-screen 10 5)))
+      (setf (screen-copy-mode-p s) nil
+            *prompt* nil
+            cl-tmux/commands::*copy-mode-isearch-origin* nil)
+      (funcall fn s)
+      (is-false *prompt* "~S must not open a prompt outside copy mode" fn))))
 
 (test copy-mode-search-forward-incremental-opens-prompt
   "Opens a prompt labelled search-forward when in copy mode."
@@ -388,15 +390,6 @@
               "isearch origin must be cleared after cancel")))
 
 ;;; ── copy-mode-search-backward-incremental ────────────────────────────────────
-
-(test copy-mode-search-backward-incremental-noop-outside-copy-mode
-  "Does not open a prompt when not in copy mode."
-  (let ((s (make-screen 10 5)))
-    (setf (screen-copy-mode-p s) nil
-          *prompt* nil
-          cl-tmux/commands::*copy-mode-isearch-origin* nil)
-    (cl-tmux/commands::copy-mode-search-backward-incremental s)
-    (is-false *prompt* "no prompt must open outside copy mode")))
 
 (test copy-mode-search-backward-incremental-opens-prompt
   "Opens a prompt labelled search-backward when in copy mode."

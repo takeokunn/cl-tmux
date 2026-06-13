@@ -271,29 +271,15 @@
 
 ;;; ── %parse-flag-int helper ──────────────────────────────────────────────────
 
-(test parse-flag-int-present-numeric
-  "%parse-flag-int returns the integer when the flag carries a numeric string value."
-  (let ((flags (list (cons #\t "5") (cons #\a t))))
-    (is (= 5 (cl-tmux::%parse-flag-int flags #\t))
-        "numeric flag value must be parsed to an integer")))
-
-(test parse-flag-int-absent-flag-returns-nil
-  "%parse-flag-int returns NIL when the flag character is not in the alist."
-  (let ((flags (list (cons #\a t))))
-    (is (null (cl-tmux::%parse-flag-int flags #\t))
-        "absent flag must return NIL")))
-
-(test parse-flag-int-non-numeric-value-returns-nil
-  "%parse-flag-int returns NIL when the flag value is not parseable as an integer."
-  (let ((flags (list (cons #\t "abc"))))
-    (is (null (cl-tmux::%parse-flag-int flags #\t))
-        "non-numeric value must return NIL (junk-allowed)")))
-
-(test parse-flag-int-boolean-true-returns-nil
-  "%parse-flag-int returns NIL when the flag is a boolean T (no associated string)."
-  (let ((flags (list (cons #\t t))))
-    (is (null (cl-tmux::%parse-flag-int flags #\t))
-        "boolean T flag must return NIL")))
+(test parse-flag-int-table
+  "%parse-flag-int returns the integer for a numeric flag, NIL for absent/non-numeric/boolean flags."
+  (dolist (c '((((#\t . "5") (#\a . t)) #\t 5   "present numeric → integer")
+               (((#\a . t))              #\t nil "absent flag → NIL")
+               (((#\t . "abc"))          #\t nil "non-numeric value → NIL")
+               (((#\t . t))              #\t nil "boolean T flag → NIL")))
+    (destructuring-bind (flags char expected desc) c
+      (is (equal expected (cl-tmux::%parse-flag-int flags char))
+          "~A" desc))))
 
 ;;; ── rename-session via command line updates *server-sessions* ───────────────
 
