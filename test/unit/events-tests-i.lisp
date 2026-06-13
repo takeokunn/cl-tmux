@@ -135,27 +135,16 @@
 
 ;;; ── overlay-scroll: verify actual offset change ──────────────────────────────
 
-(test overlay-scroll-up-decrements-offset
-  "overlay-scroll -1 decrements *overlay-scroll-offset* by 1 (clamped at 0)."
-  ;; NOTE: build the overlay with real newlines via ~%.  A CL string literal
-  ;; does NOT treat \n as a newline (backslash only escapes " and \), so
-  ;; "line1\nline2..." is a SINGLE line and overlay-lines would return 1 entry,
-  ;; clamping every scroll to 0.
-  (let ((*overlay* (format nil "line1~%line2~%line3~%line4~%line5~%"))
-        (*overlay-scroll-offset* 3))
-    (overlay-scroll -1)
-    (is (= 2 *overlay-scroll-offset*)
-        "overlay-scroll -1 must decrement offset from 3 to 2")))
-
-(test overlay-scroll-down-increments-offset
-  "overlay-scroll 1 increments *overlay-scroll-offset* by 1."
-  ;; Real newlines via ~% (a CL literal's \n is NOT a newline; see the
-  ;; overlay-scroll-up test for the full explanation).
-  (let ((*overlay* (format nil "line1~%line2~%line3~%line4~%line5~%"))
-        (*overlay-scroll-offset* 0))
-    (overlay-scroll 1)
-    (is (= 1 *overlay-scroll-offset*)
-        "overlay-scroll 1 must increment offset from 0 to 1")))
+(test overlay-scroll-table
+  "overlay-scroll delta adjusts *overlay-scroll-offset* by delta.
+   NOTE: overlay must use ~% for real newlines (CL \\n in a literal is not newline)."
+  (dolist (row '((3 -1 2 "up: offset 3, delta -1 → 2")
+                 (0  1 1 "down: offset 0, delta +1 → 1")))
+    (destructuring-bind (initial delta expected desc) row
+      (let ((*overlay* (format nil "line1~%line2~%line3~%line4~%line5~%"))
+            (*overlay-scroll-offset* initial))
+        (overlay-scroll delta)
+        (is (= expected *overlay-scroll-offset*) "~A" desc)))))
 
 (test overlay-scroll-clamps-at-zero
   "overlay-scroll -1 at offset 0 does not produce a negative offset."

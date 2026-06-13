@@ -149,22 +149,14 @@
 
 ;;; ── New modifiers: #{t:strftime}, #{pN:var}, #{U:var}, #{L:var}, #{l:var} ──
 
-(test format-modifier-strftime-hhmm
-  "#{t:%H:%M} formats the current hour and minute as HH:MM."
-  (let ((result (fmt "#{t:%H:%M}")))
-    ;; Result must be exactly 5 chars HH:MM
-    (is (= 5 (length result))
-        "#{t:%H:%M} must be 5 chars, got ~S" result)
-    (is (char= #\: (char result 2))
-        "#{t:%H:%M} must have colon at position 2, got ~S" result)))
-
-(test format-modifier-strftime-date
-  "#{t:%Y-%m-%d} formats the current date as YYYY-MM-DD."
-  (let ((result (fmt "#{t:%Y-%m-%d}")))
-    (is (= 10 (length result))
-        "#{t:%Y-%m-%d} must be 10 chars, got ~S" result)
-    (is (char= #\- (char result 4))
-        "#{t:%Y-%m-%d} must have dash at position 4, got ~S" result)))
+(test format-modifier-strftime-table
+  "#{t:FORMAT} expands to the current time using the given strftime format."
+  (dolist (row '(("#{t:%H:%M}"     5  #\: 2 "HH:MM - 5 chars, colon at pos 2")
+                 ("#{t:%Y-%m-%d}"  10 #\- 4 "YYYY-MM-DD - 10 chars, dash at pos 4")))
+    (destructuring-bind (fmt-str expected-len sep-char sep-pos desc) row
+      (let ((result (fmt fmt-str)))
+        (is (= expected-len (length result))          "~A: length"    desc)
+        (is (char= sep-char (char result sep-pos))    "~A: separator" desc)))))
 
 (test format-modifier-strftime-default-empty-format
   "#{t:} with empty format string uses the default strftime format."
