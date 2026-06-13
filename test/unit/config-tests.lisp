@@ -168,14 +168,7 @@
   (is (= 1000 +max-scrollback-lines+)
       "+max-scrollback-lines+ must be 1000, got ~A" +max-scrollback-lines+))
 
-;;; ── +poll-timeout-us+ constant ─────────────────────────────────────────────
-
-(test poll-timeout-constant
-  "+poll-timeout-us+ equals 50000 µs (50 ms ≈ 20 fps max)."
-  (is (= 50000 +poll-timeout-us+)
-      "+poll-timeout-us+ should be 50000, got ~A" +poll-timeout-us+)
-  (is (plusp +poll-timeout-us+)
-      "+poll-timeout-us+ must be positive"))
+;;; ── Numeric compile-time constants ─────────────────────────────────────────
 
 ;;; ── Key-table system tests ────────────────────────────────────────────────
 
@@ -257,28 +250,16 @@
       (is (null (cl-tmux/config:key-table-repeatable-p absent))
           "key-table-repeatable-p on NIL must return NIL"))))
 
-;;; ── Additional compile-time constants ────────────────────────────────────
-
-(test accept-timeout-constant
-  "+accept-timeout-us+ equals 100000 µs (100 ms)."
-  (is (= 100000 +accept-timeout-us+)
-      "+accept-timeout-us+ should be 100000, got ~A" +accept-timeout-us+)
-  (is (plusp +accept-timeout-us+)
-      "+accept-timeout-us+ must be positive"))
-
-(test pty-buf-size-constant
-  "+pty-buf-size+ equals 4096 bytes."
-  (is (= 4096 +pty-buf-size+)
-      "+pty-buf-size+ should be 4096, got ~A" +pty-buf-size+)
-  (is (plusp +pty-buf-size+)
-      "+pty-buf-size+ must be positive"))
-
-(test pty-poll-timeout-constant
-  "+pty-poll-timeout-us+ equals 50000 µs (50 ms)."
-  (is (= 50000 +pty-poll-timeout-us+)
-      "+pty-poll-timeout-us+ should be 50000, got ~A" +pty-poll-timeout-us+)
-  (is (plusp +pty-poll-timeout-us+)
-      "+pty-poll-timeout-us+ must be positive"))
+(test numeric-constants
+  "Timeout and buffer-size constants have the expected values and are all positive."
+  (is (= 50000  +poll-timeout-us+)     "+poll-timeout-us+ must be 50000")
+  (is (= 100000 +accept-timeout-us+)   "+accept-timeout-us+ must be 100000")
+  (is (= 4096   +pty-buf-size+)        "+pty-buf-size+ must be 4096")
+  (is (= 50000  +pty-poll-timeout-us+) "+pty-poll-timeout-us+ must be 50000")
+  (is (plusp +poll-timeout-us+)     "+poll-timeout-us+ must be positive")
+  (is (plusp +accept-timeout-us+)   "+accept-timeout-us+ must be positive")
+  (is (plusp +pty-buf-size+)        "+pty-buf-size+ must be positive")
+  (is (plusp +pty-poll-timeout-us+) "+pty-poll-timeout-us+ must be positive"))
 
 ;;; ── ensure-key-table side effects ────────────────────────────────────────
 
@@ -343,20 +324,14 @@
 
 ;;; ── Key-table name constants ──────────────────────────────────────────────
 
-(test table-prefix-constant-value
-  "+table-prefix+ has the string value \"prefix\"."
-  (is (string= "prefix" cl-tmux/config:+table-prefix+)
-      "+table-prefix+ must be \"prefix\", got ~S" cl-tmux/config:+table-prefix+))
-
-(test table-root-constant-value
-  "+table-root+ has the string value \"root\"."
-  (is (string= "root" cl-tmux/config:+table-root+)
-      "+table-root+ must be \"root\", got ~S" cl-tmux/config:+table-root+))
-
-(test table-copy-mode-constant-value
-  "+table-copy-mode+ has the string value \"copy-mode\"."
+(test table-name-constants
+  "+table-prefix+, +table-root+, +table-copy-mode+ have their expected string values."
+  (is (string= "prefix"    cl-tmux/config:+table-prefix+)
+      "+table-prefix+ must be \"prefix\"")
+  (is (string= "root"      cl-tmux/config:+table-root+)
+      "+table-root+ must be \"root\"")
   (is (string= "copy-mode" cl-tmux/config:+table-copy-mode+)
-      "+table-copy-mode+ must be \"copy-mode\", got ~S" cl-tmux/config:+table-copy-mode+))
+      "+table-copy-mode+ must be \"copy-mode\""))
 
 ;;; ── *default-shell* and *status-height* initial values ───────────────────
 
@@ -438,22 +413,12 @@
 
 ;;; ── %parse-prefix-key ────────────────────────────────────────────────────────
 
-(test parse-prefix-key-ctrl-a
-  "%parse-prefix-key parses 'C-a' to 1."
-  (is (= 1 (cl-tmux/config::%parse-prefix-key "C-a"))
-      "C-a must be 1 (logand 97 0x1f)"))
-
-(test parse-prefix-key-ctrl-b
-  "%parse-prefix-key parses 'C-b' to 2 (the default prefix)."
-  (is (= 2 (cl-tmux/config::%parse-prefix-key "C-b"))
-      "C-b must be 2 (logand 98 0x1f)"))
-
-(test parse-prefix-key-single-char
-  "%parse-prefix-key parses a single character to its char-code."
-  (is (= (char-code #\A) (cl-tmux/config::%parse-prefix-key "A"))
-      "single-char 'A' must be char-code of A"))
-
-(test parse-prefix-key-unknown-returns-nil
-  "%parse-prefix-key returns NIL for unrecognized key names."
-  (is (null (cl-tmux/config::%parse-prefix-key "UnknownKey"))
-      "unknown key name must return NIL"))
+(test parse-prefix-key-table
+  "%parse-prefix-key: C-X keys, single chars, and unknown return expected values."
+  (dolist (c '(("C-a"        1   "C-a → 1 (logand 97 #x1f)")
+               ("C-b"        2   "C-b → 2 (logand 98 #x1f, the default prefix)")
+               ("A"          65  "single char 'A' → char-code 65")
+               ("UnknownKey" nil "unknown key name → NIL")))
+    (destructuring-bind (input expected desc) c
+      (is (equal expected (cl-tmux/config::%parse-prefix-key input))
+          "~A" desc))))
