@@ -112,23 +112,17 @@
 
 ;;; ── server-access: access-control-list management ──────────────────────────
 
-(test server-access-add-records-user-read-write-by-default
-  "server-access -a USER adds USER to the access list as read-write."
-  (with-fake-session (s :nwindows 1)
-    (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
-      (cl-tmux::%run-command-line s "server-access -a alice")
-      (is (equal :read-write
-                 (cdr (assoc "alice" cl-tmux::*server-access-list* :test #'string=)))
-          "alice must be added with the default read-write permission"))))
-
-(test server-access-add-r-records-user-read-only
-  "server-access -a -r USER adds USER as read-only."
-  (with-fake-session (s :nwindows 1)
-    (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
-      (cl-tmux::%run-command-line s "server-access -a -r bob")
-      (is (equal :read-only
-                 (cdr (assoc "bob" cl-tmux::*server-access-list* :test #'string=)))
-          "-r must record bob as read-only"))))
+(test server-access-add-permission-table
+  "server-access -a adds a user with the correct permission (default read-write; -r read-only)."
+  (dolist (row '(("server-access -a alice"   "alice" :read-write "default → :read-write")
+                 ("server-access -a -r bob"  "bob"   :read-only  "-r → :read-only")))
+    (destructuring-bind (cmd user expected desc) row
+      (with-fake-session (s :nwindows 1)
+        (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
+          (cl-tmux::%run-command-line s cmd)
+          (is (equal expected
+                     (cdr (assoc user cl-tmux::*server-access-list* :test #'string=)))
+              "~A" desc))))))
 
 (test server-access-w-modifies-existing-user-permission
   "A bare `server-access -w USER` (no -a/-d) upgrades an existing entry to read-write."

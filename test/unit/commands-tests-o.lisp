@@ -137,36 +137,26 @@
 
 ;;; ── copy-mode paragraph motion tests ────────────────────────────────────────
 
-(test copy-mode-next-paragraph-jumps-to-blank-line
-  "copy-mode-next-paragraph jumps to the nearest blank line below the cursor."
+(test copy-mode-paragraph-jumps-to-blank-line-table
+  "next-paragraph (from row 0) and previous-paragraph (from row 4) both land on blank row 2."
   ;; 20-wide, 5-row screen: row0=text, row1=text, row2=blank, row3=text, row4=text
-  (let ((s (make-screen 20 5)))
-    (feed s (format nil "hello~C~Cworld~C~C~C~Cfoo~C~Cbar" #\Return #\Linefeed
-                    #\Return #\Linefeed #\Return #\Linefeed
-                    #\Return #\Linefeed))
-    (cl-tmux/commands::copy-mode-enter s)
-    ;; Cursor at row 0 (first row)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
-    (cl-tmux/commands::copy-mode-next-paragraph s)
-    ;; Blank row is at vrow 2 (row0=hello, row1=world, row2=blank)
-    ;; With no scrollback, vrow = sb-n + viewport_row - offset = 0 + row - 0 = row
-    (is (= 2 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "next-paragraph must jump to blank row 2 (got row ~D)"
-        (car (cl-tmux/terminal/types:screen-copy-cursor s)))))
-
-(test copy-mode-previous-paragraph-jumps-to-blank-line
-  "copy-mode-previous-paragraph jumps to the nearest blank line above the cursor."
-  (let ((s (make-screen 20 5)))
-    (feed s (format nil "hello~C~Cworld~C~C~C~Cfoo~C~Cbar" #\Return #\Linefeed
-                    #\Return #\Linefeed #\Return #\Linefeed
-                    #\Return #\Linefeed))
-    (cl-tmux/commands::copy-mode-enter s)
-    ;; Cursor at row 4 (last row)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 4 0))
-    (cl-tmux/commands::copy-mode-previous-paragraph s)
-    (is (= 2 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "previous-paragraph must jump to blank row 2 (got row ~D)"
-        (car (cl-tmux/terminal/types:screen-copy-cursor s)))))
+  (dolist (row (list (list (cons 0 0)
+                           #'cl-tmux/commands::copy-mode-next-paragraph
+                           "next-paragraph from row 0 → blank row 2")
+                     (list (cons 4 0)
+                           #'cl-tmux/commands::copy-mode-previous-paragraph
+                           "previous-paragraph from row 4 → blank row 2")))
+    (destructuring-bind (start-cursor fn desc) row
+      (let ((s (make-screen 20 5)))
+        (feed s (format nil "hello~C~Cworld~C~C~C~Cfoo~C~Cbar" #\Return #\Linefeed
+                        #\Return #\Linefeed #\Return #\Linefeed
+                        #\Return #\Linefeed))
+        (cl-tmux/commands::copy-mode-enter s)
+        (setf (cl-tmux/terminal/types:screen-copy-cursor s) start-cursor)
+        (funcall fn s)
+        (is (= 2 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+            "~A (got row ~D)" desc
+            (car (cl-tmux/terminal/types:screen-copy-cursor s)))))))
 
 (test copy-mode-next-paragraph-at-bottom-stays
   "copy-mode-next-paragraph with no blank line below stays at last row."
