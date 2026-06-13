@@ -35,14 +35,6 @@
 
 ;;; ── %tokenize-backslash-escape direct tests ──────────────────────────────
 
-(test tokenize-backslash-escape-produces-escaped-char
-  "%tokenize-backslash-escape pushes the character following the backslash."
-  ;; We verify the behavior indirectly via %config-tokens which calls it.
-  (let ((tokens (cl-tmux/config::%config-tokens "a\\nb")))
-    (is (= 1 (length tokens))
-        "backslash-n must be one token, got ~S" tokens)
-    (is (string= "anb" (first tokens))
-        "token must be 'anb' (backslash consumed), got ~S" (first tokens))))
 
 (test tokenize-backslash-escape-at-end-produces-partial-token
   "%tokenize-backslash-escape at the very end of input does not signal."
@@ -64,22 +56,6 @@
 
 ;;; ── %tokenize-single-quoted direct test ──────────────────────────────────
 
-(test tokenize-single-quoted-preserves-content
-  "%config-tokens: single-quoted content is preserved literally."
-  (let ((tokens (cl-tmux/config::%config-tokens "'hello world'")))
-    (is (= 1 (length tokens))
-        "single-quoted string must produce 1 token, got ~S" tokens)
-    (is (string= "hello world" (first tokens))
-        "token must be 'hello world', got ~S" (first tokens))))
-
-(test tokenize-single-quoted-no-escape-processing
-  "%config-tokens: backslash inside single quotes is literal, not an escape."
-  (let ((tokens (cl-tmux/config::%config-tokens "'a\\b'")))
-    (is (= 1 (length tokens))
-        "single-quoted backslash-b must yield 1 token, got ~S" tokens)
-    ;; Inside single quotes the backslash is literal, so token = "a\b" (3 chars).
-    (is (= 3 (length (first tokens)))
-        "token must be 3 chars (backslash is literal), got ~S" (first tokens))))
 
 ;;; ── Table-driven tokenizer tests ─────────────────────────────────────────
 ;;;
@@ -93,7 +69,10 @@
                    (""                              nil)
                    ("   "                           nil)
                    ("cmd \"\""                      ("cmd" ""))
-                   ("a \"b c\" d\\ e"               ("a" "b c" "d e"))))
+                   ("a \"b c\" d\\ e"               ("a" "b c" "d e"))
+                   ("a\\nb"                         ("anb"))
+                   ("'hello world'"                 ("hello world"))
+                   ("'a\\b'"                        ("a\\b"))))
     (destructuring-bind (input expected) entry
       (let ((result (cl-tmux/config::%config-tokens input)))
         (is (equal expected result)
@@ -204,20 +183,13 @@
 
 ;;; ── run-shell / run directive ─────────────────────────────────────────────
 
-(test run-shell-directive-returns-t
-  "run-shell runs a shell command at config parse time and returns T."
-  (is (eq t (apply-config-directive '("run-shell" "true")))
-      "run-shell must return T"))
-
-(test run-directive-is-alias-for-run-shell
-  "'run' is accepted as an alias for 'run-shell'."
-  (is (eq t (apply-config-directive '("run" "true")))
-      "run alias must return T"))
-
-(test run-shell-errors-ignored
-  "run-shell with a failing command returns T (errors silently ignored)."
-  (is (eq t (apply-config-directive '("run-shell" "false")))
-      "run-shell with exit-code 1 must still return T"))
+(test run-shell-apply-directive-table
+  "run-shell / run aliases both return T regardless of exit code."
+  (dolist (c '(("run-shell" ("true")  "run-shell returns T")
+               ("run"       ("true")  "run alias returns T")
+               ("run-shell" ("false") "run-shell error silently returns T")))
+    (destructuring-bind (cmd args desc) c
+      (is (eq t (apply-config-directive (cons cmd args))) "~A" desc))))
 
 ;;; ── run-shell / run flag tolerance (-b / -t / -d / -C) ────────────────────
 ;;;
@@ -250,36 +222,20 @@
 
 ;;; ── %expand-leading-tilde ──────────────────────────────────────────────────
 
-(test expand-leading-tilde-expands-tilde-slash
-  "%expand-leading-tilde replaces a leading '~/' with $HOME, and leaves absolute
-   and relative paths unchanged."
+(test expand-leading-tilde-table
+  "%expand-leading-tilde expands ~/... to $HOME/...; all other paths pass through."
   (let ((home (or (ignore-errors (sb-ext:posix-getenv "HOME")) "~")))
-    (is (string= (concatenate 'string home "/x")
-                 (cl-tmux/config::%expand-leading-tilde "~/x"))
-        "~/x must expand to $HOME/x")
-    (is (string= "/abs" (cl-tmux/config::%expand-leading-tilde "/abs"))
-        "an absolute path must pass through unchanged")
-    (is (string= "rel" (cl-tmux/config::%expand-leading-tilde "rel"))
-        "a relative path must pass through unchanged")))
-
-(test expand-leading-tilde-leaves-non-tilde-slash-unchanged
-  "%expand-leading-tilde only expands a leading '~/'; every other form passes
-   through unchanged (bare ~, exact ~/, ~user, embedded ~)."
-  (is (string= "~" (cl-tmux/config::%expand-leading-tilde "~"))
-      "bare ~ (length 1, below the >2 guard) is unchanged")
-  (is (string= "~/" (cl-tmux/config::%expand-leading-tilde "~/"))
-      "exact ~/ (length 2, below the >2 guard) is unchanged")
-  (is (string= "~user" (cl-tmux/config::%expand-leading-tilde "~user"))
-      "~user is unchanged (only ~/ is expanded)")
-  (is (string= "a/~/b" (cl-tmux/config::%expand-leading-tilde "a/~/b"))
-      "an embedded ~ (not leading) is unchanged"))
-
-(test expand-leading-tilde-expands-full-tpm-path
-  "%expand-leading-tilde expands the real tpm path '~/.tmux/plugins/tpm/tpm'."
-  (let ((home (or (ignore-errors (sb-ext:posix-getenv "HOME")) "~")))
-    (is (string= (concatenate 'string home "/.tmux/plugins/tpm/tpm")
-                 (cl-tmux/config::%expand-leading-tilde "~/.tmux/plugins/tpm/tpm"))
-        "the full tpm path must expand its leading ~/ to $HOME")))
+    (dolist (c (list (list "~/x"                     (concatenate 'string home "/x")                    "~/x → $HOME/x")
+                     (list "~/.tmux/plugins/tpm/tpm" (concatenate 'string home "/.tmux/plugins/tpm/tpm") "full tpm path")
+                     (list "/abs"   "/abs"   "absolute path unchanged")
+                     (list "rel"    "rel"    "relative path unchanged")
+                     (list "~"      "~"      "bare ~ unchanged")
+                     (list "~/"     "~/"     "exact ~/ unchanged")
+                     (list "~user"  "~user"  "~user unchanged")
+                     (list "a/~/b"  "a/~/b"  "embedded ~ unchanged")))
+      (destructuring-bind (input expected desc) c
+        (is (string= expected (cl-tmux/config::%expand-leading-tilde input))
+            "~A" desc)))))
 
 ;;; ── %if / %else / %endif preprocessor ───────────────────────────────────
 
