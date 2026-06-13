@@ -96,21 +96,15 @@
       (is (= 1 out-count) "focus-out fires once (old pane)")
       (is (= 1 in-count)  "focus-in fires once (new pane)"))))
 
-(test run-command-tokens-abbrev-next-dispatches
-  "%run-command-tokens resolves the tmux abbreviation 'next' (no-arg named-table
-   path) to :next-window."
-  (with-fake-session (s :nwindows 2)
-    (cl-tmux::%run-command-tokens s '("next"))
-    (is (eq (second (session-windows s)) (session-active-window s))
-        "abbrev 'next' must advance to the next window")))
-
-(test run-command-tokens-abbrev-prev-dispatches
-  "%run-command-tokens resolves the abbreviation 'prev' (no-arg named-table path)
-   to :prev-window, which from the first window wraps to the last."
-  (with-fake-session (s :nwindows 2)
-    (cl-tmux::%run-command-tokens s '("prev"))
-    (is (eq (second (session-windows s)) (session-active-window s))
-        "abbrev 'prev' must wrap to the last window")))
+(test run-command-tokens-abbrev-next-prev-table
+  "%run-command-tokens resolves 'next' and 'prev' abbreviations via the named-table path;
+   in a 2-window session both select the second window (next advances, prev wraps)."
+  (dolist (row '(("next" "abbrev 'next' must advance to the next window")
+                 ("prev" "abbrev 'prev' must wrap to the last window")))
+    (destructuring-bind (abbrev desc) row
+      (with-fake-session (s :nwindows 2)
+        (cl-tmux::%run-command-tokens s (list abbrev))
+        (is (eq (second (session-windows s)) (session-active-window s)) desc)))))
 
 (test run-command-tokens-abbrev-renamew-with-arg
   "%run-command-tokens resolves the arg-bearing abbreviation 'renamew' through
