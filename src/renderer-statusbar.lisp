@@ -99,7 +99,7 @@
                               label (or sgr-code +sgr-default-status+)))
                    (styled-p (or sgr-code (not (eq expanded label)))))
               (when sgr-code
-                (format window-stream "~C[~Am" +esc+ sgr-code))
+                (%emit-sgr window-stream sgr-code))
               (write-string expanded window-stream)
               (when styled-p
                 (reset-attrs window-stream)))))))))
@@ -245,7 +245,7 @@
   (let* ((llen  (%visible-length left))
          (rlen  (%visible-length right-str))
          (total (+ llen 1 rlen))   ; 1 = the separator space before right-str
-         (pad-l (max 0 (floor (- cols total) 2)))
+         (pad-l (%center-coord cols total))
          (gap   (max 0 (- cols llen pad-l 1 rlen)))
          (line  (format nil "~A~A~A ~A"
                         (make-string pad-l :initial-element #\Space)
@@ -367,7 +367,7 @@
 (defun %render-status-line (stream status-row sgr-code line)
   "Emit a fully-composed status LINE at STATUS-ROW, wrapped in SGR-CODE, then reset."
   (move-to stream status-row 0)
-  (format stream "~C[~Am" +esc+ sgr-code)
+  (%emit-sgr stream sgr-code)
   (write-string line stream)
   (reset-attrs stream))
 

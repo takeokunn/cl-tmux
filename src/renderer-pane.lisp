@@ -215,7 +215,7 @@
                                            (<= start cur-col) (< cur-col end)))
                            (sgr   (if current-p (or current-sgr match-sgr) match-sgr)))
                       (move-to buffer (+ oy row) (+ ox start))
-                      (format buffer "~C[~Am" +esc+ sgr)
+                      (%emit-sgr buffer sgr)
                       (write-string (subseq row-str start end) buffer)
                       (reset-attrs buffer))))))))))))
 
