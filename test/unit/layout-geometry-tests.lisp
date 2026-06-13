@@ -304,7 +304,7 @@
           (is (>= (pane-width p0) 1)  "~A: first child must be at least 1 cell wide" desc)
           (is (>= (pane-width p1) 1)  "~A: second child must be at least 1 cell wide" desc)
           (is (= 79 (+ (pane-width p0) (pane-width p1)))
-              "~A: widths must sum to avail (80-1=79)" desc)))))
+              "~A: widths must sum to avail (80-1=79)" desc))))))
 
 (test assign-split-exact-half-ratio-distributes-evenly
   "%assign-split with ratio=1/2 on an even avail gives equal children."
