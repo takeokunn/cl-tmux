@@ -351,27 +351,17 @@
     (is (null (layout->string win))
         "layout->string on nil tree must return NIL")))
 
-(test layout-to-string-h-split-uses-braces
-  "layout->string serializes an :h split using {child1,child2} notation."
-  (let* ((l0  (tl-leaf 1 1 1))
-         (l1  (tl-leaf 2 1 1))
-         (win (tl-window (make-layout-split :h l0 l1) 24 81)))
-    (let ((s (layout->string win)))
-      (is (find #\{ (coerce s 'list))
-          "H-split serialization must use '{' brackets")
-      (is (find #\} (coerce s 'list))
-          "H-split serialization must use '}' brackets"))))
-
-(test layout-to-string-v-split-uses-brackets
-  "layout->string serializes a :v split using [child1,child2] notation."
-  (let* ((l0  (tl-leaf 1 1 1))
-         (l1  (tl-leaf 2 1 1))
-         (win (tl-window (make-layout-split :v l0 l1) 24 80)))
-    (let ((s (layout->string win)))
-      (is (find #\[ (coerce s 'list))
-          "V-split serialization must use '[' brackets")
-      (is (find #\] (coerce s 'list))
-          "V-split serialization must use ']' brackets"))))
+(test layout-to-string-split-notation
+  "layout->string uses {..} for :h splits and [..] for :v splits."
+  (dolist (c '((:h #\{ #\} "H-split uses braces")
+               (:v #\[ #\] "V-split uses brackets")))
+    (destructuring-bind (orient open close label) c
+      (let* ((l0  (tl-leaf 1 1 1))
+             (l1  (tl-leaf 2 1 1))
+             (win (tl-window (make-layout-split orient l0 l1) 24 80))
+             (s   (layout->string win)))
+        (is (find open  (coerce s 'list)) "~A: must use ~C" label open)
+        (is (find close (coerce s 'list)) "~A: must use ~C" label close)))))
 
 (test string-to-layout-round-trips-single-leaf
   "string->layout decodes a layout->string-encoded string back to an equivalent tree."
@@ -419,19 +409,15 @@
     (is (every (lambda (c) (digit-char-p c 16)) cs)
         "checksum must consist of hex digits")))
 
-(test skip-checksum-strips-leading-checksum
-  "%skip-checksum removes a well-formed 4-hex-digit comma prefix."
-  (is (string= "rest" (cl-tmux/model::%skip-checksum "ABCD,rest"))
-      "%skip-checksum must strip the 4+1 char checksum prefix")
-  (is (string= "rest" (cl-tmux/model::%skip-checksum "0000,rest"))
-      "%skip-checksum must work with all-zero checksum"))
-
-(test skip-checksum-passthrough-without-checksum
-  "%skip-checksum returns the input unchanged when there is no checksum prefix."
-  (is (string= "no-checksum" (cl-tmux/model::%skip-checksum "no-checksum"))
-      "%skip-checksum must not strip non-checksum input")
-  (is (string= "ABCDE" (cl-tmux/model::%skip-checksum "ABCDE"))
-      "%skip-checksum must leave strings without comma-at-5 unchanged"))
+(test skip-checksum-table
+  "%skip-checksum strips a 4-hex+comma prefix, or passes the string through unchanged."
+  (dolist (c '(("ABCD,rest"    "rest"         "valid hex checksum stripped")
+               ("0000,rest"    "rest"         "all-zero checksum stripped")
+               ("no-checksum"  "no-checksum"  "no prefix — pass through")
+               ("ABCDE"        "ABCDE"        "5-char without comma — pass through")))
+    (destructuring-bind (input expected desc) c
+      (is (string= expected (cl-tmux/model::%skip-checksum input))
+          "~A: ~S → ~S" desc input expected))))
 
 (test build-flat-tree-single-pane
   "%build-flat-tree with one pane returns a bare layout-leaf."
