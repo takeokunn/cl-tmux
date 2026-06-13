@@ -16,31 +16,33 @@
 
 ;;; ── send-keys key-name translation ───────────────────────────────────────────
 
-(test key-name-to-bytes-named-keys
-  "%key-name-to-bytes maps named keys to their byte sequences."
+(test key-name-to-bytes-table
+  "%key-name-to-bytes maps named, control, meta, and CSI-modified keys to their byte sequences."
   (flet ((bytes (name) (coerce (cl-tmux/commands::%key-name-to-bytes name) 'list)))
-    (is (equal '(13)  (bytes "Enter"))   "Enter → CR")
-    (is (equal '(9)   (bytes "Tab"))     "Tab → HT")
-    (is (equal '(27)  (bytes "Escape"))  "Escape → ESC")
-    (is (equal '(32)  (bytes "Space"))   "Space → SP")
-    (is (equal '(127) (bytes "BSpace"))  "BSpace → DEL")
-    (is (equal '(27 91 65) (bytes "Up"))      "Up → ESC [ A")
-    (is (equal '(27 91 66) (bytes "Down"))    "Down → ESC [ B")
-    (is (equal '(27 79 80) (bytes "F1"))      "F1 → ESC O P")
-    (is (equal '(27 91 53 126) (bytes "PageUp")) "PageUp → ESC [ 5 ~")))
-
-(test key-name-to-bytes-control-keys
-  "%key-name-to-bytes maps C-<char> to the corresponding control byte."
-  (flet ((bytes (name) (coerce (cl-tmux/commands::%key-name-to-bytes name) 'list)))
-    (is (equal '(3)  (bytes "C-c")) "C-c → 0x03")
-    (is (equal '(1)  (bytes "C-a")) "C-a → 0x01")
-    (is (equal '(26) (bytes "C-z")) "C-z → 0x1a")
-    (is (equal '(0)  (bytes "C-@")) "C-@ → 0x00")))
-
-(test key-name-to-bytes-meta-keys
-  "%key-name-to-bytes maps M-<char> to ESC followed by the char."
-  (is (equal '(27 120) (coerce (cl-tmux/commands::%key-name-to-bytes "M-x") 'list))
-      "M-x → ESC x"))
+    (dolist (row '(("Enter"    (13)                    "Enter → CR")
+                   ("Tab"      (9)                     "Tab → HT")
+                   ("Escape"   (27)                    "Escape → ESC")
+                   ("Space"    (32)                    "Space → SP")
+                   ("BSpace"   (127)                   "BSpace → DEL")
+                   ("Up"       (27 91 65)               "Up → ESC [ A")
+                   ("Down"     (27 91 66)               "Down → ESC [ B")
+                   ("F1"       (27 79 80)               "F1 → ESC O P")
+                   ("PageUp"   (27 91 53 126)           "PageUp → ESC [ 5 ~")
+                   ("C-c"      (3)                     "C-c → 0x03")
+                   ("C-a"      (1)                     "C-a → 0x01")
+                   ("C-z"      (26)                    "C-z → 0x1a")
+                   ("C-@"      (0)                     "C-@ → 0x00")
+                   ("M-x"      (27 120)                "M-x → ESC x")
+                   ("C-Up"     (27 91 49 59 53 65)     "C-Up → ESC[1;5A")
+                   ("M-Left"   (27 91 49 59 51 68)     "M-Left → ESC[1;3D")
+                   ("S-Down"   (27 91 49 59 50 66)     "S-Down → ESC[1;2B")
+                   ("C-M-Left" (27 91 49 59 55 68)     "C-M-Left → ESC[1;7D")
+                   ("S-Home"   (27 91 49 59 50 72)     "S-Home → ESC[1;2H")
+                   ("C-F5"     (27 91 49 53 59 53 126) "C-F5 → ESC[15;5~")
+                   ("C-PageUp" (27 91 53 59 53 126)    "C-PageUp → ESC[5;5~")
+                   ("S-Delete" (27 91 51 59 50 126)    "S-Delete → ESC[3;2~")))
+      (destructuring-bind (name expected desc) row
+        (is (equal expected (bytes name)) "~A" desc)))))
 
 (test split-key-modifiers-decodes-csi-modifier
   "%split-key-modifiers strips C-/M-/S- prefixes into the CSI modifier code."
@@ -52,21 +54,6 @@
     (is (equal '(7 "Left") (mods "C-M-Left")) "Ctrl+Alt → 7")
     (is (equal '(6 "Up")   (mods "C-S-Up")) "Ctrl+Shift → 6")))
 
-(test key-name-to-bytes-modified-arrows-and-nav
-  "%key-name-to-bytes encodes modified arrows / Home / End as ESC [ 1 ; mod final."
-  (flet ((bytes (name) (coerce (cl-tmux/commands::%key-name-to-bytes name) 'list)))
-    (is (equal '(27 91 49 59 53 65) (bytes "C-Up"))    "C-Up → ESC[1;5A")
-    (is (equal '(27 91 49 59 51 68) (bytes "M-Left"))  "M-Left → ESC[1;3D")
-    (is (equal '(27 91 49 59 50 66) (bytes "S-Down"))  "S-Down → ESC[1;2B")
-    (is (equal '(27 91 49 59 55 68) (bytes "C-M-Left")) "C-M-Left → ESC[1;7D")
-    (is (equal '(27 91 49 59 50 72) (bytes "S-Home"))  "S-Home → ESC[1;2H")))
-
-(test key-name-to-bytes-modified-function-keys
-  "%key-name-to-bytes encodes modified F-keys / page keys as ESC [ param ; mod ~."
-  (flet ((bytes (name) (coerce (cl-tmux/commands::%key-name-to-bytes name) 'list)))
-    (is (equal '(27 91 49 53 59 53 126) (bytes "C-F5"))     "C-F5 → ESC[15;5~")
-    (is (equal '(27 91 53 59 53 126)    (bytes "C-PageUp")) "C-PageUp → ESC[5;5~")
-    (is (equal '(27 91 51 59 50 126)    (bytes "S-Delete")) "S-Delete → ESC[3;2~")))
 
 (test key-name-to-bytes-modified-does-not-break-control-chars
   "A C-/M- prefix on a plain char still yields the control/meta byte, not a CSI
