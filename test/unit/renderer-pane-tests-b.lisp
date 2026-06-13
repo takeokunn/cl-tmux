@@ -98,87 +98,39 @@
   "Call in-selection-p with positional args in a more readable order."
   (cl-tmux/renderer::in-selection-p row col sr er sc ec rect-p))
 
-(test in-selection-p-single-row-inside-range
-  "Single-row selection: cell within [sel-start-c, sel-end-c) is included."
-  (is-true (%in-sel 2 3 2 2 1 5)
-           "row=2 col=3 in single-row selection [1,5) must be T"))
-
-(test in-selection-p-single-row-left-boundary
-  "Single-row selection: cell at sel-start-c is included (inclusive lower bound)."
-  (is-true (%in-sel 2 1 2 2 1 5)
-           "col at sel-start-c must be included"))
-
-(test in-selection-p-single-row-right-boundary-exclusive
-  "Single-row selection: cell at sel-end-c is excluded (exclusive upper bound)."
-  (is-false (%in-sel 2 5 2 2 1 5)
-            "col at sel-end-c must be excluded"))
-
-(test in-selection-p-single-row-outside-left
-  "Single-row selection: cell before sel-start-c is excluded."
-  (is-false (%in-sel 2 0 2 2 1 5)
-            "col before sel-start-c must be excluded"))
-
-(test in-selection-p-first-row-of-multirow
-  "First row of multi-row selection: cols >= sel-start-c are included."
-  (is-true  (%in-sel 0 3 0 2 2 4) "col >= sel-start-c on first row must be T")
-  (is-false (%in-sel 0 1 0 2 2 4) "col < sel-start-c on first row must be F"))
-
-(test in-selection-p-last-row-of-multirow
-  "Last row of multi-row selection: cols < sel-end-c are included."
-  (is-true  (%in-sel 2 3 0 2 2 4) "col < sel-end-c on last row must be T")
-  (is-false (%in-sel 2 4 0 2 2 4) "col = sel-end-c on last row must be F (exclusive)"))
-
-(test in-selection-p-middle-row-of-multirow
-  "Middle rows of multi-row selection: all cells are included."
-  (is-true (%in-sel 1 0 0 2 2 4) "col 0 in middle row must be T (full row)")
-  (is-true (%in-sel 1 7 0 2 2 4) "col 7 in middle row must be T (full row)"))
-
-(test in-selection-p-row-before-selection-excluded
-  "Row before selection start is not included."
-  (is-false (%in-sel 0 0 1 3 0 5)
-            "row before sel-start-r must be excluded"))
-
-(test in-selection-p-row-after-selection-excluded
-  "Row after selection end is not included."
-  (is-false (%in-sel 4 0 1 3 0 5)
-            "row after sel-end-r must be excluded"))
-
-;;; -- in-selection-p rectangle mode -------------------------------------------
-
-(test in-selection-p-rect-inside-box
-  "Rectangle mode: cell inside the column × row box is selected."
-  (is-true (%in-sel 2 3 1 4 2 6 t)
-           "row=2 col=3 inside rect [rows 1-4, cols 2-6) must be T"))
-
-(test in-selection-p-rect-boundary-col-inclusive
-  "Rectangle mode: cell at start-c is included."
-  (is-true (%in-sel 2 2 1 4 2 6 t)
-           "col=start-c must be included in rectangle"))
-
-(test in-selection-p-rect-boundary-col-exclusive
-  "Rectangle mode: cell at end-c is excluded."
-  (is-false (%in-sel 2 6 1 4 2 6 t)
-            "col=end-c must be excluded from rectangle"))
-
-(test in-selection-p-rect-boundary-rows
-  "Rectangle mode: cells on both boundary rows are included if col is in range."
-  (is-true  (%in-sel 1 3 1 4 2 6 t) "start row must be included")
-  (is-true  (%in-sel 4 3 1 4 2 6 t) "end row must be included"))
-
-(test in-selection-p-rect-outside-col-range
-  "Rectangle mode: cells in the row range but outside the column range are excluded."
-  (is-false (%in-sel 2 1 1 4 2 6 t) "col before start-c must be excluded")
-  (is-false (%in-sel 2 7 1 4 2 6 t) "col after end-c must be excluded"))
-
-(test in-selection-p-rect-outside-row-range
-  "Rectangle mode: rows outside the row range are excluded regardless of column."
-  (is-false (%in-sel 0 3 1 4 2 6 t) "row before start must be excluded")
-  (is-false (%in-sel 5 3 1 4 2 6 t) "row after end must be excluded"))
-
-(test in-selection-p-rect-middle-row-only-in-col-range
-  "Rectangle mode: middle rows are NOT fully selected — only cells within the column range."
-  (is-true  (%in-sel 2 4 1 4 2 6 t) "col inside range on middle row must be T")
-  (is-false (%in-sel 2 0 1 4 2 6 t) "col 0 on middle row outside range must be F"))
+(test in-selection-p-table
+  "in-selection-p covers all four cond branches (single-row, first/last/mid row, rect mode).
+   Each row is (expected row col sr er sc ec rect-p description)."
+  (dolist (c '(;; single-row selection (sr = er = 2, sc=1, ec=5)
+               (t   2 3 2 2 1 5 nil "single-row inside [1,5)")
+               (t   2 1 2 2 1 5 nil "single-row at left boundary (inclusive)")
+               (nil 2 5 2 2 1 5 nil "single-row at right boundary (exclusive)")
+               (nil 2 0 2 2 1 5 nil "single-row before sc")
+               ;; multi-row: sr=0, er=2, sc=2, ec=4
+               (t   0 3 0 2 2 4 nil "first row, col >= sc")
+               (nil 0 1 0 2 2 4 nil "first row, col < sc")
+               (t   2 3 0 2 2 4 nil "last row, col < ec")
+               (nil 2 4 0 2 2 4 nil "last row, col = ec (exclusive)")
+               (t   1 0 0 2 2 4 nil "middle row, col 0 (full row)")
+               (t   1 7 0 2 2 4 nil "middle row, col 7 (full row)")
+               (nil 0 0 1 3 0 5 nil "row before sr")
+               (nil 4 0 1 3 0 5 nil "row after er")
+               ;; rectangle mode: sr=1, er=4, sc=2, ec=6
+               (t   2 3 1 4 2 6 t   "rect inside box")
+               (t   2 2 1 4 2 6 t   "rect col at sc (inclusive)")
+               (nil 2 6 1 4 2 6 t   "rect col at ec (exclusive)")
+               (t   1 3 1 4 2 6 t   "rect start row included")
+               (t   4 3 1 4 2 6 t   "rect end row included")
+               (nil 2 1 1 4 2 6 t   "rect col before sc")
+               (nil 2 7 1 4 2 6 t   "rect col after ec")
+               (nil 0 3 1 4 2 6 t   "rect row before sr")
+               (nil 5 3 1 4 2 6 t   "rect row after er")
+               (t   2 4 1 4 2 6 t   "rect middle row, col in range")
+               (nil 2 0 1 4 2 6 t   "rect middle row, col out of range")))
+    (destructuring-bind (expected row col sr er sc ec rect-p desc) c
+      (if expected
+          (is-true  (%in-sel row col sr er sc ec rect-p) "~A must be T"   desc)
+          (is-false (%in-sel row col sr er sc ec rect-p) "~A must be NIL" desc)))))
 
 ;;; -- %compute-selection-bounds unit tests ------------------------------------
 
