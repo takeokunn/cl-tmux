@@ -25,9 +25,8 @@
 
 (test dispatch-switch-client-next-single-session-is-noop
   ":switch-client-next with only one session in the registry is a no-op."
-  (let* ((s    (make-fake-session))
-         (name (session-name s)))
-    (with-loop-state
+  (with-fake-session (s)
+    (let ((name (session-name s)))
       (let ((cl-tmux::*server-sessions* (list (cons name s))))
         (finishes (cl-tmux::dispatch-command s :switch-client-next nil)
                   ":switch-client-next with a single session must not error")
@@ -223,11 +222,10 @@
 
 (test cmd-cycle-pane-prev-retreats-selection
   "%cmd-cycle-pane with prev-cyclic retreats the active pane."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s))
-         (p0  (first  (window-panes win)))
-         (p1  (second (window-panes win))))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s))
+           (p0  (first  (window-panes win)))
+           (p1  (second (window-panes win))))
       ;; Start at p0; prev-cyclic wraps to p1 (the last pane).
       (is (eq p0 (window-active-pane win)))
       (cl-tmux::%cmd-cycle-pane s #'cl-tmux::prev-cyclic)
@@ -238,10 +236,9 @@
 
 (test cmd-cycle-window-prev-retreats-selection
   "%cmd-cycle-window with prev-cyclic retreats the active window."
-  (let* ((s  (make-fake-session :nwindows 3))
-         (w0 (first  (session-windows s)))
-         (w2 (third  (session-windows s))))
-    (with-loop-state
+  (with-fake-session (s :nwindows 3)
+    (let ((w0 (first  (session-windows s)))
+          (w2 (third  (session-windows s))))
       ;; Start at w0; prev-cyclic wraps to w2 (the last window).
       (is (eq w0 (session-active-window s)))
       (cl-tmux::%cmd-cycle-window s #'cl-tmux::prev-cyclic)
@@ -288,11 +285,10 @@
 
 (test dispatch-prev-pane-wraps-from-first
   ":prev-pane cycles in reverse: from the first pane wraps to the last."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s))
-         (p0  (first  (window-panes win)))
-         (p1  (second (window-panes win))))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s))
+           (p0  (first  (window-panes win)))
+           (p1  (second (window-panes win))))
       (is (eq p0 (window-active-pane win)) "p0 is active initially")
       (cl-tmux::dispatch-command s :prev-pane nil)
       (is (eq p1 (window-active-pane win))
@@ -300,11 +296,10 @@
 
 (test dispatch-prev-pane-retreats-from-last
   ":prev-pane from the last pane selects the preceding pane."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s))
-         (p0  (first  (window-panes win)))
-         (p1  (second (window-panes win))))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s))
+           (p0  (first  (window-panes win)))
+           (p1  (second (window-panes win))))
       (window-select-pane win p1)
       (cl-tmux::dispatch-command s :prev-pane nil)
       (is (eq p0 (window-active-pane win))

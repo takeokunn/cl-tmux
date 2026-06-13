@@ -12,13 +12,12 @@
   "Switching windows sends ESC[I (focus gained) to the newly active window's pane
    when that pane's app enabled focus events."
   (with-pipe-fds (rfd wfd)
-    (let* ((s   (make-fake-session :nwindows 2 :npanes 1))
-           (w1  (second (session-windows s)))
-           (p1  (window-active-pane w1)))
-      ;; Make the SECOND window's pane a live, focus-aware PTY.
-      (setf (pane-fd p1) wfd)
-      (setf (cl-tmux/terminal/types:screen-focus-events (pane-screen p1)) t)
-      (with-loop-state
+    (with-fake-session (s :nwindows 2 :npanes 1)
+      (let* ((w1 (second (session-windows s)))
+             (p1 (window-active-pane w1)))
+        ;; Make the SECOND window's pane a live, focus-aware PTY.
+        (setf (pane-fd p1) wfd)
+        (setf (cl-tmux/terminal/types:screen-focus-events (pane-screen p1)) t)
         (cl-tmux::%cmd-cycle-window s #'cl-tmux::next-cyclic)
         (is (eq w1 (session-active-window s)) "next-window must activate w1")
         (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))  ; 200 ms
@@ -31,18 +30,17 @@
                 (is (= 3 n) "focus-in must be 3 bytes (got ~D)" n)
                 (is (= 27 (cffi:mem-aref buf :uint8 0)) "byte 0 must be ESC (27)")
                 (is (= 73 (cffi:mem-aref buf :uint8 2))
-                    "byte 2 must be #\\I (73) for focus gained")))))))))
+                    "byte 2 must be #\\I (73) for focus gained"))))))))
 
 (test cycle-window-delivers-focus-out-to-old-window-pane
   "Switching away from a window sends ESC[O (focus lost) to the window being left."
   (with-pipe-fds (rfd wfd)
-    (let* ((s   (make-fake-session :nwindows 2 :npanes 1))
-           (w0  (first (session-windows s)))
-           (p0  (window-active-pane w0)))
-      ;; The FIRST (currently active) window's pane is the live, focus-aware PTY.
-      (setf (pane-fd p0) wfd)
-      (setf (cl-tmux/terminal/types:screen-focus-events (pane-screen p0)) t)
-      (with-loop-state
+    (with-fake-session (s :nwindows 2 :npanes 1)
+      (let* ((w0 (first (session-windows s)))
+             (p0 (window-active-pane w0)))
+        ;; The FIRST (currently active) window's pane is the live, focus-aware PTY.
+        (setf (pane-fd p0) wfd)
+        (setf (cl-tmux/terminal/types:screen-focus-events (pane-screen p0)) t)
         (cl-tmux::%cmd-cycle-window s #'cl-tmux::next-cyclic)
         (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))
           (is-true ready "the old window's pane must receive a focus-out report")
@@ -54,19 +52,18 @@
                 (is (= 3 n) "focus-out must be 3 bytes (got ~D)" n)
                 (is (= 27 (cffi:mem-aref buf :uint8 0)) "byte 0 must be ESC (27)")
                 (is (= 79 (cffi:mem-aref buf :uint8 2))
-                    "byte 2 must be #\\O (79) for focus lost")))))))))
+                    "byte 2 must be #\\O (79) for focus lost"))))))))
 
 (test cycle-window-with-focus-events-no-pty-no-error
   "Cycling windows runs the focus-transition path without error when panes have no
    PTY, and still changes the active window."
-  (let* ((s   (make-fake-session :nwindows 2 :npanes 1))
-         (w0  (first  (session-windows s)))
-         (w1  (second (session-windows s))))
-    (setf (cl-tmux/terminal/types:screen-focus-events
-           (pane-screen (window-active-pane w0))) t)
-    (setf (cl-tmux/terminal/types:screen-focus-events
-           (pane-screen (window-active-pane w1))) t)
-    (with-loop-state
+  (with-fake-session (s :nwindows 2 :npanes 1)
+    (let ((w0 (first  (session-windows s)))
+          (w1 (second (session-windows s))))
+      (setf (cl-tmux/terminal/types:screen-focus-events
+             (pane-screen (window-active-pane w0))) t)
+      (setf (cl-tmux/terminal/types:screen-focus-events
+             (pane-screen (window-active-pane w1))) t)
       (is (eq w0 (session-active-window s)))
       (finishes (cl-tmux::%cmd-cycle-window s #'cl-tmux::next-cyclic))
       (is (eq w1 (session-active-window s))
@@ -292,9 +289,8 @@
 (test dispatch-list-sessions-populated-registry-shows-all-sessions
   ":list-sessions with *server-sessions* populated lists every registered
    session and marks the current one with an asterisk."
-  (let* ((s    (make-fake-session :nwindows 1))
-         (name (session-name s)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1)
+    (let ((name (session-name s)))
       (let ((*overlay* nil)
             (cl-tmux::*server-sessions* (list (cons name s))))
         (cl-tmux::dispatch-command s :list-sessions nil)
