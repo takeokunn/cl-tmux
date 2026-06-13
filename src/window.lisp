@@ -185,9 +185,7 @@
         ;; split against the active pane.
         (when (and leaf
                    (if full
-                       (>= (if (eq direction :h)
-                               (window-width window) (window-height window))
-                           2)
+                       (>= (%window-axis-extent window direction) 2)
                        (%split-fits-p active direction)))
           (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
         (let* ((new-pane (%fork-pane (next-pane-id window) px py pw ph
@@ -195,8 +193,7 @@
                ;; A full split's extent is the whole window along the split axis;
                ;; a normal split's is the active pane's extent.
                (avail    (1- (if full
-                                 (if (eq direction :h)
-                                     (window-width window) (window-height window))
+                                 (%window-axis-extent window direction)
                                  (%orient-pane-extent active direction))))
                (new-ratio (if size
                               (%ratio-from-size-hint size avail direction)
@@ -278,21 +275,18 @@
    (for MRU-style reselection), or NIL when WINDOW becomes empty."
   (let* ((tree (window-tree window))
          (leaf (layout-find-leaf tree pane)))
-    (if (not leaf)
-        (first (window-panes window))
+    (if leaf
         (multiple-value-bind (parent which) (layout-find-parent tree leaf)
           (setf (pane-window pane) nil)
-          (cond
-            ;; LEAF was the sole root — window becomes empty.
-            ((null parent)
-             (setf (window-tree  window) nil
-                   (window-panes window) nil)
-             nil)
-            ;; Normal case: collapse the parent split and relayout.
-            (t
-             (let ((sibling (%collapse-parent window parent which)))
-               (window-relayout-current window)
-               (first (layout-leaves sibling)))))))))
+          (if parent
+              ;; Normal case: collapse the parent split and relayout.
+              (let ((sibling (%collapse-parent window parent which)))
+                (window-relayout-current window)
+                (first (layout-leaves sibling)))
+              ;; LEAF was the sole root — window becomes empty.
+              (setf (window-tree  window) nil
+                    (window-panes window) nil)))
+        (first (window-panes window)))))
 
 ;;; ── Resize via the tree ──────────────────────────────────────────────────
 
