@@ -82,7 +82,7 @@
 (defun %ground-values ()
   "The standard CPS return for 'sequence consumed, reset to ground state':
    (values NIL #'%ground-input-state).  Named so call sites are self-documenting."
-  (%ground-values))
+  (values nil #'%ground-input-state))
 
 ;;; ── make-escape-input-k: sub-state decoder helpers ──────────────────────────
 ;;;
