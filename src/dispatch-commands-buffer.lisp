@@ -191,10 +191,8 @@
   (declare (ignore session))  ; session used via closure in item command
   (with-command-flags+pos (flags positionals args "Txy")
     (let* ((title (or (cdr (assoc #\T flags)) "Menu"))
-           (x-str (cdr (assoc #\x flags)))
-           (y-str (cdr (assoc #\y flags)))
-           (menu-x (and x-str (parse-integer x-str :junk-allowed t)))
-           (menu-y (and y-str (parse-integer y-str :junk-allowed t)))
+           (menu-x (%parse-flag-int flags #\x))
+           (menu-y (%parse-flag-int flags #\y))
            ;; Build items from consecutive (label key command) triples.
            ;; Silently skip incomplete triples (real tmux shows an error).
            (items (loop for (label key cmd) on positionals by #'cdddr
