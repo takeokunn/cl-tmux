@@ -95,9 +95,8 @@
 
 (test control-run-command-frames-output
   "%control-run-command frames a command's overlay output in a %begin/%end block."
-  (with-loop-state
-    (let* ((s     (make-fake-session))
-           (reply (cl-tmux::%control-run-command s "display-message hello" 1)))
+  (with-fake-session (s)
+    (let* ((reply (cl-tmux::%control-run-command s "display-message hello" 1)))
       (is (search "%begin 0 1 1" reply) "reply opens with %begin for command 1")
       (is (search "%end 0 1 1" reply)   "reply closes with %end")
       (is (search "hello" reply)        "the command's output is in the reply body"))))
@@ -105,9 +104,8 @@
 (test control-mode-loop-frames-each-and-exits
   "control-mode-loop runs each input line as the next numbered command and emits
    %exit at EOF."
-  (with-loop-state
-    (let* ((s   (make-fake-session))
-           (out (with-output-to-string (o)
+  (with-fake-session (s)
+    (let* ((out (with-output-to-string (o)
                   (with-input-from-string
                       (i (format nil "display-message a~%display-message b~%"))
                     (cl-tmux::control-mode-loop s i o)))))
@@ -117,9 +115,8 @@
 
 (test control-mode-loop-skips-blank-lines
   "Blank input lines are not run as commands (no reply framed for them)."
-  (with-loop-state
-    (let* ((s   (make-fake-session))
-           (out (with-output-to-string (o)
+  (with-fake-session (s)
+    (let* ((out (with-output-to-string (o)
                   (with-input-from-string (i (format nil "~%display-message x~%~%"))
                     (cl-tmux::control-mode-loop s i o)))))
       (is (search "%begin 0 1 1" out) "the one real command is command 1")

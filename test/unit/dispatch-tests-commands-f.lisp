@@ -171,9 +171,8 @@
   "confirm-before COMMAND opens a SINGLE-KEY prompt: one 'y' keypress (no Enter)
    runs the command."
   (with-isolated-config
-    (with-loop-state
-      (let ((cl-tmux/prompt:*prompt* nil)
-            (s (make-fake-session)))
+    (with-fake-session (s)
+      (let ((cl-tmux/prompt:*prompt* nil))
         (cl-tmux::%cmd-confirm-before-arg s '("set" "-g" "status-left" "YES"))
         (is (prompt-active-p) "confirm-before must open a prompt")
         (is-true (prompt-single-key *prompt*) "the prompt must be single-key")
@@ -185,9 +184,8 @@
 (test confirm-before-arg-single-key-other-cancels
   "A non-y single key cancels confirm-before without running the command."
   (with-isolated-config
-    (with-loop-state
-      (let ((cl-tmux/prompt:*prompt* nil)
-            (s (make-fake-session)))
+    (with-fake-session (s)
+      (let ((cl-tmux/prompt:*prompt* nil))
         (cl-tmux/options:set-option "status-left" "ORIG")
         (cl-tmux::%cmd-confirm-before-arg s '("set" "-g" "status-left" "YES"))
         (cl-tmux::handle-prompt-key (char-code #\n))   ; 'n' cancels
@@ -199,9 +197,8 @@
   "command-prompt -1 -p k: 'set -g status-left %1' is a single-key prompt: one
    keypress (no Enter) is substituted for %1 and the command runs."
   (with-isolated-config
-    (with-loop-state
-      (let ((cl-tmux/prompt:*prompt* nil)
-            (s (make-fake-session)))
+    (with-fake-session (s)
+      (let ((cl-tmux/prompt:*prompt* nil))
         (cl-tmux::%cmd-command-prompt-arg
          s '("-1" "-p" "k:" "set -g status-left %1"))
         (is (prompt-active-p) "command-prompt -1 must open a prompt")

@@ -24,11 +24,10 @@
 (test cmd-display-popup-with-command-opens-popup
   "display-popup with -w/-T and a command runs it and shows a popup with the
    requested width and title."
-  (with-loop-state
-    (let ((*overlay* nil)           ; isolate the global overlay (not in with-loop-state)
+  (with-fake-session (s :nwindows 1)
+    (let ((*overlay* nil)
           (cl-tmux::*term-cols* 100)
-          (cl-tmux::*term-rows* 30)
-          (s (make-fake-session :nwindows 1)))
+          (cl-tmux::*term-rows* 30))
       (cl-tmux::%cmd-display-popup s '("-E" "-w" "40" "-T" "mytitle" "echo" "hi"))
       (is (not (null cl-tmux/prompt:*active-popup*))
           "a command argument opens the popup directly (no prompt)")
@@ -40,11 +39,10 @@
 
 (test cmd-display-popup-percent-width-of-terminal
   "display-popup -w 50% sizes the popup to half the terminal width."
-  (with-loop-state
-    (let ((*overlay* nil)           ; isolate the global overlay (not in with-loop-state)
+  (with-fake-session (s :nwindows 1)
+    (let ((*overlay* nil)
           (cl-tmux::*term-cols* 80)
-          (cl-tmux::*term-rows* 24)
-          (s (make-fake-session :nwindows 1)))
+          (cl-tmux::*term-rows* 24))
       (cl-tmux::%cmd-display-popup s '("-w" "50%" "echo" "x"))
       (is (= 40 (cl-tmux/prompt:popup-width cl-tmux/prompt:*active-popup*))
           "50% of 80 columns → 40"))))
@@ -52,9 +50,8 @@
 (test cmd-display-popup-no-command-opens-prompt
   "display-popup with no command opens the interactive popup-command prompt
    rather than a popup overlay (legacy behaviour preserved)."
-  (with-loop-state
-    (let ((*prompt* nil)            ; isolate the global prompt (not in with-loop-state)
-          (s (make-fake-session :nwindows 1)))
+  (with-fake-session (s :nwindows 1)
+    (let ((*prompt* nil))
       (cl-tmux::%cmd-display-popup s '())
       (is (null cl-tmux/prompt:*active-popup*)
           "no command → no popup overlay yet")
@@ -197,22 +194,20 @@
 (test cmd-paste-buffer-d-deletes-named-after-paste
   "paste-buffer -d -b name deletes the named buffer after pasting it."
   (with-empty-buffers
-    (with-loop-state
-      (let ((s (make-fake-session)))
-        (cl-tmux/buffer:set-named-buffer "b" "data")
-        (cl-tmux::%cmd-paste-buffer-arg s '("-d" "-b" "b"))
-        (is (null (cl-tmux/buffer:get-buffer-by-name "b"))
-            "-d removes the named buffer after pasting")))))
+    (with-fake-session (s)
+      (cl-tmux/buffer:set-named-buffer "b" "data")
+      (cl-tmux::%cmd-paste-buffer-arg s '("-d" "-b" "b"))
+      (is (null (cl-tmux/buffer:get-buffer-by-name "b"))
+          "-d removes the named buffer after pasting"))))
 
 (test cmd-capture-pane-b-stores-named
   "capture-pane -b name stores the captured content under that name."
   (with-empty-buffers
-    (with-loop-state
-      (let ((s (make-fake-session)))
-        (feed (active-screen s) "captured text")
-        (cl-tmux::%cmd-capture-pane-arg s '("-b" "cap"))
-        (is (search "captured text" (or (cl-tmux/buffer:get-buffer-by-name "cap") ""))
-            "capture-pane -b stores the capture under the given name")))))
+    (with-fake-session (s)
+      (feed (active-screen s) "captured text")
+      (cl-tmux::%cmd-capture-pane-arg s '("-b" "cap"))
+      (is (search "captured text" (or (cl-tmux/buffer:get-buffer-by-name "cap") ""))
+          "capture-pane -b stores the capture under the given name"))))
 
 (test config-bind-accepts-paste-buffer-b-flag
   "`bind X paste-buffer -b foo` is accepted by the config parser."

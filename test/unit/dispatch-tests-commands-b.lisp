@@ -320,9 +320,8 @@
 
 (test dispatch-has-session-found-shows-yes
   ":has-session on-submit shows 'yes' when the session is registered."
-  (let* ((s    (make-fake-session))
-         (name (session-name s)))
-    (with-loop-state
+  (with-fake-session (s)
+    (let ((name (session-name s)))
       (let ((*prompt* nil) (*overlay* nil)
             (cl-tmux::*server-sessions* (list (cons name s))))
         (cl-tmux::dispatch-command s :has-session nil)

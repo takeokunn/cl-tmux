@@ -20,9 +20,8 @@
 
 (test dispatch-attach-session-found-session
   ":attach-session on-submit touches a registered session and shows a confirmation."
-  (let* ((s    (make-fake-session))
-         (name (session-name s)))
-    (with-loop-state
+  (with-fake-session (s)
+    (let ((name (session-name s)))
       (let ((*prompt* nil) (*overlay* nil)
             (cl-tmux::*server-sessions* (list (cons name s))))
         (cl-tmux::dispatch-command s :attach-session nil)
@@ -305,9 +304,8 @@
 
 (test run-command-line-rename-session-updates-registry
   "'rename-session <name>' via command line updates *server-sessions*."
-  (let* ((s    (make-fake-session))
-         (orig (session-name s)))
-    (with-loop-state
+  (with-fake-session (s)
+    (let ((orig (session-name s)))
       (let ((cl-tmux::*server-sessions* (list (cons orig s))))
         (cl-tmux::%run-command-line s "rename-session newsessname")
         (is (string= "newsessname" (session-name s))
