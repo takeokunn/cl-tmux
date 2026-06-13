@@ -66,13 +66,15 @@
 
 ;;; ── :mark-pane / :clear-mark dispatch ────────────────────────────────────────
 
-(test dispatch-mark-pane-marks-active-pane
-  ":mark-pane marks the active pane."
+(test dispatch-mark-pane-marks-pane-and-sets-server-pointer
+  ":mark-pane sets pane-marked and updates *server-marked-pane* to the active pane."
   (with-fake-session (s)
     (let ((ap (session-active-pane s)))
       (setf (pane-marked ap) nil)
       (cl-tmux::dispatch-command s :mark-pane nil)
-      (is-true (pane-marked ap) ":mark-pane must set pane-marked to T"))))
+      (is-true (pane-marked ap) ":mark-pane must set pane-marked to T")
+      (is (eq ap cl-tmux::*server-marked-pane*)
+          "*server-marked-pane* must point to the newly marked pane"))))
 
 (test dispatch-mark-pane-toggles-off
   ":mark-pane on an already-marked pane clears the mark (toggle)."
@@ -92,14 +94,6 @@
       (cl-tmux::dispatch-command s :clear-mark nil)
       (is-false (pane-marked ap)
                 ":clear-mark must clear the server-wide marked pane"))))
-
-(test dispatch-mark-pane-sets-server-marked-pane
-  ":mark-pane updates *server-marked-pane* to the active pane."
-  (with-fake-session (s)
-    (let ((ap (session-active-pane s)))
-      (cl-tmux::dispatch-command s :mark-pane nil)
-      (is (eq ap cl-tmux::*server-marked-pane*)
-          "*server-marked-pane* must point to the newly marked pane"))))
 
 (test dispatch-mark-pane-cross-window-clears-previous
   ":mark-pane in a second window clears the mark from a pane in the first window."
