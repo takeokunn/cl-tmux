@@ -8,10 +8,11 @@
 
 (in-suite dispatch-suite)
 
-;;; ── copy-mode paging / scrolling / movement command dispatch ─────────────────
+;;; ── copy-mode paging / scrolling / movement / selection / copy commands ─────
 ;;;
-;;; These commands delegate to copy-mode helpers via %copy-mode-call.
-;;; We verify each dispatches without error when copy mode is active.
+;;; All commands below share one contract: dispatch without error when copy mode
+;;; is active.  One table-driven test covers the whole set; the command keyword
+;;; in the finishes message keeps per-command failure messages specific.
 
 (defmacro with-copy-mode-active ((session-var) &body body)
   "Enter copy mode on a fresh fake session bound to SESSION-VAR, run BODY.
@@ -22,131 +23,23 @@
          "copy mode must be on before testing copy-mode commands")
      ,@body))
 
-(test copy-mode-page-up-scrolls-viewport-back
-  ":copy-mode-page-up scrolls the copy-mode viewport toward the beginning of history."
+(test copy-mode-commands-dispatch-without-error
+  "All copy-mode navigation, selection, and copy commands dispatch without error
+   when copy mode is active."
   (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-page-up nil)
-              ":copy-mode-page-up must not signal an error")))
-
-(test copy-mode-page-down-scrolls-viewport-forward
-  ":copy-mode-page-down scrolls the copy-mode viewport toward the end of the buffer."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-page-down nil)
-              ":copy-mode-page-down must not signal an error")))
-
-(test copy-mode-half-page-up-scrolls-half-viewport-back
-  ":copy-mode-half-page-up scrolls the viewport back by half a screen."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-half-page-up nil)
-              ":copy-mode-half-page-up must not signal an error")))
-
-(test copy-mode-half-page-down-scrolls-half-viewport-forward
-  ":copy-mode-half-page-down scrolls the viewport forward by half a screen."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-half-page-down nil)
-              ":copy-mode-half-page-down must not signal an error")))
-
-(test copy-mode-scroll-up-line-scrolls-one-line-back
-  ":copy-mode-scroll-up-line scrolls the viewport back by one line."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-scroll-up-line nil)
-              ":copy-mode-scroll-up-line must not signal an error")))
-
-(test copy-mode-scroll-down-line-scrolls-one-line-forward
-  ":copy-mode-scroll-down-line scrolls the viewport forward by one line."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-scroll-down-line nil)
-              ":copy-mode-scroll-down-line must not signal an error")))
-
-(test copy-mode-word-forward-advances-cursor-by-one-word
-  ":copy-mode-word-forward advances the copy-mode cursor to the start of the next word."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-word-forward nil)
-              ":copy-mode-word-forward must not signal an error")))
-
-(test copy-mode-word-backward-retreats-cursor-by-one-word
-  ":copy-mode-word-backward moves the copy-mode cursor to the start of the previous word."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-word-backward nil)
-              ":copy-mode-word-backward must not signal an error")))
-
-(test copy-mode-word-end-advances-cursor-to-end-of-word
-  ":copy-mode-word-end advances the copy-mode cursor to the last character of the current word."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-word-end nil)
-              ":copy-mode-word-end must not signal an error")))
-
-(test copy-mode-line-start-moves-cursor-to-column-zero
-  ":copy-mode-line-start moves the copy-mode cursor to column 0 of the current line."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-line-start nil)
-              ":copy-mode-line-start must not signal an error")))
-
-(test copy-mode-line-end-moves-cursor-to-last-column
-  ":copy-mode-line-end moves the copy-mode cursor to the last column of the current line."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-line-end nil)
-              ":copy-mode-line-end must not signal an error")))
-
-(test copy-mode-top-moves-cursor-to-first-visible-line
-  ":copy-mode-top moves the copy-mode cursor to the top of the visible viewport."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-top nil)
-              ":copy-mode-top must not signal an error")))
-
-(test copy-mode-bottom-moves-cursor-to-last-visible-line
-  ":copy-mode-bottom moves the copy-mode cursor to the bottom of the visible viewport."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-bottom nil)
-              ":copy-mode-bottom must not signal an error")))
-
-(test copy-mode-high-moves-cursor-to-top-of-screen
-  ":copy-mode-high positions the copy-mode cursor on the topmost screen row (H key)."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-high nil)
-              ":copy-mode-high must not signal an error")))
-
-(test copy-mode-middle-moves-cursor-to-middle-of-screen
-  ":copy-mode-middle positions the copy-mode cursor on the middle screen row (M key)."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-middle nil)
-              ":copy-mode-middle must not signal an error")))
-
-(test copy-mode-low-moves-cursor-to-bottom-of-screen
-  ":copy-mode-low positions the copy-mode cursor on the lowest screen row (L key)."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-low nil)
-              ":copy-mode-low must not signal an error")))
-
-(test copy-mode-begin-line-selection-starts-line-wise-selection
-  ":copy-mode-begin-line-selection starts a line-wise selection at the cursor position."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-begin-line-selection nil)
-              ":copy-mode-begin-line-selection must not signal an error")))
-
-(test copy-mode-copy-end-of-line-yanks-to-line-end
-  ":copy-mode-copy-end-of-line copies text from the cursor to the end of the line."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-copy-end-of-line nil)
-              ":copy-mode-copy-end-of-line must not signal an error")))
-
-(test copy-mode-copy-line-yanks-entire-current-line
-  ":copy-mode-copy-line copies the entire current line into the paste buffer."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-copy-line nil)
-              ":copy-mode-copy-line must not signal an error")))
-
-(test copy-mode-search-next-advances-to-next-match
-  ":copy-mode-search-next moves the cursor to the next search match (n key)."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-search-next nil)
-              ":copy-mode-search-next must not signal an error")))
-
-(test copy-mode-search-prev-retreats-to-previous-match
-  ":copy-mode-search-prev moves the cursor to the previous search match (N key)."
-  (with-copy-mode-active (s)
-    (finishes (cl-tmux::dispatch-command s :copy-mode-search-prev nil)
-              ":copy-mode-search-prev must not signal an error")))
+    (dolist (cmd '(:copy-mode-page-up          :copy-mode-page-down
+                   :copy-mode-half-page-up     :copy-mode-half-page-down
+                   :copy-mode-scroll-up-line   :copy-mode-scroll-down-line
+                   :copy-mode-word-forward     :copy-mode-word-backward
+                   :copy-mode-word-end
+                   :copy-mode-line-start       :copy-mode-line-end
+                   :copy-mode-top              :copy-mode-bottom
+                   :copy-mode-high             :copy-mode-middle        :copy-mode-low
+                   :copy-mode-begin-line-selection
+                   :copy-mode-copy-end-of-line :copy-mode-copy-line
+                   :copy-mode-search-next      :copy-mode-search-prev))
+      (finishes (cl-tmux::dispatch-command s cmd nil)
+                "~A must not signal an error in copy mode" cmd))))
 
 (test dispatch-copy-mode-choose-buffer-no-buffers-shows-overlay
   ":copy-mode-choose-buffer opens an overlay saying 'no paste buffers' when ring is empty."
