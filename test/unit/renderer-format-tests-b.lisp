@@ -27,15 +27,13 @@
 
 ;;; ── attrs2: double-underline and overline ────────────────────────────────────
 
-(test render-cell-attrs2-double-underline
-  "attrs2 bit 0 (+attr2-double-underline+) emits ;21 in the SGR string."
-  (let ((out (cell-attrs-string 0 0 0 1)))    ; attrs2 bit0 = double-underline
-    (is (search ";21" out) "double-underline (attrs2 bit0) must emit ;21 (got ~S)" out)))
-
-(test render-cell-attrs2-overline
-  "attrs2 bit 1 (+attr2-overline+) emits ;53 in the SGR string."
-  (let ((out (cell-attrs-string 0 0 0 2)))    ; attrs2 bit1 = overline
-    (is (search ";53" out) "overline (attrs2 bit1) must emit ;53 (got ~S)" out)))
+(test render-cell-attrs2-single-bit-table
+  "Each attrs2 bit alone emits the correct SGR code."
+  (dolist (c '((1 ";21" "double-underline (attrs2 bit0) → ;21")
+               (2 ";53" "overline (attrs2 bit1) → ;53")))
+    (destructuring-bind (attrs2 expected desc) c
+      (let ((out (cell-attrs-string 0 0 0 attrs2)))
+        (is (search expected out) "~A (got ~S)" desc out)))))
 
 (test render-cell-attrs2-double-underline-and-overline
   "attrs2 with both bits set emits both ;21 and ;53."
@@ -79,60 +77,28 @@
 
 ;;; ── %dispatch-style-token remaining tokens ───────────────────────────────────
 
-(test dispatch-style-token-dim
-  "%dispatch-style-token 'dim' sets :dim T."
-  (let ((cell (list nil)))
-    (is-true (cl-tmux/renderer::%dispatch-style-token "dim" cell)
-             "%dispatch-style-token must return T for 'dim'")
-    (is-true (getf (car cell) :dim) ":dim must be T after dispatch")))
+(test dispatch-style-token-extra-attrs-table
+  "%dispatch-style-token sets the correct plist key for dim, italics, blink, conceal, strikethrough."
+  (dolist (c '(("dim"           :dim)
+               ("italics"       :italics)
+               ("blink"         :blink)
+               ("conceal"       :conceal)
+               ("strikethrough" :strikethrough)))
+    (destructuring-bind (token key) c
+      (let ((cell (list nil)))
+        (is-true (cl-tmux/renderer::%dispatch-style-token token cell) "~A: returns T" token)
+        (is-true (getf (car cell) key) "~A: attr set" token)))))
 
-(test dispatch-style-token-italics
-  "%dispatch-style-token 'italics' sets :italics T."
-  (let ((cell (list nil)))
-    (cl-tmux/renderer::%dispatch-style-token "italics" cell)
-    (is-true (getf (car cell) :italics) ":italics must be T after dispatch")))
-
-(test dispatch-style-token-blink
-  "%dispatch-style-token 'blink' sets :blink T."
-  (let ((cell (list nil)))
-    (cl-tmux/renderer::%dispatch-style-token "blink" cell)
-    (is-true (getf (car cell) :blink) ":blink must be T after dispatch")))
-
-(test dispatch-style-token-conceal
-  "%dispatch-style-token 'conceal' sets :conceal T."
-  (let ((cell (list nil)))
-    (cl-tmux/renderer::%dispatch-style-token "conceal" cell)
-    (is-true (getf (car cell) :conceal) ":conceal must be T after dispatch")))
-
-(test dispatch-style-token-strikethrough
-  "%dispatch-style-token 'strikethrough' sets :strikethrough T."
-  (let ((cell (list nil)))
-    (cl-tmux/renderer::%dispatch-style-token "strikethrough" cell)
-    (is-true (getf (car cell) :strikethrough) ":strikethrough must be T after dispatch")))
-
-(test dispatch-style-token-nodim
-  "%dispatch-style-token 'nodim' sets :dim NIL."
-  (let ((cell (list (list :dim t))))
-    (cl-tmux/renderer::%dispatch-style-token "nodim" cell)
-    (is (null (getf (car cell) :dim)) ":dim must be NIL after 'nodim'")))
-
-(test dispatch-style-token-noreverse
-  "%dispatch-style-token 'noreverse' sets :reverse NIL."
-  (let ((cell (list (list :reverse t))))
-    (cl-tmux/renderer::%dispatch-style-token "noreverse" cell)
-    (is (null (getf (car cell) :reverse)) ":reverse must be NIL after 'noreverse'")))
-
-(test dispatch-style-token-nounderline
-  "%dispatch-style-token 'nounderline' sets :underline NIL."
-  (let ((cell (list (list :underline t))))
-    (cl-tmux/renderer::%dispatch-style-token "nounderline" cell)
-    (is (null (getf (car cell) :underline)) ":underline must be NIL after 'nounderline'")))
-
-(test dispatch-style-token-noitalics
-  "%dispatch-style-token 'noitalics' sets :italics NIL."
-  (let ((cell (list (list :italics t))))
-    (cl-tmux/renderer::%dispatch-style-token "noitalics" cell)
-    (is (null (getf (car cell) :italics)) ":italics must be NIL after 'noitalics'")))
+(test dispatch-style-token-no-attrs-table
+  "%dispatch-style-token clears the correct plist key for each 'no*' token."
+  (dolist (c '(("nodim"       :dim)
+               ("noreverse"   :reverse)
+               ("nounderline" :underline)
+               ("noitalics"   :italics)))
+    (destructuring-bind (token key) c
+      (let ((cell (list (list key t))))
+        (cl-tmux/renderer::%dispatch-style-token token cell)
+        (is (null (getf (car cell) key)) "~A: ~S must be NIL" token key)))))
 
 ;;; ── %emit-style-attrs remaining attributes ───────────────────────────────────
 
@@ -204,15 +170,13 @@
 
 ;;; ── %color-name-to-sgr-number brightblack / brightwhite ─────────────────────
 
-(test color-name-to-sgr-number-brightblack-fg
-  "%color-name-to-sgr-number for 'brightblack' (fg) returns the bright ANSI code."
-  (is (string= "90" (cl-tmux/renderer::%color-name-to-sgr-number "brightblack" nil))
-      "fg 'brightblack' must produce \"90\""))
-
-(test color-name-to-sgr-number-brightwhite-bg
-  "%color-name-to-sgr-number for 'brightwhite' (bg) returns the bright background code."
-  (is (string= "107" (cl-tmux/renderer::%color-name-to-sgr-number "brightwhite" t))
-      "bg 'brightwhite' must produce \"107\""))
+(test color-name-to-sgr-number-bright-table
+  "%color-name-to-sgr-number maps bright colour names to correct fg/bg codes."
+  (dolist (c '(("brightblack" nil "90"  "fg brightblack → 90")
+               ("brightwhite" t   "107" "bg brightwhite → 107")))
+    (destructuring-bind (color is-bg expected desc) c
+      (is (string= expected (cl-tmux/renderer::%color-name-to-sgr-number color is-bg))
+          "~A" desc))))
 
 ;;; ── %border-color-sgr all named colours table ────────────────────────────────
 
@@ -230,27 +194,17 @@
 ;;; The 'padded' and 'none' styles both return all-space characters.
 ;;; These were previously untested (only rounded/double/heavy/single/simple covered).
 
-(test dispatch-border-charset-padded-all-spaces
-  "%dispatch-border-charset 'padded' returns all space characters."
-  (multiple-value-bind (tl tr bl br h v)
-      (cl-tmux/renderer::%dispatch-border-charset "padded")
-    (is (char= #\Space tl) "padded tl must be space")
-    (is (char= #\Space tr) "padded tr must be space")
-    (is (char= #\Space bl) "padded bl must be space")
-    (is (char= #\Space br) "padded br must be space")
-    (is (char= #\Space h)  "padded h must be space")
-    (is (char= #\Space v)  "padded v must be space")))
-
-(test dispatch-border-charset-none-all-spaces
-  "%dispatch-border-charset 'none' returns all space characters."
-  (multiple-value-bind (tl tr bl br h v)
-      (cl-tmux/renderer::%dispatch-border-charset "none")
-    (is (char= #\Space tl) "none tl must be space")
-    (is (char= #\Space tr) "none tr must be space")
-    (is (char= #\Space bl) "none bl must be space")
-    (is (char= #\Space br) "none br must be space")
-    (is (char= #\Space h)  "none h must be space")
-    (is (char= #\Space v)  "none v must be space")))
+(test dispatch-border-charset-all-spaces-table
+  "%dispatch-border-charset 'padded' and 'none' both return all space characters."
+  (dolist (style '("padded" "none"))
+    (multiple-value-bind (tl tr bl br h v)
+        (cl-tmux/renderer::%dispatch-border-charset style)
+      (is (char= #\Space tl) "~A tl must be space" style)
+      (is (char= #\Space tr) "~A tr must be space" style)
+      (is (char= #\Space bl) "~A bl must be space" style)
+      (is (char= #\Space br) "~A br must be space" style)
+      (is (char= #\Space h)  "~A h must be space" style)
+      (is (char= #\Space v)  "~A v must be space" style))))
 
 (test dispatch-border-charset-unknown-falls-back-to-single
   "%dispatch-border-charset with an unknown style returns the single-line characters."

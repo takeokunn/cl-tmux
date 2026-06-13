@@ -6,25 +6,15 @@
 
 ;;; ── Format arithmetic #{e|OP|A,B} ───────────────────────────────────────────
 
-(test format-arithmetic-addition
-  "#{e|+|1,2} expands to 3."
-  (is (string= "3" (fmt "#{e|+|1,2}"))))
-
-(test format-arithmetic-subtraction
-  "#{e|-|5,2} expands to 3."
-  (is (string= "3" (fmt "#{e|-|5,2}"))))
-
-(test format-arithmetic-multiplication
-  "#{e|*|3,4} expands to 12."
-  (is (string= "12" (fmt "#{e|*|3,4}"))))
-
-(test format-arithmetic-division
-  "#{e|/|10,3} expands to 3 (integer division)."
-  (is (string= "3" (fmt "#{e|/|10,3}"))))
-
-(test format-arithmetic-modulo
-  "#{e|%|10,3} expands to 1."
-  (is (string= "1" (fmt "#{e|%|10,3}"))))
+(test format-arithmetic-table
+  "#{e|OP|A,B} expands to the integer result of the arithmetic operation."
+  (dolist (c '(("#{e|+|1,2}"  "3"  "addition")
+               ("#{e|-|5,2}"  "3"  "subtraction")
+               ("#{e|*|3,4}"  "12" "multiplication")
+               ("#{e|/|10,3}" "3"  "integer division")
+               ("#{e|%|10,3}" "1"  "modulo")))
+    (destructuring-bind (spec expected desc) c
+      (is (string= expected (fmt spec)) "~A" desc))))
 
 (test format-arithmetic-with-variable
   "#{e|+|1,#{window_index}} expands to window_index+1."

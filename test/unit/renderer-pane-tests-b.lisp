@@ -8,21 +8,14 @@
 
 ;;; -- %clock-digit-rows -------------------------------------------------------
 
-(test clock-digit-rows-zero
-  "%clock-digit-rows returns 3 row strings for digit 0."
-  (let ((rows (cl-tmux/renderer::%clock-digit-rows 0)))
-    (is (= 3 (length rows))
-        "%clock-digit-rows 0 must return 3 rows (got ~D)" (length rows))
-    (is (every #'stringp rows)
-        "%clock-digit-rows 0 must return strings")))
-
-(test clock-digit-rows-nine
-  "%clock-digit-rows returns non-empty strings for digit 9."
-  (let ((rows (cl-tmux/renderer::%clock-digit-rows 9)))
-    (is (= 3 (length rows))
-        "%clock-digit-rows 9 must return 3 rows (got ~D)" (length rows))
-    (is (every (lambda (r) (plusp (length r))) rows)
-        "%clock-digit-rows 9 rows must be non-empty")))
+(test clock-digit-rows-table
+  "%clock-digit-rows returns 3 non-empty strings for representative digits."
+  (dolist (digit '(0 9))
+    (let ((rows (cl-tmux/renderer::%clock-digit-rows digit)))
+      (is (= 3 (length rows))
+          "digit ~D: must return 3 rows (got ~D)" digit (length rows))
+      (is (every (lambda (r) (and (stringp r) (plusp (length r)))) rows)
+          "digit ~D: all rows must be non-empty strings" digit))))
 
 (test clock-digit-rows-all-digits-present
   "*clock-digits* has entries for all 10 digits (0..9)."

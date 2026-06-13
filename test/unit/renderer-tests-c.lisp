@@ -6,29 +6,21 @@
 
 ;;; ── enable-mouse-reporting / disable-mouse-reporting ─────────────────────────
 
-(test enable-mouse-reporting-emits-dec-sequences
-  "enable-mouse-reporting writes ?1000h, ?1002h, and ?1006h to *standard-output*."
-  (let ((out (let ((*standard-output* (make-string-output-stream)))
-               (cl-tmux/renderer::enable-mouse-reporting)
-               (get-output-stream-string *standard-output*))))
-    (is (search (format nil "~C[?1000h" #\Escape) out)
-        "enable-mouse-reporting must emit ?1000h (got ~S)" out)
-    (is (search (format nil "~C[?1002h" #\Escape) out)
-        "enable-mouse-reporting must emit ?1002h (got ~S)" out)
-    (is (search (format nil "~C[?1006h" #\Escape) out)
-        "enable-mouse-reporting must emit ?1006h (got ~S)" out)))
-
-(test disable-mouse-reporting-emits-dec-sequences
-  "disable-mouse-reporting writes ?1006l, ?1002l, and ?1000l to *standard-output*."
-  (let ((out (let ((*standard-output* (make-string-output-stream)))
-               (cl-tmux/renderer::disable-mouse-reporting)
-               (get-output-stream-string *standard-output*))))
-    (is (search (format nil "~C[?1006l" #\Escape) out)
-        "disable-mouse-reporting must emit ?1006l (got ~S)" out)
-    (is (search (format nil "~C[?1002l" #\Escape) out)
-        "disable-mouse-reporting must emit ?1002l (got ~S)" out)
-    (is (search (format nil "~C[?1000l" #\Escape) out)
-        "disable-mouse-reporting must emit ?1000l (got ~S)" out)))
+(test mouse-reporting-toggle-table
+  "enable/disable-mouse-reporting each write the correct set of DEC sequences."
+  (dolist (c '((cl-tmux/renderer::enable-mouse-reporting
+                ("?1000h" "?1002h" "?1006h")
+                "enable-mouse-reporting")
+               (cl-tmux/renderer::disable-mouse-reporting
+                ("?1006l" "?1002l" "?1000l")
+                "disable-mouse-reporting")))
+    (destructuring-bind (fn expected-suffixes desc) c
+      (let ((out (let ((*standard-output* (make-string-output-stream)))
+                   (funcall fn)
+                   (get-output-stream-string *standard-output*))))
+        (dolist (suffix expected-suffixes)
+          (is (search (format nil "~C[~A" #\Escape suffix) out)
+              "~A must emit ~A (got ~S)" desc suffix out))))))
 
 ;;; ── enable/disable-extended-keys (CSI u / modifyOtherKeys) ───────────────────
 
@@ -39,34 +31,20 @@
   (is (null (cl-tmux/renderer::extended-keys-level "off"))   "off → NIL")
   (is (null (cl-tmux/renderer::extended-keys-level nil))     "NIL → NIL"))
 
-(test enable-extended-keys-on-emits-level-1
-  "enable-extended-keys with \"on\" writes CSI > 4 ; 1 m and returns level 1."
-  (let* ((level nil)
-         (out (let ((*standard-output* (make-string-output-stream)))
-                (setf level (cl-tmux/renderer::enable-extended-keys "on"))
-                (get-output-stream-string *standard-output*))))
-    (is (= 1 level) "returns the emitted level")
-    (is (search (format nil "~C[>4;1m" #\Escape) out)
-        "must emit CSI > 4 ; 1 m (got ~S)" out)))
-
-(test enable-extended-keys-always-emits-level-2
-  "enable-extended-keys with \"always\" writes CSI > 4 ; 2 m and returns level 2."
-  (let* ((level nil)
-         (out (let ((*standard-output* (make-string-output-stream)))
-                (setf level (cl-tmux/renderer::enable-extended-keys "always"))
-                (get-output-stream-string *standard-output*))))
-    (is (= 2 level) "returns the emitted level")
-    (is (search (format nil "~C[>4;2m" #\Escape) out)
-        "must emit CSI > 4 ; 2 m (got ~S)" out)))
-
-(test enable-extended-keys-off-emits-nothing
-  "enable-extended-keys with \"off\" writes no bytes and returns NIL."
-  (let* ((level :sentinel)
-         (out (let ((*standard-output* (make-string-output-stream)))
-                (setf level (cl-tmux/renderer::enable-extended-keys "off"))
-                (get-output-stream-string *standard-output*))))
-    (is (null level) "off → NIL (reporting stays off)")
-    (is (string= "" out) "off must emit nothing (got ~S)" out)))
+(test enable-extended-keys-table
+  "enable-extended-keys maps option value to a level and the matching CSI sequence."
+  (dolist (c '(("on"     1   ">4;1m" "on → level 1 + CSI >4;1m")
+               ("always" 2   ">4;2m" "always → level 2 + CSI >4;2m")
+               ("off"    nil nil     "off → nil + no output")))
+    (destructuring-bind (value expected-level expected-suffix desc) c
+      (let* ((level nil)
+             (out (let ((*standard-output* (make-string-output-stream)))
+                    (setf level (cl-tmux/renderer::enable-extended-keys value))
+                    (get-output-stream-string *standard-output*))))
+        (is (equal expected-level level) "~A: return level" desc)
+        (if expected-suffix
+            (is (search (format nil "~C[~A" #\Escape expected-suffix) out) "~A: sequence" desc)
+            (is (string= "" out) "~A: no output" desc))))))
 
 (test disable-extended-keys-emits-reset
   "disable-extended-keys writes CSI > 4 ; 0 m to reset the outer terminal."
@@ -78,21 +56,16 @@
 
 ;;; ── enable/disable-focus-reporting (?1004) ───────────────────────────────────
 
-(test enable-focus-reporting-emits-1004h
-  "enable-focus-reporting writes ?1004h to enable focus events on the outer terminal."
-  (let ((out (let ((*standard-output* (make-string-output-stream)))
-               (cl-tmux/renderer::enable-focus-reporting)
-               (get-output-stream-string *standard-output*))))
-    (is (search (format nil "~C[?1004h" #\Escape) out)
-        "enable-focus-reporting must emit ?1004h (got ~S)" out)))
-
-(test disable-focus-reporting-emits-1004l
-  "disable-focus-reporting writes ?1004l to disable focus events on the outer terminal."
-  (let ((out (let ((*standard-output* (make-string-output-stream)))
-               (cl-tmux/renderer::disable-focus-reporting)
-               (get-output-stream-string *standard-output*))))
-    (is (search (format nil "~C[?1004l" #\Escape) out)
-        "disable-focus-reporting must emit ?1004l (got ~S)" out)))
+(test focus-reporting-toggle-table
+  "enable/disable-focus-reporting emit ?1004h and ?1004l respectively."
+  (dolist (c '((cl-tmux/renderer::enable-focus-reporting  "?1004h" "enable")
+               (cl-tmux/renderer::disable-focus-reporting "?1004l" "disable")))
+    (destructuring-bind (fn suffix desc) c
+      (let ((out (let ((*standard-output* (make-string-output-stream)))
+                   (funcall fn)
+                   (get-output-stream-string *standard-output*))))
+        (is (search (format nil "~C[~A" #\Escape suffix) out)
+            "~A-focus-reporting must emit ~A (got ~S)" desc suffix out)))))
 
 ;;; ── render-lock-screen ───────────────────────────────────────────────────────
 
@@ -181,29 +154,15 @@
       (with-output-to-string (s)
         (cl-tmux/renderer::%render-mouse-sequences s pane)))))
 
-(test render-mouse-sequences-x10-mode
-  "%render-mouse-sequences with mouse-mode 1 emits ?1000h (X10 tracking)."
-  (let ((out (%mouse-seq-output 1 nil)))
-    (is (search (format nil "~C[?1000h" #\Escape) out)
-        "mouse-mode 1 must emit ?1000h (got ~S)" out)))
-
-(test render-mouse-sequences-button-event-mode
-  "%render-mouse-sequences with mouse-mode 2 emits ?1002h (button-event tracking)."
-  (let ((out (%mouse-seq-output 2 nil)))
-    (is (search (format nil "~C[?1002h" #\Escape) out)
-        "mouse-mode 2 must emit ?1002h (got ~S)" out)))
-
-(test render-mouse-sequences-any-event-mode
-  "%render-mouse-sequences with mouse-mode 3 (other) emits ?1003h (any-event tracking)."
-  (let ((out (%mouse-seq-output 3 nil)))
-    (is (search (format nil "~C[?1003h" #\Escape) out)
-        "mouse-mode 3 must emit ?1003h (got ~S)" out)))
-
-(test render-mouse-sequences-sgr-extension
-  "%render-mouse-sequences with sgr-mode T appends ?1006h (SGR extended encoding)."
-  (let ((out (%mouse-seq-output 1 t)))
-    (is (search (format nil "~C[?1006h" #\Escape) out)
-        "sgr-mode T must emit ?1006h (got ~S)" out)))
+(test render-mouse-sequences-mode-table
+  "%render-mouse-sequences emits the correct DEC sequence per mouse-mode and sgr-mode."
+  (dolist (c '((1 nil "?1000h" "mouse-mode 1 (X10) → ?1000h")
+               (2 nil "?1002h" "mouse-mode 2 (button-event) → ?1002h")
+               (3 nil "?1003h" "mouse-mode 3 (any-event) → ?1003h")
+               (1 t   "?1006h" "sgr-mode T → ?1006h")))
+    (destructuring-bind (mode sgr expected desc) c
+      (let ((out (%mouse-seq-output mode sgr)))
+        (is (search (format nil "~C[~A" #\Escape expected) out) "~A (got ~S)" desc out)))))
 
 (test render-mouse-sequences-zero-mode-emits-nothing
   "%render-mouse-sequences with mouse-mode 0 emits no sequences."

@@ -24,21 +24,15 @@
     (is (= 19 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
         "copy-mode-line-end must set col to width-1 (19 for width=20)")))
 
-(test copy-mode-line-start-noop-outside-copy-mode
-  "copy-mode-line-start is a no-op when not in copy mode."
-  (let ((s (make-screen 20 5)))
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 10))
-    (cl-tmux/commands::copy-mode-line-start s)
-    (is (= 10 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "column must be unchanged when not in copy mode")))
-
-(test copy-mode-line-end-noop-outside-copy-mode
-  "copy-mode-line-end is a no-op when not in copy mode."
-  (let ((s (make-screen 20 5)))
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 3))
-    (cl-tmux/commands::copy-mode-line-end s)
-    (is (= 3 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "column must be unchanged when not in copy mode")))
+(test copy-mode-line-start-end-noop-table
+  "copy-mode-line-start and copy-mode-line-end leave the column unchanged when not in copy mode."
+  (dolist (c '((cl-tmux/commands::copy-mode-line-start 10 "line-start: col unchanged")
+               (cl-tmux/commands::copy-mode-line-end    3  "line-end: col unchanged")))
+    (destructuring-bind (fn col desc) c
+      (let ((s (make-screen 20 5)))
+        (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 col))
+        (funcall fn s)
+        (is (= col (cdr (cl-tmux/terminal/types:screen-copy-cursor s))) "~A" desc)))))
 
 ;;; ── copy-mode-high / copy-mode-middle / copy-mode-low ───────────────────────
 
@@ -71,29 +65,16 @@
     (is (= 9 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
         "copy-mode-low must move cursor to height-1=9 for height=10")))
 
-(test copy-mode-high-noop-outside-copy-mode
-  "copy-mode-high is a no-op when not in copy mode."
-  (let ((s (make-screen 20 5)))
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 3 5))
-    (cl-tmux/commands::copy-mode-high s)
-    (is (= 3 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "row must be unchanged outside copy mode")))
-
-(test copy-mode-middle-noop-outside-copy-mode
-  "copy-mode-middle is a no-op when not in copy mode."
-  (let ((s (make-screen 20 10)))
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 7 5))
-    (cl-tmux/commands::copy-mode-middle s)
-    (is (= 7 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "row must be unchanged outside copy mode")))
-
-(test copy-mode-low-noop-outside-copy-mode
-  "copy-mode-low is a no-op when not in copy mode."
-  (let ((s (make-screen 20 10)))
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 5))
-    (cl-tmux/commands::copy-mode-low s)
-    (is (= 2 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "row must be unchanged outside copy mode")))
+(test copy-mode-h-m-l-noop-outside-copy-mode-table
+  "copy-mode-high/middle/low leave the cursor row unchanged when not in copy mode."
+  (dolist (c '((cl-tmux/commands::copy-mode-high   3 "high: row unchanged")
+               (cl-tmux/commands::copy-mode-middle  7 "middle: row unchanged")
+               (cl-tmux/commands::copy-mode-low     2 "low: row unchanged")))
+    (destructuring-bind (fn row desc) c
+      (let ((s (make-screen 20 10)))
+        (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons row 5))
+        (funcall fn s)
+        (is (= row (car (cl-tmux/terminal/types:screen-copy-cursor s))) "~A" desc)))))
 
 ;;; ── copy-mode-page-up / copy-mode-page-down ─────────────────────────────────
 
@@ -135,56 +116,26 @@
     (is (= 4 (screen-copy-offset s))
         "copy-mode-scroll-down-line must reduce offset by 1")))
 
-(test copy-mode-page-up-noop-outside-copy-mode
-  "copy-mode-page-up is a no-op when not in copy mode."
-  (let ((s (make-screen 20 5)))
-    (setf (cl-tmux/terminal/types:screen-scrollback s)
-          (loop repeat 10 collect (make-array 0)))
-    (cl-tmux/commands::copy-mode-page-up s)
-    (is (= 0 (screen-copy-offset s))
-        "offset must remain 0 when not in copy mode")))
+(test copy-mode-scroll-up-noop-outside-copy-mode-table
+  "Scroll-up functions are no-ops when not in copy mode (offset stays 0)."
+  (dolist (fn '(cl-tmux/commands::copy-mode-page-up
+                cl-tmux/commands::copy-mode-half-page-up
+                cl-tmux/commands::copy-mode-scroll-up-line))
+    (let ((s (make-screen 20 5)))
+      (setf (cl-tmux/terminal/types:screen-scrollback s)
+            (loop repeat 10 collect (make-array 0)))
+      (funcall fn s)
+      (is (= 0 (screen-copy-offset s)) "~A: offset must remain 0" fn))))
 
-(test copy-mode-page-down-noop-outside-copy-mode
-  "copy-mode-page-down is a no-op when not in copy mode."
-  (let ((s (make-screen 20 5)))
-    (setf (cl-tmux/terminal/types:screen-copy-offset s) 0)
-    (cl-tmux/commands::copy-mode-page-down s)
-    (is (= 0 (screen-copy-offset s))
-        "offset must remain 0 when not in copy mode")))
-
-(test copy-mode-half-page-up-noop-outside-copy-mode
-  "copy-mode-half-page-up is a no-op when not in copy mode."
-  (let ((s (make-screen 20 5)))
-    (setf (cl-tmux/terminal/types:screen-scrollback s)
-          (loop repeat 10 collect (make-array 0)))
-    (cl-tmux/commands::copy-mode-half-page-up s)
-    (is (= 0 (screen-copy-offset s))
-        "offset must remain 0 when not in copy mode")))
-
-(test copy-mode-half-page-down-noop-outside-copy-mode
-  "copy-mode-half-page-down is a no-op when not in copy mode."
-  (let ((s (make-screen 20 5)))
-    (setf (cl-tmux/terminal/types:screen-copy-offset s) 0)
-    (cl-tmux/commands::copy-mode-half-page-down s)
-    (is (= 0 (screen-copy-offset s))
-        "offset must remain 0 when not in copy mode")))
-
-(test copy-mode-scroll-up-line-noop-outside-copy-mode
-  "copy-mode-scroll-up-line is a no-op when not in copy mode."
-  (let ((s (make-screen 20 5)))
-    (setf (cl-tmux/terminal/types:screen-scrollback s)
-          (loop repeat 5 collect (make-array 0)))
-    (cl-tmux/commands::copy-mode-scroll-up-line s)
-    (is (= 0 (screen-copy-offset s))
-        "offset must remain 0 when not in copy mode")))
-
-(test copy-mode-scroll-down-line-noop-outside-copy-mode
-  "copy-mode-scroll-down-line is a no-op when not in copy mode."
-  (let ((s (make-screen 20 5)))
-    (setf (cl-tmux/terminal/types:screen-copy-offset s) 0)
-    (cl-tmux/commands::copy-mode-scroll-down-line s)
-    (is (= 0 (screen-copy-offset s))
-        "offset must remain 0 when not in copy mode")))
+(test copy-mode-scroll-down-noop-outside-copy-mode-table
+  "Scroll-down functions are no-ops when not in copy mode (offset stays 0)."
+  (dolist (fn '(cl-tmux/commands::copy-mode-page-down
+                cl-tmux/commands::copy-mode-half-page-down
+                cl-tmux/commands::copy-mode-scroll-down-line))
+    (let ((s (make-screen 20 5)))
+      (setf (cl-tmux/terminal/types:screen-copy-offset s) 0)
+      (funcall fn s)
+      (is (= 0 (screen-copy-offset s)) "~A: offset must remain 0" fn))))
 
 ;;; ── copy-mode-word-forward / word-backward / word-end ──────────────────────
 

@@ -128,21 +128,14 @@
 
 ;;; ── Glob match #{m:pattern,string} ──────────────────────────────────────────
 
-(test format-glob-match-star-matches-prefix
-  "#{m:*bash,bash} → '1'."
-  (is (string= "1" (fmt "#{m:*bash,bash}"))))
-
-(test format-glob-match-star-suffix
-  "#{m:bash*,bash-5.1} → '1'."
-  (is (string= "1" (fmt "#{m:bash*,bash-5.1}"))))
-
-(test format-glob-match-no-match
-  "#{m:*zsh*,bash} → '0'."
-  (is (string= "0" (fmt "#{m:*zsh*,bash}"))))
-
-(test format-glob-match-question
-  "#{m:ba?h,bash} → '1'."
-  (is (string= "1" (fmt "#{m:ba?h,bash}"))))
+(test format-glob-match-table
+  "#{m:pattern,string} returns '1' for glob matches and '0' for misses."
+  (dolist (c '(("#{m:*bash,bash}"    "1" "star-prefix match")
+               ("#{m:bash*,bash-5.1}" "1" "star-suffix match")
+               ("#{m:*zsh*,bash}"    "0" "no match")
+               ("#{m:ba?h,bash}"     "1" "question-mark match")))
+    (destructuring-bind (spec expected desc) c
+      (is (string= expected (fmt spec)) "~A" desc))))
 
 (test format-glob-match-with-context-var
   "#{m:*bash,#{x}} with x='fish' → '0'."
@@ -154,17 +147,13 @@
 
 ;;; ── Regex match #{m/r:pattern,string} (cl-ppcre) ─────────────────────────────
 
-(test format-regex-match-anchored
-  "#{m/r:^h.*o$,hello} → '1' (anchored regex matches the whole string)."
-  (is (string= "1" (fmt "#{m/r:^h.*o$,hello}"))))
-
-(test format-regex-match-substring
-  "#{m/r:ell,hello} → '1' (regex matches a substring, unlike anchored glob)."
-  (is (string= "1" (fmt "#{m/r:ell,hello}"))))
-
-(test format-regex-match-no-match
-  "#{m/r:^x,hello} → '0'."
-  (is (string= "0" (fmt "#{m/r:^x,hello}"))))
+(test format-regex-match-table
+  "#{m/r:pattern,string} returns '1' for matches and '0' for misses."
+  (dolist (c '(("#{m/r:^h.*o$,hello}" "1" "anchored regex match")
+               ("#{m/r:ell,hello}"     "1" "substring match")
+               ("#{m/r:^x,hello}"      "0" "anchored no-match")))
+    (destructuring-bind (spec expected desc) c
+      (is (string= expected (fmt spec)) "~A" desc))))
 
 (test format-regex-match-case-insensitive
   "#{m/ri:HELLO,hello} → '1' (the i flag makes the regex case-insensitive)."

@@ -86,36 +86,26 @@
 ;;;   - trailing ** / pattern longer than string
 ;;;   - empty pattern vs empty string
 
-(test glob-match-exact
-  "%glob-match-p with a plain pattern (no metacharacters) is an equality check."
-  (is-true  (cl-tmux/format::%glob-match-p "hello" "hello"))
-  (is-false (cl-tmux/format::%glob-match-p "hello" "Hello"))
-  (is-false (cl-tmux/format::%glob-match-p "hello" "hell")))
-
-(test glob-match-star-prefix
-  "%glob-match-p with leading * matches any prefix."
-  (is-true  (cl-tmux/format::%glob-match-p "*sh" "bash"))
-  (is-true  (cl-tmux/format::%glob-match-p "*sh" "sh"))
-  (is-false (cl-tmux/format::%glob-match-p "*sh" "bash-old")))
-
-(test glob-match-star-suffix
-  "%glob-match-p with trailing * matches any suffix."
-  (is-true  (cl-tmux/format::%glob-match-p "ba*" "bash"))
-  (is-true  (cl-tmux/format::%glob-match-p "ba*" "ba"))
-  (is-false (cl-tmux/format::%glob-match-p "ba*" "zsh")))
-
-(test glob-match-star-infix
-  "%glob-match-p with an interior * matches any sequence between the anchors."
-  (is-true  (cl-tmux/format::%glob-match-p "a*b" "ab"))
-  (is-true  (cl-tmux/format::%glob-match-p "a*b" "axyzb"))
-  (is-false (cl-tmux/format::%glob-match-p "a*b" "axyzc")))
-
-(test glob-match-question-mark
-  "%glob-match-p with ? matches exactly one character."
-  (is-true  (cl-tmux/format::%glob-match-p "b?sh" "bash"))
-  (is-true  (cl-tmux/format::%glob-match-p "b?sh" "bzsh"))
-  (is-false (cl-tmux/format::%glob-match-p "b?sh" "bsh"))
-  (is-false (cl-tmux/format::%glob-match-p "b?sh" "baxsh")))
+(test glob-match-p-table
+  "%glob-match-p handles exact matches, prefix/suffix/infix *, and ? wildcard."
+  (dolist (c '(("hello" "hello" t   "exact match")
+               ("hello" "Hello" nil "exact: case-sensitive mismatch")
+               ("hello" "hell"  nil "exact: length mismatch")
+               ("*sh"   "bash"  t   "prefix-star matches bash")
+               ("*sh"   "sh"    t   "prefix-star matches sh alone")
+               ("*sh"   "bash-old" nil "prefix-star: trailing mismatch")
+               ("ba*"   "bash"  t   "suffix-star matches bash")
+               ("ba*"   "ba"    t   "suffix-star: empty suffix")
+               ("ba*"   "zsh"   nil "suffix-star: mismatch")
+               ("a*b"   "ab"    t   "infix-star: empty middle")
+               ("a*b"   "axyzb" t   "infix-star: non-empty middle")
+               ("a*b"   "axyzc" nil "infix-star: mismatch")
+               ("b?sh"  "bash"  t   "? matches one char")
+               ("b?sh"  "bzsh"  t   "? matches alt char")
+               ("b?sh"  "bsh"   nil "? requires exactly one char")
+               ("b?sh"  "baxsh" nil "? not greedy")))
+    (destructuring-bind (pattern string expected desc) c
+      (is (eq expected (cl-tmux/format::%glob-match-p pattern string)) "~A" desc))))
 
 (test glob-match-consecutive-stars-optimisation
   "Consecutive ** are collapsed — **a matches any string ending in a."

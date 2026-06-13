@@ -28,17 +28,14 @@
 
 ;;; ── render-cell-attrs (SGR codes) ───────────────────────────────────────────
 
-(test render-cell-attrs-foreground
-  (let ((out (cell-attrs-string 1 0 0)))
-    (is (search ";31" out) "fg 1 should emit ;31 (got ~S)" out)))
-
-(test render-cell-attrs-background
-  (let ((out (cell-attrs-string 0 2 0)))
-    (is (search ";42" out) "bg 2 should emit ;42 (got ~S)" out)))
-
-(test render-cell-attrs-bright-foreground
-  (let ((out (cell-attrs-string 9 0 0)))      ; bright fg uses 82+fg => 91
-    (is (search ";91" out) "bright fg 9 should emit ;91 (got ~S)" out)))
+(test render-cell-attrs-basic-color-table
+  "render-cell-attrs emits the correct SGR code for standard fg, bg, and bright fg."
+  (dolist (c '((1 0 ";31" "fg 1 → ;31 (red)")
+               (0 2 ";42" "bg 2 → ;42 (green)")
+               (9 0 ";91" "bright fg 9 → ;91")))
+    (destructuring-bind (fg bg expected desc) c
+      (let ((out (cell-attrs-string fg bg 0)))
+        (is (search expected out) "~A (got ~S)" desc out)))))
 
 (test render-cell-attrs-frame
   (let ((out (cell-attrs-string 1 2 1)))
@@ -55,17 +52,14 @@
 
 ;;; ── cursor-invisible / cursor-visible ───────────────────────────────────────
 
-(test cursor-invisible-emits-hide-sequence
-  (let ((out (with-output-to-string (s)
-               (cl-tmux/renderer::cursor-invisible s))))
-    (is (string= (format nil "~C[?25l" #\Escape) out)
-        "cursor-invisible should emit ESC[?25l (got ~S)" out)))
-
-(test cursor-visible-emits-show-sequence
-  (let ((out (with-output-to-string (s)
-               (cl-tmux/renderer::cursor-visible s))))
-    (is (string= (format nil "~C[?25h" #\Escape) out)
-        "cursor-visible should emit ESC[?25h (got ~S)" out)))
+(test cursor-visibility-sequences-table
+  "cursor-invisible emits ESC[?25l; cursor-visible emits ESC[?25h."
+  (dolist (c '((cl-tmux/renderer::cursor-invisible "?25l" "cursor-invisible → ESC[?25l")
+               (cl-tmux/renderer::cursor-visible   "?25h" "cursor-visible → ESC[?25h")))
+    (destructuring-bind (fn suffix desc) c
+      (let ((out (with-output-to-string (s) (funcall fn s))))
+        (is (string= (format nil "~C[~A" #\Escape suffix) out)
+            "~A (got ~S)" desc out)))))
 
 ;;; ── reset-attrs ─────────────────────────────────────────────────────────────
 
@@ -102,60 +96,43 @@
 
 ;;; ── Extended colour emit paths ───────────────────────────────────────────────
 
-(test render-cell-attrs-256color-fg
-  "fg index 200 (256-color palette) emits the sequence ;38;5;200 in the SGR string."
-  (let ((out (cell-attrs-string 200 0 0)))
-    (is (search ";38;5;200" out)
-        "256-color fg 200 must emit ;38;5;200 (got ~S)" out)))
+(test render-cell-attrs-256color-table
+  "256-color palette indices emit the correct extended SGR sequences."
+  (dolist (c '((200 0   ";38;5;200" "fg 200 → ;38;5;200")
+               (0   42  ";48;5;42"  "bg 42 → ;48;5;42")))
+    (destructuring-bind (fg bg expected desc) c
+      (let ((out (cell-attrs-string fg bg 0)))
+        (is (search expected out) "~A (got ~S)" desc out)))))
 
-(test render-cell-attrs-256color-bg
-  "bg index 42 (256-color palette) emits the sequence ;48;5;42 in the SGR string."
-  (let ((out (cell-attrs-string 0 42 0)))
-    (is (search ";48;5;42" out)
-        "256-color bg 42 must emit ;48;5;42 (got ~S)" out)))
-
-(test render-cell-attrs-truecolor-fg
-  "True-color fg #x1FF8000 (R=255, G=128, B=0) emits ;38;2;255;128;0."
-  (let* ((fg  (logior #x1000000 (ash 255 16) (ash 128 8) 0))
-         (out (cell-attrs-string fg 0 0)))
-    (is (search ";38;2;255;128;0" out)
-        "truecolor fg must emit ;38;2;255;128;0 (got ~S)" out)))
-
-(test render-cell-attrs-truecolor-bg
-  "True-color bg #x10080FF (R=0, G=128, B=255) emits ;48;2;0;128;255."
-  (let* ((bg  (logior #x1000000 (ash 0 16) (ash 128 8) 255))
-         (out (cell-attrs-string 0 bg 0)))
-    (is (search ";48;2;0;128;255" out)
-        "truecolor bg must emit ;48;2;0;128;255 (got ~S)" out)))
+(test render-cell-attrs-truecolor-table
+  "True-color values emit the correct 38;2;R;G;B / 48;2;R;G;B SGR sequences."
+  (dolist (c (list (list (logior #x1000000 (ash 255 16) (ash 128 8)   0) 0 ";38;2;255;128;0"   "truecolor fg → ;38;2;255;128;0")
+                   (list 0 (logior #x1000000 (ash 0   16) (ash 128 8) 255) ";48;2;0;128;255"   "truecolor bg → ;48;2;0;128;255")))
+    (destructuring-bind (fg bg expected desc) c
+      (let ((out (cell-attrs-string fg bg 0)))
+        (is (search expected out) "~A (got ~S)" desc out)))))
 
 ;;; ── %split-style-tokens ─────────────────────────────────────────────────────
 
-(test split-style-tokens-single-token
-  "%split-style-tokens with a single token returns a one-element list."
-  (is (equal '("bold") (cl-tmux/renderer::%split-style-tokens "bold"))
-      "single token must return one-element list"))
-
-(test split-style-tokens-multiple-tokens
-  "%split-style-tokens splits on commas."
-  (is (equal '("fg=red" "bold" "underline")
-             (cl-tmux/renderer::%split-style-tokens "fg=red,bold,underline"))
-      "multiple tokens must be split on commas"))
-
-(test split-style-tokens-empty-string
-  "%split-style-tokens with an empty string returns a list with one empty string."
-  (let ((result (cl-tmux/renderer::%split-style-tokens "")))
-    (is (= 1 (length result)) "empty string produces one element")
-    (is (string= "" (first result)) "that element must be the empty string")))
+(test split-style-tokens-table
+  "%split-style-tokens splits on commas; single-token and empty-string edge cases."
+  (dolist (c '(("bold"                 ("bold")                       "single token")
+               ("fg=red,bold,underline" ("fg=red" "bold" "underline") "comma-split")
+               (""                     ("")                           "empty → one empty string")))
+    (destructuring-bind (input expected desc) c
+      (is (equal expected (cl-tmux/renderer::%split-style-tokens input)) "~A" desc))))
 
 ;;; ── %dispatch-style-token ───────────────────────────────────────────────────
 
-(test dispatch-style-token-bold
-  "%dispatch-style-token 'bold' sets :bold T in result-cell."
-  (let ((cell (list nil)))
-    (is-true (cl-tmux/renderer::%dispatch-style-token "bold" cell)
-             "%dispatch-style-token must return T on match")
-    (is-true (getf (car cell) :bold)
-             ":bold must be T after dispatch")))
+(test dispatch-style-token-sets-attr-table
+  "%dispatch-style-token sets the correct plist key for bold, reverse, and underline."
+  (dolist (c '(("bold"      :bold      "bold sets :bold T")
+               ("reverse"   :reverse   "reverse sets :reverse T")
+               ("underline" :underline "underline sets :underline T")))
+    (destructuring-bind (token key desc) c
+      (let ((cell (list nil)))
+        (is-true (cl-tmux/renderer::%dispatch-style-token token cell) "~A: returns T" desc)
+        (is-true (getf (car cell) key) "~A: plist key" desc)))))
 
 (test dispatch-style-token-nobold
   "%dispatch-style-token 'nobold' sets :bold NIL in result-cell."
@@ -163,18 +140,6 @@
     (cl-tmux/renderer::%dispatch-style-token "nobold" cell)
     (is (null (getf (car cell) :bold))
         ":bold must be NIL after 'nobold' dispatch")))
-
-(test dispatch-style-token-reverse
-  "%dispatch-style-token 'reverse' sets :reverse T."
-  (let ((cell (list nil)))
-    (cl-tmux/renderer::%dispatch-style-token "reverse" cell)
-    (is-true (getf (car cell) :reverse) ":reverse must be T")))
-
-(test dispatch-style-token-underline
-  "%dispatch-style-token 'underline' sets :underline T."
-  (let ((cell (list nil)))
-    (cl-tmux/renderer::%dispatch-style-token "underline" cell)
-    (is-true (getf (car cell) :underline) ":underline must be T")))
 
 (test dispatch-style-token-unknown-returns-nil
   "%dispatch-style-token returns NIL for an unknown token."
@@ -203,22 +168,14 @@
 
 ;;; ── %border-color-sgr ───────────────────────────────────────────────────────
 
-(test border-color-sgr-known-color
-  "%border-color-sgr returns the integer SGR code for a known colour name."
-  (is (= 32 (cl-tmux/renderer::%border-color-sgr "green"))
-      "%border-color-sgr 'green' must return 32")
-  (is (= 31 (cl-tmux/renderer::%border-color-sgr "red"))
-      "%border-color-sgr 'red' must return 31"))
-
-(test border-color-sgr-unknown-returns-nil
-  "%border-color-sgr returns NIL for an unrecognised colour name."
-  (is (null (cl-tmux/renderer::%border-color-sgr "notacolor"))
-      "%border-color-sgr must return NIL for unknown colour"))
-
-(test border-color-sgr-case-insensitive
-  "%border-color-sgr accepts mixed-case colour names."
-  (is (= 34 (cl-tmux/renderer::%border-color-sgr "Blue"))
-      "%border-color-sgr 'Blue' must return 34"))
+(test border-color-sgr-table
+  "%border-color-sgr maps known colour names to SGR codes; nil for unknown; case-insensitive."
+  (dolist (c '(("green"    32  "green → 32")
+               ("red"      31  "red → 31")
+               ("Blue"     34  "mixed-case Blue → 34")
+               ("notacolor" nil "unknown → nil")))
+    (destructuring-bind (color expected desc) c
+      (is (equal expected (cl-tmux/renderer::%border-color-sgr color)) "~A" desc))))
 
 ;;; ── %color-name-to-sgr-number ───────────────────────────────────────────────
 
@@ -241,15 +198,12 @@
 
 ;;; ── %status-sgr-from-style ───────────────────────────────────────────────────
 
-(test status-sgr-from-style-nil-returns-default
-  "%status-sgr-from-style with NIL returns the default blue-on-white SGR."
-  (is (string= "44;97" (cl-tmux/renderer::%status-sgr-from-style nil))
-      "%status-sgr-from-style nil must return \"44;97\""))
-
-(test status-sgr-from-style-empty-returns-default
-  "%status-sgr-from-style with empty string returns the default SGR."
-  (is (string= "44;97" (cl-tmux/renderer::%status-sgr-from-style ""))
-      "%status-sgr-from-style \"\" must return \"44;97\""))
+(test status-sgr-from-style-default-table
+  "%status-sgr-from-style returns the default blue-on-white SGR for nil and empty string."
+  (dolist (c '((nil "nil arg → default SGR")
+               (""  "empty string → default SGR")))
+    (destructuring-bind (arg desc) c
+      (is (string= "44;97" (cl-tmux/renderer::%status-sgr-from-style arg)) "~A" desc))))
 
 (test status-sgr-from-style-bold
   "%status-sgr-from-style with 'bold' includes SGR code 1."
@@ -276,19 +230,13 @@
 
 ;;; ── set-cursor-shape ─────────────────────────────────────────────────────────
 
-(test set-cursor-shape-emits-decscusr
-  "set-cursor-shape emits the DECSCUSR sequence ESC[Nq to the stream."
-  (let ((out (with-output-to-string (s)
-               (cl-tmux/renderer::set-cursor-shape s 2))))
-    (is (search (format nil "~C[2 q" #\Escape) out)
-        "set-cursor-shape 2 must emit ESC[2 q (got ~S)" out)))
-
-(test set-cursor-shape-block-cursor
-  "set-cursor-shape with shape 1 emits ESC[1 q (blinking block)."
-  (let ((out (with-output-to-string (s)
-               (cl-tmux/renderer::set-cursor-shape s 1))))
-    (is (search (format nil "~C[1 q" #\Escape) out)
-        "set-cursor-shape 1 must emit ESC[1 q (got ~S)" out)))
+(test set-cursor-shape-table
+  "set-cursor-shape emits the DECSCUSR sequence ESC[N q for each shape number."
+  (dolist (c '((2 "2 q" "shape 2 (steady block)")
+               (1 "1 q" "shape 1 (blinking block)")))
+    (destructuring-bind (shape suffix desc) c
+      (let ((out (with-output-to-string (s) (cl-tmux/renderer::set-cursor-shape s shape))))
+        (is (search (format nil "~C[~A" #\Escape suffix) out) "~A (got ~S)" desc out)))))
 
 ;;; ── %emit-fg / %emit-bg palette boundaries ────────────────────────────────────
 

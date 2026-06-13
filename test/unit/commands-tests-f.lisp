@@ -17,19 +17,14 @@
   "rename-window with NIL window does not signal an error."
   (finishes (cl-tmux/commands:rename-window nil "irrelevant")))
 
-(test rename-window-empty-string-is-noop
-  "rename-window with an empty name leaves the window name unchanged."
-  (let ((win (make-window :id 1 :name "original" :width 20 :height 5 :panes nil)))
-    (cl-tmux/commands:rename-window win "")
-    (is (string= "original" (window-name win))
-        "empty-string rename must not change the window name")))
-
-(test rename-window-nil-name-is-noop
-  "rename-window with a NIL name leaves the window name unchanged."
-  (let ((win (make-window :id 1 :name "keep" :width 20 :height 5 :panes nil)))
-    (cl-tmux/commands:rename-window win nil)
-    (is (string= "keep" (window-name win))
-        "nil rename must not change the window name")))
+(test rename-window-invalid-name-is-noop-table
+  "rename-window with an empty or NIL name leaves the window name unchanged."
+  (dolist (c '(("" "original" "empty string → no-op")
+               (nil "keep"    "nil → no-op")))
+    (destructuring-bind (new-name original desc) c
+      (let ((win (make-window :id 1 :name original :width 20 :height 5 :panes nil)))
+        (cl-tmux/commands:rename-window win new-name)
+        (is (string= original (window-name win)) "~A" desc)))))
 
 ;;; ── kill-window (direct path) ────────────────────────────────────────────────
 

@@ -18,31 +18,15 @@
   (with-output-to-string (s)
     (cl-tmux/renderer::%apply-border-style s style)))
 
-(test apply-border-style-nil-resets
-  "NIL style emits only reset attributes (ESC[0m)."
-  (let ((out (%border-style-output nil)))
-    (is (search (format nil "~C[0m" #\Escape) out)
-        "nil style must emit ESC[0m (got ~S)" out)
-    (is (= 1 (count #\m out))
-        "nil style must emit exactly one m terminator (got ~S)" out)))
+(test apply-border-style-resets-table
+  "NIL and \"default\" styles emit only the reset SGR (ESC[0m)."
+  (dolist (c '((nil       "nil style")
+               ("default" "\"default\" style")))
+    (destructuring-bind (style desc) c
+      (let ((out (%border-style-output style)))
+        (is (search (format nil "~C[0m" #\Escape) out)
+            "~A must emit ESC[0m (got ~S)" desc out)))))
 
-(test apply-border-style-default-resets
-  "\"default\" style emits only reset attributes (ESC[0m)."
-  (let ((out (%border-style-output "default")))
-    (is (search (format nil "~C[0m" #\Escape) out)
-        "\"default\" style must emit ESC[0m (got ~S)" out)))
-
-(test apply-border-style-fg-green
-  "\"fg=green\" style emits reset then ESC[32m (SGR 32 = green foreground)."
-  (let ((out (%border-style-output "fg=green")))
-    (is (search (format nil "~C[32m" #\Escape) out)
-        "fg=green must emit ESC[32m (got ~S)" out)))
-
-(test apply-border-style-fg-red
-  "\"fg=red\" style emits reset then ESC[31m (SGR 31 = red foreground)."
-  (let ((out (%border-style-output "fg=red")))
-    (is (search (format nil "~C[31m" #\Escape) out)
-        "fg=red must emit ESC[31m (got ~S)" out)))
 
 (test pane-border-style-applied-directly
   "pane-border-style and pane-active-border-style are read directly from global options."
@@ -63,17 +47,15 @@
       (is (search "bg=yellow" eff) "bg=yellow in mode-style (got ~S)" eff)
       (is (search "bold" eff)      "bold in mode-style (got ~S)" eff))))
 
-(test apply-border-style-fg-blue
-  "\"fg=blue\" style emits reset then ESC[34m (SGR 34 = blue foreground)."
-  (let ((out (%border-style-output "fg=blue")))
-    (is (search (format nil "~C[34m" #\Escape) out)
-        "fg=blue must emit ESC[34m (got ~S)" out)))
-
-(test apply-border-style-fg-yellow
-  "\"fg=yellow\" style emits reset then ESC[33m (SGR 33 = yellow foreground)."
-  (let ((out (%border-style-output "fg=yellow")))
-    (is (search (format nil "~C[33m" #\Escape) out)
-        "fg=yellow must emit ESC[33m (got ~S)" out)))
+(test apply-border-style-fg-table
+  "fg=COLOR style emits the named colour's SGR code."
+  (dolist (c '(("fg=green"  "~C[32m" "green → ESC[32m")
+               ("fg=red"    "~C[31m" "red → ESC[31m")
+               ("fg=blue"   "~C[34m" "blue → ESC[34m")
+               ("fg=yellow" "~C[33m" "yellow → ESC[33m")))
+    (destructuring-bind (style fmt desc) c
+      (let ((out (%border-style-output style)))
+        (is (search (format nil fmt #\Escape) out) "~A (got ~S)" desc out)))))
 
 (test apply-border-style-unknown-falls-back-to-reset
   "An unrecognised non-fg= style falls through to the reset-attrs fallback."
