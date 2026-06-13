@@ -121,6 +121,24 @@
       (1+ (fourth last))
       1))
 
+(defun %h-border-hit-p (first-leaves all-leaves col row)
+  "T when (COL, ROW) lands on the vertical separator of a :h split.
+   The separator is at the max right-edge of FIRST-LEAVES; the border spans
+   the full y-range of ALL-LEAVES."
+  (let* ((sep (reduce #'max first-leaves :key (lambda (p) (+ (pane-x p) (pane-width p)))))
+         (lo  (reduce #'min all-leaves   :key #'pane-y))
+         (hi  (reduce #'max all-leaves   :key (lambda (p) (+ (pane-y p) (pane-height p))))))
+    (and (= col sep) (<= lo row) (< row hi))))
+
+(defun %v-border-hit-p (first-leaves all-leaves col row)
+  "T when (COL, ROW) lands on the horizontal separator of a :v split.
+   The separator is at the max bottom-edge of FIRST-LEAVES; the border spans
+   the full x-range of ALL-LEAVES."
+  (let* ((sep (reduce #'max first-leaves :key (lambda (p) (+ (pane-y p) (pane-height p)))))
+         (lo  (reduce #'min all-leaves   :key #'pane-x))
+         (hi  (reduce #'max all-leaves   :key (lambda (p) (+ (pane-x p) (pane-width p))))))
+    (and (= row sep) (<= lo col) (< col hi))))
+
 (defun %border-check-node (col row node)
   "Internal helper for %border-at-position: walk NODE and return
    (values split orientation) if (COL, ROW) is on a border, else (values nil nil)."
@@ -140,24 +158,10 @@
                         (first-leaves (layout-leaves (layout-split-first node)))
                         (all-leaves   (layout-leaves node)))
                    (ecase orient
-                     (:h
-                      (let* ((sep-col (reduce #'max first-leaves
-                                              :key (lambda (pane) (+ (pane-x pane) (pane-width pane)))))
-                             (min-y   (reduce #'min all-leaves :key #'pane-y))
-                             (max-y   (reduce #'max all-leaves
-                                              :key (lambda (pane) (+ (pane-y pane) (pane-height pane))))))
-                        (if (and (= col sep-col) (<= min-y row) (< row max-y))
-                            (values node :h)
-                            (values nil nil))))
-                     (:v
-                      (let* ((sep-row (reduce #'max first-leaves
-                                              :key (lambda (pane) (+ (pane-y pane) (pane-height pane)))))
-                             (min-x   (reduce #'min all-leaves :key #'pane-x))
-                             (max-x   (reduce #'max all-leaves
-                                              :key (lambda (pane) (+ (pane-x pane) (pane-width pane))))))
-                        (if (and (= row sep-row) (<= min-x col) (< col max-x))
-                            (values node :v)
-                            (values nil nil)))))))))))))
+                     (:h (if (%h-border-hit-p first-leaves all-leaves col row)
+                             (values node :h) (values nil nil)))
+                     (:v (if (%v-border-hit-p first-leaves all-leaves col row)
+                             (values node :v) (values nil nil)))))))))))))
 
 (defun %border-at-position (window col row)
   "Return (values layout-split orientation) when (COL, ROW) is on a pane separator,

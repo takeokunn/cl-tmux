@@ -251,6 +251,12 @@
                               (otherwise nil))))
                (when command (dispatch-command session command nil))))))))))
 
+(defun %csi-1-semi-prefix-p (buffer)
+  "T when BUFFER[1..3] is the ESC [ 1 ; modifier-key prefix (requires length >= 4)."
+  (and (= (aref buffer 1) +byte-csi-bracket+)
+       (= (aref buffer 2) +byte-csi-param-1+)
+       (= (aref buffer 3) +byte-csi-semi+)))
+
 (defun %make-prefix-csi-k (session buffer)
   "CPS continuation: accumulate ESC [ FINAL for post-prefix arrow key sequences.
    Dispatches :select-pane-up/down/left/right on ESC [ A/B/D/C (3-byte CSI).
@@ -307,20 +313,11 @@
                   ;; dispatch-command always returns NIL; the when's value is discarded.
                   (when command (dispatch-command session command nil)))
                 (values nil #'%ground-input-state))))))
-        ;; 4-byte sequence starting ESC [ 1 ; — keep accumulating
-        ((and (= length 4) (= (aref buffer 1) +byte-csi-bracket+)
-              (= (aref buffer 2) +byte-csi-param-1+)
-              (= (aref buffer 3) +byte-csi-semi+))
-         (values nil (%make-prefix-csi-k session buffer)))
-        ;; 5-byte: ESC [ 1 ; MOD — keep accumulating for the final letter
-        ((and (= length 5) (= (aref buffer 1) +byte-csi-bracket+)
-              (= (aref buffer 2) +byte-csi-param-1+)
-              (= (aref buffer 3) +byte-csi-semi+))
+        ;; 4-5 byte: ESC [ 1 ; [MOD] — keep accumulating for the final letter
+        ((and (<= 4 length 5) (%csi-1-semi-prefix-p buffer))
          (values nil (%make-prefix-csi-k session buffer)))
         ;; Complete 6-byte modifier CSI: ESC [ 1 ; MOD FINAL
-        ((and (= length 6) (= (aref buffer 1) +byte-csi-bracket+)
-              (= (aref buffer 2) +byte-csi-param-1+)
-              (= (aref buffer 3) +byte-csi-semi+))
+        ((and (= length 6) (%csi-1-semi-prefix-p buffer))
          (%dispatch-modifier-arrow session (aref buffer 4) (aref buffer 5))
          (setf *dirty* t)
          (values nil #'%ground-input-state))
