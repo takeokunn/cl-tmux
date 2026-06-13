@@ -121,23 +121,39 @@
       (1+ (fourth last))
       1))
 
-(defun %h-border-hit-p (first-leaves all-leaves col row)
-  "T when (COL, ROW) lands on the vertical separator of a :h split.
-   The separator is at the max right-edge of FIRST-LEAVES; the border spans
-   the full y-range of ALL-LEAVES."
-  (let* ((sep (reduce #'max first-leaves :key (lambda (p) (+ (pane-x p) (pane-width p)))))
-         (lo  (reduce #'min all-leaves   :key #'pane-y))
-         (hi  (reduce #'max all-leaves   :key (lambda (p) (+ (pane-y p) (pane-height p))))))
-    (and (= col sep) (<= lo row) (< row hi))))
+;;; Prolog-style fact table: (name doc sep-key lo-key hi-key sep-coord span-coord)
+;;; The two border predicates are axis mirrors: swap x↔y and col↔row.
+;;; define-border-hit-predicates makes the symmetry explicit data.
 
-(defun %v-border-hit-p (first-leaves all-leaves col row)
-  "T when (COL, ROW) lands on the horizontal separator of a :v split.
-   The separator is at the max bottom-edge of FIRST-LEAVES; the border spans
-   the full x-range of ALL-LEAVES."
-  (let* ((sep (reduce #'max first-leaves :key (lambda (p) (+ (pane-y p) (pane-height p)))))
-         (lo  (reduce #'min all-leaves   :key #'pane-x))
-         (hi  (reduce #'max all-leaves   :key (lambda (p) (+ (pane-x p) (pane-width p))))))
-    (and (= row sep) (<= lo col) (< col hi))))
+(defmacro define-border-hit-predicates (&rest specs)
+  "Generate border-hit predicates from a declarative (name doc sep-key lo-key hi-key sep-coord span-coord) table.
+   SEP-KEY  : function (pane → number) for the primary-axis separator edge.
+   LO-KEY   : function (pane → number) for the low end of the secondary span.
+   HI-KEY   : function (pane → number) for the high end of the secondary span.
+   SEP-COORD: which of COL/ROW is the separator coordinate.
+   SPAN-COORD: which of COL/ROW is checked against [LO, HI)."
+  `(progn
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (name doc sep-key lo-key hi-key sep-coord span-coord) spec
+                   `(defun ,name (first-leaves all-leaves col row)
+                      ,doc
+                      (let* ((sep (reduce #'max first-leaves :key ,sep-key))
+                             (lo  (reduce #'min all-leaves   :key ,lo-key))
+                             (hi  (reduce #'max all-leaves   :key ,hi-key)))
+                        (and (= ,sep-coord sep) (<= lo ,span-coord) (< ,span-coord hi))))))
+               specs)))
+
+(define-border-hit-predicates
+  (%h-border-hit-p
+   "T when (COL, ROW) lands on the vertical separator of a :h split."
+   (lambda (p) (+ (pane-x p) (pane-width p)))   #'pane-y
+   (lambda (p) (+ (pane-y p) (pane-height p)))
+   col row)
+  (%v-border-hit-p
+   "T when (COL, ROW) lands on the horizontal separator of a :v split."
+   (lambda (p) (+ (pane-y p) (pane-height p)))   #'pane-x
+   (lambda (p) (+ (pane-x p) (pane-width p)))
+   row col))
 
 (defun %border-check-node (col row node)
   "Internal helper for %border-at-position: walk NODE and return
@@ -171,28 +187,28 @@
         (%border-check-node col row tree)
         (values nil nil))))
 
+(defun %compute-split-ratio (all-panes split orientation pointer origin-key)
+  "Compute the new layout-split ratio when the drag pointer is at POINTER.
+   ORIENTATION is the split axis (:h or :v).  ORIGIN-KEY extracts the primary
+   start coordinate from a pane (e.g. #'pane-x for :h, #'pane-y for :v).
+   The ratio is clamped so each half retains at least 1 cell."
+  (let* ((origin    (reduce #'min all-panes :key origin-key))
+         (total     (layout-split-axis-extent split orientation))
+         (new-first (max 1 (min (1- total) (- pointer origin)))))
+    (/ new-first (float (1- total)))))
+
 (defun %apply-drag-resize (window split orientation col row)
   "Adjust SPLIT's ratio so the separator tracks (COL, ROW) within WINDOW.
-   ORIENTATION is :h (horizontal split — moves the vertical separator) or
-   :v (vertical split — moves the horizontal separator).  After updating the
-   ratio, layout-assign is called to recompute all pane geometries."
+   ORIENTATION is :h (moves the vertical separator) or :v (moves the horizontal one).
+   Recomputes all pane geometries via layout-assign after updating the ratio."
   (let ((all-panes (layout-leaves split)))
-    (ecase orientation
-      (:h
-       (let* ((leftmost  (reduce #'min all-panes :key #'pane-x))
-              (total     (layout-split-axis-extent split :h))
-              (new-first (max 1 (min (1- total) (- col leftmost))))
-              (new-ratio (/ new-first (float (1- total)))))
-         (setf (layout-split-ratio split) new-ratio)))
-      (:v
-       (let* ((topmost   (reduce #'min all-panes :key #'pane-y))
-              (total     (layout-split-axis-extent split :v))
-              (new-first (max 1 (min (1- total) (- row topmost))))
-              (new-ratio (/ new-first (float (1- total)))))
-         (setf (layout-split-ratio split) new-ratio))))
-    (let ((tree (window-tree window)))
-      (when tree
-        (%assign-window-tree window (window-width window) (window-height window))))))
+    (setf (layout-split-ratio split)
+          (ecase orientation
+            (:h (%compute-split-ratio all-panes split :h col #'pane-x))
+            (:v (%compute-split-ratio all-panes split :v row #'pane-y)))))
+  (let ((tree (window-tree window)))
+    (when tree
+      (%assign-window-tree window (window-width window) (window-height window)))))
 
 (defun %mouse-key-name (btn release-p location)
   "Build the tmux mouse key name for a mouse event, e.g. \"WheelUpPane\",
