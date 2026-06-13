@@ -57,16 +57,16 @@
 (defun %format-session-list (current-session)
   "Return a formatted string listing all sessions in *server-sessions*.
    The session matching CURRENT-SESSION is marked with an asterisk.
-   Falls back to a one-line entry when *server-sessions* is empty."
-  (with-output-to-string (s)
-    (if *server-sessions*
-        (loop for (name . sess) in *server-sessions*
-              for i from 0
-              do (format s "~A~A: ~A (~D window~:P)~%"
-                         (if (string= name (session-name current-session)) "*" " ")
-                         i name
-                         (length (session-windows sess))))
-        (format s "  0: ~A (1 window)~%" (session-name current-session)))))
+   Falls back to a single entry for CURRENT-SESSION when the registry is empty."
+  (let ((current-name (session-name current-session)))
+    (with-output-to-string (s)
+      (loop for (name . sess) in (or *server-sessions*
+                                     (list (cons current-name current-session)))
+            for i from 0
+            do (format s "~A~A: ~A (~D window~:P)~%"
+                       (if (string= name current-name) "*" " ")
+                       i name
+                       (length (session-windows sess)))))))
 
 ;;; -- Choose-tree entry formatter helper --------------------------------------
 ;;;
