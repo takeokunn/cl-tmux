@@ -61,24 +61,14 @@
       (is (eq w0 (session-active-window s))
           "-T when already on the target must toggle to the last window (w0)"))))
 
-(test run-command-line-select-pane-by-id
-  "'select-pane -t N' selects the pane with pane-id N in the active window."
-  (with-fake-session (s :nwindows 1 :npanes 2)
-    (let* ((win (session-active-window s)))
-      ;; make-fake-window panes have ids 1,2; the first is active.
-      (is (= 1 (pane-id (window-active-pane win))) "pane 1 is active initially")
-      (cl-tmux::%run-command-line s "select-pane -t 2")
-      (is (= 2 (pane-id (window-active-pane win)))
-          "select-pane -t 2 must activate pane-id 2"))))
-
-(test run-command-line-select-pane-by-pane-id-sigil
-  "'select-pane -t %2' (the %N pane-id sigil) selects pane-id 2, like -t 2."
-  (with-fake-session (s :nwindows 1 :npanes 2)
-    (let* ((win (session-active-window s)))
-      (is (= 1 (pane-id (window-active-pane win))) "pane 1 is active initially")
-      (cl-tmux::%run-command-line s "select-pane -t %2")
-      (is (= 2 (pane-id (window-active-pane win)))
-          "select-pane -t %2 must activate pane-id 2 via the %N sigil"))))
+(test run-command-line-select-pane-by-id-table
+  "'select-pane -t 2' and 'select-pane -t %2' both activate pane-id 2."
+  (dolist (cmd '("select-pane -t 2" "select-pane -t %2"))
+    (with-fake-session (s :nwindows 1 :npanes 2)
+      (let ((win (session-active-window s)))
+        (is (= 1 (pane-id (window-active-pane win))) "~A: pane 1 is initially active" cmd)
+        (cl-tmux::%run-command-line s cmd)
+        (is (= 2 (pane-id (window-active-pane win))) "~A must activate pane-id 2" cmd)))))
 
 (test run-command-line-select-pane-l-selects-last
   "'select-pane -l' returns to the previously active pane."
