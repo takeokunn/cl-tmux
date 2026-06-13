@@ -195,24 +195,20 @@
 
 ;;; ── send-keys -X copy-mode commands: cursor-left/right + rectangle-toggle ────
 
-(test send-keys-x-command-table-maps-cursor-and-rectangle
-  "The send-keys -X command table maps cursor-left/right and rectangle-toggle to
-   their proper copy-mode keywords (no longer the begin-selection approximation)."
+(test send-keys-x-command-table
+  "The *copy-mode-x-commands* table maps all send-keys -X names to their
+   proper copy-mode keywords."
   (flet ((kw (name) (cdr (assoc name cl-tmux::*copy-mode-x-commands* :test #'string-equal))))
-    (is (eq :copy-mode-cursor-left      (kw "cursor-left")))
-    (is (eq :copy-mode-cursor-right     (kw "cursor-right")))
-    (is (eq :copy-mode-cursor-up        (kw "cursor-up")))
-    (is (eq :copy-mode-cursor-down      (kw "cursor-down")))
-    (is (eq :copy-mode-rectangle-toggle (kw "rectangle-toggle")))))
-
-(test send-keys-x-command-table-maps-select-word-and-other-end
-  "select-word maps to :copy-mode-select-word, and both other-end (real tmux
-   name) and toggle-position map to :copy-mode-other-end (no longer the
-   begin-selection placeholder)."
-  (flet ((kw (name) (cdr (assoc name cl-tmux::*copy-mode-x-commands* :test #'string-equal))))
-    (is (eq :copy-mode-select-word (kw "select-word")))
-    (is (eq :copy-mode-other-end   (kw "other-end")))
-    (is (eq :copy-mode-other-end   (kw "toggle-position")))))
+    (dolist (c '(("cursor-left"      :copy-mode-cursor-left)
+                 ("cursor-right"     :copy-mode-cursor-right)
+                 ("cursor-up"        :copy-mode-cursor-up)
+                 ("cursor-down"      :copy-mode-cursor-down)
+                 ("rectangle-toggle" :copy-mode-rectangle-toggle)
+                 ("select-word"      :copy-mode-select-word)
+                 ("other-end"        :copy-mode-other-end)
+                 ("toggle-position"  :copy-mode-other-end)))
+      (destructuring-bind (name expected) c
+        (is (eq expected (kw name)) "~S must map to ~S" name expected)))))
 
 (test send-keys-x-rectangle-toggle-toggles-rect-select
   "send -X rectangle-toggle flips the screen's rectangle (block) selection flag

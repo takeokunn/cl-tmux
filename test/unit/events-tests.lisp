@@ -224,21 +224,13 @@
     (cl-tmux::handle-prompt-key 8)
     (is (string= "a" (prompt-buffer *prompt*)) "BS deletes the last char")))
 
-(test define-copy-mode-escape-table-macro-is-defined
-  "define-copy-mode-escape-table is a defined macro."
-  (is (macro-function 'cl-tmux::define-copy-mode-escape-table)))
-
-(test define-cps-state-macro-is-defined
-  "define-cps-state is a defined macro."
-  (is (macro-function 'cl-tmux::define-cps-state)))
-
-(test define-prompt-key-rules-macro-is-defined
-  "define-prompt-key-rules is a defined macro."
-  (is (macro-function 'cl-tmux::define-prompt-key-rules)))
-
-(test define-copy-mode-vi-rules-macro-is-defined
-  "define-copy-mode-vi-rules is a defined macro."
-  (is (macro-function 'cl-tmux::define-copy-mode-vi-rules)))
+(test dispatch-macro-definitions
+  "Event-dispatch macros used by the CPS state machine are all defined."
+  (dolist (sym '(cl-tmux::define-copy-mode-escape-table
+                 cl-tmux::define-cps-state
+                 cl-tmux::define-prompt-key-rules
+                 cl-tmux::define-copy-mode-vi-rules))
+    (is (macro-function sym) "~S must be a defined macro" sym)))
 
 ;;; ── Mouse event dispatch tests ───────────────────────────────────────────────
 ;;;
