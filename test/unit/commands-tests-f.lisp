@@ -121,27 +121,25 @@
 
 ;;; ── if-shell ─────────────────────────────────────────────────────────────────
 
-(test if-shell-zero-exit-calls-then-fn
-  "if-shell calls THEN-FN when the command exits with code 0."
-  (let ((called nil))
-    (cl-tmux/commands:if-shell "true" (lambda () (setf called t)))
-    (is-true called "then-fn must be invoked for a zero-exit command")))
+(test if-shell-dispatch-table
+  "if-shell calls then-fn on zero exit; else-fn on non-zero exit."
+  (dolist (row (list (list (lambda (f) (cl-tmux/commands:if-shell "true" f))
+                           "zero exit → then-fn called")
+                     (list (lambda (f) (cl-tmux/commands:if-shell "false"
+                                                                   (lambda () nil)
+                                                                   :else-fn f))
+                           "non-zero exit → else-fn called")))
+    (destructuring-bind (runner desc) row
+      (let ((flag nil))
+        (funcall runner (lambda () (setf flag t)))
+        (is-true flag "~A" desc)))))
 
-(test if-shell-nonzero-exit-calls-else-fn
-  "if-shell calls ELSE-FN when the command exits non-zero."
-  (let ((else-called nil))
-    (cl-tmux/commands:if-shell "false"
-                               (lambda () nil)
-                               :else-fn (lambda () (setf else-called t)))
-    (is-true else-called "else-fn must be invoked for a non-zero-exit command")))
-
-(test if-shell-nonzero-exit-no-else-fn-is-noop
-  "if-shell with a non-zero exit and no ELSE-FN does not signal an error."
-  (finishes (cl-tmux/commands:if-shell "false" (lambda () nil))))
-
-(test if-shell-zero-exit-no-then-fn-is-noop
-  "if-shell with a zero exit and NIL THEN-FN does not signal an error."
-  (finishes (cl-tmux/commands:if-shell "true" nil)))
+(test if-shell-no-applicable-callback-table
+  "if-shell with no applicable callback is a no-op (no error signalled)."
+  (dolist (row (list (list "false" (lambda () nil) "non-zero exit, no else-fn")
+                     (list "true"  nil             "zero exit, nil then-fn")))
+    (destructuring-bind (cmd then-fn desc) row
+      (finishes (cl-tmux/commands:if-shell cmd then-fn) "~A must not error" desc))))
 
 (test if-shell-timeout-returns-calls-else-fn
   "if-shell with a very short timeout calls ELSE-FN (timeout treated as non-zero exit)."
