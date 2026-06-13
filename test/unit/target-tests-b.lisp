@@ -9,55 +9,28 @@
 
 ;;; ── %sigil-id (pure helper) ──────────────────────────────────────────────────
 
-(test sigil-id-dollar-sign
-  "%sigil-id parses $N with sigil $ and returns the integer N."
-  (is (= 1  (cl-tmux::%sigil-id "$1"  #\$)))
-  (is (= 42 (cl-tmux::%sigil-id "$42" #\$))))
-
-(test sigil-id-at-sign
-  "%sigil-id parses @N with sigil @ and returns the integer N."
-  (is (= 3 (cl-tmux::%sigil-id "@3" #\@))))
-
-(test sigil-id-percent-sign
-  "%sigil-id parses %N with sigil % and returns the integer N."
-  (is (= 7 (cl-tmux::%sigil-id "%7" #\%))))
-
-(test sigil-id-wrong-sigil-returns-nil
-  "%sigil-id returns NIL when the string begins with the wrong sigil char."
-  (is (null (cl-tmux::%sigil-id "$5" #\@))
-      "%sigil-id with wrong sigil must return NIL"))
-
-(test sigil-id-non-sigil-string-returns-nil
-  "%sigil-id returns NIL when the string does not begin with the sigil char."
-  (is (null (cl-tmux::%sigil-id "main" #\$))
-      "%sigil-id on plain name must return NIL"))
-
-(test sigil-id-empty-string-returns-nil
-  "%sigil-id returns NIL for an empty string."
-  (is (null (cl-tmux::%sigil-id "" #\$))
-      "%sigil-id on empty string must return NIL"))
+(test sigil-id-table
+  "%sigil-id parses sigil+N strings and returns the integer N, or NIL on mismatch."
+  (dolist (row '(("$1"   #\$  1   "dollar single-digit")
+                 ("$42"  #\$  42  "dollar multi-digit")
+                 ("@3"   #\@  3   "at-sign")
+                 ("%7"   #\%  7   "percent-sign")
+                 ("$5"   #\@  nil "wrong sigil")
+                 ("main" #\$  nil "non-sigil string")
+                 (""     #\$  nil "empty string")))
+    (destructuring-bind (input sigil expected desc) row
+      (is (equal expected (cl-tmux::%sigil-id input sigil)) "~A" desc))))
 
 ;;; ── %name-prefix-p (pure helper) ─────────────────────────────────────────────
 
-(test name-prefix-p-exact-match
-  "%name-prefix-p returns T when PREFIX equals NAME."
-  (is-true (cl-tmux::%name-prefix-p "foo" "foo")
-           "%name-prefix-p must return T for exact match"))
-
-(test name-prefix-p-prefix-match
-  "%name-prefix-p returns T when NAME starts with PREFIX."
-  (is-true (cl-tmux::%name-prefix-p "fo" "foobar")
-           "%name-prefix-p must return T when name starts with prefix"))
-
-(test name-prefix-p-no-match
-  "%name-prefix-p returns NIL when PREFIX is longer than NAME."
-  (is-false (cl-tmux::%name-prefix-p "foobar" "fo")
-            "%name-prefix-p must return NIL when prefix is longer than name"))
-
-(test name-prefix-p-different-strings
-  "%name-prefix-p returns NIL when PREFIX does not match the start of NAME."
-  (is-false (cl-tmux::%name-prefix-p "bar" "foobar")
-            "%name-prefix-p must return NIL when strings diverge"))
+(test name-prefix-p-table
+  "%name-prefix-p returns T when PREFIX equals or is a prefix of NAME, NIL otherwise."
+  (dolist (row '((t   "foo"    "foo"    "exact match")
+                 (t   "fo"     "foobar" "prefix of longer name")
+                 (nil "foobar" "fo"     "prefix longer than name")
+                 (nil "bar"    "foobar" "strings diverge")))
+    (destructuring-bind (expected prefix name desc) row
+      (is (eq expected (cl-tmux::%name-prefix-p prefix name)) "~A" desc))))
 
 (test name-prefix-p-empty-prefix
   "%name-prefix-p with an empty prefix matches any name."

@@ -9,28 +9,17 @@
 
 ;;; It is not exported, so we access it through the internal package name.
 
-(test ranges-overlap-p-overlapping-ranges
-  "%ranges-overlap-p returns T for two overlapping integer ranges."
-  (is (cl-tmux/model::%ranges-overlap-p 0 5 3 5)
-      "[0,5) and [3,8) overlap at 3..4")
-  (is (cl-tmux/model::%ranges-overlap-p 0 10 5 3)
-      "[0,10) and [5,8) overlap")
-  (is (cl-tmux/model::%ranges-overlap-p 5 5 4 2)
-      "[5,10) and [4,6) share 5"))
-
-(test ranges-overlap-p-touching-but-not-overlapping
-  "%ranges-overlap-p returns NIL for adjacent (touching) but non-overlapping ranges."
-  (is (null (cl-tmux/model::%ranges-overlap-p 0 5 5 5))
-      "[0,5) and [5,10) are adjacent — no overlap")
-  (is (null (cl-tmux/model::%ranges-overlap-p 5 5 0 5))
-      "[5,10) and [0,5) are adjacent — no overlap"))
-
-(test ranges-overlap-p-disjoint-ranges
-  "%ranges-overlap-p returns NIL for fully disjoint ranges."
-  (is (null (cl-tmux/model::%ranges-overlap-p 0 3 10 5))
-      "[0,3) and [10,15) are disjoint")
-  (is (null (cl-tmux/model::%ranges-overlap-p 10 5 0 3))
-      "[10,15) and [0,3) are disjoint"))
+(test ranges-overlap-p-table
+  "%ranges-overlap-p: T when [s1,s1+e1) and [s2,s2+e2) share at least one point."
+  (dolist (row '((t   0  5 3  5 "[0,5) and [3,8) overlap at 3..4")
+                 (t   0 10 5  3 "[0,10) and [5,8) overlap")
+                 (t   5  5 4  2 "[5,10) and [4,6) share 5")
+                 (nil 0  5 5  5 "[0,5) and [5,10) touch but do not overlap")
+                 (nil 5  5 0  5 "[5,10) and [0,5) touch but do not overlap")
+                 (nil 0  3 10 5 "[0,3) and [10,15) are disjoint")
+                 (nil 10 5 0  3 "[10,15) and [0,3) are disjoint")))
+    (destructuring-bind (expected s1 e1 s2 e2 desc) row
+      (is (eq expected (cl-tmux/model::%ranges-overlap-p s1 e1 s2 e2)) "~A" desc))))
 
 ;;; ── %pane-center-x / %pane-center-y direct tests ────────────────────────────
 
