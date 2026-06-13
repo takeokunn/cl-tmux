@@ -67,6 +67,15 @@
           (if pane (pane-width pane) 0)
           (if pane (pane-height pane) 0)))
 
+(defun %expand-start-dir (session raw-dir)
+  "Expand #{...} format variables in RAW-DIR using the current active pane
+   as the format context.  Returns the expanded string, or NIL when RAW-DIR is NIL."
+  (when raw-dir
+    (let* ((win  (session-active-window session))
+           (pane (and win (window-active-pane win)))
+           (ctx  (cl-tmux/format:format-context-from-session session win pane)))
+      (cl-tmux/format:expand-format raw-dir ctx))))
+
 (defun %show-pane-info-overlay (session win pane print-fmt)
   "Show a transient pane-info overlay for the -P flag.
    Uses PRINT-FMT if given, otherwise the default session:window.pane summary."
@@ -100,13 +109,7 @@
            (after-p    (assoc #\a flags))
            (target-str (cdr (assoc #\t flags)))
            (raw-dir    (cdr (assoc #\c flags)))
-           ;; Expand #{...} format variables in the -c argument.
-           (start-dir  (when raw-dir
-                         (let* ((win  (session-active-window session))
-                                (pane (and win (window-active-pane win)))
-                                (ctx  (cl-tmux/format:format-context-from-session
-                                       session win pane)))
-                           (cl-tmux/format:expand-format raw-dir ctx))))
+           (start-dir  (%expand-start-dir session raw-dir))
            (at-idx     (and target-str (parse-integer target-str :junk-allowed t))))
       ;; -k: if a window with the target index already exists, kill it first.
       (when (and kill-p at-idx)
@@ -166,14 +169,7 @@
            (pct-str      (cdr (assoc #\p flags)))
            (lines-str    (cdr (assoc #\l flags)))
            (raw-dir      (cdr (assoc #\c flags)))
-           ;; Expand #{...} format variables in the -c argument so that
-           ;; 'split-window -c "#{pane_current_path}"' opens in the right dir.
-           (start-dir    (when raw-dir
-                           (let* ((win  (session-active-window session))
-                                  (pane (and win (window-active-pane win)))
-                                  (ctx  (cl-tmux/format:format-context-from-session
-                                         session win pane)))
-                             (cl-tmux/format:expand-format raw-dir ctx))))
+           (start-dir    (%expand-start-dir session raw-dir))
            (pct          (and pct-str (parse-integer pct-str :junk-allowed t)))
            ;; -l N → N cells; -l N% → fraction (modern tmux); -p N → fraction.
            (size         (or (and pct (/ pct 100.0)) (%parse-split-size lines-str))))
