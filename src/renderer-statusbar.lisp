@@ -257,9 +257,9 @@
 (defun %status-justify-line (left right-str cols justify)
   "Assemble the status bar according to JUSTIFY (\"left\" \"centre\" \"right\").
    COLS is the terminal width; result is truncated to COLS."
-  (cond
-    ((string-equal justify "centre") (%justify-centre left right-str cols))
-    (t                               (%justify-right  left right-str cols))))
+  (if (string-equal justify "centre")
+      (%justify-centre left right-str cols)
+      (%justify-right  left right-str cols)))
 
 ;;; ── Status bar render entry point ────────────────────────────────────────────
 
@@ -350,17 +350,17 @@
       (%visible-truncate
        (with-output-to-string (out)
          (let ((col 0))
-           (flet ((pad-to (target)
-                    (when (> target col)
-                      (dotimes (_ (- target col)) (write-char #\Space out))
-                      (setf col target))))
+           (labels ((pad-to (target)
+                      (when (> target col)
+                        (dotimes (_ (- target col)) (write-char #\Space out))
+                        (setf col target)))
+                    (emit-seg (seg w pos)
+                      (when (plusp w)
+                        (pad-to (max col pos))
+                        (when (< col cols) (write-string seg out) (incf col w)))))
              (write-string l out) (incf col lw)
-             (when (plusp cw)
-               (pad-to (max col (floor (- cols cw) 2)))
-               (when (< col cols) (write-string c out) (incf col cw)))
-             (when (plusp rw)
-               (pad-to (max col (- cols rw)))
-               (when (< col cols) (write-string r out) (incf col rw)))
+             (emit-seg c cw (floor (- cols cw) 2))
+             (emit-seg r rw (- cols rw))
              (pad-to cols))))
        cols))))
 

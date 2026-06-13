@@ -288,8 +288,8 @@
    (ignore-errors (sb-posix:kill (sb-posix:getpid) sb-posix:sigtstp)))
   (:lock-server
    ;; Lock all sessions, not just the current one.
-   (dolist (entry *server-sessions*)
-     (setf (session-locked-p (cdr entry)) t)))
+   (loop for (nil . sess) in *server-sessions*
+         do (setf (session-locked-p sess) t)))
 
   ;; ── Environment ───────────────────────────────────────────────────────────
   (:show-environment
@@ -401,10 +401,9 @@
   ;; ── kill-server ──────────────────────────────────────────────────────────
   ;; Terminate the server and all sessions.
   (:kill-server
-   (dolist (entry *server-sessions*)
-     (let ((sess (cdr entry)))
-       (dolist (pane (all-panes sess))
-         (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))))
+   (loop for (nil . sess) in *server-sessions*
+         do (dolist (pane (all-panes sess))
+              (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))
    (setf *running* nil)
    :quit)
 
