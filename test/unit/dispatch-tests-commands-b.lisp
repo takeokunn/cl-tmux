@@ -160,10 +160,9 @@
 
 (test copy-mode-call-skips-when-no-session-has-no-screen
   "%copy-mode-call on a windowless session is a no-op (no error)."
-  (with-empty-session (s)
-    (with-loop-state
-      (finishes (cl-tmux::%copy-mode-call s (lambda (screen) (declare (ignore screen)) nil))
-                "%copy-mode-call must not error when there is no active screen"))))
+  (with-fake-session (s :nwindows 0)
+    (finishes (cl-tmux::%copy-mode-call s (lambda (screen) (declare (ignore screen)) nil))
+              "%copy-mode-call must not error when there is no active screen")))
 
 ;;; ── %handle-kill-result helper ────────────────────────────────────────────────
 

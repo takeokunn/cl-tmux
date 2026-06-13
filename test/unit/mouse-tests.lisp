@@ -75,81 +75,37 @@
 (test parse-x10-mouse-bytes
   "X10: ESC [ M <btn+32> <col+33> <row+33> — decode btn=0, col=0, row=1."
   ;; btn=0 → raw=32; col=0 → raw=33; row=1 → raw=34
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 40 :height 24
-                           :panes (list p0)
-                           :tree  (make-layout-leaf p0)
-                           :active p0))
-         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
-    ;; Gate on mouse option
-    (cl-tmux/options:set-option "mouse" t)
-    (unwind-protect
-         (with-loop-state
-           (let ((state (cl-tmux::make-input-state)))
-             ;; ESC [ M 32 33 34  (btn=0, col=0, row=1)
-             (cl-tmux::process-byte sess 27 state)
-             (cl-tmux::process-byte sess 91 state)
-             (cl-tmux::process-byte sess 77 state)
-             (cl-tmux::process-byte sess 32 state)
-             (cl-tmux::process-byte sess 33 state)
-             (cl-tmux::process-byte sess 34 state)
-             ;; Focus is unchanged (single pane, clicking in it); no error expected.
-             (is (eq p0 (window-active-pane win))
-                 "single-pane click keeps p0 active")))
-      (cl-tmux/options:set-option "mouse" nil))))
+  (with-single-pane-mouse-session (sess win p0)
+    (let ((state (cl-tmux::make-input-state)))
+      ;; ESC [ M 32 33 34  (btn=0, col=0, row=1)
+      (cl-tmux::process-byte sess 27 state)
+      (cl-tmux::process-byte sess 91 state)
+      (cl-tmux::process-byte sess 77 state)
+      (cl-tmux::process-byte sess 32 state)
+      (cl-tmux::process-byte sess 33 state)
+      (cl-tmux::process-byte sess 34 state)
+      ;; Focus is unchanged (single pane, clicking in it); no error expected.
+      (is (eq p0 (window-active-pane win))
+          "single-pane click keeps p0 active"))))
 
 ;;; ── Mouse option gating ──────────────────────────────────────────────────────
 
 (test mouse-option-gating-off-by-default
   "When the 'mouse' option is NIL, %dispatch-mouse-event is a no-op."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (p1  (make-pane :id 2 :fd -1 :pid -1
-                          :x 41 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree  (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2)
-                           :active p0))
-         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
+  (with-two-pane-h-session (sess win p0 p1)
     (cl-tmux/options:set-option "mouse" nil)
-    (with-loop-state
-      ;; Click in right pane — should NOT change focus because mouse is off
-      (cl-tmux::%dispatch-mouse-event sess 0 50 5 nil)
-      (is (eq p0 (window-active-pane win))
-          "mouse off: focus must not change on click"))))
+    ;; Click in right pane — should NOT change focus because mouse is off
+    (cl-tmux::%dispatch-mouse-event sess 0 50 5 nil)
+    (is (eq p0 (window-active-pane win))
+        "mouse off: focus must not change on click")))
 
 (test mouse-option-gating-on
   "When the 'mouse' option is T, left-click changes active pane."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (p1  (make-pane :id 2 :fd -1 :pid -1
-                          :x 41 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree  (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2)
-                           :active p0))
-         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
-    (cl-tmux/options:set-option "mouse" t)
-    (unwind-protect
-         (with-loop-state
-           (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 81))
-             ;; Click in right pane (col 50, row 5 — within pane area, not status bar)
-             (cl-tmux::%dispatch-mouse-event sess 0 50 5 nil)
-             (is (eq p1 (window-active-pane win))
-                 "mouse on: click in right pane must focus p1")))
-      (cl-tmux/options:set-option "mouse" nil))))
+  (with-two-pane-mouse-session (sess win p0 p1)
+    ;; Click in right pane (col 50, row 5 — within pane area, not status bar)
+    (cl-tmux::%dispatch-mouse-event sess 0 50 5 nil)
+    (is (eq p1 (window-active-pane win))
+        "mouse on: click in right pane must focus p1")))
 
 ;;; ── Status bar click ─────────────────────────────────────────────────────────
 
@@ -211,45 +167,25 @@
 
 (test mouse-wheel-up-enters-copy-mode
   "Wheel-up (btn 64) automatically enters copy mode and scrolls up."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 40 :height 24
-                           :panes (list p0) :tree (make-layout-leaf p0) :active p0))
-         (sess (make-session :id 1 :name "0" :windows (list win) :active win))
-         (sc  (pane-screen p0)))
-    (cl-tmux/options:set-option "mouse" t)
-    (unwind-protect
-         (with-loop-state
-           (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
-             (seed-scrollback sc 10)
-             (is-false (screen-copy-mode-p sc) "not in copy mode initially")
-             (cl-tmux::%dispatch-mouse-event sess 64 0 0 nil)
-             (is-true (screen-copy-mode-p sc)
-                      "wheel-up must enter copy mode")))
-      (cl-tmux/options:set-option "mouse" nil))))
+  (with-single-pane-mouse-session (sess win p0)
+    (let ((sc (pane-screen p0)))
+      (seed-scrollback sc 10)
+      (is-false (screen-copy-mode-p sc) "not in copy mode initially")
+      (cl-tmux::%dispatch-mouse-event sess 64 0 0 nil)
+      (is-true (screen-copy-mode-p sc)
+               "wheel-up must enter copy mode"))))
 
 (test mouse-wheel-down-exits-copy-mode-at-bottom
   "Wheel-down (btn 65) while at offset 0 exits copy mode."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 40 :height 24
-                           :panes (list p0) :tree (make-layout-leaf p0) :active p0))
-         (sess (make-session :id 1 :name "0" :windows (list win) :active win))
-         (sc  (pane-screen p0)))
-    (cl-tmux/options:set-option "mouse" t)
-    (unwind-protect
-         (with-loop-state
-           (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
-             ;; Enter copy mode manually
-             (cl-tmux/commands:copy-mode-enter sc)
-             (is-true (screen-copy-mode-p sc))
-             ;; Already at offset 0 — wheel-down should exit copy mode
-             (cl-tmux::%dispatch-mouse-event sess 65 0 0 nil)
-             (is-false (screen-copy-mode-p sc)
-                       "wheel-down at offset 0 must exit copy mode")))
-      (cl-tmux/options:set-option "mouse" nil))))
+  (with-single-pane-mouse-session (sess win p0)
+    (let ((sc (pane-screen p0)))
+      ;; Enter copy mode manually
+      (cl-tmux/commands:copy-mode-enter sc)
+      (is-true (screen-copy-mode-p sc))
+      ;; Already at offset 0 — wheel-down should exit copy mode
+      (cl-tmux::%dispatch-mouse-event sess 65 0 0 nil)
+      (is-false (screen-copy-mode-p sc)
+                "wheel-down at offset 0 must exit copy mode"))))
 
 ;;; ── Mouse key-table bindings (bind -n WheelUpPane / MouseDown1Pane) ──────────
 

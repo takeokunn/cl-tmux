@@ -40,11 +40,10 @@
 
 (test with-active-pane-returns-nil-for-empty-session
   "with-active-pane evaluates to NIL when there is no active pane."
-  (with-empty-session (s)
-    (with-loop-state
-      ;; %active-screen uses with-active-pane internally
-      (is (null (cl-tmux::%active-screen s))
-          "empty session has no active screen"))))
+  (with-fake-session (s :nwindows 0)
+    ;; %active-screen uses with-active-pane internally
+    (is (null (cl-tmux::%active-screen s))
+        "empty session has no active screen")))
 
 (test with-active-pane-macro-is-defined
   "with-active-pane is a defined macro."

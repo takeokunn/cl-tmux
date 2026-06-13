@@ -254,6 +254,23 @@
               ,@body))
        (cl-tmux/options:set-option "mouse" nil))))
 
+(defmacro with-single-pane-mouse-session ((sess-var win-var p0-var) &body body)
+  "1-pane session (40×24) with mouse=t; restores mouse=nil via unwind-protect.
+   BODY runs inside WITH-LOOP-STATE with *term-rows*=25 and *term-cols*=40."
+  `(let* ((,p0-var  (make-no-pty-pane 1 0 0 40 24))
+          (,win-var (make-window :id 1 :name "w" :width 40 :height 24
+                                 :panes (list ,p0-var)
+                                 :tree  (make-layout-leaf ,p0-var)
+                                 :active ,p0-var))
+          (,sess-var (make-session :id 1 :name "0"
+                                   :windows (list ,win-var) :active ,win-var)))
+     (cl-tmux/options:set-option "mouse" t)
+     (unwind-protect
+          (with-loop-state
+            (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
+              ,@body))
+       (cl-tmux/options:set-option "mouse" nil))))
+
 ;;; ---- Options fixture macros --------------------------------------------------
 ;;;
 ;;; These macros are defined here (not in options-tests.lisp) so that

@@ -373,14 +373,13 @@
 
 (test dispatch-choose-window-empty-session-shows-overlay
   ":choose-window with no windows shows a '(no windows)' overlay."
-  (with-empty-session (s)
-    (with-loop-state
-      (let ((*overlay* nil))
-        (cl-tmux::dispatch-command s :choose-window nil)
-        (is (overlay-active-p) ":choose-window must open an overlay for empty session")
-        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-          (is (search "no windows" text)
-              "overlay must say 'no windows' when there are none"))))))
+  (with-fake-session (s :nwindows 0)
+    (let ((*overlay* nil))
+      (cl-tmux::dispatch-command s :choose-window nil)
+      (is (overlay-active-p) ":choose-window must open an overlay for empty session")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "no windows" text)
+            "overlay must say 'no windows' when there are none")))))
 
 ;;; ── :move-window-prompt dispatch ─────────────────────────────────────────────
 
