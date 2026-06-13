@@ -6,23 +6,17 @@
 
 ;;; ── copy-mode-line-start / copy-mode-line-end ────────────────────────────────
 
-(test copy-mode-line-start-moves-to-col-0
-  "copy-mode-line-start sets the cursor column to 0."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 10))
-    (cl-tmux/commands::copy-mode-line-start s)
-    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "copy-mode-line-start must set col to 0")))
-
-(test copy-mode-line-end-moves-to-last-col
-  "copy-mode-line-end sets the cursor column to width-1."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 3))
-    (cl-tmux/commands::copy-mode-line-end s)
-    (is (= 19 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "copy-mode-line-end must set col to width-1 (19 for width=20)")))
+(test copy-mode-line-start-end-moves-table
+  "copy-mode-line-start sets col to 0; copy-mode-line-end sets col to width-1."
+  (dolist (c '((cl-tmux/commands::copy-mode-line-start (2 . 10) 0  "line-start → col 0")
+               (cl-tmux/commands::copy-mode-line-end   (2 .  3) 19 "line-end → col 19 (width-1)")))
+    (destructuring-bind (fn init-cursor expected-col desc) c
+      (let ((s (make-screen 20 5)))
+        (cl-tmux/commands::copy-mode-enter s)
+        (setf (cl-tmux/terminal/types:screen-copy-cursor s) init-cursor)
+        (funcall fn s)
+        (is (= expected-col (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+            "~A" desc)))))
 
 (test copy-mode-line-start-end-noop-table
   "copy-mode-line-start and copy-mode-line-end leave the column unchanged when not in copy mode."
@@ -36,34 +30,20 @@
 
 ;;; ── copy-mode-high / copy-mode-middle / copy-mode-low ───────────────────────
 
-(test copy-mode-high-moves-cursor-to-row-0
-  "copy-mode-high sets the cursor row to 0, keeping column."
-  (let ((s (make-screen 20 10)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 7 5))
-    (cl-tmux/commands::copy-mode-high s)
-    (is (= 0 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "copy-mode-high must move cursor to row 0")
-    (is (= 5 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "copy-mode-high must preserve column")))
-
-(test copy-mode-middle-moves-cursor-to-mid-row
-  "copy-mode-middle sets the cursor row to floor(height/2), keeping column."
-  (let ((s (make-screen 20 10)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
-    (cl-tmux/commands::copy-mode-middle s)
-    (is (= 5 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "copy-mode-middle must move cursor to floor(10/2)=5 for height=10")))
-
-(test copy-mode-low-moves-cursor-to-last-row
-  "copy-mode-low sets the cursor row to height-1, keeping column."
-  (let ((s (make-screen 20 10)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
-    (cl-tmux/commands::copy-mode-low s)
-    (is (= 9 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "copy-mode-low must move cursor to height-1=9 for height=10")))
+(test copy-mode-h-m-l-moves-table
+  "copy-mode-high/middle/low each set the cursor row, preserving column."
+  (dolist (c '((cl-tmux/commands::copy-mode-high   (7 . 5) 0 "high → row 0")
+               (cl-tmux/commands::copy-mode-middle  (0 . 5) 5 "middle → floor(10/2)=5")
+               (cl-tmux/commands::copy-mode-low     (0 . 5) 9 "low → height-1=9")))
+    (destructuring-bind (fn init-cursor expected-row desc) c
+      (let ((s (make-screen 20 10)))
+        (cl-tmux/commands::copy-mode-enter s)
+        (setf (cl-tmux/terminal/types:screen-copy-cursor s) init-cursor)
+        (funcall fn s)
+        (is (= expected-row (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+            "~A" desc)
+        (is (= 5 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+            "~A: column must be preserved" desc)))))
 
 (test copy-mode-h-m-l-noop-outside-copy-mode-table
   "copy-mode-high/middle/low leave the cursor row unchanged when not in copy mode."
@@ -168,15 +148,16 @@
         "word-backward from col 8 must jump to start of 'world' at col 6 (got ~D)"
         (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
 
-(test copy-mode-word-forward-noop-outside-copy-mode
-  "copy-mode-word-forward is a no-op when not in copy mode."
-  (let ((s (make-screen 20 5)))
-    (feed s "hello world")
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
-    (cl-tmux/commands::copy-mode-word-forward s)
-    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "column must not change outside copy mode")))
-
+(test copy-mode-word-motion-noop-outside-copy-mode-table
+  "copy-mode-word-forward and copy-mode-word-end leave the column unchanged outside copy mode."
+  (dolist (fn '(cl-tmux/commands::copy-mode-word-forward
+                cl-tmux/commands::copy-mode-word-end))
+    (let ((s (make-screen 20 5)))
+      (feed s "hello world")
+      (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+      (funcall fn s)
+      (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+          "~A: column must not change outside copy mode" fn))))
 
 (test copy-mode-word-end-jumps-to-end-of-word
   "copy-mode-word-end moves the cursor to the last character of the current or next word."
@@ -188,15 +169,6 @@
     (is (= 4 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
         "word-end from col 0 must jump to col 4 (end of 'hello') (got ~D)"
         (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
-
-(test copy-mode-word-end-noop-outside-copy-mode
-  "copy-mode-word-end is a no-op when not in copy mode."
-  (let ((s (make-screen 20 5)))
-    (feed s "hello world")
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
-    (cl-tmux/commands::copy-mode-word-end s)
-    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "column must not change outside copy mode")))
 
 ;;; ── copy-mode-top / copy-mode-bottom ────────────────────────────────────────
 

@@ -92,49 +92,26 @@
 ;;; duplicating the setup inline.  with-two-pane-h-session and
 ;;; with-two-pane-v-session already encode the exact same geometry.
 
-(test dispatch-select-pane-right-moves-active-pane
-  ":select-pane-right moves the active pane to the right neighbour."
-  (with-two-pane-h-session (sess win p0 p1)
-    (is (eq p0 (window-active-pane win)) "p0 is active initially")
-    (cl-tmux::dispatch-command sess :select-pane-right nil)
-    (is (eq p1 (window-active-pane win))
-        "active pane must be p1 after :select-pane-right")))
+(test dispatch-select-pane-horizontal-table
+  ":select-pane-right/:select-pane-left move the active pane or stay put at edge."
+  (dolist (c '((:select-pane-right nil  t   "right from p0 → p1")
+               (:select-pane-left   t   nil "left from p1 → p0")
+               (:select-pane-right  t   t   "right at rightmost → no-op")))
+    (destructuring-bind (cmd start-p1 expected-p1 desc) c
+      (with-two-pane-h-session (sess win p0 p1)
+        (when start-p1 (window-select-pane win p1))
+        (cl-tmux::dispatch-command sess cmd nil)
+        (is (eq (if expected-p1 p1 p0) (window-active-pane win)) "~A" desc)))))
 
-(test dispatch-select-pane-left-moves-active-pane
-  ":select-pane-left moves the active pane to the left neighbour."
-  (with-two-pane-h-session (sess win p0 p1)
-    ;; Start on p1, then go left.
-    (window-select-pane win p1)
-    (cl-tmux::dispatch-command sess :select-pane-left nil)
-    (is (eq p0 (window-active-pane win))
-        "active pane must be p0 after :select-pane-left")))
-
-(test dispatch-select-pane-right-noop-at-rightmost
-  ":select-pane-right is a no-op when the active pane has no right neighbour."
-  (with-two-pane-h-session (sess win p0 p1)
-    ;; Make p1 (rightmost) active, then try to go further right.
-    (is (eq p0 (window-active-pane win)) "p0 is active initially")
-    (window-select-pane win p1)
-    (cl-tmux::dispatch-command sess :select-pane-right nil)
-    (is (eq p1 (window-active-pane win))
-        "active pane must remain p1 when no right neighbour exists")))
-
-(test dispatch-select-pane-down-moves-active-pane
-  ":select-pane-down moves the active pane to the pane below."
-  (with-two-pane-v-session (sess win p0 p1)
-    (is (eq p0 (window-active-pane win)) "p0 is active initially")
-    (cl-tmux::dispatch-command sess :select-pane-down nil)
-    (is (eq p1 (window-active-pane win))
-        "active pane must be p1 after :select-pane-down")))
-
-(test dispatch-select-pane-up-moves-active-pane
-  ":select-pane-up moves the active pane to the pane above."
-  (with-two-pane-v-session (sess win p0 p1)
-    ;; Start on p1 (bottom), then go up.
-    (window-select-pane win p1)
-    (cl-tmux::dispatch-command sess :select-pane-up nil)
-    (is (eq p0 (window-active-pane win))
-        "active pane must be p0 after :select-pane-up")))
+(test dispatch-select-pane-vertical-table
+  ":select-pane-down/:select-pane-up move the active pane in a vertical split."
+  (dolist (c '((:select-pane-down nil  t   "down from p0 → p1")
+               (:select-pane-up    t   nil "up from p1 → p0")))
+    (destructuring-bind (cmd start-p1 expected-p1 desc) c
+      (with-two-pane-v-session (sess win p0 p1)
+        (when start-p1 (window-select-pane win p1))
+        (cl-tmux::dispatch-command sess cmd nil)
+        (is (eq (if expected-p1 p1 p0) (window-active-pane win)) "~A" desc)))))
 
 ;;; ── zoom-toggle dispatch ────────────────────────────────────────────────────
 
@@ -169,31 +146,16 @@
 ;;;
 ;;; Use the shared fixture macros to avoid repeating pane/window/session setup.
 
-(test select-pane-in-direction-right-selects-right-pane
-  "%select-pane-in-direction :right from the left pane selects the right pane."
-  (with-two-pane-h-session (sess win p0 p1)
-    (is (eq p0 (window-active-pane win)) "p0 is active initially")
-    (cl-tmux::%select-pane-in-direction sess :right)
-    (is (eq p1 (window-active-pane win))
-        "active pane must be p1 after %select-pane-in-direction :right")))
-
-(test select-pane-in-direction-left-selects-left-pane
-  "%select-pane-in-direction :left from the right pane selects the left pane."
-  (with-two-pane-h-session (sess win p0 p1)
-    (window-select-pane win p1)
-    (cl-tmux::%select-pane-in-direction sess :left)
-    (is (eq p0 (window-active-pane win))
-        "active pane must be p0 after %select-pane-in-direction :left")))
-
-(test select-pane-in-direction-noop-when-no-neighbor
-  "%select-pane-in-direction is a no-op when the active pane has no neighbor
-   in the requested direction."
-  (with-two-pane-h-session (sess win p0 p1)
-    (is-false (null p0) "fixture created")
-    (window-select-pane win p1)          ; start at the rightmost pane
-    (cl-tmux::%select-pane-in-direction sess :right)
-    (is (eq p1 (window-active-pane win))
-        "active pane must remain p1 when no right neighbor exists")))
+(test select-pane-in-direction-h-table
+  "%select-pane-in-direction :right/:left moves or stays in a horizontal split."
+  (dolist (c '((:right nil  t   "right from p0 → p1")
+               (:left   t   nil "left from p1 → p0")
+               (:right  t   t   "right at rightmost → no-op")))
+    (destructuring-bind (dir start-p1 expected-p1 desc) c
+      (with-two-pane-h-session (sess win p0 p1)
+        (when start-p1 (window-select-pane win p1))
+        (cl-tmux::%select-pane-in-direction sess dir)
+        (is (eq (if expected-p1 p1 p0) (window-active-pane win)) "~A" desc)))))
 
 (test select-pane-in-direction-vertical-down-selects-lower-pane
   "%select-pane-in-direction :down from the top pane selects the bottom pane."

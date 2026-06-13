@@ -143,7 +143,6 @@
                ("new-title" "original" nil "auto-rename off → no-op")))
     (destructuring-bind (new-title win-name auto-rename-p desc) c
       (with-auto-rename-session (screen pane win sess :win-name win-name)
-        (declare (ignore pane))
         (setf (screen-title screen) new-title)
         (setf (window-automatic-rename-p win) auto-rename-p)
         (cl-tmux::%maybe-rename-window-from-title sess)
