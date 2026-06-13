@@ -227,78 +227,26 @@
 ;;; handler's RETURN VALUE (handled vs not) rather than shell side-effects;
 ;;; `true` is used so any actual execution is harmless and fast.
 
-(test run-shell-handler-handles-background-flag
-  "%apply-run-shell-directive returns T for 'run-shell -b true' (handled)."
-  (with-isolated-config
-    (is (eq t (cl-tmux/config::%apply-run-shell-directive "run-shell" '("-b" "true")))
-        "run-shell -b true must be handled (T)")))
-
-(test run-shell-handler-handles-bare-command
-  "%apply-run-shell-directive returns T for the bare 'run true' (one arg) form."
-  (with-isolated-config
-    (is (eq t (cl-tmux/config::%apply-run-shell-directive "run" '("true")))
-        "run true must be handled (T)")))
-
-(test run-shell-handler-handles-target-then-background-flags
-  "%apply-run-shell-directive strips '-t 0 -b' and still handles 'true' (T)."
-  (with-isolated-config
-    (is (eq t (cl-tmux/config::%apply-run-shell-directive
-               "run-shell" '("-t" "0" "-b" "true")))
-        "run-shell -t 0 -b true must be handled (T)")))
-
-(test run-shell-handler-ignores-non-run-command
-  "%apply-run-shell-directive returns NIL for a non-run command (e.g. bind)."
-  (with-isolated-config
-    (is (null (cl-tmux/config::%apply-run-shell-directive
-               "bind" '("x" "next-window")))
-        "a non-run command must not be handled (NIL)")))
-
-(test run-shell-handler-flag-only-is-handled-no-op
-  "%apply-run-shell-directive returns T (no error) for a flag-only 'run-shell -b'."
-  (with-isolated-config
-    (is (eq t (cl-tmux/config::%apply-run-shell-directive "run-shell" '("-b")))
-        "a flag-only run-shell -b must be handled as a no-op (T)")))
-
-(test run-shell-handler-C-flag-is-no-op
-  "%apply-run-shell-directive returns T for '-C cmd' without shelling out
-   (running a tmux command is out of scope; treated as handled/no-op)."
-  (with-isolated-config
-    (is (eq t (cl-tmux/config::%apply-run-shell-directive
-               "run-shell" '("-C" "new-window")))
-        "run-shell -C <tmux-cmd> must be handled as a no-op (T)")))
-
-(test run-shell-handler-handles-delay-flag
-  "%apply-run-shell-directive strips '-d 5' (delay) and handles 'true' (T)."
-  (with-isolated-config
-    (is (eq t (cl-tmux/config::%apply-run-shell-directive
-               "run-shell" '("-d" "5" "true")))
-        "run-shell -d 5 true must be handled (T)")))
-
-(test run-shell-handler-unknown-flag-is-skipped
-  "%apply-run-shell-directive skips an unknown bare flag '-x' and handles 'true' (T)."
-  (with-isolated-config
-    (is (eq t (cl-tmux/config::%apply-run-shell-directive
-               "run-shell" '("-x" "true")))
-        "run-shell -x true must skip the unknown flag and be handled (T)")))
-
-(test run-shell-handler-run-alias-with-flag
-  "%apply-run-shell-directive returns T for the real tpm 'run -b <cmd>' form."
-  (with-isolated-config
-    (is (eq t (cl-tmux/config::%apply-run-shell-directive "run" '("-b" "true")))
-        "run -b true (the tpm form) must be handled (T)")))
-
-(test run-shell-handler-empty-args-is-handled-no-op
-  "%apply-run-shell-directive returns T for an empty args list (no-op)."
-  (with-isolated-config
-    (is (eq t (cl-tmux/config::%apply-run-shell-directive "run-shell" '()))
-        "run-shell with no args must be handled as a no-op (T)")))
-
-(test run-shell-handler-multiword-command-joined
-  "%apply-run-shell-directive joins multi-word command tokens after the flag (T)."
-  (with-isolated-config
-    (is (eq t (cl-tmux/config::%apply-run-shell-directive
-               "run-shell" '("-b" "echo" "hello" "world")))
-        "run-shell -b echo hello world must join and be handled (T)")))
+(test run-shell-handler-table
+  "%apply-run-shell-directive returns T for handled forms and NIL for non-run commands.
+   Each row is (expected cmd args description)."
+  (dolist (c '((t   "run-shell" ("-b" "true")               "run-shell -b true (background flag)")
+               (t   "run"       ("true")                    "run true (bare alias)")
+               (t   "run-shell" ("-t" "0" "-b" "true")      "run-shell -t 0 -b true (target+bg)")
+               (nil "bind"      ("x" "next-window")         "bind (non-run command)")
+               (t   "run-shell" ("-b")                      "run-shell -b only (flag-only no-op)")
+               (t   "run-shell" ("-C" "new-window")         "run-shell -C <cmd> (tmux-cmd no-op)")
+               (t   "run-shell" ("-d" "5" "true")           "run-shell -d 5 true (delay flag)")
+               (t   "run-shell" ("-x" "true")               "run-shell -x true (unknown flag skipped)")
+               (t   "run"       ("-b" "true")               "run -b true (tpm alias with flag)")
+               (t   "run-shell" ()                          "run-shell no args (empty no-op)")
+               (t   "run-shell" ("-b" "echo" "hello" "world") "run-shell -b echo hello world (multi-word)")))
+    (destructuring-bind (expected cmd args desc) c
+      (with-isolated-config
+        (let ((result (cl-tmux/config::%apply-run-shell-directive cmd args)))
+          (if expected
+              (is (eq t result) "~A must return T (got ~S)" desc result)
+              (is (null result) "~A must return NIL (got ~S)" desc result)))))))
 
 ;;; ── %expand-leading-tilde ──────────────────────────────────────────────────
 
