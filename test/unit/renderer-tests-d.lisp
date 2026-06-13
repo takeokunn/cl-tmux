@@ -216,26 +216,26 @@
         (is (not (search "34" out))
             "activity style (SGR 34) must NOT appear when bell takes priority: ~S" out)))))
 
-;;; ── %status-bar-line (pure) ─────────────────────────────────────────────────
+;;; ── %justify-right (pure) ───────────────────────────────────────────────────
 
 (test status-bar-line-fits-in-terminal-cols
-  (let ((line (cl-tmux/renderer::%status-bar-line "left-text" "12:34" 20)))
+  (let ((line (cl-tmux/renderer::%justify-right "left-text" "12:34" 20)))
     (is (<= (length line) 20)
-        "%status-bar-line output must fit within terminal-cols=20 (got ~D: ~S)"
+        "%justify-right output must fit within cols=20 (got ~D: ~S)"
         (length line) line)))
 
 (test status-bar-line-contains-left-and-time
-  (let ((line (cl-tmux/renderer::%status-bar-line "mysession" "09:00" 40)))
+  (let ((line (cl-tmux/renderer::%justify-right "mysession" "09:00" 40)))
     (is (search "mysession" line)
-        "%status-bar-line should contain left text (got ~S)" line)
+        "%justify-right should contain left text (got ~S)" line)
     (is (search "09:00" line)
-        "%status-bar-line should contain the time string (got ~S)" line)))
+        "%justify-right should contain the time string (got ~S)" line)))
 
 (test status-bar-line-truncates-when-too-long
   ;; Terminal is only 5 cols wide; result must be clamped.
-  (let ((line (cl-tmux/renderer::%status-bar-line "very-long-left-text" "99:99" 5)))
+  (let ((line (cl-tmux/renderer::%justify-right "very-long-left-text" "99:99" 5)))
     (is (= 5 (length line))
-        "%status-bar-line should truncate to terminal-cols=5 (got ~D: ~S)"
+        "%justify-right should truncate to cols=5 (got ~D: ~S)"
         (length line) line)))
 
 ;;; ── %status-current-time ────────────────────────────────────────────────────
@@ -265,14 +265,14 @@
 ;;; ── %status-justify-line ─────────────────────────────────────────────────────
 
 (test status-justify-line-left-default
-  "%status-justify-line with justify=left matches %status-bar-line."
+  "%status-justify-line with justify=left matches %justify-right."
   (let* ((left "hello")
          (right "world")
          (cols 40)
-         (result (cl-tmux/renderer::%status-justify-line left right cols "left"))
-         (expected (cl-tmux/renderer::%status-bar-line left right cols)))
+         (result   (cl-tmux/renderer::%status-justify-line left right cols "left"))
+         (expected (cl-tmux/renderer::%justify-right left right cols)))
     (is (string= expected result)
-        "left justify must match %status-bar-line (got ~S vs ~S)" result expected)))
+        "left justify must match %justify-right (got ~S vs ~S)" result expected)))
 
 (test status-justify-line-right-places-content-at-far-right
   "%status-justify-line with justify=right places the right string at far right."

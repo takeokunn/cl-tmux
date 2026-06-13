@@ -333,27 +333,35 @@
         (write-char #\\ s))
       (write-char ch s))))
 
+(defun %iterate-fmt (items active-item active-fmt inactive-fmt context-fn &optional separator)
+  "Iterate ITEMS: format each with ACTIVE-FMT when it is EQ to ACTIVE-ITEM, else
+   INACTIVE-FMT.  CONTEXT-FN is called with each item to produce its format context.
+   SEPARATOR is written between items when non-NIL."
+  (with-output-to-string (s)
+    (loop for item in items
+          for first = t then nil
+          do (when (and separator (not first)) (write-string separator s))
+             (write-string
+              (expand-format (if (eq item active-item) active-fmt inactive-fmt)
+                             (funcall context-fn item))
+              s))))
+
 (defun %expand-window-iteration (rest context)
   "Expand a #{W:ACTIVE,INACTIVE} window-list modifier.  Iterates the windows of
-   the context's session (carried as :%session): the current window is formatted
-   with ACTIVE, the others with INACTIVE (defaults to ACTIVE when no comma is
-   present).  Each window gets a fresh per-window context; results are joined with
-   the window-status-separator option.  Returns \"\" when there is no session."
+   the context's session: the current window is formatted with ACTIVE, the others
+   with INACTIVE.  Results are joined with the window-status-separator option.
+   Returns \"\" when there is no session."
   (let ((session (getf context :%session)))
     (if (null session)
         ""
         (multiple-value-bind (active-fmt inactive-fmt) (%split-active-inactive rest)
-          (let ((active-win (cl-tmux/model:session-active-window session))
-                (separator  (or (cl-tmux/options:get-option "window-status-separator") " ")))
-            (with-output-to-string (s)
-              (loop for win in (cl-tmux/model:session-windows session)
-                    for first = t then nil
-                    do (unless first (write-string separator s))
-                       (let* ((pane (cl-tmux/model:window-active-pane win))
-                              (ctx  (format-context-from-session session win pane)))
-                         (write-string
-                          (expand-format (if (eq win active-win) active-fmt inactive-fmt) ctx)
-                          s)))))))))
+          (%iterate-fmt
+           (cl-tmux/model:session-windows session)
+           (cl-tmux/model:session-active-window session)
+           active-fmt inactive-fmt
+           (lambda (win)
+             (format-context-from-session session win (cl-tmux/model:window-active-pane win)))
+           (or (cl-tmux/options:get-option "window-status-separator") " "))))))
 
 (defun %all-server-sessions ()
   "The list of live session objects from cl-tmux's *server-sessions* registry,
@@ -365,39 +373,34 @@
 (defun %expand-session-iteration (rest context)
   "Expand a #{S:ACTIVE,INACTIVE} session-list modifier.  Iterates every server
    session: the context's current session is formatted with ACTIVE, the others with
-   INACTIVE (defaults to ACTIVE when no comma).  Results are concatenated with no
-   separator (tmux's S: loop inserts none; the format supplies any spacing).  Falls
-   back to the single context session when the registry is empty."
+   INACTIVE.  Results are concatenated without separator.  Falls back to the single
+   context session when the registry is empty."
   (multiple-value-bind (active-fmt inactive-fmt) (%split-active-inactive rest)
     (let* ((cur-session (getf context :%session))
            (sessions    (or (%all-server-sessions)
                             (and cur-session (list cur-session)))))
-      (with-output-to-string (s)
-        (dolist (sess sessions)
-          (let* ((win  (cl-tmux/model:session-active-window sess))
-                 (pane (and win (cl-tmux/model:window-active-pane win)))
-                 (ctx  (format-context-from-session sess win pane)))
-            (write-string
-             (expand-format (if (eq sess cur-session) active-fmt inactive-fmt) ctx)
-             s)))))))
+      (%iterate-fmt
+       sessions cur-session active-fmt inactive-fmt
+       (lambda (sess)
+         (let* ((win  (cl-tmux/model:session-active-window sess))
+                (pane (and win (cl-tmux/model:window-active-pane win))))
+           (format-context-from-session sess win pane)))))))
 
 (defun %expand-pane-iteration (rest context)
   "Expand a #{P:ACTIVE,INACTIVE} pane-list modifier.  Iterates the panes of the
    context's current window: the active pane is formatted with ACTIVE, the others
-   with INACTIVE (defaults to ACTIVE when no comma).  Results are concatenated with
-   no separator.  Returns \"\" when there is no window."
+   with INACTIVE.  Results are concatenated without separator.  Returns \"\" when
+   there is no window."
   (let* ((session (getf context :%session))
          (window  (and session (cl-tmux/model:session-active-window session))))
     (if (null window)
         ""
         (multiple-value-bind (active-fmt inactive-fmt) (%split-active-inactive rest)
-          (let ((active-pane (cl-tmux/model:window-active-pane window)))
-            (with-output-to-string (s)
-              (dolist (pane (cl-tmux/model:window-panes window))
-                (let ((ctx (format-context-from-session session window pane)))
-                  (write-string
-                   (expand-format (if (eq pane active-pane) active-fmt inactive-fmt) ctx)
-                   s)))))))))
+          (%iterate-fmt
+           (cl-tmux/model:window-panes window)
+           (cl-tmux/model:window-active-pane window)
+           active-fmt inactive-fmt
+           (lambda (pane) (format-context-from-session session window pane)))))))
 
 
 

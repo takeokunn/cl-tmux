@@ -204,12 +204,6 @@
                              (progn (write-char (char str i) out) (incf i))))
                        (progn (write-char (char str i) out) (incf i))))))))
 
-(defun %status-bar-line (left time-str terminal-cols)
-  "Assemble the full status bar string: LEFT text, gap, TIME-STR, truncated to TERMINAL-COLS."
-  (let* ((gap  (max 0 (- terminal-cols (%visible-length left) (%visible-length time-str) 1)))
-         (line (format nil "~A~A ~A" left (make-string gap :initial-element #\Space) time-str)))
-    (%visible-truncate line terminal-cols)))
-
 (defun %status-format-or-default (opt-name context default-fn)
   "Return the expanded format string for OPT-NAME when it differs from its registered default;
    otherwise call DEFAULT-FN.  CONTEXT is the format-expansion plist."
@@ -231,9 +225,9 @@
 ;;;
 ;;; define-justify-strategy is a Prolog-like fact table mapping a justify
 ;;; keyword string to a layout formula:
-;;;   justify_strategy("right",  left, right-str, cols) :- right_formula(…).
-;;;   justify_strategy("centre", left, right-str, cols) :- centre_formula(…).
-;;;   justify_strategy(default,  left, right-str, cols) :- %status-bar-line(…).
+;;;   justify_strategy("right",  left, right-str, cols) :- %justify-right(…).
+;;;   justify_strategy("centre", left, right-str, cols) :- %justify-centre(…).
+;;;   justify_strategy(default,  left, right-str, cols) :- %justify-right(…).
 ;;;
 ;;; (Heterogeneous bodies — different formula per arm — so we use the
 ;;; table to dispatch to per-strategy helpers rather than inlining the bodies.)
@@ -264,9 +258,8 @@
   "Assemble the status bar according to JUSTIFY (\"left\" \"centre\" \"right\").
    COLS is the terminal width; result is truncated to COLS."
   (cond
-    ((string-equal justify "right")  (%justify-right  left right-str cols))
     ((string-equal justify "centre") (%justify-centre left right-str cols))
-    (t                               (%status-bar-line left right-str cols))))
+    (t                               (%justify-right  left right-str cols))))
 
 ;;; ── Status bar render entry point ────────────────────────────────────────────
 

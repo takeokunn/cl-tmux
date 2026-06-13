@@ -93,23 +93,22 @@
              (is (search "line-A" out) "render-overlay must show first line")))
       (clear-overlay))))
 
-;;; ── %status-bar-line gap calculation ────────────────────────────────────────
+;;; ── %justify-right gap calculation ──────────────────────────────────────────
 
 (test status-bar-line-gap-fills-exactly
-  "%status-bar-line total length equals terminal-cols when content fits."
+  "%justify-right total length equals cols when content fits."
   (let* ((left  "abcde")
          (time  "12:34")
          (cols  20)
-         (line  (cl-tmux/renderer::%status-bar-line left time cols)))
-    ;; The line is truncated to cols so its length must be <= cols.
+         (line  (cl-tmux/renderer::%justify-right left time cols)))
     (is (<= (length line) cols)
-        "%status-bar-line must produce at most ~D chars (got ~D)" cols (length line))))
+        "%justify-right must produce at most ~D chars (got ~D)" cols (length line))))
 
 (test status-bar-line-empty-left-and-time
-  "%status-bar-line with empty left and time strings produces spaces up to terminal-cols."
-  (let ((line (cl-tmux/renderer::%status-bar-line "" "" 10)))
+  "%justify-right with empty left and time strings produces spaces up to cols."
+  (let ((line (cl-tmux/renderer::%justify-right "" "" 10)))
     (is (<= (length line) 10)
-        "%status-bar-line with empty inputs must fit in 10 cols (got ~D: ~S)"
+        "%justify-right with empty inputs must fit in 10 cols (got ~D: ~S)"
         (length line) line)))
 
 ;;; ── render-session-to-string status on/off interaction ──────────────────────
