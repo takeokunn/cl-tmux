@@ -98,7 +98,8 @@
     (is (eq p0 (window-active-pane win)) "p0 is active initially")
     (cl-tmux::dispatch-command sess :select-pane-right nil)
     (is (eq p1 (window-active-pane win))
-        "active pane must be p1 after :select-pane-right"))))
+        "active pane must be p1 after :select-pane-right")))
+
 (test dispatch-select-pane-left-moves-active-pane
   ":select-pane-left moves the active pane to the left neighbour."
   (with-two-pane-h-session (sess win p0 p1)
@@ -106,7 +107,8 @@
     (window-select-pane win p1)
     (cl-tmux::dispatch-command sess :select-pane-left nil)
     (is (eq p0 (window-active-pane win))
-        "active pane must be p0 after :select-pane-left"))))
+        "active pane must be p0 after :select-pane-left")))
+
 (test dispatch-select-pane-right-noop-at-rightmost
   ":select-pane-right is a no-op when the active pane has no right neighbour."
   (with-two-pane-h-session (sess win p0 p1)
@@ -115,14 +117,16 @@
     (window-select-pane win p1)
     (cl-tmux::dispatch-command sess :select-pane-right nil)
     (is (eq p1 (window-active-pane win))
-        "active pane must remain p1 when no right neighbour exists"))))
+        "active pane must remain p1 when no right neighbour exists")))
+
 (test dispatch-select-pane-down-moves-active-pane
   ":select-pane-down moves the active pane to the pane below."
   (with-two-pane-v-session (sess win p0 p1)
     (is (eq p0 (window-active-pane win)) "p0 is active initially")
     (cl-tmux::dispatch-command sess :select-pane-down nil)
     (is (eq p1 (window-active-pane win))
-        "active pane must be p1 after :select-pane-down"))))
+        "active pane must be p1 after :select-pane-down")))
+
 (test dispatch-select-pane-up-moves-active-pane
   ":select-pane-up moves the active pane to the pane above."
   (with-two-pane-v-session (sess win p0 p1)
@@ -130,7 +134,8 @@
     (window-select-pane win p1)
     (cl-tmux::dispatch-command sess :select-pane-up nil)
     (is (eq p0 (window-active-pane win))
-        "active pane must be p0 after :select-pane-up"))))
+        "active pane must be p0 after :select-pane-up")))
+
 ;;; ── zoom-toggle dispatch ────────────────────────────────────────────────────
 
 (test dispatch-zoom-toggle-sets-zoom-flag
@@ -143,7 +148,8 @@
     ;; Toggle back off.
     (cl-tmux::dispatch-command sess :zoom-toggle nil)
     (is-false (cl-tmux/model:window-zoom-p win)
-              "window-zoom-p must be NIL after second :zoom-toggle dispatch"))))
+              "window-zoom-p must be NIL after second :zoom-toggle dispatch")))
+
 ;;; ── rename-session dispatch ─────────────────────────────────────────────────
 
 (test dispatch-rename-session-opens-prompt
@@ -169,20 +175,25 @@
     (is (eq p0 (window-active-pane win)) "p0 is active initially")
     (cl-tmux::%select-pane-in-direction sess :right)
     (is (eq p1 (window-active-pane win))
-        "active pane must be p1 after %select-pane-in-direction :right"))))
+        "active pane must be p1 after %select-pane-in-direction :right")))
+
 (test select-pane-in-direction-left-selects-left-pane
   "%select-pane-in-direction :left from the right pane selects the left pane."
   (with-two-pane-h-session (sess win p0 p1)
     (window-select-pane win p1)
     (cl-tmux::%select-pane-in-direction sess :left)
     (is (eq p0 (window-active-pane win))
-        "active pane must be p0 after %select-pane-in-direction :left"))))
+        "active pane must be p0 after %select-pane-in-direction :left")))
+
 (test select-pane-in-direction-noop-when-no-neighbor
   "%select-pane-in-direction is a no-op when the active pane has no neighbor
    in the requested direction."
   (with-two-pane-h-session (sess win p0 p1)
     (is-false (null p0) "fixture created")
     (window-select-pane win p1)          ; start at the rightmost pane
+    (cl-tmux::%select-pane-in-direction sess :right)
+    (is (eq p1 (window-active-pane win))
+        "active pane must remain p1 when no right neighbor exists")))
 
 (test select-pane-in-direction-vertical-down-selects-lower-pane
   "%select-pane-in-direction :down from the top pane selects the bottom pane."
@@ -190,7 +201,8 @@
     (is (eq p0 (window-active-pane win)) "p0 is active initially")
     (cl-tmux::%select-pane-in-direction sess :down)
     (is (eq p1 (window-active-pane win))
-        "active pane must be p1 after %select-pane-in-direction :down"))))
+        "active pane must be p1 after %select-pane-in-direction :down")))
+
 ;;; ── %apply-named-layout-to-session ──────────────────────────────────────────
 
 (test apply-named-layout-even-horizontal-repositions-panes
@@ -217,7 +229,8 @@
     (is (= 0  (pane-y p0)) "p0 y must be 0 after even-vertical layout")
     (is (= 10 (pane-height p0)) "p0 height must be 10 after even-vertical layout")
     (is (= 11 (pane-y p1)) "p1 y must be 11 after even-vertical layout")
-    (is (= 10 (pane-height p1)) "p1 height must be 10 after even-vertical layout"))))
+    (is (= 10 (pane-height p1)) "p1 height must be 10 after even-vertical layout")))
+
 (test apply-named-layout-noop-for-empty-session
   "%apply-named-layout-to-session with no active window is a no-op."
   (with-empty-session (sess)
