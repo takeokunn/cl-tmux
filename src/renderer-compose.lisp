@@ -147,8 +147,7 @@
            (bell-action  (or (cl-tmux/options:get-option "bell-action") "any"))
            (visual-bell  (cl-tmux/options:get-option "visual-bell"))
            (relay-bell   (and bell-pending
-                              (not (string= bell-action "none"))
-                              (not (string= bell-action "other")))))
+                              (not (member bell-action '("none" "other") :test #'string=)))))
       (when relay-bell (%emit-bell buffer visual-bell))))
   (when (or (null active-pane)
             (screen-cursor-visible (pane-screen active-pane)))

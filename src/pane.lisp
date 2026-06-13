@@ -156,7 +156,7 @@
    The pane's geometry becomes the CONTENT rectangle; the title row sits just
    outside it (drawn by %render-pane-border-status)."
   (let ((status (cl-tmux/options:get-option "pane-border-status" "off")))
-    (if (and (not (string= status "off")) (not (string= status "")) (> height 1))
+    (if (and (not (member status '("off" "") :test #'string=)) (> height 1))
         (values (if (string= status "top") 1 0) (1- height))
         (values 0 height))))
 

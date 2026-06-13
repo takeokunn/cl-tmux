@@ -88,7 +88,7 @@
   (if *config-condition-evaluator*
       (let ((result (handler-case (funcall *config-condition-evaluator* cond-str)
                       (error () "1"))))
-        (and result (plusp (length result)) (not (string= result "0"))))
+        (and result (not (member result '("" "0") :test #'string=))))
       t))
 
 (defun %preprocessor-line-p (trimmed)
