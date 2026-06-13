@@ -13,6 +13,14 @@
   "Accumulated numeric prefix for copy-mode repeat counts.
    Set to 0 between commands.  Updated exclusively on the event-loop thread.")
 
+(defun %make-escape-buffer (byte)
+  "Return a fresh adjustable byte vector with BYTE as its sole element.
+   Used to start escape-sequence accumulation: the ESC byte is the first element
+   and subsequent bytes are appended as the CPS continuation reads them."
+  (let ((buf (make-array 8 :element-type '(unsigned-byte 8) :fill-pointer 0 :adjustable t)))
+    (vector-push-extend byte buf)
+    buf))
+
 ;;; ── Named CPS state functions ────────────────────────────────────────────────
 ;;;
 ;;; Rules read like Prolog clauses:
@@ -79,12 +87,9 @@
      ;; dismiss
      ((= byte +byte-q+)   (clear-overlay)     (setf *dirty* t))
      ((= byte +byte-esc+)                                         ; Esc — may be arrow
-      (let ((buffer (make-array 8 :element-type '(unsigned-byte 8)
-                                  :fill-pointer 0 :adjustable t)))
-        (vector-push-extend byte buffer)
-        (setf *dirty* t)
-        (return-from %ground-input-state
-          (values nil (%overlay-escape-second-byte buffer)))))
+      (setf *dirty* t)
+      (return-from %ground-input-state
+        (values nil (%overlay-escape-second-byte (%make-escape-buffer byte)))))
      ;; all other keys: swallow (keep overlay open)
      (t nil))
    (values nil #'%ground-input-state))
@@ -126,10 +131,7 @@
   ;; (2-byte non-CSI) or unrecognised sequence exits copy mode instead of
   ;; forwarding to the pane (handled in make-escape-input-k).
   ((= byte +byte-esc+)
-   (let ((buffer (make-array 8 :element-type '(unsigned-byte 8)
-                               :fill-pointer 0 :adjustable t)))
-     (vector-push-extend byte buffer)
-     (values nil (make-escape-input-k session buffer))))
+   (values nil (make-escape-input-k session (%make-escape-buffer byte))))
   ;; ── Copy-mode single-byte navigation (unprefixed) ─────────────────────────
   ;; These keys are intercepted ONLY when copy mode is active; they are never
   ;; forwarded to the pane.  The check comes before the default forward branch.
