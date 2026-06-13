@@ -19,6 +19,20 @@
    affecting menus (which pass NIL)."
   (when sgr (format stream "~C[~Am" +esc+ sgr)))
 
+(defun %emit-styled-char (stream ch sgr)
+  "Emit SGR colour, write CH to STREAM, then reset attributes — no-op when SGR is NIL.
+   Backs every side-bar character in popup and empty-content content rows."
+  (%emit-sgr stream sgr)
+  (write-char ch stream)
+  (when sgr (reset-attrs stream)))
+
+(defun %option-sgr (option-name)
+  "Return the SGR attribute string for OPTION-NAME (e.g. \"popup-border-style\"),
+   or NIL when the option is absent or empty."
+  (let ((s (cl-tmux/options:get-option option-name "")))
+    (when (and s (plusp (length s)))
+      (style-to-sgr (parse-style-string s)))))
+
 (defun %render-box-border-top (stream origin-x origin-y box-width title
                                &optional (tl #\┌) (tr #\┐) (h #\─) sgr)
   "Draw the top border of any box.
@@ -73,11 +87,11 @@
                 content keeps its own rendering)."
   (loop for row below (min box-height (screen-height popup-screen)) do
     (move-to stream (+ origin-y 1 row) origin-x)
-    (%emit-sgr stream sgr) (write-char v stream) (when sgr (reset-attrs stream))
+    (%emit-styled-char stream v sgr)
     (loop for col below (- box-width 2)
           for cell = (screen-display-cell popup-screen col row)
           do (write-char (cell-char cell) stream))
-    (%emit-sgr stream sgr) (write-char v stream) (when sgr (reset-attrs stream))))
+    (%emit-styled-char stream v sgr)))
 
 (defun %render-popup-content-empty (stream origin-x origin-y box-height box-width
                                     &optional (v #\│) sgr body-sgr)
@@ -91,11 +105,11 @@
    BODY-SGR   — optional popup-style SGR colouring the empty interior."
   (loop for row below (- box-height 2) do
     (move-to stream (+ origin-y 1 row) origin-x)
-    (%emit-sgr stream sgr) (write-char v stream) (when sgr (reset-attrs stream))
+    (%emit-styled-char stream v sgr)
     (%emit-sgr stream body-sgr)
     (loop repeat (- box-width 2) do (write-char #\Space stream))
     (when body-sgr (reset-attrs stream))
-    (%emit-sgr stream sgr) (write-char v stream) (when sgr (reset-attrs stream))))
+    (%emit-styled-char stream v sgr)))
 
 (defun render-popup (stream popup terminal-rows terminal-cols)
   "Draw the POPUP overlay box centered on the terminal.
@@ -110,14 +124,10 @@
     ;; popup-border-lines selects the box characters; popup-border-style colours the
     ;; border (NIL when the option is empty → no colour).  Menus pass neither.
     (multiple-value-bind (tl tr bl br h v) (%border-charset-for "popup-border-lines")
-      (let* ((style-str  (cl-tmux/options:get-option "popup-border-style" ""))
-             (border-sgr (when (and style-str (plusp (length style-str)))
-                           (style-to-sgr (parse-style-string style-str))))
+      (let* ((border-sgr (%option-sgr "popup-border-style"))
              ;; popup-style colours the popup interior (applied to the empty body;
              ;; a live pane renders its own cell colours).
-             (body-str   (cl-tmux/options:get-option "popup-style" ""))
-             (body-sgr   (when (and body-str (plusp (length body-str)))
-                           (style-to-sgr (parse-style-string body-str)))))
+             (body-sgr   (%option-sgr "popup-style")))
         (%render-box-border-top stream origin-x origin-y box-width title tl tr h border-sgr)
         (if (popup-pane popup)
             (let ((popup-screen (popup-screen popup)))
@@ -153,7 +163,7 @@
           do (move-to stream (+ origin-y 1 item-index) origin-x)
              (write-char v-char stream)
              ;; Style the item content (between the side borders), reset afterwards.
-             (when sgr (format stream "~C[~Am" #\Escape sgr))
+             (%emit-sgr stream sgr)
              (write-char (if selectedp #\▶ #\Space) stream)
              (let* ((inner-width (- box-width 3))
                     (label-len   (min (length label) inner-width))
@@ -184,9 +194,7 @@
     ;; menu-border-lines selects the box glyphs; menu-border-style colours the border
     ;; (NIL when empty → default single line, no colour — parallel to render-popup).
     (multiple-value-bind (tl tr bl br h v) (%border-charset-for "menu-border-lines")
-      (let* ((style-str  (cl-tmux/options:get-option "menu-border-style" ""))
-             (border-sgr (when (and style-str (plusp (length style-str)))
-                           (style-to-sgr (parse-style-string style-str)))))
+      (let* ((border-sgr (%option-sgr "menu-border-style")))
         (%render-box-border-top stream origin-x origin-y box-width title tl tr h border-sgr)
         (%render-menu-items     stream origin-x origin-y items box-width selected-index v)
         (%render-box-border-bottom stream origin-x (+ origin-y item-count 1)

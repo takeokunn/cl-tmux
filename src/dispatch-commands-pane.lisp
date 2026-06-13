@@ -2,6 +2,17 @@
 
 ;;; -- Window/pane/session structural commands ----------------------------------------
 ;;;
+;;; %parse-flag-int: shared helper for flag-value → integer parsing used by
+;;; resize-window, new-session, split-window, and new-window.
+
+(defun %parse-flag-int (flags char)
+  "Return the integer value of flag CHAR in FLAGS, or NIL when the flag is absent.
+   Uses parse-integer with :junk-allowed t so non-numeric values also return NIL."
+  (let ((v (cdr (assoc char flags))))
+    (and v (parse-integer v :junk-allowed t))))
+
+;;; --
+;;;
 ;;; Named-layout macro, select-layout, list-panes, new-window, split-window,
 ;;; new-session, switch-client, destroy-session, kill-session, resize-window,
 ;;; detach-client, and the copy-mode -X command table (for send-keys -X).
@@ -107,10 +118,9 @@
            (print-p    (assoc #\P flags))
            (print-fmt  (cdr (assoc #\F flags)))
            (after-p    (assoc #\a flags))
-           (target-str (cdr (assoc #\t flags)))
            (raw-dir    (cdr (assoc #\c flags)))
            (start-dir  (%expand-start-dir session raw-dir))
-           (at-idx     (and target-str (parse-integer target-str :junk-allowed t))))
+           (at-idx     (%parse-flag-int flags #\t)))
       ;; -k: if a window with the target index already exists, kill it first.
       (when (and kill-p at-idx)
         (let ((existing (find at-idx (session-windows session) :key #'window-id)))
@@ -166,13 +176,12 @@
            (full-p       (assoc #\f flags))
            (detach-p     (assoc #\d flags))
            (target-str   (cdr (assoc #\t flags)))
-           (pct-str      (cdr (assoc #\p flags)))
            (lines-str    (cdr (assoc #\l flags)))
            (raw-dir      (cdr (assoc #\c flags)))
            (start-dir    (%expand-start-dir session raw-dir))
-           (pct          (and pct-str (parse-integer pct-str :junk-allowed t)))
            ;; -l N → N cells; -l N% → fraction (modern tmux); -p N → fraction.
-           (size         (or (and pct (/ pct 100.0)) (%parse-split-size lines-str))))
+           (size         (let ((pct (%parse-flag-int flags #\p)))
+                           (or (and pct (/ pct 100.0)) (%parse-split-size lines-str)))))
       ;; -t target: temporarily make the target pane active so %cmd-split
       ;; operates on it.  Restore the previous active pane afterwards if -d.
       (let* ((prev-win  (session-active-window session))
@@ -240,17 +249,15 @@
            ;; sharing its window list (tmux "grouped sessions").
            (group-target     (cdr (assoc #\t flags)))
            (start-dir        (cdr (assoc #\c flags)))
-           (x-str            (cdr (assoc #\x flags)))
-           (y-str            (cdr (assoc #\y flags)))
            ;; Detached sessions have no client → fall back to default-size, not the
            ;; current terminal size.  NIL for attached sessions (use the terminal).
            (default-wxh      (and detach-p
                                   (cl-tmux/options:get-option "default-size" "80x24")))
            ;; -x/-y override everything when given (junk-allowed).
-           (cols             (or (and x-str (parse-integer x-str :junk-allowed t))
+           (cols             (or (%parse-flag-int flags #\x)
                                  (and default-wxh (nth-value 0 (%parse-wxh default-wxh)))
                                  *term-cols*))
-           (rows             (or (and y-str (parse-integer y-str :junk-allowed t))
+           (rows             (or (%parse-flag-int flags #\y)
                                  (and default-wxh (nth-value 1 (%parse-wxh default-wxh)))
                                  (- *term-rows* *status-height*))))
       ;; -A: attach to existing session if it exists
@@ -465,10 +472,8 @@
    Sets the window to exactly COLS × ROWS; without flags prompts interactively."
   (with-command-flags+pos (flags positionals args "xyt")
     (declare (ignore positionals))
-    (let* ((cols-str (cdr (assoc #\x flags)))
-           (rows-str (cdr (assoc #\y flags)))
-           (cols     (and cols-str (parse-integer cols-str :junk-allowed t)))
-           (rows     (and rows-str (parse-integer rows-str :junk-allowed t)))
+    (let* ((cols     (%parse-flag-int flags #\x))
+           (rows     (%parse-flag-int flags #\y))
            (win      (session-active-window session)))
       (when (and win cols rows (> cols 0) (> rows 0))
         (window-relayout win rows cols)))))
