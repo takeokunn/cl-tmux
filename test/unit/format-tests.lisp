@@ -13,29 +13,17 @@
 
 ;;; ── Single-character shorthands ─────────────────────────────────────────────
 
-(test expand-format-hash-s
-  "#S expands to :session-name from context."
-  (is (string= "mysession" (fmt "#S" :session-name "mysession"))))
-
-(test expand-format-hash-i
-  "#I expands to :window-index from context."
-  (is (string= "2" (fmt "#I" :window-index "2"))))
-
-(test expand-format-hash-w
-  "#W expands to :window-name from context."
-  (is (string= "bash" (fmt "#W" :window-name "bash"))))
-
-(test expand-format-hash-p
-  "#P expands to :pane-index from context."
-  (is (string= "1" (fmt "#P" :pane-index "1"))))
-
-(test expand-format-hash-h
-  "#H expands to :hostname from context."
-  (is (string= "box" (fmt "#H" :hostname "box"))))
-
-(test expand-format-hash-hash
-  "## expands to a single literal #."
-  (is (string= "#" (fmt "##"))))
+(test expand-format-hash-shorthands
+  "Each #X shorthand expands to the correct context key value; ## yields a literal #."
+  (dolist (c '(("#S" :session-name "mysession")
+               ("#I" :window-index "2")
+               ("#W" :window-name  "bash")
+               ("#P" :pane-index   "1")
+               ("#H" :hostname     "box")))
+    (destructuring-bind (spec key val) c
+      (is (string= val (fmt spec key val))
+          "~S must expand to ~S (context ~S)" spec val key)))
+  (is (string= "#" (fmt "##")) "## must expand to a literal #"))
 
 ;;; ── Brace variable form ──────────────────────────────────────────────────────
 
