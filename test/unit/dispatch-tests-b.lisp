@@ -33,11 +33,10 @@
 (test cmd-swap-pane-s-t-swaps-specific-panes
   "swap-pane -s 1 -t 3 swaps the two named panes' positions in the window list
    (not just the active pane with a neighbour)."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 3))
-         (win (session-active-window s))
-         (p1  (find 1 (window-panes win) :key #'pane-id))
-         (p3  (find 3 (window-panes win) :key #'pane-id)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 3)
+    (let* ((win (session-active-window s))
+           (p1  (find 1 (window-panes win) :key #'pane-id))
+           (p3  (find 3 (window-panes win) :key #'pane-id)))
       (is (eq p1 (first (window-panes win)))         "pane 1 starts first")
       (is (eq p3 (car (last (window-panes win))))    "pane 3 starts last")
       (cl-tmux::%run-command-line s "swap-pane -s 1 -t 3")
@@ -48,11 +47,10 @@
 
 (test cmd-swap-pane-t-swaps-active-with-target
   "swap-pane -t 2 swaps the active pane (1) with pane 2 (-s defaults to active)."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s))
-         (p1  (find 1 (window-panes win) :key #'pane-id))
-         (p2  (find 2 (window-panes win) :key #'pane-id)))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s))
+           (p1  (find 1 (window-panes win) :key #'pane-id))
+           (p2  (find 2 (window-panes win) :key #'pane-id)))
       (is (eq p1 (first (window-panes win))) "pane 1 (active) starts first")
       (cl-tmux::%run-command-line s "swap-pane -t 2")
       (is (eq p2 (first (window-panes win)))

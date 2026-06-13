@@ -50,9 +50,8 @@
 
 (test dispatch-kill-session-with-no-other-sessions-quits
   ":kill-session with no remaining sessions returns :quit."
-  (let* ((s    (make-fake-session))
-         (name (session-name s)))
-    (with-loop-state
+  (with-fake-session (s)
+    (let ((name (session-name s)))
       (let ((cl-tmux::*server-sessions* (list (cons name s))))
         (is (eq :quit (cl-tmux::dispatch-command s :kill-session nil))
             ":kill-session with empty registry must return :quit")))))
