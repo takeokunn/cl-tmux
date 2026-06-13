@@ -29,27 +29,16 @@
 
 ;;; ── next-cyclic / prev-cyclic edge cases ────────────────────────────────────
 
-(test next-cyclic-single-element-wraps-to-itself
-  "next-cyclic on a single-element list always returns that element."
-  (is (eql 'x (cl-tmux::next-cyclic '(x) 'x))
-      "next-cyclic of the only element must return itself")
-  (is (eql 'x (cl-tmux::next-cyclic '(x) 'missing))
-      "next-cyclic with unknown current on a single-element list must return the element"))
-
-(test prev-cyclic-single-element-wraps-to-itself
-  "prev-cyclic on a single-element list always returns that element."
-  (is (eql 'x (cl-tmux::prev-cyclic '(x) 'x))
-      "prev-cyclic of the only element must return itself"))
-
-(test next-cyclic-middle-element-advances
-  "next-cyclic from a middle element advances to the following element."
-  (is (eql 'c (cl-tmux::next-cyclic '(a b c d) 'b))
-      "next-cyclic from 'b in (a b c d) must return 'c"))
-
-(test prev-cyclic-middle-element-retreats
-  "prev-cyclic from a middle element retreats to the preceding element."
-  (is (eql 'a (cl-tmux::prev-cyclic '(a b c d) 'b))
-      "prev-cyclic from 'b in (a b c d) must return 'a"))
+(test cyclic-navigation-table
+  "next-cyclic advances and prev-cyclic retreats; both wrap correctly on single-element lists."
+  (dolist (c '((cl-tmux::next-cyclic (x)       x       x  "next of only element → itself")
+               (cl-tmux::next-cyclic (x)       missing x  "next with unknown current → element")
+               (cl-tmux::prev-cyclic (x)       x       x  "prev of only element → itself")
+               (cl-tmux::next-cyclic (a b c d) b       c  "next from middle → following")
+               (cl-tmux::prev-cyclic (a b c d) b       a  "prev from middle → preceding")))
+    (destructuring-bind (fn lst current expected desc) c
+      (is (eql expected (funcall fn lst current))
+          "~A" desc))))
 
 ;;; ── with-active-window macro ────────────────────────────────────────────────
 
@@ -161,19 +150,13 @@
 
 ;;; ── %cmd-split helper ────────────────────────────────────────────────────────
 
-(test cmd-split-no-focus-does-not-error
-  "%cmd-split with :no-focus T does not signal an error on a fake session."
-  ;; The pane is too small to split (20x5) so the split may return NIL.
-  ;; We verify only that the call does not error at the dispatch layer.
-  (with-fake-session (s :nwindows 1 :npanes 1)
-    (finishes (cl-tmux::%cmd-split s :h :no-focus t)
-              "%cmd-split :no-focus must not error even when pane is too small")))
-
-(test cmd-split-no-focus-does-not-error-vertical
-  "%cmd-split with :v orientation and :no-focus T does not signal an error."
-  (with-fake-session (s :nwindows 1 :npanes 1)
-    (finishes (cl-tmux::%cmd-split s :v :no-focus t)
-              "%cmd-split :v :no-focus must not error even when pane is too small")))
+(test cmd-split-no-focus-table
+  "%cmd-split with :no-focus T does not signal an error in either orientation."
+  (dolist (c '((:h "horizontal :no-focus must not error even when pane is too small")
+               (:v "vertical :no-focus must not error even when pane is too small")))
+    (destructuring-bind (orient desc) c
+      (with-fake-session (s :nwindows 1 :npanes 1)
+        (finishes (cl-tmux::%cmd-split s orient :no-focus t) "~A" desc)))))
 
 ;;; ── define-named-command-table macro ─────────────────────────────────────────
 
@@ -284,63 +267,28 @@
 
 ;;; ── :source-file dispatch ────────────────────────────────────────────────────
 
-(test dispatch-source-file-opens-prompt
-  ":source-file opens a prompt for the file path."
-  (with-fake-session (s)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :source-file nil)
-      (is (prompt-active-p) ":source-file must open a prompt")
-      (is (string= "source-file" (prompt-label *prompt*))
-          ":source-file prompt label must be \"source-file\""))))
+(test dispatch-prompt-opening-commands-table
+  ":source-file, :run-shell, and :if-shell each open a prompt with the matching label."
+  (dolist (c '((:source-file "source-file")
+               (:run-shell   "run-shell")
+               (:if-shell    "if-shell")))
+    (destructuring-bind (cmd label) c
+      (with-fake-session (s)
+        (let ((*prompt* nil))
+          (cl-tmux::dispatch-command s cmd nil)
+          (is (prompt-active-p) "~S must open a prompt" cmd)
+          (is (string= label (prompt-label *prompt*))
+              "~S prompt label must be ~S" cmd label))))))
 
-(test dispatch-source-file-empty-input-is-noop
-  ":source-file with empty input does not crash."
-  (with-fake-session (s)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :source-file nil)
-      (is (prompt-active-p) "prompt must be open")
-      (finishes (funcall (prompt-on-submit *prompt*) "")
-                ":source-file with empty input must not error"))))
-
-;;; ── :run-shell dispatch ──────────────────────────────────────────────────────
-
-(test dispatch-run-shell-opens-prompt
-  ":run-shell opens a prompt for the shell command."
-  (with-fake-session (s)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :run-shell nil)
-      (is (prompt-active-p) ":run-shell must open a prompt")
-      (is (string= "run-shell" (prompt-label *prompt*))
-          ":run-shell prompt label must be \"run-shell\""))))
-
-(test dispatch-run-shell-empty-input-is-noop
-  ":run-shell with empty input does not crash."
-  (with-fake-session (s)
-    (let ((*prompt* nil) (*overlay* nil))
-      (cl-tmux::dispatch-command s :run-shell nil)
-      (is (prompt-active-p) "prompt must be open")
-      (finishes (funcall (prompt-on-submit *prompt*) "")
-                ":run-shell with empty input must not error"))))
-
-;;; ── :if-shell dispatch ───────────────────────────────────────────────────────
-
-(test dispatch-if-shell-opens-prompt
-  ":if-shell opens a prompt for the shell command."
-  (with-fake-session (s)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :if-shell nil)
-      (is (prompt-active-p) ":if-shell must open a prompt")
-      (is (string= "if-shell" (prompt-label *prompt*))
-          ":if-shell prompt label must be \"if-shell\""))))
-
-(test dispatch-if-shell-empty-input-is-noop
-  ":if-shell with empty input does not crash."
-  (with-fake-session (s)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :if-shell nil)
-      (is (prompt-active-p) "prompt must be open")
-      (finishes (funcall (prompt-on-submit *prompt*) "")
-                ":if-shell with empty input must not error"))))
+(test dispatch-empty-input-is-noop-table
+  ":source-file, :run-shell, and :if-shell with empty input do not crash."
+  (dolist (cmd '(:source-file :run-shell :if-shell))
+    (with-fake-session (s)
+      (let ((*prompt* nil) (*overlay* nil))
+        (cl-tmux::dispatch-command s cmd nil)
+        (is (prompt-active-p) "~S must open a prompt" cmd)
+        (finishes (funcall (prompt-on-submit *prompt*) "")
+                  "~S with empty input must not error" cmd)))))
 
 ;;; ── :choose-window dispatch ──────────────────────────────────────────────────
 
