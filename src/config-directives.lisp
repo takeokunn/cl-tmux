@@ -152,7 +152,7 @@
                    (if (= (length tokens) 1)
                        ;; Single word: resolve to a keyword.
                        (let ((keyword (%command-keyword (first tokens))))
-                         (if keyword (values table key-token keyword repeatable note) nil))
+                         (and keyword (values table key-token keyword repeatable note)))
                        ;; Multi-token: store as token list.
                        (values table key-token tokens repeatable note)))
                  ;; Multiple commands: store as :sequence list of token lists.

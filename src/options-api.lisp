@@ -50,8 +50,8 @@
   (:boolean
    (cond
      ((stringp value)
-      (if (member value '("on" "true" "1") :test #'equal) t nil))
-     (t (if value t nil))))
+      (and (member value '("on" "true" "1") :test #'equal) t))
+     (t (and value t))))
   (:integer
    ;; Non-numeric and non-number inputs (including nil) fall back to 0.
    ;; Callers that need to distinguish "unset" from "zero" should check

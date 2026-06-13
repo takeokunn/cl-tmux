@@ -206,7 +206,7 @@
          (window-count          (length session-wins))
          (window-raw-flags      (%window-raw-flags window session-active-window session))
          (window-flags          (if (zerop (length window-raw-flags)) " " window-raw-flags))
-         (window-panes          (if window (cl-tmux/model:window-panes window) nil))
+         (window-panes          (and window (cl-tmux/model:window-panes window)))
          (window-layout         (or (and window (cl-tmux/model:layout->string window)) ""))
          ;; pane-title: prefer explicit slot; fall back to OSC 0/2 screen-title.
          (pane-title            (cond
