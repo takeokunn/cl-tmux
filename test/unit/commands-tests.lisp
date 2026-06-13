@@ -94,22 +94,16 @@
 
 ;;; ── resize-pane -x / -y: absolute size (command arg form) ────────────────────
 
-(test resize-pane-x-absolute-grows-active
-  "resize-pane -x N sets the active pane to an absolute width of N (grow case)."
-  (let* ((win (%vsplit-window 20))
-         (p0  (first (window-panes win)))
-         (s   (%make-session-with-window win)))
-    (cl-tmux::%cmd-resize-pane-arg s '("-x" "25"))
-    (is (= 25 (pane-width p0)) "resize-pane -x 25 must make the active pane 25 wide")))
-
-(test resize-pane-x-absolute-shrinks-active
-  "resize-pane -x N shrinks the active pane when N < current width — verifies the
-   signed-delta border move shrinks as well as grows."
-  (let* ((win (%vsplit-window 20))
-         (p0  (first (window-panes win)))
-         (s   (%make-session-with-window win)))
-    (cl-tmux::%cmd-resize-pane-arg s '("-x" "15"))
-    (is (= 15 (pane-width p0)) "resize-pane -x 15 must shrink the active pane to 15")))
+(test resize-pane-x-absolute-table
+  "resize-pane -x N sets the active pane's width to N (both grow and shrink paths)."
+  (dolist (row '(("25" 25 "resize-pane -x 25 grows pane from 20 to 25")
+                 ("15" 15 "resize-pane -x 15 shrinks pane from 20 to 15")))
+    (destructuring-bind (n-str expected desc) row
+      (let* ((win (%vsplit-window 20))
+             (p0  (first (window-panes win)))
+             (s   (%make-session-with-window win)))
+        (cl-tmux::%cmd-resize-pane-arg s (list "-x" n-str))
+        (is (= expected (pane-width p0)) "~A" desc)))))
 
 (test resize-pane-y-absolute-sets-height
   "resize-pane -y N sets the active pane to an absolute height of N."
@@ -334,48 +328,30 @@
     (cl-tmux/commands:rename-session sess "new")
     (is (string= "new" (session-name sess)) "session name must be updated to \"new\"")))
 
-(test rename-session-ignores-empty-string
-  "rename-session with an empty name is a no-op: the session name is unchanged."
-  (let ((sess (make-session :id 1 :name "original" :windows nil)))
-    (cl-tmux/commands:rename-session sess "")
-    (is (string= "original" (session-name sess))
-        "empty rename must not change the session name")))
-
-(test rename-session-ignores-nil
-  "rename-session with a NIL name is a no-op."
-  (let ((sess (make-session :id 1 :name "keep" :windows nil)))
-    (cl-tmux/commands:rename-session sess nil)
-    (is (string= "keep" (session-name sess))
-        "nil rename must not change the session name")))
+(test rename-session-ignores-invalid-names-table
+  "rename-session with \"\" or NIL is a no-op: the session name remains unchanged."
+  (dolist (row '((""  "empty string is a no-op")
+                 (nil "nil is a no-op")))
+    (destructuring-bind (new-name desc) row
+      (let ((sess (make-session :id 1 :name "keep" :windows nil)))
+        (cl-tmux/commands:rename-session sess new-name)
+        (is (string= "keep" (session-name sess)) "~A" desc)))))
 
 ;;; ── %copy-mode-clamp-cursor direct unit tests ────────────────────────────────
 
-(test copy-mode-clamp-cursor-row-above-viewport
-  "%copy-mode-clamp-cursor clamps a cursor row above 0 to row 0."
-  (let ((s (make-screen 20 5)))
-    (setf (screen-copy-cursor s) (cons -3 2))
-    (cl-tmux/commands::%copy-mode-clamp-cursor s)
-    (let ((cursor (screen-copy-cursor s)))
-      (is (= 0 (car cursor)) "row clamped from -3 to 0")
-      (is (= 2 (cdr cursor)) "col unchanged"))))
-
-(test copy-mode-clamp-cursor-row-below-viewport
-  "%copy-mode-clamp-cursor clamps a cursor row >= height to height-1."
-  (let ((s (make-screen 20 5)))
-    (setf (screen-copy-cursor s) (cons 10 3))
-    (cl-tmux/commands::%copy-mode-clamp-cursor s)
-    (let ((cursor (screen-copy-cursor s)))
-      (is (= 4 (car cursor)) "row clamped from 10 to height-1 (4)")
-      (is (= 3 (cdr cursor)) "col unchanged"))))
-
-(test copy-mode-clamp-cursor-col-out-of-range
-  "%copy-mode-clamp-cursor clamps col to [0, width-1] independently of row."
-  (let ((s (make-screen 10 5)))
-    (setf (screen-copy-cursor s) (cons 2 25))
-    (cl-tmux/commands::%copy-mode-clamp-cursor s)
-    (let ((cursor (screen-copy-cursor s)))
-      (is (= 2 (car cursor)) "row unchanged")
-      (is (= 9 (cdr cursor)) "col clamped from 25 to width-1 (9)"))))
+(test copy-mode-clamp-cursor-table
+  "%copy-mode-clamp-cursor: row clamped to [0, h-1], col clamped to [0, w-1]."
+  (dolist (row '((20 5  -3  2  0  2 "row -3 clamped to 0; col unchanged")
+                 (20 5  10  3  4  3 "row 10 clamped to height-1 (4); col unchanged")
+                 (10 5   2 25  2  9 "col 25 clamped to width-1 (9); row unchanged")
+                 (20 5   2 10  2 10 "in-bounds cursor unchanged")))
+    (destructuring-bind (w h in-row in-col out-row out-col desc) row
+      (let ((s (make-screen w h)))
+        (setf (screen-copy-cursor s) (cons in-row in-col))
+        (cl-tmux/commands::%copy-mode-clamp-cursor s)
+        (let ((cursor (screen-copy-cursor s)))
+          (is (= out-row (car cursor)) "~A: row" desc)
+          (is (= out-col (cdr cursor)) "~A: col" desc))))))
 
 (test copy-mode-clamp-cursor-noop-when-nil
   "%copy-mode-clamp-cursor is a no-op when the cursor is NIL."
@@ -383,15 +359,6 @@
     (setf (screen-copy-cursor s) nil)
     (cl-tmux/commands::%copy-mode-clamp-cursor s)
     (is (null (screen-copy-cursor s)) "nil cursor must remain nil")))
-
-(test copy-mode-clamp-cursor-in-bounds-unchanged
-  "%copy-mode-clamp-cursor leaves an already-in-bounds cursor unchanged."
-  (let ((s (make-screen 20 5)))
-    (setf (screen-copy-cursor s) (cons 2 10))
-    (cl-tmux/commands::%copy-mode-clamp-cursor s)
-    (let ((cursor (screen-copy-cursor s)))
-      (is (= 2 (car cursor)) "in-bounds row must not change")
-      (is (= 10 (cdr cursor)) "in-bounds col must not change"))))
 
 ;;; ── %join-pane-insert-into-dst direct unit tests ─────────────────────────────
 
