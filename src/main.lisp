@@ -156,6 +156,11 @@
 
       (%cleanup-after-session session reader-threads))))
 
+(defun %close-all-pane-ptys (session)
+  "Close the PTY fd of every pane in SESSION, ignoring errors on already-closed fds."
+  (dolist (pane (all-panes session))
+    (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))
+
 (defun %cleanup-after-session (session reader-threads)
   "Tear down the session after the event loop exits.
    Disables extended-keys and focus reporting on the outer terminal, signals
@@ -167,8 +172,7 @@
   (stop-reader-threads (append reader-threads
                                (when *status-timer* (list *status-timer*))))
   (setf *status-timer* nil)
-  (dolist (pane (all-panes session))
-    (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))
+  (%close-all-pane-ptys session))
 
 (defun run-control-mode (&optional args)
   "Control mode (-C): drive cl-tmux over the text protocol on stdin/stdout instead
@@ -195,8 +199,7 @@
          (control-mode-loop session *standard-input* *standard-output*)
       (setf *running* nil)
       (stop-reader-threads readers)
-      (dolist (pane (all-panes session))
-        (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))))
+      (%close-all-pane-ptys session))))
 
 ;;; ── Flag-parser macro ────────────────────────────────────────────────────────
 ;;;

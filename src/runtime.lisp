@@ -103,6 +103,11 @@
   (let ((ch (%ensure-channel name)))
     (setf (getf ch :locked) nil)))
 
+(defun %cap-list (list limit)
+  "Return LIST truncated to at most LIMIT elements; returns LIST unchanged when
+   it already fits."
+  (if (> (length list) limit) (subseq list 0 limit) list))
+
 ;;; -- Message log -------------------------------------------------------------
 
 (defvar *message-log* nil
@@ -114,8 +119,7 @@
   (push (cons (get-universal-time) msg) *message-log*)
   (let ((limit (or (cl-tmux/options:get-option "message-limit")
                    +max-message-log-entries+)))
-    (when (> (length *message-log*) limit)
-      (setf *message-log* (subseq *message-log* 0 limit)))))
+    (setf *message-log* (%cap-list *message-log* limit))))
 
 ;;; -- Prompt history ----------------------------------------------------------
 
@@ -170,8 +174,7 @@
   (when (and (stringp entry) (plusp (length entry)))
     (push entry *prompt-history*)
     (let ((limit (%effective-prompt-history-limit)))
-      (when (> (length *prompt-history*) limit)
-        (setf *prompt-history* (subseq *prompt-history* 0 limit))))
+      (setf *prompt-history* (%cap-list *prompt-history* limit)))
     (save-prompt-history)))
 
 ;;; -- Clock mode --------------------------------------------------------------

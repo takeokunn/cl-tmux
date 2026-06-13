@@ -172,41 +172,26 @@
                        (screen-consume-bell (pane-screen pane)))
               (%emit-bell buffer visual-bell))))))))
 
+(defmacro %drain-screen-queue (queue-accessor option default allowed)
+  `(let* ((mode (or (cl-tmux/options:get-option ,option ,default) ,default))
+          (emit (member mode ',allowed :test #'string=)))
+     (dolist (pane panes)
+       (let ((screen (pane-screen pane)))
+         (when screen
+           (with-lock-held ((screen-lock screen))
+             (let ((queued (nreverse (,queue-accessor screen))))
+               (setf (,queue-accessor screen) nil)
+               (when emit
+                 (dolist (seq queued)
+                   (write-string seq buffer))))))))))
+
 (defun %render-passthrough (buffer panes)
-  "Drain each pane's passthrough-queue and emit the inner sequences to BUFFER
-   (the outer terminal), oldest-first.  Gated on the allow-passthrough option:
-   when 'off' (default) the queue is cleared without emitting; when 'on'/'all'
-   the sequences are written through so tmux-in-tmux and iTerm2/kitty inline
-   images reach the real terminal.  Drains under the screen lock since reader
-   threads push to the queue concurrently."
-  (let* ((mode  (or (cl-tmux/options:get-option "allow-passthrough" "off") "off"))
-         (emit  (member mode '("on" "all") :test #'string=)))
-    (dolist (pane panes)
-      (let ((screen (pane-screen pane)))
-        (when screen
-          (with-lock-held ((screen-lock screen))
-            (let ((queued (nreverse (screen-passthrough-queue screen))))
-              (setf (screen-passthrough-queue screen) nil)
-              (when emit
-                (dolist (seq queued)
-                  (write-string seq buffer))))))))))
+  "Drain each pane's passthrough-queue into BUFFER; gated on allow-passthrough option."
+  (%drain-screen-queue screen-passthrough-queue "allow-passthrough" "off" ("on" "all")))
 
 (defun %render-clipboard (buffer panes)
-  "Drain each pane's clipboard-queue and emit the OSC 52 sequences to BUFFER (the
-   outer terminal) so a copy-mode yank reaches the host's system clipboard.  Gated
-   on set-clipboard: 'off' clears the queue without emitting; 'on'/'external' write
-   the sequences through.  Drains under the screen lock."
-  (let* ((mode (or (cl-tmux/options:get-option "set-clipboard" "on") "on"))
-         (emit (member mode '("on" "external") :test #'string=)))
-    (dolist (pane panes)
-      (let ((screen (pane-screen pane)))
-        (when screen
-          (with-lock-held ((screen-lock screen))
-            (let ((queued (nreverse (screen-clipboard-queue screen))))
-              (setf (screen-clipboard-queue screen) nil)
-              (when emit
-                (dolist (seq queued)
-                  (write-string seq buffer))))))))))
+  "Drain each pane's clipboard-queue into BUFFER (OSC 52); gated on set-clipboard option."
+  (%drain-screen-queue screen-clipboard-queue "set-clipboard" "on" ("on" "external")))
 
 (defun render-session-to-string (session terminal-rows terminal-cols)
   "Compose a full frame for SESSION as an escape-sequence string.

@@ -71,6 +71,14 @@
 (defconstant +min-clock-width+ 13
   "Minimum pane width in columns required to render the clock-mode HH:MM display.")
 
+(defun %blit-rows (stream rows ox oy start-row start-col max-width)
+  "Write ROWS (a list of strings) at terminal position (OX+START-COL, OY+START-ROW),
+   clipping each to MAX-WIDTH columns."
+  (loop for row-str in rows
+        for roff from 0 do
+    (move-to stream (+ oy start-row roff) (+ ox start-col))
+    (write-string (subseq row-str 0 (min (length row-str) max-width)) stream)))
+
 (defun draw-clock-to-screen (stream ox oy pw ph)
   "Render the current time HH:MM as 3-row ASCII digits centred in the pane
    at terminal offset (OX, OY), clipping to the pane rectangle (PW x PH).
@@ -109,12 +117,7 @@
         ;; Use a named constant consistent with +sgr-default-status+ (44;97) but with
         ;; bright cyan (96) instead of bright white to distinguish the clock from the bar.
         (format stream "~C[~Am" +esc+ (%clock-face-sgr))
-        (loop for row-str in rows
-              for roff from 0 do
-          (let ((term-row (+ oy start-row roff))
-                (term-col (+ ox start-col)))
-            (move-to stream term-row term-col)
-            (write-string (subseq row-str 0 (min (length row-str) pw)) stream)))
+        (%blit-rows stream rows ox oy start-row start-col pw)
         (reset-attrs stream)))))
 
 (defun %draw-pane-number-to-screen (stream ox oy pw ph number active-p)
@@ -138,10 +141,7 @@
                           (cl-tmux/options:get-option "display-panes-colour" "blue")))
            (sgr       (or (%border-color-sgr colour) 34)))
       (format stream "~C[~Dm" +esc+ sgr)
-      (loop for row-str in rows
-            for roff from 0 do
-        (move-to stream (+ oy start-row roff) (+ ox start-col))
-        (write-string (subseq row-str 0 (min (length row-str) pw)) stream))
+      (%blit-rows stream rows ox oy start-row start-col pw)
       (reset-attrs stream))))
 
 ;;; ── Copy-mode search-match highlighting ─────────────────────────────────────
