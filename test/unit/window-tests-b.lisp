@@ -17,13 +17,9 @@
 (test apply-named-layout-main-horizontal-two-panes
   ":main-horizontal with 2 panes: the main pane spans the top main-pane-height
    rows (tmux default 24); the second fills the rest below it."
-  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
-         (p1  (make-no-pty-pane 2 0 0 1 1))
-         ;; Window taller than the default main-pane-height so the layout is
-         ;; non-degenerate: h=50 → main 24, rest = 50 - 24 - 1 = 25.
-         (win (make-window :id 1 :name "w" :width 80 :height 50
-                           :panes (list p0 p1)
-                           :tree (make-layout-leaf p0))))
+  ;; Window taller than the default main-pane-height so the layout is
+  ;; non-degenerate: h=50 → main 24, rest = 50 - 24 - 1 = 25.
+  (with-blank-window (win p0 p1) (:width 80 :height 50)
     (apply-named-layout win :main-horizontal)
     (is (= 0  (pane-x p0))      "main pane starts at column 0")
     (is (= 0  (pane-y p0))      "main pane starts at row 0")
@@ -38,12 +34,7 @@
 (test apply-named-layout-main-horizontal-three-panes
   ":main-horizontal with 3 panes: main spans the top main-pane-height rows; two
    panes share the bottom region side by side with equal widths."
-  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
-         (p1  (make-no-pty-pane 2 0 0 1 1))
-         (p2  (make-no-pty-pane 3 0 0 1 1))
-         (win (make-window :id 1 :name "w" :width 81 :height 50
-                           :panes (list p0 p1 p2)
-                           :tree (make-layout-leaf p0))))
+  (with-blank-window (win p0 p1 p2) (:width 81 :height 50)
     (apply-named-layout win :main-horizontal)
     ;; main-h = main-pane-height = 24; rest-h = 50 - 24 - 1 = 25
     (is (= 24 (pane-height p0)) "main pane height = main-pane-height (24)")
@@ -57,10 +48,7 @@
 
 (test apply-named-layout-main-horizontal-single-pane
   ":main-horizontal with a single pane: pane takes the full window rectangle."
-  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
-         (win (make-window :id 1 :name "w" :width 80 :height 24
-                           :panes (list p0)
-                           :tree (make-layout-leaf p0))))
+  (with-blank-window (win p0) (:width 80 :height 24)
     (apply-named-layout win :main-horizontal)
     (is (= 0  (pane-x p0)))
     (is (= 0  (pane-y p0)))
@@ -70,13 +58,9 @@
 (test apply-named-layout-main-vertical-two-panes
   ":main-vertical with 2 panes: the main pane spans the left main-pane-width
    columns (tmux default 80); the second fills the right column."
-  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
-         (p1  (make-no-pty-pane 2 0 0 1 1))
-         ;; Window wider than the default main-pane-width: w=120 → main 80,
-         ;; rest = 120 - 80 - 1 = 39.
-         (win (make-window :id 1 :name "w" :width 120 :height 24
-                           :panes (list p0 p1)
-                           :tree (make-layout-leaf p0))))
+  ;; Window wider than the default main-pane-width: w=120 → main 80,
+  ;; rest = 120 - 80 - 1 = 39.
+  (with-blank-window (win p0 p1) (:width 120 :height 24)
     (apply-named-layout win :main-vertical)
     (is (= 0  (pane-x p0))      "main pane starts at column 0")
     (is (= 0  (pane-y p0))      "main pane starts at row 0")
@@ -91,12 +75,7 @@
 (test apply-named-layout-main-vertical-three-panes
   ":main-vertical with 3 panes: main spans the left main-pane-width columns; two
    panes share the right region stacked equally."
-  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
-         (p1  (make-no-pty-pane 2 0 0 1 1))
-         (p2  (make-no-pty-pane 3 0 0 1 1))
-         (win (make-window :id 1 :name "w" :width 120 :height 25
-                           :panes (list p0 p1 p2)
-                           :tree (make-layout-leaf p0))))
+  (with-blank-window (win p0 p1 p2) (:width 120 :height 25)
     (apply-named-layout win :main-vertical)
     ;; main-w = main-pane-width = 80; rest-w = 120 - 80 - 1 = 39
     (is (= 80 (pane-width p0))  "main pane width = main-pane-width (80)")
@@ -111,10 +90,7 @@
 
 (test apply-named-layout-main-vertical-single-pane
   ":main-vertical with a single pane: pane takes the full window rectangle."
-  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
-         (win (make-window :id 1 :name "w" :width 80 :height 24
-                           :panes (list p0)
-                           :tree (make-layout-leaf p0))))
+  (with-blank-window (win p0) ()
     (apply-named-layout win :main-vertical)
     (is (= 0  (pane-x p0)))
     (is (= 0  (pane-y p0)))
@@ -123,10 +99,7 @@
 
 (test apply-named-layout-tiled-single-pane
   ":tiled with 1 pane fills the whole window (1×1 grid)."
-  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
-         (win (make-window :id 1 :name "w" :width 80 :height 24
-                           :panes (list p0)
-                           :tree (make-layout-leaf p0))))
+  (with-blank-window (win p0) ()
     (apply-named-layout win :tiled)
     ;; ceil(sqrt(1)) = 1 col; ceil(1/1) = 1 row; col-w = 80; row-h = 24
     (is (= 0  (pane-x p0)))
@@ -136,13 +109,7 @@
 
 (test apply-named-layout-tiled-four-panes
   ":tiled with 4 panes produces a 2×2 grid with equal cell sizes."
-  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
-         (p1  (make-no-pty-pane 2 0 0 1 1))
-         (p2  (make-no-pty-pane 3 0 0 1 1))
-         (p3  (make-no-pty-pane 4 0 0 1 1))
-         (win (make-window :id 1 :name "w" :width 81 :height 25
-                           :panes (list p0 p1 p2 p3)
-                           :tree (make-layout-leaf p0))))
+  (with-blank-window (win p0 p1 p2 p3) (:width 81 :height 25)
     (apply-named-layout win :tiled)
     ;; ceil(sqrt(4)) = 2 cols; ceil(4/2) = 2 rows
     ;; col-w = floor((81 - 1) / 2) = 40; row-h = floor((25 - 1) / 2) = 12
@@ -165,12 +132,7 @@
 
 (test apply-named-layout-tiled-three-panes
   ":tiled with 3 panes produces a 2-column grid (2×2 with one empty cell)."
-  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
-         (p1  (make-no-pty-pane 2 0 0 1 1))
-         (p2  (make-no-pty-pane 3 0 0 1 1))
-         (win (make-window :id 1 :name "w" :width 81 :height 25
-                           :panes (list p0 p1 p2)
-                           :tree (make-layout-leaf p0))))
+  (with-blank-window (win p0 p1 p2) (:width 81 :height 25)
     (apply-named-layout win :tiled)
     ;; ceil(sqrt(3)) = 2 cols; ceil(3/2) = 2 rows
     ;; col-w = floor((81-1)/2) = 40; row-h = floor((25-1)/2) = 12

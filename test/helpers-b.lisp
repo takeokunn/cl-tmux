@@ -102,6 +102,32 @@
                                :screen (make-screen 1 1))))
      ,@body))
 
+;;; ── Blank-window fixture macro ──────────────────────────────────────────────
+;;;
+;;; apply-named-layout tests work on windows whose initial pane geometry is
+;;; irrelevant — the layout algorithm assigns final positions.  The pattern:
+;;;   (let* ((p0 (make-no-pty-pane 1 0 0 1 1))
+;;;          ...
+;;;          (win (make-window :id 1 :name "w" :width W :height H
+;;;                            :panes (list p0 ...) :tree (make-layout-leaf p0))))
+;;;     body)
+;;; repeats ~11 times with only the window dimensions and pane count changing.
+
+(defmacro with-blank-window ((win-var &rest pane-vars) (&key (width 80) (height 24))
+                             &body body)
+  "Bind WIN-VAR to a window of WIDTH x HEIGHT containing one no-pty pane per
+   symbol in PANE-VARS (IDs 1..N, all initially 1×1 at (0,0)).  The window tree
+   is a single leaf on the first pane — suitable for testing layout algorithms
+   that assign final geometry.  No session is created; no loop-state is entered."
+  (let ((bindings (loop for var in pane-vars
+                        for id from 1
+                        collect `(,var (make-no-pty-pane ,id 0 0 1 1)))))
+    `(let* (,@bindings
+            (,win-var (make-window :id 1 :name "w" :width ,width :height ,height
+                                   :panes (list ,@pane-vars)
+                                   :tree  (make-layout-leaf ,(first pane-vars)))))
+       ,@body)))
+
 ;;; ── Shared 2-pane fixture macros ─────────────────────────────────────────────
 ;;;
 ;;; Many dispatch tests need identical 2-pane sessions.  These macros eliminate
