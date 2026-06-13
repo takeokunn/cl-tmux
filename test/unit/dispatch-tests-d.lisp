@@ -281,19 +281,21 @@
                "the set-hook after-select-pane command must fire")
       (cl-tmux/hooks:clear-command-hooks "after-select-pane"))))
 
-(test set-hook-window-pane-changed-fires-config-command
-  "set-hook -g window-pane-changed <cmd> fires when the active pane changes —
-   via the window→session lookup at the sessionless chokepoint."
-  (with-fake-session (s :nwindows 1 :npanes 2)
-    (cl-tmux/hooks:clear-command-hooks "window-pane-changed")
-    (let ((cl-tmux::*server-sessions* (list (cons "0" s)))
-          (*overlay* nil))
-      (cl-tmux::%run-command-line
-       s "set-hook -g window-pane-changed \"display-message swapped\"")
-      (cl-tmux::%run-command-line s "select-pane -t 2")
-      (is-true (search "swapped" (format nil "~{~A~%~}" (overlay-lines)))
-               "the set-hook window-pane-changed command must fire via session lookup")
-      (cl-tmux/hooks:clear-command-hooks "window-pane-changed"))))
+(test set-hook-select-pane-session-lookup-table
+  "window-pane-changed and pane-focus-in both fire on select-pane -t 2 via session lookup."
+  (dolist (row '(("window-pane-changed" "swapped" "must fire via session lookup")
+                 ("pane-focus-in"       "focused" "must fire via session lookup")))
+    (destructuring-bind (hook-name word desc) row
+      (with-fake-session (s :nwindows 1 :npanes 2)
+        (cl-tmux/hooks:clear-command-hooks hook-name)
+        (let ((cl-tmux::*server-sessions* (list (cons "0" s)))
+              (*overlay* nil))
+          (cl-tmux::%run-command-line
+           s (format nil "set-hook -g ~A \"display-message ~A\"" hook-name word))
+          (cl-tmux::%run-command-line s "select-pane -t 2")
+          (is-true (search word (format nil "~{~A~%~}" (overlay-lines)))
+                   "~A ~A" hook-name desc)
+          (cl-tmux/hooks:clear-command-hooks hook-name))))))
 
 (test set-hook-after-rename-window-fires-config-via-unified-run-hooks
   "set-hook -g after-rename-window <cmd> fires on rename — proving the unified
@@ -309,20 +311,6 @@
       (is-true (search "renamed-hook" (format nil "~{~A~%~}" (overlay-lines)))
                "after-rename-window set-hook must fire via the unified run-hooks")
       (cl-tmux/hooks:clear-command-hooks "after-rename-window"))))
-
-(test set-hook-pane-focus-in-fires-config-command
-  "set-hook -g pane-focus-in <cmd> fires when a pane gains focus (config path via
-   the pane→session lookup at %notify-pane-focus)."
-  (with-fake-session (s :nwindows 1 :npanes 2)
-    (cl-tmux/hooks:clear-command-hooks "pane-focus-in")
-    (let ((cl-tmux::*server-sessions* (list (cons "0" s)))
-          (*overlay* nil))
-      (cl-tmux::%run-command-line
-       s "set-hook -g pane-focus-in \"display-message focused\"")
-      (cl-tmux::%run-command-line s "select-pane -t 2")
-      (is-true (search "focused" (format nil "~{~A~%~}" (overlay-lines)))
-               "the set-hook pane-focus-in command must fire via session lookup")
-      (cl-tmux/hooks:clear-command-hooks "pane-focus-in"))))
 
 (test cmd-list-commands-filters-by-name
   "list-commands <name> shows only that command (tmux's filter); bare
