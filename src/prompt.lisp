@@ -70,6 +70,10 @@
 
 ;;; -- Buffer editing -----------------------------------------------------------
 
+(defun %buffer-delete (buffer from to)
+  "Return BUFFER with characters [FROM, TO) removed."
+  (concatenate 'string (subseq buffer 0 from) (subseq buffer to)))
+
 (defun prompt-input (ch)
   "Insert character CH at the cursor position in the active prompt's buffer.
    Advances the cursor by one.  No-op when the prompt is inactive."
@@ -91,11 +95,8 @@
     (let* ((buffer (prompt-buffer p))
            (index  (prompt-cursor-index p)))
       (when (plusp index)
-        (setf (prompt-buffer       p)
-              (concatenate 'string
-                           (subseq buffer 0 (1- index))
-                           (subseq buffer index)))
-        (setf (prompt-cursor-index p) (1- index)))))
+        (setf (prompt-buffer       p) (%buffer-delete buffer (1- index) index)
+              (prompt-cursor-index p) (1- index)))))
   (prompt-notify-change))
 
 ;;; -- Cursor navigation -- declarative table ----------------------------------
@@ -191,11 +192,8 @@
     (let* ((buffer      (prompt-buffer p))
            (end-index   (prompt-cursor-index p))
            (start-index (%word-kill-start buffer end-index)))
-      (setf (prompt-buffer p)
-            (concatenate 'string
-                         (subseq buffer 0 start-index)
-                         (subseq buffer end-index)))
-      (setf (prompt-cursor-index p) start-index)))
+      (setf (prompt-buffer       p) (%buffer-delete buffer start-index end-index)
+            (prompt-cursor-index p) start-index)))
   (prompt-notify-change))
 
 ;;; -- Vi-mode character deletion -----------------------------------------------
@@ -216,10 +214,7 @@
            (index  (prompt-cursor-index p))
            (len    (length buffer)))
       (when (< index len)
-        (setf (prompt-buffer p)
-              (concatenate 'string
-                           (subseq buffer 0 index)
-                           (subseq buffer (1+ index))))
+        (setf (prompt-buffer p) (%buffer-delete buffer index (1+ index)))
         (%clamp-cursor-after-delete p index len)))))
 
 ;;; -- Dismiss and display -----------------------------------------------------
