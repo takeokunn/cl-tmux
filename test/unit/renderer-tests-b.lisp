@@ -108,22 +108,17 @@
       (is (search (format nil "~C[~Am" #\Escape expected) out)
           "the rendered bar must include the status-left-style SGR (got ~S)" out))))
 
-(test status-off-no-status-bar
-  "When the status option is nil/false, render-session-to-string emits no status bar."
-  (with-isolated-options ("status" nil)
-    (let* ((sess (make-test-session 20 5))
-           (out  (render-session-to-string sess 6 20)))
-      ;; With status=nil, the default blue SGR "44;97m" should not appear
-      (is (null (search (format nil "~C[44;97m" #\Escape) out))
-          "status=nil must suppress the status bar blue background (got ~S)" out))))
-
-(test status-on-shows-status-bar
-  "When the status option is true (default), render-session-to-string emits a status bar."
-  (with-isolated-options ("status" t "status-left" nil "status-right" nil "status-style" "")
-    (let* ((sess (make-test-session 20 5))
-           (out  (render-session-to-string sess 6 20)))
-      (is (search (format nil "~C[44;97m" #\Escape) out)
-          "status=t must produce the status bar with blue background (got ~S)" out))))
+(test status-on-off-table
+  "The status option controls whether render-session-to-string emits a blue status bar."
+  (dolist (row '((nil "status=nil: blue background absent")
+                 (t   "status=t:   blue background present")))
+    (destructuring-bind (status-val desc) row
+      (with-isolated-options ("status" status-val
+                              "status-left" nil "status-right" nil "status-style" "")
+        (let* ((sess (make-test-session 20 5))
+               (out  (render-session-to-string sess 6 20))
+               (hit  (search (format nil "~C[44;97m" #\Escape) out)))
+          (is (if status-val hit (null hit)) "~A (got ~S)" desc out))))))
 
 ;;; ── multi-line status (status 2..5 + status-format[N]) ─────────────────────
 
@@ -182,29 +177,24 @@
 
 ;;; ── BEL rendering ────────────────────────────────────────────────────────────
 
-(test render-emits-bel-when-bell-pending
-  "render-session-to-string emits BEL (byte 7) when the active pane has bell-pending T,
-   then clears the flag."
-  (let* ((sess  (make-test-session 20 5))
-         (ap    (session-active-pane sess))
-         (sc    (pane-screen ap)))
-    ;; Manually set bell-pending.
-    (setf (cl-tmux/terminal/types:screen-bell-pending sc) t)
-    (let ((out (render-session-to-string sess 6 20)))
-      (is (find (code-char 7) out)
-          "render output must contain BEL char (code 7) when bell-pending is T")
-      (is-false (cl-tmux/terminal/types:screen-bell-pending sc)
-                "bell-pending must be cleared after rendering"))))
-
-(test render-no-bel-when-bell-pending-nil
-  "render-session-to-string does not emit BEL when bell-pending is NIL."
-  (let* ((sess  (make-test-session 20 5))
-         (ap    (session-active-pane sess))
-         (sc    (pane-screen ap)))
-    (setf (cl-tmux/terminal/types:screen-bell-pending sc) nil)
-    (let ((out (render-session-to-string sess 6 20)))
-      (is (null (find (code-char 7) out))
-          "render output must NOT contain BEL when bell-pending is NIL"))))
+(test render-bel-table
+  "render-session-to-string emits BEL (byte 7) when bell-pending is T and clears
+   the flag; emits no BEL when bell-pending is NIL."
+  (dolist (row '((t   "bell-pending T: BEL emitted and flag cleared")
+                 (nil "bell-pending NIL: BEL absent")))
+    (destructuring-bind (initial-pending desc) row
+      (let* ((sess  (make-test-session 20 5))
+             (ap    (session-active-pane sess))
+             (sc    (pane-screen ap)))
+        (setf (cl-tmux/terminal/types:screen-bell-pending sc) initial-pending)
+        (let ((out (render-session-to-string sess 6 20)))
+          (is (if initial-pending
+                  (find (code-char 7) out)
+                  (null (find (code-char 7) out)))
+              "~A" desc)
+          (when initial-pending
+            (is-false (cl-tmux/terminal/types:screen-bell-pending sc)
+                      "bell-pending must be cleared after rendering")))))))
 
 ;;; ── status-left expanded ─────────────────────────────────────────────────────
 
