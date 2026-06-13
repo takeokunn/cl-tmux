@@ -126,6 +126,21 @@
         (show-menu (make-menu :title title :items items :selected-index 0))
         (show-overlay (%format-menu *active-menu*)))))
 
+;;; ── Copy-mode dispatch table helper ─────────────────────────────────────────
+;;;
+;;; 45 copy-mode handlers follow one uniform contract:
+;;;   (KEYWORD (%copy-mode-call session #'FUNCTION))
+;;; define-copy-mode-dispatch-handlers encodes that contract so the handler
+;;; table reads as pure keyword → function-symbol data, with no boilerplate.
+
+(defmacro define-copy-mode-dispatch-handlers (&rest entries)
+  "Register copy-mode handlers of the form (%copy-mode-call session #'FN).
+   Each ENTRY is (KEYWORD FN-SYMBOL).  Expands to define-command-handlers."
+  `(define-command-handlers
+     ,@(mapcar (lambda (entry)
+                 `(,(first entry) (%copy-mode-call session #',(second entry))))
+               entries)))
+
 (defun %copy-mode-cursor-fn (direction)
   "Return a one-arg function that moves the copy-mode cursor in DIRECTION."
   (lambda (s) (copy-mode-move-cursor s direction)))
@@ -165,82 +180,30 @@
                    (lambda (name) (rename-window win name)))))
   (:list-keys (show-overlay (describe-key-bindings)))
 
-  ;; ── Copy-mode command handlers ─────────────────────────────────────────────
-  ;; Rules are defined here so dispatch-command covers them in one case form.
-  ;; The implementations delegate to helpers in dispatch-handlers-copy-mode.lisp.
+  ;; ── Copy-mode handlers ─────────────────────────────────────────────────────
+  ;; The 45 standard (%copy-mode-call session #'fn) handlers live in the
+  ;; define-copy-mode-dispatch-handlers call at the bottom of this file.
+  ;; Non-standard copy-mode handlers follow here (cursor-fn / lambdas / no-ops).
 
-  (:copy-mode-enter            (%copy-mode-call session #'copy-mode-enter))
-  (:copy-mode-exit             (%copy-mode-call session #'copy-mode-exit))
-  (:copy-mode-begin-selection  (%copy-mode-call session #'copy-mode-begin-selection))
-  (:copy-mode-other-end        (%copy-mode-call session #'copy-mode-other-end))
-  ;; Jump-to-char repeat/reverse (vi ; and ,)
-  (:copy-mode-jump-again        (%copy-mode-call session #'copy-mode-jump-again))
-  (:copy-mode-jump-reverse      (%copy-mode-call session #'copy-mode-jump-reverse))
-  (:copy-mode-clear-selection  (%copy-mode-call session #'copy-mode-clear-selection))
-  (:copy-mode-select-word      (%copy-mode-call session #'copy-mode-select-word))
-  (:copy-mode-yank             (%copy-mode-call session #'copy-mode-yank))
-  (:copy-mode-word-forward     (%copy-mode-call session #'copy-mode-word-forward))
-  (:copy-mode-word-backward    (%copy-mode-call session #'copy-mode-word-backward))
-  (:copy-mode-word-end         (%copy-mode-call session #'copy-mode-word-end))
-  (:copy-mode-space-forward    (%copy-mode-call session #'copy-mode-space-forward))
-  (:copy-mode-space-backward   (%copy-mode-call session #'copy-mode-space-backward))
-  (:copy-mode-space-end        (%copy-mode-call session #'copy-mode-space-end))
-  (:copy-mode-line-start       (%copy-mode-call session #'copy-mode-line-start))
-  (:copy-mode-back-to-indentation (%copy-mode-call session #'copy-mode-back-to-indentation))
-  (:copy-mode-line-end         (%copy-mode-call session #'copy-mode-line-end))
-  ;; Horizontal cursor movement and rectangle (block) selection toggle — the
-  ;; proper targets for `send -X cursor-left`/`cursor-right`/`rectangle-toggle`
-  ;; (previously mis-mapped to begin-selection).  copy-mode-move-cursor takes a
-  ;; direction, so it is wrapped in a one-arg lambda for %copy-mode-call.
-  (:copy-mode-cursor-left      (%copy-mode-call session (%copy-mode-cursor-fn :left)))
-  (:copy-mode-cursor-right     (%copy-mode-call session (%copy-mode-cursor-fn :right)))
-  ;; cursor-up/down move the copy cursor (scrolling the viewport at the edges),
-  ;; matching the arrow-key path; the -X names previously only scrolled a line.
-  (:copy-mode-cursor-up        (%copy-mode-call session (%copy-mode-cursor-fn :up)))
-  (:copy-mode-cursor-down      (%copy-mode-call session (%copy-mode-cursor-fn :down)))
-  (:copy-mode-rectangle-toggle (%copy-mode-call session #'copy-mode-toggle-rectangle))
-  (:copy-mode-top              (%copy-mode-call session #'copy-mode-top))
-  (:copy-mode-bottom           (%copy-mode-call session #'copy-mode-bottom))
-  (:copy-mode-high             (%copy-mode-call session #'copy-mode-high))
-  (:copy-mode-middle           (%copy-mode-call session #'copy-mode-middle))
-  (:copy-mode-low              (%copy-mode-call session #'copy-mode-low))
-  (:copy-mode-page-up          (%copy-mode-call session #'copy-mode-page-up))
-  (:copy-mode-page-down        (%copy-mode-call session #'copy-mode-page-down))
-  (:copy-mode-half-page-up     (%copy-mode-call session #'copy-mode-half-page-up))
-  (:copy-mode-half-page-down   (%copy-mode-call session #'copy-mode-half-page-down))
-  (:copy-mode-scroll-up-line   (%copy-mode-call session #'copy-mode-scroll-up-line))
-  (:copy-mode-scroll-down-line (%copy-mode-call session #'copy-mode-scroll-down-line))
-  (:copy-mode-scroll-middle    (%copy-mode-call session #'copy-mode-scroll-middle))
-  (:copy-mode-jump-to-mark     (%copy-mode-call session #'copy-mode-jump-to-mark))
-  (:copy-mode-set-mark         (%copy-mode-call session #'copy-mode-set-mark))
-  (:copy-mode-refresh-from-pane (values))  ; no-op — copy mode always reads live pane
-  (:copy-mode-prev-paragraph   (%copy-mode-call session #'copy-mode-previous-paragraph))
-  (:copy-mode-next-paragraph   (%copy-mode-call session #'copy-mode-next-paragraph))
-  (:copy-mode-begin-line-selection (%copy-mode-call session #'copy-mode-begin-line-selection))
-  (:copy-mode-copy-end-of-line  (%copy-mode-call session #'copy-mode-copy-end-of-line))
-  (:copy-mode-copy-line         (%copy-mode-call session #'copy-mode-copy-line))
-  (:copy-mode-append-selection  (%copy-mode-call session #'copy-mode-append-selection))
-  (:copy-mode-append-selection-and-cancel
-   (%copy-mode-call session #'copy-mode-append-selection-and-cancel))
+  ;; cursor-direction: %copy-mode-cursor-fn builds the one-arg direction lambda
+  (:copy-mode-cursor-left   (%copy-mode-call session (%copy-mode-cursor-fn :left)))
+  (:copy-mode-cursor-right  (%copy-mode-call session (%copy-mode-cursor-fn :right)))
+  (:copy-mode-cursor-up     (%copy-mode-call session (%copy-mode-cursor-fn :up)))
+  (:copy-mode-cursor-down   (%copy-mode-call session (%copy-mode-cursor-fn :down)))
+  ;; no-op: copy mode reads the live pane, so no explicit refresh step
+  (:copy-mode-refresh-from-pane (values))
+  ;; copy-pipe-no-cancel passes an extra NIL arg the standard path cannot encode
   (:copy-mode-copy-pipe-no-cancel
    (%copy-mode-call session (lambda (s) (copy-mode-copy-pipe-no-cancel s nil))))
-  (:copy-mode-search-next      (%copy-mode-call session #'copy-mode-search-next))
-  (:copy-mode-search-prev      (%copy-mode-call session #'copy-mode-search-prev))
+  ;; search prompts open an interactive prompt — they don't go through %copy-mode-call
   (:copy-mode-search-forward-prompt
    (%copy-mode-search-prompt session "/" #'copy-mode-search-forward))
   (:copy-mode-search-backward-prompt
    (%copy-mode-search-prompt session "?" #'copy-mode-search-backward))
-  (:copy-mode-search-forward-incremental
-   (%copy-mode-call session #'copy-mode-search-forward-incremental))
-  (:copy-mode-search-backward-incremental
-   (%copy-mode-call session #'copy-mode-search-backward-incremental))
-  (:copy-mode-next-matching-bracket
-   (%copy-mode-call session #'copy-mode-next-matching-bracket))
-  ;; search-forward-text / search-backward-text: handled via extra-args in
-  ;; %dispatch-send-keys-X; these keyword stubs are never invoked but must
-  ;; exist so the keyword table lookup does not fall through to "unrecognised".
+  ;; stubs: handled via extra-args in %dispatch-send-keys-X so the table lookup doesn't miss
   (:copy-mode-search-forward-text  (values))
   (:copy-mode-search-backward-text (values))
+  ;; choose-buffer renders a live buffer listing overlay
   (:copy-mode-choose-buffer
    (show-built-overlay (stream)
      (let ((buffers (cl-tmux/buffer:list-paste-buffers)))
@@ -481,3 +444,59 @@
    (%signal-channel-prompt "wait-for channel"))
 
 )
+
+;;; ── Copy-mode standard dispatch table ───────────────────────────────────────
+;;;
+;;; 45 handlers that uniformly follow (:KW (%copy-mode-call session #'FN)) are
+;;; expressed as a pure keyword → function-symbol fact table.  The macro
+;;; define-copy-mode-dispatch-handlers expands each entry into the standard form.
+;;; Two entries use function symbols that differ from the keyword name:
+;;;   :copy-mode-rectangle-toggle → copy-mode-toggle-rectangle
+;;;   :copy-mode-prev-paragraph   → copy-mode-previous-paragraph
+
+(define-copy-mode-dispatch-handlers
+  (:copy-mode-enter                       copy-mode-enter)
+  (:copy-mode-exit                        copy-mode-exit)
+  (:copy-mode-begin-selection             copy-mode-begin-selection)
+  (:copy-mode-other-end                   copy-mode-other-end)
+  (:copy-mode-jump-again                  copy-mode-jump-again)
+  (:copy-mode-jump-reverse                copy-mode-jump-reverse)
+  (:copy-mode-clear-selection             copy-mode-clear-selection)
+  (:copy-mode-select-word                 copy-mode-select-word)
+  (:copy-mode-yank                        copy-mode-yank)
+  (:copy-mode-word-forward                copy-mode-word-forward)
+  (:copy-mode-word-backward               copy-mode-word-backward)
+  (:copy-mode-word-end                    copy-mode-word-end)
+  (:copy-mode-space-forward               copy-mode-space-forward)
+  (:copy-mode-space-backward              copy-mode-space-backward)
+  (:copy-mode-space-end                   copy-mode-space-end)
+  (:copy-mode-line-start                  copy-mode-line-start)
+  (:copy-mode-back-to-indentation         copy-mode-back-to-indentation)
+  (:copy-mode-line-end                    copy-mode-line-end)
+  (:copy-mode-rectangle-toggle            copy-mode-toggle-rectangle)
+  (:copy-mode-top                         copy-mode-top)
+  (:copy-mode-bottom                      copy-mode-bottom)
+  (:copy-mode-high                        copy-mode-high)
+  (:copy-mode-middle                      copy-mode-middle)
+  (:copy-mode-low                         copy-mode-low)
+  (:copy-mode-page-up                     copy-mode-page-up)
+  (:copy-mode-page-down                   copy-mode-page-down)
+  (:copy-mode-half-page-up                copy-mode-half-page-up)
+  (:copy-mode-half-page-down              copy-mode-half-page-down)
+  (:copy-mode-scroll-up-line              copy-mode-scroll-up-line)
+  (:copy-mode-scroll-down-line            copy-mode-scroll-down-line)
+  (:copy-mode-scroll-middle               copy-mode-scroll-middle)
+  (:copy-mode-jump-to-mark                copy-mode-jump-to-mark)
+  (:copy-mode-set-mark                    copy-mode-set-mark)
+  (:copy-mode-prev-paragraph              copy-mode-previous-paragraph)
+  (:copy-mode-next-paragraph              copy-mode-next-paragraph)
+  (:copy-mode-begin-line-selection        copy-mode-begin-line-selection)
+  (:copy-mode-copy-end-of-line            copy-mode-copy-end-of-line)
+  (:copy-mode-copy-line                   copy-mode-copy-line)
+  (:copy-mode-append-selection            copy-mode-append-selection)
+  (:copy-mode-append-selection-and-cancel copy-mode-append-selection-and-cancel)
+  (:copy-mode-search-next                 copy-mode-search-next)
+  (:copy-mode-search-prev                 copy-mode-search-prev)
+  (:copy-mode-search-forward-incremental  copy-mode-search-forward-incremental)
+  (:copy-mode-search-backward-incremental copy-mode-search-backward-incremental)
+  (:copy-mode-next-matching-bracket       copy-mode-next-matching-bracket))
