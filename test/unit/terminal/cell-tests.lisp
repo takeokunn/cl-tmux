@@ -20,45 +20,20 @@
   :in terminal-suite)
 (in-suite attr-constants)
 
-(test attr-bold-is-bit-0
-  :description "The bold attribute constant occupies bit 0."
-  (is (= #b00000001 cl-tmux/terminal/types:+attr-bold+)))
-
-(test attr-dim-is-bit-1
-  :description "The dim attribute constant occupies bit 1."
-  (is (= #b00000010 cl-tmux/terminal/types:+attr-dim+)))
-
-(test attr-reverse-is-bit-2
-  :description "The reverse-video attribute constant occupies bit 2."
-  (is (= #b00000100 cl-tmux/terminal/types:+attr-reverse+)))
-
-(test attr-underline-is-bit-3
-  :description "The underline attribute constant occupies bit 3."
-  (is (= #b00001000 cl-tmux/terminal/types:+attr-underline+)))
-
-(test attr-blink-is-bit-4
-  :description "The blink attribute constant occupies bit 4."
-  (is (= #b00010000 cl-tmux/terminal/types:+attr-blink+)))
-
-(test attr-italic-is-bit-5
-  :description "The italic attribute constant occupies bit 5."
-  (is (= #b00100000 cl-tmux/terminal/types:+attr-italic+)))
-
-(test attr-conceal-is-bit-6
-  :description "The conceal attribute constant occupies bit 6."
-  (is (= #b01000000 cl-tmux/terminal/types:+attr-conceal+)))
-
-(test attr-strikethrough-is-bit-7
-  :description "The strikethrough attribute constant occupies bit 7."
-  (is (= #b10000000 cl-tmux/terminal/types:+attr-strikethrough+)))
-
-(test attr2-double-underline-is-bit-0
-  :description "The double-underline extended attribute occupies attrs2 bit 0."
-  (is (= #b00000001 cl-tmux/terminal/types:+attr2-double-underline+)))
-
-(test attr2-overline-is-bit-1
-  :description "The overline extended attribute occupies attrs2 bit 1."
-  (is (= #b00000010 cl-tmux/terminal/types:+attr2-overline+)))
+(test attr-bit-values-table
+  "Each attribute constant occupies exactly the declared bit position in its byte."
+  (dolist (row (list (list #b00000001 cl-tmux/terminal/types:+attr-bold+              "bold is bit 0")
+                     (list #b00000010 cl-tmux/terminal/types:+attr-dim+               "dim is bit 1")
+                     (list #b00000100 cl-tmux/terminal/types:+attr-reverse+           "reverse is bit 2")
+                     (list #b00001000 cl-tmux/terminal/types:+attr-underline+         "underline is bit 3")
+                     (list #b00010000 cl-tmux/terminal/types:+attr-blink+             "blink is bit 4")
+                     (list #b00100000 cl-tmux/terminal/types:+attr-italic+            "italic is bit 5")
+                     (list #b01000000 cl-tmux/terminal/types:+attr-conceal+           "conceal is bit 6")
+                     (list #b10000000 cl-tmux/terminal/types:+attr-strikethrough+     "strikethrough is bit 7")
+                     (list #b00000001 cl-tmux/terminal/types:+attr2-double-underline+ "double-underline is attrs2 bit 0")
+                     (list #b00000010 cl-tmux/terminal/types:+attr2-overline+         "overline is attrs2 bit 1")))
+    (destructuring-bind (expected constant desc) row
+      (is (= expected constant) "~A" desc))))
 
 (test attr-constants-are-distinct-single-bits
   :description "All eight primary attribute constants are distinct powers of 2."
