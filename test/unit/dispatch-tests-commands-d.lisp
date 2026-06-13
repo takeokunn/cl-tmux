@@ -280,41 +280,27 @@
 
 ;;; ── :prev-pane dispatch ──────────────────────────────────────────────────────
 
-(test dispatch-prev-pane-wraps-from-first
-  ":prev-pane cycles in reverse: from the first pane wraps to the last."
-  (with-fake-session (s :nwindows 1 :npanes 2)
-    (let* ((win (session-active-window s))
-           (p0  (first  (window-panes win)))
-           (p1  (second (window-panes win))))
-      (is (eq p0 (window-active-pane win)) "p0 is active initially")
-      (cl-tmux::dispatch-command s :prev-pane nil)
-      (is (eq p1 (window-active-pane win))
-          ":prev-pane from the first pane must wrap to the last pane"))))
-
-(test dispatch-prev-pane-retreats-from-last
-  ":prev-pane from the last pane selects the preceding pane."
-  (with-fake-session (s :nwindows 1 :npanes 2)
-    (let* ((win (session-active-window s))
-           (p0  (first  (window-panes win)))
-           (p1  (second (window-panes win))))
-      (window-select-pane win p1)
-      (cl-tmux::dispatch-command s :prev-pane nil)
-      (is (eq p0 (window-active-pane win))
-          ":prev-pane from p1 must select p0"))))
+(test dispatch-prev-pane-table
+  ":prev-pane from first wraps to last (p1); from last retreats to first (p0)."
+  (dolist (row '((nil t   "from p0: wraps to p1")
+                 (t   nil "from p1: retreats to p0")))
+    (destructuring-bind (start-on-p1 expect-p1 desc) row
+      (with-fake-session (s :nwindows 1 :npanes 2)
+        (let* ((win (session-active-window s))
+               (p0  (first  (window-panes win)))
+               (p1  (second (window-panes win))))
+          (when start-on-p1 (window-select-pane win p1))
+          (cl-tmux::dispatch-command s :prev-pane nil)
+          (is (eq (if expect-p1 p1 p0) (window-active-pane win)) "~A" desc))))))
 
 ;;; ── :split-horizontal / :split-vertical (focus versions) dispatch ────────────
 
-(test dispatch-split-horizontal-does-not-error
-  ":split-horizontal dispatches without error on a fake session."
-  (with-fake-session (s :nwindows 1 :npanes 1)
-    (finishes (cl-tmux::dispatch-command s :split-horizontal nil)
-              ":split-horizontal must not signal an error")))
-
-(test dispatch-split-vertical-does-not-error
-  ":split-vertical dispatches without error on a fake session."
-  (with-fake-session (s :nwindows 1 :npanes 1)
-    (finishes (cl-tmux::dispatch-command s :split-vertical nil)
-              ":split-vertical must not signal an error")))
+(test dispatch-split-horizontal-vertical-do-not-error
+  ":split-horizontal and :split-vertical both dispatch without error on a fake session."
+  (dolist (cmd '(:split-horizontal :split-vertical))
+    (with-fake-session (s :nwindows 1 :npanes 1)
+      (finishes (cl-tmux::dispatch-command s cmd nil)
+                "~A must not signal an error" cmd))))
 
 ;;; ── :new-window dispatch ─────────────────────────────────────────────────────
 

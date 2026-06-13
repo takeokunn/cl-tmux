@@ -145,26 +145,15 @@
          (let ((,on-submit-var (prompt-on-submit *prompt*)))
            ,@body)))))
 
-(test confirm-before-y-dispatches
-  "dispatch-command :confirm-before activates a prompt; submitting \"y\" shows the overlay."
-  (with-confirm-before-prompt (on-submit)
-    (funcall on-submit "y")
-    (is (overlay-active-p)
-        "on-submit with \"y\" must show the [confirmed] overlay")))
-
-(test confirm-before-n-cancels
-  "dispatch-command :confirm-before activates a prompt; submitting \"n\" does NOT show overlay."
-  (with-confirm-before-prompt (on-submit)
-    (funcall on-submit "n")
-    (is (null (overlay-active-p))
-        "on-submit with \"n\" must NOT show the overlay")))
-
-(test confirm-before-empty-cancels
-  "dispatch-command :confirm-before activates a prompt; submitting \"\" does NOT show overlay."
-  (with-confirm-before-prompt (on-submit)
-    (funcall on-submit "")
-    (is (null (overlay-active-p))
-        "on-submit with empty string must NOT show the overlay")))
+(test confirm-before-input-table
+  ":confirm-before on-submit: \"y\" shows an overlay; \"n\" and \"\" do not."
+  (dolist (row '(("y"  t   "y confirms → overlay visible")
+                 ("n"  nil "n cancels → no overlay")
+                 (""   nil "empty string cancels → no overlay")))
+    (destructuring-bind (input overlay-p desc) row
+      (with-confirm-before-prompt (on-submit)
+        (funcall on-submit input)
+        (is (if overlay-p (overlay-active-p) (null (overlay-active-p))) "~A" desc)))))
 
 (test confirm-before-arg-is-single-key-and-y-runs-command
   "confirm-before COMMAND opens a SINGLE-KEY prompt: one 'y' keypress (no Enter)

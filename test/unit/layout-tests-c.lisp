@@ -165,37 +165,17 @@
 
 ;;; ── define-axis-rules / %split-fits-p ────────────────────────────────────────
 
-(test split-fits-p-adequate-h-pane
-  "%split-fits-p returns T when pane width ≥ 2×min-width + 1 separator."
-  ;; min-width = 2, so need at least 5 columns.
-  (let ((pane (make-pane :id 1 :fd -1 :pid -1 :width 5 :height 24
-                         :screen (make-screen 5 24))))
-    (is (cl-tmux/model::%split-fits-p pane :h)
-        "a 5-column pane must be splittable horizontally")))
-
-(test split-fits-p-too-narrow-h-pane-returns-nil
-  "%split-fits-p returns NIL when pane width < 2×min-width + 1 separator."
-  ;; 4 columns: 2+1+2=5 needed, 4 < 5 → cannot split.
-  (let ((pane (make-pane :id 1 :fd -1 :pid -1 :width 4 :height 24
-                         :screen (make-screen 4 24))))
-    (is (null (cl-tmux/model::%split-fits-p pane :h))
-        "a 4-column pane must NOT be splittable horizontally")))
-
-(test split-fits-p-adequate-v-pane
-  "%split-fits-p returns T when pane height ≥ 2×min-height + 1 separator."
-  ;; min-height = 1, so need at least 3 rows.
-  (let ((pane (make-pane :id 1 :fd -1 :pid -1 :width 80 :height 3
-                         :screen (make-screen 80 3))))
-    (is (cl-tmux/model::%split-fits-p pane :v)
-        "a 3-row pane must be splittable vertically")))
-
-(test split-fits-p-too-short-v-pane-returns-nil
-  "%split-fits-p returns NIL when pane height < 2×min-height + 1 separator."
-  ;; 2 rows: 1+1+1=3 needed, 2 < 3 → cannot split.
-  (let ((pane (make-pane :id 1 :fd -1 :pid -1 :width 80 :height 2
-                         :screen (make-screen 80 2))))
-    (is (null (cl-tmux/model::%split-fits-p pane :v))
-        "a 2-row pane must NOT be splittable vertically")))
+(test split-fits-p-table
+  "%split-fits-p: T when room exists to split on the axis, NIL when too small.
+   min-width=2 → h needs ≥5 cols; min-height=1 → v needs ≥3 rows."
+  (dolist (row '((t   5 24 :h "5-col pane fits h-split (needs 5)")
+                 (nil 4 24 :h "4-col pane too narrow for h-split (needs 5)")
+                 (t  80  3 :v "3-row pane fits v-split (needs 3)")
+                 (nil 80  2 :v "2-row pane too short for v-split (needs 3)")))
+    (destructuring-bind (expected width height orient desc) row
+      (let ((pane (make-pane :id 1 :fd -1 :pid -1 :width width :height height
+                             :screen (make-screen width height))))
+        (is (eq expected (cl-tmux/model::%split-fits-p pane orient)) "~A" desc)))))
 
 ;;; ── Table-driven: %layout-checksum known-value tests ─────────────────────────
 
