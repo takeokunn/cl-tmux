@@ -133,30 +133,27 @@
   (with-auto-rename-session (screen pane win sess :win-name "old-name")
     (setf (screen-title screen) "new-title")
     (setf (window-automatic-rename-p win) t)
-    (with-loop-state
-      (cl-tmux::%maybe-rename-window-from-title sess)
-      (is (string= "new-title" (window-name win))
-          "%maybe-rename-window-from-title must set window-name to OSC title"))))
+    (cl-tmux::%maybe-rename-window-from-title sess)
+    (is (string= "new-title" (window-name win))
+        "%maybe-rename-window-from-title must set window-name to OSC title")))
 
 (test maybe-rename-window-from-title-noop-when-titles-equal
   "%maybe-rename-window-from-title does nothing when OSC title equals window name."
   (with-auto-rename-session (screen pane win sess :win-name "same")
     (setf (screen-title screen) "same")
     (setf (window-automatic-rename-p win) t)
-    (with-loop-state
-      (cl-tmux::%maybe-rename-window-from-title sess)
-      (is (string= "same" (window-name win))
-          "window-name must be unchanged when title equals name"))))
+    (cl-tmux::%maybe-rename-window-from-title sess)
+    (is (string= "same" (window-name win))
+        "window-name must be unchanged when title equals name")))
 
 (test maybe-rename-window-from-title-noop-when-auto-rename-off
   "%maybe-rename-window-from-title does nothing when automatic-rename is disabled."
   (with-auto-rename-session (screen pane win sess :win-name "original")
     (setf (screen-title screen) "new-title")
     (setf (window-automatic-rename-p win) nil)
-    (with-loop-state
-      (cl-tmux::%maybe-rename-window-from-title sess)
-      (is (string= "original" (window-name win))
-          "window-name must not change when auto-rename is disabled"))))
+    (cl-tmux::%maybe-rename-window-from-title sess)
+    (is (string= "original" (window-name win))
+        "window-name must not change when auto-rename is disabled")))
 
 (test maybe-rename-window-from-title-noop-when-window-local-auto-rename-off
   "%maybe-rename-window-from-title is suppressed for a window whose window-local
@@ -172,10 +169,9 @@
       (cl-tmux/options:set-option "automatic-rename" t)
       (cl-tmux/options:set-option "allow-rename" t)
       (cl-tmux/options:set-option-for-window "automatic-rename" "off" win)
-      (with-loop-state
-        (cl-tmux::%maybe-rename-window-from-title sess)
-        (is (string= "original" (window-name win))
-            "window-name must not change when window-local automatic-rename is off")))))
+      (cl-tmux::%maybe-rename-window-from-title sess)
+      (is (string= "original" (window-name win))
+          "window-name must not change when window-local automatic-rename is off"))))
 
 (test maybe-rename-window-from-title-renames-when-window-local-auto-rename-on
   "Companion to the suppression test: with window-local automatic-rename ON the
@@ -187,10 +183,9 @@
       (cl-tmux/options:set-option "automatic-rename" t)
       (cl-tmux/options:set-option "allow-rename" t)
       (cl-tmux/options:set-option-for-window "automatic-rename" "on" win)
-      (with-loop-state
-        (cl-tmux::%maybe-rename-window-from-title sess)
-        (is (string= "new-title" (window-name win))
-            "window-name must update when window-local automatic-rename is on")))))
+      (cl-tmux::%maybe-rename-window-from-title sess)
+      (is (string= "new-title" (window-name win))
+          "window-name must update when window-local automatic-rename is on"))))
 
 (test allow-rename-off-keeps-command-following
   "`set -g allow-rename off` must NOT freeze automatic command-following — it
@@ -202,10 +197,9 @@
       (cl-tmux/options:set-option "automatic-rename" t)
       (cl-tmux/options:set-option "allow-rename" nil)        ; OFF
       (cl-tmux/options:set-option "automatic-rename-format" "MYCMD")
-      (with-loop-state
-        (cl-tmux::%maybe-rename-window-from-title sess)
-        (is (string= "MYCMD" (window-name win))
-            "command-following must still apply with allow-rename off")))))
+      (cl-tmux::%maybe-rename-window-from-title sess)
+      (is (string= "MYCMD" (window-name win))
+          "command-following must still apply with allow-rename off"))))
 
 (test allow-rename-off-suppresses-app-title
   "With allow-rename off, an app's OSC title must NOT rename the window (the
@@ -216,10 +210,9 @@
     (with-isolated-config
       (cl-tmux/options:set-option "automatic-rename" t)
       (cl-tmux/options:set-option "allow-rename" nil)        ; OFF
-      (with-loop-state
-        (cl-tmux::%maybe-rename-window-from-title sess)
-        (is (string= "keep" (window-name win))
-            "app OSC title must not rename the window when allow-rename is off")))))
+      (cl-tmux::%maybe-rename-window-from-title sess)
+      (is (string= "keep" (window-name win))
+          "app OSC title must not rename the window when allow-rename is off"))))
 
 (test auto-rename-name-allow-title-nil-suppresses-osc-title
   "%auto-rename-name with :allow-title NIL returns empty for a process-less pane
@@ -241,15 +234,14 @@
     (with-isolated-config
       (cl-tmux/options:set-option "automatic-rename" t)
       (cl-tmux/options:set-option "allow-rename" t)
-      (with-loop-state
-        (setf (screen-title screen) "first")
-        (cl-tmux::%maybe-rename-window-from-title sess)
-        (is (string= "first" (window-name win)) "first auto-rename applies")
-        (is-true (window-automatic-rename-p win)
-                 "automatic-rename must stay ON after an auto-rename")
-        ;; A second title change must rename again (the bug made this a no-op).
-        (setf (screen-title screen) "second")
-        (cl-tmux::%maybe-rename-window-from-title sess)
-        (is (string= "second" (window-name win))
-            "auto-rename must keep tracking after the first rename")))))
+      (setf (screen-title screen) "first")
+      (cl-tmux::%maybe-rename-window-from-title sess)
+      (is (string= "first" (window-name win)) "first auto-rename applies")
+      (is-true (window-automatic-rename-p win)
+               "automatic-rename must stay ON after an auto-rename")
+      ;; A second title change must rename again (the bug made this a no-op).
+      (setf (screen-title screen) "second")
+      (cl-tmux::%maybe-rename-window-from-title sess)
+      (is (string= "second" (window-name win))
+          "auto-rename must keep tracking after the first rename"))))
 
