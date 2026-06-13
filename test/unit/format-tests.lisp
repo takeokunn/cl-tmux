@@ -250,16 +250,12 @@
     (is (= (cl-tmux/model:pane-id (second panes)) (getf ctx2 :pane-index))
         "second pane: :pane-index must equal pane-id")))
 
-(test format-context-session-name-propagated
-  "format-context-from-session :session-name matches the session's name field."
+(test format-context-names-propagated
+  "format-context-from-session propagates :session-name and :window-name correctly."
   (with-format-context (sess win pane ctx) ()
     (is (string= (cl-tmux/model:session-name sess) (getf ctx :session-name))
         ":session-name mismatch: expected ~S got ~S"
-        (cl-tmux/model:session-name sess) (getf ctx :session-name))))
-
-(test format-context-window-name-propagated
-  "format-context-from-session :window-name matches the window's name field."
-  (with-format-context (sess win pane ctx) ()
+        (cl-tmux/model:session-name sess) (getf ctx :session-name))
     (is (string= (cl-tmux/model:window-name win) (getf ctx :window-name))
         ":window-name mismatch: expected ~S got ~S"
         (cl-tmux/model:window-name win) (getf ctx :window-name))))
@@ -284,58 +280,42 @@
       (is (char= #\: (char t-str 2))
           ":time must have colon at position 2, got ~C" (char t-str 2)))))
 
-(test format-context-host-is-non-empty
-  "format-context-from-session :host is a non-empty string."
+(test format-context-host-fields
+  ":host is a non-empty string; :host-short contains no dot."
   (with-format-context (sess win pane ctx) ()
-    (is (stringp (getf ctx :host))   ":host must be a string")
-    (is (plusp (length (getf ctx :host))) ":host must be non-empty")))
-
-(test format-context-host-short-no-dot
-  "format-context-from-session :host-short contains no dot."
-  (with-format-context (sess win pane ctx) ()
+    (is (plusp (length (getf ctx :host))) ":host must be non-empty")
     (is (null (find #\. (getf ctx :host-short)))
         ":host-short must not contain a dot, got ~S" (getf ctx :host-short))))
 
-(test format-context-window-active-for-active-window
-  "format-context-from-session :window-active is \"1\" for the session's active window."
+(test format-context-window-active-table
+  ":window-active is \"1\" for the active window and \"0\" for an inactive window."
   (let* ((sess (make-fake-session :nwindows 2))
          (wins (cl-tmux/model:session-windows sess))
-         (win  (first wins))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
-    ;; make-fake-session selects the first window
-    (is (string= "1" (getf ctx :window-active))
-        ":window-active expected \"1\" for active window, got ~S"
-        (getf ctx :window-active))))
+         (win1 (first wins))
+         (win2 (second wins)))
+    (is (string= "1" (getf (cl-tmux/format:format-context-from-session
+                             sess win1 (first (cl-tmux/model:window-panes win1)))
+                            :window-active))
+        ":window-active must be \"1\" for active window")
+    (is (string= "0" (getf (cl-tmux/format:format-context-from-session
+                             sess win2 (first (cl-tmux/model:window-panes win2)))
+                            :window-active))
+        ":window-active must be \"0\" for inactive window")))
 
-(test format-context-window-active-for-inactive-window
-  "format-context-from-session :window-active is \"0\" for a non-active window."
+(test format-context-window-flags-table
+  ":window-flags is \"*\" for the active window and \" \" for an inactive window."
   (let* ((sess (make-fake-session :nwindows 2))
          (wins (cl-tmux/model:session-windows sess))
-         (win2 (second wins))
-         (pane (first (cl-tmux/model:window-panes win2)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win2 pane)))
-    (is (string= "0" (getf ctx :window-active))
-        ":window-active expected \"0\" for inactive window, got ~S"
-        (getf ctx :window-active))))
-
-(test format-context-window-flags-active
-  "format-context-from-session :window-flags is \"*\" for the active window."
-  (with-format-context (sess win pane ctx) ()
-    (is (string= "*" (getf ctx :window-flags))
-        ":window-flags expected \"*\" for active window, got ~S"
-        (getf ctx :window-flags))))
-
-(test format-context-window-flags-inactive
-  "format-context-from-session :window-flags is \" \" for an inactive window."
-  (let* ((sess (make-fake-session :nwindows 2))
-         (wins (cl-tmux/model:session-windows sess))
-         (win2 (second wins))
-         (pane (first (cl-tmux/model:window-panes win2)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win2 pane)))
-    (is (string= " " (getf ctx :window-flags))
-        ":window-flags expected \" \" for inactive window, got ~S"
-        (getf ctx :window-flags))))
+         (win1 (first wins))
+         (win2 (second wins)))
+    (is (string= "*" (getf (cl-tmux/format:format-context-from-session
+                             sess win1 (first (cl-tmux/model:window-panes win1)))
+                            :window-flags))
+        ":window-flags must be \"*\" for active window")
+    (is (string= " " (getf (cl-tmux/format:format-context-from-session
+                             sess win2 (first (cl-tmux/model:window-panes win2)))
+                            :window-flags))
+        ":window-flags must be \" \" for inactive window")))
 
 (test expand-format-time-expands
   "#{time} expands to the :time value from context."

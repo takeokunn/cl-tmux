@@ -212,29 +212,15 @@ set -g prefix C-a~%"))))
 
 ;;; config-file-path precedence (pure: %config-path-from)
 
-(test config-path-explicit-override-wins
-  "$CL_TMUX_CONF takes precedence over XDG and the default."
-  (is (equal #p"/custom/my.conf"
-             (cl-tmux/config::%config-path-from "/custom/my.conf" "/x/cfg" #p"/home/u/"))
-      "an explicit override must be used verbatim"))
-
-(test config-path-honors-xdg-config-home
-  "Without an override, $XDG_CONFIG_HOME/cl-tmux/cl-tmux.conf is used."
-  (is (string= "/x/cfg/cl-tmux/cl-tmux.conf"
-               (config-path nil "/x/cfg" #p"/home/u/")))
-  (is (string= "/x/cfg/cl-tmux/cl-tmux.conf"
-               (config-path nil "/x/cfg/" #p"/home/u/"))
-      "a trailing slash on XDG_CONFIG_HOME must not double up"))
-
-(test config-path-defaults-to-dot-config
-  "With neither override nor XDG set, the path defaults under ~/.config."
-  (is (string= "/home/u/.config/cl-tmux/cl-tmux.conf"
-               (config-path nil nil #p"/home/u/"))))
-
-(test config-path-empty-env-is-unset
-  "Empty-string env values are treated as unset."
-  (is (string= "/home/u/.config/cl-tmux/cl-tmux.conf"
-               (config-path "" "" #p"/home/u/"))))
+(test config-path-table
+  "%config-path-from: override wins; XDG used when set; ~/.config fallback; empty = unset."
+  (dolist (c '(("/custom/my.conf" "/x/cfg"  #p"/home/u/" "/custom/my.conf"                  "explicit override wins")
+               (nil               "/x/cfg"  #p"/home/u/" "/x/cfg/cl-tmux/cl-tmux.conf"      "XDG set")
+               (nil               "/x/cfg/" #p"/home/u/" "/x/cfg/cl-tmux/cl-tmux.conf"      "XDG trailing slash")
+               (nil               nil       #p"/home/u/" "/home/u/.config/cl-tmux/cl-tmux.conf" "no XDG fallback")
+               (""                ""        #p"/home/u/" "/home/u/.config/cl-tmux/cl-tmux.conf" "empty env = unset")))
+    (destructuring-bind (override xdg home expected desc) c
+      (is (string= expected (config-path override xdg home)) "~A" desc))))
 
 ;;; load-config-file
 
@@ -375,17 +361,14 @@ set -g prefix C-a~%"))))
           "a -N note plus a brace block must store a :sequence")
       (is (= 2 (length (rest cmd))) "both inner commands must be captured"))))
 
-(test bind-note-flag-stores-note-on-binding
-  "bind -N \"note\" key cmd stores the note, retrievable via key-table-note."
+(test bind-note-flag-note-storage
+  "bind -N stores the note on the binding; binding without -N has NIL note."
   (with-isolated-config
     (load-config-from-string "bind -N \"Go to next window\" x next-window")
     (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\x)))
       (is (eq :next-window (cl-tmux/config:key-table-command entry)))
       (is (string= "Go to next window" (cl-tmux/config:key-table-note entry))
-          "the -N note must be stored on the binding"))))
-
-(test bind-without-note-has-nil-note
-  "A binding made without -N has a NIL note."
+          "the -N note must be stored on the binding")))
   (with-isolated-config
     (load-config-from-string "bind y next-window")
     (is (null (cl-tmux/config:key-table-note
