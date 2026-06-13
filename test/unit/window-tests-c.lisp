@@ -41,33 +41,21 @@
 
 (test auto-rename-from-osc
   "When window-automatic-rename-p is T, window-name is updated from OSC title."
-  (with-loop-state
-    (let* ((p0   (make-no-pty-pane 1 0 0 80 24))
-           (w0   (make-window :id 1 :name "original"
-                              :panes (list p0) :active p0))
-           (sess (make-session :id 1 :name "s" :windows (list w0))))
-      (session-select-window sess w0)
-      ;; Simulate OSC 0 title update on the screen.
-      (setf (screen-title (pane-screen p0)) "new-title")
-      ;; Call the production rename function — not a copy of its logic.
-      (cl-tmux::%maybe-rename-window-from-title sess)
-      (is (string= "new-title" (window-name w0))
-          "window-name must be updated from OSC title when automatic-rename is enabled"))))
+  (with-auto-rename-session (screen p0 w0 sess :win-name "original")
+    (setf (window-automatic-rename-p w0) t)
+    (setf (screen-title screen) "new-title")
+    (cl-tmux::%maybe-rename-window-from-title sess)
+    (is (string= "new-title" (window-name w0))
+        "window-name must be updated from OSC title when automatic-rename is enabled")))
 
 (test auto-rename-disabled-ignores-osc
   "When window-automatic-rename-p is NIL, window-name is NOT updated from OSC title."
-  (with-loop-state
-    (let* ((p0   (make-no-pty-pane 1 0 0 80 24))
-           (w0   (make-window :id 1 :name "kept"
-                              :automatic-rename-p nil
-                              :panes (list p0) :active p0))
-           (sess (make-session :id 1 :name "s" :windows (list w0))))
-      (session-select-window sess w0)
-      (setf (screen-title (pane-screen p0)) "ignored-title")
-      ;; Call the production rename function; automatic-rename-p nil must suppress it.
-      (cl-tmux::%maybe-rename-window-from-title sess)
-      (is (string= "kept" (window-name w0))
-          "window-name must NOT change when automatic-rename is disabled"))))
+  (with-auto-rename-session (screen p0 w0 sess :win-name "kept")
+    (setf (window-automatic-rename-p w0) nil)
+    (setf (screen-title screen) "ignored-title")
+    (cl-tmux::%maybe-rename-window-from-title sess)
+    (is (string= "kept" (window-name w0))
+        "window-name must NOT change when automatic-rename is disabled")))
 
 ;;; ── window-remove-pane (no PTY) ──────────────────────────────────────────────
 

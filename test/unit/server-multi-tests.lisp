@@ -178,9 +178,8 @@
    text — the server side of the `cl-tmux display -p` stdout channel."
   (when (cl-tmux/net:unix-socket-available-p)
     (with-isolated-hooks
-      (with-loop-state
-        (let* ((s        (make-fake-session))
-               (path     (format nil "~A/cl-tmux-reply-~D.sock"
+      (with-fake-session (s)
+        (let* ((path     (format nil "~A/cl-tmux-reply-~D.sock"
                                  (string-right-trim "/" (or (sb-ext:posix-getenv "TMPDIR") "/tmp"))
                                  (get-universal-time)))
                (listener (cl-tmux/net:make-listener path :backlog 4)))
@@ -281,9 +280,8 @@
    multi-client property (one render fanned out to all)."
   (when (cl-tmux/net:unix-socket-available-p)
     (with-isolated-hooks
-      (with-loop-state
-        (let* ((s    (make-fake-session))
-               (path (format nil "~A/cl-tmux-mtest-~D.sock"
+      (with-fake-session (s)
+        (let* ((path (format nil "~A/cl-tmux-mtest-~D.sock"
                              (string-right-trim "/" (or (sb-ext:posix-getenv "TMPDIR") "/tmp"))
                              (get-universal-time)))
                (listener (cl-tmux/net:make-listener path :backlog 4)))

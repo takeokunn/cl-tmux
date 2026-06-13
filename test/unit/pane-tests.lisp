@@ -202,12 +202,11 @@
 
 (test display-panes-overlay-active
   ":display-panes activates the overlay (overlay-active-p returns T)."
-  (let* ((sess (make-fake-session :nwindows 1 :npanes 2)))
-    (with-loop-state
-      (let ((*overlay* nil))
-        (cl-tmux::dispatch-command sess :display-panes nil)
-        (is-true (overlay-active-p)
-                 ":display-panes must activate the overlay")))))
+  (with-fake-session (sess :nwindows 1 :npanes 2)
+    (let ((*overlay* nil))
+      (cl-tmux::dispatch-command sess :display-panes nil)
+      (is-true (overlay-active-p)
+               ":display-panes must activate the overlay"))))
 
 ;;; ── respawn-pane resets fd/pid ───────────────────────────────────────────────
 
