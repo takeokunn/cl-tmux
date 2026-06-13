@@ -149,6 +149,20 @@
           (%apply-option-side-effects name value)
           t)))))
 
+;;; ── Option side-effect helpers ───────────────────────────────────────────────
+
+(defun %nonempty-string-p (x)
+  "T when X is a non-empty string."
+  (and (stringp x) (plusp (length x))))
+
+(defun %bind-prefix-key (value key-code-var)
+  "Parse VALUE as a prefix key; when valid, store the byte in KEY-CODE-VAR (a special-var symbol)
+   and arm that key in the prefix table."
+  (let ((byte (%parse-prefix-key value)))
+    (when byte
+      (setf (symbol-value key-code-var) byte)
+      (key-table-bind +table-prefix+ (code-char byte) :send-prefix))))
+
 ;;; ── Declarative option-side-effect dispatch ──────────────────────────────────
 ;;;
 ;;; define-option-side-effect-handlers builds %apply-option-side-effects from a
@@ -176,25 +190,16 @@
          ,@(mapcar #'expand-rule rules)))))
 
 (define-option-side-effect-handlers
-  ;; prefix: update *prefix-key-code* and register the new key in the prefix table.
-  ("prefix"
-   (let ((byte (%parse-prefix-key value)))
-     (when byte
-       (setf *prefix-key-code* byte)
-       (key-table-bind +table-prefix+ (code-char byte) :send-prefix))))
-  ;; prefix2: a second prefix key that arms the prefix table.
-  ("prefix2"
-   (let ((byte (%parse-prefix-key value)))
-     (when byte
-       (setf *prefix2-key-code* byte)
-       (key-table-bind +table-prefix+ (code-char byte) :send-prefix))))
+  ;; prefix / prefix2: parse and arm the key in the prefix table.
+  ("prefix"  (%bind-prefix-key value '*prefix-key-code*))
+  ("prefix2" (%bind-prefix-key value '*prefix2-key-code*))
   ;; default-shell: update the shell used for new panes immediately.
   ("default-shell"
-   (when (and (stringp value) (plusp (length value)))
+   (when (%nonempty-string-p value)
      (setf *default-shell* value)))
   ;; escape-time: sync into server-options so every set form takes effect.
   ("escape-time"
-   (when (and (stringp value) (plusp (length value)))
+   (when (%nonempty-string-p value)
      (cl-tmux/options:set-server-option "escape-time" value)))
   ;; status: off/false/0 hides the bar; numeric line count (capped at 5) or on/true → 1.
   ("status"
@@ -211,7 +216,7 @@
        (ignore-errors (funcall *mouse-reporting-hook* (and on-p t))))))
   ;; update-environment: propagate the space-separated variable list into the model.
   ("update-environment"
-   (when (and (stringp value) (plusp (length value)))
+   (when (%nonempty-string-p value)
      (setf cl-tmux/model:*update-environment*
            (remove-if (lambda (s) (zerop (length s)))
                       (uiop:split-string value :separator '(#\Space))))))
