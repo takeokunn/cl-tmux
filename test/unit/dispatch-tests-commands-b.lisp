@@ -166,25 +166,15 @@
 
 ;;; ── %handle-kill-result helper ────────────────────────────────────────────────
 
-(test handle-kill-result-sets-running-nil-on-quit
-  "%handle-kill-result clears *running* when RESULT is :quit."
-  (with-loop-state
-    (cl-tmux::%handle-kill-result :quit)
-    (is-false cl-tmux::*running*
-              "*running* must be NIL after :quit")))
-
-(test handle-kill-result-preserves-running-for-nil
-  "%handle-kill-result does NOT clear *running* for a NIL result."
-  (with-loop-state
-    (cl-tmux::%handle-kill-result nil)
-    (is-true cl-tmux::*running*
-             "*running* must remain T for nil result")))
-
-(test handle-kill-result-returns-its-argument
-  "%handle-kill-result returns its argument unchanged."
-  (with-loop-state
-    (is (eq :quit (cl-tmux::%handle-kill-result :quit)))
-    (is (null (cl-tmux::%handle-kill-result nil)))))
+(test handle-kill-result-table
+  "%handle-kill-result: :quit clears *running* and returns :quit; NIL preserves it and returns NIL."
+  (dolist (row '((:quit nil  ":quit must clear *running*")
+                 (nil   t    "NIL must preserve *running*")))
+    (destructuring-bind (result expected-running desc) row
+      (with-loop-state
+        (let ((ret (cl-tmux::%handle-kill-result result)))
+          (is (equal result ret)            "~A: return value must equal input" desc)
+          (is (eq expected-running cl-tmux::*running*) "~A: *running*" desc))))))
 
 ;;; ── %format-popup-overlay helper ─────────────────────────────────────────────
 
@@ -203,20 +193,16 @@
     (is (stringp result) "%format-popup-overlay must not error with nil output")
     (is (search "cmd" result) "overlay must still contain the title")))
 
-;;; ── +popup-max-width+ / +popup-max-height+ / +popup-margin+ constants ───────
+;;; ── Popup and buffer-preview positive-constant checks ────────────────────────
 
-(test popup-constants-are-positive
-  "Popup dimension constants are defined and positive."
-  (is (> cl-tmux::+popup-max-width+  0) "+popup-max-width+ must be positive")
-  (is (> cl-tmux::+popup-max-height+ 0) "+popup-max-height+ must be positive")
-  (is (> cl-tmux::+popup-margin+     0) "+popup-margin+ must be positive"))
-
-;;; ── +buffer-preview-length+ constant ─────────────────────────────────────────
-
-(test buffer-preview-length-constant-is-positive
-  "+buffer-preview-length+ is defined and positive."
-  (is (> cl-tmux::+buffer-preview-length+ 0)
-      "+buffer-preview-length+ must be positive"))
+(test popup-and-buffer-preview-constants-positive-table
+  "Popup dimension and buffer-preview constants must all be positive."
+  (dolist (row (list (list cl-tmux::+popup-max-width+      "+popup-max-width+")
+                     (list cl-tmux::+popup-max-height+     "+popup-max-height+")
+                     (list cl-tmux::+popup-margin+         "+popup-margin+")
+                     (list cl-tmux::+buffer-preview-length+ "+buffer-preview-length+")))
+    (destructuring-bind (val name) row
+      (is (> val 0) "~A must be positive" name))))
 
 ;;; ── :display-popup dispatch ──────────────────────────────────────────────────
 
@@ -276,27 +262,17 @@
       (is (null (cl-tmux/prompt:menu-y cl-tmux::*active-menu*))
           "menu-y defaults to NIL (centred)"))))
 
-(test dispatch-menu-next-advances-selection
-  ":menu-next advances the selected index."
-  (with-fake-session (s)
-    (let ((cl-tmux::*active-menu*
-            (make-menu :title "t"
-                       :items (list (cons "a" :ka) (cons "b" :kb))
-                       :selected-index 0)))
-      (cl-tmux::dispatch-command s :menu-next nil)
-      (is (= 1 (menu-selected-index cl-tmux::*active-menu*))
-          ":menu-next must advance the selection index to 1"))))
-
-(test dispatch-menu-prev-wraps-selection
-  ":menu-prev wraps from index 0 to the last item."
-  (with-fake-session (s)
-    (let ((cl-tmux::*active-menu*
-            (make-menu :title "t"
-                       :items (list (cons "a" :ka) (cons "b" :kb))
-                       :selected-index 0)))
-      (cl-tmux::dispatch-command s :menu-prev nil)
-      (is (= 1 (menu-selected-index cl-tmux::*active-menu*))
-          ":menu-prev from 0 must wrap to last index (1)"))))
+(test dispatch-menu-next-prev-table
+  ":menu-next from 0 advances to 1; :menu-prev from 0 wraps to last index (1)."
+  (dolist (cmd '(:menu-next :menu-prev))
+    (with-fake-session (s)
+      (let ((cl-tmux::*active-menu*
+              (make-menu :title "t"
+                         :items (list (cons "a" :ka) (cons "b" :kb))
+                         :selected-index 0)))
+        (cl-tmux::dispatch-command s cmd nil)
+        (is (= 1 (menu-selected-index cl-tmux::*active-menu*))
+            "~A from 0 must result in selected-index 1" cmd)))))
 
 (test dispatch-menu-dismiss-clears-menu-and-overlay
   ":menu-dismiss clears *active-menu* and the overlay."
