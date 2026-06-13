@@ -309,10 +309,10 @@
   "A define-cps-state function that ignores both args compiles and runs cleanly."
   ;; Both session and byte are declared ignorable — verify no compile warnings
   ;; by just calling the function and checking the return type.
-  (let ((s (make-fake-session))
-        (state (cl-tmux::make-input-state)))
-    (is (null (cl-tmux::process-byte s 0 state))
-        "NUL byte must return NIL (forwarded, no quit)")))
+  (with-fake-session (s)
+    (let ((state (cl-tmux::make-input-state)))
+      (is (null (cl-tmux::process-byte s 0 state))
+          "NUL byte must return NIL (forwarded, no quit)"))))
 
 ;;; ── Overlay arrow-key scrolling via escape sequence ─────────────────────────
 ;;;
@@ -321,8 +321,8 @@
 
 (test overlay-escape-up-scrolls-overlay
   "ESC [ A while an overlay is open scrolls the overlay up (offset -1)."
-  (let ((s (make-fake-session)))
-    (let ((*overlay* nil) (cl-tmux::*dirty* nil))
+  (with-fake-session (s)
+    (let ((*overlay* nil))
       (show-overlay (format nil "~{line~A~%~}" (loop for i from 1 to 20 collect i)))
       (let ((state (cl-tmux::make-input-state)))
         ;; Feed ESC [ A one byte at a time.
@@ -335,8 +335,8 @@
 
 (test overlay-escape-down-scrolls-overlay
   "ESC [ B while an overlay is open scrolls the overlay down (offset +1)."
-  (let ((s (make-fake-session)))
-    (let ((*overlay* nil) (cl-tmux::*dirty* nil))
+  (with-fake-session (s)
+    (let ((*overlay* nil))
       (show-overlay (format nil "~{line~A~%~}" (loop for i from 1 to 20 collect i)))
       (let ((state (cl-tmux::make-input-state)))
         (cl-tmux::process-byte s 27 state)
@@ -347,8 +347,8 @@
 
 (test overlay-bare-esc-dismisses-overlay
   "A lone ESC (ESC + non-'[' byte) while an overlay is open dismisses it."
-  (let ((s (make-fake-session)))
-    (let ((*overlay* nil) (cl-tmux::*dirty* nil))
+  (with-fake-session (s)
+    (let ((*overlay* nil))
       (show-overlay "some text")
       (let ((state (cl-tmux::make-input-state)))
         ;; ESC then 'x' — not a CSI sequence → dismiss

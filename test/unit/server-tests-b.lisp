@@ -336,34 +336,31 @@ it still updates *term-rows*/*term-cols* without signalling."
 
 (test process-bytes-cps-empty-bytes-returns-nil
   :description "%process-bytes-cps on an empty byte vector returns NIL immediately."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((state (cl-tmux::make-input-state))
-            (bytes (make-array 0 :element-type '(unsigned-byte 8))))
-        (is (null (cl-tmux::%process-bytes-cps s bytes state 0))
-            "empty byte array must return NIL disposition")))))
+  (with-fake-session (s)
+    (let ((state (cl-tmux::make-input-state))
+          (bytes (make-array 0 :element-type '(unsigned-byte 8))))
+      (is (null (cl-tmux::%process-bytes-cps s bytes state 0))
+          "empty byte array must return NIL disposition"))))
 
 (test process-bytes-cps-index-at-end-returns-nil
   :description "%process-bytes-cps with index = length returns NIL (all bytes consumed)."
-  (let ((s (make-fake-session)))
-    (with-loop-state
-      (let ((state (cl-tmux::make-input-state))
-            (bytes (make-array 3 :element-type '(unsigned-byte 8)
-                                 :initial-contents '(1 2 3))))
-        (is (null (cl-tmux::%process-bytes-cps s bytes state 3))
-            "index=length must return NIL (past end)")))))
+  (with-fake-session (s)
+    (let ((state (cl-tmux::make-input-state))
+          (bytes (make-array 3 :element-type '(unsigned-byte 8)
+                               :initial-contents '(1 2 3))))
+      (is (null (cl-tmux::%process-bytes-cps s bytes state 3))
+          "index=length must return NIL (past end)"))))
 
 (test process-bytes-cps-detach-keystroke-returns-detach
   :description "%process-bytes-cps on a prefix+d byte sequence returns :detach."
   ;; Isolate the key-tables so the default #\d → :detach binding is present.
-  (let ((s (make-fake-session)))
+  (with-fake-session (s)
     (with-isolated-config
-      (with-loop-state
-        (let ((state (cl-tmux::make-input-state))
-              (bytes (make-array 2 :element-type '(unsigned-byte 8)
-                                   :initial-contents (list 2 (char-code #\d)))))
-          (is (eq :detach (cl-tmux::%process-bytes-cps s bytes state 0))
-              "prefix+d must yield :detach disposition from CPS walker"))))))
+      (let ((state (cl-tmux::make-input-state))
+            (bytes (make-array 2 :element-type '(unsigned-byte 8)
+                                 :initial-contents (list 2 (char-code #\d)))))
+        (is (eq :detach (cl-tmux::%process-bytes-cps s bytes state 0))
+            "prefix+d must yield :detach disposition from CPS walker")))))
 
 ;;; ── %sync-active-window unit test ────────────────────────────────────────────
 

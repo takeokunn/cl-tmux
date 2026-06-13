@@ -173,7 +173,7 @@
    yields NIL (no commands)."
   (if (and (cdr tokens)
            (string= (first tokens) "{")
-           (string= (car (last tokens)) "}"))
+           (string= (first (last tokens)) "}"))
       (butlast (rest tokens))
       tokens))
 

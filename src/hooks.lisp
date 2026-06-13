@@ -144,7 +144,8 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
 
 (defun %format-command-hook-entry (out entry)
   "Write a single command-hook alist ENTRY to stream OUT as '  <event> -> <cmd>, ...'."
-  (format out "~%  ~A -> ~{~(~A~)~^, ~}" (car entry) (cdr entry)))
+  (destructuring-bind (event . cmds) entry
+    (format out "~%  ~A -> ~{~(~A~)~^, ~}" event cmds)))
 
 (defun describe-command-hooks ()
   "Return a newline-separated, event-sorted listing of registered command hooks.
