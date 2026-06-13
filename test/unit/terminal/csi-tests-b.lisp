@@ -275,30 +275,18 @@
   :in terminal-suite)
 (in-suite csi-decstbm-params)
 
-(test %csi-decstbm-params-converts-1based-to-0based
-  "%csi-decstbm-params converts 1-based p1/p2 to 0-based (top, bottom) pair."
-  (with-screen (s 10 10)
-    ;; p1=3, p2=8 → top=2, bottom=7
-    (multiple-value-bind (top bottom)
-        (cl-tmux/terminal/csi::%csi-decstbm-params s 3 8)
-      (is (= 2 top)   "top must be 0-based: (max 1 3)-1 = 2")
-      (is (= 7 bottom) "bottom must be 0-based: 8-1 = 7"))))
-
-(test %csi-decstbm-params-p1-zero-defaults-to-row-0
-  "%csi-decstbm-params with p1=0 uses (max 1 0)=1 → 0-based top=0."
-  (with-screen (s 10 10)
-    (multiple-value-bind (top _)
-        (cl-tmux/terminal/csi::%csi-decstbm-params s 0 5)
-      (declare (ignore _))
-      (is (= 0 top) "p1=0 must resolve to top=0"))))
-
-(test %csi-decstbm-params-p2-zero-defaults-to-screen-height-minus-1
-  "%csi-decstbm-params with p2=0 (omitted) defaults bottom to height-1."
-  (with-screen (s 10 8)
-    ;; screen height = 8
-    (multiple-value-bind (_ bottom)
-        (cl-tmux/terminal/csi::%csi-decstbm-params s 1 0)
-      (declare (ignore _))
-      (is (= 7 bottom) "p2=0 must resolve to bottom=height-1=7"))))
+(test %csi-decstbm-params-table
+  "%csi-decstbm-params converts 1-based params to 0-based; 0 defaults to top=0 or bottom=height-1."
+  (dolist (row '((10 10 3 8  2   7   "normal: p1=3,p2=8 → top=2,bottom=7")
+                 (10 10 0 5  0   nil "p1=0 → top=0 (skip bottom)")
+                 (10  8 1 0  nil 7   "p2=0 → bottom=height-1=7 (skip top)")))
+    (destructuring-bind (sw sh p1 p2 expected-top expected-bottom desc) row
+      (with-screen (s sw sh)
+        (multiple-value-bind (top bottom)
+            (cl-tmux/terminal/csi::%csi-decstbm-params s p1 p2)
+          (when expected-top
+            (is (= expected-top top) "~A: top" desc))
+          (when expected-bottom
+            (is (= expected-bottom bottom) "~A: bottom" desc)))))))
 
 ;;; ── SUITE: csi-unknown-sequences ─────────────────────────────────────────────

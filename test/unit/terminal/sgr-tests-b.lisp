@@ -161,20 +161,15 @@
     (is (zerop (logand (attrs-at s 1 0) #b100))
         "reverse bit must be cleared by SGR 27")))
 
-(test sgr-framed-51-accepted-silently
-  "SGR 51 (framed) is accepted without error and does not alter standard attrs."
-  (with-screen (s 10 2)
-    (finishes (feed s (esc "[51mX")))
-    ;; No standard attribute bit should be set by SGR 51.
-    (is (zerop (logand (attrs-at s 0 0) #b1111111))
-        "SGR 51 must not set any standard attribute bits")))
-
-(test sgr-encircled-52-accepted-silently
-  "SGR 52 (encircled) is accepted without error and does not alter standard attrs."
-  (with-screen (s 10 2)
-    (finishes (feed s (esc "[52mX")))
-    (is (zerop (logand (attrs-at s 0 0) #b1111111))
-        "SGR 52 must not set any standard attribute bits")))
+(test sgr-framed-encircled-accepted-silently-table
+  "SGR 51 (framed) and SGR 52 (encircled) are accepted without error and do not alter standard attrs."
+  (dolist (row '((51 "SGR 51 (framed)")
+                 (52 "SGR 52 (encircled)")))
+    (destructuring-bind (code desc) row
+      (with-screen (s 10 2)
+        (finishes (feed s (esc "[~DmX" code)))
+        (is (zerop (logand (attrs-at s 0 0) #b1111111))
+            "~A must not set any standard attribute bits" desc)))))
 
 (test sgr-bright-background-table
   "Bright background SGR codes 100-107 set bg indices 8-15."
@@ -190,19 +185,14 @@
 
 (in-suite direct-action-sgr)
 
-(test dispatch-sgr-code-directly-foreground
-  "%dispatch-sgr-code sets foreground directly when called with code 31."
-  (with-screen (s 10 2)
-    (cl-tmux/terminal/sgr:%dispatch-sgr-code s 31)
-    (is (= 1 (cl-tmux/terminal/types:screen-cur-fg s))
-        "%dispatch-sgr-code 31 must set cur-fg to 1 (red)")))
-
-(test dispatch-sgr-code-directly-background
-  "%dispatch-sgr-code sets background directly when called with code 42."
-  (with-screen (s 10 2)
-    (cl-tmux/terminal/sgr:%dispatch-sgr-code s 42)
-    (is (= 2 (cl-tmux/terminal/types:screen-cur-bg s))
-        "%dispatch-sgr-code 42 must set cur-bg to 2 (green)")))
+(test dispatch-sgr-code-directly-table
+  "%dispatch-sgr-code sets cur-fg or cur-bg directly by SGR code."
+  (dolist (row (list (list 31 1 #'cl-tmux/terminal/types:screen-cur-fg "31 → cur-fg=1 (red)")
+                     (list 42 2 #'cl-tmux/terminal/types:screen-cur-bg "42 → cur-bg=2 (green)")))
+    (destructuring-bind (code expected accessor desc) row
+      (with-screen (s 10 2)
+        (cl-tmux/terminal/sgr:%dispatch-sgr-code s code)
+        (is (= expected (funcall accessor s)) "~A" desc)))))
 
 (test dispatch-sgr-code-unknown-is-noop
   "%dispatch-sgr-code silently ignores unrecognized SGR codes."
