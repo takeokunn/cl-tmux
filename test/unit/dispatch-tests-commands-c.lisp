@@ -7,25 +7,18 @@
 
 ;;; ── %toggle-synchronize-panes helper ─────────────────────────────────────────
 
-(test toggle-synchronize-panes-shows-on-when-was-off
-  "%toggle-synchronize-panes shows 'ON' overlay when toggling from off."
-  (with-loop-state
-    (let ((*overlay* nil))
-      (cl-tmux/options:set-option "synchronize-panes" nil)
-      (cl-tmux::%toggle-synchronize-panes)
-      (is (overlay-active-p) "%toggle-synchronize-panes must show an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "ON" text) "toggling from off must produce an ON message")))))
-
-(test toggle-synchronize-panes-shows-off-when-was-on
-  "%toggle-synchronize-panes shows 'OFF' overlay when toggling from on."
-  (with-loop-state
-    (let ((*overlay* nil))
-      (cl-tmux/options:set-option "synchronize-panes" t)
-      (cl-tmux::%toggle-synchronize-panes)
-      (is (overlay-active-p) "%toggle-synchronize-panes must show an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "OFF" text) "toggling from on must produce an OFF message")))))
+(test toggle-synchronize-panes-table
+  "%toggle-synchronize-panes shows ON overlay from off, OFF overlay from on."
+  (dolist (row '((nil "ON"  "toggling from off must show ON")
+                 (t   "OFF" "toggling from on must show OFF")))
+    (destructuring-bind (initial expected-text desc) row
+      (with-loop-state
+        (let ((*overlay* nil))
+          (cl-tmux/options:set-option "synchronize-panes" initial)
+          (cl-tmux::%toggle-synchronize-panes)
+          (is (overlay-active-p) "~A: overlay must be shown" desc)
+          (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+            (is (search expected-text text) "~A" desc)))))))
 
 ;;; ── next-cyclic / prev-cyclic edge cases ────────────────────────────────────
 
@@ -129,24 +122,16 @@
 
 ;;; ── %swap-active-pane helper ─────────────────────────────────────────────────
 
-(test swap-active-pane-forward-reorders-panes
-  "%swap-active-pane :right swaps the active pane with the next one."
-  (with-two-pane-h-session (sess win p0 p1)
-    (cl-tmux::%swap-active-pane sess :right)
-    (is (eq p1 (first (window-panes win)))
-        "after %swap-active-pane :right, p1 must be first")
-    (is (eq p0 (second (window-panes win)))
-        "after %swap-active-pane :right, p0 must be second")))
-
-(test swap-active-pane-backward-reorders-panes
-  "%swap-active-pane :left from p1 swaps it to the front."
-  (with-two-pane-h-session (sess win p0 p1)
-    (window-select-pane win p1)
-    (cl-tmux::%swap-active-pane sess :left)
-    (is (eq p1 (first (window-panes win)))
-        "after %swap-active-pane :left from p1, p1 must be first")
-    (is (eq p0 (second (window-panes win)))
-        "after %swap-active-pane :left from p1, p0 must be second")))
+(test swap-active-pane-table
+  "%swap-active-pane :right (from p0) and :left (from p1) both move p1 to first."
+  (dolist (row '((:right nil  "forward: p0 active, swap right → p1 first")
+                 (:left  t    "backward: p1 active, swap left → p1 first")))
+    (destructuring-bind (dir select-p1 desc) row
+      (with-two-pane-h-session (sess win p0 p1)
+        (when select-p1 (window-select-pane win p1))
+        (cl-tmux::%swap-active-pane sess dir)
+        (is (eq p1 (first  (window-panes win))) "~A: p1 must be first"  desc)
+        (is (eq p0 (second (window-panes win))) "~A: p0 must be second" desc)))))
 
 ;;; ── %cmd-split helper ────────────────────────────────────────────────────────
 
@@ -214,17 +199,14 @@
 
 ;;; ── :select-layout-even-h / :select-layout-even-v dispatch ──────────────────
 
-(test dispatch-select-layout-even-h-does-not-error
-  ":select-layout-even-h dispatches without error."
+(test dispatch-select-layout-even-does-not-error
+  ":select-layout-even-h and :select-layout-even-v both dispatch without error."
   (with-two-pane-h-session (sess win p0 p1)
-    (is (and win p0 p1) "two-pane fixture created")
+    (is (and win p0 p1) "h fixture created")
     (finishes (cl-tmux::dispatch-command sess :select-layout-even-h nil)
-              ":select-layout-even-h must not signal an error")))
-
-(test dispatch-select-layout-even-v-does-not-error
-  ":select-layout-even-v dispatches without error."
+              ":select-layout-even-h must not signal an error"))
   (with-two-pane-v-session (sess win p0 p1)
-    (is (and win p0 p1) "two-pane v-fixture created")
+    (is (and win p0 p1) "v fixture created")
     (finishes (cl-tmux::dispatch-command sess :select-layout-even-v nil)
               ":select-layout-even-v must not signal an error")))
 
