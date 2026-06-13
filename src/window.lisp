@@ -221,7 +221,7 @@
               (setf (window-tree window) split)
               (%replace-in-tree window leaf split))
           (setf (pane-window new-pane) window)
-          (window-relayout window (window-height window) (window-width window))
+          (window-relayout-current window)
           (unless no-focus
             (setf (window-active window) new-pane))
           new-pane)))))))
@@ -268,6 +268,10 @@
             (/= (window-height window) rows))
     (window-relayout window rows cols)))
 
+(defun window-relayout-current (window)
+  "Relayout WINDOW using its current stored height and width."
+  (window-relayout window (window-height window) (window-width window)))
+
 (defun window-remove-pane (window pane)
   "Remove PANE from WINDOW's tree, collapsing its parent so the sibling reclaims
    the freed rectangle, then relayout.  Returns the surviving sibling pane
@@ -287,7 +291,7 @@
             ;; Normal case: collapse the parent split and relayout.
             (t
              (let ((sibling (%collapse-parent window parent which)))
-               (window-relayout window (window-height window) (window-width window))
+               (window-relayout-current window)
                (first (layout-leaves sibling)))))))))
 
 ;;; ── Resize via the tree ──────────────────────────────────────────────────
@@ -329,7 +333,7 @@
                                                    delta grow-first)))
                 (when new-ratio
                   (setf (layout-split-ratio split) new-ratio)
-                  (window-relayout window (window-height window) (window-width window))
+                  (window-relayout-current window)
                   active)))))))))
 
 ;;; ── Rotate-window ────────────────────────────────────────────────────────────
