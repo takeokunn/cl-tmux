@@ -190,23 +190,17 @@
 
 ;;; ── orient-case macro ────────────────────────────────────────────────────────
 
-(test orient-case-dispatches-on-h
-  "orient-case evaluates the :h branch for orientation :h."
-  (is (eq :horizontal
-          (cl-tmux/model::orient-case :h :h :horizontal :v :vertical))
-      ":h orientation must evaluate the :h branch")
-  (is (= 40
-         (cl-tmux/model::orient-case :h :h 40 :v 20))
-      ":h orientation must return the :h value (40)"))
-
-(test orient-case-dispatches-on-v
-  "orient-case evaluates the :v branch for orientation :v."
-  (is (eq :vertical
-          (cl-tmux/model::orient-case :v :h :horizontal :v :vertical))
-      ":v orientation must evaluate the :v branch")
-  (is (= 20
-         (cl-tmux/model::orient-case :v :h 40 :v 20))
-      ":v orientation must return the :v value (20)"))
+(test orient-case-table
+  "orient-case dispatches to the matching :h or :v branch."
+  (dolist (row '((:h :horizontal 40 ":h orientation selects :h branch")
+                 (:v :vertical   20 ":v orientation selects :v branch")))
+    (destructuring-bind (orient expected-kw expected-num desc) row
+      (is (eq expected-kw
+              (cl-tmux/model::orient-case orient :h :horizontal :v :vertical))
+          "~A: keyword form" desc)
+      (is (= expected-num
+             (cl-tmux/model::orient-case orient :h 40 :v 20))
+          "~A: numeric form" desc))))
 
 ;;; ── split-child-geometry tests ──────────────────────────────────────────────
 ;;;
@@ -241,23 +235,15 @@
 
 ;;; ── layout-min-extent tests ──────────────────────────────────────────────────
 
-(test layout-min-extent-single-leaf-v
-  "A single leaf has minimum vertical extent of +pane-min-height+."
+(test layout-min-extent-single-leaf-table
+  "A single leaf's minimum extent equals the axis-specific pane-min constant."
   (let* ((p    (make-pane :id 1 :fd -1 :pid -1 :width 40 :height 15
                           :screen (make-screen 40 15)))
          (leaf (make-layout-leaf p)))
-    (is (= cl-tmux/model::+pane-min-height+
-           (cl-tmux/model::layout-min-extent leaf :v))
-        "leaf :v extent must equal +pane-min-height+")))
-
-(test layout-min-extent-single-leaf-h
-  "A single leaf has minimum horizontal extent of +pane-min-width+."
-  (let* ((p    (make-pane :id 1 :fd -1 :pid -1 :width 40 :height 15
-                          :screen (make-screen 40 15)))
-         (leaf (make-layout-leaf p)))
-    (is (= cl-tmux/model::+pane-min-width+
-           (cl-tmux/model::layout-min-extent leaf :h))
-        "leaf :h extent must equal +pane-min-width+")))
+    (dolist (row (list (list :v cl-tmux/model::+pane-min-height+ "leaf :v extent")
+                       (list :h cl-tmux/model::+pane-min-width+  "leaf :h extent")))
+      (destructuring-bind (orient expected desc) row
+        (is (= expected (cl-tmux/model::layout-min-extent leaf orient)) desc)))))
 
 (test layout-min-extent-h-split-same-axis
   "A :h split's minimum :h extent = sum of children's :h extents + 1 separator."
