@@ -30,7 +30,7 @@
                 (is (= 3 n) "focus-in must be 3 bytes (got ~D)" n)
                 (is (= 27 (cffi:mem-aref buf :uint8 0)) "byte 0 must be ESC (27)")
                 (is (= 73 (cffi:mem-aref buf :uint8 2))
-                    "byte 2 must be #\\I (73) for focus gained"))))))))
+                    "byte 2 must be #\\I (73) for focus gained")))))))))
 
 (test cycle-window-delivers-focus-out-to-old-window-pane
   "Switching away from a window sends ESC[O (focus lost) to the window being left."
@@ -52,7 +52,7 @@
                 (is (= 3 n) "focus-out must be 3 bytes (got ~D)" n)
                 (is (= 27 (cffi:mem-aref buf :uint8 0)) "byte 0 must be ESC (27)")
                 (is (= 79 (cffi:mem-aref buf :uint8 2))
-                    "byte 2 must be #\\O (79) for focus lost"))))))))
+                    "byte 2 must be #\\O (79) for focus lost")))))))))
 
 (test cycle-window-with-focus-events-no-pty-no-error
   "Cycling windows runs the focus-transition path without error when panes have no
