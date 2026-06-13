@@ -107,6 +107,14 @@
      :endif)
     (t nil)))
 
+(defun %skip-quoted-span (line i len end-ch escape-p)
+  "Return the index past the quoted span whose opening delimiter is at I.
+   Scans to the matching END-CH; when ESCAPE-P, a backslash skips the next char."
+  (incf i)
+  (loop while (and (< i len) (char/= (char line i) end-ch))
+        do (if (and escape-p (char= (char line i) #\\)) (incf i 2) (incf i)))
+  (min len (1+ i)))
+
 (defun %line-brace-delta (line)
   "Net unquoted brace depth of LINE: count of '{' minus '}', ignoring braces
    inside single/double quotes or immediately after a backslash.  Used by
@@ -116,17 +124,9 @@
     (loop while (< i len) do
       (let ((c (char line i)))
         (cond
-          ((char= c #\\) (incf i 2))                    ; skip escaped char
-          ((char= c #\")                                ; skip double-quoted span
-           (incf i)
-           (loop while (and (< i len) (char/= (char line i) #\"))
-                 do (if (char= (char line i) #\\) (incf i 2) (incf i)))
-           (incf i))
-          ((char= c #\')                                ; skip single-quoted span
-           (incf i)
-           (loop while (and (< i len) (char/= (char line i) #\'))
-                 do (incf i))
-           (incf i))
+          ((char= c #\\) (incf i 2))
+          ((char= c #\") (setf i (%skip-quoted-span line i len #\" t)))
+          ((char= c #\') (setf i (%skip-quoted-span line i len #\' nil)))
           ((char= c #\{) (incf delta) (incf i))
           ((char= c #\}) (decf delta) (incf i))
           (t (incf i)))))

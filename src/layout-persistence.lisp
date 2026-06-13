@@ -132,22 +132,21 @@
 ;;; We declare it here so the compiler accepts the mutual recursion.
 (declaim (ftype (function (string list fixnum) (values t fixnum)) %parse-node))
 
+(defun %advance-if-char (str pos str-length ch)
+  "Return (1+ POS) when STR[POS] == CH and POS < STR-LENGTH; POS otherwise."
+  (if (and (< pos str-length) (char= (char str pos) ch))
+      (1+ pos)
+      pos))
+
 (defun %parse-split-body (str panes pos close-ch orient)
   "Parse two child nodes starting at POS, expecting CLOSE-CH (} or ]) after second.
    Returns (values split-node end-pos)."
-  (let* ((child1-pos    pos)
-         (str-length    (length str)))
-    (multiple-value-bind (child1 child1-end) (%parse-node str panes child1-pos)
-      (let* ((child2-start (if (and (< child1-end str-length)
-                                    (char= (char str child1-end) #\,))
-                               (1+ child1-end)
-                               child1-end)))
+  (let ((str-length (length str)))
+    (multiple-value-bind (child1 child1-end) (%parse-node str panes pos)
+      (let ((child2-start (%advance-if-char str child1-end str-length #\,)))
         (multiple-value-bind (child2 child2-end) (%parse-node str panes child2-start)
-          (let* ((close-end (if (and (< child2-end str-length)
-                                     (char= (char str child2-end) close-ch))
-                                (1+ child2-end)
-                                child2-end)))
-            (values (make-layout-split orient child1 child2) close-end)))))))
+          (values (make-layout-split orient child1 child2)
+                  (%advance-if-char str child2-end str-length close-ch)))))))
 
 (defun %parse-node (str panes pos)
   "Parse one layout node starting at POS in STR.
