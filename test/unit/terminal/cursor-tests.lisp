@@ -89,31 +89,17 @@
   :in terminal-suite)
 (in-suite set-cursor-suite)
 
-(test set-cursor-places-cursor-at-exact-position
-  :description "set-cursor moves cursor to the specified (x, y) within bounds."
-  (with-screen (s 10 10)
-    (cl-tmux/terminal/actions:set-cursor s 3 7)
-    (check-cursor s 3 7)))
-
-(test set-cursor-clamps-x-to-width-minus-one
-  :description "set-cursor clamps x to width-1 when x >= width."
-  (with-screen (s 10 10)
-    (cl-tmux/terminal/actions:set-cursor s 99 0)
-    (is (= 9 (screen-cursor-x s))
-        "cursor-x must be clamped to 9 (width-1)")))
-
-(test set-cursor-clamps-y-to-height-minus-one
-  :description "set-cursor clamps y to height-1 when y >= height."
-  (with-screen (s 10 10)
-    (cl-tmux/terminal/actions:set-cursor s 0 99)
-    (is (= 9 (screen-cursor-y s))
-        "cursor-y must be clamped to 9 (height-1)")))
-
-(test set-cursor-clamps-negative-x-to-zero
-  :description "set-cursor clamps a negative x to 0."
-  (with-screen (s 10 10)
-    (cl-tmux/terminal/actions:set-cursor s -5 3)
-    (is (= 0 (screen-cursor-x s)) "cursor-x must be clamped to 0 for negative input")))
+(test set-cursor-table
+  "set-cursor moves cursor to (x,y) within bounds, clamping out-of-range values to screen edges."
+  (dolist (row '(( 3  7  3  7 "in-bounds: (3,7) → cursor at (3,7)")
+                 (99  0  9  0 "x ≥ width → clamped to width-1=9")
+                 ( 0 99  0  9 "y ≥ height → clamped to height-1=9")
+                 (-5  3  0  3 "negative x → clamped to 0")))
+    (destructuring-bind (x y expected-x expected-y desc) row
+      (with-screen (s 10 10)
+        (cl-tmux/terminal/actions:set-cursor s x y)
+        (is (= expected-x (screen-cursor-x s)) "~A: cursor-x" desc)
+        (is (= expected-y (screen-cursor-y s)) "~A: cursor-y" desc)))))
 
 ;;; ── SUITE: direct-action-cursor ─────────────────────────────────────────────
 ;;;
@@ -171,12 +157,14 @@
 
 ;;; ── cursor-cht (CHT — cursor forward tab stops) ──────────────────────────────
 
-(test cursor-cht-advances-n-tab-stops
-  :description "cursor-cht N advances the cursor by N tab stops."
-  (with-screen (s 40 5)
-    ;; From col 0, 2 tab stops → col 16
-    (cl-tmux/terminal/actions:cursor-cht s 2)
-    (check-cursor s 16 0)))
+(test cursor-cht-count-table
+  "cursor-cht advances N 8-column tab stops from col 0; n=0 is treated as 1."
+  (dolist (row '((2 16 "n=2: advance 2 stops → col 16")
+                 (0  8 "n=0: treated as 1 stop → col 8")))
+    (destructuring-bind (n expected desc) row
+      (with-screen (s 40 5)
+        (cl-tmux/terminal/actions:cursor-cht s n)
+        (is (= expected (screen-cursor-x s)) "~A" desc)))))
 
 (test cursor-cht-one-is-same-as-cursor-ht
   :description "cursor-cht 1 behaves identically to cursor-ht."
@@ -187,39 +175,18 @@
     (is (= (screen-cursor-x s1) (screen-cursor-x s2))
         "cursor-cht 1 must give same result as cursor-ht")))
 
-(test cursor-cht-zero-treated-as-one
-  :description "cursor-cht 0 advances one tab stop (n is treated as max 1)."
-  (with-screen (s 20 5)
-    (cl-tmux/terminal/actions:cursor-cht s 0)
-    (is (= 8 (screen-cursor-x s))
-        "cursor-cht 0 must advance one tab stop to col 8")))
-
 ;;; ── cursor-cbt (CBT — cursor backward tab stops) ─────────────────────────────
 
-(test cursor-cbt-moves-back-n-tab-stops
-  :description "cursor-cbt N moves the cursor back by N 8-column tab stops."
-  (with-screen (s 40 5)
-    (setf (cl-tmux/terminal/types:screen-cursor-x s) 16)
-    ;; Back 2 stops: 16 → 8 → 0
-    (cl-tmux/terminal/actions:cursor-cbt s 2)
-    (is (= 0 (screen-cursor-x s))
-        "cursor-cbt 2 from col 16 must reach col 0")))
-
-(test cursor-cbt-clamps-at-column-zero
-  :description "cursor-cbt with a large count stops at column 0."
-  (with-screen (s 40 5)
-    (setf (cl-tmux/terminal/types:screen-cursor-x s) 5)
-    (cl-tmux/terminal/actions:cursor-cbt s 99)
-    (is (= 0 (screen-cursor-x s))
-        "cursor-cbt must not go past column 0")))
-
-(test cursor-cbt-zero-treated-as-one
-  :description "cursor-cbt 0 moves back one tab stop."
-  (with-screen (s 40 5)
-    (setf (cl-tmux/terminal/types:screen-cursor-x s) 16)
-    (cl-tmux/terminal/actions:cursor-cbt s 0)
-    (is (= 8 (screen-cursor-x s))
-        "cursor-cbt 0 must move back one tab stop")))
+(test cursor-cbt-table
+  "cursor-cbt moves back N 8-column tab stops, clamping at col 0; n=0 is treated as 1."
+  (dolist (row '((16  2  0 "from col 16, back 2 stops: 16→8→0")
+                 ( 5 99  0 "large n clamps at col 0")
+                 (16  0  8 "n=0 treated as 1: 16→8")))
+    (destructuring-bind (start-col n expected desc) row
+      (with-screen (s 40 5)
+        (setf (cl-tmux/terminal/types:screen-cursor-x s) start-col)
+        (cl-tmux/terminal/actions:cursor-cbt s n)
+        (is (= expected (screen-cursor-x s)) "~A: got ~D" desc (screen-cursor-x s))))))
 
 ;;; ── HTS / TBC custom tab stops (ESC H / CSI g) ───────────────────────────────
 
