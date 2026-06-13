@@ -285,62 +285,32 @@
      (setf (cl-tmux/terminal/types:screen-copy-cursor ,screen-var) (cons ,row ,col))
      ,@body))
 
-(test copy-mode-move-cursor-left-decrements-col
-  "Moving :left decrements the column by 1."
-  (with-copy-mode-cursor (s 2 5)
-    (cl-tmux/commands::copy-mode-move-cursor s :left)
-    (is (equal (cons 2 4) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "column must decrease by 1 on :left")
-    (is-true (cl-tmux/terminal/types:screen-dirty-p s)
-             "screen must be dirty after cursor move")))
+(test copy-mode-move-cursor-direction-table
+  "Each direction moves the cursor by 1 step and marks the screen dirty."
+  (dolist (c '((:left  2 5  2 4)   ; (dir start-row start-col expected-row expected-col)
+               (:right 2 5  2 6)
+               (:up    2 5  1 5)
+               (:down  2 5  3 5)))
+    (destructuring-bind (dir sr sc er ec) c
+      (with-copy-mode-cursor (s sr sc)
+        (cl-tmux/commands::copy-mode-move-cursor s dir)
+        (is (equal (cons er ec) (cl-tmux/terminal/types:screen-copy-cursor s))
+            "~A: expected (~D . ~D), got ~S" dir er ec
+            (cl-tmux/terminal/types:screen-copy-cursor s))
+        (is-true (cl-tmux/terminal/types:screen-dirty-p s)
+                 "screen must be dirty after ~A" dir)))))
 
-(test copy-mode-move-cursor-right-increments-col
-  "Moving :right increments the column by 1."
-  (with-copy-mode-cursor (s 2 5)
-    (cl-tmux/commands::copy-mode-move-cursor s :right)
-    (is (equal (cons 2 6) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "column must increase by 1 on :right")))
-
-(test copy-mode-move-cursor-up-decrements-row
-  "Moving :up decrements the row by 1."
-  (with-copy-mode-cursor (s 2 5)
-    (cl-tmux/commands::copy-mode-move-cursor s :up)
-    (is (equal (cons 1 5) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "row must decrease by 1 on :up")))
-
-(test copy-mode-move-cursor-down-increments-row
-  "Moving :down increments the row by 1."
-  (with-copy-mode-cursor (s 2 5)
-    (cl-tmux/commands::copy-mode-move-cursor s :down)
-    (is (equal (cons 3 5) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "row must increase by 1 on :down")))
-
-(test copy-mode-move-cursor-clamps-left-at-zero
-  "Moving :left when already at column 0 stays at column 0."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 0))
-    (cl-tmux/commands::copy-mode-move-cursor s :left)
-    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "column must not go below 0")))
-
-(test copy-mode-move-cursor-clamps-up-at-zero
-  "Moving :up when already at row 0 stays at row 0."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
-    (cl-tmux/commands::copy-mode-move-cursor s :up)
-    (is (= 0 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "row must not go below 0")))
-
-(test copy-mode-move-cursor-clamps-right-at-screen-edge
-  "Moving :right when at the last column stays at (width - 1)."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 19))
-    (cl-tmux/commands::copy-mode-move-cursor s :right)
-    (is (= 19 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "column must clamp at width-1")))
+(test copy-mode-move-cursor-boundary-clamping
+  "At each axis boundary, move-cursor clamps rather than wrapping or crashing."
+  (dolist (c '((:left  2  0  cdr  0  "col must not go below 0")
+               (:up    0  5  car  0  "row must not go below 0")
+               (:right 2 19  cdr 19  "col must clamp at width-1=19")
+               (:down  4  5  car  4  "row must clamp at height-1=4")))
+    (destructuring-bind (dir sr sc accessor expected msg) c
+      (with-copy-mode-cursor (s sr sc)
+        (cl-tmux/commands::copy-mode-move-cursor s dir)
+        (is (= expected (funcall accessor (cl-tmux/terminal/types:screen-copy-cursor s)))
+            msg)))))
 
 (test copy-mode-selection-cursor-can-reach-width
   "While selecting, :right may advance the cursor to WIDTH (the exclusive end past
@@ -358,14 +328,6 @@
     (is (string= "abcde" (cl-tmux/commands::%selection-text s))
         "selection includes the rightmost column 'e'")))
 
-(test copy-mode-move-cursor-clamps-down-at-screen-edge
-  "Moving :down when at the last row stays at (height - 1)."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 4 5))
-    (cl-tmux/commands::copy-mode-move-cursor s :down)
-    (is (= 4 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "row must clamp at height-1")))
 
 (test copy-mode-enter-places-cursor-at-bottom-left
   "copy-mode-enter initialises the cursor at the bottom-left of the viewport (row height-1, col 0)."
