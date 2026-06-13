@@ -36,14 +36,6 @@
   (let ((out (cell-attrs-string 0 2 0)))
     (is (search ";42" out) "bg 2 should emit ;42 (got ~S)" out)))
 
-(test render-cell-attrs-bold
-  (let ((out (cell-attrs-string 0 0 1)))      ; bit0 = bold
-    (is (search ";1" out) "bold (attrs bit0) should emit ;1 (got ~S)" out)))
-
-(test render-cell-attrs-reverse
-  (let ((out (cell-attrs-string 0 0 4)))      ; bit2 = reverse video
-    (is (search ";7" out) "reverse (attrs bit2) should emit ;7 (got ~S)" out)))
-
 (test render-cell-attrs-bright-foreground
   (let ((out (cell-attrs-string 9 0 0)))      ; bright fg uses 82+fg => 91
     (is (search ";91" out) "bright fg 9 should emit ;91 (got ~S)" out)))
@@ -54,10 +46,6 @@
         "render-cell-attrs should start with ESC[0 (got ~S)" out)
     (is (char= #\m (char out (1- (length out))))
         "render-cell-attrs should end with m (got ~S)" out)))
-
-(test render-cell-attrs-dim
-  (let ((out (cell-attrs-string 7 0 2)))      ; bit1 = dim
-    (is (search ";2" out) "dim (attrs bit1) should emit ;2 (got ~S)" out)))
 
 (test render-cell-attrs-default-color-omitted
   ;; fg/bg outside 0..15 emit no colour code — only the leading reset remains.
@@ -88,36 +76,29 @@
     (is (string= (format nil "~C[0m" #\Escape)
                  (get-output-stream-string s)))))
 
-(test render-cell-attrs-underline
-  "Underline attribute (bit 3 = #x08 = +attr-underline+) emits ;4."
-  (let ((out (cell-attrs-string 0 0 8)))     ; bit3 = underline
-    (is (search ";4" out) "underline (attrs bit3) should emit ;4 (got ~S)" out)))
-
-(test render-cell-attrs-blink
-  "Blink attribute (bit 4 = #x10 = +attr-blink+) emits ;5."
-  (let ((out (cell-attrs-string 0 0 16)))    ; bit4 = blink
-    (is (search ";5" out) "blink (attrs bit4) should emit ;5 (got ~S)" out)))
-
 (test define-cell-attr-renderer-macro-is-defined
   "define-cell-attr-renderer is a defined macro."
   (is (macro-function 'cl-tmux/renderer::define-cell-attr-renderer)))
 
-;;; ── New attribute bits: emit path ───────────────────────────────────────────
+;;; ── render-cell-attrs attribute-bit table ───────────────────────────────────
+;;;
+;;; All single-bit attribute flags: each row is (bit-value SGR-search-string label).
 
-(test render-cell-attrs-italic
-  "Italic attribute (bit 5 = #x20 = +attr-italic+) emits ;3 in the SGR string."
-  (let ((out (cell-attrs-string 0 0 32)))    ; bit5 = #b00100000 = 32
-    (is (search ";3" out) "italic (attrs bit5) must emit ;3 (got ~S)" out)))
-
-(test render-cell-attrs-conceal
-  "Conceal attribute (bit 6 = #x40 = +attr-conceal+) emits ;8."
-  (let ((out (cell-attrs-string 0 0 64)))    ; bit6 = #b01000000 = 64
-    (is (search ";8" out) "conceal (attrs bit6) must emit ;8 (got ~S)" out)))
-
-(test render-cell-attrs-strikethrough
-  "Strikethrough attribute (bit 7 = #x80 = +attr-strikethrough+) emits ;9."
-  (let ((out (cell-attrs-string 0 0 128)))   ; bit7 = #b10000000 = 128
-    (is (search ";9" out) "strikethrough (attrs bit7) must emit ;9 (got ~S)" out)))
+(test render-cell-attrs-attribute-bits
+  "Each attrs bit-flag causes render-cell-attrs to include the correct SGR code.
+   Rows: (attrs-value expected-sgr-substring label)."
+  (dolist (c '((1   ";1"  "bold (bit0)")
+               (2   ";2"  "dim (bit1)")
+               (4   ";7"  "reverse (bit2)")
+               (8   ";4"  "underline (bit3)")
+               (16  ";5"  "blink (bit4)")
+               (32  ";3"  "italic (bit5)")
+               (64  ";8"  "conceal (bit6)")
+               (128 ";9"  "strikethrough (bit7)")))
+    (destructuring-bind (attrs sgr label) c
+      (let ((out (cell-attrs-string 0 0 attrs)))
+        (is (search sgr out)
+            "~A must emit ~S (got ~S)" label sgr out)))))
 
 ;;; ── Extended colour emit paths ───────────────────────────────────────────────
 
@@ -241,45 +222,22 @@
 
 ;;; ── %color-name-to-sgr-number ───────────────────────────────────────────────
 
-(test color-name-to-sgr-number-fg-named
-  "%color-name-to-sgr-number with is-bg NIL returns foreground SGR fragment."
-  (is (string= "31" (cl-tmux/renderer::%color-name-to-sgr-number "red" nil))
-      "fg 'red' must produce \"31\""))
-
-(test color-name-to-sgr-number-bg-named
-  "%color-name-to-sgr-number with is-bg T returns background SGR fragment."
-  (is (string= "41" (cl-tmux/renderer::%color-name-to-sgr-number "red" t))
-      "bg 'red' must produce \"41\""))
-
-(test color-name-to-sgr-number-colour-n-fg
-  "%color-name-to-sgr-number for 'colour4' with is-bg NIL returns '38;5;4'."
-  (is (string= "38;5;4" (cl-tmux/renderer::%color-name-to-sgr-number "colour4" nil))
-      "fg 'colour4' must produce \"38;5;4\""))
-
-(test color-name-to-sgr-number-colour-n-bg
-  "%color-name-to-sgr-number for 'colour4' with is-bg T returns '48;5;4'."
-  (is (string= "48;5;4" (cl-tmux/renderer::%color-name-to-sgr-number "colour4" t))
-      "bg 'colour4' must produce \"48;5;4\""))
-
-(test color-name-to-sgr-number-default-fg
-  "%color-name-to-sgr-number for 'default' with is-bg NIL returns '39'."
-  (is (string= "39" (cl-tmux/renderer::%color-name-to-sgr-number "default" nil))
-      "fg 'default' must produce \"39\""))
-
-(test color-name-to-sgr-number-default-bg
-  "%color-name-to-sgr-number for 'default' with is-bg T returns '49'."
-  (is (string= "49" (cl-tmux/renderer::%color-name-to-sgr-number "default" t))
-      "bg 'default' must produce \"49\""))
-
-(test color-name-to-sgr-number-unknown-fg
-  "%color-name-to-sgr-number for unknown colour with is-bg NIL returns '39'."
-  (is (string= "39" (cl-tmux/renderer::%color-name-to-sgr-number "notacolor" nil))
-      "fg unknown must fall back to \"39\""))
-
-(test color-name-to-sgr-number-unknown-bg
-  "%color-name-to-sgr-number for unknown colour with is-bg T returns '49'."
-  (is (string= "49" (cl-tmux/renderer::%color-name-to-sgr-number "notacolor" t))
-      "bg unknown must fall back to \"49\""))
+(test color-name-to-sgr-number-table
+  "%color-name-to-sgr-number maps named colours, colour-N, default, and unknown correctly
+   for both fg (is-bg NIL) and bg (is-bg T)."
+  (dolist (c '(("red"      nil "31")
+               ("red"      t   "41")
+               ("colour4"  nil "38;5;4")
+               ("colour4"  t   "48;5;4")
+               ("default"  nil "39")
+               ("default"  t   "49")
+               ("notacolor" nil "39")
+               ("notacolor" t   "49")))
+    (destructuring-bind (color is-bg expected) c
+      (is (string= expected
+                   (cl-tmux/renderer::%color-name-to-sgr-number color is-bg))
+          "%color-name-to-sgr-number ~S is-bg=~S must produce ~S"
+          color is-bg expected))))
 
 ;;; ── %status-sgr-from-style ───────────────────────────────────────────────────
 
@@ -334,53 +292,20 @@
 
 ;;; ── %emit-fg / %emit-bg palette boundaries ────────────────────────────────────
 
-(test emit-fg-palette-lower-boundary
-  "%emit-fg with fg index 16 (first 256-color palette entry) emits ;38;5;16."
-  (let ((out (cell-attrs-string 16 0 0)))
-    (is (search ";38;5;16" out)
-        "fg 16 must emit ;38;5;16 (got ~S)" out)))
-
-(test emit-fg-palette-upper-boundary
-  "%emit-fg with fg index 255 (last 256-color palette entry) emits ;38;5;255."
-  (let ((out (cell-attrs-string 255 0 0)))
-    (is (search ";38;5;255" out)
-        "fg 255 must emit ;38;5;255 (got ~S)" out)))
-
-(test emit-bg-palette-lower-boundary
-  "%emit-bg with bg index 16 (first 256-color palette entry) emits ;48;5;16."
-  (let ((out (cell-attrs-string 0 16 0)))
-    (is (search ";48;5;16" out)
-        "bg 16 must emit ;48;5;16 (got ~S)" out)))
-
-(test emit-bg-palette-upper-boundary
-  "%emit-bg with bg index 255 (last 256-color palette entry) emits ;48;5;255."
-  (let ((out (cell-attrs-string 0 255 0)))
-    (is (search ";48;5;255" out)
-        "bg 255 must emit ;48;5;255 (got ~S)" out)))
-
-(test emit-fg-bright-lower-boundary
-  "%emit-fg with fg index 8 (first bright colour) emits ;90."
-  (let ((out (cell-attrs-string 8 0 0)))
-    (is (search ";90" out)
-        "fg 8 must emit ;90 (got ~S)" out)))
-
-(test emit-fg-bright-upper-boundary
-  "%emit-fg with fg index 15 (last bright colour) emits ;97."
-  (let ((out (cell-attrs-string 15 0 0)))
-    (is (search ";97" out)
-        "fg 15 must emit ;97 (got ~S)" out)))
-
-(test emit-bg-standard-color-0
-  "%emit-bg with bg index 0 (black) emits ;40."
-  (let ((out (cell-attrs-string 0 0 0)))
-    ;; fg=0 emits ;30, bg=0 emits ;40 — both present in a single reset+emit
-    (is (search ";40" out)
-        "bg 0 must emit ;40 (got ~S)" out)))
-
-(test emit-fg-standard-color-7
-  "%emit-fg with fg index 7 (white) emits ;37."
-  (let ((out (cell-attrs-string 7 0 0)))
-    (is (search ";37" out)
-        "fg 7 must emit ;37 (got ~S)" out)))
+(test emit-fg-bg-palette-boundary-table
+  "Verifies fg/bg SGR emission at standard-colour, bright, and 256-colour boundaries.
+   Each row is (fg bg expected-sgr-substring description)."
+  (dolist (c '((7   0   ";37"      "fg 7 (white)")
+               (0   0   ";40"      "bg 0 (black); fg=0 also emits ;30 but ;40 is present")
+               (8   0   ";90"      "fg 8 (first bright)")
+               (15  0   ";97"      "fg 15 (last bright)")
+               (16  0   ";38;5;16" "fg 16 (first 256-colour)")
+               (255 0   ";38;5;255" "fg 255 (last 256-colour)")
+               (0   16  ";48;5;16" "bg 16 (first 256-colour)")
+               (0   255 ";48;5;255" "bg 255 (last 256-colour)")))
+    (destructuring-bind (fg bg expected desc) c
+      (let ((out (cell-attrs-string fg bg 0)))
+        (is (search expected out)
+            "~A must emit ~S (got ~S)" desc expected out)))))
 
 ;;; ── render-cell-attrs all attributes table ───────────────────────────────────
