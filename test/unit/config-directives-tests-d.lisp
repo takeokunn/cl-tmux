@@ -6,26 +6,18 @@
 
 ;;; ── set -g status off side-effect ────────────────────────────────────────────
 
-(test apply-set-directive-status-off-sets-status-height-zero
-  "'set -g status off' sets *status-height* to 0."
-  (let ((orig cl-tmux/config:*status-height*))
-    (unwind-protect
-         (progn
-           (cl-tmux/config:apply-config-directive '("set" "-g" "status" "off"))
-           (is (= 0 cl-tmux/config:*status-height*)
-               "*status-height* must be 0 after 'set -g status off'"))
-      (setf cl-tmux/config:*status-height* orig))))
-
-(test apply-set-directive-status-on-sets-status-height-one
-  "'set -g status on' sets *status-height* to 1."
-  (let ((orig cl-tmux/config:*status-height*))
-    (unwind-protect
-         (progn
-           (setf cl-tmux/config:*status-height* 0)
-           (cl-tmux/config:apply-config-directive '("set" "-g" "status" "on"))
-           (is (= 1 cl-tmux/config:*status-height*)
-               "*status-height* must be 1 after 'set -g status on'"))
-      (setf cl-tmux/config:*status-height* orig))))
+(test apply-set-directive-status-table
+  "'set -g status off' → *status-height* 0; 'on' → 1."
+  (dolist (c '(("off" 0 "'set -g status off' sets *status-height* to 0")
+               ("on"  1 "'set -g status on' sets *status-height* to 1")))
+    (destructuring-bind (value expected desc) c
+      (let ((orig cl-tmux/config:*status-height*))
+        (unwind-protect
+            (progn
+              (setf cl-tmux/config:*status-height* 0)
+              (cl-tmux/config:apply-config-directive (list "set" "-g" "status" value))
+              (is (= expected cl-tmux/config:*status-height*) "~A" desc))
+          (setf cl-tmux/config:*status-height* orig))))))
 
 ;;; ── bind -n with argument-bearing command ────────────────────────────────────
 
@@ -142,53 +134,26 @@ bind-key r source-file /dev/null"))
 ;;; :active/:seeking/:taken/:dead state machine.  The identity evaluator makes the
 ;;; condition "1" truthy and "0" falsy.
 
-(test config-elif-not-taken-after-if-matched
-  "%if 1 then %elif 1: only the if-branch applies — the elif must be skipped."
-  (with-isolated-config
-    (let ((cl-tmux/config:*config-condition-evaluator* (lambda (c) c)))
-      (is (= 1 (cl-tmux/config:load-config-from-string
-                (format nil "%if 1~%bind a new-window~%%elif 1~%bind b new-window~%%endif~%")))
-          "if-true takes only the if-branch, not the following elif"))))
-
-(test config-elif-taken-when-if-false
-  "%if 0 / %elif 1: the elif-branch applies."
-  (with-isolated-config
-    (let ((cl-tmux/config:*config-condition-evaluator* (lambda (c) c)))
-      (is (= 1 (cl-tmux/config:load-config-from-string
-                (format nil "%if 0~%bind a new-window~%%elif 1~%bind b new-window~%%endif~%")))
-          "elif applies when the if condition is false"))))
-
-(test config-else-taken-when-if-and-elif-false
-  "%if 0 / %elif 0 / %else: the else-branch applies."
-  (with-isolated-config
-    (let ((cl-tmux/config:*config-condition-evaluator* (lambda (c) c)))
-      (is (= 1 (cl-tmux/config:load-config-from-string
-                (format nil "%if 0~%bind a x~%%elif 0~%bind b x~%%else~%bind c new-window~%%endif~%")))
-          "else applies when if and all elifs are false"))))
-
-(test config-elif-chain-picks-first-true
-  "%if 0 / %elif 0 / %elif 1 / %else: only the first true elif applies."
-  (with-isolated-config
-    (let ((cl-tmux/config:*config-condition-evaluator* (lambda (c) c)))
-      (is (= 1 (cl-tmux/config:load-config-from-string
-                (format nil "%if 0~%bind a x~%%elif 0~%bind b x~%%elif 1~%bind c new-window~%%else~%bind d x~%%endif~%")))
-          "the first matching elif applies; later elif/else skipped"))))
-
-(test config-if-true-skips-all-elif-and-else
-  "%if 1 / %elif 1 / %else: only the if-branch applies."
-  (with-isolated-config
-    (let ((cl-tmux/config:*config-condition-evaluator* (lambda (c) c)))
-      (is (= 1 (cl-tmux/config:load-config-from-string
-                (format nil "%if 1~%bind a new-window~%%elif 1~%bind b x~%%else~%bind c x~%%endif~%")))
-          "if-true takes only the if-branch; elif and else are skipped"))))
-
-(test config-nested-if-dead-inside-false-branch
-  "A nested %if/%elif inside a false outer block applies nothing."
-  (with-isolated-config
-    (let ((cl-tmux/config:*config-condition-evaluator* (lambda (c) c)))
-      (is (= 0 (cl-tmux/config:load-config-from-string
-                (format nil "%if 0~%%if 1~%bind a new-window~%%elif 1~%bind b new-window~%%endif~%%endif~%")))
-          "nested if/elif in a dead branch stays dead"))))
+(test config-if-elif-else-state-machine-table
+  "The %if/%elif/%else state machine picks exactly the first matching branch."
+  (dolist (c '(("%if 1~%bind a new-window~%%elif 1~%bind b new-window~%%endif~%"
+                1 "if=1 elif=1: only if-branch")
+               ("%if 0~%bind a new-window~%%elif 1~%bind b new-window~%%endif~%"
+                1 "if=0 elif=1: elif-branch applies")
+               ("%if 0~%bind a x~%%elif 0~%bind b x~%%else~%bind c new-window~%%endif~%"
+                1 "if=0 elif=0: else-branch applies")
+               ("%if 0~%bind a x~%%elif 0~%bind b x~%%elif 1~%bind c new-window~%%else~%bind d x~%%endif~%"
+                1 "elif chain: first true elif wins")
+               ("%if 1~%bind a new-window~%%elif 1~%bind b x~%%else~%bind c x~%%endif~%"
+                1 "if=1 with elif+else: only if-branch")
+               ("%if 0~%%if 1~%bind a new-window~%%elif 1~%bind b new-window~%%endif~%%endif~%"
+                0 "nested if in dead outer branch stays dead")))
+    (destructuring-bind (config-str expected desc) c
+      (with-isolated-config
+        (let ((cl-tmux/config:*config-condition-evaluator* (lambda (x) x)))
+          (is (= expected (cl-tmux/config:load-config-from-string
+                           (format nil config-str)))
+              "~A" desc))))))
 
 ;;; ── Line continuation (trailing backslash) ───────────────────────────────────
 
@@ -305,47 +270,23 @@ bind-key r source-file /dev/null"))
 
 ;;; ── if-shell config directive: -F format conditions + flag stripping ─────────
 
-(test if-shell-directive-shell-condition-runs-then
-  "if-shell with a shell condition that exits 0 applies the THEN command."
-  (with-isolated-config
-    (cl-tmux/config::%apply-if-shell-directive
-     "if-shell" '("true" "set -g status-left THEN" "set -g status-left ELSE"))
-    (is (string= "THEN" (cl-tmux/options:get-option "status-left"))
-        "exit-0 shell condition must run the THEN command")))
-
-(test if-shell-directive-F-truthy-runs-then
-  "if-shell -F with a non-empty, non-zero format runs the THEN command (the -F
-   flag must be stripped, not treated as the condition)."
-  (with-isolated-config
-    (cl-tmux/config::%apply-if-shell-directive
-     "if-shell" '("-F" "1" "set -g status-left THEN" "set -g status-left ELSE"))
-    (is (string= "THEN" (cl-tmux/options:get-option "status-left"))
-        "-F with truthy format must run THEN")))
-
-(test if-shell-directive-F-zero-runs-else
-  "if-shell -F with a \"0\" format is false → runs the ELSE command."
-  (with-isolated-config
-    (cl-tmux/config::%apply-if-shell-directive
-     "if-shell" '("-F" "0" "set -g status-left THEN" "set -g status-left ELSE"))
-    (is (string= "ELSE" (cl-tmux/options:get-option "status-left"))
-        "-F with \"0\" must run ELSE")))
-
-(test if-shell-directive-F-format-expression
-  "if-shell -F evaluates a real format expression: #{==:a,a} → 1 → THEN."
-  (with-isolated-config
-    (cl-tmux/config::%apply-if-shell-directive
-     "if-shell" '("-F" "#{==:a,a}" "set -g status-left THEN" "set -g status-left ELSE"))
-    (is (string= "THEN" (cl-tmux/options:get-option "status-left"))
-        "#{==:a,a} expands to 1 (true) → THEN")))
-
-(test if-shell-directive-strips-background-flag
-  "if-shell -b (background) is stripped; the shell condition still drives the
-   branch rather than -b being parsed as the condition."
-  (with-isolated-config
-    (cl-tmux/config::%apply-if-shell-directive
-     "if-shell" '("-b" "true" "set -g status-left THEN" "set -g status-left ELSE"))
-    (is (string= "THEN" (cl-tmux/options:get-option "status-left"))
-        "-b must be stripped, leaving the shell condition to choose THEN")))
+(test if-shell-directive-branch-selection-table
+  "%apply-if-shell-directive selects THEN or ELSE based on condition, flags stripped."
+  (dolist (c '((("true" "set -g status-left THEN" "set -g status-left ELSE")
+                "THEN" "exit-0 shell runs THEN")
+               (("-F" "1" "set -g status-left THEN" "set -g status-left ELSE")
+                "THEN" "-F truthy runs THEN")
+               (("-F" "0" "set -g status-left THEN" "set -g status-left ELSE")
+                "ELSE" "-F zero runs ELSE")
+               (("-F" "#{==:a,a}" "set -g status-left THEN" "set -g status-left ELSE")
+                "THEN" "format #{==:a,a} → 1 runs THEN")
+               (("-b" "true" "set -g status-left THEN" "set -g status-left ELSE")
+                "THEN" "-b stripped, shell condition runs THEN")))
+    (destructuring-bind (args expected desc) c
+      (with-isolated-config
+        (cl-tmux/config::%apply-if-shell-directive "if-shell" args)
+        (is (string= expected (cl-tmux/options:get-option "status-left"))
+            "~A" desc)))))
 
 (test if-shell-format-true-p-rules
   "%if-shell-format-true-p: empty and \"0\" are false; other text is true."
@@ -356,23 +297,18 @@ bind-key r source-file /dev/null"))
 
 ;;; ── if-shell brace-block then/else bodies (tmux 3.x { ... } syntax) ──────────
 
-(test if-shell-directive-F-brace-then-runs-block
-  "if-shell -F with a brace-block THEN runs the block when the condition is truthy."
-  (with-isolated-config
-    (cl-tmux/config::%apply-if-shell-directive
-     "if-shell" '("-F" "1" "{" "set" "-g" "status-left" "THEN" "}"
-                  "{" "set" "-g" "status-left" "ELSE" "}"))
-    (is (string= "THEN" (cl-tmux/options:get-option "status-left"))
-        "truthy -F runs the THEN brace block")))
-
-(test if-shell-directive-F-brace-else-runs-block
-  "if-shell -F 0 runs the ELSE brace block."
-  (with-isolated-config
-    (cl-tmux/config::%apply-if-shell-directive
-     "if-shell" '("-F" "0" "{" "set" "-g" "status-left" "THEN" "}"
-                  "{" "set" "-g" "status-left" "ELSE" "}"))
-    (is (string= "ELSE" (cl-tmux/options:get-option "status-left"))
-        "falsy -F runs the ELSE brace block")))
+(test if-shell-directive-F-brace-table
+  "if-shell -F with brace-block bodies: truthy runs THEN block, falsy runs ELSE block."
+  (dolist (c '(("1" "THEN" "truthy -F runs THEN brace block")
+               ("0" "ELSE" "falsy -F runs ELSE brace block")))
+    (destructuring-bind (cond expected desc) c
+      (with-isolated-config
+        (cl-tmux/config::%apply-if-shell-directive
+         "if-shell" (list "-F" cond
+                          "{" "set" "-g" "status-left" "THEN" "}"
+                          "{" "set" "-g" "status-left" "ELSE" "}"))
+        (is (string= expected (cl-tmux/options:get-option "status-left"))
+            "~A" desc)))))
 
 (test if-shell-directive-F-brace-multi-command
   "A brace THEN block with multiple ;-separated commands runs ALL of them."
@@ -405,23 +341,17 @@ bind-key r source-file /dev/null"))
 
 ;;; ── run-shell -C : run a tmux command, not a shell command ───────────────────
 
-(test run-shell-C-runs-tmux-command
-  "run-shell -C 'set -g status-left FOO' runs the tmux command via the config
-   dispatcher (was a documented no-op), and reports itself handled."
-  (with-isolated-config
-    (let ((handled (cl-tmux/config::%apply-run-shell-directive
-                    "run-shell" '("-C" "set -g status-left FOO"))))
-      (is (eq t handled) "run-shell must report handled")
-      (is (string= "FOO" (cl-tmux/options:get-option "status-left"))
-          "-C must execute the tmux command (set the option)"))))
-
-(test run-shell-C-alias-run-also-works
-  "The 'run' alias with -C executes the tmux command too."
-  (with-isolated-config
-    (cl-tmux/config::%apply-run-shell-directive
-     "run" '("-C" "set -g status-right BAR"))
-    (is (string= "BAR" (cl-tmux/options:get-option "status-right"))
-        "run -C must execute the tmux command")))
+(test run-shell-C-table
+  "run-shell -C and the 'run' alias both execute the tmux command and report handled."
+  (dolist (c '(("run-shell" "status-left"  "FOO" "run-shell -C")
+               ("run"       "status-right" "BAR" "run alias -C")))
+    (destructuring-bind (verb option value desc) c
+      (with-isolated-config
+        (let ((handled (cl-tmux/config::%apply-run-shell-directive
+                        verb (list "-C" (format nil "set -g ~A ~A" option value)))))
+          (is (eq t handled) "~A: must report handled" desc)
+          (is (string= value (cl-tmux/options:get-option option))
+              "~A: must set option" desc))))))
 
 ;;; ── Mid-token '#' is a literal, not a comment ────────────────────────────────
 ;;;
