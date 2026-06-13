@@ -251,5 +251,24 @@
       (is (eq :v orientation)
           "%border-check-node must report :v for the inner split"))))
 
+;;; ── %make-escape-buffer helper ───────────────────────────────────────────────
+
+(test make-escape-buffer-contains-seed-byte
+  "%make-escape-buffer returns an adjustable byte vector seeded with the given byte."
+  (let ((buf (cl-tmux::%make-escape-buffer 27)))
+    (is (= 1 (fill-pointer buf))
+        "%make-escape-buffer must have fill-pointer 1 after seeding")
+    (is (= 27 (aref buf 0))
+        "%make-escape-buffer must store the seed byte at index 0")))
+
+(test make-escape-buffer-is-adjustable
+  "%make-escape-buffer returns an adjustable vector so subsequent bytes can be pushed."
+  (let ((buf (cl-tmux::%make-escape-buffer 27)))
+    (vector-push-extend 91 buf)
+    (is (= 2 (fill-pointer buf))
+        "vector-push-extend after %make-escape-buffer must succeed — vector must be adjustable")
+    (is (= 91 (aref buf 1))
+        "pushed byte must appear at index 1")))
+
 ;;; ── %status-col-to-window: multi-window traversal coverage ──────────────────
 
