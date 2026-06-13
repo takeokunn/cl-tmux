@@ -122,7 +122,7 @@
    \"top\" or \"bottom\".  Expands pane-border-format as a format string.
    Does nothing when pane-border-status is \"off\" (the default)."
   (let ((status (cl-tmux/options:get-option "pane-border-status" "off")))
-    (unless (or (string= status "off") (string= status ""))
+    (unless (member status '("off" "") :test #'string=)
       (let* ((fmt  (cl-tmux/options:get-option "pane-border-format" " #{pane_index} "))
              (ctx  (cl-tmux/format:format-context-from-session session win pane))
              (text (handler-case (cl-tmux/format:expand-format fmt ctx)

@@ -250,17 +250,15 @@
   ":select-layout-even-h dispatches without error."
   (with-two-pane-h-session (sess win p0 p1)
     (is (and win p0 p1) "two-pane fixture created")
-    (with-loop-state
-      (finishes (cl-tmux::dispatch-command sess :select-layout-even-h nil)
-                ":select-layout-even-h must not signal an error"))))
+    (finishes (cl-tmux::dispatch-command sess :select-layout-even-h nil)
+              ":select-layout-even-h must not signal an error")))
 
 (test dispatch-select-layout-even-v-does-not-error
   ":select-layout-even-v dispatches without error."
   (with-two-pane-v-session (sess win p0 p1)
     (is (and win p0 p1) "two-pane v-fixture created")
-    (with-loop-state
-      (finishes (cl-tmux::dispatch-command sess :select-layout-even-v nil)
-                ":select-layout-even-v must not signal an error"))))
+    (finishes (cl-tmux::dispatch-command sess :select-layout-even-v nil)
+              ":select-layout-even-v must not signal an error")))
 
 ;;; ── :break-pane dispatch ─────────────────────────────────────────────────────
 
@@ -278,18 +276,17 @@
   ":break-pane on a two-pane window extracts the active pane into a new window."
   (with-two-pane-h-session (sess win p0 p1)
     (is (and win p0 p1) "two-pane fixture created")
-    (with-loop-state
-      (let ((nwindows-before (length (session-windows sess))))
-        ;; break-pane may fail in sandbox (PTY fork), so tolerate errors.
-        (handler-case
-            (progn
-              (cl-tmux::dispatch-command sess :break-pane nil)
-              ;; If it succeeded, a new window should have been created.
-              (is (> (length (session-windows sess)) nwindows-before)
-                  ":break-pane must create a new window when there are 2+ panes"))
-          (error ()
-            ;; Fork failure in sandbox is acceptable; dispatch layer must not error.
-            (is-true t ":break-pane signalled at PTY level (acceptable in sandbox)")))))))
+    (let ((nwindows-before (length (session-windows sess))))
+      ;; break-pane may fail in sandbox (PTY fork), so tolerate errors.
+      (handler-case
+          (progn
+            (cl-tmux::dispatch-command sess :break-pane nil)
+            ;; If it succeeded, a new window should have been created.
+            (is (> (length (session-windows sess)) nwindows-before)
+                ":break-pane must create a new window when there are 2+ panes"))
+        (error ()
+          ;; Fork failure in sandbox is acceptable; dispatch layer must not error.
+          (is-true t ":break-pane signalled at PTY level (acceptable in sandbox)"))))))
 
 ;;; ── :join-pane dispatch ──────────────────────────────────────────────────────
 

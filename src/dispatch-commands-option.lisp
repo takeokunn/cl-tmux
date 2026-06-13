@@ -148,7 +148,7 @@
    to the session's CURRENT name is a harmless no-op that still succeeds.  The single
    chokepoint both rename paths (arg command + interactive prompt) route through.
    Returns T on success."
-  (when (and new-name (not (string= new-name "")))
+  (when (and new-name (plusp (length new-name)))
     (let ((existing (server-find-session new-name)))
       (unless (and existing (not (eq existing session)))   ; a different session owns it
         (server-remove-session (session-name session))

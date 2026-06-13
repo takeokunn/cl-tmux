@@ -26,7 +26,7 @@
                          (write-string trimmed out)
                          (when (< vrow end-vrow)
                            (write-char #\Newline out)))))))
-        (if (plusp (length text)) text nil)))))
+        (and (plusp (length text)) text)))))
 
 ;;; ── Selection-text dispatch helper ──────────────────────────────────────────
 
