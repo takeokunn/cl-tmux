@@ -264,20 +264,18 @@
 
       ;; ── Scroll wheel up: enter copy-mode + scroll back ───────────────────
       ((= btn +mouse-btn-scroll-up+)
-       (let ((screen (and active-pane (pane-screen active-pane))))
-         (when screen
-           (unless (screen-copy-mode-p screen)
-             (copy-mode-enter screen))
-           (copy-mode-scroll screen 3))))
+       (when active-screen
+         (unless (screen-copy-mode-p active-screen)
+           (copy-mode-enter active-screen))
+         (copy-mode-scroll active-screen 3)))
 
       ;; ── Scroll wheel down: scroll forward, exit copy-mode at bottom ──────
       ((= btn +mouse-btn-scroll-down+)
-       (let ((screen (and active-pane (pane-screen active-pane))))
-         (when screen
-           (copy-mode-scroll screen -3)
-           (when (and (screen-copy-mode-p screen)
-                      (zerop (screen-copy-offset screen)))
-             (copy-mode-exit screen)))))
+       (when active-screen
+         (copy-mode-scroll active-screen -3)
+         (when (and (screen-copy-mode-p active-screen)
+                    (zerop (screen-copy-offset active-screen)))
+           (copy-mode-exit active-screen))))
 
       ;; ── Left button press ─────────────────────────────────────────────────
       ((and (= btn +mouse-btn-left+) (not release-p) (not in-status))

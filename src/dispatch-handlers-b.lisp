@@ -167,14 +167,11 @@
   (:choose-tree
    (show-built-overlay (stream)
      (let ((current-name (session-name session)))
-       (if *server-sessions*
-           (loop for (name . sess) in *server-sessions*
-                 do (%format-tree-entry stream name current-name
-                                        (session-windows sess)
-                                        (session-active-window sess)))
-           (%format-tree-entry stream current-name current-name
-                               (session-windows session)
-                               (session-active-window session))))))
+       (dolist (entry (or *server-sessions*
+                          (list (cons current-name session))))
+         (%format-tree-entry stream (car entry) current-name
+                             (session-windows  (cdr entry))
+                             (session-active-window (cdr entry)))))))
   (:customize-mode
    ;; Bare bind / keypress form: show the full customize tree (no filter).  The
    ;; scriptable customize-mode -f/-F/-t form lives in *arg-command-table*.
