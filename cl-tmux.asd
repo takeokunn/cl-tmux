@@ -99,6 +99,7 @@
      (:file "events-mouse")   ; mouse event dispatch + overlay pager escape handler
      (:file "events-keystroke-escape")  ; escape/mouse sequence decoder + make-escape-input-k
      (:file "events-keystroke")          ; CPS state functions: ground-state, after-prefix-state
+     (:file "events-copy-mode-dispatch") ; define-copy-mode-vi-rules macro + %dispatch-copy-mode-byte
      (:file "events-keystroke-keys")    ; arrow-key table, modifier/CSI-u helpers, %make-prefix-csi-k
      (:file "events-loop")
      (:file "session-registry")  ; session registry + group management

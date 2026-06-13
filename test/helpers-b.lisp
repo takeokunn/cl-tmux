@@ -481,6 +481,26 @@
     (setf (cffi:mem-ref buf :uint8) byte-value)
     (cffi:foreign-funcall "write" :int fd :pointer buf :unsigned-long 1 :long)))
 
+(defmacro with-auto-rename-session ((screen-var pane-var win-var sess-var
+                                     &key (win-name "w") (pid -1)) &body body)
+  "Build a 20x5 single-pane session for %maybe-rename-window-from-title tests."
+  `(let* ((,screen-var (make-screen 20 5))
+          (,pane-var   (make-pane :id 1 :fd -1 :pid ,pid :x 0 :y 0 :width 20 :height 5
+                                  :screen ,screen-var))
+          (,win-var    (make-window :id 1 :name ,win-name :width 20 :height 5
+                                   :panes (list ,pane-var)
+                                   :tree  (make-layout-leaf ,pane-var)))
+          (,sess-var   (make-session :id 1 :name "0" :windows (list ,win-var))))
+     (window-select-pane ,win-var ,pane-var)
+     (session-select-window ,sess-var ,win-var)
+     ,@body))
+
+(defmacro with-minimal-loop-session ((pane-var win-var sess-var &rest keys) &body body)
+  "Combine with-minimal-session + with-loop-state for dispatch tests."
+  `(with-minimal-session (,pane-var ,win-var ,sess-var ,@keys)
+     (with-loop-state
+       ,@body)))
+
 (defmacro with-pipe-fds ((read-fd write-fd) &body body)
   "Open a POSIX pipe; bind READ-FD and WRITE-FD; close both on exit.
    Shared by input-tests.lisp, pty-tests.lisp, and pty-rawmode-tests.lisp."

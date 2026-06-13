@@ -491,6 +491,11 @@
    and makes the registry isolation contract explicit in a single named macro."
   `(let ((cl-tmux::*server-sessions* nil)) ,@body))
 
+(defmacro with-input-state ((var) &body body)
+  "Bind VAR to a fresh make-input-state for use with process-byte tests."
+  `(let ((,var (cl-tmux::make-input-state)))
+     ,@body))
+
 (defun seed-scrollback (screen n)
   "Give SCREEN N dummy scrollback rows so copy-mode-scroll has room to move."
   (setf (cl-tmux/terminal/types::screen-scrollback screen)

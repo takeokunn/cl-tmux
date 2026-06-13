@@ -83,48 +83,41 @@
 
 (test dispatch-mark-pane-marks-active-pane
   ":mark-pane command sets pane-marked on the active pane."
-  (with-minimal-session (p0 win sess)
-    (with-loop-state
-      (let ((*overlay* nil))
-        (is-false (pane-marked p0) "pane must not be marked initially")
-        (cl-tmux::dispatch-command sess :mark-pane nil)
-        (is (pane-marked p0) "pane must be marked after :mark-pane")))))
+  (with-minimal-loop-session (p0 win sess)
+    (let ((*overlay* nil))
+      (is-false (pane-marked p0) "pane must not be marked initially")
+      (cl-tmux::dispatch-command sess :mark-pane nil)
+      (is (pane-marked p0) "pane must be marked after :mark-pane"))))
 
 (test dispatch-mark-pane-toggle-unmarks
   ":mark-pane on an already-marked pane unmarks it (toggle)."
-  (with-minimal-session (p0 win sess)
-    (declare (ignore win))
-    (with-loop-state
-      (let ((*overlay* nil))
-        (cl-tmux::dispatch-command sess :mark-pane nil)
-        (is (pane-marked p0) "pane marked after first :mark-pane")
-        (cl-tmux::dispatch-command sess :mark-pane nil)
-        (is-false (pane-marked p0)
-            "pane unmarked after :mark-pane on already-marked pane")))))
+  (with-minimal-loop-session (p0 win sess)
+    (let ((*overlay* nil))
+      (cl-tmux::dispatch-command sess :mark-pane nil)
+      (is (pane-marked p0) "pane marked after first :mark-pane")
+      (cl-tmux::dispatch-command sess :mark-pane nil)
+      (is-false (pane-marked p0)
+          "pane unmarked after :mark-pane on already-marked pane"))))
 
 (test dispatch-clear-mark-unmarks-all-panes
   ":clear-mark clears the server-wide marked pane."
-  (with-minimal-session (p0 win sess)
-    (declare (ignore win))
-    (with-loop-state
-      (let ((*overlay* nil))
-        (cl-tmux::dispatch-command sess :mark-pane nil)
-        (is (pane-marked p0) "pane must be marked before :clear-mark")
-        (cl-tmux::dispatch-command sess :clear-mark nil)
-        (is-false (pane-marked p0) "pane must not be marked after :clear-mark")))))
+  (with-minimal-loop-session (p0 win sess)
+    (let ((*overlay* nil))
+      (cl-tmux::dispatch-command sess :mark-pane nil)
+      (is (pane-marked p0) "pane must be marked before :clear-mark")
+      (cl-tmux::dispatch-command sess :clear-mark nil)
+      (is-false (pane-marked p0) "pane must not be marked after :clear-mark"))))
 
 ;;; ── dispatch :display-info ───────────────────────────────────────────────────
 
 (test dispatch-display-info-shows-overlay
   ":display-info shows a non-empty overlay with session/window/pane info."
-  (with-minimal-session (p0 win sess)
-    (declare (ignore p0 win))
-    (with-loop-state
-      (let ((*overlay* nil))
-        (cl-tmux::dispatch-command sess :display-info nil)
-        (is (overlay-active-p) "display-info must activate the overlay")
-        (is (search "Session:" *overlay*)
-            "overlay must contain \"Session:\"")))))
+  (with-minimal-loop-session (p0 win sess)
+    (let ((*overlay* nil))
+      (cl-tmux::dispatch-command sess :display-info nil)
+      (is (overlay-active-p) "display-info must activate the overlay")
+      (is (search "Session:" *overlay*)
+          "overlay must contain \"Session:\""))))
 
 ;;; ── dispatch :choose-client ──────────────────────────────────────────────────
 

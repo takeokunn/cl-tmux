@@ -42,11 +42,11 @@
 (test process-byte-prefix-then-command
   "Prefix byte (2) then 'n' routes through the binding table to :next-window."
   (with-fake-session (s :nwindows 2)
-    (let ((state (cl-tmux::make-input-state)))
+    (with-input-state (input-state)
       ;; Lone prefix byte just transitions to the after-prefix state, no quit.
-      (is (null (cl-tmux::process-byte s 2 state)))
+      (is (null (cl-tmux::process-byte s 2 input-state)))
       ;; Following byte 'n' selects the next window.
-      (is (null (cl-tmux::process-byte s (char-code #\n) state)))
+      (is (null (cl-tmux::process-byte s (char-code #\n) input-state)))
       (is (eq (second (session-windows s)) (session-active-window s))))))
 
 (test process-byte-prefix-detach-returns-detach
@@ -55,25 +55,25 @@
   ;; this test depends on the default #\d → :detach binding being present.
   (with-isolated-config
     (with-fake-session (s)
-      (let ((state (cl-tmux::make-input-state)))
-        (cl-tmux::process-byte s 2 state)
-        (is (eq :detach (cl-tmux::process-byte s (char-code #\d) state)))))))
+      (with-input-state (input-state)
+        (cl-tmux::process-byte s 2 input-state)
+        (is (eq :detach (cl-tmux::process-byte s (char-code #\d) input-state)))))))
 
 (test process-byte-ordinary-key-forwards
   "An ordinary byte (no prefix) is forwarded and returns NIL (no quit)."
   (with-fake-session (s)
-    (let ((state (cl-tmux::make-input-state)))
+    (with-input-state (input-state)
       ;; fd -1 panes make pty-write a harmless no-op; we assert routing only.
-      (is (null (cl-tmux::process-byte s (char-code #\x) state))))))
+      (is (null (cl-tmux::process-byte s (char-code #\x) input-state))))))
 
 (test process-byte-routes-to-active-prompt
   "While a prompt is active, process-byte edits the prompt buffer."
   (with-fake-session (s)
     (let ((*prompt* nil))
       (prompt-start "rename-window" "" (lambda (name) (declare (ignore name)) nil))
-      (let ((state (cl-tmux::make-input-state)))
-        (cl-tmux::process-byte s (char-code #\h) state)
-        (cl-tmux::process-byte s (char-code #\i) state)
+      (with-input-state (input-state)
+        (cl-tmux::process-byte s (char-code #\h) input-state)
+        (cl-tmux::process-byte s (char-code #\i) input-state)
         (is (string= "hi" (prompt-buffer *prompt*))
             "prompt captured the keystrokes via process-byte")))))
 
@@ -82,12 +82,12 @@
   (with-fake-session (s)
     (let ((*overlay* nil) (cl-tmux::*dirty* nil))
       (show-overlay "help text")
-      (let ((state (cl-tmux::make-input-state)))
+      (with-input-state (input-state)
         ;; An ordinary key ('x') is swallowed but the overlay stays open.
-        (is (null (cl-tmux::process-byte s (char-code #\x) state)))
+        (is (null (cl-tmux::process-byte s (char-code #\x) input-state)))
         (is (overlay-active-p) "ordinary key must not dismiss the overlay")
         ;; 'q' dismisses the overlay.
-        (is (null (cl-tmux::process-byte s (char-code #\q) state)))
+        (is (null (cl-tmux::process-byte s (char-code #\q) input-state)))
         (is-false (overlay-active-p) "q must dismiss the overlay")))))
 
 ;;; ── Copy-mode arrow escapes through process-byte (one byte at a time) ────────
@@ -102,65 +102,56 @@
 (test process-byte-copy-mode-up-arrow-end-to-end
   "ESC [ A (up arrow) in copy mode scrolls the viewport when the cursor is already
    at the top row (row 0) and scrollback is available."
-  (with-fake-session (s)
-    (let ((screen (active-screen s))
-          (state  (cl-tmux::make-input-state)))
-      (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (seed-scrollback screen 10)
-      ;; Force cursor to the top row so the next up-arrow scrolls the viewport.
-      (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
-      (is (zerop (screen-copy-offset screen)) "offset starts at the live view")
-      ;; ESC [ A, one byte at a time.
-      (is (null (cl-tmux::process-byte s 27 state)))
-      (is (null (cl-tmux::process-byte s 91 state)))
-      (is (null (cl-tmux::process-byte s 65 state)))
-      (is (= 1 (screen-copy-offset screen))
-          "up-arrow at top row scrolls the viewport back by 1"))))
+  (with-copy-mode-state (s screen input-state)
+    (seed-scrollback screen 10)
+    ;; Force cursor to the top row so the next up-arrow scrolls the viewport.
+    (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
+    (is (zerop (screen-copy-offset screen)) "offset starts at the live view")
+    ;; ESC [ A, one byte at a time.
+    (is (null (cl-tmux::process-byte s 27 input-state)))
+    (is (null (cl-tmux::process-byte s 91 input-state)))
+    (is (null (cl-tmux::process-byte s 65 input-state)))
+    (is (= 1 (screen-copy-offset screen))
+        "up-arrow at top row scrolls the viewport back by 1")))
 
 (test process-byte-copy-mode-down-arrow-end-to-end
   "ESC [ B (down arrow) in copy mode scrolls the viewport forward when the cursor is
    already at the bottom row and a scrolled-up viewport is active."
-  (with-fake-session (s)
-    (let ((screen (active-screen s))
-          (state  (cl-tmux::make-input-state)))
-      (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (seed-scrollback screen 10)
-      ;; Scroll the viewport up so there is room to scroll back down.
-      (cl-tmux/commands::copy-mode-scroll screen 6)
-      (is (= 6 (screen-copy-offset screen)) "pre-scrolled up 6 lines")
-      ;; Force cursor to the bottom row so the next down-arrow scrolls the viewport.
-      (setf (cl-tmux/terminal/types:screen-copy-cursor screen)
-            (cons (1- (screen-height screen)) 0))
-      ;; ESC [ B, one byte at a time.
-      (is (null (cl-tmux::process-byte s 27 state)))
-      (is (null (cl-tmux::process-byte s 91 state)))
-      (is (null (cl-tmux::process-byte s 66 state)))   ; 'B' = down
-      (is (= 5 (screen-copy-offset screen))
-          "down-arrow at bottom row scrolls the viewport forward by 1 (6 - 1)"))))
+  (with-copy-mode-state (s screen input-state)
+    (seed-scrollback screen 10)
+    ;; Scroll the viewport up so there is room to scroll back down.
+    (cl-tmux/commands::copy-mode-scroll screen 6)
+    (is (= 6 (screen-copy-offset screen)) "pre-scrolled up 6 lines")
+    ;; Force cursor to the bottom row so the next down-arrow scrolls the viewport.
+    (setf (cl-tmux/terminal/types:screen-copy-cursor screen)
+          (cons (1- (screen-height screen)) 0))
+    ;; ESC [ B, one byte at a time.
+    (is (null (cl-tmux::process-byte s 27 input-state)))
+    (is (null (cl-tmux::process-byte s 91 input-state)))
+    (is (null (cl-tmux::process-byte s 66 input-state)))   ; 'B' = down
+    (is (= 5 (screen-copy-offset screen))
+        "down-arrow at bottom row scrolls the viewport forward by 1 (6 - 1)")))
 
 (test process-byte-esc-not-bracket-flushes
   "ESC followed by a non-'[' byte is not an arrow sequence: the continuation
    flushes the two accumulated bytes through and returns to ground state."
-  (with-fake-session (s)
-    (let ((screen (active-screen s))
-          (state  (cl-tmux::make-input-state)))
-      (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (is (null (cl-tmux::process-byte s 27 state)))
-      ;; 'x' (120) is not '[': the buffer (ESC x) flushes and returns to ground.
-      (is (null (cl-tmux::process-byte s 120 state)))
-      (is (zerop (screen-copy-offset screen))
-          "a flushed (non-arrow) escape does not scroll the copy-offset"))))
+  (with-copy-mode-state (s screen input-state)
+    (is (null (cl-tmux::process-byte s 27 input-state)))
+    ;; 'x' (120) is not '[': the buffer (ESC x) flushes and returns to ground.
+    (is (null (cl-tmux::process-byte s 120 input-state)))
+    (is (zerop (screen-copy-offset screen))
+        "a flushed (non-arrow) escape does not scroll the copy-offset")))
 
 (test process-byte-esc-not-copy-mode-forwards-directly
   "Outside copy mode, ESC is an ordinary byte forwarded to the pane — the
    CPS state remains in ground state (no escape accumulation)."
   (with-fake-session (s)
-    (let ((state (cl-tmux::make-input-state)))
+    (with-input-state (input-state)
       (is-false (cl-tmux::%copy-mode-active-p s) "not in copy mode")
-      (is (null (cl-tmux::process-byte s 27 state)))
+      (is (null (cl-tmux::process-byte s 27 input-state)))
       ;; After forwarding ESC outside copy-mode the state returns to ground:
       ;; the next ordinary byte should also be forwarded (no stuck state).
-      (is (null (cl-tmux::process-byte s (char-code #\a) state))
+      (is (null (cl-tmux::process-byte s (char-code #\a) input-state))
           "byte after ESC (non-copy-mode) is also forwarded cleanly"))))
 
 ;;; ── %handle-resize / %handle-dirty extracted handlers ────────────────────────
@@ -245,6 +236,10 @@
   "define-prompt-key-rules is a defined macro."
   (is (macro-function 'cl-tmux::define-prompt-key-rules)))
 
+(test define-copy-mode-vi-rules-macro-is-defined
+  "define-copy-mode-vi-rules is a defined macro."
+  (is (macro-function 'cl-tmux::define-copy-mode-vi-rules)))
+
 ;;; ── Mouse event dispatch tests ───────────────────────────────────────────────
 ;;;
 ;;; The with-two-pane-mouse-session macro (defined in test/helpers.lisp) builds
@@ -274,8 +269,8 @@
       (with-fake-session (s)
         (cl-tmux/hooks:add-hook "pane-focus-in"
                                 (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-        (let ((state (cl-tmux::make-input-state)))
-          (dolist (b '(27 91 73)) (cl-tmux::process-byte s b state)))  ; ESC [ I
+        (with-input-state (input-state)
+          (dolist (b '(27 91 73)) (cl-tmux::process-byte s b input-state)))  ; ESC [ I
         (is-true fired "ESC [ I must fire pane-focus-in")))))
 
 (test process-byte-focus-out-fires-pane-focus-out
@@ -285,8 +280,8 @@
       (with-fake-session (s)
         (cl-tmux/hooks:add-hook "pane-focus-out"
                                 (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-        (let ((state (cl-tmux::make-input-state)))
-          (dolist (b '(27 91 79)) (cl-tmux::process-byte s b state)))  ; ESC [ O
+        (with-input-state (input-state)
+          (dolist (b '(27 91 79)) (cl-tmux::process-byte s b input-state)))  ; ESC [ O
         (is-true fired "ESC [ O must fire pane-focus-out")))))
 
 (test x10-mouse-sequence-via-process-byte
@@ -295,15 +290,15 @@
   (with-two-pane-mouse-session (sess win p0 p1)
     ;; Enable per-screen mouse mode in addition to the session option.
     (setf (screen-mouse-mode (pane-screen p0)) 1)
-    (let ((state (cl-tmux::make-input-state)))
+    (with-input-state (input-state)
       ;; X10: btn=0 → 0+32=32; col=50 → 50+33=83; row=5 → 5+33=38
       ;; Sequence: ESC(27) [(91) M(77) 32 83 38
-      (cl-tmux::process-byte sess 27 state)
-      (cl-tmux::process-byte sess 91 state)
-      (cl-tmux::process-byte sess 77 state)
-      (cl-tmux::process-byte sess 32 state)
-      (cl-tmux::process-byte sess 83 state)
-      (cl-tmux::process-byte sess 38 state)
+      (cl-tmux::process-byte sess 27 input-state)
+      (cl-tmux::process-byte sess 91 input-state)
+      (cl-tmux::process-byte sess 77 input-state)
+      (cl-tmux::process-byte sess 32 input-state)
+      (cl-tmux::process-byte sess 83 input-state)
+      (cl-tmux::process-byte sess 38 input-state)
       (is (eq p1 (window-active-pane win))
           "X10 left-click in right pane must focus p1"))))
 
@@ -378,101 +373,83 @@
   "An unbound key after prefix (C-b) is silently discarded; no bytes forwarded,
    no crash, and process-byte returns NIL."
   (with-fake-session (s)
-    (let ((state (cl-tmux::make-input-state)))
+    (with-input-state (input-state)
       ;; C-b (prefix)
-      (is (null (cl-tmux::process-byte s 2 state)))
+      (is (null (cl-tmux::process-byte s 2 input-state)))
       ;; Unbound key: '@' (64) — not in prefix key-table
-      (is (null (cl-tmux::process-byte s (char-code #\@) state))
+      (is (null (cl-tmux::process-byte s (char-code #\@) input-state))
           "unbound prefix key must return NIL (discarded, not forwarded)")
       ;; State must be back to ground: next ordinary byte is forwarded cleanly.
-      (is (null (cl-tmux::process-byte s (char-code #\a) state))
+      (is (null (cl-tmux::process-byte s (char-code #\a) input-state))
           "state returned to ground after discarding unbound prefix key"))))
 
 ;;; ── Copy-mode plain 'q' exits ────────────────────────────────────────────────
 
 (test copy-mode-plain-q-exits
   "Plain 'q' (byte 113) exits copy mode without needing C-b prefix."
-  (with-fake-session (s)
-    (let ((screen (active-screen s))
-          (state  (cl-tmux::make-input-state)))
-      (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (is (screen-copy-mode-p screen) "copy mode entered")
-      ;; Feed plain 'q' without any prefix
-      (cl-tmux::process-byte s (char-code #\q) state)
-      (is-false (screen-copy-mode-p screen)
-          "plain q must exit copy mode"))))
+  (with-copy-mode-state (s screen input-state)
+    (is (screen-copy-mode-p screen) "copy mode entered")
+    ;; Feed plain 'q' without any prefix
+    (cl-tmux::process-byte s (char-code #\q) input-state)
+    (is-false (screen-copy-mode-p screen)
+        "plain q must exit copy mode")))
 
 (test copy-mode-plain-esc-clears-selection-stays-in-copy-mode
   "ESC followed by a non-CSI byte clears the selection but STAYS in copy mode.
    This matches tmux's default copy-mode-vi Escape → clear-selection binding.
    Use q or i to exit copy mode."
-  (with-fake-session (s)
-    (let ((screen (active-screen s))
-          (state  (cl-tmux::make-input-state)))
-      (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (is (screen-copy-mode-p screen) "copy mode must be active after enter")
-      ;; Start a selection so we can verify it gets cleared.
-      (cl-tmux/commands::copy-mode-begin-selection screen)
-      (is (screen-copy-selecting screen) "selection must be active before ESC")
-      ;; Feed ESC then a non-CSI byte (not '[')
-      (cl-tmux::process-byte s 27 state)
-      (cl-tmux::process-byte s (char-code #\x) state)
-      ;; Selection is cleared but copy-mode stays active.
-      (is-true  (screen-copy-mode-p   screen) "copy mode must remain active after ESC")
-      (is-false (screen-copy-selecting screen) "selection must be cleared by ESC"))))
+  (with-copy-mode-state (s screen input-state)
+    (is (screen-copy-mode-p screen) "copy mode must be active after enter")
+    ;; Start a selection so we can verify it gets cleared.
+    (cl-tmux/commands::copy-mode-begin-selection screen)
+    (is (screen-copy-selecting screen) "selection must be active before ESC")
+    ;; Feed ESC then a non-CSI byte (not '[')
+    (cl-tmux::process-byte s 27 input-state)
+    (cl-tmux::process-byte s (char-code #\x) input-state)
+    ;; Selection is cleared but copy-mode stays active.
+    (is-true  (screen-copy-mode-p   screen) "copy mode must remain active after ESC")
+    (is-false (screen-copy-selecting screen) "selection must be cleared by ESC")))
 
 ;;; ── Copy-mode unprefixed vi navigation ───────────────────────────────────────
 
 (test copy-mode-j-scrolls-down
   "Plain 'j' (byte 106) scrolls down 1 line in copy mode."
-  (with-fake-session (s)
-    (let ((screen (active-screen s))
-          (state  (cl-tmux::make-input-state)))
-      (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (seed-scrollback screen 10)
-      ;; Scroll up 5 first so there's room to scroll back down.
-      (cl-tmux/commands::copy-mode-scroll screen 5)
-      (is (= 5 (screen-copy-offset screen)))
-      (cl-tmux::process-byte s (char-code #\j) state)
-      (is (= 4 (screen-copy-offset screen))
-          "j must scroll copy offset down by 1"))))
+  (with-copy-mode-state (s screen input-state)
+    (seed-scrollback screen 10)
+    ;; Scroll up 5 first so there's room to scroll back down.
+    (cl-tmux/commands::copy-mode-scroll screen 5)
+    (is (= 5 (screen-copy-offset screen)))
+    (cl-tmux::process-byte s (char-code #\j) input-state)
+    (is (= 4 (screen-copy-offset screen))
+        "j must scroll copy offset down by 1")))
 
 (test copy-mode-k-scrolls-up
   "Plain 'k' moves the cursor up; when the cursor is already at row 0, it scrolls
    the viewport back toward older content by 1 line."
-  (with-fake-session (s)
-    (let ((screen (active-screen s))
-          (state  (cl-tmux::make-input-state)))
-      (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (seed-scrollback screen 10)
-      ;; Force cursor to the top row so the next k scrolls the viewport.
-      (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
-      (is (zerop (screen-copy-offset screen)))
-      (cl-tmux::process-byte s (char-code #\k) state)
-      (is (= 1 (screen-copy-offset screen))
-          "k at top row scrolls copy offset up by 1"))))
+  (with-copy-mode-state (s screen input-state)
+    (seed-scrollback screen 10)
+    ;; Force cursor to the top row so the next k scrolls the viewport.
+    (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
+    (is (zerop (screen-copy-offset screen)))
+    (cl-tmux::process-byte s (char-code #\k) input-state)
+    (is (= 1 (screen-copy-offset screen))
+        "k at top row scrolls copy offset up by 1")))
 
 (test copy-mode-g-jumps-to-top
   "Plain 'g' (byte 103) jumps to top of scrollback in copy mode."
-  (with-fake-session (s)
-    (let ((screen (active-screen s))
-          (state  (cl-tmux::make-input-state)))
-      (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (seed-scrollback screen 10)
-      (cl-tmux::process-byte s (char-code #\g) state)
-      (is (= 10 (screen-copy-offset screen))
-          "g must jump to top (max scrollback offset)"))))
+  (with-copy-mode-state (s screen input-state)
+    (seed-scrollback screen 10)
+    (cl-tmux::process-byte s (char-code #\g) input-state)
+    (is (= 10 (screen-copy-offset screen))
+        "g must jump to top (max scrollback offset)")))
 
 (test copy-mode-G-jumps-to-bottom
   "Plain 'G' (byte 71) jumps to bottom (live view) in copy mode."
-  (with-fake-session (s)
-    (let ((screen (active-screen s))
-          (state  (cl-tmux::make-input-state)))
-      (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (seed-scrollback screen 10)
-      ;; Scroll up first
-      (cl-tmux/commands::copy-mode-scroll screen 8)
-      (is (= 8 (screen-copy-offset screen)))
-      (cl-tmux::process-byte s (char-code #\G) state)
-      (is (zerop (screen-copy-offset screen))
-          "G must jump to bottom (offset = 0)"))))
+  (with-copy-mode-state (s screen input-state)
+    (seed-scrollback screen 10)
+    ;; Scroll up first
+    (cl-tmux/commands::copy-mode-scroll screen 8)
+    (is (= 8 (screen-copy-offset screen)))
+    (cl-tmux::process-byte s (char-code #\G) input-state)
+    (is (zerop (screen-copy-offset screen))
+        "G must jump to bottom (offset = 0)")))

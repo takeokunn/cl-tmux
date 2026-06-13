@@ -41,6 +41,12 @@
     (window-select-pane win p0)
     win))
 
+(defun %make-session-with-window (win)
+  "Create a minimal session containing WIN as the active window."
+  (let ((sess (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window sess win)
+    sess))
+
 ;;; ── resize-pane: vertical split ─────────────────────────────────────────────
 
 (test resize-vertical-right-grows-active-shrinks-neighbour
@@ -92,8 +98,7 @@
   "resize-pane -x N sets the active pane to an absolute width of N (grow case)."
   (let* ((win (%vsplit-window 20))
          (p0  (first (window-panes win)))
-         (s   (make-session :id 1 :name "0" :windows (list win))))
-    (session-select-window s win)
+         (s   (%make-session-with-window win)))
     (cl-tmux::%cmd-resize-pane-arg s '("-x" "25"))
     (is (= 25 (pane-width p0)) "resize-pane -x 25 must make the active pane 25 wide")))
 
@@ -102,8 +107,7 @@
    signed-delta border move shrinks as well as grows."
   (let* ((win (%vsplit-window 20))
          (p0  (first (window-panes win)))
-         (s   (make-session :id 1 :name "0" :windows (list win))))
-    (session-select-window s win)
+         (s   (%make-session-with-window win)))
     (cl-tmux::%cmd-resize-pane-arg s '("-x" "15"))
     (is (= 15 (pane-width p0)) "resize-pane -x 15 must shrink the active pane to 15")))
 
@@ -111,8 +115,7 @@
   "resize-pane -y N sets the active pane to an absolute height of N."
   (let* ((win (%hsplit-window 10))
          (p0  (first (window-panes win)))
-         (s   (make-session :id 1 :name "0" :windows (list win))))
-    (session-select-window s win)
+         (s   (%make-session-with-window win)))
     (cl-tmux::%cmd-resize-pane-arg s '("-y" "13"))
     (is (= 13 (pane-height p0)) "resize-pane -y 13 must make the active pane 13 tall")))
 
@@ -218,8 +221,7 @@
   (let* ((win (%vsplit-window 20))
          (p0  (first  (window-panes win)))
          (p1  (second (window-panes win)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
-    (session-select-window sess win)
+         (sess (%make-session-with-window win)))
     (window-select-pane win p0)            ; kill the active (first) pane
     (is (null (kill-pane sess)) "surviving pane => not a quit")
     (is (equal (list p1) (window-panes win)) "killed pane removed; survivor kept")
@@ -301,8 +303,7 @@
   (let* ((win (%vsplit-window 20))
          (p0  (first  (window-panes win)))
          (p1  (second (window-panes win)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
-    (session-select-window sess win)
+         (sess (%make-session-with-window win)))
     ;; Make p0 active, then kill p1 (non-active).
     (window-select-pane win p0)
     (kill-pane sess p1)
@@ -315,8 +316,7 @@
   (let* ((win (%vsplit-window 20))
          (p0  (first  (window-panes win)))
          (p1  (second (window-panes win)))
-         (sess (make-session :id 1 :name "0" :windows (list win))))
-    (session-select-window sess win)
+         (sess (%make-session-with-window win)))
     ;; Visit p1 first, then switch back to p0 so p1 is last-active.
     (window-select-pane win p1)
     (window-select-pane win p0)
@@ -348,3 +348,92 @@
     (cl-tmux/commands:rename-session sess nil)
     (is (string= "keep" (session-name sess))
         "nil rename must not change the session name")))
+
+;;; ── %copy-mode-clamp-cursor direct unit tests ────────────────────────────────
+
+(test copy-mode-clamp-cursor-row-above-viewport
+  "%copy-mode-clamp-cursor clamps a cursor row above 0 to row 0."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-cursor s) (cons -3 2))
+    (cl-tmux/commands::%copy-mode-clamp-cursor s)
+    (let ((cursor (screen-copy-cursor s)))
+      (is (= 0 (car cursor)) "row clamped from -3 to 0")
+      (is (= 2 (cdr cursor)) "col unchanged"))))
+
+(test copy-mode-clamp-cursor-row-below-viewport
+  "%copy-mode-clamp-cursor clamps a cursor row >= height to height-1."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-cursor s) (cons 10 3))
+    (cl-tmux/commands::%copy-mode-clamp-cursor s)
+    (let ((cursor (screen-copy-cursor s)))
+      (is (= 4 (car cursor)) "row clamped from 10 to height-1 (4)")
+      (is (= 3 (cdr cursor)) "col unchanged"))))
+
+(test copy-mode-clamp-cursor-col-out-of-range
+  "%copy-mode-clamp-cursor clamps col to [0, width-1] independently of row."
+  (let ((s (make-screen 10 5)))
+    (setf (screen-copy-cursor s) (cons 2 25))
+    (cl-tmux/commands::%copy-mode-clamp-cursor s)
+    (let ((cursor (screen-copy-cursor s)))
+      (is (= 2 (car cursor)) "row unchanged")
+      (is (= 9 (cdr cursor)) "col clamped from 25 to width-1 (9)"))))
+
+(test copy-mode-clamp-cursor-noop-when-nil
+  "%copy-mode-clamp-cursor is a no-op when the cursor is NIL."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-cursor s) nil)
+    (cl-tmux/commands::%copy-mode-clamp-cursor s)
+    (is (null (screen-copy-cursor s)) "nil cursor must remain nil")))
+
+(test copy-mode-clamp-cursor-in-bounds-unchanged
+  "%copy-mode-clamp-cursor leaves an already-in-bounds cursor unchanged."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-cursor s) (cons 2 10))
+    (cl-tmux/commands::%copy-mode-clamp-cursor s)
+    (let ((cursor (screen-copy-cursor s)))
+      (is (= 2 (car cursor)) "in-bounds row must not change")
+      (is (= 10 (cdr cursor)) "in-bounds col must not change"))))
+
+;;; ── %join-pane-insert-into-dst direct unit tests ─────────────────────────────
+
+(test join-pane-insert-into-dst-returns-src-pane-on-success
+  "%join-pane-insert-into-dst returns SRC-PANE when insertion succeeds."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (src (make-pane :id 99 :x 0 :y 0 :width 10 :height 5
+                         :fd -1 :pid -1 :screen (make-screen 10 5))))
+    (window-select-pane win p0)
+    (is (eq src (cl-tmux/commands::%join-pane-insert-into-dst src win :h))
+        "%join-pane-insert-into-dst must return src-pane on success")))
+
+(test join-pane-insert-into-dst-adds-pane-to-window
+  "%join-pane-insert-into-dst appends src-pane to the destination window's pane list."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win)))
+         (src (make-pane :id 99 :x 0 :y 0 :width 10 :height 5
+                         :fd -1 :pid -1 :screen (make-screen 10 5))))
+    (window-select-pane win p0)
+    (cl-tmux/commands::%join-pane-insert-into-dst src win :h)
+    (is (member src (window-panes win))
+        "inserted pane must appear in window-panes after %join-pane-insert-into-dst")))
+
+(test join-pane-insert-into-dst-sets-pane-window
+  "%join-pane-insert-into-dst wires pane-window to the destination window."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (src (make-pane :id 99 :x 0 :y 0 :width 10 :height 5
+                         :fd -1 :pid -1 :screen (make-screen 10 5))))
+    (window-select-pane win p0)
+    (cl-tmux/commands::%join-pane-insert-into-dst src win :h)
+    (is (eq win (pane-window src))
+        "pane-window must be updated to dst-window after insertion")))
+
+(test join-pane-insert-into-dst-returns-nil-when-no-active-pane
+  "%join-pane-insert-into-dst returns NIL when the destination has no active pane."
+  (let* ((win (make-window :id 1 :name "empty" :width 20 :height 5
+                           :panes nil :tree nil))
+         (src (make-pane :id 99 :x 0 :y 0 :width 10 :height 5
+                         :fd -1 :pid -1 :screen (make-screen 10 5))))
+    (is (null (cl-tmux/commands::%join-pane-insert-into-dst src win :h))
+        "%join-pane-insert-into-dst must return NIL when destination has no active leaf")))

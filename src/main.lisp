@@ -60,35 +60,26 @@
           (cl-tmux/format:expand-format condition-string context)
         (error () "1")))))
 
+(defun %wire-option-callbacks ()
+  "Install the option-reader callbacks that the terminal/emulator layer uses.
+   Pure assignment — no I/O, no forking.  Extracted from %initialize-session-environment
+   so the callback wiring is unit-testable independently of the config-file load."
+  (setf cl-tmux/terminal:*history-limit-function*
+        (lambda () (cl-tmux/options:get-option "history-limit")))
+  (setf cl-tmux/terminal:*alternate-screen-enabled-function*
+        (lambda () (cl-tmux/options:get-option "alternate-screen")))
+  (setf cl-tmux/terminal:*scroll-on-clear-function*
+        (lambda () (cl-tmux/options:get-option "scroll-on-clear"))))
+
 (defun %initialize-session-environment ()
   "Set up the shared session environment before forking any panes.
    Loads the default shell, wires the %if condition evaluator, installs
    the history/alternate-screen/scroll-on-clear option callbacks, and applies
    the user config file.  Called from both run-standalone and run-control-mode
-   to avoid duplicating the ~20-line initialization boilerplate."
-  ;; Read $SHELL from the environment now that sb-posix is loaded.
-  ;; init-default-shell is the ORCHESTRATE-layer call that was formerly
-  ;; executed at module load time; doing it here keeps config.lisp pure.
+   to avoid duplicating the initialization boilerplate."
   (cl-tmux/config:init-default-shell)
-
-  ;; Wire up the %if condition evaluator before loading the config file so that
-  ;; conditional blocks (e.g. %if #{==:#{host},myserver}) resolve correctly.
   (setf cl-tmux/config:*config-condition-evaluator* (%make-format-condition-evaluator))
-
-  ;; Install the history-limit callback so scroll.lisp uses the option value.
-  (setf cl-tmux/terminal:*history-limit-function*
-        (lambda () (cl-tmux/options:get-option "history-limit")))
-  ;; Install the alternate-screen policy so the emulator honours the option:
-  ;; off → full-screen apps draw on the main screen (output stays in scrollback).
-  (setf cl-tmux/terminal:*alternate-screen-enabled-function*
-        (lambda () (cl-tmux/options:get-option "alternate-screen")))
-  ;; Install the scroll-on-clear policy: when on, a full-screen clear (ED 2)
-  ;; scrolls the visible content into history before erasing.
-  (setf cl-tmux/terminal:*scroll-on-clear-function*
-        (lambda () (cl-tmux/options:get-option "scroll-on-clear")))
-
-  ;; Apply the user config file — searches cl-tmux config, XDG tmux config, and
-  ;; ~/.tmux.conf in priority order (NIL triggers auto-detection).
+  (%wire-option-callbacks)
   (ignore-errors (load-config-file nil)))
 
 (defun run-standalone ()
@@ -163,17 +154,21 @@
                   "~&cl-tmux: unhandled error: ~A~%" c)
           (sb-ext:exit :code 1)))
 
-      ;; Cleanup: reset extended-keys reporting so the parent shell is not left
-      ;; receiving CSI-u sequences after cl-tmux exits, then signal shutdown, join
-      ;; reader threads and status timer, and close fds.
-      (ignore-errors (cl-tmux/renderer:disable-extended-keys))
-      (when (cl-tmux/options:get-option "focus-events")
-        (ignore-errors (cl-tmux/renderer:disable-focus-reporting)))
-      (stop-reader-threads (append reader-threads
-                                   (when *status-timer* (list *status-timer*))))
-      (setf *status-timer* nil)
-      (dolist (pane (all-panes session))
-        (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))))
+      (%cleanup-after-session session reader-threads))))
+
+(defun %cleanup-after-session (session reader-threads)
+  "Tear down the session after the event loop exits.
+   Disables extended-keys and focus reporting on the outer terminal, signals
+   shutdown, joins reader threads and the status timer, and closes all pane fds.
+   Extracted from run-standalone to reduce visual nesting depth."
+  (ignore-errors (cl-tmux/renderer:disable-extended-keys))
+  (when (cl-tmux/options:get-option "focus-events")
+    (ignore-errors (cl-tmux/renderer:disable-focus-reporting)))
+  (stop-reader-threads (append reader-threads
+                               (when *status-timer* (list *status-timer*))))
+  (setf *status-timer* nil)
+  (dolist (pane (all-panes session))
+    (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))
 
 (defun run-control-mode (&optional args)
   "Control mode (-C): drive cl-tmux over the text protocol on stdin/stdout instead

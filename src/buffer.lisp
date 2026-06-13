@@ -44,16 +44,16 @@
     (%enforce-buffer-limit))
   text)
 
-(defun set-named-buffer (name text)
-  "Set the buffer named NAME to TEXT (creating or replacing it).  Returns TEXT.
-   A thin alias for (add-paste-buffer TEXT NAME) naming the intent at call sites."
-  (add-paste-buffer text name))
 
 (defun get-paste-buffer (&optional (index 0))
   "Return the TEXT of the INDEXth paste buffer (0-based, most recent first), or NIL
    if empty or out of range."
   (let ((entry (nth index *paste-buffers*)))
     (and entry (cdr entry))))
+
+(defun set-named-buffer (name text)
+  "Set the buffer named NAME to TEXT (creating or replacing it).  Returns TEXT."
+  (add-paste-buffer text name))
 
 (defun get-buffer-by-name (name)
   "Return the TEXT of the buffer named NAME, or NIL when there is no such buffer."
