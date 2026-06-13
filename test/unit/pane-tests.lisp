@@ -215,23 +215,12 @@
 
 ;;; ── Pane slot defaults ───────────────────────────────────────────────────────
 
-(test pane-pipe-fd-defaults-nil
-  "pane-pipe-fd defaults to NIL for a freshly created pane."
+(test pane-nil-slot-defaults
+  "pane-pipe-fd, pane-window, and pane-marked all default to NIL for a fresh pane."
   (let ((pane (make-no-pty-pane 1 0 0 20 5)))
-    (is (null (pane-pipe-fd pane))
-        "pane-pipe-fd must default to NIL")))
-
-(test pane-window-defaults-nil
-  "pane-window defaults to NIL (back-pointer not set until attach)."
-  (let ((pane (make-no-pty-pane 1 0 0 20 5)))
-    (is (null (pane-window pane))
-        "pane-window must default to NIL before attach")))
-
-(test pane-marked-defaults-nil
-  "pane-marked defaults to NIL for a freshly created pane."
-  (let ((pane (make-no-pty-pane 1 0 0 20 5)))
-    (is (null (pane-marked pane))
-        "pane-marked must default to NIL")))
+    (is (null (pane-pipe-fd pane)) "pane-pipe-fd must default to NIL")
+    (is (null (pane-window  pane)) "pane-window must default to NIL before attach")
+    (is (null (pane-marked  pane)) "pane-marked must default to NIL")))
 
 (test pane-marked-settable
   "pane-marked can be set to T and read back."
@@ -297,17 +286,11 @@
     (is (= 40 (pane-width  pane)) "pane-width must return 40")
     (is (= 10 (pane-height pane)) "pane-height must return 10")))
 
-(test pane-fd-defaults-negative-for-no-pty-pane
-  "make-no-pty-pane produces a pane with fd -1."
+(test pane-no-pty-fd-and-pid-are-negative
+  "make-no-pty-pane produces a pane with fd and pid both -1."
   (let ((pane (make-no-pty-pane 1 0 0 20 5)))
-    (is (= -1 (pane-fd pane))
-        "pane-fd must be -1 for a no-PTY pane")))
-
-(test pane-pid-defaults-negative-for-no-pty-pane
-  "make-no-pty-pane produces a pane with pid -1."
-  (let ((pane (make-no-pty-pane 1 0 0 20 5)))
-    (is (= -1 (pane-pid pane))
-        "pane-pid must be -1 for a no-PTY pane")))
+    (is (= -1 (pane-fd  pane)) "pane-fd must be -1 for a no-PTY pane")
+    (is (= -1 (pane-pid pane)) "pane-pid must be -1 for a no-PTY pane")))
 
 (test pane-screen-accessible
   "pane-screen returns the screen object set at construction."
@@ -364,8 +347,8 @@
 
 ;;; ── pane-at-position hit test ────────────────────────────────────────────────
 
-(test pane-at-position-returns-correct-pane
-  "pane-at-position returns the pane whose rectangle contains the given coordinates."
+(test pane-at-position-table
+  "pane-at-position returns the pane containing (x,y), or NIL for the separator gap."
   (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
          (p1  (make-no-pty-pane 2 41 0 40 24))
          (win (make-window :id 1 :name "w" :width 81 :height 24
@@ -374,26 +357,9 @@
                                     (make-layout-leaf p0)
                                     (make-layout-leaf p1)
                                     1/2))))
-    ;; Column 10 is in p0's rectangle [0, 40).
-    (is (eq p0 (pane-at-position win 10 5))
-        "col 10, row 5 must hit p0")
-    ;; Column 50 is in p1's rectangle [41, 81).
-    (is (eq p1 (pane-at-position win 50 5))
-        "col 50, row 5 must hit p1")))
-
-(test pane-at-position-returns-nil-for-separator-column
-  "pane-at-position returns NIL when the coordinates fall in the separator gap."
-  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
-         (p1  (make-no-pty-pane 2 41 0 40 24))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2))))
-    ;; Column 40 is between p0 [0,40) and p1 [41,81) — the separator.
-    (is (null (pane-at-position win 40 5))
-        "separator column 40 must return NIL from pane-at-position")))
+    (is (eq  p0  (pane-at-position win 10 5)) "col 10 hits p0 [0,40)")
+    (is (eq  p1  (pane-at-position win 50 5)) "col 50 hits p1 [41,81)")
+    (is (null    (pane-at-position win 40 5)) "col 40 is separator → NIL")))
 
 (test pane-at-position-returns-nil-for-empty-window
   "pane-at-position returns NIL when the window has no panes."
