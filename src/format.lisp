@@ -75,12 +75,14 @@
           (let ((start 0))
             (loop
               (let ((pos (search pat string :start2 start :test test)))
-                (cond
-                  (pos (write-string string out :start start :end pos)
-                       (write-string replacement out)
-                       (setf start (+ pos (length pat))))
-                  (t   (write-string string out :start start)
-                       (return))))))))))
+                (if pos
+                    (progn
+                      (write-string string out :start start :end pos)
+                      (write-string replacement out)
+                      (setf start (+ pos (length pat))))
+                    (progn
+                      (write-string string out :start start)
+                      (return))))))))))
 
 ;;; ── Glob pattern matching (#{m:pattern,string}) ─────────────────────────────
 ;;;
@@ -239,7 +241,7 @@
       (%apply-pad-modifier mod value)
       (multiple-value-bind (pat rep flags) (%parse-substitute-spec mod)
         (if pat
-            (%string-replace-all value pat rep (and (find #\i flags) t))
+            (%string-replace-all value pat rep (find #\i flags))
             (let ((n (%truncate-spec mod)))
               (cond
                 ((null n) nil)

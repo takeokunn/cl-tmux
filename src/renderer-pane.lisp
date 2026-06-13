@@ -253,20 +253,21 @@
              ;; Column orientation: which virtual end is topmost?
              (mark-is-start (< mark-vrow cur-vrow))
              (mark-is-end   (> mark-vrow cur-vrow)))
-        (values t
-                start-vp
-                end-vp
-                ;; Rectangle mode: uniform column range (min..max+1 exclusive).
-                ;; Character mode: start-col tracks the topmost-virtual end's column.
-                (if rect-p
-                    (min mark-col cursor-col)
-                    (if mark-is-start mark-col
-                        (if mark-is-end cursor-col (min mark-col cursor-col))))
-                (if rect-p
-                    (1+ (max mark-col cursor-col))
-                    (if mark-is-start cursor-col
-                        (if mark-is-end mark-col (max mark-col cursor-col))))
-                rect-p))
+        (let ((col-min (min mark-col cursor-col))
+              (col-max (max mark-col cursor-col)))
+          ;; sel-col: pick the column boundary for one end of the selection.
+          ;; rect-col used for rectangle mode; otherwise choose by which virtual
+          ;; end is topmost (mark-is-start/end), falling back to tie.
+          (flet ((sel-col (rect-col start-col end-col tie)
+                   (if rect-p rect-col
+                       (if mark-is-start start-col
+                           (if mark-is-end end-col tie)))))
+            (values t
+                    start-vp
+                    end-vp
+                    (sel-col col-min     mark-col   cursor-col col-min)
+                    (sel-col (1+ col-max) cursor-col mark-col   col-max)
+                    rect-p))))
       (values nil 0 0 0 0 nil)))
 
 ;;; ── Per-row cell rendering ───────────────────────────────────────────────────
