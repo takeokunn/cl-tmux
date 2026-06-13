@@ -78,73 +78,35 @@
 
 ;;; ── :kill-pane-confirm dispatch ──────────────────────────────────────────────
 
-(test dispatch-kill-pane-confirm-opens-prompt
-  ":kill-pane-confirm opens a y/n prompt and does NOT kill immediately."
-  (with-fake-session (s :nwindows 1 :npanes 2)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :kill-pane-confirm nil)
-      (is (prompt-active-p)
-          ":kill-pane-confirm must open a prompt")
-      ;; Window should still have both panes (no kill yet).
-      (is (= 2 (length (window-panes (session-active-window s))))
-          ":kill-pane-confirm must not kill the pane before confirmation"))))
-
-(test dispatch-kill-pane-confirm-kills-on-y
-  ":kill-pane-confirm kills the pane when the user submits \"y\"."
-  (with-fake-session (s :nwindows 1 :npanes 2)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :kill-pane-confirm nil)
-      (is (prompt-active-p) "prompt must be open")
-      ;; Submit "y" — should kill the active pane.
-      (funcall (prompt-on-submit *prompt*) "y")
-      (is (= 1 (length (window-panes (session-active-window s))))
-          "submitting \"y\" must kill the active pane"))))
-
-(test dispatch-kill-pane-confirm-no-kill-on-n
-  ":kill-pane-confirm does NOT kill when the user submits \"n\"."
-  (with-fake-session (s :nwindows 1 :npanes 2)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :kill-pane-confirm nil)
-      (is (prompt-active-p) "prompt must be open")
-      ;; Submit "n" — should NOT kill.
-      (funcall (prompt-on-submit *prompt*) "n")
-      (is (= 2 (length (window-panes (session-active-window s))))
-          "submitting \"n\" must NOT kill the pane"))))
+(test dispatch-kill-pane-confirm-table
+  ":kill-pane-confirm opens a prompt; y kills the active pane; n leaves it."
+  (dolist (c '((nil 2 "no answer: pane count unchanged")
+               ("y" 1 "y: active pane killed")
+               ("n" 2 "n: pane preserved")))
+    (destructuring-bind (answer expected-count desc) c
+      (with-fake-session (s :nwindows 1 :npanes 2)
+        (let ((*prompt* nil))
+          (cl-tmux::dispatch-command s :kill-pane-confirm nil)
+          (is (prompt-active-p) "prompt must open for ~A" desc)
+          (when answer (funcall (prompt-on-submit *prompt*) answer))
+          (is (= expected-count
+                 (length (window-panes (session-active-window s))))
+              "~A" desc))))))
 
 ;;; ── :kill-window-confirm dispatch ────────────────────────────────────────────
 
-(test dispatch-kill-window-confirm-opens-prompt
-  ":kill-window-confirm opens a y/n prompt and does NOT kill immediately."
-  (with-fake-session (s :nwindows 2)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :kill-window-confirm nil)
-      (is (prompt-active-p)
-          ":kill-window-confirm must open a prompt")
-      ;; Both windows should still be present.
-      (is (= 2 (length (session-windows s)))
-          ":kill-window-confirm must not kill the window before confirmation"))))
-
-(test dispatch-kill-window-confirm-kills-on-y
-  ":kill-window-confirm kills the window when the user submits \"y\"."
-  (with-fake-session (s :nwindows 2)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :kill-window-confirm nil)
-      (is (prompt-active-p) "prompt must be open")
-      ;; Submit "y" — should kill the active window.
-      (funcall (prompt-on-submit *prompt*) "y")
-      (is (= 1 (length (session-windows s)))
-          "submitting \"y\" must kill the active window"))))
-
-(test dispatch-kill-window-confirm-no-kill-on-n
-  ":kill-window-confirm does NOT kill when the user submits \"n\"."
-  (with-fake-session (s :nwindows 2)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :kill-window-confirm nil)
-      (is (prompt-active-p) "prompt must be open")
-      ;; Submit "n" — should NOT kill.
-      (funcall (prompt-on-submit *prompt*) "n")
-      (is (= 2 (length (session-windows s)))
-          "submitting \"n\" must NOT kill the window"))))
+(test dispatch-kill-window-confirm-table
+  ":kill-window-confirm opens a prompt; y kills the active window; n leaves it."
+  (dolist (c '((nil 2 "no answer: window count unchanged")
+               ("y" 1 "y: active window killed")
+               ("n" 2 "n: window preserved")))
+    (destructuring-bind (answer expected-count desc) c
+      (with-fake-session (s :nwindows 2)
+        (let ((*prompt* nil))
+          (cl-tmux::dispatch-command s :kill-window-confirm nil)
+          (is (prompt-active-p) "prompt must open for ~A" desc)
+          (when answer (funcall (prompt-on-submit *prompt*) answer))
+          (is (= expected-count (length (session-windows s))) "~A" desc))))))
 
 (test dispatch-kill-window-confirm-prompt-includes-window-name
   ":kill-window-confirm prompt label includes the current window name."

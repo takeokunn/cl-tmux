@@ -372,17 +372,19 @@
 
 (test copy-mode-H-L-cursor-table
   "H (byte 72) moves cursor to row 0 (top); L (byte 76) moves cursor to last row (height-1)."
-  (dolist (c '((72 3 nil "H: row → 0 (top)")
-               (76 0  0  "L: row → height-1 (bottom)")))
-    (destructuring-bind (byte init-row expected-0-or-nil desc) c
+  (dolist (c '((72 3  0  "H: row → 0 (top)")
+               (76 0 nil  "L: row → height-1 (bottom)")))
+    (destructuring-bind (byte init-row fixed-or-nil desc) c
       (with-fake-session (s)
         (let ((screen (active-screen s))
               (state  (cl-tmux::make-input-state)))
           (cl-tmux::dispatch-command s :copy-mode-enter nil)
           (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons init-row 0))
           (cl-tmux::process-byte s byte state)
-          (let* ((row     (car (screen-copy-cursor screen)))
-                 (target  (or expected-0-or-nil (1- (screen-height screen)))))
+          (let* ((row    (car (screen-copy-cursor screen)))
+                 (target (if (null fixed-or-nil)
+                             (1- (screen-height screen))
+                             fixed-or-nil)))
             (is (= target row) "~A" desc)))))))
 
 (test copy-mode-V-begins-line-selection

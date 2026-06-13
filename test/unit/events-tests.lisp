@@ -254,27 +254,20 @@
     (is (eq p0 (window-active-pane win))
         "button release should not change the active pane")))
 
-(test process-byte-focus-in-fires-pane-focus-in
-  "ESC [ I (outer-terminal focus gained, ?1004) fires pane-focus-in on the active pane."
-  (with-isolated-hooks
-    (let ((fired nil))
-      (with-fake-session (s)
-        (cl-tmux/hooks:add-hook "pane-focus-in"
-                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-        (with-input-state (input-state)
-          (dolist (b '(27 91 73)) (cl-tmux::process-byte s b input-state)))  ; ESC [ I
-        (is-true fired "ESC [ I must fire pane-focus-in")))))
-
-(test process-byte-focus-out-fires-pane-focus-out
-  "ESC [ O (outer-terminal focus lost, ?1004) fires pane-focus-out on the active pane."
-  (with-isolated-hooks
-    (let ((fired nil))
-      (with-fake-session (s)
-        (cl-tmux/hooks:add-hook "pane-focus-out"
-                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-        (with-input-state (input-state)
-          (dolist (b '(27 91 79)) (cl-tmux::process-byte s b input-state)))  ; ESC [ O
-        (is-true fired "ESC [ O must fire pane-focus-out")))))
+(test process-byte-focus-hook-table
+  "ESC [ I/O fire pane-focus-in/pane-focus-out hooks on the active pane."
+  (dolist (c '((73 "pane-focus-in"  "ESC [ I must fire pane-focus-in")
+               (79 "pane-focus-out" "ESC [ O must fire pane-focus-out")))
+    (destructuring-bind (last-byte hook-name desc) c
+      (with-isolated-hooks
+        (let ((fired nil))
+          (with-fake-session (s)
+            (cl-tmux/hooks:add-hook hook-name
+                                    (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+            (with-input-state (input-state)
+              (dolist (b (list 27 91 last-byte))
+                (cl-tmux::process-byte s b input-state)))
+            (is-true fired "~A" desc)))))))
 
 (test x10-mouse-sequence-via-process-byte
   "X10 mouse press ESC [ M <btn+32> <col+33> <row+33> fed one byte at a time
@@ -347,17 +340,13 @@
         (is (null (cl-tmux/pty:select-fds (list rfd) 20000))
             "middle-button release must not write any paste bytes")))))
 
-(test mouse-mode-default-is-off
-  "screen-mouse-mode defaults to 0 (off) on a fresh screen."
-  (with-screen (s 20 5)
-    (is (= 0 (screen-mouse-mode s))
-        "mouse-mode must default to 0")))
-
-(test mouse-sgr-mode-default-is-nil
-  "screen-mouse-sgr-mode defaults to NIL on a fresh screen."
-  (with-screen (s 20 5)
-    (is-false (screen-mouse-sgr-mode s)
-              "mouse-sgr-mode must default to NIL")))
+(test mouse-mode-defaults-table
+  "Fresh screen mouse defaults: mouse-mode=0, mouse-sgr-mode=nil."
+  (dolist (c '((screen-mouse-mode     0   "mouse-mode defaults to 0")
+               (screen-mouse-sgr-mode nil "mouse-sgr-mode defaults to nil")))
+    (destructuring-bind (accessor expected desc) c
+      (with-screen (s 20 5)
+        (is (equal expected (funcall accessor s)) "~A" desc)))))
 
 ;;; ── Unbound prefix key discard ───────────────────────────────────────────────
 
