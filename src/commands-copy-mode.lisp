@@ -55,15 +55,19 @@
         (screen-copy-rect-select-p  screen) nil
         (screen-copy-exit-on-bottom screen) nil))
 
+(defun %clamp-row-col (screen row col)
+  "Return (cons clamped-row clamped-col) with row in [0, height-1] and col in [0, width-1]."
+  (cons (max 0 (min (1- (screen-height screen)) row))
+        (max 0 (min (1- (screen-width  screen)) col))))
+
 (defun %copy-mode-clamp-cursor (screen)
   "Clamp the copy-mode cursor row into [0, height-1] and col into [0, width-1].
    Called after the viewport offset changes so the cursor stays visible.
    Operates on the cursor cons directly; no-op when cursor is NIL."
   (let ((cursor (screen-copy-cursor screen)))
     (when cursor
-      (let ((row (max 0 (min (1- (screen-height screen)) (car cursor))))
-            (col (max 0 (min (1- (screen-width  screen)) (cdr cursor)))))
-        (setf (screen-copy-cursor screen) (cons row col))))))
+      (setf (screen-copy-cursor screen)
+            (%clamp-row-col screen (car cursor) (cdr cursor))))))
 
 (defun copy-mode-scroll (screen delta)
   "Scroll SCREEN's viewport by DELTA lines (positive = older, negative = newer).
@@ -157,10 +161,8 @@
   "Set the copy-mode cursor to ROW, COL, clamping both to the screen bounds.
    No-op when copy mode is not active."
   (when (screen-copy-mode-p screen)
-    (let ((clamped-row (max 0 (min (1- (screen-height screen)) row)))
-          (clamped-col (max 0 (min (1- (screen-width  screen)) col))))
-      (setf (screen-copy-cursor screen) (cons clamped-row clamped-col)
-            (screen-dirty-p screen) t))))
+    (setf (screen-copy-cursor screen) (%clamp-row-col screen row col)
+          (screen-dirty-p screen) t)))
 
 (defun copy-mode-begin-selection (screen)
   "Begin a text selection at the current copy-mode cursor position."
@@ -216,6 +218,16 @@
         (setf (screen-copy-cursor screen) (cons clamped (cdr mark))
               (screen-dirty-p     screen) t)))))
 
+(defun %reset-selection-fields (screen)
+  "Clear all selection state fields on SCREEN (selecting, mark, line/rect flags) and
+   mark dirty.  Does NOT clear the cursor — callers that need that do so separately."
+  (setf (screen-copy-selecting        screen) nil
+        (screen-copy-mark             screen) nil
+        (screen-copy-mark-offset      screen) 0
+        (screen-copy-line-selection-p screen) nil
+        (screen-copy-rect-select-p    screen) nil
+        (screen-dirty-p               screen) t))
+
 (defun copy-mode-clear-selection (screen)
   "Clear the active selection without leaving copy mode (tmux `clear-selection`,
    the default copy-mode-vi Escape binding).  Drops the mark and the in-progress
@@ -225,12 +237,7 @@
    or mark; marks the screen dirty when it clears."
   (when (and (screen-copy-mode-p screen)
              (or (screen-copy-selecting screen) (screen-copy-mark screen)))
-    (setf (screen-copy-selecting        screen) nil
-          (screen-copy-mark             screen) nil
-          (screen-copy-mark-offset      screen) 0
-          (screen-copy-line-selection-p screen) nil
-          (screen-copy-rect-select-p    screen) nil
-          (screen-dirty-p               screen) t)))
+    (%reset-selection-fields screen)))
 
 (defun copy-mode-select-word (screen)
   "Select the word under the copy-mode cursor (tmux copy-mode `select-word`).
@@ -282,13 +289,8 @@
 
 (defun copy-mode-cancel-selection (screen)
   "Cancel any active copy-mode selection."
-  (setf (screen-copy-mark           screen) nil
-        (screen-copy-mark-offset    screen) 0
-        (screen-copy-cursor         screen) nil
-        (screen-copy-selecting      screen) nil
-        (screen-copy-line-selection-p screen) nil
-        (screen-copy-rect-select-p  screen) nil
-        (screen-dirty-p             screen) t))
+  (setf (screen-copy-cursor screen) nil)
+  (%reset-selection-fields screen))
 
 ;;; %selection-bounds extracts the canonical (start-row end-row start-col end-col)
 ;;; rectangle from the mark and cursor positions — independent of which end the
