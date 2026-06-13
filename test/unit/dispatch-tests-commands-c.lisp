@@ -182,17 +182,12 @@
   (is (macro-function 'cl-tmux::define-named-command-table)
       "define-named-command-table must be a macro"))
 
-(test dispatch-named-command-detach
-  "%dispatch-named-command \"detach\" returns :detach."
+(test dispatch-named-command-detach-aliases
+  "%dispatch-named-command \"detach\" and \"detach-client\" both return :detach."
   (with-fake-session (s)
-    (is (eq :detach (cl-tmux::%dispatch-named-command s "detach"))
-        "%dispatch-named-command must accept 'detach' as an alias")))
-
-(test dispatch-named-command-detach-client-alias
-  "%dispatch-named-command \"detach-client\" is an alias for :detach."
-  (with-fake-session (s)
-    (is (eq :detach (cl-tmux::%dispatch-named-command s "detach-client"))
-        "%dispatch-named-command 'detach-client' must behave like 'detach'")))
+    (dolist (name '("detach" "detach-client"))
+      (is (eq :detach (cl-tmux::%dispatch-named-command s name))
+          "%dispatch-named-command ~S must return :detach" name))))
 
 (test dispatch-named-command-list-sessions
   "%dispatch-named-command \"list-sessions\" opens an overlay."
@@ -222,27 +217,17 @@
     (finishes (cl-tmux::dispatch-prefix-command s (char-code #\y))
               "dispatch-prefix-command 'y' in copy mode must not error")))
 
-(test dispatch-prefix-command-copy-mode-slash-opens-search-prompt
-  "In copy mode, '/' opens a forward-search prompt."
-  (with-fake-session (s)
-    (cl-tmux::dispatch-command s :copy-mode-enter nil)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-prefix-command s (char-code #\/))
-      (is (prompt-active-p)
-          "dispatch-prefix-command '/' in copy mode must open a search prompt")
-      (is (string= "/" (prompt-label *prompt*))
-          "search prompt label must be \"/\""))))
-
-(test dispatch-prefix-command-copy-mode-question-opens-backward-prompt
-  "In copy mode, '?' opens a backward-search prompt."
-  (with-fake-session (s)
-    (cl-tmux::dispatch-command s :copy-mode-enter nil)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-prefix-command s (char-code #\?))
-      (is (prompt-active-p)
-          "dispatch-prefix-command '?' in copy mode must open a search prompt")
-      (is (string= "?" (prompt-label *prompt*))
-          "search prompt label must be \"?\""))))
+(test dispatch-prefix-command-copy-mode-search-prompts
+  "In copy mode, '/' opens forward-search and '?' opens backward-search prompt."
+  (dolist (ch '(#\/ #\?))
+    (with-fake-session (s)
+      (cl-tmux::dispatch-command s :copy-mode-enter nil)
+      (let ((*prompt* nil))
+        (cl-tmux::dispatch-prefix-command s (char-code ch))
+        (is (prompt-active-p)
+            "dispatch-prefix-command ~S in copy mode must open a search prompt" ch)
+        (is (string= (string ch) (prompt-label *prompt*))
+            "search prompt label must equal the char (~S)" ch)))))
 
 ;;; ── :select-layout-even-h / :select-layout-even-v dispatch ──────────────────
 
@@ -426,25 +411,14 @@
 
 ;;; ── dispatch-prefix-command: normal (non-copy-mode) table lookup ─────────────
 
-(test dispatch-prefix-command-n-selects-next-window
-  "dispatch-prefix-command with byte for 'n' selects the next window."
-  (with-fake-session (s :nwindows 2)
-    (let ((w0 (first (session-windows s)))
-          (w1 (second (session-windows s))))
-      (is (eq w0 (session-active-window s)) "w0 is active initially")
-      (cl-tmux::dispatch-prefix-command s (char-code #\n))
-      (is (eq w1 (session-active-window s))
-          "dispatch-prefix-command 'n' must select the next window"))))
-
-(test dispatch-prefix-command-p-selects-prev-window
-  "dispatch-prefix-command with byte for 'p' selects the previous window."
-  (with-fake-session (s :nwindows 2)
-    (let ((w0 (first  (session-windows s)))
-          (w1 (second (session-windows s))))
-      (is (eq w0 (session-active-window s)) "w0 is active initially")
-      (cl-tmux::dispatch-prefix-command s (char-code #\p))
-      (is (eq w1 (session-active-window s))
-          "dispatch-prefix-command 'p' must select the previous (wrapped) window"))))
+(test dispatch-prefix-command-n-and-p-select-other-window
+  "dispatch-prefix-command 'n' and 'p' each select the other window in a 2-window session."
+  (dolist (key '(#\n #\p))
+    (with-fake-session (s :nwindows 2)
+      (let ((w1 (second (session-windows s))))
+        (cl-tmux::dispatch-prefix-command s (char-code key))
+        (is (eq w1 (session-active-window s))
+            "dispatch-prefix-command ~S must select the other window" key)))))
 
 (test dispatch-prefix-command-unknown-byte-is-noop
   "dispatch-prefix-command with a byte that has no key binding is a no-op."
