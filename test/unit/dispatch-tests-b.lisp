@@ -10,23 +10,6 @@
 ;;;
 ;;; Use the shared fixture macro to avoid repeating pane/window/session setup.
 
-(test dispatch-swap-pane-forward-changes-pane-order
-  ":swap-pane-forward swaps the active pane with the next pane in the list."
-  (with-two-pane-h-session (sess win p0 p1)
-    ;; p0 is active and at index 0; forward swap puts p1 at index 0.
-    (cl-tmux::dispatch-command sess :swap-pane-forward nil)
-    (is (eq p1 (first (window-panes win)))
-        "after :swap-pane-forward, p1 must be first in the panes list")
-    (is (eq p0 (second (window-panes win)))
-        "after :swap-pane-forward, p0 must be second in the panes list")))
-
-(test dispatch-swap-pane-forward-marks-dirty
-  ":swap-pane-forward marks *dirty*."
-  (with-two-pane-h-session (sess win p0 p1)
-    (is (and win p0 p1) "fixture created")
-    (cl-tmux::dispatch-command sess :swap-pane-forward nil)
-    (is-true cl-tmux::*dirty*
-             ":swap-pane-forward must mark *dirty*")))
 
 (test cmd-swap-pane-s-t-swaps-specific-panes
   "swap-pane -s 1 -t 3 swaps the two named panes' positions in the window list
@@ -54,27 +37,20 @@
       (is (eq p2 (first (window-panes win)))
           "after swap-pane -t 2, pane 2 is first (swapped with active pane 1)"))))
 
-;;; ── :swap-pane-backward dispatch ─────────────────────────────────────────────
+;;; ── :swap-pane-forward / :swap-pane-backward dispatch ───────────────────────
 
-(test dispatch-swap-pane-backward-changes-pane-order
-  ":swap-pane-backward swaps the active pane with the previous pane (wrapping)."
-  (with-two-pane-h-session (sess win p0 p1)
-    ;; Start with p1 active so that backward swap moves it to index 0.
-    (window-select-pane win p1)
-    (cl-tmux::dispatch-command sess :swap-pane-backward nil)
-    (is (eq p1 (first (window-panes win)))
-        "after :swap-pane-backward from p1, p1 must be first in the panes list")
-    (is (eq p0 (second (window-panes win)))
-        "after :swap-pane-backward from p1, p0 must be second in the panes list")))
-
-(test dispatch-swap-pane-backward-marks-dirty
-  ":swap-pane-backward marks *dirty*."
-  (with-two-pane-h-session (sess win p0 p1)
-    (is-false (null p0) "fixture created")
-    (window-select-pane win p1)
-    (cl-tmux::dispatch-command sess :swap-pane-backward nil)
-    (is-true cl-tmux::*dirty*
-             ":swap-pane-backward must mark *dirty*")))
+(test dispatch-swap-pane-table
+  ":swap-pane-forward (p0 active) and :swap-pane-backward (p1 active) both
+   move p1 to first position and mark *dirty*."
+  (dolist (row '((:swap-pane-forward  nil "forward: p0 active")
+                 (:swap-pane-backward t   "backward: p1 active")))
+    (destructuring-bind (cmd select-p1 desc) row
+      (with-two-pane-h-session (sess win p0 p1)
+        (when select-p1 (window-select-pane win p1))
+        (cl-tmux::dispatch-command sess cmd nil)
+        (is (eq p1 (first  (window-panes win))) "~A: p1 must be first"  desc)
+        (is (eq p0 (second (window-panes win))) "~A: p0 must be second" desc)
+        (is-true cl-tmux::*dirty*               "~A: must mark *dirty*" desc)))))
 
 ;;; ── :kill-pane-confirm dispatch ──────────────────────────────────────────────
 
