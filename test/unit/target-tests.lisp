@@ -13,49 +13,26 @@
 ;;; %parse-session-component has non-trivial logic for the colon/dot cases.
 ;;; Testing it directly gives coverage independent of %parse-target's full path.
 
-(test parse-session-component-with-colon
-  "%parse-session-component returns text before the colon when colon is present."
-  (is (string= "sess"
-               (cl-tmux::%parse-session-component "sess:win" 4 nil))
-      "session component must be 'sess' when colon is at position 4"))
-
-(test parse-session-component-no-colon-with-dot
-  "%parse-session-component returns text before the dot when no colon is present."
-  (is (string= "sess"
-               (cl-tmux::%parse-session-component "sess.2" nil 4))
-      "session component must be 'sess' when no colon but dot is at position 4"))
-
-(test parse-session-component-no-colon-no-dot
-  "%parse-session-component returns the whole string when neither colon nor dot."
-  (is (string= "mysession"
-               (cl-tmux::%parse-session-component "mysession" nil nil))
-      "session component must be the whole string when no colon or dot"))
-
-(test parse-session-component-empty-before-colon-returns-nil
-  "%parse-session-component returns NIL when the text before the colon is empty."
-  (is (null (cl-tmux::%parse-session-component ":win" 0 nil))
-      "session component must be NIL when colon is at position 0"))
-
-(test parse-session-component-empty-string-returns-nil
-  "%parse-session-component returns NIL for the empty string."
-  (is (null (cl-tmux::%parse-session-component "" nil nil))
-      "session component must be NIL for empty input"))
+(test parse-session-component-table
+  "%parse-session-component extracts text before the colon or dot, returning NIL for empty."
+  (dolist (c '(("sess:win"   4   nil "sess"      "text before colon")
+               ("sess.2"     nil 4   "sess"      "text before dot (no colon)")
+               ("mysession"  nil nil "mysession" "whole string (no colon or dot)")
+               (":win"       0   nil nil         "NIL when empty before colon")
+               (""           nil nil nil         "NIL for empty string")))
+    (destructuring-bind (input colon-pos dot-pos expected desc) c
+      (is (equal expected (cl-tmux::%parse-session-component input colon-pos dot-pos))
+          "~A" desc))))
 
 ;;; ── %parse-target ────────────────────────────────────────────────────────────
 
-(test parse-target-nil-returns-all-nil
-  "%parse-target with NIL returns (nil nil nil)."
-  (multiple-value-bind (s w p) (cl-tmux::%parse-target nil)
-    (is (null s))
-    (is (null w))
-    (is (null p))))
-
-(test parse-target-empty-string-returns-all-nil
-  "%parse-target with empty string returns (nil nil nil)."
-  (multiple-value-bind (s w p) (cl-tmux::%parse-target "")
-    (is (null s))
-    (is (null w))
-    (is (null p))))
+(test parse-target-nil-and-empty-return-all-nil
+  "%parse-target with NIL or empty string returns (nil nil nil) for all three components."
+  (dolist (input '(nil ""))
+    (multiple-value-bind (s w p) (cl-tmux::%parse-target input)
+      (is (null s) "session must be NIL for input ~S" input)
+      (is (null w) "window must be NIL for input ~S" input)
+      (is (null p) "pane must be NIL for input ~S" input))))
 
 (test parse-target-session-only
   "%parse-target with plain name extracts only the session component."
