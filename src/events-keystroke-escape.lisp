@@ -138,38 +138,39 @@
     (let ((base (and param (%csi-tilde-key-name param))))
       (when base (concatenate 'string (%modifier-prefix (or mod 1)) base)))))
 
-;;; ── Tilde / SS3 key-name fact tables (Prolog-style) ─────────────────────────
+;;; ── Key-name fact tables (Prolog-style) ─────────────────────────────────────
 ;;;
-;;; define-tilde-key-table builds %csi-tilde-key-name from a declarative (param name)
-;;; fact table.  Home and End each appear twice (tmux encodes them as both ESC[1~/ESC[7~
-;;; and ESC[4~/ESC[8~ depending on terminal type) — listing each as its own row mirrors
-;;; the underlying fact "param(1,Home) :- true." without needing multi-param case arms.
+;;; define-key-lookup-table generates a (param → key-name) lookup function from a
+;;; flat fact table.  Integer literals dispatch via EQL; character literals are
+;;; normalised to their char-code at macro-expansion time so the generated COND
+;;; stays homogeneous (integer comparisons throughout, no runtime CHAR= overhead).
+;;; Used for both the CSI-tilde (numeric param) and SS3 (final character) tables.
 
-(defmacro define-tilde-key-table (&rest specs)
-  "Build %CSI-TILDE-KEY-NAME from a declarative (param name) fact table.
-   Each SPEC is (numeric-param key-name-string); multiple rows with the same NAME
-   express alternate encodings of the same key (e.g. Home at params 1 and 7)."
-  `(defun %csi-tilde-key-name (param)
-     "Map the numeric PARAM of an ESC [ <param> ~ sequence to its canonical tmux key
-      name, or NIL when PARAM is not a recognised navigation/function key.  Covers
-      Home/End/Insert/Delete, PageUp/PageDown, and the vt-style F1–F12 finals.  The
-      names match those produced by %parse-key-token on the bind side (after its
-      alias normalisation), so `bind -n F5 <cmd>` / `bind -n PPage <cmd>` resolve."
+(defmacro define-key-lookup-table (fn-name param-var doc &rest specs)
+  "Generate a key-lookup function FN-NAME(PARAM-VAR) → key-name-string | nil.
+   Integer specs dispatch via EQL; character specs use CHAR-CODE so the generated
+   COND stays homogeneous (integer comparisons throughout)."
+  `(defun ,fn-name (,param-var)
+     ,doc
      (cond ,@(mapcar (lambda (spec)
-                       `((eql param ,(first spec)) ,(second spec)))
+                       `((eql ,param-var ,(let ((k (first spec)))
+                                            (if (characterp k) (char-code k) k)))
+                         ,(second spec)))
                      specs)
            (t nil))))
 
-(define-tilde-key-table
-  (1  "Home")    (7  "Home")
-  (2  "Insert")
-  (3  "Delete")
-  (4  "End")     (8  "End")
-  (5  "PageUp")
-  (6  "PageDown")
-  (11 "F1")  (12 "F2")  (13 "F3")  (14 "F4")
-  (15 "F5")  (17 "F6")  (18 "F7")  (19 "F8")
-  (20 "F9")  (21 "F10") (23 "F11") (24 "F12"))
+(define-key-lookup-table %csi-tilde-key-name param
+  "Map the numeric PARAM of an ESC [ <param> ~ sequence to its canonical tmux key
+   name, or NIL when PARAM is not a recognised navigation/function key.  Covers
+   Home/End/Insert/Delete, PageUp/PageDown, and the vt-style F1-F12 finals."
+  (1 "Home") (7 "Home")
+  (2 "Insert")
+  (3 "Delete")
+  (4 "End") (8 "End")
+  (5 "PageUp") (6 "PageDown")
+  (11 "F1") (12 "F2") (13 "F3") (14 "F4")
+  (15 "F5") (17 "F6") (18 "F7") (19 "F8")
+  (20 "F9") (21 "F10") (23 "F11") (24 "F12"))
 
 (defun %handle-escape-csi-tilde (session buffer length)
   "Handle a complete ESC [ <param> ~ sequence at root (LENGTH bytes).  A root-table
@@ -178,44 +179,30 @@
    behaviour is preserved: PageUp/PageDown scroll in copy mode, and any other or
    unbound key is forwarded raw so the pane's application still receives it.
    Returns (values nil #'%ground-input-state)."
-  (multiple-value-bind (param mod) (%csi-tilde-parse buffer length)
-    (let* ((base (and param (%csi-tilde-key-name param)))
-           (key  (and base (concatenate 'string (%modifier-prefix (or mod 1)) base))))
-      (cond
-        ;; A user binding (`bind -n F5`/`bind -n C-F5`/`bind -n PageUp`) wins.
-        ((and key (%try-bound-string-key session +table-root+ key)))
-        ;; PageUp/PageDown in copy mode (unmodified only): scroll one screenful.
-        ;; param=5 → up (positive delta), param=6 → down (negative delta).
-        ((and (member param '(5 6)) (eql mod 1) (%copy-mode-active-p session))
-         (let ((screen (%active-screen session)))
-           (when screen
-             (copy-mode-scroll screen (if (eql param 5)
-                                          (screen-height screen)
-                                          (- (screen-height screen))))
-             (setf *dirty* t))))
-        ;; Unbound and not a copy-mode scroll: forward raw bytes to the pane.
-        (t
-         (unless (%copy-mode-active-p session)
-           (%forward-octets-synchronized session (subseq buffer 0 length)))))))
+  (let ((key (%csi-tilde-key buffer length)))
+    (cond
+      ((and key (%try-bound-string-key session +table-root+ key)))
+      ;; Unmodified PageUp/Down in copy mode: scroll one screenful.
+      ;; key="PageUp"→positive delta, "PageDown"→negative.  Modified variants
+      ;; (key="C-PageUp" etc.) fall through to the raw-forward branch below.
+      ((and (member key '("PageUp" "PageDown") :test #'string=)
+            (%copy-mode-active-p session))
+       (let ((screen (%active-screen session)))
+         (when screen
+           (copy-mode-scroll screen (if (string= key "PageUp")
+                                        (screen-height screen)
+                                        (- (screen-height screen))))
+           (setf *dirty* t))))
+      (t
+       (unless (%copy-mode-active-p session)
+         (%forward-octets-synchronized session (subseq buffer 0 length))))))
   (values nil #'%ground-input-state))
 
-;;; define-ss3-key-table builds %ss3-key-name from a declarative (char name) fact table.
-;;; ESC O P/Q/R/S carry F1-F4 (xterm/screen; NOT the ESC[N~ path); ESC O H/F carry Home/End.
-
-(defmacro define-ss3-key-table (&rest specs)
-  "Build %SS3-KEY-NAME from a declarative (char name) fact table.
-   Each SPEC is (character-literal key-name-string) matching the final byte of ESC O <final>."
-  `(defun %ss3-key-name (final-byte)
-     "Map the final byte of an SS3 sequence ESC O <final> to its canonical tmux key
-      name, or NIL when it is not a recognised bindable key.  Covers F1-F4 (the
-      xterm/screen encoding ESC O P/Q/R/S, which the ESC[N~ path does NOT carry)
-      and Home/End (ESC O H/F).  Names match %parse-key-token's bind-side output."
-     (cond ,@(mapcar (lambda (spec)
-                       `((char= (code-char final-byte) ,(first spec)) ,(second spec)))
-                     specs)
-           (t nil))))
-
-(define-ss3-key-table
+(define-key-lookup-table %ss3-key-name final-byte
+  "Map the final byte of an SS3 sequence ESC O <final> to its canonical tmux key
+   name, or NIL when it is not a recognised bindable key.  Covers F1-F4
+   (ESC O P/Q/R/S, the xterm/screen encoding not carried by the ESC[N~ path)
+   and Home/End (ESC O H/F)."
   (#\P "F1") (#\Q "F2") (#\R "F3") (#\S "F4")
   (#\H "Home") (#\F "End"))
 
