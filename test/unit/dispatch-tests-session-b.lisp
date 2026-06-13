@@ -213,29 +213,17 @@
 ;;; %parse-flag-token returns a LIST of (char . value) entries (one per char in a
 ;;; cluster), so each assertion reads (first entries) / (second entries).
 
-(test parse-flag-token-value-attached
-  "%parse-flag-token with attached value (-t2) extracts value without consuming remaining."
-  (multiple-value-bind (entries new-rest)
-      (cl-tmux::%parse-flag-token "-t2" "t" '("foo"))
-    (is (eql #\t (car (first entries))) "flag char must be #\\t")
-    (is (equal "2" (cdr (first entries))) "attached value must be \"2\"")
-    (is (equal '("foo") new-rest) "remaining tokens must be unchanged")))
-
-(test parse-flag-token-value-separate
-  "%parse-flag-token with separate value (-t 2) consumes the next token."
-  (multiple-value-bind (entries new-rest)
-      (cl-tmux::%parse-flag-token "-t" "t" '("2" "foo"))
-    (is (eql #\t (car (first entries))) "flag char must be #\\t")
-    (is (equal "2" (cdr (first entries))) "value must be \"2\" from next token")
-    (is (equal '("foo") new-rest) "next token must be consumed")))
-
-(test parse-flag-token-boolean
-  "%parse-flag-token with a boolean flag (-d) does not consume next token."
-  (multiple-value-bind (entries new-rest)
-      (cl-tmux::%parse-flag-token "-d" "t" '("foo"))
-    (is (eql #\d (car (first entries))) "flag char must be #\\d")
-    (is (eq t (cdr (first entries))) "boolean flag value must be T")
-    (is (equal '("foo") new-rest) "remaining tokens must be unchanged")))
+(test parse-flag-token-simple-table
+  "%parse-flag-token handles attached values, separate values, and boolean flags."
+  (dolist (row '(("-t2" "t" ("foo")      #\t "2"  ("foo") "attached value -t2")
+                 ("-t"  "t" ("2" "foo")  #\t "2"  ("foo") "separate value -t 2")
+                 ("-d"  "t" ("foo")      #\d t     ("foo") "boolean flag -d")))
+    (destructuring-bind (token value-flags rest expected-char expected-val expected-rest desc) row
+      (multiple-value-bind (entries new-rest)
+          (cl-tmux::%parse-flag-token token value-flags rest)
+        (is (equal expected-char (car (first entries))) "~A: flag char" desc)
+        (is (equal expected-val  (cdr (first entries))) "~A: flag value" desc)
+        (is (equal expected-rest new-rest)              "~A: remaining" desc)))))
 
 (test parse-flag-token-clusters-boolean-flags
   "%parse-flag-token splits a cluster of boolean flags: -ga → -g -a."

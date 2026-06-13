@@ -199,21 +199,14 @@
 
 ;;; ── show-window-options / show-session-options ───────────────────────────────
 
-(test dispatch-show-window-options-shows-overlay
-  ":show-window-options shows an overlay with window options."
-  (with-fake-session (s)
-    (let ((*overlay* nil))
-      (cl-tmux::dispatch-command s :show-window-options nil)
-      (is (and *overlay* (plusp (length *overlay*)))
-          ":show-window-options must produce an overlay"))))
-
-(test dispatch-show-session-options-shows-overlay
-  ":show-session-options shows an overlay with session options."
-  (with-fake-session (s)
-    (let ((*overlay* nil))
-      (cl-tmux::dispatch-command s :show-session-options nil)
-      (is (and *overlay* (plusp (length *overlay*)))
-          ":show-session-options must produce an overlay"))))
+(test dispatch-show-options-overlay-table
+  ":show-window-options, :show-session-options, :list-clients, and :show-environment each produce a non-empty overlay."
+  (dolist (cmd '(:show-window-options :show-session-options :list-clients :show-environment))
+    (with-fake-session (s)
+      (let ((*overlay* nil))
+        (cl-tmux::dispatch-command s cmd nil)
+        (is (and *overlay* (plusp (length *overlay*)))
+            "~A must produce a non-empty overlay" cmd)))))
 
 ;;; ── server management commands ───────────────────────────────────────────────
 
@@ -227,14 +220,6 @@
       (is (search "server" *overlay*)
           ":server-info overlay must mention 'server'"))))
 
-(test dispatch-list-clients-shows-overlay
-  ":list-clients shows an overlay listing connected clients."
-  (with-fake-session (s)
-    (let ((*overlay* nil))
-      (cl-tmux::dispatch-command s :list-clients nil)
-      (is (and *overlay* (plusp (length *overlay*)))
-          ":list-clients must produce an overlay"))))
-
 (test dispatch-lock-server-locks-all-sessions
   ":lock-server sets locked-p on all sessions."
   (with-fake-session (s1)
@@ -247,13 +232,6 @@
         (is (cl-tmux/model:session-locked-p s2)
             ":lock-server must lock all sessions including s2")))))
 
-(test dispatch-show-environment-shows-overlay
-  ":show-environment shows an overlay with environment variables."
-  (with-fake-session (s)
-    (let ((*overlay* nil))
-      (cl-tmux::dispatch-command s :show-environment nil)
-      (is (and *overlay* (plusp (length *overlay*)))
-          ":show-environment must produce an overlay"))))
 
 ;;; ── dynamic prefix key ───────────────────────────────────────────────────────
 
