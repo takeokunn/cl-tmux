@@ -302,26 +302,20 @@
 
 ;;; ── target-field-p predicate ────────────────────────────────────────────────
 
-(test target-field-p-detects-session-sigil
-  "A field starting with '$' is a target (session sigil)."
-  (is (cl-tmux/protocol:target-field-p "$0"))
-  (is (cl-tmux/protocol:target-field-p "$99")))
-
-(test target-field-p-detects-colon-syntax
-  "A field containing ':' is a target (session:window format)."
-  (is (cl-tmux/protocol:target-field-p "mysession:1"))
-  (is (cl-tmux/protocol:target-field-p "0:1")))
-
-(test target-field-p-detects-dot-syntax
-  "A field containing '.' is a target (window.pane format)."
-  (is (cl-tmux/protocol:target-field-p "0.1"))
-  (is (cl-tmux/protocol:target-field-p "mysession:0.2")))
-
-(test target-field-p-rejects-plain-command-names
-  "Plain command names (no '$', ':', or '.') are not targets."
-  (is (not (cl-tmux/protocol:target-field-p "new-window")))
-  (is (not (cl-tmux/protocol:target-field-p "select-pane")))
-  (is (not (cl-tmux/protocol:target-field-p ""))))
+(test target-field-p-table
+  "target-field-p returns T for session sigil ($), colon (:), or dot (.) fields; NIL for plain names."
+  (dolist (row '(("$0"            t   "session sigil $ → target")
+                 ("$99"           t   "session sigil $99 → target")
+                 ("mysession:1"   t   "colon syntax → target")
+                 ("0:1"           t   "numeric colon syntax → target")
+                 ("0.1"           t   "dot syntax → target")
+                 ("mysession:0.2" t   "dot+colon syntax → target")
+                 ("new-window"    nil "plain command name → not target")
+                 ("select-pane"   nil "plain command name → not target")
+                 (""              nil "empty string → not target")))
+    (destructuring-bind (input expected desc) row
+      (is (eq expected (if (cl-tmux/protocol:target-field-p input) t nil))
+          "~A" desc))))
 
 (test decode-command-payload-command-name-with-colon-is-not-misidentified
   "A command name containing ':' is not misidentified as a target when only
