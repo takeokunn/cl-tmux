@@ -439,9 +439,9 @@
                                 session)))
       (if kill-all-others
           ;; -a: kill all sessions except target-sess (the "keep" session)
-          (dolist (entry (remove-if (lambda (e) (eq (cdr e) target-sess))
-                                    *server-sessions*))
-            (%destroy-session (cdr entry)))
+          (loop for (nil . sess) in (remove-if (lambda (e) (eq (cdr e) target-sess))
+                                               *server-sessions*)
+                do (%destroy-session sess))
           ;; No -a: kill target-sess
           (when target-sess
             (let ((name        (session-name target-sess))
