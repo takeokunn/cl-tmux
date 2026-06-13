@@ -92,14 +92,16 @@
    checks the :locked flag and skips the condition-notify entirely.  This
    allows callers to temporarily block notifications without losing them
    permanently — the channel is not destroyed, only silenced."
-  (setf (getf (%ensure-channel name) :locked) t))
+  (let ((ch (%ensure-channel name)))
+    (setf (getf ch :locked) t)))
 
 (defun unlock-channel (name)
   "Unlock channel NAME, allowing subsequent signal-channel calls to notify waiters.
    Paired with lock-channel: once unlocked, signal-channel will again call
    condition-notify on the channel's condition variable.  Does not retroactively
    deliver signals that were suppressed while the channel was locked."
-  (setf (getf (%ensure-channel name) :locked) nil))
+  (let ((ch (%ensure-channel name)))
+    (setf (getf ch :locked) nil)))
 
 (defun %cap-list (list limit)
   "Return LIST truncated to at most LIMIT elements; returns LIST unchanged when
