@@ -126,29 +126,15 @@
 
 ;;; ── window struct default slots ─────────────────────────────────────────────
 
-(test window-zoom-p-defaults-nil
-  "window-zoom-p defaults to NIL for a freshly created window."
-  (let ((win (make-window :id 1 :name "w")))
-    (is (null (cl-tmux/model:window-zoom-p win))
-        "window-zoom-p must default to NIL")))
-
-(test window-zoom-tree-defaults-nil
-  "window-zoom-tree defaults to NIL for a freshly created window."
-  (let ((win (make-window :id 1 :name "w")))
-    (is (null (cl-tmux/model:window-zoom-tree win))
-        "window-zoom-tree must default to NIL")))
-
-(test window-last-active-defaults-nil
-  "window-last-active defaults to NIL for a freshly created window."
-  (let ((win (make-window :id 1 :name "w")))
-    (is (null (window-last-active win))
-        "window-last-active must default to NIL")))
-
-(test window-automatic-rename-p-defaults-true
-  "window-automatic-rename-p defaults to T for a freshly created window."
-  (let ((win (make-window :id 1 :name "w")))
-    (is-true (window-automatic-rename-p win)
-             "window-automatic-rename-p must default to T")))
+(test window-slot-defaults-table
+  "Freshly created window slots have expected defaults: zoom-p=nil, zoom-tree=nil, last-active=nil, automatic-rename-p=t."
+  (dolist (c '((cl-tmux/model:window-zoom-p      nil "window-zoom-p defaults nil")
+               (cl-tmux/model:window-zoom-tree    nil "window-zoom-tree defaults nil")
+               (window-last-active                nil "window-last-active defaults nil")
+               (window-automatic-rename-p          t  "window-automatic-rename-p defaults t")))
+    (destructuring-bind (accessor expected desc) c
+      (let ((win (make-window :id 1 :name "w")))
+        (is (equal expected (funcall accessor win)) "~A" desc)))))
 
 (test window-automatic-rename-p-settable
   "window-automatic-rename-p can be set to NIL and read back."

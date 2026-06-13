@@ -40,23 +40,29 @@
                  "SGR ~D: expected fg ~D got ~D"
                  code expected-fg (fg-at s 0 0)))))
 
-(test sgr-bold
-  "SGR 1 sets the bold attribute bit."
-  (with-screen (s 10 2)
-    (feed s (esc "[1mB"))
-    (is (logbitp 0 (attrs-at s 0 0)) "bold bit not set")))
+(test sgr-basic-attrs-set-table
+  "SGR 1/2/4/5/7/8/9 each set their respective attribute bit on the written cell."
+  (dolist (c '(("[1mX" 0 "SGR 1 → bold (bit 0)")
+               ("[2mX" 1 "SGR 2 → dim (bit 1)")
+               ("[7mX" 2 "SGR 7 → reverse (bit 2)")
+               ("[4mX" 3 "SGR 4 → underline (bit 3)")
+               ("[5mX" 4 "SGR 5 → blink (bit 4)")
+               ("[8mX" 6 "SGR 8 → conceal (bit 6)")
+               ("[9mX" 7 "SGR 9 → strikethrough (bit 7)")))
+    (destructuring-bind (seq bit desc) c
+      (with-screen (s 10 2)
+        (feed s (esc seq))
+        (is (logbitp bit (attrs-at s 0 0)) "~A" desc)))))
 
-(test sgr-dim
-  "SGR 2 sets the dim attribute bit."
-  (with-screen (s 10 2)
-    (feed s (esc "[2mD"))
-    (is (not (zerop (logand (attrs-at s 0 0) #b010))) "dim bit not set")))
-
-(test sgr-reverse
-  "SGR 7 sets the reverse-video attribute bit."
-  (with-screen (s 10 2)
-    (feed s (esc "[7mR"))
-    (is (not (zerop (logand (attrs-at s 0 0) #b100))) "reverse bit not set")))
+(test sgr-attr-clear-table
+  "SGR 28/29 each clear their respective attribute bit."
+  (dolist (c '(("[8mX" "[28mY" 6 "SGR 28 clears conceal (bit 6)")
+               ("[9mX" "[29mY" 7 "SGR 29 clears strikethrough (bit 7)")))
+    (destructuring-bind (set-seq clear-seq bit desc) c
+      (with-screen (s 10 2)
+        (feed s (esc set-seq))
+        (feed s (esc clear-seq))
+        (is-false (logbitp bit (attrs-at s 1 0)) "~A" desc)))))
 
 (test sgr-reset
   "SGR 0 after setting colours and bold restores defaults on the next cell."
@@ -64,18 +70,6 @@
     (feed s (esc "[31;1mX"))
     (feed s (esc "[0mY"))
     (check-cell s 1 0 :fg 7 :bg 0 :attrs 0)))
-
-(test sgr-underline
-  "SGR 4 sets the underline attribute bit (bit 3 = #x08)."
-  (with-screen (s 10 2)
-    (feed s (esc "[4mU"))
-    (is (logbitp 3 (attrs-at s 0 0)) "underline bit (3) must be set after SGR 4")))
-
-(test sgr-blink
-  "SGR 5 sets the blink attribute bit (bit 4 = #x10)."
-  (with-screen (s 10 2)
-    (feed s (esc "[5mB"))
-    (is (logbitp 4 (attrs-at s 0 0)) "blink bit (4) must be set after SGR 5")))
 
 (test sgr-default-fg-39
   "SGR 39 resets the foreground colour to the default (7) without touching bg or attrs."
@@ -131,73 +125,36 @@
     (is-false (logbitp 5 (attrs-at s 1 0)) "italic bit (5) must be cleared by SGR 23")
     (is       (logbitp 0 (attrs-at s 1 0)) "bold bit (0) must remain after SGR 23")))
 
-(test sgr-conceal-sets-bit
-  "SGR 8 sets the conceal attribute bit (6)."
-  (with-screen (s 10 2)
-    (feed s (esc "[8mX"))
-    (is (logbitp 6 (attrs-at s 0 0)) "conceal bit (6) must be set after SGR 8")))
 
-(test sgr-conceal-off-28
-  "SGR 28 clears the conceal bit (6)."
-  (with-screen (s 10 2)
-    (feed s (esc "[8mX"))
-    (feed s (esc "[28mY"))
-    (is-false (logbitp 6 (attrs-at s 1 0)) "conceal bit (6) must be cleared by SGR 28")))
+(test sgr-256color-apply-sgr-table
+  "apply-sgr 38;5;N/48;5;N sets fg/bg to the 256-colour palette index N."
+  (dolist (c '((38 cl-tmux/terminal/types:screen-cur-fg 200 "256-color fg=200")
+               (48 cl-tmux/terminal/types:screen-cur-bg  42 "256-color bg=42")))
+    (destructuring-bind (code accessor n desc) c
+      (with-screen (s 10 2)
+        (cl-tmux/terminal/sgr:apply-sgr s (list code 5 n))
+        (is (= n (funcall accessor s)) "~A" desc)))))
 
-(test sgr-strikethrough-sets-bit
-  "SGR 9 sets the strikethrough attribute bit (7)."
-  (with-screen (s 10 2)
-    (feed s (esc "[9mX"))
-    (is (logbitp 7 (attrs-at s 0 0)) "strikethrough bit (7) must be set after SGR 9")))
+(test sgr-truecolor-apply-sgr-table
+  "apply-sgr 38;2;R;G;B and 48;2;R;G;B encode true-colour fg/bg (bit 24 = truecolor flag)."
+  (dolist (c (list
+              (list '(38 2 255 128 0) 'cl-tmux/terminal/types:screen-cur-fg
+                    (logior #x1000000 (ash 255 16) (ash 128 8) 0) "truecolor fg 255;128;0")
+              (list '(48 2 0 128 255) 'cl-tmux/terminal/types:screen-cur-bg
+                    (logior #x1000000 (ash 0 16) (ash 128 8) 255) "truecolor bg 0;128;255")))
+    (destructuring-bind (params accessor expected desc) c
+      (with-screen (s 10 2)
+        (cl-tmux/terminal/sgr:apply-sgr s params)
+        (is (= expected (funcall accessor s)) "~A" desc)))))
 
-(test sgr-strikethrough-off-29
-  "SGR 29 clears the strikethrough bit (7)."
-  (with-screen (s 10 2)
-    (feed s (esc "[9mX"))
-    (feed s (esc "[29mY"))
-    (is-false (logbitp 7 (attrs-at s 1 0)) "strikethrough bit (7) must be cleared by SGR 29")))
-
-(test sgr-256color-fg
-  "SGR 38;5;N sets the fg to the 256-color palette index N."
-  (with-screen (s 10 2)
-    (cl-tmux/terminal/sgr:apply-sgr s '(38 5 200))
-    (is (= 200 (cl-tmux/terminal/types:screen-cur-fg s))
-        "apply-sgr 38;5;200 must set cur-fg to 200")))
-
-(test sgr-256color-bg
-  "SGR 48;5;N sets the bg to the 256-color palette index N."
-  (with-screen (s 10 2)
-    (cl-tmux/terminal/sgr:apply-sgr s '(48 5 42))
-    (is (= 42 (cl-tmux/terminal/types:screen-cur-bg s))
-        "apply-sgr 48;5;42 must set cur-bg to 42")))
-
-(test sgr-truecolor-fg
-  "SGR 38;2;R;G;B sets fg to the true-color encoding (bit 24 set, bits 0-23 = RGB)."
-  (with-screen (s 10 2)
-    (cl-tmux/terminal/sgr:apply-sgr s '(38 2 255 128 0))
-    (let ((expected (logior #x1000000 (ash 255 16) (ash 128 8) 0)))
-      (is (= expected (cl-tmux/terminal/types:screen-cur-fg s))
-          "apply-sgr 38;2;255;128;0 must encode #x1FF8000 in cur-fg"))))
-
-(test sgr-truecolor-bg
-  "SGR 48;2;R;G;B sets bg to the true-color encoding."
-  (with-screen (s 10 2)
-    (cl-tmux/terminal/sgr:apply-sgr s '(48 2 0 128 255))
-    (let ((expected (logior #x1000000 (ash 0 16) (ash 128 8) 255)))
-      (is (= expected (cl-tmux/terminal/types:screen-cur-bg s))
-          "apply-sgr 48;2;0;128;255 must encode true-color in cur-bg"))))
-
-(test sgr-256color-fg-via-emulator
-  "ESC[38;5;200m fed through the emulator sets fg=200 on the next written cell."
-  (with-screen (s 10 2)
-    (feed s (esc "[38;5;200mX"))
-    (is (= 200 (fg-at s 0 0)) "256-color fg=200 must be stored in cell after ESC[38;5;200m")))
-
-(test sgr-256color-bg-via-emulator
-  "ESC[48;5;42m fed through the emulator sets bg=42 on the next written cell."
-  (with-screen (s 10 2)
-    (feed s (esc "[48;5;42mX"))
-    (is (= 42 (bg-at s 0 0)) "256-color bg=42 must be stored in cell after ESC[48;5;42m")))
+(test sgr-256color-emulator-table
+  "ESC[38;5;N m and ESC[48;5;N m set fg/bg 256-colour indices via the terminal emulator."
+  (dolist (c '(("[38;5;200mX" fg-at 200 "256-color fg=200 via ESC[38;5;200m")
+               ("[48;5;42mX"  bg-at  42 "256-color bg=42  via ESC[48;5;42m")))
+    (destructuring-bind (seq cell-fn n desc) c
+      (with-screen (s 10 2)
+        (feed s (esc seq))
+        (is (= n (funcall cell-fn s 0 0)) "~A" desc)))))
 
 (test sgr-truecolor-black
   "SGR 38;2;0;0;0 encodes true-black: bit 24 set, R=G=B=0."
@@ -276,27 +233,18 @@
 
 ;;; ── %pen-to-sgr-params (inverse SGR, for DECRQSS) ────────────────────────────
 
-(test pen-to-sgr-params-reset
-  "A default pen (fg 7, bg 0, no attrs) reconstructs to just \"0\"."
-  (is (string= "0" (cl-tmux/terminal/sgr:%pen-to-sgr-params 7 0 0 0))
-      "default pen → \"0\""))
-
-(test pen-to-sgr-params-bold-red
-  "Bold (attr bit 0) + red fg (1) reconstructs to \"0;1;31\"."
-  (is (string= "0;1;31" (cl-tmux/terminal/sgr:%pen-to-sgr-params 1 0 1 0))
-      "bold red → \"0;1;31\""))
-
-(test pen-to-sgr-params-truecolor-fg
-  "A true-colour fg reconstructs to 0;38;2;R;G;B."
-  (is (string= "0;38;2;255;128;0"
-               (cl-tmux/terminal/sgr:%pen-to-sgr-params
-                (logior #x1000000 (ash 255 16) (ash 128 8) 0) 0 0 0))
-      "truecolor fg → 0;38;2;255;128;0"))
-
-(test pen-to-sgr-params-bright-bg
-  "A bright bg (index 12) reconstructs to 0;104; default fg (7) is omitted."
-  (is (string= "0;104" (cl-tmux/terminal/sgr:%pen-to-sgr-params 7 12 0 0))
-      "bright bg 12 → \"0;104\""))
+(test pen-to-sgr-params-table
+  "%pen-to-sgr-params reconstructs the SGR parameter string from fg/bg/attrs/unicode."
+  (dolist (c (list
+              '(7 0 0 0  "0"                "default pen")
+              '(1 0 1 0  "0;1;31"           "bold red fg")
+              (list (logior #x1000000 (ash 255 16) (ash 128 8) 0) 0 0 0
+                    "0;38;2;255;128;0"      "truecolor fg 255;128;0")
+              '(7 12 0 0 "0;104"            "bright bg 12")))
+    (destructuring-bind (fg bg attrs unicode expected desc) c
+      (is (string= expected
+                   (cl-tmux/terminal/sgr:%pen-to-sgr-params fg bg attrs unicode))
+          "~A → ~S" desc expected))))
 
 (test sgr-reset-clears-new-attrs
   "SGR 0 after setting italic, conceal, and strikethrough zeroes all attr bits."
