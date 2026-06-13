@@ -244,29 +244,14 @@
 
 ;;; ── #(shell-cmd) expansion ───────────────────────────────────────────────────
 
-(test expand-format-shell-cmd-echo
-  "#(echo hello) expands to the command output."
-  (let ((result (fmt "#(echo hello)")))
-    (is (string= "hello" result)
-        "#(echo hello) must expand to \"hello\", got ~S" result)))
-
-(test expand-format-shell-cmd-no-trailing-newline
-  "#(printf foo) does not add a trailing newline."
-  (let ((result (fmt "#(printf '%s' foo)")))
-    (is (string= "foo" result)
-        "#(printf '%%s' foo) must expand to \"foo\" without newline, got ~S" result)))
-
-(test expand-format-shell-cmd-error-returns-empty
-  "#(false) (failing command) returns empty string without signalling."
-  (let ((result (fmt "#(false)")))
-    (is (stringp result) "#(false) result must be a string")
-    (is (string= "" result) "#(false) must return empty string on non-zero exit")))
-
-(test expand-format-shell-cmd-mixed-with-text
-  "#(echo ok) embedded in a longer format string expands inline."
-  (let ((result (fmt "status: #(echo ok) done")))
-    (is (string= "status: ok done" result)
-        "shell cmd must expand inline, got ~S" result)))
+(test expand-format-shell-cmd-table
+  "#(cmd) expands to command output; errors return empty string; embeds inline."
+  (dolist (c '(("#(echo hello)"           "hello"          "echo output")
+               ("#(printf '%s' foo)"      "foo"            "no trailing newline")
+               ("#(false)"               ""               "error → empty string")
+               ("status: #(echo ok) done" "status: ok done" "embedded in text")))
+    (destructuring-bind (spec expected desc) c
+      (is (string= expected (fmt spec)) "~A" desc))))
 
 ;;; ── #[attr] style directive — no crash guarantee ─────────────────────────────
 
@@ -393,44 +378,32 @@
   (is (string= "a\\;b"  (fmt "#{q:p}" :p "a;b"))   "semicolon is escaped")
   (is (string= "plain"  (fmt "#{q:p}" :p "plain")) "ordinary text is unchanged"))
 
-(test format-modifier-char-from-code
-  "#{a:N} yields the single character whose character code is N."
-  (is (string= "#" (fmt "#{a:35}"))  "code 35 is '#'")
-  (is (string= "A" (fmt "#{a:65}"))  "code 65 is 'A'")
-  (is (string= "a" (fmt "#{a:97}"))  "code 97 is 'a'")
-  (is (string= "B" (fmt "#{a:#{code}}" :code "66"))
-      "operand may be a nested format resolving to a number")
-  (is (string= "" (fmt "#{a:notanumber}"))
-      "a non-numeric operand yields the empty string"))
-
-(test format-modifier-char-from-code-zero-is-nul
-  "#{a:0} yields a length-1 string whose char is #\\Nul."
-  (let ((result (fmt "#{a:0}")))
-    (is (= 1 (length result)))
-    (is (char= #\Nul (char result 0)))))
+(test format-modifier-char-from-code-table
+  "#{a:N} yields the single character at code point N; nested format operands work."
+  (dolist (c (list (list "#{a:35}"           "#"                    "code 35 is '#'")
+                   (list "#{a:65}"           "A"                    "code 65 is 'A'")
+                   (list "#{a:97}"           "a"                    "code 97 is 'a'")
+                   (list "#{a:0}"            (string (code-char 0)) "code 0 is NUL")
+                   (list "#{a:955}"          (string (code-char 955)) "code 955 is lambda")
+                   (list "#{a:#{code}}"      "B"                    "nested format to code 66")))
+    (destructuring-bind (spec expected desc) c
+      (is (string= expected (fmt spec :code "66")) "~A" desc))))
 
 (test format-modifier-char-from-code-invalid-operands-yield-empty
   "Non-numeric, negative, out-of-range, empty, and nested-empty operands all yield empty."
-  (dolist (spec '("#{a:-1}" "#{a:9999999}" "#{a:}" "#{a:#{missing}}"))
+  (dolist (spec '("#{a:notanumber}" "#{a:-1}" "#{a:9999999}" "#{a:}" "#{a:#{missing}}"))
     (is (string= "" (fmt spec)) "~S must yield the empty string" spec)))
 
-(test format-modifier-char-from-code-large-valid-unicode
-  "#{a:955} yields the Greek small letter lambda."
-  (is (string= (string (code-char 955)) (fmt "#{a:955}"))))
-
-(test format-modifier-basename
-  "#{b:var} yields the final path component of the resolved value."
-  (is (string= "project"
-               (fmt "#{b:pane_current_path}" :pane-current-path "/home/user/project")))
-  (is (string= "b" (fmt "#{b:p}" :p "/a/b/"))   "trailing slash is stripped first")
-  (is (string= "foo" (fmt "#{b:p}" :p "foo"))   "a bare name is its own basename"))
-
-(test format-modifier-dirname
-  "#{d:var} yields the directory part of the resolved value."
-  (is (string= "/home/user"
-               (fmt "#{d:pane_current_path}" :pane-current-path "/home/user/project")))
-  (is (string= "." (fmt "#{d:p}" :p "foo"))   "no slash → current dir")
-  (is (string= "/" (fmt "#{d:p}" :p "/foo"))  "top-level → root"))
+(test format-modifier-basename-dirname-table
+  "#{b:var} yields the basename; #{d:var} yields the dirname."
+  (dolist (c '(("#{b:p}" :p "/home/user/project" "project"    "basename of deep path")
+               ("#{b:p}" :p "/a/b/"              "b"          "trailing slash stripped")
+               ("#{b:p}" :p "foo"                "foo"        "bare name is its own basename")
+               ("#{d:p}" :p "/home/user/project" "/home/user" "dirname of deep path")
+               ("#{d:p}" :p "foo"                "."          "no slash → current dir")
+               ("#{d:p}" :p "/foo"               "/"          "top-level → root")))
+    (destructuring-bind (spec key val expected desc) c
+      (is (string= expected (fmt spec key val)) "~A" desc))))
 
 (test format-modifier-unrecognized-falls-back-to-lookup
   "An unrecognised modifier prefix falls back to a plain variable lookup of the
