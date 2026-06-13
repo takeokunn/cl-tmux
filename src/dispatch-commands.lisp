@@ -114,8 +114,7 @@
    single-client UI; the message is still shown as an overlay).
    Uses show-transient-overlay so it auto-dismisses after the configured duration."
   (with-command-flags+pos (flags positionals args "dtc")
-    (let* ((delay-str  (cdr (assoc #\d flags)))
-           (delay-ms   (and delay-str (parse-integer delay-str :junk-allowed t)))
+    (let* ((delay-ms   (%parse-flag-int flags #\d))
            (target-str (cdr (assoc #\t flags)))
            ;; -t: resolve to a target session/window/pane; fall back to active.
            (tgt-session session)
