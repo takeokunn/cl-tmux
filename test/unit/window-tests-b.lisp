@@ -46,14 +46,6 @@
     (is (= 41 (pane-x p2))    "right secondary pane starts at column 41")
     (is (= 40 (pane-width p2)) "right secondary width = avail - left-w")))
 
-(test apply-named-layout-main-horizontal-single-pane
-  ":main-horizontal with a single pane: pane takes the full window rectangle."
-  (with-blank-window (win p0) (:width 80 :height 24)
-    (apply-named-layout win :main-horizontal)
-    (is (= 0  (pane-x p0)))
-    (is (= 0  (pane-y p0)))
-    (is (= 80 (pane-width  p0)))
-    (is (= 24 (pane-height p0)))))
 
 (test apply-named-layout-main-vertical-two-panes
   ":main-vertical with 2 panes: the main pane spans the left main-pane-width
@@ -88,24 +80,15 @@
     (is (= 13 (pane-y p2))     "bottom secondary pane y = top-h + 1 separator")
     (is (= 12 (pane-height p2)) "bottom secondary height = avail - top-h")))
 
-(test apply-named-layout-main-vertical-single-pane
-  ":main-vertical with a single pane: pane takes the full window rectangle."
-  (with-blank-window (win p0) ()
-    (apply-named-layout win :main-vertical)
-    (is (= 0  (pane-x p0)))
-    (is (= 0  (pane-y p0)))
-    (is (= 80 (pane-width  p0)))
-    (is (= 24 (pane-height p0)))))
-
-(test apply-named-layout-tiled-single-pane
-  ":tiled with 1 pane fills the whole window (1×1 grid)."
-  (with-blank-window (win p0) ()
-    (apply-named-layout win :tiled)
-    ;; ceil(sqrt(1)) = 1 col; ceil(1/1) = 1 row; col-w = 80; row-h = 24
-    (is (= 0  (pane-x p0)))
-    (is (= 0  (pane-y p0)))
-    (is (= 80 (pane-width  p0)))
-    (is (= 24 (pane-height p0)))))
+(test apply-named-layout-single-pane-fills-window-table
+  "All named layouts with a single pane assign it the full window rectangle."
+  (dolist (layout '(:main-horizontal :main-vertical :tiled))
+    (with-blank-window (win p0) ()
+      (apply-named-layout win layout)
+      (is (= 0  (pane-x      p0)) "~A: pane-x"      layout)
+      (is (= 0  (pane-y      p0)) "~A: pane-y"      layout)
+      (is (= 80 (pane-width  p0)) "~A: pane-width"  layout)
+      (is (= 24 (pane-height p0)) "~A: pane-height" layout))))
 
 (test apply-named-layout-tiled-four-panes
   ":tiled with 4 panes produces a 2×2 grid with equal cell sizes."

@@ -14,15 +14,18 @@
 ;;; apply-named-layout.  These tests call the helpers directly to verify edge
 ;;; cases (single pane, grid dimensions) that the high-level path does not reach.
 
-(test layout-even-h-single-pane-fills-window
-  "%layout-even-h with a single pane assigns the full window width."
-  (let* ((pane (tl-pane 1 80 24))
-         (win  (make-window :id 1 :name "w" :width 80 :height 24
-                            :panes (list pane)
-                            :tree  (make-layout-leaf pane))))
-    (cl-tmux/model::%layout-even-h win (window-panes win) 80 24)
-    (is (= 80 (pane-width  pane)) "single pane must span the full width")
-    (is (= 24 (pane-height pane)) "single pane must span the full height")))
+(test layout-even-single-pane-fills-window-table
+  "%layout-even-h and %layout-even-v with a single pane both assign the full window rect."
+  (dolist (row (list (list #'cl-tmux/model::%layout-even-h "even-h")
+                     (list #'cl-tmux/model::%layout-even-v "even-v")))
+    (destructuring-bind (layout-fn desc) row
+      (let* ((pane (tl-pane 1 80 24))
+             (win  (make-window :id 1 :name "w" :width 80 :height 24
+                                :panes (list pane)
+                                :tree  (make-layout-leaf pane))))
+        (funcall layout-fn win (window-panes win) 80 24)
+        (is (= 80 (pane-width  pane)) "~A: single pane must span the full width" desc)
+        (is (= 24 (pane-height pane)) "~A: single pane must span the full height" desc)))))
 
 (test layout-even-h-two-panes-equal-columns
   "%layout-even-h with two panes gives equal columns with a 1-col separator."
@@ -39,16 +42,6 @@
     (is (= 40 (pane-width p0)) "p0 must have 40 cols")
     (is (= 41 (pane-x p1)) "p1 must start one column past the separator")
     (is (= 40 (pane-width p1)) "p1 must have 40 cols")))
-
-(test layout-even-v-single-pane-fills-window
-  "%layout-even-v with a single pane assigns the full window height."
-  (let* ((pane (tl-pane 1 80 24))
-         (win  (make-window :id 1 :name "w" :width 80 :height 24
-                            :panes (list pane)
-                            :tree  (make-layout-leaf pane))))
-    (cl-tmux/model::%layout-even-v win (window-panes win) 80 24)
-    (is (= 80 (pane-width  pane)) "single pane must span the full width")
-    (is (= 24 (pane-height pane)) "single pane must span the full height")))
 
 (test layout-even-v-two-panes-equal-rows
   "%layout-even-v with two panes gives equal rows with a 1-row separator."
