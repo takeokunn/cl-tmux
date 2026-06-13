@@ -247,25 +247,14 @@
     (prompt-cursor-forward)
     (is (= 2 (prompt-cursor-index *prompt*)) "C-f clamped at end")))
 
-(test prompt-cursor-back-inactive-noop
-  "prompt-cursor-back with no active prompt does not error."
-  (with-clean-prompt
-    (finishes (prompt-cursor-back))))
-
-(test prompt-cursor-forward-inactive-noop
-  "prompt-cursor-forward with no active prompt does not error."
-  (with-clean-prompt
-    (finishes (prompt-cursor-forward))))
-
-(test prompt-cursor-bol-inactive-noop
-  "prompt-cursor-bol with no active prompt does not error."
-  (with-clean-prompt
-    (finishes (prompt-cursor-bol))))
-
-(test prompt-cursor-eol-inactive-noop
-  "prompt-cursor-eol with no active prompt does not error."
-  (with-clean-prompt
-    (finishes (prompt-cursor-eol))))
+(test prompt-cursor-and-kill-commands-inactive-noop
+  "Cursor-movement and kill commands silently no-op when no prompt is active."
+  (dolist (fn '(prompt-cursor-back   prompt-cursor-forward
+                prompt-cursor-bol    prompt-cursor-eol
+                prompt-kill-to-end   prompt-kill-to-start
+                prompt-kill-word-back))
+    (with-clean-prompt
+      (finishes (funcall fn) "~A must not signal when inactive" fn))))
 
 (test prompt-insert-at-cursor-position
   "Characters insert at cursor-index, not always at the end."
@@ -314,11 +303,6 @@
     (is (= 0 (prompt-cursor-index *prompt*))
         "cursor must remain at 0 after clearing")))
 
-(test prompt-kill-to-end-inactive-noop
-  "prompt-kill-to-end with no active prompt does not error."
-  (with-clean-prompt
-    (finishes (prompt-kill-to-end))))
-
 (test prompt-kill-to-start
   "C-u deletes from start to cursor."
   (with-prompt-at 2
@@ -334,11 +318,6 @@
         "kill-to-start at start must leave buffer unchanged")
     (is (= 0 (prompt-cursor-index *prompt*))
         "cursor must remain at 0")))
-
-(test prompt-kill-to-start-inactive-noop
-  "prompt-kill-to-start with no active prompt does not error."
-  (with-clean-prompt
-    (finishes (prompt-kill-to-start))))
 
 (test prompt-kill-word-back
   "C-w deletes the previous word."
@@ -400,11 +379,6 @@
         "C-w must kill only 'X', leaving 'foo ' in the buffer")
     (is (= 4 (prompt-cursor-index *prompt*))
         "cursor must move to index 4 (after the space)")))
-
-(test prompt-kill-word-back-inactive-noop
-  "prompt-kill-word-back with no active prompt does not error."
-  (with-clean-prompt
-    (finishes (prompt-kill-word-back))))
 
 ;;; -- handle-prompt-key wiring (real window, no PTY) --------------------------
 
