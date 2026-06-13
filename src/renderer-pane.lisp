@@ -272,23 +272,28 @@
 
 ;;; ── Per-row cell rendering ───────────────────────────────────────────────────
 
+(defstruct (sgr-register (:conc-name sgr-reg-))
+  "Mutable SGR state registers threaded across cells (and rows for hyperlinks).
+   Tracks the last-emitted attribute values so redundant SGR sequences are suppressed."
+  (fg        -1  :type fixnum)
+  (bg        -1  :type fixnum)
+  (attrs     -1  :type fixnum)
+  (attrs2    -1  :type fixnum)
+  (ul-color  -1  :type fixnum)
+  (hyperlink nil))
+
 (defun %render-cell-row (stream screen pane-col-count row
                          sel-active sel-start-row sel-end-row sel-start-col sel-end-col
                          sel-rect-p
-                         prev-fg-cell prev-bg-cell prev-attrs-cell prev-attrs2-cell
-                         prev-ul-color-cell prev-hyperlink-cell
+                         sgr-reg
                          def-fg def-bg mode-style-fg mode-style-bg)
   "Render one row of cells to STREAM, highlighting selected cells.
-   PREV-FG-CELL / PREV-BG-CELL / PREV-ATTRS-CELL / PREV-ATTRS2-CELL /
-   PREV-UL-COLOR-CELL are single-element lists used as mutable registers for SGR
-   change-detection across the row.
-   DEF-FG / DEF-BG (or NIL) are the pane's window-style default colours: a cell
-   carrying the model default (fg=7 / bg=0) is recoloured to them, which dims an
-   inactive pane / highlights the active one.
-   MODE-STYLE-FG / MODE-STYLE-BG (or NIL) are the mode-style selection colours:
-   when either is set, selected cells take those colours instead of the
-   reverse-video default, so `set -g mode-style bg=colour…` works.
-   Returns nothing; updates the prev-* registers as a side-effect."
+   SGR-REG is a sgr-register struct used as mutable state across rows (last-emitted
+   fg/bg/attrs/ul-color/hyperlink); the caller initialises it once and threads it
+   across all rows in the pane.
+   DEF-FG / DEF-BG (or NIL) are the pane's window-style default colours.
+   MODE-STYLE-FG / MODE-STYLE-BG (or NIL) are the mode-style selection colours.
+   Returns nothing; mutates SGR-REG as a side-effect."
   (loop with rev-screen = (and (screen-reverse-screen screen)
                                cl-tmux/terminal/types:+attr-reverse+)
         for col below pane-col-count
@@ -323,24 +328,24 @@
                     ;; modification (no selection / DECSCNM involvement).
                     (attrs2   (cell-attrs2    cell))
                     (ul-color (cell-ul-color  cell)))
-               (unless (and (= fg       (car prev-fg-cell))
-                            (= bg       (car prev-bg-cell))
-                            (= attrs    (car prev-attrs-cell))
-                            (= attrs2   (car prev-attrs2-cell))
-                            (= ul-color (car prev-ul-color-cell)))
+               (unless (and (= fg       (sgr-reg-fg       sgr-reg))
+                            (= bg       (sgr-reg-bg       sgr-reg))
+                            (= attrs    (sgr-reg-attrs    sgr-reg))
+                            (= attrs2   (sgr-reg-attrs2   sgr-reg))
+                            (= ul-color (sgr-reg-ul-color sgr-reg)))
                  (render-cell-attrs stream fg bg attrs attrs2 ul-color)
-                 (setf (car prev-fg-cell)       fg
-                       (car prev-bg-cell)       bg
-                       (car prev-attrs-cell)    attrs
-                       (car prev-attrs2-cell)   attrs2
-                       (car prev-ul-color-cell) ul-color))
+                 (setf (sgr-reg-fg       sgr-reg) fg
+                       (sgr-reg-bg       sgr-reg) bg
+                       (sgr-reg-attrs    sgr-reg) attrs
+                       (sgr-reg-attrs2   sgr-reg) attrs2
+                       (sgr-reg-ul-color sgr-reg) ul-color))
                ;; OSC 8 hyperlink: re-emit when entering/leaving/changing a link
                ;; span so the outer terminal makes those cells clickable.
                (let ((hl (cell-hyperlink cell)))
-                 (unless (equal hl (car prev-hyperlink-cell))
+                 (unless (equal hl (sgr-reg-hyperlink sgr-reg))
                    (write-string (format nil "~C]8;;~@[~A~]~C\\" #\Escape hl #\Escape)
                                  stream)
-                   (setf (car prev-hyperlink-cell) hl)))
+                   (setf (sgr-reg-hyperlink sgr-reg) hl)))
                (write-char (cell-char cell) stream)
                ;; Unicode combining characters (zero-width marks) follow the base char.
                (dolist (ch (cell-combining cell))
@@ -375,28 +380,19 @@
         (multiple-value-bind (sel-active sel-start-row sel-end-row sel-start-col sel-end-col
                               sel-rect-p)
             (%compute-selection-bounds screen)
-          ;; Use single-element lists as mutable SGR-state registers so
-          ;; %render-cell-row can update them without returning multiple values.
-          (let ((prev-fg-cell       (list -1))
-                (prev-bg-cell       (list -1))
-                (prev-attrs-cell    (list -1))
-                (prev-attrs2-cell   (list -1))  ; extended attrs: double-underline/overline
-                (prev-ul-color-cell (list -1))  ; underline colour (SGR 58)
-                ;; OSC 8 hyperlink register (NIL = no open link), threaded across
-                ;; rows so a link spanning rows stays open.
-                (prev-hyperlink-cell (list nil)))
+          ;; sgr-register bundles the mutable last-emitted SGR state so
+          ;; %render-cell-row can detect and suppress redundant attribute sequences.
+          (let ((sgr-reg (make-sgr-register)))
             (loop for row below pane-height do
               (move-to stream (+ origin-y row) origin-x)
               (%render-cell-row stream screen pane-width row
                                 sel-active sel-start-row sel-end-row
                                 sel-start-col sel-end-col
                                 sel-rect-p
-                                prev-fg-cell prev-bg-cell prev-attrs-cell
-                                prev-attrs2-cell prev-ul-color-cell
-                                prev-hyperlink-cell
+                                sgr-reg
                                 def-fg def-bg mode-style-fg mode-style-bg))
             ;; Close any hyperlink still open at the end of the pane (OSC 8 ; ;).
-            (when (car prev-hyperlink-cell)
+            (when (sgr-reg-hyperlink sgr-reg)
               (write-string (format nil "~C]8;;~C\\" #\Escape #\Escape) stream))))
         (screen-clear-dirty screen))))
     ;; Clock-mode overlay: draw a digital clock if this pane is the clock pane.
