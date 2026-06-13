@@ -62,16 +62,15 @@
 (define-command-handlers
   ;; ── Popup / menu overlays ──────────────────────────────────────────────────
   (:display-popup
-   (prompt-start "popup command" ""
-                 (lambda (cmd)
-                   (unless (string= cmd "")
-                     (let ((output (run-shell cmd)))
-                       (show-popup (make-popup :title cmd
-                                               :width  (min +popup-max-width+  *term-cols*)
-                                               :height (min +popup-max-height+ (- *term-rows* +popup-margin+))
-                                               :screen nil
-                                               :pane   nil))
-                       (show-overlay (%format-popup-overlay cmd output)))))))
+   (prompt-nonempty "popup command"
+                    (lambda (cmd)
+                      (let ((output (run-shell cmd)))
+                        (show-popup (make-popup :title cmd
+                                                :width  (min +popup-max-width+  *term-cols*)
+                                                :height (min +popup-max-height+ (- *term-rows* +popup-margin+))
+                                                :screen nil
+                                                :pane   nil))
+                        (show-overlay (%format-popup-overlay cmd output))))))
   (:display-popup-dismiss
    (close-popup))
   (:display-menu
@@ -121,10 +120,8 @@
    (with-active-pane (ap session)
      (if (pane-pipe-fd ap)
          (pipe-pane-close ap)
-         (prompt-start "pipe-pane command" ""
-                       (lambda (cmd)
-                         (unless (string= cmd "")
-                           (pipe-pane-open ap cmd)))))))
+         (prompt-nonempty "pipe-pane command"
+                          (lambda (cmd) (pipe-pane-open ap cmd))))))
   (:synchronize-panes
    (%toggle-synchronize-panes))
   (:lock-session
@@ -134,14 +131,10 @@
 
   ;; ── Command prompt ────────────────────────────────────────────────────────
   (:command-prompt
-   (prompt-start ": " ""
-                 (lambda (input)
-                   (unless (string= input "")
-                     ;; Record to prompt history before executing.
-                     (add-prompt-history input)
-                     ;; Arg-aware: parses "<command> <args...>" so commands like
-                     ;; display-message #{session_name} run with their arguments.
-                     (%run-command-line session input)))))
+   (prompt-nonempty ": "
+                    (lambda (input)
+                      (add-prompt-history input)
+                      (%run-command-line session input))))
 
   ;; ── Miscellaneous commands ─────────────────────────────────────────────────
   (:refresh-client
@@ -150,10 +143,8 @@
    (setf *dirty* t))
   (:send-keys
    (with-active-pane (ap session)
-     (prompt-start "send-keys" ""
-                   (lambda (input)
-                     (unless (string= input "")
-                       (send-keys-to-pane ap input))))))
+     (prompt-nonempty "send-keys"
+                      (lambda (input) (send-keys-to-pane ap input)))))
   (:clock-mode
    (with-active-pane (ap session)
      (setf *clock-mode-pane-id*
@@ -247,41 +238,38 @@
                        (when idx
                          (session-move-window session win idx)))))))
   (:bind-key
-   (prompt-start "bind key: " ""
-                 (lambda (input)
-                   (unless (string= input "")
-                     (let* ((parts   (uiop:split-string input :separator " "))
-                            (key-tok (and (first parts)
-                                         (cl-tmux/config::%parse-key-token (first parts))))
-                            (cmd-str (second parts))
-                            (kw      (and cmd-str
-                                          (cl-tmux/config::%command-keyword cmd-str))))
-                       (if kw
-                           (progn
-                             (set-key-binding key-tok kw)
-                             (show-overlay (format nil "bound ~A -> ~(~A~)" key-tok kw)))
-                           (show-overlay (format nil "unknown command: ~A"
-                                                 (or cmd-str input)))))))))
+   (prompt-nonempty "bind key: "
+                    (lambda (input)
+                      (let* ((parts   (uiop:split-string input :separator " "))
+                             (key-tok (and (first parts)
+                                          (cl-tmux/config::%parse-key-token (first parts))))
+                             (cmd-str (second parts))
+                             (kw      (and cmd-str
+                                           (cl-tmux/config::%command-keyword cmd-str))))
+                        (if kw
+                            (progn
+                              (set-key-binding key-tok kw)
+                              (show-overlay (format nil "bound ~A -> ~(~A~)" key-tok kw)))
+                            (show-overlay (format nil "unknown command: ~A"
+                                                  (or cmd-str input))))))))
   (:unbind-key
-   (prompt-start "unbind key: " ""
-                 (lambda (input)
-                   (unless (string= input "")
-                     (let ((k (cl-tmux/config::%parse-key-token input)))
-                       (remove-key-binding k)
-                       (show-overlay (format nil "unbound ~A" k)))))))
+   (prompt-nonempty "unbind key: "
+                    (lambda (input)
+                      (let ((k (cl-tmux/config::%parse-key-token input)))
+                        (remove-key-binding k)
+                        (show-overlay (format nil "unbound ~A" k))))))
   (:select-window-prompt
-   (prompt-start "select window (name or number): " ""
-                 (lambda (input)
-                   (unless (string= input "")
-                     (let* ((idx (ignore-errors (parse-integer input)))
-                            (win (or (and idx (nth idx (session-windows session)))
-                                     (find input (session-windows session)
-                                           :key #'window-name
-                                           :test #'string-equal))))
-                       (if win
-                           (%with-window-focus-transition (session)
-                             (session-select-window session win))
-                           (show-overlay (format nil "no window: ~A" input))))))))
+   (prompt-nonempty "select window (name or number): "
+                    (lambda (input)
+                      (let* ((idx (ignore-errors (parse-integer input)))
+                             (win (or (and idx (nth idx (session-windows session)))
+                                      (find input (session-windows session)
+                                            :key #'window-name
+                                            :test #'string-equal))))
+                        (if win
+                            (%with-window-focus-transition (session)
+                              (session-select-window session win))
+                            (show-overlay (format nil "no window: ~A" input)))))))
 
   ;; ── Server management ─────────────────────────────────────────────────────
   (:server-info
@@ -321,44 +309,37 @@
       (dolist (pair (cl-tmux/model:get-update-environment-vars))
         (format s "  ~A=~A~%" (car pair) (cdr pair))))))
   (:set-environment
-   (prompt-start "set-env NAME VALUE" ""
-                 (lambda (input)
-                   (unless (string= input "")
-                     (let* ((parts (uiop:split-string input :separator " "))
-                            (name  (first parts))
-                            (value (format nil "~{~A~^ ~}" (rest parts))))
-                       (when (and name (plusp (length name)))
-                         (%call-sbcl-posix "SETENV" name value 1)
-                         (show-overlay (format nil "set ~A=~A" name value))))))))
+   (prompt-nonempty "set-env NAME VALUE"
+                    (lambda (input)
+                      (let* ((parts (uiop:split-string input :separator " "))
+                             (name  (first parts))
+                             (value (format nil "~{~A~^ ~}" (rest parts))))
+                        (when (and name (plusp (length name)))
+                          (%call-sbcl-posix "SETENV" name value 1)
+                          (show-overlay (format nil "set ~A=~A" name value)))))))
 
   ;; ── resize-window ────────────────────────────────────────────────────────
-  ;; Resize the active window's terminal (not just the split layout).
-  ;; In standalone mode this matches the terminal size; with -x/-y it lets
-  ;; a config override the window size so sub-windows can differ in size.
   (:resize-window
    (with-active-window (win session)
-     (prompt-start "resize-window WxH" ""
-                   (lambda (input)
-                     (unless (string= input "")
-                       (let* ((x-pos (position #\x input :test #'char-equal))
-                              (cols  (when x-pos (parse-integer input :end x-pos :junk-allowed t)))
-                              (rows  (when x-pos (parse-integer input :start (1+ x-pos)
-                                                                :junk-allowed t))))
-                         (when (and cols rows (> cols 0) (> rows 0))
-                           (window-relayout win rows cols)
-                           (show-overlay (format nil "resized to ~Dx~D" cols rows)))))))))
+     (prompt-nonempty "resize-window WxH"
+                      (lambda (input)
+                        (let* ((x-pos (position #\x input :test #'char-equal))
+                               (cols  (when x-pos (parse-integer input :end x-pos :junk-allowed t)))
+                               (rows  (when x-pos (parse-integer input :start (1+ x-pos)
+                                                                 :junk-allowed t))))
+                          (when (and cols rows (> cols 0) (> rows 0))
+                            (window-relayout win rows cols)
+                            (show-overlay (format nil "resized to ~Dx~D" cols rows))))))))
 
   ;; ── attach-session ───────────────────────────────────────────────────────
-  ;; Switch the local client to a named session.
   (:attach-session
-   (prompt-start "attach-session -t name" ""
-                 (lambda (name)
-                   (unless (string= name "")
-                     (let ((target (server-find-session name)))
-                       (if target
-                           (progn (%switch-to-session target)
-                                  (show-overlay (format nil "attached to ~A" name)))
-                           (show-overlay (format nil "session not found: ~A" name))))))))
+   (prompt-nonempty "attach-session -t name"
+                    (lambda (name)
+                      (let ((target (server-find-session name)))
+                        (if target
+                            (progn (%switch-to-session target)
+                                   (show-overlay (format nil "attached to ~A" name)))
+                            (show-overlay (format nil "session not found: ~A" name)))))))
 
   ;; ── respawn-window ───────────────────────────────────────────────────────
   ;; Restart the shell in every pane of the active window.
@@ -447,13 +428,11 @@
      (%cycle-layout session win :prev)))
 
   ;; ── set-buffer ───────────────────────────────────────────────────────────
-  ;; Set the contents of the most-recent paste buffer (setb alias).
   (:set-buffer
-   (prompt-start "set-buffer text" ""
-                 (lambda (text)
-                   (unless (string= text "")
-                     (cl-tmux/buffer:add-paste-buffer text)
-                     (show-overlay (format nil "buffer set (~D chars)" (length text)))))))
+   (prompt-nonempty "set-buffer text"
+                    (lambda (text)
+                      (cl-tmux/buffer:add-paste-buffer text)
+                      (show-overlay (format nil "buffer set (~D chars)" (length text))))))
 
   ;; ── start-server ─────────────────────────────────────────────────────────
   ;; No-op when the server is already running (matches tmux behaviour).

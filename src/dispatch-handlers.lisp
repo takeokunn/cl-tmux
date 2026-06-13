@@ -94,15 +94,20 @@
                   (when (string-equal input "y")
                     (funcall ok-fn)))))
 
+(defun prompt-nonempty (label callback)
+  "Start a prompt labelled LABEL; call CALLBACK with the input only when non-empty."
+  (prompt-start label ""
+                (lambda (input)
+                  (unless (string= input "")
+                    (funcall callback input)))))
+
 (defun %copy-mode-search-prompt (session prompt-char search-fn)
   "Open a copy-mode search prompt with PROMPT-CHAR prefix and call SEARCH-FN
    on the entered term when non-empty."
   (let ((screen (%active-screen session)))
     (when screen
-      (prompt-start prompt-char ""
-                    (lambda (term)
-                      (unless (string= term "")
-                        (funcall search-fn screen term)))))))
+      (prompt-nonempty prompt-char
+                       (lambda (term) (funcall search-fn screen term))))))
 
 (defun %copy-mode-cursor-fn (direction)
   "Return a one-arg function that moves the copy-mode cursor in DIRECTION."
@@ -280,18 +285,15 @@
                    ;; chokepoint with the rename-session command).
                    (%rename-session-checked session name))))
   (:run-shell
-   (prompt-start "run-shell" ""
-                 (lambda (cmd)
-                   (unless (string= cmd "")
-                     (let ((output (run-shell cmd)))
-                       (show-overlay output))))))
+   (prompt-nonempty "run-shell"
+                    (lambda (cmd)
+                      (show-overlay (run-shell cmd)))))
   (:if-shell
-   (prompt-start "if-shell" ""
-                 (lambda (cmd)
-                   (unless (string= cmd "")
-                     (if-shell cmd
-                               (lambda () (show-overlay (format nil "[if-shell] ~A: ok" cmd)))
-                               :else-fn (lambda () (show-overlay (format nil "[if-shell] ~A: non-zero exit" cmd))))))))
+   (prompt-nonempty "if-shell"
+                    (lambda (cmd)
+                      (if-shell cmd
+                                (lambda () (show-overlay (format nil "[if-shell] ~A: ok" cmd)))
+                                :else-fn (lambda () (show-overlay (format nil "[if-shell] ~A: non-zero exit" cmd)))))))
 
   ;; :list-sessions / :list-sessions-full: static session list overlay.
   ((:list-sessions :list-sessions-full)
@@ -390,26 +392,22 @@
    (with-active-window (win session)
      (window-rotate win :down)))
   (:find-window
-   (prompt-start "find-window" ""
-                 (lambda (pattern)
-                   (unless (string= pattern "")
-                     (let* ((wins (session-windows session))
-                            ;; Shared with the scriptable find-window command so the
-                            ;; match rule has a single definition (%window-matches-pattern-p).
-                            (matches
-                             (remove-if-not
-                              (lambda (w) (%window-matches-pattern-p w pattern))
-                              wins)))
-                       (show-overlay
-                        (if matches
-                            (with-output-to-string (stream)
-                              (dolist (w matches)
-                                (format stream "~A: ~A~A~%"
-                                        (cl-tmux/model:window-id w)
-                                        (window-name w)
-                                        (if (eq w (session-active-window session))
-                                            " [active]" ""))))
-                            (format nil "no windows matching ~S~%" pattern))))))))
+   (prompt-nonempty "find-window"
+                    (lambda (pattern)
+                      (let* ((wins    (session-windows session))
+                             (matches (remove-if-not
+                                       (lambda (w) (%window-matches-pattern-p w pattern))
+                                       wins)))
+                        (show-overlay
+                         (if matches
+                             (with-output-to-string (stream)
+                               (dolist (w matches)
+                                 (format stream "~A: ~A~A~%"
+                                         (cl-tmux/model:window-id w)
+                                         (window-name w)
+                                         (if (eq w (session-active-window session))
+                                             " [active]" ""))))
+                             (format nil "no windows matching ~S~%" pattern)))))))
 
   ;; ── Pane management ────────────────────────────────────────────────────────
   (:swap-pane-forward  (%swap-active-pane session :right))
@@ -452,24 +450,19 @@
 
   ;; ── Message / info ─────────────────────────────────────────────────────────
   (:display-message
-   (prompt-start "display-message" ""
-                 (lambda (msg)
-                   (unless (string= msg "")
-                     ;; Expand the message as a format too, so the two-step prompt
-                     ;; and the one-line "display-message <fmt>" behave the same.
-                     (%cmd-display-message session (list msg))))))
+   (prompt-nonempty "display-message"
+                    (lambda (msg)
+                      (%cmd-display-message session (list msg)))))
   (:source-file
-   (prompt-start "source-file" ""
-                 (lambda (path)
-                   (unless (string= path "")
-                     (load-config-file (pathname path))))))
+   (prompt-nonempty "source-file"
+                    (lambda (path)
+                      (load-config-file (pathname path)))))
   (:show-options
    (show-overlay (cl-tmux/options:show-options)))
   (:show-option
-   (prompt-start "show-option" ""
-                 (lambda (name)
-                   (unless (string= name "")
-                     (show-overlay (cl-tmux/options:show-option name))))))
+   (prompt-nonempty "show-option"
+                    (lambda (name)
+                      (show-overlay (cl-tmux/options:show-option name)))))
   ;; show-window-options / show-session-options / show-server-options:
   ;; per-scope option listing.  cl-tmux uses a flat global store; these show
   ;; it with a scope header to match real tmux output format.
