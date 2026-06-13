@@ -237,22 +237,15 @@
 
 ;;; ── %new-split-ratio direct tests (pure, no PTY) ─────────────────────────
 
-(test new-split-ratio-basic-grow
-  "%new-split-ratio returns a larger ratio when growing the first child."
-  (let ((new-ratio (cl-tmux/model::%new-split-ratio :h 80 1/2 5 t)))
-    ;; cur-first = round(80 * 1/2) = 40; new-first = 40 + 5 = 45; ratio = 45/80
-    (is (= 45/80 new-ratio))))
-
-(test new-split-ratio-blocked-by-floor
-  "%new-split-ratio returns NIL when the move would shrink a side below minimum."
-  ;; avail = 10, floor* = 2 (pane-min-width for :h); cur = 5; grow by 10 → new = 15 > hi (8)
-  (is (null (cl-tmux/model::%new-split-ratio :h 10 1/2 10 t))))
-
-(test new-split-ratio-shrink
-  "%new-split-ratio shrinks first child when grow-first is NIL."
-  (let ((new-ratio (cl-tmux/model::%new-split-ratio :v 20 1/2 3 nil)))
-    ;; cur-first = 10; sign = -1; new-first = 7; ratio = 7/20
-    (is (= 7/20 new-ratio))))
+(test new-split-ratio-table
+  "%new-split-ratio: positive delta grows, clamped case → NIL, negative delta shrinks."
+  (dolist (row '((:h 80 1/2  5 t  45/80 "grow: cur=40, +5 → 45/80")
+                 (:h 10 1/2 10 t  nil   "blocked: new=15 > max=8 → NIL")
+                 (:v 20 1/2  3 nil 7/20  "shrink: cur=10, -3 → 7/20")))
+    (destructuring-bind (orient avail ratio delta grow-first expected desc) row
+      (is (equal expected
+                 (cl-tmux/model::%new-split-ratio orient avail ratio delta grow-first))
+          "~A" desc))))
 
 ;;; ── window-refresh-panes ────────────────────────────────────────────────────
 
@@ -325,15 +318,13 @@
 ;;; %two-pane-h-window was removed to eliminate the 81×24 two-pane fixture
 ;;; defined in two places with identical construction logic.
 
-(test pane-neighbor-right-in-h-split
-  "Right neighbor of the left pane is the right pane."
+(test pane-neighbor-h-split-table
+  "In an h-split: left pane's :right neighbor is the right pane, and vice versa."
   (multiple-value-bind (win p0 p1) (make-two-pane-h-window)
-    (is (eq p1 (cl-tmux/model::pane-neighbor win p0 :right)))))
-
-(test pane-neighbor-left-in-h-split
-  "Left neighbor of the right pane is the left pane."
-  (multiple-value-bind (win p0 p1) (make-two-pane-h-window)
-    (is (eq p0 (cl-tmux/model::pane-neighbor win p1 :left)))))
+    (dolist (row (list (list p0 :right p1 "p0 :right → p1")
+                       (list p1 :left  p0 "p1 :left → p0")))
+      (destructuring-bind (pane dir expected desc) row
+        (is (eq expected (cl-tmux/model::pane-neighbor win pane dir)) "~A" desc)))))
 
 (test pane-neighbor-nil-for-single-pane
   "A single pane has no neighbor in any direction."
@@ -347,17 +338,13 @@
     (is (null (cl-tmux/model::pane-neighbor win p0 :up)))
     (is (null (cl-tmux/model::pane-neighbor win p0 :down)))))
 
-(test pane-neighbor-down-in-v-split
-  "Down neighbor of the top pane in a v-split is the bottom pane."
+(test pane-neighbor-v-split-table
+  "In a v-split: top pane's :down neighbor is bottom pane, bottom's :up is top pane."
   (with-v-split-window (win p0 p1)
-    (is (eq p1 (cl-tmux/model::pane-neighbor win p0 :down))
-        "down neighbor of top pane must be the bottom pane")))
-
-(test pane-neighbor-up-in-v-split
-  "Up neighbor of the bottom pane in a v-split is the top pane."
-  (with-v-split-window (win p0 p1)
-    (is (eq p0 (cl-tmux/model::pane-neighbor win p1 :up))
-        "up neighbor of bottom pane must be the top pane")))
+    (dolist (row (list (list p0 :down p1 "p0 :down → p1")
+                       (list p1 :up   p0 "p1 :up → p0")))
+      (destructuring-bind (pane dir expected desc) row
+        (is (eq expected (cl-tmux/model::pane-neighbor win pane dir)) "~A" desc)))))
 
 (test pane-neighbor-nil-outside-split-axis
   "A pane in an h-split has no up or down neighbor."
