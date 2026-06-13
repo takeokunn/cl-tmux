@@ -92,16 +92,14 @@
    checks the :locked flag and skips the condition-notify entirely.  This
    allows callers to temporarily block notifications without losing them
    permanently — the channel is not destroyed, only silenced."
-  (let ((ch (%ensure-channel name)))
-    (setf (getf ch :locked) t)))
+  (setf (getf (%ensure-channel name) :locked) t))
 
 (defun unlock-channel (name)
   "Unlock channel NAME, allowing subsequent signal-channel calls to notify waiters.
    Paired with lock-channel: once unlocked, signal-channel will again call
    condition-notify on the channel's condition variable.  Does not retroactively
    deliver signals that were suppressed while the channel was locked."
-  (let ((ch (%ensure-channel name)))
-    (setf (getf ch :locked) nil)))
+  (setf (getf (%ensure-channel name) :locked) nil))
 
 (defun %cap-list (list limit)
   "Return LIST truncated to at most LIMIT elements; returns LIST unchanged when
@@ -322,17 +320,16 @@
 (defun reader-reading-state (pane)
   "Read one PTY chunk and feed it to PANE; transition to eof if EOF."
   (let ((bytes (pty-read-blocking (pane-fd pane) +pty-buf-size+)))
-    (cond
-      ((null bytes)
-       #'reader-eof-state)
-      (t
-       (when (pane-pipe-fd pane)
-         (pipe-pane-write pane bytes))
-       (pane-feed pane bytes)
-       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-output+ pane bytes)
-       (%update-window-on-pane-output (cl-tmux/model:pane-window pane))
-       (setf *dirty* t)
-       #'reader-idle-state))))
+    (if (null bytes)
+        #'reader-eof-state
+        (progn
+          (when (pane-pipe-fd pane)
+            (pipe-pane-write pane bytes))
+          (pane-feed pane bytes)
+          (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-output+ pane bytes)
+          (%update-window-on-pane-output (cl-tmux/model:pane-window pane))
+          (setf *dirty* t)
+          #'reader-idle-state))))
 
 (defconstant +remain-on-exit-poll-seconds+ 0.1
   "Sleep granularity (seconds) for the remain-on-exit parking spin loop.
@@ -346,9 +343,9 @@
    The loop is bounded by the *running* sentinel: when the server shuts down,
    stop-reader-threads sets *running* NIL and joins this thread with a timeout."
   (declare (ignore pane))
-  (if *running*
-      (progn (sleep +remain-on-exit-poll-seconds+) #'reader-remain-on-exit-state)
-      nil))
+  (when *running*
+    (sleep +remain-on-exit-poll-seconds+)
+    #'reader-remain-on-exit-state))
 
 (defun reader-eof-state (pane)
   "Fire the pane-exited hook and determine the next CPS state.
@@ -371,14 +368,12 @@
   (let ((remain-on-exit
           (handler-case (cl-tmux/options:get-option-for-context "remain-on-exit" :pane pane)
             (error () nil))))
-    (cond
-      (remain-on-exit
-       ;; Write the remain-on-exit-format banner (reverse-video) to the pane screen.
-       (%write-remain-on-exit-banner pane)
-       (setf *dirty* t)
-       ;; Return the parking state: the driver loop calls it on each tick.
-       #'reader-remain-on-exit-state)
-      (t nil))))
+    (when remain-on-exit
+      ;; Write the remain-on-exit-format banner (reverse-video) to the pane screen.
+      (%write-remain-on-exit-banner pane)
+      (setf *dirty* t)
+      ;; Return the parking state: the driver loop calls it on each tick.
+      #'reader-remain-on-exit-state)))
 
 (defun %run-reader-states (pane initial-state)
   "Drive the CPS reader state machine for PANE starting from INITIAL-STATE."
