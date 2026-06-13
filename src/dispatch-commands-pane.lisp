@@ -215,6 +215,12 @@
       (when (and w h (plusp w) (plusp h))
         (values w h)))))
 
+(defun %next-free-session-name ()
+  "Return the lowest positive-integer string not already in use as a session name."
+  (loop for i from 1
+        for candidate = (format nil "~D" i)
+        unless (server-find-session candidate) return candidate))
+
 (defun %cmd-new-session-arg (session args)
   "new-session [-A] [-d] [-s name] [-n window-name] [-c start-dir] [-x width] [-y height]: create a new session.
    -A: if a session named NAME already exists, attach to it instead of creating a new one.
@@ -264,9 +270,7 @@
             (progn
               (show-overlay (format nil "duplicate session: ~A" name))
               (return-from %cmd-new-session-arg nil))
-            (setf name (loop for i from 1
-                             for candidate = (format nil "~D" i)
-                             unless (server-find-session candidate) return candidate))))
+            (setf name (%next-free-session-name))))
       ;; -t <group>: join an existing session's group instead of forking a new
       ;; pane.  The grouped session SHARES the target's window list (and thus the
       ;; live PTYs + reader threads already attached to those panes), so it must
@@ -431,30 +435,22 @@
     (declare (ignore positionals))
     (let* ((kill-all-others (assoc #\a flags))
            (target-name     (cdr (assoc #\t flags)))
-           (keep-sess       (if target-name
-                                (cdr (assoc target-name *server-sessions*
-                                            :test #'equal))
+           (target-sess     (or (and target-name (server-find-session target-name))
                                 session)))
       (if kill-all-others
-          ;; -a: kill all sessions except keep-sess
-          (let ((to-kill (loop for (name . sess) in *server-sessions*
-                               unless (eq sess keep-sess)
-                               collect (cons name sess))))
-            (dolist (entry to-kill)
-              (%destroy-session (cdr entry))))
-          ;; No -a: kill the target session
-          (let ((target-sess (or (and target-name
-                                      (cdr (assoc target-name *server-sessions*
-                                                  :test #'equal)))
-                                 session)))
-            (when target-sess
-              (let ((name        (session-name target-sess))
-                    (was-current (eq target-sess session)))
-                (%destroy-session target-sess)
-                ;; Killing the session the client is viewing → apply detach-on-destroy.
-                (when (and was-current
-                           (eq :quit (%detach-on-destroy-action name)))
-                  (setf *running* nil)))))))))
+          ;; -a: kill all sessions except target-sess (the "keep" session)
+          (dolist (entry (remove-if (lambda (e) (eq (cdr e) target-sess))
+                                    *server-sessions*))
+            (%destroy-session (cdr entry)))
+          ;; No -a: kill target-sess
+          (when target-sess
+            (let ((name        (session-name target-sess))
+                  (was-current (eq target-sess session)))
+              (%destroy-session target-sess)
+              ;; Killing the session the client is viewing → apply detach-on-destroy.
+              (when (and was-current
+                         (eq :quit (%detach-on-destroy-action name)))
+                (setf *running* nil))))))))
 
 (defun %cmd-resize-window-arg (session args)
   "resize-window [-x cols] [-y rows] [-t target-window]: resize a window.
