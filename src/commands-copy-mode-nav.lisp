@@ -126,7 +126,7 @@
       (loop while (and (< col (1- width))
                        (not (funcall sep-pred (aref chars (1+ col)))))
             do (incf col))
-      (setf (screen-copy-cursor screen) (cons row (min (1- width) col)))))
+      (setf (screen-copy-cursor screen) (cons row (min (1- width) col))))))
 
 ;;; Public API: word (w/b/e) and WORD (W/B/E) motions.
 
