@@ -473,8 +473,7 @@
   (:confirm-before
    (prompt-start "confirm? (y/n)" ""
                  (lambda (input)
-                   (when (and (not (string= input ""))
-                              (string-equal input "y"))
+                   (when (string-equal input "y")
                      (show-overlay "[confirmed]")))))
 
   ;; :wait-for is the canonical wait-for-channel command.

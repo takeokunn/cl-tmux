@@ -21,8 +21,8 @@
   (if (null *server-access-list*)
       "server-access: no entries"
       (with-output-to-string (s)
-        (dolist (entry (reverse *server-access-list*))
-          (format s "~A: ~(~A~)~%" (car entry) (cdr entry))))))
+        (loop for (name . perm) in (reverse *server-access-list*)
+              do (format s "~A: ~(~A~)~%" name perm)))))
 
 (defun %cmd-server-access (session args)
   "server-access [-l] [-a|-d] [-r|-w] [-k] [user]: manage the server access list.

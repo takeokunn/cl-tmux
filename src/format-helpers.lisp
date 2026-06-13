@@ -31,10 +31,9 @@
   (intern (string-upcase (substitute #\- #\_ name)) :keyword))
 
 (defun %truthy-p (str)
-  "T when STR is truthy: non-empty, not \"0\", not \"false\"."
+  "T when STR is truthy: non-nil, non-empty, not \"0\", not \"false\" (case-insensitive)."
   (and (plusp (length str))
-       (not (string= str "0"))
-       (not (string-equal str "false"))))
+       (not (member str '("0" "false") :test #'string-equal))))
 
 (defun %top-level-comma (content start)
   "Index of the next comma in CONTENT at/after START that is NOT inside a nested

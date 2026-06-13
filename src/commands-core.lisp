@@ -127,7 +127,7 @@
    path passes :DISABLE-AUTOMATIC-RENAME NIL so repeated title-driven renames keep
    working — otherwise auto-rename would fire only once.  Fires after-rename-window
    and window-renamed in both cases."
-  (when (and window name (not (string= name "")))
+  (when (and window name (plusp (length name)))
     (setf (window-name window) name)
     (when disable-automatic-rename
       (setf (window-automatic-rename-p window) nil))
@@ -136,7 +136,7 @@
 
 (defun rename-session (session name)
   "Set SESSION's name to NAME."
-  (when (and session name (not (string= name "")))
+  (when (and session name (plusp (length name)))
     (setf (session-name session) name)))
 
 (defun select-window-by-number (session n)

@@ -69,9 +69,8 @@
   (let ((silence-secs (cl-tmux/options:get-option "monitor-silence")))
     (when (and (integerp silence-secs) (> silence-secs 0))
       (let ((now (get-universal-time)))
-        (dolist (entry sessions)
-          (let ((sess (cdr entry)))
-            (dolist (win (cl-tmux/model:session-windows sess))
+        (loop for (nil . sess) in sessions do
+          (dolist (win (cl-tmux/model:session-windows sess))
               (let ((last-output-time (cl-tmux/model:window-last-output-time win)))
                 (when (and (> last-output-time 0)
                            (not (cl-tmux/model:window-silence-flag win))
@@ -80,7 +79,7 @@
                            (%alert-action-fires-p
                             (or (cl-tmux/options:get-option "silence-action") "other")
                             (eq win (cl-tmux/model:session-active-window sess))))
-                  (%fire-silence-alert win dirty-fn))))))))))
+                  (%fire-silence-alert win dirty-fn)))))))))
 
 (defun %timer-tick-overlay (dirty-fn)
   "Check if the active overlay has expired; dismiss it and call DIRTY-FN if so."
