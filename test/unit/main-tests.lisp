@@ -36,55 +36,21 @@
        (setf (fdefinition 'cl-tmux::run-standalone)          orig-standalone)
        (setf (fdefinition 'cl-tmux::%ensure-server-running)  orig-ensure))))
 
-(test dispatch-server-with-name
-  "argv (cl-tmux server foo) routes to run-server with name \"foo\"."
-  (with-stubbed-entries
-    (let ((sb-ext:*posix-argv* (list "cl-tmux" "server" "foo")))
-      (cl-tmux::main))
-    (is (= 1 (length *main-calls*)))
-    (is (eq :server (car (first *main-calls*))))
-    (is (equal (list "foo") (cdr (first *main-calls*))))))
-
-(test dispatch-attach-with-name
-  "argv (cl-tmux attach foo) routes to run-client with name \"foo\"."
-  (with-stubbed-entries
-    (let ((sb-ext:*posix-argv* (list "cl-tmux" "attach" "foo")))
-      (cl-tmux::main))
-    (is (= 1 (length *main-calls*)))
-    (is (eq :client (car (first *main-calls*))))
-    (is (equal (list "foo") (cdr (first *main-calls*))))))
-
-(test dispatch-standalone-default
-  "argv (cl-tmux) with no mode routes to run-standalone."
-  (with-stubbed-entries
-    (let ((sb-ext:*posix-argv* (list "cl-tmux")))
-      (cl-tmux::main))
-    (is (= 1 (length *main-calls*)))
-    (is (eq :standalone (car (first *main-calls*))))
-    (is (null (cdr (first *main-calls*))))))
-
-(test dispatch-server-default-name
-  "argv (cl-tmux server) with no name falls back to default name \"0\"."
-  (with-stubbed-entries
-    (let ((sb-ext:*posix-argv* (list "cl-tmux" "server")))
-      (cl-tmux::main))
-    (is (eq :server (car (first *main-calls*))))
-    (is (equal (list "0") (cdr (first *main-calls*))))))
-
-(test dispatch-attach-default-name
-  "argv (cl-tmux attach) with no name falls back to default name \"0\"."
-  (with-stubbed-entries
-    (let ((sb-ext:*posix-argv* (list "cl-tmux" "attach")))
-      (cl-tmux::main))
-    (is (eq :client (car (first *main-calls*))))
-    (is (equal (list "0") (cdr (first *main-calls*))))))
-
-(test dispatch-unknown-mode-standalone
-  "An unrecognized mode falls through to run-standalone."
-  (with-stubbed-entries
-    (let ((sb-ext:*posix-argv* (list "cl-tmux" "bogus" "foo")))
-      (cl-tmux::main))
-    (is (eq :standalone (car (first *main-calls*))))))
+(test dispatch-main-table
+  "main routes argv to the correct entry point with the correct session name."
+  (dolist (c '((("server" "foo") :server    ("foo") "server with name")
+               (("attach" "foo") :client    ("foo") "attach with name")
+               (()               :standalone nil    "no args → standalone")
+               (("server")       :server    ("0")   "server default name")
+               (("attach")       :client    ("0")   "attach default name")
+               (("bogus" "foo")  :standalone nil    "unknown mode → standalone")))
+    (destructuring-bind (argv-tail expected-key expected-args desc) c
+      (with-stubbed-entries
+        (let ((sb-ext:*posix-argv* (cons "cl-tmux" argv-tail)))
+          (cl-tmux::main))
+        (is (= 1 (length *main-calls*)) "~A: exactly one call" desc)
+        (is (eq expected-key (car (first *main-calls*))) "~A: entry key" desc)
+        (is (equal expected-args (cdr (first *main-calls*))) "~A: args" desc)))))
 
 ;;; ── attach-session dispatch ──────────────────────────────────────────────────
 
@@ -123,29 +89,20 @@
 
 ;;; ── %parse-attach-flags unit tests ──────────────────────────────────────────
 
-(test parse-attach-flags-all-flags
-  "%parse-attach-flags correctly parses -d, -r, and -t <name> independently."
-  (multiple-value-bind (name detach read-only-p)
-      (cl-tmux::%parse-attach-flags '("-t" "mysession" "-d" "-r"))
-    (is (string= "mysession" name))
-    (is-true detach)
-    (is-true read-only-p)))
-
-(test parse-attach-flags-defaults
-  "%parse-attach-flags returns default name \"0\" when no flags are given."
-  (multiple-value-bind (name detach read-only-p)
-      (cl-tmux::%parse-attach-flags '())
-    (is (string= "0" name))
-    (is-false detach)
-    (is-false read-only-p)))
-
-(test parse-attach-flags-unknown-flags-ignored
-  "%parse-attach-flags silently ignores unrecognized flags."
-  (multiple-value-bind (name detach read-only-p)
-      (cl-tmux::%parse-attach-flags '("-x" "-t" "abc"))
-    (is (string= "abc" name))
-    (is-false detach)
-    (is-false read-only-p)))
+(test parse-attach-flags-table
+  "%parse-attach-flags: -t sets name, -d sets detach, -r sets read-only; defaults are \"0\"/nil/nil."
+  (dolist (c (list '(("-t" "mysession" "-d" "-r") "mysession" t   t   "all flags")
+                   '(()                            "0"         nil nil "no flags → defaults")
+                   '(("-x" "-t" "abc")             "abc"       nil nil "unknown flags ignored")
+                   '(("-t" "only-name")            "only-name" nil nil "-t alone")
+                   '(("-d")                        "0"         t   nil "-d alone")
+                   '(("-r")                        "0"         nil t   "-r alone")))
+    (destructuring-bind (flags expected-name expected-detach expected-ro desc) c
+      (multiple-value-bind (name detach read-only-p)
+          (cl-tmux::%parse-attach-flags flags)
+        (is (string= expected-name name)    "~A: name" desc)
+        (is (eq expected-detach detach)     "~A: detach" desc)
+        (is (eq expected-ro    read-only-p) "~A: read-only-p" desc)))))
 
 ;;; ── *startup-modes* data table ───────────────────────────────────────────────
 
@@ -186,29 +143,6 @@
   (is (fboundp 'cl-tmux::%parse-attach-flags)
       "%parse-attach-flags must be fbound"))
 
-(test parse-attach-flags-value-flag-t-alone
-  "%parse-attach-flags parses -t alone and returns default booleans."
-  (multiple-value-bind (name detach read-only-p)
-      (cl-tmux::%parse-attach-flags '("-t" "only-name"))
-    (is (string= "only-name" name) "name must be 'only-name'")
-    (is-false detach     "detach must default to NIL when -d absent")
-    (is-false read-only-p "read-only-p must default to NIL when -r absent")))
-
-(test parse-attach-flags-bool-d-alone
-  "%parse-attach-flags parses -d alone, leaving name at default."
-  (multiple-value-bind (name detach read-only-p)
-      (cl-tmux::%parse-attach-flags '("-d"))
-    (is (string= "0" name) "name must be default '0' when -t absent")
-    (is-true  detach     "detach must be T when -d is present")
-    (is-false read-only-p "read-only-p must remain NIL when -r absent")))
-
-(test parse-attach-flags-bool-r-alone
-  "%parse-attach-flags parses -r alone, leaving name and detach at defaults."
-  (multiple-value-bind (name detach read-only-p)
-      (cl-tmux::%parse-attach-flags '("-r"))
-    (is (string= "0" name) "name must be default '0' when -t absent")
-    (is-false detach "detach must remain NIL when -d absent")
-    (is-true  read-only-p "read-only-p must be T when -r is present")))
 
 (test parse-attach-flags-order-independent
   "%parse-attach-flags parses -d -t in either order."
@@ -262,17 +196,13 @@
     (is-true (getf (rest entry) :raw-args-p)
              "attach-session entry must have :raw-args-p T")))
 
-(test startup-modes-server-handler-is-run-server
-  "The 'server' entry in *startup-modes* names run-server as its handler."
-  (let ((entry (cdr (assoc "server" cl-tmux::*startup-modes* :test #'equal))))
-    (is (eq 'cl-tmux::run-server (first entry))
-        "server entry handler must be run-server")))
-
-(test startup-modes-attach-handler-is-run-attach-simple
-  "The 'attach' entry in *startup-modes* names run-attach-simple as its handler."
-  (let ((entry (cdr (assoc "attach" cl-tmux::*startup-modes* :test #'equal))))
-    (is (eq 'cl-tmux::run-attach-simple (first entry))
-        "attach entry handler must be run-attach-simple")))
+(test startup-modes-handler-table
+  "Each *startup-modes* entry names the correct handler symbol."
+  (dolist (c '(("server" cl-tmux::run-server        "server → run-server")
+               ("attach" cl-tmux::run-attach-simple  "attach → run-attach-simple")))
+    (destructuring-bind (mode expected-fn desc) c
+      (let ((entry (cdr (assoc mode cl-tmux::*startup-modes* :test #'equal))))
+        (is (eq expected-fn (first entry)) "~A" desc)))))
 
 ;;; ── server-socket-poll constants ─────────────────────────────────────────────
 
