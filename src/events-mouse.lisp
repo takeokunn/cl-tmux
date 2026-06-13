@@ -161,7 +161,7 @@
                      (:h (if (%h-border-hit-p first-leaves all-leaves col row)
                              (values node :h) (values nil nil)))
                      (:v (if (%v-border-hit-p first-leaves all-leaves col row)
-                             (values node :v) (values nil nil)))))))))))))
+                             (values node :v) (values nil nil))))))))))))
 
 (defun %border-at-position (window col row)
   "Return (values layout-split orientation) when (COL, ROW) is on a pane separator,
