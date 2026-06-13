@@ -100,17 +100,15 @@
    omitted (ESC [ <codepoint> u).  Returns NIL when the codepoint field is empty or
    non-numeric.  A sub-parameter on the modifier (the kitty `<mod>:<event>` form) is
    tolerated — only the leading integer is taken."
-  (let ((text (map 'string #'code-char (subseq buffer 2 (1- length)))) ; drop ESC [ and u
-        (codepoint nil)
-        (mod 1))
-    (let ((semi (position #\; text)))
-      (if semi
-          (progn
-            (setf codepoint (ignore-errors (parse-integer text :end semi)))
-            (let ((m (ignore-errors (parse-integer text :start (1+ semi)
-                                                       :junk-allowed t))))
-              (when m (setf mod m))))
-          (setf codepoint (ignore-errors (parse-integer text)))))
+  (let* ((text      (map 'string #'code-char (subseq buffer 2 (1- length)))) ; drop ESC [ and u
+         (semi      (position #\; text))
+         (codepoint (if semi
+                        (ignore-errors (parse-integer text :end semi))
+                        (ignore-errors (parse-integer text))))
+         (mod       (or (and semi
+                             (ignore-errors (parse-integer text :start (1+ semi)
+                                                               :junk-allowed t)))
+                        1)))
     (when codepoint (values codepoint mod))))
 
 (defun %csi-u-control-byte (codepoint)

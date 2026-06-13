@@ -57,18 +57,15 @@
         (t
          (let ((collision (find (window-id src-win) (session-windows dst-sess)
                                 :key #'window-id)))
-           (cond
-             ((and collision kill-p)
-              (kill-window dst-sess collision)
-              (session-insert-window dst-sess src-win)
-              (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-linked+ src-win)
-              (show-overlay "link-window: linked (replaced existing)"))
-             (collision
-              (show-overlay "link-window: target index in use (add -k to replace)"))
-             (t
-              (session-insert-window dst-sess src-win)
-              (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-linked+ src-win)
-              (show-overlay "link-window: linked")))))))))
+           (if (and collision (not kill-p))
+               (show-overlay "link-window: target index in use (add -k to replace)")
+               (progn
+                 (when collision (kill-window dst-sess collision))
+                 (session-insert-window dst-sess src-win)
+                 (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-linked+ src-win)
+                 (show-overlay (if collision
+                                   "link-window: linked (replaced existing)"
+                                   "link-window: linked"))))))))))
 
 (defun %cmd-unlink-window (session args)
   "unlink-window [-t target] [-k]: remove a window's link from its session.
@@ -145,11 +142,12 @@
    First command to use two value flags (-s and -t) at once."
   (with-command-flags+pos (flags positionals args "st")
     (declare (ignore positionals))
-    (let ((src (if (cdr (assoc #\s flags))
-                   (%resolve-window-target session (cdr (assoc #\s flags)))
-                   (session-active-window session)))
-          (dst (and (cdr (assoc #\t flags))
-                    (%resolve-window-target session (cdr (assoc #\t flags))))))
+    (let* ((src-str (cdr (assoc #\s flags)))
+           (dst-str (cdr (assoc #\t flags)))
+           (src (if src-str
+                    (%resolve-window-target session src-str)
+                    (session-active-window session)))
+           (dst (and dst-str (%resolve-window-target session dst-str))))
       (%swap-window-ids session src dst))))
 
 (defun %cmd-source-file (session args)

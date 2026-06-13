@@ -201,8 +201,8 @@
    Returns a plist of context keys.  The authoritative list of all #{...}
    variables is the set of keywords in the returned plist — read the append
    sections below for the current, complete set."
-  (let* ((session-wins          (if session (cl-tmux/model:session-windows session) nil))
-         (session-active-window (if session (cl-tmux/model:session-active-window session) nil))
+  (let* ((session-wins          (and session (cl-tmux/model:session-windows session)))
+         (session-active-window (and session (cl-tmux/model:session-active-window session)))
          (window-count          (length session-wins))
          (window-raw-flags      (%window-raw-flags window session-active-window session))
          (window-flags          (if (zerop (length window-raw-flags)) " " window-raw-flags))
@@ -219,8 +219,8 @@
          ;; pane-current-path: OSC 7 → OS proc query fallback.
          (pane-current-path     (let* ((scr (and pane (cl-tmux/model:pane-screen pane)))
                                        (osc-cwd (and scr (cl-tmux/terminal:screen-cwd scr))))
-                                  (if (and osc-cwd (plusp (length osc-cwd)))
-                                      osc-cwd (%pane-cwd-from-os pane))))
+                                  (or (and osc-cwd (plusp (length osc-cwd)) osc-cwd)
+                                      (%pane-cwd-from-os pane))))
          (pane-scr              (and pane (cl-tmux/model:pane-screen pane)))
          (cursor-x              (if pane-scr (cl-tmux/terminal:screen-cursor-x pane-scr) 0))
          (cursor-y              (if pane-scr (cl-tmux/terminal:screen-cursor-y pane-scr) 0))
