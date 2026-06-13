@@ -102,12 +102,7 @@
   ((and *key-table* (not (equal *key-table* +table-root+)))
    (let ((entry (key-table-lookup *key-table* (code-char byte))))
      (when entry
-       (let ((cmd (key-table-command entry)))
-         (cond
-           ((and (consp cmd) (eq (car cmd) :sequence))
-            (dolist (subcmd (cdr cmd)) (%run-command-tokens session subcmd)))
-           ((consp cmd) (%run-command-tokens session cmd))
-           (t (dispatch-command session cmd byte))))))
+       (%run-key-table-binding session entry byte)))
    (setf *dirty* t)
    (values nil #'%ground-input-state))
   ;; ── Root key-table: check for bindings that fire without any prefix ────────
@@ -115,19 +110,8 @@
   ;; keys that would otherwise be forwarded to the pane.
   ((let ((entry (key-table-lookup +table-root+ (code-char byte))))
      (when entry
-       ;; A -n binding's command is a keyword (built-in), a token LIST, or a
-       ;; :sequence of token lists (from bind -n key cmd1 \; cmd2).
-       (let ((cmd (key-table-command entry)))
-         (cond
-           ((and (consp cmd) (eq (car cmd) :sequence))
-            (dolist (subcmd (cdr cmd))
-              (%run-command-tokens session subcmd)))
-           ((consp cmd)
-            (%run-command-tokens session cmd))
-           (t
-            (dispatch-command session cmd byte))))
-       (setf *dirty* t)
-       t))
+       (%run-key-table-binding session entry byte)
+       (setf *dirty* t)))
    (values nil #'%ground-input-state))
   ;; ── Prefix key: arm command dispatcher ────────────────────────────────────
   ;; Check the RUNTIME variable *prefix-key-code* (not the compile-time constant
@@ -174,10 +158,7 @@
                                  (key-table-lookup "copy-mode" ch)))
                    (handled  nil))
               (when entry
-                (let ((cmd (key-table-command entry)))
-                  (if (consp cmd)
-                      (%run-command-tokens session cmd)
-                      (dispatch-command session cmd byte)))
+                (%run-key-table-binding session entry byte)
                 (setf handled t))
               (unless handled
             (flet ((repeat (fn)
