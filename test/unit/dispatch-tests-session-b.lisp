@@ -108,17 +108,12 @@
         (declare (ignore e))
         (is-true t ":respawn-window signalled at PTY level (expected in sandbox)")))))
 
-(test dispatch-select-layout-main-h-does-not-error
-  ":select-layout-main-h dispatches without error."
+(test dispatch-select-layout-main-h-and-v-do-not-error
+  ":select-layout-main-h and :select-layout-main-v dispatch without error."
   (with-fake-session (s :nwindows 1 :npanes 2)
-    (finishes (cl-tmux::dispatch-command s :select-layout-main-h nil)
-              ":select-layout-main-h must not signal an error")))
-
-(test dispatch-select-layout-main-v-does-not-error
-  ":select-layout-main-v dispatches without error."
-  (with-fake-session (s :nwindows 1 :npanes 2)
-    (finishes (cl-tmux::dispatch-command s :select-layout-main-v nil)
-              ":select-layout-main-v must not signal an error")))
+    (dolist (cmd '(:select-layout-main-h :select-layout-main-v))
+      (finishes (cl-tmux::dispatch-command s cmd nil)
+                "~A must not signal an error" cmd))))
 
 (test dispatch-set-environment-opens-prompt
   ":set-environment opens a prompt for NAME VALUE."

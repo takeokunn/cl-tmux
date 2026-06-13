@@ -129,17 +129,12 @@
 
 ;;; ── :select-layout-tiled / :select-layout-spread dispatch ────────────────────
 
-(test dispatch-select-layout-tiled-does-not-error
-  ":select-layout-tiled dispatches without error."
+(test dispatch-select-layout-tiled-and-spread-do-not-error
+  ":select-layout-tiled and :select-layout-spread dispatch without error."
   (with-fake-session (s :nwindows 1 :npanes 1)
-    (finishes (cl-tmux::dispatch-command s :select-layout-tiled nil)
-              ":select-layout-tiled must not signal an error")))
-
-(test dispatch-select-layout-spread-does-not-error
-  ":select-layout-spread dispatches without error."
-  (with-fake-session (s :nwindows 1 :npanes 1)
-    (finishes (cl-tmux::dispatch-command s :select-layout-spread nil)
-              ":select-layout-spread must not signal an error")))
+    (dolist (cmd '(:select-layout-tiled :select-layout-spread))
+      (finishes (cl-tmux::dispatch-command s cmd nil)
+                "~A must not signal an error" cmd))))
 
 ;;; ── :choose-client dispatch ───────────────────────────────────────────────────
 

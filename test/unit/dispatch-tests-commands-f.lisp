@@ -314,31 +314,15 @@
       (finishes (cl-tmux::dispatch-command s cmd nil)
                 "~A must not signal an error" cmd))))
 
-;;; ── :rotate-window / :rotate-window-reverse dispatch ─────────────────────────
+;;; ── :rotate-window / :rotate-window-reverse / :split-*-no-focus dispatch ────
 
-(test dispatch-rotate-window-does-not-error
-  ":rotate-window dispatches without error on a single-pane window."
-  (with-fake-session (s :nwindows 1 :npanes 1)
-    (finishes (cl-tmux::dispatch-command s :rotate-window nil)
-              ":rotate-window must not signal an error")))
-
-(test dispatch-rotate-window-reverse-does-not-error
-  ":rotate-window-reverse dispatches without error on a single-pane window."
-  (with-fake-session (s :nwindows 1 :npanes 1)
-    (finishes (cl-tmux::dispatch-command s :rotate-window-reverse nil)
-              ":rotate-window-reverse must not signal an error")))
-
-;;; ── :split-horizontal / :split-vertical (no-focus) dispatch ─────────────────
-
-(test dispatch-split-horizontal-no-focus-does-not-error
-  ":split-horizontal-no-focus dispatches without error."
-  (with-fake-session (s :nwindows 1 :npanes 1)
-    (finishes (cl-tmux::dispatch-command s :split-horizontal-no-focus nil)
-              ":split-horizontal-no-focus must not signal an error")))
-
-(test dispatch-split-vertical-no-focus-does-not-error
-  ":split-vertical-no-focus dispatches without error."
-  (with-fake-session (s :nwindows 1 :npanes 1)
-    (finishes (cl-tmux::dispatch-command s :split-vertical-no-focus nil)
-              ":split-vertical-no-focus must not signal an error")))
+(test dispatch-rotate-and-split-no-focus-do-not-error
+  "rotate-window, rotate-window-reverse, and the no-focus split variants
+   dispatch without error.  Each command gets a fresh session so that the
+   reader thread started by a split does not block the next fork."
+  (dolist (cmd '(:rotate-window :rotate-window-reverse
+                 :split-horizontal-no-focus :split-vertical-no-focus))
+    (with-fake-session (s :nwindows 1 :npanes 1)
+      (finishes (cl-tmux::dispatch-command s cmd nil)
+                "~A must not signal an error" cmd))))
 
