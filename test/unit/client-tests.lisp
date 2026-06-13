@@ -17,9 +17,13 @@
 
 ;;; ── Function existence ───────────────────────────────────────────────────────
 
-(test client-run-client-is-defined
-  :description "run-client is a defined function (integration tested via e2e-smoke)."
-  (is (fboundp 'cl-tmux::run-client) "run-client must be defined"))
+(test client-functions-fbound-table
+  :description "All key client mode functions are fbound."
+  (dolist (sym '(cl-tmux::run-client
+                 cl-tmux::%ensure-server-running
+                 cl-tmux::run-attach-simple
+                 cl-tmux::run-attach-with-flags))
+    (is (fboundp sym) "~A must be fbound" sym)))
 
 ;;; socket-path naming is tested canonically in server-tests.lisp since
 ;;; socket-path is defined in server.lisp.  No duplicate tests here.
@@ -149,33 +153,7 @@ cleanly — this is the frame run-client sends when :detach-others is T."
 
 ;;; ── %ensure-server-running existence ─────────────────────────────────────────
 
-(test client-ensure-server-running-is-fbound
-  :description "%ensure-server-running is a defined function."
-  (is (fboundp 'cl-tmux::%ensure-server-running)
-      "%ensure-server-running must be fbound"))
-
-;;; ── run-attach-simple existence ──────────────────────────────────────────────
-
-(test client-run-attach-simple-is-fbound
-  :description "run-attach-simple is a defined function (replaces the former run-client-with-autostart wrapper)."
-  (is (fboundp 'cl-tmux::run-attach-simple)
-      "run-attach-simple must be fbound"))
-
 ;;; ── *startup-modes* dispatch table ──────────────────────────────────────────
-
-(test startup-modes-has-server-entry
-  :description "*startup-modes* contains a 'server' entry whose handler is run-server."
-  (let ((entry (assoc "server" cl-tmux::*startup-modes* :test #'equal)))
-    (is-true entry "*startup-modes* must have a 'server' entry")
-    ;; Entry cdr is a plist: (handler-symbol &key :raw-args-p bool).
-    (is (eq 'cl-tmux::run-server (first (cdr entry)))
-        "server entry handler must be run-server")))
-
-;;; startup-modes-has-attach-entry and startup-modes-has-attach-session-entry
-;;; are subsumed by startup-modes-attach-handler-is-run-attach-simple and
-;;; startup-modes-attach-session-handler-is-run-attach-with-flags below.
-
-;;; %startup-mode-raw-args-p is tested canonically in main-tests.lisp.
 
 ;;; ── msg-attach encoding ──────────────────────────────────────────────────────
 ;;;
@@ -218,13 +196,6 @@ cleanly — this is the frame run-client sends when :detach-others is T."
               "frame constructor for type ~D must encode as ~D, got ~D"
               expected-type expected-type got-type))))))
 
-;;; ── run-attach-with-flags existence ─────────────────────────────────────────
-
-(test client-run-attach-with-flags-is-fbound
-  :description "run-attach-with-flags is a defined function (the attach-session mode handler)."
-  (is (fboundp 'cl-tmux::run-attach-with-flags)
-      "run-attach-with-flags must be fbound"))
-
 ;;; ── *startup-modes* handler symbols are symbols ──────────────────────────────
 ;;;
 ;;; Handlers stored as symbols (not function objects) is the key architectural
@@ -239,22 +210,18 @@ cleanly — this is the frame run-client sends when :detach-others is T."
           "handler for mode ~S must be a symbol, got ~S"
           (car entry) handler))))
 
-(test startup-modes-attach-handler-is-run-attach-simple
-  :description "*startup-modes* 'attach' entry handler is run-attach-simple."
-  (let ((entry (assoc "attach" cl-tmux::*startup-modes* :test #'equal)))
-    (is-true entry "*startup-modes* must have an 'attach' entry")
-    (is (eq 'cl-tmux::run-attach-simple (first (cdr entry)))
-        "attach entry handler must be run-attach-simple")))
-
-(test startup-modes-attach-session-handler-is-run-attach-with-flags
-  :description "*startup-modes* 'attach-session' entry handler is run-attach-with-flags
-   and has :raw-args-p T so it receives the full argv tail."
-  (let ((entry (assoc "attach-session" cl-tmux::*startup-modes* :test #'equal)))
-    (is-true entry "*startup-modes* must have an 'attach-session' entry")
-    (is (eq 'cl-tmux::run-attach-with-flags (first (cdr entry)))
-        "attach-session handler must be run-attach-with-flags")
-    (is-true (getf (rest (cdr entry)) :raw-args-p)
-             "attach-session entry must have :raw-args-p T")))
+(test startup-modes-mode-handlers-table
+  :description "*startup-modes* server/attach/attach-session entries have the expected handlers."
+  (dolist (c '(("server"          cl-tmux::run-server             nil "server → run-server")
+               ("attach"          cl-tmux::run-attach-simple       nil "attach → run-attach-simple")
+               ("attach-session"  cl-tmux::run-attach-with-flags    t  "attach-session → run-attach-with-flags")))
+    (destructuring-bind (mode handler raw-args-p desc) c
+      (let ((entry (assoc mode cl-tmux::*startup-modes* :test #'equal)))
+        (is-true entry "~A: *startup-modes* must have a '~A' entry" desc mode)
+        (is (eq handler (first (cdr entry))) "~A: handler must be ~A" desc handler)
+        (when raw-args-p
+          (is-true (getf (rest (cdr entry)) :raw-args-p)
+                   "~A: must have :raw-args-p T" desc))))))
 
 ;;; ── with-incoming-frame EOF (nil type) arm via empty file stream ─────────────
 ;;;
