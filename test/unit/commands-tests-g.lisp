@@ -6,16 +6,13 @@
 
 ;;; ── send-keys-to-pane ────────────────────────────────────────────────────────
 
-(test send-keys-to-pane-noop-with-negative-fd
-  "send-keys-to-pane is a no-op (no error) when the pane has fd=-1."
+(test send-keys-to-pane-noop
+  "send-keys-to-pane is a no-op for a NIL pane and for a pane with fd=-1."
+  (finishes (cl-tmux/commands:send-keys-to-pane nil "hello")
+            "nil pane must not signal")
   (let ((pane (%make-test-pane)))
     (finishes (cl-tmux/commands:send-keys-to-pane pane "hello")
-              "send-keys-to-pane with fd=-1 must not signal an error")))
-
-(test send-keys-to-pane-noop-with-nil-pane
-  "send-keys-to-pane with NIL pane does not signal an error."
-  (finishes (cl-tmux/commands:send-keys-to-pane nil "hello")
-            "send-keys-to-pane with nil pane must not signal an error"))
+              "fd=-1 pane must not signal")))
 
 ;;; ── send-keys key-name translation ───────────────────────────────────────────
 
@@ -120,41 +117,25 @@
 
 ;;; ── tokenize-command-string (shell-style command lexer) ──────────────────────
 
-(test tokenize-command-string-basic-whitespace
-  "Whitespace separates arguments; runs of spaces/tabs collapse."
-  (is (equal '("a" "b" "c") (cl-tmux/commands:tokenize-command-string "a b c")))
-  (is (equal '("a" "b") (cl-tmux/commands:tokenize-command-string "  a   b  ")))
-  (is (equal '() (cl-tmux/commands:tokenize-command-string "   "))))
-
-(test tokenize-command-string-single-quotes-literal
-  "'...' is a literal span: spaces inside are kept and no escapes are processed."
-  (is (equal '("a b" "c") (cl-tmux/commands:tokenize-command-string "'a b' c")))
-  (is (equal '("a\\b") (cl-tmux/commands:tokenize-command-string "'a\\b'")))
-  (is (equal '("") (cl-tmux/commands:tokenize-command-string "''"))
-      "an explicit empty quoted token yields an empty-string argument"))
-
-(test tokenize-command-string-double-quotes-with-escapes
-  "\"...\" keeps spaces and processes backslash escapes."
-  (is (equal '("a b") (cl-tmux/commands:tokenize-command-string "\"a b\"")))
-  (is (equal '("a\"b") (cl-tmux/commands:tokenize-command-string "\"a\\\"b\""))
-      "escaped double-quote stays inside the argument"))
-
-(test tokenize-command-string-bare-backslash-escape
-  "A bare backslash escapes the next character (e.g. a space joins one arg)."
-  (is (equal '("a b") (cl-tmux/commands:tokenize-command-string "a\\ b")))
-  (is (equal '("ab") (cl-tmux/commands:tokenize-command-string "a\\b"))))
-
-(test tokenize-command-string-adjacent-spans-join
-  "Adjacent quoted/bare spans concatenate into a single argument."
-  (is (equal '("foobar baz")
-             (cl-tmux/commands:tokenize-command-string "foo\"bar baz\"")))
-  (is (equal '("ab cd")
-             (cl-tmux/commands:tokenize-command-string "'ab'' cd'"))))
-
-(test tokenize-command-string-unterminated-quote-tolerated
-  "An unterminated quote consumes to end of string without error."
-  (is (equal '("a b") (cl-tmux/commands:tokenize-command-string "'a b")))
-  (is (equal '("xy") (cl-tmux/commands:tokenize-command-string "\"xy"))))
+(test tokenize-command-string-table
+  "tokenize-command-string splits on whitespace; handles quoted spans, escapes, and unterminated quotes."
+  (dolist (c '(("a b c"          ("a" "b" "c")  "basic whitespace split")
+               ("  a   b  "      ("a" "b")       "leading/trailing collapses")
+               ("   "            ()              "all-whitespace → empty list")
+               ("'a b' c"        ("a b" "c")     "space inside single quotes is literal")
+               ("'a\\b'"         ("a\\b")        "backslash in single quotes is literal")
+               ("''"             ("")            "empty single-quoted token")
+               ("\"a b\""        ("a b")         "space inside double quotes kept")
+               ("\"a\\\"b\""     ("a\"b")        "escaped double-quote inside double quotes")
+               ("a\\ b"          ("a b")         "backslash-space joins one argument")
+               ("a\\b"           ("ab")          "bare backslash-char collapses")
+               ("foo\"bar baz\"" ("foobar baz")  "adjacent spans concatenate")
+               ("'ab'' cd'"      ("ab cd")       "adjacent single-quoted spans join")
+               ("'a b"           ("a b")         "unterminated single quote")
+               ("\"xy"           ("xy")          "unterminated double quote")))
+    (destructuring-bind (input expected desc) c
+      (is (equal expected (cl-tmux/commands:tokenize-command-string input))
+          "~A" desc))))
 
 ;;; ── add-message-log ──────────────────────────────────────────────────────────
 
@@ -247,47 +228,31 @@
 
 ;;; ── %copy-mode-find-forward / %copy-mode-find-backward ──────────────────────
 
-(test copy-mode-find-forward-locates-term
-  "%copy-mode-find-forward finds TERM at the correct row/col from start position."
-  (let ((s (make-screen 30 5)))
-    (feed s "abc def abc")
-    (cl-tmux/commands::copy-mode-enter s)
-    (multiple-value-bind (row col)
-        (cl-tmux/commands::%copy-mode-find-forward s "abc" 0 1)
-      (is (= 0 row) "forward search must find match on row 0 (got ~S)" row)
-      (is (= 8 col) "forward search from col 1 must find second 'abc' at col 8 (got ~S)" col))))
+(test copy-mode-find-locates-term
+  "%copy-mode-find-forward and %copy-mode-find-backward both find TERM in 'abc def abc'."
+  (dolist (c '((cl-tmux/commands::%copy-mode-find-forward  0 1  0 8 "forward from col 1 finds second 'abc' at col 8")
+               (cl-tmux/commands::%copy-mode-find-backward 0 11 0 8 "backward from col 11 finds 'abc' at col 8")))
+    (destructuring-bind (fn srow scol erow ecol desc) c
+      (let ((s (make-screen 30 5)))
+        (feed s "abc def abc")
+        (cl-tmux/commands::copy-mode-enter s)
+        (multiple-value-bind (row col)
+            (funcall fn s "abc" srow scol)
+          (is (= erow row) "~A: row (got ~S)" desc row)
+          (is (= ecol col) "~A: col (got ~S)" desc col))))))
 
-(test copy-mode-find-forward-no-match-returns-nil-nil
-  "%copy-mode-find-forward returns (values nil nil) when no match exists."
-  (let ((s (make-screen 20 5)))
-    (feed s "hello world")
-    (cl-tmux/commands::copy-mode-enter s)
-    (multiple-value-bind (row col)
-        (cl-tmux/commands::%copy-mode-find-forward s "zzz" 0 0)
-      (is (null row) "no match: row must be NIL")
-      (is (null col) "no match: col must be NIL"))))
-
-(test copy-mode-find-backward-locates-term
-  "%copy-mode-find-backward finds the nearest match before the cursor position."
-  (let ((s (make-screen 30 5)))
-    (feed s "abc def abc")
-    (cl-tmux/commands::copy-mode-enter s)
-    ;; Search backward from col 11 on row 0 => nearest match before col 11 is
-    ;; the second "abc" at col 8.
-    (multiple-value-bind (row col)
-        (cl-tmux/commands::%copy-mode-find-backward s "abc" 0 11)
-      (is (= 0 row) "backward search must find match on row 0 (got ~S)" row)
-      (is (= 8 col) "backward search from col 11 must find 'abc' at col 8 (got ~S)" col))))
-
-(test copy-mode-find-backward-no-match-returns-nil-nil
-  "%copy-mode-find-backward returns (values nil nil) when no match exists."
-  (let ((s (make-screen 20 5)))
-    (feed s "hello world")
-    (cl-tmux/commands::copy-mode-enter s)
-    (multiple-value-bind (row col)
-        (cl-tmux/commands::%copy-mode-find-backward s "zzz" 0 5)
-      (is (null row) "no match: row must be NIL")
-      (is (null col) "no match: col must be NIL"))))
+(test copy-mode-find-no-match-returns-nil-nil
+  "%copy-mode-find-forward and %copy-mode-find-backward both return (values nil nil) when no match exists."
+  (dolist (c '((cl-tmux/commands::%copy-mode-find-forward  0 0 "forward: no match")
+               (cl-tmux/commands::%copy-mode-find-backward 0 5 "backward: no match")))
+    (destructuring-bind (fn srow scol desc) c
+      (let ((s (make-screen 20 5)))
+        (feed s "hello world")
+        (cl-tmux/commands::copy-mode-enter s)
+        (multiple-value-bind (row col)
+            (funcall fn s "zzz" srow scol)
+          (is (null row) "~A: row must be NIL" desc)
+          (is (null col) "~A: col must be NIL" desc))))))
 
 ;;; ── join-pane ────────────────────────────────────────────────────────────────
 
