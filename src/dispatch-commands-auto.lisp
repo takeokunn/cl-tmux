@@ -195,9 +195,7 @@
                         (window-id win) (window-name win)
                         (window-width win) (window-height win)
                         (length (window-panes win))
-                        (if (eq win (session-active-window sess)) " [active]" ""))))))))))
-
-
+                        (if (eq win (session-active-window sess)) " [active]" ""))))))))
 
 (defun %cmd-list-panes-arg-full (session args)
   "list-panes [-F format] [-a] [-t target]: list panes.
@@ -217,7 +215,7 @@
                         (pane-width pane) (pane-height pane)
                         (pane-x pane) (pane-y pane)
                         (pane-id pane)
-                        (if (eq pane (window-active-pane win)) " (active)" "")))))))))
+                        (if (eq pane (window-active-pane win)) " (active)" ""))))))))
 
 (defun %cmd-respawn-pane-arg (session args)
   "respawn-pane [-k] [-c start-dir] [-e VAR=val] [-t target-pane] [command]: restart
