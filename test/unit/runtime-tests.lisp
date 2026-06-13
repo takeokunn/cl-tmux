@@ -32,15 +32,12 @@
   (is (integerp cl-tmux::*term-rows*)     "*term-rows* must be an integer")
   (is (integerp cl-tmux::*term-cols*)     "*term-cols* must be an integer"))
 
-(test runtime-term-rows-positive
-  :description "*term-rows* default is a positive integer (at least 1 row)."
-  (is (plusp cl-tmux::*term-rows*) "*term-rows* must be a positive integer, got ~D"
-      cl-tmux::*term-rows*))
-
-(test runtime-term-cols-positive
-  :description "*term-cols* default is a positive integer (at least 1 column)."
-  (is (plusp cl-tmux::*term-cols*) "*term-cols* must be a positive integer, got ~D"
-      cl-tmux::*term-cols*))
+(test runtime-term-dimensions-positive-table
+  "*term-rows* and *term-cols* both default to positive integers."
+  (dolist (row (list (list cl-tmux::*term-rows* "*term-rows*")
+                     (list cl-tmux::*term-cols* "*term-cols*")))
+    (destructuring-bind (val name) row
+      (is (plusp val) "~A must be positive, got ~D" name val))))
 
 (test runtime-max-message-log-entries-is-constant
   :description "+max-message-log-entries+ is a positive integer constant."

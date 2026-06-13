@@ -56,14 +56,15 @@
 
 ;;; option-defined-p
 
-(test option-defined-p-registered-option
-  "option-defined-p returns T for a registered option."
-  (is (cl-tmux/options:option-defined-p "status")
-      "status must be a registered option"))
-
-(test option-defined-p-unregistered-returns-nil
-  "option-defined-p returns NIL for an unknown option name."
-  (is (null (cl-tmux/options:option-defined-p "no-such-option"))))
+(test option-defined-p-table
+  "option-defined-p returns T for registered options, NIL for unknowns."
+  (dolist (row '(("status"         t   "known option → T")
+                 ("no-such-option" nil "unknown option → NIL")))
+    (destructuring-bind (name expected desc) row
+      (is (if expected
+              (cl-tmux/options:option-defined-p name)
+              (null (cl-tmux/options:option-defined-p name)))
+          "~A" desc))))
 
 ;;; Type coercion
 
@@ -96,15 +97,14 @@
     (is (string= "on" (cl-tmux/options:set-option "status" "on"))
         "on is stored verbatim (status-line-count maps it to 1)")))
 
-(test integer-coercion
-  "Setting a :integer option with a numeric string coerces correctly."
-  (with-fresh-global-options
-    (is (= 5000 (cl-tmux/options:set-option "history-limit" "5000")))))
-
-(test integer-coercion-500
-  "Setting history-limit with 500 coerces to the integer 500."
-  (with-fresh-global-options
-    (is (= 500 (cl-tmux/options:set-option "history-limit" "500")))))
+(test integer-coercion-table
+  "Setting a :integer option with a numeric string coerces to the integer value."
+  (dolist (row '(("5000" 5000 "5000 → integer 5000")
+                 ("500"   500 "500 → integer 500")))
+    (destructuring-bind (str-val expected desc) row
+      (with-fresh-global-options
+        (is (= expected (cl-tmux/options:set-option "history-limit" str-val))
+            "~A" desc)))))
 
 (test string-coercion-from-non-string
   "Setting a :string option with a non-string value coerces via format ~A."
