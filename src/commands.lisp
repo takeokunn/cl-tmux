@@ -142,17 +142,18 @@
               (write-char (cell-char cell) out)))
           (format out "~C[0m" #\Escape)))))
 
+(defun %build-row-string-sgr (cell-at full-width &optional (trim t))
+  "Build a SGR-attributed row string from CELL-AT over %row-content-width columns.
+   Parallel to %build-row-string for the escapes=t case."
+  (%cells-to-sgr-string cell-at (%row-content-width cell-at full-width trim)))
+
 (defun %screen-row-string-sgr (screen row &optional (trim t))
   "Visible-row string with SGR escapes (capture-pane -e)."
-  (let ((cell-at (lambda (col) (screen-cell screen col row))))
-    (%cells-to-sgr-string cell-at
-                          (%row-content-width cell-at (screen-width screen) trim))))
+  (%build-row-string-sgr (lambda (col) (screen-cell screen col row)) (screen-width screen) trim))
 
 (defun %scrollback-row-string-sgr (cell-vector &optional (trim t))
   "Scrollback-row string with SGR escapes (capture-pane -e)."
-  (let ((cell-at (lambda (col) (aref cell-vector col))))
-    (%cells-to-sgr-string cell-at
-                          (%row-content-width cell-at (length cell-vector) trim))))
+  (%build-row-string-sgr (lambda (col) (aref cell-vector col)) (length cell-vector) trim))
 
 (defun %build-row-string (cell-at full-width trim)
   "Build a plain string from CELL-AT over width computed by %row-content-width."

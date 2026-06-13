@@ -82,6 +82,16 @@
     (values (and term (plusp (length term)) term)
             (and cmd  (plusp (length cmd))  cmd))))
 
+(defun %forkpty-with-default-options (h w &key start-dir extra-env)
+  "Fork a PTY shell using the configured default-terminal and default-command.
+   Returns (values fd pid slave-path).  Shared by %fork-pane and respawn-pane."
+  (multiple-value-bind (term command) (%read-shell-fork-options)
+    (forkpty-with-shell h w
+                        :start-dir start-dir
+                        :term term
+                        :default-command command
+                        :extra-env extra-env)))
+
 (defun %fork-pane (id x y w h &key start-dir)
   "Fork a shell and build a PTY-backed pane at position (X,Y) sized W×H.
    START-DIR: when non-NIL, the child shell is started in that directory.
@@ -91,21 +101,16 @@
    variable (alist of (NAME . VALUE)), which is consumed once and reset.
    Returns the new pane.  The PTY file descriptor and child PID are embedded
    in the pane struct; callers should call pty-close on them at teardown."
-  (multiple-value-bind (term command) (%read-shell-fork-options)
-    ;; Merge update-environment vars with *pane-extra-env*.
-    ;; *pane-extra-env* entries take precedence (placed last = later setenv).
-    (let ((environment-pairs (append (get-update-environment-vars) *pane-extra-env*)))
-      ;; Consume *pane-extra-env*: reset so a later fork without -e starts clean.
-      (setf *pane-extra-env* nil)
-      (multiple-value-bind (fd pid slave-path)
-          (forkpty-with-shell h w
-                              :start-dir start-dir
-                              :term term
-                              :default-command command
-                              :extra-env environment-pairs)
-        (make-pane :id id :x x :y y :width w :height h
-                   :fd fd :pid pid :tty (or slave-path "")
-                   :screen (make-screen w h))))))
+  ;; Merge update-environment vars with *pane-extra-env*.
+  ;; *pane-extra-env* entries take precedence (placed last = later setenv).
+  (let ((environment-pairs (append (get-update-environment-vars) *pane-extra-env*)))
+    ;; Consume *pane-extra-env*: reset so a later fork without -e starts clean.
+    (setf *pane-extra-env* nil)
+    (multiple-value-bind (fd pid slave-path)
+        (%forkpty-with-default-options h w :start-dir start-dir :extra-env environment-pairs)
+      (make-pane :id id :x x :y y :width w :height h
+                 :fd fd :pid pid :tty (or slave-path "")
+                 :screen (make-screen w h)))))
 
 (defun respawn-pane (pane)
   "Restart PANE's PTY process, keeping geometry and screen intact.
@@ -120,14 +125,11 @@
     ;; Close the old PTY; ignore errors (process may have already exited).
     (ignore-errors (pty-close old-fd old-pid))
     ;; Open a fresh PTY-backed shell at the same geometry, respecting options.
-    (multiple-value-bind (term command) (%read-shell-fork-options)
-      (multiple-value-bind (new-fd new-pid slave-path)
-          (forkpty-with-shell h w
-                              :term term
-                              :default-command command)
-        (setf (pane-fd  pane) new-fd
-              (pane-pid pane) new-pid
-              (pane-tty pane) (or slave-path ""))))
+    (multiple-value-bind (new-fd new-pid slave-path)
+        (%forkpty-with-default-options h w)
+      (setf (pane-fd  pane) new-fd
+            (pane-pid pane) new-pid
+            (pane-tty pane) (or slave-path "")))
     pane))
 
 ;;; ── pane-reposition ──────────────────────────────────────────────────────────
