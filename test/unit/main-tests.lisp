@@ -367,39 +367,24 @@
     (is (eql 1 exit-code)
         "run-has-session without socket must exit 1")))
 
-(test run-kill-server-is-fbound
-  "run-kill-server is a defined function."
-  (is (fboundp 'cl-tmux::run-kill-server)
-      "run-kill-server must be fbound"))
-
-(test run-list-sessions-is-fbound
-  "run-list-sessions is a defined function."
-  (is (fboundp 'cl-tmux::run-list-sessions)
-      "run-list-sessions must be fbound"))
-
-(test run-source-file-is-fbound
-  "run-source-file is a defined function."
-  (is (fboundp 'cl-tmux::run-source-file)
-      "run-source-file must be fbound"))
-
-(test run-has-session-is-fbound
-  "run-has-session is a defined function."
-  (is (fboundp 'cl-tmux::run-has-session)
-      "run-has-session must be fbound"))
+(test run-commands-are-fbound
+  "run-kill-server, run-list-sessions, run-source-file, and run-has-session are all fbound."
+  (dolist (sym '(cl-tmux::run-kill-server
+                 cl-tmux::run-list-sessions
+                 cl-tmux::run-source-file
+                 cl-tmux::run-has-session))
+    (is (fboundp sym) "~S must be fbound" sym)))
 
 ;;; ── Coverage: hostname / environment helpers ─────────────────────────────────
 
-(test hostname-short-strips-dot-suffix
-  "%hostname-short returns the part before the first dot."
-  (is (string= "myhost" (cl-tmux::%hostname-short "myhost.example.com"))
-      "%hostname-short must strip the domain suffix")
-  (is (string= "solo" (cl-tmux::%hostname-short "solo"))
-      "%hostname-short must return the full string when no dot present"))
-
-(test hostname-short-empty-string
-  "%hostname-short handles an empty hostname without error."
-  (is (string= "" (cl-tmux::%hostname-short ""))
-      "%hostname-short on empty string must return empty string"))
+(test hostname-short-table
+  "%hostname-short strips the domain suffix, passes through when no dot, returns empty for empty."
+  (dolist (c '(("myhost.example.com" "myhost" "FQDN → short hostname")
+               ("solo"               "solo"   "no dot → full string unchanged")
+               (""                   ""       "empty string → empty string")))
+    (destructuring-bind (input expected desc) c
+      (is (string= expected (cl-tmux::%hostname-short input))
+          "~A: ~S → ~S" desc input expected))))
 
 (test safe-getenv-returns-string
   "%safe-getenv returns a string for any variable name."
@@ -418,18 +403,13 @@
     (is (string= "3.5" (getf ctx :version))
         ":version must be \"3.5\" for compatibility")))
 
-(test make-format-condition-evaluator-returns-function
-  "%make-format-condition-evaluator returns a callable closure."
+(test make-format-condition-evaluator
+  "%make-format-condition-evaluator returns a callable closure that returns a string."
   (let ((evaluator (cl-tmux::%make-format-condition-evaluator)))
     (is (functionp evaluator)
-        "%make-format-condition-evaluator must return a function")))
-
-(test make-format-condition-evaluator-returns-string
-  "The closure returned by %make-format-condition-evaluator returns a string."
-  (let ((evaluator (cl-tmux::%make-format-condition-evaluator)))
-    (let ((result (funcall evaluator "1")))
-      (is (stringp result)
-          "format condition evaluator must return a string"))))
+        "%make-format-condition-evaluator must return a function")
+    (is (stringp (funcall evaluator "1"))
+        "format condition evaluator must return a string")))
 
 ;;; ── Coverage: server-launch timeout constant ─────────────────────────────────
 
