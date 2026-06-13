@@ -154,31 +154,17 @@
 
 ;;; ── parse-style-string remaining attributes ──────────────────────────────────
 
-(test parse-style-string-dim
-  "parse-style-string parses 'dim' into :dim T."
-  (let ((p (cl-tmux/renderer:parse-style-string "dim")))
-    (is (getf p :dim) "parse-style-string dim must set :dim T")))
-
-(test parse-style-string-italics
-  "parse-style-string parses 'italics' into :italics T."
-  (let ((p (cl-tmux/renderer:parse-style-string "italics")))
-    (is (getf p :italics) "parse-style-string italics must set :italics T")))
-
-(test parse-style-string-blink
-  "parse-style-string parses 'blink' into :blink T."
-  (let ((p (cl-tmux/renderer:parse-style-string "blink")))
-    (is (getf p :blink) "parse-style-string blink must set :blink T")))
-
-(test parse-style-string-conceal
-  "parse-style-string parses 'conceal' into :conceal T."
-  (let ((p (cl-tmux/renderer:parse-style-string "conceal")))
-    (is (getf p :conceal) "parse-style-string conceal must set :conceal T")))
-
-(test parse-style-string-strikethrough
-  "parse-style-string parses 'strikethrough' into :strikethrough T."
-  (let ((p (cl-tmux/renderer:parse-style-string "strikethrough")))
-    (is (getf p :strikethrough)
-        "parse-style-string strikethrough must set :strikethrough T")))
+(test parse-style-string-attributes-table
+  "parse-style-string correctly maps each attribute name to its plist key."
+  (let ((cases '(("dim"           . :dim)
+                 ("italics"       . :italics)
+                 ("blink"         . :blink)
+                 ("conceal"       . :conceal)
+                 ("strikethrough" . :strikethrough))))
+    (dolist (c cases)
+      (let ((p (cl-tmux/renderer:parse-style-string (car c))))
+        (is (getf p (cdr c))
+            "parse-style-string ~S must set ~S T" (car c) (cdr c))))))
 
 (test parse-style-string-fg-and-bg-combined
   "parse-style-string parses both fg= and bg= in a combined style string."
@@ -194,20 +180,16 @@
 
 ;;; ── style-to-sgr remaining attributes ───────────────────────────────────────
 
-(test style-to-sgr-dim
-  "style-to-sgr with :dim T includes SGR code 2."
-  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:dim t))))
-    (is (search "2" sgr) "style-to-sgr :dim must include \"2\" (got ~S)" sgr)))
-
-(test style-to-sgr-underline
-  "style-to-sgr with :underline T includes SGR code 4."
-  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:underline t))))
-    (is (search "4" sgr) "style-to-sgr :underline must include \"4\" (got ~S)" sgr)))
-
-(test style-to-sgr-italics
-  "style-to-sgr with :italics T includes SGR code 3."
-  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:italics t))))
-    (is (search "3" sgr) "style-to-sgr :italics must include \"3\" (got ~S)" sgr)))
+(test style-to-sgr-attributes-table
+  "style-to-sgr emits the correct SGR code for each boolean attribute."
+  (let ((cases '((:dim       "2")
+                 (:underline "4")
+                 (:italics   "3"))))
+    (dolist (c cases)
+      (destructuring-bind (key code) c
+        (let ((sgr (cl-tmux/renderer:style-to-sgr (list key t))))
+          (is (search code sgr)
+              "style-to-sgr ~S must include ~S (got ~S)" key code sgr))))))
 
 (test style-to-sgr-fg-colour-n
   "style-to-sgr with :fg \"colour200\" includes 38;5;200."
