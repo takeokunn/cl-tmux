@@ -71,6 +71,15 @@
 (defconstant +min-clock-width+ 13
   "Minimum pane width in columns required to render the clock-mode HH:MM display.")
 
+(defun %center-coord (total size)
+  "Return the column/row offset to center SIZE within TOTAL (clamped to 0)."
+  (max 0 (floor (- total size) 2)))
+
+(defun %emit-sgr (stream code)
+  "Emit an ANSI SGR escape sequence (ESC[CODEm) to STREAM.
+   CODE may be an integer or a string (e.g. \"44;96\" for compound SGR parameters)."
+  (format stream "~C[~Am" +esc+ code))
+
 (defun %blit-rows (stream rows ox oy start-row start-col max-width)
   "Write ROWS (a list of strings) at terminal position (OX+START-COL, OY+START-ROW),
    clipping each to MAX-WIDTH columns."
@@ -111,12 +120,12 @@
              ;; Centre within the pane
              (clock-w (length (first rows)))
              (clock-h 3)
-             (start-col (max 0 (floor (- pw clock-w) 2)))
-             (start-row (max 0 (floor (- ph clock-h) 2))))
+             (start-col (%center-coord pw clock-w))
+             (start-row (%center-coord ph clock-h)))
         ;; Blue background, bright cyan text for clock face.
         ;; Use a named constant consistent with +sgr-default-status+ (44;97) but with
         ;; bright cyan (96) instead of bright white to distinguish the clock from the bar.
-        (format stream "~C[~Am" +esc+ (%clock-face-sgr))
+        (%emit-sgr stream (%clock-face-sgr))
         (%blit-rows stream rows ox oy start-row start-col pw)
         (reset-attrs stream)))))
 
@@ -134,13 +143,13 @@
                                                       (nth row-idx (%clock-digit-rows d)))
                                                     digits))))
            (num-w     (length (first rows)))
-           (start-col (max 0 (floor (- pw num-w) 2)))
-           (start-row (max 0 (floor (- ph 3) 2)))
+           (start-col (%center-coord pw num-w))
+           (start-row (%center-coord ph 3))
            (colour    (if active-p
                           (cl-tmux/options:get-option "display-panes-active-colour" "red")
                           (cl-tmux/options:get-option "display-panes-colour" "blue")))
            (sgr       (or (%border-color-sgr colour) 34)))
-      (format stream "~C[~Dm" +esc+ sgr)
+      (%emit-sgr stream sgr)
       (%blit-rows stream rows ox oy start-row start-col pw)
       (reset-attrs stream))))
 
