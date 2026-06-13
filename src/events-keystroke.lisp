@@ -260,19 +260,9 @@
                 ;; N — search prev
                 (78         (copy-mode-search-prev screen))           ; N
                 ;; / — interactive search forward prompt
-                (47
-                 (prompt-start "search" ""
-                               (lambda (term)
-                                 (setf *dirty* t)
-                                 (when (and (stringp term) (plusp (length term)))
-                                   (copy-mode-search-forward screen term)))))
+                (47 (%copy-mode-search-prompt session "/" #'copy-mode-search-forward))
                 ;; ? — interactive search backward prompt
-                (63
-                 (prompt-start "search-back" ""
-                               (lambda (term)
-                                 (setf *dirty* t)
-                                 (when (and (stringp term) (plusp (length term)))
-                                   (copy-mode-search-backward screen term)))))
+                (63 (%copy-mode-search-prompt session "?" #'copy-mode-search-backward))
                 ;; C-s (19) — incremental forward search (tmux search-forward-incremental)
                 (19  (copy-mode-search-forward-incremental screen))
                 ;; C-r (18) — incremental backward search (tmux search-backward-incremental)
