@@ -168,12 +168,11 @@
   (with-command-flags (flags args "F")
     (let ((fmt (cdr (assoc #\F flags))))
       (if fmt
-          (show-overlay
-           (with-output-to-string (s)
+          (show-built-overlay (s)
              (dolist (sess (or (mapcar #'cdr *server-sessions*) (list session)))
                (let* ((ctx (cl-tmux/format:format-context-from-session
                             sess (session-active-window sess) nil)))
-                 (format s "~A~%" (cl-tmux/format:expand-format fmt ctx))))))
+                 (format s "~A~%" (cl-tmux/format:expand-format fmt ctx)))))
           (show-overlay (%format-session-list session))))))
 
 (defun %cmd-list-windows-arg (session args)
@@ -186,18 +185,19 @@
            (sessions (if (and all-p *server-sessions*)
                          (mapcar #'cdr *server-sessions*)
                          (list session))))
-      (show-overlay
-       (with-output-to-string (s)
-         (dolist (sess sessions)
-           (dolist (win (session-windows sess))
-             (if fmt
-                 (let ((ctx (cl-tmux/format:format-context-from-window sess win)))
-                   (format s "~A~%" (cl-tmux/format:expand-format fmt ctx)))
-                 (format s "~A: ~A (~Dx~D) [~D pane~:P]~A~%"
-                         (window-id win) (window-name win)
-                         (window-width win) (window-height win)
-                         (length (window-panes win))
-                         (if (eq win (session-active-window sess)) " [active]" ""))))))))))
+      (show-built-overlay (s)
+        (dolist (sess sessions)
+          (dolist (win (session-windows sess))
+            (if fmt
+                (let ((ctx (cl-tmux/format:format-context-from-window sess win)))
+                  (format s "~A~%" (cl-tmux/format:expand-format fmt ctx)))
+                (format s "~A: ~A (~Dx~D) [~D pane~:P]~A~%"
+                        (window-id win) (window-name win)
+                        (window-width win) (window-height win)
+                        (length (window-panes win))
+                        (if (eq win (session-active-window sess)) " [active]" ""))))))))))
+
+
 
 (defun %cmd-list-panes-arg-full (session args)
   "list-panes [-F format] [-a] [-t target]: list panes.
@@ -205,20 +205,19 @@
   (with-command-flags (flags args "Ft")
     (let* ((fmt   (cdr (assoc #\F flags)))
            (win   (session-active-window session)))
-      (show-overlay
-       (with-output-to-string (s)
-         (when win
-           (dolist (pane (window-panes win))
-             (if fmt
-                 (let ((ctx (cl-tmux/format:format-context-from-session
+      (show-built-overlay (s)
+        (when win
+          (dolist (pane (window-panes win))
+            (if fmt
+                (let ((ctx (cl-tmux/format:format-context-from-session
                              session win pane)))
-                   (format s "~A~%" (cl-tmux/format:expand-format fmt ctx)))
-                 (format s "~D: [~Dx~D] [~D,~D] pane ~D~A~%"
-                         (pane-id pane)
-                         (pane-width pane) (pane-height pane)
-                         (pane-x pane) (pane-y pane)
-                         (pane-id pane)
-                         (if (eq pane (window-active-pane win)) " (active)" ""))))))))))
+                  (format s "~A~%" (cl-tmux/format:expand-format fmt ctx)))
+                (format s "~D: [~Dx~D] [~D,~D] pane ~D~A~%"
+                        (pane-id pane)
+                        (pane-width pane) (pane-height pane)
+                        (pane-x pane) (pane-y pane)
+                        (pane-id pane)
+                        (if (eq pane (window-active-pane win)) " (active)" "")))))))))
 
 (defun %cmd-respawn-pane-arg (session args)
   "respawn-pane [-k] [-c start-dir] [-e VAR=val] [-t target-pane] [command]: restart
@@ -363,10 +362,9 @@
                        (remove-if-not
                         (lambda (c) (string-equal (symbol-name c) name)) cmds)
                        cmds)))
-    (show-overlay
-     (with-output-to-string (s)
-       (dolist (cmd filtered)
-         (format s "~(~A~)~%" cmd))))))
+    (show-built-overlay (s)
+      (dolist (cmd filtered)
+        (format s "~(~A~)~%" cmd)))))
 
 (defun %cmd-wait-for-arg (session args)
   "wait-for [-SLU] channel: channel synchronization.
