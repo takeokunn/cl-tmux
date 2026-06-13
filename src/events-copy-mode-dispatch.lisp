@@ -27,7 +27,6 @@
       SESSION is passed through for continuations that need to return a new CPS state.
       Returns (values HANDLED NEXT-STATE) where HANDLED is T or NIL and NEXT-STATE
       is a CPS continuation function or NIL to return to ground state."
-     (declare (ignorable session))
      (case byte
        ,@(mapcar
           (lambda (rule)
@@ -63,6 +62,10 @@
   ;; ── Exit copy mode ────────────────────────────────────────────────────────
   ;; q / Q / C-c — exit copy mode
   ((#.+byte-q+ 81 3)
+   (copy-mode-exit screen)
+   (values t nil))
+  ;; i — exit copy mode (non-standard but kept for compat)
+  (105
    (copy-mode-exit screen)
    (values t nil))
   ;; ── Yank (copy) ───────────────────────────────────────────────────────────
@@ -229,19 +232,11 @@
    (values t nil))
   ;; / — interactive search forward prompt
   (#.+byte-slash+
-   (prompt-start "search" ""
-                 (lambda (term)
-                   (setf *dirty* t)
-                   (when (and (stringp term) (plusp (length term)))
-                     (copy-mode-search-forward screen term))))
+   (%copy-mode-search-prompt session "/" #'copy-mode-search-forward)
    (values t nil))
   ;; ? — interactive search backward prompt
   (#.+byte-question+
-   (prompt-start "search-back" ""
-                 (lambda (term)
-                   (setf *dirty* t)
-                   (when (and (stringp term) (plusp (length term)))
-                     (copy-mode-search-backward screen term))))
+   (%copy-mode-search-prompt session "?" #'copy-mode-search-backward)
    (values t nil))
   ;; C-s (19) — incremental forward search
   (19
