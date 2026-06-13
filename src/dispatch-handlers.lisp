@@ -109,6 +109,15 @@
       (prompt-nonempty prompt-char
                        (lambda (term) (funcall search-fn screen term))))))
 
+(defun %show-jk-menu (title items &optional empty-msg)
+  "Show ITEMS as an interactive j/k menu titled TITLE.
+   When ITEMS is empty and EMPTY-MSG is given, show EMPTY-MSG as a plain overlay instead."
+  (if (and (null items) empty-msg)
+      (show-overlay empty-msg)
+      (progn
+        (show-menu (make-menu :title title :items items :selected-index 0))
+        (show-overlay (%format-menu *active-menu*)))))
+
 (defun %copy-mode-cursor-fn (direction)
   "Return a one-arg function that moves the copy-mode cursor in DIRECTION."
   (lambda (s) (copy-mode-move-cursor s direction)))
@@ -318,8 +327,7 @@
                                ;; :menu-select dispatch extension.
                                (list :switch-client name))))
                      sessions)))
-     (show-menu (make-menu :title "choose-session (j/k, Enter)" :items items :selected-index 0))
-     (show-overlay (%format-menu *active-menu*))))
+     (%show-jk-menu "choose-session (j/k, Enter)" items)))
   (:new-session
    (let* ((rows (- *term-rows* *status-height*))
           (cols *term-cols*)
@@ -356,11 +364,7 @@
                                  ;; Command: select this window by id.
                                  (list :select-window (window-id w))))
                          wins)))
-     (if items
-         (progn
-           (show-menu (make-menu :title "choose-window (j/k, Enter)" :items items :selected-index 0))
-           (show-overlay (%format-menu *active-menu*)))
-         (show-overlay "(no windows)"))))
+     (%show-jk-menu "choose-window (j/k, Enter)" items "(no windows)")))
   (:last-window
    (let ((prev (session-last-window session)))
      (when prev

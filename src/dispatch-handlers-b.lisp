@@ -82,8 +82,7 @@
                       (cons "Zoom Toggle"   :zoom-toggle)
                       (cons "List Sessions" :list-sessions)
                       (cons "Detach"        :detach))))
-     (show-menu (make-menu :title "Menu" :items items :selected-index 0))
-     (show-overlay (%format-menu *active-menu*))))
+     (%show-jk-menu "Menu" items)))
   (:menu-next   (when *active-menu* (%step-menu *active-menu*  1)))
   (:menu-prev   (when *active-menu* (%step-menu *active-menu* -1)))
   (:menu-select
