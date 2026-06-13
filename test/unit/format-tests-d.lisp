@@ -177,23 +177,14 @@
 
 ;;; ── #{client_width}, #{client_height}, #{client_tty} ─────────────────────────
 
-(test expand-format-client-width-from-context
-  "#{client_width} expands to :client-width from context."
-  (is (string= "220"
-               (fmt "#{client_width}" :client-width 220))
-      "#{client_width} must expand to the :client-width value"))
-
-(test expand-format-client-height-from-context
-  "#{client_height} expands to :client-height from context."
-  (is (string= "55"
-               (fmt "#{client_height}" :client-height 55))
-      "#{client_height} must expand to the :client-height value"))
-
-(test expand-format-client-tty-from-context
-  "#{client_tty} expands to :client-tty from context."
-  (is (string= "/dev/pts/0"
-               (fmt "#{client_tty}" :client-tty "/dev/pts/0"))
-      "#{client_tty} must expand to the :client-tty value"))
+(test expand-format-client-fields-table
+  "#{client_width}, #{client_height}, #{client_tty} each expand to the matching context value."
+  (dolist (c '(("#{client_width}"  :client-width  220    "220")
+               ("#{client_height}" :client-height 55     "55")
+               ("#{client_tty}"    :client-tty    "/dev/pts/0" "/dev/pts/0")))
+    (destructuring-bind (spec key value expected) c
+      (is (string= expected (fmt spec key value))
+          "~S with ~S=~S must expand to ~S" spec key value expected))))
 
 (test format-context-client-defaults-are-zero
   "format-context-from-session :client-width and :client-height default to 0."
@@ -431,25 +422,14 @@
     (is (= 1 (length result)))
     (is (char= #\Nul (char result 0)))))
 
-(test format-modifier-char-from-code-negative-yields-empty
-  "#{a:-1} (negative code) yields the empty string."
-  (is (string= "" (fmt "#{a:-1}"))))
-
-(test format-modifier-char-from-code-out-of-range-yields-empty
-  "#{a:9999999} (beyond char-code-limit) yields the empty string."
-  (is (string= "" (fmt "#{a:9999999}"))))
+(test format-modifier-char-from-code-invalid-operands-yield-empty
+  "Non-numeric, negative, out-of-range, empty, and nested-empty operands all yield empty."
+  (dolist (spec '("#{a:-1}" "#{a:9999999}" "#{a:}" "#{a:#{missing}}"))
+    (is (string= "" (fmt spec)) "~S must yield the empty string" spec)))
 
 (test format-modifier-char-from-code-large-valid-unicode
   "#{a:955} yields the Greek small letter lambda."
   (is (string= (string (code-char 955)) (fmt "#{a:955}"))))
-
-(test format-modifier-char-from-code-empty-operand-yields-empty
-  "#{a:} (empty operand) yields the empty string."
-  (is (string= "" (fmt "#{a:}"))))
-
-(test format-modifier-char-from-code-nested-empty-operand-yields-empty
-  "#{a:#{missing}} (nested operand resolving to empty) yields the empty string."
-  (is (string= "" (fmt "#{a:#{missing}}"))))
 
 (test format-modifier-basename
   "#{b:var} yields the final path component of the resolved value."
