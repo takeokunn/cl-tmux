@@ -167,7 +167,7 @@
                  (cond
                    ((string= tok "-C") (setf tmux-command-p t))
                    ((string= tok "-b")) ; background flag, no argument
-                   ((or (string= tok "-t") (string= tok "-d"))
+                   ((member tok '("-t" "-d") :test #'string=)
                     ;; These flags take the next token as their value.
                     (when remaining (pop remaining)))
                    ;; Unknown bare -X flag: skip the single flag token only.

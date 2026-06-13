@@ -176,9 +176,7 @@
    An empty / \"default\" / \"none\" BODY resets to BASE-SGR (reset + base attrs);
    any other BODY is parsed as a tmux style string (e.g. \"fg=green,bold\")."
   (let ((b (string-trim " " body)))
-    (if (or (string= b "")
-            (string-equal b "default")
-            (string-equal b "none"))
+    (if (member b '("" "default" "none") :test #'string-equal)
         (format nil "~C[0;~Am" +esc+ base-sgr)
         (format nil "~C[~Am" +esc+ (%status-sgr-from-style b)))))
 
@@ -186,8 +184,7 @@
   "Replace tmux inline #[…] style blocks in STR with CSI SGR escape sequences.
    #[fg=green,bold] → ESC[1;32m ; #[default] → reset to BASE-SGR.  Returns STR
    unchanged when it contains no #[ block, so default/format paths are untouched."
-  (if (not (search "#[" str))
-      str
+  (if (search "#[" str)
       (with-output-to-string (out)
         (let ((i 0) (len (length str)))
           (loop while (< i len)
@@ -202,7 +199,8 @@
                                 out)
                                (setf i (1+ close)))
                              (progn (write-char (char str i) out) (incf i))))
-                       (progn (write-char (char str i) out) (incf i))))))))
+                       (progn (write-char (char str i) out) (incf i))))))
+      str))
 
 (defun %status-format-or-default (opt-name context default-fn)
   "Return the expanded format string for OPT-NAME when it differs from its registered default;
@@ -268,7 +266,7 @@
    status-right-style), falling back to BASE-SGR (the status-style) when the option
    is unset or \"default\"."
   (let ((s (cl-tmux/options:get-option option-name "")))
-    (if (or (string= s "") (string-equal s "default"))
+    (if (member s '("" "default") :test #'string-equal)
         base-sgr
         (%status-sgr-from-style s))))
 

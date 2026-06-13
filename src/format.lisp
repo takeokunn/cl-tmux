@@ -304,7 +304,7 @@
     (flet ((bit01 (truth) (if truth "1" "0")))
       (cond
         ((string= op "==") (bit01 (string= a b)))
-        ((string= op "!=") (bit01 (not (string= a b))))
+        ((string= op "!=") (bit01 (string/= a b)))
         (t
          (let ((na (or (parse-integer a :junk-allowed t) 0))
                (nb (or (parse-integer b :junk-allowed t) 0)))

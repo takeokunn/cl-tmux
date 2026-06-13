@@ -231,15 +231,14 @@
    so that format variables and arguments (e.g. 'display-message #{session_name}')
    are expanded at hook-fire time via %run-command-line.
    Returns T when handled, NIL otherwise."
-  (when (or (string= cmd "set-hook") (string= cmd "hook"))
+  (when (member cmd '("set-hook" "hook") :test #'string=)
     ;; Consume ALL leading -X flags (not just -r/-u): -g/-a/-R are accepted and
     ;; skipped so `set-hook -g <event> <cmd>` registers EVENT, not "-g".
     (let* ((remove-p nil)
            (rest     (loop for tail on args
                            while (let ((tok (first tail)))
                                    (and (> (length tok) 1) (char= (char tok 0) #\-)))
-                           do (when (or (string= (first tail) "-r")
-                                        (string= (first tail) "-u"))
+                           do (when (member (first tail) '("-r" "-u") :test #'string=)
                                 (setf remove-p t))
                            finally (return tail)))
            (event    (first rest))

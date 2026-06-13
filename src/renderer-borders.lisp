@@ -74,7 +74,7 @@
   "T unless pane-border-indicators is \"off\".  cl-tmux colours the active pane's
    border for \"colour\" (the default), \"both\", and \"arrows\" (the arrow glyphs
    are not drawn, so \"arrows\" degrades to colour); \"off\" disables the highlight."
-  (not (string= (cl-tmux/options:get-option "pane-border-indicators" "colour") "off")))
+  (string/= (cl-tmux/options:get-option "pane-border-indicators" "colour") "off"))
 
 (defun %render-h-separator (stream node active-pane terminal-cols)
   "Draw the vertical column between the left and right children of an :h split.

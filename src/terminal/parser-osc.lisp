@@ -385,7 +385,7 @@
    or '?' for a read request (read requests are silently ignored)."
   (let* ((inner-semi   (position #\; text))
          (payload-data (and inner-semi (subseq text (1+ inner-semi)))))
-    (when (and payload-data (not (string= payload-data "?")))
+    (when (and payload-data (string/= payload-data "?"))
       (let* ((decoded-bytes (and payload-data (%base64-decode payload-data)))
              (decoded-text  (and decoded-bytes
                                  (handler-case

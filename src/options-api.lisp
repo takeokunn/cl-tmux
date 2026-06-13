@@ -126,7 +126,8 @@
          ;; "-style" suffix, so the bare suffix "-style" is not a style option.
          (and (> nl sl)
               (string= name suffix :start1 (- nl sl))
-              (not (string= name "clock-mode-style"))))))
+              (string/= name "clock-mode-style")))))
+
 
 (defun append-option-value (name old value)
   "Compute the new value for `set -a NAME` given the option's current OLD value and

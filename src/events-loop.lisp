@@ -262,7 +262,7 @@
                                          :allow-title (cl-tmux/options:get-option
                                                        "allow-rename"))))
         (when (and (plusp (length new-name))
-                   (not (string= new-name (window-name active-window))))
+                   (string/= new-name (window-name active-window)))
           ;; Auto-rename must NOT disable automatic-rename, or it would fire only
           ;; once; keep it on so the name keeps tracking the foreground process.
           (rename-window active-window new-name :disable-automatic-rename nil)

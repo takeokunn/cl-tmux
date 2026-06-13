@@ -213,7 +213,7 @@
           (%render-panes-and-borders buffer window panes active-pane terminal-cols)
           ;; pane-border-status title lines (drawn after borders so they overwrite border cells)
           (when (and window panes
-                     (not (string= (cl-tmux/options:get-option "pane-border-status" "off") "off")))
+                     (string/= (cl-tmux/options:get-option "pane-border-status" "off") "off"))
             (dolist (pane panes)
               (%render-pane-border-status buffer pane session window)))
           ;; display-panes (C-b q): big per-pane numbers while the display-panes overlay
