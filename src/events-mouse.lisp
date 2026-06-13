@@ -251,7 +251,7 @@
               ;; precedence over both the root binding and the built-in handling.
               (active-screen (and active-pane (pane-screen active-pane)))
               (in-copy       (and active-screen (screen-copy-mode-p active-screen)))
-              (copy-table    (if (equal (cl-tmux/options:get-option "mode-keys" "vi") "vi")
+              (copy-table    (if (string= (cl-tmux/options:get-option "mode-keys" "vi") "vi")
                                  "copy-mode-vi" +table-copy-mode+)))
          ;; User mouse binding wins over the built-in handling: copy-mode table first
          ;; (when in copy mode), then the root table.

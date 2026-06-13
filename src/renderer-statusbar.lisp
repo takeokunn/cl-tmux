@@ -473,7 +473,7 @@
    POSITION is \"bottom\" (the default), the top-most row when \"top\" — matching
    the single-line layout.  Additional rows render status-format[1..LINES-1]
    stacked inward from the main bar."
-  (let* ((bottom-p (not (equal position "top")))
+  (let* ((bottom-p (string/= position "top"))
          (main-row (if bottom-p (1- terminal-rows) 0)))
     (render-status-bar stream session terminal-rows terminal-cols
                        :status-row main-row)

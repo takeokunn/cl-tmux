@@ -104,7 +104,7 @@
   ;; keys are consumed (ignored), so the mode is truly modal.  Guarded on
   ;; *key-table* being a non-root custom table, so the normal flow below is
   ;; completely unaffected when no custom table is active (the default).
-  ((and *key-table* (not (equal *key-table* +table-root+)))
+  ((and *key-table* (string/= *key-table* +table-root+))
    (let ((entry (key-table-lookup *key-table* (code-char byte))))
      (when entry
        (%run-key-table-binding session entry byte)))

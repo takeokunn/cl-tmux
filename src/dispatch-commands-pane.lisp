@@ -356,7 +356,7 @@
     ;; -T key table (modal keymap) — orthogonal to the session move below.
     (let ((table (cdr (assoc #\T flags))))
       (when table
-        (setf *key-table* (if (equal table +table-root+) nil table))))
+        (setf *key-table* (if (string= table +table-root+) nil table))))
     ;; Session selection: -t named, else -n/-p cyclic, else -l last-active.
     (let ((sessions (mapcar #'cdr *server-sessions*)))
       (cond
