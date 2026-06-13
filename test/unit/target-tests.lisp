@@ -34,68 +34,23 @@
       (is (null w) "window must be NIL for input ~S" input)
       (is (null p) "pane must be NIL for input ~S" input))))
 
-(test parse-target-session-only
-  "%parse-target with plain name extracts only the session component."
-  (multiple-value-bind (s w p) (cl-tmux::%parse-target "mysession")
-    (is (string= "mysession" s))
-    (is (null w))
-    (is (null p))))
-
-(test parse-target-session-colon-window
-  "%parse-target with 'sess:win' extracts session and window."
-  (multiple-value-bind (s w p) (cl-tmux::%parse-target "sess:win")
-    (is (string= "sess" s))
-    (is (string= "win"  w))
-    (is (null p))))
-
-(test parse-target-session-colon-window-dot-pane
-  "%parse-target with 'sess:win.pane' extracts all three components."
-  (multiple-value-bind (s w p) (cl-tmux::%parse-target "sess:win.3")
-    (is (string= "sess" s))
-    (is (string= "win"  w))
-    (is (string= "3"    p))))
-
-(test parse-target-session-dot-pane-no-window
-  "%parse-target with 'sess.2' (no colon) extracts session and pane, no window."
-  (multiple-value-bind (s w p) (cl-tmux::%parse-target "sess.2")
-    (is (string= "sess" s))
-    (is (null w))
-    (is (string= "2" p))))
-
-(test parse-target-colon-window-only
-  "%parse-target with ':win' gives nil session, window set."
-  (multiple-value-bind (s w p) (cl-tmux::%parse-target ":win")
-    (is (null s))
-    (is (string= "win" w))
-    (is (null p))))
-
-(test parse-target-dollar-session-id
-  "%parse-target handles $N session ids."
-  (multiple-value-bind (s w p) (cl-tmux::%parse-target "$1:@2.%3")
-    (is (string= "$1" s))
-    (is (string= "@2" w))
-    (is (string= "%3" p))))
-
-(test parse-target-bare-pane-sigil
-  "%parse-target with a bare %N treats it as a PANE id (not a session)."
-  (multiple-value-bind (s w p) (cl-tmux::%parse-target "%2")
-    (is (null s) "no session component")
-    (is (null w) "no window component")
-    (is (string= "%2" p) "%2 is the pane component")))
-
-(test parse-target-bare-window-sigil
-  "%parse-target with a bare @N treats it as a WINDOW id."
-  (multiple-value-bind (s w p) (cl-tmux::%parse-target "@3")
-    (is (null s) "no session component")
-    (is (string= "@3" w) "@3 is the window component")
-    (is (null p) "no pane component")))
-
-(test parse-target-bare-session-id-and-name-stay-session
-  "%parse-target keeps $N and plain names as the session component."
-  (multiple-value-bind (s w p) (cl-tmux::%parse-target "$1")
-    (is (string= "$1" s)) (is (null w)) (is (null p)))
-  (multiple-value-bind (s w p) (cl-tmux::%parse-target "work")
-    (is (string= "work" s)) (is (null w)) (is (null p))))
+(test parse-target-table
+  "%parse-target decomposes target strings into (session window pane) components."
+  (dolist (c '(("mysession"  "mysession" nil   nil   "plain name → session only")
+               ("sess:win"   "sess"      "win" nil   "sess:win → session+window")
+               ("sess:win.3" "sess"      "win" "3"   "sess:win.pane → all three")
+               ("sess.2"     "sess"      nil   "2"   "sess.N (no colon) → session+pane")
+               (":win"       nil         "win" nil   ":win → window only")
+               ("$1:@2.%3"  "$1"        "@2"  "%3"  "sigil forms → session+window+pane")
+               ("%2"         nil         nil   "%2"  "bare %N → pane id")
+               ("@3"         nil         "@3"  nil   "bare @N → window id")
+               ("$1"         "$1"        nil   nil   "bare $N → session id")
+               ("work"       "work"      nil   nil   "plain name stays session")))
+    (destructuring-bind (input expected-s expected-w expected-p desc) c
+      (multiple-value-bind (s w p) (cl-tmux::%parse-target input)
+        (is (equal expected-s s) "~A: session must be ~S (got ~S)" desc expected-s s)
+        (is (equal expected-w w) "~A: window must be ~S (got ~S)"  desc expected-w w)
+        (is (equal expected-p p) "~A: pane must be ~S (got ~S)"    desc expected-p p)))))
 
 ;;; ── find-session-by-target ───────────────────────────────────────────────────
 
