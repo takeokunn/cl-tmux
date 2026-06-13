@@ -254,7 +254,8 @@
     (is (eq p0 (window-active-pane win)) "p0 is active initially")
     (cl-tmux::dispatch-command sess :select-pane-up nil)
     (is (eq p0 (window-active-pane win))
-        ":select-pane-up at the topmost pane must remain on p0"))))
+        ":select-pane-up at the topmost pane must remain on p0")))
+
 ;;; ── :select-pane-down at bottom pane is a no-op ─────────────────────────────
 
 (test dispatch-select-pane-down-noop-at-bottommost
@@ -264,7 +265,8 @@
     (window-select-pane win p1)
     (cl-tmux::dispatch-command sess :select-pane-down nil)
     (is (eq p1 (window-active-pane win))
-        ":select-pane-down at the bottommost pane must remain on p1"))))
+        ":select-pane-down at the bottommost pane must remain on p1")))
+
 ;;; ── :select-pane-left at leftmost is a no-op ─────────────────────────────────
 
 (test dispatch-select-pane-left-noop-at-leftmost
@@ -274,7 +276,8 @@
     (is (eq p0 (window-active-pane win)) "p0 is active initially")
     (cl-tmux::dispatch-command sess :select-pane-left nil)
     (is (eq p0 (window-active-pane win))
-        ":select-pane-left at leftmost pane must remain on p0"))))
+        ":select-pane-left at leftmost pane must remain on p0")))
+
 ;;; ── :prev-pane dispatch ──────────────────────────────────────────────────────
 
 (test dispatch-prev-pane-wraps-from-first

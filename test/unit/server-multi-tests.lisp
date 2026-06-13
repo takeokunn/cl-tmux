@@ -72,9 +72,8 @@
 
 (test multi-handle-resize-updates-conn-and-effective-size
   "A resize message updates the client's geometry and re-applies the effective size."
-  (with-loop-state
-    (let* ((s    (make-fake-session))
-           (conn (%make-test-conn :rows 24 :cols 80))
+  (with-fake-session (s)
+    (let* ((conn (%make-test-conn :rows 24 :cols 80))
            (cl-tmux::*clients* (list conn))
            (payload (cl-tmux/protocol::u16-octets-pair 40 100)))
       (cl-tmux::%handle-multi-client-message cl-tmux::+msg-resize+ payload s conn)
@@ -98,7 +97,7 @@
         (is (eq b (first cl-tmux::*clients*)) "the resized client moves to the front")
         (multiple-value-bind (rows cols) (cl-tmux::%effective-client-size)
           (is (= 50 rows) "latest tracks the just-resized client's new rows")
-          (is (= 150 cols) "latest tracks the just-resized client's new cols")))))
+          (is (= 150 cols) "latest tracks the just-resized client's new cols"))))))
 
 (test multi-handle-key-detach-drops-client
   "A ^B d key message yields :drop (the client detaches; the session survives)."

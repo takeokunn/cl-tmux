@@ -18,7 +18,8 @@
     (is (eq p1 (first (window-panes win)))
         "after :swap-pane-forward, p1 must be first in the panes list")
     (is (eq p0 (second (window-panes win)))
-        "after :swap-pane-forward, p0 must be second in the panes list"))))
+        "after :swap-pane-forward, p0 must be second in the panes list")))
+
 (test dispatch-swap-pane-forward-marks-dirty
   ":swap-pane-forward marks *dirty*."
   (with-two-pane-h-session (sess win p0 p1)
@@ -60,12 +61,20 @@
   (with-two-pane-h-session (sess win p0 p1)
     ;; Start with p1 active so that backward swap moves it to index 0.
     (window-select-pane win p1)
+    (cl-tmux::dispatch-command sess :swap-pane-backward nil)
+    (is (eq p1 (first (window-panes win)))
+        "after :swap-pane-backward from p1, p1 must be first in the panes list")
+    (is (eq p0 (second (window-panes win)))
+        "after :swap-pane-backward from p1, p0 must be second in the panes list")))
 
 (test dispatch-swap-pane-backward-marks-dirty
   ":swap-pane-backward marks *dirty*."
   (with-two-pane-h-session (sess win p0 p1)
     (is-false (null p0) "fixture created")
     (window-select-pane win p1)
+    (cl-tmux::dispatch-command sess :swap-pane-backward nil)
+    (is-true cl-tmux::*dirty*
+             ":swap-pane-backward must mark *dirty*")))
 
 ;;; ── :kill-pane-confirm dispatch ──────────────────────────────────────────────
 
