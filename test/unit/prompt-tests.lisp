@@ -145,18 +145,6 @@
     (finishes (prompt-input #\x))
     (is (null (prompt-active-p)))))
 
-(test prompt-backspace-inactive-noop
-  "prompt-backspace with no active prompt does nothing and does not error."
-  (with-clean-prompt
-    (finishes (prompt-backspace))
-    (is (null (prompt-active-p)))))
-
-(test prompt-clear-inactive-noop
-  "prompt-clear with no active prompt is a safe no-op."
-  (with-clean-prompt
-    (finishes (prompt-clear))
-    (is (null (prompt-active-p)))))
-
 ;;; -- prompt-text display variants --------------------------------------------
 
 (test prompt-text-active-empty-buffer
@@ -248,8 +236,9 @@
     (is (= 2 (prompt-cursor-index *prompt*)) "C-f clamped at end")))
 
 (test prompt-cursor-and-kill-commands-inactive-noop
-  "Cursor-movement and kill commands silently no-op when no prompt is active."
-  (dolist (fn '(prompt-cursor-back   prompt-cursor-forward
+  "Cursor-movement, kill, and basic commands silently no-op when no prompt is active."
+  (dolist (fn '(prompt-backspace     prompt-clear
+                prompt-cursor-back   prompt-cursor-forward
                 prompt-cursor-bol    prompt-cursor-eol
                 prompt-kill-to-end   prompt-kill-to-start
                 prompt-kill-word-back))
@@ -277,47 +266,28 @@
 
 ;;; -- Kill commands -----------------------------------------------------------
 
-(test prompt-kill-to-end
-  "C-k deletes from cursor to end."
-  (with-prompt-at 2
-    (prompt-kill-to-end)
-    (is (string= "he" (prompt-buffer *prompt*)))
-    (is (= 2 (prompt-cursor-index *prompt*)))))
+(test prompt-kill-to-end-table
+  "C-k deletes from cursor to end; no-ops at the buffer end."
+  (dolist (c '((2 "he"    2 "mid-buffer kill")
+               (5 "hello" 5 "at end — no-op")
+               (0 ""      0 "from start — clears buffer")))
+    (destructuring-bind (pos expected-buf expected-idx desc) c
+      (with-noop-prompt ("hello")
+        (setf (prompt-cursor-index *prompt*) pos)
+        (prompt-kill-to-end)
+        (is (string= expected-buf (prompt-buffer *prompt*)) "~A: buffer" desc)
+        (is (= expected-idx (prompt-cursor-index *prompt*)) "~A: cursor" desc)))))
 
-(test prompt-kill-to-end-at-end-is-noop
-  "C-k at the end of the buffer is a no-op (nothing to kill)."
-  (with-noop-prompt ("hello")
-    ;; cursor is at 5 (end) from prompt-start
-    (prompt-kill-to-end)
-    (is (string= "hello" (prompt-buffer *prompt*))
-        "kill-to-end at end must leave buffer unchanged")
-    (is (= 5 (prompt-cursor-index *prompt*))
-        "cursor must remain at end")))
-
-(test prompt-kill-to-end-from-start-clears-buffer
-  "C-k at cursor-index 0 deletes the entire buffer."
-  (with-prompt-at 0
-    (prompt-kill-to-end)
-    (is (string= "" (prompt-buffer *prompt*))
-        "kill-to-end from position 0 must clear the entire buffer")
-    (is (= 0 (prompt-cursor-index *prompt*))
-        "cursor must remain at 0 after clearing")))
-
-(test prompt-kill-to-start
-  "C-u deletes from start to cursor."
-  (with-prompt-at 2
-    (prompt-kill-to-start)
-    (is (string= "llo" (prompt-buffer *prompt*)))
-    (is (= 0 (prompt-cursor-index *prompt*)))))
-
-(test prompt-kill-to-start-at-start-is-noop
-  "C-u at the beginning of the buffer is a no-op (nothing to kill)."
-  (with-prompt-at 0
-    (prompt-kill-to-start)
-    (is (string= "hello" (prompt-buffer *prompt*))
-        "kill-to-start at start must leave buffer unchanged")
-    (is (= 0 (prompt-cursor-index *prompt*))
-        "cursor must remain at 0")))
+(test prompt-kill-to-start-table
+  "C-u deletes from start to cursor; no-ops at position 0."
+  (dolist (c '((2 "llo"   0 "mid-buffer kill")
+               (0 "hello" 0 "at start — no-op")))
+    (destructuring-bind (pos expected-buf expected-idx desc) c
+      (with-noop-prompt ("hello")
+        (setf (prompt-cursor-index *prompt*) pos)
+        (prompt-kill-to-start)
+        (is (string= expected-buf (prompt-buffer *prompt*)) "~A: buffer" desc)
+        (is (= expected-idx (prompt-cursor-index *prompt*)) "~A: cursor" desc)))))
 
 (test prompt-kill-word-back
   "C-w deletes the previous word."
@@ -402,12 +372,14 @@
     (is (null (prompt-active-p)) "Esc should dismiss the prompt")
     (is (string= "old" (window-name win)) "Esc must not rename")))
 
-(test handle-prompt-key-backspace
-  "Backspace (127) deletes the last buffered character."
-  (with-clean-prompt
-    (prompt-start "rename-window" "ab" (make-noop-submit))
-    (cl-tmux::handle-prompt-key 127)
-    (is (string= "a" (prompt-buffer *prompt*)))))
+(test handle-prompt-key-backspace-table
+  "Bytes 127 (DEL) and 8 (C-H) both act as backspace."
+  (dolist (byte '(127 8))
+    (with-clean-prompt
+      (prompt-start "rename-window" "ab" (make-noop-submit))
+      (cl-tmux::handle-prompt-key byte)
+      (is (string= "a" (prompt-buffer *prompt*))
+          "byte ~D must backspace to \"a\"" byte))))
 
 ;;; -- handle-prompt-key edge bytes (new coverage) -----------------------------
 
@@ -420,13 +392,6 @@
     (is (string= "ab" (prompt-buffer *prompt*)) "control byte must not edit the buffer")
     (is (prompt-active-p) "control byte must not dismiss the prompt")
     (is (eq t cl-tmux::*dirty*) "handle-prompt-key always marks the screen dirty")))
-
-(test handle-prompt-key-backspace-byte-8
-  "Byte 8 (Ctrl-H) is the alternate backspace and deletes the last character."
-  (with-clean-prompt
-    (prompt-start "rename-window" "ab" (make-noop-submit))
-    (cl-tmux::handle-prompt-key 8)
-    (is (string= "a" (prompt-buffer *prompt*)))))
 
 (test handle-prompt-key-enter-empty-is-noop-for-rename
   "Enter on an empty buffer dismisses the prompt but does NOT rename the window
