@@ -27,55 +27,21 @@
 
 ;;; ── New default key bindings ─────────────────────────────────────────────────
 
-(test key-binding-colon-is-command-prompt
-  "C-b : (char code 58) is bound to :command-prompt."
-  (is (eq :command-prompt (lookup-key-binding #\:))
-      "C-b : must be bound to :command-prompt"))
-
-(test key-binding-t-is-clock-mode
-  "C-b t (char code 116) is bound to :clock-mode."
-  (is (eq :clock-mode (lookup-key-binding #\t))
-      "C-b t must be bound to :clock-mode"))
-
-(test key-binding-i-is-display-info
-  "C-b i (char code 105) is bound to :display-info."
-  (is (eq :display-info (lookup-key-binding #\i))
-      "C-b i must be bound to :display-info"))
-
-(test key-binding-tilde-is-show-messages
-  "C-b ~ (code-char 126) is bound to :show-messages."
-  (is (eq :show-messages (lookup-key-binding (code-char 126)))
-      "C-b ~ must be bound to :show-messages"))
-
-(test key-binding-m-is-mark-pane
-  "C-b m (char code 109) is bound to :mark-pane."
-  (is (eq :mark-pane (lookup-key-binding #\m))
-      "C-b m must be bound to :mark-pane"))
-
-(test key-binding-capital-M-is-clear-mark
-  "C-b M (code-char 77) is bound to :clear-mark."
-  (is (eq :clear-mark (lookup-key-binding (code-char 77)))
-      "C-b M must be bound to :clear-mark"))
-
-(test key-binding-capital-E-is-select-layout-spread
-  "C-b E (char code 69) is bound to :select-layout-spread."
-  (is (eq :select-layout-spread (lookup-key-binding #\E))
-      "C-b E must be bound to :select-layout-spread"))
-
-(test key-binding-space-is-next-layout
-  "C-b Space (code-char 32) is bound to :next-layout."
-  (is (eq :next-layout (lookup-key-binding (code-char 32)))
-      "C-b Space must be bound to :next-layout"))
-
-(test key-binding-dot-is-move-window-prompt
-  "C-b . (char code 46) is bound to :move-window-prompt."
-  (is (eq :move-window-prompt (lookup-key-binding #\.))
-      "C-b . must be bound to :move-window-prompt"))
-
-(test key-binding-capital-D-is-choose-client
-  "C-b D (char code 68) is bound to :choose-client."
-  (is (eq :choose-client (lookup-key-binding #\D))
-      "C-b D must be bound to :choose-client"))
+(test key-bindings-table
+  "Default prefix bindings cover command-prompt, clock, info, messages, and layout/pane management."
+  (dolist (c '((58  :command-prompt       "C-b : → :command-prompt")
+               (116 :clock-mode           "C-b t → :clock-mode")
+               (105 :display-info         "C-b i → :display-info")
+               (126 :show-messages        "C-b ~ → :show-messages")
+               (109 :mark-pane            "C-b m → :mark-pane")
+               (77  :clear-mark           "C-b M → :clear-mark")
+               (69  :select-layout-spread "C-b E → :select-layout-spread")
+               (32  :next-layout          "C-b Space → :next-layout")
+               (46  :move-window-prompt   "C-b . → :move-window-prompt")
+               (68  :choose-client        "C-b D → :choose-client")))
+    (destructuring-bind (code expected desc) c
+      (is (eq expected (lookup-key-binding (code-char code)))
+          "~A" desc))))
 
 ;;; ── dispatch :mark-pane and :clear-mark ─────────────────────────────────────
 ;;; Build sessions manually (same pattern as dispatch-display-panes tests)
