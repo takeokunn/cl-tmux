@@ -318,8 +318,7 @@
   ;; :choose-session: interactive j/k menu to switch sessions (C-b s).
   ;; Builds a menu with one entry per session; selecting switches to it.
   (:choose-session
-   (let* ((sessions (if *server-sessions*
-                        *server-sessions*
+   (let* ((sessions (or *server-sessions*
                         (list (cons (session-name session) session))))
           (items    (mapcar
                      (lambda (entry)
