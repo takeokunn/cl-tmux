@@ -370,7 +370,7 @@
     (destructuring-bind (input expected desc) c
       (if expected
           (is-true  (cl-tmux/format::%truthy-p input) "~A" desc)
-          (is-false (cl-tmux/format::%truthy-p input) "~A" desc))))
+          (is-false (cl-tmux/format::%truthy-p input) "~A" desc)))))
 
 (test variable-to-keyword-table
   "%variable-to-keyword converts underscored names to hyphenated keywords and plain names to keywords."
@@ -393,7 +393,7 @@
           (cl-tmux/format::%split-conditional input)
         (is (string= ec cond-str)  "~A: condition" desc)
         (is (string= et true-str)  "~A: true branch" desc)
-        (is (string= ef false-str) "~A: false branch" desc))))
+        (is (string= ef false-str) "~A: false branch" desc)))))
 
 (test lookup-returns-empty-for-missing-key
   "%lookup returns an empty string when the key is absent from the context."
