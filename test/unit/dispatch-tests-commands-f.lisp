@@ -91,11 +91,10 @@
 
 (test dispatch-choose-tree-with-server-sessions
   ":choose-tree with multiple server sessions lists them all."
-  (let* ((s1 (make-fake-session :nwindows 1))
-         (s2 (make-fake-session :nwindows 2))
-         (reg (list (cons (session-name s1) s1)
-                    (cons (session-name s2) s2))))
-    (with-loop-state
+  (with-fake-session (s1 :nwindows 1)
+    (let* ((s2  (make-fake-session :nwindows 2))
+           (reg (list (cons (session-name s1) s1)
+                      (cons (session-name s2) s2))))
       (let ((*overlay* nil)
             (cl-tmux::*server-sessions* reg))
         (cl-tmux::dispatch-command s1 :choose-tree nil)

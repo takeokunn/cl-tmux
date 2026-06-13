@@ -186,10 +186,9 @@
 (test run-command-line-rename-window-t-targets-window
   "'rename-window -t 1 newname' renames window-id 1, NOT the active window, and
    does not fold the -t flag tokens into the new name."
-  (let* ((s  (make-fake-session :nwindows 2))
-         (w0 (first  (session-windows s)))     ; id 0, active
-         (w1 (second (session-windows s))))    ; id 1
-    (with-loop-state
+  (with-fake-session (s :nwindows 2)
+    (let ((w0 (first  (session-windows s)))    ; id 0, active
+          (w1 (second (session-windows s))))   ; id 1
       (cl-tmux::%run-command-line s "rename-window -t 1 newname")
       (is (string= "newname" (window-name w1))
           "window-id 1 must be renamed to 'newname'")
@@ -206,12 +205,11 @@
 (test run-command-line-rename-session-t-targets-session
   "'rename-session -t other newname' renames the -t target session, not the
    current one, and does not fold the flag tokens into the name."
-  (let* ((cur   (make-fake-session))
-         (other (make-fake-session)))
-    (setf (cl-tmux::session-name cur)   "cur"
-          (cl-tmux::session-name other) "other")
-    (let ((cl-tmux::*server-sessions* (list (cons "cur" cur) (cons "other" other))))
-      (with-loop-state
+  (with-fake-session (cur)
+    (let ((other (make-fake-session)))
+      (setf (cl-tmux::session-name cur)   "cur"
+            (cl-tmux::session-name other) "other")
+      (let ((cl-tmux::*server-sessions* (list (cons "cur" cur) (cons "other" other))))
         (cl-tmux::%run-command-line cur "rename-session -t other newname")
         (is (string= "newname" (session-name other))
             "the -t target session must be renamed to 'newname'")
@@ -221,10 +219,9 @@
 (test cmd-set-window-option-t-targets-window
   "setw -t 1 @wopt myval sets the WINDOW-LOCAL option on window-id 1, not the
    active window — and -t no longer leaks into the option name."
-  (let* ((s  (make-fake-session :nwindows 2))
-         (w0 (first  (session-windows s)))     ; id 0, active
-         (w1 (second (session-windows s))))    ; id 1
-    (with-loop-state
+  (with-fake-session (s :nwindows 2)
+    (let ((w0 (first  (session-windows s)))    ; id 0, active
+          (w1 (second (session-windows s))))   ; id 1
       (cl-tmux::%run-command-line s "setw -t 1 @wopt myval")
       (is (string= "myval" (cl-tmux/options:get-option-for-window "@wopt" w1))
           "window-id 1 must have the window-local @wopt = myval")
@@ -234,10 +231,9 @@
 (test cmd-respawn-pane-without-k-errors-on-live-pane
   "respawn-pane without -k on a still-running pane (fd > 0) is an error and does
    NOT respawn — matching tmux (the model would otherwise fork unconditionally)."
-  (let* ((s    (make-fake-session :nwindows 1 :npanes 1))
-         (pane (window-active-pane (session-active-window s))))
-    (setf (cl-tmux/model:pane-fd pane) 5)        ; simulate a live PTY
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 1)
+    (let ((pane (window-active-pane (session-active-window s))))
+      (setf (cl-tmux/model:pane-fd pane) 5)       ; simulate a live PTY
       (let ((*overlay* nil))
         (cl-tmux::%cmd-respawn-pane-arg s '())
         (is (overlay-active-p)
@@ -248,11 +244,10 @@
 (test cmd-respawn-window-without-k-errors-on-live-pane
   "respawn-window without -k errors when ANY pane in the window is still running,
    and does NOT respawn — matching tmux."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s))
-         (p1  (first (window-panes win))))
-    (setf (cl-tmux/model:pane-fd p1) 5)          ; one pane is live
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s))
+           (p1  (first (window-panes win))))
+      (setf (cl-tmux/model:pane-fd p1) 5)         ; one pane is live
       (let ((*overlay* nil))
         (cl-tmux::%cmd-respawn-window-arg s '())
         (is (overlay-active-p)

@@ -12,11 +12,10 @@
 
 (test dispatch-switch-client-next-moves-to-next-session
   ":switch-client-next touches the next session in the registry."
-  (let* ((s1 (make-fake-session :nwindows 1))
-         (s2 (make-fake-session :nwindows 1))
-         (reg (list (cons (session-name s1) s1)
-                    (cons (session-name s2) s2))))
-    (with-loop-state
+  (with-fake-session (s1 :nwindows 1)
+    (let* ((s2  (make-fake-session :nwindows 1))
+           (reg (list (cons (session-name s1) s1)
+                      (cons (session-name s2) s2))))
       (let ((cl-tmux::*server-sessions* reg))
         (cl-tmux::dispatch-command s1 :switch-client-next nil)
         (is-true cl-tmux::*dirty*

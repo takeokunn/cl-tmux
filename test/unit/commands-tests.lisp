@@ -261,10 +261,9 @@
 
 (test select-window-by-number-selects-nth-window
   "select-window-by-number activates the Nth (0-based) window."
-  (let* ((s  (make-fake-session :nwindows 3))
-         (w0 (first  (session-windows s)))
-         (w2 (third  (session-windows s))))
-    (with-loop-state
+  (with-fake-session (s :nwindows 3)
+    (let ((w0 (first  (session-windows s)))
+          (w2 (third  (session-windows s))))
       (is (eq w0 (session-active-window s)) "starts on window 0")
       (select-window-by-number s 2)
       (is (eq w2 (session-active-window s)) "index 2 selects the third window")

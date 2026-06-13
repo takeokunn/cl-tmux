@@ -91,11 +91,10 @@
 
 (test dispatch-last-pane-selects-previous-pane
   ":last-pane selects the previously active pane."
-  (let* ((s   (make-fake-session :nwindows 1 :npanes 2))
-         (win (session-active-window s))
-         (p0  (first  (window-panes win)))
-         (p1  (second (window-panes win))))
-    (with-loop-state
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win (session-active-window s))
+           (p0  (first  (window-panes win)))
+           (p1  (second (window-panes win))))
       ;; Visit p1, then switch back to p0.
       (window-select-pane win p1)
       (window-select-pane win p0)

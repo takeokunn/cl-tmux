@@ -407,12 +407,11 @@
    name, not the dispatching session's, proving -t drives the format context.
    Uses a populated *server-sessions* so -t actually resolves a distinct session
    rather than falling back to the active one."
-  (let* ((current (make-fake-session :nwindows 1 :npanes 1))
-         (target  (make-fake-session :nwindows 1 :npanes 1)))
-    ;; Give the target a distinctive name so its presence in the overlay is
-    ;; unambiguous evidence that -t resolved it (the fallback session is "0").
-    (setf (session-name target) "target-sess")
-    (with-loop-state
+  (with-fake-session (current :nwindows 1 :npanes 1)
+    (let ((target (make-fake-session :nwindows 1 :npanes 1)))
+      ;; Give the target a distinctive name so its presence in the overlay is
+      ;; unambiguous evidence that -t resolved it (the fallback session is "0").
+      (setf (session-name target) "target-sess")
       (let ((*overlay* nil)
             (cl-tmux::*server-sessions*
               (list (cons (session-name current) current)
