@@ -339,33 +339,21 @@
 
 ;;; ── session-locked-p slot ────────────────────────────────────────────────────
 
-(test session-locked-p-defaults-nil
-  "session-locked-p defaults to NIL for a freshly created session."
+(test session-locked-p-slot
+  "session-locked-p defaults to NIL and can be set to T."
   (let ((sess (make-session :id 1 :name "s")))
-    (is (null (session-locked-p sess))
-        "session-locked-p must default to NIL")))
-
-(test session-locked-p-settable
-  "session-locked-p can be set to T and read back."
-  (let ((sess (make-session :id 1 :name "s")))
+    (is (null (session-locked-p sess)) "session-locked-p must default to NIL")
     (setf (session-locked-p sess) t)
-    (is-true (session-locked-p sess)
-             "session-locked-p must return T after being set")))
+    (is-true (session-locked-p sess) "session-locked-p must return T after being set")))
 
 ;;; ── session-group slot ───────────────────────────────────────────────────────
 
-(test session-group-defaults-nil
-  "session-group defaults to NIL for a freshly created session."
+(test session-group-slot
+  "session-group defaults to NIL and can be set to a non-NIL value."
   (let ((sess (make-session :id 1 :name "s")))
-    (is (null (session-group sess))
-        "session-group must default to NIL")))
-
-(test session-group-settable
-  "session-group can be set to a non-NIL value and read back."
-  (let ((sess (make-session :id 1 :name "s")))
+    (is (null (session-group sess)) "session-group must default to NIL")
     (setf (session-group sess) "mygroup")
-    (is (string= "mygroup" (session-group sess))
-        "session-group must return the value written via setf")))
+    (is (string= "mygroup" (session-group sess)) "session-group must return the value written via setf")))
 
 ;;; ── session-last-active slot ────────────────────────────────────────────────
 

@@ -22,19 +22,15 @@
 
 ;;; ── %expand-brace edge cases ──────────────────────────────────────────────────
 
-(test expand-format-brace-no-closing-brace-emits-literal-hash
-  "%expand-brace emits a literal '#' when there is no closing brace."
-  ;; The '#' at the end of the template has no following character → plain char.
-  ;; The string "#{no_close" has '#' + '{' but no '}'; the function returns '#' literally.
-  (let ((result (cl-tmux/format:expand-format "#{no_close" '())))
-    (is (char= #\# (char result 0))
-        "missing closing brace must emit literal '#' (got ~S)" result)))
-
-(test expand-format-bracket-no-closing-bracket-emits-literal-hash
-  "%expand-bracket emits a literal '#' when there is no closing bracket."
-  (let ((result (cl-tmux/format:expand-format "#[no_close" '())))
-    (is (char= #\# (char result 0))
-        "missing closing bracket must emit literal '#' (got ~S)" result)))
+(test expand-format-unclosed-delimiter-emits-literal-hash
+  "#{, #[, and #( without a closing delimiter each emit a literal '#' and do not crash."
+  (dolist (c '(("#{no_close" "brace without closing }")
+               ("#[no_close" "bracket without closing ]")
+               ("#(no_close" "paren without closing )")))
+    (destructuring-bind (input desc) c
+      (let ((result (cl-tmux/format:expand-format input '())))
+        (is (char= #\# (char result 0))
+            "~A: first char must be '#' (got ~S)" desc result)))))
 
 (test expand-format-bracket-passthrough-preserves-content
   "#[attrs] passes the full bracketed text through unchanged."
@@ -265,12 +261,6 @@
   (let ((result (fmt "#(false)")))
     (is (stringp result) "#(false) result must be a string")
     (is (string= "" result) "#(false) must return empty string on non-zero exit")))
-
-(test expand-format-shell-cmd-no-close-paren-emits-literal-hash
-  "#( with no closing paren emits a literal '#' and does not crash."
-  (let ((result (cl-tmux/format:expand-format "#(no_close" '())))
-    (is (char= #\# (char result 0))
-        "missing closing paren must emit literal '#' (got ~S)" result)))
 
 (test expand-format-shell-cmd-mixed-with-text
   "#(echo ok) embedded in a longer format string expands inline."
