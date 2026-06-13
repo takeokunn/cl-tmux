@@ -67,6 +67,16 @@
           (if pane (pane-width pane) 0)
           (if pane (pane-height pane) 0)))
 
+(defun %show-pane-info-overlay (session win pane print-fmt)
+  "Show a transient pane-info overlay for the -P flag.
+   Uses PRINT-FMT if given, otherwise the default session:window.pane summary."
+  (show-transient-overlay
+   (if print-fmt
+       (cl-tmux/format:expand-format
+        print-fmt
+        (cl-tmux/format:format-context-from-session session win pane))
+       (%format-pane-info session win pane))))
+
 (defun %cmd-new-window-arg (session args)
   "new-window [-d] [-k] [-P] [-n name] [-t target-window] [-a] [-c start-dir] [-e VAR=val].
    -d: create the window but do not make it active (detached).
@@ -112,17 +122,9 @@
                                       :detach (and detach-p t)
                                       :at-index at-idx
                                       :after-current (and after-p t))))
-        ;; -P: print new pane details to overlay.  With -F, expand the custom
-        ;; format against the new window/pane; otherwise the default WxH summary.
+        ;; -P: print new pane details to overlay.
         (when (and print-p new-win)
-          (let ((new-pane (window-active-pane new-win)))
-            (show-transient-overlay
-             (if print-fmt
-                 (cl-tmux/format:expand-format
-                  print-fmt
-                  (cl-tmux/format:format-context-from-session
-                   session new-win new-pane))
-                 (%format-pane-info session new-win new-pane)))))
+          (%show-pane-info-overlay session new-win (window-active-pane new-win) print-fmt))
         new-win))))
 
 (defun %parse-split-size (lines-str)
@@ -194,30 +196,18 @@
         (when extra-env
           (setf *pane-extra-env* extra-env))
         (let* ((print-p (assoc #\P flags))
-               (result
-                (if horizontal-p
-                    (%cmd-split session :h :size size :no-focus (and detach-p t)
-                                        :start-dir start-dir :before (and before-p t)
-                                        :full (and full-p t))
-                    (%cmd-split session :v :size size :no-focus (and detach-p t)
-                                        :start-dir start-dir :before (and before-p t)
-                                        :full (and full-p t)))))
-          ;; Restore original focus when -d (detach): the target had focus switched
-          ;; transiently for the split but the user wants to stay in the prior window.
+               (result  (%cmd-split session (if horizontal-p :h :v)
+                                    :size size :no-focus (and detach-p t)
+                                    :start-dir start-dir :before (and before-p t)
+                                    :full (and full-p t))))
+          ;; Restore original focus when -d (detach).
           (when (and detach-p target-str prev-win)
             (session-select-window session prev-win)
             (when prev-pane (window-select-pane prev-win prev-pane)))
-          ;; -P: print the new pane's details.  With -F, expand the custom format
-          ;; against the new pane; otherwise the default WxH summary.
+          ;; -P: print the new pane's details.
           (when (and print-p result)
-            (let ((win       (pane-window result))
-                  (print-fmt (cdr (assoc #\F flags))))
-              (show-transient-overlay
-               (if print-fmt
-                   (cl-tmux/format:expand-format
-                    print-fmt
-                    (cl-tmux/format:format-context-from-session session win result))
-                   (%format-pane-info session win result)))))
+            (%show-pane-info-overlay session (pane-window result) result
+                                     (cdr (assoc #\F flags))))
           result)))))
 
 (defun %parse-wxh (str)
