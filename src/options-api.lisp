@@ -206,16 +206,17 @@
    fall through to the global value."
   (get-option-for-context name :window window))
 
-(defun set-option-for-window (name value window)
-  "Coerce VALUE to the registered type for NAME and store it under NAME in
-   WINDOW's local-options hash.  If NAME is not in *OPTION-REGISTRY* the value
-   is stored as-is (no coercion).  Returns the coerced value."
+(defun %set-local-option (name value hash)
+  "Coerce VALUE for NAME (via *OPTION-REGISTRY*) and store it in HASH.
+   Returns the coerced value.  Shared by set-option-for-window and set-option-for-pane."
   (let* ((spec    (gethash name *option-registry*))
-         (coerced (if spec
-                      (%coerce-value (option-spec-type spec) value)
-                      value)))
-    (setf (gethash name (cl-tmux/model:window-local-options window)) coerced)
+         (coerced (if spec (%coerce-value (option-spec-type spec) value) value)))
+    (setf (gethash name hash) coerced)
     coerced))
+
+(defun set-option-for-window (name value window)
+  "Coerce VALUE and store under NAME in WINDOW's local-options hash.  Returns the coerced value."
+  (%set-local-option name value (cl-tmux/model:window-local-options window)))
 
 (defun get-option-for-pane (name pane)
   "Look up NAME in PANE's local options, falling back to *global-options*,
@@ -228,17 +229,15 @@
   (get-option-for-context name :pane pane))
 
 (defun set-option-for-pane (name value pane)
-  "Coerce VALUE to the registered type for NAME and store it under NAME in
-   PANE's local-options hash.  If NAME is not in *OPTION-REGISTRY* the value
-   is stored as-is (no coercion).  Returns the coerced value."
-  (let* ((spec    (gethash name *option-registry*))
-         (coerced (if spec
-                      (%coerce-value (option-spec-type spec) value)
-                      value)))
-    (setf (gethash name (cl-tmux/model:pane-local-options pane)) coerced)
-    coerced))
+  "Coerce VALUE and store under NAME in PANE's local-options hash.  Returns the coerced value."
+  (%set-local-option name value (cl-tmux/model:pane-local-options pane)))
 
 ;;; ── show-options helpers ──────────────────────────────────────────────────
+
+(defun %scope-ht (scope)
+  "Return the options hash-table for SCOPE: *server-options* when SCOPE is :server,
+   *global-options* otherwise."
+  (if (eq scope :server) *server-options* *global-options*))
 
 (defun %option-value-string (value)
   "Format VALUE for show-options output in tmux-compatible format.
@@ -255,9 +254,8 @@
    SCOPE is :server for server options, otherwise global options are used.
    Output matches real tmux format: 'option-name value' (no Lisp quoting)."
   (with-output-to-string (s)
-    (let* ((ht    (if (eq scope :server) *server-options* *global-options*))
-           (pairs '()))
-      (maphash (lambda (k v) (push (cons k v) pairs)) ht)
+    (let ((pairs '()))
+      (maphash (lambda (k v) (push (cons k v) pairs)) (%scope-ht scope))
       (dolist (pair (sort pairs #'string< :key #'car))
         (format s "~A ~A~%" (car pair) (%option-value-string (cdr pair)))))))
 
@@ -265,8 +263,7 @@
   "Return a string showing the current value of a single option NAME.
    SCOPE is :server for server options.
    Output matches real tmux format: 'option-name value'."
-  (let* ((ht  (if (eq scope :server) *server-options* *global-options*))
-         (val (gethash name ht :not-found)))
+  (let ((val (gethash name (%scope-ht scope) :not-found)))
     (if (eq val :not-found)
         (format nil "~A: (not set)~%" name)
         (format nil "~A ~A~%" name (%option-value-string val)))))

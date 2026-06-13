@@ -50,7 +50,7 @@
     (declare (ignore _session))
     (dotimes (_ count) (funcall jump-fn screen (code-char byte2)))
     (setf *dirty* t)
-    (values nil #'%ground-input-state)))
+    (%ground-values)))
 
 ;;; ── Copy-mode vi dispatch table ──────────────────────────────────────────────
 ;;;
