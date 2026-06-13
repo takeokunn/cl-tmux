@@ -77,6 +77,13 @@
          (or (<= +byte-digit-0+ last +byte-digit-9+)
              (= last +byte-csi-semi+)))))
 
+;;; ── CPS return helpers ───────────────────────────────────────────────────────
+
+(defun %ground-values ()
+  "The standard CPS return for 'sequence consumed, reset to ground state':
+   (values NIL #'%ground-input-state).  Named so call sites are self-documenting."
+  (%ground-values))
+
 ;;; ── make-escape-input-k: sub-state decoder helpers ──────────────────────────
 ;;;
 ;;; The escape accumulator is decomposed into named helper functions so each
@@ -85,7 +92,7 @@
 
 (defun %handle-escape-x10-mouse (session buffer)
   "Decode a complete 6-byte X10 mouse sequence from BUFFER and dispatch it.
-   Returns (values nil #'%ground-input-state) always."
+   Returns (%ground-values) always."
   (let* ((raw-btn   (aref buffer 3))
          (raw-col   (aref buffer 4))
          (raw-row   (aref buffer 5))
@@ -95,16 +102,16 @@
          (row       (- raw-row 33))
          (release-p (= raw-btn (+ +mouse-btn-release-x10+ 32))))  ; btn 3+32=35 = release in X10
     (%dispatch-mouse-event session btn col row release-p))
-  (values nil #'%ground-input-state))
+  (%ground-values))
 
 (defun %handle-escape-sgr-mouse (session buffer length)
   "Dispatch a completed SGR mouse sequence from BUFFER (LENGTH bytes).
-   Returns (values nil #'%ground-input-state) always."
+   Returns (%ground-values) always."
   (multiple-value-bind (btn col row release-p)
       (%parse-sgr-mouse buffer length)
     (when btn
       (%dispatch-mouse-event session btn col row release-p)))
-  (values nil #'%ground-input-state))
+  (%ground-values))
 
 (defun %csi-tilde-parse (buffer length)
   "Parse an ESC [ <param> [ ; <mod> ] ~ sequence (the fields live at indices
@@ -178,7 +185,7 @@
    `bind -n PageUp <cmd>`, `bind -n Home <cmd>` … fire.  Failing that the legacy
    behaviour is preserved: PageUp/PageDown scroll in copy mode, and any other or
    unbound key is forwarded raw so the pane's application still receives it.
-   Returns (values nil #'%ground-input-state)."
+   Returns (%ground-values)."
   (let ((key (%csi-tilde-key buffer length)))
     (cond
       ((and key (%try-bound-string-key session +table-root+ key)))
@@ -195,7 +202,7 @@
            (setf *dirty* t))))
       (t
        (%forward-unless-copy-mode session buffer length))))
-  (values nil #'%ground-input-state))
+  (%ground-values))
 
 (define-key-lookup-table %ss3-key-name final-byte
   "Map the final byte of an SS3 sequence ESC O <final> to its canonical tmux key
@@ -217,7 +224,7 @@
   (let ((key (%ss3-key-name (aref buffer 2))))
     (unless (and key (%try-bound-string-key session +table-root+ key))
       (%forward-unless-copy-mode session buffer 3)))
-  (values nil #'%ground-input-state))
+  (%ground-values))
 
 (defun %handle-escape-csi-3byte (session buffer)
   "Handle a 3-byte CSI sequence ESC [ FINAL from BUFFER (not X10 / not SGR).
@@ -241,7 +248,7 @@
                 (if ss3-seq
                     (%forward-octets-synchronized session ss3-seq)
                     (%forward-octets-synchronized session (subseq buffer 0 3))))))
-          (values nil #'%ground-input-state)))))
+          (%ground-values)))))
 
 (defun %forward-unless-copy-mode (session buffer length)
   "Forward BUFFER[0..LENGTH) to the active pane unless copy mode is active."
@@ -311,7 +318,7 @@
         ;; binding by name, else re-injects the legacy byte form for transparency.
         ((%csi-u-terminated-p buffer length)
          (%handle-escape-csi-u session buffer length)
-         (values nil #'%ground-input-state))
+         (%ground-values))
         ;; ── CSI-u still accumulating: ESC [ <digits/;> (no terminator yet) ─
         ;; Defers the digit-leading CSI so multi-digit codepoints (ESC [ 9 7 …)
         ;; are not eaten by the generic 3-/4-byte forwards below.  Real
@@ -328,7 +335,7 @@
                   (= (aref buffer 2) +byte-focus-out+)))
          (%notify-pane-focus (session-active-pane session)
                              (= (aref buffer 2) +byte-focus-in+))
-         (values nil #'%ground-input-state))
+         (%ground-values))
         ;; ── 3-byte CSI: ESC [ FINAL — not X10 and not SGR ────────────────
         ((and (= length 3) (= (aref buffer 1) +byte-csi-bracket+)
               (/= (aref buffer 2) +byte-ascii-m+)
@@ -369,7 +376,7 @@
          (let ((key (%modifier-arrow-key-name (aref buffer 4) (aref buffer 5))))
            (unless (%try-bound-string-key session +table-root+ key)
              (%forward-unless-copy-mode session buffer length)))
-         (values nil #'%ground-input-state))
+         (%ground-values))
         ;; ── Digit-leading CSI with a non-'u' terminator — forward raw ─────
         ;; Reached after the arrow/function-key handlers above declined it: an
         ;; accumulated digit CSI that ended in something other than 'u' (F5–F12
@@ -381,12 +388,12 @@
               (= (aref buffer 1) +byte-csi-bracket+)
               (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+))
          (%forward-unless-copy-mode session buffer length)
-         (values nil #'%ground-input-state))
+         (%ground-values))
         ;; ── 4-byte accumulation: ESC [ N (not yet '~') — keep buffering ───
         ((and (= length 4) (= (aref buffer 1) +byte-csi-bracket+)
               (/= (aref buffer 3) +byte-tilde+))
          (%forward-unless-copy-mode session buffer length)
-         (values nil #'%ground-input-state))
+         (%ground-values))
         ;; ── 2-byte non-CSI sequence: ESC X ────────────────────────────────
         ;; In copy mode, a lone ESC (or ESC + non-CSI byte) clears any active
         ;; selection but STAYS in copy mode (tmux default: Escape → clear-selection).
@@ -413,10 +420,10 @@
                                    (%meta-key-name (aref buffer 1))))
            (t
             (%forward-octets-synchronized session (subseq buffer 0 length))))
-         (values nil #'%ground-input-state))
+         (%ground-values))
         ;; ── Buffer overflow guard (> 32 unrecognised bytes) ───────────────
         ((> length 32)
          (%forward-unless-copy-mode session buffer length)
-         (values nil #'%ground-input-state))
+         (%ground-values))
         ;; ── Still accumulating ─────────────────────────────────────────────
         (t (accumulate)))))))

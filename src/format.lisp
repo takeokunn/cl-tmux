@@ -280,6 +280,17 @@
   "True when MOD is a recognised comparison operator (==, !=, <, >, <=, >=)."
   (member mod '("==" "!=" "<" ">" "<=" ">=") :test #'string=))
 
+(defun %logical-op-p (mod)
+  "True when MOD is a logical operator (|| or &&)."
+  (member mod '("||" "&&") :test #'string=))
+
+(defun %split-and-expand (rest context)
+  "Split REST on the first top-level comma and expand both halves as format strings.
+   Returns (values expanded-lhs expanded-rhs).  Backs binary operator dispatch."
+  (multiple-value-bind (lhs rhs) (%split-two rest)
+    (values (expand-format lhs context)
+            (expand-format rhs context))))
+
 (defun %apply-comparison (op rest context)
   "Evaluate a comparison: ==/!= are string (in)equality; </>/<=/>= compare the
    sides numerically (a non-numeric side parses as 0).  Split REST on the first
@@ -287,26 +298,20 @@
    are expanded (a bare word is literal, #{...} expands), so #{==:#{host},server}
    compares the host value to the literal \"server\" and #{>:#{client_width},100}
    compares numerically."
-  (multiple-value-bind (lhs rhs) (%split-two rest)
-    (let ((a (expand-format lhs context))
-          (b (expand-format rhs context)))
-      (flet ((bit01 (truth) (if truth "1" "0")))
-        (cond
-          ((string= op "==") (bit01 (string= a b)))
-          ((string= op "!=") (bit01 (not (string= a b))))
-          (t
-           (let ((na (or (parse-integer a :junk-allowed t) 0))
-                 (nb (or (parse-integer b :junk-allowed t) 0)))
-             (bit01 (cond
-                      ((string= op "<")  (<  na nb))
-                      ((string= op ">")  (>  na nb))
-                      ((string= op "<=") (<= na nb))
-                      ((string= op ">=") (>= na nb))
-                      (t nil))))))))))
-
-(defun %logical-op-p (mod)
-  "True when MOD is a logical operator (|| or &&)."
-  (member mod '("||" "&&") :test #'string=))
+  (multiple-value-bind (a b) (%split-and-expand rest context)
+    (flet ((bit01 (truth) (if truth "1" "0")))
+      (cond
+        ((string= op "==") (bit01 (string= a b)))
+        ((string= op "!=") (bit01 (not (string= a b))))
+        (t
+         (let ((na (or (parse-integer a :junk-allowed t) 0))
+               (nb (or (parse-integer b :junk-allowed t) 0)))
+           (bit01 (cond
+                    ((string= op "<")  (<  na nb))
+                    ((string= op ">")  (>  na nb))
+                    ((string= op "<=") (<= na nb))
+                    ((string= op ">=") (>= na nb))
+                    (t nil)))))))))
 
 (defun %apply-logical (op rest context)
   "Evaluate a logical #{||:a,b} / #{&&:a,b}.  Split REST on the first TOP-LEVEL
@@ -314,12 +319,10 @@
    (non-empty and not \"0\").  || returns \"1\" when either operand is truthy;
    && returns \"1\" only when both are.  Mirrors tmux's logical format operators,
    commonly nested inside a conditional: #{?#{||:#{a},#{b}},yes,no}."
-  (multiple-value-bind (lhs rhs) (%split-two rest)
-    (let ((a (%truthy-p (expand-format lhs context)))
-          (b (%truthy-p (expand-format rhs context))))
-      (if (string= op "||")
-          (if (or a b) "1" "0")
-          (if (and a b) "1" "0")))))
+  (multiple-value-bind (a b) (%split-and-expand rest context)
+    (if (string= op "||")
+        (if (or (%truthy-p a) (%truthy-p b)) "1" "0")
+        (if (and (%truthy-p a) (%truthy-p b)) "1" "0"))))
 
 (defun %quote-format-value (value)
   "Backslash-escape characters in VALUE that are special to the shell, matching
