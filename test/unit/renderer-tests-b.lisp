@@ -56,31 +56,20 @@
       (is (search (format nil "~C[1;1H" #\Escape) out)
           "status-position top must place bar at row 0 (got ~S)" out))))
 
-(test status-position-top-offsets-panes-down
-  "With status-position = top, window-relayout shifts the panes DOWN by the status
-   height so they do not overlap the top status bar (the panes start at y=1, not 0)."
-  (with-isolated-options ("status-position" "top")
-    (let ((cl-tmux/config:*status-height* 1))
-      (let* ((p0  (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
-                             :fd -1 :pid -1 :screen (make-screen 20 5)))
-             (win (make-window :id 1 :name "w" :width 20 :height 6
-                               :tree (make-layout-leaf p0) :panes (list p0))))
-        (cl-tmux/model:window-relayout win 5 20)   ; content height 5
-        (is (= 1 (pane-y p0))
-            "top status must offset the pane to y=1, got ~D" (pane-y p0))
-        (is (= 5 (pane-height p0)) "the pane keeps the full content height")))))
-
-(test status-position-bottom-no-pane-offset
-  "With status-position = bottom (default), panes start flush at y=0."
-  (with-isolated-options ("status-position" "bottom")
-    (let ((cl-tmux/config:*status-height* 1))
-      (let* ((p0  (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
-                             :fd -1 :pid -1 :screen (make-screen 20 5)))
-             (win (make-window :id 1 :name "w" :width 20 :height 6
-                               :tree (make-layout-leaf p0) :panes (list p0))))
-        (cl-tmux/model:window-relayout win 5 20)
-        (is (= 0 (pane-y p0))
-            "bottom status must leave the pane at y=0, got ~D" (pane-y p0))))))
+(test status-position-pane-offset-table
+  "window-relayout offsets pane y by 1 for status-position=top, leaves y=0 for bottom."
+  (dolist (c '(("top"    1 "top → pane at y=1")
+               ("bottom" 0 "bottom → pane at y=0")))
+    (destructuring-bind (pos expected-y desc) c
+      (with-isolated-options ("status-position" pos)
+        (let ((cl-tmux/config:*status-height* 1))
+          (let* ((p0  (make-pane :id 1 :x 0 :y 0 :width 20 :height 5
+                                 :fd -1 :pid -1 :screen (make-screen 20 5)))
+                 (win (make-window :id 1 :name "w" :width 20 :height 6
+                                   :tree (make-layout-leaf p0) :panes (list p0))))
+            (cl-tmux/model:window-relayout win 5 20)
+            (is (= expected-y (pane-y p0)) "~A (got ~D)" desc (pane-y p0))
+            (is (= 5 (pane-height p0)) "~A: height must remain 5" desc)))))))
 
 ;;; ── status on/off ────────────────────────────────────────────────────────────
 

@@ -18,30 +18,23 @@
       (is (string= "attach-session -t name" (prompt-label *prompt*))
           ":attach-session prompt label must be \"attach-session -t name\""))))
 
-(test dispatch-attach-session-found-session
-  ":attach-session on-submit touches a registered session and shows a confirmation."
+(test dispatch-attach-session-submit-table
+  ":attach-session on-submit shows 'attached' for a registered session, 'not found' otherwise."
   (with-fake-session (s)
     (let ((name (session-name s)))
-      (let ((*prompt* nil) (*overlay* nil)
-            (cl-tmux::*server-sessions* (list (cons name s))))
-        (cl-tmux::dispatch-command s :attach-session nil)
-        (is (prompt-active-p) "prompt must be open")
-        (funcall (prompt-on-submit *prompt*) name)
-        (is (overlay-active-p) ":attach-session found must show overlay")
-        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-          (is (search "attached" text) "overlay must say 'attached'"))))))
-
-(test dispatch-attach-session-missing-session-shows-error
-  ":attach-session on-submit shows an error when the session is not found."
-  (with-fake-session (s)
-    (let ((*prompt* nil) (*overlay* nil)
-          (cl-tmux::*server-sessions* nil))
-      (cl-tmux::dispatch-command s :attach-session nil)
-      (is (prompt-active-p) "prompt must be open")
-      (funcall (prompt-on-submit *prompt*) "nosuchsession")
-      (is (overlay-active-p) ":attach-session missing must show error overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "not found" text) "overlay must say 'not found'")))))
+      (dolist (c (list
+                  (list (list (cons name s)) name           "attached"  "found session")
+                  (list nil                  "nosuchsession" "not found" "missing session")))
+        (destructuring-bind (registry input expected-text desc) c
+          (let ((*prompt* nil) (*overlay* nil)
+                (cl-tmux::*server-sessions* registry))
+            (cl-tmux::dispatch-command s :attach-session nil)
+            (is (prompt-active-p) "prompt must open for ~A" desc)
+            (funcall (prompt-on-submit *prompt*) input)
+            (is (overlay-active-p) ":attach-session ~A must show overlay" desc)
+            (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+              (is (search expected-text text)
+                  "~A: overlay must contain \"~A\"" desc expected-text))))))))
 
 (test dispatch-clear-prompt-history-empties-history
   ":clear-prompt-history sets *prompt-history* to NIL."
