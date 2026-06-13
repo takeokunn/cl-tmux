@@ -229,7 +229,7 @@
                  (pane (session-active-pane session))
                  (ctx  (cl-tmux/format:format-context-from-session session win pane))
                  (val  (cl-tmux/format:expand-format cond-str ctx)))
-            (if (and (plusp (length val)) (not (string= val "0")))
+            (if (not (member val '("" "0") :test #'string=))
                 (when then (%run-command-line session then))
                 (when else (%run-command-line session else)))))))))
 

@@ -52,9 +52,7 @@
    empty result or \"0\" as false, anything else as true.  A NIL context is used
    (config-time has no pane); global-scoped formats still resolve."
   (let ((result (ignore-errors (cl-tmux/format:expand-format condition nil))))
-    (and result
-         (not (string= result ""))
-         (not (string= result "0")))))
+    (and result (not (member result '("" "0") :test #'string=)))))
 
 (defun %take-brace-or-command (tokens)
   "Consume one command UNIT from the front of TOKENS (an if-shell then/else body).

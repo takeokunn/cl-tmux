@@ -115,11 +115,11 @@
       (cond
         ((null remaining) (return nil))
         ((string= (first remaining) "-n")
-         (setf table     +table-root+)
-         (setf remaining (rest remaining)))
+         (setf table     +table-root+
+               remaining (rest remaining)))
         ((string= (first remaining) "-r")
-         (setf repeatable t)
-         (setf remaining  (rest remaining)))
+         (setf repeatable t
+               remaining  (rest remaining)))
         ((string= (first remaining) "-T")
          (setf remaining (rest remaining))
          (when (null remaining) (return nil))
@@ -213,11 +213,11 @@
          ;; End of args: valid only when -a was given (whole-table unbind).
          (return (if all-p (values table nil t) (values nil nil nil))))
         ((string= (first remaining) "-n")
-         (setf table     +table-root+)
-         (setf remaining (rest remaining)))
+         (setf table     +table-root+
+               remaining (rest remaining)))
         ((string= (first remaining) "-a")
-         (setf all-p     t)
-         (setf remaining (rest remaining)))
+         (setf all-p     t
+               remaining (rest remaining)))
         ((string= (first remaining) "-T")
          (setf remaining (rest remaining))
          (when (null remaining) (return (values nil nil nil)))
