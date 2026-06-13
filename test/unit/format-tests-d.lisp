@@ -197,10 +197,7 @@
 
 (test format-context-client-defaults-are-zero
   "format-context-from-session :client-width and :client-height default to 0."
-  (let* ((sess (make-fake-session :nwindows 1))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+  (with-format-context (sess win pane ctx) ()
     (is (eql 0 (getf ctx :client-width))
         ":client-width must default to 0, got ~S" (getf ctx :client-width))
     (is (eql 0 (getf ctx :client-height))
@@ -223,10 +220,7 @@
 
 (test format-context-client-session-is-session-name
   "#{client_session} expands to the name of the session the client is viewing."
-  (let* ((sess (make-fake-session :nwindows 1))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+  (with-format-context (sess win pane ctx) ()
     ;; make-fake-session names the session "0".
     (is (string= (cl-tmux/model:session-name sess)
                  (cl-tmux/format:expand-format "#{client_session}" ctx))
@@ -234,20 +228,14 @@
 
 (test format-context-client-pid-is-numeric
   "#{client_pid} expands to a non-empty numeric PID string (single-process model)."
-  (let* ((sess (make-fake-session :nwindows 1))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane))
-         (pid  (cl-tmux/format:expand-format "#{client_pid}" ctx)))
-    (is (plusp (length pid)) "#{client_pid} must be non-empty")
-    (is (every #'digit-char-p pid) "#{client_pid} must be all digits, got ~S" pid)))
+  (with-format-context (sess win pane ctx) ()
+    (let ((pid (cl-tmux/format:expand-format "#{client_pid}" ctx)))
+      (is (plusp (length pid)) "#{client_pid} must be non-empty")
+      (is (every #'digit-char-p pid) "#{client_pid} must be all digits, got ~S" pid))))
 
 (test format-context-client-termname-is-string
   "#{client_termname} expands to a string (the TERM env value or empty)."
-  (let* ((sess (make-fake-session :nwindows 1))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+  (with-format-context (sess win pane ctx) ()
     (is (stringp (cl-tmux/format:expand-format "#{client_termname}" ctx))
         "#{client_termname} must expand to a string")))
 
@@ -317,10 +305,7 @@
   "format-context-from-session populates pane geometry/id/pid variables that
    expand-format resolves (#{pane_width} #{pane_height} #{pane_id} #{pane_left}
    #{pane_top} #{pane_pid})."
-  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+  (with-format-context (sess win pane ctx) ()
     ;; make-fake-window panes are 20x5 at (0,0), id 1, pid -1.
     (is (string= "20" (cl-tmux/format:expand-format "#{pane_width}"  ctx)))
     (is (string= "5"  (cl-tmux/format:expand-format "#{pane_height}" ctx)))
@@ -383,10 +368,7 @@
 
 (test format-context-window-panes-and-session-windows-counts
   "#{window_panes} is the pane count; #{session_windows} is the window count."
-  (let* ((sess (make-fake-session :nwindows 3 :npanes 2))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+  (with-format-context (sess win pane ctx) (:nwindows 3 :npanes 2)
     (is (string= "2" (cl-tmux/format:expand-format "#{window_panes}" ctx))
         "window has 2 panes")
     (is (string= "3" (cl-tmux/format:expand-format "#{session_windows}" ctx))

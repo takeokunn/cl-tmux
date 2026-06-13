@@ -91,10 +91,7 @@
 
 (test format-context-window-count-reflects-session-windows
   "format-context-from-session :window-count equals the number of windows in the session."
-  (let* ((sess (make-fake-session :nwindows 3))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+  (with-format-context (sess win pane ctx) (:nwindows 3)
     (is (= 3 (getf ctx :window-count))
         ":window-count expected 3 got ~D" (getf ctx :window-count))))
 
@@ -218,10 +215,7 @@
 
 (test format-window-raw-flags-active-window-has-star
   "For the active window, #{window_raw_flags} and #{window_flags} both contain \"*\"."
-  (let* ((sess (make-fake-session :nwindows 1))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+  (with-format-context (sess win pane ctx) ()
     (let ((raw   (cl-tmux/format:expand-format "#{window_raw_flags}" ctx))
           (flags (cl-tmux/format:expand-format "#{window_flags}" ctx)))
       (is (search "*" raw)
@@ -274,20 +268,14 @@
 
 (test format-context-session-name-propagated
   "format-context-from-session :session-name matches the session's name field."
-  (let* ((sess (make-fake-session :nwindows 1))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+  (with-format-context (sess win pane ctx) ()
     (is (string= (cl-tmux/model:session-name sess) (getf ctx :session-name))
         ":session-name mismatch: expected ~S got ~S"
         (cl-tmux/model:session-name sess) (getf ctx :session-name))))
 
 (test format-context-window-name-propagated
   "format-context-from-session :window-name matches the window's name field."
-  (let* ((sess (make-fake-session :nwindows 1))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+  (with-format-context (sess win pane ctx) ()
     (is (string= (cl-tmux/model:window-name win) (getf ctx :window-name))
         ":window-name mismatch: expected ~S got ~S"
         (cl-tmux/model:window-name win) (getf ctx :window-name))))
@@ -296,10 +284,7 @@
 
 (test expand-format-uses-window-count-from-context
   "#{window_count} expands to the window count injected via format-context-from-session."
-  (let* ((sess (make-fake-session :nwindows 4))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+  (with-format-context (sess win pane ctx) (:nwindows 4)
     (is (string= "4" (cl-tmux/format:expand-format "#{window_count}" ctx))
         "#{window_count}: expected \"4\" got ~S"
         (cl-tmux/format:expand-format "#{window_count}" ctx))))
@@ -308,31 +293,22 @@
 
 (test format-context-time-is-hhmm
   "format-context-from-session :time is a HH:MM-format 5-char string."
-  (let* ((sess (make-fake-session :nwindows 1))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane))
-         (t-str (getf ctx :time)))
-    (is (= 5 (length t-str))
-        ":time must be 5 chars (HH:MM), got ~D: ~S" (length t-str) t-str)
-    (is (char= #\: (char t-str 2))
-        ":time must have colon at position 2, got ~C" (char t-str 2))))
+  (with-format-context (sess win pane ctx) ()
+    (let ((t-str (getf ctx :time)))
+      (is (= 5 (length t-str))
+          ":time must be 5 chars (HH:MM), got ~D: ~S" (length t-str) t-str)
+      (is (char= #\: (char t-str 2))
+          ":time must have colon at position 2, got ~C" (char t-str 2)))))
 
 (test format-context-host-is-non-empty
   "format-context-from-session :host is a non-empty string."
-  (let* ((sess (make-fake-session :nwindows 1))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+  (with-format-context (sess win pane ctx) ()
     (is (stringp (getf ctx :host))   ":host must be a string")
     (is (plusp (length (getf ctx :host))) ":host must be non-empty")))
 
 (test format-context-host-short-no-dot
   "format-context-from-session :host-short contains no dot."
-  (let* ((sess (make-fake-session :nwindows 1))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+  (with-format-context (sess win pane ctx) ()
     (is (null (find #\. (getf ctx :host-short)))
         ":host-short must not contain a dot, got ~S" (getf ctx :host-short))))
 
@@ -361,10 +337,7 @@
 
 (test format-context-window-flags-active
   "format-context-from-session :window-flags is \"*\" for the active window."
-  (let* ((sess (make-fake-session :nwindows 1))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+  (with-format-context (sess win pane ctx) ()
     (is (string= "*" (getf ctx :window-flags))
         ":window-flags expected \"*\" for active window, got ~S"
         (getf ctx :window-flags))))
@@ -382,13 +355,10 @@
 
 (test expand-format-time-expands
   "#{time} expands to the :time value from context."
-  (let* ((sess (make-fake-session :nwindows 1))
-         (win  (first (cl-tmux/model:session-windows sess)))
-         (pane (first (cl-tmux/model:window-panes win)))
-         (ctx  (cl-tmux/format:format-context-from-session sess win pane))
-         (result (cl-tmux/format:expand-format "#{time}" ctx)))
-    (is (= 5 (length result))
-        "#{time} should expand to 5-char HH:MM, got ~S" result)))
+  (with-format-context (sess win pane ctx) ()
+    (let ((result (cl-tmux/format:expand-format "#{time}" ctx)))
+      (is (= 5 (length result))
+          "#{time} should expand to 5-char HH:MM, got ~S" result))))
 
 (test format-context-from-window-works
   "format-context-from-window returns the same keys as format-context-from-session."

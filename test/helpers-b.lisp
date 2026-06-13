@@ -545,6 +545,25 @@
      (with-loop-state
        ,@body)))
 
+;;; ── Format-context fixture macro ────────────────────────────────────────────
+;;;
+;;; The 4-line let* that builds sess/win/pane/ctx from make-fake-session appears
+;;; 30+ times across format-tests.lisp and format-tests-d.lisp.  This macro
+;;; encodes the standard extraction chain (first window, first pane) once.
+
+(defmacro with-format-context ((sess-var win-var pane-var ctx-var)
+                               (&key (nwindows 1) (npanes 1))
+                               &body body)
+  "Bind SESS-VAR/WIN-VAR/PANE-VAR/CTX-VAR to the first window, first pane, and
+   format context of a fresh fake session with NWINDOWS windows and NPANES panes.
+   Eliminates the recurring 4-line let* fixture in format-tests.lisp."
+  `(let* ((,sess-var (make-fake-session :nwindows ,nwindows :npanes ,npanes))
+          (,win-var  (first (cl-tmux/model:session-windows ,sess-var)))
+          (,pane-var (first (cl-tmux/model:window-panes ,win-var)))
+          (,ctx-var  (cl-tmux/format:format-context-from-session
+                      ,sess-var ,win-var ,pane-var)))
+     ,@body))
+
 (defmacro with-pipe-fds ((read-fd write-fd) &body body)
   "Open a POSIX pipe; bind READ-FD and WRITE-FD; close both on exit.
    Shared by input-tests.lisp, pty-tests.lisp, and pty-rawmode-tests.lisp."
