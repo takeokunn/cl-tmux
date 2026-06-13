@@ -89,9 +89,8 @@
    tracks the just-resized client."
   (with-fresh-options
     (cl-tmux/options:set-option "window-size" "latest")
-    (with-loop-state
-      (let* ((s (make-fake-session))
-             (a (%make-test-conn :rows 24 :cols 80))
+    (with-fake-session (s)
+      (let* ((a (%make-test-conn :rows 24 :cols 80))
              (b (%make-test-conn :rows 30 :cols 100))
              (cl-tmux::*clients* (list a b))   ; a is front initially
              (payload (cl-tmux/protocol::u16-octets-pair 50 150)))
@@ -99,7 +98,7 @@
         (is (eq b (first cl-tmux::*clients*)) "the resized client moves to the front")
         (multiple-value-bind (rows cols) (cl-tmux::%effective-client-size)
           (is (= 50 rows) "latest tracks the just-resized client's new rows")
-          (is (= 150 cols) "latest tracks the just-resized client's new cols"))))))
+          (is (= 150 cols) "latest tracks the just-resized client's new cols")))))
 
 (test multi-handle-key-detach-drops-client
   "A ^B d key message yields :drop (the client detaches; the session survives)."

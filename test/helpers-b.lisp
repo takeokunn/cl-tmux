@@ -164,7 +164,7 @@
 (defmacro with-two-pane-h-session ((sess-var win-var p0-var p1-var) &body body)
   "Bind SESS-VAR WIN-VAR P0-VAR P1-VAR to a 2-pane horizontal split session:
    p0 (x=0 w=40) | p1 (x=41 w=40), window 81x24, first pane active.
-   Runs BODY with those bindings."
+   Runs BODY inside WITH-LOOP-STATE for event-loop isolation."
   `(let* ((,p0-var  (make-no-pty-pane 1  0 0 40 24))
           (,p1-var  (make-no-pty-pane 2 41 0 40 24))
           (,win-var (make-window :id 1 :name "w" :width 81 :height 24
@@ -176,7 +176,7 @@
           (,sess-var (make-session :id 1 :name "0" :windows (list ,win-var))))
      (window-select-pane ,win-var ,p0-var)
      (session-select-window ,sess-var ,win-var)
-     ,@body))
+     (with-loop-state ,@body)))
 
 ;;; ── Two-pane layout session fixture ──────────────────────────────────────────
 ;;;
@@ -213,7 +213,7 @@
 (defmacro with-two-pane-v-session ((sess-var win-var p0-var p1-var) &body body)
   "Bind SESS-VAR WIN-VAR P0-VAR P1-VAR to a 2-pane vertical split session:
    p0 (y=0 h=10) above p1 (y=11 h=10), window 80x21, first pane active.
-   Runs BODY with those bindings."
+   Runs BODY inside WITH-LOOP-STATE for event-loop isolation."
   `(let* ((,p0-var  (make-no-pty-pane 1 0  0 80 10))
           (,p1-var  (make-no-pty-pane 2 0 11 80 10))
           (,win-var (make-window :id 1 :name "w" :width 80 :height 21
@@ -225,7 +225,7 @@
           (,sess-var (make-session :id 1 :name "0" :windows (list ,win-var))))
      (window-select-pane ,win-var ,p0-var)
      (session-select-window ,sess-var ,win-var)
-     ,@body))
+     (with-loop-state ,@body)))
 
 (defmacro with-two-pane-mouse-session ((sess-var win-var p0-var p1-var) &body body)
   "Bind SESS-VAR WIN-VAR P0-VAR P1-VAR to a 2-pane horizontal split session
