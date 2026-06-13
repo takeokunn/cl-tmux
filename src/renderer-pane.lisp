@@ -77,8 +77,9 @@
 
 (defun %emit-sgr (stream code)
   "Emit an ANSI SGR escape sequence (ESC[CODEm) to STREAM.
-   CODE may be an integer or a string (e.g. \"44;96\" for compound SGR parameters)."
-  (format stream "~C[~Am" +esc+ code))
+   CODE may be an integer or a string (e.g. \"44;96\" for compound SGR parameters).
+   A no-op when CODE is NIL — allows callers to pass optional style codes directly."
+  (when code (format stream "~C[~Am" +esc+ code)))
 
 (defun %blit-rows (stream rows ox oy start-row start-col max-width)
   "Write ROWS (a list of strings) at terminal position (OX+START-COL, OY+START-ROW),

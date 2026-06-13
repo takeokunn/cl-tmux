@@ -13,12 +13,6 @@
 
 ;;; ── Box-drawing shared helpers ──────────────────────────────────────────────
 
-(defun %emit-sgr (stream sgr)
-  "Emit the SGR parameter string SGR (e.g. \"31\") as an escape sequence to STREAM
-   when SGR is non-NIL; a no-op otherwise.  Used to colour popup borders without
-   affecting menus (which pass NIL)."
-  (when sgr (format stream "~C[~Am" +esc+ sgr)))
-
 (defun %emit-styled-char (stream ch sgr)
   "Emit SGR colour, write CH to STREAM, then reset attributes — no-op when SGR is NIL.
    Backs every side-bar character in popup and empty-content content rows."
@@ -117,8 +111,8 @@
    Otherwise render an empty box with the popup title."
   (let* ((box-width  (min (popup-width  popup) terminal-cols))
          (box-height (popup-height popup))
-         (origin-x   (max 0 (floor (- terminal-cols box-width) 2)))
-         (origin-y   (max 0 (floor (- (1- terminal-rows) box-height) 2)))
+         (origin-x   (%center-coord terminal-cols box-width))
+         (origin-y   (%center-coord (1- terminal-rows) box-height))
          (title      (popup-title popup)))
     (reset-attrs stream)
     ;; popup-border-lines selects the box characters; popup-border-style colours the
@@ -185,10 +179,10 @@
          ;; box fits on screen (origin in [0, dim - box-extent]).
          (origin-x       (if (menu-x menu)
                              (max 0 (min (menu-x menu) (- terminal-cols box-width)))
-                             (max 0 (floor (- terminal-cols box-width) 2))))
+                             (%center-coord terminal-cols box-width)))
          (origin-y       (if (menu-y menu)
                              (max 0 (min (menu-y menu) (- terminal-rows box-height)))
-                             (max 0 (floor (- terminal-rows box-height) 2))))
+                             (%center-coord terminal-rows box-height)))
          (selected-index (menu-selected-index menu)))
     (reset-attrs stream)
     ;; menu-border-lines selects the box glyphs; menu-border-style colours the border

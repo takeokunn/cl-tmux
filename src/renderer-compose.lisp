@@ -18,7 +18,7 @@
   "Render a full-screen lock overlay.  Fills the screen with a solid colour
    and centres a 'Session locked' message."
   (reset-attrs stream)
-  (format stream "~C[~Am" +esc+ +sgr-default-status+)
+  (%emit-sgr stream +sgr-default-status+)
   ;; Fill all rows with spaces.
   (let ((blank-row (make-string terminal-cols :initial-element #\Space)))
     (loop for row below (1- terminal-rows)
@@ -28,7 +28,7 @@
   (let* ((msg     "Session locked — press any key to unlock")
          (mlen    (min (length msg) terminal-cols))
          (mid-row (floor terminal-rows 2))
-         (mid-col (max 0 (floor (- terminal-cols mlen) 2))))
+         (mid-col (%center-coord terminal-cols mlen)))
     (move-to stream mid-row mid-col)
     (write-string (subseq msg 0 mlen) stream))
   (reset-attrs stream))
@@ -45,7 +45,7 @@
          (sgr-code  (when (and style-opt (plusp (length style-opt)))
                       (%status-sgr-from-style style-opt))))
     (if sgr-code
-        (format stream "~C[~Am" +esc+ sgr-code)
+        (%emit-sgr stream sgr-code)
         (reset-attrs stream)))
   (loop for line in (overlay-lines)
         for row from 0
