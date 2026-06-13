@@ -179,24 +179,18 @@
 
 ;;; ── %copy-mode-clamp-cursor (direct unit tests) ──────────────────────────────
 
-(test copy-mode-clamp-cursor-clamps-row-into-viewport
-  "%copy-mode-clamp-cursor clamps the cursor row into [0, height-1]."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    ;; Force cursor outside viewport bounds.
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 10 3))
-    (cl-tmux/commands::%copy-mode-clamp-cursor s)
-    (is (= 4 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "row > height-1 must clamp to height-1=4")))
-
-(test copy-mode-clamp-cursor-clamps-col-into-viewport
-  "%copy-mode-clamp-cursor clamps the cursor col into [0, width-1]."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 50))
-    (cl-tmux/commands::%copy-mode-clamp-cursor s)
-    (is (= 19 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "col > width-1 must clamp to width-1=19")))
+(test copy-mode-clamp-cursor-table
+  "%copy-mode-clamp-cursor clamps out-of-range row/col and leaves in-range cursors unchanged."
+  (dolist (c '((10  3 4  3 "row > height-1 clamps to height-1=4")
+               (2  50 2 19 "col > width-1 clamps to width-1=19")
+               (2  10 2 10 "in-range cursor unchanged")))
+    (destructuring-bind (init-r init-c exp-r exp-c desc) c
+      (let ((s (make-screen 20 5)))
+        (cl-tmux/commands::copy-mode-enter s)
+        (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons init-r init-c))
+        (cl-tmux/commands::%copy-mode-clamp-cursor s)
+        (is (= exp-r (car (cl-tmux/terminal/types:screen-copy-cursor s))) "~A: row" desc)
+        (is (= exp-c (cdr (cl-tmux/terminal/types:screen-copy-cursor s))) "~A: col" desc)))))
 
 (test copy-mode-clamp-cursor-noop-when-cursor-nil
   "%copy-mode-clamp-cursor is a no-op when the cursor is NIL."
@@ -205,15 +199,6 @@
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) nil)
     (finishes (cl-tmux/commands::%copy-mode-clamp-cursor s)
               "%copy-mode-clamp-cursor with nil cursor must not signal")))
-
-(test copy-mode-clamp-cursor-preserves-in-range-values
-  "%copy-mode-clamp-cursor leaves a cursor already in range unchanged."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 10))
-    (cl-tmux/commands::%copy-mode-clamp-cursor s)
-    (is (equal (cons 2 10) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "in-range cursor must be unchanged after clamp")))
 
 ;;; ── %selection-bounds (direct unit tests) ────────────────────────────────────
 

@@ -50,16 +50,6 @@
         (is (and yanked (string= "world" yanked))
             "D command must copy from col 6 to end (got ~S)" yanked)))))
 
-(test copy-mode-copy-end-of-line-noop-outside-copy-mode
-  "copy-mode-copy-end-of-line is a no-op when not in copy mode."
-  (let ((cl-tmux/buffer:*paste-buffers* nil))
-    (let ((s (make-screen 20 5)))
-      (feed s "hello world")
-      ;; Do NOT enter copy mode.
-      (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
-      (cl-tmux/commands::copy-mode-copy-end-of-line s)
-      (is (null cl-tmux/buffer:*paste-buffers*)
-          "paste buffers must remain empty when not in copy mode"))))
 
 ;;; ── copy-mode-copy-line (Y) ──────────────────────────────────────────────────
 
@@ -77,16 +67,18 @@
         (is (and yanked (search "hello" yanked))
             "Y command must copy the full row containing 'hello' (got ~S)" yanked)))))
 
-(test copy-mode-copy-line-noop-outside-copy-mode
-  "copy-mode-copy-line is a no-op when not in copy mode."
-  (let ((cl-tmux/buffer:*paste-buffers* nil))
-    (let ((s (make-screen 20 5)))
-      (feed s "hello")
-      ;; Do NOT enter copy mode.
-      (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
-      (cl-tmux/commands::copy-mode-copy-line s)
-      (is (null cl-tmux/buffer:*paste-buffers*)
-          "paste buffers must remain empty when not in copy mode"))))
+(test copy-mode-copy-yank-noop-outside-copy-mode-table
+  "copy-mode-copy-end-of-line and copy-mode-copy-line leave paste-buffers empty outside copy mode."
+  (dolist (c '((cl-tmux/commands::copy-mode-copy-end-of-line "copy-end-of-line")
+               (cl-tmux/commands::copy-mode-copy-line        "copy-line")))
+    (destructuring-bind (fn desc) c
+      (let ((cl-tmux/buffer:*paste-buffers* nil))
+        (let ((s (make-screen 20 5)))
+          (feed s "hello world")
+          (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+          (funcall fn s)
+          (is (null cl-tmux/buffer:*paste-buffers*)
+              "~A: paste buffers must remain empty outside copy mode" desc))))))
 
 ;;; ── copy-mode-search-forward / search-backward ──────────────────────────────
 
