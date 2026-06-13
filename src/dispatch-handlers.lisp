@@ -101,6 +101,14 @@
                   (unless (string= input "")
                     (funcall callback input)))))
 
+(defun prompt-integer (label callback)
+  "Start a prompt labelled LABEL; call CALLBACK with the parsed integer when the
+   input parses as a valid integer.  Silently ignores non-numeric input."
+  (prompt-start label ""
+                (lambda (input)
+                  (let ((n (ignore-errors (parse-integer input))))
+                    (when n (funcall callback n))))))
+
 (defun %copy-mode-search-prompt (session prompt-char search-fn)
   "Open a copy-mode search prompt with PROMPT-CHAR prefix and call SEARCH-FN
    on the entered term when non-empty."
@@ -373,22 +381,17 @@
          (setf (window-last-active-time prev) (get-universal-time))))))
   (:move-window
    (with-active-window (win session)
-     (prompt-start "move-window" ""
-                   (lambda (idx-str)
-                     (let ((idx (ignore-errors (parse-integer idx-str))))
-                       (when idx
-                         (session-move-window session win idx)))))))
+     (prompt-integer "move-window"
+                     (lambda (idx) (session-move-window session win idx)))))
   (:swap-window
    (with-active-window (win session)
-     (prompt-start "swap-window" ""
-                   (lambda (idx-str)
-                     ;; The typed value is a window INDEX (id), not a list position.
-                     (let ((dst-id (ignore-errors (parse-integer idx-str))))
-                       (when dst-id
-                         (%swap-window-ids
-                          session win
-                          (find dst-id (session-windows session)
-                                :key #'window-id))))))))
+     ;; The typed value is a window INDEX (id), not a list position.
+     (prompt-integer "swap-window"
+                     (lambda (dst-id)
+                       (%swap-window-ids
+                        session win
+                        (find dst-id (session-windows session)
+                              :key #'window-id))))))
   (:rotate-window
    (with-active-window (win session)
      (window-rotate win :up)))

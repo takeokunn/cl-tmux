@@ -231,11 +231,8 @@
                 (if (and screen (screen-copy-mode-p screen)) " [copy]" ""))))))
   (:move-window-prompt
    (with-active-window (win session)
-     (prompt-start "move-window to index" ""
-                   (lambda (idx-str)
-                     (let ((idx (ignore-errors (parse-integer idx-str))))
-                       (when idx
-                         (session-move-window session win idx)))))))
+     (prompt-integer "move-window to index"
+                     (lambda (idx) (session-move-window session win idx)))))
   (:bind-key
    (prompt-nonempty "bind key: "
                     (lambda (input)
@@ -374,14 +371,12 @@
   ;; Move the active pane to a different window (like join-pane but interactive).
   (:move-pane
    (with-active-window (src-win session)
-     (prompt-start "move-pane to window (index)" ""
-                   (lambda (idx-str)
-                     (let ((idx (ignore-errors (parse-integer idx-str))))
-                       (when idx
-                         (let* ((dst-win  (nth idx (session-windows session)))
-                                (src-pane (and src-win (window-active-pane src-win))))
-                           (when (and dst-win src-pane (not (eq src-win dst-win)))
-                             (join-pane session src-win src-pane dst-win :h)))))))))
+     (prompt-integer "move-pane to window (index)"
+                     (lambda (idx)
+                       (let* ((dst-win  (nth idx (session-windows session)))
+                              (src-pane (and src-win (window-active-pane src-win))))
+                         (when (and dst-win src-pane (not (eq src-win dst-win)))
+                           (join-pane session src-win src-pane dst-win :h)))))))
 
   ;; ── list-panes ───────────────────────────────────────────────────────────
   ;; List all panes in the active window (lsp alias).

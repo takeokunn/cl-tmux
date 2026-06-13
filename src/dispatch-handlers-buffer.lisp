@@ -48,14 +48,12 @@
                                    (subseq buffer 0 (min +buffer-preview-length+
                                                          (length buffer))))))))
           (show-overlay listing)
-          (prompt-start "choose buffer (index)" "0"
-                        (lambda (idx-str)
-                          (let ((idx (ignore-errors (parse-integer idx-str))))
-                            (when idx
-                              (let* ((text (cl-tmux/buffer:get-paste-buffer idx))
-                                     (win  (session-active-window session))
-                                     (ap   (and win (window-active-pane win))))
-                                (%paste-to-pane ap text)))))))
+          (prompt-integer "choose buffer (index)"
+                          (lambda (idx)
+                            (let* ((text (cl-tmux/buffer:get-paste-buffer idx))
+                                   (win  (session-active-window session))
+                                   (ap   (and win (window-active-pane win))))
+                              (%paste-to-pane ap text)))))
         (show-overlay "(no paste buffers)"))))
 
 ;;; -- %cmd-delete-buffer ------------------------------------------------------
