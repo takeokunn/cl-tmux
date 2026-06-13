@@ -106,27 +106,18 @@
     (is (equal (cons 2 7) (cl-tmux/terminal/types:screen-copy-cursor s))
         "copy-mode-set-cursor must set cursor to (2 . 7)")))
 
-(test copy-mode-set-cursor-clamps-row-to-bounds
-  "copy-mode-set-cursor clamps the row to [0, height-1]."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (cl-tmux/commands:copy-mode-set-cursor s 99 0)
-    (is (= 4 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "row > height-1 must clamp to height-1=4")
-    (cl-tmux/commands:copy-mode-set-cursor s -1 0)
-    (is (= 0 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "row < 0 must clamp to 0")))
-
-(test copy-mode-set-cursor-clamps-col-to-bounds
-  "copy-mode-set-cursor clamps the column to [0, width-1]."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (cl-tmux/commands:copy-mode-set-cursor s 0 99)
-    (is (= 19 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "col > width-1 must clamp to width-1=19")
-    (cl-tmux/commands:copy-mode-set-cursor s 0 -1)
-    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "col < 0 must clamp to 0")))
+(test copy-mode-set-cursor-clamps-table
+  "copy-mode-set-cursor clamps both row and column to [0, bound-1]."
+  (dolist (row (list (list 99  0  4 #'car "row 99 → height-1=4")
+                     (list -1  0  0 #'car "row -1 → 0")
+                     (list  0 99 19 #'cdr "col 99 → width-1=19")
+                     (list  0 -1  0 #'cdr "col -1 → 0")))
+    (destructuring-bind (r c expected accessor desc) row
+      (let ((s (make-screen 20 5)))
+        (cl-tmux/commands::copy-mode-enter s)
+        (cl-tmux/commands:copy-mode-set-cursor s r c)
+        (is (= expected (funcall accessor (cl-tmux/terminal/types:screen-copy-cursor s)))
+            "~A" desc)))))
 
 (test copy-mode-set-cursor-noop-outside-copy-mode
   "copy-mode-set-cursor is a no-op when not in copy mode."
@@ -430,32 +421,20 @@
 
 ;;; ── copy-mode-next-matching-bracket ─────────────────────────────────────────
 
-(test copy-mode-next-matching-bracket-open-paren-finds-close
-  "When cursor is on '(' the bracket scan jumps to the matching ')'."
-  (let ((s (make-screen 20 5)))
-    (setf (screen-copy-mode-p s) t)
-    ;; Write "( foo )" directly into row 2 cells.
-    (dotimes (i 7)
-      (setf (cl-tmux/terminal/types:screen-cell s i 2)
-            (cl-tmux/terminal/types:make-cell :char (char "( foo )" i))))
-    (setf (screen-copy-cursor s) (cons 2 0)   ; on the '('
-          (screen-copy-offset  s) 0)
-    (cl-tmux/commands::copy-mode-next-matching-bracket s)
-    (is (= 6 (cdr (screen-copy-cursor s)))
-        "cursor column must be on the ')' at col 6")))
-
-(test copy-mode-next-matching-bracket-close-paren-finds-open
-  "When cursor is on ')' the bracket scan jumps backward to the matching '('."
-  (let ((s (make-screen 20 5)))
-    (setf (screen-copy-mode-p s) t)
-    (dotimes (i 7)
-      (setf (cl-tmux/terminal/types:screen-cell s i 2)
-            (cl-tmux/terminal/types:make-cell :char (char "( foo )" i))))
-    (setf (screen-copy-cursor s) (cons 2 6)   ; on the ')'
-          (screen-copy-offset  s) 0)
-    (cl-tmux/commands::copy-mode-next-matching-bracket s)
-    (is (= 0 (cdr (screen-copy-cursor s)))
-        "cursor column must be on the '(' at col 0")))
+(test copy-mode-next-matching-bracket-paren-table
+  "Cursor on '(' jumps forward to ')'; cursor on ')' jumps backward to '('."
+  (dolist (row '((2 0 6 "on '(' (col 0) → finds ')' (col 6)")
+                 (2 6 0 "on ')' (col 6) → finds '(' (col 0)")))
+    (destructuring-bind (start-row start-col expected-col desc) row
+      (let ((s (make-screen 20 5)))
+        (setf (screen-copy-mode-p s) t)
+        (dotimes (i 7)
+          (setf (cl-tmux/terminal/types:screen-cell s i 2)
+                (cl-tmux/terminal/types:make-cell :char (char "( foo )" i))))
+        (setf (screen-copy-cursor s) (cons start-row start-col)
+              (screen-copy-offset  s) 0)
+        (cl-tmux/commands::copy-mode-next-matching-bracket s)
+        (is (= expected-col (cdr (screen-copy-cursor s))) "~A" desc)))))
 
 (test copy-mode-next-matching-bracket-nested-brackets
   "Nested brackets: cursor on outer '(' jumps to the outer matching ')'."
