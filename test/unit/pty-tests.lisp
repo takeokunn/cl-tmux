@@ -12,20 +12,30 @@
 (def-suite pty-suite :description "PTY / shell integration")
 (in-suite pty-suite)
 
-(defun drain-pty (fd &key (deadline-seconds 3.0) (stop-marker nil))
-  "Read from FD until STOP-MARKER appears in the decoded output or
-   DEADLINE-SECONDS elapses.  Returns the accumulated string."
+(defun drain-pty (fd &key (deadline-seconds 3.0) (stop-marker nil) (quiet-windows 1))
+  "Read from FD until STOP-MARKER appears in the decoded output, DEADLINE-SECONDS
+   elapses, or QUIET-WINDOWS consecutive empty 200ms select polls occur (meaning
+   the shell has truly gone idle).  Returns the accumulated string.
+
+   quiet-windows > 1 is useful before testing idleness: it certifies actual shell
+   stability rather than just elapsed time, eliminating a race where the shell sends
+   a late output burst right after drain returns."
   (let ((acc  (make-array 0 :element-type '(unsigned-byte 8) :adjustable t
                             :fill-pointer 0))
         (end  (+ (get-internal-real-time)
-                 (* deadline-seconds internal-time-units-per-second))))
+                 (* deadline-seconds internal-time-units-per-second)))
+        (quiet-count 0))
     (loop
       (when (> (get-internal-real-time) end) (return))
-      (when (select-fds (list fd) 200000)        ; 200 ms
-        (let ((chunk (pty-read-blocking fd 4096)))
-          (when chunk
-            (loop for b across chunk
-                  do (vector-push-extend b acc)))))
+      (if (select-fds (list fd) 200000)          ; 200 ms poll
+          (let ((chunk (pty-read-blocking fd 4096)))
+            (setf quiet-count 0)
+            (when chunk
+              (loop for b across chunk
+                    do (vector-push-extend b acc))))
+          (progn
+            (incf quiet-count)
+            (when (>= quiet-count quiet-windows) (return))))
       (let ((text (map 'string #'code-char acc)))
         (when (and stop-marker (search stop-marker text))
           (return-from drain-pty text))))
@@ -59,8 +69,9 @@
   (unless (pty-available-p)
     (skip "no PTY available (sandboxed environment)"))
   (with-pty-shell (fd pid)
-    ;; Drain the initial shell prompt, then expect idleness.
-    (drain-pty fd :deadline-seconds 0.5)
+    ;; Drain until two consecutive quiet 200ms windows: certifies the shell has
+    ;; truly settled before we test that no further output arrives.
+    (drain-pty fd :deadline-seconds 2.0 :quiet-windows 2)
     (let ((ready (select-fds (list fd) 100000)))  ; 100 ms, no input sent
       (is (null ready) "idle PTY should not be readable"))))
 
