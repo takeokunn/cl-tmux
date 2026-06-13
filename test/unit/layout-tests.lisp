@@ -238,23 +238,17 @@
 
 ;;; ── layout-find-leaf direct ─────────────────────────────────────────────────
 
-(test layout-find-leaf-finds-existing-pane
-  "layout-find-leaf returns the leaf node wrapping the given pane."
-  (let* ((l0 (tl-leaf 1 1 1))
-         (l1 (tl-leaf 2 1 1))
+(test layout-find-leaf-table
+  "layout-find-leaf returns the leaf for a present pane, NIL for an absent one."
+  (let* ((l0   (tl-leaf 1 1 1))
+         (l1   (tl-leaf 2 1 1))
          (tree (make-layout-split :h l0 l1))
-         (p0  (layout-leaf-pane l0)))
-    (is (eq l0 (layout-find-leaf tree p0))
-        "must return the leaf that holds p0")))
-
-(test layout-find-leaf-returns-nil-for-absent-pane
-  "layout-find-leaf returns NIL when the pane is not in the tree."
-  (let* ((l0 (tl-leaf 1 1 1))
-         (l1 (tl-leaf 2 1 1))
-         (tree (make-layout-split :h l0 l1))
-         (other (make-pane :id 99 :fd -1 :pid -1 :screen (make-screen 1 1))))
-    (is (null (layout-find-leaf tree other))
-        "absent pane must return NIL")))
+         (p0   (layout-leaf-pane l0))
+         (pabs (make-pane :id 99 :fd -1 :pid -1 :screen (make-screen 1 1))))
+    (dolist (row (list (list p0   l0  "present pane → its leaf node")
+                       (list pabs nil "absent pane → NIL")))
+      (destructuring-bind (pane expected desc) row
+        (is (eq expected (layout-find-leaf tree pane)) "~A" desc)))))
 
 ;;; ── layout-leaves and define-layout-visitor edge cases ──────────────────────
 

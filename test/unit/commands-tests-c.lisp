@@ -202,55 +202,22 @@
 
 ;;; ── %selection-bounds (direct unit tests) ────────────────────────────────────
 
-(test selection-bounds-same-row-mark-before-cursor
-  "%selection-bounds returns (start-r end-r start-c end-c) when mark col < cursor col."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-mark   s) (cons 1 3)
-          (cl-tmux/terminal/types:screen-copy-cursor s) (cons 1 8))
-    (multiple-value-bind (start-row end-row start-col end-col)
-        (cl-tmux/commands::%selection-bounds s)
-      (is (= 1 start-row) "start-row must be 1")
-      (is (= 1 end-row)   "end-row must be 1")
-      (is (= 3 start-col) "start-col must be mark-col (3)")
-      (is (= 8 end-col)   "end-col must be cursor-col (8)"))))
-
-(test selection-bounds-same-row-cursor-before-mark
-  "%selection-bounds normalises reversed cursor/mark on the same row."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-mark   s) (cons 1 8)
-          (cl-tmux/terminal/types:screen-copy-cursor s) (cons 1 3))
-    (multiple-value-bind (start-row end-row start-col end-col)
-        (cl-tmux/commands::%selection-bounds s)
-      (is (= 1 start-row) "start-row must be 1")
-      (is (= 1 end-row)   "end-row must be 1")
-      (is (= 3 start-col) "start-col must be min(3,8)=3")
-      (is (= 8 end-col)   "end-col must be max(3,8)=8"))))
-
-(test selection-bounds-multi-row-mark-above-cursor
-  "%selection-bounds for multi-row selection where mark is on an earlier row."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-mark   s) (cons 0 2)
-          (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 7))
-    (multiple-value-bind (start-row end-row start-col end-col)
-        (cl-tmux/commands::%selection-bounds s)
-      (is (= 0 start-row) "start-row must be 0 (mark row)")
-      (is (= 2 end-row)   "end-row must be 2 (cursor row)")
-      (is (= 2 start-col) "start-col must be mark-col (2)")
-      (is (= 7 end-col)   "end-col must be cursor-col (7)"))))
-
-(test selection-bounds-multi-row-cursor-above-mark
-  "%selection-bounds normalises reversed multi-row selection."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-mark   s) (cons 2 7)
-          (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 2))
-    (multiple-value-bind (start-row end-row start-col end-col)
-        (cl-tmux/commands::%selection-bounds s)
-      (is (= 0 start-row) "start-row must be 0 (cursor row — lower)")
-      (is (= 2 end-row)   "end-row must be 2 (mark row — higher)")
-      (is (= 2 start-col) "start-col must be cursor-col (2) since cursor-row < mark-row")
-      (is (= 7 end-col)   "end-col must be mark-col (7)"))))
+(test selection-bounds-table
+  "%selection-bounds always returns (start-row end-row start-col end-col) with
+   start ≤ end, regardless of whether mark or cursor comes first."
+  (dolist (row '((1 3  1 8  1 1 3 8 "same-row: mark col < cursor col")
+                 (1 8  1 3  1 1 3 8 "same-row: cursor col < mark col (normalised)")
+                 (0 2  2 7  0 2 2 7 "multi-row: mark above cursor")
+                 (2 7  0 2  0 2 2 7 "multi-row: cursor above mark (normalised)")))
+    (destructuring-bind (mr mc cr cc exp-sr exp-er exp-sc exp-ec desc) row
+      (let ((s (make-screen 20 5)))
+        (cl-tmux/commands::copy-mode-enter s)
+        (setf (cl-tmux/terminal/types:screen-copy-mark   s) (cons mr mc)
+              (cl-tmux/terminal/types:screen-copy-cursor s) (cons cr cc))
+        (multiple-value-bind (start-row end-row start-col end-col)
+            (cl-tmux/commands::%selection-bounds s)
+          (is (= exp-sr start-row) "~A: start-row" desc)
+          (is (= exp-er end-row)   "~A: end-row"   desc)
+          (is (= exp-sc start-col) "~A: start-col" desc)
+          (is (= exp-ec end-col)   "~A: end-col"   desc))))))
 
