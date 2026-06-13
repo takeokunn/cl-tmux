@@ -8,39 +8,29 @@
 
 ;;; ── parse-style-string ───────────────────────────────────────────────────────
 
-(test parse-style-string-nil-returns-nil
-  "parse-style-string with NIL returns NIL."
-  (is (null (cl-tmux/renderer:parse-style-string nil))
-      "parse-style-string nil must return nil"))
+(test parse-style-string-nil-inputs-table
+  "parse-style-string returns NIL for NIL and empty-string inputs."
+  (dolist (row '((nil "NIL input → nil")
+                 (""  "empty-string input → nil")))
+    (destructuring-bind (input desc) row
+      (is (null (cl-tmux/renderer:parse-style-string input)) "~A" desc))))
 
-(test parse-style-string-empty-returns-nil
-  "parse-style-string with empty string returns NIL."
-  (is (null (cl-tmux/renderer:parse-style-string ""))
-      "parse-style-string \"\" must return nil"))
+(test parse-style-string-color-key-table
+  "parse-style-string sets :fg or :bg to the parsed colour name."
+  (dolist (row '(("fg=red"     :fg "red"     "fg=red → :fg \"red\"")
+                 ("bg=blue"    :bg "blue"     "bg=blue → :bg \"blue\"")
+                 ("fg=colour4" :fg "colour4"  "fg=colour4 → :fg \"colour4\"")))
+    (destructuring-bind (input key expected desc) row
+      (let ((p (cl-tmux/renderer:parse-style-string input)))
+        (is (string= expected (getf p key)) "~A: got ~S" desc (getf p key))))))
 
-(test parse-style-string-fg-color
-  "parse-style-string parses fg=red into :fg \"red\"."
-  (let ((p (cl-tmux/renderer:parse-style-string "fg=red")))
-    (is (string= "red" (getf p :fg))
-        "parse-style-string fg=red must set :fg to \"red\", got ~S" (getf p :fg))))
-
-(test parse-style-string-bg-color
-  "parse-style-string parses bg=blue into :bg \"blue\"."
-  (let ((p (cl-tmux/renderer:parse-style-string "bg=blue")))
-    (is (string= "blue" (getf p :bg))
-        "parse-style-string bg=blue must set :bg to \"blue\", got ~S" (getf p :bg))))
-
-(test parse-style-string-bold
-  "parse-style-string parses bold into :bold T."
-  (let ((p (cl-tmux/renderer:parse-style-string "bold")))
-    (is (getf p :bold)
-        "parse-style-string bold must set :bold T, got ~S" (getf p :bold))))
-
-(test parse-style-string-reverse
-  "parse-style-string parses reverse into :reverse T."
-  (let ((p (cl-tmux/renderer:parse-style-string "reverse")))
-    (is (getf p :reverse)
-        "parse-style-string reverse must set :reverse T, got ~S" (getf p :reverse))))
+(test parse-style-string-bool-attr-table
+  "parse-style-string sets boolean attribute keys to T."
+  (dolist (row '(("bold"    :bold    "bold → :bold T")
+                 ("reverse" :reverse "reverse → :reverse T")))
+    (destructuring-bind (input key desc) row
+      (let ((p (cl-tmux/renderer:parse-style-string input)))
+        (is (getf p key) "~A: got ~S" desc (getf p key))))))
 
 (test parse-style-string-multiple-attrs
   "parse-style-string parses fg=green,bold,underline into a combined plist."
@@ -52,12 +42,6 @@
     (is (getf p :underline)
         ":underline must be T, got ~S" (getf p :underline))))
 
-(test parse-style-string-colour-n
-  "parse-style-string parses fg=colour4 correctly."
-  (let ((p (cl-tmux/renderer:parse-style-string "fg=colour4")))
-    (is (string= "colour4" (getf p :fg))
-        ":fg must be \"colour4\", got ~S" (getf p :fg))))
-
 ;;; ── style-to-sgr ────────────────────────────────────────────────────────────
 
 (test style-to-sgr-nil-returns-default
@@ -66,35 +50,16 @@
       "style-to-sgr nil must return \"44;97\", got ~S"
       (cl-tmux/renderer:style-to-sgr nil)))
 
-(test style-to-sgr-bold
-  "style-to-sgr with :bold T includes SGR code 1."
-  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:bold t))))
-    (is (search "1" sgr)
-        "style-to-sgr :bold must include SGR code 1, got ~S" sgr)))
-
-(test style-to-sgr-reverse
-  "style-to-sgr with :reverse T includes SGR code 7."
-  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:reverse t))))
-    (is (search "7" sgr)
-        "style-to-sgr :reverse must include SGR code 7, got ~S" sgr)))
-
-(test style-to-sgr-fg-red
-  "style-to-sgr with :fg \"red\" includes SGR code 31."
-  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:fg "red"))))
-    (is (search "31" sgr)
-        "style-to-sgr :fg red must include SGR code 31, got ~S" sgr)))
-
-(test style-to-sgr-bg-blue
-  "style-to-sgr with :bg \"blue\" includes SGR code 44."
-  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:bg "blue"))))
-    (is (search "44" sgr)
-        "style-to-sgr :bg blue must include SGR code 44, got ~S" sgr)))
-
-(test style-to-sgr-colour-n
-  "style-to-sgr with :bg \"colour4\" includes extended SGR sequence 48;5;4."
-  (let ((sgr (cl-tmux/renderer:style-to-sgr '(:bg "colour4"))))
-    (is (search "48;5;4" sgr)
-        "style-to-sgr :bg colour4 must include 48;5;4, got ~S" sgr)))
+(test style-to-sgr-attrs-table
+  "style-to-sgr includes the correct SGR code substring for each attribute."
+  (dolist (row '(((:bold t)       "1"      ":bold T → SGR 1")
+                 ((:reverse t)    "7"      ":reverse T → SGR 7")
+                 ((:fg "red")     "31"     ":fg red → SGR 31")
+                 ((:bg "blue")    "44"     ":bg blue → SGR 44")
+                 ((:bg "colour4") "48;5;4" ":bg colour4 → SGR 48;5;4")))
+    (destructuring-bind (style expected desc) row
+      (let ((sgr (cl-tmux/renderer:style-to-sgr style)))
+        (is (search expected sgr) "~A: got ~S" desc sgr)))))
 
 ;;; ── status-left-length / status-right-length enforcement ────────────────────
 

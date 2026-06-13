@@ -114,17 +114,13 @@
 
 ;;; ── Modifier chaining ────────────────────────────────────────────────────────
 
-(test format-modifier-chain-b-of-d
-  "#{b:d:var} chains dirname then basename: b(d('/a/b/c')) = b('/a/b') = 'b'."
-  (is (string= "b" (fmt "#{b:d:x}" :x "/a/b/c"))))
-
-(test format-modifier-chain-U-of-b
-  "#{U:b:var} chains basename then uppercase."
-  (is (string= "FOO" (fmt "#{U:b:x}" :x "/some/path/foo"))))
-
-(test format-modifier-chain-three
-  "#{U:b:d:var} chains dirname, basename, uppercase."
-  (is (string= "B" (fmt "#{U:b:d:x}" :x "/a/b/c"))))
+(test format-modifier-chain-table
+  "Format modifier chains apply right-to-left: b:d = dirname then basename; U:b = basename then uppercase."
+  (dolist (row '(("#{b:d:x}"   "/a/b/c"        "b"   "b(d(x)): dirname then basename → b")
+                 ("#{U:b:x}"   "/some/path/foo" "FOO" "U(b(x)): basename then uppercase → FOO")
+                 ("#{U:b:d:x}" "/a/b/c"         "B"   "U(b(d(x))): dirname+basename+uppercase → B")))
+    (destructuring-bind (fmt-str input expected desc) row
+      (is (string= expected (fmt fmt-str :x input)) "~A" desc))))
 
 ;;; ── Glob match #{m:pattern,string} ──────────────────────────────────────────
 

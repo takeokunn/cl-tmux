@@ -9,25 +9,15 @@
 
 ;;; ── %clamp-status-segment ───────────────────────────────────────────────────
 
-(test clamp-status-segment-short-text-unchanged
-  "%clamp-status-segment returns text unchanged when it fits within max-length."
-  (is (string= "hello" (cl-tmux/renderer::%clamp-status-segment "hello" 10))
-      "text shorter than max must be returned unchanged"))
-
-(test clamp-status-segment-exact-length-unchanged
-  "%clamp-status-segment returns text unchanged when length equals max-length."
-  (is (string= "hello" (cl-tmux/renderer::%clamp-status-segment "hello" 5))
-      "text at exact max must be returned unchanged"))
-
-(test clamp-status-segment-truncates-long-text
-  "%clamp-status-segment truncates text exceeding max-length."
-  (is (string= "hel" (cl-tmux/renderer::%clamp-status-segment "hello" 3))
-      "text exceeding max must be truncated to max chars"))
-
-(test clamp-status-segment-empty-string
-  "%clamp-status-segment with empty string returns empty string."
-  (is (string= "" (cl-tmux/renderer::%clamp-status-segment "" 10))
-      "empty string must be returned as-is"))
+(test clamp-status-segment-table
+  "%clamp-status-segment returns text unchanged when it fits (≤ max) and truncates when it exceeds max."
+  (dolist (row '(("hello" 10 "hello" "shorter than max → unchanged")
+                 ("hello"  5 "hello" "exactly max length → unchanged")
+                 ("hello"  3 "hel"   "exceeds max → truncated to 3 chars")
+                 (""      10 ""      "empty string → always unchanged")))
+    (destructuring-bind (text max expected desc) row
+      (is (string= expected (cl-tmux/renderer::%clamp-status-segment text max))
+          "~A" desc))))
 
 ;;; ── set-cursor-shape in rendered output ──────────────────────────────────────
 
