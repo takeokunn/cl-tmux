@@ -50,43 +50,27 @@
 
 ;;; ── command-name-to-string ──────────────────────────────────────────────────
 
-(test command-name-to-string-keyword-to-lowercase
-  "command-name-to-string downcases a keyword's symbol-name."
-  (is (string= "new-window"
-               (cl-tmux/protocol:command-name-to-string :new-window))
-      ":new-window → \"new-window\""))
-
-(test command-name-to-string-string-passthrough
-  "command-name-to-string returns a plain string unchanged."
-  (is (string= "select-pane"
-               (cl-tmux/protocol:command-name-to-string "select-pane"))
-      "string passthrough"))
+(test command-name-to-string-table
+  "command-name-to-string downcases keywords (any case) and passes strings through unchanged."
+  (dolist (c '((:new-window  "new-window"  "lowercase keyword → downcased")
+               (:NEW-WINDOW  "new-window"  "uppercase keyword → downcased")
+               (:SELECT-PANE "select-pane" "uppercase keyword → downcased")
+               ("select-pane" "select-pane" "string → pass through")))
+    (destructuring-bind (input expected desc) c
+      (is (string= expected (cl-tmux/protocol:command-name-to-string input))
+          "~A" desc))))
 
 ;;; ── assemble-command-fields ─────────────────────────────────────────────────
 
-(test assemble-command-fields-no-target-no-args
-  "assemble-command-fields returns just the name when target and args are nil."
-  (is (equal '("new-window")
-             (cl-tmux/protocol:assemble-command-fields "new-window" nil nil))
-      "no target, no args → name only"))
-
-(test assemble-command-fields-with-target
-  "assemble-command-fields prepends target when supplied."
-  (is (equal '("$1:0" "select-pane")
-             (cl-tmux/protocol:assemble-command-fields "select-pane" "$1:0" nil))
-      "target is prepended before name"))
-
-(test assemble-command-fields-with-args
-  "assemble-command-fields appends args after name."
-  (is (equal '("send-keys" "C-c" "")
-             (cl-tmux/protocol:assemble-command-fields "send-keys" nil '("C-c" "")))
-      "args follow name"))
-
-(test assemble-command-fields-target-and-args
-  "assemble-command-fields orders fields as: [target] name [args...]."
-  (is (equal '("2:0" "resize-pane" "-U" "5")
-             (cl-tmux/protocol:assemble-command-fields "resize-pane" "2:0" '("-U" "5")))
-      "target precedes name; args follow"))
+(test assemble-command-fields-table
+  "assemble-command-fields orders fields as [target] name [args...]."
+  (dolist (c '(("new-window"  nil    nil          ("new-window")               "name only")
+               ("select-pane" "$1:0" nil          ("$1:0" "select-pane")       "target + name")
+               ("send-keys"   nil    ("C-c" "")   ("send-keys" "C-c" "")       "name + args")
+               ("resize-pane" "2:0"  ("-U" "5")   ("2:0" "resize-pane" "-U" "5") "target + name + args")))
+    (destructuring-bind (name target args expected desc) c
+      (is (equal expected (cl-tmux/protocol:assemble-command-fields name target args))
+          "~A" desc))))
 
 ;;; ── encode-fields-to-buffer ─────────────────────────────────────────────────
 
@@ -266,41 +250,17 @@
 
 ;;; ── target-field-p edge cases ────────────────────────────────────────────────
 
-(test target-field-p-single-dollar-is-a-target
-  "A lone '$' character is a valid session sigil and therefore a target."
-  (is (cl-tmux/protocol:target-field-p "$")
-      "bare '$' must be detected as a target sigil"))
-
-(test target-field-p-single-colon-is-a-target
-  "A lone ':' character satisfies the contains-char rule for ':'."
-  (is (cl-tmux/protocol:target-field-p ":")
-      "bare ':' must be detected as a target (contains ':')"))
-
-(test target-field-p-single-dot-is-a-target
-  "A lone '.' character satisfies the contains-char rule for '.'."
-  (is (cl-tmux/protocol:target-field-p ".")
-      "bare '.' must be detected as a target (contains '.')"))
-
-(test target-field-p-integer-string-is-not-a-target
-  "A plain integer string (window index) has no sigil and is not a target."
-  (is (not (cl-tmux/protocol:target-field-p "0"))
-      "\"0\" must not be detected as a target"))
-
-(test target-field-p-long-command-name-is-not-a-target
-  "A typical long tmux command name with hyphens but no sigil characters is not a target."
-  (is (not (cl-tmux/protocol:target-field-p "copy-mode-search-forward"))
-      "hyphenated command name must not be detected as a target"))
-
-;;; ── command-name-to-string edge cases ────────────────────────────────────────
-
-(test command-name-to-string-uppercased-keyword
-  "command-name-to-string downcases keywords regardless of how the keyword was interned."
-  (is (string= "new-window"
-               (cl-tmux/protocol:command-name-to-string :NEW-WINDOW))
-      "uppercase keyword symbol-name must be downcased to wire form")
-  (is (string= "select-pane"
-               (cl-tmux/protocol:command-name-to-string :SELECT-PANE))
-      ":SELECT-PANE must downcase to \"select-pane\""))
+(test target-field-p-table
+  "target-field-p recognizes sigil characters ($, :, .) as targets; plain names/numbers are not."
+  (dolist (c '(("$"                        t   "bare '$' is a target")
+               (":"                        t   "bare ':' is a target")
+               ("."                        t   "bare '.' is a target")
+               ("0"                        nil "plain integer is not a target")
+               ("copy-mode-search-forward" nil "hyphenated command name is not a target")))
+    (destructuring-bind (input expected desc) c
+      (if expected
+          (is-true  (cl-tmux/protocol:target-field-p input) "~A" desc)
+          (is-false (cl-tmux/protocol:target-field-p input) "~A" desc)))))
 
 ;;; ── encode-frame / decode-frame type byte ────────────────────────────────────
 
