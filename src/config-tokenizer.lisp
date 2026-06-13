@@ -76,8 +76,8 @@
            (finish-token ()
              (when in-token
                (push (copy-seq current) tokens)
-               (setf (fill-pointer current) 0)
-               (setf in-token nil))))
+               (setf (fill-pointer current) 0
+                     in-token nil))))
       (let ((i 0))
         (loop while (< i len) do
           (let ((ch (char line i)))
@@ -85,11 +85,11 @@
               ((char= ch #\\)
                (setf i (%tokenize-backslash-escape line i len #'push-char)))
               ((char= ch #\")
-               (setf in-token t)
-               (setf i (%tokenize-double-quoted line i len #'push-char)))
+               (setf in-token t
+                     i (%tokenize-double-quoted line i len #'push-char)))
               ((char= ch #\')
-               (setf in-token t)
-               (setf i (%tokenize-single-quoted line i len #'push-char)))
+               (setf in-token t
+                     i (%tokenize-single-quoted line i len #'push-char)))
               ((%whitespace-p ch)
                (finish-token)
                (incf i))

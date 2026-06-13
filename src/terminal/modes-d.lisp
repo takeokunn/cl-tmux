@@ -278,8 +278,8 @@
 (defun invoke-charset (screen g)
   "Invoke G (:g0 or :g1) as the active charset: SO (0x0E) invokes G1, SI (0x0F)
    invokes G0.  Sets the effective charset to G's current designation."
-  (setf (screen-active-g screen) g)
-  (setf (screen-charset screen) (screen-invoked-charset screen g)))
+  (setf (screen-active-g screen) g
+        (screen-charset screen) (screen-invoked-charset screen g)))
 
 ;;; ── Screen title ─────────────────────────────────────────────────────────────
 

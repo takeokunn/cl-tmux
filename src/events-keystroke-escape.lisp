@@ -133,7 +133,7 @@
       (if semi
           (let ((param (digits 2 semi))
                 (mod   (digits (1+ semi) (1- length))))
-            (if (and param mod) (values param mod) nil))
+            (and param mod (values param mod)))
           (let ((param (digits 2 (1- length))))
             (when param (values param 1)))))))
 

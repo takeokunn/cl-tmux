@@ -84,8 +84,8 @@
                                 (subseq buffer 0 index)
                                 (string ch)
                                 (subseq buffer index))))
-      (setf (prompt-buffer       p) new)
-      (setf (prompt-cursor-index p) (1+ index))))
+      (setf (prompt-buffer       p) new
+            (prompt-cursor-index p) (1+ index))))
   (prompt-notify-change))
 
 (defun prompt-backspace ()
@@ -161,8 +161,8 @@
   (with-active-prompt (p)
     (let* ((buffer (prompt-buffer p))
            (index  (prompt-cursor-index p)))
-      (setf (prompt-buffer       p) (subseq buffer index))
-      (setf (prompt-cursor-index p) 0)))
+      (setf (prompt-buffer       p) (subseq buffer index)
+            (prompt-cursor-index p) 0)))
   (prompt-notify-change))
 
 (defun %skip-while-left (buffer cursor-pos predicate)

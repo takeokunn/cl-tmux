@@ -50,8 +50,8 @@
   (let ((current (window-active window)))
     (when (and current (not (eq current pane)))
       (setf (window-last-active window) current)))
-  (setf (window-active window) pane)
-  (setf (window-last-active-time window) (get-universal-time)))
+  (setf (window-active window) pane
+        (window-last-active-time window) (get-universal-time)))
 
 ;;; ── Orientation-aware pane extent ──────────────────────────────────────────
 ;;;

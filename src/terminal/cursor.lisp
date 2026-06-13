@@ -321,8 +321,8 @@
     ;; If the wide char cannot fit (only one column remains), blank the last
     ;; column and wrap to the next row before placing it.
     (when (>= (1+ (screen-cursor-x screen)) (screen-width screen))
-      (setf (screen-cell screen (screen-cursor-x screen) (screen-cursor-y screen)) (blank-cell))
-      (setf (screen-cursor-x screen) 0)
+      (setf (screen-cell screen (screen-cursor-x screen) (screen-cursor-y screen)) (blank-cell)
+            (screen-cursor-x screen) 0)
       (cursor-down/scroll screen))
     (%place-wide-char screen (screen-cursor-x screen) (screen-cursor-y screen)
                       ch fg bg attrs attrs2 ul-color

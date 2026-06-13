@@ -123,8 +123,7 @@
         ((string= (first remaining) "-T")
          (setf remaining (rest remaining))
          (when (null remaining) (return nil))
-         (setf table     (first remaining))
-         (setf remaining (rest remaining)))
+         (setf table (pop remaining)))
         ;; -N "note": tmux 3.1+ key-binding description.  Capture the (already
         ;; single-token, quote-joined) note argument so list-keys can display it.
         ;; It MUST be consumed here — otherwise the fall-through below would
@@ -132,8 +131,7 @@
         ((string= (first remaining) "-N")
          (setf remaining (rest remaining))
          (when (null remaining) (return nil))
-         (setf note      (first remaining))
-         (setf remaining (rest remaining)))
+         (setf note (pop remaining)))
         (t
          ;; Need a key plus at least one command token.
          (when (null (rest remaining)) (return nil))
@@ -221,8 +219,7 @@
         ((string= (first remaining) "-T")
          (setf remaining (rest remaining))
          (when (null remaining) (return (values nil nil nil)))
-         (setf table     (first remaining))
-         (setf remaining (rest remaining)))
+         (setf table (pop remaining)))
         (t
          (unless (= (length remaining) 1) (return (values nil nil nil)))
          (return (values table (%parse-key-token (first remaining)) all-p)))))))

@@ -33,8 +33,8 @@
 (define-cps-state %ground-input-state (session byte)
   ;; ── Locked session: any key unlocks ────────────────────────────────────────
   ((session-locked-p session)
-   (setf (session-locked-p session) nil)
-   (setf *dirty* t)
+   (setf (session-locked-p session) nil
+         *dirty* t)
    (values nil #'%ground-input-state))
   ;; ── Active menu: j/k navigate, Enter selects, q/Esc dismisses ───────────────
   ;; Menu takes priority over overlay so choose-session/choose-window is

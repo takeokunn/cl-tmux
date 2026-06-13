@@ -42,9 +42,9 @@
 
 (defun show-overlay (text)
   "Display TEXT as an overlay; navigated with j/k, dismissed with q or Esc."
-  (setf *overlay* text)
-  (setf *overlay-scroll-offset* 0)
-  (setf *display-panes-active* nil))
+  (setf *overlay* text
+        *overlay-scroll-offset* 0
+        *display-panes-active* nil))
 
 (defun show-transient-overlay (text)
   "Display TEXT as a transient overlay that auto-dismisses after display-time ms.
@@ -56,9 +56,9 @@
 
 (defun clear-overlay ()
   "Dismiss the active overlay and reset the scroll offset."
-  (setf *overlay* nil)
-  (setf *overlay-scroll-offset* 0)
-  (setf *display-panes-active* nil))
+  (setf *overlay* nil
+        *overlay-scroll-offset* 0
+        *display-panes-active* nil))
 
 (defun overlay-lines ()
   "The active overlay split into a list of lines, or NIL when inactive."
