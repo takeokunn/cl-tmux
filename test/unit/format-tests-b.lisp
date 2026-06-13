@@ -21,26 +21,17 @@
 
 ;;; ── Substitute modifier: #{s/PAT/REP/[i]:var} ────────────────────────────────
 
-(test format-modifier-substitute-replaces-all
-  "#{s/PAT/REP/:var} replaces every occurrence of PAT in the resolved value."
-  (is (string= "barbar" (fmt "#{s/foo/bar/:window_name}" :window-name "foofoo")))
-  (is (string= "m00n"   (fmt "#{s/o/0/:p}" :p "moon"))))
-
-(test format-modifier-substitute-no-match-unchanged
-  "#{s/PAT/REP/:var} returns the value unchanged when PAT does not occur."
-  (is (string= "abc" (fmt "#{s/xyz/Q/:p}" :p "abc"))))
-
-(test format-modifier-substitute-case-insensitive-flag
-  "The trailing 'i' flag makes the substitution case-insensitive."
-  (is (string= "xx" (fmt "#{s/abc/x/i:p}" :p "abcABC"))))
-
-(test format-modifier-substitute-case-sensitive-by-default
-  "Without the 'i' flag, the substitution is case-sensitive."
-  (is (string= "xABC" (fmt "#{s/abc/x/:p}" :p "abcABC"))))
-
-(test format-modifier-substitute-empty-pattern-is-safe
-  "An empty pattern leaves the value unchanged (no infinite loop)."
-  (is (string= "abc" (fmt "#{s///:p}" :p "abc"))))
+(test format-modifier-substitute-table
+  "#{s/PAT/REP/:var} replaces all matches; 'i' for case-insensitive; empty pattern is safe."
+  (dolist (c '(("#{s/foo/bar/:window_name}" :window-name "foofoo" "barbar" "replaces all occurrences")
+               ("#{s/o/0/:p}"               :p           "moon"   "m00n"   "replaces every occurrence")
+               ("#{s/xyz/Q/:p}"             :p           "abc"    "abc"    "no match → unchanged")
+               ("#{s/abc/x/i:p}"            :p           "abcABC" "xx"     "case-insensitive flag")
+               ("#{s/abc/x/:p}"             :p           "abcABC" "xABC"   "case-sensitive by default")
+               ("#{s///:p}"                 :p           "abc"    "abc"    "empty pattern → unchanged")))
+    (destructuring-bind (spec key val expected desc) c
+      (is (string= expected (fmt spec key val))
+          "~A" desc))))
 
 (test string-replace-all-unit
   "%string-replace-all replaces all occurrences; case-insensitive on request;
@@ -231,31 +222,26 @@
     (is (string= "100%" result)
         "#{t:100%%} must produce '100%%', got ~S" result)))
 
-(test format-modifier-pad-right
-  "#{p5:var} pads value to 5 chars on the right (left-align)."
-  (is (string= "ab   " (fmt "#{p5:v}" :v "ab"))
-      "2-char value padded to 5 should be 'ab   '")
-  (is (string= "hello" (fmt "#{p5:v}" :v "hello"))
-      "5-char value matches width exactly — no change")
-  (is (string= "toolong" (fmt "#{p5:v}" :v "toolong"))
-      "value longer than width passes through unchanged"))
+(test format-modifier-pad-table
+  "#{p5:var} pads right; #{p-5:var} pads left; at-width values are unchanged; longer pass through."
+  (dolist (c '(("#{p5:v}"  :v "ab"      "ab   "   "right pad: 2 chars to 5")
+               ("#{p5:v}"  :v "hello"   "hello"   "right pad: at width — no change")
+               ("#{p5:v}"  :v "toolong" "toolong" "right pad: longer than width — pass through")
+               ("#{p-5:v}" :v "ab"      "   ab"   "left pad: 2 chars to 5")
+               ("#{p-5:v}" :v "hello"   "hello"   "left pad: at width — no change")))
+    (destructuring-bind (spec key val expected desc) c
+      (is (string= expected (fmt spec key val))
+          "~A" desc))))
 
-(test format-modifier-pad-left
-  "#{p-5:var} pads value to 5 chars on the left (right-align)."
-  (is (string= "   ab" (fmt "#{p-5:v}" :v "ab"))
-      "2-char value right-aligned to 5 should be '   ab'")
-  (is (string= "hello" (fmt "#{p-5:v}" :v "hello"))
-      "5-char value matches width exactly — no change"))
-
-(test format-modifier-uppercase
-  "#{U:var} uppercases the value."
-  (is (string= "HELLO" (fmt "#{U:v}" :v "hello")))
-  (is (string= "BASH"  (fmt "#{U:window_name}" :window-name "bash"))))
-
-(test format-modifier-lowercase
-  "#{L:var} lowercases the value."
-  (is (string= "hello" (fmt "#{L:v}" :v "HELLO")))
-  (is (string= "main"  (fmt "#{L:session_name}" :session-name "MAIN"))))
+(test format-modifier-case-table
+  "#{U:var} uppercases and #{L:var} lowercases the resolved value."
+  (dolist (c '(("#{U:v}"            :v            "hello" "HELLO" "uppercase literal")
+               ("#{U:window_name}"  :window-name  "bash"  "BASH"  "uppercase via variable")
+               ("#{L:v}"            :v            "HELLO" "hello" "lowercase literal")
+               ("#{L:session_name}" :session-name "MAIN"  "main"  "lowercase via variable")))
+    (destructuring-bind (spec key val expected desc) c
+      (is (string= expected (fmt spec key val))
+          "~A" desc))))
 
 (test format-modifier-length
   "#{l:var} returns the character length of the value as a string."
