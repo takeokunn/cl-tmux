@@ -293,29 +293,18 @@
 
 ;;; ── Copy-mode additional vi navigation keys ──────────────────────────────────
 
-(test copy-mode-h-moves-cursor-left
-  "Plain 'h' (byte 104) moves the copy-mode cursor left by one column."
-  (with-fake-session (s)
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        ;; Place cursor at column 3.
-        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 3))
-        (cl-tmux::process-byte s 104 state)   ; h
-        (let ((col (cdr (screen-copy-cursor screen))))
-          (is (= 2 col) "h must move cursor left by 1 column")))))
-
-(test copy-mode-l-moves-cursor-right
-  "Plain 'l' (byte 108) moves the copy-mode cursor right by one column."
-  (with-fake-session (s)
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        ;; Place cursor at column 0.
-        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
-        (cl-tmux::process-byte s 108 state)   ; l
-        (let ((col (cdr (screen-copy-cursor screen))))
-          (is (= 1 col) "l must move cursor right by 1 column")))))
+(test copy-mode-h-l-cursor-table
+  "h (byte 104) moves cursor left; l (byte 108) moves cursor right by one column."
+  (dolist (c '((104 3 2 "h: col 3→2 (left)")
+               (108 0 1 "l: col 0→1 (right)")))
+    (destructuring-bind (byte init-col expected-col desc) c
+      (with-fake-session (s)
+        (let ((screen (active-screen s))
+              (state  (cl-tmux::make-input-state)))
+          (cl-tmux::dispatch-command s :copy-mode-enter nil)
+          (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 init-col))
+          (cl-tmux::process-byte s byte state)
+          (is (= expected-col (cdr (screen-copy-cursor screen))) "~A" desc))))))
 
 (test copy-mode-i-exits-copy-mode
   "Plain 'i' (byte 105) exits copy mode without needing the C-b prefix."
@@ -381,30 +370,20 @@
         (is (= 1 (screen-copy-offset screen))
             "C-p at top row must scroll viewport up by 1"))))
 
-(test copy-mode-H-moves-cursor-to-high
-  "Plain 'H' (byte 72) moves the copy-mode cursor to the top row of the screen."
-  (with-fake-session (s)
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        ;; Place cursor at some non-zero row first.
-        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 3 0))
-        (cl-tmux::process-byte s 72 state)   ; H
-        (let ((row (car (screen-copy-cursor screen))))
-          (is (= 0 row) "H must move cursor to row 0 (top of screen)")))))
-
-(test copy-mode-L-moves-cursor-to-low
-  "Plain 'L' (byte 76) moves the copy-mode cursor to the bottom row of the screen."
-  (with-fake-session (s)
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        ;; Cursor at row 0.
-        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
-        (cl-tmux::process-byte s 76 state)   ; L
-        (let* ((row    (car (screen-copy-cursor screen)))
-               (height (screen-height screen)))
-          (is (= (1- height) row) "L must move cursor to last row")))))
+(test copy-mode-H-L-cursor-table
+  "H (byte 72) moves cursor to row 0 (top); L (byte 76) moves cursor to last row (height-1)."
+  (dolist (c '((72 3 nil "H: row → 0 (top)")
+               (76 0  0  "L: row → height-1 (bottom)")))
+    (destructuring-bind (byte init-row expected-0-or-nil desc) c
+      (with-fake-session (s)
+        (let ((screen (active-screen s))
+              (state  (cl-tmux::make-input-state)))
+          (cl-tmux::dispatch-command s :copy-mode-enter nil)
+          (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons init-row 0))
+          (cl-tmux::process-byte s byte state)
+          (let* ((row     (car (screen-copy-cursor screen)))
+                 (target  (or expected-0-or-nil (1- (screen-height screen)))))
+            (is (= target row) "~A" desc)))))))
 
 (test copy-mode-V-begins-line-selection
   "Plain 'V' (byte 86) starts line-selection mode in copy mode without signaling."

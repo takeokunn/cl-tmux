@@ -190,27 +190,16 @@
     (cl-tmux/commands::copy-mode-begin-selection screen)
     (finishes (cl-tmux::process-byte s 121 state))))   ; y
 
-(test copy-mode-n-search-next-finishes
-  "Plain 'n' (byte 110) runs search-next without signaling in copy mode."
-  (with-copy-mode-state (s screen state)
-    (finishes (cl-tmux::process-byte s 110 state))))   ; n
-
-(test copy-mode-N-search-prev-finishes
-  "Plain 'N' (byte 78) runs search-prev without signaling in copy mode."
-  (with-copy-mode-state (s screen state)
-    (finishes (cl-tmux::process-byte s 78 state))))    ; N
-
-;;; ── copy-mode Y (copy-line) and D (copy-end-of-line) ────────────────────────
-
-(test copy-mode-Y-copies-current-line
-  "Plain 'Y' (byte 89) copies the current line into the paste buffer without signaling."
-  (with-copy-mode-state (s screen state)
-    (finishes (cl-tmux::process-byte s 89 state))))    ; Y
-
-(test copy-mode-D-copies-to-end-of-line
-  "Plain 'D' (byte 68) copies from the cursor to end of line without signaling."
-  (with-copy-mode-state (s screen state)
-    (finishes (cl-tmux::process-byte s 68 state))))    ; D
+(test copy-mode-search-copy-finishes-table
+  "copy-mode n/N/Y/D keys (search-next/prev, copy-line, copy-eol) do not signal in copy mode."
+  (dolist (c '((110 "n: search-next")
+               (78  "N: search-prev")
+               (89  "Y: copy-line")
+               (68  "D: copy-end-of-line")))
+    (destructuring-bind (byte desc) c
+      (with-copy-mode-state (s screen state)
+        (declare (ignore screen))
+        (finishes (cl-tmux::process-byte s byte state) "~A" desc)))))
 
 ;;; ── copy-mode half-page and single-line scroll bindings ──────────────────────
 
