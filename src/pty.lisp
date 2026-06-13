@@ -35,13 +35,18 @@
                           :pointer ws
                           :int)))
 
-;;; ── exec argument-vector size constants ────────────────────────────────────
+;;; ── exec argument-vector macro ─────────────────────────────────────────────
 
-(defconstant +sh-argc+ 4
-  "Number of pointers in the argv array for 'sh -c CMD NULL': /bin/sh, -c, cmd, NULL.")
-
-(defconstant +shell-argc+ 2
-  "Number of pointers in the argv array for 'shell NULL': shell-path, NULL.")
+(defmacro %execv (exec-ptr &rest ptr-args)
+  "Build a NULL-terminated C argv from PTR-ARGS and call execv(EXEC-PTR, argv).
+   The argv length is computed at macro-expansion time from the number of PTR-ARGS."
+  (let ((argc (1+ (length ptr-args)))
+        (argv (gensym "argv")))
+    `(cffi:with-foreign-object (,argv :pointer ,argc)
+       ,@(loop for ptr in ptr-args for i from 0
+               collect `(setf (cffi:mem-aref ,argv :pointer ,i) ,ptr))
+       (setf (cffi:mem-aref ,argv :pointer ,(length ptr-args)) (cffi:null-pointer))
+       (cffi:foreign-funcall "execv" :pointer ,exec-ptr :pointer ,argv :int))))
 
 ;;; ── Fork sentinel constants ────────────────────────────────────────────────
 
@@ -84,28 +89,18 @@
 
 (defun %exec-command (command)
   "Replace the current process image with /bin/sh -c COMMAND.
-   Builds a +sh-argc+-element argv: [\"/bin/sh\", \"-c\", command, NULL].
    MUST be called only in the child process after fork — NEVER from the parent."
   (cffi:with-foreign-string (sh-ptr "/bin/sh")
     (cffi:with-foreign-string (dash-c-ptr "-c")
       (cffi:with-foreign-string (cmd-ptr command)
-        (cffi:with-foreign-object (argv :pointer +sh-argc+)
-          (setf (cffi:mem-aref argv :pointer 0) sh-ptr
-                (cffi:mem-aref argv :pointer 1) dash-c-ptr
-                (cffi:mem-aref argv :pointer 2) cmd-ptr
-                (cffi:mem-aref argv :pointer 3) (cffi:null-pointer))
-          (cffi:foreign-funcall "execv" :pointer sh-ptr :pointer argv :int))))))
+        (%execv sh-ptr sh-ptr dash-c-ptr cmd-ptr)))))
 
 (defun %exec-shell (shell-path)
   "Replace the current process image with SHELL-PATH directly.
-   Builds a +shell-argc+-element argv: [shell-path, NULL].
    MUST be called only in the child process after fork — NEVER from the parent."
   (cffi:with-foreign-string (path-ptr shell-path)
     (cffi:with-foreign-string (arg0-ptr shell-path)
-      (cffi:with-foreign-object (argv :pointer +shell-argc+)
-        (setf (cffi:mem-aref argv :pointer 0) arg0-ptr
-              (cffi:mem-aref argv :pointer 1) (cffi:null-pointer))
-        (cffi:foreign-funcall "execv" :pointer path-ptr :pointer argv :int)))))
+      (%execv path-ptr arg0-ptr))))
 
 (defun %child-exec-shell (&optional start-dir term default-command extra-env)
   "Replace the current process image with a shell or default-command.

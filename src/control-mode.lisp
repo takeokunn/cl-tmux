@@ -72,48 +72,51 @@
   (format nil "%output %~D ~A" pane-id (control-escape-output data)))
 
 ;;; ── State-change notifications ──────────────────────────────────────────────
+;;;
+;;; All notification formatters follow the same shape: (format nil FMT ARGS...).
+;;; define-control-notifications generates each DEFUN from a declarative table.
 
-(defun control-session-changed (session-id name)
-  "`%session-changed $<id> <name>` — the client's current session changed."
-  (format nil "%session-changed $~D ~A" session-id name))
+(defmacro define-control-notifications (&rest rules)
+  "Build control-mode notification formatters from a declarative table.
+   Each RULE: (FN-NAME LAMBDA-LIST DOC FMT-STRING ARGS...)
+   Generates one DEFUN per rule that returns (format nil FMT-STRING ARGS...)."
+  `(progn
+     ,@(mapcar (lambda (rule)
+                 (destructuring-bind (fn-name lambda-list doc fmt &rest fmt-args) rule
+                   `(defun ,fn-name ,lambda-list ,doc (format nil ,fmt ,@fmt-args))))
+               rules)))
 
-(defun control-session-renamed (session-id name)
-  "`%session-renamed $<id> <name>`."
-  (format nil "%session-renamed $~D ~A" session-id name))
-
-(defun control-window-add (window-id)
-  "`%window-add @<id>` — a window was linked into the client's session."
-  (format nil "%window-add @~D" window-id))
-
-(defun control-window-close (window-id)
-  "`%window-close @<id>` — a window was unlinked/closed."
-  (format nil "%window-close @~D" window-id))
-
-(defun control-window-renamed (window-id name)
-  "`%window-renamed @<id> <name>`."
-  (format nil "%window-renamed @~D ~A" window-id name))
-
-(defun control-layout-change (window-id layout visible-layout raw-flags)
-  "`%layout-change @<id> <layout> <visible-layout> <raw-flags>`."
-  (format nil "%layout-change @~D ~A ~A ~A" window-id layout visible-layout raw-flags))
-
-(defun control-window-pane-changed (window-id pane-id)
-  "`%window-pane-changed @<window-id> %<pane-id>` — the active pane within a window
-   changed (tmux control_notify_window_pane_changed)."
-  (format nil "%window-pane-changed @~D %~D" window-id pane-id))
-
-(defun control-session-window-changed (session-id window-id)
-  "`%session-window-changed $<session-id> @<window-id>` — a session's active window
-   changed (tmux control_notify_session_window_changed)."
-  (format nil "%session-window-changed $~D @~D" session-id window-id))
-
-(defun control-unlinked-window-add (window-id)
-  "`%unlinked-window-add @<id>` — a window was linked but NOT to the client's session."
-  (format nil "%unlinked-window-add @~D" window-id))
-
-(defun control-client-session-changed (client session-id name)
-  "`%client-session-changed <client> $<id> <name>` — another client's session changed."
-  (format nil "%client-session-changed ~A $~D ~A" client session-id name))
+(define-control-notifications
+  (control-session-changed (session-id name)
+    "`%session-changed $<id> <name>` — the client's current session changed."
+    "%session-changed $~D ~A" session-id name)
+  (control-session-renamed (session-id name)
+    "`%session-renamed $<id> <name>`."
+    "%session-renamed $~D ~A" session-id name)
+  (control-window-add (window-id)
+    "`%window-add @<id>` — a window was linked into the client's session."
+    "%window-add @~D" window-id)
+  (control-window-close (window-id)
+    "`%window-close @<id>` — a window was unlinked/closed."
+    "%window-close @~D" window-id)
+  (control-window-renamed (window-id name)
+    "`%window-renamed @<id> <name>`."
+    "%window-renamed @~D ~A" window-id name)
+  (control-layout-change (window-id layout visible-layout raw-flags)
+    "`%layout-change @<id> <layout> <visible-layout> <raw-flags>`."
+    "%layout-change @~D ~A ~A ~A" window-id layout visible-layout raw-flags)
+  (control-window-pane-changed (window-id pane-id)
+    "`%window-pane-changed @<window-id> %<pane-id>` — the active pane within a window changed."
+    "%window-pane-changed @~D %~D" window-id pane-id)
+  (control-session-window-changed (session-id window-id)
+    "`%session-window-changed $<session-id> @<window-id>` — a session's active window changed."
+    "%session-window-changed $~D @~D" session-id window-id)
+  (control-unlinked-window-add (window-id)
+    "`%unlinked-window-add @<id>` — a window was linked but NOT to the client's session."
+    "%unlinked-window-add @~D" window-id)
+  (control-client-session-changed (client session-id name)
+    "`%client-session-changed <client> $<id> <name>` — another client's session changed."
+    "%client-session-changed ~A $~D ~A" client session-id name))
 
 (defun control-exit (&optional reason)
   "`%exit` (optionally with a REASON) — the control client is detaching."
