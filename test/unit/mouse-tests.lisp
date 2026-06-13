@@ -18,57 +18,27 @@
 
 ;;; ── SGR mouse parsing ────────────────────────────────────────────────────────
 
-(test parse-sgr-mouse-press
-  "Parse ESC [ < 0 ; 5 ; 3 M → button 0, col 4 (0-based), row 2 (0-based), press."
-  ;; ESC=27, [=91, <=60, then '0',';','5',';','3','M'
-  (let* ((seq (map '(simple-array (unsigned-byte 8) (*))
-                   #'char-code
-                   (format nil "~C[<0;5;3M" #\Escape)))
-         (buf (make-array (length seq)
-                          :element-type '(unsigned-byte 8)
-                          :fill-pointer (length seq)
-                          :adjustable t
-                          :initial-contents (coerce seq 'list))))
-    (multiple-value-bind (btn col row release-p)
-        (cl-tmux::%parse-sgr-mouse buf (fill-pointer buf))
-      (is (= 0 btn)      "button must be 0")
-      (is (= 4 col)      "col must be 4 (1-based 5 → 0-based 4)")
-      (is (= 2 row)      "row must be 2 (1-based 3 → 0-based 2)")
-      (is-false release-p "M final byte means press"))))
-
-(test parse-sgr-mouse-release
-  "Parse ESC [ < 0 ; 10 ; 7 m → button 0, col 9, row 6, release."
-  (let* ((seq (map '(simple-array (unsigned-byte 8) (*))
-                   #'char-code
-                   (format nil "~C[<0;10;7m" #\Escape)))
-         (buf (make-array (length seq)
-                          :element-type '(unsigned-byte 8)
-                          :fill-pointer (length seq)
-                          :adjustable t
-                          :initial-contents (coerce seq 'list))))
-    (multiple-value-bind (btn col row release-p)
-        (cl-tmux::%parse-sgr-mouse buf (fill-pointer buf))
-      (is (= 0 btn)   "button must be 0")
-      (is (= 9 col)   "col must be 9")
-      (is (= 6 row)   "row must be 6")
-      (is-true release-p "m final byte means release"))))
-
-(test parse-sgr-mouse-wheel
-  "Parse ESC [ < 64 ; 1 ; 1 M → button 64 (wheel-up), col 0, row 0, press."
-  (let* ((seq (map '(simple-array (unsigned-byte 8) (*))
-                   #'char-code
-                   (format nil "~C[<64;1;1M" #\Escape)))
-         (buf (make-array (length seq)
-                          :element-type '(unsigned-byte 8)
-                          :fill-pointer (length seq)
-                          :adjustable t
-                          :initial-contents (coerce seq 'list))))
-    (multiple-value-bind (btn col row release-p)
-        (cl-tmux::%parse-sgr-mouse buf (fill-pointer buf))
-      (is (= 64 btn)    "button must be 64 (wheel-up)")
-      (is (= 0 col)     "col must be 0")
-      (is (= 0 row)     "row must be 0")
-      (is-false release-p "M = press"))))
+(test parse-sgr-mouse-table
+  "Parse SGR mouse sequences: btn, col (0-based), row (0-based), release-p."
+  (dolist (c '(("~C[<0;5;3M"   0  4  2  nil "left press: M final, coords 5;3 → col 4 row 2")
+               ("~C[<0;10;7m"  0  9  6  t   "left release: m final, coords 10;7 → col 9 row 6")
+               ("~C[<64;1;1M" 64  0  0  nil "wheel-up press: btn 64, coords 1;1 → col 0 row 0")))
+    (destructuring-bind (fmt expected-btn expected-col expected-row expected-rel desc) c
+      (let* ((seq (map '(simple-array (unsigned-byte 8) (*))
+                       #'char-code
+                       (format nil fmt #\Escape)))
+             (len (length seq))
+             (buf (make-array len
+                              :element-type '(unsigned-byte 8)
+                              :fill-pointer len
+                              :adjustable t
+                              :initial-contents (coerce seq 'list))))
+        (multiple-value-bind (btn col row release-p)
+            (cl-tmux::%parse-sgr-mouse buf (fill-pointer buf))
+          (is (= expected-btn btn)         "~A: btn" desc)
+          (is (= expected-col col)         "~A: col" desc)
+          (is (= expected-row row)         "~A: row" desc)
+          (is (eql expected-rel release-p) "~A: release-p" desc))))))
 
 ;;; ── X10 mouse via process-byte ───────────────────────────────────────────────
 
@@ -190,16 +160,18 @@
 ;;; ── Mouse key-table bindings (bind -n WheelUpPane / MouseDown1Pane) ──────────
 
 (test mouse-key-name-builds-tmux-names
-  "%mouse-key-name maps (button, action, location) to tmux mouse key names."
-  (is (string= "WheelUpPane"      (cl-tmux::%mouse-key-name 64 nil "Pane")))
-  (is (string= "WheelDownPane"    (cl-tmux::%mouse-key-name 65 nil "Pane")))
-  (is (string= "MouseDown1Pane"   (cl-tmux::%mouse-key-name 0  nil "Pane")))
-  (is (string= "MouseUp1Pane"     (cl-tmux::%mouse-key-name 0  t   "Pane")))
-  (is (string= "MouseDown2Pane"   (cl-tmux::%mouse-key-name 1  nil "Pane")))
-  (is (string= "MouseDown3Status" (cl-tmux::%mouse-key-name 2  nil "Status")))
-  (is (string= "WheelUpStatus"    (cl-tmux::%mouse-key-name 64 nil "Status")))
-  (is (null (cl-tmux::%mouse-key-name 32 nil "Pane"))
-      "motion (btn 32) has no standard mouse key name"))
+  "%mouse-key-name maps (button, release-p, location) to tmux mouse key names."
+  (dolist (c '((64 nil "Pane"   "WheelUpPane"       "wheel-up in pane")
+               (65 nil "Pane"   "WheelDownPane"     "wheel-down in pane")
+               (0  nil "Pane"   "MouseDown1Pane"    "left press in pane")
+               (0  t   "Pane"   "MouseUp1Pane"      "left release in pane")
+               (1  nil "Pane"   "MouseDown2Pane"    "middle press in pane")
+               (2  nil "Status" "MouseDown3Status"  "right press on status")
+               (64 nil "Status" "WheelUpStatus"     "wheel-up on status")
+               (32 nil "Pane"   nil                 "motion has no standard name")))
+    (destructuring-bind (btn release-p location expected desc) c
+      (is (equal expected (cl-tmux::%mouse-key-name btn release-p location))
+          "~A" desc))))
 
 (test mouse-wheel-up-binding-fires-and-overrides-default
   "bind -n WheelUpPane <cmd> fires on a wheel-up event instead of the built-in
