@@ -209,14 +209,13 @@
   "%apply-named-layout-to-session :even-horizontal repositions two panes into
    equal-width columns and rebuilds the window tree."
   (with-two-pane-layout-session (sess win p0 p1)
-    (with-loop-state
-      (cl-tmux::%apply-named-layout-to-session sess :even-horizontal)
-      ;; After even-horizontal: avail-w = 81 - 1 = 80, each-w = 40.
-      ;; p0 should be at x=0, p1 at x=41, both width=40.
-      (is (= 0  (pane-x p0)) "p0 x must be 0 after even-horizontal layout")
-      (is (= 40 (pane-width p0)) "p0 width must be 40 after even-horizontal layout")
-      (is (= 41 (pane-x p1)) "p1 x must be 41 after even-horizontal layout")
-      (is (= 40 (pane-width p1)) "p1 width must be 40 after even-horizontal layout"))))
+    (cl-tmux::%apply-named-layout-to-session sess :even-horizontal)
+    ;; After even-horizontal: avail-w = 81 - 1 = 80, each-w = 40.
+    ;; p0 should be at x=0, p1 at x=41, both width=40.
+    (is (= 0  (pane-x p0)) "p0 x must be 0 after even-horizontal layout")
+    (is (= 40 (pane-width p0)) "p0 width must be 40 after even-horizontal layout")
+    (is (= 41 (pane-x p1)) "p1 x must be 41 after even-horizontal layout")
+    (is (= 40 (pane-width p1)) "p1 width must be 40 after even-horizontal layout")))
 
 (test apply-named-layout-even-vertical-repositions-panes
   "%apply-named-layout-to-session :even-vertical repositions two panes into
@@ -233,10 +232,9 @@
 
 (test apply-named-layout-noop-for-empty-session
   "%apply-named-layout-to-session with no active window is a no-op."
-  (with-empty-session (sess)
-    (with-loop-state
-      (finishes (cl-tmux::%apply-named-layout-to-session sess :even-horizontal))
-      "calling with no active window must not signal an error")))
+  (with-fake-session (sess :nwindows 0)
+    (finishes (cl-tmux::%apply-named-layout-to-session sess :even-horizontal)
+              "calling with no active window must not signal an error")))
 
 ;;; ── :list-windows dispatch ───────────────────────────────────────────────────
 

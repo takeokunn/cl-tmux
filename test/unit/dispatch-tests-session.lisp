@@ -229,9 +229,8 @@
   "%apply-named-layout-to-session :tiled dispatches without error on a 2-pane window."
   (with-two-pane-layout-session (sess win p0 p1)
     (is (and win p0 p1) "two-pane layout fixture created")
-    (with-loop-state
-      (finishes (cl-tmux::%apply-named-layout-to-session sess :tiled)
-                "%apply-named-layout-to-session :tiled must not signal an error"))))
+    (finishes (cl-tmux::%apply-named-layout-to-session sess :tiled)
+              "%apply-named-layout-to-session :tiled must not signal an error")))
 
 ;;; ── %handle-kill-result :detach does not clear *running* ─────────────────────
 

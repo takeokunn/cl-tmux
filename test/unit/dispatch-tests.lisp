@@ -305,9 +305,8 @@
 
 (test active-screen-returns-nil-for-empty-session
   "%active-screen returns NIL when no pane is active."
-  (with-empty-session (s)
-    (with-loop-state
-      (is (null (cl-tmux::%active-screen s))))))
+  (with-fake-session (s :nwindows 0)
+    (is (null (cl-tmux::%active-screen s)))))
 
 ;;; ── %cmd-cycle-window ────────────────────────────────────────────────────────
 

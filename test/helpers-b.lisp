@@ -193,7 +193,7 @@
   "Bind SESS-VAR WIN-VAR P0-VAR P1-VAR to a 2-pane horizontal split session
    ready for layout-assign tests.  WIN-WIDTH × WIN-HEIGHT default to 81 × 24.
    p0 occupies the left half, p1 the right half, with p0 active.
-   Runs BODY with those bindings."
+   Runs BODY inside WITH-LOOP-STATE for event-loop isolation."
   (let ((half-width (gensym "HALF-W")))
     `(let* ((,half-width (floor (- ,win-width 1) 2))
             (,p0-var  (make-no-pty-pane 1  0 0 ,half-width ,win-height))
@@ -208,7 +208,7 @@
             (,sess-var (make-session :id 1 :name "0" :windows (list ,win-var))))
        (window-select-pane ,win-var ,p0-var)
        (session-select-window ,sess-var ,win-var)
-       ,@body)))
+       (with-loop-state ,@body))))
 
 (defmacro with-two-pane-v-session ((sess-var win-var p0-var p1-var) &body body)
   "Bind SESS-VAR WIN-VAR P0-VAR P1-VAR to a 2-pane vertical split session:

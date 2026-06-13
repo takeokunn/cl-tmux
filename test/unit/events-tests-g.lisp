@@ -149,46 +149,22 @@
 
 (test dispatch-mouse-scroll-up-enters-copy-mode
   "Mouse scroll-up (btn=64) enters copy mode on the active pane when not in copy mode."
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1
-                           :x 0 :y 0 :width 40 :height 24
-                           :screen (make-screen 40 24)))
-         (win  (make-window :id 1 :name "w" :width 40 :height 24
-                            :panes (list p0)
-                            :tree  (make-layout-leaf p0)
-                            :active p0))
-         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
-    (cl-tmux/options:set-option "mouse" t)
-    (unwind-protect
-         (with-loop-state
-           (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
-             (seed-scrollback (pane-screen p0) 5)
-             (cl-tmux::%dispatch-mouse-event sess 64 5 5 nil)
-             (is (screen-copy-mode-p (pane-screen p0))
-                 "scroll-up must enter copy mode")))
-      (cl-tmux/options:set-option "mouse" nil))))
+  (with-single-pane-mouse-session (sess win p0)
+    (seed-scrollback (pane-screen p0) 5)
+    (cl-tmux::%dispatch-mouse-event sess 64 5 5 nil)
+    (is (screen-copy-mode-p (pane-screen p0))
+        "scroll-up must enter copy mode")))
 
 (test dispatch-mouse-scroll-down-exits-copy-mode-at-bottom
   "Mouse scroll-down (btn=65) exits copy mode when the viewport is at the bottom (offset=0)."
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1
-                           :x 0 :y 0 :width 40 :height 24
-                           :screen (make-screen 40 24)))
-         (win  (make-window :id 1 :name "w" :width 40 :height 24
-                            :panes (list p0)
-                            :tree  (make-layout-leaf p0)
-                            :active p0))
-         (sess (make-session :id 1 :name "0" :windows (list win) :active win))
-         (screen (pane-screen p0)))
-    (cl-tmux/options:set-option "mouse" t)
-    (unwind-protect
-         (with-loop-state
-           (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
-             (seed-scrollback screen 5)
-             (cl-tmux/commands::copy-mode-enter screen)
-             ;; offset already at 0 — scroll down should exit copy mode
-             (cl-tmux::%dispatch-mouse-event sess 65 5 5 nil)
-             (is-false (screen-copy-mode-p screen)
-                 "scroll-down at offset=0 must exit copy mode")))
-      (cl-tmux/options:set-option "mouse" nil))))
+  (with-single-pane-mouse-session (sess win p0)
+    (let ((screen (pane-screen p0)))
+      (seed-scrollback screen 5)
+      (cl-tmux/commands::copy-mode-enter screen)
+      ;; offset already at 0 — scroll down should exit copy mode
+      (cl-tmux::%dispatch-mouse-event sess 65 5 5 nil)
+      (is-false (screen-copy-mode-p screen)
+                "scroll-down at offset=0 must exit copy mode"))))
 
 (test dispatch-mouse-gated-by-mouse-option
   "%dispatch-mouse-event is a no-op when the 'mouse' option is false."
