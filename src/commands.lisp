@@ -154,24 +154,23 @@
     (%cells-to-sgr-string cell-at
                           (%row-content-width cell-at (length cell-vector) trim))))
 
+(defun %build-row-string (cell-at full-width trim)
+  "Build a plain string from CELL-AT over width computed by %row-content-width."
+  (let* ((width  (%row-content-width cell-at full-width trim))
+         (result (make-string width)))
+    (dotimes (col width result)
+      (setf (char result col) (cell-char (funcall cell-at col))))))
+
 (defun %screen-row-string (screen row &optional (trim t))
   "Return a string representing ROW in SCREEN's visible grid, character per cell.
    When TRIM (the capture-pane default), trailing blank cells are dropped; when
    NIL (capture-pane -J) the full width is kept.  Pure data-to-string conversion."
-  (let* ((cell-at (lambda (col) (screen-cell screen col row)))
-         (width   (%row-content-width cell-at (screen-width screen) trim))
-         (result  (make-string width)))
-    (dotimes (col width result)
-      (setf (char result col) (cell-char (funcall cell-at col))))))
+  (%build-row-string (lambda (col) (screen-cell screen col row)) (screen-width screen) trim))
 
 (defun %scrollback-row-string (cell-vector &optional (trim t))
   "Return a string of characters from a scrollback row CELL-VECTOR (a simple-vector
    of cells).  TRIM drops trailing blank cells (capture-pane default)."
-  (let* ((cell-at (lambda (col) (aref cell-vector col)))
-         (n       (%row-content-width cell-at (length cell-vector) trim))
-         (result  (make-string n)))
-    (dotimes (i n result)
-      (setf (char result i) (cell-char (funcall cell-at i))))))
+  (%build-row-string (lambda (col) (aref cell-vector col)) (length cell-vector) trim))
 
 (defun capture-pane (pane &key (include-scrollback nil) (escapes nil) (join nil)
                                (preserve-trailing nil))
