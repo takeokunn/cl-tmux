@@ -117,87 +117,44 @@
 
 ;;; ── Modifier+arrow binding override (bind C-Up / bind -n M-Left) ────────────
 
-(test prefix-c-up-binding-overrides-resize
-  "bind C-Up next-window makes C-b then Ctrl+Up (ESC [ 1 ; 5 A) run next-window
-   instead of the hardcoded resize-pane default."
-  (with-isolated-config
-    (cl-tmux/config:apply-config-directive '("bind" "C-Up" "next-window"))
-    (with-fake-session (s :nwindows 2)
-        (let ((state (cl-tmux::make-input-state)))
-          (dolist (b '(2 27 91 49 59 53 65))  ; C-b ESC [ 1 ; 5 A
-            (cl-tmux::process-byte s b state))
-          (is (eq (second (session-windows s)) (session-active-window s))
-              "bound C-Up must run next-window, not resize")))))
+(test prefix-modifier-arrow-overrides-table
+  "Binding C-Up/M-Up/Up to next-window makes C-b + sequence run next-window (not resize/select-pane)."
+  (dolist (c '(("C-Up" (2 27 91 49 59 53 65) "C-b C-Up → next-window, not resize")
+               ("M-Up" (2 27 91 49 59 51 65) "C-b M-Up → next-window, not resize")
+               ("Up"   (2 27 91 65)           "C-b Up → next-window, not select-pane")))
+    (destructuring-bind (key-name bytes desc) c
+      (with-isolated-config
+        (cl-tmux/config:apply-config-directive (list "bind" key-name "next-window"))
+        (with-fake-session (s :nwindows 2)
+          (let ((state (cl-tmux::make-input-state)))
+            (dolist (b bytes) (cl-tmux::process-byte s b state))
+            (is (eq (second (session-windows s)) (session-active-window s))
+                "~A" desc)))))))
 
-(test prefix-m-up-binding-overrides-resize
-  "bind M-Up next-window makes C-b then Alt+Up (ESC [ 1 ; 3 A) run next-window
-   instead of the hardcoded :resize-up default."
-  (with-isolated-config
-    (cl-tmux/config:apply-config-directive '("bind" "M-Up" "next-window"))
-    (with-fake-session (s :nwindows 2)
-        (let ((state (cl-tmux::make-input-state)))
-          (dolist (b '(2 27 91 49 59 51 65))  ; C-b ESC [ 1 ; 3 A
-            (cl-tmux::process-byte s b state))
-          (is (eq (second (session-windows s)) (session-active-window s))
-              "bound M-Up must run next-window, not resize")))))
+(test unbound-prefix-modifier-arrow-leaves-window-table
+  "Without a binding, C-b + modifier+arrow sequences leave the first window active."
+  (dolist (c '(((2 27 91 49 59 53 65) "C-b C-Up unbound: first window stays")
+               ((27 91 49 59 53 65)    "bare C-Up unbound: first window stays")))
+    (destructuring-bind (bytes desc) c
+      (with-isolated-config
+        (with-fake-session (s :nwindows 2)
+          (let ((state (cl-tmux::make-input-state)))
+            (dolist (b bytes) (cl-tmux::process-byte s b state))
+            (is (eq (first (session-windows s)) (session-active-window s))
+                "~A" desc)))))))
 
-(test prefix-plain-arrow-binding-overrides-select-pane
-  "bind Up next-window makes C-b Up (ESC [ A) run next-window instead of the
-   hardcoded :select-pane-up default."
-  (with-isolated-config
-    (cl-tmux/config:apply-config-directive '("bind" "Up" "next-window"))
-    (with-fake-session (s :nwindows 2)
-        (let ((state (cl-tmux::make-input-state)))
-          (dolist (b '(2 27 91 65))  ; C-b ESC [ A
-            (cl-tmux::process-byte s b state))
-          (is (eq (second (session-windows s)) (session-active-window s))
-              "bound Up must run next-window, not select-pane")))))
-
-(test unbound-prefix-c-up-leaves-active-window
-  "With no C-Up binding, C-b Ctrl+Up takes the resize fallback and must NOT
-   change the active window (the override is purely additive)."
-  (with-isolated-config
-    (with-fake-session (s :nwindows 2)
-        (let ((state (cl-tmux::make-input-state)))
-          (dolist (b '(2 27 91 49 59 53 65))  ; C-b ESC [ 1 ; 5 A
-            (cl-tmux::process-byte s b state))
-          (is (eq (first (session-windows s)) (session-active-window s))
-              "unbound C-Up must leave the first window active")))))
-
-(test root-m-left-binding-fires-without-prefix
-  "bind -n M-Left next-window makes a bare Alt+Left (ESC [ 1 ; 3 D) run
-   next-window with no prefix — the root-table modifier+arrow path."
-  (with-isolated-config
-    (cl-tmux/config:apply-config-directive '("bind" "-n" "M-Left" "next-window"))
-    (with-fake-session (s :nwindows 2)
-        (let ((state (cl-tmux::make-input-state)))
-          (dolist (b '(27 91 49 59 51 68))  ; ESC [ 1 ; 3 D  (no prefix)
-            (cl-tmux::process-byte s b state))
-          (is (eq (second (session-windows s)) (session-active-window s))
-              "bound -n M-Left must run next-window at root")))))
-
-(test root-c-up-binding-fires-without-prefix
-  "bind -n C-Up next-window makes a bare Ctrl+Up (ESC [ 1 ; 5 A) run
-   next-window with no prefix."
-  (with-isolated-config
-    (cl-tmux/config:apply-config-directive '("bind" "-n" "C-Up" "next-window"))
-    (with-fake-session (s :nwindows 2)
-        (let ((state (cl-tmux::make-input-state)))
-          (dolist (b '(27 91 49 59 53 65))  ; ESC [ 1 ; 5 A  (no prefix)
-            (cl-tmux::process-byte s b state))
-          (is (eq (second (session-windows s)) (session-active-window s))
-              "bound -n C-Up must run next-window at root")))))
-
-(test unbound-root-c-up-leaves-active-window
-  "With no -n C-Up binding, a bare Ctrl+Up is forwarded to the pane and must
-   NOT change the active window."
-  (with-isolated-config
-    (with-fake-session (s :nwindows 2)
-        (let ((state (cl-tmux::make-input-state)))
-          (dolist (b '(27 91 49 59 53 65))  ; ESC [ 1 ; 5 A  (no prefix, unbound)
-            (cl-tmux::process-byte s b state))
-          (is (eq (first (session-windows s)) (session-active-window s))
-              "unbound bare C-Up must leave the first window active")))))
+(test root-modifier-arrow-binding-table
+  "Bindings with -n fire modifier+arrow sequences at root without prefix."
+  (dolist (c '(("M-Left" (27 91 49 59 51 68) "M-Left bare → next-window")
+               ("C-Up"   (27 91 49 59 53 65) "C-Up bare → next-window")))
+    (destructuring-bind (key-name bytes desc) c
+      (with-isolated-config
+        (cl-tmux/config:apply-config-directive (list "bind" "-n" key-name "next-window"))
+        (with-fake-session (s :nwindows 2)
+          (let ((state (cl-tmux::make-input-state)))
+            (dolist (b bytes) (cl-tmux::process-byte s b state))
+            (is (eq (second (session-windows s)) (session-active-window s))
+                "~A" desc)))))))
 
 ;;; ── Meta/Alt key-name helper and bind override (bind -n M-h / bind M-j) ─────
 

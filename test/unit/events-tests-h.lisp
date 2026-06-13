@@ -137,23 +137,17 @@
     (is (string= "new-title" (window-name win))
         "%maybe-rename-window-from-title must set window-name to OSC title")))
 
-(test maybe-rename-window-from-title-noop-when-titles-equal
-  "%maybe-rename-window-from-title does nothing when OSC title equals window name."
-  (with-auto-rename-session (screen pane win sess :win-name "same")
-    (setf (screen-title screen) "same")
-    (setf (window-automatic-rename-p win) t)
-    (cl-tmux::%maybe-rename-window-from-title sess)
-    (is (string= "same" (window-name win))
-        "window-name must be unchanged when title equals name")))
-
-(test maybe-rename-window-from-title-noop-when-auto-rename-off
-  "%maybe-rename-window-from-title does nothing when automatic-rename is disabled."
-  (with-auto-rename-session (screen pane win sess :win-name "original")
-    (setf (screen-title screen) "new-title")
-    (setf (window-automatic-rename-p win) nil)
-    (cl-tmux::%maybe-rename-window-from-title sess)
-    (is (string= "original" (window-name win))
-        "window-name must not change when auto-rename is disabled")))
+(test maybe-rename-window-from-title-noop-table
+  "%maybe-rename-window-from-title does not rename when title=name or auto-rename is off."
+  (dolist (c '(("same"      "same"     t   "title equals name → no-op")
+               ("new-title" "original" nil "auto-rename off → no-op")))
+    (destructuring-bind (new-title win-name auto-rename-p desc) c
+      (with-auto-rename-session (screen pane win sess :win-name win-name)
+        (declare (ignore pane))
+        (setf (screen-title screen) new-title)
+        (setf (window-automatic-rename-p win) auto-rename-p)
+        (cl-tmux::%maybe-rename-window-from-title sess)
+        (is (string= win-name (window-name win)) "~A" desc)))))
 
 (test maybe-rename-window-from-title-noop-when-window-local-auto-rename-off
   "%maybe-rename-window-from-title is suppressed for a window whose window-local
