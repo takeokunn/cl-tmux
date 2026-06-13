@@ -44,6 +44,10 @@
 ;;; appears in %active-screen and %forward-octets.
 ;;; with-active-pane names the intent directly.
 
+(defmacro show-built-overlay ((stream) &body body)
+  "Show an overlay whose text is built by BODY writing to STREAM."
+  `(show-overlay (with-output-to-string (,stream) ,@body)))
+
 (defmacro with-active-pane ((pane-var session) &body body)
   "Bind PANE-VAR to SESSION's active pane and evaluate BODY.
    Returns NIL when no active pane is present (no-op guard)."

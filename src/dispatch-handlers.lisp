@@ -242,17 +242,16 @@
   (:copy-mode-search-forward-text  (values))
   (:copy-mode-search-backward-text (values))
   (:copy-mode-choose-buffer
-   (show-overlay
-    (with-output-to-string (stream)
-      (let ((buffers (cl-tmux/buffer:list-paste-buffers)))
-        (if buffers
-            (loop for buffer in buffers
-                  for index from 0
-                  do (format stream "~D: ~A~%"
-                             index
-                             (subseq buffer 0 (min +buffer-preview-length+
-                                                   (length buffer)))))
-            (format stream "(no paste buffers)~%"))))))
+   (show-built-overlay (stream)
+     (let ((buffers (cl-tmux/buffer:list-paste-buffers)))
+       (if buffers
+           (loop for buffer in buffers
+                 for index from 0
+                 do (format stream "~D: ~A~%"
+                            index
+                            (subseq buffer 0 (min +buffer-preview-length+
+                                                  (length buffer)))))
+           (format stream "(no paste buffers)~%")))))
 
   ;; ── Resize commands ────────────────────────────────────────────────────────
   (:resize-left   (resize-pane (session-active-window session) :left))

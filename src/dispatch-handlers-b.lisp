@@ -165,17 +165,16 @@
    (with-active-pane (ap session)
      (cl-tmux/terminal/actions:clear-scrollback (pane-screen ap))))
   (:choose-tree
-   (show-overlay
-    (with-output-to-string (stream)
-      (let ((current-name (session-name session)))
-        (if *server-sessions*
-            (loop for (name . sess) in *server-sessions*
-                  do (%format-tree-entry stream name current-name
-                                         (session-windows sess)
-                                         (session-active-window sess)))
-            (%format-tree-entry stream current-name current-name
-                                (session-windows session)
-                                (session-active-window session)))))))
+   (show-built-overlay (stream)
+     (let ((current-name (session-name session)))
+       (if *server-sessions*
+           (loop for (name . sess) in *server-sessions*
+                 do (%format-tree-entry stream name current-name
+                                        (session-windows sess)
+                                        (session-active-window sess)))
+           (%format-tree-entry stream current-name current-name
+                               (session-windows session)
+                               (session-active-window session))))))
   (:customize-mode
    ;; Bare bind / keypress form: show the full customize tree (no filter).  The
    ;; scriptable customize-mode -f/-F/-t form lives in *arg-command-table*.
@@ -207,13 +206,12 @@
    (with-active-window (win session)
      (%cycle-layout session win :next)))
   (:choose-client
-   (show-overlay
-    (with-output-to-string (stream)
-      (format stream "Clients:~%")
-      (format stream "  0: local  ~A  ~Dx~D~%"
-              (session-name session)
-              *term-cols*
-              *term-rows*))))
+   (show-built-overlay (stream)
+     (format stream "Clients:~%")
+     (format stream "  0: local  ~A  ~Dx~D~%"
+             (session-name session)
+             *term-cols*
+             *term-rows*)))
   (:display-info
    (with-active-pane (ap session)
      (let* ((win    (session-active-window session))
@@ -276,15 +274,14 @@
             (code-char (logior cl-tmux/config:*prefix-key-code* #x40))
             cl-tmux/config:*prefix-key-code*)))
   (:list-clients
-   (show-overlay
-    (with-output-to-string (s)
-      (format s "clients~%")
-      (if *server-sessions*
-          (loop for (name . sess) in *server-sessions*
-                do (format s "  ~A: ~Dx~D~%"
-                           name *term-cols* *term-rows*))
-          (format s "  0: local  ~A  ~Dx~D~%"
-                  (session-name session) *term-cols* *term-rows*)))))
+   (show-built-overlay (s)
+     (format s "clients~%")
+     (if *server-sessions*
+         (loop for (name . sess) in *server-sessions*
+               do (format s "  ~A: ~Dx~D~%"
+                          name *term-cols* *term-rows*))
+         (format s "  0: local  ~A  ~Dx~D~%"
+                 (session-name session) *term-cols* *term-rows*))))
   (:suspend-client
    ;; Send SIGTSTP to the running process to suspend the client, matching
    ;; real tmux's C-b C-z behaviour.  Reset mouse and extended-keys reporting
@@ -299,11 +296,10 @@
 
   ;; ── Environment ───────────────────────────────────────────────────────────
   (:show-environment
-   (show-overlay
-    (with-output-to-string (s)
-      (format s "environment~%")
-      (dolist (pair (cl-tmux/model:get-update-environment-vars))
-        (format s "  ~A=~A~%" (car pair) (cdr pair))))))
+   (show-built-overlay (s)
+     (format s "environment~%")
+     (dolist (pair (cl-tmux/model:get-update-environment-vars))
+       (format s "  ~A=~A~%" (car pair) (cdr pair)))))
   (:set-environment
    (prompt-nonempty "set-env NAME VALUE"
                     (lambda (input)
