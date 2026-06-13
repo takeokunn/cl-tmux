@@ -2,17 +2,6 @@
 
 ;;; -- Window/pane/session structural commands ----------------------------------------
 ;;;
-;;; %parse-flag-int: shared helper for flag-value → integer parsing used by
-;;; resize-window, new-session, split-window, and new-window.
-
-(defun %parse-flag-int (flags char)
-  "Return the integer value of flag CHAR in FLAGS, or NIL when the flag is absent.
-   Uses parse-integer with :junk-allowed t so non-numeric values also return NIL."
-  (let ((v (cdr (assoc char flags))))
-    (and v (parse-integer v :junk-allowed t))))
-
-;;; --
-;;;
 ;;; Named-layout macro, select-layout, list-panes, new-window, split-window,
 ;;; new-session, switch-client, destroy-session, kill-session, resize-window,
 ;;; detach-client, and the copy-mode -X command table (for send-keys -X).

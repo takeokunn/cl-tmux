@@ -175,10 +175,8 @@
   (with-command-flags+pos (flags positionals args "txy")
     (let* ((amount-str (first positionals))
            (amount     (or (and amount-str (parse-integer amount-str :junk-allowed t)) 5))
-           (x-str      (cdr (assoc #\x flags)))
-           (y-str      (cdr (assoc #\y flags)))
-           (x-val      (and x-str (parse-integer x-str :junk-allowed t)))
-           (y-val      (and y-str (parse-integer y-str :junk-allowed t)))
+           (x-val      (%parse-flag-int flags #\x))
+           (y-val      (%parse-flag-int flags #\y))
            ;; Resolve target pane; fall back to active window for resize operations.
            (target-str (cdr (assoc #\t flags)))
            (win        (if target-str

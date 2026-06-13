@@ -187,13 +187,12 @@
   (with-command-flags+pos (flags positionals args "st")
     (declare (ignore positionals))
     (let* ((src-str (cdr (assoc #\s flags)))
-           (dst-str (cdr (assoc #\t flags)))
            (repack  (assoc #\r flags))
            (after   (assoc #\a flags))
            (src-win (if src-str
                         (%resolve-window-target session src-str)
                         (session-active-window session)))
-           (dst-n   (and dst-str (parse-integer dst-str :junk-allowed t))))
+           (dst-n   (%parse-flag-int flags #\t)))
       (cond
         ;; -r: repack all windows sequentially from base-index
         (repack

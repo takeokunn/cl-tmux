@@ -55,6 +55,12 @@
                (push token positionals))
         finally (return (values (nreverse flags) (nreverse positionals)))))
 
+(defun %parse-flag-int (flags char)
+  "Return the integer value of flag CHAR in FLAGS, or NIL when the flag is absent.
+   Uses parse-integer with :junk-allowed t so non-numeric values also return NIL."
+  (let ((v (cdr (assoc char flags))))
+    (and v (parse-integer v :junk-allowed t))))
+
 (defun %resolve-pane-in-window (win target-str)
   "Resolve TARGET-STR to a pane in WIN by pane-id; default to WIN's active pane.
    Accepts bare id (\"2\") and tmux %N sigil (\"%2\")."
