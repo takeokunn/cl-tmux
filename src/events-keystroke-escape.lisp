@@ -194,8 +194,7 @@
                                         (- (screen-height screen))))
            (setf *dirty* t))))
       (t
-       (unless (%copy-mode-active-p session)
-         (%forward-octets-synchronized session (subseq buffer 0 length))))))
+       (%forward-unless-copy-mode session buffer length))))
   (values nil #'%ground-input-state))
 
 (define-key-lookup-table %ss3-key-name final-byte
@@ -217,8 +216,7 @@
    still reaches the pane: %flush-esc-if-timed-out replays the buffered ESC O."
   (let ((key (%ss3-key-name (aref buffer 2))))
     (unless (and key (%try-bound-string-key session +table-root+ key))
-      (unless (%copy-mode-active-p session)
-        (%forward-octets-synchronized session (subseq buffer 0 3)))))
+      (%forward-unless-copy-mode session buffer 3)))
   (values nil #'%ground-input-state))
 
 (defun %handle-escape-csi-3byte (session buffer)
@@ -244,6 +242,11 @@
                     (%forward-octets-synchronized session ss3-seq)
                     (%forward-octets-synchronized session (subseq buffer 0 3))))))
           (values nil #'%ground-input-state)))))
+
+(defun %forward-unless-copy-mode (session buffer length)
+  "Forward BUFFER[0..LENGTH) to the active pane unless copy mode is active."
+  (unless (%copy-mode-active-p session)
+    (%forward-octets-synchronized session (subseq buffer 0 length))))
 
 (defun make-escape-input-k (session buffer)
   "CPS continuation: accumulate an ESC [... sequence one byte at a time.
@@ -272,13 +275,14 @@
     ;; partial sequence (e.g. a held ESC O) rather than dropping all but the ESC.
     (setf *esc-accum-buffer* buffer)
     (let ((length (fill-pointer buffer)))
+      (flet ((accumulate () (values nil (make-escape-input-k session buffer))))
       (cond
         ;; ── SS3 introducer: ESC O — defer one byte to disambiguate ───────
         ;; ESC O P/Q/R/S (F1-F4) and ESC O H/F (Home/End) vs Alt+O.  Keep
         ;; accumulating; if no third byte arrives, escape-time flushes the
         ;; buffered ESC O to the pane (Alt+O passthrough preserved).
         ((and (= length 2) (= (aref buffer 1) +byte-ss3-o+))
-         (values nil (make-escape-input-k session buffer)))
+         (accumulate))
         ;; ── SS3 function key complete: ESC O <final> ─────────────────────
         ((and (= length 3) (= (aref buffer 1) +byte-ss3-o+))
          (%handle-escape-ss3 session buffer))
@@ -292,14 +296,14 @@
               (= (aref buffer 1) +byte-csi-bracket+)
               (= (aref buffer 2) +byte-ascii-m+)
               (< length 6))
-         (values nil (make-escape-input-k session buffer)))
+         (accumulate))
         ;; ── SGR mouse terminated: ESC [ < Pb ; Px ; Py M|m ───────────────
         ((and (%sgr-mouse-sequence-p buffer length)
               (%sgr-mouse-terminated-p buffer length))
          (%handle-escape-sgr-mouse session buffer length))
         ;; ── SGR mouse still accumulating ──────────────────────────────────
         ((%sgr-mouse-sequence-p buffer length)
-         (values nil (make-escape-input-k session buffer)))
+         (accumulate))
         ;; ── CSI-u extended-keys complete: ESC [ <codepoint> ; <mod> u ─────
         ;; Placed before the 3-byte CSI / function-key / modifier-arrow branches
         ;; so a digit-leading u-terminated chord is decoded here rather than being
@@ -314,7 +318,7 @@
         ;; modifier-arrows (ESC [ 1 ; N FINAL) pass through here too and resolve
         ;; at the modifier-arrow-complete branch once the final letter arrives.
         ((%csi-u-accumulating-p buffer length)
-         (values nil (make-escape-input-k session buffer)))
+         (accumulate))
         ;; ── Focus in/out: ESC [ I (gained) / ESC [ O (lost) from the outer ─
         ;; terminal's ?1004 reporting.  Deliver the focus change to the active
         ;; pane (its app gets ESC[I/ESC[O when it enabled ?1004); never forward
@@ -332,7 +336,7 @@
          (multiple-value-bind (keep-accumulating next-state)
              (%handle-escape-csi-3byte session buffer)
            (if keep-accumulating
-               (values nil (make-escape-input-k session buffer))
+               (accumulate)
                (values nil next-state))))
         ;; ── Function / navigation key: ESC [ <digits> ~ (any width) ──────
         ;; Single-digit (Home ESC [ 1 ~, PageUp ESC [ 5 ~, Delete ESC [ 3 ~)
@@ -357,15 +361,14 @@
               (= (aref buffer 1) +byte-csi-bracket+)
               (= (aref buffer 2) +byte-csi-param-1+)
               (= (aref buffer 3) +byte-csi-semi+))
-         (values nil (make-escape-input-k session buffer)))
+         (accumulate))
         ((and (= length 6)
               (= (aref buffer 1) +byte-csi-bracket+)
               (= (aref buffer 2) +byte-csi-param-1+)
               (= (aref buffer 3) +byte-csi-semi+))
          (let ((key (%modifier-arrow-key-name (aref buffer 4) (aref buffer 5))))
            (unless (%try-bound-string-key session +table-root+ key)
-             (unless (%copy-mode-active-p session)
-               (%forward-octets-synchronized session (subseq buffer 0 length)))))
+             (%forward-unless-copy-mode session buffer length)))
          (values nil #'%ground-input-state))
         ;; ── Digit-leading CSI with a non-'u' terminator — forward raw ─────
         ;; Reached after the arrow/function-key handlers above declined it: an
@@ -377,15 +380,12 @@
         ((and (>= length 4)
               (= (aref buffer 1) +byte-csi-bracket+)
               (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+))
-         (unless (%copy-mode-active-p session)
-           (%forward-octets-synchronized session (subseq buffer 0 length)))
+         (%forward-unless-copy-mode session buffer length)
          (values nil #'%ground-input-state))
         ;; ── 4-byte accumulation: ESC [ N (not yet '~') — keep buffering ───
         ((and (= length 4) (= (aref buffer 1) +byte-csi-bracket+)
               (/= (aref buffer 3) +byte-tilde+))
-         ;; Forward if no terminating ~ and not copy mode, return to ground
-         (unless (%copy-mode-active-p session)
-           (%forward-octets-synchronized session (subseq buffer 0 length)))
+         (%forward-unless-copy-mode session buffer length)
          (values nil #'%ground-input-state))
         ;; ── 2-byte non-CSI sequence: ESC X ────────────────────────────────
         ;; In copy mode, a lone ESC (or ESC + non-CSI byte) clears any active
@@ -416,8 +416,7 @@
          (values nil #'%ground-input-state))
         ;; ── Buffer overflow guard (> 32 unrecognised bytes) ───────────────
         ((> length 32)
-         (unless (%copy-mode-active-p session)
-           (%forward-octets-synchronized session (subseq buffer 0 length)))
+         (%forward-unless-copy-mode session buffer length)
          (values nil #'%ground-input-state))
         ;; ── Still accumulating ─────────────────────────────────────────────
-        (t (values nil (make-escape-input-k session buffer)))))))
+        (t (accumulate)))))))

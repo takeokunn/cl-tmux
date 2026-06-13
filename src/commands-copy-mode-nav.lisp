@@ -30,6 +30,12 @@
    independent of the 'word-separators' option that drives w/b/e."
   (or (char= ch #\Space) (char= ch #\Tab)))
 
+(defmacro with-copy-mode-dirty (screen &body body)
+  "Execute BODY only when SCREEN is in copy mode; mark the screen dirty on exit."
+  `(when (screen-copy-mode-p ,screen)
+     ,@body
+     (setf (screen-dirty-p ,screen) t)))
+
 ;;; ── Multi-line word-navigation helpers ──────────────────────────────────────
 ;;;
 ;;; Real tmux copy-mode `w`/`b`/`e` (and W/B/E) cross line boundaries.  Three
@@ -44,7 +50,7 @@
 (defun %word-forward-impl (screen sep-pred)
   "Move the cursor forward to the start of the next word, crossing lines.
    SEP-PRED classifies separator characters."
-  (when (screen-copy-mode-p screen)
+  (with-copy-mode-dirty screen
     (let* ((row   (car (screen-copy-cursor screen)))
            (col   (cdr (screen-copy-cursor screen)))
            (width (screen-width screen))
@@ -64,13 +70,12 @@
             ;; If scroll was a no-op (bottom of history), stay at last col.
             (when (equal saved (screen-copy-cursor screen))
               (setf (screen-copy-cursor screen) (cons row (1- width)))))
-          (setf (screen-copy-cursor screen) (cons row col)))
-      (setf (screen-dirty-p screen) t))))
+          (setf (screen-copy-cursor screen) (cons row col))))))
 
 (defun %word-backward-impl (screen sep-pred)
   "Move the cursor backward to the start of the current/previous word, crossing lines.
    SEP-PRED classifies separator characters."
-  (when (screen-copy-mode-p screen)
+  (with-copy-mode-dirty screen
     (let* ((row     (car (screen-copy-cursor screen)))
            (col     (cdr (screen-copy-cursor screen)))
            (max-off (length (screen-scrollback screen))))
@@ -88,13 +93,12 @@
               do (decf col))
         (loop while (and (> col 0) (not (funcall sep-pred (aref chars (1- col)))))
               do (decf col))
-        (setf (screen-copy-cursor screen) (cons row (max 0 col))
-              (screen-dirty-p screen) t)))))
+        (setf (screen-copy-cursor screen) (cons row (max 0 col)))))))
 
 (defun %word-end-impl (screen sep-pred)
   "Move the cursor to the last character of the current/next word, crossing lines.
    SEP-PRED classifies separator characters."
-  (when (screen-copy-mode-p screen)
+  (with-copy-mode-dirty screen
     (let* ((row   (car (screen-copy-cursor screen)))
            (col   (cdr (screen-copy-cursor screen)))
            (width (screen-width screen))
@@ -122,8 +126,7 @@
       (loop while (and (< col (1- width))
                        (not (funcall sep-pred (aref chars (1+ col)))))
             do (incf col))
-      (setf (screen-copy-cursor screen) (cons row (min (1- width) col))
-            (screen-dirty-p screen) t))))
+      (setf (screen-copy-cursor screen) (cons row (min (1- width) col)))))
 
 ;;; Public API: word (w/b/e) and WORD (W/B/E) motions.
 
@@ -267,7 +270,7 @@
    the viewport, then moves the cursor row to that center row.  If the history
    limit prevents full centering the offset is clamped and the cursor is placed
    at the achievable nearest-center row."
-  (when (screen-copy-mode-p screen)
+  (with-copy-mode-dirty screen
     (let* ((row     (car (screen-copy-cursor screen)))
            (h       (screen-height screen))
            (sb-n    (length (screen-scrollback screen)))
@@ -277,8 +280,7 @@
            (delta   (- new-off offset))
            (new-row (max 0 (min (1- h) (+ row delta)))))
       (setf (screen-copy-offset screen) new-off
-            (screen-copy-cursor screen) (cons new-row (cdr (screen-copy-cursor screen)))
-            (screen-dirty-p screen) t))))
+            (screen-copy-cursor screen) (cons new-row (cdr (screen-copy-cursor screen)))))))
 
 ;;; ── Paragraph motion (vi { and }) ───────────────────────────────────────────
 ;;;
@@ -337,7 +339,7 @@
 
 (defun copy-mode-previous-paragraph (screen)
   "Jump to the nearest blank-line paragraph boundary above (vi {)."
-  (when (screen-copy-mode-p screen)
+  (with-copy-mode-dirty screen
     (let* ((cur-vrow (%cursor-vrow screen))
            (target   nil))
       ;; Walk upward from cur-vrow - 1, skipping any blanks immediately above,
@@ -350,7 +352,7 @@
 
 (defun copy-mode-next-paragraph (screen)
   "Jump to the nearest blank-line paragraph boundary below (vi })."
-  (when (screen-copy-mode-p screen)
+  (with-copy-mode-dirty screen
     (let* ((sb-n     (length (screen-scrollback screen)))
            (h        (screen-height screen))
            (total    (+ sb-n h))
@@ -367,7 +369,7 @@
 (defun copy-mode-begin-line-selection (screen)
   "Begin a full-line selection at the current row (tmux V binding).
    Sets copy-line-selection-p and activates the selection."
-  (when (screen-copy-mode-p screen)
+  (with-copy-mode-dirty screen
     (let* ((cur    (or (screen-copy-cursor screen) (cons 0 0)))
            (row    (car cur))
            ;; Mark at col 0, cursor at col width-1 to select full row.
@@ -377,8 +379,7 @@
             (screen-copy-mark-offset      screen) (screen-copy-offset screen)
             (screen-copy-cursor           screen) cursor
             (screen-copy-selecting        screen) t
-            (screen-copy-line-selection-p screen) t
-            (screen-dirty-p               screen) t))))
+            (screen-copy-line-selection-p screen) t))))
 
 ;;; ── Copy-mode yank variants (D and Y) ───────────────────────────────────────
 
