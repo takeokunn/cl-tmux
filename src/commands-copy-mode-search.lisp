@@ -208,60 +208,43 @@
              (copy-mode-search-forward  screen term)
              (copy-mode-search-backward screen term)))))))
 
+(defun %copy-mode-isearch-start (screen direction)
+  "Launch an incremental search prompt in DIRECTION (:forward or :backward).
+   Saves the current cursor/offset as the restore point; on-cancel restores it."
+  (setf *copy-mode-isearch-origin*
+        (cons (screen-copy-cursor screen) (screen-copy-offset screen)))
+  (cl-tmux/prompt:prompt-start
+   (if (eq direction :forward) "search-forward" "search-backward") ""
+   (lambda (term)
+     (setf *copy-mode-isearch-origin* nil)
+     (when (and term (plusp (length term)))
+       (setf (screen-copy-search-term screen) term)))
+   :on-change
+   (lambda (text)
+     (%copy-mode-isearch-from-origin screen text direction)
+     (setf cl-tmux::*dirty* t))
+   :on-cancel
+   (lambda ()
+     (let ((origin *copy-mode-isearch-origin*))
+       (setf *copy-mode-isearch-origin* nil)
+       (when (and origin (screen-copy-mode-p screen))
+         (setf (screen-copy-cursor screen) (car origin)
+               (screen-copy-offset screen) (cdr origin)
+               (screen-dirty-p screen) t))))))
+
 (defun copy-mode-search-forward-incremental (screen)
   "Start a forward incremental search prompt (C-s in copy-mode).
    Each keystroke moves the cursor to the nearest forward match.
    ESC/C-g cancels and restores the original position."
   (when (screen-copy-mode-p screen)
-    ;; Save the origin BEFORE opening the prompt.
-    (setf *copy-mode-isearch-origin*
-          (cons (screen-copy-cursor screen) (screen-copy-offset screen)))
-    (cl-tmux/prompt:prompt-start
-     "search-forward" ""
-     ;; on-submit: save term for n/N, clear origin
-     (lambda (term)
-       (setf *copy-mode-isearch-origin* nil)
-       (when (and term (plusp (length term)))
-         (setf (screen-copy-search-term screen) term)))
-     :on-change
-     (lambda (text)
-       (%copy-mode-isearch-from-origin screen text :forward)
-       (setf cl-tmux::*dirty* t))
-     :on-cancel
-     ;; Restore cursor to pre-search position.
-     (lambda ()
-       (let ((origin *copy-mode-isearch-origin*))
-         (setf *copy-mode-isearch-origin* nil)
-         (when (and origin (screen-copy-mode-p screen))
-           (setf (screen-copy-cursor screen) (car origin)
-                 (screen-copy-offset screen) (cdr origin)
-                 (screen-dirty-p screen) t)))))))
+    (%copy-mode-isearch-start screen :forward)))
 
 (defun copy-mode-search-backward-incremental (screen)
   "Start a backward incremental search prompt (C-r in copy-mode).
    Each keystroke moves the cursor to the nearest backward match.
    ESC/C-g cancels and restores the original position."
   (when (screen-copy-mode-p screen)
-    (setf *copy-mode-isearch-origin*
-          (cons (screen-copy-cursor screen) (screen-copy-offset screen)))
-    (cl-tmux/prompt:prompt-start
-     "search-backward" ""
-     (lambda (term)
-       (setf *copy-mode-isearch-origin* nil)
-       (when (and term (plusp (length term)))
-         (setf (screen-copy-search-term screen) term)))
-     :on-change
-     (lambda (text)
-       (%copy-mode-isearch-from-origin screen text :backward)
-       (setf cl-tmux::*dirty* t))
-     :on-cancel
-     (lambda ()
-       (let ((origin *copy-mode-isearch-origin*))
-         (setf *copy-mode-isearch-origin* nil)
-         (when (and origin (screen-copy-mode-p screen))
-           (setf (screen-copy-cursor screen) (car origin)
-                 (screen-copy-offset screen) (cdr origin)
-                 (screen-dirty-p screen) t)))))))
+    (%copy-mode-isearch-start screen :backward)))
 
 ;;; ── Bracket matching (vi %) ───────────────────────────────────────────────────
 ;;;
