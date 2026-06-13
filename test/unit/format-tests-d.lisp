@@ -367,17 +367,14 @@
 
 ;;; ── Format modifiers: #{=N:var} #{=-N:var} #{b:var} #{d:var} ─────────────────
 
-(test format-modifier-truncate-left
-  "#{=N:var} keeps the first N characters of the resolved value."
-  (is (string= "veryl" (fmt "#{=5:window_name}" :window-name "verylongname"))))
-
-(test format-modifier-truncate-right
-  "#{=-N:var} keeps the last N characters of the resolved value."
-  (is (string= "gname" (fmt "#{=-5:window_name}" :window-name "verylongname"))))
-
-(test format-modifier-truncate-shorter-than-limit-unchanged
-  "#{=N:var} leaves a value shorter than N untouched."
-  (is (string= "short" (fmt "#{=20:window_name}" :window-name "short"))))
+(test format-modifier-truncate-table
+  "#{=N:var} keeps the first N chars; #{=-N:var} keeps the last N; shorter values pass through."
+  (dolist (c '(("#{=5:window_name}"  "verylongname" "veryl" "left truncation: first 5 chars")
+               ("#{=-5:window_name}" "verylongname" "gname" "right truncation: last 5 chars")
+               ("#{=20:window_name}" "short"        "short" "shorter than limit → unchanged")))
+    (destructuring-bind (spec input expected desc) c
+      (is (string= expected (fmt spec :window-name input))
+          "~A: ~S → ~S" desc spec expected))))
 
 (test format-modifier-logical-or
   "#{||:a,b} returns 1 when either operand is truthy, else 0."

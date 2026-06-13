@@ -37,17 +37,13 @@
 
 ;;; ── Conditional form ─────────────────────────────────────────────────────────
 
-(test expand-format-conditional-true
-  "#{?1,yes,no} returns the true branch."
-  (is (string= "yes" (fmt "#{?1,yes,no}"))))
-
-(test expand-format-conditional-false
-  "#{?0,yes,no} returns the false branch."
-  (is (string= "no" (fmt "#{?0,yes,no}"))))
-
-(test expand-format-conditional-empty-is-false
-  "#{?,yes,no} with empty cond returns the false branch."
-  (is (string= "no" (fmt "#{?,yes,no}"))))
+(test expand-format-conditional-table
+  "#{?cond,true,false}: truthy condition → true branch; zero/empty → false branch."
+  (dolist (c '(("#{?1,yes,no}" "yes" "truthy condition → true branch")
+               ("#{?0,yes,no}" "no"  "zero condition → false branch")
+               ("#{?,yes,no}"  "no"  "empty condition → false branch")))
+    (destructuring-bind (input expected desc) c
+      (is (string= expected (fmt input)) "~A" desc))))
 
 ;;; ── Plain text and unknown specifiers ────────────────────────────────────────
 
@@ -362,58 +358,42 @@
 
 ;;; ── Internal helper unit tests ───────────────────────────────────────────────
 
-(test truthy-p-non-empty-string-is-true
-  "%truthy-p returns T for any non-empty, non-zero, non-false string."
-  (is-true  (cl-tmux/format::%truthy-p "1")     "\"1\" is truthy")
-  (is-true  (cl-tmux/format::%truthy-p "yes")   "\"yes\" is truthy")
-  (is-true  (cl-tmux/format::%truthy-p "hello") "arbitrary non-empty string is truthy"))
+(test truthy-p-table
+  "%truthy-p: non-empty/non-zero/non-false strings are truthy; empty, \"0\", \"false\" are not."
+  (dolist (c '(("1"     t   "\"1\" is truthy")
+               ("yes"   t   "\"yes\" is truthy")
+               ("hello" t   "arbitrary non-empty string is truthy")
+               (""      nil "empty string is not truthy")
+               ("0"     nil "\"0\" is not truthy")
+               ("false" nil "\"false\" is not truthy")
+               ("FALSE" nil "\"FALSE\" is not truthy (case-insensitive)")))
+    (destructuring-bind (input expected desc) c
+      (if expected
+          (is-true  (cl-tmux/format::%truthy-p input) "~A" desc)
+          (is-false (cl-tmux/format::%truthy-p input) "~A" desc))))
 
-(test truthy-p-falsy-strings
-  "%truthy-p returns NIL for empty string, \"0\", and \"false\" (case-insensitive)."
-  (is-false (cl-tmux/format::%truthy-p "")      "empty string is not truthy")
-  (is-false (cl-tmux/format::%truthy-p "0")     "\"0\" is not truthy")
-  (is-false (cl-tmux/format::%truthy-p "false") "\"false\" is not truthy")
-  (is-false (cl-tmux/format::%truthy-p "FALSE") "\"FALSE\" is not truthy (case-insensitive)"))
+(test variable-to-keyword-table
+  "%variable-to-keyword converts underscored names to hyphenated keywords and plain names to keywords."
+  (dolist (c '(("session_name" :session-name "session_name → :session-name")
+               ("window_index" :window-index "window_index → :window-index")
+               ("pane_index"   :pane-index   "pane_index → :pane-index")
+               ("time"         :time         "time → :time")
+               ("host"         :host         "host → :host")))
+    (destructuring-bind (input expected desc) c
+      (is (eq expected (cl-tmux/format::%variable-to-keyword input))
+          "~A" desc))))
 
-(test variable-to-keyword-converts-underscores
-  "%variable-to-keyword converts underscored names to hyphenated keywords."
-  (is (eq :session-name (cl-tmux/format::%variable-to-keyword "session_name"))
-      "session_name → :session-name")
-  (is (eq :window-index (cl-tmux/format::%variable-to-keyword "window_index"))
-      "window_index → :window-index")
-  (is (eq :pane-index   (cl-tmux/format::%variable-to-keyword "pane_index"))
-      "pane_index → :pane-index"))
-
-(test variable-to-keyword-no-underscore-passes-through
-  "%variable-to-keyword upcases a name with no underscores into a plain keyword."
-  (is (eq :time (cl-tmux/format::%variable-to-keyword "time"))
-      "time → :time")
-  (is (eq :host (cl-tmux/format::%variable-to-keyword "host"))
-      "host → :host"))
-
-(test split-conditional-both-branches
-  "%split-conditional parses ?cond,true,false into three parts."
-  (multiple-value-bind (cond-str true-str false-str)
-      (cl-tmux/format::%split-conditional "1,yes,no")
-    (is (string= "1"   cond-str)  "condition part")
-    (is (string= "yes" true-str)  "true branch")
-    (is (string= "no"  false-str) "false branch")))
-
-(test split-conditional-missing-false-branch
-  "%split-conditional returns empty string for missing false branch."
-  (multiple-value-bind (cond-str true-str false-str)
-      (cl-tmux/format::%split-conditional "1,yes")
-    (is (string= "1"   cond-str)  "condition part")
-    (is (string= "yes" true-str)  "true branch")
-    (is (string= ""    false-str) "false branch defaults to empty string")))
-
-(test split-conditional-no-commas-returns-condition-only
-  "%split-conditional with no commas returns the whole string as condition."
-  (multiple-value-bind (cond-str true-str false-str)
-      (cl-tmux/format::%split-conditional "something")
-    (is (string= "something" cond-str) "whole input is condition")
-    (is (string= ""          true-str) "true branch empty")
-    (is (string= ""          false-str) "false branch empty")))
+(test split-conditional-table
+  "%split-conditional parses the condition/true/false triple; missing branches default to empty."
+  (dolist (c '(("1,yes,no"  "1"         "yes" "no"  "both branches")
+               ("1,yes"     "1"         "yes" ""    "missing false branch → empty")
+               ("something" "something" ""    ""    "no commas → condition only")))
+    (destructuring-bind (input ec et ef desc) c
+      (multiple-value-bind (cond-str true-str false-str)
+          (cl-tmux/format::%split-conditional input)
+        (is (string= ec cond-str)  "~A: condition" desc)
+        (is (string= et true-str)  "~A: true branch" desc)
+        (is (string= ef false-str) "~A: false branch" desc))))
 
 (test lookup-returns-empty-for-missing-key
   "%lookup returns an empty string when the key is absent from the context."
@@ -426,12 +406,10 @@
     (is (string= "42"    (cl-tmux/format::%lookup ctx :count)) ":count → \"42\"")
     (is (string= "hello" (cl-tmux/format::%lookup ctx :label)) ":label → \"hello\"")))
 
-(test short-hostname-strips-domain
-  "%short-hostname returns the part before the first dot."
-  (is (string= "myhost" (cl-tmux/format::%short-hostname "myhost.example.com"))
-      "full FQDN → short host part"))
-
-(test short-hostname-no-dot-returns-full-string
-  "%short-hostname returns the full string when there is no dot."
-  (is (string= "myhost" (cl-tmux/format::%short-hostname "myhost"))
-      "no dot → full string unchanged"))
+(test short-hostname-table
+  "%short-hostname strips the domain suffix, or passes through unchanged when there is no dot."
+  (dolist (c '(("myhost.example.com" "myhost" "FQDN → short hostname")
+               ("myhost"             "myhost" "no dot → full string unchanged")))
+    (destructuring-bind (input expected desc) c
+      (is (string= expected (cl-tmux/format::%short-hostname input))
+          "~A: ~S → ~S" desc input expected))))
