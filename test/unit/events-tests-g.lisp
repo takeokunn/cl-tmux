@@ -295,31 +295,19 @@
 ;;; When the overlay is active and ESC [ A arrives, %overlay-escape-second-byte
 ;;; scrolls the overlay up; ESC [ B scrolls it down.
 
-(test overlay-escape-up-scrolls-overlay
-  "ESC [ A while an overlay is open scrolls the overlay up (offset -1)."
-  (with-fake-session (s)
-    (let ((*overlay* nil))
-      (show-overlay (format nil "~{line~A~%~}" (loop for i from 1 to 20 collect i)))
-      (let ((state (cl-tmux::make-input-state)))
-        ;; Feed ESC [ A one byte at a time.
-        (cl-tmux::process-byte s 27 state)
-        (cl-tmux::process-byte s 91 state)
-        (cl-tmux::process-byte s 65 state))
-      ;; After the sequence the overlay should still be open.
-      (is (overlay-active-p)
-          "overlay must remain open after ESC [ A (up arrow)"))))
-
-(test overlay-escape-down-scrolls-overlay
-  "ESC [ B while an overlay is open scrolls the overlay down (offset +1)."
-  (with-fake-session (s)
-    (let ((*overlay* nil))
-      (show-overlay (format nil "~{line~A~%~}" (loop for i from 1 to 20 collect i)))
-      (let ((state (cl-tmux::make-input-state)))
-        (cl-tmux::process-byte s 27 state)
-        (cl-tmux::process-byte s 91 state)
-        (cl-tmux::process-byte s 66 state))
-      (is (overlay-active-p)
-          "overlay must remain open after ESC [ B (down arrow)"))))
+(test overlay-escape-scroll-table
+  "ESC [ A and ESC [ B both scroll the overlay while keeping it open."
+  (dolist (row '((65 "ESC [ A (up arrow) must keep overlay open")
+                 (66 "ESC [ B (down arrow) must keep overlay open")))
+    (destructuring-bind (arrow-byte desc) row
+      (with-fake-session (s)
+        (let ((*overlay* nil))
+          (show-overlay (format nil "~{line~A~%~}" (loop for i from 1 to 20 collect i)))
+          (let ((state (cl-tmux::make-input-state)))
+            (cl-tmux::process-byte s 27 state)
+            (cl-tmux::process-byte s 91 state)
+            (cl-tmux::process-byte s arrow-byte state))
+          (is (overlay-active-p) desc))))))
 
 (test overlay-bare-esc-dismisses-overlay
   "A lone ESC (ESC + non-'[' byte) while an overlay is open dismisses it."
