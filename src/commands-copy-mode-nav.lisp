@@ -337,32 +337,30 @@
                 (screen-copy-cursor screen)  (cons new-row col))))
     (setf (screen-dirty-p screen) t)))
 
+(defun %find-paragraph-boundary (screen start direction total)
+  "Scan from START in DIRECTION (:up or :down) for the nearest blank vrow.
+   Returns the blank vrow found, or the hard boundary (0 for :up, TOTAL-1 for :down)."
+  (if (eq direction :up)
+      (loop for vrow downfrom start to 0
+            when (%copy-mode-row-blank-p screen vrow) return vrow
+            finally (return 0))
+      (loop for vrow from start below total
+            when (%copy-mode-row-blank-p screen vrow) return vrow
+            finally (return (1- total)))))
+
 (defun copy-mode-previous-paragraph (screen)
   "Jump to the nearest blank-line paragraph boundary above (vi {)."
   (with-copy-mode-dirty screen
-    (let* ((cur-vrow (%cursor-vrow screen))
-           (target   nil))
-      ;; Walk upward from cur-vrow - 1, skipping any blanks immediately above,
-      ;; then stopping at the first blank line found.
-      (loop for vrow downfrom (1- cur-vrow) to 0
-            do (when (%copy-mode-row-blank-p screen vrow)
-                 (setf target vrow)
-                 (return)))
-      (%set-cursor-vrow screen (or target 0)))))
+    (%set-cursor-vrow screen
+                      (%find-paragraph-boundary screen (1- (%cursor-vrow screen)) :up 0))))
 
 (defun copy-mode-next-paragraph (screen)
   "Jump to the nearest blank-line paragraph boundary below (vi })."
   (with-copy-mode-dirty screen
-    (let* ((sb-n     (length (screen-scrollback screen)))
-           (h        (screen-height screen))
-           (total    (+ sb-n h))
-           (cur-vrow (%cursor-vrow screen))
-           (target   nil))
-      (loop for vrow from (1+ cur-vrow) below total
-            do (when (%copy-mode-row-blank-p screen vrow)
-                 (setf target vrow)
-                 (return)))
-      (%set-cursor-vrow screen (or target (1- total))))))
+    (let* ((sb-n  (length (screen-scrollback screen)))
+           (total (+ sb-n (screen-height screen))))
+      (%set-cursor-vrow screen
+                        (%find-paragraph-boundary screen (1+ (%cursor-vrow screen)) :down total)))))
 
 ;;; ── Copy-mode selection: line-select (V) ────────────────────────────────────
 
@@ -430,21 +428,25 @@
                            (if till-p (min (1- w) (1+ c)) c))
                      (return t))))))
 
-(defun copy-mode-jump-forward (screen char)
-  "Jump to the next occurrence of CHAR on the current line (vi f<char>)."
-  (%copy-mode-jump screen :forward char nil))
+;;; Prolog-style fact table: (name direction till-p docstring)
+;;; define-jump-to-char-commands generates the four thin wrappers.
 
-(defun copy-mode-jump-backward (screen char)
-  "Jump to the previous occurrence of CHAR on the current line (vi F<char>)."
-  (%copy-mode-jump screen :backward char nil))
+(defmacro define-jump-to-char-commands (&rest specs)
+  "Generate jump-to-char wrapper functions from a declarative (name dir till doc) table.
+   Each wrapper calls %copy-mode-jump with the bound SCREEN, CHAR, DIR, and TILL."
+  `(progn
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (name dir till doc) spec
+                   `(defun ,name (screen char)
+                      ,doc
+                      (%copy-mode-jump screen ,dir char ,till))))
+               specs)))
 
-(defun copy-mode-jump-to (screen char)
-  "Jump to just before the next occurrence of CHAR on the line (vi t<char>)."
-  (%copy-mode-jump screen :forward char t))
-
-(defun copy-mode-jump-to-backward (screen char)
-  "Jump to just after the previous occurrence of CHAR on the line (vi T<char>)."
-  (%copy-mode-jump screen :backward char t))
+(define-jump-to-char-commands
+  (copy-mode-jump-forward    :forward  nil "Jump to next CHAR on current line (vi f<char>).")
+  (copy-mode-jump-backward   :backward nil "Jump to previous CHAR on current line (vi F<char>).")
+  (copy-mode-jump-to         :forward  t   "Jump to just before next CHAR on current line (vi t<char>).")
+  (copy-mode-jump-to-backward :backward t  "Jump to just after previous CHAR on current line (vi T<char>)."))
 
 (defun copy-mode-jump-again (screen)
   "Repeat the last jump-to-char with the same direction, char, and mode (vi ;)."
@@ -469,19 +471,26 @@
              (> line-number 0))
     (%set-cursor-vrow screen (1- line-number))))
 
-(defun copy-mode-copy-end-of-line (screen)
-  "Copy from the current cursor column to the end of the line, then exit copy mode."
-  (when (screen-copy-mode-p screen)
-    (let* ((row (car (screen-copy-cursor screen)))
-           (col (cdr (screen-copy-cursor screen)))
-           (w   (screen-width screen)))
-      (%copy-row-range-to-paste-buffer screen row col w))
-    (copy-mode-exit screen)))
+;;; Prolog-style fact table: (name from-col-expr doc)
+;;; FROM-COL-EXPR may reference COL (cursor column) and W (row width).
 
-(defun copy-mode-copy-line (screen)
-  "Copy the full current line (all columns), then exit copy mode."
-  (when (screen-copy-mode-p screen)
-    (let* ((row (car (screen-copy-cursor screen)))
-           (w   (screen-width screen)))
-      (%copy-row-range-to-paste-buffer screen row 0 w))
-    (copy-mode-exit screen)))
+(defmacro define-copy-to-buffer-commands (&rest specs)
+  "Generate copy-to-paste-buffer functions from a declarative (name from-col-expr doc) table.
+   FROM-COL-EXPR may reference COL (cursor column) and W (screen width)."
+  `(progn
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (name from-col-expr doc) spec
+                   `(defun ,name (screen)
+                      ,doc
+                      (when (screen-copy-mode-p screen)
+                        (let* ((row (car (screen-copy-cursor screen)))
+                               (col (cdr (screen-copy-cursor screen)))
+                               (w   (screen-width screen)))
+                          (declare (ignorable col))
+                          (%copy-row-range-to-paste-buffer screen row ,from-col-expr w))
+                        (copy-mode-exit screen)))))
+               specs)))
+
+(define-copy-to-buffer-commands
+  (copy-mode-copy-end-of-line col "Copy from the current cursor column to end of line, then exit copy mode.")
+  (copy-mode-copy-line        0   "Copy the full current line (all columns), then exit copy mode."))
