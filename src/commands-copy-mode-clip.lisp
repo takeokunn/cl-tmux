@@ -28,6 +28,16 @@
                            (write-char #\Newline out)))))))
         (if (plusp (length text)) text nil)))))
 
+;;; ── Selection-text dispatch helper ──────────────────────────────────────────
+
+(defun %get-selection-text (screen)
+  "Return the selected text for SCREEN, respecting rectangle-select mode.
+   Delegates to %rectangle-selection-text when rect-select is active, else
+   %selection-text."
+  (if (screen-copy-rect-select-p screen)
+      (%rectangle-selection-text screen)
+      (%selection-text screen)))
+
 ;;; ── copy-pipe helper ─────────────────────────────────────────────────────────
 ;;;
 ;;; When the "copy-command" option is set to a non-empty string, the yank text
@@ -70,9 +80,7 @@
    then exit copy mode.  In rectangle-select mode the rectangular region is used.
    When set-clipboard is on/external, also emits OSC 52 to the host terminal so
    the selection reaches the system clipboard."
-  (let ((text (if (screen-copy-rect-select-p screen)
-                  (%rectangle-selection-text screen)
-                  (%selection-text screen))))
+  (let ((text (%get-selection-text screen)))
     (when (and text (plusp (length text)))
       (cl-tmux/buffer:add-paste-buffer text)
       (%maybe-copy-to-clipboard screen text)
@@ -104,9 +112,7 @@
    If the paste buffer is empty the selection is pushed as a new entry.
    Rectangle-select mode is honoured."
   (when (screen-copy-mode-p screen)
-    (let ((text (if (screen-copy-rect-select-p screen)
-                    (%rectangle-selection-text screen)
-                    (%selection-text screen))))
+    (let ((text (%get-selection-text screen)))
       (when (and text (plusp (length text)))
         (let ((existing (cl-tmux/buffer:get-paste-buffer 0)))
           (if existing
@@ -146,9 +152,7 @@
   "Copy selection to paste buffer and pipe to CMD (or copy-command option if NIL).
    Shared logic for copy-pipe variants; does NOT exit copy mode."
   (when (screen-copy-mode-p screen)
-    (let ((text (if (screen-copy-rect-select-p screen)
-                    (%rectangle-selection-text screen)
-                    (%selection-text screen))))
+    (let ((text (%get-selection-text screen)))
       (when (and text (plusp (length text)))
         (cl-tmux/buffer:add-paste-buffer text)
         (let ((effective-cmd (%resolve-copy-pipe-cmd cmd)))

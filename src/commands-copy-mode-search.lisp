@@ -124,39 +124,38 @@
 
 ;;; ── Public search commands ───────────────────────────────────────────────────
 
+(defun %copy-mode-search-direction (screen term direction)
+  "Shared search engine for copy-mode-search-{forward,backward}.
+   DIRECTION is :forward or :backward.  Saves TERM; wraps when wrap-search is on.
+   Forward starts one past the cursor col; backward starts at the cursor col."
+  (when (and (screen-copy-mode-p screen) term (plusp (length term)))
+    (setf (screen-copy-search-term screen) term)
+    (let* ((cursor     (or (screen-copy-cursor screen) (cons 0 0)))
+           (start-vrow (%copy-mode-cursor-virtual-row screen))
+           (forwardp   (eq direction :forward))
+           (finder     (if forwardp #'%copy-mode-find-forward #'%copy-mode-find-backward))
+           (start-col  (if forwardp (1+ (cdr cursor)) (cdr cursor))))
+      (multiple-value-bind (found-vrow found-col)
+          (funcall finder screen term start-vrow start-col)
+        (when (and (null found-vrow) (%wrap-search-p))
+          (multiple-value-setq (found-vrow found-col)
+            (if forwardp
+                (funcall finder screen term 0 0)
+                (funcall finder screen term
+                         (1- (%copy-mode-total-rows screen))
+                         (screen-width screen)))))
+        (when found-vrow
+          (%copy-mode-set-virtual-row screen found-vrow found-col))))))
+
 (defun copy-mode-search-forward (screen term)
   "Search forward from the current cursor for TERM through the full scrollback + live grid.
    Saves TERM for n/N repeats.  Wraps to top when wrap-search is on."
-  (when (and (screen-copy-mode-p screen) term (plusp (length term)))
-    (setf (screen-copy-search-term screen) term)
-    (let* ((cursor    (or (screen-copy-cursor screen) (cons 0 0)))
-           (start-vrow (%copy-mode-cursor-virtual-row screen))
-           (start-col  (1+ (cdr cursor))))    ; advance past current position on same row
-      (multiple-value-bind (found-vrow found-col)
-          (%copy-mode-find-forward screen term start-vrow start-col)
-        (when (and (null found-vrow) (%wrap-search-p))
-          (multiple-value-setq (found-vrow found-col)
-            (%copy-mode-find-forward screen term 0 0)))
-        (when found-vrow
-          (%copy-mode-set-virtual-row screen found-vrow found-col))))))
+  (%copy-mode-search-direction screen term :forward))
 
 (defun copy-mode-search-backward (screen term)
   "Search backward from the current cursor for TERM through the full scrollback + live grid.
    Saves TERM for n/N repeats.  Wraps to bottom when wrap-search is on."
-  (when (and (screen-copy-mode-p screen) term (plusp (length term)))
-    (setf (screen-copy-search-term screen) term)
-    (let* ((cursor    (or (screen-copy-cursor screen) (cons 0 0)))
-           (start-vrow (%copy-mode-cursor-virtual-row screen))
-           (start-col  (cdr cursor)))
-      (multiple-value-bind (found-vrow found-col)
-          (%copy-mode-find-backward screen term start-vrow start-col)
-        (when (and (null found-vrow) (%wrap-search-p))
-          (let ((bottom-vrow (1- (%copy-mode-total-rows screen))))
-            (multiple-value-setq (found-vrow found-col)
-              (%copy-mode-find-backward screen term bottom-vrow
-                                        (screen-width screen)))))
-        (when found-vrow
-          (%copy-mode-set-virtual-row screen found-vrow found-col))))))
+  (%copy-mode-search-direction screen term :backward))
 
 (defun copy-mode-search-next (screen)
   "Repeat the last search in the forward direction."
