@@ -8,16 +8,17 @@
 
 (test path-basename-edge-cases
   "%path-basename handles roots, trailing slashes, and bare names."
-  (is (string= "c"   (cl-tmux/format::%path-basename "/a/b/c")))
-  (is (string= "b"   (cl-tmux/format::%path-basename "/a/b/")))
-  (is (string= "foo" (cl-tmux/format::%path-basename "foo")))
-  (is (string= "/"   (cl-tmux/format::%path-basename "/"))))
+  (dolist (c '(("/a/b/c" "c") ("/a/b/" "b") ("foo" "foo") ("/" "/")))
+    (destructuring-bind (input expected) c
+      (is (string= expected (cl-tmux/format::%path-basename input))
+          "%path-basename ~S → ~S" input expected))))
 
 (test path-dirname-edge-cases
   "%path-dirname handles roots, trailing slashes, and bare names."
-  (is (string= "/a/b" (cl-tmux/format::%path-dirname "/a/b/c")))
-  (is (string= "/"    (cl-tmux/format::%path-dirname "/foo")))
-  (is (string= "."    (cl-tmux/format::%path-dirname "foo"))))
+  (dolist (c '(("/a/b/c" "/a/b") ("/foo" "/") ("foo" ".")))
+    (destructuring-bind (input expected) c
+      (is (string= expected (cl-tmux/format::%path-dirname input))
+          "%path-dirname ~S → ~S" input expected))))
 
 ;;; ── Substitute modifier: #{s/PAT/REP/[i]:var} ────────────────────────────────
 
@@ -36,13 +37,12 @@
 (test string-replace-all-unit
   "%string-replace-all replaces all occurrences; case-insensitive on request;
    empty pattern returns the input unchanged."
-  (is (string= "a-b-c" (cl-tmux/format::%string-replace-all "axbxc" "x" "-")))
-  (is (string= "XXX"   (cl-tmux/format::%string-replace-all "aAa" "a" "X" t))
-      "case-insensitive replaces all three a/A")
-  (is (string= "XAX"   (cl-tmux/format::%string-replace-all "aAa" "a" "X"))
-      "case-sensitive replaces only the two lowercase a")
-  (is (string= "abc"   (cl-tmux/format::%string-replace-all "abc" "" "Z"))
-      "empty pattern returns the input unchanged"))
+  (dolist (c '(("axbxc" "x" "-" nil "a-b-c" "basic replacement")
+               ("aAa"   "a" "X" t   "XXX"   "case-insensitive replaces all three a/A")
+               ("aAa"   "a" "X" nil "XAX"   "case-sensitive replaces only the two lowercase a")
+               ("abc"   ""  "Z" nil "abc"    "empty pattern returns the input unchanged")))
+    (destructuring-bind (str pat rep ic expected desc) c
+      (is (string= expected (cl-tmux/format::%string-replace-all str pat rep ic)) "~A" desc))))
 
 ;;; ── Nested #{...} (balanced braces) + comparison operators ───────────────────
 
@@ -68,10 +68,10 @@
 
 (test format-comparison-equal-and-not-equal
   "#{==:a,b} → 1 when equal else 0; #{!=:a,b} is its negation."
-  (is (string= "1" (fmt "#{==:foo,foo}")))
-  (is (string= "0" (fmt "#{==:foo,bar}")))
-  (is (string= "1" (fmt "#{!=:foo,bar}")))
-  (is (string= "0" (fmt "#{!=:foo,foo}"))))
+  (dolist (c '(("#{==:foo,foo}" "1") ("#{==:foo,bar}" "0")
+               ("#{!=:foo,bar}" "1") ("#{!=:foo,foo}" "0")))
+    (destructuring-bind (spec expected) c
+      (is (string= expected (fmt spec)) "~S → ~S" spec expected))))
 
 (test format-comparison-expands-nested-sides
   "#{==:#{var},literal} expands the nested side before comparing."
@@ -86,14 +86,16 @@
 
 (test format-comparison-numeric-operators
   "#{<:a,b} #{>:a,b} #{<=:a,b} #{>=:a,b} compare the sides numerically."
-  (is (string= "1" (fmt "#{<:5,10}"))  "5 < 10")
-  (is (string= "0" (fmt "#{<:10,5}"))  "not 10 < 5")
-  (is (string= "1" (fmt "#{>:10,5}"))  "10 > 5")
-  (is (string= "0" (fmt "#{>:5,10}"))  "not 5 > 10")
-  (is (string= "1" (fmt "#{<=:5,5}"))  "5 <= 5")
-  (is (string= "0" (fmt "#{<=:6,5}"))  "not 6 <= 5")
-  (is (string= "1" (fmt "#{>=:5,5}"))  "5 >= 5")
-  (is (string= "0" (fmt "#{>=:4,5}"))  "not 4 >= 5"))
+  (dolist (c '(("#{<:5,10}"  "1" "5 < 10")
+               ("#{<:10,5}"  "0" "not 10 < 5")
+               ("#{>:10,5}"  "1" "10 > 5")
+               ("#{>:5,10}"  "0" "not 5 > 10")
+               ("#{<=:5,5}"  "1" "5 <= 5")
+               ("#{<=:6,5}"  "0" "not 6 <= 5")
+               ("#{>=:5,5}"  "1" "5 >= 5")
+               ("#{>=:4,5}"  "0" "not 4 >= 5")))
+    (destructuring-bind (spec expected desc) c
+      (is (string= expected (fmt spec)) "~A" desc))))
 
 (test format-comparison-numeric-nested-and-nonnumeric
   "Numeric comparison expands nested sides; a non-numeric side parses as 0."

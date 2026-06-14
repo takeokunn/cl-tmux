@@ -281,11 +281,10 @@
 (test format-context-pane-variables-default-when-pane-nil
   "With a NIL pane, structural pane variables default to 0 (empty-safe)."
   (let ((ctx (cl-tmux/format:format-context-from-session nil nil nil)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{pane_width}"  ctx)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{pane_id}"     ctx)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{pane_right}"  ctx)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{pane_bottom}" ctx)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{pane_active}" ctx)))))
+    (dolist (spec '("#{pane_width}" "#{pane_id}" "#{pane_right}"
+                    "#{pane_bottom}" "#{pane_active}"))
+      (is (string= "0" (cl-tmux/format:expand-format spec ctx))
+          "~S must default to 0 with nil pane" spec))))
 
 (test window-bell-flag-respects-monitor-bell
   "#{window_bell_flag} shows ! only when monitor-bell is on (default); monitor-bell
@@ -347,19 +346,22 @@
 
 (test format-modifier-logical-or
   "#{||:a,b} returns 1 when either operand is truthy, else 0."
-  (is (string= "1" (fmt "#{||:1,0}")) "1 || 0 → 1")
-  (is (string= "1" (fmt "#{||:0,1}")) "0 || 1 → 1")
-  (is (string= "0" (fmt "#{||:0,0}")) "0 || 0 → 0")
-  (is (string= "0" (fmt "#{||:,}"))   "empty || empty → 0")
-  (is (string= "1" (fmt "#{||:#{a},#{b}}" :a "" :b "x"))
-      "operands expand as formats before the truthiness test"))
+  (dolist (c '(("#{||:1,0}"       ()           "1" "1 || 0 → 1")
+               ("#{||:0,1}"       ()           "1" "0 || 1 → 1")
+               ("#{||:0,0}"       ()           "0" "0 || 0 → 0")
+               ("#{||:,}"         ()           "0" "empty || empty → 0")
+               ("#{||:#{a},#{b}}" (:a "" :b "x") "1" "operands expand before the truthiness test")))
+    (destructuring-bind (spec ctx expected desc) c
+      (is (string= expected (cl-tmux/format:expand-format spec ctx)) "~A" desc))))
 
 (test format-modifier-logical-and
   "#{&&:a,b} returns 1 only when both operands are truthy."
-  (is (string= "1" (fmt "#{&&:1,1}")) "1 && 1 → 1")
-  (is (string= "0" (fmt "#{&&:1,0}")) "1 && 0 → 0")
-  (is (string= "0" (fmt "#{&&:0,1}")) "0 && 1 → 0")
-  (is (string= "0" (fmt "#{&&:0,0}")) "0 && 0 → 0"))
+  (dolist (c '(("#{&&:1,1}" "1" "1 && 1 → 1")
+               ("#{&&:1,0}" "0" "1 && 0 → 0")
+               ("#{&&:0,1}" "0" "0 && 1 → 0")
+               ("#{&&:0,0}" "0" "0 && 0 → 0")))
+    (destructuring-bind (spec expected desc) c
+      (is (string= expected (fmt spec)) "~A" desc))))
 
 (test format-modifier-logical-nested-in-conditional
   "#{?#{||:cond1,cond2},yes,no} chooses the branch by the logical result."
@@ -368,9 +370,11 @@
 
 (test format-modifier-quote
   "#{q:var} backslash-escapes shell-special characters in the resolved value."
-  (is (string= "a\\ b"  (fmt "#{q:p}" :p "a b"))   "space is escaped")
-  (is (string= "a\\;b"  (fmt "#{q:p}" :p "a;b"))   "semicolon is escaped")
-  (is (string= "plain"  (fmt "#{q:p}" :p "plain")) "ordinary text is unchanged"))
+  (dolist (c '(("a b"   "a\\ b"  "space is escaped")
+               ("a;b"   "a\\;b"  "semicolon is escaped")
+               ("plain" "plain"  "ordinary text is unchanged")))
+    (destructuring-bind (input expected desc) c
+      (is (string= expected (fmt "#{q:p}" :p input)) "~A" desc))))
 
 (test format-modifier-char-from-code-table
   "#{a:N} yields the single character at code point N; nested format operands work."
