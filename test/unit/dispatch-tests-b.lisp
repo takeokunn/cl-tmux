@@ -147,14 +147,12 @@
 (test substitute-percent-handles-literal-and-edge-cases
   "%% is a literal percent; a missing arg expands to empty; %1 does not match
    inside %10; a non-arg %x is left verbatim."
-  (is (string= "100% done" (cl-tmux::%substitute-percent "100%% done" '()))
-      "%% → literal %")
-  (is (string= "x" (cl-tmux::%substitute-percent "x%2" '("only-one")))
-      "a reference past the arg list expands to empty")
-  (is (string= "v0" (cl-tmux::%substitute-percent "%10" '("v")))
-      "%1 must not match inside %10 (single left-to-right pass)")
-  (is (string= "%z" (cl-tmux::%substitute-percent "%z" '("a")))
-      "a non-digit %x is left verbatim"))
+  (dolist (c '(("100%% done" ()          "100% done" "%% → literal %")
+               ("x%2"        ("only-one") "x"         "reference past arg list → empty")
+               ("%10"        ("v")        "v0"        "%1 must not match inside %10")
+               ("%z"         ("a")        "%z"        "non-digit %x is left verbatim")))
+    (destructuring-bind (template args expected desc) c
+      (is (string= expected (cl-tmux::%substitute-percent template args)) "~A" desc))))
 
 ;;; ── :command-prompt dispatch ─────────────────────────────────────────────────
 
