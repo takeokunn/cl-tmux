@@ -94,7 +94,10 @@
     (let ((*overlay* nil))
       (cl-tmux::%run-command-line s "show-option -v status")
       (is (and *overlay* (null (search "status" *overlay*)))
-          "-v must show only the value"))))
+          "-v must show only the value"))
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line s "show-option -qv no-such-option")
+      (is (null *overlay*) "-qv must suppress missing option output"))))
 
 ;;; ── :respawn-pane dispatch ────────────────────────────────────────────────────
 

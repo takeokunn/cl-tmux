@@ -119,7 +119,8 @@
   "Return only NAME's value for `show-option -v`, or NIL when NAME is unset."
   (let* ((line (cl-tmux/options:show-option name scope))
          (prefix (format nil "~A " name)))
-    (when (and (>= (length line) (length prefix))
+    (when (and (not (search "(not set)" line))
+               (>= (length line) (length prefix))
                (string= prefix line :end2 (length prefix)))
       (string-right-trim '(#\Newline #\Return)
                          (subseq line (length prefix))))))
