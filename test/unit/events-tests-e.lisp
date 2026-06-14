@@ -68,6 +68,8 @@
     (seed-scrollback screen 10)
     ;; Use the named constants from events-core.lisp for each byte.
     (dolist (byte (list #.cl-tmux::+byte-h+
+                        #.cl-tmux::+byte-j+
+                        #.cl-tmux::+byte-k+
                         #.cl-tmux::+byte-l+
                         #.cl-tmux::+byte-w+
                         #.cl-tmux::+byte-b+
@@ -263,6 +265,49 @@
       (cl-tmux::process-byte s (char-code #\v) state)
       (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
                 "vi mode must dispatch the copy-mode-vi binding"))))
+
+(test copy-mode-vi-default-hjkl-move-cursor
+  "The default copy-mode-vi table provides hjkl cursor movement."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "vi")
+    (with-copy-mode-state (s screen state)
+      (seed-scrollback screen 10)
+      (setf (cl-tmux/terminal:screen-copy-cursor screen) (cons 1 1))
+      (cl-tmux::process-byte s (char-code #\j) state)
+      (is (equal (cons 2 1) (cl-tmux/terminal:screen-copy-cursor screen))
+          "j must move the copy cursor down")
+      (cl-tmux::process-byte s (char-code #\k) state)
+      (is (equal (cons 1 1) (cl-tmux/terminal:screen-copy-cursor screen))
+          "k must move the copy cursor up")
+      (cl-tmux::process-byte s (char-code #\l) state)
+      (is (equal (cons 1 2) (cl-tmux/terminal:screen-copy-cursor screen))
+          "l must move the copy cursor right")
+      (cl-tmux::process-byte s (char-code #\h) state)
+      (is (equal (cons 1 1) (cl-tmux/terminal:screen-copy-cursor screen))
+          "h must move the copy cursor left"))))
+
+(test copy-mode-vi-pageup-uses-copy-mode-key-table
+  "In vi mode, CSI PageUp uses the copy-mode-vi table before the scroll fallback."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "vi")
+    (cl-tmux/config:key-table-bind "copy-mode-vi" "PageUp" :copy-mode-exit)
+    (with-copy-mode-state (s screen state)
+      (dolist (byte '(27 91 53 126))
+        (cl-tmux::process-byte s byte state))
+      (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
+                "copy-mode-vi PageUp binding must fire"))))
+
+(test copy-mode-pagedown-uses-emacs-copy-mode-key-table
+  "In emacs mode, CSI PageDown uses the copy-mode table."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "emacs")
+    (cl-tmux/config:key-table-bind "copy-mode-vi" "PageDown" :copy-mode-page-up)
+    (cl-tmux/config:key-table-bind "copy-mode" "PageDown" :copy-mode-exit)
+    (with-copy-mode-state (s screen state)
+      (dolist (byte '(27 91 54 126))
+        (cl-tmux::process-byte s byte state))
+      (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
+                "copy-mode PageDown binding must fire"))))
 
 (test copy-mode-key-table-selection-follows-mode-keys-emacs
   "In emacs mode, copy-mode input uses the copy-mode table."

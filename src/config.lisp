@@ -58,6 +58,9 @@
 (defconstant +table-copy-mode+
   (%constant-value '+table-copy-mode+ "copy-mode")
   "Name of the copy-mode key-table.")
+(defconstant +table-copy-mode-vi+
+  (%constant-value '+table-copy-mode-vi+ "copy-mode-vi")
+  "Name of the vi copy-mode key-table.")
 
 ;;; ── Shell default ─────────────────────────────────────────────────────────
 ;;;
@@ -99,7 +102,8 @@
 ;;;
 ;;; *key-tables* maps table-name (string) → hash-table of chord → (keyword . flags).
 ;;; Flags is a plist; :repeatable T means the prefix stays active after dispatch.
-;;; Standard table names: +table-prefix+, +table-root+, +table-copy-mode+.
+;;; Standard table names: +table-prefix+, +table-root+,
+;;; +table-copy-mode+, +table-copy-mode-vi+.
 ;;;
 ;;; set-key-binding / remove-key-binding are thin wrappers around key-table-bind
 ;;; for the prefix table — the only table that matters for the main dispatch path.
@@ -301,6 +305,20 @@
 
 ;;; ── Default emacs copy-mode bindings ─────────────────────────────────────
 
+(defun %bind-copy-mode-named-navigation (table-name)
+  "Install common named-key copy-mode navigation bindings into TABLE-NAME."
+  (dolist (binding '(("Up"       :copy-mode-cursor-up)
+                     ("Down"     :copy-mode-cursor-down)
+                     ("Left"     :copy-mode-cursor-left)
+                     ("Right"    :copy-mode-cursor-right)
+                     ("PageUp"   :copy-mode-page-up)
+                     ("PageDown" :copy-mode-page-down)
+                     ("Home"     :copy-mode-line-start)
+                     ("End"      :copy-mode-line-end)))
+    (destructuring-bind (key command) binding
+      (key-table-bind table-name key command)))
+  (values))
+
 (defun install-default-copy-mode-bindings ()
   "Populate the 'copy-mode' (emacs) key table with tmux 3.x default bindings.
    Meta bindings use names like \"M-f\" so they match what %meta-key-name produces
@@ -320,12 +338,51 @@
   ;; selection copy (emacs M-w = copy without cut)
   (key-table-bind +table-copy-mode+ "M-w" :copy-mode-yank)
   ;; back-to-indentation (emacs M-m)
-  (key-table-bind +table-copy-mode+ "M-m" :copy-mode-back-to-indentation))
+  (key-table-bind +table-copy-mode+ "M-m" :copy-mode-back-to-indentation)
+  (%bind-copy-mode-named-navigation +table-copy-mode+))
+
+(defun install-default-copy-mode-vi-bindings ()
+  "Populate the 'copy-mode-vi' key table with tmux 3.x default bindings."
+  (dolist (binding `((#\q :copy-mode-exit)
+                     (#\i :copy-mode-exit)
+                     (#\h :copy-mode-cursor-left)
+                     (#\j :copy-mode-cursor-down)
+                     (#\k :copy-mode-cursor-up)
+                     (#\l :copy-mode-cursor-right)
+                     (#\Space :copy-mode-begin-selection)
+                     (#\v :copy-mode-begin-selection)
+                     (#\V :copy-mode-begin-line-selection)
+                     (#\y :copy-mode-yank)
+                     (#\w :copy-mode-word-forward)
+                     (#\b :copy-mode-word-backward)
+                     (#\e :copy-mode-word-end)
+                     (#\W :copy-mode-space-forward)
+                     (#\B :copy-mode-space-backward)
+                     (#\E :copy-mode-space-end)
+                     (#\0 :copy-mode-line-start)
+                     (#\^ :copy-mode-back-to-indentation)
+                     (#\$ :copy-mode-line-end)
+                     (#\g :copy-mode-top)
+                     (#\G :copy-mode-bottom)
+                     (#\H :copy-mode-high)
+                     (#\M :copy-mode-middle)
+                     (#\L :copy-mode-low)
+                     (#\D :copy-mode-copy-end-of-line)
+                     (#\Y :copy-mode-copy-line)
+                     (#\A :copy-mode-append-selection)
+                     (#\n :copy-mode-search-next)
+                     (#\N :copy-mode-search-prev)
+                     (#\/ :copy-mode-search-forward-prompt)
+                     (#\? :copy-mode-search-backward-prompt)
+                     (#\= :copy-mode-choose-buffer)))
+    (destructuring-bind (key command) binding
+      (key-table-bind +table-copy-mode-vi+ key command)))
+  (%bind-copy-mode-named-navigation +table-copy-mode-vi+))
 
 ;;; ── Initialisation ────────────────────────────────────────────────────────
 
 (defun initialize-default-key-tables ()
-  "Install the standard default prefix bindings, the C-b C-b → :send-prefix
+  "Install the standard default prefix bindings, the C-b C-b -> :send-prefix
    binding, and ensure the root/copy-mode tables exist.
    Called once at load time and by test isolation helpers (idempotent)."
   (install-default-prefix-bindings)
@@ -333,7 +390,9 @@
   (set-key-binding (code-char +prefix-key-code+) :send-prefix)
   (ensure-key-table +table-root+)
   (ensure-key-table +table-copy-mode+)
-  (install-default-copy-mode-bindings))
+  (ensure-key-table +table-copy-mode-vi+)
+  (install-default-copy-mode-bindings)
+  (install-default-copy-mode-vi-bindings))
 
 ;;; Initialise tables at load time.
 (initialize-default-key-tables)

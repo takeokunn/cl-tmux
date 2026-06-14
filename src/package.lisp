@@ -10,6 +10,7 @@
    #:+table-prefix+
    #:+table-root+
    #:+table-copy-mode+
+   #:+table-copy-mode-vi+
    #:*default-shell*
    #:*status-height*
    #:+pty-buf-size+

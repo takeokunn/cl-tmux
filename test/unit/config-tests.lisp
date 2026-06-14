@@ -182,6 +182,27 @@
       (is (search "bind-key -T prefix -r C-Right resize-pane -R 1" text)
           "list-keys must show repeatable C-Right resize binding"))))
 
+(test default-copy-mode-vi-bindings-are-listed
+  "Default copy-mode-vi keys are present in the key table and list-keys output."
+  (with-isolated-config
+    (let ((j-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\j))
+          (h-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\h))
+          (page-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" "PageUp"))
+          (text (cl-tmux/config:describe-key-bindings-for-table "copy-mode-vi")))
+      (is (eq :copy-mode-cursor-down
+              (cl-tmux/config:key-table-command j-entry))
+          "copy-mode-vi j must move down")
+      (is (eq :copy-mode-cursor-left
+              (cl-tmux/config:key-table-command h-entry))
+          "copy-mode-vi h must move left")
+      (is (eq :copy-mode-page-up
+              (cl-tmux/config:key-table-command page-entry))
+          "copy-mode-vi PageUp must page up")
+      (is (search "bind-key -T copy-mode-vi j copy-mode-cursor-down" text)
+          "list-keys must show copy-mode-vi j")
+      (is (search "bind-key -T copy-mode-vi PageUp copy-mode-page-up" text)
+          "list-keys must show copy-mode-vi PageUp"))))
+
 ;;; ── +max-scrollback-lines+ constant ───────────────────────────────────────
 
 (test max-scrollback-lines-constant
@@ -199,8 +220,8 @@
       "*key-tables* must be a hash-table"))
 
 (test key-tables-required-tables-exist
-  "The \"prefix\" and \"root\" key-tables are both created by sync-key-tables-from-bindings."
-  (dolist (name '("prefix" "root"))
+  "The standard key-tables are created by initialize-default-key-tables."
+  (dolist (name '("prefix" "root" "copy-mode" "copy-mode-vi"))
     (is (not (null (gethash name cl-tmux/config:*key-tables*)))
         "\"~A\" table must exist in *key-tables*" name)))
 
@@ -327,18 +348,22 @@
     (is (not (null (gethash "root"      cl-tmux/config:*key-tables*)))
         "\"root\" table must exist after double initialization")
     (is (not (null (gethash "copy-mode" cl-tmux/config:*key-tables*)))
-        "\"copy-mode\" table must exist after double initialization")))
+        "\"copy-mode\" table must exist after double initialization")
+    (is (not (null (gethash "copy-mode-vi" cl-tmux/config:*key-tables*)))
+        "\"copy-mode-vi\" table must exist after double initialization")))
 
 ;;; ── Key-table name constants ──────────────────────────────────────────────
 
 (test table-name-constants
-  "+table-prefix+, +table-root+, +table-copy-mode+ have their expected string values."
+  "Standard key-table constants have their expected string values."
   (is (string= "prefix"    cl-tmux/config:+table-prefix+)
       "+table-prefix+ must be \"prefix\"")
   (is (string= "root"      cl-tmux/config:+table-root+)
       "+table-root+ must be \"root\"")
   (is (string= "copy-mode" cl-tmux/config:+table-copy-mode+)
-      "+table-copy-mode+ must be \"copy-mode\""))
+      "+table-copy-mode+ must be \"copy-mode\"")
+  (is (string= "copy-mode-vi" cl-tmux/config:+table-copy-mode-vi+)
+      "+table-copy-mode-vi+ must be \"copy-mode-vi\""))
 
 ;;; ── *default-shell* and *status-height* initial values ───────────────────
 
@@ -407,9 +432,11 @@
 ;;; ── copy-mode table exists after initialize ───────────────────────────────
 
 (test key-tables-copy-mode-table-exists
-  "The \"copy-mode\" key-table is created by initialize-default-key-tables."
+  "The copy-mode key-tables are created by initialize-default-key-tables."
   (is (not (null (gethash "copy-mode" cl-tmux/config:*key-tables*)))
-      "\"copy-mode\" table must exist in *key-tables*"))
+      "\"copy-mode\" table must exist in *key-tables*")
+  (is (not (null (gethash "copy-mode-vi" cl-tmux/config:*key-tables*)))
+      "\"copy-mode-vi\" table must exist in *key-tables*"))
 
 ;;; ── *prefix-key-code* dynamic variable ──────────────────────────────────────
 

@@ -182,13 +182,16 @@
 (defun %handle-escape-csi-tilde (session buffer length)
   "Handle a complete ESC [ <param> ~ sequence at root (LENGTH bytes).  A root-table
    binding for the canonical key name wins first, so `bind -n F5 <cmd>`,
-   `bind -n PageUp <cmd>`, `bind -n Home <cmd>` … fire.  Failing that the legacy
+   `bind -n PageUp <cmd>`, `bind -n Home <cmd>` … fire.  In copy mode, the active
+   copy-mode table is then checked for named navigation keys.  Failing that the legacy
    behaviour is preserved: PageUp/PageDown scroll in copy mode, and any other or
    unbound key is forwarded raw so the pane's application still receives it.
    Returns (%ground-values)."
   (let ((key (%csi-tilde-key buffer length)))
     (cond
       ((and key (%try-bound-string-key session +table-root+ key)))
+      ((and key (%copy-mode-active-p session)
+            (%try-bound-string-key session (%active-copy-mode-table) key)))
       ;; Unmodified PageUp/Down in copy mode: scroll one screenful.
       ;; key="PageUp"→positive delta, "PageDown"→negative.  Modified variants
       ;; (key="C-PageUp" etc.) fall through to the raw-forward branch below.
