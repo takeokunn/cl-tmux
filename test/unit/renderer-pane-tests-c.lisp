@@ -120,12 +120,12 @@
 (test clock-face-sgr-from-colour-option
   "clock-mode-colour maps to its foreground SGR code; an unknown name falls back
    to bright cyan (96)."
-  (with-isolated-options ("clock-mode-colour" "red")
-    (is (string= "31" (cl-tmux/renderer::%clock-face-sgr)) "red → 31"))
-  (with-isolated-options ("clock-mode-colour" "green")
-    (is (string= "32" (cl-tmux/renderer::%clock-face-sgr)) "green → 32"))
-  (with-isolated-options ("clock-mode-colour" "bogus-colour")
-    (is (string= "96" (cl-tmux/renderer::%clock-face-sgr)) "unknown → 96 fallback")))
+  (dolist (c '(("red"          "31" "red -> 31")
+               ("green"        "32" "green -> 32")
+               ("bogus-colour" "96" "unknown -> 96 fallback")))
+    (destructuring-bind (colour expected desc) c
+      (with-isolated-options ("clock-mode-colour" colour)
+        (is (string= expected (cl-tmux/renderer::%clock-face-sgr)) "~A" desc)))))
 
 ;;; -- display-panes per-pane big numbers (C-b q) ------------------------------
 

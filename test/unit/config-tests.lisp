@@ -356,14 +356,12 @@
 
 (test table-name-constants
   "Standard key-table constants have their expected string values."
-  (is (string= "prefix"    cl-tmux/config:+table-prefix+)
-      "+table-prefix+ must be \"prefix\"")
-  (is (string= "root"      cl-tmux/config:+table-root+)
-      "+table-root+ must be \"root\"")
-  (is (string= "copy-mode" cl-tmux/config:+table-copy-mode+)
-      "+table-copy-mode+ must be \"copy-mode\"")
-  (is (string= "copy-mode-vi" cl-tmux/config:+table-copy-mode-vi+)
-      "+table-copy-mode-vi+ must be \"copy-mode-vi\""))
+  (dolist (c `(("prefix"       ,cl-tmux/config:+table-prefix+)
+               ("root"         ,cl-tmux/config:+table-root+)
+               ("copy-mode"    ,cl-tmux/config:+table-copy-mode+)
+               ("copy-mode-vi" ,cl-tmux/config:+table-copy-mode-vi+)))
+    (destructuring-bind (expected actual) c
+      (is (string= expected actual) "constant must equal ~S" expected))))
 
 ;;; ── *default-shell* and *status-height* initial values ───────────────────
 
