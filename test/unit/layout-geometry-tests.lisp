@@ -151,30 +151,14 @@
 ;;;
 ;;; All three tests share with-h-split-81-24 to avoid repeating the fixture.
 
-(test pane-at-position-finds-pane-in-left-half
-  "pane-at-position returns the left pane when clicking in its column range."
+(test pane-at-position-h-split-table
+  "pane-at-position finds left pane, right pane, or NIL (separator) by column in an h-split."
   (with-h-split-81-24 (p0 p1 win)
-    (declare (ignore p1))
-    (is (eq p0 (cl-tmux/model:pane-at-position win 0 0))
-        "Top-left corner must be in p0")
-    (is (eq p0 (cl-tmux/model:pane-at-position win 39 23))
-        "Bottom-right corner of p0 must be in p0")))
-
-(test pane-at-position-finds-pane-in-right-half
-  "pane-at-position returns the right pane when clicking in its column range."
-  (with-h-split-81-24 (p0 p1 win)
-    (declare (ignore p0))
-    (is (eq p1 (cl-tmux/model:pane-at-position win 41 0))
-        "Start of right pane must be in p1")
-    (is (eq p1 (cl-tmux/model:pane-at-position win 80 23))
-        "Bottom-right of right pane must be in p1")))
-
-(test pane-at-position-separator-returns-nil
-  "pane-at-position returns NIL for the separator column between panes."
-  (with-h-split-81-24 (p0 p1 win)
-    (declare (ignore p0 p1))
-    (is (null (cl-tmux/model:pane-at-position win 40 0))
-        "Separator column 40 must not be in any pane")))
+    (is (eq  p0 (cl-tmux/model:pane-at-position win  0  0)) "origin → p0")
+    (is (eq  p0 (cl-tmux/model:pane-at-position win 39 23)) "bottom-right of p0 → p0")
+    (is (null   (cl-tmux/model:pane-at-position win 40  0)) "separator col 40 → NIL")
+    (is (eq  p1 (cl-tmux/model:pane-at-position win 41  0)) "start of p1 → p1")
+    (is (eq  p1 (cl-tmux/model:pane-at-position win 80 23)) "bottom-right of p1 → p1")))
 
 (test pane-at-position-single-pane
   "pane-at-position with a single full-screen pane returns it for any in-bounds coord."
