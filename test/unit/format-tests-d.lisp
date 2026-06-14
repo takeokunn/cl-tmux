@@ -266,19 +266,17 @@
 (test format-context-exposes-structural-pane-variables
   "format-context-from-session populates pane geometry/id/pid variables that
    expand-format resolves (#{pane_width} #{pane_height} #{pane_id} #{pane_left}
-   #{pane_top} #{pane_pid})."
+   #{pane_top} #{pane_pid}).
+   make-fake-window panes are 20x5 at (0,0), id 1, pid -1.
+   Inclusive far-edge: right = 0+20-1 = 19, bottom = 0+5-1 = 4."
   (with-format-context (sess win pane ctx) ()
-    ;; make-fake-window panes are 20x5 at (0,0), id 1, pid -1.
-    (is (string= "20" (cl-tmux/format:expand-format "#{pane_width}"  ctx)))
-    (is (string= "5"  (cl-tmux/format:expand-format "#{pane_height}" ctx)))
-    (is (string= "1"  (cl-tmux/format:expand-format "#{pane_id}"     ctx)))
-    (is (string= "0"  (cl-tmux/format:expand-format "#{pane_left}"   ctx)))
-    (is (string= "0"  (cl-tmux/format:expand-format "#{pane_top}"    ctx)))
-    ;; #{pane_right}/#{pane_bottom}: inclusive far edge = origin + size - 1.
-    ;; A 20x5 pane at (0,0) → right column 19, bottom row 4.
-    (is (string= "19" (cl-tmux/format:expand-format "#{pane_right}"  ctx)))
-    (is (string= "4"  (cl-tmux/format:expand-format "#{pane_bottom}" ctx)))
-    (is (string= "-1" (cl-tmux/format:expand-format "#{pane_pid}"    ctx)))))
+    (dolist (c '(("#{pane_width}"  "20") ("#{pane_height}" "5")
+                 ("#{pane_id}"     "1")  ("#{pane_left}"   "0")
+                 ("#{pane_top}"    "0")  ("#{pane_right}"  "19")
+                 ("#{pane_bottom}" "4")  ("#{pane_pid}"    "-1")))
+      (destructuring-bind (spec expected) c
+        (is (string= expected (cl-tmux/format:expand-format spec ctx))
+            "~S must expand to ~S" spec expected)))))
 
 (test format-context-pane-variables-default-when-pane-nil
   "With a NIL pane, structural pane variables default to 0 (empty-safe)."

@@ -219,26 +219,15 @@ bind-key r source-file /dev/null"))
 
 (test strip-config-comment-respects-quotes-and-formats
   "%strip-config-comment removes a comment only outside quotes and not for #{/##."
-  (is (string= "set -g foo bar"
-               (cl-tmux/config::%strip-config-comment "set -g foo bar # note"))
-      "inline comment stripped")
-  (is (string= "" (cl-tmux/config::%strip-config-comment "# full line"))
-      "full-line comment → empty")
-  (is (string= "set x \"#{session_name}\""
-               (cl-tmux/config::%strip-config-comment "set x \"#{session_name}\""))
-      "# inside double quotes kept")
-  (is (string= "set x '# literal'"
-               (cl-tmux/config::%strip-config-comment "set x '# literal'"))
-      "# inside single quotes kept")
-  (is (string= "set x #{session_name}"
-               (cl-tmux/config::%strip-config-comment "set x #{session_name}"))
-      "unquoted #{ format kept")
-  (is (string= "set x ##y"
-               (cl-tmux/config::%strip-config-comment "set x ##y"))
-      "## escaped-literal not a comment")
-  (is (string= "set x bar"
-               (cl-tmux/config::%strip-config-comment "set x bar"))
-      "no comment → unchanged"))
+  (dolist (c '(("set -g foo bar # note"    "set -g foo bar"           "inline comment stripped")
+               ("# full line"              ""                         "full-line comment → empty")
+               ("set x \"#{session_name}\"" "set x \"#{session_name}\"" "# inside double quotes kept")
+               ("set x '# literal'"       "set x '# literal'"        "# inside single quotes kept")
+               ("set x #{session_name}"   "set x #{session_name}"    "unquoted #{ format kept")
+               ("set x ##y"              "set x ##y"                 "## escaped-literal not a comment")
+               ("set x bar"              "set x bar"                 "no comment → unchanged")))
+    (destructuring-bind (input expected desc) c
+      (is (string= expected (cl-tmux/config::%strip-config-comment input)) "~A" desc))))
 
 (test config-inline-comment-not-in-value
   "An inline # comment is stripped before the directive is applied."
@@ -363,19 +352,12 @@ bind-key r source-file /dev/null"))
 (test strip-config-comment-keeps-mid-token-hash
   "A '#' in the middle of an unquoted token is literal; only a token-start '#'
    begins a comment."
-  (is (string= "set -g status-style bg=#0000ff"
-               (cl-tmux/config::%strip-config-comment "set -g status-style bg=#0000ff"))
-      "mid-token hex colour kept verbatim")
-  (is (string= "set -g @c fg=#ff0000"
-               (cl-tmux/config::%strip-config-comment "set -g @c fg=#ff0000"))
-      "mid-token hex in a user (@) option kept")
-  (is (string= "set -g status-style bg=#0000ff"
-               (cl-tmux/config::%strip-config-comment
-                "set -g status-style bg=#0000ff # trailing note"))
-      "mid-token hex kept AND a real trailing comment still stripped")
-  (is (string= "set -g foo"
-               (cl-tmux/config::%strip-config-comment "set -g foo #bar"))
-      "a '#' at a token start (after whitespace) still begins a comment"))
+  (dolist (c '(("set -g status-style bg=#0000ff"                 "set -g status-style bg=#0000ff" "mid-token hex colour kept verbatim")
+               ("set -g @c fg=#ff0000"                           "set -g @c fg=#ff0000"           "mid-token hex in a user (@) option kept")
+               ("set -g status-style bg=#0000ff # trailing note" "set -g status-style bg=#0000ff" "mid-token hex kept AND a real trailing comment still stripped")
+               ("set -g foo #bar"                                "set -g foo"                     "a '#' at a token start (after whitespace) still begins a comment")))
+    (destructuring-bind (input expected desc) c
+      (is (string= expected (cl-tmux/config::%strip-config-comment input)) "~A" desc))))
 
 (test apply-config-line-keeps-hash-colour-end-to-end
   "End-to-end: an unquoted hex colour survives apply-config-line into the option
