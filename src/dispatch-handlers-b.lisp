@@ -151,11 +151,7 @@
                nil
                (pane-id ap)))))
   (:show-messages
-   (show-overlay
-    (if *message-log*
-        (format nil "~{~A~%~}"
-                (mapcar #'cdr *message-log*))
-        "(no messages)")))
+   (show-overlay (%format-message-log-overlay)))
   (:show-hooks
    (show-overlay (cl-tmux/hooks:describe-command-hooks)))
   (:capture-pane

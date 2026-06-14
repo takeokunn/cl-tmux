@@ -8,8 +8,9 @@
 ;;; dispatch-commands{,-buffer,-option,-lifecycle,-pane,-shell,-auto}.lisp.
 
 (defparameter *arg-command-table*
-  (list
+   (list
    (cons '("display-message" "display") #'%cmd-display-message)
+   (cons '("show-messages" "showmsgs")  #'%cmd-show-messages-arg)
    (cons '("set-hook" "hook")           #'%cmd-set-hook)
    (cons '("bind-key" "bind")           #'%cmd-bind-key-arg)
    (cons '("unbind-key" "unbind")       #'%cmd-unbind-key-arg)

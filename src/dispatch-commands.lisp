@@ -100,6 +100,12 @@
 ;;; Each %cmd-*-arg function handles one tmux command that takes arguments.
 ;;; Flag parsing uses with-command-flags / with-command-flags+pos above.
 
+(defun %format-message-log-overlay ()
+  "Return the show-messages overlay body for the current server message log."
+  (if *message-log*
+      (format nil "~{~A~%~}" (mapcar #'cdr *message-log*))
+      "(no messages)"))
+
 (defun %cmd-display-message (session args)
   "display-message [-l] [-d ms] [-t target] <fmt...>: expand the space-joined ARGS as a format string
    against the target (or active) session/window/pane, then log and show the result.
@@ -146,6 +152,15 @@
             (show-transient-overlay text)
             (cl-tmux/options:set-option "display-time" saved))
           (show-transient-overlay text))))))
+
+(defun %cmd-show-messages-arg (session args)
+  "show-messages [-JT] [-t target-client]: show server messages.
+   -J, -T, and -t are accepted for tmux compatibility.  cl-tmux currently keeps
+   one server message log and one client, so these flags do not alter selection."
+  (declare (ignore session))
+  (with-command-flags (flags args "t")
+    (declare (ignore flags))
+    (show-overlay (%format-message-log-overlay))))
 
 (defun %cmd-swap-pane-arg (session args)
   "swap-pane [-dUDLRZ] [-s src-pane] [-t dst-pane]: swap two panes.
@@ -274,4 +289,3 @@
        (if found
            (format nil "has-session ~A: yes" (or target-name ""))
            (format nil "has-session ~A: no"  (or target-name "")))))))
-

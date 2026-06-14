@@ -329,3 +329,27 @@
       (let ((text (format nil "~{~A~%~}" (overlay-lines))))
         (is (search "hello" text) "overlay must contain 'hello'")
         (is (search "world" text) "overlay must contain 'world'")))))
+
+(test run-command-line-show-messages-accepts-flags
+  "show-messages [-JT] [-t target-client] is reachable from the command line."
+  (with-fake-session (s)
+    (let ((*overlay* nil)
+          (cl-tmux::*message-log* (list (cons 0 "alpha") (cons 1 "beta"))))
+      (cl-tmux::%run-command-line s "show-messages -J -t client0")
+      (is (overlay-active-p)
+          "show-messages with -J/-t must open an overlay")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "alpha" text) "overlay must contain 'alpha'")
+        (is (search "beta" text) "overlay must contain 'beta'")))))
+
+(test run-command-line-showmsgs-alias-accepts-terminal-flag
+  "showmsgs -T accepts tmux's terminal debug flag and still shows messages."
+  (with-fake-session (s)
+    (let ((*overlay* nil)
+          (cl-tmux::*message-log* (list (cons 0 "terminal-ish"))))
+      (cl-tmux::%run-command-line s "showmsgs -T")
+      (is (overlay-active-p)
+          "showmsgs alias with -T must open an overlay")
+      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
+        (is (search "terminal-ish" text)
+            "overlay must contain the logged message")))))
