@@ -288,14 +288,13 @@
 
 (test numeric-constants
   "Timeout and buffer-size constants have the expected values and are all positive."
-  (is (= 50000  +poll-timeout-us+)     "+poll-timeout-us+ must be 50000")
-  (is (= 100000 +accept-timeout-us+)   "+accept-timeout-us+ must be 100000")
-  (is (= 4096   +pty-buf-size+)        "+pty-buf-size+ must be 4096")
-  (is (= 50000  +pty-poll-timeout-us+) "+pty-poll-timeout-us+ must be 50000")
-  (is (plusp +poll-timeout-us+)     "+poll-timeout-us+ must be positive")
-  (is (plusp +accept-timeout-us+)   "+accept-timeout-us+ must be positive")
-  (is (plusp +pty-buf-size+)        "+pty-buf-size+ must be positive")
-  (is (plusp +pty-poll-timeout-us+) "+pty-poll-timeout-us+ must be positive"))
+  (dolist (row `((,+poll-timeout-us+     50000  "+poll-timeout-us+")
+                 (,+accept-timeout-us+   100000 "+accept-timeout-us+")
+                 (,+pty-buf-size+        4096   "+pty-buf-size+")
+                 (,+pty-poll-timeout-us+ 50000  "+pty-poll-timeout-us+")))
+    (destructuring-bind (value expected name) row
+      (is (= expected value)  "~A must be ~A" name expected)
+      (is (plusp value)       "~A must be positive" name))))
 
 ;;; ── ensure-key-table side effects ────────────────────────────────────────
 

@@ -117,11 +117,13 @@
 (test blank-cell-returns-default-cell
   "blank-cell returns a space-character cell with default colours and width 1."
   (let ((c (cl-tmux/terminal/types:blank-cell)))
-    (is (char= #\Space (cell-char c))  "blank-cell char must be space")
-    (is (= 7 (cell-fg    c))           "blank-cell fg must be default (7)")
-    (is (= 0 (cell-bg    c))           "blank-cell bg must be default (0)")
-    (is (= 0 (cell-attrs c))           "blank-cell attrs must be 0")
-    (is (= 1 (cell-width c))           "blank-cell width must be 1")))
+    (is (char= #\Space (cell-char c)) "blank-cell char must be space")
+    (dolist (row (list (list (cell-fg    c) 7 "blank-cell fg must be default (7)")
+                       (list (cell-bg    c) 0 "blank-cell bg must be default (0)")
+                       (list (cell-attrs c) 0 "blank-cell attrs must be 0")
+                       (list (cell-width c) 1 "blank-cell width must be 1")))
+      (destructuring-bind (actual expected desc) row
+        (is (= expected actual) "~A" desc)))))
 
 (test blank-cell-returns-fresh-instance-each-call
   :description "Each call to blank-cell returns a structurally equal but distinct object."
@@ -236,11 +238,13 @@
 
 (test char-width-classification
   "char-width returns 2 for wide CJK/kana and 1 for ASCII and box drawing."
-  (is (= 1 (char-width #\a)))
-  (is (= 1 (char-width #\Space)))
-  (is (= 2 (char-width #\あ)) "Hiragana is double-width")
-  (is (= 2 (char-width #\中)) "CJK ideograph is double-width")
-  (is (= 1 (char-width #\│)) "box drawing stays single-width"))
+  (dolist (row '((#\a   1 "ASCII a is single-width")
+                 (#\Space 1 "Space is single-width")
+                 (#\あ  2 "Hiragana is double-width")
+                 (#\中  2 "CJK ideograph is double-width")
+                 (#\│   1 "box drawing stays single-width")))
+    (destructuring-bind (char expected desc) row
+      (is (= expected (char-width char)) "~A" desc))))
 
 (test char-width-ascii-range-is-single
   :description "All printable ASCII characters have display width 1."
