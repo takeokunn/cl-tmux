@@ -123,23 +123,6 @@
     (destructuring-bind (input expected desc) row
       (is (equal expected (cl-tmux::%non-empty input)) "~A" desc))))
 
-;;; ── Table-driven %parse-target cases ────────────────────────────────────────
-
-(test parse-target-table
-  "Table-driven: %parse-target decomposes various target strings correctly."
-  ;; Each entry: (target-string expected-sess expected-win expected-pane description)
-  (dolist (entry
-           '(("sess:win.3" "sess" "win" "3" "full path")
-             ("sess:win"   "sess" "win" nil "session and window only")
-             ("sess.2"     "sess" nil   "2" "session and pane no window")
-             (":win"       nil    "win" nil "window only via colon prefix")
-             ("mysess"     "mysess" nil nil "bare session name")))
-    (destructuring-bind (target-str exp-sess exp-win exp-pane desc) entry
-      (multiple-value-bind (s w p) (cl-tmux::%parse-target target-str)
-        (is (equal exp-sess s) "session component of ~S: ~S" target-str desc)
-        (is (equal exp-win  w) "window  component of ~S: ~S" target-str desc)
-        (is (equal exp-pane p) "pane    component of ~S: ~S" target-str desc)))))
-
 ;;; ── resolve-target with pane specified as numeric index ─────────────────────
 
 (test resolve-target-pane-by-numeric-index

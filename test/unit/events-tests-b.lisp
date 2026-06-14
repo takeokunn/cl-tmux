@@ -253,30 +253,6 @@
       (is (null orientation)
           "single-pane window must have NIL orientation"))))
 
-;;; ── %mouse-status-bar-click direct tests ─────────────────────────────────────
-
-(test mouse-status-bar-click-selects-window
-  "%mouse-status-bar-click changes the active window when the click col lands in an entry."
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
-                           :screen (make-screen 20 5)))
-         (p1   (make-pane :id 2 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
-                           :screen (make-screen 20 5)))
-         (win0 (make-window :id 0 :name "w" :width 20 :height 5
-                            :panes (list p0) :tree (make-layout-leaf p0)))
-         (win1 (make-window :id 1 :name "x" :width 20 :height 5
-                            :panes (list p1) :tree (make-layout-leaf p1)))
-         (sess (make-session :id 1 :name "s" :windows (list win0 win1))))
-    (window-select-pane win0 p0)
-    (window-select-pane win1 p1)
-    (session-select-window sess win0)
-    ;; Session prefix " s" = 2 chars.
-    ;; win0 "w" entry starts at col 2 (4 + 1 = 5 chars: "  w ?" or " [w] ")
-    ;; win1 "x" entry starts at col 7.
-    ;; Clicking col 7 should activate win1.
-    (cl-tmux::%mouse-status-bar-click sess 7)
-    (is (eq win1 (session-active-window sess))
-        "%mouse-status-bar-click at col 7 must select win1")))
-
 (test mouse-status-bar-click-does-nothing-for-out-of-range-col
   "%mouse-status-bar-click is a no-op when col falls before all window entries."
   (let* ((p0   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5

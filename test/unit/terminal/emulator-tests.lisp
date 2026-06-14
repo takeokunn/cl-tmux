@@ -247,14 +247,6 @@
     (is-false (cl-tmux/terminal/types:screen-consume-bell s)
               "second consume-bell must return NIL (bell already consumed)")))
 
-(test screen-consume-bell-returns-nil-when-not-pending
-  :description "screen-consume-bell returns NIL when no bell was pending."
-  (with-screen (s 10 5)
-    (is-false (cl-tmux/terminal/types:screen-bell-pending s)
-              "bell-pending must be NIL on a fresh screen")
-    (is-false (cl-tmux/terminal/types:screen-consume-bell s)
-              "screen-consume-bell must return NIL when bell was not pending")))
-
 ;;; ── SUITE: screen-resize emulator integration ────────────────────────────────
 
 (def-suite screen-resize-suite

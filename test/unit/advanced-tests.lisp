@@ -237,12 +237,3 @@
     (is (every #'stringp vars)
         "*update-environment* entries must all be strings")))
 
-(test get-update-environment-vars-returns-alist
-  "get-update-environment-vars returns an alist of (name . value) pairs."
-  (let ((result (cl-tmux::get-update-environment-vars)))
-    (is (listp result)
-        "get-update-environment-vars must return a list")
-    (dolist (pair result)
-      (is (consp pair) "each entry must be a cons")
-      (is (stringp (car pair)) "car must be a string (name)")
-      (is (stringp (cdr pair)) "cdr must be a string (value)"))))

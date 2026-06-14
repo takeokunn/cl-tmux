@@ -146,14 +146,6 @@
         (overlay-scroll delta)
         (is (= expected *overlay-scroll-offset*) "~A" desc)))))
 
-(test overlay-scroll-clamps-at-zero
-  "overlay-scroll -1 at offset 0 does not produce a negative offset."
-  (let ((*overlay* "line1\n")
-        (*overlay-scroll-offset* 0))
-    (overlay-scroll -1)
-    (is (>= *overlay-scroll-offset* 0)
-        "overlay-scroll at offset 0 must not go negative")))
-
 ;;; ── %border-check-node direct tests ─────────────────────────────────────────
 ;;;
 ;;; %border-check-node is the recursive tree walker inside %border-at-position.

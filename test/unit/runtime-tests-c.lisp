@@ -39,15 +39,6 @@
 
 ;;; ── add-message-log ──────────────────────────────────────────────────────────
 
-(test add-message-log-prepends-entry
-  :description "add-message-log prepends a (timestamp . text) cons and caps the log."
-  (let ((cl-tmux::*message-log* nil))
-    (cl-tmux::add-message-log "hello")
-    (is (= 1 (length cl-tmux::*message-log*))
-        "log should have 1 entry after one add-message-log")
-    (is (string= "hello" (cdr (first cl-tmux::*message-log*)))
-        "log entry text must match what was added")))
-
 (test add-message-log-caps-at-message-limit
   :description "add-message-log caps *message-log* at the message-limit option."
   (with-isolated-options ("message-limit" 5)

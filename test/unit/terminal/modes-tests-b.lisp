@@ -81,8 +81,10 @@
 (test screen-consume-bell-returns-nil-when-not-pending
   :description "screen-consume-bell returns NIL without side effects when bell is not pending."
   (with-screen (s 10 5)
-    (let ((result (cl-tmux/terminal/types:screen-consume-bell s)))
-      (is-false result "screen-consume-bell must return NIL when bell is not pending"))))
+    (is-false (cl-tmux/terminal/types:screen-bell-pending s)
+              "bell-pending must be NIL on a fresh screen")
+    (is-false (cl-tmux/terminal/types:screen-consume-bell s)
+              "screen-consume-bell must return NIL when bell is not pending")))
 
 (test bell-byte-sets-pending-via-emulator
   :description "A BEL byte (0x07) fed to the emulator sets screen-bell-pending."

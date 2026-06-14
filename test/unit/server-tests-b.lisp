@@ -119,6 +119,7 @@ and marks *dirty* so the server re-renders."
 (test parse-attach-flags-table
   "%parse-attach-flags correctly parses -t (name), -d (detach), -r (read-only), and unknown flags."
   (dolist (row '((()                                       "0"             nil nil "no args → default name \"0\"")
+                 (("-d")                                   "0"             t   nil "-d alone sets detach")
                  (("-d" "-t" "mysess")                     "mysess"        t   nil "-d -t sets detach and name")
                  (("-r")                                   "0"             nil t   "-r sets read-only")
                  (("-t" "special")                         "special"       nil nil "-t sets name")

@@ -224,8 +224,8 @@
 
 ;;; ── DECCRA — Copy Rectangular Area ──────────────────────────────────────────
 
-(test deccra-copies-rectangle-to-target
-  "DECCRA copies a source rectangle to a non-overlapping target."
+(test deccra-action-direct-copies-rectangle-to-target
+  "DECCRA copies a source rectangle to a non-overlapping target (direct action call)."
   (with-screen (s 10 5)
     ;; Write 'A' in a 3×2 block at rows 1-2 cols 1-3 (1-based).
     (cl-tmux/terminal/actions:decfra s 65 1 1 2 3)  ; 'A'=65

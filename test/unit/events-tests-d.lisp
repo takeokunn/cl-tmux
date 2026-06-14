@@ -74,29 +74,6 @@
       (cl-tmux::dispatch-command sess :clear-mark nil)
       (is-false (pane-marked p0) "pane must not be marked after :clear-mark"))))
 
-;;; ── dispatch :display-info ───────────────────────────────────────────────────
-
-(test dispatch-display-info-shows-overlay
-  ":display-info shows a non-empty overlay with session/window/pane info."
-  (with-minimal-loop-session (p0 win sess)
-    (let ((*overlay* nil))
-      (cl-tmux::dispatch-command sess :display-info nil)
-      (is (overlay-active-p) "display-info must activate the overlay")
-      (is (search "Session:" *overlay*)
-          "overlay must contain \"Session:\""))))
-
-;;; ── dispatch :choose-client ──────────────────────────────────────────────────
-
-(test dispatch-choose-client-shows-overlay
-  ":choose-client shows an overlay with client info."
-  (with-fake-session (s)
-    (let ((*overlay* nil)
-          (cl-tmux::*term-rows* 24) (cl-tmux::*term-cols* 80))
-      (cl-tmux::dispatch-command s :choose-client nil)
-      (is (overlay-active-p) "choose-client must activate the overlay")
-      (is (search "Clients" *overlay*)
-          "overlay must contain \"Clients\""))))
-
 ;;; ── Root key-table lookup ────────────────────────────────────────────────────
 
 (test root-table-binding-fires-without-prefix

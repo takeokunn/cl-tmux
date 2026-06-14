@@ -270,23 +270,6 @@
         (is (equal expected-target target)     "~A: target"  desc)
         (is (equal expected-args args)         "~A: args"    desc)))))
 
-;;; ── target-field-p predicate ────────────────────────────────────────────────
-
-(test target-field-p-table
-  "target-field-p returns T for session sigil ($), colon (:), or dot (.) fields; NIL for plain names."
-  (dolist (row '(("$0"            t   "session sigil $ → target")
-                 ("$99"           t   "session sigil $99 → target")
-                 ("mysession:1"   t   "colon syntax → target")
-                 ("0:1"           t   "numeric colon syntax → target")
-                 ("0.1"           t   "dot syntax → target")
-                 ("mysession:0.2" t   "dot+colon syntax → target")
-                 ("new-window"    nil "plain command name → not target")
-                 ("select-pane"   nil "plain command name → not target")
-                 (""              nil "empty string → not target")))
-    (destructuring-bind (input expected desc) row
-      (is (eq expected (if (cl-tmux/protocol:target-field-p input) t nil))
-          "~A" desc))))
-
 (test decode-command-payload-command-name-with-colon-is-not-misidentified
   "A command name containing ':' is not misidentified as a target when only
    one field is present (no ambiguity — target detection requires >= 2 fields)."

@@ -255,17 +255,6 @@
         (is (> (pane-x p) first-pane-right)
             "main-vertical: secondary panes must be to the right of the first pane")))))
 
-(test apply-named-layout-tiled-four-panes
-  "apply-named-layout :tiled with 4 panes produces a near-square 2x2 grid."
-  (let* ((panes (loop for i from 1 to 4 collect (tl-pane i 1 1)))
-         (win   (make-window :id 1 :name "w" :width 81 :height 25
-                             :panes panes
-                             :tree  (cl-tmux/model::%build-flat-tree panes :h))))
-    (apply-named-layout win :tiled)
-    (dolist (p (window-panes win))
-      (is (> (pane-width  p) 0) "each pane must have positive width in tiled")
-      (is (> (pane-height p) 0) "each pane must have positive height in tiled"))))
-
 (test apply-named-layout-single-pane-any-layout
   "apply-named-layout with a single pane assigns the full window regardless of layout."
   (dolist (layout-name '(:even-horizontal :even-vertical

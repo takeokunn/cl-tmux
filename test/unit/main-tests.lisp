@@ -87,23 +87,6 @@
       (is (getf (rest call-args) :detach-others)
           ":detach-others T must be passed when -d flag is present"))))
 
-;;; ── %parse-attach-flags unit tests ──────────────────────────────────────────
-
-(test parse-attach-flags-table
-  "%parse-attach-flags: -t sets name, -d sets detach, -r sets read-only; defaults are \"0\"/nil/nil."
-  (dolist (c (list '(("-t" "mysession" "-d" "-r") "mysession" t   t   "all flags")
-                   '(()                            "0"         nil nil "no flags → defaults")
-                   '(("-x" "-t" "abc")             "abc"       nil nil "unknown flags ignored")
-                   '(("-t" "only-name")            "only-name" nil nil "-t alone")
-                   '(("-d")                        "0"         t   nil "-d alone")
-                   '(("-r")                        "0"         nil t   "-r alone")))
-    (destructuring-bind (flags expected-name expected-detach expected-ro desc) c
-      (multiple-value-bind (name detach read-only-p)
-          (cl-tmux::%parse-attach-flags flags)
-        (is (string= expected-name name)    "~A: name" desc)
-        (is (eq expected-detach detach)     "~A: detach" desc)
-        (is (eq expected-ro    read-only-p) "~A: read-only-p" desc)))))
-
 ;;; ── *startup-modes* data table ───────────────────────────────────────────────
 
 (test startup-modes-contains-server-attach-and-attach-session
