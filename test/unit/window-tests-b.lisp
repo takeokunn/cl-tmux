@@ -21,15 +21,16 @@
   ;; non-degenerate: h=50 → main 24, rest = 50 - 24 - 1 = 25.
   (with-blank-window (win p0 p1) (:width 80 :height 50)
     (apply-named-layout win :main-horizontal)
-    (is (= 0  (pane-x p0))      "main pane starts at column 0")
-    (is (= 0  (pane-y p0))      "main pane starts at row 0")
-    (is (= 80 (pane-width p0))  "main pane spans full width")
-    (is (= 24 (pane-height p0)) "main pane height = main-pane-height (24)")
-    ;; Secondary pane fills the bottom portion.
-    (is (= 0  (pane-x p1))      "secondary pane starts at column 0")
-    (is (= 25 (pane-y p1))      "secondary pane y = main-h + 1 separator")
-    (is (= 80 (pane-width p1))  "secondary pane spans full width (1 pane below)")
-    (is (= 25 (pane-height p1)) "secondary pane height = h - main-h - 1")))
+    (dolist (c (list (list (pane-x      p0)  0 "main pane starts at column 0")
+                     (list (pane-y      p0)  0 "main pane starts at row 0")
+                     (list (pane-width  p0) 80 "main pane spans full width")
+                     (list (pane-height p0) 24 "main pane height = main-pane-height (24)")
+                     (list (pane-x      p1)  0 "secondary pane starts at column 0")
+                     (list (pane-y      p1) 25 "secondary pane y = main-h + 1 separator")
+                     (list (pane-width  p1) 80 "secondary pane spans full width (1 pane below)")
+                     (list (pane-height p1) 25 "secondary pane height = h - main-h - 1")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc)))))
 
 (test apply-named-layout-main-horizontal-three-panes
   ":main-horizontal with 3 panes: main spans the top main-pane-height rows; two
@@ -37,14 +38,16 @@
   (with-blank-window (win p0 p1 p2) (:width 81 :height 50)
     (apply-named-layout win :main-horizontal)
     ;; main-h = main-pane-height = 24; rest-h = 50 - 24 - 1 = 25
-    (is (= 24 (pane-height p0)) "main pane height = main-pane-height (24)")
-    (is (= 25 (pane-height p1)) "secondary panes fill the bottom region height")
-    (is (= 25 (pane-height p2)) "secondary panes fill the bottom region height")
     ;; Two secondary panes in a row: 81 cols - 1 separator = 80, floor(80/2) = 40 each
-    (is (= 0  (pane-x p1))     "left secondary pane starts at column 0")
-    (is (= 40 (pane-width p1)) "left secondary width = floor(avail/2)")
-    (is (= 41 (pane-x p2))    "right secondary pane starts at column 41")
-    (is (= 40 (pane-width p2)) "right secondary width = avail - left-w")))
+    (dolist (c (list (list (pane-height p0) 24 "main pane height = main-pane-height (24)")
+                     (list (pane-height p1) 25 "secondary panes fill the bottom region height")
+                     (list (pane-height p2) 25 "secondary panes fill the bottom region height")
+                     (list (pane-x      p1)  0 "left secondary pane starts at column 0")
+                     (list (pane-width  p1) 40 "left secondary width = floor(avail/2)")
+                     (list (pane-x      p2) 41 "right secondary pane starts at column 41")
+                     (list (pane-width  p2) 40 "right secondary width = avail - left-w")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc)))))
 
 
 (test apply-named-layout-main-vertical-two-panes
@@ -54,15 +57,17 @@
   ;; rest = 120 - 80 - 1 = 39.
   (with-blank-window (win p0 p1) (:width 120 :height 24)
     (apply-named-layout win :main-vertical)
-    (is (= 0  (pane-x p0))      "main pane starts at column 0")
-    (is (= 0  (pane-y p0))      "main pane starts at row 0")
-    (is (= 80 (pane-width p0))  "main pane width = main-pane-width (80)")
-    (is (= 24 (pane-height p0)) "main pane spans full height")
     ;; Secondary pane fills the right column.
-    (is (= 81 (pane-x p1))      "secondary pane x = main-w + 1 separator")
-    (is (= 0  (pane-y p1))      "secondary pane starts at row 0")
-    (is (= 39 (pane-width p1))  "secondary pane width = w - main-w - 1")
-    (is (= 24 (pane-height p1)) "secondary pane spans full height (1 pane in column)")))
+    (dolist (c (list (list (pane-x      p0)  0 "main pane starts at column 0")
+                     (list (pane-y      p0)  0 "main pane starts at row 0")
+                     (list (pane-width  p0) 80 "main pane width = main-pane-width (80)")
+                     (list (pane-height p0) 24 "main pane spans full height")
+                     (list (pane-x      p1) 81 "secondary pane x = main-w + 1 separator")
+                     (list (pane-y      p1)  0 "secondary pane starts at row 0")
+                     (list (pane-width  p1) 39 "secondary pane width = w - main-w - 1")
+                     (list (pane-height p1) 24 "secondary pane spans full height (1 pane in column)")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc)))))
 
 (test apply-named-layout-main-vertical-three-panes
   ":main-vertical with 3 panes: main spans the left main-pane-width columns; two
@@ -70,15 +75,17 @@
   (with-blank-window (win p0 p1 p2) (:width 120 :height 25)
     (apply-named-layout win :main-vertical)
     ;; main-w = main-pane-width = 80; rest-w = 120 - 80 - 1 = 39
-    (is (= 80 (pane-width p0))  "main pane width = main-pane-width (80)")
-    (is (= 25 (pane-height p0)) "main pane spans full height")
     ;; Two secondary panes stacked: 25 rows - 1 separator = 24, floor(24/2) = 12 each
-    (is (= 81 (pane-x p1))     "top secondary pane x = main-w + 1")
-    (is (= 0  (pane-y p1))     "top secondary pane starts at row 0")
-    (is (= 12 (pane-height p1)) "top secondary height = floor(avail/2)")
-    (is (= 81 (pane-x p2))     "bottom secondary pane in the same column")
-    (is (= 13 (pane-y p2))     "bottom secondary pane y = top-h + 1 separator")
-    (is (= 12 (pane-height p2)) "bottom secondary height = avail - top-h")))
+    (dolist (c (list (list (pane-width  p0) 80 "main pane width = main-pane-width (80)")
+                     (list (pane-height p0) 25 "main pane spans full height")
+                     (list (pane-x      p1) 81 "top secondary pane x = main-w + 1")
+                     (list (pane-y      p1)  0 "top secondary pane starts at row 0")
+                     (list (pane-height p1) 12 "top secondary height = floor(avail/2)")
+                     (list (pane-x      p2) 81 "bottom secondary pane in the same column")
+                     (list (pane-y      p2) 13 "bottom secondary pane y = top-h + 1 separator")
+                     (list (pane-height p2) 12 "bottom secondary height = avail - top-h")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc)))))
 
 (test apply-named-layout-single-pane-fills-window-table
   "All named layouts with a single pane assign it the full window rectangle."
@@ -96,22 +103,24 @@
     (apply-named-layout win :tiled)
     ;; ceil(sqrt(4)) = 2 cols; ceil(4/2) = 2 rows
     ;; col-w = floor((81 - 1) / 2) = 40; row-h = floor((25 - 1) / 2) = 12
-    (is (=  0 (pane-x p0)) "p0 col 0")
-    (is (=  0 (pane-y p0)) "p0 row 0")
-    (is (= 40 (pane-width  p0)))
-    (is (= 12 (pane-height p0)))
-    (is (= 41 (pane-x p1)) "p1 col 1: x = 1*(40+1)")
-    (is (=  0 (pane-y p1)) "p1 row 0")
-    (is (= 40 (pane-width  p1)))
-    (is (= 12 (pane-height p1)))
-    (is (=  0 (pane-x p2)) "p2 col 0")
-    (is (= 13 (pane-y p2)) "p2 row 1: y = 1*(12+1)")
-    (is (= 40 (pane-width  p2)))
-    (is (= 12 (pane-height p2)))
-    (is (= 41 (pane-x p3)) "p3 col 1")
-    (is (= 13 (pane-y p3)) "p3 row 1")
-    (is (= 40 (pane-width  p3)))
-    (is (= 12 (pane-height p3)))))
+    (dolist (c (list (list (pane-x      p0)  0 "p0 col 0, row 0: x")
+                     (list (pane-y      p0)  0 "p0 col 0, row 0: y")
+                     (list (pane-width  p0) 40 "p0 width")
+                     (list (pane-height p0) 12 "p0 height")
+                     (list (pane-x      p1) 41 "p1 col 1, row 0: x = 1*(40+1)")
+                     (list (pane-y      p1)  0 "p1 row 0: y")
+                     (list (pane-width  p1) 40 "p1 width")
+                     (list (pane-height p1) 12 "p1 height")
+                     (list (pane-x      p2)  0 "p2 col 0, row 1: x")
+                     (list (pane-y      p2) 13 "p2 row 1: y = 1*(12+1)")
+                     (list (pane-width  p2) 40 "p2 width")
+                     (list (pane-height p2) 12 "p2 height")
+                     (list (pane-x      p3) 41 "p3 col 1, row 1: x")
+                     (list (pane-y      p3) 13 "p3 row 1: y")
+                     (list (pane-width  p3) 40 "p3 width")
+                     (list (pane-height p3) 12 "p3 height")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc)))))
 
 (test apply-named-layout-tiled-three-panes
   ":tiled with 3 panes produces a 2-column grid (2×2 with one empty cell)."
@@ -120,12 +129,14 @@
     ;; ceil(sqrt(3)) = 2 cols; ceil(3/2) = 2 rows
     ;; col-w = floor((81-1)/2) = 40; row-h = floor((25-1)/2) = 12
     ;; p0 at (col=0,row=0) p1 at (col=1,row=0) p2 at (col=0,row=1)
-    (is (=  0 (pane-x p0)))
-    (is (=  0 (pane-y p0)))
-    (is (= 41 (pane-x p1)))
-    (is (=  0 (pane-y p1)))
-    (is (=  0 (pane-x p2)))
-    (is (= 13 (pane-y p2)) "p2 placed in second row")))
+    (dolist (c (list (list (pane-x p0)  0 "p0 at col 0, row 0: x")
+                     (list (pane-y p0)  0 "p0 at col 0, row 0: y")
+                     (list (pane-x p1) 41 "p1 at col 1, row 0: x")
+                     (list (pane-y p1)  0 "p1 at col 1, row 0: y")
+                     (list (pane-x p2)  0 "p2 at col 0, row 1: x")
+                     (list (pane-y p2) 13 "p2 placed in second row")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc)))))
 
 ;;; ── last-window by recency ───────────────────────────────────────────────────
 
