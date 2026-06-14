@@ -59,12 +59,14 @@
                             :tree (make-layout-leaf pane)
                             :panes (list pane) :active pane)))
     (window-relayout win 30 90)
-    (is (= 0  (pane-x      pane)))
-    (is (= 0  (pane-y      pane)))
-    (is (= 90 (pane-width  pane)))
-    (is (= 30 (pane-height pane)))
-    (is (= 90 (screen-width  (pane-screen pane))))
-    (is (= 30 (screen-height (pane-screen pane))))))
+    (dolist (c (list (list (pane-x      pane)              0  "pane x")
+                     (list (pane-y      pane)              0  "pane y")
+                     (list (pane-width  pane)              90 "pane width")
+                     (list (pane-height pane)              30 "pane height")
+                     (list (screen-width  (pane-screen pane)) 90 "screen width")
+                     (list (screen-height (pane-screen pane)) 30 "screen height")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc)))))
 
 (test window-relayout-no-tree-is-noop-for-panes
   "With a NIL tree, window-relayout updates the stored dimensions but does not
@@ -75,18 +77,18 @@
                            :width 10 :height 10
                            :panes (list p0 p1) :active p0)))
     (window-relayout win 30 90)
-    ;; Dimensions updated.
-    (is (= 90 (window-width  win)))
-    (is (= 30 (window-height win)))
-    ;; Without a tree no pane is repositioned.
-    (is (= 5  (pane-x      p0)) "p0 x unchanged: no tree")
-    (is (= 5  (pane-y      p0)) "p0 y unchanged: no tree")
-    (is (= 10 (pane-width  p0)) "p0 width unchanged: no tree")
-    (is (= 10 (pane-height p0)) "p0 height unchanged: no tree")
-    (is (= 7  (pane-x      p1)) "p1 x unchanged: no tree")
-    (is (= 7  (pane-y      p1)) "p1 y unchanged: no tree")
-    (is (= 12 (pane-width  p1)) "p1 width unchanged: no tree")
-    (is (= 12 (pane-height p1)) "p1 height unchanged: no tree")))
+    (dolist (c (list (list (window-width  win) 90 "window width updated")
+                     (list (window-height win) 30 "window height updated")
+                     (list (pane-x      p0) 5  "p0 x unchanged: no tree")
+                     (list (pane-y      p0) 5  "p0 y unchanged: no tree")
+                     (list (pane-width  p0) 10 "p0 width unchanged: no tree")
+                     (list (pane-height p0) 10 "p0 height unchanged: no tree")
+                     (list (pane-x      p1) 7  "p1 x unchanged: no tree")
+                     (list (pane-y      p1) 7  "p1 y unchanged: no tree")
+                     (list (pane-width  p1) 12 "p1 width unchanged: no tree")
+                     (list (pane-height p1) 12 "p1 height unchanged: no tree")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc)))))
 
 ;;; ── ensure-window-fits ───────────────────────────────────────────────────────
 
@@ -101,13 +103,14 @@
     ;; Deliberately leave the window's stored size inconsistent with the
     ;; requested target so ensure-window-fits must act.
     (cl-tmux/model::ensure-window-fits win 30 100)
-    (is (= 100 (window-width  win)))
-    (is (= 30  (window-height win)))
-    ;; Single-pane tree: pane spans the whole window.
-    (is (= 100 (pane-width  pane)))
-    (is (= 30  (pane-height pane)))
-    (is (= 100 (screen-width  (pane-screen pane))))
-    (is (= 30  (screen-height (pane-screen pane))))))
+    (dolist (c (list (list (window-width  win)              100 "window width")
+                     (list (window-height win)              30  "window height")
+                     (list (pane-width  pane)               100 "pane width")
+                     (list (pane-height pane)               30  "pane height")
+                     (list (screen-width  (pane-screen pane)) 100 "screen width")
+                     (list (screen-height (pane-screen pane)) 30  "screen height")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc)))))
 
 (test ensure-window-fits-noop-when-size-matches
   "ensure-window-fits is a no-op when the window already matches the requested
@@ -122,17 +125,18 @@
                               :panes (list pane) :active pane)))
     ;; Same size as stored → nothing should happen.
     (cl-tmux/model::ensure-window-fits win 24 80)
-    (is (= 80 (window-width  win)))
-    (is (= 24 (window-height win)))
-    (is (= 0  (pane-x      pane)))
-    (is (= 0  (pane-y      pane)))
-    (is (= 80 (pane-width  pane)))
-    (is (= 24 (pane-height pane)))
-    ;; The exact screen object must be preserved (relayout was skipped).
+    (dolist (c (list (list (window-width  win)              80 "window width")
+                     (list (window-height win)              24 "window height")
+                     (list (pane-x      pane)              0  "pane x")
+                     (list (pane-y      pane)              0  "pane y")
+                     (list (pane-width  pane)              80 "pane width")
+                     (list (pane-height pane)              24 "pane height")
+                     (list (screen-width  (pane-screen pane)) 80 "screen width")
+                     (list (screen-height (pane-screen pane)) 24 "screen height")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc)))
     (is (eq screen (pane-screen pane))
-        "pane screen object must be unchanged when size already matches")
-    (is (= 80 (screen-width  (pane-screen pane))))
-    (is (= 24 (screen-height (pane-screen pane))))))
+        "pane screen object must be unchanged when size already matches")))
 
 ;;; ── Splitting and selecting panes ─────────────────────────────────────────
 
@@ -218,10 +222,12 @@
     (multiple-value-bind (px py pw ph)
         (cl-tmux/model::split-child-geometry p :h)
       ;; avail = 41 - 1 = 40; fw = floor(40/2) = 20; child at x = 20+1 = 21, w = 40-20 = 20
-      (is (= 21 px) "child x = parent-x + fw + 1")
-      (is (= 0  py))
-      (is (= 20 pw))
-      (is (= 20 ph)))))
+      (dolist (c (list (list px 21 "child x = parent-x + fw + 1")
+                       (list py 0  "y = 0")
+                       (list pw 20 "width = 20")
+                       (list ph 20 "height = 20")))
+        (destructuring-bind (actual expected desc) c
+          (is (= expected actual) "~A" desc))))))
 
 (test split-child-geometry-v-orient
   "split-child-geometry :v gives the bottom half of a pane."
@@ -230,10 +236,12 @@
     (multiple-value-bind (px py pw ph)
         (cl-tmux/model::split-child-geometry p :v)
       ;; avail = 25 - 1 = 24; fh = floor(24/2) = 12; child at y = 12+1 = 13, h = 24-12 = 12
-      (is (= 0  px))
-      (is (= 13 py) "child y = parent-y + fh + 1")
-      (is (= 80 pw))
-      (is (= 12 ph)))))
+      (dolist (c (list (list px 0  "x = 0")
+                       (list py 13 "child y = parent-y + fh + 1")
+                       (list pw 80 "width = 80")
+                       (list ph 12 "height = 12")))
+        (destructuring-bind (actual expected desc) c
+          (is (= expected actual) "~A" desc))))))
 
 ;;; ── %new-split-ratio direct tests (pure, no PTY) ─────────────────────────
 
@@ -349,10 +357,9 @@
                            :panes (list p0)
                            :tree (make-layout-leaf p0))))
     (window-select-pane win p0)
-    (is (null (cl-tmux/model::pane-neighbor win p0 :right)))
-    (is (null (cl-tmux/model::pane-neighbor win p0 :left)))
-    (is (null (cl-tmux/model::pane-neighbor win p0 :up)))
-    (is (null (cl-tmux/model::pane-neighbor win p0 :down)))))
+    (dolist (dir '(:right :left :up :down))
+      (is (null (cl-tmux/model::pane-neighbor win p0 dir))
+          "single pane must have no ~A neighbor" dir))))
 
 (test pane-neighbor-v-split-table
   "In a v-split: top pane's :down neighbor is bottom pane, bottom's :up is top pane."
@@ -382,12 +389,14 @@
                            :tree (make-layout-leaf p0))))
     (apply-named-layout win :even-horizontal)
     ;; 81 cols - 1 separator = 80 usable, floor(80/2) = 40 each
-    (is (=  0 (pane-x p0)) "p0 must start at column 0")
-    (is (= 40 (pane-width p0)) "p0 width must be 40")
-    (is (= 41 (pane-x p1)) "p1 must start at column 41")
-    (is (= 40 (pane-width p1)) "p1 width must be 40")
-    (is (= 24 (pane-height p0)) "height unchanged")
-    (is (= 24 (pane-height p1)) "height unchanged")))
+    (dolist (c (list (list (pane-x      p0) 0  "p0 must start at column 0")
+                     (list (pane-width  p0) 40 "p0 width must be 40")
+                     (list (pane-x      p1) 41 "p1 must start at column 41")
+                     (list (pane-width  p1) 40 "p1 width must be 40")
+                     (list (pane-height p0) 24 "p0 height unchanged")
+                     (list (pane-height p1) 24 "p1 height unchanged")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc))))
 
 (test apply-named-layout-even-vertical-positions-panes
   "even-vertical places n panes stacked with equal height."
@@ -398,10 +407,12 @@
                            :tree (make-layout-leaf p0))))
     (apply-named-layout win :even-vertical)
     ;; 25 rows - 1 separator = 24, floor(24/2) = 12 each
-    (is (=  0 (pane-y p0)) "p0 must start at row 0")
-    (is (= 12 (pane-height p0)) "p0 height must be 12")
-    (is (= 13 (pane-y p1)) "p1 must start at row 13")
-    (is (= 12 (pane-height p1)) "p1 height must be 12")))
+    (dolist (c (list (list (pane-y      p0) 0  "p0 must start at row 0")
+                     (list (pane-height p0) 12 "p0 height must be 12")
+                     (list (pane-y      p1) 13 "p1 must start at row 13")
+                     (list (pane-height p1) 12 "p1 height must be 12")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc))))
 
 ;;; ── window-zoom-toggle ────────────────────────────────────────────────────────
 
