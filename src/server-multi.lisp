@@ -162,20 +162,20 @@
           (let ((tokens (append (list (string-downcase (symbol-name cmd)))
                                 (when target (list "-t" target))
                                 args))
-                ;; Capture the command's overlay text (display-message, list-*, …)
+                ;; Capture the command's overlay text (display-message, list-*, ...)
                 ;; instead of showing it to interactive clients, so it can be
-                ;; returned to the CLI command client — the `cl-tmux display -p`
-                ;; (and `cl-tmux list-sessions`, …) stdout path.
+                ;; returned to the CLI command client - the `cl-tmux display -p`
+                ;; (and `cl-tmux list-sessions`, ...) stdout path.
                 (cl-tmux/prompt:*overlay* nil))
-            (ignore-errors (%run-command-tokens session tokens))
-            ;; Reply with the captured output to the requesting client (a no-op
-            ;; for the socket-less test conn, whose stream is NIL).
-            (when (client-conn-stream conn)
-              (ignore-errors
-                (send-frame (client-conn-stream conn)
-                            (msg-reply (or cl-tmux/prompt:*overlay* ""))))))
-          (setf *dirty* t)
-          nil)
+            (let ((result (ignore-errors (%run-command-tokens session tokens))))
+              ;; Reply with the captured output to the requesting client (a no-op
+              ;; for the socket-less test conn, whose stream is NIL).
+              (when (client-conn-stream conn)
+                (ignore-errors
+                  (send-frame (client-conn-stream conn)
+                              (msg-reply (or cl-tmux/prompt:*overlay* "")))))
+              (setf *dirty* t)
+              (when (eq result :quit) :quit))))
          (t (setf *dirty* t) nil))))
     (t :drop)))
 

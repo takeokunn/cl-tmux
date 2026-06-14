@@ -48,6 +48,12 @@
   (#\? :copy-mode-search-backward-prompt)
   (#\= :copy-mode-choose-buffer))
 
+(defun %active-copy-mode-table ()
+  "Return the copy-mode key table selected by the mode-keys option."
+  (if (string= (cl-tmux/options:get-option "mode-keys" "vi") "vi")
+      "copy-mode-vi"
+      +table-copy-mode+))
+
 ;;; -- Session list formatter helper -------------------------------------------
 ;;;
 ;;; :list-sessions, :list-sessions-full, :choose-session, and :choose-tree all
@@ -360,4 +366,3 @@
   ("showb"     :show-buffer)
   ("showmsgs"  :show-messages)
   ("show"      :show-options))
-

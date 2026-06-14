@@ -264,6 +264,83 @@
     (is (eql 0 exit-code)
         "run-list-sessions must exit with code 0")))
 
+(test run-kill-server-forwards-to-running-server
+  "run-kill-server forwards the real command to an existing server socket."
+  (let ((orig-running (fdefinition 'cl-tmux::%running-server-name))
+        (orig-command (fdefinition 'cl-tmux::run-command-client))
+        (forwarded nil)
+        exit-code)
+    (unwind-protect
+         (progn
+           (setf (fdefinition 'cl-tmux::%running-server-name)
+                 (lambda (&optional preferred)
+                   (declare (ignore preferred))
+                   "0"))
+           (setf (fdefinition 'cl-tmux::run-command-client)
+                 (lambda (name args)
+                   (setf forwarded (list name args))))
+           (with-stubbed-exit exit-code
+             (cl-tmux::run-kill-server '("-q")))
+           (is (equal '("0" ("kill-server" "-q")) forwarded)
+               "kill-server must be sent as a server-side command")
+           (is (eql 0 exit-code)
+               "run-kill-server still exits cleanly after forwarding"))
+      (setf (fdefinition 'cl-tmux::%running-server-name) orig-running)
+      (setf (fdefinition 'cl-tmux::run-command-client) orig-command))))
+
+(test run-list-sessions-forwards-to-running-server
+  "run-list-sessions forwards to an existing server so output comes from the registry."
+  (let ((orig-running (fdefinition 'cl-tmux::%running-server-name))
+        (orig-command (fdefinition 'cl-tmux::run-command-client))
+        (forwarded nil)
+        exit-code)
+    (unwind-protect
+         (progn
+           (setf (fdefinition 'cl-tmux::%running-server-name)
+                 (lambda (&optional preferred)
+                   (declare (ignore preferred))
+                   "work"))
+           (setf (fdefinition 'cl-tmux::run-command-client)
+                 (lambda (name args)
+                   (setf forwarded (list name args))))
+           (with-stubbed-exit exit-code
+             (cl-tmux::run-list-sessions '("-F" "#{session_name}")))
+           (is (equal '("work" ("list-sessions" "-F" "#{session_name}")) forwarded)
+               "list-sessions must be sent as a server-side command")
+           (is (eql 0 exit-code)
+               "run-list-sessions still exits cleanly after forwarding"))
+      (setf (fdefinition 'cl-tmux::%running-server-name) orig-running)
+      (setf (fdefinition 'cl-tmux::run-command-client) orig-command))))
+
+(test run-new-session-forwards-full-argv-when-server-exists
+  "run-new-session preserves tmux flags by forwarding the full argv to the server."
+  (let ((orig-running (fdefinition 'cl-tmux::%running-server-name))
+        (orig-command (fdefinition 'cl-tmux::run-command-client))
+        (orig-client  (fdefinition 'cl-tmux::run-client))
+        (forwarded nil)
+        (attached nil))
+    (unwind-protect
+         (progn
+           (setf (fdefinition 'cl-tmux::%running-server-name)
+                 (lambda (&optional preferred)
+                   (declare (ignore preferred))
+                   "0"))
+           (setf (fdefinition 'cl-tmux::run-command-client)
+                 (lambda (name args)
+                   (setf forwarded (list name args))))
+           (setf (fdefinition 'cl-tmux::run-client)
+                 (lambda (&rest args)
+                   (setf attached args)))
+           (cl-tmux::run-new-session '("-s" "work" "-n" "shell" "-c" "/tmp" "-d"))
+           (is (equal '("0" ("new-session" "-s" "work" "-n" "shell" "-c" "/tmp" "-d"))
+                      forwarded)
+               "new-session must forward all original flags")
+           (is (null attached)
+               "-d must not attach after forwarding"))
+      (setf (fdefinition 'cl-tmux::%running-server-name) orig-running)
+      (setf (fdefinition 'cl-tmux::run-command-client) orig-command)
+      (setf (fdefinition 'cl-tmux::run-client) orig-client))))
+
 (test run-source-file-nonexistent-path-exits-cleanly
   "run-source-file with a nonexistent path exits cleanly (code 0)."
   (let (exit-code)

@@ -64,7 +64,10 @@
         (let ((*prompt* nil))
           (cl-tmux::dispatch-command s :kill-pane-confirm nil)
           (is (prompt-active-p) "prompt must open for ~A" desc)
-          (when answer (funcall (prompt-on-submit *prompt*) answer))
+          (is-true (prompt-single-key *prompt*) "prompt must accept a single key for ~A" desc)
+          (when answer
+            (cl-tmux::handle-prompt-key (char-code (char answer 0)))
+            (is-false (prompt-active-p) "prompt must close after answer for ~A" desc))
           (is (= expected-count
                  (length (window-panes (session-active-window s))))
               "~A" desc))))))
@@ -81,7 +84,10 @@
         (let ((*prompt* nil))
           (cl-tmux::dispatch-command s :kill-window-confirm nil)
           (is (prompt-active-p) "prompt must open for ~A" desc)
-          (when answer (funcall (prompt-on-submit *prompt*) answer))
+          (is-true (prompt-single-key *prompt*) "prompt must accept a single key for ~A" desc)
+          (when answer
+            (cl-tmux::handle-prompt-key (char-code (char answer 0)))
+            (is-false (prompt-active-p) "prompt must close after answer for ~A" desc))
           (is (= expected-count (length (session-windows s))) "~A" desc))))))
 
 (test dispatch-kill-window-confirm-prompt-includes-window-name

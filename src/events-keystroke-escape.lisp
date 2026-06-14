@@ -402,14 +402,13 @@
         ;; overrides forwarding; only when unbound do we forward to the pane.
         ((and (= length 2) (/= (aref buffer 1) +byte-csi-bracket+))
          (cond
-           ;; In copy mode: check copy-mode-vi / copy-mode key tables for an
-           ;; M-<key> binding first (emacs meta bindings: M-f, M-b, M-w, …).
+           ;; In copy mode: check the active copy-mode key table for an
+           ;; M-<key> binding first.
            ;; Only fall through to clear-selection if no table entry matches.
            ((%copy-mode-active-p session)
             (let* ((meta-name (%meta-key-name (aref buffer 1)))
                    (entry     (when meta-name
-                                (or (key-table-lookup "copy-mode-vi" meta-name)
-                                    (key-table-lookup "copy-mode"    meta-name)))))
+                                (key-table-lookup (%active-copy-mode-table) meta-name))))
               (if entry
                   (%run-key-table-binding session entry nil)
                   ;; No table binding: ESC clears the active selection.

@@ -43,14 +43,20 @@
 ;;; All references to the standard table names use these constants so a typo
 ;;; is caught at compile time and a rename touches only one place.
 
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun %constant-value (symbol fallback)
+    (if (boundp symbol)
+        (symbol-value symbol)
+        fallback)))
+
 (defconstant +table-prefix+
-  (if (boundp '+table-prefix+) +table-prefix+ "prefix")
+  (%constant-value '+table-prefix+ "prefix")
   "Name of the default key-table (requires prefix key).")
 (defconstant +table-root+
-  (if (boundp '+table-root+) +table-root+ "root")
+  (%constant-value '+table-root+ "root")
   "Name of the root key-table (no prefix required).")
 (defconstant +table-copy-mode+
-  (if (boundp '+table-copy-mode+) +table-copy-mode+ "copy-mode")
+  (%constant-value '+table-copy-mode+ "copy-mode")
   "Name of the copy-mode key-table.")
 
 ;;; ── Shell default ─────────────────────────────────────────────────────────
@@ -189,6 +195,26 @@
   (#\! :if-shell)           ; events-loop.lisp overrides to :break-pane
   (:digits :select-window))
 
+(defun install-default-prefix-string-bindings ()
+  "Bind standard multi-byte prefix keys into the prefix key-table."
+  (dolist (binding '(("Up"    :select-pane-up)
+                     ("Down"  :select-pane-down)
+                     ("Left"  :select-pane-left)
+                     ("Right" :select-pane-right)))
+    (destructuring-bind (key command) binding
+      (key-table-bind +table-prefix+ key command)))
+  (dolist (binding '(("C-Up"    ("resize-pane" "-U" "1"))
+                     ("C-Down"  ("resize-pane" "-D" "1"))
+                     ("C-Left"  ("resize-pane" "-L" "1"))
+                     ("C-Right" ("resize-pane" "-R" "1"))
+                     ("M-Up"    ("resize-pane" "-U" "5"))
+                     ("M-Down"  ("resize-pane" "-D" "5"))
+                     ("M-Left"  ("resize-pane" "-L" "5"))
+                     ("M-Right" ("resize-pane" "-R" "5"))))
+    (destructuring-bind (key command) binding
+      (key-table-bind +table-prefix+ key command :repeatable t)))
+  (values))
+
 ;;; ── Key-binding accessors (thin wrappers over key-tables) ─────────────────
 
 (defun lookup-key-binding (key)
@@ -224,11 +250,13 @@
 
 (defun %format-binding-line (table-name key entry)
   "Format one `bind-key -T TABLE-NAME [-N note] KEY COMMAND` line.
-   When ENTRY carries an -N note it is emitted as `-N \"note\"` before the key,
-   matching tmux's list-keys -N output."
-  (let ((note (key-table-note entry)))
-    (format nil "bind-key -T ~A ~@[-N \"~A\" ~]~A ~A~%"
+   When ENTRY is repeatable, emit `-r`; when it carries an -N note, emit
+   `-N \"note\"` before the key, matching tmux's list-keys -N output."
+  (let ((note (key-table-note entry))
+        (repeatable (key-table-repeatable-p entry)))
+    (format nil "bind-key -T ~A ~:[~;-r ~]~@[-N \"~A\" ~]~A ~A~%"
             table-name
+            repeatable
             note
             (key-label key)
             (%binding-label (key-table-command entry)))))
@@ -301,6 +329,7 @@
    binding, and ensure the root/copy-mode tables exist.
    Called once at load time and by test isolation helpers (idempotent)."
   (install-default-prefix-bindings)
+  (install-default-prefix-string-bindings)
   (set-key-binding (code-char +prefix-key-code+) :send-prefix)
   (ensure-key-table +table-root+)
   (ensure-key-table +table-copy-mode+)

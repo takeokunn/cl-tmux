@@ -92,7 +92,8 @@
   (prompt-start msg ""
                 (lambda (input)
                   (when (string-equal input "y")
-                    (funcall ok-fn)))))
+                    (funcall ok-fn)))
+                :single-key t))
 
 (defun prompt-nonempty (label callback)
   "Start a prompt labelled LABEL; call CALLBACK with the input only when non-empty."

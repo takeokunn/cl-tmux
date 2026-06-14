@@ -125,6 +125,68 @@
             (is (eq (first (session-windows s)) (session-active-window s))
                 "~A" desc)))))))
 
+(test default-prefix-arrow-selects-neighbour-pane
+  "Default C-b Right/Left are real prefix-table bindings and select neighbour panes."
+  (with-isolated-config
+    (with-loop-state
+      (let* ((win (%vsplit-window 20))
+             (left (first (window-panes win)))
+             (right (second (window-panes win)))
+             (s (make-session :id 1 :name "s" :windows (list win)))
+             (state (cl-tmux::make-input-state)))
+        (session-select-window s win)
+        (window-select-pane win left)
+        (dolist (b '(2 27 91 67))
+          (cl-tmux::process-byte s b state))
+        (is (eq right (window-active-pane win))
+            "C-b Right must select the right pane")
+        (dolist (b '(2 27 91 68))
+          (cl-tmux::process-byte s b state))
+        (is (eq left (window-active-pane win))
+            "C-b Left must select the left pane")))))
+
+(test default-prefix-control-arrow-resizes-and-repeats
+  "Default C-b C-Right resizes by one cell and keeps repeat mode for the next C-Right."
+  (with-isolated-config
+    (with-loop-state
+      (let* ((win (%vsplit-window 20))
+             (left (first (window-panes win)))
+             (right (second (window-panes win)))
+             (s (make-session :id 1 :name "s" :windows (list win)))
+             (state (cl-tmux::make-input-state)))
+        (session-select-window s win)
+        (window-select-pane win left)
+        (dolist (b '(2 27 91 49 59 53 67))
+          (cl-tmux::process-byte s b state))
+        (is (= 21 (pane-width left))
+            "C-b C-Right must grow the active pane by one cell")
+        (is (= 19 (pane-width right))
+            "C-b C-Right must shrink the right pane by one cell")
+        (dolist (b '(27 91 49 59 53 67))
+          (cl-tmux::process-byte s b state))
+        (is (= 22 (pane-width left))
+            "repeat C-Right without another prefix must grow again")
+        (is (= 18 (pane-width right))
+            "repeat C-Right without another prefix must shrink again")))))
+
+(test default-prefix-meta-arrow-resizes-by-five
+  "Default C-b M-Right resizes by five cells through the prefix-table binding."
+  (with-isolated-config
+    (with-loop-state
+      (let* ((win (%vsplit-window 20))
+             (left (first (window-panes win)))
+             (right (second (window-panes win)))
+             (s (make-session :id 1 :name "s" :windows (list win)))
+             (state (cl-tmux::make-input-state)))
+        (session-select-window s win)
+        (window-select-pane win left)
+        (dolist (b '(2 27 91 49 59 51 67))
+          (cl-tmux::process-byte s b state))
+        (is (= 25 (pane-width left))
+            "C-b M-Right must grow the active pane by five cells")
+        (is (= 15 (pane-width right))
+            "C-b M-Right must shrink the right pane by five cells")))))
+
 (test root-modifier-arrow-binding-table
   "Bindings with -n fire modifier+arrow sequences at root without prefix."
   (dolist (c '(("M-Left" (27 91 49 59 51 68) "M-Left bare → next-window")
@@ -312,4 +374,3 @@
           ;; Layout applied: the window still has its two panes and a usable tree.
           (is (= 2 (length (window-panes (session-active-window s))))
               "select-layout via C-b M-1 must preserve both panes")))))
-

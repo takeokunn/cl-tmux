@@ -152,12 +152,11 @@
          (t
           (let ((count (max 1 *copy-mode-prefix*)))
             (setf *copy-mode-prefix* 0)
-            ;; First: check the copy-mode-vi and copy-mode key tables for
-            ;; user-defined overrides (bind -T copy-mode-vi ...).
+            ;; First: check the active copy-mode key table for user-defined
+            ;; overrides (bind -T copy-mode-vi ... / bind -T copy-mode ...).
             ;; When a table binding is found, execute it and SKIP the hardcoded dispatch.
             (let* ((ch       (code-char byte))
-                   (entry    (or (key-table-lookup "copy-mode-vi" ch)
-                                 (key-table-lookup "copy-mode" ch)))
+                   (entry    (key-table-lookup (%active-copy-mode-table) ch))
                    (handled  nil))
               (when entry
                 (%run-key-table-binding session entry byte)
@@ -176,4 +175,3 @@
                                   (make-array 1 :element-type '(unsigned-byte 8)
                                                :initial-element byte))
    (values nil #'%ground-input-state)))
-

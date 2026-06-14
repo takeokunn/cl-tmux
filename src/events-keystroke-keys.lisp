@@ -206,17 +206,27 @@
       (t
        (dispatch-command session cmd byte)))))
 
+(defun %run-bound-string-key (session table key-string)
+  "Run string KEY-STRING from TABLE and return its entry, or NIL if unbound."
+  (let ((entry (and key-string (key-table-lookup table key-string))))
+    (when entry
+      (%run-key-table-binding session entry nil)
+      (setf *dirty* t)
+      entry)))
+
 (defun %try-bound-string-key (session table key-string)
   "Look up the string KEY-STRING (e.g. \"C-Up\", \"M-Left\", \"Up\") in key
    TABLE.  When a binding exists, run it, mark the screen dirty, and return T;
    otherwise return NIL so the caller can fall back to its hardcoded default.
    This is the hook that lets `bind -T prefix C-Up <cmd>` and `bind -n M-Left
    <cmd>` override the built-in resize/select behaviour."
-  (let ((entry (and key-string (key-table-lookup table key-string))))
-    (when entry
-      (%run-key-table-binding session entry nil)
-      (setf *dirty* t)
-      t)))
+  (and (%run-bound-string-key session table key-string) t))
+
+(defun %prefix-string-entry-result (entry)
+  "Return the CPS outcome/state pair for a prefix string-key ENTRY."
+  (if (and entry (key-table-repeatable-p entry))
+      (values :repeatable #'%after-prefix-input-state)
+      (values nil #'%ground-input-state)))
 
 (defun %dispatch-modifier-arrow (session mod-byte final-byte)
   "Handle the modifier+arrow combination inside the 6-byte CSI sequence.
@@ -228,26 +238,27 @@
    back to the built-in default — C-arrow resizes 1 cell, M-arrow resizes 5."
   ;; User override in the prefix table wins over the hardcoded default.
   (let ((key (%modifier-arrow-key-name mod-byte final-byte)))
-    (unless (%try-bound-string-key session +table-prefix+ key)
-      (let ((window (session-active-window session)))
-        (when window
-          (cond
-            ;; C-arrow: ESC [ 1 ; 5 FINAL  → resize 1 cell
-            ((= mod-byte +byte-csi-mod-ctrl+)
-             (case final-byte
-               (#.+byte-arrow-up+    (resize-pane window :up    1))
-               (#.+byte-arrow-down+  (resize-pane window :down  1))
-               (#.+byte-arrow-right+ (resize-pane window :right 1))
-               (#.+byte-arrow-left+  (resize-pane window :left  1))))
-            ;; M-arrow: ESC [ 1 ; 3 FINAL  → resize 5 cells (standard :resize-* amount)
-            ((= mod-byte +byte-csi-mod-meta+)
-             (let ((command (case final-byte
-                              (#.+byte-arrow-up+    :resize-up)
-                              (#.+byte-arrow-down+  :resize-down)
-                              (#.+byte-arrow-right+ :resize-right)
-                              (#.+byte-arrow-left+  :resize-left)
-                              (otherwise nil))))
-               (when command (dispatch-command session command nil))))))))))
+    (or (%run-bound-string-key session +table-prefix+ key)
+        (let ((window (session-active-window session)))
+          (when window
+            (cond
+              ;; C-arrow: ESC [ 1 ; 5 FINAL  → resize 1 cell
+              ((= mod-byte +byte-csi-mod-ctrl+)
+               (case final-byte
+                 (#.+byte-arrow-up+    (resize-pane window :up    1))
+                 (#.+byte-arrow-down+  (resize-pane window :down  1))
+                 (#.+byte-arrow-right+ (resize-pane window :right 1))
+                 (#.+byte-arrow-left+  (resize-pane window :left  1))))
+              ;; M-arrow: ESC [ 1 ; 3 FINAL  → resize 5 cells (standard :resize-* amount)
+              ((= mod-byte +byte-csi-mod-meta+)
+               (let ((command (case final-byte
+                                (#.+byte-arrow-up+    :resize-up)
+                                (#.+byte-arrow-down+  :resize-down)
+                                (#.+byte-arrow-right+ :resize-right)
+                                (#.+byte-arrow-left+  :resize-left)
+                                (otherwise nil))))
+                 (when command (dispatch-command session command nil)))))))
+        nil)))
 
 (defun %csi-1-semi-prefix-p (buffer)
   "T when BUFFER[1..3] is the ESC [ 1 ; modifier-key prefix (requires length >= 4)."
@@ -279,8 +290,8 @@
         ;; ── SS3 function key after prefix: ESC O <final> ─────────────────
         ((and (= length 3) (= (aref buffer 1) +byte-ss3-o+))
          (let ((key (%ss3-key-name (aref buffer 2))))
-           (when key (%try-bound-string-key session +table-prefix+ key)))
-         (values nil #'%ground-input-state))
+           (%prefix-string-entry-result
+            (and key (%run-bound-string-key session +table-prefix+ key)))))
         ;; ── Function / navigation key after prefix: ESC [ <digits> ~ ─────
         ;; F5 ESC[15~ … F12, PageUp ESC[5~, Home ESC[1~, Delete ESC[3~, so
         ;; `bind F5 <cmd>` / `bind PPage <cmd>` resolve in the prefix table.
@@ -290,8 +301,8 @@
               (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)
               (= (aref buffer (1- length)) +byte-tilde+))
          (let ((key (%csi-tilde-key buffer length)))
-           (when key (%try-bound-string-key session +table-prefix+ key)))
-         (values nil #'%ground-input-state))
+           (%prefix-string-entry-result
+            (and key (%run-bound-string-key session +table-prefix+ key)))))
         ;; Complete 3-byte CSI sequence: ESC [ FINAL
         ((and (= length 3) (= (aref buffer 1) +byte-csi-bracket+))
          (let ((final-byte (aref buffer 2)))
@@ -306,26 +317,28 @@
               ;; A user binding (`bind -T prefix Up <cmd>`) overrides the built-in
               ;; select-pane default; fall back only when the key is unbound.
               (let ((name    (%arrow-final-name final-byte))
-                    (command (%prefix-csi-arrow-cmd final-byte)))
-                (unless (%try-bound-string-key session +table-prefix+ name)
+                    (command (%prefix-csi-arrow-cmd final-byte))
+                    (entry   nil))
+                (setf entry (%run-bound-string-key session +table-prefix+ name))
+                (unless entry
                   ;; dispatch-command always returns NIL; the when's value is discarded.
                   (when command (dispatch-command session command nil)))
-                (values nil #'%ground-input-state))))))
+                (%prefix-string-entry-result entry))))))
         ;; 4-5 byte: ESC [ 1 ; [MOD] — keep accumulating for the final letter
         ((and (<= 4 length 5) (%csi-1-semi-prefix-p buffer))
          (values nil (%make-prefix-csi-k session buffer)))
         ;; Complete 6-byte modifier CSI: ESC [ 1 ; MOD FINAL
         ((and (= length 6) (%csi-1-semi-prefix-p buffer))
-         (%dispatch-modifier-arrow session (aref buffer 4) (aref buffer 5))
-         (setf *dirty* t)
-         (values nil #'%ground-input-state))
+         (let ((entry (%dispatch-modifier-arrow session (aref buffer 4) (aref buffer 5))))
+           (setf *dirty* t)
+           (%prefix-string-entry-result entry)))
         ;; 2-byte non-CSI: a prefix meta chord (C-b then Alt+key → ESC <key>).
         ;; Look up `bind M-<key>` in the prefix table; if unbound, discard as
         ;; before (no passthrough after the prefix).
         ((and (= length 2) (/= (aref buffer 1) +byte-csi-bracket+))
-         (%try-bound-string-key session +table-prefix+
-                                (%meta-key-name (aref buffer 1)))
-         (values nil #'%ground-input-state))
+         (%prefix-string-entry-result
+          (%run-bound-string-key session +table-prefix+
+                                 (%meta-key-name (aref buffer 1)))))
         ;; Buffer at capacity (>= 6 bytes but unrecognised) — discard and return
         ;; to ground to avoid permanent stuck-state on malformed CSI sequences.
         ((>= length 6)
@@ -350,4 +363,3 @@
      (if (eq result :repeatable)
          (values nil #'%after-prefix-input-state)
          (values result #'%ground-input-state)))))
-

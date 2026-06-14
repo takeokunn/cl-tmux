@@ -253,6 +253,44 @@
             "copy-mode-vi table must have 'v' binding")
         (cl-tmux/commands:copy-mode-exit screen)))))
 
+(test copy-mode-key-table-selection-follows-mode-keys-vi
+  "In vi mode, copy-mode input uses the copy-mode-vi table."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "vi")
+    (cl-tmux/config:key-table-bind "copy-mode-vi" #\v :copy-mode-exit)
+    (cl-tmux/config:key-table-bind "copy-mode" #\v :copy-mode-begin-selection)
+    (with-copy-mode-state (s screen state)
+      (cl-tmux::process-byte s (char-code #\v) state)
+      (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
+                "vi mode must dispatch the copy-mode-vi binding"))))
+
+(test copy-mode-key-table-selection-follows-mode-keys-emacs
+  "In emacs mode, copy-mode input uses the copy-mode table."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "emacs")
+    (cl-tmux/config:key-table-bind "copy-mode-vi" #\v :copy-mode-exit)
+    (cl-tmux/config:key-table-bind "copy-mode" #\v :copy-mode-begin-selection)
+    (with-copy-mode-state (s screen state)
+      (cl-tmux::process-byte s (char-code #\v) state)
+      (is (cl-tmux/terminal:screen-copy-mode-p screen)
+          "emacs mode must not dispatch the copy-mode-vi binding")
+      (is (cl-tmux/terminal:screen-copy-selecting screen)
+          "emacs mode must dispatch the copy-mode binding"))))
+
+(test copy-mode-meta-key-table-selection-follows-mode-keys-emacs
+  "In emacs mode, ESC-prefixed Meta keys use the copy-mode table."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "emacs")
+    (cl-tmux/config:key-table-bind "copy-mode-vi" "M-f" :copy-mode-exit)
+    (cl-tmux/config:key-table-bind "copy-mode" "M-f" :copy-mode-begin-selection)
+    (with-copy-mode-state (s screen state)
+      (cl-tmux::process-byte s 27 state)
+      (cl-tmux::process-byte s (char-code #\f) state)
+      (is (cl-tmux/terminal:screen-copy-mode-p screen)
+          "emacs mode must not dispatch the copy-mode-vi Meta binding")
+      (is (cl-tmux/terminal:screen-copy-selecting screen)
+          "emacs mode must dispatch the copy-mode Meta binding"))))
+
 ;;; ── Extended keys (CSI u) key-name parsing ───────────────────────────────────
 
 (test csi-u-key-name-modifier-combinations

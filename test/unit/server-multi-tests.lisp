@@ -157,6 +157,17 @@
       (is (= 1 (cl-tmux/model:window-id (session-active-window s)))
           "forwarded `select-window -t 1` must select window-id 1 via the args"))))
 
+(test multi-handle-forwarded-kill-server-quits-loop
+  "A forwarded kill-server command must propagate :quit to the multi-client loop."
+  (with-fake-session (s)
+    (let ((payload (cl-tmux/protocol::encode-command-payload :kill-server))
+          (cl-tmux::*running* t))
+      (is (eq :quit (cl-tmux::%handle-multi-client-message
+                     cl-tmux::+msg-command+ payload s (%make-test-conn)))
+          "forwarded kill-server must return :quit")
+      (is-false cl-tmux::*running*
+                "kill-server command implementation clears *running*"))))
+
 ;;; ── %drop-client: registry removal ───────────────────────────────────────────
 
 (test multi-drop-client-removes-from-registry

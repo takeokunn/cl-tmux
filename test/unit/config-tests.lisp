@@ -158,6 +158,30 @@
     (is (search "detach" text)       "should list detach")
     (is (search "select-window" text) "should list select-window")))
 
+(test default-prefix-string-bindings-are-listed-and-repeatable
+  "Default prefix multi-byte keys are present in the key table and resize arrows are repeatable."
+  (with-isolated-config
+    (let ((up-entry (cl-tmux/config:key-table-lookup "prefix" "Up"))
+          (ctrl-right-entry (cl-tmux/config:key-table-lookup "prefix" "C-Right"))
+          (meta-right-entry (cl-tmux/config:key-table-lookup "prefix" "M-Right"))
+          (text (cl-tmux/config:describe-key-bindings-for-table "prefix")))
+      (is (eq :select-pane-up (cl-tmux/config:key-table-command up-entry))
+          "prefix Up must select the pane above")
+      (is (equal '("resize-pane" "-R" "1")
+                 (cl-tmux/config:key-table-command ctrl-right-entry))
+          "prefix C-Right must resize right by 1")
+      (is (equal '("resize-pane" "-R" "5")
+                 (cl-tmux/config:key-table-command meta-right-entry))
+          "prefix M-Right must resize right by 5")
+      (is (cl-tmux/config:key-table-repeatable-p ctrl-right-entry)
+          "prefix C-Right must be repeatable")
+      (is (cl-tmux/config:key-table-repeatable-p meta-right-entry)
+          "prefix M-Right must be repeatable")
+      (is (search "bind-key -T prefix Up select-pane-up" text)
+          "list-keys must show the prefix Up binding")
+      (is (search "bind-key -T prefix -r C-Right resize-pane -R 1" text)
+          "list-keys must show repeatable C-Right resize binding"))))
+
 ;;; ── +max-scrollback-lines+ constant ───────────────────────────────────────
 
 (test max-scrollback-lines-constant

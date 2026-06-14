@@ -267,8 +267,7 @@
               ;; precedence over both the root binding and the built-in handling.
               (active-screen (and active-pane (pane-screen active-pane)))
               (in-copy       (and active-screen (screen-copy-mode-p active-screen)))
-              (copy-table    (if (string= (cl-tmux/options:get-option "mode-keys" "vi") "vi")
-                                 "copy-mode-vi" +table-copy-mode+)))
+              (copy-table    (%active-copy-mode-table)))
          ;; User mouse binding wins over the built-in handling: copy-mode table first
          ;; (when in copy mode), then the root table.
          (unless (or (and in-copy (%try-bound-string-key session copy-table mouse-key))
@@ -413,4 +412,3 @@
        (clear-overlay)
        (setf *dirty* t)
        (values nil #'%ground-input-state)))))
-

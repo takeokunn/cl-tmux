@@ -368,21 +368,64 @@
   (:bool  "-d" detach)
   (:value "-c" start-dir))
 
+(defun %socket-file-session-name (path)
+  "Extract the cl-tmux session/server name from a socket PATH, or NIL."
+  (when path
+    (let* ((name (pathname-name path))
+           (prefix "cl-tmux-"))
+      (when (and name
+                 (>= (length name) (length prefix))
+                 (string= prefix name :end2 (length prefix)))
+        (subseq name (length prefix))))))
+
+(defun %running-server-name (&optional preferred-name)
+  "Return the best known running server socket name, preferring PREFERRED-NAME.
+   Falls back to the default \"0\" socket, then to the first cl-tmux socket in
+   TMPDIR.  This supports CLI command forwarding even when the first server was
+   launched with `new-session -s NAME` or `attach NAME`."
+  (cond
+    ((and preferred-name (probe-file (socket-path preferred-name)))
+     preferred-name)
+    ((probe-file (socket-path "0")) "0")
+    (t
+     (let* ((env-tmpdir (sb-ext:posix-getenv "TMPDIR"))
+            (tmpdir (if (and env-tmpdir (plusp (length env-tmpdir)))
+                        (string-right-trim "/" env-tmpdir)
+                        "/tmp"))
+            (pattern (merge-pathnames "cl-tmux-*.sock"
+                                      (parse-namestring (format nil "~A/" tmpdir)))))
+       (%socket-file-session-name (first (ignore-errors (directory pattern))))))))
+
+(defun %forward-startup-command (server-name command raw-args)
+  "Forward COMMAND and RAW-ARGS to SERVER-NAME, returning T on success.
+   Stale socket files are common after crashes; connection failures must not make
+   startup/list/kill CLI commands crash before they can print a useful result."
+  (when server-name
+    (handler-case
+        (progn
+          (run-command-client server-name (cons command raw-args))
+          t)
+      (error () nil))))
+
 (defun run-new-session (raw-args)
   "Create a new session (optionally named via -s) and attach to it.
-   Ensures the server is running; sends new-session command via the socket.
-   The -n (window name) and -c (start directory) flags are parsed but currently
-   unused — they are consumed to avoid unknown-flag errors, and will be wired
-   through once the server-side new-session handler supports them."
+   If a server already exists, forward the full new-session command to it so
+   flags such as -n, -c, -x, -y, -t and -A are handled by the server-side tmux
+   command implementation.  Otherwise start the first server and attach to it."
   (multiple-value-bind (name _win-name detach _start-dir)
       (%parse-new-session-flags raw-args)
     (declare (ignore _win-name _start-dir))
-    (let* ((session-name (or name "0")))
-      ;; Start the server if not already running.
-      (%ensure-server-running session-name)
-      ;; Attach; if the session doesn't exist the server creates it on first attach.
-      (unless detach
-        (run-client session-name)))))
+    (let* ((session-name (or name "0"))
+           (server-name (%running-server-name session-name)))
+      (if server-name
+          (progn
+            (%forward-startup-command server-name "new-session" raw-args)
+            (unless detach
+              (run-client server-name)))
+          (progn
+            (%ensure-server-running session-name)
+            (unless detach
+              (run-client session-name)))))))
 
 (defun run-has-session (raw-args)
   "Exit 0 when a session named by -t exists, exit 1 otherwise.
@@ -397,18 +440,17 @@
 
 (defun run-kill-server (raw-args)
   "Send kill-server command via the socket, then exit.
-   In standalone mode the server socket is not accessible from this process;
-   this is a best-effort stub that exits cleanly."
-  (declare (ignore raw-args))
-  (format t "kill-server: not supported in standalone mode~%")
+   Exits cleanly when no server socket is present, matching tmux's scriptable
+   command behavior without starting a new interactive multiplexer."
+  (unless (%forward-startup-command (%running-server-name) "kill-server" raw-args)
+    (format t "kill-server: no server running~%"))
   (sb-ext:exit :code 0))
 
 (defun run-list-sessions (raw-args)
   "Print a list of active sessions to stdout and exit.
-   In standalone mode the server socket is not accessible; this stub prints
-   a diagnostic and exits cleanly."
-  (declare (ignore raw-args))
-  (format t "(no server running or session listing requires attach)~%")
+   Forwards to a running server so the result reflects the session registry."
+  (unless (%forward-startup-command (%running-server-name) "list-sessions" raw-args)
+    (format t "(no server running)~%"))
   (sb-ext:exit :code 0))
 
 (defun run-source-file (raw-args)
