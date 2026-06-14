@@ -95,55 +95,58 @@
   (with-isolated-config
    (flet ((bound-p (key)
             (not (null (lookup-key-binding key)))))
-    ;; Session
-    (is (bound-p #\d)   "d → detach")
-    (is (bound-p #\$)   "$ → rename-session")
-    (is (bound-p #\s)   "s → choose-session")
-    (is (bound-p #\()   "( → switch-client-prev")
-    (is (bound-p #\))   ") → switch-client-next")
-    (is (bound-p #\L)   "L → last-session")
-    ;; Window
-    (is (bound-p #\c)   "c → new-window")
-    (is (bound-p #\n)   "n → next-window")
-    (is (bound-p #\p)   "p → prev-window")
-    (is (bound-p #\l)   "l → last-window")
-    (is (bound-p #\w)   "w → choose-window")
-    (is (bound-p #\f)   "f → find-window")
-    (is (bound-p #\&)   "& → kill-window-confirm")
-    (is (bound-p #\,)   ", → rename-window")
-    (is (bound-p #\0)   "0 → select-window")
-    (is (bound-p #\9)   "9 → select-window")
-    (is (bound-p #\.)   ". → move-window-prompt")
-    (is (bound-p #\')   "' → select-window-prompt")
-    ;; Pane
-    (is (bound-p #\%)   "% → split-vertical")
-    (is (bound-p #\")   "\" → split-horizontal")
-    (is (bound-p #\o)   "o → next-pane")
-    (is (bound-p #\;)   "; → last-pane")
-    (is (bound-p #\q)   "q → display-panes")
-    (is (bound-p #\x)   "x → kill-pane-confirm")
-    (is (bound-p #\z)   "z → zoom-toggle (lowercase)")
-    (is (bound-p #\!)   "! → break-pane")
-    (is (bound-p #\{)   "{ → swap-pane-backward")
-    (is (bound-p #\})   "} → swap-pane-forward")
-    ;; Buffer
-    (is (bound-p #\[)   "[ → copy-mode-enter")
-    (is (bound-p #\])   "] → paste-buffer")
-    (is (bound-p (code-char 35))  "# → list-buffers")
-    (is (bound-p (code-char 61))  "= → choose-buffer")
-    (is (bound-p (code-char 45))  "- → delete-buffer")
-    ;; Misc
-    (is (bound-p #\:)   ": → command-prompt")
-    (is (bound-p #\?)   "? → list-keys")
-    (is (bound-p #\t)   "t → clock-mode")
-    (is (bound-p #\i)   "i → display-info")
-    (is (bound-p (code-char 126)) "~ → show-messages")
-    (is (bound-p #\m)   "m → mark-pane")
-    (is (bound-p (code-char 77))  "M → clear-mark")
-    (is (bound-p #\E)   "E → select-layout-spread")
-    (is (bound-p (code-char 32))  "Space → next-layout")
-    (is (bound-p #\D)   "D → choose-client")
-    (is (bound-p (code-char 2))   "C-b → send-prefix"))))
+    (dolist (c (list
+                 ;; Session
+                 (list #\d   "d → detach")
+                 (list #\$   "$ → rename-session")
+                 (list #\s   "s → choose-session")
+                 (list #\(   "( → switch-client-prev")
+                 (list #\)   ") → switch-client-next")
+                 (list #\L   "L → last-session")
+                 ;; Window
+                 (list #\c   "c → new-window")
+                 (list #\n   "n → next-window")
+                 (list #\p   "p → prev-window")
+                 (list #\l   "l → last-window")
+                 (list #\w   "w → choose-window")
+                 (list #\f   "f → find-window")
+                 (list #\&   "& → kill-window-confirm")
+                 (list #\,   ", → rename-window")
+                 (list #\0   "0 → select-window")
+                 (list #\9   "9 → select-window")
+                 (list #\.   ". → move-window-prompt")
+                 (list #\'   "' → select-window-prompt")
+                 ;; Pane
+                 (list #\%   "% → split-vertical")
+                 (list #\"   "\" → split-horizontal")
+                 (list #\o   "o → next-pane")
+                 (list #\;   "; → last-pane")
+                 (list #\q   "q → display-panes")
+                 (list #\x   "x → kill-pane-confirm")
+                 (list #\z   "z → zoom-toggle (lowercase)")
+                 (list #\!   "! → break-pane")
+                 (list #\{   "{ → swap-pane-backward")
+                 (list #\}   "} → swap-pane-forward")
+                 ;; Buffer
+                 (list #\[   "[ → copy-mode-enter")
+                 (list #\]   "] → paste-buffer")
+                 (list #\#   "# → list-buffers")
+                 (list #\=   "= → choose-buffer")
+                 (list #\-   "- → delete-buffer")
+                 ;; Misc
+                 (list #\:   ": → command-prompt")
+                 (list #\?   "? → list-keys")
+                 (list #\t   "t → clock-mode")
+                 (list #\i   "i → display-info")
+                 (list #\~   "~ → show-messages")
+                 (list #\m   "m → mark-pane")
+                 (list #\M   "M → clear-mark")
+                 (list #\E   "E → select-layout-spread")
+                 (list #\Space "Space → next-layout")
+                 (list #\D   "D → choose-client")
+                 (list (code-char 2) "C-b → send-prefix")))
+      (destructuring-bind (key desc) c
+        (is (bound-p key) "~A" desc))))))
 
 ;;; ── Mouse scroll-wheel paths ─────────────────────────────────────────────────
 
@@ -219,11 +222,13 @@
 
 (test mouse-button-constants-have-expected-values
   "Named mouse button constants must have the correct integer values."
-  (is (= 0  cl-tmux::+mouse-btn-left+)        "left button must be 0")
-  (is (= 3  cl-tmux::+mouse-btn-release-x10+) "X10 release must be 3")
-  (is (= 32 cl-tmux::+mouse-btn-motion+)       "motion must be 32")
-  (is (= 64 cl-tmux::+mouse-btn-scroll-up+)    "scroll-up must be 64")
-  (is (= 65 cl-tmux::+mouse-btn-scroll-down+)  "scroll-down must be 65"))
+  (dolist (c `((0  ,cl-tmux::+mouse-btn-left+        "left button must be 0")
+               (3  ,cl-tmux::+mouse-btn-release-x10+ "X10 release must be 3")
+               (32 ,cl-tmux::+mouse-btn-motion+       "motion must be 32")
+               (64 ,cl-tmux::+mouse-btn-scroll-up+    "scroll-up must be 64")
+               (65 ,cl-tmux::+mouse-btn-scroll-down+  "scroll-down must be 65")))
+    (destructuring-bind (expected constant desc) c
+      (is (= expected constant) "~A" desc))))
 
 ;;; ── SGR mouse parser ─────────────────────────────────────────────────────────
 

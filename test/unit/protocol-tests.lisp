@@ -44,9 +44,11 @@
   "read-u16 reads two bytes at START as a big-endian u16."
   (let ((buffer (make-array 6 :element-type '(unsigned-byte 8)
                               :initial-contents '(0 0 0 24 0 80))))
-    (is (= 0  (cl-tmux/protocol:read-u16 buffer 0)))
-    (is (= 24 (cl-tmux/protocol:read-u16 buffer 2)))
-    (is (= 80 (cl-tmux/protocol:read-u16 buffer 4)))))
+    (dolist (c '((0 0  "offset 0 → 0")
+                 (2 24 "offset 2 → 24")
+                 (4 80 "offset 4 → 80")))
+      (destructuring-bind (offset expected desc) c
+        (is (= expected (cl-tmux/protocol:read-u16 buffer offset)) "~A" desc)))))
 
 ;;; ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -213,10 +215,12 @@
 (test u16-u32-encoders-produce-correct-byte-widths
   "u16-octets always yields 2 bytes and u32-octets always yields 4 bytes,
    regardless of the value encoded."
-  (is (= 2 (length (cl-tmux/protocol:u16-octets 0)))        "u16(0) = 2 bytes")
-  (is (= 2 (length (cl-tmux/protocol:u16-octets 65535)))    "u16(max) = 2 bytes")
-  (is (= 4 (length (cl-tmux/protocol:u32-octets 0)))        "u32(0) = 4 bytes")
-  (is (= 4 (length (cl-tmux/protocol:u32-octets #xFFFFFFFF))) "u32(max) = 4 bytes"))
+  (dolist (c (list (list 2 (cl-tmux/protocol:u16-octets 0)          "u16(0) = 2 bytes")
+                   (list 2 (cl-tmux/protocol:u16-octets 65535)      "u16(max) = 2 bytes")
+                   (list 4 (cl-tmux/protocol:u32-octets 0)          "u32(0) = 4 bytes")
+                   (list 4 (cl-tmux/protocol:u32-octets #xFFFFFFFF) "u32(max) = 4 bytes")))
+    (destructuring-bind (expected-len result desc) c
+      (is (= expected-len (length result)) "~A" desc))))
 
 (test msg-constructors-produce-correct-frames
   "All eight typed message constructors produce frames that decode to the expected type."
