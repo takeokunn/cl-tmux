@@ -32,18 +32,20 @@
       (is (= new-cols (window-width  win)))
       (is (= new-rows (window-height win)))
       ;; Both panes have correct height and positive width.
-      (is (= new-rows (pane-height p0)) "pane 1 height")
-      (is (= new-rows (pane-height p1)) "pane 2 height")
-      (is (plusp (pane-width p0)) "pane 1 has positive width")
-      (is (plusp (pane-width p1)) "pane 2 has positive width")
+      (dolist (pair (list (list p0 "pane 1") (list p1 "pane 2")))
+        (destructuring-bind (p lbl) pair
+          (is (= new-rows (pane-height p)) "~A height" lbl)
+          (is (plusp (pane-width p)) "~A has positive width" lbl)))
       ;; Total coverage: two pane widths + 1 separator = new-cols.
       (is (= new-cols (+ (pane-width p0) 1 (pane-width p1)))
           "pane widths + separator must equal ~D" new-cols)
       ;; Screens match pane dimensions.
-      (is (= (pane-width p0) (screen-width (pane-screen p0))) "pane 1 screen-width")
-      (is (= (pane-height p0) (screen-height (pane-screen p0))) "pane 1 screen-height")
-      (is (= (pane-width p1) (screen-width (pane-screen p1))) "pane 2 screen-width")
-      (is (= (pane-height p1) (screen-height (pane-screen p1))) "pane 2 screen-height")
+      (dolist (row (list (list (pane-width p0)  (screen-width  (pane-screen p0)) "pane 1 screen-width")
+                         (list (pane-height p0) (screen-height (pane-screen p0)) "pane 1 screen-height")
+                         (list (pane-width p1)  (screen-width  (pane-screen p1)) "pane 2 screen-width")
+                         (list (pane-height p1) (screen-height (pane-screen p1)) "pane 2 screen-height")))
+        (destructuring-bind (actual expected desc) row
+          (is (= expected actual) "~A" desc)))
       ;; Sanity: separator gap is one column between panes.
       (is (= 1 (- (pane-x p1) (+ (pane-x p0) (pane-width p0))))
           "exactly one separator column between vertical panes"))))
