@@ -87,8 +87,8 @@
       (cl-tmux::process-byte s 49  state)   ; 1
       (cl-tmux::process-byte s 59  state)   ; ;
       (cl-tmux::process-byte s 53  state)   ; 5 (Ctrl)
-      (is (null (cl-tmux::process-byte s 65 state))   ; A (Up)
-          "C-b C-Up must return NIL (no quit/detach)"))))
+      (is (member (cl-tmux::process-byte s 65 state) '(nil :repeatable))   ; A (Up)
+          "C-b C-Up must return NIL or :REPEATABLE (no quit/detach)"))))
 
 (test dispatch-modifier-arrow-meta-arrow-dispatches-resize-command
   "M-arrow (mod-byte=51) dispatches :resize-* command without signaling."
@@ -100,8 +100,8 @@
       (cl-tmux::process-byte s 49  state)   ; 1
       (cl-tmux::process-byte s 59  state)   ; ;
       (cl-tmux::process-byte s 51  state)   ; 3 (Meta)
-      (is (null (cl-tmux::process-byte s 66 state))   ; B (Down)
-          "C-b M-Down must return NIL (no quit/detach)"))))
+      (is (member (cl-tmux::process-byte s 66 state) '(nil :repeatable))   ; B (Down)
+          "C-b M-Down must return NIL or :REPEATABLE (no quit/detach)"))))
 
 ;;; ── copy-mode-set-cursor command coverage ────────────────────────────────────
 

@@ -189,14 +189,10 @@
          (win  (first (cl-tmux/model:session-windows sess)))
          (pane (first (cl-tmux/model:window-panes win)))
          (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
-    (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_top}" ctx))
-        "single pane must be at top")
-    (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_bottom}" ctx))
-        "single pane must be at bottom")
-    (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_left}" ctx))
-        "single pane must be at left")
-    (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_right}" ctx))
-        "single pane must be at right")))
+    (dolist (spec '("#{pane_at_top}" "#{pane_at_bottom}"
+                    "#{pane_at_left}" "#{pane_at_right}"))
+      (is (string= "1" (cl-tmux/format:expand-format spec ctx))
+          "~S must be 1 for a single-pane window" spec))))
 
 (test format-pane-at-edges-horizontal-split
   "For a laid-out horizontal split (make-two-pane-h-window: 81x24, p0 x=0 w=40,
@@ -205,29 +201,18 @@
   (multiple-value-bind (win p0 p1) (make-two-pane-h-window)
     (let ((ctx0 (cl-tmux/format:format-context-from-session nil win p0))
           (ctx1 (cl-tmux/format:format-context-from-session nil win p1)))
-      ;; left pane p0: at left, top, bottom; NOT at right.
-      (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_left}" ctx0))
-          "left pane must be at left edge")
-      (is (string= "0" (cl-tmux/format:expand-format "#{pane_at_right}" ctx0))
-          "left pane must NOT be at right edge (0+40=40 ≠ 81)")
-      (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_top}" ctx0))
-          "left pane must be at top edge")
-      (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_bottom}" ctx0))
-          "left pane must be at bottom edge (0+24=24)")
-      ;; right pane p1: at right, top, bottom; NOT at left.
-      (is (string= "0" (cl-tmux/format:expand-format "#{pane_at_left}" ctx1))
-          "right pane must NOT be at left edge (x=41 ≠ 0)")
-      (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_right}" ctx1))
-          "right pane must be at right edge (41+40=81)")
-      (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_top}" ctx1))
-          "right pane must be at top edge")
-      (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_bottom}" ctx1))
-          "right pane must be at bottom edge")
-      ;; window_width/height from the real split window.
-      (is (string= "81" (cl-tmux/format:expand-format "#{window_width}" ctx0))
-          "#{window_width} must equal the split window's width (81)")
-      (is (string= "24" (cl-tmux/format:expand-format "#{window_height}" ctx0))
-          "#{window_height} must equal the split window's height (24)"))))
+      (dolist (c `((,ctx0 "#{pane_at_left}"   "1" "left pane at left edge")
+                   (,ctx0 "#{pane_at_right}"  "0" "left pane NOT at right edge (0+40≠81)")
+                   (,ctx0 "#{pane_at_top}"    "1" "left pane at top edge")
+                   (,ctx0 "#{pane_at_bottom}" "1" "left pane at bottom edge (0+24=24)")
+                   (,ctx1 "#{pane_at_left}"   "0" "right pane NOT at left edge (x=41≠0)")
+                   (,ctx1 "#{pane_at_right}"  "1" "right pane at right edge (41+40=81)")
+                   (,ctx1 "#{pane_at_top}"    "1" "right pane at top edge")
+                   (,ctx1 "#{pane_at_bottom}" "1" "right pane at bottom edge")
+                   (,ctx0 "#{window_width}"   "81" "window_width equals split window width")
+                   (,ctx0 "#{window_height}"  "24" "window_height equals split window height")))
+        (destructuring-bind (ctx spec expected desc) c
+          (is (string= expected (cl-tmux/format:expand-format spec ctx)) "~A" desc))))))
 
 ;;; ── pane_at_top/bottom "0" branches + NIL-safe defaults ──────────────────────
 ;;;
@@ -245,32 +230,31 @@
   (with-v-split-window (win p0 p1)
     (let ((ctx0 (cl-tmux/format:format-context-from-session nil win p0))
           (ctx1 (cl-tmux/format:format-context-from-session nil win p1)))
-      (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_top}" ctx0)))
-      (is (string= "0" (cl-tmux/format:expand-format "#{pane_at_bottom}" ctx0)))
-      (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_left}" ctx0)))
-      (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_right}" ctx0)))
-      (is (string= "0" (cl-tmux/format:expand-format "#{pane_at_top}" ctx1)))
-      (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_bottom}" ctx1)))
-      (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_left}" ctx1)))
-      (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_right}" ctx1))))))
+      (dolist (c `((,ctx0 "#{pane_at_top}"    "1") (,ctx0 "#{pane_at_bottom}" "0")
+                   (,ctx0 "#{pane_at_left}"   "1") (,ctx0 "#{pane_at_right}"  "1")
+                   (,ctx1 "#{pane_at_top}"    "0") (,ctx1 "#{pane_at_bottom}" "1")
+                   (,ctx1 "#{pane_at_left}"   "1") (,ctx1 "#{pane_at_right}"  "1")))
+        (destructuring-bind (ctx spec expected) c
+          (is (string= expected (cl-tmux/format:expand-format spec ctx))
+              "~S → ~S" spec expected))))))
 
 (test format-pane-at-edges-and-window-dims-default-when-nil
   "With NIL session/window/pane, geometry vars are empty-safe: window_width/height
    expand to \"0\" and every pane_at_* flag is \"0\"."
   (let ((ctx (cl-tmux/format:format-context-from-session nil nil nil)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{window_width}"  ctx)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{window_height}" ctx)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{pane_at_top}"    ctx)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{pane_at_bottom}" ctx)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{pane_at_left}"   ctx)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{pane_at_right}"  ctx)))))
+    (dolist (spec '("#{window_width}" "#{window_height}"
+                    "#{pane_at_top}" "#{pane_at_bottom}"
+                    "#{pane_at_left}" "#{pane_at_right}"))
+      (is (string= "0" (cl-tmux/format:expand-format spec ctx))
+          "~S must default to 0 with nil geometry" spec))))
 
 (test format-pane-at-bottom-right-default-when-window-nil
   "Pane present but window NIL: pane_at_top/left resolve from the pane's coords,
    but pane_at_bottom/right short-circuit to \"0\" (far-edge needs the window)."
   (let* ((pane (make-no-pty-pane 1 0 0 40 24))
          (ctx  (cl-tmux/format:format-context-from-session nil nil pane)))
-    (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_top}"    ctx)))
-    (is (string= "1" (cl-tmux/format:expand-format "#{pane_at_left}"   ctx)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{pane_at_bottom}" ctx)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{pane_at_right}"  ctx)))))
+    (dolist (c '(("#{pane_at_top}"    "1") ("#{pane_at_left}"   "1")
+                 ("#{pane_at_bottom}" "0") ("#{pane_at_right}"  "0")))
+      (destructuring-bind (spec expected) c
+        (is (string= expected (cl-tmux/format:expand-format spec ctx))
+            "~S with nil window → ~S" spec expected)))))
