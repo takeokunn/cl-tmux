@@ -71,7 +71,7 @@
                        (list (getf ctx :window-name)  "" "window-name defaults to empty string")
                        (list (getf ctx :pane-index)    0 "pane-index defaults to 0")))
       (destructuring-bind (actual expected desc) row
-        (is (equal expected actual) "~A" desc))))
+        (is (equal expected actual) "~A" desc)))))
 
 ;;; ── format-context-from-session with real objects ────────────────────────────
 
