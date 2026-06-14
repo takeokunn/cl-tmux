@@ -54,7 +54,7 @@
                      (list "C-M-Left" '(7 "Left") "Ctrl+Alt -> 7")
                      (list "C-S-Up"  '(6 "Up")   "Ctrl+Shift -> 6")))
       (destructuring-bind (name expected desc) c
-        (is (equal expected (mods name)) "~A" desc))))
+        (is (equal expected (mods name)) "~A" desc)))))
 
 
 (test key-name-to-bytes-modified-does-not-break-control-chars
