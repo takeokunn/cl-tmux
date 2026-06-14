@@ -61,9 +61,9 @@
          (win  (first (cl-tmux/model:session-windows sess)))
          (pane (first (cl-tmux/model:window-panes win)))
          (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
-    (is (string= "" (cl-tmux/format:expand-format "#{copy_cursor_x}" ctx)))
-    (is (string= "" (cl-tmux/format:expand-format "#{copy_cursor_y}" ctx)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{selection_present}" ctx)))))
+    (dolist (c '(("#{copy_cursor_x}" "") ("#{copy_cursor_y}" "") ("#{selection_present}" "0")))
+      (destructuring-bind (spec expected) c
+        (is (string= expected (cl-tmux/format:expand-format spec ctx)) "~S" spec)))))
 
 (test format-context-copy-cursor-reports-position-in-copy-mode
   "In copy mode #{copy_cursor_x}/#{copy_cursor_y} report the copy cursor (row . col)
@@ -76,12 +76,11 @@
           (cl-tmux/terminal/types:screen-copy-cursor scr) (cons 7 3)
           (cl-tmux/terminal/types:screen-copy-selecting scr) t)
     (let ((ctx (cl-tmux/format:format-context-from-session sess win pane)))
-      (is (string= "3" (cl-tmux/format:expand-format "#{copy_cursor_x}" ctx))
-          "#{copy_cursor_x} must be the copy cursor column (cdr of (row . col))")
-      (is (string= "7" (cl-tmux/format:expand-format "#{copy_cursor_y}" ctx))
-          "#{copy_cursor_y} must be the copy cursor row (car of (row . col))")
-      (is (string= "1" (cl-tmux/format:expand-format "#{selection_present}" ctx))
-          "#{selection_present} must be 1 while selecting"))
+      (dolist (c '(("#{copy_cursor_x}"    "3" "copy cursor column (cdr of row.col)")
+                   ("#{copy_cursor_y}"    "7" "copy cursor row (car of row.col)")
+                   ("#{selection_present}" "1" "selection present while selecting")))
+        (destructuring-bind (spec expected desc) c
+          (is (string= expected (cl-tmux/format:expand-format spec ctx)) "~A" desc))))
     (setf (cl-tmux/terminal/types:screen-copy-mode-p scr) nil
           (cl-tmux/terminal/types:screen-copy-selecting scr) nil)))
 

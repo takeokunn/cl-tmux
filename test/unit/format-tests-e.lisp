@@ -23,12 +23,11 @@
   "#{C:term} returns the 1-based line number of the first line containing term."
   (let* ((p   (%content-search-pane "hello world" "foo bar" "baz qux"))
          (ctx (cl-tmux/format:format-context-from-session nil nil p)))
-    (is (string= "1" (cl-tmux/format:expand-format "#{C:hello}" ctx))
-        "term on the first line → 1")
-    (is (string= "2" (cl-tmux/format:expand-format "#{C:bar}" ctx))
-        "term on the second line → 2")
-    (is (string= "3" (cl-tmux/format:expand-format "#{C:qux}" ctx))
-        "term on the third line → 3")))
+    (dolist (c '(("#{C:hello}" "1" "term on the first line → 1")
+                 ("#{C:bar}"   "2" "term on the second line → 2")
+                 ("#{C:qux}"   "3" "term on the third line → 3")))
+      (destructuring-bind (spec expected desc) c
+        (is (string= expected (cl-tmux/format:expand-format spec ctx)) "~A" desc)))))
 
 (test format-content-search-no-match-returns-zero
   "#{C:term} returns \"0\" when no visible line contains term."
@@ -53,23 +52,21 @@
   "#{C/r:term} treats term as a regex (anchors honoured: ^ matches line start)."
   (let* ((p   (%content-search-pane "alpha line" "foo bar" "baz"))
          (ctx (cl-tmux/format:format-context-from-session nil nil p)))
-    (is (string= "2" (cl-tmux/format:expand-format "#{C/r:b.r}" ctx))
-        "b.r regex matches 'bar' on line 2")
-    (is (string= "2" (cl-tmux/format:expand-format "#{C/r:^foo}" ctx))
-        "^foo anchors to the start of line 2")
-    (is (string= "0" (cl-tmux/format:expand-format "#{C/r:^bar}" ctx))
-        "^bar matches no line start → 0 (regex, not substring)")))
+    (dolist (c '(("#{C/r:b.r}"  "2" "b.r regex matches 'bar' on line 2")
+                 ("#{C/r:^foo}" "2" "^foo anchors to the start of line 2")
+                 ("#{C/r:^bar}" "0" "^bar matches no line start → 0 (regex, not substring)")))
+      (destructuring-bind (spec expected desc) c
+        (is (string= expected (cl-tmux/format:expand-format spec ctx)) "~A" desc)))))
 
 (test format-content-search-case-insensitive
   "#{C/i:term} folds case; bare #{C:term} is case-sensitive."
   (let* ((p   (%content-search-pane "Hello World"))
          (ctx (cl-tmux/format:format-context-from-session nil nil p)))
-    (is (string= "0" (cl-tmux/format:expand-format "#{C:hello}" ctx))
-        "case-sensitive glob does not match 'Hello'")
-    (is (string= "1" (cl-tmux/format:expand-format "#{C/i:hello}" ctx))
-        "case-insensitive glob matches 'Hello'")
-    (is (string= "1" (cl-tmux/format:expand-format "#{C/ri:HELLO}" ctx))
-        "case-insensitive regex matches 'Hello'")))
+    (dolist (c '(("#{C:hello}"   "0" "case-sensitive glob does not match 'Hello'")
+                 ("#{C/i:hello}" "1" "case-insensitive glob matches 'Hello'")
+                 ("#{C/ri:HELLO}" "1" "case-insensitive regex matches 'Hello'")))
+      (destructuring-bind (spec expected desc) c
+        (is (string= expected (cl-tmux/format:expand-format spec ctx)) "~A" desc)))))
 
 (test format-content-search-term-is-expanded
   "#{C:#{var}} expands the term as a format string before searching."
