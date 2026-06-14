@@ -238,14 +238,6 @@
   (is (= 2 (char-width #\中)) "CJK ideograph is double-width")
   (is (= 1 (char-width #\│)) "box drawing stays single-width"))
 
-(test char-width-hangul-jamo-is-wide
-  :description "U+1100 (Hangul Jamo range start) has display width 2."
-  (is (= 2 (char-width (code-char #x1100)))))
-
-(test char-width-fullwidth-ascii-is-wide
-  :description "U+FF21 (Fullwidth Latin Capital A) has display width 2."
-  (is (= 2 (char-width (code-char #xFF21)))))
-
 (test char-width-ascii-range-is-single
   :description "All printable ASCII characters have display width 1."
   (loop for cp from 32 to 126
@@ -256,27 +248,6 @@
 (test define-wide-char-ranges-macro-is-defined
   "define-wide-char-ranges is a defined macro accessible via single-colon export."
   (is (macro-function 'cl-tmux/terminal/types:define-wide-char-ranges)))
-
-(test char-width-emoji-block-start-boundary
-  :description "U+1F300 (first code point of Emoji/pictograph block) has width 2."
-  (is (= 2 (char-width (code-char #x1F300)))
-      "U+1F300 must be wide (start of Emoji block)"))
-
-(test char-width-emoji-block-end-boundary
-  :description "U+1FAFF (last code point of Emoji/pictograph block) has width 2."
-  (is (= 2 (char-width (code-char #x1FAFF)))
-      "U+1FAFF must be wide (end of Emoji block)"))
-
-(test char-width-cjk-ext-b-start-boundary
-  :description "U+20000 (first code point of CJK Extension B range) has width 2."
-  (is (= 2 (char-width (code-char #x20000)))
-      "U+20000 must be wide (start of CJK Extension B range)"))
-
-(test char-width-adjacent-below-emoji-block
-  :description "U+1F2FF (one below the Emoji block start) is not in the range."
-  ;; U+1F2FF is below #x1F300; should not be in any wide range.
-  (is (= 1 (char-width (code-char #x1F2FF)))
-      "U+1F2FF is outside all wide ranges and must have width 1"))
 
 ;;; Table-driven char-width boundary tests: (cp expected-width description)
 (test char-width-range-boundaries-table
@@ -294,9 +265,14 @@
                   (#xAC00 2 "U+AC00 Hangul syllables start")
                   (#xD7A3 2 "U+D7A3 Hangul syllables end")
                   (#xFF00 2 "U+FF00 Fullwidth ASCII start")
+                  (#xFF21 2 "U+FF21 Fullwidth Latin Capital A (mid-range)")
                   (#xFF60 2 "U+FF60 Fullwidth ASCII end")
                   (#xFFE0 2 "U+FFE0 Fullwidth signs start")
-                  (#xFFE6 2 "U+FFE6 Fullwidth signs end")))
+                  (#xFFE6 2 "U+FFE6 Fullwidth signs end")
+                  (#x1F2FF 1 "U+1F2FF below Emoji block — must be width 1")
+                  (#x1F300 2 "U+1F300 Emoji/pictograph block start")
+                  (#x1FAFF 2 "U+1FAFF Emoji/pictograph block end")
+                  (#x20000 2 "U+20000 CJK Extension B start")))
     (destructuring-bind (cp expected-width desc) case
       (when (< cp char-code-limit)
         (is (= expected-width (char-width (code-char cp))) desc)))))

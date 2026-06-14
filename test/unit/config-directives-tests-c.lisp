@@ -117,42 +117,27 @@
 
 ;;; %parse-key-token
 
-(test parse-key-token-single-char-returns-char
-  "%parse-key-token returns a character for a 1-char token."
-  (is (char= #\c   (cl-tmux/config::%parse-key-token "c")))
-  (is (char= #\%   (cl-tmux/config::%parse-key-token "%")))
-  (is (char= #\"   (cl-tmux/config::%parse-key-token "\""))))
-
-(test parse-key-token-multi-char-returns-string
-  "%parse-key-token returns the string itself for tokens longer than 1 char."
-  (is (string= "M-1" (cl-tmux/config::%parse-key-token "M-1")))
-  (is (string= "F1"  (cl-tmux/config::%parse-key-token "F1"))))
-
-(test parse-key-token-control-letters-return-control-char
-  "%parse-key-token converts C-<letter> to its control character so the binding
-   matches the byte the event loop sees: C-a→^A(1), C-z→^Z(26), C-b→^B(2)."
-  (is (char= (code-char 1)  (cl-tmux/config::%parse-key-token "C-a")) "C-a → ^A (1)")
-  (is (char= (code-char 26) (cl-tmux/config::%parse-key-token "C-z")) "C-z → ^Z (26)")
-  (is (char= (code-char 2)  (cl-tmux/config::%parse-key-token "C-b")) "C-b → ^B (2)")
-  ;; Case-insensitive: C-A is the same control char as C-a.
-  (is (char= (code-char 1)  (cl-tmux/config::%parse-key-token "C-A")) "C-A → ^A (1)"))
-
-(test parse-key-token-control-space-and-at-return-nul
-  "C-Space and C-@ both map to the NUL control character (byte 0)."
-  (is (char= (code-char 0) (cl-tmux/config::%parse-key-token "C-Space")) "C-Space → NUL")
-  (is (char= (code-char 0) (cl-tmux/config::%parse-key-token "C-@")) "C-@ → NUL"))
-
-(test parse-key-token-control-punctuation-return-control-char
-  "C-[ C-\\ C-] map to control bytes 27/28/29."
-  (is (char= (code-char 27) (cl-tmux/config::%parse-key-token "C-[")) "C-[ → ESC (27)")
-  (is (char= (code-char 28) (cl-tmux/config::%parse-key-token "C-\\")) "C-\\ → FS (28)")
-  (is (char= (code-char 29) (cl-tmux/config::%parse-key-token "C-]")) "C-] → GS (29)"))
-
-(test parse-key-token-control-modifier-arrow-stays-string
-  "C-<named-key> (e.g. C-Left) that the event loop encodes as a multi-byte
-   sequence is kept as the string for the deferred modifier-key path."
-  (is (string= "C-Left"  (cl-tmux/config::%parse-key-token "C-Left")))
-  (is (string= "C-Up"    (cl-tmux/config::%parse-key-token "C-Up"))))
+(test parse-key-token-table
+  "%parse-key-token: 1-char token → character; multi-char → string; C-<letter> →
+   control char; C-Space/C-@ → NUL; C-<named-key> kept as string."
+  (dolist (row (list (list "c"       #\c            "single char 'c'")
+                     (list "%"       #\%            "single char '%'")
+                     (list "\""      #\"            "single char '\"'")
+                     (list "M-1"     "M-1"          "multi-char → string")
+                     (list "F1"      "F1"           "multi-char F1 → string")
+                     (list "C-a"     (code-char 1)  "C-a → ^A (1)")
+                     (list "C-z"     (code-char 26) "C-z → ^Z (26)")
+                     (list "C-b"     (code-char 2)  "C-b → ^B (2)")
+                     (list "C-A"     (code-char 1)  "C-A → ^A (case-insensitive)")
+                     (list "C-Space" (code-char 0)  "C-Space → NUL")
+                     (list "C-@"     (code-char 0)  "C-@ → NUL")
+                     (list "C-["     (code-char 27) "C-[ → ESC (27)")
+                     (list "C-\\"    (code-char 28) "C-\\ → FS (28)")
+                     (list "C-]"     (code-char 29) "C-] → GS (29)")
+                     (list "C-Left"  "C-Left"       "C-<named-key> stays string")
+                     (list "C-Up"    "C-Up"         "C-<named-key> stays string")))
+    (destructuring-bind (input expected desc) row
+      (is (equal expected (cl-tmux/config::%parse-key-token input)) "~A" desc))))
 
 (test bind-control-letter-fires-via-control-char
   "bind C-a <cmd> binds the control character ^A (byte 1) so a real Ctrl-a
