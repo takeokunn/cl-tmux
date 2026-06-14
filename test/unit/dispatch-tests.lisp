@@ -253,21 +253,20 @@
     (is (eq :detach (cl-tmux::dispatch-command s :detach nil)))
     (is-true cl-tmux::*running* "dispatch-command must not clear *running*")))
 
-(test dispatch-kill-last-window-quits
-  "Killing the only window ends the session (:quit)."
+(test dispatch-kill-last-returns-quit-table
+  "Killing the last window or last pane ends the session with :quit."
   (with-fake-session (s :nwindows 1)
-    (is (eq :quit (cl-tmux::dispatch-command s :kill-window nil)))))
+    (is (eq :quit (cl-tmux::dispatch-command s :kill-window nil))
+        "killing last window → :quit"))
+  (with-fake-session (s :nwindows 1 :npanes 1)
+    (is (eq :quit (cl-tmux::dispatch-command s :kill-pane nil))
+        "killing last pane → :quit")))
 
 (test dispatch-kill-one-of-two-windows-survives
   "Killing one of two windows leaves the session running with the other."
   (with-fake-session (s :nwindows 2)
     (is (null (cl-tmux::dispatch-command s :kill-window nil)))
     (is (= 1 (length (session-windows s))))))
-
-(test dispatch-kill-last-pane-quits
-  "Killing the sole pane of the sole window ends the session (:quit)."
-  (with-fake-session (s :nwindows 1 :npanes 1)
-    (is (eq :quit (cl-tmux::dispatch-command s :kill-pane nil)))))
 
 ;;; ── Prefix routing ──────────────────────────────────────────────────────────
 

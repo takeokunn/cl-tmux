@@ -129,14 +129,10 @@
 
 ;;; ── #{pane_title} expansion ───────────────────────────────────────────────────
 
-(test expand-format-pane-title-from-context
-  "#{pane_title} expands to :pane-title from context."
-  (is (string= "mytitle"
-               (fmt "#{pane_title}" :pane-title "mytitle"))
-      "#{pane_title} must expand to the :pane-title value"))
-
-(test expand-format-pane-title-missing-returns-empty
-  "#{pane_title} returns empty string when :pane-title is absent."
+(test expand-format-pane-title-table
+  "#{pane_title} expands to :pane-title when present, or empty when absent."
+  (is (string= "mytitle" (fmt "#{pane_title}" :pane-title "mytitle"))
+      "#{pane_title} must expand to the :pane-title value")
   (is (string= "" (fmt "#{pane_title}"))
       "#{pane_title} with no context must return empty string"))
 
