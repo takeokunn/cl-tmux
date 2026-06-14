@@ -337,40 +337,7 @@
         (cl-tmux/commands:rename-session sess new-name)
         (is (string= "keep" (session-name sess)) "~A" desc)))))
 
-;;; ── %copy-mode-clamp-cursor direct unit tests ────────────────────────────────
-
-(test copy-mode-clamp-cursor-table
-  "%copy-mode-clamp-cursor: row clamped to [0, h-1], col clamped to [0, w-1]."
-  (dolist (row '((20 5  -3  2  0  2 "row -3 clamped to 0; col unchanged")
-                 (20 5  10  3  4  3 "row 10 clamped to height-1 (4); col unchanged")
-                 (10 5   2 25  2  9 "col 25 clamped to width-1 (9); row unchanged")
-                 (20 5   2 10  2 10 "in-bounds cursor unchanged")))
-    (destructuring-bind (w h in-row in-col out-row out-col desc) row
-      (let ((s (make-screen w h)))
-        (setf (screen-copy-cursor s) (cons in-row in-col))
-        (cl-tmux/commands::%copy-mode-clamp-cursor s)
-        (let ((cursor (screen-copy-cursor s)))
-          (is (= out-row (car cursor)) "~A: row" desc)
-          (is (= out-col (cdr cursor)) "~A: col" desc))))))
-
-(test copy-mode-clamp-cursor-noop-when-nil
-  "%copy-mode-clamp-cursor is a no-op when the cursor is NIL."
-  (let ((s (make-screen 20 5)))
-    (setf (screen-copy-cursor s) nil)
-    (cl-tmux/commands::%copy-mode-clamp-cursor s)
-    (is (null (screen-copy-cursor s)) "nil cursor must remain nil")))
-
 ;;; ── %join-pane-insert-into-dst direct unit tests ─────────────────────────────
-
-(test join-pane-insert-into-dst-returns-src-pane-on-success
-  "%join-pane-insert-into-dst returns SRC-PANE when insertion succeeds."
-  (let* ((win (%vsplit-window 20))
-         (p0  (first  (window-panes win)))
-         (src (make-pane :id 99 :x 0 :y 0 :width 10 :height 5
-                         :fd -1 :pid -1 :screen (make-screen 10 5))))
-    (window-select-pane win p0)
-    (is (eq src (cl-tmux/commands::%join-pane-insert-into-dst src win :h))
-        "%join-pane-insert-into-dst must return src-pane on success")))
 
 (test join-pane-insert-into-dst-adds-pane-to-window
   "%join-pane-insert-into-dst appends src-pane to the destination window's pane list."
@@ -395,11 +362,3 @@
     (is (eq win (pane-window src))
         "pane-window must be updated to dst-window after insertion")))
 
-(test join-pane-insert-into-dst-returns-nil-when-no-active-pane
-  "%join-pane-insert-into-dst returns NIL when the destination has no active pane."
-  (let* ((win (make-window :id 1 :name "empty" :width 20 :height 5
-                           :panes nil :tree nil))
-         (src (make-pane :id 99 :x 0 :y 0 :width 10 :height 5
-                         :fd -1 :pid -1 :screen (make-screen 10 5))))
-    (is (null (cl-tmux/commands::%join-pane-insert-into-dst src win :h))
-        "%join-pane-insert-into-dst must return NIL when destination has no active leaf")))

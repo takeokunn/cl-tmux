@@ -25,17 +25,13 @@
 
 (test name-prefix-p-table
   "%name-prefix-p returns T when PREFIX equals or is a prefix of NAME, NIL otherwise."
-  (dolist (row '((t   "foo"    "foo"    "exact match")
-                 (t   "fo"     "foobar" "prefix of longer name")
-                 (nil "foobar" "fo"     "prefix longer than name")
-                 (nil "bar"    "foobar" "strings diverge")))
+  (dolist (row '((t   "foo"    "foo"     "exact match")
+                 (t   "fo"     "foobar"  "prefix of longer name")
+                 (nil "foobar" "fo"      "prefix longer than name")
+                 (nil "bar"    "foobar"  "strings diverge")
+                 (t   ""       "anything" "empty prefix matches anything")))
     (destructuring-bind (expected prefix name desc) row
       (is (eq expected (cl-tmux::%name-prefix-p prefix name)) "~A" desc))))
-
-(test name-prefix-p-empty-prefix
-  "%name-prefix-p with an empty prefix matches any name."
-  (is-true (cl-tmux::%name-prefix-p "" "anything")
-           "%name-prefix-p with empty prefix must return T for any name"))
 
 ;;; ── find-session-by-target edge cases ────────────────────────────────────────
 
@@ -119,20 +115,13 @@
 
 ;;; ── %non-empty pure helper ───────────────────────────────────────────────────
 
-(test non-empty-returns-non-empty-string
-  "%non-empty returns the string when it is non-empty."
-  (is (string= "hello" (cl-tmux::%non-empty "hello"))
-      "%non-empty must return the string when non-empty"))
-
-(test non-empty-returns-nil-for-empty-string
-  "%non-empty returns NIL when the string is empty."
-  (is (null (cl-tmux::%non-empty ""))
-      "%non-empty must return NIL for an empty string"))
-
-(test non-empty-returns-nil-for-nil
-  "%non-empty returns NIL when the input is NIL."
-  (is (null (cl-tmux::%non-empty nil))
-      "%non-empty must return NIL for NIL input"))
+(test non-empty-table
+  "%non-empty returns the string for non-empty input; NIL for empty string or NIL input."
+  (dolist (row '(("hello" "hello" "%non-empty of \"hello\" must return itself")
+                 (""      nil     "%non-empty of empty string must return NIL")
+                 (nil     nil     "%non-empty of NIL input must return NIL")))
+    (destructuring-bind (input expected desc) row
+      (is (equal expected (cl-tmux::%non-empty input)) "~A" desc))))
 
 ;;; ── Table-driven %parse-target cases ────────────────────────────────────────
 
