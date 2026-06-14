@@ -1,5 +1,7 @@
 (in-package #:cl-tmux/commands)
 
+(declaim (special cl-tmux::*dirty*))
+
 ;;; ── Copy-mode search subsystem ──────────────────────────────────────────────
 ;;;
 ;;; copy_mode_search_forward(Screen, Term)  :- scan rows from cursor downward

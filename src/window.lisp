@@ -69,11 +69,14 @@
     (:v (pane-height pane))
     (:h (pane-width  pane))))
 
+(defun %split-axis-fits-p (extent orient)
+  "T when EXTENT is large enough to split along ORIENT (needs 2*min + 1 separator)."
+  (let ((axis-floor (%axis-floor orient)))
+    (>= extent (+ axis-floor 1 axis-floor))))
+
 (defun %split-fits-p (pane orient)
-  "T when PANE is wide/tall enough to split along ORIENT (needs 2×min + 1 separator)."
-  (let ((avail     (%orient-pane-extent pane orient))
-        (axis-floor (%axis-floor orient)))
-    (>= avail (+ axis-floor 1 axis-floor))))
+  "T when PANE is wide/tall enough to split along ORIENT."
+  (%split-axis-fits-p (%orient-pane-extent pane orient) orient))
 
 ;;; ── Window-level pane ID allocation ────────────────────────────────────────
 
@@ -185,7 +188,8 @@
         ;; split against the active pane.
         (when (and leaf
                    (if full
-                       (>= (%window-axis-extent window direction) 2)
+                       (%split-axis-fits-p (%window-axis-extent window direction)
+                                           direction)
                        (%split-fits-p active direction)))
           (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
         (let* ((new-pane (%fork-pane (next-pane-id window) px py pw ph

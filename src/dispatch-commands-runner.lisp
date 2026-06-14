@@ -83,6 +83,8 @@
    ;; Named paste-buffer commands: -b <name> targets a specific named buffer.
    (cons '("set-buffer" "setb")         #'%cmd-set-buffer-arg)
    (cons '("paste-buffer" "pasteb")     #'%cmd-paste-buffer-arg)
+   (cons '("save-buffer" "saveb")       #'%cmd-save-buffer-arg)
+   (cons '("load-buffer" "loadb")       #'%cmd-load-buffer-arg)
    (cons '("delete-buffer" "deleteb")   #'%cmd-delete-buffer-arg)
    (cons '("show-buffer" "showb")       #'%cmd-show-buffer-arg)
    ;; has-session [-t name]: check if a named session exists (0 = yes, 1 = no).
@@ -137,4 +139,3 @@
         (%run-command-tokens session (first sequences))
         (dolist (subcmd sequences)
           (%run-command-tokens session subcmd)))))
-

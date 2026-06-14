@@ -152,6 +152,21 @@
       (is (search "named buf" (or (cl-tmux/buffer:get-paste-buffer 0) ""))
           "-b stores the capture in the unnamed ring (single-ring model)"))))
 
+(test cmd-capture-pane-t-captures-target-pane
+  "capture-pane -t captures the requested pane, not always the active pane."
+  (with-empty-buffers
+    (with-fake-session (s :nwindows 1 :npanes 2)
+      (let* ((win (session-active-window s))
+             (active (window-active-pane win))
+             (target (find 2 (window-panes win) :key #'pane-id)))
+        (feed (pane-screen active) "active text")
+        (feed (pane-screen target) "target text")
+        (cl-tmux::%cmd-capture-pane-arg s '("-t" "%2" "-b" "cap"))
+        (let ((buf (or (cl-tmux/buffer:get-buffer-by-name "cap") "")))
+          (is (search "target text" buf) "-t %2 captures pane 2")
+          (is (null (search "active text" buf))
+              "-t %2 must not fall back to the active pane"))))))
+
 ;;; ── Named paste-buffer commands (-b name) ────────────────────────────────────
 
 (test cmd-set-buffer-b-stores-named
@@ -190,6 +205,63 @@
       (cl-tmux::%cmd-delete-buffer-arg s '("-b" "b"))
       (is (null (cl-tmux/buffer:get-buffer-by-name "b"))
           "the named buffer is gone after delete-buffer -b"))))
+
+(test cmd-save-buffer-b-writes-named-buffer
+  "save-buffer -b name path writes the named buffer to a file."
+  (with-empty-buffers
+    (with-fake-session (s)
+      (let* ((label (format nil "cl-tmux-save-buffer-~D-~D.txt"
+                            (get-universal-time)
+                            (random 1000000)))
+             (path (namestring (merge-pathnames label (uiop:temporary-directory)))))
+        (unwind-protect
+             (progn
+               (cl-tmux/buffer:set-named-buffer "saved" "named text")
+               (cl-tmux::%run-command-tokens s (list "save-buffer" "-b" "saved" path))
+               (is (string= "named text" (uiop:read-file-string path))
+                   "wrote selected named buffer"))
+          (ignore-errors (delete-file path)))))))
+
+(test cmd-save-buffer-a-appends
+  "save-buffer -a appends the selected buffer to an existing file."
+  (with-empty-buffers
+    (with-fake-session (s)
+      (let* ((label (format nil "cl-tmux-save-buffer-append-~D-~D.txt"
+                            (get-universal-time)
+                            (random 1000000)))
+             (path (namestring (merge-pathnames label (uiop:temporary-directory)))))
+        (unwind-protect
+             (progn
+               (with-open-file (out path
+                                    :direction :output
+                                    :if-exists :supersede
+                                    :if-does-not-exist :create)
+                 (write-string "pre:" out))
+               (cl-tmux/buffer:add-paste-buffer "post")
+               (cl-tmux::%run-command-tokens s (list "save-buffer" "-a" path))
+               (is (string= "pre:post" (uiop:read-file-string path))
+                   "appended most recent buffer"))
+          (ignore-errors (delete-file path)))))))
+
+(test cmd-load-buffer-b-loads-named-buffer
+  "load-buffer -b name path loads file contents into a named buffer."
+  (with-empty-buffers
+    (with-fake-session (s)
+      (let* ((label (format nil "cl-tmux-load-buffer-~D-~D.txt"
+                            (get-universal-time)
+                            (random 1000000)))
+             (path (namestring (merge-pathnames label (uiop:temporary-directory)))))
+        (unwind-protect
+             (progn
+               (with-open-file (out path
+                                    :direction :output
+                                    :if-exists :supersede
+                                    :if-does-not-exist :create)
+                 (write-string "from file" out))
+               (cl-tmux::%run-command-tokens s (list "load-buffer" "-b" "loaded" path))
+               (is (string= "from file" (cl-tmux/buffer:get-buffer-by-name "loaded"))
+                   "loaded file into named buffer"))
+          (ignore-errors (delete-file path)))))))
 
 (test cmd-paste-buffer-d-deletes-named-after-paste
   "paste-buffer -d -b name deletes the named buffer after pasting it."

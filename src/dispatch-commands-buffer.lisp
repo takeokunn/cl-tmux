@@ -106,6 +106,40 @@
                      (cl-tmux/buffer:get-paste-buffer 0))))
       (show-overlay (or text "(no buffer)")))))
 
+(defun %cmd-save-buffer-arg (session args)
+  "save-buffer [-a] [-b name] path: save a paste buffer to PATH.
+   -b name saves that named buffer; otherwise saves the most recent buffer.
+   -a appends instead of overwriting."
+  (declare (ignore session))
+  (with-command-flags+pos (flags positionals args "b")
+    (let* ((name (cdr (assoc #\b flags)))
+           (append-p (and (assoc #\a flags) t))
+           (path (first positionals))
+           (text (if name
+                     (cl-tmux/buffer:get-buffer-by-name name)
+                     (cl-tmux/buffer:get-paste-buffer 0))))
+      (when (and path text)
+        (with-open-file (out path
+                             :direction :output
+                             :if-exists (if append-p :append :supersede)
+                             :if-does-not-exist :create)
+          (write-string text out))
+        text))))
+
+(defun %cmd-load-buffer-arg (session args)
+  "load-buffer [-b name] path: load PATH into a paste buffer.
+   -b name stores the data under NAME; otherwise an automatic buffer name is used."
+  (declare (ignore session))
+  (with-command-flags+pos (flags positionals args "b")
+    (let ((name (cdr (assoc #\b flags)))
+          (path (first positionals)))
+      (when path
+        (with-open-file (in path :direction :input)
+          (let* ((len (or (file-length in) 0))
+                 (text (make-string len))
+                 (count (read-sequence text in)))
+            (cl-tmux/buffer:add-paste-buffer (subseq text 0 count) name)))))))
+
 ;;; ── Popup overlay constants + formatter ─────────────────────────────────────
 ;;;
 ;;; Moved here from dispatch-handlers so BOTH the arg-bearing %cmd-display-popup
@@ -257,4 +291,3 @@
         (setf *dirty* t)))))
 
 ;;; *set-option-command-names* removed — inlined into *arg-command-table* below.
-

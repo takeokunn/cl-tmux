@@ -282,6 +282,22 @@
     ;; :v needs 3, only 2 → does not fit
     (is-false (cl-tmux/model::%split-fits-p p-short :v))))
 
+(test window-split-full-obeys-axis-minimums
+  "window-split :full refuses root splits that cannot leave both panes at min size."
+  (dolist (row '((:h 4 24 "full h-split needs at least 5 columns")
+                 (:v 80 2 "full v-split needs at least 3 rows")))
+    (destructuring-bind (direction width height desc) row
+      (let* ((p0   (make-no-pty-pane 1 0 0 width height))
+             (leaf (make-layout-leaf p0))
+             (win  (make-window :id 1 :name "w" :width width :height height
+                                :panes (list p0)
+                                :tree leaf)))
+        (window-select-pane win p0)
+        (is (null (window-split win direction :full t)) "~A" desc)
+        (is (eq leaf (window-tree win)) "~A: tree unchanged" desc)
+        (is (equal (list p0) (window-panes win)) "~A: pane list unchanged" desc)
+        (is (eq p0 (window-active-pane win)) "~A: active pane unchanged" desc)))))
+
 (test replace-in-tree-updates-parent-link
   "%replace-in-tree splices a replacement in place of a leaf."
   (let* ((l0   (tl-leaf 1 1 1))
@@ -465,4 +481,3 @@
   (let ((win (make-window :id 1 :name "w")))
     (is-true (window-lock win)
              "window-lock must return a non-NIL lock object")))
-

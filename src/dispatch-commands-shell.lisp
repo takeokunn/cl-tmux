@@ -142,14 +142,28 @@
      applies to the visible region (scrollback rows are not joined).
    -N: preserve trailing spaces WITHOUT joining wrapped lines (the difference from -J).
    -a / -P: accepted but not specially handled.
-   -t target: target pane (standalone uses the active pane)."
+   -t target: target pane by id (for example %2) or session:window.pane."
   (with-command-flags (flags args "tSEb")
     (let* ((print-p (assoc #\p flags))
            (include-scrollback (assoc #\S flags))
            (escapes  (assoc #\e flags))      ; -e: keep SGR colour/attr escapes
            (join     (assoc #\J flags))      ; -J: preserve trailing spaces + join wraps
            (preserve (assoc #\N flags))      ; -N: preserve trailing spaces, no join
-           (pane (session-active-pane session))
+           (target-str (cdr (assoc #\t flags)))
+           (cur-win (session-active-window session))
+           (cur-pane (and cur-win (window-active-pane cur-win)))
+           (pane (if target-str
+                     (multiple-value-bind (target-session target-window target-pane)
+                         (resolve-target *server-sessions* target-str
+                                         :current-session session
+                                         :current-window cur-win
+                                         :current-pane cur-pane)
+                       (declare (ignore target-session))
+                       (or (and target-pane target-window
+                                (member target-pane (window-panes target-window))
+                                target-pane)
+                           (and target-window (window-active-pane target-window))))
+                     cur-pane))
            (content (and pane (capture-pane pane
                                             :include-scrollback (and include-scrollback t)
                                             :escapes (and escapes t)
@@ -344,4 +358,3 @@
         (window-rotate win dir)
         (setf *dirty* t)
         t))))
-
