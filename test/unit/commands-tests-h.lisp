@@ -84,6 +84,25 @@
       (is (member p1 (window-panes win))
           "the source window must retain the non-active pane"))))
 
+(test break-pane-respects-base-index
+  "break-pane assigns the lowest free window id at or above base-index."
+  (with-isolated-options ("base-index" 1)
+    (let* ((p0  (%make-test-pane :id 1 :w 10))
+           (p1  (%make-test-pane :id 2 :x 11 :w 10))
+           (win (make-window :id 1 :name "w" :width 21 :height 5
+                             :tree (make-layout-split :h
+                                      (make-layout-leaf p0) (make-layout-leaf p1)
+                                      1/2)
+                             :panes (list p0 p1)))
+           (sess (make-session :id 1 :name "0" :windows (list win))))
+      (session-select-window sess win)
+      (window-select-pane win p0)
+      (let ((new-win (cl-tmux/commands:break-pane sess)))
+        (is (= 2 (window-id new-win))
+            "new window id must advance from base-index instead of using 0")
+        (is (null (find 0 (session-windows sess) :key #'window-id))
+            "break-pane must not create window id 0 when base-index is 1")))))
+
 ;;; ── break-pane (scriptable %cmd-break-pane-arg) ──────────────────────────────
 
 (defun %break-arg-fixture ()
@@ -333,4 +352,3 @@
       (cl-tmux::%cmd-previous-window-arg sess '("-a"))
       (is (eq wb (session-active-window sess))
           "previous-window -a selects beta (the alerted window)"))))
-

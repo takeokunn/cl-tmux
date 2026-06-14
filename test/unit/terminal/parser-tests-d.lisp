@@ -395,9 +395,9 @@
 
 (test handle-osc-52-no-inner-semicolon-is-noop
   "%handle-osc-52 is a no-op when the body has no semicolon (malformed OSC 52)."
-  (let ((received :not-called)
-        (cl-tmux/terminal/parser:*osc52-handler*
-          (lambda (text) (setf received text))))
+  (let* ((received :not-called)
+         (cl-tmux/terminal/parser:*osc52-handler*
+           (lambda (text) (setf received text))))
     (finishes (cl-tmux/terminal/parser::%handle-osc-52 "nodatahere"))
     (is (eq :not-called received)
         "%handle-osc-52 with no semicolon must not invoke the handler")))

@@ -141,8 +141,8 @@
   "%visible-truncate equals SUBSEQ for escape-free strings."
   (dolist (c '(("hello" 3  "hel"   "truncate to 3")
                ("hello" 5  "hello" "truncate at exact length")
-               ("hello" 99 "hello" "truncate past length → unchanged")
-               ("hello" 0  ""      "truncate to 0 → empty string")))
+               ("hello" 99 "hello" "truncate past length -> unchanged")
+               ("hello" 0  ""      "truncate to 0 -> empty string")))
     (destructuring-bind (input n expected desc) c
       (is (string= expected (cl-tmux/renderer::%visible-truncate input n)) "~A" desc))))
 

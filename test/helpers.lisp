@@ -342,12 +342,10 @@
 
    IMPORTANT: after signaling *running*=NIL we SLEEP before restoring it.
    Reader/timer loops only observe *running* between poll cycles (readers poll
-   every +pty-poll-timeout-us+ ≈ 50 ms).  bordeaux-threads:join-thread does not
-   reliably honour :timeout on this build, so we cannot count on the join to
-   block until the thread dies — without the pause, *running* would flip back to
-   T while a reader is still mid-poll and it would never stop.  Sleeping ~3 poll
-   cycles guarantees every reader observes the stop and exits (leaving
-   sb-thread:list-all-threads, which is what makes the next fork succeed)."
+   every +pty-poll-timeout-us+ ≈ 50 ms).  Without the pause, *running* could
+   flip back to T while a reader is still mid-poll and it would never stop.
+   Sleeping ~3 poll cycles gives every reader a chance to observe the stop and
+   exit before the bounded join."
   (let ((targets
           (remove-if-not
            (lambda (th)
@@ -361,7 +359,7 @@
       (setf cl-tmux::*running* nil)
       (sleep 0.15)
       (dolist (th targets)
-        (ignore-errors (bordeaux-threads:join-thread th :timeout 2)))
+        (ignore-errors (cl-tmux::%join-thread-with-timeout th 2)))
       (setf cl-tmux::*running* t))))
 
 (defmacro with-loop-state (&body body)
@@ -406,4 +404,3 @@
   "Give SCREEN N dummy scrollback rows so copy-mode-scroll has room to move."
   (setf (cl-tmux/terminal/types::screen-scrollback screen)
         (loop repeat n collect (vector))))
-

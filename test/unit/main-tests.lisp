@@ -400,12 +400,3 @@
         "%make-format-condition-evaluator must return a function")
     (is (stringp (funcall evaluator "1"))
         "format condition evaluator must return a string")))
-
-;;; ── Coverage: server-launch timeout constant ─────────────────────────────────
-
-(test server-launch-timeout-constant-is-positive
-  "+server-launch-timeout-seconds+ is a positive integer."
-  (is (plusp cl-tmux::+server-launch-timeout-seconds+)
-      "+server-launch-timeout-seconds+ must be positive")
-  (is (integerp cl-tmux::+server-launch-timeout-seconds+)
-      "+server-launch-timeout-seconds+ must be an integer"))

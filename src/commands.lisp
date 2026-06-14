@@ -259,7 +259,9 @@
     ;; Use the lowest free window id (same rule as session-new-window).
     (let* ((rows    (window-height src-win))
            (cols    (window-width  src-win))
-           (new-id  (cl-tmux/model::%next-window-id session))
+           (new-id  (cl-tmux/model::%next-window-id
+                     session
+                     (or (cl-tmux/options:get-option "base-index") 0)))
            (wname   (or name (cl-tmux/model::%shell-basename)))
            (new-win (make-window :id new-id :name wname :width cols :height rows)))
       ;; Install the pane as the sole leaf in the new window's tree.
@@ -359,4 +361,3 @@
     (ignore-errors
       (write-sequence bytes (pane-pipe-fd pane))
       (force-output (pane-pipe-fd pane)))))
-

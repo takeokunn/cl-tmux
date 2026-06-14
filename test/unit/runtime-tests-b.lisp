@@ -122,8 +122,8 @@
         ;; timer thread observes, so it exits and join-thread returns promptly.
         (setf cl-tmux::*running* nil)
         (ignore-errors
-          (bordeaux-threads:join-thread thread
-                                        :timeout cl-tmux::+reader-thread-join-timeout+))))))
+          (cl-tmux::%join-thread-with-timeout
+           thread cl-tmux::+reader-thread-join-timeout+))))))
 
 (test start-status-timer-fires-callback
   :description "With a short status-interval, at least one dirty callback fires."
@@ -151,9 +151,8 @@
                       (loop repeat 600 until (>= counter 1) do (sleep 0.01))
                       (setf cl-tmux::*running* nil)
                       (ignore-errors
-                        (bordeaux-threads:join-thread
-                         thread
-                         :timeout cl-tmux::+reader-thread-join-timeout+))
+                        (cl-tmux::%join-thread-with-timeout
+                         thread cl-tmux::+reader-thread-join-timeout+))
                       (is (>= counter 1)
                           "at least one dirty callback must fire; got ~D" counter))
                  ;; Ensure thread is stopped even if assertion fails.

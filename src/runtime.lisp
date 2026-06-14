@@ -36,8 +36,24 @@
 
 (defconstant +reader-thread-join-timeout+ 10
   "Seconds (real number) to wait for a PTY reader thread to terminate before
-   giving up.  Passed directly to bordeaux-threads:join-thread :timeout, which
-   expects a real number of seconds on SBCL.")
+   giving up when the Lisp implementation supports bounded thread joins.")
+
+(defun %join-thread-with-timeout (thread &optional (timeout +reader-thread-join-timeout+))
+  "Join THREAD with a bounded wait when available.
+
+   Bordeaux Threads does not standardize a timeout argument to JOIN-THREAD; SBCL
+   provides one on SB-THREAD:JOIN-THREAD.  On other implementations, poll for the
+   thread to exit and only call the portable join once it is already dead."
+  #+sbcl
+  (sb-thread:join-thread thread :timeout timeout)
+  #-sbcl
+  (let ((deadline (+ (get-internal-real-time)
+                     (round (* timeout internal-time-units-per-second)))))
+    (loop while (and (bordeaux-threads:thread-alive-p thread)
+                     (< (get-internal-real-time) deadline))
+          do (sleep 0.01))
+    (unless (bordeaux-threads:thread-alive-p thread)
+      (bordeaux-threads:join-thread thread))))
 
 (defconstant +wait-for-channel-timeout+ 30
   "Seconds before wait-for-channel gives up waiting for a signal.
@@ -396,6 +412,4 @@
   (setf *running* nil)
   (dolist (thread threads)
     (ignore-errors
-      (bordeaux-threads:join-thread thread
-                                    :timeout +reader-thread-join-timeout+))))
-
+      (%join-thread-with-timeout thread +reader-thread-join-timeout+))))

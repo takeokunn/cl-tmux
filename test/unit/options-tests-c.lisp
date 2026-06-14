@@ -31,8 +31,8 @@
 
 (test type-coercions-string
   "%coerce-value :string formats any value as a string."
-  (dolist (c '((42      "42"    "integer → decimal string")
-               (t       "T"     "T → \"T\"")
+  (dolist (c '((42      "42"    "integer -> decimal string")
+               (t       "T"     "T -> \"T\"")
                ("hello" "hello" "string passes through unchanged")))
     (destructuring-bind (input expected desc) c
       (is (string= expected (cl-tmux/options::%coerce-value :string input)) "~A" desc))))
@@ -180,4 +180,3 @@
         (is (string= name (cl-tmux/options:option-spec-name spec))    "~A: name" desc)
         (is (eq type (cl-tmux/options:option-spec-type spec))         "~A: type" desc)
         (is (equal default (cl-tmux/options:option-spec-default spec)) "~A: default" desc)))))
-

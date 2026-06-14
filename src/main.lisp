@@ -309,11 +309,6 @@
 (defconstant +server-socket-poll-max-iterations+ 30
   "Maximum number of socket-existence probes (30 × 0.1 s = 3 s total wait).")
 
-(defconstant +server-launch-timeout-seconds+ 30
-  "Wall-clock timeout (seconds) passed to sb-ext:run-program when spawning a
-   background server process.  Bounds the subprocess launch time so a hung
-   spawn does not block the attach client indefinitely.")
-
 (defun %ensure-server-running (session-name)
   "Start a background server for SESSION-NAME if no socket exists.
    Uses sb-ext:run-program with *posix-argv* to spawn a separate process.
@@ -326,12 +321,10 @@
     (unless (probe-file socket-path)
       ;; Guard: run-program may fail in test environments or when the
       ;; binary is not yet on PATH.  Only poll if the spawn succeeded.
-      ;; :wait nil means non-blocking — run-program returns immediately after fork.
-      ;; :timeout bounds the subprocess launch time.
+      ;; :wait nil means non-blocking, so run-program returns immediately after fork.
       (let ((launched (ignore-errors
                         (sb-ext:run-program exe args
                                             :wait nil
-                                            :timeout +server-launch-timeout-seconds+
                                             :output nil :error nil))))
         ;; Poll only when we actually attempted a launch.  This avoids the
         ;; unconditional 3-second dead-time when run-program silently failed.

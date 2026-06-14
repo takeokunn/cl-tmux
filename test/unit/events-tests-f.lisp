@@ -62,12 +62,25 @@
 ;;; ── C-b C-b send-prefix ──────────────────────────────────────────────────────
 
 (test prefix-then-prefix-byte-sends-send-prefix
-  "C-b C-b (byte 2 twice) dispatches :send-prefix (no crash, returns NIL)."
-  (with-fake-session (s)
-    (let ((state (cl-tmux::make-input-state)))
-      (cl-tmux::process-byte s 2 state)  ; prefix
-      (is (null (cl-tmux::process-byte s 2 state))
-          "C-b C-b must dispatch :send-prefix and return NIL"))))
+  "C-b C-b dispatches :send-prefix and writes one literal prefix byte."
+  (with-isolated-config
+    (with-fake-session (s)
+      (let* ((pane (window-active-pane (session-active-window s)))
+             (state (cl-tmux::make-input-state))
+             (writes nil)
+             (orig (fdefinition 'cl-tmux/pty:pty-write)))
+        (setf (pane-fd pane) 9999)
+        (unwind-protect
+             (progn
+               (setf (fdefinition 'cl-tmux/pty:pty-write)
+                     (lambda (fd bytes)
+                       (push (list fd (coerce bytes 'list)) writes)))
+               (cl-tmux::process-byte s 2 state)  ; prefix
+               (is (null (cl-tmux::process-byte s 2 state))
+                   "C-b C-b must dispatch :send-prefix and return NIL")
+               (is (equal '((9999 (2))) (reverse writes))
+                   "send-prefix must write exactly one literal prefix byte"))
+          (setf (fdefinition 'cl-tmux/pty:pty-write) orig))))))
 
 ;;; ── Modifier+arrow key-name helpers ────────────────────────────────────────
 
@@ -124,6 +137,26 @@
             (dolist (b bytes) (cl-tmux::process-byte s b state))
             (is (eq (first (session-windows s)) (session-active-window s))
                 "~A" desc)))))))
+
+(test unbound-prefix-shift-arrow-does-not-forward
+  "Unbound C-b S-Up is consumed by the prefix table and must not leak to the pane."
+  (with-isolated-config
+    (with-fake-session (s)
+      (let* ((pane (window-active-pane (session-active-window s)))
+             (state (cl-tmux::make-input-state))
+             (writes nil)
+             (orig (fdefinition 'cl-tmux/pty:pty-write)))
+        (setf (pane-fd pane) 9999)
+        (unwind-protect
+             (progn
+               (setf (fdefinition 'cl-tmux/pty:pty-write)
+                     (lambda (fd bytes)
+                       (push (list fd (coerce bytes 'list)) writes)))
+               (dolist (b '(2 27 91 49 59 50 65)) ; C-b, ESC [ 1 ; 2 A
+                 (cl-tmux::process-byte s b state))
+               (is (null writes)
+                   "unbound prefixed S-Up must not be forwarded to the pane"))
+          (setf (fdefinition 'cl-tmux/pty:pty-write) orig))))))
 
 (test default-prefix-arrow-selects-neighbour-pane
   "Default C-b Right/Left are real prefix-table bindings and select neighbour panes."
@@ -244,11 +277,23 @@
    change the active window (the override is purely additive)."
   (with-isolated-config
     (with-fake-session (s :nwindows 2)
-        (let ((state (cl-tmux::make-input-state)))
+        (let* ((pane (window-active-pane (session-active-window s)))
+               (state (cl-tmux::make-input-state))
+               (writes nil)
+               (orig (fdefinition 'cl-tmux/pty:pty-write)))
+          (setf (pane-fd pane) 9999)
+          (unwind-protect
+               (progn
+                 (setf (fdefinition 'cl-tmux/pty:pty-write)
+                       (lambda (fd bytes)
+                         (push (list fd (coerce bytes 'list)) writes)))
           (dolist (b '(27 120))  ; ESC x  (no prefix, unbound)
             (cl-tmux::process-byte s b state))
           (is (eq (first (session-windows s)) (session-active-window s))
-              "unbound bare M-x must leave the first window active")))))
+              "unbound bare M-x must leave the first window active")
+          (is (equal '((9999 (27 120))) (reverse writes))
+              "unbound bare M-x must be forwarded to the active pane"))
+            (setf (fdefinition 'cl-tmux/pty:pty-write) orig))))))
 
 ;;; ── Custom key tables (switch-client -T <table>) ────────────────────────────
 
