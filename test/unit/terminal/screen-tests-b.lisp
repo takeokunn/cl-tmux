@@ -9,29 +9,13 @@
   :in terminal-suite)
 (in-suite copy-mode-slots)
 
-(test screen-copy-cursor-defaults-nil
-  :description "copy-cursor slot is NIL on a fresh screen."
+(test screen-copy-slots-default-to-nil
+  "All copy-mode slots default to NIL/false on a fresh screen."
   (with-screen (s 10 5)
-    (is (null (screen-copy-cursor s))
-        "copy-cursor must start as NIL")))
-
-(test screen-copy-selecting-defaults-false
-  :description "copy-selecting flag is NIL on a fresh screen."
-  (with-screen (s 10 5)
-    (is-false (screen-copy-selecting s)
-              "copy-selecting must default to NIL")))
-
-(test screen-copy-search-term-defaults-nil
-  :description "copy-search-term slot is NIL on a fresh screen."
-  (with-screen (s 10 5)
-    (is (null (cl-tmux/terminal/types:screen-copy-search-term s))
-        "copy-search-term must start as NIL")))
-
-(test screen-copy-line-selection-p-defaults-false
-  :description "copy-line-selection-p flag is NIL on a fresh screen."
-  (with-screen (s 10 5)
-    (is-false (cl-tmux/terminal/types:screen-copy-line-selection-p s)
-              "copy-line-selection-p must default to NIL")))
+    (is (null (screen-copy-cursor s))                                 "copy-cursor must start as NIL")
+    (is-false (screen-copy-selecting s)                               "copy-selecting must default to NIL")
+    (is (null (cl-tmux/terminal/types:screen-copy-search-term s))     "copy-search-term must start as NIL")
+    (is-false (cl-tmux/terminal/types:screen-copy-line-selection-p s) "copy-line-selection-p must default to NIL")))
 
 (test screen-copy-cursor-can-be-set
   :description "copy-cursor can be set to a (row . col) pair via setf."
@@ -64,17 +48,11 @@
   :in terminal-suite)
 (in-suite alt-screen-slots)
 
-(test screen-alt-cursor-x-defaults-zero
-  :description "alt-cursor-x slot starts at 0 on a fresh screen."
+(test screen-alt-cursor-defaults-zero
+  "alt-cursor-x and alt-cursor-y both start at 0 on a fresh screen."
   (with-screen (s 10 5)
-    (is (= 0 (cl-tmux/terminal/types:screen-alt-cursor-x s))
-        "alt-cursor-x must default to 0")))
-
-(test screen-alt-cursor-y-defaults-zero
-  :description "alt-cursor-y slot starts at 0 on a fresh screen."
-  (with-screen (s 10 5)
-    (is (= 0 (cl-tmux/terminal/types:screen-alt-cursor-y s))
-        "alt-cursor-y must default to 0")))
+    (is (= 0 (cl-tmux/terminal/types:screen-alt-cursor-x s)) "alt-cursor-x must default to 0")
+    (is (= 0 (cl-tmux/terminal/types:screen-alt-cursor-y s)) "alt-cursor-y must default to 0")))
 
 (test screen-alt-cells-defaults-nil
   :description "alt-cells slot is NIL before entering alt-screen mode."
@@ -261,19 +239,11 @@
   :in terminal-suite)
 (in-suite screen-lock-suite)
 
-(test screen-lock-is-present-on-fresh-screen
-  :description "A fresh screen has a non-NIL screen-lock slot."
+(test screen-lock-is-present-and-non-nil
+  "A fresh screen's screen-lock slot is non-NIL."
   (with-screen (s 10 5)
     (is-true (cl-tmux/terminal/types:screen-lock s)
              "screen-lock must be non-NIL after make-screen")))
-
-(test screen-lock-is-a-lock-object
-  :description "screen-lock satisfies bordeaux-threads:lock-p (or is a native lock)."
-  (with-screen (s 10 5)
-    ;; bordeaux-threads does not export lock-p on all implementations; use a
-    ;; functional probe instead: acquiring and releasing the lock must not signal.
-    (is (not (null (cl-tmux/terminal/types:screen-lock s)))
-        "screen-lock must be a non-NIL lock object")))
 
 (test screen-lock-can-be-acquired-and-released
   :description "The screen lock can be acquired and released without error."
@@ -312,17 +282,11 @@
         (is (char= #\Space (cell-char (aref cells i)))
             "screen-cells element ~D must be a space cell" i)))))
 
-(test screen-parser-is-a-function
-  :description "screen-parser on a fresh make-screen returns a callable function."
+(test screen-parser-is-wired-ground-state
+  "screen-parser is a function, and correctly processes printable ASCII (confirming ground-state)."
   (with-screen (s 10 5)
     (is (functionp (cl-tmux/terminal/types:screen-parser s))
-        "screen-parser must be a function")))
-
-(test screen-parser-is-ground-state
-  :description "The parser slot installed by make-screen delegates to ground-state."
-  ;; Feed a printable ASCII byte and verify the screen correctly displays it,
-  ;; proving the wired parser is the real ground-state (not the #'identity placeholder).
-  (with-screen (s 10 5)
+        "screen-parser must be a function")
     (screen-process-bytes s #(65))      ; 65 = #\A
     (is (char= #\A (char-at s 0 0))
         "parser must process 'A' correctly (ground-state wired in make-screen)")))
