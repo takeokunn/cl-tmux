@@ -65,13 +65,10 @@
 ;;; the 'copy-command' option is set.  These direct tests cover the no-op branch
 ;;; (empty option / empty text) and the error-handling contract.
 
-(test run-copy-command-noop-when-text-is-nil
-  "%run-copy-command is a no-op when TEXT is NIL."
+(test run-copy-command-noop-when-nil-or-empty
+  "%run-copy-command is a no-op for NIL and for an empty string."
   (finishes (cl-tmux/commands::%run-copy-command nil)
-            "%run-copy-command with nil text must not signal"))
-
-(test run-copy-command-noop-when-text-is-empty
-  "%run-copy-command is a no-op when TEXT is an empty string."
+            "%run-copy-command with nil text must not signal")
   (finishes (cl-tmux/commands::%run-copy-command "")
             "%run-copy-command with empty text must not signal"))
 

@@ -49,22 +49,16 @@
 
 ;;; ── ul-color: underline colour (SGR 58) ─────────────────────────────────────
 
-(test render-cell-attrs-ul-color-zero-emits-nothing
-  "ul-color = 0 (default) does not emit any ;58 sequence."
-  (let ((out (cell-attrs-string 0 0 0 0 0)))
-    (is (not (search ";58" out)) "ul-color=0 must not emit ;58 (got ~S)" out)))
-
-(test render-cell-attrs-ul-color-palette
-  "ul-color = 200 emits ;58;5;200."
-  (let ((out (cell-attrs-string 0 0 0 0 200)))
-    (is (search ";58;5;200" out) "palette ul-color 200 must emit ;58;5;200 (got ~S)" out)))
-
-(test render-cell-attrs-ul-color-truecolor
-  "ul-color true-color (R=255 G=0 B=128) emits ;58;2;255;0;128."
-  (let* ((ul-color (logior #x1000000 (ash 255 16) (ash 0 8) 128))
-         (out (cell-attrs-string 0 0 0 0 ul-color)))
-    (is (search ";58;2;255;0;128" out)
-        "truecolor ul-color must emit ;58;2;255;0;128 (got ~S)" out)))
+(test render-cell-attrs-ul-color-table
+  "ul-color: 0 emits nothing; palette 200 emits ;58;5;200; truecolor emits ;58;2;255;0;128."
+  (dolist (row (list (list 0                                              nil             "ul-color=0 must not emit ;58")
+                     (list 200                                            ";58;5;200"     "palette ul-color 200 must emit ;58;5;200")
+                     (list (logior #x1000000 (ash 255 16) (ash 0 8) 128) ";58;2;255;0;128" "truecolor must emit ;58;2;255;0;128")))
+    (destructuring-bind (ul-color expected-sub desc) row
+      (let ((out (cell-attrs-string 0 0 0 0 ul-color)))
+        (if expected-sub
+            (is (search expected-sub out) "~A (got ~S)" desc out)
+            (is (not (search ";58" out)) "~A (got ~S)" desc out))))))
 
 ;;; ── move-to additional positions ─────────────────────────────────────────────
 

@@ -150,27 +150,17 @@
   :in terminal-suite)
 (in-suite reset-terminal-modes-suite)
 
-(test reset-terminal-modes-restores-cursor-visible
-  :description "reset-terminal-modes sets screen-cursor-visible to T."
+(test reset-terminal-modes-restores-flags
+  "reset-terminal-modes restores cursor-visible and autowrap to T, and charset to :ascii."
   (with-screen (s 10 5)
-    (setf (cl-tmux/terminal/types:screen-cursor-visible s) nil)
+    (setf (cl-tmux/terminal/types:screen-cursor-visible s) nil
+          (cl-tmux/terminal/types:screen-autowrap s)        nil
+          (cl-tmux/terminal/types:screen-charset s)         :dec-graphics)
     (cl-tmux/terminal/actions:reset-terminal-modes s)
     (is (cl-tmux/terminal/types:screen-cursor-visible s)
-        "cursor-visible must be T after reset-terminal-modes")))
-
-(test reset-terminal-modes-restores-autowrap
-  :description "reset-terminal-modes sets screen-autowrap to T."
-  (with-screen (s 10 5)
-    (setf (cl-tmux/terminal/types:screen-autowrap s) nil)
-    (cl-tmux/terminal/actions:reset-terminal-modes s)
+        "cursor-visible must be T after reset-terminal-modes")
     (is (cl-tmux/terminal/types:screen-autowrap s)
-        "autowrap must be T after reset-terminal-modes")))
-
-(test reset-terminal-modes-restores-charset
-  :description "reset-terminal-modes sets screen-charset to :ascii."
-  (with-screen (s 10 5)
-    (setf (cl-tmux/terminal/types:screen-charset s) :dec-graphics)
-    (cl-tmux/terminal/actions:reset-terminal-modes s)
+        "autowrap must be T after reset-terminal-modes")
     (is (eq :ascii (cl-tmux/terminal/types:screen-charset s))
         "charset must be :ascii after reset-terminal-modes")))
 
