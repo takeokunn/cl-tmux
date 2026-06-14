@@ -7,17 +7,13 @@
 
 ;;; ── socket-path naming ───────────────────────────────────────────────────────
 
-(test socket-path-includes-session-name
-  :description "socket-path names the per-session Unix socket under the temp directory."
-  (let ((path (cl-tmux::socket-path "mysess")))
-    (is (search "cl-tmux-mysess.sock" path)
-        "socket-path should embed the session name, got ~S" path)))
-
-(test socket-path-ends-with-sock
-  :description "socket-path always produces a path ending in '.sock'."
-  (let ((path (cl-tmux::socket-path "anysess")))
-    (is (search ".sock" path)
-        "socket-path must include .sock extension, got ~S" path)))
+(test socket-path-properties-table
+  "socket-path embeds the session name in the filename and always ends with '.sock'."
+  (dolist (row '(("mysess"  "cl-tmux-mysess.sock" "session name embedded in path")
+                 ("anysess" ".sock"               "path always ends with .sock")))
+    (destructuring-bind (sess expected desc) row
+      (let ((path (cl-tmux::socket-path sess)))
+        (is (search expected path) "~A: got ~S" desc path)))))
 
 (test socket-path-distinct-for-different-names
   :description "socket-path returns distinct paths for distinct session names."
@@ -355,23 +351,14 @@ and leaves *running* untouched."
     (is (null (cl-tmux::server-all-sessions))
         "server-all-sessions on empty registry must return NIL")))
 
-(test server-find-session-returns-nil-for-unknown-name
-  :description "server-find-session returns NIL when the name does not match any session."
-  (with-empty-registry
-    (is (null (cl-tmux::server-find-session "no-such-session"))
-        "server-find-session must return NIL for an unknown name")))
-
-(test server-find-session-returns-nil-for-nil-name
-  :description "server-find-session returns NIL when called with NIL (guards the empty-string check)."
-  (with-empty-registry
-    (is (null (cl-tmux::server-find-session nil))
-        "server-find-session must return NIL when name is NIL")))
-
-(test server-find-session-returns-nil-for-empty-string
-  :description "server-find-session returns NIL when called with an empty string."
-  (with-empty-registry
-    (is (null (cl-tmux::server-find-session ""))
-        "server-find-session must return NIL for empty string name")))
+(test server-find-session-nil-inputs-table
+  "server-find-session returns NIL for an unknown name, NIL, or an empty string."
+  (dolist (row '(("no-such-session" "unknown name → nil")
+                 (nil               "nil input → nil")
+                 (""                "empty string → nil")))
+    (destructuring-bind (input desc) row
+      (with-empty-registry
+        (is (null (cl-tmux::server-find-session input)) "~A" desc)))))
 
 ;;; ── Multi-session add/remove ─────────────────────────────────────────────────
 
