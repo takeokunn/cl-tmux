@@ -137,6 +137,35 @@
       (is (null (sb-ext:posix-getenv name))
           "set-environment -u must unset the variable"))))
 
+(test cmd-set-environment-t-consumes-target-session
+  "set-environment -t target NAME VALUE accepts and ignores the target-session argument."
+  (with-fake-session (s)
+    (let ((name "CLTMUX_TEST_ENV_VAR_T")
+          (target "CLTMUX_TEST_ENV_TARGET_T"))
+      (unwind-protect
+           (progn
+             (ignore-errors (sb-posix:unsetenv name))
+             (ignore-errors (sb-posix:unsetenv target))
+             (cl-tmux::%cmd-set-environment-prompt s (list "-t" target name "value"))
+             (is (string= "value" (sb-ext:posix-getenv name))
+                 "set-environment -t must set NAME, not the target-session token")
+             (is (null (sb-ext:posix-getenv target))
+                 "set-environment -t must not treat the target-session as a variable name"))
+        (ignore-errors (sb-posix:unsetenv name))
+        (ignore-errors (sb-posix:unsetenv target))))))
+
+(test cmd-set-environment-g-t-u-unsets-variable
+  "set-environment -g -t target -u NAME accepts scope flags while unsetting NAME."
+  (with-fake-session (s)
+    (let ((name "CLTMUX_TEST_ENV_VAR_GT_U"))
+      (unwind-protect
+           (progn
+             (sb-posix:setenv name "hello" 1)
+             (cl-tmux::%cmd-set-environment-prompt s (list "-g" "-t" "ignored" "-u" name))
+             (is (null (sb-ext:posix-getenv name))
+                 "set-environment -g -t target -u must unset NAME"))
+        (ignore-errors (sb-posix:unsetenv name))))))
+
 (test dispatch-show-hooks-shows-overlay
   ":show-hooks opens an overlay describing registered command hooks."
   (with-fake-session (s)

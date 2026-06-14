@@ -14,20 +14,23 @@
 ;;; the unset form before the fixed-arity table gets a chance to reject it.
 
 (defun %apply-set-environment-directive (cmd args)
-  "Handle 'set-environment [-g] [-u|-r] VAR [VALUE]' config directives.
+  "Handle 'set-environment [-g] [-t target-session] [-u|-r] VAR [VALUE]' config directives.
    -u unsets the variable (tmux's unset flag); -r is accepted as a synonym for
    unset (cl-tmux has no separate update-environment list to remove from).
-   -g is accepted and ignored (global scope is the only scope supported).
+   -g and -t are accepted and ignored (global scope is the only scope supported).
    Returns T when handled, NIL otherwise."
   (when (member cmd '("set-environment" "setenv") :test #'string=)
-    (let* (;; Consume optional flags: -g (global, default), -u/-r (unset).
+    (let* (;; Consume optional flags: -g (global, default), -t target-session,
+           ;; -u/-r (unset).
            (remove-p   nil)
            (remaining  args))
       (loop while (and remaining
                        (let ((tok (first remaining)))
                          (and (>= (length tok) 2) (char= (char tok 0) #\-))))
             do (let ((tok (pop remaining)))
-                 (when (or (find #\u tok) (find #\r tok)) (setf remove-p t))))
+                 (when (or (find #\u tok) (find #\r tok)) (setf remove-p t))
+                 (when (find #\t tok)
+                   (when remaining (pop remaining)))))
       (let ((var-name  (first remaining))
             (var-value (second remaining)))
         (when var-name
@@ -264,4 +267,3 @@
    Returns T when CMD is a source verb, else NIL."
   (when (member cmd '("source-file" "source") :test #'string=)
     (source-files args)))
-

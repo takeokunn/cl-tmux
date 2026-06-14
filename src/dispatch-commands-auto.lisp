@@ -370,10 +370,11 @@
       (when fn (apply fn args)))))
 
 (defun %cmd-set-environment-prompt (session args)
-  "set-environment [-u|-r] NAME [VALUE]: set or unset a process environment variable.
+  "set-environment [-g] [-t target-session] [-u|-r] NAME [VALUE]: set or unset a process environment variable.
+   -g and -t are accepted for tmux compatibility; cl-tmux keeps one process-wide environment.
    -u (tmux's unset flag) or -r unsets the variable.  Otherwise VALUE is required."
   (declare (ignore session))
-  (with-command-flags+pos (flags positionals args "")
+  (with-command-flags+pos (flags positionals args "t")
     (let* ((remove-p (or (assoc #\u flags) (assoc #\r flags)))
            (name     (first positionals))
            (value    (format nil "~{~A~^ ~}" (rest positionals))))

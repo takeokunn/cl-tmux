@@ -345,6 +345,35 @@
     (is (null (sb-ext:posix-getenv name))
         "config set-environment -u must unset the variable")))
 
+(test apply-set-environment-t-consumes-target-session
+  "'set-environment -t target VAR VALUE' config directive accepts target-session and sets VAR."
+  (let ((name "CLTMUX_TEST_ENV_VAR_CFG_T")
+        (target "CLTMUX_TEST_ENV_TARGET_CFG_T"))
+    (unwind-protect
+         (progn
+           (ignore-errors (sb-posix:unsetenv name))
+           (ignore-errors (sb-posix:unsetenv target))
+           (is (eq t (apply-config-directive (list "set-environment" "-t" target name "value")))
+               "set-environment -t must be handled (return T)")
+           (is (string= "value" (sb-ext:posix-getenv name))
+               "config set-environment -t must set VAR, not the target-session token")
+           (is (null (sb-ext:posix-getenv target))
+               "config set-environment -t must not treat target-session as a variable name"))
+      (ignore-errors (sb-posix:unsetenv name))
+      (ignore-errors (sb-posix:unsetenv target)))))
+
+(test apply-set-environment-g-t-u-unsets-variable
+  "'set-environment -g -t target -u VAR' config directive accepts scope flags while unsetting VAR."
+  (let ((name "CLTMUX_TEST_ENV_VAR_CFG_GT_U"))
+    (unwind-protect
+         (progn
+           (sb-posix:setenv name "x" 1)
+           (is (eq t (apply-config-directive (list "setenv" "-g" "-t" "ignored" "-u" name)))
+               "setenv -g -t target -u must be handled (return T)")
+           (is (null (sb-ext:posix-getenv name))
+               "config setenv -g -t target -u must unset VAR"))
+      (ignore-errors (sb-posix:unsetenv name)))))
+
 ;;; ── %apply-option-side-effects: prefix branch ────────────────────────────
 ;;;
 ;;; Tests that "set -g prefix C-a" updates *prefix-key-code* and registers
