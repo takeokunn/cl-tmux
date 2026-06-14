@@ -61,10 +61,12 @@
          (leaf (make-layout-leaf pane)))
     (cl-tmux/model::layout-assign leaf 5 3 40 20)
     (let ((rect (cl-tmux/renderer::layout-subtree-rect leaf)))
-      (is (= 5  (getf rect :x)) ":x must match pane-x (got ~D)" (getf rect :x))
-      (is (= 3  (getf rect :y)) ":y must match pane-y (got ~D)" (getf rect :y))
-      (is (= 40 (getf rect :w)) ":w must match pane-width (got ~D)" (getf rect :w))
-      (is (= 20 (getf rect :h)) ":h must match pane-height (got ~D)" (getf rect :h)))))
+      (dolist (c (list (list (getf rect :x)  5 ":x must match pane-x")
+                       (list (getf rect :y)  3 ":y must match pane-y")
+                       (list (getf rect :w) 40 ":w must match pane-width")
+                       (list (getf rect :h) 20 ":h must match pane-height")))
+        (destructuring-bind (actual expected desc) c
+          (is (= expected actual) "~A" desc))))))
 
 ;;; -- subtree-contains-p nil pane corner case --------------------------------
 
@@ -134,10 +136,12 @@
         (cl-tmux/renderer::%compute-selection-bounds screen)
       (is-true  active  "sel-active must be T when all prerequisites present")
       (is-false rect-p  "rect-p must be NIL for non-rectangle selection")
-      (is (= 1 sr) "start row must be min(mark-row, cursor-row)")
-      (is (= 3 er) "end row must be max(mark-row, cursor-row)")
-      (is (= 2 sc) "start col: mark-col when mark-row < cursor-row")
-      (is (= 4 ec) "end col: cursor-col when mark-row < cursor-row"))))
+      (dolist (c (list (list sr 1 "start row must be min(mark-row, cursor-row)")
+                       (list er 3 "end row must be max(mark-row, cursor-row)")
+                       (list sc 2 "start col: mark-col when mark-row < cursor-row")
+                       (list ec 4 "end col: cursor-col when mark-row < cursor-row")))
+        (destructuring-bind (actual expected desc) c
+          (is (= expected actual) "~A" desc))))))
 
 (test compute-selection-bounds-no-selecting
   "%compute-selection-bounds returns sel-active=NIL when copy-selecting is NIL."
@@ -170,11 +174,13 @@
       (declare (ignore rect-p))
       (is-true active "sel-active must be T")
       (is (<= sr er) "start row (~D) must be <= end row (~D)" sr er)
-      (is (= 1 sr) "start row must be min(mark-row=3, cursor-row=1)=1")
-      (is (= 3 er) "end row must be max(mark-row=3, cursor-row=1)=3")
       ;; cursor-row < mark-row: start-col = cursor-col, end-col = mark-col
-      (is (= 2 sc) "start col = cursor-col when cursor-row < mark-row")
-      (is (= 5 ec) "end col = mark-col when cursor-row < mark-row"))))
+      (dolist (c (list (list sr 1 "start row must be min(mark-row=3, cursor-row=1)=1")
+                       (list er 3 "end row must be max(mark-row=3, cursor-row=1)=3")
+                       (list sc 2 "start col = cursor-col when cursor-row < mark-row")
+                       (list ec 5 "end col = mark-col when cursor-row < mark-row")))
+        (destructuring-bind (actual expected desc) c
+          (is (= expected actual) "~A" desc))))))
 
 (test compute-selection-bounds-same-row-cols-normalised
   "%compute-selection-bounds normalises col order for same-row selections."
@@ -183,10 +189,12 @@
         (cl-tmux/renderer::%compute-selection-bounds screen)
       (declare (ignore rect-p))
       (is-true active "sel-active must be T")
-      (is (= 2 sr) "both rows are 2")
-      (is (= 2 er) "both rows are 2")
-      (is (= 3 sc) "start col = min(mark-col=7, cursor-col=3)=3")
-      (is (= 7 ec) "end col = max(mark-col=7, cursor-col=3)=7"))))
+      (dolist (c (list (list sr 2 "both rows are 2: start")
+                       (list er 2 "both rows are 2: end")
+                       (list sc 3 "start col = min(mark-col=7, cursor-col=3)=3")
+                       (list ec 7 "end col = max(mark-col=7, cursor-col=3)=7")))
+        (destructuring-bind (actual expected desc) c
+          (is (= expected actual) "~A" desc))))))
 
 (test compute-selection-bounds-copy-offset-applied
   "%compute-selection-bounds maps virtual rows to viewport rows using the CURRENT offset.
@@ -213,10 +221,12 @@
         (cl-tmux/renderer::%compute-selection-bounds screen)
       (is-true  active  "sel-active must be T")
       (is-true  rect-p  "rect-p must be T when :rect t")
-      (is (= 1 sr) "start row = min(1,4) = 1")
-      (is (= 4 er) "end row = max(1,4) = 4")
-      (is (= 2 sc) "start col = min(mark-col=6, cursor-col=2) = 2")
-      (is (= 7 ec) "end col = 1+max(6,2) = 7 (exclusive)"))))
+      (dolist (c (list (list sr 1 "start row = min(1,4) = 1")
+                       (list er 4 "end row = max(1,4) = 4")
+                       (list sc 2 "start col = min(mark-col=6, cursor-col=2) = 2")
+                       (list ec 7 "end col = 1+max(6,2) = 7 (exclusive)")))
+        (destructuring-bind (actual expected desc) c
+          (is (= expected actual) "~A" desc))))))
 
 (test compute-selection-bounds-rect-columns-reversed
   "%compute-selection-bounds swaps columns correctly when cursor-col > mark-col in rect mode."
@@ -234,11 +244,13 @@
 (test make-test-pane-creates-correct-geometry
   "make-test-pane returns a pane with the requested width, height, id, and origin."
   (let ((pane (make-test-pane 20 5 :id 7 :x 3 :y 2)))
-    (is (= 20 (pane-width  pane)) "pane width must be 20")
-    (is (= 5  (pane-height pane)) "pane height must be 5")
-    (is (= 7  (pane-id     pane)) "pane id must be 7")
-    (is (= 3  (pane-x      pane)) "pane x must be 3")
-    (is (= 2  (pane-y      pane)) "pane y must be 2")
+    (dolist (c (list (list (pane-width  pane) 20 "pane width must be 20")
+                     (list (pane-height pane)  5 "pane height must be 5")
+                     (list (pane-id     pane)  7 "pane id must be 7")
+                     (list (pane-x      pane)  3 "pane x must be 3")
+                     (list (pane-y      pane)  2 "pane y must be 2")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc)))
     (is (screen-p (pane-screen pane)) "pane screen must be a screen struct")))
 
 (test make-test-pane-feeds-content
