@@ -105,19 +105,12 @@
 ;;; Shared fixture: with-h-split-window and with-v-split-window from helpers.lisp
 ;;; replace the previously triplicated inline 81x24 two-pane window construction.
 
-(test pane-neighbor-right
-  "Right neighbor of the left pane in a side-by-side split is the right pane."
-  ;; Window 81 wide x 24 tall, split :h 50/50 → left pane x=0 w=40, right pane x=41 w=40
+(test pane-neighbor-h-split
+  "In a side-by-side split: right neighbor of left pane is right; left neighbor of right pane is left."
   (with-h-split-window (win p0 p1)
-    (is (eq p1 (pane-neighbor win p0 :right))
-        "Right neighbor of p0 must be p1")))
-
-(test pane-neighbor-left
-  "Left neighbor of the right pane in a side-by-side split is the left pane."
-  (with-h-split-window (win p0 p1)
+    (is (eq p1 (pane-neighbor win p0 :right)) "Right neighbor of p0 must be p1")
     (window-select-pane win p1)
-    (is (eq p0 (pane-neighbor win p1 :left))
-        "Left neighbor of p1 must be p0")))
+    (is (eq p0 (pane-neighbor win p1 :left)) "Left neighbor of p1 must be p0")))
 
 (test pane-neighbor-nil
   "A single pane has no neighbors in any direction."
@@ -133,19 +126,12 @@
     (is (null (pane-neighbor win p0 :up))     "No up neighbor when alone")
     (is (null (pane-neighbor win p0 :down))   "No down neighbor when alone")))
 
-(test pane-neighbor-down
-  "Down neighbor of the top pane in a top/bottom split is the bottom pane."
-  ;; Window 80 wide x 21 tall, split :v → top pane y=0 h=10, bottom pane y=11 h=10
+(test pane-neighbor-v-split
+  "In a top/bottom split: down neighbor of top pane is bottom; up neighbor of bottom pane is top."
   (with-v-split-window (win p0 p1)
-    (is (eq p1 (pane-neighbor win p0 :down))
-        "Down neighbor of top pane (p0) must be the bottom pane (p1)")))
-
-(test pane-neighbor-up
-  "Up neighbor of the bottom pane in a top/bottom split is the top pane."
-  (with-v-split-window (win p0 p1)
+    (is (eq p1 (pane-neighbor win p0 :down)) "Down neighbor of top pane (p0) must be p1")
     (window-select-pane win p1)
-    (is (eq p0 (pane-neighbor win p1 :up))
-        "Up neighbor of bottom pane (p1) must be the top pane (p0)")))
+    (is (eq p0 (pane-neighbor win p1 :up))  "Up neighbor of bottom pane (p1) must be p0")))
 
 ;;; ── pane-at-position tests ───────────────────────────────────────────────────
 ;;;

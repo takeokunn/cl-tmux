@@ -256,49 +256,19 @@
 
 ;;; ── encode-command-payload / decode-command-payload round-trips ─────────────
 
-(test encode-decode-command-payload-no-target-no-args
-  "A command with no target and no args encodes and decodes cleanly."
-  (let ((payload (encode-command-payload :new-window)))
-    (multiple-value-bind (command target args) (decode-command-payload payload)
-      (is (eq :new-window command))
-      (is (null target))
-      (is (null args)))))
-
-(test encode-decode-command-payload-with-target
-  "A command with a target field round-trips target and command-name."
-  (multiple-value-bind (command target args)
-      (decode-command-payload
-       (encode-command-payload :select-pane :target "$1:0.0"))
-    (is (eq :select-pane command))
-    (is (string= "$1:0.0" target))
-    (is (null args))))
-
-(test encode-decode-command-payload-with-args
-  "A command with argument strings round-trips all args in order."
-  (multiple-value-bind (command target args)
-      (decode-command-payload
-       (encode-command-payload :send-keys :args '("C-c" "")))
-    (is (eq :send-keys command))
-    (is (null target))
-    (is (equal '("C-c" "") args))))
-
-(test encode-decode-command-payload-target-and-args
-  "A command with both target and args round-trips all fields."
-  (multiple-value-bind (command target args)
-      (decode-command-payload
-       (encode-command-payload :resize-pane :target "2:0" :args '("-U" "5")))
-    (is (eq :resize-pane command))
-    (is (string= "2:0" target))
-    (is (equal '("-U" "5") args))))
-
-(test encode-decode-command-payload-string-command-name
-  "encode-command-payload accepts a plain string command-name (not keyword)."
-  (multiple-value-bind (command target args)
-      (decode-command-payload
-       (encode-command-payload "new-session" :target "$2"))
-    (is (eq :new-session command))
-    (is (string= "$2" target))
-    (is (null args))))
+(test encode-decode-command-payload-table
+  "encode-command-payload round-trips command, target, and args in all combinations."
+  (dolist (row '(((:new-window)                               :new-window  nil       nil           "no target/args")
+                 ((:select-pane :target "$1:0.0")             :select-pane "$1:0.0"  nil           "with target")
+                 ((:send-keys :args ("C-c" ""))               :send-keys   nil       ("C-c" "")    "with args")
+                 ((:resize-pane :target "2:0" :args ("-U" "5")) :resize-pane "2:0"  ("-U" "5")    "target+args")
+                 (("new-session" :target "$2")                :new-session "$2"      nil           "string command-name")))
+    (destructuring-bind (encode-args expected-cmd expected-target expected-args desc) row
+      (multiple-value-bind (command target args)
+          (decode-command-payload (apply #'encode-command-payload encode-args))
+        (is (eq expected-cmd command)          "~A: command" desc)
+        (is (equal expected-target target)     "~A: target"  desc)
+        (is (equal expected-args args)         "~A: args"    desc)))))
 
 ;;; ── target-field-p predicate ────────────────────────────────────────────────
 

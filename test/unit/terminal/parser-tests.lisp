@@ -10,17 +10,14 @@
   :in terminal-suite)
 (in-suite utf8)
 
-(test utf8-2byte
-  "U+00E9 (é) is decoded from its 2-byte UTF-8 encoding."
-  (with-screen (s 10 2)
-    (utf8-feed s "é")
-    (is (char= #\é (char-at s 0 0)))))
-
-(test utf8-3byte
-  "U+3042 (あ) is decoded from its 3-byte UTF-8 encoding."
-  (with-screen (s 10 2)
-    (utf8-feed s "あ")
-    (is (char= #\あ (char-at s 0 0)))))
+(test utf8-multibyte-table
+  "Multi-byte UTF-8 characters decode and appear at the correct screen position."
+  (dolist (row '((#\é "2-byte: U+00E9 é")
+                 (#\あ "3-byte: U+3042 あ")))
+    (destructuring-bind (char desc) row
+      (with-screen (s 10 2)
+        (utf8-feed s (string char))
+        (is (char= char (char-at s 0 0)) "~A" desc)))))
 
 (test utf8-4byte
   "A 4-byte UTF-8 code point is decoded correctly (e.g. U+1F600 if in limit)."
