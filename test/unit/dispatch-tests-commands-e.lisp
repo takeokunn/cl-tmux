@@ -57,12 +57,13 @@
 
 ;;; ── :find-window dispatch ─────────────────────────────────────────────────────
 
-(test dispatch-find-window-opens-prompt
-  ":find-window opens a prompt for the search pattern."
-  (with-fake-session (s :nwindows 1)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :find-window nil)
-      (is (prompt-active-p) ":find-window must open a prompt"))))
+(test dispatch-simple-commands-open-prompt-table
+  ":find-window, :bind-key, :unbind-key, :load-buffer, and :wait-for each open a prompt."
+  (dolist (cmd '(:find-window :bind-key :unbind-key :load-buffer :wait-for))
+    (with-fake-session (s)
+      (let ((*prompt* nil))
+        (cl-tmux::dispatch-command s cmd nil)
+        (is (prompt-active-p) "~A must open a prompt" cmd)))))
 
 ;;; ── :mark-pane / :clear-mark dispatch ────────────────────────────────────────
 
@@ -154,22 +155,6 @@
       (let ((text (format nil "~{~A~%~}" (overlay-lines))))
         (is (search "Session" text) "overlay must contain 'Session'")
         (is (search "Pane" text) "overlay must contain 'Pane'")))))
-
-;;; ── :bind-key / :unbind-key dispatch ─────────────────────────────────────────
-
-(test dispatch-bind-key-opens-prompt
-  ":bind-key opens a prompt for the key-command pair."
-  (with-fake-session (s)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :bind-key nil)
-      (is (prompt-active-p) ":bind-key must open a prompt"))))
-
-(test dispatch-unbind-key-opens-prompt
-  ":unbind-key opens a prompt for the key to unbind."
-  (with-fake-session (s)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :unbind-key nil)
-      (is (prompt-active-p) ":unbind-key must open a prompt"))))
 
 ;;; ── :list-buffers / :show-buffer / :delete-buffer dispatch ───────────────────
 
@@ -267,13 +252,6 @@
         (is (search "no paste buffers" text)
             "overlay must mention 'no paste buffers'")))))
 
-(test dispatch-load-buffer-opens-prompt
-  ":load-buffer opens a prompt for the file path."
-  (with-fake-session (s)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :load-buffer nil)
-      (is (prompt-active-p) ":load-buffer must open a prompt"))))
-
 ;;; ── :choose-buffer dispatch ───────────────────────────────────────────────────
 
 (test dispatch-choose-buffer-opens-prompt-when-buffers-exist
@@ -297,14 +275,15 @@
         (is (search "no paste buffers" text)
             "overlay must say 'no paste buffers'")))))
 
-;;; ── :select-window-prompt dispatch ───────────────────────────────────────────
+;;; ── :select-window-prompt / :move-window / :swap-window dispatch ─────────────
 
-(test dispatch-select-window-prompt-opens-prompt
-  ":select-window-prompt opens a prompt for the window name or number."
-  (with-fake-session (s :nwindows 2)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :select-window-prompt nil)
-      (is (prompt-active-p) ":select-window-prompt must open a prompt"))))
+(test dispatch-two-window-commands-open-prompt-table
+  ":select-window-prompt, :move-window, and :swap-window each open a prompt (requires ≥ 2 windows)."
+  (dolist (cmd '(:select-window-prompt :move-window :swap-window))
+    (with-fake-session (s :nwindows 2)
+      (let ((*prompt* nil))
+        (cl-tmux::dispatch-command s cmd nil)
+        (is (prompt-active-p) "~A must open a prompt" cmd)))))
 
 (test dispatch-select-window-prompt-selects-by-number
   ":select-window-prompt on-submit with a valid index selects that window."
@@ -315,33 +294,6 @@
       (funcall (prompt-on-submit *prompt*) "1")
       (is (eq (second (session-windows s)) (session-active-window s))
           "on-submit with \"1\" must select the second window"))))
-
-;;; ── :move-window dispatch ─────────────────────────────────────────────────────
-
-(test dispatch-move-window-opens-prompt
-  ":move-window opens a prompt for the destination index."
-  (with-fake-session (s :nwindows 2)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :move-window nil)
-      (is (prompt-active-p) ":move-window must open a prompt"))))
-
-;;; ── :swap-window dispatch ─────────────────────────────────────────────────────
-
-(test dispatch-swap-window-opens-prompt
-  ":swap-window opens a prompt for the destination index."
-  (with-fake-session (s :nwindows 2)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :swap-window nil)
-      (is (prompt-active-p) ":swap-window must open a prompt"))))
-
-;;; ── :wait-for dispatch ────────────────────────────────────────────────────────
-
-(test dispatch-wait-for-opens-prompt
-  ":wait-for opens a prompt for the channel name."
-  (with-fake-session (s)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :wait-for nil)
-      (is (prompt-active-p) ":wait-for must open a prompt"))))
 
 ;;; ── %copy-mode-active-p ──────────────────────────────────────────────────────
 
