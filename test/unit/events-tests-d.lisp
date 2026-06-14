@@ -149,34 +149,33 @@
         "an unmapped parameter yields NIL so it is forwarded raw")))
 
 (test csi-tilde-key-name-maps-known-params
-  "%csi-tilde-key-name maps vt parameters to canonical tmux key names."
-  (is (string= "Home"     (cl-tmux::%csi-tilde-key-name 1)))
-  (is (string= "Delete"   (cl-tmux::%csi-tilde-key-name 3)))
-  (is (string= "PageUp"   (cl-tmux::%csi-tilde-key-name 5)))
-  (is (string= "PageDown" (cl-tmux::%csi-tilde-key-name 6)))
-  (is (string= "F5"       (cl-tmux::%csi-tilde-key-name 15)))
-  (is (string= "F12"      (cl-tmux::%csi-tilde-key-name 24)))
-  (is (null (cl-tmux::%csi-tilde-key-name 99))
-      "an unknown parameter must map to NIL (forwarded raw, not bound)"))
+  "%csi-tilde-key-name maps vt parameters to canonical tmux key names;
+   an unknown parameter maps to NIL (forwarded raw, not bound)."
+  (dolist (c '((1  "Home") (3  "Delete") (5  "PageUp")
+               (6  "PageDown") (15 "F5") (24 "F12")
+               (99 nil)))
+    (destructuring-bind (param expected) c
+      (is (equal expected (cl-tmux::%csi-tilde-key-name param))
+          "param ~D → ~S" param expected))))
 
 (test normalize-key-alias-collapses-navigation-spellings
-  "%normalize-key-alias maps tmux's aliases to the canonical input-side names."
-  (is (string= "PageUp"   (cl-tmux/config::%normalize-key-alias "PPage")))
-  (is (string= "PageDown" (cl-tmux/config::%normalize-key-alias "NPage")))
-  (is (string= "Insert"   (cl-tmux/config::%normalize-key-alias "IC")))
-  (is (string= "Delete"   (cl-tmux/config::%normalize-key-alias "DC")))
-  (is (string= "PageUp"   (cl-tmux/config::%normalize-key-alias "pgup"))
-      "alias matching is case-insensitive")
-  (is (null (cl-tmux/config::%normalize-key-alias "F5"))
-      "a non-alias token returns NIL so %parse-key-token keeps it verbatim"))
+  "%normalize-key-alias maps tmux's aliases to the canonical input-side names;
+   matching is case-insensitive; a non-alias token returns NIL."
+  (dolist (c '(("PPage" "PageUp")   ("NPage" "PageDown")
+               ("IC"    "Insert")   ("DC"    "Delete")
+               ("pgup"  "PageUp")   ("F5"    nil)))
+    (destructuring-bind (input expected) c
+      (is (equal expected (cl-tmux/config::%normalize-key-alias input))
+          "~A → ~S" input expected))))
 
 (test parse-key-token-normalizes-aliases-to-canonical
-  "%parse-key-token collapses PPage→PageUp so bind-side and input-side keys match."
-  (is (string= "PageUp"   (cl-tmux/config::%parse-key-token "PPage")))
-  (is (string= "PageDown" (cl-tmux/config::%parse-key-token "NPage")))
-  (is (string= "Insert"   (cl-tmux/config::%parse-key-token "IC")))
-  (is (string= "F5"       (cl-tmux/config::%parse-key-token "F5"))
-      "a canonical/non-alias name passes through unchanged"))
+  "%parse-key-token collapses PPage→PageUp so bind-side and input-side keys match;
+   a canonical/non-alias name passes through unchanged."
+  (dolist (c '(("PPage" "PageUp") ("NPage" "PageDown")
+               ("IC"    "Insert") ("F5"    "F5")))
+    (destructuring-bind (input expected) c
+      (is (string= expected (cl-tmux/config::%parse-key-token input))
+          "~A → ~S" input expected))))
 
 (test function-key-root-binding-fires-from-byte-stream
   "bind -n F5 fires when ESC [ 1 5 ~ is fed through the input state machine."
@@ -231,17 +230,14 @@
 ;;; ── SS3 function keys: ESC O P/Q/R/S (F1-F4), ESC O H/F (Home/End) ───────────
 
 (test ss3-key-name-maps-f1-through-f4-and-home-end
-  "%ss3-key-name maps the SS3 finals to canonical key names; others are NIL."
-  (is (string= "F1"   (cl-tmux::%ss3-key-name (char-code #\P))))
-  (is (string= "F2"   (cl-tmux::%ss3-key-name (char-code #\Q))))
-  (is (string= "F3"   (cl-tmux::%ss3-key-name (char-code #\R))))
-  (is (string= "F4"   (cl-tmux::%ss3-key-name (char-code #\S))))
-  (is (string= "Home" (cl-tmux::%ss3-key-name (char-code #\H))))
-  (is (string= "End"  (cl-tmux::%ss3-key-name (char-code #\F))))
-  (is (null (cl-tmux::%ss3-key-name (char-code #\A)))
-      "SS3 arrows are out of scope here and must map to NIL (forwarded raw)")
-  (is (null (cl-tmux::%ss3-key-name (char-code #\Z)))
-      "an unrecognised SS3 final must map to NIL"))
+  "%ss3-key-name maps the SS3 finals to canonical key names; SS3 arrows and
+   unrecognised finals map to NIL (forwarded raw)."
+  (dolist (c '((#\P "F1") (#\Q "F2") (#\R "F3") (#\S "F4")
+               (#\H "Home") (#\F "End")
+               (#\A nil) (#\Z nil)))
+    (destructuring-bind (ch expected) c
+      (is (equal expected (cl-tmux::%ss3-key-name (char-code ch)))
+          "SS3 final ~C → ~S" ch expected))))
 
 (test ss3-introducer-defers-one-byte-and-tracks-buffer
   "ESC O does not resolve immediately (it could be F1-F4); the decoder keeps
