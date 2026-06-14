@@ -232,32 +232,24 @@
     (feed s (esc "[Z"))        ; CBT 1 stop backward
     (check-cursor s 8 0)))
 
-(test cbt-moves-backward-two-stops
-  "CSI 2 Z from column 18 moves cursor back two tab stops to column 8."
-  (with-screen (s 40 5)
-    (feed s (esc "[1;19H"))    ; move to col 18
-    (feed s (esc "[2Z"))       ; CBT 2 stops backward
-    (check-cursor s 8 0)))
+(test cbt-backward-tab-stops-table
+  "CBT (CSI N Z) moves the cursor backward N tab stops, clamping at column 0."
+  (dolist (row '(("[1;19H" "[2Z" 8 "2 stops from col 18 → col 8")
+                 ("[1;4H"  "[5Z" 0 "5 stops from col 3 → col 0 (clamped)")))
+    (destructuring-bind (setup-seq cbt-seq expected desc) row
+      (with-screen (s 40 5)
+        (feed s (esc setup-seq))
+        (feed s (esc cbt-seq))
+        (check-cursor s expected 0)))))
 
-(test cbt-clamps-to-column-zero
-  "CSI 5 Z from column 3 clamps cursor to column 0."
-  (with-screen (s 40 5)
-    (feed s (esc "[1;4H"))     ; col 3
-    (feed s (esc "[5Z"))       ; backward 5 stops
-    (check-cursor s 0 0)))
-
-(test cht-moves-forward-tab
-  "CSI 1 I from column 0 advances cursor to column 8."
-  (with-screen (s 40 5)
-    (check-cursor s 0 0)
-    (feed s (esc "[I"))        ; CHT 1 stop forward
-    (check-cursor s 8 0)))
-
-(test cht-moves-forward-two-stops
-  "CSI 2 I from column 0 advances cursor to column 16."
-  (with-screen (s 40 5)
-    (feed s (esc "[2I"))       ; CHT 2 stops forward
-    (check-cursor s 16 0)))
+(test cht-forward-tab-stops-table
+  "CHT (CSI N I) advances cursor forward N tab stops from column 0."
+  (dolist (row '(("[I"  8  "1 stop from col 0 → col 8")
+                 ("[2I" 16 "2 stops from col 0 → col 16")))
+    (destructuring-bind (seq expected desc) row
+      (with-screen (s 40 5)
+        (feed s (esc seq))
+        (check-cursor s expected 0)))))
 
 (test cht-clamps-to-right-edge
   "CSI 10 I from column 0 on a narrow screen clamps to the right edge."

@@ -233,37 +233,27 @@
   :in terminal-suite)
 (in-suite screen-consume-bell-suite)
 
-(test screen-consume-bell-returns-true-and-clears-flag
-  :description "screen-consume-bell returns T when the bell is pending and resets the flag."
+(test screen-consume-bell-pending-and-idempotent
+  "screen-consume-bell: returns T and clears bell-pending; a second call returns NIL."
   (with-screen (s 10 5)
-    ;; Trigger a BEL via the emulator.
     (screen-process-bytes s (make-array 1 :element-type '(unsigned-byte 8)
                                           :initial-contents '(#x07)))
     (is (cl-tmux/terminal/types:screen-bell-pending s)
         "bell-pending must be T before consume-bell")
-    ;; Consume the bell: should return T and clear the flag.
     (is (cl-tmux/terminal/types:screen-consume-bell s)
         "screen-consume-bell must return T when bell was pending")
     (is-false (cl-tmux/terminal/types:screen-bell-pending s)
-              "bell-pending must be NIL after screen-consume-bell")))
+              "bell-pending must be NIL after screen-consume-bell")
+    (is-false (cl-tmux/terminal/types:screen-consume-bell s)
+              "second consume-bell must return NIL (bell already consumed)")))
 
 (test screen-consume-bell-returns-nil-when-not-pending
   :description "screen-consume-bell returns NIL when no bell was pending."
   (with-screen (s 10 5)
-    ;; No BEL was received.
     (is-false (cl-tmux/terminal/types:screen-bell-pending s)
               "bell-pending must be NIL on a fresh screen")
     (is-false (cl-tmux/terminal/types:screen-consume-bell s)
               "screen-consume-bell must return NIL when bell was not pending")))
-
-(test screen-consume-bell-idempotent-second-call
-  :description "Calling screen-consume-bell twice returns T then NIL."
-  (with-screen (s 10 5)
-    (screen-process-bytes s (make-array 1 :element-type '(unsigned-byte 8)
-                                          :initial-contents '(#x07)))
-    (cl-tmux/terminal/types:screen-consume-bell s)   ; first call — clears the flag
-    (is-false (cl-tmux/terminal/types:screen-consume-bell s)
-              "second consume-bell must return NIL (bell already consumed)")))
 
 ;;; ── SUITE: screen-resize emulator integration ────────────────────────────────
 
@@ -272,19 +262,15 @@
   :in terminal-suite)
 (in-suite screen-resize-suite)
 
-(test screen-resize-grows-dimensions
-  :description "screen-resize to a larger size updates width and height."
-  (with-screen (s 10 5)
-    (screen-resize s 20 10)
-    (is (= 20 (screen-width  s)) "width must be 20 after resize to 20x10")
-    (is (= 10 (screen-height s)) "height must be 10 after resize to 20x10")))
-
-(test screen-resize-shrinks-dimensions
-  :description "screen-resize to a smaller size updates width and height."
-  (with-screen (s 20 10)
-    (screen-resize s 10 5)
-    (is (= 10 (screen-width  s)) "width must be 10 after shrink")
-    (is (= 5  (screen-height s)) "height must be 5 after shrink")))
+(test screen-resize-dimensions-table
+  "screen-resize updates width and height for both growing and shrinking."
+  (dolist (row '((10 5  20 10 "grow:   10x5 → 20x10")
+                 (20 10 10 5  "shrink: 20x10 → 10x5")))
+    (destructuring-bind (init-w init-h new-w new-h desc) row
+      (with-screen (s init-w init-h)
+        (screen-resize s new-w new-h)
+        (is (= new-w (screen-width  s)) "~A: width"  desc)
+        (is (= new-h (screen-height s)) "~A: height" desc)))))
 
 (test screen-resize-preserves-content-within-new-bounds
   :description "Content written before a grow-resize is accessible afterwards."
