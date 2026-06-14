@@ -157,23 +157,12 @@
 
 (test layout-checksum-known-values-match-expected
   "%layout-checksum produces the correct tmux-compatible 4-hex checksum."
-  ;; Computed by running the same algorithm in isolation.
-  (let ((cases
-         ;; (input expected-checksum)
-         (list (list ""          "0000")   ; empty string → 0
-               (list "a"        "0061")   ; "a" = 97 decimal = 0x61
-               (list "1x1,0,0,1" (cl-tmux/model::%layout-checksum "1x1,0,0,1")))))
-    ;; The first two are pinned; the third just checks determinism.
-    (destructuring-bind ((input1 expected1)
-                         (input2 expected2)
-                         (input3 expected3))
-        cases
-      (is (string= expected1 (cl-tmux/model::%layout-checksum input1))
-          "empty string checksum must be 0000")
-      (is (string= expected2 (cl-tmux/model::%layout-checksum input2))
-          "single-char 'a' checksum must be 0061")
-      (is (string= expected3 (cl-tmux/model::%layout-checksum input3))
-          "checksum of typical layout body must be deterministic"))))
+  (dolist (c (list (list ""           "0000" "empty string checksum must be 0000")
+                   (list "a"         "0061" "single-char 'a' (97 decimal = 0x61)")
+                   (let ((s "1x1,0,0,1"))
+                     (list s (cl-tmux/model::%layout-checksum s) "checksum must be deterministic"))))
+    (destructuring-bind (input expected desc) c
+      (is (string= expected (cl-tmux/model::%layout-checksum input)) "~A" desc))))
 
 ;;; ── Table-driven: resize-direction-orientation mapping ───────────────────────
 ;;;

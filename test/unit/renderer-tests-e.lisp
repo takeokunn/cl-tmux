@@ -139,10 +139,12 @@
 
 (test visible-truncate-escape-free-equals-subseq
   "%visible-truncate equals SUBSEQ for escape-free strings."
-  (is (string= "hel" (cl-tmux/renderer::%visible-truncate "hello" 3)))
-  (is (string= "hello" (cl-tmux/renderer::%visible-truncate "hello" 5)))
-  (is (string= "hello" (cl-tmux/renderer::%visible-truncate "hello" 99)))
-  (is (string= "" (cl-tmux/renderer::%visible-truncate "hello" 0))))
+  (dolist (c '(("hello" 3  "hel"   "truncate to 3")
+               ("hello" 5  "hello" "truncate at exact length")
+               ("hello" 99 "hello" "truncate past length → unchanged")
+               ("hello" 0  ""      "truncate to 0 → empty string")))
+    (destructuring-bind (input n expected desc) c
+      (is (string= expected (cl-tmux/renderer::%visible-truncate input n)) "~A" desc))))
 
 (test visible-truncate-passes-sgr-through
   "%visible-truncate copies SGR escapes through without counting them toward N."

@@ -442,15 +442,9 @@
 (test append-option-value-style-vs-plain
   "append-option-value comma-joins non-empty style values, plain-concats other
    options, and never emits a stray comma when an operand is empty."
-  (is (string= "bg=red,fg=blue"
-               (cl-tmux/options:append-option-value "status-style" "bg=red" "fg=blue"))
-      "non-empty style append → comma separator")
-  (is (string= "fg=blue"
-               (cl-tmux/options:append-option-value "status-style" "" "fg=blue"))
-      "empty old style value → no leading comma")
-  (is (string= "bg=red"
-               (cl-tmux/options:append-option-value "status-style" "bg=red" ""))
-      "empty appended value → no trailing comma")
-  (is (string= "AB"
-               (cl-tmux/options:append-option-value "status-left" "A" "B"))
-      "non-style option → separator-less concatenation"))
+  (dolist (c '(("status-style" "bg=red" "fg=blue" "bg=red,fg=blue" "non-empty style → comma separator")
+               ("status-style" ""       "fg=blue" "fg=blue"        "empty old → no leading comma")
+               ("status-style" "bg=red" ""        "bg=red"         "empty new → no trailing comma")
+               ("status-left"  "A"      "B"       "AB"             "non-style → separator-less concat")))
+    (destructuring-bind (name old new expected desc) c
+      (is (string= expected (cl-tmux/options:append-option-value name old new)) "~A" desc))))

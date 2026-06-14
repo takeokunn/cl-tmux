@@ -31,9 +31,11 @@
 
 (test type-coercions-string
   "%coerce-value :string formats any value as a string."
-  (is (string= "42"   (cl-tmux/options::%coerce-value :string 42)))
-  (is (string= "T"    (cl-tmux/options::%coerce-value :string t)))
-  (is (string= "hello" (cl-tmux/options::%coerce-value :string "hello"))))
+  (dolist (c '((42      "42"    "integer → decimal string")
+               (t       "T"     "T → \"T\"")
+               ("hello" "hello" "string passes through unchanged")))
+    (destructuring-bind (input expected desc) c
+      (is (string= expected (cl-tmux/options::%coerce-value :string input)) "~A" desc))))
 
 ;;; ── set-option unregistered-option passthrough path ──────────────────────
 

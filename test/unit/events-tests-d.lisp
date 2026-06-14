@@ -131,7 +131,7 @@
        (make-array 7 :element-type '(unsigned-byte 8)
                      :initial-contents '(27 91 49 53 59 53 126)) 7)
     (is (= 15 p)) (is (= 5 m)))
-  ;; ESC [ ~ (empty param) → NIL → raw forward
+  ;; ESC [ ~ (empty param) -> NIL -> raw forward
   (is (null (cl-tmux::%csi-tilde-parse
              (make-array 3 :element-type '(unsigned-byte 8)
                            :initial-contents '(27 91 126)) 3))))
@@ -142,11 +142,12 @@
                      (make-array (length bytes) :element-type '(unsigned-byte 8)
                                                 :initial-contents bytes)
                      (length bytes))))
-    (is (string= "F5"     (k '(27 91 49 53 126))))         ; ESC [ 15 ~
-    (is (string= "C-F5"   (k '(27 91 49 53 59 53 126))))   ; ESC [ 15 ; 5 ~
-    (is (string= "S-Home" (k '(27 91 49 59 50 126))))      ; ESC [ 1 ; 2 ~
-    (is (null (k '(27 91 50 48 48 126)))                   ; ESC [ 200 ~ (paste)
-        "an unmapped parameter yields NIL so it is forwarded raw")))
+    (dolist (c '(((27 91 49 53 126)       "F5"     "ESC [ 15 ~       -> F5")
+                 ((27 91 49 53 59 53 126) "C-F5"   "ESC [ 15 ; 5 ~  -> C-F5")
+                 ((27 91 49 59 50 126)    "S-Home" "ESC [ 1 ; 2 ~   -> S-Home")
+                 ((27 91 50 48 48 126)    nil       "ESC [ 200 ~ (paste) -> NIL")))
+      (destructuring-bind (bytes expected desc) c
+        (is (equal expected (k bytes)) "~A" desc)))))
 
 (test csi-tilde-key-name-maps-known-params
   "%csi-tilde-key-name maps vt parameters to canonical tmux key names;
