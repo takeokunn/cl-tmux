@@ -63,7 +63,7 @@
                  (1 "b c" "second token is b c")
                  (2 "d e" "third token is d e (backslash-space)")))
       (destructuring-bind (idx expected desc) c
-        (is (string= expected (nth idx tokens)) "~A" desc))))
+        (is (string= expected (nth idx tokens)) "~A" desc)))))
 
 ;;; bind-key with flags
 
