@@ -27,20 +27,15 @@
   (with-screen (s 5 3)
     (feed-lines s "L0" "L1" "L2" "L3" "L4")
     (setf (screen-copy-mode-p s) t)
-    ;; Offset 0: viewport is the live grid unchanged.
-    (setf (screen-copy-offset s) 0)
-    (is (string= "L2" (display-row-string s 0 :end 2)))
-    (is (string= "L4" (display-row-string s 2 :end 2)))
-    ;; Offset 1: top row is newest scrollback line (L1); live grid pushed down.
-    (setf (screen-copy-offset s) 1)
-    (is (string= "L1" (display-row-string s 0 :end 2)))
-    (is (string= "L2" (display-row-string s 1 :end 2)))
-    (is (string= "L3" (display-row-string s 2 :end 2)))
-    ;; Offset 2: the two scrollback lines (L0, L1) sit above the live top (L2).
-    (setf (screen-copy-offset s) 2)
-    (is (string= "L0" (display-row-string s 0 :end 2)))
-    (is (string= "L1" (display-row-string s 1 :end 2)))
-    (is (string= "L2" (display-row-string s 2 :end 2)))))
+    (dolist (group '((0 ((0 "L2") (2 "L4")))
+                     (1 ((0 "L1") (1 "L2") (2 "L3")))
+                     (2 ((0 "L0") (1 "L1") (2 "L2")))))
+      (destructuring-bind (offset checks) group
+        (setf (screen-copy-offset s) offset)
+        (dolist (check checks)
+          (destructuring-bind (row expected) check
+            (is (string= expected (display-row-string s row :end 2))
+                "offset ~D row ~D → ~S" offset row expected)))))))
 
 (test copy-mode-off-ignores-offset
   "A stale copy-offset is ignored entirely when copy mode is off."
