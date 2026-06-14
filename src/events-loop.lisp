@@ -161,20 +161,24 @@
                             (input-state-esc-entered-at state))
                          (/ internal-time-units-per-second 1000))))
       (when (>= elapsed esc-ms)
-        ;; Forward the full accumulated partial sequence to the active pane.  In
-        ;; the common vim case nothing has accumulated past the ESC, so this is a
-        ;; lone ESC — identical to the historical behaviour.  When a multi-byte
-        ;; partial is pending (e.g. a held Alt+O = ESC O), replaying the whole
-        ;; buffer keeps every byte instead of dropping all but the ESC.
-        (let* ((win   (session-active-window session))
-               (pane  (and win (window-active-pane win)))
-               (accum *esc-accum-buffer*)
-               (bytes (if (and accum (plusp (fill-pointer accum)))
-                          (subseq accum 0 (fill-pointer accum))
-                          (make-array 1 :element-type '(unsigned-byte 8)
-                                        :initial-element +byte-esc+))))
-          (when (and pane (> (pane-fd pane) 0) (not *client-read-only*))
-            (pty-write (pane-fd pane) bytes)))
+        (if (prompt-active-p)
+            ;; Prompt-local ESC is a cancel key, not pane input.  The state
+            ;; machine defers it briefly to distinguish lone ESC from arrows.
+            (handle-prompt-key +byte-esc+)
+            ;; Forward the full accumulated partial sequence to the active pane.
+            ;; In the common vim case nothing has accumulated past the ESC, so
+            ;; this is a lone ESC — identical to the historical behaviour.  When
+            ;; a multi-byte partial is pending (e.g. a held Alt+O = ESC O),
+            ;; replaying the whole buffer keeps every byte.
+            (let* ((win   (session-active-window session))
+                   (pane  (and win (window-active-pane win)))
+                   (accum *esc-accum-buffer*)
+                   (bytes (if (and accum (plusp (fill-pointer accum)))
+                              (subseq accum 0 (fill-pointer accum))
+                              (make-array 1 :element-type '(unsigned-byte 8)
+                                            :initial-element +byte-esc+))))
+              (when (and pane (> (pane-fd pane) 0) (not *client-read-only*))
+                (pty-write (pane-fd pane) bytes))))
         (setf (input-state-continuation state) #'%ground-input-state
               (input-state-esc-entered-at state) nil
               *esc-accum-buffer* nil)

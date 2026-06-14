@@ -215,7 +215,8 @@
            (len    (length buffer)))
       (when (< index len)
         (setf (prompt-buffer p) (%buffer-delete buffer index (1+ index)))
-        (%clamp-cursor-after-delete p index len)))))
+        (%clamp-cursor-after-delete p index len))))
+  (prompt-notify-change))
 
 ;;; -- Dismiss and display -----------------------------------------------------
 

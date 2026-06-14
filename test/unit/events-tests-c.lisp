@@ -133,6 +133,71 @@
       (is (string= "foo" (string-right-trim " " buf))
           "C-w must kill the previous word"))))
 
+;;; ── process-byte: prompt ESC navigation sequences ──────────────────────────
+
+(test process-byte-prompt-csi-arrows-edit-cursor
+  "CSI left/right arrows move the prompt cursor without cancelling the prompt."
+  (with-fake-session (s)
+    (with-clean-prompt
+      (let ((state (cl-tmux::make-input-state)))
+        (prompt-start "test" "ac"
+                      (lambda (buf) (declare (ignore buf)) nil))
+        ;; ESC [ D moves from end to between a/c; typing b inserts there.
+        (dolist (byte '(27 91 68))
+          (cl-tmux::process-byte s byte state))
+        (cl-tmux::process-byte s (char-code #\b) state)
+        (is (string= "abc" (prompt-buffer *prompt*))
+            "left arrow must move insertion point left")
+        ;; ESC [ C moves to end; typing d appends.
+        (dolist (byte '(27 91 67))
+          (cl-tmux::process-byte s byte state))
+        (cl-tmux::process-byte s (char-code #\d) state)
+        (is (string= "abcd" (prompt-buffer *prompt*))
+            "right arrow must move insertion point right")))))
+
+(test process-byte-prompt-home-end-delete
+  "CSI Home/End and Delete edit the prompt buffer."
+  (with-fake-session (s)
+    (with-clean-prompt
+      (let ((state (cl-tmux::make-input-state)))
+        (prompt-start "test" "abc"
+                      (lambda (buf) (declare (ignore buf)) nil))
+        ;; ESC [ H -> BOL, then insert x at the start.
+        (dolist (byte '(27 91 72))
+          (cl-tmux::process-byte s byte state))
+        (cl-tmux::process-byte s (char-code #\x) state)
+        (is (string= "xabc" (prompt-buffer *prompt*))
+            "CSI Home must move to beginning")
+        ;; ESC [ F -> EOL, then append y.
+        (dolist (byte '(27 91 70))
+          (cl-tmux::process-byte s byte state))
+        (cl-tmux::process-byte s (char-code #\y) state)
+        (is (string= "xabcy" (prompt-buffer *prompt*))
+            "CSI End must move to end")
+        ;; Move left to y and delete it with ESC [ 3 ~.
+        (dolist (byte '(27 91 68 27 91 51 126))
+          (cl-tmux::process-byte s byte state))
+        (is (string= "xabc" (prompt-buffer *prompt*))
+            "CSI Delete must remove the character under the cursor")))))
+
+(test process-byte-prompt-ss3-home-end
+  "SS3 Home/End sequences edit the prompt cursor."
+  (with-fake-session (s)
+    (with-clean-prompt
+      (let ((state (cl-tmux::make-input-state)))
+        (prompt-start "test" "abc"
+                      (lambda (buf) (declare (ignore buf)) nil))
+        (dolist (byte '(27 79 72))
+          (cl-tmux::process-byte s byte state))
+        (cl-tmux::process-byte s (char-code #\x) state)
+        (is (string= "xabc" (prompt-buffer *prompt*))
+            "SS3 Home must move to beginning")
+        (dolist (byte '(27 79 70))
+          (cl-tmux::process-byte s byte state))
+        (cl-tmux::process-byte s (char-code #\y) state)
+        (is (string= "xabcy" (prompt-buffer *prompt*))
+            "SS3 End must move to end")))))
+
 ;;; ── process-byte: copy-mode w, b, e word navigation ─────────────────────────
 
 (test copy-mode-w-moves-word-forward
@@ -239,4 +304,3 @@
     (cl-tmux::process-byte s 25 state)    ; C-y
     (is (>= (screen-copy-offset screen) 0)
         "C-y must not produce a negative copy-offset")))
-

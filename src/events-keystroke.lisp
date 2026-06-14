@@ -95,8 +95,11 @@
    (values nil #'%ground-input-state))
   ;; ── Active prompt captures all input ──────────────────────────────────────
   ((prompt-active-p)
-   (handle-prompt-key byte)
-   (values nil #'%ground-input-state))
+   (if (= byte +byte-esc+)
+       (values nil (make-prompt-escape-input-k (%make-escape-buffer byte)))
+       (progn
+         (handle-prompt-key byte)
+         (values nil #'%ground-input-state))))
   ;; ── Active custom key table (switch-client -T <table>) ─────────────────────
   ;; While the client is in a user key table, keys are looked up THERE (not
   ;; root/prefix) and the table PERSISTS until a binding switches back (e.g.

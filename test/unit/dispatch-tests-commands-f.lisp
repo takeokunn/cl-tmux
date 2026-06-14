@@ -181,6 +181,23 @@
         (is (string= "ORIG" (cl-tmux/options:get-option "status-left"))
             "a non-y key must NOT run the command")))))
 
+(test confirm-before-arg-p-expands-format-prompt
+  "confirm-before -p expands tmux formats against the active window and pane."
+  (with-isolated-config
+    (with-fake-session (s)
+      (let* ((win (session-active-window s))
+             (pane (window-active-pane win))
+             (cl-tmux/prompt:*prompt* nil))
+        (setf (window-name win) "work")
+        (cl-tmux::%cmd-confirm-before-arg
+         s '("-p" "kill-window #W pane #P? (y/n)"
+             "display-message" "ok"))
+        (is (prompt-active-p) "confirm-before -p must open a prompt")
+        (is (string= (format nil "kill-window work pane ~D? (y/n)"
+                             (pane-id pane))
+                     (prompt-label *prompt*))
+            "confirm-before -p prompt must expand #W and #P")))))
+
 (test command-prompt-1-single-key-substitutes-one-keypress
   "command-prompt -1 -p k: 'set -g status-left %1' is a single-key prompt: one
    keypress (no Enter) is substituted for %1 and the command runs."
@@ -311,4 +328,3 @@
     (with-fake-session (s :nwindows 1 :npanes 1)
       (finishes (cl-tmux::dispatch-command s cmd nil)
                 "~A must not signal an error" cmd))))
-

@@ -229,6 +229,82 @@
       (%forward-unless-copy-mode session buffer 3)))
   (%ground-values))
 
+(defun %prompt-csi-tilde-action (buffer length)
+  "Return the prompt editing action for ESC [ <param> ~, or NIL."
+  (multiple-value-bind (param mod) (%csi-tilde-parse buffer length)
+    (when (= (or mod 1) 1)
+      (case param
+        ((1 7) :bol)
+        (3 :delete)
+        ((4 8) :eol)
+        (t nil)))))
+
+(defun %handle-prompt-escape-sequence (buffer length)
+  "Apply a complete prompt ESC sequence. Returns true when consumed."
+  (let ((action
+          (cond
+            ((and (= length 3)
+                  (= (aref buffer 1) +byte-csi-bracket+))
+             (case (aref buffer 2)
+               (68 :left)
+               (67 :right)
+               (72 :bol)
+               (70 :eol)
+               (t nil)))
+            ((and (= length 3)
+                  (= (aref buffer 1) +byte-ss3-o+))
+             (case (aref buffer 2)
+               (72 :bol)
+               (70 :eol)
+               (t nil)))
+            ((and (>= length 4)
+                  (= (aref buffer 1) +byte-csi-bracket+)
+                  (= (aref buffer (1- length)) +byte-tilde+))
+             (%prompt-csi-tilde-action buffer length)))))
+    (case action
+      (:left   (prompt-cursor-back) t)
+      (:right  (prompt-cursor-forward) t)
+      (:bol    (prompt-cursor-bol) t)
+      (:eol    (prompt-cursor-eol) t)
+      (:delete (prompt-delete-char) t)
+      (t nil))))
+
+(defun make-prompt-escape-input-k (buffer)
+  "CPS continuation for prompt-local ESC sequences.
+
+   CSI/SS3 navigation sequences edit the prompt buffer; unknown sequences cancel
+   the prompt like a bare Escape. The buffer is exposed through
+   *ESC-ACCUM-BUFFER* so escape-time can also turn a lone Escape into cancel."
+  (lambda (_session byte)
+    (declare (ignore _session))
+    (vector-push-extend byte buffer)
+    (setf *esc-accum-buffer* buffer)
+    (let ((length (fill-pointer buffer)))
+      (flet ((accumulate ()
+               (values nil (make-prompt-escape-input-k buffer)))
+             (cancel ()
+               (handle-prompt-key +byte-esc+)
+               (%ground-values)))
+        (cond
+          ((and (= length 2)
+                (or (= (aref buffer 1) +byte-csi-bracket+)
+                    (= (aref buffer 1) +byte-ss3-o+)))
+           (accumulate))
+          ((and (= length 3)
+                (= (aref buffer 1) +byte-csi-bracket+)
+                (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+))
+           (accumulate))
+          ((and (>= length 4)
+                (= (aref buffer 1) +byte-csi-bracket+)
+                (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)
+                (/= (aref buffer (1- length)) +byte-tilde+)
+                (< length 8))
+           (accumulate))
+          ((%handle-prompt-escape-sequence buffer length)
+           (%ground-values))
+          (t
+           (cancel)))))))
+
 (defun %handle-escape-csi-3byte (session buffer)
   "Handle a 3-byte CSI sequence ESC [ FINAL from BUFFER (not X10 / not SGR).
    If the third byte is a digit, returns (values T NIL) meaning keep accumulating.

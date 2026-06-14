@@ -249,7 +249,14 @@
   (with-command-flags+pos (flags positionals args "p")
     (let* ((custom-prompt (cdr (assoc #\p flags)))
            (cmd-line      (format nil "~{~A~^ ~}" positionals))
-           (prompt-text   (or custom-prompt
+           (window        (session-active-window session))
+           (pane          (and window (window-active-pane window)))
+           (ctx           (cl-tmux/format:format-context-from-session
+                           session window pane))
+           (prompt-text   (if custom-prompt
+                              (handler-case
+                                  (cl-tmux/format:expand-format custom-prompt ctx)
+                                (error () custom-prompt))
                               (format nil "~A? (y/n)" cmd-line))))
       (when (plusp (length cmd-line))
         ;; Single-key prompt like tmux: one 'y'/'Y' keypress confirms (no Enter);

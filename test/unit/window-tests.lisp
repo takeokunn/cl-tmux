@@ -396,7 +396,7 @@
                      (list (pane-height p0) 24 "p0 height unchanged")
                      (list (pane-height p1) 24 "p1 height unchanged")))
       (destructuring-bind (actual expected desc) c
-        (is (= expected actual) "~A" desc))))
+        (is (= expected actual) "~A" desc)))))
 
 (test apply-named-layout-even-vertical-positions-panes
   "even-vertical places n panes stacked with equal height."
@@ -412,7 +412,7 @@
                      (list (pane-y      p1) 13 "p1 must start at row 13")
                      (list (pane-height p1) 12 "p1 height must be 12")))
       (destructuring-bind (actual expected desc) c
-        (is (= expected actual) "~A" desc))))
+        (is (= expected actual) "~A" desc)))))
 
 ;;; ── window-zoom-toggle ────────────────────────────────────────────────────────
 
