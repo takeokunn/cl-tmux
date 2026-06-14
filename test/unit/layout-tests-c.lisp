@@ -7,69 +7,45 @@
 
 ;;; ── Layout persistence: internal helpers ─────────────────────────────────────
 
-(test split-bounding-box-h-split
-  "%split-bounding-box derives correct bounding box for a laid-out :h split."
-  (let* ((l0  (tl-leaf 1 1 1))
-         (l1  (tl-leaf 2 1 1))
-         (tree (make-layout-split :h l0 l1)))
-    ;; Lay out so pane coordinates are concrete.
-    (cl-tmux/model::layout-assign tree 5 3 40 12)
-    (multiple-value-bind (min-x min-y width height)
-        (cl-tmux/model::%split-bounding-box tree)
-      (is (= 5    min-x)  "bounding-box x must be the leftmost pane-x")
-      (is (= 3    min-y)  "bounding-box y must be the topmost pane-y")
-      (is (= 40   width)  "bounding-box width must span both panes + separator")
-      (is (= 12   height) "bounding-box height must equal pane height"))))
+(test split-bounding-box-table
+  "%split-bounding-box derives correct bounding box for both :h and :v splits."
+  (dolist (row '((:h  5  3  40 12   5  3  40 12 ":h split")
+                 (:v  0  0  80 21   0  0  80 21 ":v split")))
+    (destructuring-bind (orient x y w h exp-x exp-y exp-w exp-h desc) row
+      (let* ((l0   (tl-leaf 1 1 1))
+             (l1   (tl-leaf 2 1 1))
+             (tree (make-layout-split orient l0 l1)))
+        (cl-tmux/model::layout-assign tree x y w h)
+        (multiple-value-bind (min-x min-y width height)
+            (cl-tmux/model::%split-bounding-box tree)
+          (is (= exp-x min-x)  "~A: bounding-box x" desc)
+          (is (= exp-y min-y)  "~A: bounding-box y" desc)
+          (is (= exp-w width)  "~A: bounding-box width" desc)
+          (is (= exp-h height) "~A: bounding-box height" desc))))))
 
-(test split-bounding-box-v-split
-  "%split-bounding-box derives correct bounding box for a laid-out :v split."
-  (let* ((l0  (tl-leaf 1 1 1))
-         (l1  (tl-leaf 2 1 1))
-         (tree (make-layout-split :v l0 l1)))
-    (cl-tmux/model::layout-assign tree 0 0 80 21)
-    (multiple-value-bind (min-x min-y width height)
-        (cl-tmux/model::%split-bounding-box tree)
-      (is (= 0    min-x)  "bounding-box x must be 0")
-      (is (= 0    min-y)  "bounding-box y must be 0")
-      (is (= 80   width)  "bounding-box width must equal window width")
-      (is (= 21   height) "bounding-box height must span both panes + separator"))))
-
-(test node-to-string-single-leaf
-  "%node->string produces the correct WxH,X,Y,pane-id fragment for a leaf."
+(test node-to-string-leaf-and-nil
+  "%node->string formats a leaf's WxH,X,Y,id fragment and returns empty string for NIL."
   (let* ((p    (tl-pane 7 20 10))
          (leaf (make-layout-leaf p)))
-    ;; Assign explicit coordinates.
     (cl-tmux/model::layout-assign leaf 3 5 20 10)
     (let ((s (cl-tmux/model::%node->string leaf)))
       (is (stringp s) "%node->string must return a string")
       (is (search "20x10" s) "fragment must contain WxH")
       (is (search ",3,5," s) "fragment must contain X,Y coordinates")
-      (is (search "7" s) "fragment must contain the pane id"))))
-
-(test node-to-string-nil-returns-empty-string
-  "%node->string returns the empty string for a NIL node."
+      (is (search "7" s) "fragment must contain the pane id")))
   (is (string= "" (cl-tmux/model::%node->string nil))
       "%node->string on NIL must return empty string"))
 
-(test read-digits-parses-integer-at-pos
-  "%read-digits reads a decimal integer from a string starting at a given position."
-  (multiple-value-bind (val end)
-      (cl-tmux/model::%read-digits "abc123xyz" 3)
-    (is (= 123 val) "%read-digits must return the integer value 123")
-    (is (= 6 end) "%read-digits end position must be past the last digit"))
-  ;; Position at beginning:
-  (multiple-value-bind (val end)
-      (cl-tmux/model::%read-digits "42rest" 0)
-    (is (= 42 val))
-    (is (= 2 end))))
-
-(test read-digits-at-end-of-string-returns-digits-up-to-end
-  "%read-digits stops at the end of string when all trailing chars are digits."
-  ;; "100" has digits from position 0 to 3 (end of string).
-  (multiple-value-bind (val end)
-      (cl-tmux/model::%read-digits "100" 0)
-    (is (= 100 val) "%read-digits on '100' must return 100")
-    (is (= 3 end) "end position must be 3 (past all digits")))
+(test read-digits-table
+  "%read-digits parses decimal integers at given positions, stopping at end-of-string."
+  (dolist (row '(("abc123xyz" 3  123 6 "offset into middle")
+                 ("42rest"    0   42 2 "offset at beginning")
+                 ("100"       0  100 3 "digits up to end of string")))
+    (destructuring-bind (input pos expected-val expected-end desc) row
+      (multiple-value-bind (val end)
+          (cl-tmux/model::%read-digits input pos)
+        (is (= expected-val val) "~A: value" desc)
+        (is (= expected-end end) "~A: end pos" desc)))))
 
 (test string-to-layout-round-trips-v-split
   "string->layout decodes a :v split tree encoded by layout->string."
@@ -228,19 +204,15 @@
                             (make-no-pty-pane 2 0 0 w h)
                             (make-no-pty-pane 3 0 0 w h))))
 
-(test main-vertical-honours-main-pane-width
-  "apply-named-layout :main-vertical sizes the main (first/left) pane to the
-   given main-pane-width."
+(test main-layout-honours-main-pane-size
+  "apply-named-layout :main-vertical sizes the main pane to main-pane-width;
+   :main-horizontal sizes the main pane to main-pane-height."
   (let ((win (%three-pane-window 100 30)))
     (cl-tmux/model:apply-named-layout win :main-vertical 60 24)
     (let ((p0 (first (window-panes win))))
       (is (= 60 (pane-width p0)) "main pane is main-pane-width (60) columns wide")
       (is (< (pane-width (second (window-panes win))) 60)
-          "secondary panes share the narrower remainder"))))
-
-(test main-horizontal-honours-main-pane-height
-  "apply-named-layout :main-horizontal sizes the main (first/top) pane to the
-   given main-pane-height."
+          "secondary panes share the narrower remainder")))
   (let ((win (%three-pane-window 100 40)))
     (cl-tmux/model:apply-named-layout win :main-horizontal 80 15)
     (let ((p0 (first (window-panes win)))
@@ -265,27 +237,23 @@
 ;;; OTHER region and gives the main pane the rest — tmux layout_set_main_h/_v.
 ;;; When it does not fit, main-pane-* wins.
 
-(test main-vertical-other-pane-width-overrides-main
-  ":main-vertical with a fitting other-pane-width sizes the other panes to it and
-   gives the main pane the remaining width."
+(test main-layout-other-pane-size-overrides-main
+  ":main-vertical / :main-horizontal with a fitting other-pane size sizes the
+   other panes to it and gives the main pane the remaining dimension."
+  ;; :main-vertical: available=119; other-pane-width 30 fits (89 >= main 80) → main 89.
   (let ((win (%three-pane-window 120 30)))
-    ;; available = 119; other-pane-width 30 fits (119-30=89 >= main 80) → main 89.
     (cl-tmux/model:apply-named-layout win :main-vertical 80 24 30 0)
     (is (= 89 (pane-width (first (window-panes win))))
-        "main pane width = available - other-pane-width")
+        ":main-vertical main pane width = available - other-pane-width")
     (is (= 30 (pane-width (second (window-panes win))))
-        "other panes get other-pane-width (30)")))
-
-(test main-horizontal-other-pane-height-overrides-main
-  ":main-horizontal with a fitting other-pane-height sizes the other panes to it
-   and gives the main pane the remaining height."
+        ":main-vertical other panes get other-pane-width (30)"))
+  ;; :main-horizontal: available=49; other-pane-height 20 fits (29 >= main 24) → main 29.
   (let ((win (%three-pane-window 100 50)))
-    ;; available = 49; other-pane-height 20 fits (49-20=29 >= main 24) → main 29.
     (cl-tmux/model:apply-named-layout win :main-horizontal 80 24 0 20)
     (is (= 29 (pane-height (first (window-panes win))))
-        "main pane height = available - other-pane-height")
+        ":main-horizontal main pane height = available - other-pane-height")
     (is (= 20 (pane-height (second (window-panes win))))
-        "other panes get other-pane-height (20)")))
+        ":main-horizontal other panes get other-pane-height (20)")))
 
 (test main-vertical-other-pane-width-too-big-falls-back-to-main
   "An other-pane-width that does not leave room for the main pane is ignored;
