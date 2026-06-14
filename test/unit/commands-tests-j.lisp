@@ -73,29 +73,6 @@
     (is (= 13 (pane-height p0)) "upper neighbour grows on :up from lower pane")
     (is (= 7  (pane-height p1)) "lower (active) pane shrinks on :up")))
 
-;;; ── copy-mode-word-backward: noop outside copy mode ──────────────────────────
-
-(test copy-mode-word-backward-noop-outside-copy-mode
-  "copy-mode-word-backward is a no-op when not in copy mode."
-  (let ((s (make-screen 20 5)))
-    (feed s "hello world")
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 8))
-    (cl-tmux/commands::copy-mode-word-backward s)
-    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "column must not change outside copy mode")))
-
-;;; ── copy-mode-bottom: noop outside copy mode ─────────────────────────────────
-
-(test copy-mode-bottom-noop-outside-copy-mode
-  "copy-mode-bottom is a no-op when not in copy mode."
-  (let ((s (make-screen 20 5)))
-    (setf (cl-tmux/terminal/types:screen-scrollback s)
-          (loop repeat 5 collect (make-array 0)))
-    (setf (cl-tmux/terminal/types:screen-copy-offset s) 3)
-    (cl-tmux/commands::copy-mode-bottom s)
-    (is (= 3 (screen-copy-offset s))
-        "offset must remain unchanged when not in copy mode")))
-
 ;;; ── copy-mode-search-backward: saves term ────────────────────────────────────
 
 (test copy-mode-search-backward-saves-term

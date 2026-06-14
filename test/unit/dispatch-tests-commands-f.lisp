@@ -237,8 +237,9 @@
 
 ;;; ── %format-tree-entry helper ────────────────────────────────────────────────
 
-(test format-tree-entry-marks-current-session
-  "%format-tree-entry marks the current session with an asterisk."
+(test format-tree-entry-current-and-non-current-prefix
+  "%format-tree-entry uses '* ' for the current session and '  ' for others."
+  ;; Current session: marked with asterisk and includes window name.
   (let* ((screen (make-screen 20 5))
          (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
                             :screen screen))
@@ -246,17 +247,14 @@
                               :panes (list pane)
                               :tree  (make-layout-leaf pane))))
     (window-select-pane win pane)
-    (let ((output
-            (with-output-to-string (s)
-              (cl-tmux::%format-tree-entry s "mysess" "mysess"
-                                          (list win) win))))
+    (let ((output (with-output-to-string (s)
+                    (cl-tmux::%format-tree-entry s "mysess" "mysess"
+                                                (list win) win))))
       (is (search "* mysess" output)
           "current session must be marked with '* ' prefix")
       (is (search "test-win" output)
-          "window name must appear in the output"))))
-
-(test format-tree-entry-non-current-session-uses-space
-  "%format-tree-entry uses '  ' prefix for non-current sessions."
+          "window name must appear in the output")))
+  ;; Non-current session: space prefix, no asterisk.
   (let* ((screen (make-screen 20 5))
          (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
                             :screen screen))
@@ -264,10 +262,9 @@
                               :panes (list pane)
                               :tree  (make-layout-leaf pane))))
     (window-select-pane win pane)
-    (let ((output
-            (with-output-to-string (s)
-              (cl-tmux::%format-tree-entry s "other" "current"
-                                          (list win) win))))
+    (let ((output (with-output-to-string (s)
+                    (cl-tmux::%format-tree-entry s "other" "current"
+                                                (list win) win))))
       (is-false (search "* other" output)
                 "non-current session must not start with '* '")
       (is (search "  other" output)
