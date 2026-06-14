@@ -39,6 +39,7 @@
    (cons '("resize-window" "resizew")   #'%cmd-resize-window-arg)
    (cons '("detach-client" "detachc")   #'%cmd-detach-client-arg)
    (cons '("send-keys" "send-key" "send") #'%cmd-send-keys-arg)
+   (cons '("send-prefix" "sendp")       #'%cmd-send-prefix-arg)
    (cons '("resize-pane" "resizep")     #'%cmd-resize-pane-arg)
    (cons '("capture-pane" "capturep")   #'%cmd-capture-pane-arg)
    (cons '("run-shell" "run")           #'%cmd-run-shell-arg)

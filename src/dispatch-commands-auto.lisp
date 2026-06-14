@@ -161,6 +161,31 @@
                    (when str (send-keys-to-pane target-pane str :literal t)))
                  (send-keys-to-pane target-pane key :literal literal-p)))))))))
 
+(defun %cmd-send-prefix-arg (session args)
+  "send-prefix [-2] [-t target-pane]: send the configured prefix key to a pane.
+   -2 sends the secondary prefix key instead of the primary prefix.  -t targets a
+   specific pane by pane-id or 'session:window.pane' syntax."
+  (with-command-flags+pos (flags positionals args "t")
+    (declare (ignore positionals))
+    (let* ((target-str (cdr (assoc #\t flags)))
+           (target-resolved (and target-str
+                                 (multiple-value-list
+                                  (resolve-target *server-sessions* target-str
+                                                  :current-session session
+                                                  :current-window  (session-active-window session)
+                                                  :current-pane    (session-active-pane session)))))
+           (target-pane (if target-str (third target-resolved)
+                            (session-active-pane session)))
+           (prefix-byte (if (assoc #\2 flags)
+                            cl-tmux/config:*prefix2-key-code*
+                            cl-tmux/config:*prefix-key-code*)))
+      (when (and prefix-byte target-pane (> (pane-fd target-pane) 0))
+        (cl-tmux/pty:pty-write
+         (pane-fd target-pane)
+         (make-array 1 :element-type '(unsigned-byte 8)
+                       :initial-element prefix-byte))
+        t))))
+
 (defun %cmd-list-sessions-arg (session args)
   "list-sessions [-F format]: list sessions.
    -F format: custom format string (default: shows name, windows, attached).
@@ -379,4 +404,3 @@
           ((assoc #\L flags) (lock-channel   channel))
           ((assoc #\U flags) (unlock-channel channel))
           (t                 (wait-for-channel channel)))))))
-

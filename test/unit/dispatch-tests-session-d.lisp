@@ -1,6 +1,6 @@
 (in-package #:cl-tmux/test)
 
-;;;; Dispatch session tests — part D: display-popup, send-keys -N/-H,
+;;;; Dispatch session tests — part D: display-popup, send-keys -N/-H, send-prefix,
 ;;;; capture-pane, named paste-buffer, join-pane marked-pane, wait-for-arg.
 
 (in-suite dispatch-suite)
@@ -113,6 +113,48 @@
       (cl-tmux::%cmd-send-keys-arg s '("-X" "cursor-up"))
       (is (= (- row0 1) (car (screen-copy-cursor screen)))
           "a bare -X command runs exactly once (count defaults to 1)"))))
+
+;;; ── send-prefix -t / -2 ─────────────────────────────────────────────────────
+
+(test cmd-send-prefix-t-targets-pane
+  "send-prefix -t writes the literal primary prefix byte to the target pane."
+  (with-isolated-config
+    (with-fake-session (s :nwindows 1 :npanes 2)
+      (let* ((win (session-active-window s))
+             (active (window-active-pane win))
+             (target (find 2 (window-panes win) :key #'pane-id))
+             (writes nil)
+             (orig (fdefinition 'cl-tmux/pty:pty-write)))
+        (setf (pane-fd active) 1111
+              (pane-fd target) 2222)
+        (unwind-protect
+             (progn
+               (setf (fdefinition 'cl-tmux/pty:pty-write)
+                     (lambda (fd bytes)
+                       (push (list fd (coerce bytes 'list)) writes)))
+               (cl-tmux::%run-command-line s "send-prefix -t %2")
+               (is (equal '((2222 (2))) (reverse writes))
+                   "send-prefix -t %2 writes C-b to pane 2 only"))
+          (setf (fdefinition 'cl-tmux/pty:pty-write) orig))))))
+
+(test cmd-send-prefix-2-uses-secondary-prefix
+  "send-prefix -2 writes the configured secondary prefix byte."
+  (with-isolated-config
+    (let ((cl-tmux/config:*prefix2-key-code* 1))
+      (with-fake-session (s)
+        (let* ((pane (window-active-pane (session-active-window s)))
+               (writes nil)
+               (orig (fdefinition 'cl-tmux/pty:pty-write)))
+          (setf (pane-fd pane) 3333)
+          (unwind-protect
+               (progn
+                 (setf (fdefinition 'cl-tmux/pty:pty-write)
+                       (lambda (fd bytes)
+                         (push (list fd (coerce bytes 'list)) writes)))
+                 (cl-tmux::%run-command-line s "send-prefix -2")
+                 (is (equal '((3333 (1))) (reverse writes))
+                     "send-prefix -2 writes C-a when prefix2 is C-a"))
+            (setf (fdefinition 'cl-tmux/pty:pty-write) orig)))))))
 
 ;;; ── capture-pane saves to a buffer by default (scriptable form) ──────────────
 ;;;
