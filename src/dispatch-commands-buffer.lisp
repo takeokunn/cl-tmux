@@ -270,12 +270,15 @@
 (defun %cmd-list-keys-arg (session args)
   "list-keys [-T table] [-1] [key]: list key bindings.
    -T table: show bindings for TABLE only (e.g. prefix, root, copy-mode-vi).
-   Without -T: show all tables.  Additional positionals and flags (-1) are accepted
-   but ignored for simplicity (cl-tmux shows the full table always)."
+   Without -T: show all tables.  KEY filters the output to matching bindings.
+   The -1 flag is accepted for tmux compatibility."
   (declare (ignore session))
-  (with-command-flags (flags args "T")
+  (with-command-flags+pos (flags positionals args "T")
     (let* ((table-name (cdr (assoc #\T flags)))
-           (output     (cl-tmux/config:describe-key-bindings-for-table table-name)))
+           (key        (first positionals))
+           (output     (if key
+                           (cl-tmux/config:describe-key-bindings-for-key table-name key)
+                           (cl-tmux/config:describe-key-bindings-for-table table-name))))
       (show-overlay (if (plusp (length output))
                         output
                         (format nil "(no bindings in table ~A)"

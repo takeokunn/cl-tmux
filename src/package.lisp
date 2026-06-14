@@ -22,6 +22,7 @@
    #:lookup-key-binding
    #:describe-key-bindings
    #:describe-key-bindings-for-table
+   #:describe-key-bindings-for-key
    #:set-key-binding
    #:remove-key-binding
    ;; Key-table system

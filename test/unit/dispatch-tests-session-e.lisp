@@ -159,6 +159,61 @@
         (is (search "one:1" *overlay*)
             "list-panes -s must include panes from later windows")))))
 
+;;; ── list-windows arg command ─────────────────────────────────────────────────
+
+(test run-command-line-list-windows-format-uses-arg-handler
+  "%run-command-line list-windows -F expands window formats through the arg handler."
+  (with-fake-session (s :nwindows 2 :npanes 1)
+    (setf (session-name s) "alpha")
+    (let ((wins (session-windows s)))
+      (setf (window-name (first wins)) "home"
+            (window-name (second wins)) "work")
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line
+         s "list-windows -F '#{session_name}:#{window_name}'")
+        (is (search "alpha:home" *overlay*)
+            "list-windows -F must include the first formatted window")
+        (is (search "alpha:work" *overlay*)
+            "list-windows -F must include the second formatted window")))))
+
+(test run-command-line-list-windows-targets-session
+  "%run-command-line list-windows -t lists windows from the target session."
+  (with-fake-session (s1 :nwindows 1 :npanes 1)
+    (let ((s2 (make-fake-session :nwindows 1 :npanes 1)))
+      (setf (session-name s1) "alpha"
+            (session-name s2) "beta"
+            (window-name (first (session-windows s1))) "home"
+            (window-name (first (session-windows s2))) "work")
+      (let ((cl-tmux::*server-sessions*
+              (list (cons (session-name s1) s1)
+                    (cons (session-name s2) s2)))
+            (*overlay* nil))
+        (cl-tmux::%run-command-line
+         s1 "list-windows -t beta -F '#{session_name}:#{window_name}'")
+        (is (search "beta:work" *overlay*)
+            "list-windows -t must include windows from the target session")
+        (is (null (search "alpha:home" *overlay*))
+            "list-windows -t must not list the current session when another is targeted")))))
+
+(test run-command-line-list-windows-all-sessions
+  "%run-command-line list-windows -a lists windows across registered sessions."
+  (with-fake-session (s1 :nwindows 1 :npanes 1)
+    (let ((s2 (make-fake-session :nwindows 1 :npanes 1)))
+      (setf (session-name s1) "alpha"
+            (session-name s2) "beta"
+            (window-name (first (session-windows s1))) "home"
+            (window-name (first (session-windows s2))) "work")
+      (let ((cl-tmux::*server-sessions*
+              (list (cons (session-name s1) s1)
+                    (cons (session-name s2) s2)))
+            (*overlay* nil))
+        (cl-tmux::%run-command-line
+         s1 "list-windows -a -F '#{session_name}:#{window_name}'")
+        (is (search "alpha:home" *overlay*)
+            "list-windows -a must include windows from the current session")
+        (is (search "beta:work" *overlay*)
+            "list-windows -a must include windows from other registered sessions")))))
+
 ;;; ── split-window arg command ─────────────────────────────────────────────────
 
 (test parse-split-size-absolute-vs-percentage

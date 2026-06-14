@@ -202,6 +202,15 @@
       (is (search "bind-key -T copy-mode-vi PageUp copy-mode-page-up" text)
           "list-keys must show copy-mode-vi PageUp"))))
 
+(test describe-key-bindings-for-key-filters-by-key-label
+  "describe-key-bindings-for-key returns only bindings whose key label matches."
+  (with-isolated-config
+    (let ((text (cl-tmux/config:describe-key-bindings-for-key "prefix" "C-Right")))
+      (is (search "bind-key -T prefix -r C-Right resize-pane -R 1" text)
+          "C-Right binding must be listed")
+      (is (null (search "bind-key -T prefix Up select-pane-up" text))
+          "different keys must be omitted"))))
+
 ;;; ── +max-scrollback-lines+ constant ───────────────────────────────────────
 
 (test max-scrollback-lines-constant

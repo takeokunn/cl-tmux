@@ -78,6 +78,16 @@
       (cl-tmux::dispatch-command s :list-keys nil)
       (is (overlay-active-p) "list-keys should open the help overlay"))))
 
+(test run-command-line-list-keys-filters-by-key
+  "%run-command-line list-keys [key] shows only matching bindings."
+  (with-fake-session (s)
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line s "list-keys -T prefix C-Right")
+      (is (search "bind-key -T prefix -r C-Right resize-pane -R 1" *overlay*)
+          "matching key binding must be shown")
+      (is (null (search "bind-key -T prefix Up select-pane-up" *overlay*))
+          "non-matching key bindings must be hidden"))))
+
 (test define-command-handlers-macro-is-defined
   "define-command-handlers is a defined macro."
   (is (macro-function 'cl-tmux::define-command-handlers)))
@@ -275,4 +285,3 @@
       (cl-tmux::dispatch-command sess :display-panes nil)
       (is-true cl-tmux::*dirty*
                ":display-panes must mark *dirty*"))))
-

@@ -292,6 +292,21 @@
       (with-output-to-string (out)
         (%describe-one-table out table-name))))
 
+(defun describe-key-bindings-for-key (table-name key)
+  "Return bind-key lines matching KEY, optionally limited to TABLE-NAME.
+   KEY is compared against the display label shown by LIST-KEYS, so both character
+   keys like \"c\" and named keys like \"C-Right\" work."
+  (let ((tables (if table-name (list table-name) (%sorted-table-names))))
+    (with-output-to-string (out)
+      (dolist (name tables)
+        (let ((inner (gethash name *key-tables*)))
+          (when inner
+            (dolist (binding (sort (%table-binding-alist inner)
+                                   #'string< :key (lambda (b) (key-label (car b)))))
+              (when (string= key (key-label (car binding)))
+                (write-string (%format-binding-line name (car binding) (cdr binding))
+                              out)))))))))
+
 (defun set-key-binding (key command)
   "Bind KEY (a character or string) to COMMAND (a keyword) in the prefix table.
    Returns COMMAND."

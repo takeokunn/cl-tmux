@@ -203,13 +203,22 @@
 (defun %cmd-list-windows-arg (session args)
   "list-windows [-F format] [-a] [-t session]: list windows.
    -F format: custom format string.
-   -a: list windows in all sessions."
+   -a: list windows in all sessions.
+   -t target-session: list windows in the target session."
   (with-command-flags (flags args "Ft")
-    (let* ((fmt    (cdr (assoc #\F flags)))
-           (all-p  (assoc #\a flags))
-           (sessions (if (and all-p *server-sessions*)
-                         (mapcar #'cdr *server-sessions*)
-                         (list session))))
+    (let* ((fmt        (cdr (assoc #\F flags)))
+           (target-str (cdr (assoc #\t flags)))
+           (all-p      (assoc #\a flags))
+           (target-session (and target-str
+                                (find-session-by-target *server-sessions* target-str)))
+           (sessions (cond
+                       ((and all-p *server-sessions*)
+                        (mapcar #'cdr *server-sessions*))
+                       (target-str
+                        (when target-session
+                          (list target-session)))
+                       (t
+                        (list session)))))
       (show-built-overlay (s)
         (dolist (sess sessions)
           (dolist (win (session-windows sess))
