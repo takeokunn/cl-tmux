@@ -9,17 +9,22 @@
 
 ;;; ── Macro: define-copy-mode-vi-rules ────────────────────────────────────────
 ;;;
-;;; Each RULE is (BYTE-OR-BYTE-LIST ACTION-FORM ...).
-;;; The macro generates %dispatch-copy-mode-byte which is called with a screen, a
-;;; raw byte, and the already-computed repeat count.  The repeat helper and the
-;;; char-jump continuation builder are top-level functions so they are independently
-;;; testable and do not pollute the ground-state closure.
+;;; Each RULE is (BYTE-OR-BYTE-LIST ACTION...).
+;;; Two shorthands reduce boilerplate in the common cases:
+;;;   (PATTERN :repeat FN)  → (%copy-mode-repeat FN screen count) (values t nil)
+;;;   (PATTERN :call   FN)  → (FN screen) (values t nil)
+;;; For non-standard bodies (search prompts, continuations) the forms are
+;;; used verbatim.  The macro generates %dispatch-copy-mode-byte which is
+;;; called with a screen, a raw byte, and the already-computed repeat count.
 
 (defmacro define-copy-mode-vi-rules (&rest rules)
   "Generate %DISPATCH-COPY-MODE-BYTE (SCREEN BYTE COUNT SESSION) from an ordered
-   table of copy-mode vi rules.  Each RULE is (PATTERN &rest BODY) where PATTERN
-   is an integer, a list of integers, or a read-time evaluated constant expression
-   such as #.+byte-f+.  The first matching PATTERN wins (ordered-cut semantics).
+   table of copy-mode vi rules.  Each RULE is (PATTERN BODY...) where:
+     (PATTERN :repeat FN)  →  (%copy-mode-repeat FN screen count) (values t nil)
+     (PATTERN :call   FN)  →  (FN screen) (values t nil)
+     (PATTERN body...)     →  body... verbatim (for complex/continuation arms)
+   PATTERN is an integer, a list of integers, or a read-time constant.
+   The first matching PATTERN wins (ordered-cut semantics like Prolog).
    Returns (values HANDLED NEXT-STATE) where HANDLED is T or NIL and NEXT-STATE
    is a CPS continuation function or NIL to return to ground state."
   `(defun %dispatch-copy-mode-byte (screen byte count session)
@@ -31,7 +36,22 @@
        ,@(mapcar
           (lambda (rule)
             (destructuring-bind (pattern &rest body) rule
-              `(,pattern ,@body)))
+              (let ((expanded
+                     (cond
+                       ;; :repeat FN — call FN N times via %copy-mode-repeat
+                       ((and (= 2 (length body)) (eq (first body) :repeat))
+                        `((%copy-mode-repeat ,(second body) screen count)
+                          (values t nil)))
+                       ;; :call #'sym — direct no-repeat call (unwrap #' for clarity)
+                       ;; :call (lambda ...) — funcall
+                       ((and (= 2 (length body)) (eq (first body) :call))
+                        (let ((fn (second body)))
+                          (if (and (consp fn) (eq (car fn) 'function))
+                              `((,(cadr fn) screen) (values t nil))
+                              `((funcall ,fn screen) (values t nil)))))
+                       ;; Verbatim body — for search prompts, continuations, etc.
+                       (t body))))
+                `(,pattern ,@expanded))))
           rules)
        (otherwise (values nil nil)))))
 
@@ -54,200 +74,117 @@
 
 ;;; ── Copy-mode vi dispatch table ──────────────────────────────────────────────
 ;;;
-;;; Rules read as Prolog facts: each arm maps one or more byte values to an action.
-;;; Raw integer literals are replaced by named constants from events-core.lisp.
-;;; The #. read-time eval allows using constant symbols in case patterns.
+;;; Reads as Prolog facts: each arm maps one or more byte values to an action.
+;;; :repeat FN   — move/scroll commands that honour a numeric prefix count.
+;;; :call   FN   — one-shot commands (enter/exit, yank, selection toggles, marks).
+;;; Verbatim bodies — search prompts (need SESSION) and char-jump continuations.
 
 (define-copy-mode-vi-rules
   ;; ── Exit copy mode ────────────────────────────────────────────────────────
   ;; q / Q / C-c — exit copy mode
-  ((#.+byte-q+ 81 3)
-   (copy-mode-exit screen)
-   (values t nil))
-  ;; i — exit copy mode (non-standard but kept for compat)
-  (105
-   (copy-mode-exit screen)
-   (values t nil))
+  ((#.+byte-q+ 81 3) :call #'copy-mode-exit)
+  ;; i — exit copy mode (vi insert-mode key repurposed as exit)
+  (105               :call #'copy-mode-exit)
   ;; ── Yank (copy) ───────────────────────────────────────────────────────────
   ;; Enter (13) / C-j (10) — copy selection and return to ground
-  ((13 10)
-   (copy-mode-yank screen)
-   (values t nil))
+  ((13 10) :call #'copy-mode-yank)
   ;; ── Cursor navigation ─────────────────────────────────────────────────────
   ;; h / C-h (8) — move cursor left
-  ((#.+byte-h+ 8)
-   (%copy-mode-repeat (lambda (s) (copy-mode-move-cursor s :left)) screen count)
-   (values t nil))
+  ((#.+byte-h+ 8)  :repeat (lambda (s) (copy-mode-move-cursor s :left)))
   ;; l — move cursor right
-  (#.+byte-l+
-   (%copy-mode-repeat (lambda (s) (copy-mode-move-cursor s :right)) screen count)
-   (values t nil))
+  (#.+byte-l+      :repeat (lambda (s) (copy-mode-move-cursor s :right)))
   ;; j / C-n (14) — move cursor down (viewport follows at edge)
-  ((#.+byte-j+ 14)
-   (%copy-mode-repeat (lambda (s) (copy-mode-move-cursor s :down)) screen count)
-   (values t nil))
+  ((#.+byte-j+ 14) :repeat (lambda (s) (copy-mode-move-cursor s :down)))
   ;; k / C-p (16) — move cursor up (viewport follows at edge)
-  ((#.+byte-k+ 16)
-   (%copy-mode-repeat (lambda (s) (copy-mode-move-cursor s :up)) screen count)
-   (values t nil))
+  ((#.+byte-k+ 16) :repeat (lambda (s) (copy-mode-move-cursor s :up)))
   ;; ── Viewport scrolling ────────────────────────────────────────────────────
   ;; J — scroll-down (viewport toward newer content; vi J = C-e analogue)
-  (74
-   (%copy-mode-repeat #'copy-mode-scroll-down-line screen count)
-   (values t nil))
+  (74  :repeat #'copy-mode-scroll-down-line)
   ;; K — scroll-up (viewport toward older content; vi K = C-y analogue)
-  (75
-   (%copy-mode-repeat #'copy-mode-scroll-up-line screen count)
-   (values t nil))
+  (75  :repeat #'copy-mode-scroll-up-line)
   ;; C-f (6) — page down
-  (6
-   (%copy-mode-repeat #'copy-mode-page-down screen count)
-   (values t nil))
+  (6   :repeat #'copy-mode-page-down)
   ;; C-b (2) — page up
-  (2
-   (%copy-mode-repeat #'copy-mode-page-up screen count)
-   (values t nil))
+  (2   :repeat #'copy-mode-page-up)
   ;; C-u (21) — scroll up half page
-  (21
-   (%copy-mode-repeat #'copy-mode-half-page-up screen count)
-   (values t nil))
+  (21  :repeat #'copy-mode-half-page-up)
   ;; C-d (4) — scroll down half page
-  (4
-   (%copy-mode-repeat #'copy-mode-half-page-down screen count)
-   (values t nil))
+  (4   :repeat #'copy-mode-half-page-down)
   ;; C-e (5) — scroll down one line
-  (5
-   (%copy-mode-repeat #'copy-mode-scroll-down-line screen count)
-   (values t nil))
+  (5   :repeat #'copy-mode-scroll-down-line)
   ;; C-y (25) — scroll up one line
-  (25
-   (%copy-mode-repeat #'copy-mode-scroll-up-line screen count)
-   (values t nil))
+  (25  :repeat #'copy-mode-scroll-up-line)
   ;; ── Word motions ──────────────────────────────────────────────────────────
   ;; w — word forward
-  (#.+byte-w+
-   (%copy-mode-repeat #'copy-mode-word-forward screen count)
-   (values t nil))
+  (#.+byte-w+ :repeat #'copy-mode-word-forward)
   ;; W — WORD forward (whitespace-delimited)
-  (87
-   (%copy-mode-repeat #'copy-mode-space-forward screen count)
-   (values t nil))
+  (87         :repeat #'copy-mode-space-forward)
   ;; b — word backward
-  (#.+byte-b+
-   (%copy-mode-repeat #'copy-mode-word-backward screen count)
-   (values t nil))
+  (#.+byte-b+ :repeat #'copy-mode-word-backward)
   ;; B — WORD backward (whitespace-delimited)
-  (66
-   (%copy-mode-repeat #'copy-mode-space-backward screen count)
-   (values t nil))
+  (66         :repeat #'copy-mode-space-backward)
   ;; e — word end
-  (#.+byte-e+
-   (%copy-mode-repeat #'copy-mode-word-end screen count)
-   (values t nil))
+  (#.+byte-e+ :repeat #'copy-mode-word-end)
   ;; E — WORD end (whitespace-delimited)
-  (69
-   (%copy-mode-repeat #'copy-mode-space-end screen count)
-   (values t nil))
+  (69         :repeat #'copy-mode-space-end)
   ;; ── Line position ─────────────────────────────────────────────────────────
   ;; 0 — line start (bare '0' with no prefix)
-  (#.+byte-digit-0+
-   (copy-mode-line-start screen)
-   (values t nil))
+  (#.+byte-digit-0+ :call #'copy-mode-line-start)
   ;; ^ — back-to-indentation (first non-blank)
-  (94
-   (copy-mode-back-to-indentation screen)
-   (values t nil))
+  (94               :call #'copy-mode-back-to-indentation)
   ;; $ — line end
-  (#.+byte-dollar+
-   (copy-mode-line-end screen)
-   (values t nil))
+  (#.+byte-dollar+  :call #'copy-mode-line-end)
   ;; ── Jump to scrollback extremes ───────────────────────────────────────────
   ;; g — jump to top (maximum scrollback)
-  (#.+byte-g+
-   (copy-mode-top screen)
-   (values t nil))
+  (#.+byte-g+      :call #'copy-mode-top)
   ;; G — jump to bottom (offset = 0, live view)
-  (71
-   (copy-mode-bottom screen)
-   (values t nil))
+  (71              :call #'copy-mode-bottom)
   ;; H — cursor to top of screen
-  (#.+byte-capital-h+
-   (copy-mode-high screen)
-   (values t nil))
+  (#.+byte-capital-h+  :call #'copy-mode-high)
   ;; M — cursor to middle of screen
-  (#.(char-code #\M)
-   (copy-mode-middle screen)
-   (values t nil))
+  (#.(char-code #\M)   :call #'copy-mode-middle)
   ;; L — cursor to bottom of screen
-  (#.+byte-capital-l+
-   (copy-mode-low screen)
-   (values t nil))
-  ;; ── Scroll centering ──────────────────────────────────────────────────────
+  (#.+byte-capital-l+  :call #'copy-mode-low)
+  ;; ── Scroll centering ─────────────────────────────────────────────────────
   ;; z — scroll-middle: scroll viewport so cursor row is centered
-  (122
-   (copy-mode-scroll-middle screen)
-   (values t nil))
+  (122 :call #'copy-mode-scroll-middle)
   ;; ── Selection ─────────────────────────────────────────────────────────────
   ;; V — begin line selection
-  (#.+byte-capital-v+
-   (copy-mode-begin-line-selection screen)
-   (values t nil))
+  (#.+byte-capital-v+       :call #'copy-mode-begin-line-selection)
   ;; Space / v — begin selection
-  ((#.+byte-space+ #.+byte-v+)
-   (copy-mode-begin-selection screen)
-   (values t nil))
+  ((#.+byte-space+ #.+byte-v+) :call #'copy-mode-begin-selection)
   ;; o / O — swap mark and cursor ends of selection
-  ((111 79)
-   (copy-mode-other-end screen)
-   (values t nil))
+  ((111 79) :call #'copy-mode-other-end)
   ;; C-v (22) — toggle rectangle select
-  (22
-   (copy-mode-toggle-rectangle screen)
-   (values t nil))
-  ;; ── Copy actions ─────────────────────────────────────────────────────────
+  (22       :call #'copy-mode-toggle-rectangle)
+  ;; ── Copy actions ──────────────────────────────────────────────────────────
   ;; y — yank selection
-  (#.+byte-y+
-   (copy-mode-yank screen)
-   (values t nil))
+  (#.+byte-y+       :call #'copy-mode-yank)
   ;; D — copy to end of line
-  (#.+byte-capital-d+
-   (copy-mode-copy-end-of-line screen)
-   (values t nil))
+  (#.+byte-capital-d+ :call #'copy-mode-copy-end-of-line)
   ;; Y — copy current line
-  (#.+byte-capital-y+
-   (copy-mode-copy-line screen)
-   (values t nil))
+  (#.+byte-capital-y+ :call #'copy-mode-copy-line)
   ;; A — append selection to paste buffer and cancel
-  (#.+byte-capital-a+
-   (copy-mode-append-selection screen)
-   (values t nil))
+  (#.+byte-capital-a+ :call #'copy-mode-append-selection)
   ;; ── Search ────────────────────────────────────────────────────────────────
   ;; n — search next
-  (#.+byte-n+
-   (copy-mode-search-next screen)
-   (values t nil))
+  (#.+byte-n+         :call #'copy-mode-search-next)
   ;; N — search prev
-  (#.+byte-capital-n+
-   (copy-mode-search-prev screen)
-   (values t nil))
-  ;; / — interactive search forward prompt
+  (#.+byte-capital-n+ :call #'copy-mode-search-prev)
+  ;; / — interactive search forward prompt (needs session — verbatim body)
   (#.+byte-slash+
    (%copy-mode-search-prompt session "/" #'copy-mode-search-forward)
    (values t nil))
-  ;; ? — interactive search backward prompt
+  ;; ? — interactive search backward prompt (needs session — verbatim body)
   (#.+byte-question+
    (%copy-mode-search-prompt session "?" #'copy-mode-search-backward)
    (values t nil))
   ;; C-s (19) — incremental forward search
-  (19
-   (copy-mode-search-forward-incremental screen)
-   (values t nil))
+  (19 :call #'copy-mode-search-forward-incremental)
   ;; C-r (18) — incremental backward search
-  (18
-   (copy-mode-search-backward-incremental screen)
-   (values t nil))
-  ;; ── Char-jump motions (need a second byte) ────────────────────────────────
-  ;; f — jump forward to char on line (vi f<char>): arm a one-byte continuation
+  (18 :call #'copy-mode-search-backward-incremental)
+  ;; ── Char-jump motions (need a second byte — verbatim continuation bodies) ─
+  ;; f — jump forward to char on line (vi f<char>)
   (#.+byte-f+
    (setf *dirty* t)
    (values t (%copy-mode-char-jump-continuation #'copy-mode-jump-forward screen count)))
@@ -265,33 +202,19 @@
    (values t (%copy-mode-char-jump-continuation #'copy-mode-jump-to-backward screen count)))
   ;; ── Paragraph jumps ───────────────────────────────────────────────────────
   ;; { — previous-paragraph (jump to nearest blank line above)
-  (123
-   (%copy-mode-repeat #'copy-mode-previous-paragraph screen count)
-   (values t nil))
+  (123 :repeat #'copy-mode-previous-paragraph)
   ;; } — next-paragraph (jump to nearest blank line below)
-  (125
-   (%copy-mode-repeat #'copy-mode-next-paragraph screen count)
-   (values t nil))
-  ;; ── Bracket matching ─────────────────────────────────────────────────────
+  (125 :repeat #'copy-mode-next-paragraph)
+  ;; ── Bracket matching ──────────────────────────────────────────────────────
   ;; % — jump to matching bracket
-  (37
-   (copy-mode-next-matching-bracket screen)
-   (values t nil))
-  ;; ── Jump repeat ──────────────────────────────────────────────────────────
+  (37 :call #'copy-mode-next-matching-bracket)
+  ;; ── Jump repeat ───────────────────────────────────────────────────────────
   ;; ; — repeat last jump
-  (59
-   (dotimes (_ count) (copy-mode-jump-again screen))
-   (values t nil))
+  (59 :repeat #'copy-mode-jump-again)
   ;; , — reverse last jump
-  (44
-   (dotimes (_ count) (copy-mode-jump-reverse screen))
-   (values t nil))
-  ;; ── Mark operations ──────────────────────────────────────────────────────
+  (44 :repeat #'copy-mode-jump-reverse)
+  ;; ── Mark operations ───────────────────────────────────────────────────────
   ;; m — set mark at current cursor position
-  (109
-   (copy-mode-set-mark screen)
-   (values t nil))
+  (109 :call #'copy-mode-set-mark)
   ;; ' — jump to mark
-  (39
-   (copy-mode-jump-to-mark screen)
-   (values t nil)))
+  (39  :call #'copy-mode-jump-to-mark))
