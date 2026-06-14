@@ -70,8 +70,8 @@
 
 (test expand-shorthand-unknown-char-emits-both-chars
   "An unknown shorthand #X emits both '#' and 'X' literally."
-  (is (string= "#Z" (fmt "#Z")) "#Z must pass through as two literal chars")
-  (is (string= "#?" (fmt "#?")) "#? must pass through as two literal chars"))
+  (dolist (spec '("#Z" "#?"))
+    (is (string= spec (fmt spec)) "~S must pass through as two literal chars" spec)))
 
 ;;; ── format-context-from-window nil window ────────────────────────────────────
 

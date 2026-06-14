@@ -383,8 +383,9 @@
 (test lookup-returns-string-value
   "%lookup returns the princ-to-string representation of the stored value."
   (let ((ctx (list :count 42 :label "hello")))
-    (is (string= "42"    (cl-tmux/format::%lookup ctx :count)) ":count → \"42\"")
-    (is (string= "hello" (cl-tmux/format::%lookup ctx :label)) ":label → \"hello\"")))
+    (dolist (c '((:count "42") (:label "hello")))
+      (destructuring-bind (key expected) c
+        (is (string= expected (cl-tmux/format::%lookup ctx key)) "~S" key)))))
 
 (test short-hostname-table
   "%short-hostname strips the domain suffix, or passes through unchanged when there is no dot."
