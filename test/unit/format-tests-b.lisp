@@ -176,9 +176,9 @@
 
 (test strftime-format-at-empty-for-non-timestamp
   "%strftime-format-at returns the empty string for NIL / zero / non-positive."
-  (is (string= "" (cl-tmux/format::%strftime-format-at "%Y" nil)))
-  (is (string= "" (cl-tmux/format::%strftime-format-at "%Y" 0)))
-  (is (string= "" (cl-tmux/format::%strftime-format-at "%Y" -1))))
+  (dolist (ts '(nil 0 -1))
+    (is (string= "" (cl-tmux/format::%strftime-format-at "%Y" ts))
+        "must return empty for ~S" ts)))
 
 (test format-t-modifier-formats-timestamp-variable
   "#{t:VAR} (bare variable, no %) formats VAR's value as a timestamp via the
@@ -239,9 +239,11 @@
 
 (test format-modifier-length
   "#{l:var} returns the character length of the value as a string."
-  (is (string= "5" (fmt "#{l:v}" :v "hello")))
-  (is (string= "0" (fmt "#{l:v}" :v "")))
-  (is (string= "3" (fmt "#{l:session_name}" :session-name "abc"))))
+  (dolist (c '(("#{l:v}"            :v            "hello" "5" "hello is 5 chars")
+               ("#{l:v}"            :v            ""      "0" "empty string is 0")
+               ("#{l:session_name}" :session-name "abc"   "3" "resolves via var name")))
+    (destructuring-bind (spec key val expected desc) c
+      (is (string= expected (fmt spec key val)) "~A" desc))))
 
 (test format-modifier-strftime-unit-tests
   "%strftime-format internal helpers produce correct output."

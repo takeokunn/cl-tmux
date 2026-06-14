@@ -316,14 +316,12 @@
          (p-inactive (find-if-not (lambda (p) (eq p p-active)) panes)))
     (let ((ctx-a (cl-tmux/format:format-context-from-session sess win p-active))
           (ctx-i (cl-tmux/format:format-context-from-session sess win p-inactive)))
-      (is (string= "1" (cl-tmux/format:expand-format "#{pane_active}" ctx-a))
-          "active pane → #{pane_active} 1")
-      (is (string= "0" (cl-tmux/format:expand-format "#{pane_active}" ctx-i))
-          "inactive pane → #{pane_active} 0")
-      (is (string= "HERE" (cl-tmux/format:expand-format "#{?pane_active,HERE,away}" ctx-a))
-          "conditional picks the true branch for the active pane")
-      (is (string= "away" (cl-tmux/format:expand-format "#{?pane_active,HERE,away}" ctx-i))
-          "conditional picks the false branch for an inactive pane"))))
+      (dolist (c `((,ctx-a "#{pane_active}"            "1"    "active pane → #{pane_active} 1")
+                   (,ctx-i "#{pane_active}"            "0"    "inactive pane → #{pane_active} 0")
+                   (,ctx-a "#{?pane_active,HERE,away}" "HERE" "conditional picks the true branch")
+                   (,ctx-i "#{?pane_active,HERE,away}" "away" "conditional picks the false branch")))
+        (destructuring-bind (ctx spec expected desc) c
+          (is (string= expected (cl-tmux/format:expand-format spec ctx)) "~A" desc))))))
 
 (test format-context-window-panes-and-session-windows-counts
   "#{window_panes} is the pane count; #{session_windows} is the window count."

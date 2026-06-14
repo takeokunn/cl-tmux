@@ -109,9 +109,10 @@
              (cl-tmux/buffer:add-paste-buffer "d")  ; should evict "a"
              (is (= 3 (length (cl-tmux/buffer:list-paste-buffers)))
                  "ring must not grow beyond buffer-limit")
-             (is (string= "d" (cl-tmux/buffer:get-paste-buffer 0)))
-             (is (string= "c" (cl-tmux/buffer:get-paste-buffer 1)))
-             (is (string= "b" (cl-tmux/buffer:get-paste-buffer 2)))
+             (dolist (c '((0 "d") (1 "c") (2 "b")))
+               (destructuring-bind (idx expected) c
+                 (is (string= expected (cl-tmux/buffer:get-paste-buffer idx))
+                     "index ~D must be ~S" idx expected)))
              (is (null (cl-tmux/buffer:get-paste-buffer 3))
                  "oldest buffer must have been evicted"))
         (cl-tmux/options:set-option "buffer-limit" saved)))))
@@ -189,9 +190,9 @@
     (cl-tmux/buffer:add-paste-buffer "second")
     (cl-tmux/buffer:add-paste-buffer "third")
     (let ((lst (cl-tmux/buffer:list-paste-buffers)))
-      (is (string= "third"  (first  lst)) "most recent must be first in list")
-      (is (string= "second" (second lst)) "second most recent must be second in list")
-      (is (string= "first"  (third  lst)) "oldest must be last in list"))))
+      (dolist (c '((0 "third" "most recent first") (1 "second" "second most recent") (2 "first" "oldest last")))
+        (destructuring-bind (idx expected desc) c
+          (is (string= expected (nth idx lst)) "~A" desc))))))
 
 ;;; ── delete-paste-buffer on non-empty then empty ──────────────────────────────
 
