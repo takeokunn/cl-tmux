@@ -47,27 +47,17 @@
 
 ;;; ── Prefix arrow keys select pane ────────────────────────────────────────────
 
-(test prefix-arrow-up-selects-pane-up
-  "C-b Up (prefix then ESC [ A) dispatches :select-pane-up."
-  (with-fake-session (s)
-    (let ((state (cl-tmux::make-input-state)))
-      ;; Feed C-b (prefix) then ESC [ A
-      (cl-tmux::process-byte s 2   state)
-      (cl-tmux::process-byte s 27  state)
-      (cl-tmux::process-byte s 91  state)
-      ;; Final byte — returns to ground state, no crash.
-      (is (null (cl-tmux::process-byte s 65 state))
-          "C-b Up arrow must return NIL (no quit/detach)"))))
-
-(test prefix-arrow-down-selects-pane-down
-  "C-b Down (prefix then ESC [ B) dispatches :select-pane-down."
-  (with-fake-session (s)
-    (let ((state (cl-tmux::make-input-state)))
-      (cl-tmux::process-byte s 2   state)
-      (cl-tmux::process-byte s 27  state)
-      (cl-tmux::process-byte s 91  state)
-      (is (null (cl-tmux::process-byte s 66 state))
-          "C-b Down arrow must return NIL (no quit/detach)"))))
+(test prefix-arrow-up-down-returns-nil-table
+  "C-b Up (ESC [ A) and C-b Down (ESC [ B) each return NIL (no quit/detach)."
+  (dolist (row '((65 "C-b Up arrow must return NIL (no quit/detach)")
+                 (66 "C-b Down arrow must return NIL (no quit/detach)")))
+    (destructuring-bind (final desc) row
+      (with-fake-session (s)
+        (let ((state (cl-tmux::make-input-state)))
+          (cl-tmux::process-byte s 2   state)
+          (cl-tmux::process-byte s 27  state)
+          (cl-tmux::process-byte s 91  state)
+          (is (null (cl-tmux::process-byte s final state)) "~A" desc))))))
 
 ;;; ── C-b C-b send-prefix ──────────────────────────────────────────────────────
 
@@ -81,39 +71,31 @@
 
 ;;; ── Modifier+arrow key-name helpers ────────────────────────────────────────
 
-(test arrow-final-name-maps-arrow-bytes
-  "%arrow-final-name returns the tmux base name for each arrow final byte."
-  (is (string= "Up"    (cl-tmux::%arrow-final-name 65)))
-  (is (string= "Down"  (cl-tmux::%arrow-final-name 66)))
-  (is (string= "Right" (cl-tmux::%arrow-final-name 67)))
-  (is (string= "Left"  (cl-tmux::%arrow-final-name 68))))
+(test arrow-final-name-table
+  "%arrow-final-name returns the tmux base name for arrow finals and NIL for others."
+  (dolist (row '((65 "Up"    "A → Up")
+                 (66 "Down"  "B → Down")
+                 (67 "Right" "C → Right")
+                 (68 "Left"  "D → Left")
+                 (72 nil     "H (Home) → NIL")
+                 (109 nil    "m (SGR final) → NIL")))
+    (destructuring-bind (byte expected desc) row
+      (is (equal expected (cl-tmux::%arrow-final-name byte)) "~A" desc))))
 
-(test arrow-final-name-returns-nil-for-non-arrows
-  "%arrow-final-name returns NIL for non-arrow final bytes."
-  (is (null (cl-tmux::%arrow-final-name 72)))   ; H = Home
-  (is (null (cl-tmux::%arrow-final-name 109)))) ; m = SGR final
-
-(test modifier-arrow-key-name-builds-canonical-names
-  "%modifier-arrow-key-name builds the exact strings %parse-key-token stores:
-   5=Ctrl→C-, 3=Meta→M-, 2=Shift→S-, combined with the arrow base name."
-  (is (string= "C-Up"    (cl-tmux::%modifier-arrow-key-name 53 65)))
-  (is (string= "M-Left"  (cl-tmux::%modifier-arrow-key-name 51 68)))
-  (is (string= "S-Down"  (cl-tmux::%modifier-arrow-key-name 50 66)))
-  (is (string= "C-Right" (cl-tmux::%modifier-arrow-key-name 53 67))))
-
-(test modifier-arrow-key-name-builds-combined-modifiers
-  "Combined modifiers resolve via %modifier-prefix in canonical C-/M-/S- order:
-   6=Ctrl+Shift, 7=Ctrl+Meta, 8=Ctrl+Meta+Shift, 4=Meta+Shift."
-  (is (string= "C-S-Up"   (cl-tmux::%modifier-arrow-key-name 54 65)))  ; 6
-  (is (string= "C-M-Up"   (cl-tmux::%modifier-arrow-key-name 55 65)))  ; 7
-  (is (string= "C-M-S-Up" (cl-tmux::%modifier-arrow-key-name 56 65)))  ; 8
-  (is (string= "M-S-Up"   (cl-tmux::%modifier-arrow-key-name 52 65)))) ; 4
-
-(test modifier-arrow-key-name-returns-nil-for-unknown
-  "%modifier-arrow-key-name returns NIL for a non-arrow final or a no-modifier
-   value, so the caller forwards the sequence unchanged."
-  (is (null (cl-tmux::%modifier-arrow-key-name 53 72)))  ; Ctrl+Home — not arrow
-  (is (null (cl-tmux::%modifier-arrow-key-name 49 65)))) ; '1' = no modifier → NIL
+(test modifier-arrow-key-name-table
+  "%modifier-arrow-key-name builds C-/M-/S- prefixed arrow names; NIL for non-arrow or no-modifier."
+  (dolist (row '((53 65 "C-Up"    "5=Ctrl + A → C-Up")
+                 (51 68 "M-Left"  "3=Meta + D → M-Left")
+                 (50 66 "S-Down"  "2=Shift + B → S-Down")
+                 (53 67 "C-Right" "5=Ctrl + C → C-Right")
+                 (54 65 "C-S-Up"   "6=Ctrl+Shift + A → C-S-Up")
+                 (55 65 "C-M-Up"   "7=Ctrl+Meta + A → C-M-Up")
+                 (56 65 "C-M-S-Up" "8=Ctrl+Meta+Shift + A → C-M-S-Up")
+                 (52 65 "M-S-Up"   "4=Meta+Shift + A → M-S-Up")
+                 (53 72 nil        "Ctrl+H (Home final) → NIL")
+                 (49 65 nil        "1=no-modifier → NIL")))
+    (destructuring-bind (mod arrow expected desc) row
+      (is (equal expected (cl-tmux::%modifier-arrow-key-name mod arrow)) "~A" desc))))
 
 ;;; ── Modifier+arrow binding override (bind C-Up / bind -n M-Left) ────────────
 
@@ -158,21 +140,18 @@
 
 ;;; ── Meta/Alt key-name helper and bind override (bind -n M-h / bind M-j) ─────
 
-(test meta-key-name-builds-canonical-names
-  "%meta-key-name reconstructs the M-<char> name from the byte that follows ESC,
-   matching the M-<char> encoding send-keys produces."
-  (is (string= "M-a"     (cl-tmux::%meta-key-name 97)))   ; a
-  (is (string= "M-1"     (cl-tmux::%meta-key-name 49)))   ; 1
-  (is (string= "M-/"     (cl-tmux::%meta-key-name 47)))   ; /
-  (is (string= "M-H"     (cl-tmux::%meta-key-name 72)))   ; H (Alt+Shift+h)
-  (is (string= "M-Space" (cl-tmux::%meta-key-name 32))))  ; space
-
-(test meta-key-name-returns-nil-for-control-and-del
-  "%meta-key-name returns NIL for control bytes and DEL, so they forward
-   unchanged rather than being treated as meta chords."
-  (is (null (cl-tmux::%meta-key-name 8)))    ; ^H (backspace)
-  (is (null (cl-tmux::%meta-key-name 27)))   ; ESC
-  (is (null (cl-tmux::%meta-key-name 127)))) ; DEL
+(test meta-key-name-table
+  "%meta-key-name returns M-<char> for printable bytes and NIL for control bytes and DEL."
+  (dolist (row '((97  "M-a"     "a → M-a")
+                 (49  "M-1"     "1 → M-1")
+                 (47  "M-/"     "/ → M-/")
+                 (72  "M-H"     "H (Alt+Shift+h) → M-H")
+                 (32  "M-Space" "space → M-Space")
+                 (8   nil       "^H (backspace) → NIL")
+                 (27  nil       "ESC → NIL")
+                 (127 nil       "DEL → NIL")))
+    (destructuring-bind (byte expected desc) row
+      (is (equal expected (cl-tmux::%meta-key-name byte)) "~A" desc))))
 
 (test root-m-h-binding-fires-without-prefix
   "bind -n M-h next-window makes a bare Alt+h (ESC h) run next-window with no
