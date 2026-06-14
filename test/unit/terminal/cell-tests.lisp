@@ -60,26 +60,30 @@
 (test make-cell-default-slots
   :description "make-cell with no arguments returns a space/default-color/no-attrs cell."
   (let ((c (cl-tmux/terminal/types:make-cell)))
-    (is (char= #\Space (cell-char c))  "default char must be Space")
-    (is (= 7   (cell-fg    c))         "default fg must be 7 (white)")
-    (is (= 0   (cell-bg    c))         "default bg must be 0 (black)")
-    (is (= 0   (cell-attrs c))         "default attrs must be 0")
-    (is (= 0   (cl-tmux/terminal/types:cell-attrs2    c)) "default attrs2 must be 0")
-    (is (= 0   (cl-tmux/terminal/types:cell-ul-color  c)) "default ul-color must be 0")
-    (is (null  (cl-tmux/terminal/types:cell-combining c)) "default combining must be NIL")
-    (is (= 1   (cell-width c))         "default width must be 1")))
+    (is (char= #\Space (cell-char c)) "default char must be Space")
+    (dolist (row (list (list (cell-fg   c)                             7 "default fg must be 7 (white)")
+                       (list (cell-bg   c)                             0 "default bg must be 0 (black)")
+                       (list (cell-attrs c)                            0 "default attrs must be 0")
+                       (list (cl-tmux/terminal/types:cell-attrs2    c) 0 "default attrs2 must be 0")
+                       (list (cl-tmux/terminal/types:cell-ul-color  c) 0 "default ul-color must be 0")
+                       (list (cell-width c)                            1 "default width must be 1")))
+      (destructuring-bind (actual expected desc) row
+        (is (= expected actual) "~A" desc)))
+    (is (null (cl-tmux/terminal/types:cell-combining c)) "default combining must be NIL")))
 
 (test make-cell-custom-slots
   :description "make-cell with explicit keyword arguments stores all supplied values."
   (let ((c (cl-tmux/terminal/types:make-cell :char #\A :fg 2 :bg 5 :attrs 3
                                               :attrs2 1 :ul-color 4 :width 2)))
-    (is (char= #\A (cell-char c)))
-    (is (= 2 (cell-fg    c)))
-    (is (= 5 (cell-bg    c)))
-    (is (= 3 (cell-attrs c)))
-    (is (= 1 (cl-tmux/terminal/types:cell-attrs2   c)))
-    (is (= 4 (cl-tmux/terminal/types:cell-ul-color c)))
-    (is (= 2 (cell-width c)))))
+    (is (char= #\A (cell-char c)) "char must be #\\A")
+    (dolist (row (list (list (cell-fg   c)                            2 "fg")
+                       (list (cell-bg   c)                            5 "bg")
+                       (list (cell-attrs c)                           3 "attrs")
+                       (list (cl-tmux/terminal/types:cell-attrs2   c) 1 "attrs2")
+                       (list (cl-tmux/terminal/types:cell-ul-color c) 4 "ul-color")
+                       (list (cell-width c)                           2 "width")))
+      (destructuring-bind (actual expected desc) row
+        (is (= expected actual) "~A" desc)))))
 
 (test make-cell-continuation-width-zero
   :description "make-cell :width 0 produces a valid continuation placeholder."

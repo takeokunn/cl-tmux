@@ -28,27 +28,27 @@
   "pane-reposition sets x/y/width/height and resizes the underlying screen."
   (let ((pane (make-no-pty-pane 1 0 0 20 5)))
     (pane-reposition pane 3 7 40 10)
-    ;; Geometry slots updated.
-    (is (= 3  (pane-x      pane)) "pane-x must be 3 after reposition")
-    (is (= 7  (pane-y      pane)) "pane-y must be 7 after reposition")
-    (is (= 40 (pane-width  pane)) "pane-width must be 40 after reposition")
-    (is (= 10 (pane-height pane)) "pane-height must be 10 after reposition")
-    ;; Screen dimensions match pane geometry.
-    (is (= 40 (screen-width  (pane-screen pane)))
-        "screen-width must match new pane width")
-    (is (= 10 (screen-height (pane-screen pane)))
-        "screen-height must match new pane height")))
+    (dolist (c (list (list (pane-x      pane)               3 "pane-x must be 3 after reposition")
+                     (list (pane-y      pane)               7 "pane-y must be 7 after reposition")
+                     (list (pane-width  pane)              40 "pane-width must be 40 after reposition")
+                     (list (pane-height pane)              10 "pane-height must be 10 after reposition")
+                     (list (screen-width  (pane-screen pane)) 40 "screen-width must match new pane width")
+                     (list (screen-height (pane-screen pane)) 10 "screen-height must match new pane height")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc)))))
 
 (test pane-reposition-zero-origin
   "pane-reposition correctly sets position to (0,0) — the corner case for zoom-in."
   (let ((pane (make-no-pty-pane 1 5 3 10 5)))
     (pane-reposition pane 0 0 80 24)
-    (is (= 0  (pane-x      pane)) "pane-x must be 0 after reposition to origin")
-    (is (= 0  (pane-y      pane)) "pane-y must be 0 after reposition to origin")
-    (is (= 80 (pane-width  pane)) "pane-width must be 80")
-    (is (= 24 (pane-height pane)) "pane-height must be 24")
-    (is (= 80 (screen-width  (pane-screen pane))))
-    (is (= 24 (screen-height (pane-screen pane))))))
+    (dolist (c (list (list (pane-x      pane)                0 "pane-x must be 0 after reposition to origin")
+                     (list (pane-y      pane)                0 "pane-y must be 0 after reposition to origin")
+                     (list (pane-width  pane)               80 "pane-width must be 80")
+                     (list (pane-height pane)               24 "pane-height must be 24")
+                     (list (screen-width  (pane-screen pane)) 80 "screen width must match pane width")
+                     (list (screen-height (pane-screen pane)) 24 "screen height must match pane height")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc)))))
 
 (test pane-reposition-returns-no-value
   "pane-reposition returns no useful value — callers rely solely on side effects."
