@@ -201,70 +201,59 @@
 
 ;;; ── apply-named-layout — high-level named layout dispatch ───────────────────
 
-(test apply-named-layout-even-horizontal-fills-window
-  "apply-named-layout :even-horizontal distributes panes into equal columns."
+(test apply-named-layout-even-h-and-v-distribute-panes
+  "apply-named-layout :even-horizontal and :even-vertical each distribute 3 panes
+   with positive dimensions, ordered along their respective axis."
   (let* ((panes (loop for i from 1 to 3 collect (tl-pane i 1 1)))
          (win   (make-window :id 1 :name "w" :width 82 :height 24
                              :panes panes
                              :tree  (cl-tmux/model::%build-flat-tree panes :h))))
     (apply-named-layout win :even-horizontal)
-    ;; All panes must have positive width and height.
     (dolist (p (window-panes win))
-      (is (> (pane-width  p) 0) "each pane must have positive width")
-      (is (> (pane-height p) 0) "each pane must have positive height"))
-    ;; Panes must be ordered left to right (increasing x).
+      (is (> (pane-width  p) 0) "even-horizontal: each pane must have positive width")
+      (is (> (pane-height p) 0) "even-horizontal: each pane must have positive height"))
     (let ((xs (mapcar #'pane-x (window-panes win))))
       (is (equal xs (sort (copy-seq xs) #'<))
-          "pane x positions must be in ascending order"))))
-
-(test apply-named-layout-even-vertical-fills-window
-  "apply-named-layout :even-vertical distributes panes into equal rows."
+          "even-horizontal: pane x positions must be in ascending order")))
   (let* ((panes (loop for i from 1 to 3 collect (tl-pane i 1 1)))
          (win   (make-window :id 1 :name "w" :width 80 :height 25
                              :panes panes
                              :tree  (cl-tmux/model::%build-flat-tree panes :v))))
     (apply-named-layout win :even-vertical)
     (dolist (p (window-panes win))
-      (is (> (pane-width  p) 0) "each pane must have positive width")
-      (is (> (pane-height p) 0) "each pane must have positive height"))
-    ;; Panes must be ordered top to bottom (increasing y).
+      (is (> (pane-width  p) 0) "even-vertical: each pane must have positive width")
+      (is (> (pane-height p) 0) "even-vertical: each pane must have positive height"))
     (let ((ys (mapcar #'pane-y (window-panes win))))
       (is (equal ys (sort (copy-seq ys) #'<))
-          "pane y positions must be in ascending order"))))
+          "even-vertical: pane y positions must be in ascending order"))))
 
-(test apply-named-layout-main-horizontal-first-pane-on-top
-  "apply-named-layout :main-horizontal puts the first pane in the top half."
+(test apply-named-layout-main-h-and-v-first-pane-position
+  "apply-named-layout :main-horizontal puts the first pane at the top;
+   :main-vertical puts the first pane at the left."
   (let* ((panes (loop for i from 1 to 3 collect (tl-pane i 1 1)))
          (win   (make-window :id 1 :name "w" :width 80 :height 25
                              :panes panes
                              :tree  (cl-tmux/model::%build-flat-tree panes :v))))
     (apply-named-layout win :main-horizontal)
-    ;; The first pane must be at y=0 (top).
     (is (= 0 (pane-y (first (window-panes win))))
-        "first pane must start at row 0 in main-horizontal")
-    ;; All secondary panes must have a larger y than the first pane.
+        "main-horizontal: first pane must start at row 0")
     (let ((first-pane-bottom (+ (pane-y (first (window-panes win)))
                                 (pane-height (first (window-panes win))))))
       (dolist (p (rest (window-panes win)))
         (is (> (pane-y p) first-pane-bottom)
-            "secondary panes must be below the first pane's bottom edge")))))
-
-(test apply-named-layout-main-vertical-first-pane-on-left
-  "apply-named-layout :main-vertical puts the first pane in the left half."
+            "main-horizontal: secondary panes must be below the first pane"))))
   (let* ((panes (loop for i from 1 to 3 collect (tl-pane i 1 1)))
          (win   (make-window :id 1 :name "w" :width 81 :height 24
                              :panes panes
                              :tree  (cl-tmux/model::%build-flat-tree panes :h))))
     (apply-named-layout win :main-vertical)
-    ;; The first pane must be at x=0 (leftmost).
     (is (= 0 (pane-x (first (window-panes win))))
-        "first pane must start at column 0 in main-vertical")
-    ;; All secondary panes must have a larger x than the first pane.
+        "main-vertical: first pane must start at column 0")
     (let ((first-pane-right (+ (pane-x (first (window-panes win)))
                                (pane-width (first (window-panes win))))))
       (dolist (p (rest (window-panes win)))
         (is (> (pane-x p) first-pane-right)
-            "secondary panes must be to the right of the first pane's right edge")))))
+            "main-vertical: secondary panes must be to the right of the first pane")))))
 
 (test apply-named-layout-tiled-four-panes
   "apply-named-layout :tiled with 4 panes produces a near-square 2x2 grid."
