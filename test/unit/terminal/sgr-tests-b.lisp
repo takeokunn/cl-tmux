@@ -81,34 +81,24 @@
                        cl-tmux/terminal/types:+attr2-double-underline+))
         "double-underline bit must be cleared by SGR 24")))
 
-(test sgr-53-overline-sets-bit
-  "SGR 53 sets the +attr2-overline+ bit in cur-attrs2."
+(test sgr-overline-on-and-off
+  "SGR 53 sets the +attr2-overline+ bit in cur-attrs2; SGR 55 clears it."
   (with-screen (s 10 2)
     (feed s (esc "[53mX"))
     (is (not (zerop (logand (cl-tmux/terminal/types:screen-cur-attrs2 s)
                             cl-tmux/terminal/types:+attr2-overline+)))
-        "overline bit must be set in cur-attrs2 after SGR 53")))
-
-(test sgr-55-overline-off
-  "SGR 55 clears the +attr2-overline+ bit in cur-attrs2."
-  (with-screen (s 10 2)
-    (feed s (esc "[53mX"))    ; overline on
-    (feed s (esc "[55mY"))    ; overline off
+        "overline bit must be set in cur-attrs2 after SGR 53")
+    (feed s (esc "[55mY"))
     (is (zerop (logand (cl-tmux/terminal/types:screen-cur-attrs2 s)
                        cl-tmux/terminal/types:+attr2-overline+))
         "overline bit must be cleared by SGR 55")))
 
-(test sgr-58-underline-color-256
-  "SGR 58;5;42 sets cur-ul-color to 42 (256-color palette index)."
+(test sgr-underline-color-set-and-reset
+  "SGR 58;5;42 sets cur-ul-color to 42; SGR 59 resets it to 0."
   (with-screen (s 10 2)
     (cl-tmux/terminal/sgr:apply-sgr s '(58 5 42))
     (is (= 42 (cl-tmux/terminal/types:screen-cur-ul-color s))
-        "cur-ul-color must be 42 after SGR 58;5;42")))
-
-(test sgr-59-resets-underline-color
-  "SGR 59 resets the underline color to default (0)."
-  (with-screen (s 10 2)
-    (cl-tmux/terminal/sgr:apply-sgr s '(58 5 42))
+        "cur-ul-color must be 42 after SGR 58;5;42")
     (cl-tmux/terminal/sgr:apply-sgr s '(59))
     (is (= 0 (cl-tmux/terminal/types:screen-cur-ul-color s))
         "cur-ul-color must be 0 after SGR 59")))
@@ -127,17 +117,14 @@
 
 (in-suite sgr)
 
-(test sgr-black-foreground-30
-  "SGR 30 sets the foreground to index 0 (black)."
-  (with-screen (s 10 2)
-    (feed s (esc "[30mX"))
-    (is (= 0 (fg-at s 0 0)) "SGR 30 must set fg to 0 (black)")))
-
-(test sgr-black-background-40
-  "SGR 40 sets the background to index 0 (black)."
-  (with-screen (s 10 2)
-    (feed s (esc "[40mX"))
-    (is (= 0 (bg-at s 0 0)) "SGR 40 must set bg to 0 (black)")))
+(test sgr-black-fg-and-bg-table
+  "SGR 30 sets foreground to index 0 (black); SGR 40 sets background to index 0 (black)."
+  (dolist (row (list (list "[30mX" #'fg-at "SGR 30 must set fg to 0 (black)")
+                     (list "[40mX" #'bg-at "SGR 40 must set bg to 0 (black)")))
+    (destructuring-bind (seq accessor desc) row
+      (with-screen (s 10 2)
+        (feed s (esc seq))
+        (is (= 0 (funcall accessor s 0 0)) desc)))))
 
 (test sgr-rapid-blink-6-sets-blink-bit
   "SGR 6 (rapid blink) maps to the same blink bit as SGR 5."
