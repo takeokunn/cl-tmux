@@ -57,21 +57,15 @@
     (is (/= 9 (screen-cursor-y s))
         "cursor-down must not pass scroll-bottom down to height-1")))
 
-(test cursor-left-clamps-to-column-zero
-  "cursor-left with a large count clamps to column 0."
-  (with-screen (s 10 10)
-    (setf (cl-tmux/terminal/types:screen-cursor-x s) 5)
-    (cl-tmux/terminal/actions::cursor-left s 100)
-    (is (= 0 (screen-cursor-x s))
-        "cursor-left should clamp to column 0, got ~D" (screen-cursor-x s))))
-
-(test cursor-right-clamps-to-width-minus-one
-  "cursor-right with a large count clamps to width-1."
-  (with-screen (s 10 10)
-    (setf (cl-tmux/terminal/types:screen-cursor-x s) 2)
-    (cl-tmux/terminal/actions::cursor-right s 100)
-    (is (= 9 (screen-cursor-x s))
-        "cursor-right should clamp to width-1 (9), got ~D" (screen-cursor-x s))))
+(test cursor-horizontal-clamping-table
+  "cursor-left clamps to column 0; cursor-right clamps to width-1 (9)."
+  (dolist (row (list (list 5 #'cl-tmux/terminal/actions::cursor-left  0 "cursor-left  clamps to 0")
+                     (list 2 #'cl-tmux/terminal/actions::cursor-right 9 "cursor-right clamps to 9")))
+    (destructuring-bind (init-x fn expected desc) row
+      (with-screen (s 10 10)
+        (setf (cl-tmux/terminal/types:screen-cursor-x s) init-x)
+        (funcall fn s 100)
+        (is (= expected (screen-cursor-x s)) "~A (got ~D)" desc (screen-cursor-x s))))))
 
 (test cursor-up-down-respect-region-from-mid
   "From a row inside the region, a small cursor-up/down stays within the
@@ -112,17 +106,14 @@
   :in terminal-suite)
 (in-suite direct-action-cursor)
 
-(test cursor-bs-moves-left-one-column
-  "cursor-bs decrements the cursor column by 1."
+(test cursor-bs-moves-left-and-clamps-at-zero
+  "cursor-bs decrements the cursor column by 1; at column 0 it is a no-op."
   (with-screen (s 10 5)
-    (feed s "abc")                        ; cursor at col 3
+    (feed s "abc")
     (cl-tmux/terminal/actions:cursor-bs s)
-    (check-cursor s 2 0)))
-
-(test cursor-bs-noop-at-column-zero
-  "cursor-bs at column 0 does nothing."
+    (check-cursor s 2 0))
   (with-screen (s 10 5)
-    (cl-tmux/terminal/actions:cursor-bs s) ; cursor already at 0
+    (cl-tmux/terminal/actions:cursor-bs s)
     (check-cursor s 0 0)))
 
 (test cursor-cr-resets-column

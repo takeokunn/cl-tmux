@@ -242,4 +242,4 @@
           (let ((out (cl-tmux/renderer::render-session-to-string sess 5 20)))
             (if expected-bell-p
                 (is (find (code-char 7) out)      "~A" desc)
-                (is (null (find (code-char 7) out)) "~A" desc)))))))
+                (is (null (find (code-char 7) out)) "~A" desc))))))))

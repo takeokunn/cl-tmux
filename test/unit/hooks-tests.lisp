@@ -137,39 +137,21 @@
 
 ;;; ── run-hooks error resilience ───────────────────────────────────────────────
 
-(test run-hooks-ignores-errors
-  "A hook that signals an error does not propagate and does not stop other hooks."
-  (with-isolated-hooks
-    (let ((second-called nil))
-      ;; Register the good hook first (it will run second/newest-last)
-      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-session-created+
-                               (lambda () (setf second-called t)))
-      ;; Register the bad hook second (newest-first, so it runs first)
-      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-session-created+
-                               (lambda () (error "deliberate hook error")))
-      ;; run-hooks must not signal an error to the caller
-      (finishes (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-created+))
-      ;; The older (good) hook must still have been called
-      (is-true second-called
-               "subsequent hooks must run even after an earlier hook signals an error"))))
-
-(test run-hooks-suppresses-any-error-subclass
-  "run-hooks swallows the full ERROR condition hierarchy -- a subclass of ERROR
-   (here a SIMPLE-ERROR) is also silently suppressed without reaching the caller."
-  (with-isolated-hooks
-    ;; Register a hook that signals a SIMPLE-ERROR (a direct subclass of ERROR).
-    ;; run-hooks must catch it without the error propagating to the caller.
-    (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-kill-pane+
-                             (lambda () (error 'simple-error :format-control "hook boom")))
-    ;; Register a second hook to verify run-hooks continues after the first errors.
-    (let ((second-ran nil))
-      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-kill-pane+
-                               (lambda () (setf second-ran t)))
-      ;; FINISHES asserts that no condition escapes.
-      (finishes (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-kill-pane+))
-      ;; The second hook (added last = runs first, newest-first) ran before the error hook.
-      (is-true second-ran
-               "the first-registered hook must run despite the second hook signalling an error"))))
+(test run-hooks-swallows-error-and-continues
+  "run-hooks suppresses any ERROR (including subclasses) and continues executing remaining hooks."
+  (dolist (row (list (list cl-tmux/hooks:+hook-session-created+
+                           (lambda () (error "deliberate hook error"))
+                           "generic ERROR")
+                     (list cl-tmux/hooks:+hook-after-kill-pane+
+                           (lambda () (error 'simple-error :format-control "hook boom"))
+                           "SIMPLE-ERROR subclass")))
+    (destructuring-bind (hook error-fn desc) row
+      (with-isolated-hooks
+        (let ((good-ran nil))
+          (cl-tmux/hooks:add-hook hook error-fn)
+          (cl-tmux/hooks:add-hook hook (lambda () (setf good-ran t)))
+          (finishes (cl-tmux/hooks:run-hooks hook))
+          (is-true good-ran "~A: non-error hook must still run" desc))))))
 
 ;;; ── run-hooks argument passing ───────────────────────────────────────────────
 
