@@ -402,13 +402,15 @@
   "Table-driven: make-session zero-argument defaults are predictable."
   ;; Each entry: (slot-accessor default-pred description)
   (let ((sess (make-session :id 1 :name "test")))
-    (is (= 1     (session-id sess))        "session-id must match :id kwarg")
+    (is (= 1 (session-id sess)) "session-id must match :id kwarg")
     (is (string= "test" (session-name sess)) "session-name must match :name kwarg")
-    (is (null   (session-windows sess))    "session-windows must default to NIL")
-    (is (null   (session-active-window sess)) "active window must be NIL (no windows)")
-    (is (null   (session-clients sess))    "session-clients must default to NIL")
-    (is (null   (session-locked-p sess))   "session-locked-p must default to NIL")
-    (is (null   (session-group sess))      "session-group must default to NIL")))
+    (dolist (row (list (list (session-windows sess)       "session-windows must default to NIL")
+                       (list (session-active-window sess) "active window must be NIL (no windows)")
+                       (list (session-clients sess)       "session-clients must default to NIL")
+                       (list (session-locked-p sess)      "session-locked-p must default to NIL")
+                       (list (session-group sess)         "session-group must default to NIL")))
+      (destructuring-bind (val desc) row
+        (is (null val) "~A" desc)))))
 
 ;;; ── create-initial-session ID counter ───────────────────────────────────────
 

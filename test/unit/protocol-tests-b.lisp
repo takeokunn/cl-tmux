@@ -186,15 +186,17 @@
 
 (test message-type-tag-constants-have-expected-values
   "Message type tag constants are fixed wire-protocol values and must not change."
-  (is (= 1 +msg-attach+)  "+msg-attach+ must equal 1")
-  (is (= 2 +msg-key+)     "+msg-key+ must equal 2")
-  (is (= 3 +msg-resize+)  "+msg-resize+ must equal 3")
-  (is (= 4 +msg-detach+)  "+msg-detach+ must equal 4")
-  (is (= 5 +msg-frame+)   "+msg-frame+ must equal 5")
-  (is (= 6 +msg-bye+)     "+msg-bye+ must equal 6")
-  (is (= 7 +msg-command+) "+msg-command+ must equal 7")
-  (is (= 8 +msg-reply+)   "+msg-reply+ must equal 8")
-  (is (= 5 +header-size+) "+header-size+ must equal 5"))
+  (dolist (c `((1 ,+msg-attach+  "+msg-attach+ must equal 1")
+               (2 ,+msg-key+     "+msg-key+ must equal 2")
+               (3 ,+msg-resize+  "+msg-resize+ must equal 3")
+               (4 ,+msg-detach+  "+msg-detach+ must equal 4")
+               (5 ,+msg-frame+   "+msg-frame+ must equal 5")
+               (6 ,+msg-bye+     "+msg-bye+ must equal 6")
+               (7 ,+msg-command+ "+msg-command+ must equal 7")
+               (8 ,+msg-reply+   "+msg-reply+ must equal 8")
+               (5 ,+header-size+ "+header-size+ must equal 5")))
+    (destructuring-bind (expected constant desc) c
+      (is (= expected constant) "~A" desc))))
 
 ;;; ── u16-octets-pair with max values ─────────────────────────────────────────
 

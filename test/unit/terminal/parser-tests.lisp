@@ -191,14 +191,16 @@
 
 (test xterm-palette-rgb-values
   "%xterm-palette-rgb maps indices to the standard xterm 256-colour palette."
-  (is (= #x000000 (cl-tmux/terminal/parser::%xterm-palette-rgb 0))   "index 0 = black")
-  (is (= #xffffff (cl-tmux/terminal/parser::%xterm-palette-rgb 15))  "index 15 = white")
-  (is (= #x000000 (cl-tmux/terminal/parser::%xterm-palette-rgb 16))  "cube origin = black")
-  (is (= #x0000ff (cl-tmux/terminal/parser::%xterm-palette-rgb 21))  "index 21 = pure blue")
-  (is (= #xff0000 (cl-tmux/terminal/parser::%xterm-palette-rgb 196)) "index 196 = pure red")
-  (is (= #xffffff (cl-tmux/terminal/parser::%xterm-palette-rgb 231)) "cube max = white")
-  (is (= #x080808 (cl-tmux/terminal/parser::%xterm-palette-rgb 232)) "grayscale ramp start")
-  (is (= #xeeeeee (cl-tmux/terminal/parser::%xterm-palette-rgb 255)) "grayscale ramp end")
+  (dolist (c '((#x000000   0 "index 0 = black")
+               (#xffffff  15 "index 15 = white")
+               (#x000000  16 "cube origin = black")
+               (#x0000ff  21 "index 21 = pure blue")
+               (#xff0000 196 "index 196 = pure red")
+               (#xffffff 231 "cube max = white")
+               (#x080808 232 "grayscale ramp start")
+               (#xeeeeee 255 "grayscale ramp end")))
+    (destructuring-bind (expected idx desc) c
+      (is (= expected (cl-tmux/terminal/parser::%xterm-palette-rgb idx)) "~A" desc)))
   (is (null (cl-tmux/terminal/parser::%xterm-palette-rgb 256)) "out of range → NIL"))
 
 (test osc-4-query-reports-palette-colour
