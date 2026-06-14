@@ -110,16 +110,17 @@
         "capture-pane output must contain the fed text \"ABC\" (got ~S)" result)))
 
 (test capture-color-sgr-encodes-cell-colours
-  "%capture-color-sgr maps a cell colour value to its SGR fragment."
-  (is (string= "31"  (cl-tmux/commands::%capture-color-sgr 1 nil))  "fg standard")
-  (is (string= "41"  (cl-tmux/commands::%capture-color-sgr 1 t))    "bg standard")
-  (is (string= "94"  (cl-tmux/commands::%capture-color-sgr 12 nil)) "fg bright")
-  (is (string= "104" (cl-tmux/commands::%capture-color-sgr 12 t))   "bg bright")
-  (is (string= "38;5;200" (cl-tmux/commands::%capture-color-sgr 200 nil)) "fg 256")
-  (is (string= "48;5;200" (cl-tmux/commands::%capture-color-sgr 200 t))   "bg 256")
-  (is (string= "38;2;255;128;0"
-               (cl-tmux/commands::%capture-color-sgr (logior #x1000000 #xff8000) nil))
-      "fg true-colour"))
+  "%capture-color-sgr maps a cell colour value to its SGR fragment:
+   standard (1-7), bright (8-15), 256 (16-255), and 24-bit true-colour (#x1rrggbb)."
+  (dolist (c '((1         nil "31"           "fg standard")
+               (1         t   "41"           "bg standard")
+               (12        nil "94"           "fg bright")
+               (12        t   "104"          "bg bright")
+               (200       nil "38;5;200"     "fg 256")
+               (200       t   "48;5;200"     "bg 256")
+               (#x1ff8000 nil "38;2;255;128;0" "fg true-colour")))
+    (destructuring-bind (color bg-p expected desc) c
+      (is (string= expected (cl-tmux/commands::%capture-color-sgr color bg-p)) "~A" desc))))
 
 (test capture-cell-sgr-includes-attrs-and-colours
   "%capture-cell-sgr emits reset + attrs + fg + bg."
