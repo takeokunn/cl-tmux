@@ -207,37 +207,17 @@
   (is (string= "256"  (cl-tmux/terminal/parser::%hex-decode-string "323536")) "323536 → 256")
   (is (null (cl-tmux/terminal/parser::%hex-decode-string "5")) "odd-length hex → NIL"))
 
-(test xtgettcap-reports-truecolor-tc
-  "XTGETTCAP +q 5463 (Tc) replies DCS 1 + r 5463 ST — true-colour present."
-  (with-screen (s 20 5)
-    (%feed-dcs s "+q5463")
-    (is (string= (format nil "~CP1+r5463~C\\" #\Escape #\Escape)
-                 (first (cl-tmux/terminal/types:screen-response-queue s)))
-        "Tc must be reported present as DCS 1+r 5463")))
-
-(test xtgettcap-reports-rgb
-  "XTGETTCAP +q 524742 (RGB) replies DCS 1 + r 524742 ST."
-  (with-screen (s 20 5)
-    (%feed-dcs s "+q524742")
-    (is (string= (format nil "~CP1+r524742~C\\" #\Escape #\Escape)
-                 (first (cl-tmux/terminal/types:screen-response-queue s)))
-        "RGB must be reported present")))
-
-(test xtgettcap-reports-colors-256
-  "XTGETTCAP +q 636f6c6f7273 (colors) replies DCS 1 + r 636f6c6f7273=323536 ST (256)."
-  (with-screen (s 20 5)
-    (%feed-dcs s "+q636f6c6f7273")
-    (is (string= (format nil "~CP1+r636f6c6f7273=323536~C\\" #\Escape #\Escape)
-                 (first (cl-tmux/terminal/types:screen-response-queue s)))
-        "colors must be reported as 256 (hex 323536)")))
-
-(test xtgettcap-unknown-cap-reports-failure
-  "XTGETTCAP for an unknown cap replies DCS 0 + r <hexname> ST (failure)."
-  (with-screen (s 20 5)
-    (%feed-dcs s "+q5878")    ; \"Xx\" — not a recognised capability
-    (is (string= (format nil "~CP0+r5878~C\\" #\Escape #\Escape)
-                 (first (cl-tmux/terminal/types:screen-response-queue s)))
-        "an unknown cap must be reported as failure (0+r)")))
+(test xtgettcap-responses-table
+  "XTGETTCAP replies DCS 1+r for known caps (Tc, RGB, colors) and DCS 0+r for unknown caps."
+  (dolist (row (list (list "+q5463"         (format nil "~CP1+r5463~C\\"          #\Escape #\Escape) "Tc → DCS 1+r 5463")
+                     (list "+q524742"        (format nil "~CP1+r524742~C\\"        #\Escape #\Escape) "RGB → DCS 1+r 524742")
+                     (list "+q636f6c6f7273"  (format nil "~CP1+r636f6c6f7273=323536~C\\" #\Escape #\Escape) "colors → DCS 1+r with =323536")
+                     (list "+q5878"          (format nil "~CP0+r5878~C\\"          #\Escape #\Escape) "unknown cap → DCS 0+r")))
+    (destructuring-bind (dcs-input expected desc) row
+      (with-screen (s 20 5)
+        (%feed-dcs s dcs-input)
+        (is (string= expected (first (cl-tmux/terminal/types:screen-response-queue s)))
+            "~A" desc)))))
 
 ;;; ── DECRQSS (DCS $ q <setting> ST) ───────────────────────────────────────────
 
@@ -282,32 +262,16 @@
   :in terminal-suite)
 (in-suite ground-state-control-bytes)
 
-(test ground-state-del-is-ignored
-  "ground-state on DEL (#x7F) does not write a character and returns ground-state."
-  (let ((s (make-screen 10 5)))
-    (let ((next (cl-tmux/terminal/parser:ground-state s #x7F)))
-      (is (eq #'cl-tmux/terminal/parser:ground-state next)
-          "ground-state must return ground-state for DEL")
-      (is (char= #\Space (char-at s 0 0))
-          "DEL must not write a visible character"))))
-
-(test ground-state-so-is-ignored
-  "ground-state on SO (#x0E, charset shift-out) returns ground-state without writing."
-  (let ((s (make-screen 10 5)))
-    (let ((next (cl-tmux/terminal/parser:ground-state s #x0E)))
-      (is (eq #'cl-tmux/terminal/parser:ground-state next)
-          "SO must return ground-state")
-      (is (char= #\Space (char-at s 0 0))
-          "SO must not write a visible character"))))
-
-(test ground-state-si-is-ignored
-  "ground-state on SI (#x0F, charset shift-in) returns ground-state without writing."
-  (let ((s (make-screen 10 5)))
-    (let ((next (cl-tmux/terminal/parser:ground-state s #x0F)))
-      (is (eq #'cl-tmux/terminal/parser:ground-state next)
-          "SI must return ground-state")
-      (is (char= #\Space (char-at s 0 0))
-          "SI must not write a visible character"))))
+(test ground-state-ignored-bytes-table
+  "ground-state on DEL (#x7F), SO (#x0E), and SI (#x0F) returns ground-state and writes nothing."
+  (dolist (row '((#x7F "DEL must return ground-state"          "DEL must not write a visible character")
+                 (#x0E "SO must return ground-state"           "SO must not write a visible character")
+                 (#x0F "SI must return ground-state"           "SI must not write a visible character")))
+    (destructuring-bind (byte state-desc char-desc) row
+      (let ((s (make-screen 10 5)))
+        (let ((next (cl-tmux/terminal/parser:ground-state s byte)))
+          (is (eq #'cl-tmux/terminal/parser:ground-state next) "~A" state-desc)
+          (is (char= #\Space (char-at s 0 0)) "~A" char-desc))))))
 
 (test ground-state-stray-continuation-byte-emits-replacement
   "ground-state on a stray UTF-8 continuation byte (#x80) writes U+FFFD."
