@@ -128,13 +128,17 @@
   :in terminal-suite)
 (in-suite enqueue-helpers)
 
-(test enqueue-dsr-reply-pushes-0n
-  "enqueue-dsr-reply pushes ESC[0n onto the response queue."
-  (with-screen (s 20 5)
-    (cl-tmux/terminal/csi::enqueue-dsr-reply s)
-    (is (some (lambda (r) (search "[0n" r))
-              (cl-tmux/terminal/types:screen-response-queue s))
-        "enqueue-dsr-reply must push a string containing '[0n'")))
+(test enqueue-static-reply-signatures-table
+  "enqueue-dsr/da1/da2-reply each push a string with the expected fixed signature."
+  (dolist (row (list (list #'cl-tmux/terminal/csi::enqueue-dsr-reply "[0n"   "dsr → [0n")
+                     (list #'cl-tmux/terminal/csi::enqueue-da1-reply "?1;2c" "da1 → ?1;2c")
+                     (list #'cl-tmux/terminal/csi::enqueue-da2-reply ">1;"   "da2 → >1;")))
+    (destructuring-bind (fn expected-sub desc) row
+      (with-screen (s 20 5)
+        (funcall fn s)
+        (is (some (lambda (r) (search expected-sub r))
+                  (cl-tmux/terminal/types:screen-response-queue s))
+            "~A" desc)))))
 
 (test enqueue-cpr-reply-reflects-cursor
   "enqueue-cpr-reply pushes ESC[row;colR reflecting the current cursor (1-based)."
@@ -144,22 +148,6 @@
     (is (some (lambda (r) (search "[3;5R" r))
               (cl-tmux/terminal/types:screen-response-queue s))
         "enqueue-cpr-reply must contain '[3;5R' for cursor at (row=2,col=4)")))
-
-(test enqueue-da1-reply-contains-signature
-  "enqueue-da1-reply pushes a string containing the DA1 signature '?1;2c'."
-  (with-screen (s 20 5)
-    (cl-tmux/terminal/csi::enqueue-da1-reply s)
-    (is (some (lambda (r) (search "?1;2c" r))
-              (cl-tmux/terminal/types:screen-response-queue s))
-        "enqueue-da1-reply must push a string containing '?1;2c'")))
-
-(test enqueue-da2-reply-contains-signature
-  "enqueue-da2-reply pushes a string containing the DA2 signature '>1;'."
-  (with-screen (s 20 5)
-    (cl-tmux/terminal/csi::enqueue-da2-reply s)
-    (is (some (lambda (r) (search ">1;" r))
-              (cl-tmux/terminal/types:screen-response-queue s))
-        "enqueue-da2-reply must push a string containing '>1;'")))
 
 ;;; ── XTPUSHTITLE / XTPOPTITLE (CSI > Ps t / CSI < Ps t) ─────────────────────
 

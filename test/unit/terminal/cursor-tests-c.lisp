@@ -200,36 +200,19 @@
 ;;; cursor-left, and cursor-right actually move the cursor as documented.
 ;;; They replace implementation-probing tests that only checked fbound status.
 
-(test cursor-up-moves-cursor-by-n-rows
-  "cursor-up N decrements the cursor row by N (within the scroll region)."
-  (with-screen (s 10 10)
-    (setf (cl-tmux/terminal/types::screen-cursor-y s) 6)
-    (cl-tmux/terminal/actions:cursor-up s 2)
-    (is (= 4 (screen-cursor-y s))
-        "cursor-up 2 from row 6 must reach row 4, got ~D" (screen-cursor-y s))))
-
-(test cursor-down-moves-cursor-by-n-rows
-  "cursor-down N increments the cursor row by N (within the scroll region)."
-  (with-screen (s 10 10)
-    (setf (cl-tmux/terminal/types::screen-cursor-y s) 3)
-    (cl-tmux/terminal/actions:cursor-down s 3)
-    (is (= 6 (screen-cursor-y s))
-        "cursor-down 3 from row 3 must reach row 6, got ~D" (screen-cursor-y s))))
-
-(test cursor-left-moves-cursor-by-n-columns
-  "cursor-left N decrements the cursor column by N."
-  (with-screen (s 10 10)
-    (setf (cl-tmux/terminal/types::screen-cursor-x s) 7)
-    (cl-tmux/terminal/actions:cursor-left s 3)
-    (is (= 4 (screen-cursor-x s))
-        "cursor-left 3 from col 7 must reach col 4, got ~D" (screen-cursor-x s))))
-
-(test cursor-right-moves-cursor-by-n-columns
-  "cursor-right N increments the cursor column by N."
-  (with-screen (s 10 10)
-    (setf (cl-tmux/terminal/types::screen-cursor-x s) 2)
-    (cl-tmux/terminal/actions:cursor-right s 4)
-    (is (= 6 (screen-cursor-x s))
-        "cursor-right 4 from col 2 must reach col 6, got ~D" (screen-cursor-x s))))
+(test cursor-direction-moves-by-n-table
+  "cursor-up/down/left/right each move the cursor by N along their axis."
+  (dolist (row (list (list #'cl-tmux/terminal/actions:cursor-up    :y 6 2 4 "cursor-up 2 from row 6 → row 4")
+                     (list #'cl-tmux/terminal/actions:cursor-down  :y 3 3 6 "cursor-down 3 from row 3 → row 6")
+                     (list #'cl-tmux/terminal/actions:cursor-left  :x 7 3 4 "cursor-left 3 from col 7 → col 4")
+                     (list #'cl-tmux/terminal/actions:cursor-right :x 2 4 6 "cursor-right 4 from col 2 → col 6")))
+    (destructuring-bind (fn axis init-val count expected desc) row
+      (with-screen (s 10 10)
+        (if (eq axis :x)
+            (setf (cl-tmux/terminal/types::screen-cursor-x s) init-val)
+            (setf (cl-tmux/terminal/types::screen-cursor-y s) init-val))
+        (funcall fn s count)
+        (let ((actual (if (eq axis :x) (screen-cursor-x s) (screen-cursor-y s))))
+          (is (= expected actual) "~A (got ~D)" desc actual))))))
 
 ;;; ── SUITE: %place-wide-char ──────────────────────────────────────────────────
