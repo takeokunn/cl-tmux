@@ -160,9 +160,11 @@
            (w1 (find 1 (session-windows s) :key #'window-id))
            (w2 (find 2 (session-windows s) :key #'window-id)))
       (cl-tmux::%run-command-line s "swap-window -s 0 -t 2")
-      (is (= 2 (window-id w0)) "window formerly #0 now has index 2")
-      (is (= 0 (window-id w2)) "window formerly #2 now has index 0")
-      (is (= 1 (window-id w1)) "the middle window keeps index 1")
+      (dolist (row (list (list w0 2 "window formerly #0 now has index 2")
+                         (list w2 0 "window formerly #2 now has index 0")
+                         (list w1 1 "the middle window keeps index 1")))
+        (destructuring-bind (win expected desc) row
+          (is (= expected (window-id win)) "~A" desc)))
       (is (equal '(0 1 2) (mapcar #'window-id (session-windows s)))
           "the window list stays sorted by index"))))
 

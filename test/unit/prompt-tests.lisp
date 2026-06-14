@@ -47,10 +47,12 @@
 (test make-prompt-defaults
   "make-prompt with no keyword arguments fills slots to documented defaults."
   (let ((p (make-prompt)))
-    (is (string= "" (prompt-label p))         "default label is empty string")
-    (is (string= "" (prompt-buffer p))        "default buffer is empty string")
-    (is (= 0 (prompt-cursor-index p))         "default cursor-index is 0")
-    (is (null (prompt-on-submit p))           "default on-submit is NIL")))
+    (dolist (row (list (list (prompt-label p)       "" "default label is empty string")
+                       (list (prompt-buffer p)      "" "default buffer is empty string")
+                       (list (prompt-cursor-index p) 0 "default cursor-index is 0")))
+      (destructuring-bind (actual expected desc) row
+        (is (equal expected actual) "~A" desc)))
+    (is (null (prompt-on-submit p)) "default on-submit is NIL")))
 
 (test make-prompt-keyword-args
   "make-prompt keyword arguments override all defaults."
@@ -65,10 +67,9 @@
 (test prompt-p-recognises-prompt-struct
   "prompt-p returns T for a PROMPT and NIL for any other value."
   (let ((p (make-prompt)))
-    (is (prompt-p p)         "prompt-p must return T for a make-prompt result")
-    (is (not (prompt-p nil)) "prompt-p must return NIL for NIL")
-    (is (not (prompt-p 42))  "prompt-p must return NIL for a non-prompt value")
-    (is (not (prompt-p ""))  "prompt-p must return NIL for a string")))
+    (is (prompt-p p) "prompt-p must return T for a make-prompt result")
+    (dolist (val (list nil 42 ""))
+      (is (not (prompt-p val)) "prompt-p must return NIL for ~S" val))))
 
 ;;; -- Pure prompt state -------------------------------------------------------
 
