@@ -10,19 +10,23 @@
   "%parse-bind-key-args with valid key+command returns all four values."
   (multiple-value-bind (table key kw repeatable)
       (cl-tmux/config::%parse-bind-key-args '("z" "new-window"))
-    (is (string= "prefix" table) "table defaults to prefix")
-    (is (char= #\z key)          "key must be #\\z")
-    (is (eq :new-window kw)      "command must be :new-window")
-    (is (null repeatable)        "repeatable must be NIL by default")))
+    (dolist (row (list (list table "prefix"    "table defaults to prefix")
+                       (list key   #\z         "key must be #\\z")
+                       (list kw    :new-window "command must be :new-window")))
+      (destructuring-bind (actual expected desc) row
+        (is (equal expected actual) "~A" desc)))
+    (is (null repeatable) "repeatable must be NIL by default")))
 
 (test parse-bind-key-args-T-flag-specifies-table
   "%parse-bind-key-args with -T uses the given table name."
   (multiple-value-bind (table key kw ignored-rep)
       (cl-tmux/config::%parse-bind-key-args '("-T" "copy-mode" "q" "copy-mode-enter"))
     (declare (ignore ignored-rep))
-    (is (string= "copy-mode" table) "table must be copy-mode")
-    (is (char= #\q key)             "key must be #\\q")
-    (is (eq :copy-mode-enter kw)    "command must be :copy-mode-enter")))
+    (dolist (row (list (list table "copy-mode"      "table must be copy-mode")
+                       (list key   #\q              "key must be #\\q")
+                       (list kw    :copy-mode-enter "command must be :copy-mode-enter")))
+      (destructuring-bind (actual expected desc) row
+        (is (equal expected actual) "~A" desc)))))
 
 (test parse-bind-key-args-r-flag-sets-repeatable
   "%parse-bind-key-args with -r sets repeatable to T."
