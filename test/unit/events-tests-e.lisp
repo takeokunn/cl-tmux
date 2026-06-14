@@ -257,22 +257,24 @@
 
 (test csi-u-key-name-modifier-combinations
   "%csi-u-key-name maps a CSI-u codepoint+modifier to the canonical key name."
-  (is (string= "a"       (cl-tmux::%csi-u-key-name 97 1)) "plain a (mod 1)")
-  (is (string= "S-a"     (cl-tmux::%csi-u-key-name 97 2)) "Shift (mod 2)")
-  (is (string= "M-a"     (cl-tmux::%csi-u-key-name 97 3)) "Alt (mod 3)")
-  (is (string= "C-a"     (cl-tmux::%csi-u-key-name 97 5)) "Ctrl (mod 5)")
-  (is (string= "C-S-a"   (cl-tmux::%csi-u-key-name 97 6)) "Ctrl+Shift (mod 6)")
-  (is (string= "C-M-a"   (cl-tmux::%csi-u-key-name 97 7)) "Ctrl+Alt (mod 7)")
-  (is (string= "C-M-S-a" (cl-tmux::%csi-u-key-name 97 8)) "Ctrl+Alt+Shift (mod 8)"))
+  (dolist (c '((97 1 "a"       "plain a (mod 1)")
+               (97 2 "S-a"     "Shift (mod 2)")
+               (97 3 "M-a"     "Alt (mod 3)")
+               (97 5 "C-a"     "Ctrl (mod 5)")
+               (97 6 "C-S-a"   "Ctrl+Shift (mod 6)")
+               (97 7 "C-M-a"   "Ctrl+Alt (mod 7)")
+               (97 8 "C-M-S-a" "Ctrl+Alt+Shift (mod 8)")))
+    (destructuring-bind (code mod expected desc) c
+      (is (string= expected (cl-tmux::%csi-u-key-name code mod)) "~A" desc))))
 
 (test csi-u-key-name-special-keys
   "%csi-u-key-name names the special codepoints (Tab/Enter/Escape/Space/BSpace)."
-  (is (string= "Tab"     (cl-tmux::%csi-u-key-name 9 1)))
-  (is (string= "S-Tab"   (cl-tmux::%csi-u-key-name 9 2)))
-  (is (string= "Enter"   (cl-tmux::%csi-u-key-name 13 1)))
-  (is (string= "Escape"  (cl-tmux::%csi-u-key-name 27 1)))
-  (is (string= "C-Space" (cl-tmux::%csi-u-key-name 32 5)))
-  (is (string= "BSpace"  (cl-tmux::%csi-u-key-name 127 1))))
+  (dolist (c '((9   1 "Tab")    (9  2 "S-Tab")
+               (13  1 "Enter")  (27 1 "Escape")
+               (32  5 "C-Space") (127 1 "BSpace")))
+    (destructuring-bind (code mod expected) c
+      (is (string= expected (cl-tmux::%csi-u-key-name code mod))
+          "code ~D mod ~D → ~S" code mod expected))))
 
 (test csi-u-key-name-unhandled-codepoint
   "An unhandled (control/out-of-range) codepoint yields NIL."
