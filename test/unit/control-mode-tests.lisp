@@ -37,14 +37,11 @@
 
 (test control-escape-output-octal
   "Non-printable bytes are escaped as 3-digit octal; printable ASCII passes through."
-  (is (string= "abc" (cl-tmux/control:control-escape-output "abc")))
-  (is (string= "a\\033b"
-               (cl-tmux/control:control-escape-output
-                (format nil "a~Cb" (code-char 27))))    ; ESC = 27 = octal 033
-      "ESC escapes to \\033")
-  (is (string= "x\\012"
-               (cl-tmux/control:control-escape-output (format nil "x~C" #\Newline)))
-      "newline (10 = octal 012) is escaped"))
+  (dolist (c `(("abc"                         "abc"     "plain ASCII passes through")
+               (,(format nil "a~Cb" #\Esc)    "a\\033b" "ESC escapes to \\033")
+               (,(format nil "x~C" #\Newline) "x\\012"  "newline (10 = octal 012) is escaped")))
+    (destructuring-bind (input expected desc) c
+      (is (string= expected (cl-tmux/control:control-escape-output input)) "~A" desc))))
 
 (test control-output-notification
   "%output prefixes the pane id with % and escapes the data."
