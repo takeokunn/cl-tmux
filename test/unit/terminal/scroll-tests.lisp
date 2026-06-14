@@ -346,7 +346,7 @@
                    (#\Space 3 "col3 should be blank")
                    (#\Space 4 "col4 should be blank")))
       (destructuring-bind (expected col desc) row
-        (is (char= expected (char-at s col 0)) "~A" desc))))
+        (is (char= expected (char-at s col 0)) "~A" desc)))))
 
 (test dch-at-midline
   "CSI 1 P at a non-zero column deletes one char and shifts the rest left."
@@ -394,7 +394,7 @@
                    (#\b     3 "col3 should be 'b'")
                    (#\c     4 "col4 should be 'c'")))
       (destructuring-bind (expected col desc) row
-        (is (char= expected (char-at s col 0)) "~A" desc))))
+        (is (char= expected (char-at s col 0)) "~A" desc)))))
 
 (test ich-at-midline
   "CSI 1 @ at a non-zero column inserts one blank and pushes the tail right."
@@ -408,7 +408,7 @@
                    (#\c     3 "col3 should be shifted 'c'")
                    (#\d     4 "col4 should be shifted 'd'")))
       (destructuring-bind (expected col desc) row
-        (is (char= expected (char-at s col 0)) "~A" desc))))
+        (is (char= expected (char-at s col 0)) "~A" desc)))))
 
 (test ich-n-ge-width-blanks-from-cursor
   "CSI n @ with n >= remaining width blanks every cell from the cursor; the
