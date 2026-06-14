@@ -58,11 +58,12 @@
   ;; "a \"b c\" d\\ e" is the literal  a "b c" d\ e  — quoted token preserves the
   ;; inner space; the backslash-space escapes to keep "d e" as one token.
   (let ((tokens (cl-tmux/config::%config-tokens "a \"b c\" d\\ e")))
-    (is (= 3 (length tokens))
-        "must have 3 tokens, got ~S" tokens)
-    (is (string= "a" (first tokens)) "first token is a")
-    (is (string= "b c" (second tokens)) "second token is b c")
-    (is (string= "d e" (third tokens)) "third token is d e (backslash-space)")))
+    (is (= 3 (length tokens)) "must have 3 tokens, got ~S" tokens)
+    (dolist (c '((0 "a"   "first token is a")
+                 (1 "b c" "second token is b c")
+                 (2 "d e" "third token is d e (backslash-space)")))
+      (destructuring-bind (idx expected desc) c
+        (is (string= expected (nth idx tokens)) "~A" desc))))
 
 ;;; bind-key with flags
 

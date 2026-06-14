@@ -19,17 +19,21 @@
 
 (test u16-octets-big-endian
   "u16-octets encodes a 16-bit value as two big-endian bytes."
-  (is (equalp #(0 0)     (cl-tmux/protocol:u16-octets 0)))
-  (is (equalp #(0 1)     (cl-tmux/protocol:u16-octets 1)))
-  (is (equalp #(1 0)     (cl-tmux/protocol:u16-octets 256)))
-  (is (equalp #(255 255) (cl-tmux/protocol:u16-octets 65535))))
+  (dolist (c '((0     #(0 0))
+               (1     #(0 1))
+               (256   #(1 0))
+               (65535 #(255 255))))
+    (destructuring-bind (n expected) c
+      (is (equalp expected (cl-tmux/protocol:u16-octets n)) "~D -> ~S" n expected))))
 
 (test u32-octets-big-endian
   "u32-octets encodes a 32-bit value as four big-endian bytes."
-  (is (equalp #(0 0 0 0)   (cl-tmux/protocol:u32-octets 0)))
-  (is (equalp #(0 0 0 1)   (cl-tmux/protocol:u32-octets 1)))
-  (is (equalp #(0 1 0 0)   (cl-tmux/protocol:u32-octets 65536)))
-  (is (equalp #(255 255 255 255) (cl-tmux/protocol:u32-octets #xFFFFFFFF))))
+  (dolist (c '((0          #(0 0 0 0))
+               (1          #(0 0 0 1))
+               (65536      #(0 1 0 0))
+               (#xFFFFFFFF #(255 255 255 255))))
+    (destructuring-bind (n expected) c
+      (is (equalp expected (cl-tmux/protocol:u32-octets n)) "~D -> ~S" n expected))))
 
 (test u16-octets-pair-concatenates-two-u16s
   "u16-octets-pair concatenates two u16 values as 4 big-endian bytes."

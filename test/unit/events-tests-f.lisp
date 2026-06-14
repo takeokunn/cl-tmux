@@ -402,11 +402,13 @@
   (with-isolated-config
     (flet ((cmd (k) (cl-tmux/config:key-table-command
                      (cl-tmux/config:key-table-lookup "prefix" k))))
-      (is (equal '("select-layout" "even-horizontal") (cmd "M-1")))
-      (is (equal '("select-layout" "even-vertical")   (cmd "M-2")))
-      (is (equal '("select-layout" "main-horizontal") (cmd "M-3")))
-      (is (equal '("select-layout" "main-vertical")   (cmd "M-4")))
-      (is (equal '("select-layout" "tiled")           (cmd "M-5"))))))
+      (dolist (c '(("M-1" ("select-layout" "even-horizontal") "M-1 -> even-horizontal")
+                   ("M-2" ("select-layout" "even-vertical")   "M-2 -> even-vertical")
+                   ("M-3" ("select-layout" "main-horizontal") "M-3 -> main-horizontal")
+                   ("M-4" ("select-layout" "main-vertical")   "M-4 -> main-vertical")
+                   ("M-5" ("select-layout" "tiled")           "M-5 -> tiled")))
+        (destructuring-bind (key expected desc) c
+          (is (equal expected (cmd key)) "~A" desc))))))
 
 (test prefix-meta-1-applies-layout-end-to-end
   "C-b then Alt+1 (ESC 1) runs the bound select-layout even-horizontal on a

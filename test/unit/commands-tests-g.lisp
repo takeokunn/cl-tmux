@@ -47,12 +47,14 @@
 (test split-key-modifiers-decodes-csi-modifier
   "%split-key-modifiers strips C-/M-/S- prefixes into the CSI modifier code."
   (flet ((mods (name) (multiple-value-list (cl-tmux/commands::%split-key-modifiers name))))
-    (is (equal '(1 "Up")   (mods "Up"))    "no modifier → 1")
-    (is (equal '(5 "Up")   (mods "C-Up"))  "Ctrl → 5")
-    (is (equal '(3 "Left") (mods "M-Left")) "Alt → 3")
-    (is (equal '(2 "Down") (mods "S-Down")) "Shift → 2")
-    (is (equal '(7 "Left") (mods "C-M-Left")) "Ctrl+Alt → 7")
-    (is (equal '(6 "Up")   (mods "C-S-Up")) "Ctrl+Shift → 6")))
+    (dolist (c (list (list "Up"      '(1 "Up")   "no modifier -> 1")
+                     (list "C-Up"    '(5 "Up")   "Ctrl -> 5")
+                     (list "M-Left"  '(3 "Left") "Alt -> 3")
+                     (list "S-Down"  '(2 "Down") "Shift -> 2")
+                     (list "C-M-Left" '(7 "Left") "Ctrl+Alt -> 7")
+                     (list "C-S-Up"  '(6 "Up")   "Ctrl+Shift -> 6")))
+      (destructuring-bind (name expected desc) c
+        (is (equal expected (mods name)) "~A" desc))))
 
 
 (test key-name-to-bytes-modified-does-not-break-control-chars

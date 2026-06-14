@@ -404,7 +404,9 @@
   "%dispatch-pane-border-chars returns the expected glyphs for each named style."
   (flet ((chars (style) (multiple-value-list
                          (cl-tmux/renderer::%dispatch-pane-border-chars style))))
-    (is (equal '(#\│ #\─) (chars "single")) "single fallback matches default")
-    (is (equal '(#\║ #\═) (chars "double")) "double: ║ ═")
-    (is (equal '(#\┃ #\━) (chars "heavy"))  "heavy: ┃ ━")
-    (is (equal '(#\| #\-) (chars "simple")) "simple: | -")))
+    (dolist (c '(("single" #\│ #\─ "single fallback")
+                 ("double" #\║ #\═ "double: ║ ═")
+                 ("heavy"  #\┃ #\━ "heavy: ┃ ━")
+                 ("simple" #\| #\- "simple: | -")))
+      (destructuring-bind (style ev eh desc) c
+        (is (equal (list ev eh) (chars style)) "~A" desc))))

@@ -18,9 +18,11 @@
 
 (test next-cyclic-wraps
   "next-cyclic advances and wraps past the end."
-  (is (eql 'b (cl-tmux::next-cyclic '(a b c) 'a)))
-  (is (eql 'a (cl-tmux::next-cyclic '(a b c) 'c)))
-  (is (eql 'b (cl-tmux::next-cyclic '(a b c) 'missing))))   ; unknown → idx 0 → element 1
+  (dolist (c '(((a b c) a b "advance: a -> b")
+               ((a b c) c a "wrap past end: c -> a")
+               ((a b c) missing b "unknown: idx 0 -> element 1")))
+    (destructuring-bind (lst cur expected desc) c
+      (is (eql expected (cl-tmux::next-cyclic lst cur)) "~A" desc))))
 
 (test prev-cyclic-wraps
   "prev-cyclic steps back and wraps past the front."

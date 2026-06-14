@@ -401,13 +401,15 @@
 
 (test csi-u-legacy-octets-cases
   "%csi-u-legacy-octets reproduces the byte form a non-extended terminal sends."
-  (is (equalp #(97)    (cl-tmux::%csi-u-legacy-octets 97 0)) "plain a → 97")
-  (is (equalp #(97)    (cl-tmux::%csi-u-legacy-octets 97 1)) "S-a → 97 (shift only)")
-  (is (equalp #(1)     (cl-tmux::%csi-u-legacy-octets 97 4)) "C-a → ^A")
-  (is (equalp #(1)     (cl-tmux::%csi-u-legacy-octets 97 5)) "C-S-a → ^A (legacy collapse)")
-  (is (equalp #(27 97) (cl-tmux::%csi-u-legacy-octets 97 2)) "M-a → ESC a")
-  (is (equalp #(27 1)  (cl-tmux::%csi-u-legacy-octets 97 6)) "C-M-a → ESC ^A")
-  (is (null (cl-tmux::%csi-u-legacy-octets 9 1)) "Tab (no printable/ctrl legacy) → NIL"))
+  (dolist (c '((97 0 #(97)    "plain a -> 97")
+               (97 1 #(97)    "S-a -> 97 (shift only)")
+               (97 4 #(1)     "C-a -> ^A")
+               (97 5 #(1)     "C-S-a -> ^A (legacy collapse)")
+               (97 2 #(27 97) "M-a -> ESC a")
+               (97 6 #(27 1)  "C-M-a -> ESC ^A")
+               (9  1 nil      "Tab (no printable/ctrl legacy) -> NIL")))
+    (destructuring-bind (cp mod expected desc) c
+      (is (equalp expected (cl-tmux::%csi-u-legacy-octets cp mod)) "~A" desc))))
 
 (test csi-u-terminated-and-accumulating-predicates
   "The state-machine predicates recognise CSI-u prefixes and full sequences,
