@@ -409,4 +409,4 @@
                  ("heavy"  #\┃ #\━ "heavy: ┃ ━")
                  ("simple" #\| #\- "simple: | -")))
       (destructuring-bind (style ev eh desc) c
-        (is (equal (list ev eh) (chars style)) "~A" desc))))
+        (is (equal (list ev eh) (chars style)) "~A" desc)))))
