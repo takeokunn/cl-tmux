@@ -339,12 +339,14 @@
     (feed s "abcde")
     (feed s (esc "[1;1H"))     ; cursor home (col 0, row 0)
     (feed s (csi "2" #\P))     ; DCH 2
-    (is (char= #\c (char-at s 0 0)) "col0 should be 'c', got ~C" (char-at s 0 0))
-    (is (char= #\d (char-at s 1 0)) "col1 should be 'd', got ~C" (char-at s 1 0))
-    (is (char= #\e (char-at s 2 0)) "col2 should be 'e', got ~C" (char-at s 2 0))
     ;; The original 'cde' occupied cols 2..4; after a 2-shift the tail blanks.
-    (is (char= #\Space (char-at s 3 0)) "col3 should be blank")
-    (is (char= #\Space (char-at s 4 0)) "col4 should be blank")))
+    (dolist (row '((#\c     0 "col0 should be 'c'")
+                   (#\d     1 "col1 should be 'd'")
+                   (#\e     2 "col2 should be 'e'")
+                   (#\Space 3 "col3 should be blank")
+                   (#\Space 4 "col4 should be blank")))
+      (destructuring-bind (expected col desc) row
+        (is (char= expected (char-at s col 0)) "~A" desc))))
 
 (test dch-at-midline
   "CSI 1 P at a non-zero column deletes one char and shifts the rest left."
@@ -386,11 +388,13 @@
     (feed s (esc "[1;1H"))     ; cursor home
     (feed s (csi "2" #\@))     ; ICH 2
     ;; Two blanks inserted at cols 0,1; 'abc' shifts to cols 2,3,4; 'de' lost.
-    (is (char= #\Space (char-at s 0 0)) "col0 should be blank gap")
-    (is (char= #\Space (char-at s 1 0)) "col1 should be blank gap")
-    (is (char= #\a (char-at s 2 0)) "col2 should be 'a', got ~C" (char-at s 2 0))
-    (is (char= #\b (char-at s 3 0)) "col3 should be 'b', got ~C" (char-at s 3 0))
-    (is (char= #\c (char-at s 4 0)) "col4 should be 'c', got ~C" (char-at s 4 0))))
+    (dolist (row '((#\Space 0 "col0 should be blank gap")
+                   (#\Space 1 "col1 should be blank gap")
+                   (#\a     2 "col2 should be 'a'")
+                   (#\b     3 "col3 should be 'b'")
+                   (#\c     4 "col4 should be 'c'")))
+      (destructuring-bind (expected col desc) row
+        (is (char= expected (char-at s col 0)) "~A" desc))))
 
 (test ich-at-midline
   "CSI 1 @ at a non-zero column inserts one blank and pushes the tail right."
@@ -398,13 +402,13 @@
     (feed s "abcde")
     (feed s (esc "[1;3H"))     ; cursor at col 2 (1-based col 3)
     (feed s (csi "1" #\@))     ; insert one blank at col 2
-    (is (char= #\a (char-at s 0 0)) "col0 unchanged 'a'")
-    (is (char= #\b (char-at s 1 0)) "col1 unchanged 'b'")
-    (is (char= #\Space (char-at s 2 0)) "col2 should be the inserted blank")
-    (is (char= #\c (char-at s 3 0)) "col3 should be shifted 'c', got ~C"
-        (char-at s 3 0))
-    (is (char= #\d (char-at s 4 0)) "col4 should be shifted 'd', got ~C"
-        (char-at s 4 0))))
+    (dolist (row '((#\a     0 "col0 unchanged 'a'")
+                   (#\b     1 "col1 unchanged 'b'")
+                   (#\Space 2 "col2 should be the inserted blank")
+                   (#\c     3 "col3 should be shifted 'c'")
+                   (#\d     4 "col4 should be shifted 'd'")))
+      (destructuring-bind (expected col desc) row
+        (is (char= expected (char-at s col 0)) "~A" desc))))
 
 (test ich-n-ge-width-blanks-from-cursor
   "CSI n @ with n >= remaining width blanks every cell from the cursor; the

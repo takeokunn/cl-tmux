@@ -37,12 +37,9 @@
       "copy-mode-internal commands must not be user-bindable, found ~A"
       (intersection '(:copy-mode-exit :copy-mode-up :copy-mode-down)
                     cl-tmux/config::*bindable-commands*))
-  (is (not (member :copy-mode-exit cl-tmux/config::*bindable-commands*))
-      ":copy-mode-exit must not be a user-bindable command")
-  (is (not (member :copy-mode-up cl-tmux/config::*bindable-commands*))
-      ":copy-mode-up must not be a user-bindable command")
-  (is (not (member :copy-mode-down cl-tmux/config::*bindable-commands*))
-      ":copy-mode-down must not be a user-bindable command")
+  (dolist (cmd '(:copy-mode-exit :copy-mode-up :copy-mode-down))
+    (is (not (member cmd cl-tmux/config::*bindable-commands*))
+        "~A must not be a user-bindable command" cmd))
   (is (member :new-window cl-tmux/config::*bindable-commands*)
       ":new-window must remain a user-bindable command"))
 

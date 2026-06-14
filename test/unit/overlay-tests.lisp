@@ -158,23 +158,29 @@
 (test make-popup-defaults
   "make-popup fills all slots to their documented defaults."
   (let ((p (make-popup)))
-    (is (= 0  (popup-x p))      "default x is 0")
-    (is (= 0  (popup-y p))      "default y is 0")
-    (is (= 40 (popup-width p))  "default width is 40")
-    (is (= 10 (popup-height p)) "default height is 10")
-    (is (null (popup-screen p)) "default screen is nil (text-only)")
-    (is (null (popup-pane p))   "default pane is nil (text-only)")
-    (is (string= "" (popup-title p))       "default title is empty string")
-    (is (eq t (popup-close-on-exit p))     "default close-on-exit is T")))
+    (dolist (row (list (list (popup-x p)      0  "default x is 0")
+                       (list (popup-y p)      0  "default y is 0")
+                       (list (popup-width p)  40 "default width is 40")
+                       (list (popup-height p) 10 "default height is 10")))
+      (destructuring-bind (actual expected desc) row
+        (is (= expected actual) "~A" desc)))
+    (dolist (row (list (list (popup-screen p) "default screen is nil (text-only)")
+                       (list (popup-pane p)   "default pane is nil (text-only)")))
+      (destructuring-bind (val desc) row
+        (is (null val) "~A" desc)))
+    (is (string= "" (popup-title p))   "default title is empty string")
+    (is (eq t (popup-close-on-exit p)) "default close-on-exit is T")))
 
 (test make-popup-keyword-args
   "make-popup accepts keyword arguments that override all defaults."
   (let ((p (make-popup :x 5 :y 10 :width 80 :height 24
                        :title "Test Popup" :close-on-exit nil)))
-    (is (= 5  (popup-x p)))
-    (is (= 10 (popup-y p)))
-    (is (= 80 (popup-width p)))
-    (is (= 24 (popup-height p)))
+    (dolist (row (list (list (popup-x p)      5  "x is 5")
+                       (list (popup-y p)      10 "y is 10")
+                       (list (popup-width p)  80 "width is 80")
+                       (list (popup-height p) 24 "height is 24")))
+      (destructuring-bind (actual expected desc) row
+        (is (= expected actual) "~A" desc)))
     (is (string= "Test Popup" (popup-title p)))
     (is (null (popup-close-on-exit p)) "close-on-exit can be set to NIL")))
 
@@ -250,24 +256,18 @@
 (test popup-p-recognises-popup-struct
   "popup-p returns T for a POPUP struct and NIL for any other value."
   (let ((p (make-popup)))
-    (is (popup-p p)          "popup-p must return T for a make-popup result")
-    (is (not (popup-p nil))  "popup-p must return NIL for NIL")
-    (is (not (popup-p 42))   "popup-p must return NIL for a fixnum")
-    (is (not (popup-p ""))   "popup-p must return NIL for a string")
-    (is (not (popup-p (make-menu)))
-        "popup-p must return NIL for a MENU struct")))
+    (is (popup-p p) "popup-p must return T for a make-popup result")
+    (dolist (val (list nil 42 "" (make-menu)))
+      (is (not (popup-p val)) "popup-p must return NIL for ~S" val))))
 
 ;;; -- menu-p predicate --------------------------------------------------------
 
 (test menu-p-recognises-menu-struct
   "menu-p returns T for a MENU struct and NIL for any other value."
   (let ((m (make-menu)))
-    (is (menu-p m)           "menu-p must return T for a make-menu result")
-    (is (not (menu-p nil))   "menu-p must return NIL for NIL")
-    (is (not (menu-p 42))    "menu-p must return NIL for a fixnum")
-    (is (not (menu-p ""))    "menu-p must return NIL for a string")
-    (is (not (menu-p (make-popup)))
-        "menu-p must return NIL for a POPUP struct")))
+    (is (menu-p m) "menu-p must return T for a make-menu result")
+    (dolist (val (list nil 42 "" (make-popup)))
+      (is (not (menu-p val)) "menu-p must return NIL for ~S" val))))
 
 ;;; -- +default-popup-width+ / +default-popup-height+ constants ----------------
 
