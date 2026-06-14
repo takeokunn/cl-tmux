@@ -34,15 +34,12 @@
 
 ;;; ── Known default bindings ────────────────────────────────────────────────
 
-(test lookup-c-binds-new-window
-  "C-b c creates a new window."
-  (is (eq :new-window (lookup-key-binding #\c))
-      "#\\c should be bound to :new-window"))
-
-(test lookup-d-binds-detach
-  "C-b d detaches the client."
-  (is (eq :detach (lookup-key-binding #\d))
-      "#\\d should be bound to :detach"))
+(test lookup-known-bindings-table
+  "C-b c creates a new window; C-b d detaches the client."
+  (dolist (row '((#\c :new-window "#\\c → :new-window")
+                 (#\d :detach     "#\\d → :detach")))
+    (destructuring-bind (key expected desc) row
+      (is (eq expected (lookup-key-binding key)) "~A" desc))))
 
 (test lookup-unknown-returns-nil
   "An unbound key returns NIL.  #\\z is now bound to :zoom-toggle, so we
@@ -177,33 +174,23 @@
   (is (hash-table-p cl-tmux/config:*key-tables*)
       "*key-tables* must be a hash-table"))
 
-(test key-tables-prefix-table-exists
-  "The \"prefix\" key-table is created by sync-key-tables-from-bindings."
-  (is (not (null (gethash "prefix" cl-tmux/config:*key-tables*)))
-      "\"prefix\" table must exist in *key-tables*"))
+(test key-tables-required-tables-exist
+  "The \"prefix\" and \"root\" key-tables are both created by sync-key-tables-from-bindings."
+  (dolist (name '("prefix" "root"))
+    (is (not (null (gethash name cl-tmux/config:*key-tables*)))
+        "\"~A\" table must exist in *key-tables*" name)))
 
-(test key-tables-root-table-exists
-  "The \"root\" key-table exists."
-  (is (not (null (gethash "root" cl-tmux/config:*key-tables*)))
-      "\"root\" table must exist in *key-tables*"))
-
-(test key-table-bind-root-no-prefix
-  "key-table-bind to \"root\" stores a binding retrievable by key-table-lookup."
-  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
-    (cl-tmux/config:key-table-bind "root" #\a :new-window)
-    (let ((entry (cl-tmux/config:key-table-lookup "root" #\a)))
-      (is (not (null entry)) "binding must be found in root table")
-      (is (eq :new-window (cl-tmux/config:key-table-command entry))
-          "command must be :new-window"))))
-
-(test key-table-bind-prefix-table
-  "key-table-bind to \"prefix\" stores a binding retrievable by key-table-lookup."
-  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
-    (cl-tmux/config:key-table-bind "prefix" #\c :new-window)
-    (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\c)))
-      (is (not (null entry)) "binding must be found in prefix table")
-      (is (eq :new-window (cl-tmux/config:key-table-command entry))
-          "command must be :new-window"))))
+(test key-table-bind-table
+  "key-table-bind stores a binding retrievable by key-table-lookup in both 'root' and 'prefix' tables."
+  (dolist (row '(("root"   #\a "root table binding")
+                 ("prefix" #\c "prefix table binding")))
+    (destructuring-bind (table-name key desc) row
+      (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+        (cl-tmux/config:key-table-bind table-name key :new-window)
+        (let ((entry (cl-tmux/config:key-table-lookup table-name key)))
+          (is (not (null entry)) "~A: binding must be found" desc)
+          (is (eq :new-window (cl-tmux/config:key-table-command entry))
+              "~A: command must be :new-window" desc))))))
 
 (test key-table-repeatable-flag
   "key-table-bind with :repeatable T marks the entry as repeatable."
@@ -223,16 +210,12 @@
           "entry must not be repeatable by default"))))
 
 (test key-table-lookup-missing-returns-nil
-  "key-table-lookup returns NIL for an absent key."
+  "key-table-lookup returns NIL for an absent key and for a non-existent table."
   (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
-    (is (null (cl-tmux/config:key-table-lookup "prefix" #\z))
-        "absent key must return NIL")))
-
-(test key-table-lookup-missing-table-returns-nil
-  "key-table-lookup on a non-existent table returns NIL."
-  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+    (is (null (cl-tmux/config:key-table-lookup "prefix"      #\z))
+        "absent key must return NIL")
     (is (null (cl-tmux/config:key-table-lookup "nonexistent" #\a))
-        "lookup in absent table must return NIL")))
+        "absent table must return NIL")))
 
 ;;; ── key-table-repeatable-p nil-safe guard ─────────────────────────────────
 
