@@ -289,10 +289,7 @@
 
   ;; ── Environment ───────────────────────────────────────────────────────────
   (:show-environment
-   (show-built-overlay (s)
-     (format s "environment~%")
-     (dolist (pair (cl-tmux/model:get-update-environment-vars))
-       (format s "  ~A=~A~%" (car pair) (cdr pair)))))
+   (%cmd-show-environment-arg session nil))
   (:set-environment
    (prompt-nonempty "set-env NAME VALUE"
                     (lambda (input)

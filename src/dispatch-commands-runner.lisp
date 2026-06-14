@@ -43,6 +43,7 @@
    (cons '("new-window" "neww")         #'%cmd-new-window-arg)
    (cons '("split-window" "splitw")     #'%cmd-split-window)
    (cons '("new-session" "new")         #'%cmd-new-session-arg)
+   (cons '("show-environment" "showenv") #'%cmd-show-environment-arg)
    (cons '("set-environment" "setenv")  #'%cmd-set-environment-prompt)
    (cons '("resize-window" "resizew")   #'%cmd-resize-window-arg)
    (cons '("detach-client" "detachc")   #'%cmd-detach-client-arg)

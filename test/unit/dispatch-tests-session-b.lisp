@@ -166,6 +166,40 @@
                  "set-environment -g -t target -u must unset NAME"))
         (ignore-errors (sb-posix:unsetenv name))))))
 
+(test cmd-show-environment-name-shows-value
+  "show-environment NAME displays NAME=VALUE."
+  (with-fake-session (s)
+    (let ((name "CLTMUX_TEST_SHOWENV_NAME"))
+      (unwind-protect
+           (let ((*overlay* nil))
+             (sb-posix:setenv name "visible" 1)
+             (cl-tmux::%run-command-line s (format nil "show-environment ~A" name))
+             (is (search (format nil "~A=visible" name) *overlay*)
+                 "show-environment NAME must display NAME=VALUE"))
+        (ignore-errors (sb-posix:unsetenv name))))))
+
+(test cmd-show-environment-s-shell-format
+  "showenv -s NAME displays shell assignment form."
+  (with-fake-session (s)
+    (let ((name "CLTMUX_TEST_SHOWENV_S"))
+      (unwind-protect
+           (let ((*overlay* nil))
+             (sb-posix:setenv name "visible" 1)
+             (cl-tmux::%run-command-line s (format nil "showenv -s ~A" name))
+             (is (search (format nil "~A='visible'; export ~A" name name) *overlay*)
+                 "showenv -s NAME must display shell assignment"))
+        (ignore-errors (sb-posix:unsetenv name))))))
+
+(test cmd-show-environment-missing-name-marks-unset
+  "showenv NAME marks missing variables as unset."
+  (with-fake-session (s)
+    (let ((name "CLTMUX_TEST_SHOWENV_MISSING"))
+      (ignore-errors (sb-posix:unsetenv name))
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s (format nil "showenv ~A" name))
+        (is (search (format nil "-~A" name) *overlay*)
+            "showenv NAME must mark missing variables as unset")))))
+
 (test dispatch-show-hooks-shows-overlay
   ":show-hooks opens an overlay describing registered command hooks."
   (with-fake-session (s)

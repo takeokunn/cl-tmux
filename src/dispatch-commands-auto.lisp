@@ -369,6 +369,44 @@
     (let ((fn (find-symbol name "SB-POSIX")))
       (when fn (apply fn args)))))
 
+(defun %shell-single-quote (value)
+  (with-output-to-string (out)
+    (write-char #\' out)
+    (loop for ch across value
+          do (if (char= ch #\')
+                 (write-string "'\\''" out)
+                 (write-char ch out)))
+    (write-char #\' out)))
+
+(defun %format-show-environment-entry (name value shell-p)
+  (if shell-p
+      (if value
+          (format nil "~A=~A; export ~A" name (%shell-single-quote value) name)
+          (format nil "unset ~A" name))
+      (if value
+          (format nil "~A=~A" name value)
+          (format nil "-~A" name))))
+
+(defun %cmd-show-environment-arg (session args)
+  "show-environment [-gs] [-t target-session] [NAME]: show process environment variables.
+   -g and -t are accepted for tmux compatibility; cl-tmux keeps one process-wide environment.
+   With NAME, show that variable.  -s prints shell assignment/unset syntax."
+  (declare (ignore session))
+  (with-command-flags+pos (flags positionals args "t")
+    (let ((shell-p (assoc #\s flags))
+          (name    (first positionals)))
+      (if name
+          (show-overlay
+           (%format-show-environment-entry name (ignore-errors (sb-ext:posix-getenv name)) shell-p))
+          (show-built-overlay (s)
+            (format s "environment~%")
+            (dolist (pair (cl-tmux/model:get-update-environment-vars))
+              (let ((var (car pair))
+                    (value (cdr pair)))
+                (if shell-p
+                    (format s "~A~%" (%format-show-environment-entry var value t))
+                    (format s "  ~A=~A~%" var value)))))))))
+
 (defun %cmd-set-environment-prompt (session args)
   "set-environment [-g] [-t target-session] [-u|-r] NAME [VALUE]: set or unset a process environment variable.
    -g and -t are accepted for tmux compatibility; cl-tmux keeps one process-wide environment.
