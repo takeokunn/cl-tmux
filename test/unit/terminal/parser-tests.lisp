@@ -130,14 +130,15 @@
 
 (test parse-osc-color-forms
   "%parse-osc-color parses #RRGGBB, #RGB and rgb:R/G/B; rejects junk."
-  (is (= #xFF8000 (cl-tmux/terminal/parser::%parse-osc-color "#ff8000")) "#RRGGBB")
-  (is (= #xFF0000 (cl-tmux/terminal/parser::%parse-osc-color "#f00")) "#RGB expands (0xF→0xFF)")
-  (is (= #xFF0000 (cl-tmux/terminal/parser::%parse-osc-color "rgb:ffff/0000/0000"))
-      "rgb: with 16-bit channels scales down to 8-bit")
-  (is (= #x00FF00 (cl-tmux/terminal/parser::%parse-osc-color "rgb:00/ff/00"))
-      "rgb: with 8-bit channels")
-  (is (null (cl-tmux/terminal/parser::%parse-osc-color "tomato")) "named colour → NIL")
-  (is (null (cl-tmux/terminal/parser::%parse-osc-color "rgb:zz/00/00")) "bad hex → NIL"))
+  (dolist (row '((#xFF8000 "#ff8000"              "#RRGGBB")
+                 (#xFF0000 "#f00"                 "#RGB expands (0xF→0xFF)")
+                 (#xFF0000 "rgb:ffff/0000/0000"   "rgb: with 16-bit channels scales down to 8-bit")
+                 (#x00FF00 "rgb:00/ff/00"         "rgb: with 8-bit channels")))
+    (destructuring-bind (expected input desc) row
+      (is (= expected (cl-tmux/terminal/parser::%parse-osc-color input)) "~A" desc)))
+  (dolist (input '("tomato" "rgb:zz/00/00"))
+    (is (null (cl-tmux/terminal/parser::%parse-osc-color input))
+        "invalid colour string → NIL: ~S" input)))
 
 (test osc-11-query-reports-default-background
   "OSC 11 ; ? queries the default background; cl-tmux replies on the response-queue
