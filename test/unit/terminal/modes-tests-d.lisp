@@ -34,48 +34,20 @@
     (is-false (funcall accessor s)
               "mode ~D accessor must be NIL after ESC[?~Dl" mode)))
 
-(test mouse-mode-1000-set-and-reset
-  "ESC[?1000h sets mouse-mode to 1; ESC[?1000l resets it to 0."
-  (with-screen (s 20 5)
-    (is (= 0 (cl-tmux/terminal/types:screen-mouse-mode s))
-        "mouse-mode must be 0 by default")
-    (test-dec-pm-toggle-numeric 1000 1 #'cl-tmux/terminal/types:screen-mouse-mode)))
+(test mouse-mode-numeric-toggle-table
+  "ESC[?1000/1002/1003h sets mouse-mode to 1/2/3; the corresponding l resets to 0."
+  (dolist (row '((1000 1) (1002 2) (1003 3)))
+    (destructuring-bind (mode expected-val) row
+      (test-dec-pm-toggle-numeric mode expected-val #'cl-tmux/terminal/types:screen-mouse-mode))))
 
-(test mouse-mode-1002-set-and-reset
-  "ESC[?1002h sets mouse-mode to 2; ESC[?1002l resets it to 0."
-  (test-dec-pm-toggle-numeric 1002 2 #'cl-tmux/terminal/types:screen-mouse-mode))
-
-(test mouse-mode-1003-set-and-reset
-  "ESC[?1003h sets mouse-mode to 3; ESC[?1003l resets it to 0."
-  (test-dec-pm-toggle-numeric 1003 3 #'cl-tmux/terminal/types:screen-mouse-mode))
-
-(test mouse-sgr-mode-1006-set-and-reset
-  "ESC[?1006h sets mouse-sgr-mode to T; ESC[?1006l resets it to NIL."
-  (test-dec-pm-toggle-boolean 1006 #'cl-tmux/terminal/types:screen-mouse-sgr-mode))
-
-(test dec-pm-set-1000-directly
-  "dec-pm-set/reset with param 1000 toggles mouse-mode 0↔1 directly."
-  (test-dec-pm-toggle-numeric 1000 1 #'cl-tmux/terminal/types:screen-mouse-mode))
-
-;;; ── Bracketed paste mode (?2004h / ?2004l) ───────────────────────────────────
-
-(test bracketed-paste-mode-toggle
-  "ESC[?2004h sets bracketed-paste to T; ESC[?2004l resets it to NIL."
-  (test-dec-pm-toggle-boolean 2004 #'cl-tmux/terminal/types:screen-bracketed-paste))
-
-(test bracketed-paste-direct-set-reset
-  "dec-pm-set/reset with param 2004 toggles bracketed-paste directly."
-  (test-dec-pm-toggle-boolean 2004 #'cl-tmux/terminal/types:screen-bracketed-paste))
-
-;;; ── Focus event reporting (?1004h / ?1004l) ──────────────────────────────────
-
-(test focus-events-mode-toggle
-  "ESC[?1004h sets focus-events to T; ESC[?1004l resets it to NIL."
-  (test-dec-pm-toggle-boolean 1004 #'cl-tmux/terminal/types:screen-focus-events))
-
-(test focus-events-direct-set-reset
-  "dec-pm-set/reset with param 1004 toggles focus-events directly."
-  (test-dec-pm-toggle-boolean 1004 #'cl-tmux/terminal/types:screen-focus-events))
+(test dec-pm-boolean-toggle-table
+  "DEC private modes 1/1004/1006/2004 toggle their boolean accessors via h/l sequences."
+  (dolist (row (list (list 1    #'cl-tmux/terminal/types:screen-app-cursor-keys)
+                     (list 1004 #'cl-tmux/terminal/types:screen-focus-events)
+                     (list 1006 #'cl-tmux/terminal/types:screen-mouse-sgr-mode)
+                     (list 2004 #'cl-tmux/terminal/types:screen-bracketed-paste)))
+    (destructuring-bind (mode accessor) row
+      (test-dec-pm-toggle-boolean mode accessor))))
 
 (test focus-event-report-bytes
   "focus-event-report yields ESC[I on focus gained, ESC[O on focus lost, and NIL
@@ -94,10 +66,6 @@
         "focus lost must report ESC[O")))
 
 ;;; ── Application cursor keys (?1h / ?1l) ─────────────────────────────────────
-
-(test app-cursor-keys-toggle
-  "ESC[?1h sets app-cursor-keys to T; ESC[?1l resets it to NIL."
-  (test-dec-pm-toggle-boolean 1 #'cl-tmux/terminal/types:screen-app-cursor-keys))
 
 ;;; ── Auto-wrap mode (?7h / ?7l) ───────────────────────────────────────────────
 

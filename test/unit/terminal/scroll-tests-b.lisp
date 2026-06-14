@@ -203,25 +203,17 @@
   :in terminal-suite)
 (in-suite scroll-dirty-flag)
 
-(test scroll-up-one-marks-screen-dirty
-  "scroll-up-one sets screen-dirty-p to T."
-  (with-screen (s 5 3)
-    (screen-clear-dirty s)
-    (is-false (cl-tmux/terminal/types:screen-dirty-p s)
-              "dirty flag must be NIL before scroll-up-one")
-    (cl-tmux/terminal/actions:scroll-up-one s)
-    (is (cl-tmux/terminal/types:screen-dirty-p s)
-        "screen must be marked dirty after scroll-up-one")))
-
-(test scroll-down-one-marks-screen-dirty
-  "scroll-down-one sets screen-dirty-p to T."
-  (with-screen (s 5 3)
-    (screen-clear-dirty s)
-    (is-false (cl-tmux/terminal/types:screen-dirty-p s)
-              "dirty flag must be NIL before scroll-down-one")
-    (cl-tmux/terminal/actions:scroll-down-one s)
-    (is (cl-tmux/terminal/types:screen-dirty-p s)
-        "screen must be marked dirty after scroll-down-one")))
+(test scroll-up-and-down-one-mark-screen-dirty
+  "Both scroll-up-one and scroll-down-one set screen-dirty-p to T."
+  (dolist (fn (list #'cl-tmux/terminal/actions:scroll-up-one
+                    #'cl-tmux/terminal/actions:scroll-down-one))
+    (with-screen (s 5 3)
+      (screen-clear-dirty s)
+      (is-false (cl-tmux/terminal/types:screen-dirty-p s)
+                "dirty flag must be NIL before scroll")
+      (funcall fn s)
+      (is (cl-tmux/terminal/types:screen-dirty-p s)
+          "screen must be marked dirty after scroll"))))
 
 ;;; ── SUITE: history-limit-function nil path ────────────────────────────────────
 ;;;
