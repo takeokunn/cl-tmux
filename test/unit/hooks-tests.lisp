@@ -12,17 +12,19 @@
 
 (test hook-event-constants
   "Hook event constants defined via define-hook-events have the expected string values."
-  (is (string= "after-new-window"    cl-tmux/hooks:+hook-after-new-window+))
-  (is (string= "after-new-pane"      cl-tmux/hooks:+hook-after-new-pane+))
-  (is (string= "pane-exited"         cl-tmux/hooks:+hook-pane-exited+))
-  (is (string= "after-rename-window" cl-tmux/hooks:+hook-after-rename-window+))
-  (is (string= "session-created"     cl-tmux/hooks:+hook-session-created+))
-  (is (string= "after-kill-pane"     cl-tmux/hooks:+hook-after-kill-pane+))
-  (is (string= "after-kill-window"   cl-tmux/hooks:+hook-after-kill-window+))
-  (is (string= "after-split-window"  cl-tmux/hooks:+hook-after-split-window+))
-  (is (string= "client-attached"     cl-tmux/hooks:+hook-client-attached+))
-  (is (string= "client-detached"     cl-tmux/hooks:+hook-client-detached+))
-  (is (string= "alert-bell"          cl-tmux/hooks:+hook-alert-bell+)))
+  (dolist (c `(("after-new-window"    ,cl-tmux/hooks:+hook-after-new-window+)
+               ("after-new-pane"      ,cl-tmux/hooks:+hook-after-new-pane+)
+               ("pane-exited"         ,cl-tmux/hooks:+hook-pane-exited+)
+               ("after-rename-window" ,cl-tmux/hooks:+hook-after-rename-window+)
+               ("session-created"     ,cl-tmux/hooks:+hook-session-created+)
+               ("after-kill-pane"     ,cl-tmux/hooks:+hook-after-kill-pane+)
+               ("after-kill-window"   ,cl-tmux/hooks:+hook-after-kill-window+)
+               ("after-split-window"  ,cl-tmux/hooks:+hook-after-split-window+)
+               ("client-attached"     ,cl-tmux/hooks:+hook-client-attached+)
+               ("client-detached"     ,cl-tmux/hooks:+hook-client-detached+)
+               ("alert-bell"          ,cl-tmux/hooks:+hook-alert-bell+)))
+    (destructuring-bind (expected actual) c
+      (is (string= expected actual) "constant must equal ~S" expected))))
 
 ;;; hook-event-constants-are-strings was removed: hook-event-constants already
 ;;; asserts string= for every constant, which implies stringp — the type check
