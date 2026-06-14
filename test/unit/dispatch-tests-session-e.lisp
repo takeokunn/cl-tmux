@@ -98,6 +98,67 @@
       (is (and *overlay* (plusp (length *overlay*)))
           "list-panes must produce a non-empty overlay"))))
 
+(test run-command-line-list-panes-format-uses-arg-handler
+  "%run-command-line list-panes -F expands pane formats through the arg handler."
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (setf (session-name s) "alpha")
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line
+       s "list-panes -F '#{session_name}:#{window_index}.#{pane_id}'")
+      (is (search "alpha:0.1" *overlay*)
+          "list-panes -F must include the first formatted pane")
+      (is (search "alpha:0.2" *overlay*)
+          "list-panes -F must include the second formatted pane")
+      (is (null (search "[" *overlay*))
+          "custom format output should replace the default pane listing"))))
+
+(test run-command-line-list-panes-targets-window
+  "%run-command-line list-panes -t lists panes from the target window."
+  (with-fake-session (s :nwindows 2 :npanes 1)
+    (let* ((wins   (session-windows s))
+           (home   (first wins))
+           (target (second wins)))
+      (setf (window-name home) "home"
+            (window-name target) "work")
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line
+         s "list-panes -t :work -F '#{window_name}:#{pane_id}'")
+        (is (search "work:1" *overlay*)
+            "list-panes -t must include panes from the target window")
+        (is (null (search "home:1" *overlay*))
+            "list-panes -t must not list the active window when another is targeted")))))
+
+(test run-command-line-list-panes-all-sessions
+  "%run-command-line list-panes -a lists panes across registered sessions."
+  (with-fake-session (s1 :nwindows 1 :npanes 1)
+    (let ((s2 (make-fake-session :nwindows 1 :npanes 1)))
+      (setf (session-name s1) "alpha"
+            (session-name s2) "beta")
+      (let ((cl-tmux::*server-sessions*
+              (list (cons (session-name s1) s1)
+                    (cons (session-name s2) s2)))
+            (*overlay* nil))
+        (cl-tmux::%run-command-line
+         s1 "list-panes -a -F '#{session_name}:#{pane_id}'")
+        (is (search "alpha:1" *overlay*)
+            "list-panes -a must include panes from the current session")
+        (is (search "beta:1" *overlay*)
+            "list-panes -a must include panes from other registered sessions")))))
+
+(test run-command-line-list-panes-session-scope
+  "%run-command-line list-panes -s lists panes across the target/current session."
+  (with-fake-session (s :nwindows 2 :npanes 1)
+    (let ((wins (session-windows s)))
+      (setf (window-name (first wins)) "zero"
+            (window-name (second wins)) "one")
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line
+         s "list-panes -s -F '#{window_name}:#{pane_id}'")
+        (is (search "zero:1" *overlay*)
+            "list-panes -s must include panes from the first window")
+        (is (search "one:1" *overlay*)
+            "list-panes -s must include panes from later windows")))))
+
 ;;; ── split-window arg command ─────────────────────────────────────────────────
 
 (test parse-split-size-absolute-vs-percentage
@@ -292,4 +353,3 @@
             "split-window -d must add a pane")
         (is (eq orig-pane (cl-tmux/model:window-active-pane win))
             "split-window -d must not change the active pane")))))
-

@@ -223,24 +223,63 @@
                         (if (eq win (session-active-window sess)) " [active]" "")))))))))
 
 (defun %cmd-list-panes-arg-full (session args)
-  "list-panes [-F format] [-a] [-t target]: list panes.
-   -F format: custom format string."
+  "list-panes [-as] [-F format] [-t target]: list panes.
+   -F format: custom format string.
+   -a: list panes in all sessions.
+   -s: list panes in all windows of the target/current session."
   (with-command-flags (flags args "Ft")
-    (let* ((fmt   (cdr (assoc #\F flags)))
-           (win   (session-active-window session)))
-      (show-built-overlay (s)
-        (when win
-          (dolist (pane (window-panes win))
-            (if fmt
-                (let ((ctx (cl-tmux/format:format-context-from-session
-                             session win pane)))
-                  (format s "~A~%" (cl-tmux/format:expand-format fmt ctx)))
-                (format s "~D: [~Dx~D] [~D,~D] pane ~D~A~%"
-                        (pane-id pane)
-                        (pane-width pane) (pane-height pane)
-                        (pane-x pane) (pane-y pane)
-                        (pane-id pane)
-                        (if (eq pane (window-active-pane win)) " (active)" "")))))))))
+    (let* ((fmt        (cdr (assoc #\F flags)))
+           (target-str (cdr (assoc #\t flags)))
+           (all-p      (assoc #\a flags))
+           (session-p  (assoc #\s flags)))
+      (labels ((registered-sessions ()
+                 (or (mapcar #'cdr *server-sessions*)
+                     (list session)))
+               (session-target (name)
+                 (or (and name (find-session-by-target *server-sessions* name))
+                     session))
+               (window-targets-for-session (target-session)
+                 (mapcar (lambda (win) (cons target-session win))
+                         (session-windows target-session)))
+               (resolved-window-target ()
+                 (multiple-value-bind (target-session win pane)
+                     (resolve-target *server-sessions* target-str
+                                     :current-session session
+                                     :current-window (session-active-window session)
+                                     :current-pane (session-active-pane session))
+                   (declare (ignore pane))
+                   (when win
+                     (list (cons target-session win))))))
+        (let ((targets
+                (cond
+                  (all-p
+                   (loop for target-session in (registered-sessions)
+                         append (window-targets-for-session target-session)))
+                  (session-p
+                   (window-targets-for-session (session-target target-str)))
+                  (target-str
+                   (resolved-window-target))
+                  (t
+                   (let ((win (session-active-window session)))
+                     (when win
+                       (list (cons session win))))))))
+          (show-built-overlay (s)
+            (dolist (target targets)
+              (let ((target-session (car target))
+                    (win            (cdr target)))
+                (dolist (pane (window-panes win))
+                  (if fmt
+                      (let ((ctx (cl-tmux/format:format-context-from-session
+                                  target-session win pane)))
+                        (format s "~A~%" (cl-tmux/format:expand-format fmt ctx)))
+                      (format s "~D: [~Dx~D] [~D,~D] pane ~D~A~%"
+                              (pane-id pane)
+                              (pane-width pane) (pane-height pane)
+                              (pane-x pane) (pane-y pane)
+                              (pane-id pane)
+                              (if (eq pane (window-active-pane win))
+                                  " (active)"
+                                  ""))))))))))))
 
 (defun %cmd-respawn-pane-arg (session args)
   "respawn-pane [-k] [-c start-dir] [-e VAR=val] [-t target-pane] [command]: restart
