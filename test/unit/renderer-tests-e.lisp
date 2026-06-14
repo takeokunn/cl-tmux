@@ -226,52 +226,20 @@
 
 ;;; ── Background-window bell relay (gap #23) ────────────────────────────────
 
-(test render-session-relays-background-window-bell-when-any
-  "bell-action 'any': a BEL in a non-active window pane is forwarded to the
-   outer terminal (ASCII 7 present in the rendered frame)."
-  (with-isolated-options ("bell-action" "any" "visual-bell" nil "status" "off")
-    (let* ((sess  (make-fake-session :nwindows 2))
-           (win2  (second (cl-tmux/model:session-windows sess)))
-           (pane2 (first (cl-tmux/model:window-panes win2))))
-      ;; Plant a pending bell on the background window's pane.
-      (setf (cl-tmux/terminal/types:screen-bell-pending
-             (cl-tmux/model:pane-screen pane2)) t)
-      (let ((out (cl-tmux/renderer::render-session-to-string sess 5 20)))
-        (is (find (code-char 7) out)
-            "bell-action 'any': background-window BEL must appear in rendered frame")))))
-
-(test render-session-relays-background-window-bell-when-other
-  "bell-action 'other': a BEL in a non-active window pane IS forwarded."
-  (with-isolated-options ("bell-action" "other" "visual-bell" nil "status" "off")
-    (let* ((sess  (make-fake-session :nwindows 2))
-           (win2  (second (cl-tmux/model:session-windows sess)))
-           (pane2 (first (cl-tmux/model:window-panes win2))))
-      (setf (cl-tmux/terminal/types:screen-bell-pending
-             (cl-tmux/model:pane-screen pane2)) t)
-      (let ((out (cl-tmux/renderer::render-session-to-string sess 5 20)))
-        (is (find (code-char 7) out)
-            "bell-action 'other': background-window BEL must appear in rendered frame")))))
-
-(test render-session-suppresses-background-bell-when-current
-  "bell-action 'current': a BEL in a non-active window pane is NOT forwarded."
-  (with-isolated-options ("bell-action" "current" "visual-bell" nil "status" "off")
-    (let* ((sess  (make-fake-session :nwindows 2))
-           (win2  (second (cl-tmux/model:session-windows sess)))
-           (pane2 (first (cl-tmux/model:window-panes win2))))
-      (setf (cl-tmux/terminal/types:screen-bell-pending
-             (cl-tmux/model:pane-screen pane2)) t)
-      (let ((out (cl-tmux/renderer::render-session-to-string sess 5 20)))
-        (is (null (find (code-char 7) out))
-            "bell-action 'current': background-window BEL must be swallowed")))))
-
-(test render-session-suppresses-background-bell-when-none
-  "bell-action 'none': all BELs (foreground and background) are swallowed."
-  (with-isolated-options ("bell-action" "none" "visual-bell" nil "status" "off")
-    (let* ((sess  (make-fake-session :nwindows 2))
-           (win2  (second (cl-tmux/model:session-windows sess)))
-           (pane2 (first (cl-tmux/model:window-panes win2))))
-      (setf (cl-tmux/terminal/types:screen-bell-pending
-             (cl-tmux/model:pane-screen pane2)) t)
-      (let ((out (cl-tmux/renderer::render-session-to-string sess 5 20)))
-        (is (null (find (code-char 7) out))
-            "bell-action 'none': background-window BEL must be swallowed")))))
+(test render-session-background-bell-action-table
+  "bell-action controls whether BEL in a non-active window reaches the rendered frame."
+  (dolist (row '(("any"     t   "bell-action 'any': background BEL must appear")
+                 ("other"   t   "bell-action 'other': background BEL must appear")
+                 ("current" nil "bell-action 'current': background BEL must be swallowed")
+                 ("none"    nil "bell-action 'none': all BELs must be swallowed")))
+    (destructuring-bind (bell-action expected-bell-p desc) row
+      (with-isolated-options ("bell-action" bell-action "visual-bell" nil "status" "off")
+        (let* ((sess  (make-fake-session :nwindows 2))
+               (win2  (second (cl-tmux/model:session-windows sess)))
+               (pane2 (first (cl-tmux/model:window-panes win2))))
+          (setf (cl-tmux/terminal/types:screen-bell-pending
+                 (cl-tmux/model:pane-screen pane2)) t)
+          (let ((out (cl-tmux/renderer::render-session-to-string sess 5 20)))
+            (if expected-bell-p
+                (is (find (code-char 7) out)      "~A" desc)
+                (is (null (find (code-char 7) out)) "~A" desc)))))))
