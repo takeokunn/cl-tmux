@@ -168,10 +168,12 @@
 (test osc7-path-extraction
   "%osc7-path extracts the path from a file:// URL, with or without a host."
   (flet ((p (s) (cl-tmux/terminal/parser::%osc7-path s)))
-    (is (string= "/home/u"     (p "file://host/home/u")) "with host")
-    (is (string= "/home/u"     (p "file:///home/u"))     "empty host")
-    (is (string= "/"           (p "file://host"))        "host but no path → /")
-    (is (string= "not-a-url"   (p "not-a-url"))          "non-file:// → unchanged")))
+    (dolist (c '(("file://host/home/u" "/home/u"   "with host")
+                 ("file:///home/u"     "/home/u"   "empty host")
+                 ("file://host"        "/"         "host but no path → /")
+                 ("not-a-url"          "not-a-url" "non-file:// → unchanged")))
+      (destructuring-bind (input expected desc) c
+        (is (string= expected (p input)) "~A" desc)))))
 
 (test osc7-sets-screen-cwd-end-to-end
   "Feeding ESC ] 7 ; file://host/path BEL sets screen-cwd to the path."
@@ -188,20 +190,22 @@
   "%percent-decode handles %20 spaces, UTF-8 multibyte, no-% passthrough, and an
    incomplete trailing % (left literal)."
   (flet ((d (s) (cl-tmux/terminal/parser::%percent-decode s)))
-    (is (string= "a b"   (d "a%20b"))      "%20 → space")
-    (is (string= "abc"   (d "abc"))        "no % → unchanged")
-    (is (string= "/"     (d "%2F"))        "%2F → /")
-    (is (string= "a%"    (d "a%"))         "incomplete trailing % is literal")
-    (is (string= "a%zz"  (d "a%zz"))       "non-hex after % is literal")
-    (is (string= "✓"     (d "%E2%9C%93"))  "UTF-8 multibyte (U+2713) decodes")))
+    (dolist (c '(("a%20b"     "a b" "%20 → space")
+                 ("abc"       "abc" "no % → unchanged")
+                 ("%2F"       "/"   "%2F → /")
+                 ("a%"        "a%"  "incomplete trailing % is literal")
+                 ("a%zz"      "a%zz" "non-hex after % is literal")
+                 ("%E2%9C%93" "✓"  "UTF-8 multibyte (U+2713) decodes")))
+      (destructuring-bind (input expected desc) c
+        (is (string= expected (d input)) "~A" desc)))))
 
 (test osc7-path-percent-decoded
   "OSC 7 paths are percent-decoded — e.g. macOS '/Application Support'."
-  (is (string= "/My Docs"
-               (cl-tmux/terminal/parser::%osc7-path "file://host/My%20Docs")))
-  (is (string= "/Library/Application Support"
-               (cl-tmux/terminal/parser::%osc7-path
-                "file:///Library/Application%20Support"))))
+  (dolist (c '(("file://host/My%20Docs"              "/My Docs")
+               ("file:///Library/Application%20Support" "/Library/Application Support")))
+    (destructuring-bind (url expected) c
+      (is (string= expected (cl-tmux/terminal/parser::%osc7-path url))
+          "~S" url))))
 
 (test screen-cwd-defaults-empty
   "screen-cwd is empty on a fresh screen (no OSC 7 reported yet)."
