@@ -63,6 +63,39 @@
       (cl-tmux::dispatch-command s :show-option nil)
       (is (prompt-active-p) ":show-option must open a prompt"))))
 
+(test run-command-show-option-with-name-shows-overlay
+  "%run-command-line show-option <name> shows the option instead of opening the prompt."
+  (with-fake-session (s)
+    (let ((*prompt* nil)
+          (*overlay* nil))
+      (cl-tmux::%run-command-line s "show-option status")
+      (is (overlay-active-p) "show-option <name> must open an overlay")
+      (is-false (prompt-active-p) "show-option <name> must not open the prompt")
+      (is (search "status" *overlay*) "overlay must include the requested option"))))
+
+(test run-command-show-options-scope-flags
+  "%run-command-line show-options accepts tmux scope flags and aliases."
+  (with-fake-session (s)
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line s "show -s escape-time")
+      (is (search "escape-time" *overlay*)
+          "show -s <name> must read from server options"))
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line s "showw mode-keys")
+      (is (search "mode-keys" *overlay*)
+          "showw <name> must show a window option through the arg handler"))))
+
+(test run-command-show-option-quiet-and-value-only
+  "%run-command-line show-option supports quiet missing options and value-only output."
+  (with-fake-session (s)
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line s "show-option -q no-such-option")
+      (is (null *overlay*) "-q must suppress missing option output"))
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line s "show-option -v status")
+      (is (and *overlay* (null (search "status" *overlay*)))
+          "-v must show only the value"))))
+
 ;;; ── :respawn-pane dispatch ────────────────────────────────────────────────────
 
 (test dispatch-respawn-pane-does-not-error

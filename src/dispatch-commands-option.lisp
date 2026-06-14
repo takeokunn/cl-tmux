@@ -107,6 +107,63 @@
    globalp)) gate lets -g override the injected -w."
   (%cmd-set-option session (cons "-w" args)))
 
+(defun %show-options-scope (flags default-scope)
+  "Resolve show-options scope flags.  The current option store models session and
+   window options through the global table; server options are separate."
+  (cond
+    ((assoc #\s flags) :server)
+    ((eq default-scope :server) :server)
+    (t nil)))
+
+(defun %show-option-value-only (name scope)
+  "Return only NAME's value for `show-option -v`, or NIL when NAME is unset."
+  (let* ((line (cl-tmux/options:show-option name scope))
+         (prefix (format nil "~A " name)))
+    (when (and (>= (length line) (length prefix))
+               (string= prefix line :end2 (length prefix)))
+      (string-right-trim '(#\Newline #\Return)
+                         (subseq line (length prefix))))))
+
+(defun %cmd-show-options* (session args default-scope)
+  "show-options/show-option argument form.
+   Supports the common scriptable subset: -g/-w/-s scope flags, -t target
+   consumption, -q quiet missing options, -v value-only, and an optional option
+   NAME positional.  Targets are consumed for tmux-compatible syntax; option
+   storage is currently global/server-scoped."
+  (declare (ignore session))
+  (with-command-flags+pos (flags positionals args "t")
+    (let* ((scope (%show-options-scope flags default-scope))
+           (name (first positionals))
+           (quietp (assoc #\q flags))
+           (value-only-p (assoc #\v flags)))
+      (cond
+        ((and name value-only-p)
+         (let ((value (%show-option-value-only name scope)))
+           (when (or value (not quietp))
+             (show-overlay (or value "")))))
+        (name
+         (let ((out (cl-tmux/options:show-option name scope)))
+           (unless (and quietp (search "(not set)" out))
+             (show-overlay out))))
+        (t
+         (show-overlay (cl-tmux/options:show-options scope)))))))
+
+(defun %cmd-show-options-arg (session args)
+  "show-options / show / show-option with arguments."
+  (%cmd-show-options* session args nil))
+
+(defun %cmd-show-window-options-arg (session args)
+  "show-window-options / showw with arguments; consumes tmux flags."
+  (%cmd-show-options* session args nil))
+
+(defun %cmd-show-session-options-arg (session args)
+  "show-session-options / shows with arguments; consumes tmux flags."
+  (%cmd-show-options* session args nil))
+
+(defun %cmd-show-server-options-arg (session args)
+  "show-server-options with arguments; defaults to the server option store."
+  (%cmd-show-options* session args :server))
+
 ;;; -- -e VAR=val environment flag parser ----------------------------------------
 ;;;
 ;;; new-window and split-window accept repeated -e VAR=val flags to set
@@ -264,4 +321,3 @@
       ;; after-select-pane fires once after the command (run-hooks now fires both
       ;; the add-hook and the .tmux.conf set-hook registries).
       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-pane+ session))))
-
