@@ -271,17 +271,15 @@
 
 ;; osc-st-state ─────────────────────────────────────────────────────────────────
 
-(test osc-st-state-backslash-returns-ground
-  "osc-st-state on #x5C (backslash = ST) returns ground-state."
+(test osc-st-state-byte-dispatch
+  "osc-st-state returns ground-state on backslash (#x5C) and osc-state on any other byte."
   (with-screen (s 10 5)
     (is (eq #'cl-tmux/terminal/parser:ground-state
-            (cl-tmux/terminal/parser::osc-st-state s #x5C)))))
-
-(test osc-st-state-non-backslash-returns-to-osc
-  "osc-st-state on a non-backslash byte returns osc-state (ST not confirmed)."
-  (with-screen (s 10 5)
+            (cl-tmux/terminal/parser::osc-st-state s #x5C))
+        "backslash must return ground-state")
     (is (eq #'cl-tmux/terminal/parser:osc-state
-            (cl-tmux/terminal/parser::osc-st-state s 65)))))
+            (cl-tmux/terminal/parser::osc-st-state s 65))
+        "non-backslash must return osc-state")))
 
 ;; make-csi-k ───────────────────────────────────────────────────────────────────
 

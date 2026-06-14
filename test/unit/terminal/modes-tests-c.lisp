@@ -184,13 +184,17 @@
     (is (not (cl-tmux/terminal/types:screen-insert-mode s))
         "CSI 4 l must clear screen-insert-mode")))
 
-(test irm-reset-by-ris
-  "RIS (ESC c) clears insert mode so subsequent writes overwrite again."
-  (with-screen (s 10 5)
-    (feed s (esc "[4h"))            ; IRM on
-    (feed s (esc "c"))             ; RIS
-    (is (not (cl-tmux/terminal/types:screen-insert-mode s))
-        "RIS must reset insert mode")))
+(test ris-resets-mode-flags-table
+  "RIS (ESC c) clears insert-mode, newline-mode, and reverse-screen flags."
+  (dolist (row (list (list (esc "[4h")  #'cl-tmux/terminal/types:screen-insert-mode   "insert mode")
+                     (list (esc "[20h") #'cl-tmux/terminal/types:screen-newline-mode   "newline mode")
+                     (list (esc "[?5h") #'cl-tmux/terminal/types:screen-reverse-screen "reverse-screen")))
+    (destructuring-bind (enable-seq accessor desc) row
+      (with-screen (s 10 5)
+        (feed s enable-seq)
+        (feed s (esc "c"))
+        (is-false (funcall accessor s)
+                  "RIS must reset ~A" desc)))))
 
 ;;; ── LNM — Line Feed/New Line Mode (CSI 20 h / CSI 20 l) ─────────────────────
 
@@ -225,14 +229,6 @@
     (is (not (cl-tmux/terminal/types:screen-newline-mode s))
         "CSI 20 l must clear screen-newline-mode")))
 
-(test lnm-reset-by-ris
-  "RIS (ESC c) clears newline mode."
-  (with-screen (s 10 5)
-    (feed s (esc "[20h"))
-    (feed s (esc "c"))                ; RIS
-    (is (not (cl-tmux/terminal/types:screen-newline-mode s))
-        "RIS must reset newline mode")))
-
 ;;; ── DECSCNM — reverse-video screen (CSI ?5h / ?5l) ──────────────────────────
 
 (test decscnm-set-and-reset-toggle-screen-flag
@@ -244,14 +240,6 @@
     (feed s (esc "[?5l"))
     (is (not (cl-tmux/terminal/types:screen-reverse-screen s))
         "?5l must clear screen-reverse-screen")))
-
-(test decscnm-reset-by-ris
-  "RIS (ESC c) clears reverse-video screen mode."
-  (with-screen (s 10 5)
-    (feed s (esc "[?5h"))
-    (feed s (esc "c"))                ; RIS
-    (is (not (cl-tmux/terminal/types:screen-reverse-screen s))
-        "RIS must reset reverse-video screen")))
 
 ;;; ── DECSTR — Soft Terminal Reset (CSI ! p) ─────────────────────────────────
 

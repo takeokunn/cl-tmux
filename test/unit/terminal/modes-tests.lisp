@@ -268,35 +268,25 @@
     (is-false (cl-tmux/terminal/types:screen-origin-mode s)
               "origin-mode must be NIL after dec-pm-reset 6")))
 
-(test dectcem-hide-cursor
-  "ESC[?25l (DEC PM reset 25) sets screen-cursor-visible to NIL."
+(test dectcem-hide-and-show
+  "ESC[?25l hides the cursor (screen-cursor-visible → NIL); ESC[?25h shows it again (→ T)."
   (with-screen (s 20 5)
-    ;; Cursor is visible by default.
     (is (cl-tmux/terminal/types:screen-cursor-visible s)
         "cursor must be visible by default")
     (feed s (esc "[?25l"))
     (is-false (cl-tmux/terminal/types:screen-cursor-visible s)
-              "screen-cursor-visible must be NIL after ESC[?25l")))
-
-(test dectcem-show-cursor
-  "ESC[?25h (DEC PM set 25) restores screen-cursor-visible to T."
-  (with-screen (s 20 5)
-    (feed s (esc "[?25l"))   ; hide
-    (feed s (esc "[?25h"))   ; show again
+              "screen-cursor-visible must be NIL after ESC[?25l")
+    (feed s (esc "[?25h"))
     (is (cl-tmux/terminal/types:screen-cursor-visible s)
         "screen-cursor-visible must be T after ESC[?25h")))
 
-(test dectcem-dec-pm-set-directly
-  "dec-pm-set with param 25 sets cursor-visible to T."
+(test dectcem-dec-pm-direct
+  "dec-pm-set 25 makes cursor-visible T; dec-pm-reset 25 makes it NIL."
   (with-screen (s 20 5)
     (setf (cl-tmux/terminal/types:screen-cursor-visible s) nil)
     (cl-tmux/terminal/actions:dec-pm-set s '(25))
     (is (cl-tmux/terminal/types:screen-cursor-visible s)
-        "dec-pm-set 25 must set cursor-visible to T")))
-
-(test dectcem-dec-pm-reset-directly
-  "dec-pm-reset with param 25 sets cursor-visible to NIL."
-  (with-screen (s 20 5)
+        "dec-pm-set 25 must set cursor-visible to T")
     (cl-tmux/terminal/actions:dec-pm-reset s '(25))
     (is-false (cl-tmux/terminal/types:screen-cursor-visible s)
               "dec-pm-reset 25 must set cursor-visible to NIL")))
