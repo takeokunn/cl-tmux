@@ -83,7 +83,7 @@
           (is (= expected actual) "~A" desc)))
       ;; No overlap between the two bottom panes.
       (is (<= (+ (pane-x pbl) (pane-width pbl)) (pane-x pbr))
-          "bottom panes must not overlap")))
+          "bottom panes must not overlap"))))
 
 ;;; ── Resize on each axis (tree) ───────────────────────────────────────────
 
