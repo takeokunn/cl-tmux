@@ -44,14 +44,16 @@
          (win  (tl-window tree 24 81)))
     (destructuring-bind (p0 p1) (window-panes win)
       ;; 81 cols - 1 separator = 80 split 50/50 = 40/40.
-      (is (= 0  (pane-x p0)))
-      (is (= 40 (pane-width p0)))
-      (is (= 41 (pane-x p1)) "right pane sits one column past the separator")
-      (is (= 40 (pane-width p1)))
-      (is (= 24 (pane-height p0)) "full height on a left/right split")
-      (is (= 24 (pane-height p1)))
-      ;; Exactly one separator column between them.
-      (is (= 1 (- (pane-x p1) (+ (pane-x p0) (pane-width p0))))))))
+      (dolist (c (list (list (pane-x      p0) 0  "p0 at column 0")
+                       (list (pane-width  p0) 40 "p0 width 40")
+                       (list (pane-x      p1) 41 "right pane sits one column past the separator")
+                       (list (pane-width  p1) 40 "p1 width 40")
+                       (list (pane-height p0) 24 "full height on a left/right split")
+                       (list (pane-height p1) 24 "p1 height 24")
+                       (list (- (pane-x p1) (+ (pane-x p0) (pane-width p0))) 1
+                             "exactly one separator column between them")))
+        (destructuring-bind (actual expected desc) c
+          (is (= expected actual) "~A" desc))))))
 
 (test nested-mixed-layout-geometry
   "A pane split top/bottom, its bottom half then split left/right, yields three
@@ -64,22 +66,24 @@
          (win    (tl-window tree 25 80)))
     (destructuring-bind (ptop pbl pbr) (window-panes win)
       ;; Vertical (:v) split: 25 rows - 1 separator = 24, 12 top / 12 bottom.
-      (is (= 0  (pane-y ptop)))
-      (is (= 12 (pane-height ptop)))
-      (is (= 80 (pane-width  ptop)) "top spans full width")
-      ;; Bottom row starts at y = 12 + 1 separator = 13, height 12.
-      (is (= 13 (pane-y pbl)))
-      (is (= 13 (pane-y pbr)))
-      (is (= 12 (pane-height pbl)))
-      (is (= 12 (pane-height pbr)))
       ;; Bottom is split left|right: 80 - 1 separator = 79, 40 left / 39 right
       ;; (banker's rounding of 39.5 → 40 for the first child).
-      (is (= 0  (pane-x pbl)))
-      (is (= 40 (pane-width pbl)))
-      (is (= 41 (pane-x pbr)))
-      (is (= 39 (pane-width pbr)))
+      (dolist (c (list (list (pane-y      ptop)  0  "top pane at row 0")
+                       (list (pane-height ptop) 12  "top pane height 12")
+                       (list (pane-width  ptop) 80  "top spans full width")
+                       (list (pane-y      pbl)  13  "bottom-left starts at row 13")
+                       (list (pane-y      pbr)  13  "bottom-right starts at row 13")
+                       (list (pane-height pbl)  12  "bottom-left height 12")
+                       (list (pane-height pbr)  12  "bottom-right height 12")
+                       (list (pane-x      pbl)   0  "bottom-left at column 0")
+                       (list (pane-width  pbl)  40  "bottom-left width 40")
+                       (list (pane-x      pbr)  41  "bottom-right at column 41")
+                       (list (pane-width  pbr)  39  "bottom-right width 39")))
+        (destructuring-bind (actual expected desc) c
+          (is (= expected actual) "~A" desc)))
       ;; No overlap between the two bottom panes.
-      (is (<= (+ (pane-x pbl) (pane-width pbl)) (pane-x pbr))))))
+      (is (<= (+ (pane-x pbl) (pane-width pbl)) (pane-x pbr))
+          "bottom panes must not overlap")))
 
 ;;; ── Resize on each axis (tree) ───────────────────────────────────────────
 

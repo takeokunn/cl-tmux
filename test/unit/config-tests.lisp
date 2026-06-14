@@ -154,9 +154,8 @@
 (test describe-key-bindings-lists-commands
   "describe-key-bindings produces help text naming the bound commands."
   (let ((text (describe-key-bindings)))
-    (is (search "new-window" text)   "should list new-window")
-    (is (search "detach" text)       "should list detach")
-    (is (search "select-window" text) "should list select-window")))
+    (dolist (sub '("new-window" "detach" "select-window"))
+      (is (search sub text) "should list ~A" sub))))
 
 (test default-prefix-string-bindings-are-listed-and-repeatable
   "Default prefix multi-byte keys are present in the key table and resize arrows are repeatable."

@@ -401,11 +401,12 @@ set -g prefix C-a~%"))))
 
 (test line-brace-delta-counts-unquoted-braces
   "%line-brace-delta nets '{' against '}' and ignores braces inside quotes."
-  (is (= 1  (cl-tmux/config::%line-brace-delta "bind r {")))
-  (is (= -1 (cl-tmux/config::%line-brace-delta "}")))
-  (is (= 0  (cl-tmux/config::%line-brace-delta "bind r { next-window }")))
-  (is (= 0  (cl-tmux/config::%line-brace-delta "display \"a { b }\""))
-      "braces inside a double-quoted string are ignored"))
+  (dolist (c '((1  "bind r {"                    "open brace is +1")
+               (-1 "}"                           "close brace is -1")
+               (0  "bind r { next-window }"      "balanced block nets 0")
+               (0  "display \"a { b }\""         "braces inside a double-quoted string are ignored")))
+    (destructuring-bind (expected input desc) c
+      (is (= expected (cl-tmux/config::%line-brace-delta input)) "~A" desc))))
 
 (test bind-single-line-brace-block-single-command
   "bind r { next-window } binds the single inner command as a keyword."

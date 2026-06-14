@@ -31,10 +31,12 @@
                           :screen (make-screen 1 1)))
          (leaf (make-layout-leaf p)))
     (cl-tmux/model::layout-assign leaf 3 5 40 20)
-    (is (= 3  (pane-x p)))
-    (is (= 5  (pane-y p)))
-    (is (= 40 (pane-width p)))
-    (is (= 20 (pane-height p)))))
+    (dolist (c (list (list (pane-x      p)  3 "pane-x")
+                     (list (pane-y      p)  5 "pane-y")
+                     (list (pane-width  p) 40 "pane-width")
+                     (list (pane-height p) 20 "pane-height")))
+      (destructuring-bind (actual expected desc) c
+        (is (= expected actual) "~A" desc)))))
 
 (test layout-assign-h-split-divides-width
   "A :h split divides width: left gets ratio share, right gets remainder, one separator."
@@ -42,12 +44,14 @@
     (let ((tree (make-layout-split :h (make-layout-leaf p0) (make-layout-leaf p1) 1/2)))
       (cl-tmux/model::layout-assign tree 0 0 81 24)
       ;; 81 cols - 1 separator = 80, split 50/50 → 40 each
-      (is (= 0  (pane-x p0)))
-      (is (= 40 (pane-width p0)))
-      (is (= 41 (pane-x p1)))
-      (is (= 40 (pane-width p1)))
-      (is (= 24 (pane-height p0)))
-      (is (= 24 (pane-height p1))))))
+      (dolist (c (list (list (pane-x      p0)  0 "p0 at column 0")
+                       (list (pane-width  p0) 40 "p0 width 40")
+                       (list (pane-x      p1) 41 "p1 starts one past separator")
+                       (list (pane-width  p1) 40 "p1 width 40")
+                       (list (pane-height p0) 24 "p0 full height")
+                       (list (pane-height p1) 24 "p1 full height")))
+        (destructuring-bind (actual expected desc) c
+          (is (= expected actual) "~A" desc))))))
 
 ;;; ── layout-split-axis-extent direct tests ─────────────────────────────────
 
@@ -95,10 +99,10 @@
 
 (test resize-direction-orientation-mapping
   ":left/:right map to :h; :up/:down map to :v."
-  (is (eq :h (cl-tmux/model::resize-direction-orientation :left)))
-  (is (eq :h (cl-tmux/model::resize-direction-orientation :right)))
-  (is (eq :v (cl-tmux/model::resize-direction-orientation :up)))
-  (is (eq :v (cl-tmux/model::resize-direction-orientation :down))))
+  (dolist (c '((:left :h) (:right :h) (:up :v) (:down :v)))
+    (destructuring-bind (dir expected) c
+      (is (eq expected (cl-tmux/model::resize-direction-orientation dir))
+          "~A → ~A" dir expected))))
 
 ;;; ── pane-neighbor tests ──────────────────────────────────────────────────────
 ;;;
@@ -121,10 +125,8 @@
                            :panes (list p0)
                            :tree (make-layout-leaf p0))))
     (window-select-pane win p0)
-    (is (null (pane-neighbor win p0 :right))  "No right neighbor when alone")
-    (is (null (pane-neighbor win p0 :left))   "No left neighbor when alone")
-    (is (null (pane-neighbor win p0 :up))     "No up neighbor when alone")
-    (is (null (pane-neighbor win p0 :down))   "No down neighbor when alone")))
+    (dolist (dir '(:right :left :up :down))
+      (is (null (pane-neighbor win p0 dir)) "No ~A neighbor when alone" dir))))
 
 (test pane-neighbor-v-split
   "In a top/bottom split: down neighbor of top pane is bottom; up neighbor of bottom pane is top."
