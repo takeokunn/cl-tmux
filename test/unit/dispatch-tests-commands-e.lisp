@@ -204,32 +204,24 @@
 (test paste-buffer-text-translates-lf-to-cr-by-default
   "%paste-buffer-text replaces LF with CR by default so a multi-line paste
    submits each line; -r (no-replace) keeps the raw bytes."
-  (is (string= (format nil "a~Cb~Cc" #\Return #\Return)
-               (cl-tmux::%paste-buffer-text (format nil "a~%b~%c") nil))
-      "default paste must translate LF → CR")
-  (is (string= (format nil "a~%b~%c")
-               (cl-tmux::%paste-buffer-text (format nil "a~%b~%c") t))
-      "-r must keep LF unchanged")
-  (is (string= "abc" (cl-tmux::%paste-buffer-text "abc" nil))
-      "text without newlines is unchanged")
-  (is (null (cl-tmux::%paste-buffer-text nil nil))
-      "NIL buffer contents → NIL"))
+  (dolist (c (list (list (format nil "a~Cb~Cc" #\Return #\Return)
+                         (format nil "a~%b~%c") nil "default: LF -> CR")
+                   (list (format nil "a~%b~%c")
+                         (format nil "a~%b~%c") t   "-r: keep LF unchanged")
+                   (list "abc" "abc" nil "no newlines -> unchanged")
+                   (list nil   nil   nil "NIL contents -> NIL")))
+    (destructuring-bind (expected input no-replace desc) c
+      (is (equal expected (cl-tmux::%paste-buffer-text input no-replace)) "~A" desc))))
 
 (test paste-buffer-text-separator-overrides-default
   "%paste-buffer-text -s SEPARATOR replaces LF with SEPARATOR instead of CR; -r
    still wins (raw), and SEP may be empty or multi-character."
-  (is (string= "a-b-c"
-               (cl-tmux::%paste-buffer-text (format nil "a~%b~%c") nil "-"))
-      "-s '-' must replace each LF with '-'")
-  (is (string= "a, b, c"
-               (cl-tmux::%paste-buffer-text (format nil "a~%b~%c") nil ", "))
-      "-s ', ' must replace each LF with a multi-character separator")
-  (is (string= "abc"
-               (cl-tmux::%paste-buffer-text (format nil "a~%b~%c") nil ""))
-      "-s '' must strip the line breaks entirely")
-  (is (string= (format nil "a~%b~%c")
-               (cl-tmux::%paste-buffer-text (format nil "a~%b~%c") t "-"))
-      "-r must take precedence over -s and keep the raw bytes"))
+  (dolist (c (list (list "a-b-c"               (format nil "a~%b~%c") nil "-"  "-s '-': LF -> '-'")
+                   (list "a, b, c"              (format nil "a~%b~%c") nil ", " "-s ', ': LF -> multi-char sep")
+                   (list "abc"                  (format nil "a~%b~%c") nil ""   "-s '': strip LF")
+                   (list (format nil "a~%b~%c") (format nil "a~%b~%c") t   "-"  "-r wins over -s")))
+    (destructuring-bind (expected input no-replace sep desc) c
+      (is (string= expected (cl-tmux::%paste-buffer-text input no-replace sep)) "~A" desc))))
 
 ;;; ── :save-buffer / :load-buffer dispatch ─────────────────────────────────────
 

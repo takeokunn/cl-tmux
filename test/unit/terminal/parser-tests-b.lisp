@@ -202,10 +202,14 @@
 
 (test hex-decode-encode-roundtrip
   "%hex-decode-string / %hex-encode-string convert XTGETTCAP hex cap names."
-  (is (string= "Tc"   (cl-tmux/terminal/parser::%hex-decode-string "5463")) "5463 → Tc")
-  (is (string= "5463" (cl-tmux/terminal/parser::%hex-encode-string "Tc"))   "Tc → 5463")
-  (is (string= "256"  (cl-tmux/terminal/parser::%hex-decode-string "323536")) "323536 → 256")
-  (is (null (cl-tmux/terminal/parser::%hex-decode-string "5")) "odd-length hex → NIL"))
+  (flet ((decode (s) (cl-tmux/terminal/parser::%hex-decode-string s))
+         (encode (s) (cl-tmux/terminal/parser::%hex-encode-string s)))
+    (dolist (c `(("Tc"   ,(lambda () (decode "5463"))   "5463 -> Tc")
+                 ("5463" ,(lambda () (encode "Tc"))     "Tc -> 5463")
+                 ("256"  ,(lambda () (decode "323536")) "323536 -> 256")
+                 (nil    ,(lambda () (decode "5"))      "odd-length -> NIL")))
+      (destructuring-bind (expected fn desc) c
+        (is (equal expected (funcall fn)) "~A" desc)))))
 
 (test xtgettcap-responses-table
   "XTGETTCAP replies DCS 1+r for known caps (Tc, RGB, colors) and DCS 0+r for unknown caps."
