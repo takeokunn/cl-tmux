@@ -90,12 +90,9 @@
    standard server options."
   (is (hash-table-p cl-tmux/options:*server-option-registry*)
       "*server-option-registry* must be a hash-table")
-  (is (not (null (gethash "escape-time"     cl-tmux/options:*server-option-registry*)))
-      "escape-time must be in *server-option-registry*")
-  (is (not (null (gethash "exit-empty"      cl-tmux/options:*server-option-registry*)))
-      "exit-empty must be in *server-option-registry*")
-  (is (not (null (gethash "exit-unattached" cl-tmux/options:*server-option-registry*)))
-      "exit-unattached must be in *server-option-registry*"))
+  (dolist (name '("escape-time" "exit-empty" "exit-unattached"))
+    (is (not (null (gethash name cl-tmux/options:*server-option-registry*)))
+        "~S must be in *server-option-registry*" name)))
 
 ;;; ── exit-unattached server option default ────────────────────────────────
 

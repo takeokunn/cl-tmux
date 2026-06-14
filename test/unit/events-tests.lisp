@@ -11,18 +11,17 @@
   "Arrow-key escape sequences are consumed while copy mode is active; q exits."
   (with-fake-session (s)
     (cl-tmux::dispatch-command s :copy-mode-enter nil)
-    (is (cl-tmux::handle-copy-mode-escape
-         s (make-array 3 :element-type '(unsigned-byte 8)
-                         :initial-contents '(27 91 65)))  ; ESC [ A (up)
-        "up-arrow should be consumed in copy mode")
-    (is (cl-tmux::handle-copy-mode-escape
-         s (make-array 3 :element-type '(unsigned-byte 8)
-                         :initial-contents '(27 91 66)))  ; ESC [ B (down)
-        "down-arrow should be consumed in copy mode")
-    (is (cl-tmux::handle-copy-mode-escape
-         s (make-array 1 :element-type '(unsigned-byte 8)
-                         :initial-contents '(113)))       ; q
-        "q should be consumed in copy mode")
+    (dolist (row (list (list (make-array 3 :element-type '(unsigned-byte 8)
+                                           :initial-contents '(27 91 65))   ; ESC [ A (up)
+                             "up-arrow should be consumed in copy mode")
+                       (list (make-array 3 :element-type '(unsigned-byte 8)
+                                           :initial-contents '(27 91 66))   ; ESC [ B (down)
+                             "down-arrow should be consumed in copy mode")
+                       (list (make-array 1 :element-type '(unsigned-byte 8)
+                                           :initial-contents '(113))        ; q
+                             "q should be consumed in copy mode")))
+      (destructuring-bind (buf desc) row
+        (is (cl-tmux::handle-copy-mode-escape s buf) "~A" desc)))
     (is-false (screen-copy-mode-p (active-screen s))
         "q should have exited copy mode")))
 

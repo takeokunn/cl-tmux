@@ -66,10 +66,12 @@
 (test format-context-nil-session-returns-defaults
   "format-context-from-session with all NIL args returns safe defaults."
   (let ((ctx (cl-tmux/format:format-context-from-session nil nil nil)))
-    (is (string= "" (getf ctx :session-name)))
-    (is (= 0 (getf ctx :window-index)))
-    (is (string= "" (getf ctx :window-name)))
-    (is (= 0 (getf ctx :pane-index)))))
+    (dolist (row (list (list (getf ctx :session-name) "" "session-name defaults to empty string")
+                       (list (getf ctx :window-index)  0 "window-index defaults to 0")
+                       (list (getf ctx :window-name)  "" "window-name defaults to empty string")
+                       (list (getf ctx :pane-index)    0 "pane-index defaults to 0")))
+      (destructuring-bind (actual expected desc) row
+        (is (equal expected actual) "~A" desc))))
 
 ;;; ── format-context-from-session with real objects ────────────────────────────
 

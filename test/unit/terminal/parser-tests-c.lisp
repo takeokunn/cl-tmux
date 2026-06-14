@@ -122,15 +122,13 @@
 
 (test utf8-lead-decode-returns-initial-accumulators
   "utf8-lead-decode gives (acc, remaining-bytes) for 2/3/4-byte sequences."
-  (multiple-value-bind (acc left) (cl-tmux/terminal/parser::utf8-lead-decode #xC2)
-    (is (= 2 acc)  "C2: acc should be 2 (low 5 bits of #xC2)")
-    (is (= 1 left) "C2: 1 continuation byte expected"))
-  (multiple-value-bind (acc left) (cl-tmux/terminal/parser::utf8-lead-decode #xE3)
-    (is (= 3 acc)  "E3: acc should be 3 (low 4 bits of #xE3)")
-    (is (= 2 left) "E3: 2 continuation bytes expected"))
-  (multiple-value-bind (acc left) (cl-tmux/terminal/parser::utf8-lead-decode #xF0)
-    (is (= 0 acc)  "F0: acc should be 0 (low 3 bits of #xF0)")
-    (is (= 3 left) "F0: 3 continuation bytes expected")))
+  (dolist (row '((#xC2 2 1 "2-byte leader")
+                 (#xE3 3 2 "3-byte leader")
+                 (#xF0 0 3 "4-byte leader")))
+    (destructuring-bind (byte expected-acc expected-left desc) row
+      (multiple-value-bind (acc left) (cl-tmux/terminal/parser::utf8-lead-decode byte)
+        (is (= expected-acc  acc)  "~A: acc" desc)
+        (is (= expected-left left) "~A: continuation bytes" desc)))))
 
 ;;; ── CPS parser state function tests (direct) ─────────────────────────────────
 
