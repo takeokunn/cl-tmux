@@ -280,29 +280,20 @@
   :in terminal-suite)
 (in-suite decrqm-internal)
 
-(test decrqm-boolean-t-returns-1
-  "%decrqm-boolean T → 1 (set)."
-  (is (= 1 (cl-tmux/terminal/csi::%decrqm-boolean t))
-      "%decrqm-boolean T must return 1"))
+(test decrqm-boolean-table
+  "%decrqm-boolean returns 1 for T (set) and 2 for NIL (reset)."
+  (is (= 1 (cl-tmux/terminal/csi::%decrqm-boolean t))   "%decrqm-boolean T must return 1")
+  (is (= 2 (cl-tmux/terminal/csi::%decrqm-boolean nil)) "%decrqm-boolean NIL must return 2"))
 
-(test decrqm-boolean-nil-returns-2
-  "%decrqm-boolean NIL → 2 (reset)."
-  (is (= 2 (cl-tmux/terminal/csi::%decrqm-boolean nil))
-      "%decrqm-boolean NIL must return 2"))
-
-(test decrqm-ansi-mode-state-irm-set
-  "%decrqm-ansi-mode-state reports IRM (mode 4) as 1 (set) when insert-mode is T."
-  (with-screen (s 20 5)
-    (setf (cl-tmux/terminal/types:screen-insert-mode s) t)
-    (is (= 1 (cl-tmux/terminal/csi::%decrqm-ansi-mode-state s 4))
-        "%decrqm-ansi-mode-state mode 4 must be 1 when insert-mode is T")))
-
-(test decrqm-ansi-mode-state-irm-reset
-  "%decrqm-ansi-mode-state reports IRM (mode 4) as 2 (reset) when insert-mode is NIL."
-  (with-screen (s 20 5)
-    (setf (cl-tmux/terminal/types:screen-insert-mode s) nil)
-    (is (= 2 (cl-tmux/terminal/csi::%decrqm-ansi-mode-state s 4))
-        "%decrqm-ansi-mode-state mode 4 must be 2 when insert-mode is NIL")))
+(test decrqm-ansi-mode-state-irm-table
+  "%decrqm-ansi-mode-state reports IRM (mode 4) as 1 when insert-mode T, 2 when NIL."
+  (dolist (row '((t   1 "insert-mode T → 1 (set)")
+                 (nil 2 "insert-mode NIL → 2 (reset)")))
+    (destructuring-bind (insert-mode-val expected desc) row
+      (with-screen (s 20 5)
+        (setf (cl-tmux/terminal/types:screen-insert-mode s) insert-mode-val)
+        (is (= expected (cl-tmux/terminal/csi::%decrqm-ansi-mode-state s 4))
+            "~A" desc)))))
 
 (test decrqm-ansi-mode-state-lnm-set
   "%decrqm-ansi-mode-state reports LNM (mode 20) as 1 (set) when newline-mode is T."
@@ -326,21 +317,16 @@
   :in terminal-suite)
 (in-suite da3-xtversion-direct)
 
-(test enqueue-da3-reply-contains-unit-id
-  "enqueue-da3-reply pushes a string containing the unit-id '!|00000000'."
-  (with-screen (s 20 5)
-    (cl-tmux/terminal/csi::enqueue-da3-reply s)
-    (is (some (lambda (r) (search "!|00000000" r))
-              (cl-tmux/terminal/types:screen-response-queue s))
-        "enqueue-da3-reply must push a string containing '!|00000000'")))
-
-(test enqueue-xtversion-reply-contains-tmux
-  "enqueue-xtversion-reply pushes a string containing 'tmux'."
-  (with-screen (s 20 5)
-    (cl-tmux/terminal/csi::enqueue-xtversion-reply s)
-    (is (some (lambda (r) (search "tmux" r))
-              (cl-tmux/terminal/types:screen-response-queue s))
-        "enqueue-xtversion-reply must push a string containing 'tmux'")))
+(test enqueue-reply-substring-table
+  "enqueue-da3-reply contains '!|00000000'; enqueue-xtversion-reply contains 'tmux'."
+  (dolist (row (list (list #'cl-tmux/terminal/csi::enqueue-da3-reply      "!|00000000" "DA3 reply")
+                     (list #'cl-tmux/terminal/csi::enqueue-xtversion-reply "tmux"       "XTVERSION reply")))
+    (destructuring-bind (fn expected desc) row
+      (with-screen (s 20 5)
+        (funcall fn s)
+        (is (some (lambda (r) (search expected r))
+                  (cl-tmux/terminal/types:screen-response-queue s))
+            "~A must push a string containing ~S" desc expected)))))
 
 ;;; ── Coverage gap: enqueue-xtwinops-reply direct tests ───────────────────────
 ;;;
@@ -351,21 +337,16 @@
   :in terminal-suite)
 (in-suite xtwinops-direct)
 
-(test enqueue-xtwinops-reply-op-18-text-area
-  "enqueue-xtwinops-reply op 18 pushes ESC[8;rows;colst."
-  (with-screen (s 30 8)
-    (cl-tmux/terminal/csi::enqueue-xtwinops-reply s 18)
-    (is (some (lambda (r) (search "[8;8;30t" r))
-              (cl-tmux/terminal/types:screen-response-queue s))
-        "op 18 must push a string containing '[8;8;30t'")))
-
-(test enqueue-xtwinops-reply-op-19-screen
-  "enqueue-xtwinops-reply op 19 pushes ESC[9;rows;colst."
-  (with-screen (s 30 8)
-    (cl-tmux/terminal/csi::enqueue-xtwinops-reply s 19)
-    (is (some (lambda (r) (search "[9;8;30t" r))
-              (cl-tmux/terminal/types:screen-response-queue s))
-        "op 19 must push a string containing '[9;8;30t'")))
+(test enqueue-xtwinops-reply-size-ops-table
+  "enqueue-xtwinops-reply op 18 reports text-area ([8;…]) and op 19 reports screen ([9;…])."
+  (dolist (row '((18 "[8;8;30t" "op 18 text-area report")
+                 (19 "[9;8;30t" "op 19 screen report")))
+    (destructuring-bind (op expected desc) row
+      (with-screen (s 30 8)
+        (cl-tmux/terminal/csi::enqueue-xtwinops-reply s op)
+        (is (some (lambda (r) (search expected r))
+                  (cl-tmux/terminal/types:screen-response-queue s))
+            "~A: must contain ~S" desc expected)))))
 
 (test enqueue-xtwinops-reply-op-99-no-reply
   "enqueue-xtwinops-reply with an unsupported op enqueues nothing."
