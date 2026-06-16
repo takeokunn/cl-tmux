@@ -14,8 +14,8 @@
 
 ;;; ── Tokenizer phase helpers ──────────────────────────────────────────────
 ;;;
-;;; Each helper handles one tokenizer state; all share the PUSH-CHAR closure
-;;; and return the updated character index.
+;;; Each helper handles one tokenizer state and returns the updated character
+;;; index.
 
 (defun %tokenize-backslash-escape (line i len push-char)
   "Consume a backslash-escaped character starting at I.  Calls PUSH-CHAR on
@@ -59,6 +59,17 @@
     (when (< j len) (incf j))        ; skip closing '
     j))
 
+(defun %config-token-finish (current tokens in-token)
+  "Flush CURRENT into TOKENS when IN-TOKEN is true."
+  (if in-token
+      (values (cons (copy-seq current) tokens) nil)
+      (values tokens in-token)))
+
+(defun %config-token-append-char (current in-token ch)
+  "Append CH to CURRENT and report the tokenizer as active."
+  (vector-push-extend ch current)
+  (values current t))
+
 (defun %config-tokens (line)
   "Tokenize LINE into a list of strings, handling:
    - unquoted whitespace as delimiter
@@ -70,33 +81,47 @@
          (current  (make-array 0 :element-type 'character :adjustable t :fill-pointer 0))
          (in-token nil)
          (len      (length line)))
-    (flet ((push-char (ch)
-             (vector-push-extend ch current)
-             (setf in-token t))
-           (finish-token ()
-             (when in-token
-               (push (copy-seq current) tokens)
-               (setf (fill-pointer current) 0
-                     in-token nil))))
-      (let ((i 0))
-        (loop while (< i len) do
-          (let ((ch (char line i)))
-            (cond
-              ((char= ch #\\)
-               (setf i (%tokenize-backslash-escape line i len #'push-char)))
-              ((char= ch #\")
-               (setf in-token t
-                     i (%tokenize-double-quoted line i len #'push-char)))
-              ((char= ch #\')
-               (setf in-token t
-                     i (%tokenize-single-quoted line i len #'push-char)))
-              ((%whitespace-p ch)
-               (finish-token)
-               (incf i))
-              (t
-               (push-char ch)
-               (incf i)))))
-        (finish-token)))
+    (let ((i 0))
+      (loop while (< i len) do
+        (let ((ch (char line i)))
+          (cond
+            ((char= ch #\\)
+             (setf i (%tokenize-backslash-escape line i len
+                                                 (lambda (escaped-char)
+                                                   (multiple-value-bind (next-current next-in-token)
+                                                       (%config-token-append-char current in-token escaped-char)
+                                                     (setf current next-current
+                                                           in-token next-in-token))))))
+            ((char= ch #\")
+             (setf in-token t
+                   i (%tokenize-double-quoted line i len
+                                              (lambda (quoted-char)
+                                                (multiple-value-bind (next-current next-in-token)
+                                                    (%config-token-append-char current in-token quoted-char)
+                                                  (setf current next-current
+                                                        in-token next-in-token))))))
+            ((char= ch #\')
+             (setf in-token t
+                   i (%tokenize-single-quoted line i len
+                                              (lambda (quoted-char)
+                                                (multiple-value-bind (next-current next-in-token)
+                                                    (%config-token-append-char current in-token quoted-char)
+                                                  (setf current next-current
+                                                        in-token next-in-token))))))
+            ((%whitespace-p ch)
+             (multiple-value-setq (tokens in-token)
+               (%config-token-finish current tokens in-token))
+             (setf (fill-pointer current) 0)
+             (incf i))
+            (t
+             (multiple-value-bind (next-current next-in-token)
+                 (%config-token-append-char current in-token ch)
+               (setf current next-current
+                     in-token next-in-token))
+             (incf i)))))
+      (multiple-value-setq (tokens in-token)
+        (%config-token-finish current tokens in-token))
+      (setf (fill-pointer current) 0))
     (nreverse tokens)))
 
 (defun %parse-control-char (rest)
@@ -188,7 +213,7 @@
     :list-buffers :show-buffer :choose-buffer :delete-buffer
     :save-buffer :load-buffer
     ;; Display / info
-    :show-options :show-option
+    :show-options
     :show-window-options :show-session-options :show-server-options
     :show-messages :show-hooks
     :display-message :display-popup
@@ -204,7 +229,7 @@
     :resize-window :respawn-window :attach-session :move-pane
     :previous-layout :link-window :unlink-window
     ;; Pane management (additional)
-    :list-panes :set-buffer :select-pane-mark :detach-client
+    :list-panes :set-buffer :select-pane-mark
     ;; Info / listing
     :list-commands
     ;; Environment
@@ -221,74 +246,11 @@
    interception rather than by key lookup.
    Updated whenever a new dispatchable command is added to dispatch-handlers.")
 
-(defparameter *command-name-aliases*
-  '(;; full tmux names whose keyword differs from the keyword-ized name
-    ("previous-window" . :prev-window)
-    ("copy-mode"        . :copy-mode-enter)
-    ("move-window"      . :move-window-prompt)
-    ("swap-pane"        . :swap-pane-forward)
-    ("detach-client"    . :detach)
-    ;; standard tmux command abbreviations (see man tmux "ALIASES") for the
-    ;; arg-less bindable commands, so `bind <key> <abbrev>` resolves directly
-    ("showw"     . :show-window-options)
-    ("shows"     . :show-session-options)
-    ("breakp"    . :break-pane)
-    ("clearhist" . :clear-history)
-    ("displayp"  . :display-panes)
-    ("popup"     . :display-popup)   ; man tmux: display-popup (alias: popup)
-    ("findw"     . :find-window)
-    ("joinp"     . :join-pane)
-    ("killp"     . :kill-pane)
-    ("last"      . :last-window)
-    ("loadb"     . :load-buffer)
-    ("lock"      . :lock-server)
-    ("locks"     . :lock-session)
-    ("lockc"     . :lock-client)
-    ("lsb"       . :list-buffers)
-    ("movep"     . :move-pane)
-    ("next"      . :next-window)
-    ("nextl"     . :next-layout)
-    ("pasteb"    . :paste-buffer)
-    ("prev"      . :prev-window)
-    ("prevl"     . :previous-layout)
-    ("refresh"   . :refresh-client)
-    ("respawnp"  . :respawn-pane)
-    ("respawnw"  . :respawn-window)
-    ("rotatew"   . :rotate-window)
-    ("saveb"     . :save-buffer)
-    ("showb"     . :show-buffer)
-    ("showmsgs"  . :show-messages)
-    ("show"      . :show-options)
-    ;; Single-token abbreviations of ARG-bearing commands.  `bind X <abbrev> args`
-    ;; (multi-token) already works — stored unvalidated, resolved via the runtime
-    ;; *arg-command-table* — but a BARE `bind X <abbrev>` goes through
-    ;; %command-keyword and needs an alias here.  Each maps to the same keyword the
-    ;; full command name resolves to (all verified members of *bindable-commands*).
-    ("capturep"  . :capture-pane)
-    ("commandp"  . :command-prompt)
-    ("deleteb"   . :delete-buffer)
-    ("has"       . :has-session)
-    ("killw"     . :kill-window)
-    ("lastp"     . :last-pane)
-    ("resizew"   . :resize-window)
-    ("selectw"   . :select-window)
-    ("setb"      . :set-buffer)
-    ("swapp"     . :swap-pane-forward))
-  "tmux command names whose canonical bindable keyword is NOT simply the
-   keyword-ized form of the name — full tmux names (previous-window, copy-mode,
-   detach-client) and the standard short aliases (man tmux \"ALIASES\": breakp,
-   killp, next, prev, etc.).  Mirrors the alias rows of the runtime named-command
-   table (dispatch-core.lisp define-named-command-table); duplicated here because
-   the config layer sits below the cl-tmux package and cannot call it.  Every
-   VALUE must be a member of *bindable-commands* (enforced by a unit test).")
-
 (defun %command-keyword (name)
   "Return the bindable command keyword named by NAME (case-insensitive), or NIL
-   if NAME is not a recognized command.  Recognizes the canonical command names
-   (resolved via FIND-SYMBOL so unknown names are never interned into the keyword
-   package) plus the tmux aliases in *command-name-aliases*.  Genuinely-unknown
-   names still resolve to NIL so config typos are rejected at load time."
-  (or (cdr (assoc name *command-name-aliases* :test #'string-equal))
-      (let ((keyword (find-symbol (string-upcase name) :keyword)))
-        (and keyword (member keyword *bindable-commands*) keyword))))
-
+   if NAME is not a recognized command.  Canonical command names are resolved
+   via FIND-SYMBOL so unknown names are never interned into the keyword package.
+   Genuinely-unknown names still resolve to NIL so config typos are rejected at
+   load time."
+  (let ((keyword (find-symbol (string-upcase name) :keyword)))
+    (and keyword (member keyword *bindable-commands*) keyword)))

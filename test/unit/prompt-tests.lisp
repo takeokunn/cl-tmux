@@ -109,6 +109,41 @@
       (is (eq cb (prompt-on-submit *prompt*))
           "prompt-on-submit must return the exact function passed to prompt-start"))))
 
+(test prompt-history-prev-next-restores-in-progress-input
+  "History navigation walks newest-first entries and Down restores current input."
+  (with-clean-prompt
+    (prompt-start "p" "li" (make-noop-submit)
+                  :history '("list-windows" "new-window"))
+    (prompt-history-prev)
+    (is (string= "list-windows" (prompt-buffer *prompt*))
+        "first Up must load newest history entry")
+    (prompt-history-prev)
+    (is (string= "new-window" (prompt-buffer *prompt*))
+        "second Up must load the next older history entry")
+    (prompt-history-next)
+    (is (string= "list-windows" (prompt-buffer *prompt*))
+        "first Down must move toward newer history")
+    (prompt-history-next)
+    (is (string= "li" (prompt-buffer *prompt*))
+        "Down from newest history must restore the in-progress input")
+    (is (= 2 (prompt-cursor-index *prompt*))
+        "restored input must place cursor at end")))
+
+(test prompt-history-edit-resets-navigation-base
+  "Editing a recalled history entry makes future Up navigation start from that edit."
+  (with-clean-prompt
+    (prompt-start "p" "" (make-noop-submit)
+                  :history '("list-windows" "new-window"))
+    (prompt-history-prev)
+    (prompt-input #\s)
+    (is (string= "list-windowss" (prompt-buffer *prompt*)))
+    (prompt-history-next)
+    (is (string= "list-windowss" (prompt-buffer *prompt*))
+        "Down after editing must not replace the edited buffer with the original")
+    (prompt-history-prev)
+    (is (string= "list-windows" (prompt-buffer *prompt*))
+        "Up after editing starts a fresh history walk")))
+
 ;;; -- Buffer editing ----------------------------------------------------------
 
 (test prompt-input-appends
@@ -419,6 +454,5 @@
   (let ((sess (make-test-session 40 10 :content "")))
     (with-clean-prompt
       (prompt-start "rename-window" "foo" (make-noop-submit))
-      (let ((out (with-output-to-string (s)
-                   (cl-tmux/renderer::render-status-bar s sess 10 40))))
+      (let ((out (render-status-bar-output sess 10 40)))
         (is (search "rename-window: foo" out))))))

@@ -95,12 +95,13 @@
                     (funcall ok-fn)))
                 :single-key t))
 
-(defun prompt-nonempty (label callback)
+(defun prompt-nonempty (label callback &key history)
   "Start a prompt labelled LABEL; call CALLBACK with the input only when non-empty."
   (prompt-start label ""
                 (lambda (input)
                   (unless (string= input "")
-                    (funcall callback input)))))
+                    (funcall callback input)))
+                :history history))
 
 (defun prompt-integer (label callback)
   "Start a prompt labelled LABEL; call CALLBACK with the parsed integer when the
@@ -109,6 +110,10 @@
                 (lambda (input)
                   (let ((n (ignore-errors (parse-integer input))))
                     (when n (funcall callback n))))))
+
+(defun %byte-vector (byte)
+  "Return a one-byte unsigned vector containing BYTE."
+  (make-array 1 :element-type '(unsigned-byte 8) :initial-element byte))
 
 (defun %copy-mode-search-prompt (session prompt-char search-fn)
   "Open a copy-mode search prompt with PROMPT-CHAR prefix and call SEARCH-FN
@@ -183,7 +188,7 @@
 
   ;; ── Copy-mode handlers ─────────────────────────────────────────────────────
   ;; The 45 standard (%copy-mode-call session #'fn) handlers live in the
-  ;; define-copy-mode-dispatch-handlers call at the bottom of this file.
+  ;; define-copy-mode-dispatch-handlers call in dispatch-handlers-copy-mode.lisp.
   ;; Non-standard copy-mode handlers follow here (cursor-fn / lambdas / no-ops).
 
   ;; cursor-direction: %copy-mode-cursor-fn builds the one-arg direction lambda
@@ -193,9 +198,13 @@
   (:copy-mode-cursor-down   (%copy-mode-call session (%copy-mode-cursor-fn :down)))
   ;; no-op: copy mode reads the live pane, so no explicit refresh step
   (:copy-mode-refresh-from-pane (values))
-  ;; copy-pipe-no-cancel passes an extra NIL arg the standard path cannot encode
+  ;; copy-pipe variants pass an extra NIL arg the standard path cannot encode.
+  (:copy-mode-copy-pipe-and-cancel
+   (%copy-mode-call session (lambda (s) (copy-mode-copy-pipe s nil))))
   (:copy-mode-copy-pipe-no-cancel
    (%copy-mode-call session (lambda (s) (copy-mode-copy-pipe-no-cancel s nil))))
+  (:copy-mode-copy-pipe-end-of-line-and-cancel
+   (%copy-mode-call session (lambda (s) (copy-mode-copy-pipe-end-of-line s nil))))
   ;; search prompts open an interactive prompt — they don't go through %copy-mode-call
   (:copy-mode-search-forward-prompt
    (%copy-mode-search-prompt session "/" #'copy-mode-search-forward))
@@ -233,11 +242,9 @@
   (:send-prefix
    ;; Send the currently configured prefix key byte, not the compile-time default.
    ;; *prefix-key-code* is updated when `set prefix` runs; +prefix-key-code+ is fixed.
-   (flet ((byte-vec (b)
-            (make-array 1 :element-type '(unsigned-byte 8) :initial-element b)))
-     (with-active-pane (ap session)
-       (when (> (pane-fd ap) 0)
-         (pty-write (pane-fd ap) (byte-vec cl-tmux/config:*prefix-key-code*))))))
+   (with-active-pane (ap session)
+     (when (and (not *client-read-only*) (> (pane-fd ap) 0))
+       (pty-write (pane-fd ap) (%byte-vector cl-tmux/config:*prefix-key-code*)))))
 
   ;; ── Layout commands ────────────────────────────────────────────────────────
   (:select-layout-even-h    (%apply-named-layout-to-session session :even-horizontal))
@@ -272,8 +279,8 @@
    (prompt-nonempty "if-shell"
                     (lambda (cmd)
                       (if-shell cmd
-                                (lambda () (show-overlay (format nil "[if-shell] ~A: ok" cmd)))
-                                :else-fn (lambda () (show-overlay (format nil "[if-shell] ~A: non-zero exit" cmd)))))))
+                                (lambda () (%overlayf "[if-shell] ~A: ok" cmd))
+                                :else-fn (lambda () (%overlayf "[if-shell] ~A: non-zero exit" cmd))))))
 
   ;; :list-sessions / :list-sessions-full: static session list overlay.
   ((:list-sessions :list-sessions-full)
@@ -423,10 +430,6 @@
                       (load-config-file (pathname path)))))
   (:show-options
    (show-overlay (cl-tmux/options:show-options)))
-  (:show-option
-   (prompt-nonempty "show-option"
-                    (lambda (name)
-                      (show-overlay (cl-tmux/options:show-option name)))))
   ;; show-window-options / show-session-options / show-server-options:
   ;; per-scope option listing.  cl-tmux uses a flat global store; these show
   ;; it with a scope header to match real tmux output format.
@@ -448,56 +451,6 @@
 
 ;;; ── Copy-mode standard dispatch table ───────────────────────────────────────
 ;;;
-;;; 45 handlers that uniformly follow (:KW (%copy-mode-call session #'FN)) are
-;;; expressed as a pure keyword → function-symbol fact table.  The macro
-;;; define-copy-mode-dispatch-handlers expands each entry into the standard form.
-;;; Two entries use function symbols that differ from the keyword name:
-;;;   :copy-mode-rectangle-toggle → copy-mode-toggle-rectangle
-;;;   :copy-mode-prev-paragraph   → copy-mode-previous-paragraph
-
-(define-copy-mode-dispatch-handlers
-  (:copy-mode-enter                       copy-mode-enter)
-  (:copy-mode-exit                        copy-mode-exit)
-  (:copy-mode-begin-selection             copy-mode-begin-selection)
-  (:copy-mode-other-end                   copy-mode-other-end)
-  (:copy-mode-jump-again                  copy-mode-jump-again)
-  (:copy-mode-jump-reverse                copy-mode-jump-reverse)
-  (:copy-mode-clear-selection             copy-mode-clear-selection)
-  (:copy-mode-select-word                 copy-mode-select-word)
-  (:copy-mode-yank                        copy-mode-yank)
-  (:copy-mode-word-forward                copy-mode-word-forward)
-  (:copy-mode-word-backward               copy-mode-word-backward)
-  (:copy-mode-word-end                    copy-mode-word-end)
-  (:copy-mode-space-forward               copy-mode-space-forward)
-  (:copy-mode-space-backward              copy-mode-space-backward)
-  (:copy-mode-space-end                   copy-mode-space-end)
-  (:copy-mode-line-start                  copy-mode-line-start)
-  (:copy-mode-back-to-indentation         copy-mode-back-to-indentation)
-  (:copy-mode-line-end                    copy-mode-line-end)
-  (:copy-mode-rectangle-toggle            copy-mode-toggle-rectangle)
-  (:copy-mode-top                         copy-mode-top)
-  (:copy-mode-bottom                      copy-mode-bottom)
-  (:copy-mode-high                        copy-mode-high)
-  (:copy-mode-middle                      copy-mode-middle)
-  (:copy-mode-low                         copy-mode-low)
-  (:copy-mode-page-up                     copy-mode-page-up)
-  (:copy-mode-page-down                   copy-mode-page-down)
-  (:copy-mode-half-page-up                copy-mode-half-page-up)
-  (:copy-mode-half-page-down              copy-mode-half-page-down)
-  (:copy-mode-scroll-up-line              copy-mode-scroll-up-line)
-  (:copy-mode-scroll-down-line            copy-mode-scroll-down-line)
-  (:copy-mode-scroll-middle               copy-mode-scroll-middle)
-  (:copy-mode-jump-to-mark                copy-mode-jump-to-mark)
-  (:copy-mode-set-mark                    copy-mode-set-mark)
-  (:copy-mode-prev-paragraph              copy-mode-previous-paragraph)
-  (:copy-mode-next-paragraph              copy-mode-next-paragraph)
-  (:copy-mode-begin-line-selection        copy-mode-begin-line-selection)
-  (:copy-mode-copy-end-of-line            copy-mode-copy-end-of-line)
-  (:copy-mode-copy-line                   copy-mode-copy-line)
-  (:copy-mode-append-selection            copy-mode-append-selection)
-  (:copy-mode-append-selection-and-cancel copy-mode-append-selection-and-cancel)
-  (:copy-mode-search-next                 copy-mode-search-next)
-  (:copy-mode-search-prev                 copy-mode-search-prev)
-  (:copy-mode-search-forward-incremental  copy-mode-search-forward-incremental)
-  (:copy-mode-search-backward-incremental copy-mode-search-backward-incremental)
-  (:copy-mode-next-matching-bracket       copy-mode-next-matching-bracket))
+;;; The copy-mode table is split into dispatch-handlers-copy-mode.lisp so this
+;;; coordinator file stays focused on shared helpers, macro definitions, and the
+;;; main command handler table.

@@ -118,6 +118,20 @@
       (is (eq t (cl-tmux/options:get-option-for-window "synchronize-panes" win))
           "get-option-for-window must fall back to the global value T"))))
 
+(test cmd-set-option-rejects-unsupported-terminal-options
+  "Runtime set-option rejects terminal matching directives instead of storing no-op state."
+  (dolist (args '(("-g" "terminal-overrides" "xterm*:RGB")
+                  ("-g" "terminal-features" "xterm*:RGB")))
+    (with-option-session (s)
+      (let ((*overlay* nil))
+        (destructuring-bind (_ name value) args
+          (declare (ignore _))
+          (cl-tmux::%cmd-set-option s args)
+          (is (search "unsupported option" *overlay*)
+              "~A must produce an unsupported-option overlay" name)
+          (is (not (equal value (cl-tmux/options:get-option name nil)))
+              "~A must not be stored when terminal matching is unsupported" name))))))
+
 (test cmd-set-option-o-skips-when-already-set
   "'set -o name value' is a no-op when the option already has a value — the
    only-if-unset plugin idiom must NOT clobber a user override."
@@ -195,6 +209,19 @@
       (is (not (string= "newname" (window-name w0)))
           "the active window (id 0) must be unchanged"))))
 
+(test run-command-line-rename-window-rejects-unsupported-flags
+  "rename-window rejects unknown flags before changing the window name."
+  (with-fake-session (s :nwindows 1)
+    (let* ((win (session-active-window s))
+           (before (window-name win))
+           (*overlay* nil))
+      (is (null (cl-tmux::%run-command-line s "rename-window -x renamed"))
+          "rename-window -x must be rejected")
+      (is (string= before (window-name win))
+          "rename-window -x must not rename the window")
+      (assert-overlay-contains "unsupported argument" *overlay*
+                                "rename-window -x"))))
+
 (test run-command-line-rename-session
   "'rename-session <name>' renames the session."
   (with-fake-session (s)
@@ -215,6 +242,37 @@
             "the -t target session must be renamed to 'newname'")
         (is (string= "cur" (session-name cur))
             "the current session must be unchanged")))))
+
+(test run-command-line-rename-session-missing-target-falls-back-to-current
+  "'rename-session -t missing newname' falls back to the current session when
+   the target cannot be resolved."
+  (with-fake-session (cur)
+    (setf (cl-tmux::session-name cur) "cur")
+    (let ((cl-tmux::*server-sessions* (list (cons "cur" cur))))
+      (cl-tmux::%run-command-line cur "rename-session -t missing newname")
+      (is (string= "newname" (session-name cur))
+          "missing -t should still rename the current session")
+      (is (assoc "newname" cl-tmux::*server-sessions* :test #'equal)
+          "the registry must be updated to the fallback session's new name")
+      (is (null (assoc "cur" cl-tmux::*server-sessions* :test #'equal))
+          "the old registry key must be removed"))))
+
+(test run-command-line-rename-session-rejects-unsupported-flags
+  "rename-session rejects unknown flags before changing the session registry."
+  (with-fake-session (s)
+    (setf (cl-tmux::session-name s) "old")
+    (let ((cl-tmux::*server-sessions* (list (cons "old" s)))
+          (*overlay* nil))
+      (is (null (cl-tmux::%run-command-line s "rename-session -x new"))
+          "rename-session -x must be rejected")
+      (is (string= "old" (session-name s))
+          "rename-session -x must not rename the session")
+      (is (assoc "old" cl-tmux::*server-sessions* :test #'equal)
+          "rename-session -x must keep the old registry entry")
+      (is (null (assoc "new" cl-tmux::*server-sessions* :test #'equal))
+          "rename-session -x must not add a new registry entry")
+      (assert-overlay-contains "unsupported argument" *overlay*
+                                "rename-session -x"))))
 
 (test cmd-set-window-option-t-targets-window
   "setw -t 1 @wopt myval sets the WINDOW-LOCAL option on window-id 1, not the
@@ -255,6 +313,55 @@
         (is (= 5 (cl-tmux/model:pane-fd p1))
             "the window must NOT be respawned (live pane fd unchanged → no fork)")))))
 
+(test cmd-respawn-pane-rejects-unimplemented-overrides
+  "respawn-pane rejects start-dir/env/command overrides that cl-tmux does not implement."
+  (dolist (args '(("-c" "/tmp")
+                  ("-e" "NAME=value")
+                  ("echo" "ignored")))
+    (with-fake-session (s :nwindows 1 :npanes 1)
+      (let* ((pane (window-active-pane (session-active-window s)))
+             (fd (cl-tmux/model:pane-fd pane))
+             (pid (cl-tmux/model:pane-pid pane))
+             (cl-tmux::*dirty* nil)
+             (*overlay* nil))
+        (is (null (cl-tmux::%cmd-respawn-pane-arg s args))
+            "~S must be rejected instead of accepted as a no-op override" args)
+        (is (search "unsupported argument" *overlay*)
+            "~S must explain that the argument is unsupported" args)
+        (is (eql fd (cl-tmux/model:pane-fd pane))
+            "~S must leave the pane fd unchanged" args)
+        (is (eql pid (cl-tmux/model:pane-pid pane))
+            "~S must leave the pane pid unchanged" args)
+        (is-false cl-tmux::*dirty*
+                  "~S must not mark the model dirty after rejection" args)))))
+
+(test cmd-respawn-window-rejects-unimplemented-overrides
+  "respawn-window rejects start-dir/env/command overrides that cl-tmux does not implement."
+  (dolist (args '(("-c" "/tmp")
+                  ("-e" "NAME=value")
+                  ("echo" "ignored")))
+    (with-fake-session (s :nwindows 1 :npanes 2)
+      (let* ((win (session-active-window s))
+             (pane-states (mapcar (lambda (pane)
+                                    (list pane
+                                          (cl-tmux/model:pane-fd pane)
+                                          (cl-tmux/model:pane-pid pane)))
+                                  (window-panes win)))
+             (cl-tmux::*dirty* nil)
+             (*overlay* nil))
+        (is (null (cl-tmux::%cmd-respawn-window-arg s args))
+            "~S must be rejected instead of accepted as a no-op override" args)
+        (is (search "unsupported argument" *overlay*)
+            "~S must explain that the argument is unsupported" args)
+        (dolist (state pane-states)
+          (destructuring-bind (pane fd pid) state
+            (is (eql fd (cl-tmux/model:pane-fd pane))
+                "~S must leave pane fd unchanged" args)
+            (is (eql pid (cl-tmux/model:pane-pid pane))
+                "~S must leave pane pid unchanged" args)))
+        (is-false cl-tmux::*dirty*
+                  "~S must not mark the model dirty after rejection" args)))))
+
 (test set-hook-after-select-window-fires-config-command
   "set-hook -g after-select-window <cmd> (the .tmux.conf path) fires the command
    when select-window runs — i.e. the hook reaches run-command-hooks, not just the
@@ -265,8 +372,8 @@
       (cl-tmux::%run-command-line
        s "set-hook -g after-select-window \"display-message hooked\"")
       (cl-tmux::%run-command-line s "select-window -n")
-      (is-true (search "hooked" (format nil "~{~A~%~}" (overlay-lines)))
-               "the set-hook after-select-window command must fire (display 'hooked')")
+      (assert-overlay-contains "hooked" *overlay*
+                               "the set-hook after-select-window command")
       (cl-tmux/hooks:clear-command-hooks "after-select-window"))))
 
 (test set-hook-after-select-pane-fires-config-command
@@ -277,8 +384,8 @@
       (cl-tmux::%run-command-line
        s "set-hook -g after-select-pane \"display-message picked\"")
       (cl-tmux::%run-command-line s "select-pane -t 2")
-      (is-true (search "picked" (format nil "~{~A~%~}" (overlay-lines)))
-               "the set-hook after-select-pane command must fire")
+      (assert-overlay-contains "picked" *overlay*
+                               "the set-hook after-select-pane command")
       (cl-tmux/hooks:clear-command-hooks "after-select-pane"))))
 
 (test set-hook-select-pane-session-lookup-table
@@ -293,8 +400,8 @@
           (cl-tmux::%run-command-line
            s (format nil "set-hook -g ~A \"display-message ~A\"" hook-name word))
           (cl-tmux::%run-command-line s "select-pane -t 2")
-          (is-true (search word (format nil "~{~A~%~}" (overlay-lines)))
-                   "~A ~A" hook-name desc)
+          (assert-overlay-contains word *overlay*
+                                   (format nil "~A ~A" hook-name desc))
           (cl-tmux/hooks:clear-command-hooks hook-name))))))
 
 (test set-hook-after-rename-window-fires-config-via-unified-run-hooks
@@ -308,8 +415,8 @@
       (cl-tmux::%run-command-line
        s "set-hook -g after-rename-window \"display-message renamed-hook\"")
       (cl-tmux::%run-command-line s "rename-window newname")
-      (is-true (search "renamed-hook" (format nil "~{~A~%~}" (overlay-lines)))
-               "after-rename-window set-hook must fire via the unified run-hooks")
+      (assert-overlay-contains "renamed-hook" *overlay*
+                               "after-rename-window set-hook")
       (cl-tmux/hooks:clear-command-hooks "after-rename-window"))))
 
 (test cmd-list-commands-filters-by-name
@@ -318,11 +425,53 @@
   (with-fake-session (s)
     (let ((*overlay* nil))
       (cl-tmux::%run-command-line s "list-commands new-window")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is-true (search "new-window" text)
-                 "list-commands new-window must list new-window")
-        (is (null (search "kill-pane" text))
-            "the filtered output must not contain unrelated commands (kill-pane)")))))
+      (assert-overlay-contains "new-window" *overlay*
+                               "list-commands new-window")
+      (assert-overlay-not-contains "kill-pane" *overlay*
+                                   "list-commands new-window"))))
+
+(test cmd-list-commands-uses-public-tmux-command-names
+  "list-commands lists tmux public commands, not cl-tmux's internal bindable
+   helper command names."
+  (let ((names (cl-tmux::%list-command-public-names)))
+    (is (equal "attach-session" (first names)))
+    (is (member "list-commands" names :test #'string=))
+    (is (member "set-buffer" names :test #'string=))
+    (is (member "set-option" names :test #'string=))
+    (is (member "set-window-option" names :test #'string=))
+    (is (member "show-options" names :test #'string=))
+    (is (member "wait-for" names :test #'string=))
+    (is (null (member "set" names :test #'string=))
+        "alias-only set spelling must not be exposed as a public command")
+    (is (null (member "setw" names :test #'string=))
+        "alias-only setw spelling must not be exposed as a public command")
+    (is (null (member "copy-mode-enter" names :test #'string=))
+        "copy-mode helper commands must not be exposed as public commands")
+    (is (null (member "split-horizontal" names :test #'string=))
+        "binding aliases must not be exposed as public command names")))
+
+(test cmd-list-commands-format-command-list-name
+  "list-commands -F expands #{command_list_name} for each listed command."
+  (with-fake-session (s)
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line
+       s "list-commands -F '#{command_list_name}' list-sessions")
+      (assert-overlay-contains "list-sessions" *overlay*
+                               "formatted list-commands")
+      (assert-overlay-not-contains "#{command_list_name}" *overlay*
+                                   "formatted list-commands"))))
+
+(test cmd-list-commands-unsupported-arguments-are-rejected-before-output
+  "list-commands rejects unknown flags and extra filters instead of ignoring them."
+  (with-fake-session (s)
+    (dolist (line '("list-commands -Z new-window"
+                    "list-commands new-window kill-pane"))
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s line)
+        (assert-overlay-contains "unsupported argument" *overlay*
+                                 "list-commands")
+        (assert-overlay-not-contains "new-window" *overlay*
+                                     "list-commands")))))
 
 (test run-command-line-rename-window-no-arg-opens-prompt
   "'rename-window' with no argument falls through to the prompt (name table)."
@@ -331,4 +480,3 @@
       (cl-tmux::%run-command-line s "rename-window")
       (is (prompt-active-p)
           "no-arg rename-window must open the rename prompt"))))
-

@@ -142,11 +142,13 @@
 (test pane-at-position-h-split-table
   "pane-at-position finds left pane, right pane, or NIL (separator) by column in an h-split."
   (with-h-split-81-24 (p0 p1 win)
-    (is (eq  p0 (cl-tmux/model:pane-at-position win  0  0)) "origin → p0")
-    (is (eq  p0 (cl-tmux/model:pane-at-position win 39 23)) "bottom-right of p0 → p0")
-    (is (null   (cl-tmux/model:pane-at-position win 40  0)) "separator col 40 → NIL")
-    (is (eq  p1 (cl-tmux/model:pane-at-position win 41  0)) "start of p1 → p1")
-    (is (eq  p1 (cl-tmux/model:pane-at-position win 80 23)) "bottom-right of p1 → p1")))
+    (dolist (entry (list (list  0  0 p0  "origin → p0")
+                         (list 39 23 p0  "bottom-right of p0 → p0")
+                         (list 40  0 nil "separator col 40 → NIL")
+                         (list 41  0 p1  "start of p1 → p1")
+                         (list 80 23 p1  "bottom-right of p1 → p1")))
+      (destructuring-bind (col row expected desc) entry
+        (is (equal expected (cl-tmux/model:pane-at-position win col row)) "~A" desc)))))
 
 (test pane-at-position-single-pane
   "pane-at-position with a single full-screen pane returns it for any in-bounds coord."
@@ -156,9 +158,11 @@
          (win (make-window :id 1 :name "w" :width 80 :height 24
                            :panes (list p0)
                            :tree  (make-layout-leaf p0))))
-    (is (eq p0 (cl-tmux/model:pane-at-position win 0 0))   "origin")
-    (is (eq p0 (cl-tmux/model:pane-at-position win 79 23)) "max corner")
-    (is (null (cl-tmux/model:pane-at-position win 80 0))   "out-of-bounds col")))
+    (dolist (entry (list (list  0  0 p0  "origin")
+                         (list 79 23 p0  "max corner")
+                         (list 80  0 nil "out-of-bounds col")))
+      (destructuring-bind (col row expected desc) entry
+        (is (equal expected (cl-tmux/model:pane-at-position win col row)) "~A" desc)))))
 
 ;;; ── orient-case macro ────────────────────────────────────────────────────────
 
@@ -187,10 +191,12 @@
     (multiple-value-bind (nx ny nw nh)
         (cl-tmux/model::split-child-geometry pane :v)
       ;; avail = 21 - 1 = 20; fh = floor(20/2) = 10 → child starts at y=11, h=10
-      (is (= 0  nx) ":v split: new child x must equal parent x")
-      (is (= 11 ny) ":v split: new child y must be pane-y + fh + 1")
-      (is (= 80 nw) ":v split: new child width must equal parent width")
-      (is (= 10 nh) ":v split: new child height must be avail - fh"))))
+      (dolist (row (list (list nx  0  ":v split: new child x must equal parent x")
+                         (list ny  11 ":v split: new child y must be pane-y + fh + 1")
+                         (list nw  80 ":v split: new child width must equal parent width")
+                         (list nh  10 ":v split: new child height must be avail - fh")))
+        (destructuring-bind (actual expected desc) row
+          (is (= expected actual) "~A" desc))))))
 
 (test split-child-geometry-horizontal-split-dimensions
   "Horizontal split: new child gets roughly half the width to the right of the divider."
@@ -200,10 +206,12 @@
     (multiple-value-bind (nx ny nw nh)
         (cl-tmux/model::split-child-geometry pane :h)
       ;; avail = 81 - 1 = 80; fw = floor(80/2) = 40 → child starts at x=41, w=40
-      (is (= 41 nx) ":h split: new child x must be pane-x + fw + 1")
-      (is (= 0  ny) ":h split: new child y must equal parent y")
-      (is (= 40 nw) ":h split: new child width must be avail - fw")
-      (is (= 24 nh) ":h split: new child height must equal parent height"))))
+      (dolist (row (list (list nx  41 ":h split: new child x must be pane-x + fw + 1")
+                         (list ny   0 ":h split: new child y must equal parent y")
+                         (list nw  40 ":h split: new child width must be avail - fw")
+                         (list nh  24 ":h split: new child height must equal parent height")))
+        (destructuring-bind (actual expected desc) row
+          (is (= expected actual) "~A" desc))))))
 
 ;;; ── layout-min-extent tests ──────────────────────────────────────────────────
 

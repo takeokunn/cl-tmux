@@ -38,10 +38,12 @@
                                      (make-layout-leaf p0)
                                      (make-layout-leaf p1)))))
     (cl-tmux/model::%layout-even-h win (list p0 p1) 81 24)
-    (is (= 0  (pane-x p0)) "p0 must start at column 0")
-    (is (= 40 (pane-width p0)) "p0 must have 40 cols")
-    (is (= 41 (pane-x p1)) "p1 must start one column past the separator")
-    (is (= 40 (pane-width p1)) "p1 must have 40 cols")))
+    (dolist (row (list (list (pane-x p0)    0  "p0 must start at column 0")
+                       (list (pane-width p0) 40 "p0 must have 40 cols")
+                       (list (pane-x p1)    41 "p1 must start one column past the separator")
+                       (list (pane-width p1) 40 "p1 must have 40 cols")))
+      (destructuring-bind (actual expected desc) row
+        (is (= expected actual) "~A" desc)))))
 
 (test layout-even-v-two-panes-equal-rows
   "%layout-even-v with two panes gives equal rows with a 1-row separator."
@@ -54,10 +56,12 @@
                                      (make-layout-leaf p0)
                                      (make-layout-leaf p1)))))
     (cl-tmux/model::%layout-even-v win (list p0 p1) 80 25)
-    (is (= 0  (pane-y p0)) "p0 must start at row 0")
-    (is (= 12 (pane-height p0)) "p0 must have 12 rows")
-    (is (= 13 (pane-y p1)) "p1 must start one row past the separator")
-    (is (= 12 (pane-height p1)) "p1 must have 12 rows")))
+    (dolist (row (list (list (pane-y p0)     0  "p0 must start at row 0")
+                       (list (pane-height p0) 12 "p0 must have 12 rows")
+                       (list (pane-y p1)     13 "p1 must start one row past the separator")
+                       (list (pane-height p1) 12 "p1 must have 12 rows")))
+      (destructuring-bind (actual expected desc) row
+        (is (= expected actual) "~A" desc)))))
 
 (test layout-main-single-pane-is-leaf
   "%layout-main with only one pane builds a bare leaf and assigns the full rect."

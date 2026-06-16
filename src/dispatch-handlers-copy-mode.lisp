@@ -1,0 +1,58 @@
+(in-package #:cl-tmux)
+
+;;;; Copy-mode standard dispatch table.
+;;;;
+;;;; 45 handlers that uniformly follow (:KW (%copy-mode-call session #'FN)) are
+;;;; expressed as a pure keyword → function-symbol fact table.  The macro
+;;;; define-copy-mode-dispatch-handlers expands each entry into the standard form.
+;;;; Two entries use function symbols that differ from the keyword name:
+;;;;   :copy-mode-rectangle-toggle → copy-mode-toggle-rectangle
+;;;;   :copy-mode-prev-paragraph   → copy-mode-previous-paragraph
+
+(define-copy-mode-dispatch-handlers
+  (:copy-mode-enter                       copy-mode-enter)
+  (:copy-mode-exit                        copy-mode-exit)
+  (:copy-mode-begin-selection             copy-mode-begin-selection)
+  (:copy-mode-other-end                   copy-mode-other-end)
+  (:copy-mode-jump-again                  copy-mode-jump-again)
+  (:copy-mode-jump-reverse                copy-mode-jump-reverse)
+  (:copy-mode-clear-selection             copy-mode-clear-selection)
+  (:copy-mode-select-word                 copy-mode-select-word)
+  (:copy-mode-yank                        copy-mode-yank)
+  (:copy-mode-word-forward                copy-mode-word-forward)
+  (:copy-mode-word-backward               copy-mode-word-backward)
+  (:copy-mode-word-end                    copy-mode-word-end)
+  (:copy-mode-space-forward               copy-mode-space-forward)
+  (:copy-mode-space-backward              copy-mode-space-backward)
+  (:copy-mode-space-end                   copy-mode-space-end)
+  (:copy-mode-line-start                  copy-mode-line-start)
+  (:copy-mode-back-to-indentation         copy-mode-back-to-indentation)
+  (:copy-mode-line-end                    copy-mode-line-end)
+  (:copy-mode-rectangle-toggle            copy-mode-toggle-rectangle)
+  (:copy-mode-top                         copy-mode-top)
+  (:copy-mode-bottom                      copy-mode-bottom)
+  (:copy-mode-high                        copy-mode-high)
+  (:copy-mode-middle                      copy-mode-middle)
+  (:copy-mode-low                         copy-mode-low)
+  (:copy-mode-page-up                     copy-mode-page-up)
+  (:copy-mode-page-down                   copy-mode-page-down)
+  (:copy-mode-half-page-up                copy-mode-half-page-up)
+  (:copy-mode-half-page-down              copy-mode-half-page-down)
+  (:copy-mode-scroll-up-line              copy-mode-scroll-up-line)
+  (:copy-mode-scroll-down-line            copy-mode-scroll-down-line)
+  (:copy-mode-scroll-middle               copy-mode-scroll-middle)
+  (:copy-mode-jump-to-mark                copy-mode-jump-to-mark)
+  (:copy-mode-set-mark                    copy-mode-set-mark)
+  (:copy-mode-prev-paragraph              copy-mode-previous-paragraph)
+  (:copy-mode-next-paragraph              copy-mode-next-paragraph)
+  (:copy-mode-begin-line-selection        copy-mode-begin-line-selection)
+  (:copy-mode-copy-end-of-line            copy-mode-copy-end-of-line)
+  (:copy-mode-copy-line                   copy-mode-copy-line)
+  (:copy-mode-append-selection            copy-mode-append-selection)
+  (:copy-mode-append-selection-and-cancel copy-mode-append-selection-and-cancel)
+  (:copy-mode-search-next                 copy-mode-search-next)
+  (:copy-mode-search-prev                 copy-mode-search-prev)
+  (:copy-mode-search-forward-incremental  copy-mode-search-forward-incremental)
+  (:copy-mode-search-backward-incremental copy-mode-search-backward-incremental)
+  (:copy-mode-next-matching-bracket       copy-mode-next-matching-bracket)
+  (:copy-mode-previous-matching-bracket   copy-mode-previous-matching-bracket))

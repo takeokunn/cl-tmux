@@ -14,12 +14,12 @@
       (cl-tmux/options:set-option "synchronize-panes" nil)
       (cl-tmux::dispatch-command s :synchronize-panes nil)
       (is (overlay-active-p) ":synchronize-panes must show an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "ON" text) "first toggle must produce ON message"))
+      (assert-overlay-contains "ON" (overlay-lines)
+                               ":synchronize-panes first toggle")
       ;; Toggle back off.
       (cl-tmux::dispatch-command s :synchronize-panes nil)
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "OFF" text) "second toggle must produce OFF message")))))
+      (assert-overlay-contains "OFF" (overlay-lines)
+                               ":synchronize-panes second toggle"))))
 
 ;;; ── :lock-session / :unlock-session dispatch ─────────────────────────────────
 
@@ -47,7 +47,7 @@
       (is (eq w1 (session-active-window s))
           ":last-window must return to the previously active window"))))
 
-;;; ── :show-options / :show-option dispatch ────────────────────────────────────
+;;; ── :show-options dispatch ──────────────────────────────────────────────────
 
 (test dispatch-show-options-shows-overlay
   ":show-options opens an overlay listing global options."
@@ -56,47 +56,55 @@
       (cl-tmux::dispatch-command s :show-options nil)
       (is (overlay-active-p) ":show-options must open an overlay"))))
 
-(test dispatch-show-option-opens-prompt
-  ":show-option opens a prompt for the option name."
-  (with-fake-session (s)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :show-option nil)
-      (is (prompt-active-p) ":show-option must open a prompt"))))
-
-(test run-command-show-option-with-name-shows-overlay
-  "%run-command-line show-option <name> shows the option instead of opening the prompt."
+(test run-command-show-options-with-name-shows-overlay
+  "%run-command-line show-options <name> shows the option instead of opening the prompt."
   (with-fake-session (s)
     (let ((*prompt* nil)
           (*overlay* nil))
-      (cl-tmux::%run-command-line s "show-option status")
-      (is (overlay-active-p) "show-option <name> must open an overlay")
-      (is-false (prompt-active-p) "show-option <name> must not open the prompt")
-      (is (search "status" *overlay*) "overlay must include the requested option"))))
+      (cl-tmux::%run-command-line s "show-options status")
+      (is (overlay-active-p) "show-options <name> must open an overlay")
+      (is-false (prompt-active-p) "show-options <name> must not open the prompt")
+      (assert-overlay-contains "status" *overlay*
+                               "show-options <name> overlay"))))
 
 (test run-command-show-options-scope-flags
-  "%run-command-line show-options accepts tmux scope flags and aliases."
+  "%run-command-line show-options accepts tmux scope flags."
   (with-fake-session (s)
     (let ((*overlay* nil))
-      (cl-tmux::%run-command-line s "show -s escape-time")
-      (is (search "escape-time" *overlay*)
-          "show -s <name> must read from server options"))
+      (cl-tmux::%run-command-line s "show-options -s escape-time")
+      (assert-overlay-contains "escape-time" *overlay*
+                               "show-options -s <name>"))
     (let ((*overlay* nil))
-      (cl-tmux::%run-command-line s "showw mode-keys")
-      (is (search "mode-keys" *overlay*)
-          "showw <name> must show a window option through the arg handler"))))
+      (cl-tmux::%run-command-line s "show-window-options mode-keys")
+      (assert-overlay-contains "mode-keys" *overlay*
+                               "show-window-options <name>"))))
 
-(test run-command-show-option-quiet-and-value-only
-  "%run-command-line show-option supports quiet missing options and value-only output."
+(test run-command-show-options-rejects-unsupported-arguments
+  "show-options rejects unknown flags and extra option names."
+  (dolist (command '("show-options -x"
+                     "show-options status extra"
+                     "show-window-options -x mode-keys"))
+    (with-fake-session (s)
+      (let ((*overlay* nil))
+        (is (null (cl-tmux::%run-command-line s command))
+            "~A must be rejected" command)
+        (is (overlay-active-p)
+            "~A must show an error overlay" command)
+        (assert-overlay-contains "unsupported argument" (overlay-lines)
+                                 command)))))
+
+(test run-command-show-options-quiet-and-value-only
+  "%run-command-line show-options supports quiet missing options and value-only output."
   (with-fake-session (s)
     (let ((*overlay* nil))
-      (cl-tmux::%run-command-line s "show-option -q no-such-option")
+      (cl-tmux::%run-command-line s "show-options -q no-such-option")
       (is (null *overlay*) "-q must suppress missing option output"))
     (let ((*overlay* nil))
-      (cl-tmux::%run-command-line s "show-option -v status")
+      (cl-tmux::%run-command-line s "show-options -v status")
       (is (and *overlay* (null (search "status" *overlay*)))
           "-v must show only the value"))
     (let ((*overlay* nil))
-      (cl-tmux::%run-command-line s "show-option -qv no-such-option")
+      (cl-tmux::%run-command-line s "show-options -qv no-such-option")
       (is (null *overlay*) "-qv must suppress missing option output"))))
 
 ;;; ── :respawn-pane dispatch ────────────────────────────────────────────────────
@@ -138,6 +146,26 @@
       (cl-tmux::dispatch-command s :last-pane nil)
       (is (eq p1 (window-active-pane win))
           ":last-pane must select the previously active pane"))))
+
+(test cmd-last-pane-rejects-unsupported-arguments
+  "last-pane rejects unknown flags and positional tokens before changing active pane."
+  (dolist (command '("last-pane extra"
+                     "last-pane -x"))
+    (with-fake-session (s :nwindows 1 :npanes 2)
+      (let* ((win (session-active-window s))
+             (p0  (first  (window-panes win)))
+             (p1  (second (window-panes win)))
+             (*overlay* nil))
+        (window-select-pane win p1)
+        (window-select-pane win p0)
+        (is (null (cl-tmux::%run-command-line s command))
+            "~A must be rejected" command)
+        (is (eq p0 (window-active-pane win))
+            "~A must not select the previous pane" command)
+        (is (overlay-active-p)
+            "~A must show an unsupported-argument overlay" command)
+        (assert-overlay-contains "unsupported argument" (overlay-lines)
+                                 command)))))
 
 ;;; ── %format-window-list helper ───────────────────────────────────────────────
 
@@ -338,8 +366,25 @@
         (is (prompt-active-p) "prompt must be open")
         (funcall (prompt-on-submit *prompt*) name)
         (is (overlay-active-p) "on-submit must open an overlay")
-        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-          (is (search "yes" text) "overlay must say 'yes' for a known session"))))))
+        (assert-overlay-contains "yes" (overlay-lines)
+                                 "known session")))))
+
+(test cmd-has-session-rejects-unsupported-arguments
+  "has-session rejects unknown flags and positionals instead of silently checking all sessions."
+  (dolist (command '("has-session extra"
+                     "has-session -x"
+                     "has-session -t 0 extra"))
+    (with-fake-session (s)
+      (let ((*overlay* nil)
+            (cl-tmux::*server-sessions* (list (cons (session-name s) s))))
+        (is (null (cl-tmux::%run-command-line s command))
+            "~A must be rejected" command)
+        (is (overlay-active-p)
+            "~A must show an unsupported-argument overlay" command)
+        (assert-overlay-contains "unsupported argument" (overlay-lines)
+                                 command)
+        (assert-overlay-not-contains "yes" (overlay-lines)
+                                     command)))))
 
 ;;; ── :lock-session / :unlock-session (already tested) ─────────────────────────
 ;;; Covered by dispatch-lock-unlock-session above.

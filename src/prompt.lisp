@@ -31,7 +31,13 @@
   (vi-normal-p nil :type boolean)           ; T when in vi normal mode
   ;; Single-key mode (confirm-before, command-prompt -1): the first printable key
   ;; IS the answer — submitted immediately, with no Enter required.
-  (single-key  nil :type boolean))
+  (single-key  nil :type boolean)
+  ;; Optional command history, newest first.  HISTORY-INDEX is NIL until the user
+  ;; starts navigating with Up/Down; HISTORY-ORIGINAL preserves the in-progress
+  ;; input so Down can return to it after walking older entries.
+  (history nil :type list)
+  (history-index nil :type (or null fixnum))
+  (history-original "" :type string))
 
 (defvar *prompt* nil
   "The active PROMPT, or NIL when not prompting.
@@ -42,7 +48,7 @@
   "True when an input prompt is currently active."
   (and *prompt* t))
 
-(defun prompt-start (label initial on-submit &key single-key on-change on-cancel)
+(defun prompt-start (label initial on-submit &key single-key on-change on-cancel history)
   "Begin a prompt labelled LABEL, seeded with INITIAL text.  ON-SUBMIT is a
    function of one argument (the final buffer string) run when the user presses
    Enter.  The cursor starts at the end of INITIAL.
@@ -51,13 +57,17 @@
    ON-CHANGE is a function of one argument called after every buffer edit —
    used by incremental search to jump to the nearest match while the user types.
    ON-CANCEL is a no-argument function called when the prompt is dismissed by
-   ESC / C-c — used by incremental search to restore the pre-search cursor."
+   ESC / C-c — used by incremental search to restore the pre-search cursor.
+   HISTORY, when supplied, is a newest-first list of strings navigated with
+   prompt-history-prev / prompt-history-next."
   (setf *prompt* (make-prompt :label label :buffer initial
                                :cursor-index (length initial)
                                :on-submit on-submit
                                :on-change  on-change
                                :on-cancel  on-cancel
-                               :single-key single-key)))
+                               :single-key single-key
+                               :history history
+                               :history-original initial)))
 
 ;;; -- Change notification helper ----------------------------------------------
 
@@ -69,6 +79,11 @@
       (funcall (prompt-on-change p) (prompt-buffer p)))))
 
 ;;; -- Buffer editing -----------------------------------------------------------
+
+(defun %prompt-reset-history-navigation (p)
+  "Treat the current buffer as a fresh in-progress input after manual edits."
+  (setf (prompt-history-index p) nil
+        (prompt-history-original p) (prompt-buffer p)))
 
 (defun %buffer-delete (buffer from to)
   "Return BUFFER with characters [FROM, TO) removed."
@@ -84,6 +99,7 @@
                                 (subseq buffer 0 index)
                                 (string ch)
                                 (subseq buffer index))))
+      (%prompt-reset-history-navigation p)
       (setf (prompt-buffer       p) new
             (prompt-cursor-index p) (1+ index))))
   (prompt-notify-change))
@@ -95,8 +111,46 @@
     (let* ((buffer (prompt-buffer p))
            (index  (prompt-cursor-index p)))
       (when (plusp index)
+        (%prompt-reset-history-navigation p)
         (setf (prompt-buffer       p) (%buffer-delete buffer (1- index) index)
               (prompt-cursor-index p) (1- index)))))
+  (prompt-notify-change))
+
+;;; -- History navigation -------------------------------------------------------
+
+(defun %prompt-set-buffer-at-end (p buffer)
+  "Replace P's buffer and place the cursor at the end."
+  (setf (prompt-buffer p) buffer
+        (prompt-cursor-index p) (length buffer)))
+
+(defun prompt-history-prev ()
+  "Replace the active prompt buffer with the previous history entry.
+   History is expected newest first, matching *prompt-history*."
+  (with-active-prompt (p)
+    (let ((history (prompt-history p)))
+      (when history
+        (let* ((current-index (prompt-history-index p))
+               (next-index (if current-index
+                               (min (1- (length history)) (1+ current-index))
+                               0)))
+          (unless current-index
+            (setf (prompt-history-original p) (prompt-buffer p)))
+          (setf (prompt-history-index p) next-index)
+          (%prompt-set-buffer-at-end p (nth next-index history))))))
+  (prompt-notify-change))
+
+(defun prompt-history-next ()
+  "Move toward newer history, or restore the in-progress input after newest."
+  (with-active-prompt (p)
+    (let ((current-index (prompt-history-index p)))
+      (when current-index
+        (if (plusp current-index)
+            (let ((next-index (1- current-index)))
+              (setf (prompt-history-index p) next-index)
+              (%prompt-set-buffer-at-end p (nth next-index (prompt-history p))))
+            (progn
+              (setf (prompt-history-index p) nil)
+              (%prompt-set-buffer-at-end p (prompt-history-original p)))))))
   (prompt-notify-change))
 
 ;;; -- Cursor navigation -- declarative table ----------------------------------
@@ -153,6 +207,7 @@
   "Kill (delete) all characters from the cursor to the end of the buffer."
   (with-active-prompt (p)
     (let ((index (prompt-cursor-index p)))
+      (%prompt-reset-history-navigation p)
       (setf (prompt-buffer p) (subseq (prompt-buffer p) 0 index))))
   (prompt-notify-change))
 
@@ -161,6 +216,7 @@
   (with-active-prompt (p)
     (let* ((buffer (prompt-buffer p))
            (index  (prompt-cursor-index p)))
+      (%prompt-reset-history-navigation p)
       (setf (prompt-buffer       p) (subseq buffer index)
             (prompt-cursor-index p) 0)))
   (prompt-notify-change))
@@ -192,6 +248,7 @@
     (let* ((buffer      (prompt-buffer p))
            (end-index   (prompt-cursor-index p))
            (start-index (%word-kill-start buffer end-index)))
+      (%prompt-reset-history-navigation p)
       (setf (prompt-buffer       p) (%buffer-delete buffer start-index end-index)
             (prompt-cursor-index p) start-index)))
   (prompt-notify-change))
@@ -214,6 +271,7 @@
            (index  (prompt-cursor-index p))
            (len    (length buffer)))
       (when (< index len)
+        (%prompt-reset-history-navigation p)
         (setf (prompt-buffer p) (%buffer-delete buffer index (1+ index)))
         (%clamp-cursor-after-delete p index len))))
   (prompt-notify-change))

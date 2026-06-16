@@ -217,8 +217,7 @@
                           "status-right" nil
                           "status-style" "")
     (let* ((sess (make-test-session 40 6))
-           (out  (with-output-to-string (s)
-                   (cl-tmux/renderer::render-status-bar s sess 10 40))))
+           (out  (render-status-bar-output sess 10 40)))
       (is (search (format nil "~C[32m" #\Escape) out)
           "inline #[fg=green] must emit SGR 32 (got ~S)" out)
       (is (null (search "#[" out))

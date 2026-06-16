@@ -108,7 +108,7 @@
       ;; Clean up
       (ignore-errors (pty-close (pane-fd new-pane) (pane-pid new-pane))))))
 
-;;; ── split-window -p/-l size hint ─────────────────────────────────────────────
+;;; ── split-window -l size hint ────────────────────────────────────────────────
 
 (test split-window-size-hint-percentage
   "window-split with a fractional size hint assigns the new pane a proportional width."
@@ -195,7 +195,7 @@
 
 (test respawn-pane-updates-fd-and-pid
   "respawn-pane closes the old PTY and assigns a fresh fd/pid to the pane.
-   Uses pty-available-p to skip when PTY forking is not available."
+   Uses pty-available-p to skip when PTY spawning is not available."
   (unless (pty-available-p)
     (skip "PTY not available"))
   (multiple-value-bind (fd pid) (forkpty-with-shell 5 20)
@@ -204,11 +204,11 @@
                               :fd fd :pid pid :screen screen)))
       (let ((old-pid (pane-pid pane)))
         (respawn-pane pane)
-        ;; The new pid must differ (a new child process was forked).
+        ;; The new pid must differ (a new child process was spawned).
         ;; The fd may or may not be the same number (OS fd recycling), but
         ;; it must be non-negative (a valid open fd).
         (is (not (= old-pid (pane-pid pane)))
-            "pid must change after respawn (a new process was forked)")
+            "pid must change after respawn (a new process was spawned)")
         (is (>= (pane-fd pane) 0)
             "pane-fd must be a non-negative open fd after respawn")
         (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))))
@@ -216,9 +216,10 @@
 ;;; ── Pane slot defaults ───────────────────────────────────────────────────────
 
 (test pane-nil-slot-defaults
-  "pane-pipe-fd, pane-window, and pane-marked all default to NIL for a fresh pane."
+  "pipe state, pane-window, and pane-marked all default to NIL for a fresh pane."
   (let ((pane (make-no-pty-pane 1 0 0 20 5)))
     (is (null (pane-pipe-fd pane)) "pane-pipe-fd must default to NIL")
+    (is (null (pane-pipe-process pane)) "pane-pipe-process must default to NIL")
     (is (null (pane-window  pane)) "pane-window must default to NIL before attach")
     (is (null (pane-marked  pane)) "pane-marked must default to NIL")))
 

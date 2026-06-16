@@ -69,8 +69,7 @@
     (cl-tmux/options:set-option "status-left" "abcdefghij")
     (cl-tmux/options:set-option "status-left-length" 5)
     (let* ((sess (make-test-session 80 10))
-           (out  (with-output-to-string (s)
-                   (cl-tmux/renderer::render-status-bar s sess 11 80))))
+           (out  (render-status-bar-output sess 11 80)))
       (is (search "abcde" out)
           "truncated left must start with first 5 chars (got ~S)" out)
       (is (null (search "abcdefghij" out))
@@ -82,8 +81,7 @@
     (cl-tmux/options:set-option "status-right" "1234567890")
     (cl-tmux/options:set-option "status-right-length" 4)
     (let* ((sess (make-test-session 80 10))
-           (out  (with-output-to-string (s)
-                   (cl-tmux/renderer::render-status-bar s sess 11 80))))
+           (out  (render-status-bar-output sess 11 80)))
       (is (search "1234" out)
           "truncated right must start with first 4 chars (got ~S)" out)
       (is (null (search "1234567890" out))
@@ -101,8 +99,7 @@
         (make-two-window-session 80 5)
       (declare (ignore _p0 _w1 _p1))
       (session-select-window sess win0)  ; alpha is active
-      (let ((out (with-output-to-string (s)
-                   (cl-tmux/renderer::render-status-bar s sess 11 80))))
+      (let ((out (render-status-bar-output sess 11 80)))
         (is (search "[alpha]" out)
             "active window must use window-status-current-format [alpha] (got ~S)" out)
         (is (search "WIN:beta" out)
@@ -118,8 +115,7 @@
         (make-two-window-session 80 5)
       (declare (ignore _p0 _w1 _p1))
       (session-select-window sess win0)
-      (let ((out (with-output-to-string (s)
-                   (cl-tmux/renderer::render-status-bar s sess 11 80))))
+      (let ((out (render-status-bar-output sess 11 80)))
         (is (search "|SEP|" out)
             "window-status-separator |SEP| must appear between windows (got ~S)" out)))))
 
@@ -129,8 +125,7 @@
   "render-popup with no live pane draws top border with corners and title, plus bottom border."
   (let* ((popup (make-popup :title "Test" :x 0 :y 0 :width 20 :height 6
                             :pane nil :screen nil :close-on-exit nil))
-         (out   (with-output-to-string (s)
-                  (cl-tmux/renderer::render-popup s popup 24 80))))
+         (out   (render-popup-output popup 24 80)))
     (is (find (code-char #x250C) out)
         "render-popup must draw top-left corner ┌ (got ~S)" out)
     (is (find (code-char #x2510) out)
@@ -146,14 +141,12 @@
   "popup-style colours the empty popup interior; with it unset the body has no SGR."
   (let ((popup (make-popup :title "T" :x 0 :y 0 :width 20 :height 6
                            :pane nil :screen nil :close-on-exit nil)))
-    (flet ((render () (with-output-to-string (s)
-                        (cl-tmux/renderer::render-popup s popup 24 80))))
-      (with-isolated-options ("popup-style" "bg=blue")
-        (is (search (format nil "~C[44m" #\Escape) (render))
-            "popup-style bg=blue must colour the body (SGR 44)"))
-      (with-isolated-options ("popup-style" "")
-        (is (null (search (format nil "~C[44m" #\Escape) (render)))
-            "no popup-style means no body bg SGR")))))
+    (with-isolated-options ("popup-style" "bg=blue")
+      (is (search (format nil "~C[44m" #\Escape) (render-popup-output popup 24 80))
+          "popup-style bg=blue must colour the body (SGR 44)"))
+    (with-isolated-options ("popup-style" "")
+      (is (null (search (format nil "~C[44m" #\Escape) (render-popup-output popup 24 80)))
+          "no popup-style means no body bg SGR"))))
 
 (test render-popup-honours-border-lines-option
   "render-popup draws the box with the popup-border-lines characters (the whole
@@ -161,8 +154,7 @@
   (with-isolated-options ("popup-border-lines" "double")
     (let* ((popup (make-popup :title "T" :x 0 :y 0 :width 20 :height 6
                               :pane nil :screen nil :close-on-exit nil))
-           (out   (with-output-to-string (s)
-                    (cl-tmux/renderer::render-popup s popup 24 80))))
+           (out   (render-popup-output popup 24 80)))
       (is (find #\╔ out) "double border draws ╔ top-left")
       (is (find #\╗ out) "double border draws ╗ top-right")
       (is (find #\╚ out) "double border draws ╚ bottom-left")
@@ -177,8 +169,7 @@
                       (cl-tmux/renderer:parse-style-string "fg=red")))
            (popup (make-popup :title "T" :x 0 :y 0 :width 20 :height 6
                               :pane nil :screen nil :close-on-exit nil))
-           (out   (with-output-to-string (s)
-                    (cl-tmux/renderer::render-popup s popup 24 80))))
+           (out   (render-popup-output popup 24 80)))
       (is (search (format nil "~C[~Am" #\Escape expected) out)
           "the popup-border-style SGR (~S) must appear in the rendered border"
           expected))))
@@ -187,8 +178,7 @@
   "render-popup with no live pane fills interior rows with │ side bars."
   (let* ((popup (make-popup :title "T" :x 0 :y 0 :width 10 :height 4
                             :pane nil :screen nil :close-on-exit nil))
-         (out   (with-output-to-string (s)
-                  (cl-tmux/renderer::render-popup s popup 24 80))))
+         (out   (render-popup-output popup 24 80)))
     (is (find (code-char #x2502) out)
         "render-popup with empty interior must draw │ side bars (got ~S)" out)))
 
@@ -199,8 +189,7 @@
          (popup (make-popup :title "P" :x 0 :y 0 :width 10 :height 4
                             :pane pane :screen sc :close-on-exit nil)))
     (feed sc "hi")
-    (let ((out (with-output-to-string (s)
-                 (cl-tmux/renderer::render-popup s popup 24 80))))
+    (let ((out (render-popup-output popup 24 80)))
       (is (find #\h out)
           "render-popup with live pane must render pane content h (got ~S)" out)
       (is (find #\i out)
@@ -212,8 +201,7 @@
   "render-menu draws borders, the title, and each menu item label."
   (let* ((items '(("Option A" . nil) ("Option B" . nil) ("Option C" . nil)))
          (menu  (make-menu :title "Choose" :items items :selected-index 0))
-         (out   (with-output-to-string (s)
-                  (cl-tmux/renderer::render-menu s menu 24 80))))
+         (out   (render-menu-output menu 24 80)))
     (is (find (code-char #x250C) out)  "render-menu must draw top-left ┌ (got ~S)" out)
     (is (find (code-char #x2514) out)  "render-menu must draw bottom-left └ (got ~S)" out)
     (is (search "Choose" out)  "render-menu must include the title (got ~S)" out)
@@ -225,8 +213,7 @@
   "render-menu emits ▶ for the selected item and space for others."
   (let* ((items '(("Alpha" . nil) ("Beta" . nil)))
          (menu  (make-menu :title "M" :items items :selected-index 1))
-         (out   (with-output-to-string (s)
-                  (cl-tmux/renderer::render-menu s menu 24 80))))
+         (out   (render-menu-output menu 24 80)))
     ;; Selected item is index 1 (Beta).
     (is (find (code-char #x25B6) out)
         "render-menu must emit ▶ for the selected item (got ~S)" out)))
@@ -237,8 +224,7 @@
   (with-isolated-options ("menu-style" "fg=blue" "menu-selected-style" "bg=red")
     (let* ((items '(("Alpha" . nil) ("Beta" . nil)))
            (menu  (make-menu :title "M" :items items :selected-index 1))
-           (out   (with-output-to-string (s)
-                    (cl-tmux/renderer::render-menu s menu 24 80))))
+           (out   (render-menu-output menu 24 80)))
       (is (search (format nil "~C[41m" #\Escape) out)
           "selected item must use menu-selected-style bg=red (SGR 41, got ~S)" out)
       (is (search (format nil "~C[34m" #\Escape) out)
@@ -250,8 +236,7 @@
   (with-isolated-options ("menu-style" "" "menu-selected-style" "")
     (let* ((items '(("Alpha" . nil) ("Beta" . nil)))
            (menu  (make-menu :title "M" :items items :selected-index 1))
-           (out   (with-output-to-string (s)
-                    (cl-tmux/renderer::render-menu s menu 24 80))))
+           (out   (render-menu-output menu 24 80)))
       (is (null (search (format nil "~C[41m" #\Escape) out))
           "no menu-selected-style means no bg SGR (got ~S)" out)
       (is (search "Alpha" out) "labels are still drawn (got ~S)" out))))
@@ -262,8 +247,7 @@
   (with-isolated-options ("menu-border-lines" "double")
     (let* ((items '(("Alpha" . nil) ("Beta" . nil)))
            (menu  (make-menu :title "M" :items items :selected-index 0))
-           (out   (with-output-to-string (s)
-                    (cl-tmux/renderer::render-menu s menu 24 80))))
+           (out   (render-menu-output menu 24 80)))
       (is (find (code-char #x2554) out) "double → top-left ╔ (got ~S)" out)
       (is (find (code-char #x2551) out) "double → vertical side ║ (got ~S)" out)
       (is (null (find (code-char #x250C) out)) "no single ┌ when double (got ~S)" out))))
@@ -273,7 +257,6 @@
   (with-isolated-options ("menu-border-style" "fg=red")
     (let* ((items '(("Alpha" . nil)))
            (menu  (make-menu :title "M" :items items :selected-index 0))
-           (out   (with-output-to-string (s)
-                    (cl-tmux/renderer::render-menu s menu 24 80))))
+           (out   (render-menu-output menu 24 80)))
       (is (search (format nil "~C[31m" #\Escape) out)
           "menu-border-style fg=red must emit SGR 31 (got ~S)" out))))

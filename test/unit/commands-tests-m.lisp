@@ -264,6 +264,19 @@
       (is (null (search "foobar" joined))
           "foo and bar did not wrap — they stay separate, not joined (got ~S)" joined))))
 
+(test capture-pane-J-keeps-scrollback-boundary-separate
+  "capture-pane -J does NOT join across the scrollback/visible boundary."
+  (let* ((screen (make-screen 5 1))
+         (pane   (make-pane :id 1 :x 0 :y 0 :width 5 :height 1
+                            :fd -1 :pid -1 :screen screen)))
+    (feed screen "ABCDEFGH") ; scrollback row "ABCDE", visible row "FGH"
+    (let ((joined (capture-pane pane :include-scrollback t :join t)))
+      (is-true (search "ABCDE" joined) "scrollback row present")
+      (is-true (search "FGH" joined) "visible row present")
+      (is (null (search "ABCDEFGH" joined))
+          "-J must not join scrollback and visible rows into one line (got ~S)"
+          joined))))
+
 (test shift-line-wrapped-up-moves-flags
   "%shift-line-wrapped-up (scroll-up of the wrap flags): a flag at row Y in the
    region moves to Y-1, mirroring the content shift."

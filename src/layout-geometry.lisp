@@ -73,17 +73,19 @@
       :h (- (reduce #'max panes :key (lambda (p) (+ (pane-x p) (pane-width p))))
             (reduce #'min panes :key #'pane-x)))))
 
+(defun %resize-find-split-climb (tree node orient)
+  "Climb from NODE toward TREE's root until an ORIENT split is found."
+  (multiple-value-bind (parent which) (layout-find-parent tree node)
+    (cond ((null parent) (values nil nil))
+          ((eq (layout-split-orientation parent) orient)
+           (values parent which))
+          (t (%resize-find-split-climb tree parent orient)))))
+
 (defun resize-find-split (tree leaf orient)
   "Climb from LEAF toward the root of TREE; return (values SPLIT SIDE) for the
    nearest ancestor LAYOUT-SPLIT whose orientation is ORIENT, where SIDE
    (:first/:second) is the branch LEAF descends from.  NIL when none exists."
-  (labels ((climb (node)
-             (multiple-value-bind (parent which) (layout-find-parent tree node)
-               (cond ((null parent) (values nil nil))
-                     ((eq (layout-split-orientation parent) orient)
-                      (values parent which))
-                     (t (climb parent))))))
-    (climb leaf)))
+  (%resize-find-split-climb tree leaf orient))
 
 (defun resize-direction-orientation (direction)
   "Tree split orientation a resize DIRECTION acts on:
@@ -105,5 +107,4 @@
               (fw    (floor avail 2)))
          (values (+ (pane-x pane) fw 1) (pane-y pane)
                  (- avail fw) (pane-height pane)))))
-
 

@@ -358,21 +358,21 @@
 (test render-overlay-wires-message-style
   "render-overlay applies the message-style option: the rendered overlay SGR
    differs from the unstyled overlay."
-  (flet ((render ()
-           (let ((*overlay* nil))
-             (show-overlay "hello")
-             (unwind-protect
-                  (let ((buf (make-string-output-stream)))
-                    (cl-tmux/renderer::render-overlay buf 20)
-                    (get-output-stream-string buf))
-               (clear-overlay)))))
-    (let ((styled   (with-isolated-options ("message-style" "bg=red")
-                      (render)))
-          (unstyled (with-isolated-options ("message-style" "")
-                      (render))))
-      (is (not (string= styled unstyled))
-          "message-style bg=red must change the overlay's rendered SGR (styled=~S unstyled=~S)"
-          styled unstyled))))
+  (let ((styled   (with-isolated-options ("message-style" "bg=red")
+                    (let ((*overlay* nil))
+                      (show-overlay "hello")
+                      (unwind-protect
+                           (render-overlay-output 20)
+                        (clear-overlay)))))
+        (unstyled (with-isolated-options ("message-style" "")
+                    (let ((*overlay* nil))
+                      (show-overlay "hello")
+                      (unwind-protect
+                           (render-overlay-output 20)
+                        (clear-overlay))))))
+    (is (not (string= styled unstyled))
+        "message-style bg=red must change the overlay's rendered SGR (styled=~S unstyled=~S)"
+        styled unstyled)))
 
 ;;; ── DECTCEM cursor-visibility in rendered output ────────────────────────────
 
@@ -406,4 +406,3 @@
     (let ((out (render-session-to-string sess 6 20)))
       (is (search (format nil "~C[?25h" #\Escape) out)
           "?25h must be emitted when active pane is nil"))))
-

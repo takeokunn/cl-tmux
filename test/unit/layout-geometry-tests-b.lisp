@@ -131,7 +131,6 @@
 (test pane-at-position-out-of-bounds-returns-nil
   "pane-at-position returns NIL for coordinates outside all pane rectangles."
   (with-h-split-81-24 (p0 p1 win)
-    (declare (ignore p0 p1))
     ;; Row 24 is one past the bottom of all 24-row panes.
     (is (null (cl-tmux/model:pane-at-position win 0 24))
         "row 24 is out-of-bounds and must return NIL")

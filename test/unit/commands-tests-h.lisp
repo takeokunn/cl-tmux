@@ -8,7 +8,7 @@
 
 (test copy-mode-exit-resets-all-copy-state
   "copy-mode-exit resets copy-mode-p, offset, mark, cursor, and selecting."
-  (let ((s (%copy-mode-screen)))
+  (let ((s (copy-mode-screen)))
     ;; Set all copy-mode fields to non-default values.
     (setf (cl-tmux/terminal/types:screen-copy-offset    s) 5
           (cl-tmux/terminal/types:screen-copy-mark      s) (cons 2 3)
@@ -155,6 +155,31 @@
         (is (string= "logs" (window-name new-win))
             "the new window must be named 'logs'")))))
 
+(test cmd-break-pane-rejects-unimplemented-arguments-before-moving-pane
+  "break-pane rejects unsupported tmux compatibility arguments before mutation."
+  (dolist (case (list (list '("-t" ":2") "target placement")
+                      (list '("-F" "#{pane_id}") "print format")
+                      (list '("-P") "print flag")
+                      (list '("-a") "append flag")
+                      (list '("extra") "positional argument")))
+    (destructuring-bind (args description) case
+      (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
+        (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+              (cl-tmux::*dirty* nil)
+              (*overlay* nil))
+          (is (null (cl-tmux::%cmd-break-pane-arg sess args))
+              "~A must be rejected" description)
+          (is (search "break-pane: unsupported argument" *overlay*)
+              "~A must explain that the argument is unsupported" description)
+          (is (= 1 (length (session-windows sess)))
+              "~A must not create a new window" description)
+          (is (equal (list p0 p1) (window-panes win))
+              "~A must leave panes in their original window" description)
+          (is (eq win (session-active-window sess))
+              "~A must leave the active window unchanged" description)
+          (is-false cl-tmux::*dirty*
+                    "~A must not mark the model dirty after rejection" description))))))
+
 ;;; ── clear-history (scriptable %cmd-clear-history-arg) ────────────────────────
 
 (defun %clear-history-fixture ()
@@ -234,6 +259,21 @@
       (is (eq p2 (first (window-panes win)))
           "-D (backward) makes the last pane first"))))
 
+(test cmd-rotate-window-rejects-unimplemented-zoom-flag
+  "rotate-window rejects -Z because keep-zoom semantics are not implemented."
+  (multiple-value-bind (sess win p0 p1 p2) (%rotate-window-fixture)
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil)
+          (*overlay* nil))
+      (is (null (cl-tmux::%cmd-rotate-window-arg sess '("-Z" "-t" ":w")))
+          "-Z must be rejected instead of accepted as a no-op")
+      (is (search "unsupported argument" *overlay*)
+          "-Z must explain that the argument is unsupported")
+      (is (equal (list p0 p1 p2) (window-panes win))
+          "-Z must not rotate the window after rejection")
+      (is-false cl-tmux::*dirty*
+                "-Z must not mark the model dirty after rejection"))))
+
 ;;; ── find-window (scriptable %cmd-find-window-arg) ────────────────────────────
 
 (defun %find-window-fixture ()
@@ -268,6 +308,29 @@
     (is (eq wa (session-active-window sess))
         "no match must leave the original active window selected")))
 
+(test cmd-find-window-rejects-unsupported-search-flags
+  "find-window rejects unimplemented search-mode flags and extra positionals instead of accepting them."
+  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+    (declare (ignore wb wg))
+    (dolist (args '(("-i" "ALP")
+                    ("-r" "ALP")
+                    ("-C" "ALP")
+                    ("-T" "ALP")
+                    ("-Z" "ALP")
+                    ("-t" ":0.1" "ALP")
+                    ("ALP" "extra")))
+      (let ((cl-tmux::*dirty* nil)
+            (cl-tmux::*overlay* nil))
+        (session-select-window sess wa)
+        (is (null (cl-tmux::%cmd-find-window-arg sess args))
+            "unsupported find-window args must return NIL: ~S" args)
+        (is (eq wa (session-active-window sess))
+            "unsupported find-window args must not change the active window: ~S" args)
+        (is-false cl-tmux::*dirty*
+                  "unsupported find-window args must not mark the display dirty: ~S" args)
+        (is (overlay-active-p)
+            "unsupported find-window args must show an error overlay: ~S" args)))))
+
 (test window-matches-pattern-p-name
   "%window-matches-pattern-p matches the window name case-insensitively."
   (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
@@ -297,6 +360,68 @@
       (is (eq wg (session-active-window sess))
           "previous-window from alpha wraps to gamma"))))
 
+(test cmd-window-cycle-rejects-unsupported-arguments-before-cycling
+  "next-window/previous-window reject unsupported arguments before changing the
+   active window."
+  (dolist (case (list (list #'cl-tmux::%cmd-next-window-arg
+                            "next-window" '("-Z"))
+                      (list #'cl-tmux::%cmd-next-window-arg
+                            "next-window" '("extra"))
+                      (list #'cl-tmux::%cmd-previous-window-arg
+                            "previous-window" '("-Z"))
+                      (list #'cl-tmux::%cmd-previous-window-arg
+                            "previous-window" '("extra"))))
+    (destructuring-bind (command command-name args) case
+      (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+        (declare (ignore wb wg))
+        (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+              (cl-tmux::*dirty* nil)
+              (cl-tmux::*overlay* nil))
+          (is (null (funcall command sess args))
+              "~A rejects ~S" command-name args)
+          (is (eq wa (session-active-window sess))
+              "~A leaves the active window unchanged for ~S" command-name args)
+          (is-false cl-tmux::*dirty*
+                    "~A leaves dirty clear for ~S" command-name args)
+          (is (search (format nil "~A: unsupported argument" command-name)
+                      cl-tmux::*overlay*)
+              "~A reports an unsupported argument for ~S" command-name args))))))
+
+(test cmd-last-window-selects-previously-active-window
+  "last-window selects the most recently active non-current window."
+  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+    (declare (ignore wg))
+    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+          (cl-tmux::*dirty* nil))
+      (session-select-window sess wb)
+      (setf (cl-tmux/model:window-last-active-time wb) 40
+            (cl-tmux/model:window-last-active-time wa) 30)
+      (cl-tmux::%cmd-last-window-arg sess '())
+      (is (eq wa (session-active-window sess))
+          "last-window switches to the previous window")
+      (is-true cl-tmux::*dirty*
+               "last-window marks the display dirty"))))
+
+(test cmd-last-window-rejects-unsupported-arguments-before-switching
+  "last-window rejects unsupported arguments before changing the active window."
+  (dolist (args '(("-Z") ("extra")))
+    (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+      (declare (ignore wg))
+      (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
+            (cl-tmux::*dirty* nil)
+            (cl-tmux::*overlay* nil))
+        (session-select-window sess wb)
+        (setf (cl-tmux/model:window-last-active-time wb) 40
+              (cl-tmux/model:window-last-active-time wa) 30)
+        (is (null (cl-tmux::%cmd-last-window-arg sess args))
+            "last-window rejects ~S" args)
+        (is (eq wb (session-active-window sess))
+            "last-window leaves the active window unchanged for ~S" args)
+        (is-false cl-tmux::*dirty*
+                  "last-window leaves dirty clear for ~S" args)
+        (is (search "last-window: unsupported argument" cl-tmux::*overlay*)
+            "last-window reports an unsupported argument for ~S" args)))))
+
 (test cmd-next-window-t-targets-named-session
   "next-window -t NAME advances the NAMED session's window, leaving the current
    session's active window unchanged."
@@ -317,6 +442,31 @@
       (cl-tmux::%cmd-next-window-arg cur '("-t" "other"))
       (is (eq o-b (session-active-window other))
           "next-window -t other advanced the OTHER session to its second window")
+      (is (eq cur-win (session-active-window cur))
+          "the current session's active window stays unchanged"))))
+
+(test cmd-last-window-t-targets-named-session
+  "last-window -t NAME selects the NAMED session's previous window, leaving the
+   current session's active window unchanged."
+  (let* ((pc (%make-test-pane :id 1)) (poa (%make-test-pane :id 2))
+         (pob (%make-test-pane :id 3))
+         (cur-win (make-window :id 1 :name "cur" :width 20 :height 5
+                               :tree (make-layout-leaf pc) :panes (list pc)))
+         (cur     (make-session :id 1 :name "cur" :windows (list cur-win)))
+         (o-a (make-window :id 2 :name "oa" :width 20 :height 5
+                           :tree (make-layout-leaf poa) :panes (list poa)))
+         (o-b (make-window :id 3 :name "ob" :width 20 :height 5
+                           :tree (make-layout-leaf pob) :panes (list pob)))
+         (other (make-session :id 2 :name "other" :windows (list o-a o-b))))
+    (session-select-window cur cur-win)
+    (session-select-window other o-b)
+    (setf (cl-tmux/model:window-last-active-time o-b) 40
+          (cl-tmux/model:window-last-active-time o-a) 30)
+    (let ((cl-tmux::*server-sessions* (list (cons "cur" cur) (cons "other" other)))
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%cmd-last-window-arg cur '("-t" "other"))
+      (is (eq o-a (session-active-window other))
+          "last-window -t other selects the OTHER session's previous window")
       (is (eq cur-win (session-active-window cur))
           "the current session's active window stays unchanged"))))
 

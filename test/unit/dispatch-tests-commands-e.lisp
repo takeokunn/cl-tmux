@@ -138,11 +138,9 @@
   (with-fake-session (s)
     (let ((*overlay* nil))
       (cl-tmux::dispatch-command s :choose-client nil)
-      (is (overlay-active-p) ":choose-client must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "Clients" text) "overlay must contain 'Clients'")
-        (is (search (session-name s) text)
-            "overlay must contain the session name")))))
+      (assert-overlay-contains "Clients" (overlay-lines) ":choose-client")
+      (assert-overlay-contains (session-name s) (overlay-lines)
+                                ":choose-client"))))
 
 ;;; ── :display-info dispatch ────────────────────────────────────────────────────
 
@@ -151,10 +149,8 @@
   (with-fake-session (s)
     (let ((*overlay* nil))
       (cl-tmux::dispatch-command s :display-info nil)
-      (is (overlay-active-p) ":display-info must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "Session" text) "overlay must contain 'Session'")
-        (is (search "Pane" text) "overlay must contain 'Pane'")))))
+      (assert-overlay-contains "Session" (overlay-lines) ":display-info")
+      (assert-overlay-contains "Pane" (overlay-lines) ":display-info"))))
 
 ;;; ── :list-buffers / :show-buffer / :delete-buffer dispatch ───────────────────
 
@@ -164,10 +160,8 @@
     (let ((*overlay* nil)
           (cl-tmux/buffer:*paste-buffers* nil))
       (cl-tmux::dispatch-command s :list-buffers nil)
-      (is (overlay-active-p) ":list-buffers must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "no paste buffers" text)
-            "overlay must say 'no paste buffers' when ring is empty")))))
+      (assert-overlay-contains "no paste buffers" (overlay-lines)
+                                ":list-buffers"))))
 
 (test dispatch-list-buffers-populated-shows-entries
   ":list-buffers with buffers lists them by name with their content preview."
@@ -176,11 +170,9 @@
           (cl-tmux/buffer:*paste-buffers* (list (cons "buffer1" "hello")
                                                 (cons "buffer0" "world"))))
       (cl-tmux::dispatch-command s :list-buffers nil)
-      (is (overlay-active-p) ":list-buffers must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "hello" text) "overlay must list the first buffer's content")
-        (is (search "world" text) "overlay must list the second buffer's content")
-        (is (search "buffer1:" text) "overlay must show buffer names")))))
+      (assert-overlay-contains "hello" (overlay-lines) ":list-buffers")
+      (assert-overlay-contains "world" (overlay-lines) ":list-buffers")
+      (assert-overlay-contains "buffer1:" (overlay-lines) ":list-buffers"))))
 
 (test dispatch-show-buffer-shows-content
   ":show-buffer opens an overlay with buffer 0's content."
@@ -188,10 +180,8 @@
     (let ((*overlay* nil)
           (cl-tmux/buffer:*paste-buffers* (list (cons "buffer0" "test-content"))))
       (cl-tmux::dispatch-command s :show-buffer nil)
-      (is (overlay-active-p) ":show-buffer must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "test-content" text)
-            "overlay must contain buffer 0 content")))))
+      (assert-overlay-contains "test-content" (overlay-lines)
+                                ":show-buffer"))))
 
 (test dispatch-delete-buffer-removes-first-entry
   ":delete-buffer removes the first paste buffer."
@@ -239,10 +229,8 @@
     (let ((*overlay* nil)
           (cl-tmux/buffer:*paste-buffers* nil))
       (cl-tmux::dispatch-command s :save-buffer nil)
-      (is (overlay-active-p) ":save-buffer must open an overlay when no buffers")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "no paste buffers" text)
-            "overlay must mention 'no paste buffers'")))))
+      (assert-overlay-contains "no paste buffers" (overlay-lines)
+                                ":save-buffer"))))
 
 ;;; ── :choose-buffer dispatch ───────────────────────────────────────────────────
 
@@ -262,10 +250,8 @@
     (let ((*overlay* nil)
           (cl-tmux/buffer:*paste-buffers* nil))
       (cl-tmux::dispatch-command s :choose-buffer nil)
-      (is (overlay-active-p) ":choose-buffer must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "no paste buffers" text)
-            "overlay must say 'no paste buffers'")))))
+      (assert-overlay-contains "no paste buffers" (overlay-lines)
+                                ":choose-buffer"))))
 
 ;;; ── :select-window-prompt / :move-window / :swap-window dispatch ─────────────
 
@@ -287,6 +273,21 @@
       (is (eq (second (session-windows s)) (session-active-window s))
           "on-submit with \"1\" must select the second window"))))
 
+(test dispatch-select-window-prompt-selects-by-window-id-with-gap
+  ":select-window-prompt numeric input selects by window id, not list position."
+  (with-fake-session (s :nwindows 3)
+    (let* ((win0 (first (session-windows s)))
+           (win2 (third (session-windows s))))
+      (setf (window-name win2) "target"
+            (session-windows s) (list win0 win2))
+      (session-select-window s win0)
+      (let ((*prompt* nil))
+        (cl-tmux::dispatch-command s :select-window-prompt nil)
+        (is (prompt-active-p) "prompt must be open")
+        (funcall (prompt-on-submit *prompt*) "2")
+        (is (eq win2 (session-active-window s))
+            "numeric prompt input must select window id 2 even when it is not list index 2")))))
+
 ;;; ── %copy-mode-active-p ──────────────────────────────────────────────────────
 
 (test copy-mode-active-p-false-for-windowless-session
@@ -305,4 +306,3 @@
       (is (prompt-active-p) "%signal-channel-prompt must open a prompt")
       (is (string= "test-channel" (prompt-label *prompt*))
           "%signal-channel-prompt label must match the argument"))))
-

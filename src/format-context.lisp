@@ -65,32 +65,43 @@
 (defconstant +pane-command-cache-ttl+ 2
   "Seconds before #{pane_current_command} is re-queried from the OS.")
 
+(defconstant +pane-command-probe-timeout+ 1
+  "Seconds to allow pgrep/ps foreground-command probes to run.")
+
+(defconstant +pane-cwd-proc-timeout+ 1
+  "Seconds to allow /proc cwd probes to run.")
+
+(defconstant +pane-cwd-lsof-timeout+ 2
+  "Seconds to allow lsof cwd probes to run.")
+
+(defun %run-format-probe (args timeout)
+  "Run a short OS probe and return trimmed stdout, or the empty string on failure."
+  (handler-case
+      (string-trim " \t\n\r"
+                   (uiop:run-program args
+                                     :output :string
+                                     :ignore-error-status t
+                                     :timeout timeout))
+    (error () "")))
+
 (defun %fetch-pane-command (pid)
   "Query the OS for the foreground command running in PID's terminal.
    Spawns pgrep -P PID to find the youngest child process, then ps -o comm= to
    retrieve its name.  Only the first child PID line is used (pgrep may list
    several).  Returns a command name string on success, or NIL on any failure
    (pgrep/ps not available, no children, process already gone, timeout, etc.)."
-  (handler-case
-      (let ((child-out (string-trim " \t\n\r"
-                          (uiop:run-program
-                           (list "pgrep" "-P" (format nil "~D" pid))
-                           :output :string :ignore-error-status t
-                           :timeout 1))))
-        (when (plusp (length child-out))
-          ;; pgrep returns one PID per line; take the first
-          (let ((first-cpid (string-trim " \t\r"
-                              (first (uiop:split-string child-out
-                                                        :separator '(#\Newline))))))
-            (when (and (plusp (length first-cpid))
-                       (every #'digit-char-p first-cpid))
-              (let ((name (string-trim " \t\n\r"
-                            (uiop:run-program
-                             (list "ps" "-o" "comm=" "-p" first-cpid)
-                             :output :string :ignore-error-status t
-                             :timeout 1))))
-                (when (plusp (length name)) name))))))
-    (error () nil)))
+  (let ((child-out (%run-format-probe (list "pgrep" "-P" (format nil "~D" pid))
+                                      +pane-command-probe-timeout+)))
+    (when (plusp (length child-out))
+      ;; pgrep returns one PID per line; take the first
+      (let ((first-cpid (string-trim " \t\r"
+                                     (first (uiop:split-string child-out
+                                                               :separator '(#\Newline))))))
+        (when (and (plusp (length first-cpid))
+                   (every #'digit-char-p first-cpid))
+          (let ((name (%run-format-probe (list "ps" "-o" "comm=" "-p" first-cpid)
+                                         +pane-command-probe-timeout+)))
+            (when (plusp (length name)) name)))))))
 
 (defun %lsof-extract-cwd (lsof-output)
   "Extract the current working directory path from LSOF-OUTPUT (the text returned
@@ -113,29 +124,20 @@
        ;; Linux: /proc/PID/cwd is a symlink to the cwd.
        (let ((proc-path (format nil "/proc/~D/cwd" pid)))
          (when (probe-file proc-path)
-           (let ((cwd (handler-case
-                          (string-trim " \t\n\r"
-                                       (uiop:run-program
-                                        (list "readlink" proc-path)
-                                        :output :string :ignore-error-status t
-                                        :timeout 1))
-                        (error () ""))))
+           (let ((cwd (%run-format-probe (list "readlink" proc-path)
+                                         +pane-cwd-proc-timeout+)))
              (when (plusp (length cwd)) cwd))))
        ;; macOS: lsof reports the cwd as file descriptor 'cwd'.
        ;; Try both full path (/usr/sbin/lsof) and bare name in case PATH varies.
-       (handler-case
-           (let* ((lsof-binary (or (and (probe-file "/usr/sbin/lsof") "/usr/sbin/lsof")
-                                   "lsof"))
-                  (lsof-output (string-trim " \t\n\r"
-                                 (uiop:run-program
-                                  (list lsof-binary "-p" (format nil "~D" pid)
-                                        "-a" "-d" "cwd" "-Fn")
-                                  :output :string :ignore-error-status t
-                                  :timeout 2)))
-                  (extracted-path (%lsof-extract-cwd lsof-output)))
-             (when (and extracted-path (plusp (length extracted-path)))
-               extracted-path))
-         (error () nil))))))
+	       (let* ((lsof-binary (or (and (probe-file "/usr/sbin/lsof") "/usr/sbin/lsof")
+	                               "lsof"))
+	              (lsof-output (%run-format-probe
+	                            (list lsof-binary "-p" (format nil "~D" pid)
+	                                  "-a" "-d" "cwd" "-Fn")
+	                            +pane-cwd-lsof-timeout+))
+	              (extracted-path (%lsof-extract-cwd lsof-output)))
+	         (when (and extracted-path (plusp (length extracted-path)))
+	           extracted-path))))))
 
 (defun %pane-current-command (pane)
   "Return the foreground command name for PANE's PTY process.
@@ -352,7 +354,7 @@
                                       "1" "0")
             :client-last-session  ""
             :server-pid           pid-str
-            :version              "3.5"
+            :version              (cl-tmux/version:version-string)
             :hostname             hostname
             :host                 hostname
             :host-short           (%short-hostname hostname)

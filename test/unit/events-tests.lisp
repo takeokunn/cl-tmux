@@ -8,7 +8,7 @@
 ;;; ── Copy-mode escape handler ─────────────────────────────────────────────────
 
 (test handle-copy-mode-escape-consumes-arrows
-  "Arrow-key escape sequences are consumed while copy mode is active; q exits."
+  "Arrow-key escape sequences are consumed while copy mode is active."
   (with-fake-session (s)
     (cl-tmux::dispatch-command s :copy-mode-enter nil)
     (dolist (row (list (list (make-array 3 :element-type '(unsigned-byte 8)
@@ -16,14 +16,11 @@
                              "up-arrow should be consumed in copy mode")
                        (list (make-array 3 :element-type '(unsigned-byte 8)
                                            :initial-contents '(27 91 66))   ; ESC [ B (down)
-                             "down-arrow should be consumed in copy mode")
-                       (list (make-array 1 :element-type '(unsigned-byte 8)
-                                           :initial-contents '(113))        ; q
-                             "q should be consumed in copy mode")))
+                             "down-arrow should be consumed in copy mode")))
       (destructuring-bind (buf desc) row
         (is (cl-tmux::handle-copy-mode-escape s buf) "~A" desc)))
-    (is-false (screen-copy-mode-p (active-screen s))
-        "q should have exited copy mode")))
+    (is-true (screen-copy-mode-p (active-screen s))
+        "copy mode should remain active after arrow handling")))
 
 (test handle-copy-mode-escape-inactive-returns-nil
   "Outside copy mode, handle-copy-mode-escape consumes nothing."
@@ -383,9 +380,9 @@
     ;; Start a selection so we can verify it gets cleared.
     (cl-tmux/commands::copy-mode-begin-selection screen)
     (is (screen-copy-selecting screen) "selection must be active before ESC")
-    ;; Feed ESC then a non-CSI byte (not '[')
+    ;; Feed ESC then a non-CSI byte (not '[') with no M-<key> binding.
     (cl-tmux::process-byte s 27 input-state)
-    (cl-tmux::process-byte s (char-code #\x) input-state)
+    (cl-tmux::process-byte s (char-code #\@) input-state)
     ;; Selection is cleared but copy-mode stays active.
     (is-true  (screen-copy-mode-p   screen) "copy mode must remain active after ESC")
     (is-false (screen-copy-selecting screen) "selection must be cleared by ESC")))

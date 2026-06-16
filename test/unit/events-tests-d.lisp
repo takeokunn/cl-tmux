@@ -104,9 +104,8 @@
         (cl-tmux::process-byte s (char-code #\Z) state)
         (is (overlay-active-p)
             "a -n command-line binding must fire without C-b")
-        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-          (is (search "hi" text)
-              "overlay must contain the bound command's output 'hi' (got ~S)" text))))))
+        (assert-overlay-contains "hi" *overlay*
+                                 "overlay must contain the bound command's output 'hi'")))))
 
 ;;; ── Function / navigation keys: ESC [ N ~ → key name → binding ───────────────
 

@@ -153,6 +153,30 @@
         "literal '(' must be found at col 2 (got ~D)"
         (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
 
+(test copy-mode-search-forward-word-searches-literal-word
+  "copy-mode-search-forward-word searches for the literal word under the cursor."
+  (let ((s (make-screen 30 5)))
+    (feed s "xx a.b aXb a.b")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 3))
+    (cl-tmux/commands::copy-mode-search-forward-word s)
+    (is (= 11 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "forward word search must skip regex-like text and land on the next literal match")
+    (is (string= "a\\.b" (cl-tmux/terminal/types:screen-copy-search-term s))
+        "forward word search must save the escaped literal term")))
+
+(test copy-mode-search-backward-word-searches-literal-word
+  "copy-mode-search-backward-word searches for the literal word under the cursor."
+  (let ((s (make-screen 30 5)))
+    (feed s "xx a.b aXb a.b")
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 12))
+    (cl-tmux/commands::copy-mode-search-backward-word s)
+    (is (= 11 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "backward word search must land on the nearest literal match before the cursor")
+    (is (string= "a\\.b" (cl-tmux/terminal/types:screen-copy-search-term s))
+        "backward word search must save the escaped literal term")))
+
 ;;; ── wrap-search: search wraps around the buffer ends (default on) ────────────
 
 (test copy-mode-search-forward-wraps-to-top

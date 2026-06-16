@@ -184,23 +184,321 @@
 (test default-copy-mode-vi-bindings-are-listed
   "Default copy-mode-vi keys are present in the key table and list-keys output."
   (with-isolated-config
-    (let ((j-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\j))
+    (let ((escape-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" "Escape"))
+          (q-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\q))
+          (i-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\i))
+          (j-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\j))
           (h-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\h))
+          (percent-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\%))
+          (comma-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\,))
+          (semicolon-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\;))
+          (upper-a-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\A))
+          (upper-d-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\D))
+          (upper-j-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\J))
+          (upper-k-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\K))
+          (upper-p-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\P))
+          (upper-r-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\R))
+          (upper-x-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\X))
+          (lower-o-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\o))
+          (lower-z-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\z))
+          (lower-r-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\r))
+          (colon-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\:))
+          (lower-f-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\f))
+          (upper-f-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\F))
+          (lower-t-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\t))
+          (upper-t-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\T))
+          (prev-paragraph-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\{))
+          (next-paragraph-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\}))
+          (jump-mark-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" "M-x"))
+          (control-b-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" "C-b"))
+          (control-v-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" "C-v"))
+          (control-up-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" "C-Up"))
+          (control-down-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" "C-Down"))
+          (enter-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" "Enter"))
+          (bspace-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" "BSpace"))
           (page-entry (cl-tmux/config:key-table-lookup "copy-mode-vi" "PageUp"))
           (text (cl-tmux/config:describe-key-bindings-for-table "copy-mode-vi")))
       (is (eq :copy-mode-cursor-down
               (cl-tmux/config:key-table-command j-entry))
           "copy-mode-vi j must move down")
+      (is (eq :copy-mode-exit
+              (cl-tmux/config:key-table-command q-entry))
+          "copy-mode-vi q must exit copy-mode")
+      (is (eq :copy-mode-clear-selection
+              (cl-tmux/config:key-table-command escape-entry))
+          "copy-mode-vi Escape must clear selection")
+      (is (eq :copy-mode-exit
+              (cl-tmux/config:key-table-command i-entry))
+          "copy-mode-vi i must exit copy-mode")
       (is (eq :copy-mode-cursor-left
               (cl-tmux/config:key-table-command h-entry))
           "copy-mode-vi h must move left")
       (is (eq :copy-mode-page-up
               (cl-tmux/config:key-table-command page-entry))
           "copy-mode-vi PageUp must page up")
+      (is (eq :copy-mode-next-matching-bracket
+              (cl-tmux/config:key-table-command percent-entry))
+          "copy-mode-vi % must jump to the next matching bracket")
+      (is (eq :copy-mode-jump-reverse
+              (cl-tmux/config:key-table-command comma-entry))
+          "copy-mode-vi , must reverse the last jump")
+      (is (eq :copy-mode-jump-again
+              (cl-tmux/config:key-table-command semicolon-entry))
+          "copy-mode-vi ; must repeat the last jump")
+      (is (eq :copy-mode-append-selection-and-cancel
+              (cl-tmux/config:key-table-command upper-a-entry))
+          "copy-mode-vi A must append selection and cancel")
+      (is (eq :copy-mode-copy-pipe-end-of-line-and-cancel
+              (cl-tmux/config:key-table-command upper-d-entry))
+          "copy-mode-vi D must copy-pipe to end of line and cancel")
+      (is (eq :copy-mode-scroll-down-line
+              (cl-tmux/config:key-table-command upper-j-entry))
+          "copy-mode-vi J must scroll down one line")
+      (is (eq :copy-mode-scroll-up-line
+              (cl-tmux/config:key-table-command upper-k-entry))
+          "copy-mode-vi K must scroll up one line")
+      (is (eq :copy-mode-other-end
+              (cl-tmux/config:key-table-command upper-p-entry))
+          "copy-mode-vi P must toggle position")
+      (is (eq :copy-mode-rectangle-toggle
+              (cl-tmux/config:key-table-command upper-r-entry))
+          "copy-mode-vi R must toggle rectangle selection")
+      (is (eq :copy-mode-set-mark
+              (cl-tmux/config:key-table-command upper-x-entry))
+          "copy-mode-vi X must set mark")
+      (is (eq :copy-mode-other-end
+              (cl-tmux/config:key-table-command lower-o-entry))
+          "copy-mode-vi o must move to the other selection end")
+      (is (eq :copy-mode-scroll-middle
+              (cl-tmux/config:key-table-command lower-z-entry))
+          "copy-mode-vi z must centre the cursor")
+      (is (eq :copy-mode-refresh-from-pane
+              (cl-tmux/config:key-table-command lower-r-entry))
+          "copy-mode-vi r must refresh from pane")
+      (is (eq :copy-mode-jump-forward
+              (cl-tmux/config:key-table-command lower-f-entry))
+          "copy-mode-vi f must jump forward")
+      (is (eq :copy-mode-jump-backward
+              (cl-tmux/config:key-table-command upper-f-entry))
+          "copy-mode-vi F must jump backward")
+      (is (eq :copy-mode-jump-to
+              (cl-tmux/config:key-table-command lower-t-entry))
+          "copy-mode-vi t must jump to a character")
+      (is (eq :copy-mode-jump-to-backward
+              (cl-tmux/config:key-table-command upper-t-entry))
+          "copy-mode-vi T must jump backward to a character")
+      (is (eq :copy-mode-goto-line
+              (cl-tmux/config:key-table-command colon-entry))
+          "copy-mode-vi : must open the goto-line prompt")
+      (is (eq :copy-mode-prev-paragraph
+              (cl-tmux/config:key-table-command prev-paragraph-entry))
+          "copy-mode-vi { must move to the previous paragraph")
+      (is (eq :copy-mode-next-paragraph
+              (cl-tmux/config:key-table-command next-paragraph-entry))
+          "copy-mode-vi } must move to the next paragraph")
+      (is (eq :copy-mode-jump-to-mark
+              (cl-tmux/config:key-table-command jump-mark-entry))
+          "copy-mode-vi M-x must jump to mark")
+      (is (eq :copy-mode-page-up
+              (cl-tmux/config:key-table-command control-b-entry))
+          "copy-mode-vi C-b must page up")
+      (is (eq :copy-mode-rectangle-toggle
+              (cl-tmux/config:key-table-command control-v-entry))
+          "copy-mode-vi C-v must toggle rectangle selection")
+      (is (eq :copy-mode-scroll-up-line
+              (cl-tmux/config:key-table-command control-up-entry))
+          "copy-mode-vi C-Up must scroll up one line")
+      (is (eq :copy-mode-scroll-down-line
+              (cl-tmux/config:key-table-command control-down-entry))
+          "copy-mode-vi C-Down must scroll down one line")
+      (is (eq :copy-mode-copy-pipe-and-cancel
+              (cl-tmux/config:key-table-command enter-entry))
+          "copy-mode-vi Enter must copy-pipe-and-cancel")
+      (is (eq :copy-mode-cursor-left
+              (cl-tmux/config:key-table-command bspace-entry))
+          "copy-mode-vi BSpace must move left")
       (is (search "bind-key -T copy-mode-vi j copy-mode-cursor-down" text)
           "list-keys must show copy-mode-vi j")
+      (is (search "bind-key -T copy-mode-vi Escape copy-mode-clear-selection"
+                  text)
+          "list-keys must show copy-mode-vi Escape")
+      (is (search "bind-key -T copy-mode-vi q copy-mode-exit" text)
+          "list-keys must show copy-mode-vi q")
+      (is (search "bind-key -T copy-mode-vi i copy-mode-exit" text)
+          "list-keys must show copy-mode-vi i")
+      (is (search "bind-key -T copy-mode-vi f copy-mode-jump-forward" text)
+          "list-keys must show copy-mode-vi f")
+      (is (search "bind-key -T copy-mode-vi F copy-mode-jump-backward" text)
+          "list-keys must show copy-mode-vi F")
+      (is (search "bind-key -T copy-mode-vi t copy-mode-jump-to" text)
+          "list-keys must show copy-mode-vi t")
+      (is (search "bind-key -T copy-mode-vi T copy-mode-jump-to-backward"
+                  text)
+          "list-keys must show copy-mode-vi T")
+      (is (search "bind-key -T copy-mode-vi r copy-mode-refresh-from-pane"
+                  text)
+          "list-keys must show copy-mode-vi r")
+      (is (search "bind-key -T copy-mode-vi : copy-mode-goto-line" text)
+          "list-keys must show copy-mode-vi :")
+      (is (search "bind-key -T copy-mode-vi % copy-mode-next-matching-bracket"
+                  text)
+          "list-keys must show copy-mode-vi %")
+      (is (search "bind-key -T copy-mode-vi A copy-mode-append-selection-and-cancel"
+                  text)
+          "list-keys must show copy-mode-vi A")
+      (is (search "bind-key -T copy-mode-vi M-x copy-mode-jump-to-mark" text)
+          "list-keys must show copy-mode-vi M-x")
+      (is (search "bind-key -T copy-mode-vi C-b copy-mode-page-up" text)
+          "list-keys must show copy-mode-vi C-b")
+      (is (search "bind-key -T copy-mode-vi C-Up copy-mode-scroll-up-line" text)
+          "list-keys must show copy-mode-vi C-Up")
+      (is (search "bind-key -T copy-mode-vi Enter copy-mode-copy-pipe-and-cancel"
+                  text)
+          "list-keys must show copy-mode-vi Enter")
       (is (search "bind-key -T copy-mode-vi PageUp copy-mode-page-up" text)
           "list-keys must show copy-mode-vi PageUp"))))
+
+(test default-copy-mode-emacs-control-bindings
+  "Default copy-mode emacs control keys match tmux movement, selection and search defaults."
+  (with-isolated-config
+    (dolist (row '(("C-Space" :copy-mode-begin-selection "C-Space begins selection")
+                   ("C-a" :copy-mode-line-start "C-a moves to line start")
+                   ("C-c" :copy-mode-exit "C-c exits copy-mode")
+                   ("C-e" :copy-mode-line-end "C-e moves to line end")
+                   ("C-f" :copy-mode-cursor-right "C-f moves right")
+                   ("C-b" :copy-mode-cursor-left "C-b moves left")
+                   ("C-g" :copy-mode-clear-selection "C-g clears selection")
+                   ("C-l" :copy-mode-cursor-centre-vertical
+                    "C-l centres the cursor vertically")
+                   ("C-k" :copy-mode-copy-pipe-end-of-line-and-cancel
+                    "C-k copy-pipes to end of line and cancels")
+                   ("C-n" :copy-mode-cursor-down "C-n moves down")
+                   ("C-p" :copy-mode-cursor-up "C-p moves up")
+                   ("C-r" :copy-mode-search-backward-incremental
+                    "C-r starts backward incremental search")
+                   ("C-s" :copy-mode-search-forward-incremental
+                    "C-s starts forward incremental search")
+                   ("C-v" :copy-mode-page-down "C-v pages down")
+                   ("C-w" :copy-mode-copy-pipe-and-cancel
+                    "C-w copy-pipes and cancels")))
+      (destructuring-bind (key expected message) row
+        (let ((entry (cl-tmux/config:key-table-lookup "copy-mode" key)))
+          (is (eq expected (cl-tmux/config:key-table-command entry))
+              "copy-mode ~A" message))))))
+
+(test default-copy-mode-emacs-printable-and-meta-bindings
+  "Default copy-mode emacs printable and meta keys expose tmux navigation defaults."
+  (with-isolated-config
+    (let ((text (cl-tmux/config:describe-key-bindings-for-table "copy-mode")))
+      (dolist (row `((#\Space :copy-mode-page-down "Space pages down")
+                     (#\, :copy-mode-jump-reverse ", reverses the last jump")
+                     (#\; :copy-mode-jump-again "; repeats the last jump")
+                     (#\N :copy-mode-search-prev "N repeats search backward")
+                     (#\P :copy-mode-other-end "P toggles position")
+                     (#\R :copy-mode-rectangle-toggle "R toggles rectangle")
+                     (#\X :copy-mode-set-mark "X sets mark")
+                     (#\n :copy-mode-search-next "n repeats search forward")
+                     (#\r :copy-mode-refresh-from-pane "r refreshes from pane")
+                     (#\f :copy-mode-jump-forward "f jumps forward")
+                     (#\F :copy-mode-jump-backward "F jumps backward")
+                     (#\t :copy-mode-jump-to "t jumps to a character")
+                     (#\T :copy-mode-jump-to-backward
+                      "T jumps backward to a character")
+                     (#\g :copy-mode-goto-line "g opens the goto-line prompt")
+                     ("M-f" :copy-mode-word-end "M-f moves to next word end")
+                     ("M-l" :copy-mode-cursor-centre-horizontal
+                      "M-l centres the cursor horizontally")
+                     ("M-x" :copy-mode-jump-to-mark "M-x jumps to mark")
+                     ("M-{" :copy-mode-prev-paragraph
+                      "M-{ moves to the previous paragraph")
+                     ("M-}" :copy-mode-next-paragraph
+                      "M-} moves to the next paragraph")))
+        (destructuring-bind (key expected message) row
+          (let ((entry (cl-tmux/config:key-table-lookup "copy-mode" key)))
+            (is (eq expected (cl-tmux/config:key-table-command entry))
+                "copy-mode ~A" message))))
+      (is (search "bind-key -T copy-mode C-Space copy-mode-begin-selection" text)
+          "list-keys must show copy-mode C-Space")
+      (is (search "bind-key -T copy-mode C-l copy-mode-cursor-centre-vertical" text)
+          "list-keys must show copy-mode C-l")
+      (is (search "bind-key -T copy-mode M-f copy-mode-word-end" text)
+          "list-keys must show copy-mode M-f")
+      (is (search "bind-key -T copy-mode M-l copy-mode-cursor-centre-horizontal"
+                  text)
+          "list-keys must show copy-mode M-l")
+      (is (search "bind-key -T copy-mode f copy-mode-jump-forward" text)
+          "list-keys must show copy-mode f")
+      (is (search "bind-key -T copy-mode F copy-mode-jump-backward" text)
+          "list-keys must show copy-mode F")
+      (is (search "bind-key -T copy-mode t copy-mode-jump-to" text)
+          "list-keys must show copy-mode t")
+      (is (search "bind-key -T copy-mode T copy-mode-jump-to-backward" text)
+          "list-keys must show copy-mode T")
+      (is (search "bind-key -T copy-mode g copy-mode-goto-line" text)
+          "list-keys must show copy-mode g")
+      (is (search "bind-key -T copy-mode M-x copy-mode-jump-to-mark" text)
+          "list-keys must show copy-mode M-x"))))
+
+(test default-copy-mode-emacs-q-exits
+  "Default copy-mode emacs q exits copy-mode and appears in list-keys output."
+  (with-isolated-config
+    (let ((escape-entry (cl-tmux/config:key-table-lookup "copy-mode" "Escape"))
+          (q-entry (cl-tmux/config:key-table-lookup "copy-mode" #\q))
+          (text (cl-tmux/config:describe-key-bindings-for-table "copy-mode")))
+      (is (eq :copy-mode-exit
+              (cl-tmux/config:key-table-command escape-entry))
+          "copy-mode Escape must exit copy-mode")
+      (is (eq :copy-mode-exit
+              (cl-tmux/config:key-table-command q-entry))
+          "copy-mode q must exit copy-mode")
+      (is (search "bind-key -T copy-mode Escape copy-mode-exit" text)
+          "list-keys must show copy-mode Escape")
+      (is (search "bind-key -T copy-mode q copy-mode-exit" text)
+          "list-keys must show copy-mode q"))))
+
+(test default-copy-mode-emacs-control-meta-bracket-bindings
+  "Default copy-mode emacs C-M-b/C-M-f jump between matching brackets."
+  (with-isolated-config
+    (let ((prev-entry (cl-tmux/config:key-table-lookup "copy-mode" "C-M-b"))
+          (next-entry (cl-tmux/config:key-table-lookup "copy-mode" "C-M-f"))
+          (text (cl-tmux/config:describe-key-bindings-for-table "copy-mode")))
+      (is (eq :copy-mode-previous-matching-bracket
+              (cl-tmux/config:key-table-command prev-entry))
+          "copy-mode C-M-b must jump to the previous matching bracket")
+      (is (eq :copy-mode-next-matching-bracket
+              (cl-tmux/config:key-table-command next-entry))
+          "copy-mode C-M-f must jump to the next matching bracket")
+      (is (search "bind-key -T copy-mode C-M-b copy-mode-previous-matching-bracket"
+                  text)
+          "list-keys must show copy-mode C-M-b")
+      (is (search "bind-key -T copy-mode C-M-f copy-mode-next-matching-bracket"
+                  text)
+          "list-keys must show copy-mode C-M-f"))))
+
+(test default-copy-mode-emacs-modifier-arrow-bindings
+  "Default copy-mode emacs C-Up/C-Down and M-Up/M-Down match tmux scrolling keys."
+  (with-isolated-config
+    (let ((c-up-entry (cl-tmux/config:key-table-lookup "copy-mode" "C-Up"))
+          (c-down-entry (cl-tmux/config:key-table-lookup "copy-mode" "C-Down"))
+          (m-up-entry (cl-tmux/config:key-table-lookup "copy-mode" "M-Up"))
+          (m-down-entry (cl-tmux/config:key-table-lookup "copy-mode" "M-Down"))
+          (text (cl-tmux/config:describe-key-bindings-for-table "copy-mode")))
+      (is (eq :copy-mode-scroll-up-line
+              (cl-tmux/config:key-table-command c-up-entry))
+          "copy-mode C-Up must scroll up one line")
+      (is (eq :copy-mode-scroll-down-line
+              (cl-tmux/config:key-table-command c-down-entry))
+          "copy-mode C-Down must scroll down one line")
+      (is (eq :copy-mode-half-page-up
+              (cl-tmux/config:key-table-command m-up-entry))
+          "copy-mode M-Up must half-page up")
+      (is (eq :copy-mode-half-page-down
+              (cl-tmux/config:key-table-command m-down-entry))
+          "copy-mode M-Down must half-page down")
+      (is (search "bind-key -T copy-mode C-Up copy-mode-scroll-up-line" text)
+          "list-keys must show copy-mode C-Up")
+      (is (search "bind-key -T copy-mode M-Down copy-mode-half-page-down" text)
+          "list-keys must show copy-mode M-Down"))))
 
 (test describe-key-bindings-for-key-filters-by-key-label
   "describe-key-bindings-for-key returns only bindings whose key label matches."

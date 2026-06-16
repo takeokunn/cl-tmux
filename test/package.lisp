@@ -84,6 +84,7 @@
                 #:respawn-pane
                 ;; New pane slots
                 #:pane-pipe-fd
+                #:pane-pipe-process
                 #:pane-window
                 #:pane-marked
                 #:pane-title
@@ -165,6 +166,8 @@
                 #:prompt-start
                 #:prompt-input
                 #:prompt-backspace
+                #:prompt-history-prev
+                #:prompt-history-next
                 #:prompt-clear
                 #:prompt-text
                 #:*overlay*

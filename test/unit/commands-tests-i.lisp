@@ -174,22 +174,20 @@
 
 ;;; ── Jump-to-char (vi f/F/t/T/;/,) ──────────────────────────────────────────
 
-(defun %jump-screen (&optional (content "hello world"))
-  "Return a copy-mode screen with CONTENT on row 0 and cursor at col 0."
-  (let ((s (%copy-mode-screen :w 20 :h 3 :content content)))
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
-    s))
-
 (test copy-mode-jump-forward-finds-char
   "jump-forward moves cursor to the next occurrence of the target char on the line."
-  (let ((s (%jump-screen "hello world")))
+  (let ((s (copy-mode-screen :w 20 :h 3
+                             :content "hello world"
+                             :cursor (cons 0 0))))
     (cl-tmux/commands::copy-mode-jump-forward s #\l)
     (is (= 2 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
         "jump-forward 'l' from col 0 must land on col 2 (first 'l')")))
 
 (test copy-mode-jump-forward-no-match-stays-put
   "jump-forward does not move the cursor when the char is not found ahead."
-  (let ((s (%jump-screen "hello world")))
+  (let ((s (copy-mode-screen :w 20 :h 3
+                             :content "hello world"
+                             :cursor (cons 0 0))))
     (setf (cdr (cl-tmux/terminal/types:screen-copy-cursor s)) 10) ; col 10 = 'd'
     (cl-tmux/commands::copy-mode-jump-forward s #\z)
     (is (= 10 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
@@ -197,7 +195,9 @@
 
 (test copy-mode-jump-backward-finds-char
   "jump-backward moves cursor to the previous occurrence of the target char."
-  (let ((s (%jump-screen "hello world")))
+  (let ((s (copy-mode-screen :w 20 :h 3
+                             :content "hello world"
+                             :cursor (cons 0 0))))
     (setf (cdr (cl-tmux/terminal/types:screen-copy-cursor s)) 10) ; start near end
     (cl-tmux/commands::copy-mode-jump-backward s #\l)
     (is (= 9 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
@@ -205,14 +205,18 @@
 
 (test copy-mode-jump-to-stops-before-char
   "jump-to (vi t) lands one column BEFORE the target char (till)."
-  (let ((s (%jump-screen "hello world")))
+  (let ((s (copy-mode-screen :w 20 :h 3
+                             :content "hello world"
+                             :cursor (cons 0 0))))
     (cl-tmux/commands::copy-mode-jump-to s #\l)
     (is (= 1 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
         "jump-to 'l' from col 0 must land on col 1 (one before col 2)")))
 
 (test copy-mode-jump-again-repeats-last
   "jump-again (vi ;) repeats the last jump-forward."
-  (let ((s (%jump-screen "hello world")))
+  (let ((s (copy-mode-screen :w 20 :h 3
+                             :content "hello world"
+                             :cursor (cons 0 0))))
     (cl-tmux/commands::copy-mode-jump-forward s #\l)   ; lands col 2
     (cl-tmux/commands::copy-mode-jump-again s)         ; next 'l'
     (is (= 3 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
@@ -220,7 +224,9 @@
 
 (test copy-mode-jump-reverse-reverses-forward
   "jump-reverse (vi ,) performs the jump in the opposite direction."
-  (let ((s (%jump-screen "hello world")))
+  (let ((s (copy-mode-screen :w 20 :h 3
+                             :content "hello world"
+                             :cursor (cons 0 0))))
     (cl-tmux/commands::copy-mode-jump-forward s #\l)   ; lands col 2
     (cl-tmux/commands::copy-mode-jump-again  s)        ; lands col 3
     (cl-tmux/commands::copy-mode-jump-reverse s)       ; back to col 2
@@ -453,5 +459,40 @@
     (setf (screen-copy-mode-p s) nil
           (screen-copy-cursor  s) (cons 0 3))
     (cl-tmux/commands::copy-mode-next-matching-bracket s)
+    (is (equal (cons 0 3) (screen-copy-cursor s))
+        "cursor must remain at (0,3) when not in copy mode")))
+
+(test copy-mode-previous-matching-bracket-on-close
+  "Cursor on ')' jumps backward to its matching '('."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-mode-p s) t)
+    (dotimes (i 7)
+      (setf (cl-tmux/terminal/types:screen-cell s i 2)
+            (cl-tmux/terminal/types:make-cell :char (char "( foo )" i))))
+    (setf (screen-copy-cursor s) (cons 2 6)
+          (screen-copy-offset  s) 0)
+    (cl-tmux/commands::copy-mode-previous-matching-bracket s)
+    (is (= 0 (cdr (screen-copy-cursor s)))
+        "cursor must land on the matching '(' at column 0")))
+
+(test copy-mode-previous-matching-bracket-finds-previous-close
+  "Cursor after a matched pair finds the previous ')' and jumps to its matching '('."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-mode-p s) t)
+    (dotimes (i 12)
+      (setf (cl-tmux/terminal/types:screen-cell s i 2)
+            (cl-tmux/terminal/types:make-cell :char (char "( foo ) tail" i))))
+    (setf (screen-copy-cursor s) (cons 2 8)
+          (screen-copy-offset  s) 0)
+    (cl-tmux/commands::copy-mode-previous-matching-bracket s)
+    (is (= 0 (cdr (screen-copy-cursor s)))
+        "cursor must land on the opener that matches the previous close bracket")))
+
+(test copy-mode-previous-matching-bracket-noop-outside-copy-mode
+  "Previous bracket matching is a no-op when not in copy mode."
+  (let ((s (make-screen 20 5)))
+    (setf (screen-copy-mode-p s) nil
+          (screen-copy-cursor  s) (cons 0 3))
+    (cl-tmux/commands::copy-mode-previous-matching-bracket s)
     (is (equal (cons 0 3) (screen-copy-cursor s))
         "cursor must remain at (0,3) when not in copy mode")))

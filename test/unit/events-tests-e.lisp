@@ -223,7 +223,7 @@
 (test mouse-drag-state-is-set-on-border-press
   "*mouse-drag-state* is non-NIL after a left-press on the separator column."
   (with-two-pane-mouse-session (sess win p0 p1)
-    (declare (ignore p1))
+    (is (not (eq p0 p1)) "precondition: fixture must create two distinct panes")
     ;; Simulate a left-press on the separator column (col 40).
     (cl-tmux::%dispatch-mouse-event sess 0 40 5 nil)
     ;; Whether the state has 2 or 4 elements depends on the implementation;
@@ -286,6 +286,19 @@
       (is (equal (cons 1 1) (cl-tmux/terminal:screen-copy-cursor screen))
           "h must move the copy cursor left"))))
 
+(test copy-mode-vi-percent-jumps-to-next-matching-bracket
+  "The default copy-mode-vi % binding jumps to the next matching bracket."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "vi")
+    (with-copy-mode-state (s screen state)
+      (dotimes (i 7)
+        (setf (cl-tmux/terminal/types:screen-cell screen i 0)
+              (cl-tmux/terminal/types:make-cell :char (char "(a(b)c)" i))))
+      (setf (cl-tmux/terminal:screen-copy-cursor screen) (cons 0 0))
+      (cl-tmux::process-byte s (char-code #\%) state)
+      (is (equal (cons 0 6) (cl-tmux/terminal:screen-copy-cursor screen))
+          "% must jump to the matching closing bracket"))))
+
 (test copy-mode-vi-pageup-uses-copy-mode-key-table
   "In vi mode, CSI PageUp uses the copy-mode-vi table before the scroll fallback."
   (with-isolated-config
@@ -296,6 +309,49 @@
         (cl-tmux::process-byte s byte state))
       (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
                 "copy-mode-vi PageUp binding must fire"))))
+
+(test copy-mode-vi-control-b-uses-copy-mode-table-before-prefix
+  "In vi mode, a legacy C-b byte runs copy-mode-vi C-b instead of arming prefix."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "vi")
+    (with-copy-mode-state (s screen state)
+      (seed-scrollback screen 30)
+      (is (zerop (screen-copy-offset screen)) "precondition: copy view starts live")
+      (cl-tmux::process-byte s 2 state)
+      (is (= (min (screen-height screen) 30)
+             (screen-copy-offset screen))
+          "C-b must dispatch copy-mode-vi page-up, not the prefix key"))))
+
+(test copy-mode-vi-control-v-uses-named-control-binding
+  "Legacy Ctrl bytes are resolved through copy-mode-vi C-* bindings."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "vi")
+    (cl-tmux/config:key-table-bind "copy-mode-vi" "C-v" :copy-mode-exit)
+    (with-copy-mode-state (s screen state)
+      (cl-tmux::process-byte s 22 state)
+      (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
+                "C-v must dispatch the named copy-mode-vi binding"))))
+
+(test copy-mode-vi-enter-uses-named-special-binding
+  "Single-byte Enter is resolved through the copy-mode-vi Enter binding."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "vi")
+    (cl-tmux/config:key-table-bind "copy-mode-vi" "Enter" :copy-mode-exit)
+    (with-copy-mode-state (s screen state)
+      (cl-tmux::process-byte s 13 state)
+      (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
+                "Enter must dispatch the named copy-mode-vi binding"))))
+
+(test copy-mode-vi-control-up-uses-copy-mode-table
+  "Modifier arrow sequences in vi copy mode resolve through copy-mode-vi."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "vi")
+    (cl-tmux/config:key-table-bind "copy-mode-vi" "C-Up" :copy-mode-exit)
+    (with-copy-mode-state (s screen state)
+      (dolist (b '(27 91 49 59 53 65)) ; ESC [ 1 ; 5 A
+        (cl-tmux::process-byte s b state))
+      (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
+                "C-Up must dispatch the named copy-mode-vi binding"))))
 
 (test copy-mode-pagedown-uses-emacs-copy-mode-key-table
   "In emacs mode, CSI PageDown uses the copy-mode table."
@@ -335,6 +391,18 @@
           "emacs mode must not dispatch the copy-mode-vi Meta binding")
       (is (cl-tmux/terminal:screen-copy-selecting screen)
           "emacs mode must dispatch the copy-mode Meta binding"))))
+
+(test copy-mode-legacy-control-meta-key-uses-copy-mode-table
+  "In emacs mode, legacy ESC+Ctrl bytes use the copy-mode table as C-M-* keys."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "emacs")
+    (cl-tmux/config:key-table-bind "copy-mode-vi" "C-M-b" :copy-mode-page-up)
+    (cl-tmux/config:key-table-bind "copy-mode" "C-M-b" :copy-mode-exit)
+    (with-copy-mode-state (s screen state)
+      (cl-tmux::process-byte s 27 state)
+      (cl-tmux::process-byte s 2 state)
+      (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
+                "legacy ESC ^B must dispatch copy-mode C-M-b"))))
 
 ;;; ── Extended keys (CSI u) key-name parsing ───────────────────────────────────
 
@@ -467,6 +535,18 @@
           (cl-tmux::process-byte s b state))
         (is (eq (second (session-windows s)) (session-active-window s))
             "bound -n S-Tab must run next-window via single-digit CSI-u")))))
+
+(test copy-mode-csi-u-control-meta-key-uses-copy-mode-table
+  "In emacs mode, CSI-u Ctrl+Meta keys use the copy-mode table as C-M-* keys."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "emacs")
+    (cl-tmux/config:key-table-bind "copy-mode-vi" "C-M-b" :copy-mode-page-up)
+    (cl-tmux/config:key-table-bind "copy-mode" "C-M-b" :copy-mode-exit)
+    (with-copy-mode-state (s screen state)
+      (dolist (b '(27 91 57 56 59 55 117)) ; ESC [ 98 ; 7 u
+        (cl-tmux::process-byte s b state))
+      (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
+                "CSI-u C-M-b must dispatch copy-mode C-M-b"))))
 
 (test csi-u-plain-printable-forwards-to-pane
   "An unbound plain extended-key (ESC [ 97 u) is translated to its legacy byte 'a'

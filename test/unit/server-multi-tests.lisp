@@ -157,6 +157,31 @@
       (is (= 1 (cl-tmux/model:window-id (session-active-window s)))
           "forwarded `select-window -t 1` must select window-id 1 via the args"))))
 
+(test multi-handle-forwarded-new-session-creates-session
+  "A forwarded `new-session -d` command must run in the server process and add
+   the new detached session to *server-sessions*."
+  (with-isolated-hooks
+    (with-fake-session (s)
+      (let ((cl-tmux::*server-sessions* (list (cons "0" s)))
+            (created nil))
+        (unwind-protect
+             (let ((payload (cl-tmux/protocol::encode-command-payload
+                             :new-session :args '("-d" "-s" "beta" "-n" "two"))))
+               (cl-tmux::%handle-multi-client-message
+                cl-tmux::+msg-command+ payload s (%make-test-conn))
+               (setf created (cl-tmux::server-find-session "beta"))
+               (is (not (null created))
+                   "forwarded detached new-session must register beta")
+               (when created
+                 (is (string= "two"
+                              (cl-tmux::window-name
+                               (cl-tmux::session-active-window created)))
+                     "forwarded -n sets the initial window name")))
+          (dolist (pane (and created (cl-tmux::all-panes created)))
+            (ignore-errors (cl-tmux/pty:pty-close
+                            (cl-tmux::pane-fd pane)
+                            (cl-tmux::pane-pid pane)))))))))
+
 (test multi-handle-forwarded-kill-server-quits-loop
   "A forwarded kill-server command must propagate :quit to the multi-client loop."
   (with-fake-session (s)

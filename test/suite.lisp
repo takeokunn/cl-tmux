@@ -14,7 +14,7 @@
     overlay-suite prompt-suite protocol-suite transport-suite
     net-suite server-suite server-multi-suite pty-ffi-suite pty-rawmode-suite
     pty-suite input-suite runtime-suite client-suite
-    main-suite advanced-suite)
+    main-suite advanced-suite compat-suite)
   "Every per-area suite, run in this order by RUN-TESTS.")
 
 (defun run-tests ()
@@ -22,15 +22,12 @@
 results, explain them together, and signal an error (non-zero exit under Nix)
 on any failure.
 
-Sequential execution is REQUIRED — not a performance choice.  Many integration
-suites fork a PTY via sb-posix:fork, which SBCL refuses with \"Cannot fork with
-multiple threads running\" whenever ANY other thread is alive.  A prior version
-ran the suites across eight bordeaux-threads workers for speed; that left eight
-threads alive and made every forkpty in the MODEL / PTY / SERVER / DISPATCH
-suites fail (28 errors) or skip (21).  STOP-CL-TMUX-THREADS is called after each
-suite to join any PTY-reader / status-timer thread a test spawned (e.g. via
-new-session or a dispatched :split), so the next suite again starts
-single-threaded."
+Sequential execution is REQUIRED — not a performance choice.  Integration suites
+share global session, runtime, socket, and PTY state; running them concurrently
+leaves reader/status/background threads from one suite visible to another.
+STOP-CL-TMUX-THREADS is called after each suite to join any PTY-reader /
+status-timer thread a test spawned (e.g. via new-session or a dispatched
+:split), keeping the next suite deterministic."
   (let ((all-results '()))
     (dolist (suite *all-suites*)
       (setf all-results (append all-results (run suite)))

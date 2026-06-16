@@ -120,8 +120,8 @@
    (format nil "~CP!|00000000~C\\" #\Escape #\Escape)
    "Push Tertiary Device Attributes (DCS P!|00000000 ST) onto SCREEN's response queue.")
   (enqueue-xtversion-reply
-   (format nil "~CP>|tmux 3.5~C\\" #\Escape #\Escape)
-   "Push XTVERSION reply (DCS>|tmux 3.5 ST) onto SCREEN's response queue."))
+   (format nil "~CP>|cl-tmux ~A~C\\" #\Escape (cl-tmux/version:version-string) #\Escape)
+   "Push XTVERSION reply (DCS>|cl-tmux VERSION ST) onto SCREEN's response queue."))
 
 (defun enqueue-cpr-reply (screen)
   "Push a Cursor Position Report (ESC [ row ; col R, 1-based) onto SCREEN's
@@ -372,7 +372,7 @@
        (setf (screen-title screen) (car stack)
              (screen-title-stack screen) (cdr stack)))))
 
-  ;; XTVERSION — query terminal name/version (CSI > q): reply ESC P > | tmux 3.5 ST
+  ;; XTVERSION — query terminal name/version (CSI > q)
   ((and (eql private #\>) (char= final #\q))
    (enqueue-xtversion-reply screen))
 

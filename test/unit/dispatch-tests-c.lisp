@@ -225,10 +225,8 @@
   (with-fake-session (s :nwindows 2)
     (let ((*overlay* nil))
       (cl-tmux::dispatch-command s :list-windows nil)
-      (is (overlay-active-p) "overlay must be open")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "1" text)
-            "overlay must contain the first window entry")))))
+      (assert-overlay-contains "1" *overlay*
+                               "list-windows"))))
 
 ;;; ── :list-sessions dispatch ──────────────────────────────────────────────────
 
@@ -239,11 +237,8 @@
     (let ((*overlay* nil)
           (cl-tmux::*server-sessions* nil))
       (cl-tmux::dispatch-command s :list-sessions nil)
-      (is (overlay-active-p)
-          ":list-sessions must open an overlay even when *server-sessions* is nil")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search (session-name s) text)
-            "fallback overlay must contain the session name")))))
+      (assert-overlay-contains (session-name s) *overlay*
+                               ":list-sessions fallback"))))
 
 (test dispatch-list-sessions-populated-registry-shows-all-sessions
   ":list-sessions with *server-sessions* populated lists every registered
@@ -253,13 +248,10 @@
       (let ((*overlay* nil)
             (cl-tmux::*server-sessions* (list (cons name s))))
         (cl-tmux::dispatch-command s :list-sessions nil)
-        (is (overlay-active-p)
-            ":list-sessions must open an overlay")
-        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-          (is (search name text)
-              "overlay must contain the session name")
-          (is (search "*" text)
-              "current session must be marked with an asterisk"))))))
+        (assert-overlay-contains name *overlay*
+                                 ":list-sessions")
+        (assert-overlay-contains "*" *overlay*
+                                 ":list-sessions")))))
 
 ;;; ── :display-panes dispatch ──────────────────────────────────────────────────
 
@@ -285,3 +277,35 @@
       (cl-tmux::dispatch-command sess :display-panes nil)
       (is-true cl-tmux::*dirty*
                ":display-panes must mark *dirty*"))))
+
+(test run-command-line-display-panes-arms-overlay
+  "%run-command-line display-panes accepts -d and arms pane numbers."
+  (with-fake-session (sess :nwindows 1 :npanes 1)
+    (let ((*overlay* nil)
+          (cl-tmux/prompt:*display-panes-active* nil)
+          (saved (cl-tmux/options:get-option "display-panes-time" 1000)))
+      (unwind-protect
+           (progn
+             (cl-tmux/options:set-option "display-panes-time" 1000)
+             (cl-tmux::%run-command-line sess "display-panes -d 125")
+             (is (overlay-active-p)
+                 "display-panes command must open the timing overlay")
+             (is-true cl-tmux/prompt:*display-panes-active*
+                      "display-panes command must arm pane-number rendering")
+             (is (= 1000 (cl-tmux/options:get-option "display-panes-time"))
+                 "-d duration must be restored after arming the overlay"))
+        (cl-tmux/options:set-option "display-panes-time" saved)))))
+
+(test run-command-line-display-panes-rejects-ignored-compat-args
+  "display-panes rejects tmux-compatible arguments that cl-tmux does not implement."
+  (with-fake-session (sess :nwindows 1 :npanes 1)
+    (let ((*overlay* nil)
+          (cl-tmux/prompt:*display-panes-active* nil))
+      (is (null (cl-tmux::%cmd-display-panes-arg sess '("-b")))
+          "ignored -b must not be accepted")
+      (is (not cl-tmux/prompt:*display-panes-active*)
+          "rejecting -b must not arm pane-number rendering")
+      (is (null (cl-tmux::%cmd-display-panes-arg sess '("-t" "client0")))
+          "ignored -t target-client must not be accepted")
+      (is (null (cl-tmux::%cmd-display-panes-arg sess '("template")))
+          "ignored template positionals must not be accepted"))))

@@ -10,7 +10,20 @@
 ;;;; this file).
 ;;;;
 ;;;; Load order: renderer-format → renderer-style → renderer-pane
-;;;;             → renderer-overlay → renderer-statusbar → renderer-compose
+;;;;             → renderer-overlay → renderer-statusbar
+;;;;             → renderer-compose-protocols → renderer-compose-overlay
+;;;;             → renderer-compose-effects → renderer-compose
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (let* ((source (or *load-truename* *compile-file-truename*))
+         (base (and source
+                    (make-pathname :name nil :type nil :defaults source))))
+    (dolist (name '("renderer-compose-protocols.lisp"
+                    "renderer-compose-overlay.lisp"
+                    "renderer-compose-effects.lisp"))
+      (let ((path (and base (merge-pathnames name base))))
+        (when (and path (probe-file path))
+          (load path))))))
 
 ;;; ── Lock-screen overlay ─────────────────────────────────────────────────────
 
@@ -33,73 +46,6 @@
     (write-string (subseq msg 0 mlen) stream))
   (reset-attrs stream))
 
-;;; ── Overlay (list-keys help) ────────────────────────────────────────────────
-
-(defun render-overlay (stream cols)
-  "Draw the active overlay's lines over the top rows of the screen.
-   Applies the message-style option (or message-command-style when a prompt is
-   active) so overlays respect the user's colour scheme."
-  (let* ((style-opt (if (prompt-active-p)
-                        (cl-tmux/options:get-option "message-command-style" "")
-                        (cl-tmux/options:get-option "message-style" "")))
-         (sgr-code  (when (and style-opt (plusp (length style-opt)))
-                      (%status-sgr-from-style style-opt))))
-    (if sgr-code
-        (%emit-sgr stream sgr-code)
-        (reset-attrs stream)))
-  (loop for line in (overlay-lines)
-        for row from 0
-        do (move-to stream row 0)
-           (write-string (subseq line 0 (min (length line) cols)) stream)))
-
-;;; ── Mouse-mode DEC private mode dispatch table ──────────────────────────────
-;;;
-;;; define-mouse-mode-sequence maps a screen-mouse-mode integer to the
-;;; DEC private mode number to enable:
-;;;   mouse_mode(1) → ?1000h  (X10: press only)
-;;;   mouse_mode(2) → ?1002h  (button-event: press + release + held motion)
-;;;   mouse_mode(3) → ?1003h  (any-event: all mouse motion, and default fallback)
-;;;
-;;; Pattern matches define-csi-rules style: one declarative rule per mode.
-
-(defmacro define-mouse-mode-sequence (&rest rules)
-  "Build %MOUSE-MODE-DEC-NUMBER from a declarative (mode-integer dec-mode-number) table.
-   The last entry's dec-mode-number is the default for any unmatched mode > 0."
-  (let ((default-dec (second (car (last rules))))
-        (explicit-rules (butlast rules)))
-    `(defun %mouse-mode-dec-number (mode-integer)
-       "Return the DEC private mode number for the given SCREEN-MOUSE-MODE integer."
-       (cond
-         ,@(mapcar (lambda (rule)
-                     (destructuring-bind (mode-val dec-num) rule
-                       `((= mode-integer ,mode-val) ,dec-num)))
-                   explicit-rules)
-         (t ,default-dec)))))
-
-(define-mouse-mode-sequence
-  (1 1000)   ; X10 basic mouse tracking (press only)
-  (2 1002)   ; button-event tracking (press + release + motion while held)
-  (3 1003))  ; any-event tracking (all motion) — also default fallback
-
-(defun %render-mouse-sequences (stream active-pane)
-  "Emit mouse-tracking mode sequences according to session and pane settings.
-   When the session 'mouse' option is enabled, emit SGR + button-event sequences.
-   Otherwise honour ACTIVE-PANE's screen-mouse-mode (X10/button-event/any-event)."
-  (let ((session-mouse (cl-tmux/options:get-option "mouse")))
-    (if session-mouse
-        (progn
-          (format stream "~C[?1006h" +esc+)
-          (format stream "~C[?1002h" +esc+))
-        (when active-pane
-          (let* ((screen     (pane-screen active-pane))
-                 (mouse-mode (screen-mouse-mode screen))
-                 (sgr-mode   (screen-mouse-sgr-mode screen)))
-            (when (> mouse-mode 0)
-              (format stream "~C[?~Dh" +esc+ (%mouse-mode-dec-number mouse-mode))
-              (when sgr-mode (format stream "~C[?1006h" +esc+))))))))
-
-;;; ── Full-session render ────────────────────────────────────────────────────
-
 (defun %render-panes-and-borders (buffer window panes active-pane terminal-cols)
   "Render all panes and split-tree borders for WINDOW into BUFFER.
    Snapshots zoom state under the window lock to avoid a race with
@@ -112,85 +58,6 @@
     (dolist (pane panes) (render-pane buffer pane))
     (when (and tree (not zoomed))
       (render-tree-borders buffer tree active-pane terminal-cols))))
-
-(defun %render-overlay-layer (buffer active-pane terminal-rows terminal-cols)
-  "Render the active overlay layer (popup > menu > overlay > cursor) into BUFFER."
-  (cond
-    (*active-popup*
-     (render-popup buffer *active-popup* terminal-rows terminal-cols))
-    (*active-menu*
-     (render-menu buffer *active-menu* terminal-rows terminal-cols))
-    ((overlay-active-p)
-     (render-overlay buffer terminal-cols))
-    (t
-     (when active-pane
-       (let ((screen (pane-screen active-pane)))
-         (with-lock-held ((screen-lock screen))
-           (move-to buffer
-                    (+ (pane-y active-pane) (screen-cursor-y screen))
-                    (+ (pane-x active-pane) (screen-cursor-x screen)))))))))
-
-(defun %emit-bell (buffer visual-bell)
-  "Write one BEL event to BUFFER: reverse-video flash when VISUAL-BELL is set,
-   otherwise the BEL character (ASCII 7).  Fires the alert-bell hook in both cases."
-  (if visual-bell
-      (format buffer "~C[7m~C[0m" +esc+ +esc+)
-      (write-char (code-char 7) buffer))
-  (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-bell+))
-
-(defun %render-bell-and-cursor (buffer active-pane)
-  "Emit a pending BEL from ACTIVE-PANE (if any) and restore cursor visibility.
-   bell-action 'none' swallows all BELs; 'other' skips the active pane (handled
-   by %render-background-bells instead); 'any'/'current' relay the active pane bell."
-  (when active-pane
-    (let* ((bell-pending (screen-consume-bell (pane-screen active-pane)))
-           (bell-action  (or (cl-tmux/options:get-option "bell-action") "any"))
-           (visual-bell  (cl-tmux/options:get-option "visual-bell"))
-           (relay-bell   (and bell-pending
-                              (not (member bell-action '("none" "other") :test #'string=)))))
-      (when relay-bell (%emit-bell buffer visual-bell))))
-  (when (or (null active-pane)
-            (screen-cursor-visible (pane-screen active-pane)))
-    (cursor-visible buffer)
-    (when active-pane
-      (set-cursor-shape buffer (screen-cursor-shape (pane-screen active-pane))))))
-
-(defun %render-background-bells (buffer session active-window)
-  "Drain and relay BEL characters from all non-active windows.
-   bell-action 'any': relay bells from every non-active window pane.
-   bell-action 'other': same (non-active is by definition 'other').
-   bell-action 'current'/'none': no relay from background windows."
-  (let* ((bell-action  (or (cl-tmux/options:get-option "bell-action") "any"))
-         (visual-bell  (cl-tmux/options:get-option "visual-bell"))
-         (relay-p      (member bell-action '("any" "other") :test #'string=)))
-    (when relay-p
-      (dolist (win (session-windows session))
-        (unless (eq win active-window)
-          (dolist (pane (window-panes win))
-            (when (and (pane-screen pane)
-                       (screen-consume-bell (pane-screen pane)))
-              (%emit-bell buffer visual-bell))))))))
-
-(defmacro %drain-screen-queue (queue-accessor option default allowed)
-  `(let* ((mode (or (cl-tmux/options:get-option ,option ,default) ,default))
-          (emit (member mode ',allowed :test #'string=)))
-     (dolist (pane panes)
-       (let ((screen (pane-screen pane)))
-         (when screen
-           (with-lock-held ((screen-lock screen))
-             (let ((queued (nreverse (,queue-accessor screen))))
-               (setf (,queue-accessor screen) nil)
-               (when emit
-                 (dolist (seq queued)
-                   (write-string seq buffer))))))))))
-
-(defun %render-passthrough (buffer panes)
-  "Drain each pane's passthrough-queue into BUFFER; gated on allow-passthrough option."
-  (%drain-screen-queue screen-passthrough-queue "allow-passthrough" "off" ("on" "all")))
-
-(defun %render-clipboard (buffer panes)
-  "Drain each pane's clipboard-queue into BUFFER (OSC 52); gated on set-clipboard option."
-  (%drain-screen-queue screen-clipboard-queue "set-clipboard" "on" ("on" "external")))
 
 (defun render-session-to-string (session terminal-rows terminal-cols)
   "Compose a full frame for SESSION as an escape-sequence string.
@@ -253,94 +120,4 @@
 (defun render-session (session terminal-rows terminal-cols)
   "Repaint all panes and the status bar; flush to *standard-output* in one write."
   (write-string (render-session-to-string session terminal-rows terminal-cols))
-  (force-output))
-
-(defun clear-display ()
-  "Erase the entire terminal and move cursor home."
-  (format t "~C[2J~C[H" +esc+ +esc+)
-  (force-output))
-
-;;; ── Mouse reporting control ────────────────────────────────────────────────
-;;;
-;;; enable-mouse-reporting emits the three DEC private mode sequences that
-;;; instruct the outer terminal to send mouse events to cl-tmux's stdin:
-;;;   ?1000h — X10 basic mouse tracking (press only)
-;;;   ?1002h — button-event tracking (press + release + motion with button held)
-;;;   ?1006h — SGR extended coordinate encoding (supports terminals > 223 cols)
-;;;
-;;; disable-mouse-reporting reverses all three with the corresponding ?Nh → ?Nl.
-;;;
-;;; Call enable-mouse-reporting once at startup when (get-option "mouse") is
-;;; true.  The render pipeline also re-emits these sequences on each repaint
-;;; via %render-mouse-sequences, so these helpers are primarily for explicit
-;;; startup/shutdown use.
-
-(defun enable-mouse-reporting ()
-  "Emit DEC private mode sequences to enable mouse reporting on the outer terminal.
-   Enables X10 tracking (?1000h), button-event tracking (?1002h), and SGR
-   extended encoding (?1006h).  Flushes stdout immediately."
-  (format t "~C[?1000h~C[?1002h~C[?1006h" +esc+ +esc+ +esc+)
-  (force-output))
-
-(defun disable-mouse-reporting ()
-  "Emit DEC private mode sequences to disable mouse reporting on the outer terminal.
-   Disables SGR encoding (?1006l), button-event tracking (?1002l), and X10
-   tracking (?1000l).  Flushes stdout immediately."
-  (format t "~C[?1006l~C[?1002l~C[?1000l" +esc+ +esc+ +esc+)
-  (force-output))
-
-;;; ── Extended-keys (CSI u / fixterms) reporting control ──────────────────────
-;;;
-;;; enable-extended-keys emits the xterm modifyOtherKeys sequence CSI > 4 ; N m,
-;;; asking the outer terminal to report modified keys as CSI-u sequences
-;;; (ESC [ <codepoint> ; <mod> u) rather than collapsing them to a single byte —
-;;; the input side of which is decoded by %handle-escape-csi-u:
-;;;   N=1 — only keys that would otherwise be ambiguous (extended-keys "on")
-;;;   N=2 — every key reported as CSI-u, incl. plain letters (extended-keys "always")
-;;; disable-extended-keys resets the terminal with CSI > 4 ; 0 m.  This mirrors
-;;; enable/disable-mouse-reporting: call once at startup (gated on the option) and
-;;; once at shutdown.
-
-(defun extended-keys-level (option-value)
-  "Map the `extended-keys` option value to the modifyOtherKeys level: \"on\" → 1,
-   \"always\" → 2, anything else (\"off\", NIL) → NIL (reporting stays off)."
-  (cond
-    ((null option-value) nil)
-    ((string-equal option-value "on")     1)
-    ((string-equal option-value "always") 2)
-    (t nil)))
-
-(defun enable-extended-keys (option-value)
-  "Emit CSI > 4 ; N m to enable extended (CSI-u) key reporting on the outer terminal
-   when OPTION-VALUE (the `extended-keys` option) is \"on\" (level 1) or \"always\"
-   (level 2).  Returns the level emitted, or NIL when reporting stayed off.  Flushes
-   stdout immediately."
-  (let ((level (extended-keys-level option-value)))
-    (when level
-      (format t "~C[>4;~Dm" +esc+ level)
-      (force-output))
-    level))
-
-(defun disable-extended-keys ()
-  "Emit CSI > 4 ; 0 m to reset extended-keys reporting on the outer terminal.
-   Flushes stdout immediately."
-  (format t "~C[>4;0m" +esc+)
-  (force-output))
-
-;;; ── Focus event reporting (?1004) ───────────────────────────────────────────
-;;;
-;;; enable-focus-reporting asks the outer terminal to report focus in/out as
-;;; ESC [ I / ESC [ O (DEC private mode ?1004), so cl-tmux learns when its window
-;;; gains or loses focus and can forward that to the active pane's application
-;;; (via %notify-pane-focus).  Mirrors enable/disable-mouse-reporting: call once at
-;;; startup when the focus-events option is on, and once at shutdown.
-
-(defun enable-focus-reporting ()
-  "Emit ?1004h to enable focus-event reporting on the outer terminal.  Flushes."
-  (format t "~C[?1004h" +esc+)
-  (force-output))
-
-(defun disable-focus-reporting ()
-  "Emit ?1004l to disable focus-event reporting on the outer terminal.  Flushes."
-  (format t "~C[?1004l" +esc+)
   (force-output))

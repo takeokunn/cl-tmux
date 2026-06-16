@@ -3,7 +3,7 @@
 ;;; -- Runtime directive handlers: set-environment, if-shell, run-shell, source ----
 ;;;
 ;;; %apply-set-environment-directive, %apply-if-shell-directive,
-;;; %apply-command-alias-directive, %apply-run-shell-directive,
+;;; %apply-run-shell-directive,
 ;;; %glob-expand, source-files, %apply-source-file-directive.
 
 ;;; ── set-environment flag handling (set-environment -r VAR) ──────────────────
@@ -13,35 +13,47 @@
 ;;; table rejects because arg[0] ≠ a variable name.  This handler intercepts
 ;;; the unset form before the fixed-arity table gets a chance to reject it.
 
+(defconstant +config-shell-command-timeout+ 30
+  "Seconds to allow config-time shell directives to run.")
+
+(defun %run-config-shell-command (command)
+  "Run COMMAND through /bin/sh while loading config, with a bounded lifetime."
+  (uiop:run-program (list "/bin/sh" "-c" command)
+                    :ignore-error-status t
+                    :timeout +config-shell-command-timeout+))
+
 (defun %apply-set-environment-directive (cmd args)
-  "Handle 'set-environment [-g] [-t target-session] [-u|-r] VAR [VALUE]' config directives.
+  "Handle 'set-environment [-u|-r] VAR [VALUE]' config directives.
    -u unsets the variable (tmux's unset flag); -r is accepted as a synonym for
    unset (cl-tmux has no separate update-environment list to remove from).
-   -g and -t are accepted and ignored (global scope is the only scope supported).
    Returns T when handled, NIL otherwise."
-  (when (member cmd '("set-environment" "setenv") :test #'string=)
-    (let* (;; Consume optional flags: -g (global, default), -t target-session,
-           ;; -u/-r (unset).
-           (remove-p   nil)
+  (when (string= cmd "set-environment")
+    (let* ((remove-p   nil)
+           (rejected-p nil)
            (remaining  args))
-      (loop while (and remaining
-                       (let ((tok (first remaining)))
-                         (and (>= (length tok) 2) (char= (char tok 0) #\-))))
-            do (let ((tok (pop remaining)))
-                 (when (or (find #\u tok) (find #\r tok)) (setf remove-p t))
-                 (when (find #\t tok)
-                   (when remaining (pop remaining)))))
-      (let ((var-name  (first remaining))
-            (var-value (second remaining)))
-        (when var-name
-          (if remove-p
-              ;; Unset: lazy lookup so SB-POSIX need not be loaded before cl-tmux.
-              (let ((fn (%config-posix-fn "UNSETENV")))
-                (when fn (ignore-errors (funcall fn var-name))))
-              ;; Set: value required for non-remove form.
-              (when var-value
-                (%config-setenv var-name var-value)))
-          t)))))
+      (setf remaining
+            (%consume-leading-flag-tokens
+             remaining
+             (lambda (tok rest)
+               (when (%flag-token-contains-any-p tok '(#\u #\r))
+                 (setf remove-p t))
+               (when (%flag-token-contains-any-p tok '(#\g #\t))
+                 (setf rejected-p t))
+               (when (%flag-token-contains-any-p tok '(#\t))
+                 (when rest (setf rest (cdr rest))))
+               (values rest t))))
+      (unless rejected-p
+        (let ((var-name  (first remaining))
+              (var-value (second remaining)))
+          (when var-name
+            (if remove-p
+                ;; Unset: lazy lookup so SB-POSIX need not be loaded before cl-tmux.
+                (let ((fn (%config-posix-fn "UNSETENV")))
+                  (when fn (ignore-errors (funcall fn var-name))))
+                ;; Set: value required for non-remove form.
+                (when var-value
+                  (%config-setenv var-name var-value)))
+            t))))))
 
 ;;; ── if-shell config-time conditional ────────────────────────────────────────
 ;;;
@@ -83,32 +95,31 @@
    Without -F, CONDITION is a shell command (exit 0 = true).  With -F, CONDITION
    is a format string (true unless it expands to empty or \"0\").  -b (background)
    and -t target are accepted and ignored at config time.  Returns T when CMD is
-   if-shell/if (handled), NIL otherwise."
-  (when (member cmd '("if-shell" "if") :test #'string=)
+   if-shell (handled), NIL otherwise."
+  (when (string= cmd "if-shell")
     (let ((format-mode nil)
           (remaining   args))
       ;; Consume leading flag tokens (clusters like -bF are allowed; -t takes the
       ;; next token).  Stop at the first non-flag token — the CONDITION.
-      (loop while (and remaining
-                       (let ((tok (first remaining)))
-                         (and (> (length tok) 1) (char= (char tok 0) #\-))))
-            do (let ((tok (pop remaining)))
-                 (cond
-                   ((string= tok "-t") (when remaining (pop remaining)))
-                   (t (when (find #\F tok) (setf format-mode t))))))
+      (setf remaining
+            (%consume-leading-flag-tokens
+             remaining
+             (lambda (tok rest)
+               (cond
+                 ((string= tok "-t") (when rest (setf rest (cdr rest))))
+                 (t (when (%flag-token-contains-any-p tok '(#\F))
+                      (setf format-mode t))))
+               (values rest t))))
       (when (>= (length remaining) 2)
         (let* ((condition (first remaining))
                (truthy-p  (if format-mode
                               (%if-shell-format-true-p condition)
                               ;; Run the condition shell command; treat any error
                               ;; (including a timeout signal from UIOP) as non-zero
-                              ;; (falsy).  :timeout 30 guards against a hanging command
-                              ;; blocking config loading indefinitely.
+                              ;; (falsy), so config loading cannot hang indefinitely.
                               (handler-case
                                   (eql 0 (nth-value 2
-                                           (uiop:run-program
-                                            (list "/bin/sh" "-c" condition)
-                                            :ignore-error-status t :timeout 30)))
+                                           (%run-config-shell-command condition)))
                                 (error () nil)))))
           ;; THEN/ELSE bodies are each either a brace block { ... } (tmux 3.x) or a
           ;; single quoted command token.  %take-brace-or-command consumes one unit
@@ -121,26 +132,6 @@
                 (apply-config-directive line))))))
       t)))
 
-;;; ── command-alias array syntax handling ─────────────────────────────────────
-;;;
-;;; tmux stores command aliases as an array option in .tmux.conf:
-;;;   set -s command-alias[0] e='new-window -n'
-;;; The option name carries the index (`command-alias[0]`).  After %strip-set-
-;;; flags the positionals look like: ("command-alias[0]" "e=new-window -n").
-;;; This function detects that pattern and routes it to the alias registry.
-
-(defun %apply-command-alias-directive (name value)
-  "If NAME looks like 'command-alias[N]', parse VALUE as 'alias=expansion'
-   and register the alias.  Returns T when handled, NIL otherwise."
-  (when (and (>= (length name) 13)
-             (string= (subseq name 0 13) "command-alias"))
-    (let ((eq-pos (position #\= value)))
-      (when eq-pos
-        (cl-tmux/options:register-command-alias
-         (subseq value 0 eq-pos)
-         (subseq value (1+ eq-pos)))
-        t))))
-
 ;;; ── run-shell / run flag handling (run-shell -b/-t/-d/-C 'cmd') ──────────────
 ;;;
 ;;; The fixed-arity table only matches the bare 1-arg form `run-shell 'cmd'`, so
@@ -150,7 +141,7 @@
 
 (defun %apply-run-shell-directive (cmd args)
   "Handle 'run-shell [-b] [-C] [-t target] [-d delay] shell-command' directives
-   (alias 'run').  Consumes leading flags:
+   Consumes leading flags:
      -b           run in background (boolean; we run synchronously regardless)
      -C           run a tmux command instead of a shell command (boolean)
      -t <target>  target pane (takes the next token as its value)
@@ -158,26 +149,26 @@
    Unknown leading -X flags: a single bare flag token is skipped to stay
    tolerant.  Stops at the first non-flag token; that token plus any remaining
    tokens (joined by spaces) form the shell command.
-   Returns T when CMD is run-shell/run (handled), NIL otherwise."
-  (when (member cmd '("run-shell" "run") :test #'string=)
+   Returns T when CMD is run-shell (handled), NIL otherwise."
+  (when (string= cmd "run-shell")
     (let ((tmux-command-p nil)
           (remaining      args))
       ;; Consume leading flag tokens.
-      (loop while (and remaining
-                       (let ((tok (first remaining)))
-                         (and (>= (length tok) 1) (char= (char tok 0) #\-))))
-            do (let ((tok (pop remaining)))
-                 (cond
-                   ((string= tok "-C") (setf tmux-command-p t))
-                   ((string= tok "-b")) ; background flag, no argument
-                   ((member tok '("-t" "-d") :test #'string=)
-                    ;; These flags take the next token as their value.
-                    (when remaining (pop remaining)))
-                   ;; Unknown bare -X flag: skip the single flag token only.
-                   (t nil))))
+      (setf remaining
+            (%consume-leading-flag-tokens
+             remaining
+             (lambda (tok rest)
+               (cond
+                 ((string= tok "-C") (setf tmux-command-p t))
+                 ((string= tok "-b")) ; background flag, no argument
+                 ((member tok '("-t" "-d") :test #'string=)
+                  ;; These flags take the next token as their value.
+                  (when rest (setf rest (cdr rest))))
+                 ;; Unknown bare -X flag: skip the single flag token only.
+                 (t nil))
+               (values rest t))))
       ;; Remaining tokens (joined) form the shell command.
-      (let ((command (when remaining
-                       (format nil "~{~A~^ ~}" remaining))))
+      (let ((command (%join-config-tokens remaining)))
         (cond
           ;; No command after flags: a flag-only invocation is a no-op but handled.
           ((null command) t)
@@ -190,13 +181,11 @@
           ;; Shell command: run it the same way the fixed-arity entries do.
           (t
            (let ((expanded (%expand-leading-tilde command)))
-             ;; :timeout 30 guards against a hanging run-shell blocking config loading.
              ;; handler-case makes a timeout signal (UIOP:SUBPROCESS-ERROR or similar)
              ;; explicit: the command is abandoned and loading continues rather than
              ;; silently treating the timeout as a non-zero exit.
              (handler-case
-                 (uiop:run-program (list "/bin/sh" "-c" expanded)
-                                   :ignore-error-status t :timeout 30)
+                 (%run-config-shell-command expanded)
                (error () nil)))
            t))))))
 
@@ -213,18 +202,25 @@
       (list path)))
 
 (defun %parse-source-file-flags (args)
-  "Parse the leading -Fnqv flags of source-file.  Returns
+  "Parse the leading -Fnqv flags and -t target of source-file.  Returns
    (values PARSE-ONLY-P QUIET-P VERBOSE-P FORMAT-P POSITIONALS).  Clustered flags
    (e.g. -qn) are supported; scanning stops at the first non-flag token (a path)."
   (let ((parse-only nil) (quiet nil) (verbose nil) (format-p nil) (rest args))
-    (loop while (and rest
-                     (let ((tok (first rest)))
-                       (and (> (length tok) 1) (char= (char tok 0) #\-))))
-          do (let ((tok (pop rest)))
-               (when (find #\n tok) (setf parse-only t))
-               (when (find #\q tok) (setf quiet t))
-               (when (find #\v tok) (setf verbose t))
-               (when (find #\F tok) (setf format-p t))))
+      (setf rest
+          (%consume-leading-flag-tokens
+           rest
+           (lambda (tok rest)
+             (when (%flag-token-contains-any-p tok '(#\n)) (setf parse-only t))
+             (when (%flag-token-contains-any-p tok '(#\q)) (setf quiet t))
+             (when (%flag-token-contains-any-p tok '(#\v)) (setf verbose t))
+             (when (%flag-token-contains-any-p tok '(#\F)) (setf format-p t))
+             (let ((target-pos (position #\t tok)))
+               (if target-pos
+                   (progn
+                     (when (and (= target-pos (1- (length tok))) rest)
+                       (setf rest (cdr rest)))
+                     (values rest nil))
+                   (values rest t))))))
     (values parse-only quiet verbose format-p rest)))
 
 (defun %parse-config-file-only (file)
@@ -240,7 +236,7 @@
               do (%config-tokens (%strip-config-comment line)))))))
 
 (defun source-files (args)
-  "Implement `source-file [-Fnqv] path...`: for each non-flag PATH, optionally
+  "Implement `source-file [-Fnqv] [-t target-pane] path...`: for each non-flag PATH, optionally
    expand it as a format string (-F), then expand a leading ~ and shell globs
    (* ? []), and load every matching config file.  With -n (parse-only), each file
    is read and tokenised but NO command runs (tmux's CMD_PARSE_PARSEONLY syntax
@@ -262,8 +258,8 @@
   t)
 
 (defun %apply-source-file-directive (cmd args)
-  "Intercept source-file / source: -q/-n/-v flags, glob patterns, and multiple
-   paths (the fixed-arity directive table only handled a single bare path).
-   Returns T when CMD is a source verb, else NIL."
-  (when (member cmd '("source-file" "source") :test #'string=)
+  "Intercept source-file: -q/-n/-v flags, glob patterns, and multiple paths
+   (the fixed-arity directive table only handled a single bare path).  Returns T
+   when CMD is source-file, else NIL."
+  (when (string= cmd "source-file")
     (source-files args)))

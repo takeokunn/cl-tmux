@@ -10,8 +10,8 @@
   :components
   ((:module "src"
     :serial t
-    :components
-    ((:file "package")
+     :components
+     ((:file "package")
      (:file "config")
      (:file "config-tokenizer")    ; config tokenizer + key/command parse tables
      (:file "config-directives")         ; directive macros + bind/unbind parsing + key dispatch
@@ -63,6 +63,7 @@
      (:file "overlay")              ; overlay, popup, menu state (used by dispatch/events/renderer)
      (:file "commands-core")
      (:file "commands-copy-mode")      ; copy-mode core: enter/exit, scroll, cursor, selection
+     (:file "commands-copy-mode-selection") ; selection bounds and text extraction helpers
      (:file "commands-copy-mode-clip") ; rectangle selection text, yank, copy-pipe, append-selection
      (:file "commands-copy-mode-nav")    ; word/line navigation, page/half-page scroll, copy-D/Y
      (:file "commands-copy-mode-search") ; search-forward/backward, search-next/prev
@@ -85,28 +86,39 @@
      (:file "dispatch-commands-buffer")   ; paste-buffer + overlay popup/menu %cmd-* handlers
      (:file "dispatch-commands-option")   ; set-option (CPS) + rename/select %cmd-* handlers
      (:file "dispatch-commands-lifecycle") ; kill/link/unlink/swap/move/source-file/if-shell %cmd-*
-     (:file "dispatch-commands-pane")   ; layout/window/pane/session %cmd-*
-     (:file "dispatch-commands-pane-x") ; copy-mode -X command name table (send-keys -X dispatch)
+    (:file "dispatch-commands-pane")   ; layout/window/pane helpers + *key-table*
+    (:file "dispatch-commands-pane-session") ; session/client lifecycle %cmd-*
+    (:file "dispatch-commands-pane-x") ; copy-mode -X command name table (send-keys -X dispatch)
      (:file "dispatch-commands-shell")   ; shell/pane-ops %cmd-* (run-shell, if-shell, capture, resize, join, break, clear, rotate)
-     (:file "dispatch-commands-auto")   ; window-nav/session-mgmt %cmd-* (find-window, send-keys, list-*, respawn, pipe-pane)
+     (:file "dispatch-commands-list")    ; list-sessions/windows/panes/clients/commands + wait-for arg checks
+     (:file "dispatch-commands-auto")   ; window-nav/session-mgmt %cmd-* (find-window, send-keys, respawn, pipe-pane)
      (:file "dispatch-commands-server") ; server-access ACL + customize-mode tree browser
      (:file "dispatch-commands-runner") ; *arg-command-table* + %run-command-tokens + %run-command-line
      (:file "dispatch-control")         ; control-mode REPL + dispatch-prefix-command
      (:file "dispatch-handlers")        ; command handler rule table part I (detach through wait-for)
-     (:file "dispatch-handlers-b")     ; command handler rule table part II (popup/menu through detach-client)
-     (:file "dispatch-handlers-buffer") ; paste-buffer command handler helpers
+     (:file "dispatch-handlers-copy-mode") ; copy-mode command handler rule table
+    (:file "dispatch-handlers-b-menu") ; popup/menu overlays
+    (:file "dispatch-handlers-b-server") ; server/env/prompt-history handlers
+    (:file "dispatch-handlers-b-prompt") ; prompt-driven dispatch handlers
+    (:file "dispatch-handlers-b")     ; command handler rule table part II (break/join through mark/layout)
+    (:file "dispatch-handlers-b-tail") ; session/window/misc handlers
+    (:file "dispatch-handlers-buffer") ; paste-buffer command handler helpers
      (:file "events-core")
      (:file "events-mouse")   ; mouse event dispatch + overlay pager escape handler
-     (:file "events-keystroke-escape")  ; escape/mouse sequence decoder + make-escape-input-k
-     (:file "events-keystroke")          ; CPS state functions: ground-state, after-prefix-state
-     (:file "events-copy-mode-dispatch") ; define-copy-mode-vi-rules macro + %dispatch-copy-mode-byte
-     (:file "events-keystroke-keys")    ; arrow-key table, modifier/CSI-u helpers, %make-prefix-csi-k
+    (:file "events-keystroke-escape")  ; escape decoder coordinator + CSI-u helpers
+    (:file "events-keystroke-escape-mouse") ; X10/SGR mouse escape parsing
+    (:file "events-keystroke-escape-prompt") ; prompt-local ESC sequences
+    (:file "events-keystroke-escape-keys") ; SS3 / CSI-tilde key-name resolution
+    (:file "events-keystroke")          ; CPS state functions: ground-state, after-prefix-state
+    (:file "events-copy-mode-dispatch") ; define-copy-mode-vi-rules macro + %dispatch-copy-mode-byte
+    (:file "events-keystroke-keys")    ; arrow-key table, modifier/CSI-u helpers, %make-prefix-csi-k
      (:file "events-loop")
      (:file "session-registry")  ; session registry + group management
      (:file "server")
      (:file "server-multi")  ; multi-client select-multiplexed serve loop
      (:file "client")
-     (:file "main"))))
+               (:file "main")
+               (:file "main-startup"))))
   ;; Build a standalone binary: (asdf:make :cl-tmux)
   :build-operation "program-op"
   :build-pathname "cl-tmux"
@@ -256,6 +268,11 @@
        (:file "client-tests")
        (:file "main-tests")
        (:file "advanced-tests")))
+     (:module "compat"
+      :serial t
+      :components
+      ((:file "matrix-tests")
+       (:file "matrix-cli-tests")))
      (:file "suite"))))
   ;; Run with: (asdf:test-system :cl-tmux)
   :perform (test-op (op c)

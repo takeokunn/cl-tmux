@@ -9,7 +9,7 @@
 (test copy-mode-clear-selection-drops-selection-keeps-cursor
   "copy-mode-clear-selection clears the mark + selection flags but keeps the
    cursor and stays in copy mode (tmux clear-selection / default vi Escape)."
-  (let ((s (%copy-mode-screen)))
+  (let ((s (copy-mode-screen)))
     (setf (cl-tmux/terminal/types:screen-copy-selecting        s) t
           (cl-tmux/terminal/types:screen-copy-mark             s) (cons 0 2)
           (cl-tmux/terminal/types:screen-copy-cursor           s) (cons 0 5)
@@ -30,7 +30,7 @@
 
 (test copy-mode-clear-selection-noop-without-selection
   "copy-mode-clear-selection is a clean no-op when there is no selection/mark."
-  (let ((s (%copy-mode-screen)))
+  (let ((s (copy-mode-screen)))
     (setf (cl-tmux/terminal/types:screen-copy-selecting s) nil
           (cl-tmux/terminal/types:screen-copy-mark      s) nil
           (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 3)
@@ -45,29 +45,30 @@
   "The send -X name clear-selection (and its alias stop-selection) map to the
    :copy-mode-clear-selection dispatch keyword."
   (is (eq :copy-mode-clear-selection
-          (cdr (assoc "clear-selection" cl-tmux::*copy-mode-x-commands*
-                      :test #'string-equal)))
+          (copy-mode-x-command-value "clear-selection"))
       "clear-selection must be a known send -X command")
   (is (eq :copy-mode-clear-selection
-          (cdr (assoc "stop-selection" cl-tmux::*copy-mode-x-commands*
-                      :test #'string-equal)))
+          (copy-mode-x-command-value "stop-selection"))
       "stop-selection must alias clear-selection"))
 
 (test copy-mode-x-line-positions-vs-history-extremes
   "top/middle/bottom-line (vi H/M/L) move within the viewport; history-top/bottom
    (vi g/G) jump to the scrollback extremes — they must map to distinct actions."
-  (flet ((x (name) (cdr (assoc name cl-tmux::*copy-mode-x-commands*
-                               :test #'string-equal))))
-    (is (eq :copy-mode-high   (x "top-line"))    "top-line → high (viewport top)")
-    (is (eq :copy-mode-middle (x "middle-line")) "middle-line → middle (was missing)")
-    (is (eq :copy-mode-low    (x "bottom-line")) "bottom-line → low (viewport bottom)")
-    (is (eq :copy-mode-top    (x "history-top")) "history-top → scrollback top")
-    (is (eq :copy-mode-bottom (x "history-bottom")) "history-bottom → scrollback bottom")))
+  (is (eq :copy-mode-high   (copy-mode-x-command-value "top-line"))
+      "top-line → high (viewport top)")
+  (is (eq :copy-mode-middle (copy-mode-x-command-value "middle-line"))
+      "middle-line → middle (was missing)")
+  (is (eq :copy-mode-low    (copy-mode-x-command-value "bottom-line"))
+      "bottom-line → low (viewport bottom)")
+  (is (eq :copy-mode-top    (copy-mode-x-command-value "history-top"))
+      "history-top → scrollback top")
+  (is (eq :copy-mode-bottom (copy-mode-x-command-value "history-bottom"))
+      "history-bottom → scrollback bottom"))
 
 (test copy-mode-high-middle-low-set-viewport-row
   "copy-mode-high/middle/low move the cursor to viewport row 0 / mid / height-1
    without changing the scroll offset."
-  (let ((s (%copy-mode-screen)))
+  (let ((s (copy-mode-screen)))
     (setf (cl-tmux/terminal/types:screen-copy-offset s) 7
           (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 3))
     (cl-tmux/commands::copy-mode-low s)
@@ -90,7 +91,7 @@
 (test copy-mode-space-motion-is-whitespace-delimited
   "WORD motion (W/B/E) treats punctuation as part of the WORD — only whitespace
    separates — unlike w/b/e which honour word-separators (here '-')."
-  (let ((s (%copy-mode-screen :content "foo-bar baz")))
+  (let ((s (copy-mode-screen :content "foo-bar baz")))
     ;; forward: w stops at 'bar' (col 4, '-' is a separator); W skips to 'baz' (8).
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
     (cl-tmux/commands::copy-mode-word-forward s)
@@ -110,7 +111,7 @@
 
 (test copy-mode-space-end-lands-on-word-final-char
   "copy-mode-space-end (vi E) moves to the last char of the current/next WORD."
-  (let ((s (%copy-mode-screen :content "foo-bar baz")))
+  (let ((s (copy-mode-screen :content "foo-bar baz")))
     ;; From col 0, E → last char of 'foo-bar' (col 6, the 'r').
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
     (cl-tmux/commands::copy-mode-space-end s)
@@ -119,19 +120,17 @@
 
 (test copy-mode-x-word-vs-space-mappings
   "send -X next-word/etc. map to word motion; next-space/etc. to WORD motion."
-  (flet ((x (name) (cdr (assoc name cl-tmux::*copy-mode-x-commands*
-                               :test #'string-equal))))
-    (is (eq :copy-mode-word-forward  (x "next-word")))
-    (is (eq :copy-mode-space-forward (x "next-space")))
-    (is (eq :copy-mode-space-backward (x "previous-space")))
-    (is (eq :copy-mode-space-end      (x "next-space-end")))))
+  (is (eq :copy-mode-word-forward  (copy-mode-x-command-value "next-word")))
+  (is (eq :copy-mode-space-forward (copy-mode-x-command-value "next-space")))
+  (is (eq :copy-mode-space-backward (copy-mode-x-command-value "previous-space")))
+  (is (eq :copy-mode-space-end      (copy-mode-x-command-value "next-space-end"))))
 
 ;;; ── back-to-indentation (vi ^): first non-blank vs line-start (vi 0) ─────────
 
 (test copy-mode-back-to-indentation-stops-at-first-non-blank
   "copy-mode-back-to-indentation (vi ^) moves to the first non-blank column —
    unlike copy-mode-line-start (vi 0), which always goes to column 0."
-  (let ((s (%copy-mode-screen :content "   foo")))
+  (let ((s (copy-mode-screen :content "   foo")))
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
     (cl-tmux/commands::copy-mode-back-to-indentation s)
     (is (= 3 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
@@ -143,7 +142,7 @@
 
 (test copy-mode-back-to-indentation-blank-line-goes-to-zero
   "On an all-blank row, ^ falls back to column 0."
-  (let ((s (%copy-mode-screen)))            ; default content is blank
+  (let ((s (copy-mode-screen)))             ; default content is blank
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 4))
     (cl-tmux/commands::copy-mode-back-to-indentation s)
     (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
@@ -153,13 +152,12 @@
   "send -X back-to-indentation maps to the distinct :copy-mode-back-to-indentation
    action, not line-start."
   (is (eq :copy-mode-back-to-indentation
-          (cdr (assoc "back-to-indentation" cl-tmux::*copy-mode-x-commands*
-                      :test #'string-equal)))))
+          (copy-mode-x-command-value "back-to-indentation"))))
 
 (test copy-mode-other-end-preserves-selection-text
   "Swapping the two ends must not change the selected text or normalised bounds —
    this is the defining invariant of other-end."
-  (let ((s (%copy-mode-screen :content "foo bar baz")))
+  (let ((s (copy-mode-screen :content "foo bar baz")))
     (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
           (cl-tmux/terminal/types:screen-copy-mark      s) (cons 0 4)
           (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 6))
@@ -175,7 +173,7 @@
 
 (test copy-mode-other-end-double-swap-restores-original
   "Two successive swaps restore the original cursor and mark."
-  (let ((s (%copy-mode-screen)))
+  (let ((s (copy-mode-screen)))
     (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
           (cl-tmux/terminal/types:screen-copy-mark      s) (cons 0 2)
           (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 5))
@@ -192,7 +190,7 @@
   "copy-mode-select-word selects exactly the word under the cursor.
    The %selection-text round-trip pins the column off-by-one: for \"bar\" at
    cols 4-6 the mark sits at col 4 and the cursor at col 7 (exclusive end)."
-  (let ((s (%copy-mode-screen :content "foo bar baz")))
+  (let ((s (copy-mode-screen :content "foo bar baz")))
     ;; "foo bar baz": b=4 a=5 r=6 — put the cursor inside "bar" on row 0.
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
     (cl-tmux/commands::copy-mode-select-word s)
@@ -207,7 +205,7 @@
 
 (test copy-mode-select-word-on-separator-selects-single-cell
   "copy-mode-select-word on a separator (space) selects just the single cell."
-  (let ((s (%copy-mode-screen :content "foo bar baz")))
+  (let ((s (copy-mode-screen :content "foo bar baz")))
     ;; Column 3 is the space between "foo" and "bar".
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 3))
     (finishes (cl-tmux/commands::copy-mode-select-word s))
@@ -222,7 +220,7 @@
   "A word ending at the rightmost column must NOT lose its final character: the
    cursor's exclusive end is allowed to reach width.  PINS the rightmost off-by-one."
   ;; Width-3 screen, content \"cat\": c=0 a=1 t=2 (t is at the last column).
-  (let ((s (%copy-mode-screen :w 3 :h 3 :content "cat")))
+  (let ((s (copy-mode-screen :w 3 :h 3 :content "cat")))
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 1))
     (cl-tmux/commands::copy-mode-select-word s)
     (is (equal (cons 0 0) (cl-tmux/terminal/types:screen-copy-mark s))
@@ -234,7 +232,7 @@
 
 (test copy-mode-select-word-at-start-of-row-clamps-start
   "select-word with the cursor at column 0 leaves the mark at column 0."
-  (let ((s (%copy-mode-screen :content "foo bar baz")))
+  (let ((s (copy-mode-screen :content "foo bar baz")))
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
     (cl-tmux/commands::copy-mode-select-word s)
     (is (equal (cons 0 0) (cl-tmux/terminal/types:screen-copy-mark s))
@@ -245,7 +243,7 @@
 (test copy-mode-select-word-stops-at-multi-space-gap
   "select-word must not span a multi-space gap between words."
   ;; \"ab   cd\": a=0 b=1 spaces=2,3,4 c=5 d=6.
-  (let ((s (%copy-mode-screen :content "ab   cd")))
+  (let ((s (copy-mode-screen :content "ab   cd")))
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
     (cl-tmux/commands::copy-mode-select-word s)
     (is (equal (cons 0 5) (cl-tmux/terminal/types:screen-copy-mark s))
@@ -255,7 +253,7 @@
 
 (test copy-mode-select-word-sets-dirty-flag
   "select-word marks the screen dirty."
-  (let ((s (%copy-mode-screen :content "foo bar baz")))
+  (let ((s (copy-mode-screen :content "foo bar baz")))
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5)
           (cl-tmux/terminal/types:screen-dirty-p     s) nil)
     (is-false (cl-tmux/terminal/types:screen-dirty-p s)
@@ -276,14 +274,6 @@
         "mark must remain NIL when not in copy mode")))
 
 ;;; ── copy-mode-move-cursor ────────────────────────────────────────────────────
-
-(defmacro with-copy-mode-cursor ((screen-var row col &key (w 20) (h 5)) &body body)
-  "Bind SCREEN-VAR to a fresh W x H copy-mode screen with cursor at (ROW . COL).
-   Eliminates the three-step setup repeated across move-cursor tests."
-  `(let ((,screen-var (make-screen ,w ,h)))
-     (cl-tmux/commands::copy-mode-enter ,screen-var)
-     (setf (cl-tmux/terminal/types:screen-copy-cursor ,screen-var) (cons ,row ,col))
-     ,@body))
 
 (test copy-mode-move-cursor-direction-table
   "Each direction moves the cursor by 1 step and marks the screen dirty."

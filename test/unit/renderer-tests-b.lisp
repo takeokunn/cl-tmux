@@ -13,8 +13,7 @@
   (with-isolated-options ()
     (cl-tmux/options:set-option "status-left" "sess:#{session_name}")
     (let* ((sess (make-test-session 60 10 :content ""))
-           (out  (with-output-to-string (s)
-                   (cl-tmux/renderer::render-status-bar s sess 10 60))))
+           (out  (render-status-bar-output sess 10 60)))
       (is (search "sess:0" out)
           "status-left #{session_name} must expand to the session name '0' (got ~S)" out)
       (is (null (search "#{session_name}" out))
@@ -26,8 +25,7 @@
   (with-isolated-options ()
     (cl-tmux/options:set-option "status-right" "win:#{window_name}")
     (let* ((sess (make-test-session 60 10 :content ""))
-           (out  (with-output-to-string (s)
-                   (cl-tmux/renderer::render-status-bar s sess 10 60))))
+           (out  (render-status-bar-output sess 10 60)))
       (is (search "win:1" out)
           "status-right #{window_name} must expand to the window name '1' (got ~S)" out))))
 
@@ -38,8 +36,7 @@
   (with-isolated-options ("status-position" "bottom" "status-left" nil "status-right" nil)
     (let* ((sess (make-test-session 20 5))
            (rows 6)
-           (out  (with-output-to-string (s)
-                   (cl-tmux/renderer::render-status-bar s sess rows 20))))
+           (out  (render-status-bar-output sess rows 20)))
       ;; The status bar emits ESC[row;colH where row is 1-based.
       ;; Bottom row = rows-1 = 5, so ESC[6;1H
       (is (search (format nil "~C[6;1H" #\Escape) out)
@@ -49,9 +46,7 @@
   "With status-position = top, the status bar appears at row 0 (ESC[1;1H)."
   (with-isolated-options ("status-position" "top" "status-left" nil "status-right" nil)
     (let* ((sess (make-test-session 20 5))
-           (out  (with-output-to-string (s)
-                   ;; render-status-bar directly with explicit status-row = 0
-                   (cl-tmux/renderer::render-status-bar s sess 6 20 :status-row 0))))
+           (out  (render-status-bar-output sess 6 20 :status-row 0)))
       ;; ESC[1;1H is row=0, col=0 (1-based = row 1, col 1)
       (is (search (format nil "~C[1;1H" #\Escape) out)
           "status-position top must place bar at row 0 (got ~S)" out))))
@@ -103,8 +98,7 @@
                           "status-left-style" "fg=red")
     (let* ((expected (cl-tmux/renderer::%status-sgr-from-style "fg=red"))
            (sess     (make-test-session 20 5))
-           (out      (with-output-to-string (s)
-                       (cl-tmux/renderer::render-status-bar s sess 6 20))))
+           (out      (render-status-bar-output sess 6 20)))
       (is (search (format nil "~C[~Am" #\Escape expected) out)
           "the rendered bar must include the status-left-style SGR (got ~S)" out))))
 
@@ -203,8 +197,7 @@
   (with-isolated-options ()
     (cl-tmux/options:set-option "status-left" "#{session_name}")
     (let* ((sess (make-test-session 40 10))
-           (out  (with-output-to-string (s)
-                   (cl-tmux/renderer::render-status-bar s sess 11 40))))
+           (out  (render-status-bar-output sess 11 40)))
       (is (search "0" out)
           "status-left #{session_name} must expand to session name '0' (got ~S)" out)
       (is (null (search "#{session_name}" out))

@@ -113,6 +113,58 @@
        (%run-key-table-binding session entry byte)))
    (setf *dirty* t)
    (values nil #'%ground-input-state))
+  ;; ── Copy-mode single-byte navigation (unprefixed) ─────────────────────────
+  ;; Copy mode has its own active table, so ordinary bytes are resolved there
+  ;; before root/prefix bindings.  ESC is left to the escape accumulator below:
+  ;; it may be a lone Escape, an arrow key, mouse input, or an extended key.
+  ;; Numeric prefix: digit bytes 0-9 accumulate *copy-mode-prefix*.  '0' with a
+  ;; zero prefix goes to line-start instead (vi convention: 0 = BOL when no count).
+  ((and (%copy-mode-active-p session) (/= byte +byte-esc+))
+   (let ((screen (%active-screen session)))
+     (when screen
+       ;; Digit accumulation: build a numeric count for the next command.
+       ;; '0' with prefix=0 falls through to line-start (handled by case below).
+       (cond
+         ;; Accumulate digit into prefix (1-9 always; 0 only when prefix already set)
+         ((and (>= byte +byte-digit-0+) (<= byte +byte-digit-9+)
+               (or (> byte +byte-digit-0+) (plusp *copy-mode-prefix*)))
+          (setf *copy-mode-prefix*
+                (+ (* *copy-mode-prefix* 10) (- byte +byte-digit-0+))))
+         ;; Non-digit (or bare '0'): dispatch with accumulated count then reset.
+         (t
+          (let ((count (max 1 *copy-mode-prefix*)))
+            (setf *copy-mode-prefix* 0)
+            ;; First: check the active copy-mode key table for user-defined
+            ;; overrides (bind -T copy-mode-vi ... / bind -T copy-mode ...).
+            ;; Legacy Ctrl bytes and single-byte special keys are also probed
+            ;; by their canonical tmux name ("C-b", "Enter", "BSpace", ...),
+            ;; matching keys stored by bind-key.
+            (let* ((ch           (code-char byte))
+                   (control-base (%control-byte-key-name byte))
+                   (control-key  (and control-base
+                                       (concatenate 'string "C-" control-base)))
+                   (special-key  (case byte
+                                   (9 "Tab")
+                                   (13 "Enter")
+                                   (127 "BSpace")
+                                   (t nil)))
+                   (entry        (or (key-table-lookup (%active-copy-mode-table) ch)
+                                     (key-table-lookup (%active-copy-mode-table)
+                                                       special-key)
+                                     (key-table-lookup (%active-copy-mode-table)
+                                                       control-key)))
+                   (handled      nil))
+              (when entry
+                (%run-key-table-binding session entry byte)
+                (setf handled t))
+              (unless handled
+                (multiple-value-bind (dispatched new-state)
+                    (%dispatch-copy-mode-byte screen byte count session)
+                  (when (and dispatched new-state)
+                    (return-from %ground-input-state
+                      (values nil new-state))))))))))
+   (setf *dirty* t)
+   (values nil #'%ground-input-state)))
   ;; ── Root key-table: check for bindings that fire without any prefix ────────
   ;; Looked up before the prefix-key check so that -n bindings can intercept
   ;; keys that would otherwise be forwarded to the pane.
@@ -135,43 +187,6 @@
   ;; forwarding to the pane (handled in make-escape-input-k).
   ((= byte +byte-esc+)
    (values nil (make-escape-input-k session (%make-escape-buffer byte))))
-  ;; ── Copy-mode single-byte navigation (unprefixed) ─────────────────────────
-  ;; These keys are intercepted ONLY when copy mode is active; they are never
-  ;; forwarded to the pane.  The check comes before the default forward branch.
-  ;; Numeric prefix: digit bytes 0-9 accumulate *copy-mode-prefix*.  '0' with a
-  ;; zero prefix goes to line-start instead (vi convention: 0 = BOL when no count).
-  ((%copy-mode-active-p session)
-   (let ((screen (%active-screen session)))
-     (when screen
-       ;; Digit accumulation: build a numeric count for the next command.
-       ;; '0' with prefix=0 falls through to line-start (handled by case below).
-       (cond
-         ;; Accumulate digit into prefix (1-9 always; 0 only when prefix already set)
-         ((and (>= byte +byte-digit-0+) (<= byte +byte-digit-9+)
-               (or (> byte +byte-digit-0+) (plusp *copy-mode-prefix*)))
-          (setf *copy-mode-prefix*
-                (+ (* *copy-mode-prefix* 10) (- byte +byte-digit-0+))))
-         ;; Non-digit (or bare '0'): dispatch with accumulated count then reset.
-         (t
-          (let ((count (max 1 *copy-mode-prefix*)))
-            (setf *copy-mode-prefix* 0)
-            ;; First: check the active copy-mode key table for user-defined
-            ;; overrides (bind -T copy-mode-vi ... / bind -T copy-mode ...).
-            ;; When a table binding is found, execute it and SKIP the hardcoded dispatch.
-            (let* ((ch       (code-char byte))
-                   (entry    (key-table-lookup (%active-copy-mode-table) ch))
-                   (handled  nil))
-              (when entry
-                (%run-key-table-binding session entry byte)
-                (setf handled t))
-              (unless handled
-                (multiple-value-bind (dispatched new-state)
-                    (%dispatch-copy-mode-byte screen byte count session)
-                  (when (and dispatched new-state)
-                    (return-from %ground-input-state
-                      (values nil new-state))))))))))
-   (setf *dirty* t))
-   (values nil #'%ground-input-state))
   ;; ── Default: forward raw byte to active pane (+ synchronize-panes broadcast) ─
   (t
    (%forward-octets-synchronized session

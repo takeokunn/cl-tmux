@@ -1,6 +1,18 @@
 (in-package #:cl-tmux/commands)
 
 ;;;; Rectangle selection text, copy-pipe helpers, yank, append-selection.
+;;;; Uses selection helpers from commands-copy-mode-selection.lisp and search
+;;;; helpers from commands-copy-mode-search.lisp.
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (let* ((source (or *load-truename* *compile-file-truename*))
+         (path (and source
+                    (merge-pathnames #P"commands-copy-mode-nav-copy.lisp"
+                                     (make-pathname :name nil
+                                                    :type nil
+                                                    :defaults source)))))
+    (when (probe-file path)
+      (load path))))
 
 ;;; ── Rectangle selection text ────────────────────────────────────────────────
 ;;;
@@ -54,7 +66,8 @@
     (bt:with-timeout (+copy-command-timeout+)
       (uiop:run-program (list "/bin/sh" "-c" command)
                         :input (make-string-input-stream text)
-                        :ignore-error-status t))))
+                        :ignore-error-status t
+                        :timeout +copy-command-timeout+))))
 
 (defun %run-copy-command (text)
   "Pipe TEXT to the shell command stored in the \"copy-command\" option.
@@ -176,9 +189,26 @@
   (when (screen-copy-mode-p screen)
     (setf (screen-dirty-p screen) t)))
 
+(defun copy-mode-copy-pipe-end-of-line (screen cmd)
+  "Copy from the cursor to the end of the current line, pipe it, then exit copy mode.
+   If CMD is empty or NIL the global \"copy-command\" option is used."
+  (when (screen-copy-mode-p screen)
+    (let* ((row (car (screen-copy-cursor screen)))
+           (col (cdr (screen-copy-cursor screen)))
+           (text (%copy-row-range-text screen row col (screen-width screen))))
+      (when (plusp (length text))
+        (cl-tmux/buffer:add-paste-buffer text)
+        (let ((effective-cmd (%resolve-copy-pipe-cmd cmd)))
+          (when effective-cmd
+            (%run-shell-cmd-with-input effective-cmd text)))))
+    (copy-mode-cancel-selection screen)
+    (copy-mode-exit screen)))
+
 ;;; Navigation (word/line/screen jumps) and search are in separate files:
-;;;   commands-copy-mode-nav.lisp    — word-forward/backward/end, line-start/end,
-;;;                                    cursor-jump macros, page/half-page scroll,
-;;;                                    begin-line-selection, copy-end-of-line, copy-line
+;;;   commands-copy-mode-word.lisp   — word-forward/backward/end and
+;;;                                    space-forward/backward/end
+;;;   commands-copy-mode-nav.lisp    — line-start/end, cursor-jump macros,
+;;;                                    page/half-page scroll, begin-line-selection,
+;;;                                    copy-end-of-line, copy-line
 ;;;   commands-copy-mode-search.lisp — %copy-mode-row-string, find-forward/backward,
 ;;;                                    search-forward/backward, search-next/prev

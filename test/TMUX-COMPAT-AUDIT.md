@@ -1,5 +1,115 @@
 # cl-tmux tmux-Compatibility Audit
 
+## 2026-06-14 tmux 3.6a Baseline
+
+This repository is not yet proven tmux-compatible.  The current real-tmux
+baseline was measured locally with tmux 3.6a against a temporary clean server
+started with `tmux -L <clean> -f /dev/null new-session -d`:
+
+| Surface | tmux command | Count |
+|---------|--------------|-------|
+| Commands | `tmux -L <clean> -f /dev/null list-commands` | 90 |
+| Named bindings | `tmux -L <clean> -f /dev/null list-keys -N` | 87 |
+| Root bindings | `tmux -L <clean> -f /dev/null list-keys -T root` | 19 |
+| Prefix bindings | `tmux -L <clean> -f /dev/null list-keys -T prefix` | 87 |
+| Copy-mode bindings | `tmux -L <clean> -f /dev/null list-keys -T copy-mode` | 74 |
+| Copy-mode-vi bindings | `tmux -L <clean> -f /dev/null list-keys -T copy-mode-vi` | 87 |
+| Global options | `tmux -L <clean> -f /dev/null show-options -g` | 61 |
+| Window options | `tmux -L <clean> -f /dev/null show-window-options -g` | 67 |
+| Hooks | `tmux -L <clean> -f /dev/null show-hooks -g` | 57 |
+| Format variables | `tmux 3.6a` man `FORMATS` plus display-menu popup variable table | 226 |
+
+New machine-readable compatibility state lives in
+`test/tmux-compat-matrix.sexp`, and `test/compat/matrix-tests.lisp` now runs
+real tmux inventory checks when a local tmux binary is available.  On tmux 3.6a
+the test requires the measured inventory counts above to stay stable and
+requires every command from `tmux list-commands` and every default key from
+`tmux list-keys -T ...` to have a matrix row.  On other tmux versions it records
+the version mismatch by skipping the count equality check instead of pretending
+the baseline applies.
+
+Known current gaps recorded in the matrix:
+
+- `window-size`: real tmux defaults to `latest`; cl-tmux currently defaults to
+  `smallest` for its shared-frame model.
+- Option defaults now have row-level tmux 3.6a checks for all 128 clean
+  `show-options -g` and `show-window-options -g` rows.  52 default values match
+  the cl-tmux registry, 36 are recorded as `:partial` default divergences, and
+  40 exact tmux option rows are missing from the registry.  Global options are
+  27/13/21; window options are 25/23/19.  These rows prove default values only;
+  parser behavior, option scope, validation, formatting, and runtime side
+  effects are still not exhaustively proven.
+- Real tmux commands are now enumerated as 90 matrix rows.  All 90 names are
+  present in cl-tmux's combined bindable-command and argv-command inventories,
+  so they are recorded as `:partial` with `:cl-tmux-command t`; cl-tmux also has
+  121 command names or aliases that are not tmux 3.6a public command names.
+  `list-commands -F '#{command_list_name}'` now uses the tmux public 90-name
+  inventory instead of exposing cl-tmux's internal bindable helper commands.
+  This is still not complete command compatibility: parser, alias, usage, flag,
+  output, server behavior, side-effect, and error behavior remain to be tested
+  against real tmux.
+- Real tmux default binding tables (`root`, `prefix`, `copy-mode`,
+  `copy-mode-vi`) are now enumerated as 267 matrix rows from
+  `tmux list-keys -T ...`.  151 rows have a cl-tmux table/key entry and are
+  recorded as `:partial`; 116 are absent and recorded as `:missing` (root 0/19,
+  prefix 39/48, copy-mode 50/24, copy-mode-vi 62/25).  These rows prove
+  inventory and key-label presence only; repeat flags, notes, command strings,
+  dispatch semantics, copy-mode behavior, and mouse/menu behavior are not
+  differentially proven.  Named binding notes from `list-keys -N` remain
+  count-only.
+- Real tmux hooks are now enumerated as 57 matrix rows from
+  `tmux show-hooks -g`.  19 are present in cl-tmux hook event constants and
+  recorded as `:partial`; 38 are absent and recorded as `:missing`.  cl-tmux
+  also has 8 hook constants that are not tmux 3.6a global hook names.  These
+  rows prove inventory and event-name presence only; `set-hook`, `show-hooks`,
+  `run-hook`, firing semantics, and hook format variables are not
+  differentially proven.
+- Real tmux format variables are now enumerated as 226 matrix rows from the tmux
+  3.6a `FORMATS` table plus the display-menu popup variable table.  74 are
+  present in `cl-tmux/format:format-context-from-session` and recorded as
+  `:partial`; 152 are absent and recorded as `:missing`.  These rows prove
+  inventory and context presence only; aliases, modifiers, values, and
+  context-specific behavior are not differentially proven.
+- Remaining unexpanded surfaces: named binding notes are counted but not
+  row-classified.
+- Non-TTY query command behavior is now covered for `list-commands
+  -F '#{command_list_name}'` by a real differential test when
+  `CL_TMUX_COMPAT_BINARY` or `result/bin/cl-tmux` is available.  The `lscm`
+  alias is also covered for the same command-name format output.  Usage strings
+  and aliases inside command sequences are still unproven.  The `display`
+  alias is covered for no-server `-p hello` failure behavior; live-server
+  `display-message`, target/client flags, format context, verbose/literal
+  flags, hooks, overlays, and in-session behavior remain unproven.  `list-sessions`
+  no-server behavior is also covered for stdout, normalized stderr connection
+  failure, and exit code.
+  `has-session -t no-such-session-xyz`, its `has` alias, and `kill-server`
+  no-server behavior are covered for stdout, normalized stderr connection
+  failure, and exit code.
+  `list-windows` no-server behavior is covered for stdout, normalized stderr
+  connection failure, and exit code.  `show-options -g` no-server behavior is
+  covered for stdout, normalized stderr connection failure, and exit code.
+  `show-window-options -g` no-server behavior is covered for stdout, normalized
+  stderr connection failure, and exit code; live-server `show-options` and
+  `show-window-options` output,
+  scope selection, quiet flags, target-window semantics, and option formatting
+  remain unproven.
+  Detached `new-session
+  -d -s beta -n two`
+  against an existing live server is covered by a real differential test that
+  compares resulting `list-sessions -F '#{session_name}'` output and the beta
+  `list-windows -a -F '#{session_name}:#{window_name}'` row.  Under threaded
+  SBCL this cl-tmux path registers a query-visible no-PTY placeholder pane,
+  so it does not prove a shell-backed pane that can later be attached or used.
+  Live `list-windows` behavior beyond that beta session/window-name
+  observation, filters, formatting, flags, target semantics, attached
+  `new-session`, grouping, duplicate-name errors, and socket-name semantics
+  remain unproven.
+
+The older audit below is retained as historical source-backed analysis, but it
+must not be read as a complete proof of current compatibility.
+
+---
+
 This report assesses whether each cl-tmux command behaves like real tmux. Each
 divergence was independently verified against the source; verdicts are
 `confirmed` (source-backed), `partial` (real but minor / narrow trigger), or
@@ -199,13 +309,6 @@ bindings that real tmux does not use.
 - Evidence: `src/events.lisp:77-86`; `src/prompt.lisp:11-15,32-43`.
 - Fix: add a cursor index to the prompt struct and implement the emacs editing key-table.
 
-**[Low] C-c does not cancel the rename prompt**
-- Expected: both Escape and C-c cancel the command-prompt.
-- Actual: only byte 27 (Esc) is treated as cancel; byte 3 (C-c) matches no clause and is ignored.
-- Verdict: confirmed.
-- Evidence: `src/events.lisp:77-86`.
-- Fix: add a byte-3 clause that cancels the prompt like Escape.
-
 **[Low] Non-ASCII / UTF-8 window names cannot be entered**
 - Expected: tmux accepts UTF-8 in the command-prompt.
 - Actual: only bytes 32–126 are inserted; every byte ≥127 (all UTF-8 lead/continuation bytes) is dropped.
@@ -295,11 +398,11 @@ bindings that real tmux does not use.
 - Evidence: `src/config.lisp:35-38`; `src/events.lisp:108-112,300-306`.
 - Fix: add a directional select-pane command and bind it to `C-b` arrows.
 
-**[Medium] No default binding for prev-pane; `:prev-pane` is dead code under defaults; no last-pane (C-b ;)**
+**[Medium] No default binding for last-pane (`C-b ;`)**
 - Expected: `C-b o` (next, wrapping) and `C-b ;` (last/MRU pane).
-- Actual: `:prev-pane` exists but is never bound by default; `;` is unbound and passes through. Only forward cycling with `o` works.
+- Actual: the `last-pane` command exists but is never bound by default; `;` is unbound and passes through. Only forward cycling with `o` works.
 - Verdict: confirmed.
-- Evidence: `src/config.lisp:20-41`; `src/events.lisp:111-112`.
+- Evidence: `src/config.lisp:20-41`; `src/dispatch-core-commands.lisp:283-286`.
 - Fix: add a `C-b ;` last-pane binding (needs the last-pane MRU stack).
 
 ---
@@ -351,13 +454,6 @@ bindings that real tmux does not use.
 ---
 
 ### copy-mode (C-b [), scroll, q to exit — entry binding matches tmux
-
-**[High] Plain `q` does not exit copy mode (must press C-b q); the unprefixed-q handler is dead code**
-- Expected: inside copy mode, a lone `q` cancels copy mode.
-- Actual: a lone `q` falls to the `(t …)` branch and is forwarded to the shell. The would-be `q`-exit branch is unreachable because escape-pending is only armed on ESC (byte 27). Exit only works via `C-b q`.
-- Verdict: confirmed.
-- Evidence: `src/events.lisp:300-306,230-234,194`.
-- Fix: in copy mode, treat an unprefixed `q` (and Escape) as exit.
 
 **[High] Scroll keys `[` and `]` require the prefix and are not real tmux copy-mode bindings**
 - Expected: copy-mode scrolling uses unprefixed Up/Down/k/j, PageUp/PageDown, C-u/C-d; `[`/`]` are not movement keys.
@@ -520,8 +616,7 @@ real tmux:
 - **resize-pane** — bound to prefix **H/J/K/L**; tmux uses **C-arrow** (1 cell) and **M-arrow** (5 cells), both repeatable. No Ctrl/Meta-arrow bindings exist.
 - **send-prefix (C-b C-b)** — **not bound at all**; tmux default-binds `C-b send-prefix`.
 - **Directional select-pane (C-b Up/Down/Left/Right)** — **missing entirely**; tmux binds these to `select-pane -U/-D/-L/-R`.
-- **last-pane (C-b ;)** — **missing**; `;` passes through.
-- **prev-pane** — implemented but **unbound** by default (dead code under defaults).
+- **last-pane (C-b ;)** — command exists but is **unbound** by default; `;` passes through.
 - **Unbound prefix keys** — passthrough-injected into the pane instead of being discarded (tmux drops them).
 
 ---

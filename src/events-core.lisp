@@ -280,8 +280,7 @@
   ((+byte-esc+ +byte-csi-bracket+ +byte-arrow-up+)    (copy-mode-move-cursor screen :up))
   ((+byte-esc+ +byte-csi-bracket+ +byte-arrow-down+)  (copy-mode-move-cursor screen :down))
   ((+byte-esc+ +byte-csi-bracket+ +byte-arrow-left+)  (copy-mode-move-cursor screen :left))
-  ((+byte-esc+ +byte-csi-bracket+ +byte-arrow-right+) (copy-mode-move-cursor screen :right))
-  ((+byte-q+)                                          (copy-mode-exit  screen)))
+  ((+byte-esc+ +byte-csi-bracket+ +byte-arrow-right+) (copy-mode-move-cursor screen :right)))
 
 ;;; ── CPS keystroke processing ─────────────────────────────────────────────────
 ;;;
@@ -316,4 +315,3 @@
   (when (member final-byte '(65 66 67 68))
     (make-array 3 :element-type '(unsigned-byte 8)
                   :initial-contents (list 27 79 final-byte)))) ; ESC O <final>
-

@@ -293,6 +293,10 @@
     (values (expand-format lhs context)
             (expand-format rhs context))))
 
+(defun %bit01 (truth)
+  "Return \"1\" when TRUTH is non-nil, otherwise \"0\"."
+  (if truth "1" "0"))
+
 (defun %apply-comparison (op rest context)
   "Evaluate a comparison: ==/!= are string (in)equality; </>/<=/>= compare the
    sides numerically (a non-numeric side parses as 0).  Split REST on the first
@@ -301,19 +305,18 @@
    compares the host value to the literal \"server\" and #{>:#{client_width},100}
    compares numerically."
   (multiple-value-bind (a b) (%split-and-expand rest context)
-    (flet ((bit01 (truth) (if truth "1" "0")))
-      (cond
-        ((string= op "==") (bit01 (string= a b)))
-        ((string= op "!=") (bit01 (string/= a b)))
-        (t
-         (let ((na (or (parse-integer a :junk-allowed t) 0))
-               (nb (or (parse-integer b :junk-allowed t) 0)))
-           (bit01 (cond
-                    ((string= op "<")  (<  na nb))
-                    ((string= op ">")  (>  na nb))
-                    ((string= op "<=") (<= na nb))
-                    ((string= op ">=") (>= na nb))
-                    (t nil)))))))))
+    (cond
+      ((string= op "==") (%bit01 (string= a b)))
+      ((string= op "!=") (%bit01 (string/= a b)))
+      (t
+       (let ((na (or (parse-integer a :junk-allowed t) 0))
+             (nb (or (parse-integer b :junk-allowed t) 0)))
+         (%bit01 (cond
+                   ((string= op "<")  (<  na nb))
+                   ((string= op ">")  (>  na nb))
+                   ((string= op "<=") (<= na nb))
+                   ((string= op ">=") (>= na nb))
+                   (t nil))))))))
 
 (defun %apply-logical (op rest context)
   "Evaluate a logical #{||:a,b} / #{&&:a,b}.  Split REST on the first TOP-LEVEL
@@ -406,6 +409,5 @@
            (cl-tmux/model:window-active-pane window)
            active-fmt inactive-fmt
            (lambda (pane) (format-context-from-session session window pane)))))))
-
 
 

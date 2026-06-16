@@ -17,8 +17,7 @@
           (cl-tmux/options:set-option "synchronize-panes" initial)
           (cl-tmux::%toggle-synchronize-panes)
           (is (overlay-active-p) "~A: overlay must be shown" desc)
-          (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-            (is (search expected-text text) "~A" desc)))))))
+          (assert-overlay-contains expected-text *overlay* desc))))))
 
 ;;; ── next-cyclic / prev-cyclic edge cases ────────────────────────────────────
 
@@ -292,9 +291,8 @@
     (let ((*overlay* nil))
       (cl-tmux::dispatch-command s :choose-window nil)
       (is (overlay-active-p) ":choose-window must open an overlay for empty session")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "no windows" text)
-            "overlay must say 'no windows' when there are none")))))
+      (assert-overlay-contains "no windows" *overlay*
+                               "overlay must say 'no windows' when there are none"))))
 
 ;;; ── :move-window-prompt dispatch ─────────────────────────────────────────────
 

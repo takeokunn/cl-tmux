@@ -46,12 +46,9 @@
          (l1   (tl-leaf 2 1 1))
          (tree (make-layout-split :v l0 l1)))
     (cl-tmux/model::layout-assign tree 0 0 80 21)
-    (let* ((ap  (layout-leaf-pane l0))
-           (buf (make-string-output-stream)))
-      (cl-tmux/renderer::render-tree-borders buf tree ap 80)
-      (let ((out (get-output-stream-string buf)))
-        (is (plusp (length out)) "render-tree-borders must produce output for :v split")
-        (is (find #\─ out) "horizontal bar character must be present for :v split")))))
+    (let ((out (render-tree-borders-output tree (layout-leaf-pane l0) 80)))
+      (is (plusp (length out)) "render-tree-borders must produce output for :v split")
+      (is (find #\─ out) "horizontal bar character must be present for :v split"))))
 
 ;;; -- layout-subtree-rect single-leaf edge case ------------------------------
 
@@ -235,6 +232,7 @@
     (multiple-value-bind (active sr er sc ec rect-p)
         (cl-tmux/renderer::%compute-selection-bounds screen)
       (declare (ignore sr er))
+      (is-true  active  "sel-active must be T")
       (is-true  rect-p  "rect-p must be T")
       (is (= 3 sc) "start col = min(3,8) = 3")
       (is (= 9 ec) "end col = 1+max(3,8) = 9"))))

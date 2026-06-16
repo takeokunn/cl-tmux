@@ -6,17 +6,9 @@
 
 ;;; ── copy-mode-begin-selection and copy-mode-yank ────────────────────────────
 
-(defun %copy-mode-screen (&key (w 20) (h 5) (content ""))
-  "Return a copy-mode screen pre-filled with CONTENT (no PTY required)."
-  (let ((s (make-screen w h)))
-    (unless (string= content "")
-      (feed s content))
-    (cl-tmux/commands::copy-mode-enter s)
-    s))
-
 (test copy-mode-begin-selection-sets-selecting-flag
   "copy-mode-begin-selection sets screen-copy-selecting to T and places mark at cursor."
-  (let ((s (%copy-mode-screen)))
+  (let ((s (copy-mode-screen)))
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 5))
     (cl-tmux/commands::copy-mode-begin-selection s)
     (is-true  (cl-tmux/terminal/types:screen-copy-selecting s)
@@ -93,7 +85,7 @@
 (test copy-mode-yank-noop-when-no-selection
   "copy-mode-yank with no active selection does not push to *paste-buffers*."
   (let ((cl-tmux/buffer:*paste-buffers* nil))
-    (let ((s (%copy-mode-screen :content "data")))
+    (let ((s (copy-mode-screen :content "data")))
       ;; Ensure no selection is active.
       (setf (cl-tmux/terminal/types:screen-copy-selecting s) nil)
       (cl-tmux/commands::copy-mode-yank s)
@@ -102,7 +94,7 @@
 
 (test copy-mode-cancel-selection-clears-all-state
   "copy-mode-cancel-selection resets mark, cursor, and selecting flag."
-  (let ((s (%copy-mode-screen)))
+  (let ((s (copy-mode-screen)))
     (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
           (cl-tmux/terminal/types:screen-copy-mark      s) (cons 1 2)
           (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 1 5))
@@ -118,7 +110,7 @@
 
 (test copy-mode-other-end-swaps-cursor-and-mark
   "copy-mode-other-end exchanges the cursor and mark ends of the selection."
-  (let ((s (%copy-mode-screen)))
+  (let ((s (copy-mode-screen)))
     (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
           (cl-tmux/terminal/types:screen-copy-mark      s) (cons 0 2)
           (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 5))
@@ -132,7 +124,7 @@
 
 (test copy-mode-other-end-no-op-when-not-selecting
   "copy-mode-other-end is a harmless no-op when no selection is active."
-  (let ((s (%copy-mode-screen)))
+  (let ((s (copy-mode-screen)))
     ;; No selection: selecting NIL, mark/cursor stay as set by copy-mode-enter.
     (setf (cl-tmux/terminal/types:screen-copy-selecting s) nil
           (cl-tmux/terminal/types:screen-copy-mark      s) nil
@@ -146,7 +138,7 @@
 (test copy-mode-other-end-no-op-when-mark-nil
   "copy-mode-other-end does not swap (and stays clean) when mark is NIL even
    though selecting is T — guards against a half-initialised selection."
-  (let ((s (%copy-mode-screen)))
+  (let ((s (copy-mode-screen)))
     (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
           (cl-tmux/terminal/types:screen-copy-mark      s) nil
           (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 4)

@@ -3,19 +3,21 @@
 (defun apply-config-directive (tokens)
   "Apply one parsed config directive (list of string TOKENS) to live state.
    Returns T when applied, NIL for an unknown/invalid directive.
-   Handles bind/unbind, set-hook, set[-g|-a|-s|-u|...], set-environment [-r],
-   if-shell, run-shell/run [-b|-C|-t|-d], and the fixed-arity directive table."
+   Handles bind/unbind, set-hook, set[-g|-a|-s|-u|...], set-environment [-u|-r],
+   if-shell, run-shell [-b|-C|-t|-d], source-file, and the fixed-arity
+   directive table."
   (when tokens
     (let ((cmd  (first tokens))
           (args (rest tokens)))
-      (or (%apply-key-directive cmd args)
-          (%apply-if-shell-directive cmd args)
+      (if (string= cmd "set-environment")
           (%apply-set-environment-directive cmd args)
-          (%apply-set-directive cmd args)
-          (%apply-set-hook-directive cmd args)
-          (%apply-run-shell-directive cmd args)
-          (%apply-source-file-directive cmd args)
-          (%apply-config-directive-inner tokens)))))
+          (or (%apply-key-directive cmd args)
+              (%apply-if-shell-directive cmd args)
+              (%apply-set-directive cmd args)
+              (%apply-set-hook-directive cmd args)
+              (%apply-run-shell-directive cmd args)
+              (%apply-source-file-directive cmd args)
+              (%apply-config-directive-inner tokens))))))
 
 (defun %strip-config-comment (line)
   "Remove a trailing # comment from a config LINE.  Following tmux's lexer, a #
@@ -173,6 +175,10 @@
                                      next)))
     line))
 
+(defun %config-cond-stack-active-p (cond-stack)
+  "True when every nested config condition is currently active."
+  (every (lambda (state) (eq state :active)) cond-stack))
+
 (defun load-config-from-stream (stream)
   "Apply every directive line read from STREAM, honoring %if/%elif/%else/%endif
    blocks.  Multi-line { ... } command blocks (tmux 3.x brace syntax) are joined
@@ -185,51 +191,50 @@
   ;; a match" from "a branch already matched" is required for correct %elif chains.
   (let ((cond-stack nil)
         (count 0))
-    (flet ((active-p () (every (lambda (s) (eq s :active)) cond-stack)))
-      (loop for raw = (read-line stream nil nil)
-            while raw
-            ;; Join trailing-backslash continuation lines, then strip any inline #
-            ;; comment, before classifying — so a continued/commented directive (or
-            ;; `%if 1 # note`) is seen as one clean logical line.
-            for line = (%strip-config-comment
-                        (%read-logical-config-line raw stream)) do
-        (let* ((trimmed (string-trim '(#\Space #\Tab #\Return #\Newline) line))
-               (pp-type (%preprocessor-line-p trimmed)))
-          (case pp-type
-            (:if
-             ;; Only evaluate the condition in an active context; a dead block
-             ;; never evaluates (matching tmux's short-circuit).
-             (let ((cond-str (string-trim " \t" (subseq trimmed 3))))
-               (push (cond ((not (active-p)) :dead)
-                           ((%eval-config-condition cond-str) :active)
-                           (t :seeking))
-                     cond-stack)))
-            (:elif
-             (when cond-stack
-               (let ((cond-str (string-trim " \t" (subseq trimmed 5))))
-                 (setf (first cond-stack)
-                       (case (first cond-stack)
-                         (:seeking (if (%eval-config-condition cond-str) :active :seeking))
-                         (:active  :taken)   ; prior branch matched → skip the rest
-                         (t        (first cond-stack)))))))   ; :taken / :dead unchanged
-            (:else
-             (when cond-stack
+    (loop for raw = (read-line stream nil nil)
+          while raw
+          ;; Join trailing-backslash continuation lines, then strip any inline #
+          ;; comment, before classifying — so a continued/commented directive (or
+          ;; `%if 1 # note`) is seen as one clean logical line.
+          for line = (%strip-config-comment
+                      (%read-logical-config-line raw stream)) do
+      (let* ((trimmed (string-trim '(#\Space #\Tab #\Return #\Newline) line))
+             (pp-type (%preprocessor-line-p trimmed)))
+        (case pp-type
+          (:if
+           ;; Only evaluate the condition in an active context; a dead block
+           ;; never evaluates (matching tmux's short-circuit).
+           (let ((cond-str (string-trim " \t" (subseq trimmed 3))))
+             (push (cond ((not (%config-cond-stack-active-p cond-stack)) :dead)
+                         ((%eval-config-condition cond-str) :active)
+                         (t :seeking))
+                   cond-stack)))
+          (:elif
+           (when cond-stack
+             (let ((cond-str (string-trim " \t" (subseq trimmed 5))))
                (setf (first cond-stack)
                      (case (first cond-stack)
-                       (:seeking :active)    ; no branch matched → take the else
-                       (:active  :taken)
-                       (t        (first cond-stack))))))
-            (:endif
-             (when cond-stack (pop cond-stack)))
-            (otherwise
-             ;; Normal line: apply only when every %if level is active.
-             (when (active-p)
-               ;; Join a multi-line { ... } command block into one logical line.
-               (let ((full-line (if (> (%line-brace-delta line) 0)
-                                    (%read-brace-block line stream)
-                                    line)))
-                 (when (apply-config-line full-line)
-                   (incf count)))))))))
+                       (:seeking (if (%eval-config-condition cond-str) :active :seeking))
+                       (:active  :taken)   ; prior branch matched → skip the rest
+                       (t        (first cond-stack)))))))   ; :taken / :dead unchanged
+          (:else
+           (when cond-stack
+             (setf (first cond-stack)
+                   (case (first cond-stack)
+                     (:seeking :active)    ; no branch matched → take the else
+                     (:active  :taken)
+                     (t        (first cond-stack))))))
+          (:endif
+           (when cond-stack (pop cond-stack)))
+          (otherwise
+           ;; Normal line: apply only when every %if level is active.
+           (when (%config-cond-stack-active-p cond-stack)
+             ;; Join a multi-line { ... } command block into one logical line.
+             (let ((full-line (if (> (%line-brace-delta line) 0)
+                                  (%read-brace-block line stream)
+                                  line)))
+               (when (apply-config-line full-line)
+                 (incf count))))))))
     count))
 
 (defun load-config-from-string (text)

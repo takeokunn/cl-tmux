@@ -86,8 +86,7 @@
   "When *clock-mode-pane-id* matches the pane id, render-pane draws the clock overlay."
   (let* ((pane   (make-test-pane 20 6 :id 42))
          (cl-tmux::*clock-mode-pane-id* 42))
-    (let ((out (with-output-to-string (s)
-                 (cl-tmux/renderer::render-pane s pane))))
+    (let ((out (render-pane-output pane)))
       (is (find #\█ out)
           "render-pane in clock mode must emit block-element digits (got ~S)" out))))
 
@@ -95,8 +94,7 @@
   "When *clock-mode-pane-id* does not match the pane id, the clock overlay is suppressed."
   (let* ((pane   (make-test-pane 20 6 :id 1))
          (cl-tmux::*clock-mode-pane-id* 99))
-    (let ((out (with-output-to-string (s)
-                 (cl-tmux/renderer::render-pane s pane))))
+    (let ((out (render-pane-output pane)))
       (is (null (find #\█ out))
           "render-pane without matching clock-mode id must not emit clock digits (got ~S)"
           out))))
@@ -170,11 +168,6 @@
           (screen-copy-cursor       screen) (cons cursor-row cursor-col))
     pane))
 
-(defun %render-pane-string (pane)
-  "Return the string produced by render-pane for PANE."
-  (with-output-to-string (s)
-    (cl-tmux/renderer::render-pane s pane)))
-
 (defun %reverse-video-p (out)
   "True when OUT contains the SGR reverse-video code (;7)."
   (not (null (search ";7" out))))
@@ -187,7 +180,7 @@
           (screen-copy-selecting screen) nil
           (screen-copy-mark      screen) nil
           (screen-copy-cursor    screen) nil)
-    (let ((out (%render-pane-string pane)))
+    (let ((out (render-pane-output pane)))
       (is (null (%reverse-video-p out))
           "no reverse-video SGR should appear when copy-selecting is NIL (got ~S)"
           out))))
@@ -197,7 +190,7 @@
   (let* ((pane (%make-selecting-pane 8 4
                                      "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
                                      0 2 0 5)))
-    (let ((out (%render-pane-string pane)))
+    (let ((out (render-pane-output pane)))
       (is (%reverse-video-p out)
           "single-row selection: reverse-video SGR must appear (got ~S)" out))))
 
@@ -207,7 +200,7 @@
   (with-isolated-config
     (let ((pane (%make-selecting-pane 8 4 "ABCDEFGHIJKLMNOP" 0 2 0 5)))
       (cl-tmux/options:set-option "mode-style" "reverse")
-      (let ((out (%render-pane-string pane)))
+      (let ((out (render-pane-output pane)))
         (is (%reverse-video-p out)
             "default mode-style must keep reverse-video selection (got ~S)" out)))))
 
@@ -217,7 +210,7 @@
   (with-isolated-config
     (let ((pane (%make-selecting-pane 8 4 "ABCDEFGHIJKLMNOP" 0 2 0 5)))
       (cl-tmux/options:set-option "mode-style" "bg=colour172")
-      (let ((out (%render-pane-string pane)))
+      (let ((out (render-pane-output pane)))
         (is (search "48;5;172" out)
             "colour mode-style must emit bg colour172 on the selection (got ~S)" out)
         (is (null (%reverse-video-p out))
@@ -228,7 +221,7 @@
   (let* ((pane (%make-selecting-pane 8 4
                                      "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
                                      0 3 2 0)))
-    (let ((out (%render-pane-string pane)))
+    (let ((out (render-pane-output pane)))
       (is (%reverse-video-p out)
           "first-row branch: reverse-video SGR must appear (got ~S)" out))))
 
@@ -237,7 +230,7 @@
   (let* ((pane (%make-selecting-pane 8 4
                                      "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
                                      0 0 2 5)))
-    (let ((out (%render-pane-string pane)))
+    (let ((out (render-pane-output pane)))
       (is (%reverse-video-p out)
           "last-row branch: reverse-video SGR must appear (got ~S)" out))))
 
@@ -246,7 +239,7 @@
   (let* ((pane (%make-selecting-pane 8 4
                                      "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
                                      0 0 3 0)))
-    (let ((out (%render-pane-string pane)))
+    (let ((out (render-pane-output pane)))
       (is (%reverse-video-p out)
           "middle-row branch: reverse-video SGR must appear (got ~S)" out))))
 
@@ -258,7 +251,6 @@
           (screen-copy-selecting screen) t
           (screen-copy-mark      screen) nil
           (screen-copy-cursor    screen) (cons 0 3))
-    (let ((out (%render-pane-string pane)))
+    (let ((out (render-pane-output pane)))
       (is (null (%reverse-video-p out))
           "nil mark must suppress reverse-video (got ~S)" out))))
-

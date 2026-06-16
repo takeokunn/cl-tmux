@@ -33,24 +33,51 @@
             ,@body)
        (setf (fdefinition 'cl-tmux::run-server)              orig-server)
        (setf (fdefinition 'cl-tmux::run-client)              orig-client)
-       (setf (fdefinition 'cl-tmux::run-standalone)          orig-standalone)
-       (setf (fdefinition 'cl-tmux::%ensure-server-running)  orig-ensure))))
+	     (setf (fdefinition 'cl-tmux::run-standalone)          orig-standalone)
+	     (setf (fdefinition 'cl-tmux::%ensure-server-running)  orig-ensure))))
+
+(test application-argv-strips-sbcl-wrapper-options
+  "%application-argv drops SBCL saved-core wrapper options before dispatch."
+  (let ((sb-ext:*posix-argv*
+          (list "sbcl" "--noinform" "--core" "/nix/store/core"
+                "--no-sysinit" "--no-userinit"
+                "list-commands" "-F" "#{command_list_name}")))
+    (is (equal '("list-commands" "-F" "#{command_list_name}")
+               (cl-tmux::%application-argv)))))
 
 (test dispatch-main-table
   "main routes argv to the correct entry point with the correct session name."
   (dolist (c '((("server" "foo") :server    ("foo") "server with name")
                (("attach" "foo") :client    ("foo") "attach with name")
                (()               :standalone nil    "no args → standalone")
-               (("server")       :server    ("0")   "server default name")
-               (("attach")       :client    ("0")   "attach default name")
-               (("bogus" "foo")  :standalone nil    "unknown mode → standalone")))
+	               (("server")       :server    ("0")   "server default name")
+	               (("attach")       :client    ("0")   "attach default name")
+	               (("bogus" "foo")  :standalone nil    "unknown mode → standalone")))
     (destructuring-bind (argv-tail expected-key expected-args desc) c
       (with-stubbed-entries
         (let ((sb-ext:*posix-argv* (cons "cl-tmux" argv-tail)))
           (cl-tmux::main))
         (is (= 1 (length *main-calls*)) "~A: exactly one call" desc)
         (is (eq expected-key (car (first *main-calls*))) "~A: entry key" desc)
-        (is (equal expected-args (cdr (first *main-calls*))) "~A: args" desc)))))
+	(is (equal expected-args (cdr (first *main-calls*))) "~A: args" desc)))))
+
+(test dispatch-main-from-sbcl-wrapper-argv
+  "main routes argv correctly when the saved core is launched through SBCL options."
+  (let ((orig-list-commands (fdefinition 'cl-tmux::run-list-commands)))
+    (unwind-protect
+         (let ((*main-calls* nil))
+           (setf (fdefinition 'cl-tmux::run-list-commands)
+                 (lambda (&rest a) (push (cons :list-commands a) *main-calls*)))
+           (let ((sb-ext:*posix-argv*
+                   (list "sbcl" "--noinform" "--core" "/nix/store/core"
+                         "--no-sysinit" "--no-userinit"
+                         "list-commands" "-F" "#{command_list_name}")))
+             (cl-tmux::main))
+           (is (= 1 (length *main-calls*)))
+           (is (eq :list-commands (car (first *main-calls*))))
+           (is (equal '(("-F" "#{command_list_name}"))
+                      (cdr (first *main-calls*)))))
+      (setf (fdefinition 'cl-tmux::run-list-commands) orig-list-commands))))
 
 ;;; ── attach-session dispatch ──────────────────────────────────────────────────
 
@@ -99,7 +126,7 @@
       "*startup-modes* must have an 'attach-session' entry")
   ;; Each entry's cdr is a list starting with the handler symbol.
   (dolist (name '("server" "attach" "attach-session"))
-    (let ((entry (cdr (assoc name cl-tmux::*startup-modes* :test #'equal))))
+    (let ((entry (alist-value name cl-tmux::*startup-modes* :test #'equal)))
       (is (consp entry)
           "~A entry cdr must be a list" name)
       (is (symbolp (first entry))
@@ -107,12 +134,22 @@
 
 ;;; ── %startup-mode-raw-args-p ────────────────────────────────────────────────
 
-(test startup-mode-raw-args-p-attach-session-is-true
-  "%startup-mode-raw-args-p returns T only for 'attach-session'."
+(test startup-mode-raw-args-p-known-raw-modes
+  "%startup-mode-raw-args-p returns T for modes that receive the full argv tail."
   (is-true  (cl-tmux::%startup-mode-raw-args-p "attach-session")
-            "attach-session must be a raw-args mode")
+	    "attach-session must be a raw-args mode")
+  (is-true  (cl-tmux::%startup-mode-raw-args-p "list-commands")
+	    "list-commands must be a raw-args mode")
+  (is-true  (cl-tmux::%startup-mode-raw-args-p "display-message")
+	    "display-message must be a raw-args mode")
+  (is-true  (cl-tmux::%startup-mode-raw-args-p "show-options")
+	    "show-options must be a raw-args mode")
+  (is-true  (cl-tmux::%startup-mode-raw-args-p "show-window-options")
+	    "show-window-options must be a raw-args mode")
+  (is-true  (cl-tmux::%startup-mode-raw-args-p "list-windows")
+	    "list-windows must be a raw-args mode")
   (is-false (cl-tmux::%startup-mode-raw-args-p "server")
-            "server must not be a raw-args mode")
+	    "server must not be a raw-args mode")
   (is-false (cl-tmux::%startup-mode-raw-args-p "attach")
             "attach must not be a raw-args mode")
   (is-false (cl-tmux::%startup-mode-raw-args-p "bogus")
@@ -156,6 +193,7 @@
   ;; Passing a vector with -t and a value should consume both.
   (multiple-value-bind (name _d _r)
       (cl-tmux::%parse-attach-flags '("-t" "myval"))
+    (declare (ignore _d _r))
     (is (string= "myval" name)
         ":value flag must capture the next argument as the variable value")))
 
@@ -164,6 +202,7 @@
   ;; After -d, the next element is not a flag → it is an unknown flag, silently consumed.
   (multiple-value-bind (_n detach _r)
       (cl-tmux::%parse-attach-flags '("-d" "extra"))
+    (declare (ignore _n _r))
     (is-true detach ":bool flag must set the variable to T")))
 
 (test define-flag-parser-unknown-flag-at-end-does-not-error
@@ -175,16 +214,28 @@
 
 (test startup-modes-attach-session-has-raw-args-key
   "The 'attach-session' entry in *startup-modes* carries :raw-args-p T."
-  (let ((entry (cdr (assoc "attach-session" cl-tmux::*startup-modes* :test #'equal))))
+  (let ((entry (alist-value "attach-session" cl-tmux::*startup-modes* :test #'equal)))
     (is-true (getf (rest entry) :raw-args-p)
              "attach-session entry must have :raw-args-p T")))
 
 (test startup-modes-handler-table
   "Each *startup-modes* entry names the correct handler symbol."
   (dolist (c '(("server" cl-tmux::run-server        "server → run-server")
-               ("attach" cl-tmux::run-attach-simple  "attach → run-attach-simple")))
+               ("attach" cl-tmux::run-attach-simple  "attach → run-attach-simple")
+               ("attach-session" cl-tmux::run-attach-with-flags
+                "attach-session → run-attach-with-flags")
+               ("list-commands" cl-tmux::run-list-commands
+                "list-commands → run-list-commands")
+               ("display-message" cl-tmux::run-display-message
+                "display-message → run-display-message")
+               ("show-options" cl-tmux::run-show-options
+                "show-options → run-show-options")
+               ("show-window-options" cl-tmux::run-show-window-options
+                "show-window-options → run-show-window-options")
+               ("has-session" cl-tmux::run-has-session
+                "has-session → run-has-session")))
     (destructuring-bind (mode expected-fn desc) c
-      (let ((entry (cdr (assoc mode cl-tmux::*startup-modes* :test #'equal))))
+      (let ((entry (alist-value mode cl-tmux::*startup-modes* :test #'equal)))
         (is (eq expected-fn (first entry)) "~A" desc)))))
 
 ;;; ── server-socket-poll constants ─────────────────────────────────────────────
@@ -249,20 +300,52 @@
            (setf (fdefinition 'sb-ext:exit) ,orig))))))
 
 (test run-kill-server-exits
-  "run-kill-server captures exit code 0."
+  "run-kill-server captures exit code 1 when no server is present."
   (let (exit-code)
     (with-stubbed-exit exit-code
       (cl-tmux::run-kill-server nil))
-    (is (eql 0 exit-code)
-        "run-kill-server must exit with code 0")))
+    (is (eql 1 exit-code)
+        "run-kill-server without a server must exit with code 1")))
 
 (test run-list-sessions-exits
-  "run-list-sessions captures exit code 0."
+  "run-list-sessions captures exit code 1 when no server is present."
   (let (exit-code)
     (with-stubbed-exit exit-code
       (cl-tmux::run-list-sessions nil))
-    (is (eql 0 exit-code)
-        "run-list-sessions must exit with code 0")))
+    (is (eql 1 exit-code)
+        "run-list-sessions without a server must exit with code 1")))
+
+(test run-list-windows-exits
+  "run-list-windows captures exit code 1 when no server is present."
+  (let (exit-code)
+    (with-stubbed-exit exit-code
+      (cl-tmux::run-list-windows nil))
+    (is (eql 1 exit-code)
+        "run-list-windows without a server must exit with code 1")))
+
+(test run-display-message-exits
+  "run-display-message captures exit code 1 when no server is present."
+  (let (exit-code)
+    (with-stubbed-exit exit-code
+      (cl-tmux::run-display-message '("-p" "hello")))
+    (is (eql 1 exit-code)
+        "run-display-message without a server must exit with code 1")))
+
+(test run-show-options-exits
+  "run-show-options captures exit code 1 when no server is present."
+  (let (exit-code)
+    (with-stubbed-exit exit-code
+      (cl-tmux::run-show-options '("-g")))
+    (is (eql 1 exit-code)
+        "run-show-options without a server must exit with code 1")))
+
+(test run-show-window-options-exits
+  "run-show-window-options captures exit code 1 when no server is present."
+  (let (exit-code)
+    (with-stubbed-exit exit-code
+      (cl-tmux::run-show-window-options '("-g")))
+    (is (eql 1 exit-code)
+        "run-show-window-options without a server must exit with code 1")))
 
 (test run-kill-server-forwards-to-running-server
   "run-kill-server forwards the real command to an existing server socket."
@@ -312,6 +395,102 @@
       (setf (fdefinition 'cl-tmux::%running-server-name) orig-running)
       (setf (fdefinition 'cl-tmux::run-command-client) orig-command))))
 
+(test run-list-windows-forwards-to-running-server
+  "run-list-windows forwards to an existing server so output comes from server state."
+  (let ((orig-running (fdefinition 'cl-tmux::%running-server-name))
+        (orig-command (fdefinition 'cl-tmux::run-command-client))
+        (forwarded nil)
+        exit-code)
+    (unwind-protect
+         (progn
+           (setf (fdefinition 'cl-tmux::%running-server-name)
+                 (lambda (&optional preferred)
+                   (declare (ignore preferred))
+                   "work"))
+           (setf (fdefinition 'cl-tmux::run-command-client)
+                 (lambda (name args)
+                   (setf forwarded (list name args))))
+           (with-stubbed-exit exit-code
+             (cl-tmux::run-list-windows '("-F" "#{window_name}")))
+           (is (equal '("work" ("list-windows" "-F" "#{window_name}")) forwarded)
+               "list-windows must be sent as a server-side command")
+           (is (eql 0 exit-code)
+               "run-list-windows still exits cleanly after forwarding"))
+      (setf (fdefinition 'cl-tmux::%running-server-name) orig-running)
+      (setf (fdefinition 'cl-tmux::run-command-client) orig-command))))
+
+(test run-display-message-forwards-to-running-server
+  "run-display-message forwards to an existing server so output comes from server state."
+  (let ((orig-running (fdefinition 'cl-tmux::%running-server-name))
+        (orig-command (fdefinition 'cl-tmux::run-command-client))
+        (forwarded nil)
+        exit-code)
+    (unwind-protect
+         (progn
+           (setf (fdefinition 'cl-tmux::%running-server-name)
+                 (lambda (&optional preferred)
+                   (declare (ignore preferred))
+                   "work"))
+           (setf (fdefinition 'cl-tmux::run-command-client)
+                 (lambda (name args)
+                   (setf forwarded (list name args))))
+           (with-stubbed-exit exit-code
+             (cl-tmux::run-display-message '("-p" "hello")))
+           (is (equal '("work" ("display-message" "-p" "hello")) forwarded)
+               "display-message must be sent as a server-side command")
+           (is (eql 0 exit-code)
+               "run-display-message still exits cleanly after forwarding"))
+      (setf (fdefinition 'cl-tmux::%running-server-name) orig-running)
+      (setf (fdefinition 'cl-tmux::run-command-client) orig-command))))
+
+(test run-show-options-forwards-to-running-server
+  "run-show-options forwards to an existing server so output comes from server state."
+  (let ((orig-running (fdefinition 'cl-tmux::%running-server-name))
+        (orig-command (fdefinition 'cl-tmux::run-command-client))
+        (forwarded nil)
+        exit-code)
+    (unwind-protect
+         (progn
+           (setf (fdefinition 'cl-tmux::%running-server-name)
+                 (lambda (&optional preferred)
+                   (declare (ignore preferred))
+                   "work"))
+           (setf (fdefinition 'cl-tmux::run-command-client)
+                 (lambda (name args)
+                   (setf forwarded (list name args))))
+           (with-stubbed-exit exit-code
+             (cl-tmux::run-show-options '("-g")))
+           (is (equal '("work" ("show-options" "-g")) forwarded)
+               "show-options must be sent as a server-side command")
+           (is (eql 0 exit-code)
+               "run-show-options still exits cleanly after forwarding"))
+      (setf (fdefinition 'cl-tmux::%running-server-name) orig-running)
+      (setf (fdefinition 'cl-tmux::run-command-client) orig-command))))
+
+(test run-show-window-options-forwards-to-running-server
+  "run-show-window-options forwards to an existing server so output comes from server state."
+  (let ((orig-running (fdefinition 'cl-tmux::%running-server-name))
+        (orig-command (fdefinition 'cl-tmux::run-command-client))
+        (forwarded nil)
+        exit-code)
+    (unwind-protect
+         (progn
+           (setf (fdefinition 'cl-tmux::%running-server-name)
+                 (lambda (&optional preferred)
+                   (declare (ignore preferred))
+                   "work"))
+           (setf (fdefinition 'cl-tmux::run-command-client)
+                 (lambda (name args)
+                   (setf forwarded (list name args))))
+           (with-stubbed-exit exit-code
+             (cl-tmux::run-show-window-options '("-g")))
+           (is (equal '("work" ("show-window-options" "-g")) forwarded)
+               "show-window-options must be sent as a server-side command")
+           (is (eql 0 exit-code)
+               "run-show-window-options still exits cleanly after forwarding"))
+      (setf (fdefinition 'cl-tmux::%running-server-name) orig-running)
+      (setf (fdefinition 'cl-tmux::run-command-client) orig-command))))
+
 (test run-new-session-forwards-full-argv-when-server-exists
   "run-new-session preserves tmux flags by forwarding the full argv to the server."
   (let ((orig-running (fdefinition 'cl-tmux::%running-server-name))
@@ -341,6 +520,38 @@
       (setf (fdefinition 'cl-tmux::run-command-client) orig-command)
       (setf (fdefinition 'cl-tmux::run-client) orig-client))))
 
+(test run-new-session-discovers-existing-server-before-session-name
+  "run-new-session -s NAME creates a session in the existing server, not a new NAME socket."
+  (let ((orig-running (fdefinition 'cl-tmux::%running-server-name))
+        (orig-command (fdefinition 'cl-tmux::run-command-client))
+        (orig-ensure (fdefinition 'cl-tmux::%ensure-server-running))
+        (forwarded nil)
+        (ensured nil)
+        (probes '()))
+    (unwind-protect
+         (progn
+           (setf (fdefinition 'cl-tmux::%running-server-name)
+                 (lambda (&optional preferred)
+                   (push preferred probes)
+                   (and (null preferred) "alpha")))
+           (setf (fdefinition 'cl-tmux::run-command-client)
+                 (lambda (name args)
+                   (setf forwarded (list name args))))
+           (setf (fdefinition 'cl-tmux::%ensure-server-running)
+                 (lambda (name)
+                   (setf ensured name)))
+           (cl-tmux::run-new-session '("-d" "-s" "beta" "-n" "two"))
+           (is (equal '("alpha" ("new-session" "-d" "-s" "beta" "-n" "two"))
+                      forwarded)
+               "new-session must forward to the already-running server")
+           (is (null ensured)
+               "new-session must not start a second server named after -s")
+           (is (equal '(nil) (reverse probes))
+               "new-session should discover any running server before treating -s as a socket name"))
+      (setf (fdefinition 'cl-tmux::%running-server-name) orig-running)
+      (setf (fdefinition 'cl-tmux::run-command-client) orig-command)
+      (setf (fdefinition 'cl-tmux::%ensure-server-running) orig-ensure))))
+
 (test run-source-file-nonexistent-path-exits-cleanly
   "run-source-file with a nonexistent path exits cleanly (code 0)."
   (let (exit-code)
@@ -358,11 +569,16 @@
         "run-has-session without socket must exit 1")))
 
 (test run-commands-are-fbound
-  "run-kill-server, run-list-sessions, run-source-file, and run-has-session are all fbound."
+  "CLI helper handlers are all fbound."
   (dolist (sym '(cl-tmux::run-kill-server
-                 cl-tmux::run-list-sessions
-                 cl-tmux::run-source-file
-                 cl-tmux::run-has-session))
+		 cl-tmux::run-list-sessions
+		 cl-tmux::run-list-windows
+		 cl-tmux::run-list-commands
+		 cl-tmux::run-display-message
+		 cl-tmux::run-show-options
+		 cl-tmux::run-show-window-options
+		 cl-tmux::run-source-file
+		 cl-tmux::run-has-session))
     (is (fboundp sym) "~S must be fbound" sym)))
 
 ;;; ── Coverage: hostname / environment helpers ─────────────────────────────────
@@ -390,8 +606,8 @@
     (is (stringp (getf ctx :hostname))  ":hostname must be a string")
     (is (stringp (getf ctx :version))   ":version must be a string")
     (is (stringp (getf ctx :term))      ":term must be a string")
-    (is (string= "3.5" (getf ctx :version))
-        ":version must be \"3.5\" for compatibility")))
+    (is (string= (cl-tmux/version:version-string) (getf ctx :version))
+        ":version must expose the cl-tmux runtime version")))
 
 (test make-format-condition-evaluator
   "%make-format-condition-evaluator returns a callable closure that returns a string."

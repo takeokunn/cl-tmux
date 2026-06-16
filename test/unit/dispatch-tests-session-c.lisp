@@ -52,14 +52,17 @@
 (test cmd-new-session-detached-uses-default-size
   "new-session -d with no -x/-y sizes the detached session from the default-size
    option (it has no client to size it), not the current terminal."
-  (with-isolated-options ("default-size" "100x40")
-    (with-fake-session (s)
-      (let* ((cl-tmux::*server-sessions* nil)
-             (new (cl-tmux::%cmd-new-session-arg s '("-d" "-s" "bg"))))
-        (is (= 100 (window-width (session-active-window new)))
-            "detached new-session width comes from default-size (100)")
-        (is (= 40 (window-height (session-active-window new)))
-            "detached new-session height comes from default-size (40)")))))
+  (with-isolated-config
+    (with-isolated-options ("default-size" "100x40")
+      (with-fake-session (s)
+        (let* ((cl-tmux::*server-sessions* nil)
+               (new (cl-tmux::%cmd-new-session-arg s '("-d" "-s" "bg")))
+               (win (session-active-window new))
+               (expected-height (- 40 cl-tmux/config:*status-height*)))
+          (is (= 100 (window-width win))
+              "detached new-session width comes from default-size (100)")
+          (is (= expected-height (window-height win))
+              "detached new-session window height is default-size rows minus status bar"))))))
 
 ;;; ── popup-border-lines: popup box-drawing character set ──────────────────────
 
@@ -99,12 +102,12 @@
    single-client display follow session-switch commands."
   (with-fake-session (s0)
     (let ((s1 (make-fake-session)))
-      (let ((cl-tmux::*server-sessions* nil))
+      (with-empty-registry
         (is (eq s0 (cl-tmux::%current-session s0))
             "empty registry → fallback to the argument"))
       (setf (cl-tmux::session-last-active s0) 10
             (cl-tmux::session-last-active s1) 20)
-      (let ((cl-tmux::*server-sessions* (list (cons "0" s0) (cons "1" s1))))
+      (with-registered-sessions (("0" s0) ("1" s1))
         (is (eq s1 (cl-tmux::%current-session s0))
             "registry non-empty → the highest last-active (s1)")
         (setf (cl-tmux::session-last-active s0) 30)
@@ -118,7 +121,7 @@
     (let ((s1 (make-fake-session)))
       (setf (cl-tmux::session-last-active s0) 100
             (cl-tmux::session-last-active s1) 50)
-      (let ((cl-tmux::*server-sessions* (list (cons "0" s0) (cons "1" s1))))
+      (with-registered-sessions (("0" s0) ("1" s1))
         (is (eq s0 (cl-tmux::%current-session s0)) "s0 starts as current")
         (cl-tmux::%switch-to-session s1)
         (is (eq s1 (cl-tmux::%current-session s0))
@@ -131,7 +134,7 @@
    even when other sessions survive."
   (with-fake-session (s1)
     (with-isolated-options ("detach-on-destroy" "on")
-      (let ((cl-tmux::*server-sessions* (list (cons "1" s1))))
+      (with-registered-sessions (("1" s1))
         (is (eq :quit (cl-tmux::%detach-on-destroy-action "0"))
             "on + survivors → :quit")))))
 
@@ -139,7 +142,7 @@
   "detach-on-destroy off: destroying the viewed session switches to a survivor."
   (with-fake-session (s1)
     (with-isolated-options ("detach-on-destroy" "off")
-      (let ((cl-tmux::*server-sessions* (list (cons "1" s1))))
+      (with-registered-sessions (("1" s1))
         (is (null (cl-tmux::%detach-on-destroy-action "0"))
             "off + survivors → nil (switch, loop follows)")))))
 
@@ -147,7 +150,7 @@
   "With no surviving sessions, detach-on-destroy always detaches (:quit)."
   (with-loop-state
     (with-isolated-options ("detach-on-destroy" "off")
-      (let ((cl-tmux::*server-sessions* nil))
+      (with-empty-registry
         (is (eq :quit (cl-tmux::%detach-on-destroy-action "0"))
             "no survivors → :quit regardless of mode")))))
 
@@ -157,7 +160,7 @@
     (setf (cl-tmux::session-name sa) "a"
           (cl-tmux::session-name sc) "c"
           (cl-tmux::session-name se) "e")
-    (let ((cl-tmux::*server-sessions* (list (cons "a" sa) (cons "c" sc) (cons "e" se))))
+    (with-registered-sessions (("a" sa) ("c" sc) ("e" se))
       (is (eq se (cl-tmux::%alphabetical-neighbour "c"  1)) "next of c is e")
       (is (eq sa (cl-tmux::%alphabetical-neighbour "c" -1)) "prev of c is a")
       (is (eq sa (cl-tmux::%alphabetical-neighbour "z"  1)) "next of z wraps to a")
@@ -170,7 +173,7 @@
       (let ((sc (make-fake-session)))
         (setf (cl-tmux::session-name sa) "a" (cl-tmux::session-last-active sa) 5
               (cl-tmux::session-name sc) "c" (cl-tmux::session-last-active sc) 5)
-        (let ((cl-tmux::*server-sessions* (list (cons "a" sa) (cons "c" sc))))
+        (with-registered-sessions (("a" sa) ("c" sc))
           (is (null (cl-tmux::%detach-on-destroy-action "b")) "next returns nil (switch)")
           (is (eq sc (cl-tmux::%current-session sa))
               "next switched to the alphabetically-next survivor (c)"))))))
@@ -181,7 +184,7 @@
     (with-isolated-options ("detach-on-destroy" "on")
       (let ((s2 (make-fake-session)))
         (setf (cl-tmux::session-name s1) "cur" (cl-tmux::session-name s2) "other")
-        (let ((cl-tmux::*server-sessions* (list (cons "cur" s1) (cons "other" s2))))
+        (with-registered-sessions (("cur" s1) ("other" s2))
           (is (eq :quit (cl-tmux::dispatch-command s1 :kill-session nil))
               "kill current with survivors + on → :quit (detach)"))))))
 
@@ -191,7 +194,7 @@
     (with-isolated-options ("detach-on-destroy" "off")
       (let ((s2 (make-fake-session)))
         (setf (cl-tmux::session-name s1) "cur" (cl-tmux::session-name s2) "other")
-        (let ((cl-tmux::*server-sessions* (list (cons "cur" s1) (cons "other" s2))))
+        (with-registered-sessions (("cur" s1) ("other" s2))
           (is (null (cl-tmux::dispatch-command s1 :kill-session nil))
               "kill current with survivors + off → nil (keep running)"))))))
 
@@ -204,7 +207,7 @@
       (let ((b (make-fake-session)))
         (setf (cl-tmux::session-name a) "a" (cl-tmux::session-last-active a) 20
               (cl-tmux::session-name b) "b" (cl-tmux::session-last-active b) 10)
-        (let ((cl-tmux::*server-sessions* (list (cons "a" a) (cons "b" b))))
+        (with-registered-sessions (("a" a) ("b" b))
           (cl-tmux::%switch-to-session b)
           (is (cl-tmux::server-find-session "a")
               "old session survives when destroy-unattached is off"))))))
@@ -216,7 +219,7 @@
       (let ((b (make-fake-session)))
         (setf (cl-tmux::session-name a) "a" (cl-tmux::session-last-active a) 20
               (cl-tmux::session-name b) "b" (cl-tmux::session-last-active b) 10)
-        (let ((cl-tmux::*server-sessions* (list (cons "a" a) (cons "b" b))))
+        (with-registered-sessions (("a" a) ("b" b))
           (cl-tmux::%switch-to-session b)
           (is (null (cl-tmux::server-find-session "a"))
               "old session is destroyed when destroy-unattached is on")
@@ -227,7 +230,7 @@
   (with-fake-session (a)
     (with-isolated-options ("destroy-unattached" t)
       (setf (cl-tmux::session-name a) "a" (cl-tmux::session-last-active a) 20)
-      (let ((cl-tmux::*server-sessions* (list (cons "a" a))))
+      (with-registered-sessions (("a" a))
         (cl-tmux::%switch-to-session a)
         (is (cl-tmux::server-find-session "a")
             "switching to current destroys nothing")))))
@@ -238,7 +241,7 @@
   "%rename-session-checked re-keys *server-sessions* under the new name."
   (with-fake-session (s)
     (setf (cl-tmux::session-name s) "old")
-    (let ((cl-tmux::*server-sessions* (list (cons "old" s))))
+    (with-registered-sessions (("old" s))
       (is (eq t (cl-tmux::%rename-session-checked s "new")) "rename succeeds")
       (is (string= "new" (cl-tmux::session-name s)) "name updated")
       (is (eq s (cl-tmux::server-find-session "new")) "findable under new name")
@@ -250,7 +253,7 @@
   (with-fake-session (a)
     (let ((b (make-fake-session)))
       (setf (cl-tmux::session-name a) "a" (cl-tmux::session-name b) "b")
-      (let ((cl-tmux::*server-sessions* (list (cons "a" a) (cons "b" b))))
+      (with-registered-sessions (("a" a) ("b" b))
         (is (null (cl-tmux::%rename-session-checked a "b"))
             "rename a → existing name b is refused")
         (is (string= "a" (cl-tmux::session-name a)) "a keeps its name")
@@ -261,7 +264,7 @@
   "Renaming a session to its own current name succeeds as a harmless no-op."
   (with-fake-session (s)
     (setf (cl-tmux::session-name s) "x")
-    (let ((cl-tmux::*server-sessions* (list (cons "x" s))))
+    (with-registered-sessions (("x" s))
       (is (eq t (cl-tmux::%rename-session-checked s "x")) "self-rename succeeds")
       (is (eq s (cl-tmux::server-find-session "x")) "still findable"))))
 
@@ -273,7 +276,7 @@
         (setf (cl-tmux::session-name s) "old")
         (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-session-renamed+
                                 (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-        (let ((cl-tmux::*server-sessions* (list (cons "old" s))))
+        (with-registered-sessions (("old" s))
           (cl-tmux::%rename-session-checked s "new")
           (is-true fired "the session-renamed hook fired"))))))
 

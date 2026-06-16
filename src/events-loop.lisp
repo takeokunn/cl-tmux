@@ -46,6 +46,11 @@
   (set-key-binding "M-3" '("select-layout" "main-horizontal"))
   (set-key-binding "M-4" '("select-layout" "main-vertical"))
   (set-key-binding "M-5" '("select-layout" "tiled"))
+  ;; C-b M-n / C-b M-p — cycle to next/previous window with an alert.
+  (set-key-binding "M-n" '("next-window" "-a"))
+  (set-key-binding "M-p" '("previous-window" "-a"))
+  ;; C-b M-o — rotate panes backward.
+  (set-key-binding "M-o" '("rotate-window" "-D"))
   ;; Pane management
   ;; C-b ! — break-pane (move active pane to a new window)
   (set-key-binding #\! :break-pane)
@@ -63,6 +68,8 @@
   ;; C-b M — clear-mark (clear the marked pane)
   (set-key-binding (code-char 77) :clear-mark)
   ;; Copy/paste/buffers
+  ;; C-b PageUp (tmux PPage) — enter copy mode and scroll to the oldest content.
+  (set-key-binding "PageUp" '("copy-mode" "-u"))
   ;; C-b C-b — send-prefix (forward one literal C-b byte to the active pane)
   (set-key-binding (code-char 2) :send-prefix)
   ;; C-b # — list-buffers (show all paste buffers)
@@ -74,6 +81,8 @@
   ;; Misc
   ;; C-b : — command-prompt (open interactive command line)
   (set-key-binding #\: :command-prompt)
+  ;; C-b C — customize-mode tree.
+  (set-key-binding #\C '("customize-mode"))
   ;; C-b r — refresh-client (force a full terminal redraw)
   (set-key-binding #\r :refresh-client)
   ;; C-b t — clock-mode (toggle digital clock overlay on active pane)
@@ -84,6 +93,8 @@
   (set-key-binding (code-char 126) :show-messages)
   ;; C-b C-o (15) — rotate-window (rotate panes forward, matching real tmux)
   (set-key-binding (code-char 15) :rotate-window)
+  ;; C-b C-z (26) — suspend-client.
+  (set-key-binding (code-char 26) :suspend-client)
   (values))
 
 ;; Install once at load time so the running image has the full default set.

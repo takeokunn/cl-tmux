@@ -236,7 +236,8 @@
   "CBT (CSI N Z) moves the cursor backward N tab stops, clamping at column 0."
   (dolist (row '(("[1;19H" "[2Z" 8 "2 stops from col 18 → col 8")
                  ("[1;4H"  "[5Z" 0 "5 stops from col 3 → col 0 (clamped)")))
-    (destructuring-bind (setup-seq cbt-seq expected desc) row
+    (destructuring-bind (setup-seq cbt-seq expected _desc) row
+      (declare (ignore _desc))
       (with-screen (s 40 5)
         (feed s (esc setup-seq))
         (feed s (esc cbt-seq))
@@ -246,7 +247,8 @@
   "CHT (CSI N I) advances cursor forward N tab stops from column 0."
   (dolist (row '(("[I"  8  "1 stop from col 0 → col 8")
                  ("[2I" 16 "2 stops from col 0 → col 16")))
-    (destructuring-bind (seq expected desc) row
+    (destructuring-bind (seq expected _desc) row
+      (declare (ignore _desc))
       (with-screen (s 40 5)
         (feed s (esc seq))
         (check-cursor s expected 0)))))

@@ -154,6 +154,13 @@
                         (incf index))))
     (if (< index length) (1+ index) index))) ; skip closing quote when present
 
+(defun %flush-tokenized-argument (accumulator arguments in-arg)
+  "Flush ACCUMULATOR into ARGUMENTS when IN-ARG is true.
+   Returns two values: the updated ARGUMENTS list and the new IN-ARG state."
+  (if in-arg
+      (values (cons (get-output-stream-string accumulator) arguments) nil)
+      (values arguments in-arg)))
+
 (defun tokenize-command-string (string)
   "Split STRING into a list of argument strings, shell-style.
    Whitespace separates arguments; '...' is a literal span; \"...\" allows \\
@@ -165,32 +172,34 @@
         (in-arg      nil)
         (index       0)
         (length      (length string)))
-    (flet ((flush-argument ()
-             (when in-arg
-               (push (get-output-stream-string accumulator) arguments)
-               (setf in-arg nil))))
-      (loop while (< index length)
-            for character = (char string index)
-            do (cond
-                 ((member character '(#\Space #\Tab))
-                  (flush-argument)
-                  (incf index))
-                 ((char= character #\')
-                  (setf in-arg t
-                        index (%consume-single-quoted string index length accumulator)))
-                 ((char= character #\")
-                  (setf in-arg t
-                        index (%consume-double-quoted string index length accumulator)))
-                 ((and (char= character #\\) (< (1+ index) length))
-                  (setf in-arg t)
-                  (write-char (char string (1+ index)) accumulator)
-                  (incf index 2))
-                 (t
-                  (setf in-arg t)
-                  (write-char character accumulator)
-                  (incf index))))
-      (flush-argument)
-      (nreverse arguments))))
+    (loop while (< index length)
+          for character = (char string index)
+          do (cond
+               ((member character '(#\Space #\Tab))
+                (multiple-value-bind (new-arguments new-in-arg)
+                    (%flush-tokenized-argument accumulator arguments in-arg)
+                  (setf arguments new-arguments
+                        in-arg new-in-arg))
+                (incf index))
+               ((char= character #\')
+                (setf in-arg t
+                      index (%consume-single-quoted string index length accumulator)))
+               ((char= character #\")
+                (setf in-arg t
+                      index (%consume-double-quoted string index length accumulator)))
+               ((and (char= character #\\) (< (1+ index) length))
+                (setf in-arg t)
+                (write-char (char string (1+ index)) accumulator)
+                (incf index 2))
+               (t
+                (setf in-arg t)
+                (write-char character accumulator)
+                (incf index))))
+    (multiple-value-bind (new-arguments new-in-arg)
+        (%flush-tokenized-argument accumulator arguments in-arg)
+      (declare (ignore new-in-arg))
+      (setf arguments new-arguments))
+    (nreverse arguments)))
 
 (defun %translate-send-keys (string)
   "Bytes that send-keys should write for the argument string STRING.  STRING is
@@ -228,15 +237,19 @@
 ;;; run_shell(cmd)            :- subprocess(cmd, timeout=30, output=string).
 ;;; if_shell(cmd, then, else) :- subprocess(cmd), exit_code=0 -> then ; else.
 ;;;
-;;; Both run-shell and if-shell accept a :timeout keyword (seconds, default 30).
-;;; The foreground (synchronous) paths honour the timeout via a bordeaux-threads
-;;; helper; background tasks are fire-and-forget.
+;;; Both run-shell and if-shell accept a :timeout keyword (seconds, default
+;;; +shell-command-timeout+).  Synchronous callers are bounded by both the Lisp
+;;; control path and the subprocess itself; background callers return
+;;; immediately but the worker still gives the subprocess a bounded lifetime.
 ;;;
 ;;; uiop:run-program is used instead of sb-ext:run-program so the code is
 ;;; portable across all ASDF-supported implementations.
 ;;;
 ;;; if-shell is exported and wired to the :if-shell dispatch key in dispatch.lisp
 ;;; so it is reachable from the prefix-key handler.
+
+(defconstant +shell-command-timeout+ 30
+  "Default wall-clock timeout, in seconds, for shell subprocesses.")
 
 (defun %run-with-timeout (thunk timeout-seconds)
   "Run THUNK in a fresh thread; join it up to TIMEOUT-SECONDS.
@@ -256,38 +269,46 @@
          ,@body))
      ,timeout))
 
-(defun run-shell (command &key background (timeout 30))
+(defun %run-shell-program (shell command &key output timeout)
+  "Run COMMAND through SHELL with an explicit subprocess TIMEOUT."
+  (uiop:run-program (list shell "-c" command)
+                    :output output
+                    :ignore-error-status t
+                    :timeout timeout))
+
+(defun run-shell (command &key background (timeout +shell-command-timeout+))
   "Run COMMAND in a subshell.  Returns the output string (stdout) when BACKGROUND
    is nil, or T immediately when BACKGROUND is T.
    Uses *default-shell* for the shell binary.
-   TIMEOUT (seconds, default 30) limits how long a synchronous command may run;
-   when the limit is exceeded NIL is returned."
+   TIMEOUT (seconds, default +shell-command-timeout+) limits how long the
+   subprocess may run; when the synchronous limit is exceeded NIL is returned."
   (if background
       (progn
-        ;; Deliberate no-timeout policy: background shell commands are fire-and-forget.
-        ;; The caller requested asynchronous execution and does not need the result.
-        ;; If a bounded background job is needed, the caller should wrap in bt:with-timeout.
         (bt:make-thread
           (lambda ()
             (let ((shell (or *default-shell* "/bin/sh")))
-              (uiop:run-program (list shell "-c" command)
-                                :output nil :ignore-error-status t)))
+              (ignore-errors
+                (%run-shell-program shell command
+                                    :output nil
+                                    :timeout timeout))))
           :name "shell-bg")
         t)
       (with-shell-timeout (shell timeout)
-        (uiop:run-program (list shell "-c" command)
-                          :output :string :ignore-error-status t))))
+        (%run-shell-program shell command
+                            :output :string
+                            :timeout timeout))))
 
-(defun if-shell (command then-fn &key else-fn (timeout 30))
+(defun if-shell (command then-fn &key else-fn (timeout +shell-command-timeout+))
   "Run COMMAND; call THEN-FN if exit code is 0, ELSE-FN otherwise.
    THEN-FN and ELSE-FN are zero-argument functions (keyword arguments).
-   TIMEOUT (seconds, default 30) limits how long the command may run;
-   when the limit is exceeded ELSE-FN is called."
+   TIMEOUT (seconds, default +shell-command-timeout+) limits how long the
+   command may run; when the limit is exceeded ELSE-FN is called."
   (let ((exit-code
           (with-shell-timeout (shell timeout)
             (multiple-value-bind (output error-output code)
-                (uiop:run-program (list shell "-c" command)
-                                  :output nil :ignore-error-status t)
+                (%run-shell-program shell command
+                                    :output nil
+                                    :timeout timeout)
               (declare (ignore output error-output))
               code))))
     (if (and exit-code (zerop exit-code))

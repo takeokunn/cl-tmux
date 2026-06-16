@@ -24,19 +24,42 @@
         (loop for (name . perm) in (reverse *server-access-list*)
               do (format s "~A: ~(~A~)~%" name perm)))))
 
+(defun %server-access-delete-user (user)
+  "Remove USER from *server-access-list* and emit the standard overlay."
+  (setf *server-access-list*
+        (remove user *server-access-list* :key #'car :test #'string=))
+  (%overlayf "server-access: removed ~A" user)
+  t)
+
+(defun %server-access-upsert-user (user perm addp)
+  "Modify USER if present, add it when ADDP is true, or report an unknown user."
+  (let ((entry (assoc user *server-access-list* :test #'string=)))
+    (cond
+      (entry
+       (when perm
+         (setf (cdr entry) perm))
+       t)
+      (addp
+       (push (cons user (or perm :read-write)) *server-access-list*)
+       t)
+      (t
+       (%overlayf "server-access: unknown user ~A" user)
+       nil))))
+
 (defun %cmd-server-access (session args)
-  "server-access [-l] [-a|-d] [-r|-w] [-k] [user]: manage the server access list.
+  "server-access [-l] [-a|-d] [-r|-w] [user]: manage the server access list.
    -l       list the current access entries (name -> permission); also the
             default when no user and no -a/-d is given.
    -a user  add USER (read-write by default, read-only when -r is also given).
    -d user  remove USER from the access list.
    -r / -w  set the permission to read-only / read-write when adding or modifying.
-   -k       kill USER's clients — accepted for compatibility; single-user cl-tmux
-            has no remote clients to kill, so it is a no-op.
    A bare `server-access -r user` (no -a/-d) modifies an existing entry; modifying
    an unknown user is an error, matching tmux.  See *server-access-list*."
   (declare (ignore session))
-  (with-command-flags+pos (flags positionals args "")
+  (with-command-input (flags positionals args ""
+                       :allowed-flags '(#\l #\a #\d #\r #\w)
+                       :max-positionals 1
+                       :message "server-access: unsupported argument")
     (let* ((listp (assoc #\l flags))
            (addp  (assoc #\a flags))
            (delp  (assoc #\d flags))
@@ -51,22 +74,13 @@
          t)
         ;; -d user: remove (a no-op if absent, like tmux).
         ((and delp user)
-         (setf *server-access-list*
-               (remove user *server-access-list* :key #'car :test #'string=))
-         (show-overlay (format nil "server-access: removed ~A" user))
-         t)
+         (%server-access-delete-user user))
         ;; -a user, or bare `user` with -r/-w: add or modify.
         (user
-         (let* ((entry (assoc user *server-access-list* :test #'string=))
-                (valid (cond
-                         (entry (when perm (setf (cdr entry) perm)) t)
-                         (addp  (push (cons user (or perm :read-write)) *server-access-list*) t)
-                         (t (show-overlay (format nil "server-access: unknown user ~A" user)) nil))))
-           (when valid
-             (show-overlay
-              (format nil "server-access: ~A -> ~(~A~)" user
-                      (cdr (assoc user *server-access-list* :test #'string=))))
-             t)))
+         (when (%server-access-upsert-user user perm addp)
+           (%overlayf "server-access: ~A -> ~(~A~)" user
+                      (cdr (assoc user *server-access-list* :test #'string=)))
+           t))
         (t nil)))))
 
 ;;; ── customize-mode ─────────────────────────────────────────────────────────
@@ -98,27 +112,31 @@
         ((stringp value) value)
         (t (princ-to-string value))))
 
+(defun %customize-emit-options (s title ht-pairs &optional filter)
+  "Write one customize-tree section to S, preserving the existing name sort and
+   filtering behavior for options and hooks."
+  (let ((shown (sort (remove-if-not
+                      (lambda (p) (%customize-match-p (car p) filter))
+                      ht-pairs)
+                     #'string< :key #'car)))
+    (when shown
+      (format s "~A:~%" title)
+      (dolist (p shown)
+        (format s "  ~A: ~A~%"
+                (car p) (%customize-value-string (cdr p)))))))
+
 (defun %format-customize-tree (&optional filter)
   "Render the customize tree as an overlay string: Server Options, then
    Session/Window Options (each `  name: value`, name-sorted), then Key Bindings,
    restricted to entries matching FILTER (substring, case-insensitive).  A group
    with no surviving entries is omitted entirely."
   (with-output-to-string (s)
-    (flet ((emit-options (title ht-pairs)
-             (let ((shown (sort (remove-if-not
-                                 (lambda (p) (%customize-match-p (car p) filter))
-                                 ht-pairs)
-                                #'string< :key #'car)))
-               (when shown
-                 (format s "~A:~%" title)
-                 (dolist (p shown)
-                   (format s "  ~A: ~A~%"
-                           (car p) (%customize-value-string (cdr p))))))))
-      (let (server-pairs)
-        (maphash (lambda (k v) (push (cons k v) server-pairs))
-                 cl-tmux/options::*server-options*)
-        (emit-options "Server Options" server-pairs))
-      (emit-options "Session/Window Options" (cl-tmux/options:all-options)))
+    (let (server-pairs)
+      (maphash (lambda (k v) (push (cons k v) server-pairs))
+               cl-tmux/options::*server-options*)
+      (%customize-emit-options s "Server Options" server-pairs filter))
+    (%customize-emit-options s "Session/Window Options"
+                             (cl-tmux/options:all-options) filter)
     ;; Key bindings: filter the pre-rendered describe-key-bindings block by line.
     (let ((lines (remove-if
                   (lambda (l) (or (string= l "")
@@ -129,16 +147,14 @@
         (dolist (l lines) (format s "  ~A~%" l))))))
 
 (defun %cmd-customize-mode (session args)
-  "customize-mode [-N] [-F format] [-f filter] [-t target-pane]: show the
-   customize tree (options + key bindings) in an overlay.  -f FILTER limits the
-   tree to entries whose name/line contains FILTER (case-insensitive substring).
-   -F format, -N (numeric/no-preview), and -t target-pane are accepted for tmux
-   compatibility and otherwise ignored — cl-tmux's tree is read-only (edit with
-   set-option / bind-key)."
+  "customize-mode [-f filter]: show the customize tree (options + key bindings)
+   in an overlay.  -f FILTER limits the tree to entries whose name/line contains
+   FILTER (case-insensitive substring).  cl-tmux's tree is read-only; edit with
+   set-option / bind-key."
   (declare (ignore session))
-  (with-command-flags+pos (flags positionals args "Fft")
-    (declare (ignore positionals))
+  (with-command-input (flags positionals args "f"
+                       :allowed-flags '(#\f)
+                       :max-positionals 0
+                       :message "customize-mode: unsupported argument")
     (show-overlay (%format-customize-tree (cdr (assoc #\f flags))))
     t))
-
-

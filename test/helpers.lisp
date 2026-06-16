@@ -91,6 +91,25 @@
   (screen-process-bytes screen (octets string))
   screen)
 
+(defun copy-mode-screen (&key (w 20) (h 5) (content "") cursor mark selecting)
+  "Return a copy-mode screen pre-filled with CONTENT and optional copy state."
+  (let ((screen (make-screen w h)))
+    (unless (string= content "")
+      (feed screen content))
+    (cl-tmux/commands::copy-mode-enter screen)
+    (when cursor
+      (setf (cl-tmux/terminal/types:screen-copy-cursor screen) cursor))
+    (when mark
+      (setf (cl-tmux/terminal/types:screen-copy-mark screen) mark))
+    (when selecting
+      (setf (cl-tmux/terminal/types:screen-copy-selecting screen) selecting))
+    screen))
+
+(defmacro with-copy-mode-cursor ((screen-var row col &key (w 20) (h 5)) &body body)
+  "Bind SCREEN-VAR to a fresh copy-mode screen with cursor at (ROW . COL)."
+  `(let ((,screen-var (copy-mode-screen :w ,w :h ,h :cursor (cons ,row ,col))))
+     ,@body))
+
 ;;; ── Semantic escape sequence builders ──────────────────────────────────────
 
 (defun esc (fmt &rest args)
@@ -153,14 +172,216 @@
       (loop for x below end
             do (write-char (cell-char (screen-display-cell screen x y)) s)))))
 
+(defun render-pane-output (pane)
+  "Render PANE to a string using the production renderer."
+  (with-output-to-string (s)
+    (cl-tmux/renderer::render-pane s pane)))
+
+(defun render-status-bar-output (sess rows cols &key ((:status-row status-row)
+                                                     nil
+                                                     status-row-supplied-p))
+  "Render the status bar for SESS to a string using the production renderer."
+  (with-output-to-string (s)
+    (if status-row-supplied-p
+        (cl-tmux/renderer::render-status-bar s sess rows cols :status-row status-row)
+        (cl-tmux/renderer::render-status-bar s sess rows cols))))
+
+(defun render-overlay-output (width)
+  "Render the current overlay to a string using the production renderer."
+  (with-output-to-string (buf)
+    (cl-tmux/renderer::render-overlay buf width)))
+
+(defun render-popup-output (popup rows cols)
+  "Render POPUP to a string using the production renderer."
+  (with-output-to-string (s)
+    (cl-tmux/renderer::render-popup s popup rows cols)))
+
+(defun render-menu-output (menu rows cols)
+  "Render MENU to a string using the production renderer."
+  (with-output-to-string (s)
+    (cl-tmux/renderer::render-menu s menu rows cols)))
+
+(defun render-tree-borders-output (tree active-pane width)
+  "Render TREE borders for ACTIVE-PANE to a string using the production renderer."
+  (with-output-to-string (s)
+    (cl-tmux/renderer::render-tree-borders s tree active-pane width)))
+
+;;; ── Key translation helpers ────────────────────────────────────────────────
+
+(defun key-name-bytes (name)
+  "Return %key-name-to-bytes(NAME) as a list of byte values."
+  (coerce (cl-tmux/commands::%key-name-to-bytes name) 'list))
+
+(defun split-key-modifiers-values (name)
+  "Return the multiple values from %split-key-modifiers(NAME) as a list."
+  (multiple-value-list (cl-tmux/commands::%split-key-modifiers name)))
+
+(defun translate-send-keys-bytes (string)
+  "Return %translate-send-keys(STRING) as a list of byte values."
+  (coerce (cl-tmux/commands::%translate-send-keys string) 'list))
+
+(defun key-table-command-value (table key)
+  "Return the command bound to KEY in TABLE as a list or keyword."
+  (cl-tmux/config:key-table-command
+   (cl-tmux/config:key-table-lookup table key)))
+
+(defun copy-mode-x-command-value (name)
+  "Return the copy-mode -X command keyword bound to NAME."
+  (cdr (assoc name cl-tmux::*copy-mode-x-commands* :test #'string-equal)))
+
+(defun alist-value (key alist &key (test #'eql))
+  "Return the value bound to KEY in ALIST."
+  (cdr (assoc key alist :test test)))
+
+;;; ── Overlay assertions ─────────────────────────────────────────────────────
+
+(defun overlay-text (overlay)
+  "Normalize OVERLAY contents to a string suitable for substring checks."
+  (cond
+    ((null overlay) "")
+    ((stringp overlay) overlay)
+    ((listp overlay) (format nil "~{~A~%~}" overlay))
+    (t (princ-to-string overlay))))
+
+(defmacro assert-overlay-contains (needle overlay &optional (context "overlay"))
+  "Assert that an active overlay contains NEEDLE in its rendered text."
+  `(let ((text (overlay-text ,overlay)))
+     (is (overlay-active-p)
+         "~A must open an overlay" ,context)
+     (is (search ,needle text)
+         "~A must report ~S (got ~S)" ,context ,needle text)))
+
+(defmacro assert-overlay-contains-all (needles overlay &optional (context "overlay"))
+  "Assert that an active overlay contains every string in NEEDLES."
+  `(let ((text (overlay-text ,overlay)))
+     (is (overlay-active-p)
+         "~A must open an overlay" ,context)
+     (dolist (needle ,needles)
+       (is (search needle text)
+           "~A must report ~S (got ~S)" ,context needle text))))
+
+(defmacro assert-overlay-not-contains (needle overlay &optional (context "overlay"))
+  "Assert that an active overlay does not contain NEEDLE in its rendered text."
+  `(let ((text (overlay-text ,overlay)))
+     (is (overlay-active-p)
+         "~A must open an overlay" ,context)
+     (is (null (search ,needle text))
+         "~A must not report ~S (got ~S)" ,context ,needle text)))
+
+(defmacro assert-overlay-uses-custom-format (needles overlay &optional (context "overlay"))
+  "Assert that an overlay shows NEEDLES and does not fall back to the default listing."
+  `(progn
+     (assert-overlay-contains-all ,needles ,overlay ,context)
+     (assert-overlay-not-contains "[" ,overlay
+                                  ,(format nil "~A must replace the default listing" context))))
+
+(defmacro with-overlay-session ((session-spec &key context) setup-form &body body)
+  "Run SETUP-FORM in a fake session and assert that it opens an overlay."
+  (let ((session-var (if (consp session-spec) (first session-spec) session-spec))
+        (session-args (if (consp session-spec) (rest session-spec) nil)))
+    `(with-fake-session (,session-var ,@session-args)
+       (let ((*overlay* nil))
+         ,setup-form
+         (is (overlay-active-p)
+             ,(or context "overlay must open"))
+         ,@body))))
+
+(defmacro with-dispatch-overlay ((session-spec command &key args context)
+                                 &body body)
+  "Run DISPATCH-COMMAND for COMMAND in a fake session and assert that it opens
+   an overlay.  BODY runs with the session bound and *OVERLAY* still active.
+   SESSION-SPEC may be either a session variable, or a list whose first element
+   is the session variable and the remaining elements are forwarded to
+   WITH-FAKE-SESSION as MAKE-ARGS."
+  `(with-overlay-session (,session-spec :context ,(or context "dispatch-command must open an overlay"))
+       (cl-tmux::dispatch-command ,(if (consp session-spec) (first session-spec) session-spec)
+                                  ,command ,args)
+     ,@body))
+
+(defmacro with-run-command-line-overlay ((session-spec command &key context)
+                                         &body body)
+  "Run %RUN-COMMAND-LINE for COMMAND in a fake session and assert that it opens
+   an overlay.  BODY runs with the session bound and *OVERLAY* still active.
+   SESSION-SPEC may be either a session variable, or a list whose first element
+   is the session variable and the remaining elements are forwarded to
+   WITH-FAKE-SESSION as MAKE-ARGS."
+  `(with-overlay-session (,session-spec :context ,(or context "%run-command-line must open an overlay"))
+       (cl-tmux::%run-command-line ,(if (consp session-spec) (first session-spec) session-spec)
+                                   ,command)
+     ,@body))
+
+(defmacro with-dispatch-prompt ((session-spec command &key args label context)
+                                &body body)
+  "Run DISPATCH-COMMAND for COMMAND in a fake session and assert that it opens
+   a prompt.  BODY runs with the session bound and *PROMPT* still active.
+   SESSION-SPEC may be either a session variable, or a list whose first element
+   is the session variable and the remaining elements are forwarded to
+   WITH-FAKE-SESSION as MAKE-ARGS."
+  (let ((session-var (if (consp session-spec) (first session-spec) session-spec))
+        (session-args (if (consp session-spec) (rest session-spec) nil)))
+    `(with-fake-session (,session-var ,@session-args)
+       (let ((*prompt* nil))
+         (cl-tmux::dispatch-command ,session-var ,command ,args)
+         (is (prompt-active-p)
+             ,(or context "dispatch-command must open a prompt"))
+         ,(when label
+            `(is (string= ,label (prompt-label *prompt*))
+                 ,(format nil "~A prompt label must be ~S" command label)))
+         ,@body))))
+
+(defmacro assert-overlay-rejects-before-row (overlay message row-token
+                                            &optional (context "overlay"))
+  "Assert that OVERLAY reports MESSAGE and does not fall through to ROW-TOKEN."
+  `(let ((text (overlay-text ,overlay)))
+     (is (overlay-active-p)
+         "~A must open an overlay" ,context)
+     (is (search ,message text)
+         "~A must report ~S (got ~S)" ,context ,message text)
+     (is (null (search ,row-token text))
+         "~A must not fall through to row output ~S (got ~S)"
+         ,context ,row-token text)))
+
+(defmacro with-session-name ((session-var name) &body body)
+  "Assign NAME to SESSION-VAR and continue with BODY."
+  `(progn
+     (setf (session-name ,session-var) ,name)
+     ,@body))
+
+(defmacro with-window-names ((session-var &rest names) &body body)
+  "Assign NAMES to the active windows of SESSION-VAR in order."
+  (let ((windows (gensym "WINDOWS")))
+    `(let ((,windows (session-windows ,session-var)))
+       (loop for window in ,windows
+             for name in (list ,@names)
+             do (setf (window-name window) name))
+       ,@body)))
+
+(defmacro with-session-and-window-names ((session-var session-name
+                                         &rest window-names)
+                                        &body body)
+  "Assign SESSION-NAME and WINDOW-NAMES to SESSION-VAR in one step."
+  `(with-session-name (,session-var ,session-name)
+     (with-window-names (,session-var ,@window-names)
+       ,@body)))
+
+(defmacro with-registered-sessions ((&rest session-bindings) &body body)
+  "Bind *SERVER-SESSIONS* from SESSION-BINDINGS data.
+
+   Each binding is a (SESSION-NAME SESSION-VAR) pair, keeping registry setup
+   separate from the test logic that exercises it."
+  `(let ((cl-tmux::*server-sessions*
+           (list ,@(loop for (session-name session-var) in session-bindings
+                         collect `(cons ,session-name ,session-var)))))
+     ,@body))
+
 ;;; ── PTY availability probe (test-only) ─────────────────────────────────────
 ;;;
-;;; pty-available-p is a testing artifact: it forks a real shell and immediately
+;;; pty-available-p is a testing artifact: it spawns a real shell and immediately
 ;;; kills it purely to check PTY access.  It lives here (test helpers) rather
 ;;; than in production source so the production pty.lisp has no test-only code.
 
 (defun pty-available-p ()
-  "Return T if a PTY can be opened and forked on this system, NIL otherwise.
+  "Return T if a PTY-backed shell can be spawned on this system, NIL otherwise.
    Used as a skip guard in integration tests that require /dev/ptmx."
   (handler-case
       (multiple-value-bind (fd pid) (forkpty-with-shell 8 20)
@@ -168,8 +389,67 @@
         t)
     (error () nil)))
 
+(defmacro with-pty-available (&body body)
+  "Run BODY only when PTY-backed shells are available."
+  `(when (pty-available-p)
+     ,@body))
+
+(defmacro with-pty-session ((session-spec) &body body)
+  "Run BODY in a fake session only when PTY-backed shells are available."
+  (let ((session-var (if (consp session-spec) (first session-spec) session-spec))
+        (session-args (if (consp session-spec) (rest session-spec) nil)))
+    `(with-pty-available
+       (with-fake-session (,session-var ,@session-args)
+         ,@body))))
+
+(defmacro with-pty-run-command-line-overlay ((session-spec command &key context)
+                                             &body body)
+  "Run %RUN-COMMAND-LINE for COMMAND in a fake session only when PTYs exist."
+  (let ((session-var (if (consp session-spec) (first session-spec) session-spec))
+        (session-args (if (consp session-spec) (rest session-spec) nil)))
+    `(with-pty-session (,session-var ,@session-args)
+       (with-run-command-line-overlay (,session-var ,command :context ,context)
+         ,@body))))
+
+(defmacro with-command-line-rejection-cases ((line-var message-var row-token-var cases)
+                                             &body body)
+  "Iterate over rejection cases as data, keeping the assertions in BODY."
+  `(dolist (case ,cases)
+     (destructuring-bind (,line-var ,message-var ,row-token-var) case
+       ,@body)))
+
+(defmacro with-pty-command-preserving-focus ((session-spec command &key count-form active-form
+                                                           count-context focus-context)
+                                              &body body)
+  "Run COMMAND in a PTY-backed fake session and assert it changes COUNT-FORM
+   while leaving ACTIVE-FORM unchanged."
+  (let ((session-var (if (consp session-spec) (first session-spec) session-spec))
+        (session-args (if (consp session-spec) (rest session-spec) nil)))
+    `(with-pty-session (,session-var ,@session-args)
+       (let ((before-count ,count-form)
+             (before-active ,active-form))
+         (cl-tmux::%run-command-line ,session-var ,command)
+         (let ((after-count ,count-form))
+           (is (> after-count before-count)
+               ,count-context))
+         (is (eq before-active ,active-form)
+             ,focus-context)
+         ,@body))))
+
+(defmacro with-pty-command-increasing-count ((session-spec command &key count-form count-context)
+                                             &body body)
+  "Run COMMAND in a PTY-backed fake session and assert it increases COUNT-FORM."
+  (let ((session-var (if (consp session-spec) (first session-spec) session-spec))
+        (session-args (if (consp session-spec) (rest session-spec) nil)))
+    `(with-pty-session (,session-var ,@session-args)
+       (let ((before-count ,count-form))
+         (cl-tmux::%run-command-line ,session-var ,command)
+         (is (> ,count-form before-count)
+             ,count-context)
+         ,@body))))
+
 (defmacro with-pty-shell ((fd-var pid-var &key (rows 24) (cols 80)) &body body)
-  "Fork a shell on a fresh PTY of ROWS×COLS; bind FD-VAR and PID-VAR.
+  "Spawn a shell on a fresh PTY of ROWS×COLS; bind FD-VAR and PID-VAR.
    Closes the PTY via unwind-protect on exit, even if BODY signals."
   `(multiple-value-bind (,fd-var ,pid-var) (forkpty-with-shell ,rows ,cols)
      (unwind-protect
@@ -216,23 +496,22 @@
    avoid stamping window-last-active-time during construction — that timestamp is a
    session-level concept updated only by session-select-window."
   (let* ((panes (loop for i below npanes
-                      collect (make-pane :id (1+ i) :x 0 :y 0 :width 20 :height 5
-                                         :fd -1 :pid -1 :screen (make-screen 20 5))))
-         ;; Build a balanced left-spine tree: each pane wrapped in a leaf.
-         ;; For 1 pane: just a leaf. For 2+: chain of :h splits.
-         (tree  (labels ((build (ps)
-                           (if (null (rest ps))
-                               (make-layout-leaf (first ps))
-                               (make-layout-split :h
-                                  (make-layout-leaf (first ps))
-                                  (build (rest ps))
-                                  1/2))))
-                  (build panes))))
+                      collect (make-no-pty-pane (1+ i) 0 0 20 5)))
+         (tree  (%fake-window-tree panes)))
     (let ((win (make-window :id id :name name :width 20 :height 5
                             :panes panes :tree tree :active (first panes))))
       ;; Wire each pane's back-pointer so pane-window returns the real window.
       (dolist (p panes) (setf (cl-tmux/model:pane-window p) win))
       win)))
+
+(defun %fake-window-tree (panes)
+  "Build the left-spine layout tree used by fake-window fixtures."
+  (if (null (rest panes))
+      (make-layout-leaf (first panes))
+      (make-layout-split :h
+                         (make-layout-leaf (first panes))
+                         (%fake-window-tree (rest panes))
+                         1/2)))
 
 (defun make-fake-session (&key (nwindows 1) (npanes 1))
   "A session of NWINDOWS fake windows (each with NPANES fake panes), no PTYs.
@@ -317,8 +596,7 @@
    status-timer threads spawned inside BODY do NOT inherit the parent's dynamic
    bindings — they observe the GLOBAL value of *running*.  A LET binding is
    therefore invisible to them: they never see the stop signal, loop forever,
-   outlive join-thread's timeout, and leak into later suites where a leftover
-   thread makes fork() fail with \"Cannot fork with multiple threads running.\"
+   outlive join-thread's timeout, and leak into later suites as background work.
    Mutating the global with SETF is what those threads actually observe, so any
    test that spawns a reader/timer thread must drive *running* through this
    macro rather than a LET."
@@ -330,11 +608,9 @@
 
 (defun stop-cl-tmux-threads ()
   "Stop and join every PTY-reader / status-timer / background-shell thread that
-   a test may have spawned, so none leaks into a later test where a leftover
-   thread makes sb-posix:fork signal \"Cannot fork with multiple threads
-   running.\"
+   a test may have spawned, so none leaks into a later test.
 
-   Dispatching :split-*, :new-window, :new-session or :respawn-pane forks a real
+   Dispatching :split-*, :new-window, :new-session or :respawn-pane spawns a real
    pane and calls START-READER-THREAD; that reader loops while the GLOBAL
    *running* is true.  We clear the global so the loops exit, join the named
    threads (bounded), then restore *running* to T for the next test.  Threads
@@ -364,20 +640,25 @@
 
 (defmacro with-loop-state (&body body)
   "Run BODY with the event-loop specials isolated, then stop any reader/timer
-   threads BODY spawned (e.g. by dispatching a :split that forks a real pane).
+   threads BODY spawned (e.g. by dispatching a :split that creates a real pane).
 
    *running* is driven through its GLOBAL value (via WITH-GLOBAL-RUNNING) rather
    than a LET, because reader threads spawned during BODY read the global; a LET
-   binding would be invisible to them and they would leak into later forking
-   tests.  STOP-CL-TMUX-THREADS joins them before returning.
+   binding would be invisible to them and they would leak into later tests.
+   STOP-CL-TMUX-THREADS joins them before returning.
 
-   Also isolates *active-menu* (cl-tmux/prompt) and *active-popup* so that
-   menu/popup state created by one test does not leak into subsequent tests."
+   Also isolates prompt/overlay/menu/popup state so that UI state created by
+   one test does not leak into subsequent event-loop tests."
   `(let ((cl-tmux::*dirty* nil)
          (cl-tmux::*last-mouse-click* nil)
          (cl-tmux::*key-table* nil)
          (cl-tmux::*server-marked-pane* nil)
          (cl-tmux::*client-read-only* nil)
+         (cl-tmux/prompt:*prompt* nil)
+         (cl-tmux/prompt:*overlay* nil)
+         (cl-tmux/prompt:*overlay-scroll-offset* 0)
+         (cl-tmux/prompt:*overlay-shown-at* 0)
+         (cl-tmux/prompt:*display-panes-active* nil)
          (cl-tmux/prompt:*active-menu* nil)
          (cl-tmux/prompt:*active-popup* nil))
      (with-global-running t
@@ -391,9 +672,8 @@
 
 (defmacro with-empty-registry (&body body)
   "Bind *server-sessions* to NIL for the duration of BODY.
-   Eliminates the repeated (let ((cl-tmux::*server-sessions* nil)) ...) pattern
-   and makes the registry isolation contract explicit in a single named macro."
-  `(let ((cl-tmux::*server-sessions* nil)) ,@body))
+   Thin wrapper over `with-registered-sessions` for the empty-registry case."
+  `(with-registered-sessions () ,@body))
 
 (defmacro with-input-state ((var) &body body)
   "Bind VAR to a fresh make-input-state for use with process-byte tests."

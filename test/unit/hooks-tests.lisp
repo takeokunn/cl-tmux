@@ -188,8 +188,8 @@
                                (lambda () (setf called :second)))
       ;; Sanity: hooks present before clearing
       (let ((before (cl-tmux/hooks:list-hooks)))
-        (is (= 2 (cdr (assoc cl-tmux/hooks:+hook-after-kill-pane+ before
-                             :test #'string=)))
+        (is (= 2 (alist-value cl-tmux/hooks:+hook-after-kill-pane+ before
+                              :test #'string=))
             "expect 2 hooks before clear"))
       ;; Clear
       (cl-tmux/hooks:clear-hooks cl-tmux/hooks:+hook-after-kill-pane+)
@@ -218,10 +218,10 @@
     (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-pane-exited+      (lambda () nil))
     (let ((alist (cl-tmux/hooks:list-hooks)))
       (is (= 2 (length alist)) "two distinct event names must appear")
-      (let ((nw-count (cdr (assoc cl-tmux/hooks:+hook-after-new-window+ alist
-                                  :test #'string=)))
-            (pe-count (cdr (assoc cl-tmux/hooks:+hook-pane-exited+ alist
-                                  :test #'string=))))
+      (let ((nw-count (alist-value cl-tmux/hooks:+hook-after-new-window+ alist
+                                   :test #'string=))
+            (pe-count (alist-value cl-tmux/hooks:+hook-pane-exited+ alist
+                                   :test #'string=)))
         (is (= 2 nw-count) "after-new-window must show count 2")
         (is (= 1 pe-count) "pane-exited must show count 1")))))
 
@@ -238,12 +238,14 @@
           (cb-b (lambda () nil)))
       (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-new-window+ cb-a)
       (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-new-window+ cb-b)
-      (let ((before (cdr (assoc cl-tmux/hooks:+hook-after-new-window+
-                                (cl-tmux/hooks:list-hooks) :test #'string=))))
+      (let ((before (alist-value cl-tmux/hooks:+hook-after-new-window+
+                                 (cl-tmux/hooks:list-hooks)
+                                 :test #'string=)))
         (is (= 2 before) "count must be 2 after two adds"))
       (cl-tmux/hooks:remove-hook cl-tmux/hooks:+hook-after-new-window+ cb-a)
-      (let ((after (cdr (assoc cl-tmux/hooks:+hook-after-new-window+
-                               (cl-tmux/hooks:list-hooks) :test #'string=))))
+      (let ((after (alist-value cl-tmux/hooks:+hook-after-new-window+
+                                (cl-tmux/hooks:list-hooks)
+                                :test #'string=)))
         (is (= 1 after) "count must be 1 after one remove")))))
 
 ;;; wait-for-signal-unblocks was moved to runtime-tests.lisp because it tests

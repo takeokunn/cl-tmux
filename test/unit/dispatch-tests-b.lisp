@@ -37,6 +37,21 @@
       (is (eq p2 (first (window-panes win)))
           "after swap-pane -t 2, pane 2 is first (swapped with active pane 1)"))))
 
+(test cmd-swap-pane-rejects-unsupported-arguments
+  "swap-pane rejects unknown flags and positional tokens before mutating panes."
+  (dolist (command '("swap-pane -Z extra"
+                     "swap-pane -x"
+                     "swap-pane -s 1 -t 3 extra"))
+    (with-fake-session (s :nwindows 1 :npanes 3)
+      (let* ((win (session-active-window s))
+             (before (copy-list (window-panes win)))
+             (*overlay* nil))
+        (is (null (cl-tmux::%run-command-line s command))
+            "~A must be rejected" command)
+        (is (equal before (window-panes win))
+            "~A must not reorder panes" command)
+        (assert-overlay-contains "unsupported argument" *overlay* command)))))
+
 ;;; ── :swap-pane-forward / :swap-pane-backward dispatch ───────────────────────
 
 (test dispatch-swap-pane-table
@@ -111,6 +126,25 @@
     (finishes (cl-tmux::dispatch-command s :send-prefix nil))
     (is-true cl-tmux::*dirty* ":send-prefix must mark *dirty*")))
 
+(test dispatch-send-prefix-read-only-does-not-write
+  ":send-prefix does not inject the prefix byte when the client is read-only."
+  (with-isolated-config
+    (with-fake-session (s)
+      (let* ((pane (window-active-pane (session-active-window s)))
+             (writes nil)
+             (orig (fdefinition 'cl-tmux/pty:pty-write)))
+        (setf (pane-fd pane) 9999)
+        (unwind-protect
+             (progn
+               (setf (fdefinition 'cl-tmux/pty:pty-write)
+                     (lambda (fd bytes)
+                       (push (list fd (coerce bytes 'list)) writes)))
+               (let ((cl-tmux::*client-read-only* t))
+                 (cl-tmux::dispatch-command s :send-prefix nil))
+               (is (null writes)
+                   "read-only clients must not write a prefix byte to the pane"))
+          (setf (fdefinition 'cl-tmux/pty:pty-write) orig))))))
+
 ;;; ── unbound prefix key no-op ─────────────────────────────────────────────────
 
 (test dispatch-unknown-command-is-noop
@@ -180,10 +214,8 @@
     (let ((*prompt* nil) (*overlay* nil))
       (cl-tmux::dispatch-command s :command-prompt nil)
       (funcall (prompt-on-submit *prompt*) "no-such-command-xyz")
-      (is (overlay-active-p) "unknown command must open an error overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "unknown command" text)
-            "overlay must contain the 'unknown command' error message")))))
+      (assert-overlay-contains "unknown command" *overlay*
+                               "unknown command"))))
 
 (test dispatch-command-prompt-known-command-executes
   ":command-prompt with 'list-windows' executes that command (opens overlay)."
@@ -202,12 +234,10 @@
     (let ((*prompt* nil) (*overlay* nil))
       (cl-tmux::dispatch-command s :command-prompt nil)
       (funcall (prompt-on-submit *prompt*) "display-message #{session_name}")
-      (is (overlay-active-p) "display-message must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "0" text)
-            "overlay must contain the expanded session name '0' (got ~S)" text)
-        (is (null (search "#{" text))
-            "the #{...} format must be expanded, not shown literally (got ~S)" text)))))
+      (assert-overlay-contains "0" *overlay*
+                               "command-prompt display-message")
+      (assert-overlay-not-contains "#{" *overlay*
+                                   "command-prompt display-message"))))
 
 (test run-command-line-no-arg-command-falls-through
   "%run-command-line with a bare command name dispatches it by name (no args)."
@@ -222,9 +252,8 @@
   (with-fake-session (s)
     (let ((*overlay* nil))
       (cl-tmux::%run-command-line s "display-message hello world")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "hello world" text)
-            "joined args 'hello world' must appear in the overlay (got ~S)" text)))))
+      (assert-overlay-contains "hello world" *overlay*
+                               "display-message hello world"))))
 
 (test display-message-l-flag-shows-literal-format
   "display-message -l shows ARGS verbatim, WITHOUT expanding #{...} formats —
@@ -232,21 +261,28 @@
   (with-fake-session (s)
     (let ((*overlay* nil))
       (cl-tmux::%run-command-line s "display-message -l #{session_name}")
-      (is (overlay-active-p) "display-message -l must still open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "#{session_name}" text)
-            "-l must show the literal #{session_name}, not expand it (got ~S)" text)))))
+      (assert-overlay-contains "#{session_name}" *overlay*
+                               "display-message -l")
+      (assert-overlay-not-contains "0" *overlay*
+                                   "display-message -l"))))
 
-(test display-message-c-flag-consumes-client-arg
-  "display-message -c <client> consumes the client name (a no-op target) instead
-   of leaking it into the format text."
+(test display-message-rejects-unsupported-flags
+  "The in-server display-message command supports overlays via -l/-d/-t only;
+   client/stdout/verbose compatibility flags must fail instead of becoming
+   no-op behavior."
   (with-fake-session (s)
-    (let ((*overlay* nil))
-      (cl-tmux::%run-command-line s "display-message -c someclient #{session_name}")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "0" text) "the expanded session name must appear")
-        (is (null (search "someclient" text))
-            "-c client name must NOT appear in the message (got ~S)" text)))))
+    (dolist (command '("display-message -c someclient #{session_name}"
+                       "display-message -p #{session_name}"
+                       "display-message -v #{session_name}"))
+      (let ((*overlay* nil)
+            (cl-tmux::*message-log* nil))
+        (is (null (cl-tmux::%run-command-line s command))
+            "~A must be rejected" command)
+        (assert-overlay-contains "unsupported argument" *overlay* command)
+        (assert-overlay-not-contains "someclient" *overlay* command)
+        (assert-overlay-not-contains "0" *overlay* command)
+        (is (null cl-tmux::*message-log*)
+            "~A must not add a message-log entry" command)))))
 
 (test run-command-line-empty-is-noop
   "%run-command-line with blank input does not signal an error."
@@ -281,13 +317,12 @@
 (test run-command-line-set-option-scope-flag
   "'set -g status off' sets the 'status' option (not an option literally named
    '-g') — the canonical tmux form must work."
-  (with-fake-session (s)
-    (with-isolated-options ()
-      (cl-tmux::%run-command-line s "set -g status off")
-      (is (string= "off" (cl-tmux/options:get-option "status"))
-          "set -g status off must set 'status' to the choice string \"off\"")
-      (is (null (cl-tmux/options:get-option "-g"))
-          "must NOT create an option literally named '-g'"))))
+  (with-option-session (s)
+    (cl-tmux::%run-command-line s "set -g status off")
+    (is (string= "off" (cl-tmux/options:get-option "status"))
+        "set -g status off must set 'status' to the choice string \"off\"")
+    (is (null (cl-tmux/options:get-option "-g"))
+        "must NOT create an option literally named '-g'")))
 
 (test run-command-line-set-option-append-flag
   "'set -a <name> <value>' appends to the option's current value."
@@ -296,3 +331,25 @@
       (cl-tmux::%run-command-line s "set -a status-left B")
       (is (string= "AB" (cl-tmux/options:get-option "status-left"))
           "set -a must append B to the existing 'A'"))))
+
+(test run-command-line-set-option-rejects-unsupported-flags
+  "set-option and setw reject unknown flags before mutating option stores."
+  (with-fake-session (s)
+    (with-isolated-options ("status-left" "ORIG")
+      (let ((*overlay* nil))
+        (is (null (cl-tmux::%run-command-line s "set-option -x status-left bad"))
+            "set-option -x must be rejected")
+        (is (string= "ORIG" (cl-tmux/options:get-option "status-left"))
+            "set-option -x must not mutate the global option")
+        (assert-overlay-contains "unsupported argument" *overlay*
+                                  "set-option -x"))))
+  (with-fake-session (s :nwindows 1)
+    (let ((cl-tmux/options:*global-options* (make-hash-table :test #'equal))
+          (*overlay* nil))
+      (let ((win (session-active-window s)))
+        (is (null (cl-tmux::%run-command-line s "setw -x mode-keys vi"))
+            "setw -x must be rejected")
+        (is (not (nth-value 1 (gethash "mode-keys"
+                                       (cl-tmux/model:window-local-options win))))
+            "setw -x must not mutate the window-local option")
+        (is (overlay-active-p) "setw -x must show an error overlay")))))

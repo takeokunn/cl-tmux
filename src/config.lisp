@@ -73,7 +73,7 @@
 
 (defun init-default-shell ()
   "Set *DEFAULT-SHELL* from $SHELL if that variable is set and non-empty.
-   Call this once at program startup (in main.lisp) before forking any panes."
+   Call this once at program startup (in main.lisp) before spawning any panes."
   (let ((shell (sb-ext:posix-getenv "SHELL")))
     (when (and shell (plusp (length shell)))
       (setf *default-shell* shell))))
@@ -219,93 +219,10 @@
       (key-table-bind +table-prefix+ key command :repeatable t)))
   (values))
 
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (load "src/config-listing.lisp"))
+
 ;;; ── Key-binding accessors (thin wrappers over key-tables) ─────────────────
-
-(defun lookup-key-binding (key)
-  "Return the command keyword bound to KEY (a character or string), or NIL.
-   Looks up the prefix key-table."
-  (let ((entry (key-table-lookup +table-prefix+ key)))
-    (and entry (key-table-command entry))))
-
-(defun key-label (key)
-  "Return a display string for KEY: characters become single-character strings,
-   strings are returned as-is."
-  (if (characterp key) (string key) key))
-
-(defun %binding-label (command)
-  "Human-readable label for a binding's COMMAND value: a reconstructed command
-   line for a token list (`bind key cmd args`), or the lowercased keyword name
-   for a built-in command."
-  (if (consp command)
-      (format nil "~{~A~^ ~}" command)
-      (format nil "~(~A~)" command)))
-
-(defun %sorted-table-names ()
-  "Return all key-table names from *KEY-TABLES* in alphabetical order."
-  (sort (loop for name being the hash-keys of *key-tables* collect name)
-        #'string<))
-
-(defun %table-binding-alist (inner)
-  "Build an alist of (key . entry) from INNER (an inner key-table hash-table).
-   The whole entry (command . flags) is kept so callers can read the -N note."
-  (loop for key being the hash-keys of inner
-        using (hash-value entry)
-        collect (cons key entry)))
-
-(defun %format-binding-line (table-name key entry)
-  "Format one `bind-key -T TABLE-NAME [-N note] KEY COMMAND` line.
-   When ENTRY is repeatable, emit `-r`; when it carries an -N note, emit
-   `-N \"note\"` before the key, matching tmux's list-keys -N output."
-  (let ((note (key-table-note entry))
-        (repeatable (key-table-repeatable-p entry)))
-    (format nil "bind-key -T ~A ~:[~;-r ~]~@[-N \"~A\" ~]~A ~A~%"
-            table-name
-            repeatable
-            note
-            (key-label key)
-            (%binding-label (key-table-command entry)))))
-
-(defun %describe-one-table (out table-name)
-  "Write bind-key lines for TABLE-NAME to OUT stream.  No-op when table is absent."
-  (let* ((inner (gethash table-name *key-tables*)))
-    (when inner
-      (let ((bindings (sort (%table-binding-alist inner)
-                            #'string< :key (lambda (b) (key-label (car b))))))
-        (dolist (binding bindings)
-          (write-string (%format-binding-line table-name (car binding) (cdr binding))
-                        out))))))
-
-(defun describe-key-bindings ()
-  "Return bind-key -T table key command lines for all key tables.
-   Output format matches real tmux list-keys: one binding per line,
-   sorted by table name then by key within each table."
-  (with-output-to-string (out)
-    (dolist (table-name (%sorted-table-names))
-      (%describe-one-table out table-name))))
-
-(defun describe-key-bindings-for-table (table-name)
-  "Return bind-key lines for TABLE-NAME only.
-   When TABLE-NAME is NIL, returns all tables (same as DESCRIBE-KEY-BINDINGS).
-   Returns an empty string when TABLE-NAME names a non-existent table."
-  (if (null table-name)
-      (describe-key-bindings)
-      (with-output-to-string (out)
-        (%describe-one-table out table-name))))
-
-(defun describe-key-bindings-for-key (table-name key)
-  "Return bind-key lines matching KEY, optionally limited to TABLE-NAME.
-   KEY is compared against the display label shown by LIST-KEYS, so both character
-   keys like \"c\" and named keys like \"C-Right\" work."
-  (let ((tables (if table-name (list table-name) (%sorted-table-names))))
-    (with-output-to-string (out)
-      (dolist (name tables)
-        (let ((inner (gethash name *key-tables*)))
-          (when inner
-            (dolist (binding (sort (%table-binding-alist inner)
-                                   #'string< :key (lambda (b) (key-label (car b)))))
-              (when (string= key (key-label (car binding)))
-                (write-string (%format-binding-line name (car binding) (cdr binding))
-                              out)))))))))
 
 (defun set-key-binding (key command)
   "Bind KEY (a character or string) to COMMAND (a keyword) in the prefix table.
@@ -326,6 +243,8 @@
                      ("Down"     :copy-mode-cursor-down)
                      ("Left"     :copy-mode-cursor-left)
                      ("Right"    :copy-mode-cursor-right)
+                     ("C-Up"     :copy-mode-scroll-up-line)
+                     ("C-Down"   :copy-mode-scroll-down-line)
                      ("PageUp"   :copy-mode-page-up)
                      ("PageDown" :copy-mode-page-down)
                      ("Home"     :copy-mode-line-start)
@@ -334,64 +253,142 @@
       (key-table-bind table-name key command)))
   (values))
 
+(defun %bind-copy-mode-bindings (table-name bindings)
+  "Bind each (KEY COMMAND) pair in BINDINGS into TABLE-NAME."
+  (dolist (binding bindings)
+    (destructuring-bind (key command) binding
+      (key-table-bind table-name key command)))
+  (values))
+
+(defconstant +default-copy-mode-bindings+
+  '(("M-f" :copy-mode-word-end)
+    ("M-b" :copy-mode-word-backward)
+    ("M-e" :copy-mode-word-end)
+    ("C-M-f" :copy-mode-next-matching-bracket)
+    ("C-M-b" :copy-mode-previous-matching-bracket)
+    ("C-Space" :copy-mode-begin-selection)
+    ("C-a" :copy-mode-line-start)
+    ("C-c" :copy-mode-exit)
+    ("C-e" :copy-mode-line-end)
+    ("C-f" :copy-mode-cursor-right)
+    ("C-b" :copy-mode-cursor-left)
+    ("C-g" :copy-mode-clear-selection)
+    ("C-l" :copy-mode-cursor-centre-vertical)
+    ("C-k" :copy-mode-copy-pipe-end-of-line-and-cancel)
+    ("C-n" :copy-mode-cursor-down)
+    ("C-p" :copy-mode-cursor-up)
+    ("C-r" :copy-mode-search-backward-incremental)
+    ("C-s" :copy-mode-search-forward-incremental)
+    ("C-v" :copy-mode-page-down)
+    ("C-w" :copy-mode-copy-pipe-and-cancel)
+    ("M-<" :copy-mode-top)
+    ("M->" :copy-mode-bottom)
+    ("M-v" :copy-mode-page-up)
+    ("M-Up" :copy-mode-half-page-up)
+    ("M-Down" :copy-mode-half-page-down)
+    ("M-l" :copy-mode-cursor-centre-horizontal)
+    ("M-r" :copy-mode-middle)
+    ("M-R" :copy-mode-high)
+    ("M-w" :copy-mode-yank)
+    ("M-m" :copy-mode-back-to-indentation)
+    ("M-x" :copy-mode-jump-to-mark)
+    (#\f :copy-mode-jump-forward)
+    (#\F :copy-mode-jump-backward)
+    (#\t :copy-mode-jump-to)
+    (#\T :copy-mode-jump-to-backward)
+    (#\g :copy-mode-goto-line)
+    ("M-{" :copy-mode-prev-paragraph)
+    ("M-}" :copy-mode-next-paragraph)
+    ("Escape" :copy-mode-exit)
+    (#\q :copy-mode-exit)
+    (#\Space :copy-mode-page-down)
+    (#\, :copy-mode-jump-reverse)
+    (#\; :copy-mode-jump-again)
+    (#\N :copy-mode-search-prev)
+    (#\P :copy-mode-other-end)
+    (#\R :copy-mode-rectangle-toggle)
+    (#\X :copy-mode-set-mark)
+    (#\n :copy-mode-search-next)
+    (#\r :copy-mode-refresh-from-pane))
+  "Default tmux copy-mode bindings for the emacs-style table.")
+
+(defconstant +default-copy-mode-vi-bindings+
+  '((#\q :copy-mode-exit)
+    (#\i :copy-mode-exit)
+    (#\h :copy-mode-cursor-left)
+    (#\j :copy-mode-cursor-down)
+    (#\k :copy-mode-cursor-up)
+    (#\l :copy-mode-cursor-right)
+    (#\Space :copy-mode-begin-selection)
+    (#\v :copy-mode-begin-selection)
+    (#\V :copy-mode-begin-line-selection)
+    (#\y :copy-mode-yank)
+    (#\w :copy-mode-word-forward)
+    (#\b :copy-mode-word-backward)
+    (#\e :copy-mode-word-end)
+    (#\W :copy-mode-space-forward)
+    (#\B :copy-mode-space-backward)
+    (#\E :copy-mode-space-end)
+    (#\0 :copy-mode-line-start)
+    (#\^ :copy-mode-back-to-indentation)
+    (#\$ :copy-mode-line-end)
+    (#\% :copy-mode-next-matching-bracket)
+    (#\, :copy-mode-jump-reverse)
+    (#\; :copy-mode-jump-again)
+    (#\g :copy-mode-top)
+    (#\G :copy-mode-bottom)
+    (#\H :copy-mode-high)
+    (#\J :copy-mode-scroll-down-line)
+    (#\K :copy-mode-scroll-up-line)
+    (#\M :copy-mode-middle)
+    (#\L :copy-mode-low)
+    (#\D :copy-mode-copy-pipe-end-of-line-and-cancel)
+    (#\Y :copy-mode-copy-line)
+    (#\A :copy-mode-append-selection-and-cancel)
+    (#\P :copy-mode-other-end)
+    (#\R :copy-mode-rectangle-toggle)
+    (#\X :copy-mode-set-mark)
+    (#\n :copy-mode-search-next)
+    (#\N :copy-mode-search-prev)
+    (#\f :copy-mode-jump-forward)
+    (#\F :copy-mode-jump-backward)
+    (#\t :copy-mode-jump-to)
+    (#\T :copy-mode-jump-to-backward)
+    (#\o :copy-mode-other-end)
+    (#\/ :copy-mode-search-forward-prompt)
+    (#\? :copy-mode-search-backward-prompt)
+    (#\= :copy-mode-choose-buffer)
+    (#\{ :copy-mode-prev-paragraph)
+    (#\} :copy-mode-next-paragraph)
+    (#\z :copy-mode-scroll-middle)
+    ("M-x" :copy-mode-jump-to-mark)
+    ("Escape" :copy-mode-clear-selection)
+    ("C-c" :copy-mode-exit)
+    ("C-d" :copy-mode-half-page-down)
+    ("C-e" :copy-mode-scroll-down-line)
+    ("C-b" :copy-mode-page-up)
+    ("C-f" :copy-mode-page-down)
+    ("C-h" :copy-mode-cursor-left)
+    ("C-j" :copy-mode-copy-pipe-and-cancel)
+    ("Enter" :copy-mode-copy-pipe-and-cancel)
+    ("C-u" :copy-mode-half-page-up)
+    ("C-v" :copy-mode-rectangle-toggle)
+    ("C-y" :copy-mode-scroll-up-line)
+    ("BSpace" :copy-mode-cursor-left)
+    (#\r :copy-mode-refresh-from-pane)
+    (#\: :copy-mode-goto-line))
+  "Default tmux copy-mode bindings for the vi-style table.")
+
 (defun install-default-copy-mode-bindings ()
   "Populate the 'copy-mode' (emacs) key table with tmux 3.x default bindings.
    Meta bindings use names like \"M-f\" so they match what %meta-key-name produces
    when ESC+key arrives in the input stream.  Idempotent."
-  ;; word navigation
-  (key-table-bind +table-copy-mode+ "M-f" :copy-mode-word-forward)
-  (key-table-bind +table-copy-mode+ "M-b" :copy-mode-word-backward)
-  (key-table-bind +table-copy-mode+ "M-e" :copy-mode-word-end)
-  ;; history extremes
-  (key-table-bind +table-copy-mode+ "M-<" :copy-mode-top)
-  (key-table-bind +table-copy-mode+ "M->" :copy-mode-bottom)
-  ;; page scrolling
-  (key-table-bind +table-copy-mode+ "M-v" :copy-mode-page-up)
-  ;; within-viewport movement
-  (key-table-bind +table-copy-mode+ "M-r" :copy-mode-middle)
-  (key-table-bind +table-copy-mode+ "M-R" :copy-mode-high)
-  ;; selection copy (emacs M-w = copy without cut)
-  (key-table-bind +table-copy-mode+ "M-w" :copy-mode-yank)
-  ;; back-to-indentation (emacs M-m)
-  (key-table-bind +table-copy-mode+ "M-m" :copy-mode-back-to-indentation)
+  (%bind-copy-mode-bindings +table-copy-mode+ +default-copy-mode-bindings+)
   (%bind-copy-mode-named-navigation +table-copy-mode+))
 
 (defun install-default-copy-mode-vi-bindings ()
   "Populate the 'copy-mode-vi' key table with tmux 3.x default bindings."
-  (dolist (binding `((#\q :copy-mode-exit)
-                     (#\i :copy-mode-exit)
-                     (#\h :copy-mode-cursor-left)
-                     (#\j :copy-mode-cursor-down)
-                     (#\k :copy-mode-cursor-up)
-                     (#\l :copy-mode-cursor-right)
-                     (#\Space :copy-mode-begin-selection)
-                     (#\v :copy-mode-begin-selection)
-                     (#\V :copy-mode-begin-line-selection)
-                     (#\y :copy-mode-yank)
-                     (#\w :copy-mode-word-forward)
-                     (#\b :copy-mode-word-backward)
-                     (#\e :copy-mode-word-end)
-                     (#\W :copy-mode-space-forward)
-                     (#\B :copy-mode-space-backward)
-                     (#\E :copy-mode-space-end)
-                     (#\0 :copy-mode-line-start)
-                     (#\^ :copy-mode-back-to-indentation)
-                     (#\$ :copy-mode-line-end)
-                     (#\g :copy-mode-top)
-                     (#\G :copy-mode-bottom)
-                     (#\H :copy-mode-high)
-                     (#\M :copy-mode-middle)
-                     (#\L :copy-mode-low)
-                     (#\D :copy-mode-copy-end-of-line)
-                     (#\Y :copy-mode-copy-line)
-                     (#\A :copy-mode-append-selection)
-                     (#\n :copy-mode-search-next)
-                     (#\N :copy-mode-search-prev)
-                     (#\/ :copy-mode-search-forward-prompt)
-                     (#\? :copy-mode-search-backward-prompt)
-                     (#\= :copy-mode-choose-buffer)))
-    (destructuring-bind (key command) binding
-      (key-table-bind +table-copy-mode-vi+ key command)))
+  (%bind-copy-mode-bindings +table-copy-mode-vi+ +default-copy-mode-vi-bindings+)
   (%bind-copy-mode-named-navigation +table-copy-mode-vi+))
 
 ;;; ── Initialisation ────────────────────────────────────────────────────────

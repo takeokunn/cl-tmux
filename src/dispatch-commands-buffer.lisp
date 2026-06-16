@@ -14,22 +14,57 @@
 ;;; keyword handlers (:set-buffer etc. in dispatch-handlers) remain for the C-b
 ;;; interactive bindings.
 
+(defun %named-or-latest-paste-buffer (name)
+  "Return NAME's paste buffer when NAME is non-NIL, otherwise the most recent
+   paste buffer."
+  (if name
+      (cl-tmux/buffer:get-buffer-by-name name)
+      (cl-tmux/buffer:get-paste-buffer 0)))
+
+(defun %command-flag-value (flags flag)
+  "Return FLAG's value from FLAGS, or NIL when the flag is absent."
+  (cdr (assoc flag flags)))
+
+(defun %buffer-append-p (flags)
+  "Return T when the command FLAGS include -a."
+  (and (%command-flag-value flags #\a) t))
+
+(defun %buffer-positionals-text (positionals)
+  "Join POSITIONALS with spaces, mirroring tmux's command-line token joining."
+  (format nil "~{~A~^ ~}" positionals))
+
+(defun %buffer-read-file (path)
+  "Read PATH as a character stream and return its full contents."
+  (with-open-file (in path :direction :input)
+    (let* ((len (or (file-length in) 0))
+           (text (make-string len))
+           (count (read-sequence text in)))
+      (subseq text 0 count))))
+
+(defun %buffer-write-file (path text &key append-p)
+  "Write TEXT to PATH, appending when APPEND-P is true, and return TEXT."
+  (with-open-file (out path
+                       :direction :output
+                       :if-exists (if append-p :append :supersede)
+                       :if-does-not-exist :create)
+    (write-string text out))
+  text)
+
 (defun %cmd-set-buffer-arg (session args)
-  "set-buffer [-a] [-b name] [-t target] data: set a paste buffer's contents.
+  "set-buffer [-a] [-b name] data...: set a paste buffer's contents.
    -b name: name the buffer (retrievable via paste-buffer -b name, etc.); without
      -b an automatic name (bufferN) is assigned.
    -a: append DATA to the existing buffer (named NAME, or the most recent)."
   (declare (ignore session))
-  (with-command-flags+pos (flags positionals args "bt")
-    (let* ((name     (cdr (assoc #\b flags)))
-           (append-p (and (assoc #\a flags) t))
-           (data     (format nil "~{~A~^ ~}" positionals)))
+  (with-command-input (flags positionals args "b"
+                             :allowed-flags '(#\a #\b)
+                             :message "set-buffer: unsupported argument")
+    (let* ((name     (%command-flag-value flags #\b))
+           (append-p (%buffer-append-p flags))
+           (data     (%buffer-positionals-text positionals)))
       (when positionals
         (if append-p
-            (let ((existing (or (if name
-                                    (cl-tmux/buffer:get-buffer-by-name name)
-                                    (cl-tmux/buffer:get-paste-buffer 0))
-                                "")))
+            (let ((existing (or (%named-or-latest-paste-buffer name) "")))
               (cl-tmux/buffer:add-paste-buffer
                (concatenate 'string existing data) name))
             (cl-tmux/buffer:add-paste-buffer data name))))))
@@ -61,37 +96,37 @@
    CR (e.g. `paste-buffer -s ' '` joins lines with spaces); -r still wins, pasting
    raw.  Bracketed paste is applied automatically by %paste-to-pane when the
    application has enabled it.  -p is accepted but not specially handled."
-  (with-command-flags (flags args "bst")
-    (let* ((name       (cdr (assoc #\b flags)))
-           (delete-p   (and (assoc #\d flags) t))
-           (no-replace (and (assoc #\r flags) t))
-           (separator  (cdr (assoc #\s flags)))
-           (target-str (cdr (assoc #\t flags)))
-           (raw        (if name
-                           (cl-tmux/buffer:get-buffer-by-name name)
-                           (cl-tmux/buffer:get-paste-buffer 0)))
-           ;; tmux default: LF → CR so a multi-line paste submits each line; -s
-           ;; overrides the replacement, -r keeps the raw bytes.
-           (text       (%paste-buffer-text raw no-replace separator))
-           (target-pane (if target-str
-                            (nth-value 2 (resolve-target
-                                          *server-sessions* target-str
-                                          :current-session session
-                                          :current-window (session-active-window session)
-                                          :current-pane (session-active-pane session)))
-                            (session-active-pane session))))
-      (when text
-        (%paste-to-pane target-pane text)
-        (when delete-p
-          (if name
-              (cl-tmux/buffer:delete-buffer-by-name name)
-              (cl-tmux/buffer:delete-paste-buffer 0)))))))
+  (with-command-flags+pos (flags positionals args "bst")
+    (with-command-input (flags positionals args "bst"
+                                :allowed-flags '(#\d #\p #\r #\b #\s #\t)
+                                :max-positionals 0
+                                :message "paste-buffer: unsupported argument")
+      (let* ((name       (%command-flag-value flags #\b))
+             (delete-p   (and (%command-flag-value flags #\d) t))
+             (no-replace (and (%command-flag-value flags #\r) t))
+             (separator  (%command-flag-value flags #\s))
+             (target-str (%command-flag-value flags #\t))
+             (raw        (%named-or-latest-paste-buffer name))
+             ;; tmux default: LF → CR so a multi-line paste submits each line; -s
+             ;; overrides the replacement, -r keeps the raw bytes.
+             (text       (%paste-buffer-text raw no-replace separator)))
+        (with-target-context (target-session target-window target-pane session target-str)
+          (declare (ignore target-session target-window))
+          (when text
+            (%paste-to-pane target-pane text)
+            (when delete-p
+              (if name
+                  (cl-tmux/buffer:delete-buffer-by-name name)
+                  (cl-tmux/buffer:delete-paste-buffer 0)))))))))
 
 (defun %cmd-delete-buffer-arg (session args)
   "delete-buffer [-b name]: delete the named buffer (or the most recent)."
   (declare (ignore session))
-  (with-command-flags (flags args "b")
-    (let ((name (cdr (assoc #\b flags))))
+  (with-command-input (flags positionals args "b"
+                             :allowed-flags '(#\b)
+                             :max-positionals 0
+                             :message "delete-buffer: unsupported argument")
+    (let ((name (%command-flag-value flags #\b)))
       (if name
           (cl-tmux/buffer:delete-buffer-by-name name)
           (cl-tmux/buffer:delete-paste-buffer 0)))))
@@ -99,11 +134,12 @@
 (defun %cmd-show-buffer-arg (session args)
   "show-buffer [-b name]: show the named buffer's contents (or the most recent)."
   (declare (ignore session))
-  (with-command-flags (flags args "b")
-    (let* ((name (cdr (assoc #\b flags)))
-           (text (if name
-                     (cl-tmux/buffer:get-buffer-by-name name)
-                     (cl-tmux/buffer:get-paste-buffer 0))))
+  (with-command-input (flags positionals args "b"
+                             :allowed-flags '(#\b)
+                             :max-positionals 0
+                             :message "show-buffer: unsupported argument")
+    (let* ((name (%command-flag-value flags #\b))
+           (text (%named-or-latest-paste-buffer name)))
       (show-overlay (or text "(no buffer)")))))
 
 (defun %cmd-save-buffer-arg (session args)
@@ -111,41 +147,35 @@
    -b name saves that named buffer; otherwise saves the most recent buffer.
    -a appends instead of overwriting."
   (declare (ignore session))
-  (with-command-flags+pos (flags positionals args "b")
-    (let* ((name (cdr (assoc #\b flags)))
-           (append-p (and (assoc #\a flags) t))
+  (with-command-input (flags positionals args "b"
+                             :allowed-flags '(#\a #\b)
+                             :max-positionals 1
+                             :message "save-buffer: unsupported argument")
+      (let* ((name (%command-flag-value flags #\b))
+           (append-p (%buffer-append-p flags))
            (path (first positionals))
-           (text (if name
-                     (cl-tmux/buffer:get-buffer-by-name name)
-                     (cl-tmux/buffer:get-paste-buffer 0))))
+           (text (%named-or-latest-paste-buffer name)))
       (when (and path text)
-        (with-open-file (out path
-                             :direction :output
-                             :if-exists (if append-p :append :supersede)
-                             :if-does-not-exist :create)
-          (write-string text out))
-        text))))
+        (%buffer-write-file path text :append-p append-p)))))
 
 (defun %cmd-load-buffer-arg (session args)
   "load-buffer [-b name] path: load PATH into a paste buffer.
    -b name stores the data under NAME; otherwise an automatic buffer name is used."
   (declare (ignore session))
-  (with-command-flags+pos (flags positionals args "b")
-    (let ((name (cdr (assoc #\b flags)))
+  (with-command-input (flags positionals args "b"
+                             :allowed-flags '(#\b)
+                             :max-positionals 1
+                             :message "load-buffer: unsupported argument")
+    (let ((name (%command-flag-value flags #\b))
           (path (first positionals)))
       (when path
-        (with-open-file (in path :direction :input)
-          (let* ((len (or (file-length in) 0))
-                 (text (make-string len))
-                 (count (read-sequence text in)))
-            (cl-tmux/buffer:add-paste-buffer (subseq text 0 count) name)))))))
+        (cl-tmux/buffer:add-paste-buffer (%buffer-read-file path) name)))))
 
 ;;; ── Popup overlay constants + formatter ─────────────────────────────────────
 ;;;
-;;; Moved here from dispatch-handlers so BOTH the arg-bearing %cmd-display-popup
-;;; (below, registered in *arg-command-table*) and the legacy :display-popup
-;;; keyword handler (in dispatch-handlers, which loads after dispatch-core) can
-;;; share them.  These bounds cap the overlay geometry to the terminal size.
+;;; Moved here from dispatch-handlers so the arg-bearing %cmd-display-popup and
+;;; the :display-popup keyword handler can share them.  These bounds cap the
+;;; overlay geometry to the terminal size.
 
 (defconstant +popup-max-width+  60 "Maximum column width of a popup overlay.")
 (defconstant +popup-max-height+ 15 "Maximum row height of a popup overlay.")
@@ -169,6 +199,14 @@
             (or output "")
             bl (make-string (+ 2 (length title)) :initial-element h) br)))
 
+(defun %show-popup-command-output (title command width height)
+  "Run COMMAND, open a popup sized WIDTH × HEIGHT, and render the command output."
+  (let* ((label  (if (plusp (length title)) title command))
+         (output (run-shell command)))
+    (show-popup (make-popup :title label :width width :height height
+                            :screen nil :pane nil))
+    (show-overlay (%format-popup-overlay label output))))
+
 (defun %popup-dimension (spec axis-total fallback)
   "Resolve a popup -w/-h dimension SPEC against AXIS-TOTAL (the terminal width or
    height).  SPEC may be NIL (use FALLBACK), an integer string (absolute cells),
@@ -184,12 +222,11 @@
     (max 1 (min n axis-total))))
 
 (defun %cmd-display-popup (session args)
-  "display-popup (alias: popup) [-E] [-w width] [-h height] [-x col] [-y row]
+  "display-popup [-E] [-w width] [-h height] [-x col] [-y row]
    [-d dir] [-t target] [-c client] [-b border] [-T title] [command]: show a popup.
 
-   With a COMMAND (the common `bind C-p popup -E \"cmd\"` form), run it in a shell
-   and display its output in the popup directly — no prompt.  With NO command, open
-   the interactive popup-command prompt (the legacy :display-popup behaviour).
+   With a COMMAND, run it in a shell and display its output in the popup directly.
+   With NO command, open the interactive popup-command prompt.
    -w/-h accept absolute cells or an N% of the terminal; -E/-EE and
    -x/-y/-d/-t/-c/-b are parsed and tolerated.  Geometry is clamped to the overlay
    bounds (cl-tmux popups render command output, not a live embedded terminal)."
@@ -202,18 +239,13 @@
                                       (min +popup-max-height+ (- *term-rows* +popup-margin+))))
            (clamp-w (min width  *term-cols*))
            (clamp-h (min height (max 1 (- *term-rows* +popup-margin+)))))
-      (flet ((render (cmd)
-               (let ((label  (if (plusp (length title)) title cmd))
-                     (output (run-shell cmd)))
-                 (show-popup (make-popup :title label :width clamp-w :height clamp-h
-                                         :screen nil :pane nil))
-                 (show-overlay (%format-popup-overlay label output)))))
-        (if command
-            (render command)
-            ;; No command: fall back to the interactive popup-command prompt.
-            (prompt-start "popup command" ""
-                          (lambda (cmd)
-                            (unless (string= cmd "") (render cmd)))))))))
+      (if command
+          (%show-popup-command-output title command clamp-w clamp-h)
+          ;; No command: fall back to the interactive popup-command prompt.
+          (prompt-start "popup command" ""
+                        (lambda (cmd)
+                          (unless (string= cmd "")
+                            (%show-popup-command-output title cmd clamp-w clamp-h))))))))
 
 (defun %cmd-display-menu-arg (session args)
   "display-menu [-T title] [-x x] [-y y] [label key command ...]: show an interactive menu.
@@ -247,25 +279,24 @@
    COMMAND is the remaining positional tokens as a command line.
    Only executes COMMAND when the user confirms with 'y' or 'Y'."
   (with-command-flags+pos (flags positionals args "p")
-    (let* ((custom-prompt (cdr (assoc #\p flags)))
-           (cmd-line      (format nil "~{~A~^ ~}" positionals))
-           (window        (session-active-window session))
-           (pane          (and window (window-active-pane window)))
-           (ctx           (cl-tmux/format:format-context-from-session
-                           session window pane))
-           (prompt-text   (if custom-prompt
-                              (handler-case
-                                  (cl-tmux/format:expand-format custom-prompt ctx)
-                                (error () custom-prompt))
-                              (format nil "~A? (y/n)" cmd-line))))
-      (when (plusp (length cmd-line))
-        ;; Single-key prompt like tmux: one 'y'/'Y' keypress confirms (no Enter);
-        ;; any other key cancels.
-        (prompt-start prompt-text ""
-                      (lambda (input)
-                        (when (member input '("y" "Y") :test #'string=)
-                          (%run-command-line session cmd-line)))
-                      :single-key t)))))
+    (multiple-value-bind (window pane) (%active-window-pane session)
+      (let* ((custom-prompt (cdr (assoc #\p flags)))
+             (cmd-line      (format nil "~{~A~^ ~}" positionals))
+             (ctx           (cl-tmux/format:format-context-from-session
+                             session window pane))
+             (prompt-text   (if custom-prompt
+                                (handler-case
+                                    (cl-tmux/format:expand-format custom-prompt ctx)
+                                  (error () custom-prompt))
+                                (format nil "~A? (y/n)" cmd-line))))
+        (when (plusp (length cmd-line))
+          ;; Single-key prompt like tmux: one 'y'/'Y' keypress confirms (no Enter);
+          ;; any other key cancels.
+          (prompt-start prompt-text ""
+                        (lambda (input)
+                          (when (member input '("y" "Y") :test #'string=)
+                            (%run-command-line session cmd-line)))
+                        :single-key t))))))
 
 (defun %cmd-list-keys-arg (session args)
   "list-keys [-T table] [-1] [key]: list key bindings.
@@ -291,7 +322,10 @@
        the live bottom (offset 0).  Standard for mouse-wheel copy-mode entry:
        `bind -n WheelUpPane copy-mode -e` enters copy mode on scroll-up and
        leaves it once the user scrolls back to the live output."
-  (with-command-flags (flags args "")
+  (with-command-input (flags positionals args ""
+                             :allowed-flags '(#\u #\e)
+                             :max-positionals 0
+                             :message "copy-mode: unsupported argument")
     (let* ((scroll-to-top  (and (assoc #\u flags) t))
            (exit-on-bottom (and (assoc #\e flags) t))
            (screen (%active-screen session)))

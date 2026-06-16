@@ -7,6 +7,10 @@
 ;;; %coerce-set-value, %route-set-value, %apply-set-directive, option side effects,
 ;;; and %apply-set-hook-directive.
 
+(declaim (special cl-tmux/options:*global-options*
+                  cl-tmux/options:*server-options*
+                  cl-tmux/model:*update-environment*))
+
 ;;; ── Simple directive definitions ─────────────────────────────────────────
 ;;;
 ;;; The six set-option variants (set, set-option, setw, set-window-option,
@@ -18,6 +22,10 @@
 ;;; cl-tmux/options:set-option-for-window / set-option-for-pane directly to
 ;;; store in the per-struct local-options hash.
 
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defparameter +set-directive-aliases+
+    '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")))
+
 (define-config-directives
   ("set-shell" 1 (path)
     (setf *default-shell* path)
@@ -27,23 +35,24 @@
       (when (and height (plusp height))
         (setf *status-height* height)
         t)))
-  (:aliases ("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")
+  (:aliases +set-directive-aliases+
     2 (option-name option-value)
     (cl-tmux/options:set-option option-name option-value)
     t)
   ;; NOTE: set-hook is handled entirely by %apply-set-hook-directive (stores raw
   ;; command strings for format expansion at fire time); no entry needed here.
-  ;; NOTE: source-file/source are handled entirely by %apply-source-file-directive
+  ;; NOTE: source-file is handled entirely by %apply-source-file-directive
   ;; (wired into apply-config-directive before this table) to support -q/-n/-v
   ;; flags, glob patterns, and multiple paths.
-  ;; NOTE: run-shell/run are handled entirely by %apply-run-shell-directive
+  ;; NOTE: run-shell is handled entirely by %apply-run-shell-directive
   ;; (wired into apply-config-directive before this fixed-arity table), which
   ;; covers the bare 1-arg form as well as the flag-bearing forms.  No fixed-
   ;; arity entries are needed here.
-  ;; set-environment / setenv 2-arg form: VAR VALUE (no flags).
+  ;; set-environment 2-arg form: VAR VALUE (no flags).
   ;; The %apply-set-environment-directive handler in apply-config-directive
-  ;; intercepts this first (handling -r/-g flags); these entries are fallbacks.
-  (:aliases ("set-environment" "setenv") 2 (var-name var-value)
+  ;; owns this command family; these entries are retained for the fixed-arity
+  ;; inner dispatcher but are not reached through apply-config-directive.
+  ("set-environment" 2 (var-name var-value)
     (%config-setenv var-name var-value)
     t))
 
@@ -56,13 +65,21 @@
 ;;;   -a append  -u unset
 ;;; -s routes the write to *server-options* instead of *global-options*.
 ;;;
-;;; The set-verb list is derived from the :aliases declaration in define-config-
-;;; directives rather than maintained as a separate defparameter.
+;;; The set-verb list is shared via +set-directive-aliases+ rather than
+;;; duplicated in the directive table and predicate.
 
 (defun %set-directive-p (cmd)
   "Return T when CMD is one of the standard set-option directive verbs."
-  (member cmd '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")
+  (member cmd +set-directive-aliases+
           :test #'string=))
+
+(defparameter +unsupported-set-option-names+
+  '("terminal-overrides" "terminal-features")
+  "Options whose tmux syntax implies behavior cl-tmux does not implement.")
+
+(defun %unsupported-set-option-p (name)
+  "Return T when NAME is a set-option target cl-tmux must reject."
+  (member name +unsupported-set-option-names+ :test #'string=))
 
 (defun %strip-set-flags (args)
   "Consume leading -X flag tokens from a set directive's ARGS.
@@ -89,21 +106,22 @@
                        (and (>= (length tok) 2) (char= (char tok 0) #\-))))
           do (let ((tok (pop remaining)))
                (setf flag-present-p t)
-               (when (find #\a tok) (setf append-p t))
-               (when (find #\s tok) (setf server-p t))
-               (when (find #\u tok) (setf unset-p  t))
+               (when (%flag-token-contains-any-p tok '(#\a)) (setf append-p t))
+               (when (%flag-token-contains-any-p tok '(#\s)) (setf server-p t))
+               (when (%flag-token-contains-any-p tok '(#\u)) (setf unset-p  t))
                ;; -F: expand the value as a format string before storing.
-               (when (find #\F tok) (setf format-p t))
+               (when (%flag-token-contains-any-p tok '(#\F)) (setf format-p t))
                ;; -g, -w, -p, -o, -q: accepted silently.
                ))
     (values flag-present-p append-p server-p unset-p format-p remaining)))
 
 (defun %coerce-set-value (raw-value format-p)
   "Coerce RAW-VALUE for storage.  When FORMAT-P is T, expand it as a format
-   string using a minimal context (hostname + version); on expansion failure
-   the raw string is returned unchanged.  Pure: no side-effects."
+   string using a minimal context (hostname + cl-tmux version); on expansion
+   failure the raw string is returned unchanged.  Pure: no side-effects."
   (if format-p
-      (let ((ctx (list :hostname (machine-instance) :version "3.5")))
+      (let ((ctx (list :hostname (machine-instance)
+                       :version (cl-tmux/version:version-string))))
         (handler-case
             (cl-tmux/format:expand-format raw-value ctx)
           (error () raw-value)))
@@ -139,15 +157,14 @@
     (multiple-value-bind (flag-present-p append-p server-p unset-p format-p positionals)
         (%strip-set-flags args)
       (when (and flag-present-p (first positionals))
-        (let* ((name      (first positionals))
-               (raw-value (format nil "~{~A~^ ~}" (rest positionals)))
-               (value     (%coerce-set-value raw-value format-p)))
-          (%route-set-value name value server-p append-p unset-p)
-          ;; Special: command-alias[N] alias=expansion array syntax.
-          (%apply-command-alias-directive name value)
-          ;; Side-effect: intercept special options that need runtime state updates.
-          (%apply-option-side-effects name value)
-          t)))))
+        (let ((name      (first positionals))
+              (raw-value (%join-config-tokens (rest positionals))))
+          (unless (%unsupported-set-option-p name)
+            (let ((value (%coerce-set-value raw-value format-p)))
+              (%route-set-value name value server-p append-p unset-p)
+              ;; Side-effect: intercept special options that need runtime state updates.
+              (%apply-option-side-effects name value)
+              t)))))))
 
 ;;; ── Option side-effect helpers ───────────────────────────────────────────────
 
@@ -170,24 +187,27 @@
 ;;; is guarded by (string= name NAME-STRING); VALUE is bound in BODY.  This matches
 ;;; define-csi-rules / define-config-directives in style.
 
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun %expand-option-side-effect-rule (rule)
+    "Expand one option side-effect RULE into a list of COND clauses."
+    (if (eq (first rule) :any-of)
+        (destructuring-bind (names &body body) (rest rule)
+          `((member name ',names :test #'string=) ,@body))
+        (destructuring-bind (name-string &body body) rule
+          `((string= name ,name-string) ,@body)))))
+
 (defmacro define-option-side-effect-handlers (&rest rules)
   "Build %APPLY-OPTION-SIDE-EFFECTS from a declarative table of RULES.
    Each RULE has the form:
      (NAME-STRING &body BODY)   — NAME-STRING matched via STRING=; VALUE bound in BODY.
      (:any-of (NAME...) &body BODY) — VALUE bound in BODY when NAME is one of the list.
    Generates a COND dispatch over NAME."
-  (flet ((expand-rule (rule)
-           (if (eq (first rule) :any-of)
-               (destructuring-bind (names &body body) (rest rule)
-                 `((member name ',names :test #'string=) ,@body))
-               (destructuring-bind (name-string &body body) rule
-                 `((string= name ,name-string) ,@body)))))
-    `(defun %apply-option-side-effects (name value)
-       "Apply runtime side-effects for options that touch non-option state.
-        Dispatches on NAME; VALUE holds the new option value string."
-       (declare (ignorable value))
-       (cond
-         ,@(mapcar #'expand-rule rules)))))
+  `(defun %apply-option-side-effects (name value)
+     "Apply runtime side-effects for options that touch non-option state.
+      Dispatches on NAME; VALUE holds the new option value string."
+     (declare (ignorable value))
+     (cond
+       ,@(mapcar #'%expand-option-side-effect-rule rules))))
 
 (define-option-side-effect-handlers
   ;; prefix / prefix2: parse and arm the key in the prefix table.
@@ -219,10 +239,7 @@
    (when (%nonempty-string-p value)
      (setf cl-tmux/model:*update-environment*
            (remove-if (lambda (s) (zerop (length s)))
-                      (uiop:split-string value :separator '(#\Space))))))
-  ;; terminal-overrides / terminal-features: accepted silently — cl-tmux always
-  ;; emits 24-bit SGR; the option is stored by the caller for show-options.
-  (:any-of ("terminal-overrides" "terminal-features") nil))
+                      (uiop:split-string value :separator '(#\Space)))))))
 
 (defun %apply-set-hook-directive (cmd args)
   "Handle 'set-hook [-r] [-u] event [command]' directives.
@@ -231,21 +248,23 @@
    so that format variables and arguments (e.g. 'display-message #{session_name}')
    are expanded at hook-fire time via %run-command-line.
    Returns T when handled, NIL otherwise."
-  (when (member cmd '("set-hook" "hook") :test #'string=)
+  (when (string= cmd "set-hook")
     ;; Consume ALL leading -X flags (not just -r/-u): -g/-a/-R are accepted and
     ;; skipped so `set-hook -g <event> <cmd>` registers EVENT, not "-g".
     (let* ((remove-p nil)
-           (rest     (loop for tail on args
-                           while (let ((tok (first tail)))
-                                   (and (> (length tok) 1) (char= (char tok 0) #\-)))
-                           do (when (member (first tail) '("-r" "-u") :test #'string=)
-                                (setf remove-p t))
-                           finally (return tail)))
+           (rest     (let ((remaining args))
+                       (setf remaining
+                             (%consume-leading-flag-tokens
+                              remaining
+                              (lambda (tok rest)
+                                (when (member tok '("-r" "-u") :test #'string=)
+                                  (setf remove-p t))
+                                (values rest t))))
+                       remaining))
            (event    (first rest))
            ;; The command may be a single quoted token or split across tokens;
            ;; join all remaining tokens as a single command line string.
-           (cmd-str  (when (rest rest)
-                       (format nil "~{~A~^ ~}" (rest rest)))))
+           (cmd-str  (%join-config-tokens (rest rest))))
       (when event
         (if remove-p
             (progn (cl-tmux/hooks:clear-command-hooks event) t)
@@ -253,4 +272,3 @@
               ;; Store the raw command string for execution at hook-fire time.
               (cl-tmux/hooks:set-command-hook event cmd-str)
               t))))))
-

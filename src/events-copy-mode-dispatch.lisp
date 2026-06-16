@@ -160,13 +160,17 @@
   ;; ── Copy actions ──────────────────────────────────────────────────────────
   ;; y — yank selection
   (#.+byte-y+       :call #'copy-mode-yank)
-  ;; D — copy to end of line
-  (#.+byte-capital-d+ :call #'copy-mode-copy-end-of-line)
+  ;; D — copy to end of line, pipe if configured, and cancel
+  (#.+byte-capital-d+ (copy-mode-copy-pipe-end-of-line screen nil) (values t nil))
   ;; Y — copy current line
   (#.+byte-capital-y+ :call #'copy-mode-copy-line)
   ;; A — append selection to paste buffer and cancel
   (#.+byte-capital-a+ :call #'copy-mode-append-selection)
   ;; ── Search ────────────────────────────────────────────────────────────────
+  ;; # — search backward for word under cursor
+  (35 :call #'copy-mode-search-backward-word)
+  ;; * — search forward for word under cursor
+  (42 :call #'copy-mode-search-forward-word)
   ;; n — search next
   (#.+byte-n+         :call #'copy-mode-search-next)
   ;; N — search prev

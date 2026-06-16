@@ -3,6 +3,18 @@
 ;;;; Core brace expander (%expand-brace), bracket/paren expanders,
 ;;;;  CPS character processor, and expand-format public entry point.
 
+(defconstant +format-shell-command-timeout+ 2
+  "Seconds to allow #(shell-command) format expansion commands to run.")
+
+(defun %run-format-shell-command (command)
+  "Run COMMAND for #(shell-command) expansion and return stdout or the empty string."
+  (handler-case
+      (uiop:run-program (list "/bin/sh" "-c" command)
+                        :output :string
+                        :ignore-error-status t
+                        :timeout +format-shell-command-timeout+)
+    (error () "")))
+
 (defun %expand-brace-modifier (mod rest content context out)
   "Dispatch #{MOD:REST} — the 9-way modifier/operator expansion.
    CONTENT is the full brace content (MOD + ':' + REST), used by the value-modifier
@@ -151,13 +163,7 @@
     (if (null close)
         (progn (write-char #\# out) (1- start))
         (let ((cmd (subseq template start close)))
-          (let ((result
-                  (handler-case
-                      (uiop:run-program (list "/bin/sh" "-c" cmd)
-                                        :output :string
-                                        :ignore-error-status t
-                                        :timeout 2)
-                    (error () ""))))
+          (let ((result (%run-format-shell-command cmd)))
             ;; Strip a single trailing newline (shell commands usually add one)
             (write-string
              (if (and (plusp (length result))
@@ -222,4 +228,3 @@
   (with-output-to-string (out)
     (loop for i = 0 then (%expand-step template i context out)
           while (< i (length template)))))
-

@@ -45,6 +45,21 @@
           (is (= expected (screen-copy-offset screen))
               "PageDown must scroll copy-offset down by screen-height lines"))))))
 
+(test prefix-pageup-enters-copy-mode-at-top
+  "C-b PageUp (tmux PPage) runs copy-mode -u and scrolls to the oldest content."
+  (with-isolated-config
+    (with-fake-session (s)
+      (let ((screen (active-screen s))
+            (state  (cl-tmux::make-input-state)))
+        (seed-scrollback screen 30)
+        (is-false (screen-copy-mode-p screen))
+        (dolist (b '(2 27 91 53 126)) ; C-b, ESC [ 5 ~
+          (cl-tmux::process-byte s b state))
+        (is-true (screen-copy-mode-p screen)
+                 "prefix PageUp must enter copy mode")
+        (is (= 30 (screen-copy-offset screen))
+            "copy-mode -u must scroll to the oldest scrollback row")))))
+
 ;;; ── Prefix arrow keys select pane ────────────────────────────────────────────
 
 (test prefix-arrow-up-down-returns-nil-table
@@ -394,21 +409,77 @@
           (is (string= "resize" cl-tmux::*key-table*)
               "-T still arms the key table when -t is also given"))))))
 
+(test cmd-switch-client-rejects-unimplemented-client-targeting
+  "switch-client rejects client-targeting/control flags that cl-tmux does not
+   implement instead of consuming them silently."
+  (with-loop-state
+    (with-empty-registry
+      (multiple-value-bind (s0 s1 s2) (%make-three-session-registry)
+        (declare (ignore s0 s2))
+        (dolist (args '(("-c" "client-0" "-t" "2")
+                        ("-E" "-t" "2")
+                        ("-Z" "-t" "2")))
+          (let ((*overlay* nil)
+                (cl-tmux::*dirty* nil))
+            (is-false (cl-tmux::%cmd-switch-client s1 args)
+                      "~S must be rejected" args)
+            (is (search "unsupported argument" *overlay*)
+                "~S must explain the unsupported flag" args)
+            (is (eq s1 (cl-tmux::server-current-session))
+                "~S must not switch to the target session" args)
+            (is-false cl-tmux::*dirty*
+                      "~S must not mark the screen dirty" args)))))))
+
+(test cmd-switch-client-r-refreshes-without-session-switch
+  "switch-client -r is accepted as a redraw request without changing sessions."
+  (with-loop-state
+    (with-empty-registry
+      (multiple-value-bind (s0 s1 s2) (%make-three-session-registry)
+        (declare (ignore s0 s2))
+        (setf cl-tmux::*dirty* nil)
+        (is-true (cl-tmux::%cmd-switch-client s1 '("-r"))
+                 "-r returns true as a handled refresh request")
+        (is-true cl-tmux::*dirty*
+                 "-r marks the display dirty")))))
+
 ;;; ── Default M-1..M-5 preset-layout bindings (tmux defaults) ─────────────────
 
 (test default-meta-digit-layout-bindings-registered
   "C-b M-1..M-5 are installed as select-layout command token-lists in the prefix
    table, matching real tmux's preset-layout defaults."
   (with-isolated-config
-    (flet ((cmd (k) (cl-tmux/config:key-table-command
-                     (cl-tmux/config:key-table-lookup "prefix" k))))
-      (dolist (c '(("M-1" ("select-layout" "even-horizontal") "M-1 -> even-horizontal")
-                   ("M-2" ("select-layout" "even-vertical")   "M-2 -> even-vertical")
-                   ("M-3" ("select-layout" "main-horizontal") "M-3 -> main-horizontal")
-                   ("M-4" ("select-layout" "main-vertical")   "M-4 -> main-vertical")
-                   ("M-5" ("select-layout" "tiled")           "M-5 -> tiled")))
-        (destructuring-bind (key expected desc) c
-          (is (equal expected (cmd key)) "~A" desc))))))
+    (dolist (c '(("M-1" ("select-layout" "even-horizontal") "M-1 -> even-horizontal")
+                 ("M-2" ("select-layout" "even-vertical")   "M-2 -> even-vertical")
+                 ("M-3" ("select-layout" "main-horizontal") "M-3 -> main-horizontal")
+                 ("M-4" ("select-layout" "main-vertical")   "M-4 -> main-vertical")
+                 ("M-5" ("select-layout" "tiled")           "M-5 -> tiled")))
+      (destructuring-bind (key expected desc) c
+        (is (equal expected (key-table-command-value "prefix" key)) "~A" desc)))))
+
+(test default-meta-window-bindings-registered
+  "C-b M-n/M-p/M-o are installed as command token-lists in the prefix table,
+   matching tmux's alert-window and reverse-rotate defaults."
+  (with-isolated-config
+    (dolist (c '(("M-n" ("next-window" "-a")     "M-n -> next alerted window")
+                 ("M-p" ("previous-window" "-a") "M-p -> previous alerted window")
+                 ("M-o" ("rotate-window" "-D")   "M-o -> rotate backward")))
+      (destructuring-bind (key expected desc) c
+        (is (equal expected (key-table-command-value "prefix" key)) "~A" desc)))))
+
+(test default-prefix-customize-and-suspend-bindings-registered
+  "C-b C and C-b C-z are installed in the prefix table."
+  (with-isolated-config
+    (is (equal '("customize-mode") (key-table-command-value "prefix" #\C))
+        "C -> customize-mode")
+    (is (eq :suspend-client (key-table-command-value "prefix" (code-char 26)))
+        "C-z -> suspend-client")))
+
+(test default-prefix-pageup-binding-registered
+  "C-b PageUp is installed as copy-mode -u in the prefix table."
+  (with-isolated-config
+    (is (equal '("copy-mode" "-u")
+               (key-table-command-value "prefix" "PageUp"))
+        "PageUp -> copy-mode -u")))
 
 (test prefix-meta-1-applies-layout-end-to-end
   "C-b then Alt+1 (ESC 1) runs the bound select-layout even-horizontal on a

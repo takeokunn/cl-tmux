@@ -343,7 +343,6 @@
   "%join-pane-insert-into-dst appends src-pane to the destination window's pane list."
   (let* ((win (%vsplit-window 20))
          (p0  (first  (window-panes win)))
-         (p1  (second (window-panes win)))
          (src (make-pane :id 99 :x 0 :y 0 :width 10 :height 5
                          :fd -1 :pid -1 :screen (make-screen 10 5))))
     (window-select-pane win p0)
@@ -361,4 +360,3 @@
     (cl-tmux/commands::%join-pane-insert-into-dst src win :h)
     (is (eq win (pane-window src))
         "pane-window must be updated to dst-window after insertion")))
-

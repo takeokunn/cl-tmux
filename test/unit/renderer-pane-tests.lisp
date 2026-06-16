@@ -21,8 +21,7 @@
 (test render-pane-content-and-positioning
   (let* ((sess (make-renderer-test-session 5 2 :content "hi"))
          (pane (first (window-panes (session-active-window sess))))
-         (out  (with-output-to-string (s)
-                 (cl-tmux/renderer::render-pane s pane))))
+         (out  (render-pane-output pane)))
     (is (find #\h out) "render-pane should emit the h glyph (got ~S)" out)
     (is (find #\i out) "render-pane should emit the i glyph (got ~S)" out)
     (is (search (format nil "~C[1;1H" #\Escape) out)
@@ -34,19 +33,18 @@
   (let* ((sess   (make-renderer-test-session 5 2 :content "hi"))
          (pane   (first (window-panes (session-active-window sess))))
          (screen (pane-screen pane)))
-    (flet ((render () (with-output-to-string (s) (cl-tmux/renderer::render-pane s pane))))
-      (setf (cl-tmux/terminal/types:screen-reverse-screen screen) nil)
-      (let ((normal (render)))
-        (setf (cl-tmux/terminal/types:screen-reverse-screen screen) t)
-        (let ((reversed (render)))
-          (is (not (string= normal reversed))
-              "reverse-screen on must change the rendered output")
-          ;; render-cell-attrs emits the reverse attribute as the SGR token ";7"
-          ;; (default fg=7 emits ";37", which does not contain ";7").
-          (is (search ";7" reversed)
-              "reversed render must carry the reverse SGR ;7 (got ~S)" reversed)
-          (is (null (search ";7" normal))
-              "non-reversed render must not emit the reverse SGR ;7 (got ~S)" normal))))))
+    (setf (cl-tmux/terminal/types:screen-reverse-screen screen) nil)
+    (let ((normal (render-pane-output pane)))
+      (setf (cl-tmux/terminal/types:screen-reverse-screen screen) t)
+      (let ((reversed (render-pane-output pane)))
+        (is (not (string= normal reversed))
+            "reverse-screen on must change the rendered output")
+        ;; render-cell-attrs emits the reverse attribute as the SGR token ";7"
+        ;; (default fg=7 emits ";37", which does not contain ";7").
+        (is (search ";7" reversed)
+            "reversed render must carry the reverse SGR ;7 (got ~S)" reversed)
+        (is (null (search ";7" normal))
+            "non-reversed render must not emit the reverse SGR ;7 (got ~S)" normal)))))
 
 ;;; -- double-width glyphs are not double-printed ------------------------------
 
@@ -54,8 +52,7 @@
   (let* ((pane   (make-test-pane 5 2))
          (screen (pane-screen pane)))
     (cl-tmux/test::utf8-feed screen "あ")
-    (let ((out (with-output-to-string (s)
-                 (cl-tmux/renderer::render-pane s pane))))
+    (let ((out (render-pane-output pane)))
       (is (= 1 (count #\あ out))
           "exactly one wide glyph should be printed (got ~D in ~S)"
           (count #\あ out) out))))
@@ -68,7 +65,7 @@
   (let* ((pane   (make-test-pane 10 2))
          (screen (pane-screen pane)))
     (feed screen (format nil "~C]8;;https://x~C\\X" #\Escape #\Escape))
-    (let ((out (with-output-to-string (s) (cl-tmux/renderer::render-pane s pane))))
+    (let ((out (render-pane-output pane)))
       (is (search (format nil "~C]8;;https://x~C\\" #\Escape #\Escape) out)
           "render-pane must emit OSC 8 set for the hyperlinked cell (got ~S)" out)
       (is (search (format nil "~C]8;;~C\\" #\Escape #\Escape) out)
@@ -80,7 +77,7 @@
   (let* ((pane   (make-test-pane 10 2))
          (screen (pane-screen pane)))
     (feed screen "plain")
-    (let ((out (with-output-to-string (s) (cl-tmux/renderer::render-pane s pane))))
+    (let ((out (render-pane-output pane)))
       (is (null (search (format nil "~C]8;" #\Escape) out))
           "no OSC 8 must be emitted when no cell has a hyperlink (got ~S)" out))))
 
@@ -118,12 +115,12 @@
     (let* ((sess (make-renderer-test-session 5 2 :content "hi"))
            (pane (first (window-panes (session-active-window sess)))))
       ;; Baseline: no window-style → no colour-52 background emitted.
-      (let ((out (with-output-to-string (s) (cl-tmux/renderer::render-pane s pane))))
+      (let ((out (render-pane-output pane)))
         (is (not (search "48;5;52" out))
             "default render must not contain the window-style bg (got ~S)" out))
       ;; Opt in: window-style recolours the default-bg cells.
       (cl-tmux/options:set-option "window-style" "bg=colour52")
-      (let ((out (with-output-to-string (s) (cl-tmux/renderer::render-pane s pane))))
+      (let ((out (render-pane-output pane)))
         (is (search "48;5;52" out)
             "pane must emit bg colour52 (48;5;52) for default cells (got ~S)" out)))))
 
@@ -137,7 +134,7 @@
       ;; Paint one cell with an explicit bg=colour200 (SGR 48;5;200) then text.
       (feed screen (esc "[48;5;200mX"))
       (cl-tmux/options:set-option "window-style" "bg=colour52")
-      (let ((out (with-output-to-string (s) (cl-tmux/renderer::render-pane s pane))))
+      (let ((out (render-pane-output pane)))
         (is (search "48;5;200" out)
             "an explicit bg must survive window-style recolour (got ~S)" out)))))
 
@@ -176,12 +173,9 @@
          (l1   (tl-leaf 2 1 1))
          (tree (make-layout-split :h l0 l1)))
     (cl-tmux/model::layout-assign tree 0 0 81 24)
-    (let* ((ap  (layout-leaf-pane l0))
-           (buf (make-string-output-stream)))
-      (cl-tmux/renderer::render-tree-borders buf tree ap 81)
-      (let ((out (get-output-stream-string buf)))
-        (is (plusp (length out)) "render-tree-borders must produce output")
-        (is (find #\│ out) "vertical bar character must be present")))))
+    (let ((out (render-tree-borders-output tree (layout-leaf-pane l0) 81)))
+      (is (plusp (length out)) "render-tree-borders must produce output")
+      (is (find #\│ out) "vertical bar character must be present"))))
 
 (test border-indicators-colour-p-honours-option
   "%border-indicators-colour-p is true unless pane-border-indicators is \"off\"."
@@ -203,17 +197,16 @@
          (tree (make-layout-split :h l0 l1)))
     (cl-tmux/model::layout-assign tree 0 0 81 24)
     (let ((ap (layout-leaf-pane l0)))
-      (flet ((render ()
-               (with-output-to-string (buf)
-                 (cl-tmux/renderer::render-tree-borders buf tree ap 81))))
-        (with-isolated-options ("pane-border-indicators" "colour"
-                                "pane-active-border-style" "fg=green")
-          (is (search (format nil "~C[32m" #\Escape) (render))
-              "default indicators must colour the active border green (32)"))
-        (with-isolated-options ("pane-border-indicators" "off"
-                                "pane-active-border-style" "fg=green")
-          (is (null (search (format nil "~C[32m" #\Escape) (render)))
-              "indicators off must NOT colour the active border"))))))
+      (with-isolated-options ("pane-border-indicators" "colour"
+                              "pane-active-border-style" "fg=green")
+        (is (search (format nil "~C[32m" #\Escape)
+                    (render-tree-borders-output tree ap 81))
+            "default indicators must colour the active border green (32)"))
+      (with-isolated-options ("pane-border-indicators" "off"
+                              "pane-active-border-style" "fg=green")
+        (is (null (search (format nil "~C[32m" #\Escape)
+                          (render-tree-borders-output tree ap 81)))
+            "indicators off must NOT colour the active border")))))
 
 (test pane-border-chars-follow-pane-border-lines
   "%pane-border-chars selects glyph pairs by pane-border-lines; unknown/number
@@ -239,9 +232,6 @@
            (l1   (tl-leaf 2 1 1))
            (tree (make-layout-split :h l0 l1)))
       (cl-tmux/model::layout-assign tree 0 0 81 24)
-      (let* ((ap  (layout-leaf-pane l0))
-             (buf (make-string-output-stream)))
-        (cl-tmux/renderer::render-tree-borders buf tree ap 81)
-        (let ((out (get-output-stream-string buf)))
-          (is (find #\║ out) "double border must draw ║ (got ~S)" out)
-          (is (not (find #\│ out)) "double border must not draw the single-line │"))))))
+      (let ((out (render-tree-borders-output tree (layout-leaf-pane l0) 81)))
+        (is (find #\║ out) "double border must draw ║ (got ~S)" out)
+        (is (not (find #\│ out)) "double border must not draw the single-line │")))))

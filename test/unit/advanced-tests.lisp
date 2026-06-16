@@ -221,9 +221,8 @@
       (cl-tmux::dispatch-command sess :choose-session nil)
       (is (overlay-active-p)
           ":choose-session must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search (session-name sess) text)
-            "overlay must contain the session name")))))
+      (assert-overlay-contains (session-name sess) *overlay*
+                               "overlay must contain the session name"))))
 
 ;;; ── update-environment ───────────────────────────────────────────────────────
 
@@ -236,4 +235,3 @@
         "*update-environment* must have at least one entry")
     (is (every #'stringp vars)
         "*update-environment* entries must all be strings")))
-

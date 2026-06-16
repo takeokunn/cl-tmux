@@ -2,7 +2,7 @@
 
 ;;;; Arg-command dispatch tests — part 4: has-session, switch-client-next,
 ;;;; find-window/select-window-prompt on-submit, move/swap-window, bind/unbind-key,
-;;;; show-option, rename/display-message, kill-pane, cycle-pane/window, split, new-window.
+;;;; show-options, rename/display-message, kill-pane, cycle-pane/window, split, new-window.
 
 (in-suite dispatch-suite)
 
@@ -16,10 +16,8 @@
       (cl-tmux::dispatch-command s :has-session nil)
       (is (prompt-active-p) "prompt must be open")
       (funcall (prompt-on-submit *prompt*) "nonexistent-session-xyz")
-      (is (overlay-active-p) "on-submit must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "no" text)
-            "overlay must say 'no' for an unknown session")))))
+      (assert-overlay-contains "no" (overlay-lines)
+                                "on-submit"))))
 
 ;;; ── :switch-client-next with no other session is a no-op ─────────────────────
 
@@ -43,9 +41,7 @@
       (is (prompt-active-p) "prompt must be open")
       ;; All window names start with a digit; "0" matches the first window.
       (funcall (prompt-on-submit *prompt*) "0")
-      (is (overlay-active-p) ":find-window with a match must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "0" text) "overlay must list the matching window")))))
+      (assert-overlay-contains "0" (overlay-lines) ":find-window"))))
 
 (test dispatch-find-window-no-match-shows-no-windows-message
   ":find-window on-submit with no matches shows a 'no windows matching' overlay."
@@ -54,10 +50,7 @@
       (cl-tmux::dispatch-command s :find-window nil)
       (is (prompt-active-p) "prompt must be open")
       (funcall (prompt-on-submit *prompt*) "zzz-no-such-window-xyz")
-      (is (overlay-active-p) ":find-window with no match must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "no windows" text)
-            "overlay must say 'no windows matching' when there are no matches")))))
+      (assert-overlay-contains "no windows" (overlay-lines) ":find-window"))))
 
 ;;; ── :select-window-prompt with name lookup ────────────────────────────────────
 
@@ -79,10 +72,8 @@
       (cl-tmux::dispatch-command s :select-window-prompt nil)
       (is (prompt-active-p) "prompt must be open")
       (funcall (prompt-on-submit *prompt*) "no-such-window-xyz")
-      (is (overlay-active-p) "unknown window must open an error overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "no window" text)
-            "overlay must mention 'no window'")))))
+      (assert-overlay-contains "no window" (overlay-lines)
+                                ":select-window-prompt"))))
 
 ;;; ── :move-window on-submit ────────────────────────────────────────────────────
 
@@ -120,9 +111,7 @@
       (is (prompt-active-p) "prompt must be open")
       ;; "z detach" — z is a valid key token, detach is a known command.
       (funcall (prompt-on-submit *prompt*) "z detach")
-      (is (overlay-active-p) "successful bind-key must show a confirmation overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "bound" text) "overlay must confirm the binding with 'bound'")))))
+      (assert-overlay-contains "bound" (overlay-lines) ":bind-key"))))
 
 (test dispatch-bind-key-unknown-command-shows-error
   ":bind-key on-submit with an unknown command shows an error overlay."
@@ -131,10 +120,8 @@
       (cl-tmux::dispatch-command s :bind-key nil)
       (is (prompt-active-p) "prompt must be open")
       (funcall (prompt-on-submit *prompt*) "z totally-unknown-cmd-xyz")
-      (is (overlay-active-p) "unknown command must show an error overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "unknown command" text)
-            "overlay must contain 'unknown command'")))))
+      (assert-overlay-contains "unknown command" (overlay-lines)
+                                ":bind-key"))))
 
 ;;; ── :unbind-key on-submit ────────────────────────────────────────────────────
 
@@ -146,21 +133,7 @@
       (is (prompt-active-p) "prompt must be open")
       ;; Use a key that is expected to be in the default table (e.g. 'd' → detach).
       (funcall (prompt-on-submit *prompt*) "d")
-      (is (overlay-active-p) "unbind-key must show a confirmation overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "unbound" text) "overlay must confirm the unbinding")))))
-
-;;; ── :show-option on-submit paths ─────────────────────────────────────────────
-
-(test dispatch-show-option-on-submit-known-option-shows-overlay
-  ":show-option on-submit with a known option name shows its value in an overlay."
-  (with-fake-session (s)
-    (let ((*prompt* nil) (*overlay* nil))
-      (cl-tmux::dispatch-command s :show-option nil)
-      (is (prompt-active-p) "prompt must be open")
-      ;; "mouse" is a standard option.
-      (funcall (prompt-on-submit *prompt*) "mouse")
-      (is (overlay-active-p) ":show-option with known option must open overlay"))))
+      (assert-overlay-contains "unbound" (overlay-lines) ":unbind-key"))))
 
 ;;; ── :rename-session on-submit: empty input does not rename ──────────────────
 
@@ -313,4 +286,3 @@
           (is-true t ":new-window dispatched without error"))
       (error ()
         (is-true t ":new-window signalled at PTY level (acceptable in sandbox)")))))
-

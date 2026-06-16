@@ -83,7 +83,9 @@
   ;; directly with the argument.  These keyword fallbacks handle the no-arg case
   ;; (using the copy-command global option).
   ("copy-pipe"                    :copy-mode-copy-pipe-no-cancel)
-  ("copy-pipe-and-cancel"         :copy-mode-yank)
+  ("copy-pipe-and-cancel"         :copy-mode-copy-pipe-and-cancel)
+  ("copy-pipe-end-of-line-and-cancel"
+   :copy-mode-copy-pipe-end-of-line-and-cancel)
   ;; mouse-wheel support
   ("scroll-mouse"                 :copy-mode-scroll-up-line)
   ;; vi-style movement
@@ -106,7 +108,7 @@
   ("toggle-position"              :copy-mode-other-end)
   ;; pipe / pipe-and-cancel / pipe-no-clear: same semantics as copy-pipe variants.
   ("pipe"                         :copy-mode-copy-pipe-no-cancel)
-  ("pipe-and-cancel"              :copy-mode-yank)
+  ("pipe-and-cancel"              :copy-mode-copy-pipe-and-cancel)
   ("pipe-no-clear"                :copy-mode-copy-pipe-no-cancel)
   ;; search-forward-text / search-backward-text (tmux 3.2+): scripted search
   ;; with the text passed as an extra-arg instead of an interactive prompt.
@@ -114,7 +116,5 @@
   ("search-forward-text"          :copy-mode-search-forward-text)
   ("search-backward-text"         :copy-mode-search-backward-text)
   ;; Bracket matching (vi %): jump to matching bracket.
-  ;; Both names call the same function (direction determined by char under cursor).
   ("next-matching-bracket"        :copy-mode-next-matching-bracket)
-  ("previous-matching-bracket"    :copy-mode-next-matching-bracket))
-
+  ("previous-matching-bracket"    :copy-mode-previous-matching-bracket))

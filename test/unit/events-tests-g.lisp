@@ -139,12 +139,14 @@
                  (list #\t   "t → clock-mode")
                  (list #\i   "i → display-info")
                  (list #\~   "~ → show-messages")
+                 (list #\C   "C → customize-mode")
                  (list #\m   "m → mark-pane")
                  (list #\M   "M → clear-mark")
                  (list #\E   "E → select-layout-spread")
                  (list #\Space "Space → next-layout")
                  (list #\D   "D → choose-client")
-                 (list (code-char 2) "C-b → send-prefix")))
+                 (list (code-char 2) "C-b → send-prefix")
+                 (list (code-char 26) "C-z → suspend-client")))
       (destructuring-bind (key desc) c
         (is (bound-p key) "~A" desc))))))
 
@@ -370,4 +372,3 @@
     (cl-tmux::handle-prompt-key (char-code #\A))
     (is (string= "A" (prompt-buffer *prompt*))
         "printable key 'A' must be inserted into buffer")))
-

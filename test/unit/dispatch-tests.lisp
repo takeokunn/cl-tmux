@@ -3,6 +3,7 @@
 ;;;; Command dispatch tests (src/dispatch-core.lisp,
 ;;;;                         src/dispatch-commands.lisp,
 ;;;;                         src/dispatch-commands-pane.lisp,
+;;;;                         src/dispatch-commands-list.lisp,
 ;;;;                         src/dispatch-commands-auto.lisp,
 ;;;;                         src/dispatch-commands-runner.lisp,
 ;;;;                         src/dispatch-control.lisp,
@@ -98,23 +99,23 @@
       (is (= 1 out-count) "focus-out fires once (old pane)")
       (is (= 1 in-count)  "focus-in fires once (new pane)"))))
 
-(test run-command-tokens-abbrev-next-prev-table
-  "%run-command-tokens resolves 'next' and 'prev' abbreviations via the named-table path;
-   in a 2-window session both select the second window (next advances, prev wraps)."
-  (dolist (row '(("next" "abbrev 'next' must advance to the next window")
-                 ("prev" "abbrev 'prev' must wrap to the last window")))
+(test run-command-tokens-canonical-next-previous-table
+  "%run-command-tokens resolves canonical next-window and previous-window commands;
+   in a 2-window session both select the second window (next advances, previous wraps)."
+  (dolist (row '(("next-window" "next-window must advance to the next window")
+                 ("previous-window" "previous-window must wrap to the last window")))
     (destructuring-bind (abbrev desc) row
       (with-fake-session (s :nwindows 2)
         (cl-tmux::%run-command-tokens s (list abbrev))
         (is (eq (second (session-windows s)) (session-active-window s)) desc)))))
 
-(test run-command-tokens-abbrev-renamew-with-arg
-  "%run-command-tokens resolves the arg-bearing abbreviation 'renamew' through
+(test run-command-tokens-canonical-rename-window-with-arg
+  "%run-command-tokens resolves the canonical 'rename-window' command through
    *arg-command-table* to rename the active window."
   (with-fake-session (s :nwindows 1)
-    (cl-tmux::%run-command-tokens s '("renamew" "myname"))
+    (cl-tmux::%run-command-tokens s '("rename-window" "myname"))
     (is (string= "myname" (window-name (session-active-window s)))
-        "renamew must rename the active window via the arg-table alias")))
+        "rename-window must rename the active window via the arg-table entry")))
 
 (test dispatch-next-pane-cycles
   "C-b o moves to the next pane within the active window."
@@ -194,17 +195,29 @@
 (test send-keys-x-command-table
   "The *copy-mode-x-commands* table maps all send-keys -X names to their
    proper copy-mode keywords."
-  (flet ((kw (name) (cdr (assoc name cl-tmux::*copy-mode-x-commands* :test #'string-equal))))
-    (dolist (c '(("cursor-left"      :copy-mode-cursor-left)
-                 ("cursor-right"     :copy-mode-cursor-right)
-                 ("cursor-up"        :copy-mode-cursor-up)
-                 ("cursor-down"      :copy-mode-cursor-down)
-                 ("rectangle-toggle" :copy-mode-rectangle-toggle)
-                 ("select-word"      :copy-mode-select-word)
-                 ("other-end"        :copy-mode-other-end)
-                 ("toggle-position"  :copy-mode-other-end)))
-      (destructuring-bind (name expected) c
-        (is (eq expected (kw name)) "~S must map to ~S" name expected)))))
+  (dolist (c '(("cursor-left"      :copy-mode-cursor-left)
+               ("cursor-right"     :copy-mode-cursor-right)
+               ("cursor-up"        :copy-mode-cursor-up)
+               ("cursor-down"      :copy-mode-cursor-down)
+               ("rectangle-toggle" :copy-mode-rectangle-toggle)
+               ("select-word"      :copy-mode-select-word)
+               ("other-end"        :copy-mode-other-end)
+               ("toggle-position"  :copy-mode-other-end)
+               ("copy-pipe"        :copy-mode-copy-pipe-no-cancel)
+               ("pipe"             :copy-mode-copy-pipe-no-cancel)
+               ("pipe-no-clear"    :copy-mode-copy-pipe-no-cancel)
+               ("copy-pipe-and-cancel" :copy-mode-copy-pipe-and-cancel)
+               ("copy-pipe-end-of-line-and-cancel"
+                :copy-mode-copy-pipe-end-of-line-and-cancel)
+               ("pipe-and-cancel"      :copy-mode-copy-pipe-and-cancel)
+               ("search-forward-text"  :copy-mode-search-forward-text)
+               ("search-backward-text" :copy-mode-search-backward-text)
+               ("next-matching-bracket" :copy-mode-next-matching-bracket)
+               ("previous-matching-bracket"
+                :copy-mode-previous-matching-bracket)))
+    (destructuring-bind (name expected) c
+      (is (eq expected (copy-mode-x-command-value name))
+          "~S must map to ~S" name expected))))
 
 (test send-keys-x-rectangle-toggle-toggles-rect-select
   "send -X rectangle-toggle flips the screen's rectangle (block) selection flag
@@ -218,6 +231,42 @@
       (is (screen-copy-rect-select-p screen) "rectangle-toggle turns rect-select ON")
       (cl-tmux::%dispatch-send-keys-X s "rectangle-toggle")
       (is-false (screen-copy-rect-select-p screen) "a second toggle turns it OFF"))))
+
+(test send-keys-x-copy-pipe-and-cancel-no-arg-copies-and-exits
+  "send -X copy-pipe-and-cancel without an explicit command still uses the
+   copy-pipe path, allowing copy-command fallback and exiting copy mode."
+  (let ((cl-tmux/buffer:*paste-buffers* nil))
+    (with-option-session (s)
+      (with-loop-state
+        (cl-tmux/options:set-option "copy-command" "")
+        (let ((screen (active-screen s)))
+          (feed screen "pipe-me")
+          (cl-tmux::dispatch-command s :copy-mode-enter nil)
+          (setf (screen-copy-selecting screen) t
+                (screen-copy-mark screen) (cons 0 0)
+                (screen-copy-cursor screen) (cons 0 7))
+          (is (cl-tmux::%dispatch-send-keys-X s "copy-pipe-and-cancel")
+              "copy-pipe-and-cancel must be handled through the -X table")
+          (is (string= "pipe-me" (cl-tmux/buffer:get-paste-buffer 0))
+              "selected text must be copied into the paste buffer")
+          (is-false (screen-copy-mode-p screen)
+                    "copy-pipe-and-cancel must exit copy mode"))))))
+
+(test send-keys-x-search-forward-text-searches-without-prompt
+  "send -X search-forward-text with an argument searches directly instead of
+   opening an interactive prompt."
+  (with-fake-session (s)
+    (let ((screen (active-screen s)))
+      (feed screen "abc def abc")
+      (cl-tmux::dispatch-command s :copy-mode-enter nil)
+      (setf (screen-copy-cursor screen) (cons 0 0))
+      (is (cl-tmux::%dispatch-send-keys-X s "search-forward-text" nil nil '("abc"))
+          "search-forward-text with an argument must be handled")
+      (is (= 8 (cdr (screen-copy-cursor screen)))
+          "search-forward-text must jump to the next matching text")
+      (is (string= "abc"
+                   (cl-tmux/terminal/types:screen-copy-search-term screen))
+          "search term must be saved for repeat search"))))
 
 (test send-keys-x-cursor-left-right-move-cursor
   "send -X cursor-right / cursor-left move the copy-mode cursor horizontally

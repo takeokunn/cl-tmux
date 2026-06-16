@@ -10,7 +10,7 @@
    elapsed interval.  Kept small so the thread shuts down promptly when *running*
    clears instead of holding a multi-second sleep that would outlive the
    join-thread timeout and leak the thread (which, fatally, makes every
-   subsequent fork() fail with \"Cannot fork with multiple threads running\").")
+   subsequent tests or runtime state).")
 
 (defun %maybe-auto-dismiss-overlay ()
   "Auto-dismiss the active overlay when display-time milliseconds have elapsed.

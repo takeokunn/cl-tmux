@@ -23,6 +23,28 @@
 ;;; Used for OSC 52 clipboard payloads.  We use a simple table-driven approach
 ;;; rather than depending on an external Base64 library.
 
+(defun %alphabet-index (alphabet encoded-string group-start offset)
+  "Return the Base64 alphabet index at GROUP-START + OFFSET, or NIL if absent."
+  (and (< (+ group-start offset) (length encoded-string))
+       (position (char encoded-string (+ group-start offset)) alphabet)))
+
+(defun %b64-byte0 (index-a index-b)
+  "Assemble the first decoded byte from Base64 indices A and B."
+  (and index-a index-b
+       (logior (ash index-a 2) (ash index-b -4))))
+
+(defun %b64-byte1 (index-b index-c)
+  "Assemble the second decoded byte from Base64 indices B and C."
+  (and index-b index-c
+       (logand #xFF (logior (ash (logand index-b #xF) 4)
+                            (ash index-c -2)))))
+
+(defun %b64-byte2 (index-c index-d)
+  "Assemble the third decoded byte from Base64 indices C and D."
+  (and index-c index-d
+       (logand #xFF (logior (ash (logand index-c #x3) 6)
+                            index-d))))
+
 (defun %decode-base64-group (alphabet encoded-string group-start)
   "Decode one 4-character Base64 group starting at GROUP-START in ENCODED-STRING.
    Returns (values byte0-or-nil byte1-or-nil byte2-or-nil).
@@ -32,31 +54,13 @@
      byte0 = (a << 2) | (b >> 4)
      byte1 = ((b & 0xF) << 4) | (c >> 2)
      byte2 = ((c & 0x3) << 6) | d"
-  (flet (;; Resolve one alphabet-indexed character, returning NIL for out-of-range.
-         (alphabet-index (offset)
-           (and (< (+ group-start offset) (length encoded-string))
-                (position (char encoded-string (+ group-start offset)) alphabet)))
-         ;; Assemble the first output byte from Base64 indices a and b.
-         (b64-byte0 (index-a index-b)
-           (and index-a index-b
-                (logior (ash index-a 2) (ash index-b -4))))
-         ;; Assemble the second output byte from Base64 indices b and c.
-         (b64-byte1 (index-b index-c)
-           (and index-b index-c
-                (logand #xFF (logior (ash (logand index-b #xF) 4)
-                                     (ash index-c -2)))))
-         ;; Assemble the third output byte from Base64 indices c and d.
-         (b64-byte2 (index-c index-d)
-           (and index-c index-d
-                (logand #xFF (logior (ash (logand index-c #x3) 6)
-                                     index-d)))))
-    (let* ((index-a (alphabet-index 0))
-           (index-b (alphabet-index 1))
-           (index-c (alphabet-index 2))
-           (index-d (alphabet-index 3)))
-      (values (b64-byte0 index-a index-b)
-              (b64-byte1 index-b index-c)
-              (b64-byte2 index-c index-d)))))
+  (let* ((index-a (%alphabet-index alphabet encoded-string group-start 0))
+         (index-b (%alphabet-index alphabet encoded-string group-start 1))
+         (index-c (%alphabet-index alphabet encoded-string group-start 2))
+         (index-d (%alphabet-index alphabet encoded-string group-start 3)))
+    (values (%b64-byte0 index-a index-b)
+            (%b64-byte1 index-b index-c)
+            (%b64-byte2 index-c index-d))))
 
 (defun %base64-decode (encoded-string)
   "Decode Base64-encoded ENCODED-STRING into a byte vector.
@@ -101,6 +105,14 @@
                  (write-char (if (< (+ i 2) n)
                                  (char alphabet (ldb (byte 6 0) triple)) #\=)
                              out))))))
+
+(defun %hex-digit-16 (char)
+  "Parse CHAR as a hexadecimal digit and return its numeric value, or NIL."
+  (digit-char-p char 16))
+
+(defun %parse-hex-integer (string)
+  "Parse STRING as a hexadecimal integer and return NIL on failure."
+  (ignore-errors (parse-integer string :radix 16)))
 
 (defun osc52-clipboard-sequence (text)
   "Build the OSC 52 set-clipboard escape sequence (ESC ] 52 ; c ; <base64> ST)
@@ -157,23 +169,22 @@
       (let ((bytes '())
             (index 0)
             (input-length (length encoded-string)))
-        (flet ((hex-digit (char) (digit-char-p char 16)))
-          (loop while (< index input-length) do
-            (let ((current-char (char encoded-string index)))
-              (if (and (char= current-char #\%)
-                       (< (+ index 2) input-length)
-                       (hex-digit (char encoded-string (1+ index)))
-                       (hex-digit (char encoded-string (+ index 2))))
-                  (progn
-                    (push (+ (* 16 (hex-digit (char encoded-string (1+ index))))
-                             (hex-digit (char encoded-string (+ index 2))))
-                          bytes)
-                    (incf index 3))
-                  (progn
-                    (loop for byte across (babel:string-to-octets (string current-char)
-                                                                  :encoding :utf-8)
-                          do (push byte bytes))
-                    (incf index))))))
+        (loop while (< index input-length) do
+          (let ((current-char (char encoded-string index)))
+            (if (and (char= current-char #\%)
+                     (< (+ index 2) input-length)
+                     (%hex-digit-16 (char encoded-string (1+ index)))
+                     (%hex-digit-16 (char encoded-string (+ index 2))))
+                (progn
+                  (push (+ (* 16 (%hex-digit-16 (char encoded-string (1+ index))))
+                           (%hex-digit-16 (char encoded-string (+ index 2))))
+                        bytes)
+                  (incf index 3))
+                (progn
+                  (loop for byte across (babel:string-to-octets (string current-char)
+                                                                :encoding :utf-8)
+                        do (push byte bytes))
+                  (incf index)))))
         (babel:octets-to-string (coerce (nreverse bytes) '(vector (unsigned-byte 8)))
                                 :encoding :utf-8 :errorp nil))))
 
@@ -216,13 +227,14 @@
 
 (defun %parse-hash-color (hex)
   "Parse a #RGB or #RRGGBB hex string (without the leading #) to 0xRRGGBB, or NIL."
-  (flet ((hx (s) (ignore-errors (parse-integer s :radix 16))))
-    (case (length hex)
-      (6 (hx hex))
-      (3 (let ((r (hx (subseq hex 0 1))) (g (hx (subseq hex 1 2))) (b (hx (subseq hex 2 3))))
-           (when (and r g b)
-             (logior (ash (* r 17) 16) (ash (* g 17) 8) (* b 17)))))   ; 0xF → 0xFF
-      (t nil))))
+  (case (length hex)
+    (6 (%parse-hex-integer hex))
+    (3 (let ((r (%parse-hex-integer (subseq hex 0 1)))
+             (g (%parse-hex-integer (subseq hex 1 2)))
+             (b (%parse-hex-integer (subseq hex 2 3))))
+         (when (and r g b)
+           (logior (ash (* r 17) 16) (ash (* g 17) 8) (* b 17)))))   ; 0xF → 0xFF
+    (t nil)))
 
 (defun %parse-rgb-color (channels)
   "Parse an xterm 'R/G/B' channel string (each 1-4 hex digits) to 0xRRGGBB, or NIL."

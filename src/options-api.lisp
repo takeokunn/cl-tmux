@@ -3,35 +3,6 @@
 ;;;; Option accessor API: type coercions, get/set functions,
 ;;;;  scoped window/pane overrides, and show-options helpers.
 
-;;; ── Command-alias registry ────────────────────────────────────────────────
-;;;
-;;; Implements tmux's command-alias[] array option.  Each entry maps an alias
-;;; name string to a command-line expansion string, e.g.
-;;;   "e" → "new-window -n"
-;;; When the alias is looked up, the expansion is tokenised and the caller's
-;;; remaining arguments are appended.
-;;;
-;;; In .tmux.conf:
-;;;   set -s command-alias[0] e='new-window -n'
-;;;   set -s command-alias[1] gst='new-session -s'
-
-(defvar *command-aliases* (make-hash-table :test #'equal)
-  "Hash-table mapping alias name strings to their command-line expansion strings.")
-
-(defun register-command-alias (alias expansion)
-  "Register ALIAS as a shorthand for the EXPANSION command line."
-  (setf (gethash alias *command-aliases*) expansion))
-
-(defun lookup-command-alias (name)
-  "Return the expansion string for alias NAME, or NIL when not found."
-  (gethash name *command-aliases*))
-
-(defun list-command-aliases ()
-  "Return an alist of (alias . expansion) pairs from *command-aliases*."
-  (let (result)
-    (maphash (lambda (k v) (push (cons k v) result)) *command-aliases*)
-    (sort result #'string< :key #'car)))
-
 ;;; ── Type coercions ────────────────────────────────────────────────────────
 
 (defmacro define-type-coercions (&rest specs)

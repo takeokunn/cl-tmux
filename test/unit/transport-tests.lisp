@@ -103,7 +103,9 @@
     (with-open-file (in path :element-type '(unsigned-byte 8))
       (let ((dispatched nil))
         (with-incoming-frame (type payload in)
-          ((= type +msg-detach+) (setf dispatched :detach))
+          ((= type +msg-detach+) (is (zerop (length payload))
+                                     "detach carries an empty payload")
+                                 (setf dispatched :detach))
           (t (setf dispatched :other)))
         (is (eq :detach dispatched)
             "with-incoming-frame must dispatch to the detach clause")))))
@@ -128,7 +130,9 @@
                              :if-does-not-exist :create)
       (let ((hit-eof nil))
         (with-incoming-frame (type payload in)
-          ((null type) (setf hit-eof t))
+          ((null type) (is (null payload)
+                           "EOF delivers a NIL payload")
+                       (setf hit-eof t))
           (t nil))
         (is-true hit-eof
                  "with-incoming-frame must reach the nil-type clause at EOF")))))
@@ -137,23 +141,14 @@
 
 (test transport-all-typed-constructors-roundtrip
   "Every typed message constructor survives a send-frame / read-frame round-trip."
-  (flet ((round-trip (frame expected-type)
-           (with-temp-octet-file (path)
-             (write-frames-to-file path frame)
-             (with-open-file (in path :element-type '(unsigned-byte 8))
-               (multiple-value-bind (type payload) (read-frame in)
-                 (declare (ignore payload))
-                 (is (= expected-type type)
-                     "round-trip type mismatch: expected ~D got ~S"
-                     expected-type type))))))
-    (round-trip (msg-attach  24 80)           +msg-attach+)
-    (round-trip (msg-key     #(27 65))        +msg-key+)
-    (round-trip (msg-resize  30 100)          +msg-resize+)
-    (round-trip (msg-detach)                  +msg-detach+)
-    (round-trip (msg-frame   "hi")            +msg-frame+)
-    (round-trip (msg-bye)                     +msg-bye+)
-    (round-trip (msg-reply   "output text")   +msg-reply+)
-    (round-trip (msg-command :new-window nil nil) +msg-command+)))
+  (assert-round-tripped-frame-type (msg-attach  24 80)           +msg-attach+)
+  (assert-round-tripped-frame-type (msg-key     #(27 65))        +msg-key+)
+  (assert-round-tripped-frame-type (msg-resize  30 100)          +msg-resize+)
+  (assert-round-tripped-frame-type (msg-detach)                  +msg-detach+)
+  (assert-round-tripped-frame-type (msg-frame   "hi")            +msg-frame+)
+  (assert-round-tripped-frame-type (msg-bye)                     +msg-bye+)
+  (assert-round-tripped-frame-type (msg-reply   "output text")   +msg-reply+)
+  (assert-round-tripped-frame-type (msg-command :new-window nil nil) +msg-command+))
 
 ;;; ── Transport constant value ─────────────────────────────────────────────────
 
@@ -238,48 +233,47 @@
 
 (test transport-typed-constructors-payload-roundtrip
   "Each typed constructor's payload survives send-frame / read-frame intact."
-  (flet ((round-trip (frame check-fn)
-           (with-temp-octet-file (path)
-             (write-frames-to-file path frame)
-             (with-open-file (in path :element-type '(unsigned-byte 8))
-               (multiple-value-bind (type payload) (read-frame in)
-                 (declare (ignore type))
-                 (funcall check-fn payload))))))
-    ;; msg-attach: decode-size must recover rows and cols
-    (round-trip (msg-attach 15 60)
-                (lambda (payload)
-                  (multiple-value-bind (rows cols) (cl-tmux/protocol:decode-size payload)
-                    (is (= 15 rows) "attach rows must survive transport")
-                    (is (= 60 cols) "attach cols must survive transport"))))
-    ;; msg-key: payload bytes must be preserved verbatim
-    (round-trip (msg-key #(27 91 65))
-                (lambda (payload)
-                  (is (equalp #(27 91 65) payload)
-                      "key payload bytes must survive transport")))
-    ;; msg-resize: decode-size must recover rows and cols
-    (round-trip (msg-resize 50 200)
-                (lambda (payload)
-                  (multiple-value-bind (rows cols) (cl-tmux/protocol:decode-size payload)
-                    (is (= 50 rows)  "resize rows must survive transport")
-                    (is (= 200 cols) "resize cols must survive transport"))))
-    ;; msg-frame: decode-text must recover the Unicode string
-    (round-trip (msg-frame "こんにちは")
-                (lambda (payload)
-                  (is (string= "こんにちは" (cl-tmux/protocol:decode-text payload))
-                      "frame UTF-8 payload must survive transport")))
-    ;; msg-reply: decode-text must recover the UTF-8 reply text
-    (round-trip (msg-reply "output: 42")
-                (lambda (payload)
-                  (is (string= "output: 42" (cl-tmux/protocol:decode-text payload))
-                      "reply UTF-8 payload must survive transport")))
-    ;; msg-command: decode-command-payload must recover command, target, and args
-    (round-trip (msg-command :new-window "$0" '("-d"))
-                (lambda (payload)
-                  (multiple-value-bind (command target args)
-                      (cl-tmux/protocol:decode-command-payload payload)
-                    (is (eq :new-window command) "command keyword must survive transport")
-                    (is (string= "$0" target)    "target string must survive transport")
-                    (is (equal '("-d") args)     "args list must survive transport"))))))
+  ;; msg-attach: decode-size must recover rows and cols
+  (assert-round-tripped-frame-payload
+   (msg-attach 15 60)
+   (lambda (payload)
+     (multiple-value-bind (rows cols) (cl-tmux/protocol:decode-size payload)
+       (is (= 15 rows) "attach rows must survive transport")
+       (is (= 60 cols) "attach cols must survive transport"))))
+  ;; msg-key: payload bytes must be preserved verbatim
+  (assert-round-tripped-frame-payload
+   (msg-key #(27 91 65))
+   (lambda (payload)
+     (is (equalp #(27 91 65) payload)
+         "key payload bytes must survive transport")))
+  ;; msg-resize: decode-size must recover rows and cols
+  (assert-round-tripped-frame-payload
+   (msg-resize 50 200)
+   (lambda (payload)
+     (multiple-value-bind (rows cols) (cl-tmux/protocol:decode-size payload)
+       (is (= 50 rows)  "resize rows must survive transport")
+       (is (= 200 cols) "resize cols must survive transport"))))
+  ;; msg-frame: decode-text must recover the Unicode string
+  (assert-round-tripped-frame-payload
+   (msg-frame "こんにちは")
+   (lambda (payload)
+     (is (string= "こんにちは" (cl-tmux/protocol:decode-text payload))
+         "frame UTF-8 payload must survive transport")))
+  ;; msg-reply: decode-text must recover the UTF-8 reply text
+  (assert-round-tripped-frame-payload
+   (msg-reply "output: 42")
+   (lambda (payload)
+     (is (string= "output: 42" (cl-tmux/protocol:decode-text payload))
+         "reply UTF-8 payload must survive transport")))
+  ;; msg-command: decode-command-payload must recover command, target, and args
+  (assert-round-tripped-frame-payload
+   (msg-command :new-window "$0" '("-d"))
+   (lambda (payload)
+     (multiple-value-bind (command target args)
+         (cl-tmux/protocol:decode-command-payload payload)
+       (is (eq :new-window command) "command keyword must survive transport")
+       (is (string= "$0" target)    "target string must survive transport")
+       (is (equal '("-d") args)     "args list must survive transport")))))
 
 ;;; ── %read-exact direct contract tests ───────────────────────────────────────
 ;;;

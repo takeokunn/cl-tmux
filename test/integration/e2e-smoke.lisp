@@ -20,8 +20,11 @@
 
 ;;; ── Timing constants ─────────────────────────────────────────────────────────
 
-(defconstant +e2e-startup-seconds+       1.5
-  "Seconds to wait for cl-tmux and its inner shell to initialize before typing.")
+(defconstant +e2e-startup-timeout-seconds+ 8
+  "Maximum seconds to wait for cl-tmux and its inner shell to initialize before typing.")
+
+(defconstant +e2e-startup-quiet-seconds+ 0.5
+  "Seconds of quiet PTY output after first render before typing the marker command.")
 
 (defconstant +e2e-marker-timeout-seconds+ 6
   "Maximum seconds to wait for the marker to appear in the rendered output.")
@@ -34,6 +37,9 @@
 
 (defconstant +e2e-read-buf-size+   cl-tmux/config:+pty-buf-size+
   "PTY read buffer size in bytes.")
+
+(defconstant +e2e-search-window-bytes+ (* 64 1024)
+  "Maximum recent PTY output bytes to scan for the marker.")
 
 ;;; ── Accumulator helpers ──────────────────────────────────────────────────────
 
@@ -48,8 +54,9 @@
 (defun %search-in-tail (substr acc tail-size)
   "Search for SUBSTR (string) in the last TAIL-SIZE bytes of ACC (octet vector).
    Scanning only the tail avoids re-scanning gigabytes of prior PTY output."
-  (let ((overlap (max 0 (- (fill-pointer acc) (1- tail-size)))))
-    (search substr (map 'string #'code-char (subseq acc overlap)))))
+  (let* ((len (fill-pointer acc))
+         (start (max 0 (- len tail-size))))
+    (search substr (map 'string #'code-char (subseq acc start)))))
 
 ;;; ── CPS-style polling loop ───────────────────────────────────────────────────
 
@@ -65,8 +72,30 @@
         (let ((chunk (pty-read-blocking fd +e2e-read-buf-size+)))
           (when chunk
             (%accumulate-chunk acc chunk)
-            (when (%search-in-tail substr acc mlen)
+            (when (%search-in-tail substr acc (max +e2e-search-window-bytes+ mlen))
               (return t))))))))
+
+(defun %wait-for-startup-render (fd seconds acc)
+  "Poll FD until cl-tmux has rendered at least once and output has gone quiet.
+   The integration smoke drives a saved-core wrapper, whose startup time varies
+   enough that a fixed sleep can type before raw mode and the first pane are ready."
+  (let ((deadline (+ (get-internal-real-time)
+                     (* seconds internal-time-units-per-second)))
+        (quiet-ticks (* +e2e-startup-quiet-seconds+
+                        internal-time-units-per-second))
+        (last-output nil))
+    (loop
+      (let ((now (get-internal-real-time)))
+        (when (> now deadline)
+          (return (not (null last-output))))
+        (when (and last-output
+                   (>= (- now last-output) quiet-ticks))
+          (return t)))
+      (when (select-fds (list fd) +e2e-poll-timeout-us+)
+        (let ((chunk (pty-read-blocking fd +e2e-read-buf-size+)))
+          (when chunk
+            (%accumulate-chunk acc chunk)
+            (setf last-output (get-internal-real-time))))))))
 
 ;;; ── E2E entry point ──────────────────────────────────────────────────────────
 
@@ -78,7 +107,7 @@
          (let ((marker "E2E_PROOF_4242")
                (acc    (%make-accumulator)))
            ;; Let cl-tmux and its inner shell start up.
-           (sleep +e2e-startup-seconds+)
+           (%wait-for-startup-render fd +e2e-startup-timeout-seconds+ acc)
            ;; Type a command at the (emulated) keyboard.
            (pty-write fd (format nil "echo ~A~%" marker))
            ;; Wait for the marker to appear in rendered output.

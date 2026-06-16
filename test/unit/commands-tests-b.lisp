@@ -56,6 +56,40 @@
         (funcall fn s)
         (is (= row (car (cl-tmux/terminal/types:screen-copy-cursor s))) "~A" desc)))))
 
+(test copy-mode-cursor-centre-moves-table
+  "copy-mode-cursor-centre-vertical/horizontal set the centre row/column."
+  (dolist (c '((cl-tmux/commands::copy-mode-cursor-centre-vertical
+                (2 . 7) 5 7 "vertical centre → row 5")
+               (cl-tmux/commands::copy-mode-cursor-centre-horizontal
+                (2 . 7) 2 10 "horizontal centre → col 10")))
+    (destructuring-bind (fn init-cursor expected-value expected-keep desc) c
+      (let ((s (make-screen 20 10)))
+        (cl-tmux/commands::copy-mode-enter s)
+        (setf (cl-tmux/terminal/types:screen-copy-cursor s) init-cursor)
+        (funcall fn s)
+        (ecase fn
+          (cl-tmux/commands::copy-mode-cursor-centre-vertical
+           (is (= expected-value (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+               "~A" desc)
+           (is (= expected-keep (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+               "~A: column must be preserved" desc))
+          (cl-tmux/commands::copy-mode-cursor-centre-horizontal
+           (is (= expected-value (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+               "~A" desc)
+           (is (= expected-keep (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+               "~A: row must be preserved" desc)))))))
+
+(test copy-mode-cursor-centre-noop-outside-copy-mode-table
+  "copy-mode-cursor-centre-vertical/horizontal leave the cursor unchanged when not in copy mode."
+  (dolist (c '((cl-tmux/commands::copy-mode-cursor-centre-vertical 3 5 "vertical: row unchanged")
+               (cl-tmux/commands::copy-mode-cursor-centre-horizontal 7 2 "horizontal: col unchanged")))
+    (destructuring-bind (fn row col desc) c
+      (let ((s (make-screen 20 10)))
+        (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons row col))
+        (funcall fn s)
+        (is (= row (car (cl-tmux/terminal/types:screen-copy-cursor s))) "~A" desc)
+        (is (= col (cdr (cl-tmux/terminal/types:screen-copy-cursor s))) "~A" desc)))))
+
 ;;; ── copy-mode-page-up / copy-mode-page-down ─────────────────────────────────
 
 (test copy-mode-page-up-scrolls-by-full-height
@@ -121,16 +155,9 @@
 
 ;;; ── copy-mode-word-forward / word-backward / word-end ──────────────────────
 
-(defun %copy-mode-screen-with-text (text &key (w 40) (h 5))
-  "Return a copy-mode screen with TEXT fed at row 0."
-  (let ((s (make-screen w h)))
-    (feed s text)
-    (cl-tmux/commands::copy-mode-enter s)
-    s))
-
 (test copy-mode-word-forward-jumps-to-next-word
   "copy-mode-word-forward moves the cursor to the start of the next word."
-  (let ((s (%copy-mode-screen-with-text "hello world")))
+  (let ((s (copy-mode-screen :w 40 :content "hello world")))
     ;; Cursor at col 0 (start of "hello")
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
     (cl-tmux/commands::copy-mode-word-forward s)
@@ -141,7 +168,7 @@
 
 (test copy-mode-word-backward-jumps-to-prev-word-start
   "copy-mode-word-backward moves the cursor to the start of the previous word."
-  (let ((s (%copy-mode-screen-with-text "hello world")))
+  (let ((s (copy-mode-screen :w 40 :content "hello world")))
     ;; Cursor in the middle of "world" at col 8
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 8))
     (cl-tmux/commands::copy-mode-word-backward s)
@@ -164,7 +191,7 @@
 
 (test copy-mode-word-end-jumps-to-end-of-word
   "copy-mode-word-end moves the cursor to the last character of the current or next word."
-  (let ((s (%copy-mode-screen-with-text "hello world")))
+  (let ((s (copy-mode-screen :w 40 :content "hello world")))
     ;; Cursor at col 0 (start of "hello")
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
     (cl-tmux/commands::copy-mode-word-end s)
@@ -192,5 +219,3 @@
     (cl-tmux/commands::copy-mode-bottom s)
     (is (= 0 (screen-copy-offset s))
         "copy-mode-bottom must reset offset to 0 (live view)")))
-
-

@@ -36,15 +36,6 @@
 
 ;;; ── Test helper macros ───────────────────────────────────────────────────────
 ;;;
-;;; Reduces boilerplate in status-bar tests: ~25 tests inline the same
-;;; (with-output-to-string (s) (render-status-bar s sess rows cols)) pattern.
-
-(defun render-status-bar-string (sess rows cols)
-  "Render the status bar for SESS at (ROWS x COLS) and return the output string.
-   Convenience wrapper reducing the with-output-to-string boilerplate in tests."
-  (with-output-to-string (s)
-    (cl-tmux/renderer::render-status-bar s sess rows cols)))
-
 (defmacro with-minimal-status-bar-options (&body body)
   "Run BODY with status-left and status-right cleared (the 'no decorations'
    baseline used by ~10 status-bar tests)."
@@ -56,8 +47,7 @@
 (test render-status-bar-shows-names
   (with-isolated-options ("status-left" nil "status-right" nil)
     (let* ((sess (make-test-session 40 10 :content ""))
-           (out  (with-output-to-string (s)
-                   (cl-tmux/renderer::render-status-bar s sess 10 40))))
+           (out  (render-status-bar-output sess 10 40)))
       (is (search "0" out) "status bar should contain the session name 0 (got ~S)" out)
       ;; The active window is formatted using window-status-current-format:
       ;; " #{window_index}:#{window_name}* " → " 1:1* " for window named "1" at index 1.
@@ -84,8 +74,7 @@
    #[align=right] honoured, instead of the procedural left/window-list/right path."
   (with-isolated-options ("status-format[0]" "LEFThere#[align=right]RIGHThere")
     (let* ((sess (make-test-session 40 10 :content ""))
-           (out  (with-output-to-string (s)
-                   (cl-tmux/renderer::render-status-bar s sess 10 40)))
+           (out  (render-status-bar-output sess 10 40))
            ;; Strip ALL CSI sequences (the leading cursor-move ESC[10;1H and any SGR).
            (vis  (cl-ppcre:regex-replace-all
                   (format nil "~C\\[[0-9;?]*[A-Za-z]" #\Escape) out ""))
@@ -98,8 +87,7 @@
   "status-format[0] expands #{W:...}, so the window list appears in the template."
   (with-isolated-options ("status-format[0]" "#{W:[#{window_index}]}")
     (let* ((sess (make-test-session 40 10 :content ""))
-           (out  (with-output-to-string (s)
-                   (cl-tmux/renderer::render-status-bar s sess 10 40)))
+           (out  (render-status-bar-output sess 10 40))
            (vis  (cl-ppcre:regex-replace-all
                   (format nil "~C\\[[0-9;?]*[A-Za-z]" #\Escape) out "")))
       (is (search "[" vis) "the #{W:} window list renders the bracketed window entry (got ~S)" vis))))
@@ -110,8 +98,7 @@
   (with-isolated-options ("status-left" nil "status-right" nil)
     (let ((cl-tmux/prompt:*prompt* nil))
       (let* ((sess (make-test-session 40 10 :content ""))
-             (out  (with-output-to-string (s)
-                     (cl-tmux/renderer::render-status-bar s sess 10 40))))
+             (out  (render-status-bar-output sess 10 40)))
         ;; window-status-current-format renders active window as " 1:1* "
         (is (search "1:1" out)
             "inactive status bar should show the window fragment 1:1 (got ~S)" out)
@@ -125,8 +112,7 @@
            (screen (pane-screen ap)))
       (setf (screen-copy-mode-p screen) t
             (screen-copy-offset screen) 3)
-      (let ((out (with-output-to-string (s)
-                   (cl-tmux/renderer::render-status-bar s sess 10 60))))
+      (let ((out (render-status-bar-output sess 10 60)))
         (is (search "COPY" out)
             "status bar should show COPY indicator in copy mode (got ~S)" out)
         (is (search "+3" out)
@@ -134,8 +120,7 @@
 
 (test render-status-bar-no-copy-indicator-live
   (let* ((sess (make-test-session 60 10 :content ""))
-         (out  (with-output-to-string (s)
-                 (cl-tmux/renderer::render-status-bar s sess 10 60))))
+         (out  (render-status-bar-output sess 10 60)))
     (is (not (search "COPY" out))
         "live status bar should NOT show the COPY indicator (got ~S)" out)))
 
@@ -147,8 +132,7 @@
   (with-isolated-options ("status-left" nil "status-right" nil)
     (let* ((width  8)
            (sess   (make-test-session width 10 :content ""))
-           (out    (with-output-to-string (s)
-                     (cl-tmux/renderer::render-status-bar s sess 10 width)))
+           (out    (render-status-bar-output sess 10 width))
            (color  (format nil "~C[44;97m" #\Escape))
            (reset  (format nil "~C[0m" #\Escape))
            (start  (+ (search color out) (length color)))
@@ -176,8 +160,7 @@
     (cl-tmux/prompt:prompt-start "rename-window" "abc" nil)
     (unwind-protect
          (let* ((sess (make-test-session 60 10 :content ""))
-                (out  (with-output-to-string (s)
-                        (cl-tmux/renderer::render-status-bar s sess 10 60))))
+                (out  (render-status-bar-output sess 10 60)))
            ;; prompt-text formats as "LABEL: BUFFER".
            (is (search "rename-window: abc" out)
                "active-prompt status bar should show the prompt text (got ~S)" out)

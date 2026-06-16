@@ -69,13 +69,16 @@
       (is (some (lambda (r) (search ">1;" r)) q)
           "DA2 response must contain >1;"))))
 
-(test xtversion-reports-tmux-version
-  "CSI > q (XTVERSION) replies ESC P > | tmux 3.5 ST (cl-tmux's tmux 3.5 identity)."
+(test xtversion-reports-cl-tmux-version
+  "CSI > q (XTVERSION) replies with cl-tmux's own runtime version."
   (with-screen (s 20 5)
     (feed s (esc "[>q"))       ; XTVERSION
-    (is (string= (format nil "~CP>|tmux 3.5~C\\" #\Escape #\Escape)
+    (is (string= (format nil "~CP>|cl-tmux ~A~C\\"
+                         #\Escape
+                         (cl-tmux/version:version-string)
+                         #\Escape)
                  (first (cl-tmux/terminal/types:screen-response-queue s)))
-        "XTVERSION must report tmux 3.5")))
+        "XTVERSION must report the cl-tmux runtime version")))
 
 (test da3-response
   "CSI = c (DA3 / tertiary device attributes) queues the DECRPTUI reply."
@@ -318,9 +321,9 @@
 (in-suite da3-xtversion-direct)
 
 (test enqueue-reply-substring-table
-  "enqueue-da3-reply contains '!|00000000'; enqueue-xtversion-reply contains 'tmux'."
+  "enqueue-da3-reply contains '!|00000000'; enqueue-xtversion-reply contains 'cl-tmux'."
   (dolist (row (list (list #'cl-tmux/terminal/csi::enqueue-da3-reply      "!|00000000" "DA3 reply")
-                     (list #'cl-tmux/terminal/csi::enqueue-xtversion-reply "tmux"       "XTVERSION reply")))
+                     (list #'cl-tmux/terminal/csi::enqueue-xtversion-reply "cl-tmux"    "XTVERSION reply")))
     (destructuring-bind (fn expected desc) row
       (with-screen (s 20 5)
         (funcall fn s)
@@ -354,4 +357,3 @@
     (cl-tmux/terminal/csi::enqueue-xtwinops-reply s 99)
     (is (null (cl-tmux/terminal/types:screen-response-queue s))
         "unsupported XTWINOPS op must not enqueue a reply")))
-

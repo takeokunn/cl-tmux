@@ -2,10 +2,6 @@
 
 ;;; -- Window navigation and session management commands ----------------------
 ;;;
-;;; find-window, next/previous-window (alert cycling), send-keys (-H/-l/-N),
-;;; list-sessions/windows/panes, respawn-pane/window, pipe-pane,
-;;; set-environment, set-hook, bind-key, unbind-key, list-commands,
-;;; server-access, customize-mode.
 (defun %window-matches-pattern-p (window pattern &key name-only)
   "T when WINDOW matches PATTERN by case-insensitive substring.  The window name
    is always searched; unless NAME-ONLY, each pane's title and screen title are
@@ -24,13 +20,16 @@
                  (cl-tmux/model:window-panes window)))))
 
 (defun %cmd-find-window-arg (session args)
-  "find-window [-CNiTrZ] [-t target-pane] match-string: find the window whose name
+  "find-window [-N] match-string: find the window whose name
    (or, unless -N, a pane title/content) matches MATCH-STRING and select it.  With
    several matches, the first is selected.  The match is case-insensitive substring
-   (as in the interactive find-window); -i/-r/-C/-T/-Z are accepted.  This is the
-   scriptable form; the interactive :find-window binding (which lists matches in an
-   overlay) is unchanged."
-  (with-command-flags+pos (flags positionals args "t")
+   (as in the interactive find-window).  This is the scriptable form; the
+   interactive :find-window binding (which lists matches in an overlay) is
+   unchanged."
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\N)
+                             :max-positionals 1
+                             :message "find-window: unsupported argument")
     (let* ((name-only (assoc #\N flags))
            (pattern   (first positionals)))
       (when (and pattern (plusp (length pattern)))
@@ -65,33 +64,87 @@
                  (return t))
             finally (return nil)))))
 
-(defun %cycle-window-in-target (session args cycler)
+(defun %cycle-window-in-target (session args cycler command-name)
   "Resolve -t to a target session (default SESSION) and cycle its active window
    with CYCLER (next-cyclic / prev-cyclic).  Shared by the scriptable
    next-window / previous-window commands.  -a cycles to the next/prev window with
    an alert (activity or silence); without -a, plain window cycling."
-  (with-command-flags+pos (flags positionals args "t")
-    (declare (ignore positionals))
-    (let* ((target-str (cdr (assoc #\t flags)))
-           (target     (or (and target-str
-                                 (find-session-by-target *server-sessions* target-str))
-                           session)))
-      (if (assoc #\a flags)
-          (%cycle-to-alert-window target cycler)
-          (%cmd-cycle-window target cycler))
-      (setf *dirty* t)
-      t)))
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\a #\t)
+                             :max-positionals 0
+                             :message (format nil "~A: unsupported argument" command-name))
+    (let ((target-str (cdr (assoc #\t flags))))
+      (with-target-session (target-session target-str session
+                                :on-missing :current)
+        (let ((cycled (if (assoc #\a flags)
+                          (%cycle-to-alert-window target-session cycler)
+                          (%cmd-cycle-window target-session cycler))))
+          (when cycled
+            (setf *dirty* t)
+            t))))))
 
 (defun %cmd-next-window-arg (session args)
   "next-window [-a] [-t target-session]: select the next window in the target
    session (default: the current session).  Scriptable form; the interactive
    :next-window binding (current session) is unchanged."
-  (%cycle-window-in-target session args #'next-cyclic))
+  (%cycle-window-in-target session args #'next-cyclic "next-window"))
 
 (defun %cmd-previous-window-arg (session args)
   "previous-window [-a] [-t target-session]: select the previous window in the
    target session (default: the current session)."
-  (%cycle-window-in-target session args #'prev-cyclic))
+  (%cycle-window-in-target session args #'prev-cyclic "previous-window"))
+
+(defun %cmd-last-window-arg (session args)
+  "last-window [-t target-session]: select the previously active window in the
+   target session (default: the current session)."
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\t)
+                             :max-positionals 0
+                             :message "last-window: unsupported argument")
+    (let ((target-str (cdr (assoc #\t flags))))
+      (with-target-session (target-session target-str session
+                                :on-missing :current)
+        (let ((prev (session-last-window target-session)))
+          (when prev
+            (%with-window-focus-transition (target-session)
+              (session-select-window target-session prev))
+            (setf *dirty* t)
+            t))))))
+
+(defun %cmd-refresh-client-arg (session args)
+  "refresh-client: force a full redraw.
+   cl-tmux implements only the active-client redraw request; unsupported
+   control-mode or target flags are rejected instead of being ignored."
+  (declare (ignore session))
+  (with-command-input (flags positionals args ""
+                             :allowed-flags '()
+                             :max-positionals 0
+                             :message "refresh-client: unsupported argument")
+    (setf *dirty* t)
+    t))
+
+(defun %cmd-lock-client-arg (session args)
+  "lock-client: lock the active client/session.
+   cl-tmux has no named client model; target-client arguments are unsupported
+   and rejected instead of being ignored."
+  (with-command-input (flags positionals args ""
+                             :allowed-flags '()
+                             :max-positionals 0
+                             :message "lock-client: unsupported argument")
+    (dispatch-command session :lock-client nil)
+    t))
+
+(defun %cmd-lock-session-arg (session args)
+  "lock-session [-t target-session]: lock a session."
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\t)
+                             :max-positionals 0
+                             :message "lock-session: unsupported argument")
+    (let ((target-str (cdr (assoc #\t flags))))
+      (with-target-session (target-session target-str session
+                                :on-missing :current)
+        (dispatch-command target-session :lock-session nil)
+        t))))
 
 (defun %send-keys-hex-to-string (hex)
   "Convert a send-keys -H argument (a hexadecimal character code like \"1b\" or
@@ -116,217 +169,108 @@
    -l: send each positional literally (no key-name translation).
    -H: each positional is a hexadecimal character code (e.g. `send -H 1b 5b 41`).
    -R: reset the target pane's terminal state (RIS) before sending any keys.
-   -M (mouse passthrough) is accepted but not acted on (needs mouse-event context).
    Without -X: each positional is a key name or literal string typed into the pane."
-  (with-command-flags+pos (flags positionals args "tN")
+  (with-command-input (flags positionals args "tN"
+                             :allowed-flags '(#\l #\H #\R #\X #\N #\t)
+                             :message "send-keys: unsupported argument")
     (let* ((target-str (cdr (assoc #\t flags)))
            (literal-p  (and (assoc #\l flags) t))
            (hex-p      (and (assoc #\H flags) t))
            (x-p        (and (assoc #\X flags) t))
            (count      (let ((n (cdr (assoc #\N flags))))
-                         (max 1 (or (and n (parse-integer n :junk-allowed t)) 1))))
-           ;; Resolve -t to a specific window+pane; fall back to the active ones.
-           ;; The window is needed so a copy-mode -X command can be routed to a
-           ;; non-active target pane (see %dispatch-send-keys-X).
-           (target-resolved (and target-str
-                                 (multiple-value-list
-                                  (resolve-target *server-sessions* target-str
-                                                  :current-session session
-                                                  :current-window  (session-active-window session)
-                                                  :current-pane    (session-active-pane session)))))
-           (target-win  (if target-str (second target-resolved)
-                            (session-active-window session)))
-           (target-pane (if target-str (third target-resolved)
-                            (session-active-pane session))))
-      ;; -R: reset the target pane's terminal state (RIS — clears the grid, homes
-      ;; the cursor, resets SGR + modes) so a pane left in a confused state by a
-      ;; crashed full-screen app recovers.  Runs before any keys are sent.
-      (when (and (assoc #\R flags) target-pane (pane-screen target-pane))
-        (cl-tmux/terminal/actions:ris-action (pane-screen target-pane))
-        (setf *dirty* t))
-      (cond
-        ;; -X: dispatch the copy-mode command (first positional) COUNT times.
-        (x-p
-         (when (first positionals)
-           (dotimes (_ count)
-             (%dispatch-send-keys-X session (first positionals) target-pane target-win
-                                    (rest positionals)))))
-        ;; Regular keys: send the whole positional sequence COUNT times.  With -H
-        ;; each positional is a hex code → the literal character it names.
-        ((and positionals target-pane)
-         (dotimes (_ count)
-           (dolist (key positionals)
-             (if hex-p
-                 (let ((str (%send-keys-hex-to-string key)))
-                   (when str (send-keys-to-pane target-pane str :literal t)))
-                 (send-keys-to-pane target-pane key :literal literal-p)))))))))
+                         (max 1 (or (and n (parse-integer n :junk-allowed t)) 1)))))
+      (with-target-context (target-session target-win target-pane session target-str)
+        (let ((session target-session))
+          ;; -R: reset the target pane's terminal state (RIS — clears the grid,
+          ;; homes the cursor, resets SGR + modes) so a pane left in a confused
+          ;; state by a crashed full-screen app recovers.  Runs before any keys
+          ;; are sent.
+          (when (and (assoc #\R flags) target-pane (pane-screen target-pane))
+            (cl-tmux/terminal/actions:ris-action (pane-screen target-pane))
+            (setf *dirty* t))
+          (cond
+            ;; -X: dispatch the copy-mode command (first positional) COUNT times.
+            (x-p
+             (when (first positionals)
+               (dotimes (_ count)
+                 (%dispatch-send-keys-X session (first positionals) target-pane
+                                        target-win (rest positionals)))))
+            ;; Regular keys: send the whole positional sequence COUNT times.  With
+            ;; -H each positional is a hex code -> the literal character it names.
+            ((and positionals target-pane)
+             (dotimes (_ count)
+               (dolist (key positionals)
+                 (if hex-p
+                     (let ((str (%send-keys-hex-to-string key)))
+                       (when str (send-keys-to-pane target-pane str :literal t)))
+                     (send-keys-to-pane target-pane key :literal literal-p)))))))))))
 
 (defun %cmd-send-prefix-arg (session args)
   "send-prefix [-2] [-t target-pane]: send the configured prefix key to a pane.
    -2 sends the secondary prefix key instead of the primary prefix.  -t targets a
    specific pane by pane-id or 'session:window.pane' syntax."
-  (with-command-flags+pos (flags positionals args "t")
-    (declare (ignore positionals))
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\2 #\t)
+                             :max-positionals 0
+                             :message "send-prefix: unsupported argument")
     (let* ((target-str (cdr (assoc #\t flags)))
-           (target-resolved (and target-str
-                                 (multiple-value-list
-                                  (resolve-target *server-sessions* target-str
-                                                  :current-session session
-                                                  :current-window  (session-active-window session)
-                                                  :current-pane    (session-active-pane session)))))
-           (target-pane (if target-str (third target-resolved)
-                            (session-active-pane session)))
+           (target-pane nil)
            (prefix-byte (if (assoc #\2 flags)
                             cl-tmux/config:*prefix2-key-code*
                             cl-tmux/config:*prefix-key-code*)))
-      (when (and prefix-byte target-pane (> (pane-fd target-pane) 0))
+      (with-target-context (target-session target-window pane session target-str)
+        (declare (ignore target-session target-window))
+        (setf target-pane pane))
+      (when (and prefix-byte
+                 target-pane
+                 (not *client-read-only*)
+                 (> (pane-fd target-pane) 0))
         (cl-tmux/pty:pty-write
          (pane-fd target-pane)
          (make-array 1 :element-type '(unsigned-byte 8)
-                       :initial-element prefix-byte))
+                     :initial-element prefix-byte))
         t))))
 
-(defun %cmd-list-sessions-arg (session args)
-  "list-sessions [-F format]: list sessions.
-   -F format: custom format string (default: shows name, windows, attached).
-   Shows overlay in standalone mode."
-  (with-command-flags (flags args "F")
-    (let ((fmt (cdr (assoc #\F flags))))
-      (if fmt
-          (show-built-overlay (s)
-             (dolist (sess (or (mapcar #'cdr *server-sessions*) (list session)))
-               (let* ((ctx (cl-tmux/format:format-context-from-session
-                            sess (session-active-window sess) nil)))
-                 (format s "~A~%" (cl-tmux/format:expand-format fmt ctx)))))
-          (show-overlay (%format-session-list session))))))
-
-(defun %cmd-list-windows-arg (session args)
-  "list-windows [-F format] [-a] [-t session]: list windows.
-   -F format: custom format string.
-   -a: list windows in all sessions.
-   -t target-session: list windows in the target session."
-  (with-command-flags (flags args "Ft")
-    (let* ((fmt        (cdr (assoc #\F flags)))
-           (target-str (cdr (assoc #\t flags)))
-           (all-p      (assoc #\a flags))
-           (target-session (and target-str
-                                (find-session-by-target *server-sessions* target-str)))
-           (sessions (cond
-                       ((and all-p *server-sessions*)
-                        (mapcar #'cdr *server-sessions*))
-                       (target-str
-                        (when target-session
-                          (list target-session)))
-                       (t
-                        (list session)))))
-      (show-built-overlay (s)
-        (dolist (sess sessions)
-          (dolist (win (session-windows sess))
-            (if fmt
-                (let ((ctx (cl-tmux/format:format-context-from-window sess win)))
-                  (format s "~A~%" (cl-tmux/format:expand-format fmt ctx)))
-                (format s "~A: ~A (~Dx~D) [~D pane~:P]~A~%"
-                        (window-id win) (window-name win)
-                        (window-width win) (window-height win)
-                        (length (window-panes win))
-                        (if (eq win (session-active-window sess)) " [active]" "")))))))))
-
-(defun %cmd-list-panes-arg-full (session args)
-  "list-panes [-as] [-F format] [-t target]: list panes.
-   -F format: custom format string.
-   -a: list panes in all sessions.
-   -s: list panes in all windows of the target/current session."
-  (with-command-flags (flags args "Ft")
-    (let* ((fmt        (cdr (assoc #\F flags)))
-           (target-str (cdr (assoc #\t flags)))
-           (all-p      (assoc #\a flags))
-           (session-p  (assoc #\s flags)))
-      (labels ((registered-sessions ()
-                 (or (mapcar #'cdr *server-sessions*)
-                     (list session)))
-               (session-target (name)
-                 (or (and name (find-session-by-target *server-sessions* name))
-                     session))
-               (window-targets-for-session (target-session)
-                 (mapcar (lambda (win) (cons target-session win))
-                         (session-windows target-session)))
-               (resolved-window-target ()
-                 (multiple-value-bind (target-session win pane)
-                     (resolve-target *server-sessions* target-str
-                                     :current-session session
-                                     :current-window (session-active-window session)
-                                     :current-pane (session-active-pane session))
-                   (declare (ignore pane))
-                   (when win
-                     (list (cons target-session win))))))
-        (let ((targets
-                (cond
-                  (all-p
-                   (loop for target-session in (registered-sessions)
-                         append (window-targets-for-session target-session)))
-                  (session-p
-                   (window-targets-for-session (session-target target-str)))
-                  (target-str
-                   (resolved-window-target))
-                  (t
-                   (let ((win (session-active-window session)))
-                     (when win
-                       (list (cons session win))))))))
-          (show-built-overlay (s)
-            (dolist (target targets)
-              (let ((target-session (car target))
-                    (win            (cdr target)))
-                (dolist (pane (window-panes win))
-                  (if fmt
-                      (let ((ctx (cl-tmux/format:format-context-from-session
-                                  target-session win pane)))
-                        (format s "~A~%" (cl-tmux/format:expand-format fmt ctx)))
-                      (format s "~D: [~Dx~D] [~D,~D] pane ~D~A~%"
-                              (pane-id pane)
-                              (pane-width pane) (pane-height pane)
-                              (pane-x pane) (pane-y pane)
-                              (pane-id pane)
-                              (if (eq pane (window-active-pane win))
-                                  " (active)"
-                                  ""))))))))))))
-
 (defun %cmd-respawn-pane-arg (session args)
-  "respawn-pane [-k] [-c start-dir] [-e VAR=val] [-t target-pane] [command]: restart
+  "respawn-pane [-k] [-t target-pane]: restart
    the target pane's process (default: the active pane).
    -k: kill the existing process first.  WITHOUT -k, respawning a pane whose process
    is still running is an error (tmux behaviour) — use -k to force it.
-   -c/-e/command are accepted for compatibility; the respawn currently reuses the
-   pane's default shell (start-dir/env/command override is not yet modelled).
    This is the scriptable form; the interactive :respawn-pane binding is unchanged."
-  (with-command-flags+pos (flags positionals args "cet")
-    (declare (ignore positionals))
-    (let* ((win    (session-active-window session))
-           (pane   (%resolve-pane-in-window win (cdr (assoc #\t flags))))
-           (kill-p (assoc #\k flags)))
-      (when pane
-        (if (and (not kill-p) (> (cl-tmux/model:pane-fd pane) 0))
-            ;; tmux: respawn-pane without -k on a still-running pane is an error.
-            (show-overlay "respawn-pane: pane is active (use -k to force respawn)")
-            (let ((new-pane (respawn-pane pane)))
-              (when new-pane
-                (start-reader-thread new-pane)
-                (setf *dirty* t)
-                t)))))))
+  (with-command-input (flags positionals args "cet"
+                             :allowed-flags '(#\k #\t)
+                             :max-positionals 0
+                             :message "respawn-pane: unsupported argument")
+    (let ((target-str (cdr (assoc #\t flags)))
+          (kill-p (assoc #\k flags)))
+      (with-target-context (target-session win pane session target-str)
+        (declare (ignore target-session))
+        (when (and win pane)
+          (if (and (not kill-p) (> (cl-tmux/model:pane-fd pane) 0))
+              ;; tmux: respawn-pane without -k on a still-running pane is an error.
+              (show-overlay "respawn-pane: pane is active (use -k to force respawn)")
+              (let ((new-pane (respawn-pane pane)))
+                (when new-pane
+                  (start-reader-thread new-pane)
+                  (setf *dirty* t)
+                  t))))))))
 
 (defun %cmd-respawn-window-arg (session args)
-  "respawn-window [-k] [-c start-dir] [-e VAR=val] [-t target-window] [command]:
+  "respawn-window [-k] [-t target-window]:
    restart every pane's process in the target window (default: the active window).
    -k: kill the existing processes first.  WITHOUT -k, respawning when ANY pane is
-   still running is an error (tmux behaviour) — use -k to force it.  -c/-e/command
-   are accepted for compatibility (override not yet modelled).  Scriptable form; the
+   still running is an error (tmux behaviour) — use -k to force it.  Scriptable form; the
    interactive :respawn-window binding is unchanged."
-  (with-command-flags+pos (flags positionals args "cet")
-    (declare (ignore positionals))
+  (with-command-input (flags positionals args "cet"
+                             :allowed-flags '(#\k #\t)
+                             :max-positionals 0
+                             :message "respawn-window: unsupported argument")
     (let* ((target-str (cdr (assoc #\t flags)))
-           (win    (if target-str
-                       (%resolve-window-target session target-str)
-                       (session-active-window session)))
+           (win nil)
            (kill-p (assoc #\k flags)))
+      (with-target-context (target-session resolved-win target-pane session target-str)
+        (declare (ignore target-session target-pane))
+        (setf win resolved-win))
       (when win
         (if (and (not kill-p)
                  (some (lambda (p) (> (cl-tmux/model:pane-fd p) 0))
@@ -341,26 +285,32 @@
               t))))))
 
 (defun %cmd-pipe-pane-arg (session args)
-  "pipe-pane [-IOo] [-t target-pane] [command]: open or close a pipe for the
+  "pipe-pane [-o] [-t target-pane] [command]: open or close a pipe for the
    target pane (default: the active pane).
    -o: only open a pipe if none is currently open (no-op when one already is).
-   -t target: the pane to pipe (pane-id in the active window).
-   -I/-O (pipe pane input / output) are accepted; cl-tmux pipes pane OUTPUT.
+   -t target: the pane to pipe (pane-id in the active window; bare ids and %N
+   are accepted).
    Without a command: close any open pipe on the target pane."
-  (with-command-flags+pos (flags positionals args "t")
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\o #\t)
+                             :message "pipe-pane: unsupported argument")
     (let* ((only-open (assoc #\o flags))
            (command   (format nil "~{~A~^ ~}" positionals))
-           (win       (session-active-window session))
-           (pane      (%resolve-pane-in-window win (cdr (assoc #\t flags)))))
-      (when pane
-        (cond
-          ;; No command: close existing pipe
-          ((zerop (length command))
-           (when (pane-pipe-fd pane) (pipe-pane-close pane)))
-          ;; -o: skip if already piped
-          ((and only-open (pane-pipe-fd pane)) nil)
-          ;; Open the pipe
-          (t (pipe-pane-open pane command)))))))
+           (target-str (cdr (assoc #\t flags))))
+      (let* ((win  (session-active-window session))
+             (pane (if target-str
+                       (%resolve-pane-in-window win target-str)
+                       (session-active-pane session))))
+        (when pane
+          (cond
+            ;; No command: close existing pipe.
+            ((zerop (length command))
+             (when (pane-pipe-fd pane)
+               (pipe-pane-close pane)))
+            ;; -o: skip if already piped.
+            ((and only-open (pane-pipe-fd pane)) nil)
+            ;; Open the pipe.
+            (t (pipe-pane-open pane command))))))))
 
 (defun %call-sbcl-posix (name &rest args)
   "Call the SB-POSIX function named NAME with ARGS, ignoring errors.
@@ -388,38 +338,49 @@
           (format nil "-~A" name))))
 
 (defun %cmd-show-environment-arg (session args)
-  "show-environment [-gs] [-t target-session] [NAME]: show process environment variables.
-   -g and -t are accepted for tmux compatibility; cl-tmux keeps one process-wide environment.
+  "show-environment [-s] [NAME]: show process environment variables.
    With NAME, show that variable.  -s prints shell assignment/unset syntax."
   (declare (ignore session))
-  (with-command-flags+pos (flags positionals args "t")
-    (let ((shell-p (assoc #\s flags))
-          (name    (first positionals)))
-      (if name
-          (show-overlay
-           (%format-show-environment-entry name (ignore-errors (sb-ext:posix-getenv name)) shell-p))
-          (show-built-overlay (s)
-            (format s "environment~%")
-            (dolist (pair (cl-tmux/model:get-update-environment-vars))
-              (let ((var (car pair))
-                    (value (cdr pair)))
-                (if shell-p
-                    (format s "~A~%" (%format-show-environment-entry var value t))
-                    (format s "  ~A=~A~%" var value)))))))))
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\g #\s #\t)
+                             :max-positionals 1
+                             :message "show-environment: unsupported argument")
+    (cond
+      ((or (assoc #\g flags) (assoc #\t flags))
+       (show-overlay "show-environment: -g and -t are unsupported"))
+      (t
+       (let ((shell-p (assoc #\s flags))
+             (name    (first positionals)))
+         (if name
+             (show-overlay
+              (%format-show-environment-entry name (ignore-errors (sb-ext:posix-getenv name)) shell-p))
+             (show-built-overlay (s)
+               (format s "environment~%")
+               (dolist (pair (cl-tmux/model:get-update-environment-vars))
+                 (let ((var (car pair))
+                       (value (cdr pair)))
+                   (if shell-p
+                       (format s "~A~%" (%format-show-environment-entry var value t))
+                       (format s "  ~A=~A~%" var value)))))))))))
 
 (defun %cmd-set-environment-prompt (session args)
-  "set-environment [-g] [-t target-session] [-u|-r] NAME [VALUE]: set or unset a process environment variable.
-   -g and -t are accepted for tmux compatibility; cl-tmux keeps one process-wide environment.
+  "set-environment [-u|-r] NAME [VALUE]: set or unset a process environment variable.
    -u (tmux's unset flag) or -r unsets the variable.  Otherwise VALUE is required."
   (declare (ignore session))
-  (with-command-flags+pos (flags positionals args "t")
-    (let* ((remove-p (or (assoc #\u flags) (assoc #\r flags)))
-           (name     (first positionals))
-           (value    (format nil "~{~A~^ ~}" (rest positionals))))
-      (when (and name (plusp (length name)))
-        (if remove-p
-            (%call-sbcl-posix "UNSETENV" name)
-            (%call-sbcl-posix "SETENV" name value 1))))))
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\g #\r #\t #\u)
+                             :message "set-environment: unsupported argument")
+    (cond
+      ((or (assoc #\g flags) (assoc #\t flags))
+       (show-overlay "set-environment: -g and -t are unsupported"))
+      (t
+       (let* ((remove-p (or (assoc #\u flags) (assoc #\r flags)))
+              (name     (first positionals))
+              (value    (format nil "~{~A~^ ~}" (rest positionals))))
+         (when (and name (plusp (length name)))
+           (if remove-p
+               (%call-sbcl-posix "UNSETENV" name)
+               (%call-sbcl-posix "SETENV" name value 1))))))))
 
 (defun %cmd-set-hook (session args)
   "set-hook [-g] [-a] [-R] [-u] event [command]: register or unset a command hook
@@ -459,35 +420,3 @@
    key in a table) at runtime, delegating to the config directive logic."
   (declare (ignore session))
   (cl-tmux/config:apply-config-directive (cons "unbind" args)))
-
-(defun %cmd-list-commands-arg (session args)
-  "list-commands [command]: list the recognised commands one per line; with a
-   COMMAND name, show only that command (tmux's `list-commands <name>`).  Without a
-   name this matches the interactive :list-commands binding (the full list)."
-  (declare (ignore session))
-  (let* ((name     (first args))
-         (cmds     (sort (copy-list cl-tmux/config::*bindable-commands*)
-                         #'string< :key #'symbol-name))
-         (filtered (if (and name (plusp (length name)))
-                       (remove-if-not
-                        (lambda (c) (string-equal (symbol-name c) name)) cmds)
-                       cmds)))
-    (show-built-overlay (s)
-      (dolist (cmd filtered)
-        (format s "~(~A~)~%" cmd)))))
-
-(defun %cmd-wait-for-arg (session args)
-  "wait-for [-SLU] channel: channel synchronization.
-   Bare: block the calling thread until CHANNEL is signaled (or timeout elapses).
-   -S: signal (unblock) all threads waiting on CHANNEL.
-   -L: lock CHANNEL so subsequent signal calls are suppressed.
-   -U: unlock CHANNEL, re-enabling signal-channel."
-  (declare (ignore session))
-  (with-command-flags+pos (flags positionals args)  ; S/L/U are boolean (no value)
-    (let ((channel (first positionals)))
-      (when (and channel (plusp (length channel)))
-        (cond
-          ((assoc #\S flags) (signal-channel channel))
-          ((assoc #\L flags) (lock-channel   channel))
-          ((assoc #\U flags) (unlock-channel channel))
-          (t                 (wait-for-channel channel)))))))

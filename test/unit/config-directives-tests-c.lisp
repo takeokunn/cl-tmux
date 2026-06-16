@@ -38,54 +38,38 @@
   (is (eq :new-window (cl-tmux/config::%command-keyword "NEW-WINDOW"))
       "resolution should be case-insensitive")
   (is (eq :split-horizontal (cl-tmux/config::%command-keyword "split-horizontal"))
-      "split-horizontal should resolve to :split-horizontal"))
+      "split-horizontal should resolve to :split-horizontal")
+  (is (eq :prev-window (cl-tmux/config::%command-keyword "prev-window"))
+      "prev-window should resolve to :prev-window")
+  (is (eq :copy-mode-enter (cl-tmux/config::%command-keyword "copy-mode-enter"))
+      "copy-mode-enter should resolve to :copy-mode-enter")
+  (is (eq :swap-pane-forward (cl-tmux/config::%command-keyword "swap-pane-forward"))
+      "swap-pane-forward should resolve to :swap-pane-forward")
+  (is (eq :detach (cl-tmux/config::%command-keyword "detach"))
+      "detach should resolve to :detach"))
 
-(test command-keyword-resolves-tmux-aliases
-  "%command-keyword resolves tmux command-name aliases (full names whose keyword
-   differs, plus short forms) to the canonical bindable keyword."
-  (is (eq :prev-window      (cl-tmux/config::%command-keyword "previous-window")))
-  (is (eq :copy-mode-enter  (cl-tmux/config::%command-keyword "copy-mode")))
-  (is (eq :swap-pane-forward (cl-tmux/config::%command-keyword "swap-pane")))
-  (is (eq :detach           (cl-tmux/config::%command-keyword "detach-client")))
-  (is (eq :show-window-options (cl-tmux/config::%command-keyword "showw")))
-  (is (eq :prev-window      (cl-tmux/config::%command-keyword "PREVIOUS-WINDOW"))
-      "alias resolution must be case-insensitive"))
+(test command-keyword-rejects-standard-tmux-abbreviations
+  "%command-keyword rejects shorthand tmux abbreviations so config sticks to
+   canonical command names."
+  (is (null (cl-tmux/config::%command-keyword "breakp")))
+  (is (null (cl-tmux/config::%command-keyword "killp")))
+  (is (null (cl-tmux/config::%command-keyword "next")))
+  (is (null (cl-tmux/config::%command-keyword "prev")))
+  (is (null (cl-tmux/config::%command-keyword "last")))
+  (is (null (cl-tmux/config::%command-keyword "displayp")))
+  (is (null (cl-tmux/config::%command-keyword "rotatew"))))
 
-(test command-keyword-resolves-standard-tmux-abbreviations
-  "%command-keyword resolves the standard tmux command abbreviations (man tmux
-   ALIASES) for arg-less bindable commands to their canonical keyword."
-  (is (eq :break-pane    (cl-tmux/config::%command-keyword "breakp")))
-  (is (eq :kill-pane     (cl-tmux/config::%command-keyword "killp")))
-  (is (eq :next-window   (cl-tmux/config::%command-keyword "next")))
-  (is (eq :prev-window   (cl-tmux/config::%command-keyword "prev")))
-  (is (eq :last-window   (cl-tmux/config::%command-keyword "last")))
-  (is (eq :display-panes (cl-tmux/config::%command-keyword "displayp")))
-  (is (eq :rotate-window (cl-tmux/config::%command-keyword "rotatew"))))
-
-(test bind-tmux-abbreviation-fires
-  "bind b breakp binds :break-pane via the abbreviation, and an unknown abbrev
-   is still rejected."
+(test bind-canonical-name-rejects-shorthand
+  "bind rejects shorthand tmux abbreviations now that config is canonical-only."
   (with-isolated-config
-    (is (= 1 (load-config-from-string "bind b breakp")))
-    (is (eq :break-pane (lookup-key-binding #\b))
-        "abbrev breakp must bind :break-pane")
+    (is (= 0 (load-config-from-string "bind b breakp")))
+    (is (null (lookup-key-binding #\b))
+        "breakp must no longer bind anything")
+    (is (= 0 (load-config-from-string "bind p previous-window")))
+    (is (null (lookup-key-binding #\p))
+        "previous-window must no longer bind anything")
     (is (= 0 (load-config-from-string "bind Q definitely-not-a-command"))
         "an unknown abbreviation must still be rejected")))
-
-(test command-name-aliases-target-bindable-keywords
-  "Every alias value must be a member of *bindable-commands* (else the bind would
-   resolve to a keyword the dispatcher rejects)."
-  (dolist (pair cl-tmux/config::*command-name-aliases*)
-    (is (member (cdr pair) cl-tmux/config::*bindable-commands*)
-        "alias ~A -> ~A must target a bindable keyword" (car pair) (cdr pair))))
-
-(test bind-tmux-alias-name-fires
-  "bind x previous-window binds the canonical :prev-window keyword via the alias."
-  (with-isolated-config
-    (let ((applied (load-config-from-string "bind x previous-window")))
-      (is (= 1 applied))
-      (is (eq :prev-window (lookup-key-binding #\x))
-          "previous-window alias must bind :prev-window"))))
 
 (test command-keyword-rejects-non-bindable-keyword
   "%command-keyword returns NIL for interned-but-non-bindable keywords."
@@ -230,4 +214,3 @@
       "whitespace-only line should return NIL")
   (is (null (cl-tmux/config::apply-config-line "# this is a comment"))
       "comment line should return NIL"))
-

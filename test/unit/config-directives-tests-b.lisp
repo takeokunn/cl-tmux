@@ -121,7 +121,20 @@
     (is (null (cl-tmux/options:get-option "exit-empty" nil))
         "exit-empty must NOT appear in global-options (it is server-only)")))
 
-;;; ── source-file / source directive ───────────────────────────────────────
+(test apply-set-directive-rejects-unsupported-terminal-options
+  "terminal-overrides/features are terminal matching directives cl-tmux does not implement."
+  (dolist (form '(("set" "-g" "terminal-overrides" "xterm*:RGB")
+                  ("set-option" "-g" "terminal-features" "xterm*:RGB")))
+    (with-fresh-global-options
+      (destructuring-bind (verb flag name value) form
+        (declare (ignore verb flag))
+        (is (null (apply-config-directive form))
+            "~S must be rejected instead of accepted as a stored no-op" form)
+        (is (not (equal value (cl-tmux/options:get-option name nil)))
+            "~A must not be stored when the terminal-matching behavior is unsupported"
+            name)))))
+
+;;; ── source-file directive ──────────────────────────────────────────────────
 
 (test source-file-directive-loads-temp-file
   "source-file applies a config file from disk, returning T."
@@ -131,15 +144,6 @@
           "source-file must return T")
       (is (eq :next-window (lookup-key-binding #\z))
           "#\\z must be bound after source-file"))))
-
-(test source-directive-is-alias-for-source-file
-  "'source' is accepted as an alias for 'source-file'."
-  (with-isolated-config
-    (with-temp-config-file (p "bind w last-window")
-      (is (eq t (apply-config-directive (list "source" (namestring p))))
-          "source alias must return T")
-      (is (eq :last-window (lookup-key-binding #\w))
-          "#\\w must be bound after source"))))
 
 (test source-file-missing-returns-t-silently
   "source-file on a nonexistent file returns T (errors are ignored)."
@@ -185,37 +189,54 @@
     (is-true  f "format (F)")
     (is (equal '("/path/to.conf") rest) "positionals = the path")))
 
-;;; ── run-shell / run directive ─────────────────────────────────────────────
+(test parse-source-file-flags-target-pane
+  "%parse-source-file-flags consumes tmux's -t target-pane without treating it as a path."
+  (multiple-value-bind (n q v f rest)
+      (cl-tmux/config::%parse-source-file-flags '("-q" "-t" "%1" "/path/to.conf"))
+    (declare (ignore n v f))
+    (is-true q "quiet (q)")
+    (is (equal '("/path/to.conf") rest) "target pane must not remain in positionals")))
+
+(test consume-leading-flag-tokens-stops-at-first-non-flag
+  "%consume-leading-flag-tokens walks leading flags and stops at the first positional token."
+  (let ((seen '()))
+    (is (equal '("cmd" "arg")
+               (cl-tmux/config::%consume-leading-flag-tokens
+                '("-b" "-F" "cmd" "arg")
+                (lambda (tok rest)
+                  (push tok seen)
+                  (values rest t)))))
+    (is (equal '("-F" "-b") seen)
+        "callback must see the leading flags in order")))
+
+;;; ── run-shell directive ───────────────────────────────────────────────────
 
 (test run-shell-apply-directive-table
-  "run-shell / run aliases both return T regardless of exit code."
+  "run-shell returns T regardless of exit code."
   (dolist (c '(("run-shell" ("true")  "run-shell returns T")
-               ("run"       ("true")  "run alias returns T")
                ("run-shell" ("false") "run-shell error silently returns T")))
     (destructuring-bind (cmd args desc) c
       (is (eq t (apply-config-directive (cons cmd args))) "~A" desc))))
 
-;;; ── run-shell / run flag tolerance (-b / -t / -d / -C) ────────────────────
+;;; ── run-shell flag tolerance (-b / -t / -d / -C) ───────────────────────────
 ;;;
 ;;; %apply-run-shell-directive strips leading flags so the common
-;;; `run-shell -b 'cmd'` / `run -b '~/.tmux/plugins/tpm/tpm'` forms — which the
-;;; fixed-arity table silently dropped — are handled.  These tests assert the
-;;; handler's RETURN VALUE (handled vs not) rather than shell side-effects;
-;;; `true` is used so any actual execution is harmless and fast.
+;;; `run-shell -b 'cmd'` form — which the fixed-arity table silently dropped —
+;;; is handled.  These tests assert the handler's RETURN VALUE (handled vs not)
+;;; rather than shell side-effects; `true` is used so any actual execution is
+;;; harmless and fast.
 
 (test run-shell-handler-table
   "%apply-run-shell-directive returns T for handled forms and NIL for non-run commands.
    Each row is (expected cmd args description)."
-  (dolist (c '((t   "run-shell" ("-b" "true")               "run-shell -b true (background flag)")
-               (t   "run"       ("true")                    "run true (bare alias)")
+  (dolist (c '((t   "run-shell" ("-b" "true")                 "run-shell -b true (background flag)")
                (t   "run-shell" ("-t" "0" "-b" "true")      "run-shell -t 0 -b true (target+bg)")
-               (nil "bind"      ("x" "next-window")         "bind (non-run command)")
-               (t   "run-shell" ("-b")                      "run-shell -b only (flag-only no-op)")
-               (t   "run-shell" ("-C" "new-window")         "run-shell -C <cmd> (tmux-cmd no-op)")
-               (t   "run-shell" ("-d" "5" "true")           "run-shell -d 5 true (delay flag)")
-               (t   "run-shell" ("-x" "true")               "run-shell -x true (unknown flag skipped)")
-               (t   "run"       ("-b" "true")               "run -b true (tpm alias with flag)")
-               (t   "run-shell" ()                          "run-shell no args (empty no-op)")
+               (nil "bind"      ("x" "next-window")           "bind (non-run command)")
+               (t   "run-shell" ("-b")                        "run-shell -b only (flag-only no-op)")
+               (t   "run-shell" ("-C" "new-window")           "run-shell -C <cmd> (tmux-cmd no-op)")
+               (t   "run-shell" ("-d" "5" "true")             "run-shell -d 5 true (delay flag)")
+               (t   "run-shell" ("-x" "true")                 "run-shell -x true (unknown flag skipped)")
+               (t   "run-shell" ()                            "run-shell no args (empty no-op)")
                (t   "run-shell" ("-b" "echo" "hello" "world") "run-shell -b echo hello world (multi-word)")))
     (destructuring-bind (expected cmd args desc) c
       (with-isolated-config
@@ -349,33 +370,33 @@
     (is (null (sb-ext:posix-getenv name))
         "config set-environment -u must unset the variable")))
 
-(test apply-set-environment-t-consumes-target-session
-  "'set-environment -t target VAR VALUE' config directive accepts target-session and sets VAR."
+(test apply-set-environment-t-is-rejected
+  "'set-environment -t target VAR VALUE' config directive is rejected."
   (let ((name "CLTMUX_TEST_ENV_VAR_CFG_T")
         (target "CLTMUX_TEST_ENV_TARGET_CFG_T"))
     (unwind-protect
          (progn
            (ignore-errors (sb-posix:unsetenv name))
            (ignore-errors (sb-posix:unsetenv target))
-           (is (eq t (apply-config-directive (list "set-environment" "-t" target name "value")))
-               "set-environment -t must be handled (return T)")
-           (is (string= "value" (sb-ext:posix-getenv name))
-               "config set-environment -t must set VAR, not the target-session token")
+           (is (null (apply-config-directive (list "set-environment" "-t" target name "value")))
+               "set-environment -t must be rejected (return NIL)")
+           (is (null (sb-ext:posix-getenv name))
+               "config set-environment -t must not set VAR")
            (is (null (sb-ext:posix-getenv target))
                "config set-environment -t must not treat target-session as a variable name"))
       (ignore-errors (sb-posix:unsetenv name))
       (ignore-errors (sb-posix:unsetenv target)))))
 
-(test apply-set-environment-g-t-u-unsets-variable
-  "'set-environment -g -t target -u VAR' config directive accepts scope flags while unsetting VAR."
+(test apply-set-environment-g-t-u-is-rejected
+  "'set-environment -g -t target -u VAR' config directive is rejected."
   (let ((name "CLTMUX_TEST_ENV_VAR_CFG_GT_U"))
     (unwind-protect
          (progn
            (sb-posix:setenv name "x" 1)
-           (is (eq t (apply-config-directive (list "setenv" "-g" "-t" "ignored" "-u" name)))
-               "setenv -g -t target -u must be handled (return T)")
-           (is (null (sb-ext:posix-getenv name))
-               "config setenv -g -t target -u must unset VAR"))
+           (is (null (apply-config-directive (list "set-environment" "-g" "-t" "ignored" "-u" name)))
+               "set-environment -g -t target -u must be rejected (return NIL)")
+           (is (string= "x" (sb-ext:posix-getenv name))
+               "config set-environment -g -t target -u must not unset VAR"))
       (ignore-errors (sb-posix:unsetenv name)))))
 
 ;;; ── %apply-option-side-effects: prefix branch ────────────────────────────

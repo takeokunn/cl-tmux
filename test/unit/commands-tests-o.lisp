@@ -54,7 +54,7 @@
 
 (test copy-mode-word-backward-at-col-zero-stays-put
   "copy-mode-word-backward when cursor is already at col 0 does not move."
-  (let ((s (%copy-mode-screen-with-text "hello world")))
+  (let ((s (copy-mode-screen :w 40 :content "hello world")))
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
     (cl-tmux/commands::copy-mode-word-backward s)
     (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
@@ -62,7 +62,7 @@
 
 (test copy-mode-word-backward-from-whitespace-skips-to-word-start
   "copy-mode-word-backward when cursor is in whitespace skips to the previous word start."
-  (let ((s (%copy-mode-screen-with-text "hello world")))
+  (let ((s (copy-mode-screen :w 40 :content "hello world")))
     ;; Position cursor in the space between words (col 5).
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
     (cl-tmux/commands::copy-mode-word-backward s)
@@ -73,7 +73,7 @@
 
 (test copy-mode-word-backward-from-first-char-of-word
   "copy-mode-word-backward when cursor is at the first character of a word."
-  (let ((s (%copy-mode-screen-with-text "hello world")))
+  (let ((s (copy-mode-screen :w 40 :content "hello world")))
     ;; Position at col 6 — the 'w' of "world".
     (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 6))
     (cl-tmux/commands::copy-mode-word-backward s)

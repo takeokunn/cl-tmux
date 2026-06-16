@@ -37,9 +37,7 @@
                        (session-active-pane session))))
          (funcall k (if pane :pane :global) pane)))
       ((and (assoc #\w flags) (not globalp))
-       (let ((win (if target-str
-                      (%resolve-window-target session target-str)
-                      (session-active-window session))))
+       (let ((win (%resolve-window-target-or-active session target-str)))
          (funcall k (if win :window :global) win)))
       (t
        (funcall k :global nil)))))
@@ -51,19 +49,25 @@
     (:window (remhash name (cl-tmux/model:window-local-options target)))
     (:global (remhash name cl-tmux/options:*global-options*))))
 
+(defun %append-option-value (name current value)
+  "Combine CURRENT and VALUE for NAME using the option-specific append rule."
+  (cl-tmux/options:append-option-value name current value))
+
 (defun %scope-append (name value scope target)
   "Append VALUE to option NAME in the store identified by SCOPE / TARGET.
    Style options (e.g. status-style) join with ',' via append-option-value."
-  (flet ((cur (v) (cl-tmux/options:append-option-value name v value)))
-    (ecase scope
-      (:pane
-       (cl-tmux/options:set-option-for-pane
-        name (cur (cl-tmux/options:get-option-for-pane name target)) target))
-      (:window
-       (cl-tmux/options:set-option-for-window
-        name (cur (cl-tmux/options:get-option-for-window name target)) target))
-      (:global
-       (cl-tmux/options:set-option name (cur (cl-tmux/options:get-option name nil)))))))
+  (ecase scope
+    (:pane
+     (cl-tmux/options:set-option-for-pane
+      name (%append-option-value name (cl-tmux/options:get-option-for-pane name target) value)
+      target))
+    (:window
+     (cl-tmux/options:set-option-for-window
+      name (%append-option-value name (cl-tmux/options:get-option-for-window name target) value)
+      target))
+    (:global
+     (cl-tmux/options:set-option
+      name (%append-option-value name (cl-tmux/options:get-option name nil) value)))))
 
 (defun %scope-set (name value scope target)
   "Store VALUE for option NAME in the store identified by SCOPE / TARGET."
@@ -77,28 +81,35 @@
    Scope: -p pane-local, -w window-local, -g global (default), -s → global.
    Operation: -u unset, -a append, -o only-if-unset, default: set.
    -F expands #{...} in VALUE before storage (one-shot format resolution)."
-  (with-command-flags+pos (flags positionals args "t")
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\a #\F #\g #\o #\p #\s #\u #\w #\t)
+                             :message "set-option: unsupported argument")
     (let* ((name       (first positionals))
            (raw-value  (format nil "~{~A~^ ~}" (rest positionals)))
-           (value      (%expand-F-flag flags session raw-value))
            (target-str (cdr (assoc #\t flags))))
-      (when name
-        (%with-option-scope session flags target-str
-          (lambda (scope target)
-            (cond
-              ((assoc #\u flags)
-               (%scope-unset name scope target))
-              ((assoc #\a flags)
-               (%scope-append name value scope target))
-              ((and (assoc #\o flags)
-                    (nth-value 1 (gethash name cl-tmux/options:*global-options*)))
-               nil)
-              (t
-               (%scope-set name value scope target)))
-            ;; Side-effects for special options (prefix/status/escape-time etc.)
-            ;; always run after the operation, even when -o skips the write.
-            ;; Passes RAW value — side-effect parsers expect strings, not coerced types.
-            (cl-tmux/config:%apply-option-side-effects name value)))))))
+      (cond
+        ((null name) nil)
+        ((cl-tmux/config::%unsupported-set-option-p name)
+         (%overlayf "set-option: unsupported option ~A" name)
+         nil)
+        (t
+         (let ((value (%expand-F-flag flags session raw-value)))
+           (%with-option-scope session flags target-str
+             (lambda (scope target)
+               (cond
+                 ((assoc #\u flags)
+                  (%scope-unset name scope target))
+                 ((assoc #\a flags)
+                  (%scope-append name value scope target))
+                 ((and (assoc #\o flags)
+                       (nth-value 1 (gethash name cl-tmux/options:*global-options*)))
+                  nil)
+                 (t
+                  (%scope-set name value scope target)))
+               ;; Side-effects for special options (prefix/status/escape-time etc.)
+               ;; always run after the operation, even when -o skips the write.
+               ;; Passes RAW value — side-effect parsers expect strings, not coerced types.
+               (cl-tmux/config:%apply-option-side-effects name value)))))))))
 
 (defun %cmd-set-window-option (session args)
   "set-window-option / setw: like set-option but defaults to WINDOW scope (tmux
@@ -116,7 +127,7 @@
     (t nil)))
 
 (defun %show-option-value-only (name scope)
-  "Return only NAME's value for `show-option -v`, or NIL when NAME is unset."
+  "Return only NAME's value for `show-options -v`, or NIL when NAME is unset."
   (let* ((line (cl-tmux/options:show-option name scope))
          (prefix (format nil "~A " name)))
     (when (and (not (search "(not set)" line))
@@ -126,13 +137,16 @@
                          (subseq line (length prefix))))))
 
 (defun %cmd-show-options* (session args default-scope)
-  "show-options/show-option argument form.
+  "show-options argument form.
    Supports the common scriptable subset: -g/-w/-s scope flags, -t target
    consumption, -q quiet missing options, -v value-only, and an optional option
    NAME positional.  Targets are consumed for tmux-compatible syntax; option
-   storage is currently global/server-scoped."
+  storage is currently global/server-scoped."
   (declare (ignore session))
-  (with-command-flags+pos (flags positionals args "t")
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\g #\w #\s #\t #\q #\v)
+                             :max-positionals 1
+                             :message "show-options: unsupported argument")
     (let* ((scope (%show-options-scope flags default-scope))
            (name (first positionals))
            (quietp (assoc #\q flags))
@@ -150,15 +164,15 @@
          (show-overlay (cl-tmux/options:show-options scope)))))))
 
 (defun %cmd-show-options-arg (session args)
-  "show-options / show / show-option with arguments."
+  "show-options with arguments."
   (%cmd-show-options* session args nil))
 
 (defun %cmd-show-window-options-arg (session args)
-  "show-window-options / showw with arguments; consumes tmux flags."
+  "show-window-options with arguments; consumes tmux flags."
   (%cmd-show-options* session args nil))
 
 (defun %cmd-show-session-options-arg (session args)
-  "show-session-options / shows with arguments; consumes tmux flags."
+  "show-session-options with arguments; consumes tmux flags."
   (%cmd-show-options* session args nil))
 
 (defun %cmd-show-server-options-arg (session args)
@@ -189,11 +203,11 @@
    the active window) to the joined remaining ARGS.  Without -t parsing, a bare
    `rename-window -t @2 foo` would fold the flag tokens into the name and rename
    the wrong (active) window."
-  (with-command-flags+pos (flags positionals args "t")
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\t)
+                             :message "rename-window: unsupported argument")
     (let* ((target-str (cdr (assoc #\t flags)))
-           (win        (if target-str
-                           (%resolve-window-target session target-str)
-                           (session-active-window session)))
+           (win        (%resolve-window-target-or-active session target-str))
            (name       (format nil "~{~A~^ ~}" positionals)))
       (when (and win (plusp (length name)))
         (rename-window win name)))))
@@ -221,15 +235,15 @@
    Refuses a name already used by another session (see %rename-session-checked).
    Without -t parsing, `rename-session -t old new` would fold the flag tokens into
    the name and rename the wrong (current) session."
-  (with-command-flags+pos (flags positionals args "t")
-    (let* ((target-str (cdr (assoc #\t flags)))
-           (target     (if target-str
-                           (or (find-session-by-target *server-sessions* target-str)
-                               session)
-                           session))
-           (name       (format nil "~{~A~^ ~}" positionals)))
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\t)
+                             :message "rename-session: unsupported argument")
+    (let ((target-str (cdr (assoc #\t flags)))
+          (name       (format nil "~{~A~^ ~}" positionals)))
       (when (plusp (length name))
-        (%rename-session-checked target name)))))
+        (with-target-session (target-session target-str session
+                                  :on-missing :current)
+          (%rename-session-checked target-session name))))))
 
 (defun %cmd-select-window (session args)
   "select-window [-t target] [-l] [-n] [-p] [-T]: select a window.
@@ -240,7 +254,10 @@
    -T: toggle — when the target is ALREADY the current window, behave like
        last-window instead (the `bind Tab select-window -T` two-window toggle).
    Delivers ?1004 focus events on the switch."
-  (with-command-flags (flags args "t")
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\l #\n #\p #\T #\t)
+                             :max-positionals 0
+                             :message "select-window: unsupported argument")
     (cond
       ((assoc #\l flags)
        ;; -l: last window
@@ -255,7 +272,7 @@
        ;; -p: previous window
        (%cmd-cycle-window session #'prev-cyclic))
       (t
-       ;; -t target or bare target
+       ;; -t target
        (let ((target (cdr (assoc #\t flags))))
          (when target
            (%with-window-focus-transition (session)
@@ -281,7 +298,10 @@
    -t target: pane-id within the active window (default: the active pane).  The
      pane-configuring forms (-d/-e/-T/-m) and plain selection all act on -t's pane,
      not unconditionally the active one."
-  (with-command-flags (flags args "tT")
+  (with-command-input (flags positionals args "tT"
+                             :allowed-flags '(#\L #\R #\U #\D #\l #\d #\e #\m #\M #\t #\T)
+                             :max-positionals 0
+                             :message "select-pane: unsupported argument")
     (let* ((win    (session-active-window session))
            ;; Resolve -t to a pane-id within the active window; default = active pane.
            (target-pane (%resolve-pane-in-window win (cdr (assoc #\t flags)))))

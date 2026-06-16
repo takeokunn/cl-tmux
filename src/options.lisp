@@ -250,7 +250,5 @@
   ("set-clipboard"        :string  "on") ; external, on, or off
   ("terminal-features"    :string  "")
   ("terminal-overrides"   :string  "")
-  ("command-alias"        :string  "")   ; array stored as single string for simplicity
   ("default-terminal"     :string  "screen")
   ("buffer-limit"         :integer 50))
-

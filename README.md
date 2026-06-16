@@ -133,12 +133,15 @@ the same `process-byte` pipeline the standalone loop uses.
 # /dev/ptmx is unavailable, so this also works in sandboxed builds:
 nix flake check                     # runs the suite as a Nix check
 # or, in the dev shell:
-sbcl --eval "(asdf:test-system :cl-tmux)" --quit
+sbcl --eval '(require :asdf)' \
+     --eval '(push (truename ".") asdf:*central-registry*)' \
+     --eval '(asdf:test-system :cl-tmux)' \
+     --quit
 
 # End-to-end smoke test: drives the *real* binary inside a PTY,
 # types a command, and verifies cl-tmux renders the output.
 nix build .
-sbcl --no-sysinit --no-userinit --script test/e2e-smoke.lisp result/bin/cl-tmux
+sbcl --no-sysinit --no-userinit --script test/integration/e2e-smoke.lisp result/bin/cl-tmux
 ```
 
 The suite covers three layers: the VT100 emulator (cursor, erase, SGR,
@@ -185,7 +188,7 @@ cl-tmux/
     ├── renderer-tests.lisp # escape-code renderer output
     ├── pty-tests.lisp      # live PTY/shell integration
     ├── suite.lisp          # aggregate runner
-    └── e2e-smoke.lisp      # drives the real binary in a PTY
+    └── integration/e2e-smoke.lisp # drives the real binary in a PTY
 ```
 
 ## Architecture

@@ -11,19 +11,25 @@
 
 (test parse-command-flags-value-and-boolean
   "%parse-command-flags separates -t<value> flags, boolean flags, and positionals."
-  (flet ((flags (toks vf)
-           (multiple-value-bind (f p) (cl-tmux::%parse-command-flags toks vf)
-             (declare (ignore p)) f))
-         (pos (toks vf)
-           (multiple-value-bind (f p) (cl-tmux::%parse-command-flags toks vf)
-             (declare (ignore f)) p)))
-    (is (equal "2" (cdr (assoc #\t (flags '("-t" "2") "t"))))
-        "-t 2 (separate) → value \"2\"")
-    (is (equal "2" (cdr (assoc #\t (flags '("-t2") "t"))))
-        "-t2 (attached) → value \"2\"")
-    (is (eq t (cdr (assoc #\d (flags '("-d") "t"))))
-        "-d (not a value flag) → boolean T")
-    (is (equal '("foo" "bar") (pos '("-d" "foo" "-t" "2" "bar") "t"))
+  (multiple-value-bind (flags positionals)
+      (cl-tmux::%parse-command-flags '("-t" "2") "t")
+    (declare (ignore positionals))
+    (is (equal "2" (alist-value #\t flags))
+        "-t 2 (separate) → value \"2\""))
+  (multiple-value-bind (flags positionals)
+      (cl-tmux::%parse-command-flags '("-t2") "t")
+    (declare (ignore positionals))
+    (is (equal "2" (alist-value #\t flags))
+        "-t2 (attached) → value \"2\""))
+  (multiple-value-bind (flags positionals)
+      (cl-tmux::%parse-command-flags '("-d") "t")
+    (declare (ignore positionals))
+    (is (eq t (alist-value #\d flags))
+        "-d (not a value flag) → boolean T"))
+  (multiple-value-bind (flags positionals)
+      (cl-tmux::%parse-command-flags '("-d" "foo" "-t" "2" "bar") "t")
+    (declare (ignore flags))
+    (is (equal '("foo" "bar") positionals)
         "non-flag tokens are positionals in order")))
 
 (test run-command-line-select-window-by-number
@@ -60,6 +66,21 @@
       (cl-tmux::%run-command-line s "select-window -T -t 1")
       (is (eq w0 (session-active-window s))
           "-T when already on the target must toggle to the last window (w0)"))))
+
+(test run-command-line-select-window-rejects-unsupported-arguments
+  "select-window rejects unknown flags and positional tokens before changing windows."
+  (dolist (command '("select-window -n extra"
+                     "select-window -x"
+                     "select-window -t 2 extra"))
+    (with-fake-session (s :nwindows 2)
+      (let ((initial (session-active-window s))
+            (*overlay* nil))
+        (is (null (cl-tmux::%run-command-line s command))
+            "~A must be rejected" command)
+        (is (eq initial (session-active-window s))
+            "~A must not change the active window" command)
+        (assert-overlay-contains "unsupported argument"
+                                  (overlay-lines) command)))))
 
 (test run-command-line-select-pane-by-id-table
   "'select-pane -t 2' and 'select-pane -t %2' both activate pane-id 2."
@@ -114,6 +135,28 @@
         (is (null (pane-marked ap))
             "select-pane -M must clear the pane mark")))))
 
+(test run-command-line-select-pane-rejects-unsupported-arguments
+  "select-pane rejects unknown flags and positional tokens before mutating panes."
+  (dolist (command '("select-pane -t 2 extra"
+                     "select-pane -x"
+                     "select-pane -d extra"
+                     "select-pane -t 2 -T title extra"))
+    (with-fake-session (s :nwindows 1 :npanes 2)
+      (let* ((win (session-active-window s))
+             (initial (window-active-pane win))
+             (target (find 2 (window-panes win) :key #'pane-id))
+             (*overlay* nil))
+        (is (null (cl-tmux::%run-command-line s command))
+            "~A must be rejected" command)
+        (is (eq initial (window-active-pane win))
+            "~A must not change the active pane" command)
+        (is-false (cl-tmux/model:pane-input-disabled target)
+                  "~A must not disable target pane input" command)
+        (is (string= "" (cl-tmux/model:pane-title target))
+            "~A must not set the target pane title" command)
+        (assert-overlay-contains "unsupported argument"
+                                  (overlay-lines) command)))))
+
 ;;; ── kill-window / kill-pane with -t target ───────────────────────────────────
 
 (test run-command-line-kill-window-by-target
@@ -150,6 +193,60 @@
       (is (null (find active (session-windows s)))
           "the previously active window must be gone"))))
 
+(test run-command-line-kill-commands-reject-unsupported-arguments
+  "kill-window and kill-pane reject unknown flags and extra positionals."
+  (dolist (case '(("kill-window extra" "kill-window: unsupported argument" :windows)
+                  ("kill-window -Z" "kill-window: unsupported argument" :windows)
+                  ("kill-pane extra" "kill-pane: unsupported argument" :panes)
+                  ("kill-pane -Z" "kill-pane: unsupported argument" :panes)))
+    (destructuring-bind (cmd message kind) case
+      (ecase kind
+        (:windows
+         (with-fake-session (s :nwindows 2)
+           (let ((before (copy-list (session-windows s)))
+                 (*overlay* nil))
+             (cl-tmux::%run-command-line s cmd)
+             (assert-overlay-contains message *overlay* cmd)
+             (is (equal before (session-windows s))
+                 "~A must not mutate the window list" cmd))))
+        (:panes
+         (with-fake-session (s :nwindows 1 :npanes 2)
+           (let* ((win (session-active-window s))
+                  (before (copy-list (window-panes win)))
+                  (*overlay* nil))
+             (cl-tmux::%run-command-line s cmd)
+             (assert-overlay-contains message *overlay* cmd)
+             (is (equal before (window-panes win))
+                 "~A must not mutate the pane list" cmd))))))))
+
+(test run-command-line-link-commands-reject-unsupported-arguments
+  "link-window and unlink-window reject unknown flags and extra positionals."
+  (dolist (cmd '("link-window -t dst extra" "link-window -Z -t dst"))
+    (with-fake-session (src :nwindows 1)
+      (with-fake-session (dst :nwindows 1)
+        (setf (session-name src) "src"
+              (session-name dst) "dst")
+        (let ((src-before (copy-list (session-windows src)))
+              (dst-before (copy-list (session-windows dst)))
+              (cl-tmux::*server-sessions* (list (cons "src" src) (cons "dst" dst)))
+              (*overlay* nil))
+          (cl-tmux::%run-command-line src cmd)
+          (assert-overlay-contains "link-window: unsupported argument"
+                                    *overlay* cmd)
+          (is (equal src-before (session-windows src))
+              "~A must not mutate the source window list" cmd)
+          (is (equal dst-before (session-windows dst))
+              "~A must not mutate the destination window list" cmd)))))
+  (dolist (cmd '("unlink-window extra" "unlink-window -Z"))
+    (with-fake-session (s :nwindows 2)
+      (let ((before (copy-list (session-windows s)))
+            (*overlay* nil))
+        (cl-tmux::%run-command-line s cmd)
+        (assert-overlay-contains "unlink-window: unsupported argument"
+                                  *overlay* cmd)
+        (is (equal before (session-windows s))
+            "~A must not mutate the window list" cmd)))))
+
 ;;; ── swap-window -s -t (two value flags) ──────────────────────────────────────
 
 (test run-command-line-swap-window-exchanges-indices
@@ -185,6 +282,21 @@
       (is (equal ids-before (mapcar #'window-id (session-windows s)))
           "a -t target that matches nothing must not change indices"))))
 
+(test run-command-line-swap-window-rejects-unsupported-arguments
+  "swap-window rejects unknown flags and extra positionals before swapping."
+  (dolist (command '("swap-window extra"
+                     "swap-window -Z"
+                     "swap-window -s 0 -t 2 extra"))
+    (with-fake-session (s :nwindows 3)
+      (let ((before (mapcar #'window-id (session-windows s)))
+            (*overlay* nil))
+        (is (null (cl-tmux::%run-command-line s command))
+            "~A must be rejected" command)
+        (is (equal before (mapcar #'window-id (session-windows s)))
+            "~A must not change any window indices" command)
+        (assert-overlay-contains "swap-window: unsupported argument"
+                                  (overlay-lines) command)))))
+
 ;;; ── arg-taking key bindings + source-file ────────────────────────────────────
 
 (test dispatch-prefix-bound-command-line-runs
@@ -195,15 +307,13 @@
       (let ((*overlay* nil))
         (cl-tmux/config:apply-config-directive '("bind" "X" "display-message" "hi"))
         (cl-tmux::dispatch-prefix-command s (char-code #\X))
-        (is (overlay-active-p) "the bound display-message must open an overlay")
-        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-          (is (search "hi" text)
-              "overlay must contain the bound command's output 'hi' (got ~S)" text))))))
+        (assert-overlay-contains "hi" (overlay-lines)
+                                  "the bound display-message")))))
 
 (test cmd-source-file-loads-config-file
   "source-file <path> loads the file and applies its directives (end-to-end with
    the set -g fix)."
-  (with-isolated-options ()
+  (with-isolated-config
     (let ((path (format nil "/tmp/cl-tmux-srcfile-~D.conf" (get-universal-time))))
       (unwind-protect
            (progn
@@ -244,6 +354,24 @@
       (is (= 2 (window-id w1))
           "the window formerly at 1 shifts up to 2"))))
 
+(test run-command-line-move-window-rejects-unsupported-arguments
+  "move-window rejects unknown flags and extra positionals before moving."
+  (dolist (command '("move-window extra"
+                     "move-window -Z"
+                     "move-window -s 0 -t 2 extra"))
+    (with-fake-session (s :nwindows 3)
+      (let ((before (mapcar #'window-id (session-windows s)))
+            (active-before (session-active-window s))
+            (*overlay* nil))
+        (is (null (cl-tmux::%run-command-line s command))
+            "~A must be rejected" command)
+        (is (equal before (mapcar #'window-id (session-windows s)))
+            "~A must not change any window indices" command)
+        (is (eq active-before (session-active-window s))
+            "~A must not change the active window" command)
+        (assert-overlay-contains "move-window: unsupported argument"
+                                  (overlay-lines) command)))))
+
 ;;; ── if-shell -F <cond> <then> [<else>] (format-conditional) ──────────────────
 
 (test run-command-line-if-shell-F-true-runs-then
@@ -251,9 +379,8 @@
   (with-fake-session (s)
     (let ((*overlay* nil))
       (cl-tmux::%run-command-line s "if-shell -F 1 \"display-message yes\"")
-      (is (overlay-active-p) "truthy if-shell -F must run THEN (overlay opens)")
-      (is (search "yes" (format nil "~{~A~%~}" (overlay-lines)))
-          "overlay must show the THEN command's output"))))
+      (assert-overlay-contains "yes" (overlay-lines)
+                                "truthy if-shell -F"))))
 
 (test run-command-line-if-shell-F-false-runs-else
   "if-shell -F with a falsey condition (\"0\") runs the ELSE command line."
@@ -261,8 +388,8 @@
     (let ((*overlay* nil))
       (cl-tmux::%run-command-line
        s "if-shell -F 0 \"display-message yes\" \"display-message no\"")
-      (is (search "no" (format nil "~{~A~%~}" (overlay-lines)))
-          "falsey if-shell -F must run ELSE, not THEN"))))
+      (assert-overlay-contains "no" (overlay-lines)
+                                "falsey if-shell -F"))))
 
 (test run-command-line-if-shell-F-format-condition
   "if-shell -F evaluates a #{...} format as its condition.  A non-zero value is
@@ -272,8 +399,8 @@
     (let ((*overlay* nil))
       (cl-tmux::%run-command-line
        s "if-shell -F \"#{window_count}\" \"display-message named\"")
-      (is (search "named" (format nil "~{~A~%~}" (overlay-lines)))
-          "a non-zero #{window_count} (1) must be truthy → THEN"))))
+      (assert-overlay-contains "named" (overlay-lines)
+                                "a non-zero #{window_count} (1)"))))
 
 (test run-command-line-if-shell-F-empty-condition-no-then
   "if-shell -F with an empty condition and no else runs nothing."
@@ -282,6 +409,26 @@
       (cl-tmux::%run-command-line s "if-shell -F \"\" \"display-message x\"")
       (is (not (overlay-active-p))
           "an empty (falsey) condition with no else must not run THEN"))))
+
+(test run-command-line-if-shell-accepts-b-and-t-flags
+  "if-shell accepts tmux's -b and -t flags without treating the target as CONDITION."
+  (with-fake-session (s)
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line
+       s "if-shell -b -t %1 -F 1 \"display-message if-target-ok\"")
+      (assert-overlay-contains "if-target-ok" (overlay-lines)
+                                "if-shell -b/-t"))))
+
+(test run-command-line-if-shell-rejects-unsupported-arguments
+  "if-shell rejects unknown flags and extra positionals before running anything."
+  (dolist (command '("if-shell -Z -F 1 \"display-message x\""
+                     "if-shell -F 1 \"display-message x\" \"display-message y\" extra"))
+    (with-fake-session (s)
+      (let ((*overlay* nil))
+        (is (null (cl-tmux::%run-command-line s command))
+            "~A must be rejected" command)
+        (assert-overlay-contains "if-shell: unsupported argument"
+                                  (overlay-lines) command)))))
 
 ;;; ── %dispatch-named-command helper ──────────────────────────────────────────
 
@@ -302,11 +449,10 @@
   (with-fake-session (s)
     (let ((*overlay* nil))
       (cl-tmux::%dispatch-named-command s "totally-unknown-xyz")
-      (is (overlay-active-p) "unknown command must open an error overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "unknown command" text) "overlay must mention 'unknown command'")
-        (is (search "totally-unknown-xyz" text)
-            "overlay must include the bad command name")))))
+      (assert-overlay-contains "unknown command" (overlay-lines)
+                                "unknown command")
+      (assert-overlay-contains "totally-unknown-xyz" (overlay-lines)
+                                "unknown command"))))
 
 ;;; ── :show-messages dispatch ──────────────────────────────────────────────────
 
@@ -316,10 +462,8 @@
     (let ((*overlay* nil)
           (cl-tmux::*message-log* nil))
       (cl-tmux::dispatch-command s :show-messages nil)
-      (is (overlay-active-p) ":show-messages must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "no messages" text)
-            "overlay must say '(no messages)' when log is empty")))))
+      (assert-overlay-contains "no messages" (overlay-lines)
+                                ":show-messages"))))
 
 (test dispatch-show-messages-populated-log-shows-entries
   ":show-messages with entries in *message-log* lists them."
@@ -327,31 +471,36 @@
     (let ((*overlay* nil)
           (cl-tmux::*message-log* (list (cons 0 "hello") (cons 1 "world"))))
       (cl-tmux::dispatch-command s :show-messages nil)
-      (is (overlay-active-p) ":show-messages must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "hello" text) "overlay must contain 'hello'")
-        (is (search "world" text) "overlay must contain 'world'")))))
+      (is (equal '("hello" "world") (overlay-lines))
+          ":show-messages must render one message per line")
+      (assert-overlay-contains "hello" (overlay-lines)
+                                ":show-messages")
+      (assert-overlay-contains "world" (overlay-lines)
+                                ":show-messages"))))
 
-(test run-command-line-show-messages-accepts-flags
-  "show-messages [-JT] [-t target-client] is reachable from the command line."
+(test run-command-line-show-messages-rejects-unsupported-args
+  "show-messages rejects target-client/history flags that cl-tmux does not implement."
   (with-fake-session (s)
-    (let ((*overlay* nil)
-          (cl-tmux::*message-log* (list (cons 0 "alpha") (cons 1 "beta"))))
-      (cl-tmux::%run-command-line s "show-messages -J -t client0")
-      (is (overlay-active-p)
-          "show-messages with -J/-t must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "alpha" text) "overlay must contain 'alpha'")
-        (is (search "beta" text) "overlay must contain 'beta'")))))
+    (dolist (line '("show-messages -J"
+                    "show-messages -T"
+                    "show-messages -t client0"))
+      (let ((*overlay* nil)
+            (cl-tmux::*message-log* (list (cons 0 "alpha") (cons 1 "beta"))))
+        (is (null (cl-tmux::%run-command-line s line))
+            "unsupported show-messages args must be rejected: ~A" line)
+        (assert-overlay-contains "unsupported argument"
+                                  (overlay-lines) line)
+        (assert-overlay-not-contains "alpha" (overlay-lines) line)))))
 
-(test run-command-line-showmsgs-alias-accepts-terminal-flag
-  "showmsgs -T accepts tmux's terminal debug flag and still shows messages."
+(test run-command-line-show-messages-rejects-unsupported-args
+  "show-messages rejects unsupported arguments."
   (with-fake-session (s)
     (let ((*overlay* nil)
           (cl-tmux::*message-log* (list (cons 0 "terminal-ish"))))
-      (cl-tmux::%run-command-line s "showmsgs -T")
-      (is (overlay-active-p)
-          "showmsgs alias with -T must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "terminal-ish" text)
-            "overlay must contain the logged message")))))
+      (is (null (cl-tmux::%run-command-line s "show-messages -T"))
+          "show-messages must reject unsupported arguments")
+      (assert-overlay-contains "unsupported argument"
+                                (overlay-lines)
+                                "show-messages")
+      (assert-overlay-not-contains "terminal-ish" (overlay-lines)
+                                   "show-messages"))))

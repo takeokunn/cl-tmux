@@ -14,7 +14,8 @@
   ;; ── PTY file descriptors ──────────────────────────────────────────────────
   (fd       -1  :type fixnum)         ; master PTY file descriptor
   (pid      -1  :type fixnum)         ; child process PID
-  (pipe-fd  nil)                      ; NIL or file-descriptor for pipe-pane output tee
+  (pipe-fd  nil)                      ; NIL or stream for pipe-pane output tee
+  (pipe-process nil)                  ; NIL or uiop process-info for pipe-pane command
   ;; ── Terminal emulator ─────────────────────────────────────────────────────
   (screen   nil)
   ;; ── Window back-pointer and state ─────────────────────────────────────────
@@ -67,14 +68,14 @@
    child environment.  Bound by callers that need per-pane env vars (e.g.
    new-window -e VAR=val).  Consumed by %fork-pane and reset to NIL after use.")
 
-;;; ── Shared option-reading helper for fork operations ───────────────────────
+;;; ── Shared option-reading helper for pane spawn operations ─────────────────
 ;;;
 ;;; Both %fork-pane and respawn-pane read the same two options and apply the
-;;; same (and … (plusp (length …))) guard.  %read-shell-fork-options captures
+;;; same (and … (plusp (length …))) guard.  %read-shell-spawn-options captures
 ;;; that shared logic in one named step.
 
-(defun %read-shell-fork-options ()
-  "Read the 'default-terminal' and 'default-command' options for PTY fork calls.
+(defun %read-shell-spawn-options ()
+  "Read the 'default-terminal' and 'default-command' options for PTY spawn calls.
    Returns (values term-or-nil command-or-nil) where a value is NIL when the
    option is unset or empty — matching the guard (and val (plusp (length val)))."
   (let ((term (cl-tmux/options:get-option "default-terminal"))
@@ -82,10 +83,10 @@
     (values (and term (plusp (length term)) term)
             (and cmd  (plusp (length cmd))  cmd))))
 
-(defun %forkpty-with-default-options (h w &key start-dir extra-env)
-  "Fork a PTY shell using the configured default-terminal and default-command.
+(defun %spawn-pty-with-default-options (h w &key start-dir extra-env)
+  "Spawn a PTY shell using the configured default-terminal and default-command.
    Returns (values fd pid slave-path).  Shared by %fork-pane and respawn-pane."
-  (multiple-value-bind (term command) (%read-shell-fork-options)
+  (multiple-value-bind (term command) (%read-shell-spawn-options)
     (forkpty-with-shell h w
                         :start-dir start-dir
                         :term term
@@ -93,7 +94,7 @@
                         :extra-env extra-env)))
 
 (defun %fork-pane (id x y w h &key start-dir)
-  "Fork a shell and build a PTY-backed pane at position (X,Y) sized W×H.
+  "Spawn a shell and build a PTY-backed pane at position (X,Y) sized W×H.
    START-DIR: when non-NIL, the child shell is started in that directory.
    The TERM environment variable is set from the 'default-terminal' option.
    When 'default-command' is set to a non-empty string, it is run via sh -c.
@@ -104,17 +105,17 @@
   ;; Merge update-environment vars with *pane-extra-env*.
   ;; *pane-extra-env* entries take precedence (placed last = later setenv).
   (let ((environment-pairs (append (get-update-environment-vars) *pane-extra-env*)))
-    ;; Consume *pane-extra-env*: reset so a later fork without -e starts clean.
+    ;; Consume *pane-extra-env*: reset so a later pane spawn without -e starts clean.
     (setf *pane-extra-env* nil)
     (multiple-value-bind (fd pid slave-path)
-        (%forkpty-with-default-options h w :start-dir start-dir :extra-env environment-pairs)
+        (%spawn-pty-with-default-options h w :start-dir start-dir :extra-env environment-pairs)
       (make-pane :id id :x x :y y :width w :height h
                  :fd fd :pid pid :tty (or slave-path "")
                  :screen (make-screen w h)))))
 
 (defun respawn-pane (pane)
   "Restart PANE's PTY process, keeping geometry and screen intact.
-   Closes the old PTY fd (sending SIGHUP to the child), forks a fresh shell on
+   Closes the old PTY fd (sending SIGHUP to the child), spawns a fresh shell on
    a new PTY, and updates the pane's FD and PID.  The existing screen is
    preserved so the renderer can continue without a layout change.
    Returns the updated pane."
@@ -126,7 +127,7 @@
     (ignore-errors (pty-close old-fd old-pid))
     ;; Open a fresh PTY-backed shell at the same geometry, respecting options.
     (multiple-value-bind (new-fd new-pid slave-path)
-        (%forkpty-with-default-options h w)
+        (%spawn-pty-with-default-options h w)
       (setf (pane-fd  pane) new-fd
             (pane-pid pane) new-pid
             (pane-tty pane) (or slave-path "")))

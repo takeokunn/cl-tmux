@@ -386,42 +386,6 @@
                   "history-limit" :pane pane :window win))
           "must return the present global value 1, not the registry default 2000"))))
 
-;;; ── Command-alias registry ───────────────────────────────────────────────
-
-(test register-and-lookup-command-alias
-  "register-command-alias stores an alias retrievable by lookup-command-alias."
-  (let ((cl-tmux/options:*command-aliases* (make-hash-table :test #'equal)))
-    (cl-tmux/options:register-command-alias "e" "new-window -n")
-    (is (string= "new-window -n"
-                 (cl-tmux/options:lookup-command-alias "e"))
-        "lookup-command-alias must return the registered expansion")))
-
-(test lookup-command-alias-returns-nil-when-absent
-  "lookup-command-alias returns NIL for an unregistered alias."
-  (let ((cl-tmux/options:*command-aliases* (make-hash-table :test #'equal)))
-    (is (null (cl-tmux/options:lookup-command-alias "nonexistent-alias-xyz"))
-        "absent alias must return NIL")))
-
-(test list-command-aliases-returns-sorted-alist
-  "list-command-aliases returns an alist sorted alphabetically by alias name."
-  (let ((cl-tmux/options:*command-aliases* (make-hash-table :test #'equal)))
-    (cl-tmux/options:register-command-alias "z" "zoom-toggle")
-    (cl-tmux/options:register-command-alias "a" "attach-session")
-    (let ((result (cl-tmux/options:list-command-aliases)))
-      (is (listp result) "list-command-aliases must return a list")
-      (is (= 2 (length result))
-          "must have exactly 2 aliases, got ~D" (length result))
-      (is (string= "a" (caar result))
-          "first alias must be \"a\" (alphabetical), got ~S" (caar result))
-      (is (string= "z" (caadr result))
-          "second alias must be \"z\" (alphabetical), got ~S" (caadr result)))))
-
-(test list-command-aliases-empty
-  "list-command-aliases returns NIL when no aliases are registered."
-  (let ((cl-tmux/options:*command-aliases* (make-hash-table :test #'equal)))
-    (is (null (cl-tmux/options:list-command-aliases))
-        "list-command-aliases must return NIL when registry is empty")))
-
 ;;; ── Style-option classification + style-aware append ─────────────────────────
 
 (test style-option-p-classification

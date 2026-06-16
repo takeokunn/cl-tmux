@@ -107,7 +107,7 @@
 
 (test copy-mode-toggle-rectangle-flips-flag
   "copy-mode-toggle-rectangle toggles screen-copy-rect-select-p between NIL and T."
-  (let ((s (%copy-mode-screen)))
+  (let ((s (copy-mode-screen)))
     (is-false (cl-tmux/terminal/types:screen-copy-rect-select-p s)
               "rect-select must start NIL")
     (cl-tmux/commands::copy-mode-toggle-rectangle s)
@@ -127,7 +127,7 @@
 
 (test copy-mode-exit-resets-rect-select
   "copy-mode-exit clears screen-copy-rect-select-p."
-  (let ((s (%copy-mode-screen)))
+  (let ((s (copy-mode-screen)))
     (setf (cl-tmux/terminal/types:screen-copy-rect-select-p s) t)
     (cl-tmux/commands::copy-mode-exit s)
     (is-false (cl-tmux/terminal/types:screen-copy-rect-select-p s)
@@ -230,6 +230,32 @@
       (cl-tmux/commands::copy-mode-copy-pipe s "")
       (is-false (screen-copy-mode-p s)
                 "copy mode must be inactive after copy-pipe"))))
+
+(test copy-mode-copy-pipe-end-of-line-puts-row-tail-in-paste-buffer
+  "copy-mode-copy-pipe-end-of-line copies from cursor to EOL and exits copy mode."
+  (let ((cl-tmux/buffer:*paste-buffers* nil))
+    (let ((s (make-screen 20 5)))
+      (feed s "hello world")
+      (cl-tmux/commands::copy-mode-enter s)
+      (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 6))
+      (cl-tmux/commands::copy-mode-copy-pipe-end-of-line s "")
+      (is (= 1 (length cl-tmux/buffer:*paste-buffers*))
+          "copy-pipe-end-of-line must push one paste buffer entry")
+      (is (string= "world" (cl-tmux/buffer:get-paste-buffer 0))
+          "paste buffer must contain the row tail")
+      (is-false (screen-copy-mode-p s)
+                "copy mode must be inactive after copy-pipe-end-of-line"))))
+
+(test copy-mode-copy-pipe-end-of-line-noop-outside-copy-mode
+  "copy-mode-copy-pipe-end-of-line does nothing outside copy mode."
+  (let ((cl-tmux/buffer:*paste-buffers* nil))
+    (let ((s (make-screen 20 5)))
+      (feed s "hello")
+      (cl-tmux/commands::copy-mode-copy-pipe-end-of-line s "")
+      (is (null cl-tmux/buffer:*paste-buffers*)
+          "outside copy mode no paste buffer entry should be created")
+      (is-false (screen-copy-mode-p s)
+                "outside copy mode must remain inactive"))))
 
 ;;; ── rectangle selection text ─────────────────────────────────────────────────
 

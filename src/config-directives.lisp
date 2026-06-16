@@ -17,7 +17,7 @@
 
 ;;; ── Environment-variable helper ─────────────────────────────────────────────
 ;;;
-;;; set-environment / setenv directives need to mutate the process environment.
+;;; set-environment directives need to mutate the process environment.
 ;;; SB-POSIX is looked up lazily at call time — it is not an ASDF dependency of
 ;;; cl-tmux so it may not be loaded when this file first loads, but it IS loaded
 ;;; before any runtime or test caller reaches these functions.
@@ -50,6 +50,69 @@
                    (subseq cmd 1))
       cmd))
 
+(defun %leading-flag-token-p (tok &key (allow-single-dash nil))
+  "Return T when TOK looks like a leading directive flag token."
+  (and (stringp tok)
+       (if allow-single-dash
+           (and (> (length tok) 0) (char= (char tok 0) #\-))
+           (and (> (length tok) 1) (char= (char tok 0) #\-)))))
+
+(defun %consume-leading-flag-tokens (tokens consumer
+                                     &key (allow-single-dash nil))
+  "Consume leading flag TOKENS using CONSUMER.
+   CONSUMER is called as (funcall CONSUMER FLAG-TOKEN REST) and must return two
+   values: the updated REST token list and a generalized boolean that says
+   whether scanning should continue."
+  (loop while (and tokens
+                   (%leading-flag-token-p (first tokens)
+                                          :allow-single-dash allow-single-dash))
+        do (multiple-value-bind (next-tokens continue-p)
+               (funcall consumer (pop tokens) tokens)
+             (setf tokens next-tokens)
+             (unless continue-p (return))))
+  tokens)
+
+(defun %flag-token-contains-any-p (tok chars)
+  "Return T when TOK contains any character in CHARS."
+  (and (stringp tok)
+       (some (lambda (ch) (find ch tok)) chars)))
+
+(defun %join-config-tokens (tokens)
+  "Join TOKENS into a single space-separated string, or NIL for an empty list."
+  (and tokens (format nil "~{~A~^ ~}" tokens)))
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun %resolve-config-directive-names (names)
+    "Return the directive NAMES list, allowing a named list symbol."
+    (cond
+      ((symbolp names)
+       (let ((value (symbol-value names)))
+         (unless (listp value)
+           (error "Directive alias symbol ~S does not name a list." names))
+         value))
+      ((listp names) names)
+      (t
+       (error "Directive alias list must be a list or symbol, got ~S." names)))))
+
+(defun %expand-config-directive-rule (rule)
+  "Expand one directive RULE into a list of COND clauses."
+  (if (eq (first rule) :aliases)
+      ;; (:aliases (name...) arity arglist body...)
+      (destructuring-bind (names arity arglist &body body) (rest rule)
+        (let ((names (%resolve-config-directive-names names)))
+          (mapcar (lambda (name)
+                    `((and (string= cmd ,name) (= (length args) ,arity))
+                      (destructuring-bind ,arglist args
+                        (declare (ignorable ,@arglist))
+                        ,@body)))
+                  names)))
+      ;; (name arity arglist body...)
+      (destructuring-bind (name arity arglist &body body) rule
+        (list `((and (string= cmd ,name) (= (length args) ,arity))
+                (destructuring-bind ,arglist args
+                  (declare (ignorable ,@arglist))
+                  ,@body))))))
+
 ;;; ── Declarative directive dispatch macro ──────────────────────────────────
 
 (defmacro define-config-directives (&rest rules)
@@ -65,36 +128,20 @@
 
      (:aliases (NAME...) ARITY (ARG...) &body BODY)
        Identical to the single-name form except CMD matches any string in (NAME...).
-       Eliminates alias repetition (source-file/source, set/setw/…, etc.).
+       Eliminates alias repetition when several spellings intentionally map to
+       the same directive implementation.
 
    The outer APPLY-CONFIG-DIRECTIVE function wraps this inner dispatcher and
    handles 'bind' with variable-arity flags separately."
-  (flet ((expand-rule (rule)
-           ;; Returns a list of cond arms (one arm per name).
-           (if (eq (first rule) :aliases)
-               ;; (:aliases (name...) arity arglist body...)
-               (destructuring-bind (names arity arglist &body body) (rest rule)
-                 (mapcar (lambda (name)
-                           `((and (string= cmd ,name) (= (length args) ,arity))
-                             (destructuring-bind ,arglist args
-                               (declare (ignorable ,@arglist))
-                               ,@body)))
-                         names))
-               ;; (name arity arglist body...)
-               (destructuring-bind (name arity arglist &body body) rule
-                 (list `((and (string= cmd ,name) (= (length args) ,arity))
-                         (destructuring-bind ,arglist args
-                           (declare (ignorable ,@arglist))
-                           ,@body)))))))
-    `(defun %apply-config-directive-inner (tokens)
-       "Apply one non-bind config directive (list of string TOKENS) to live state.
-        Returns T when applied, NIL for an unknown/invalid directive."
-       (when tokens
-         (let ((cmd (first tokens)) (args (rest tokens)))
-           (declare (ignorable args))
-           (cond
-             ,@(mapcan #'expand-rule rules)
-             (t nil)))))))
+  `(defun %apply-config-directive-inner (tokens)
+     "Apply one non-bind config directive (list of string TOKENS) to live state.
+      Returns T when applied, NIL for an unknown/invalid directive."
+     (when tokens
+       (let ((cmd (first tokens)) (args (rest tokens)))
+         (declare (ignorable args))
+         (cond
+           ,@(mapcan #'%expand-config-directive-rule rules)
+           (t nil))))))
 
 ;;; ── bind-key flag parsing ────────────────────────────────────────────────
 ;;;
@@ -274,4 +321,3 @@
           (inner  (gethash table *key-tables*)))
      (when inner (clrhash inner))
      t)))
-

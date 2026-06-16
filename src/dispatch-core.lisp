@@ -48,6 +48,103 @@
   "Show an overlay whose text is built by BODY writing to STREAM."
   `(show-overlay (with-output-to-string (,stream) ,@body)))
 
+(defun %overlay-lines-string (lines &optional (empty ""))
+  "Render LINES as newline-separated overlay text, or EMPTY when no lines exist."
+  (if lines
+      (with-output-to-string (s)
+        (loop for line in lines
+              for first = t then nil
+              do (unless first
+                   (terpri s))
+                 (princ line s)))
+      empty))
+
+(defun %overlayf (control &rest args)
+  "Render a formatted one-line overlay from CONTROL and ARGS."
+  (show-overlay (apply #'format nil control args)))
+
+(defun %flag-value (flags char)
+  "Return the value associated with CHAR in FLAGS, or NIL when absent."
+  (cdr (assoc char flags)))
+
+(defun %flag-present-p (flags char)
+  "Return true when FLAGS contains CHAR."
+  (not (null (%flag-value flags char))))
+
+(defun %resolve-target-window-pane (session target-str current-window current-pane)
+  "Resolve TARGET-STR to a window/pane pair.
+   When TARGET-STR is absent, return CURRENT-WINDOW and CURRENT-PANE.
+   When TARGET-STR names a window but not a pane, return that window's active pane."
+  (if target-str
+      (multiple-value-bind (target-session target-window target-pane)
+          (resolve-target *server-sessions* target-str
+                          :current-session session
+                          :current-window current-window
+                          :current-pane current-pane)
+        (declare (ignore target-session))
+        (when target-window
+          (values target-window
+                  (or (and target-pane
+                           (member target-pane (window-panes target-window))
+                           target-pane)
+                      (window-active-pane target-window)))))
+      (values current-window current-pane)))
+
+(defun %resolve-target-session-window (session target-str current-window current-pane)
+  "Resolve TARGET-STR to a session/window pair.
+   When TARGET-STR is absent, return SESSION and CURRENT-WINDOW.
+   When TARGET-STR names a pane, return its window."
+  (if target-str
+      (multiple-value-bind (target-session target-window target-pane)
+          (resolve-target *server-sessions* target-str
+                          :current-session session
+                          :current-window current-window
+                          :current-pane current-pane)
+        (declare (ignore target-pane))
+        (when target-window
+          (values target-session target-window)))
+      (values session current-window)))
+
+(defun %resolve-window-target-or-active (session target-str)
+  "Return TARGET-STR's window or SESSION's active window when TARGET-STR is absent."
+  (or (and target-str (%resolve-window-target session target-str))
+      (session-active-window session)))
+
+(defmacro with-target-session ((target-session target-str session
+                               &key message (on-missing :skip))
+                               &body body)
+  "Bind TARGET-SESSION from TARGET-STR or SESSION.
+   When TARGET-STR is missing, run BODY with SESSION.
+   When TARGET-STR is present but unresolved, either skip BODY, show MESSAGE, or
+   run BODY against SESSION depending on ON-MISSING (:skip, :error, :current)."
+  (let ((target-str-var (gensym "TARGET-STR-"))
+        (resolved-var (gensym "TARGET-SESSION-"))
+        (session-var (gensym "SESSION-")))
+    `(let* ((,session-var ,session)
+            (,target-str-var ,target-str)
+            (,resolved-var (and ,target-str-var
+                                (find-session-by-target *server-sessions*
+                                                        ,target-str-var)))
+            (,target-session (or ,resolved-var ,session-var)))
+       (cond
+         ((or (null ,target-str-var) ,resolved-var)
+          ,@body)
+         ((eq ,on-missing :current)
+          ,@body)
+         ((eq ,on-missing :error)
+          (progn
+            ,(when message
+               `(%overlayf ,message ,target-str-var))
+            nil))
+         (t nil)))))
+
+(defmacro with-target-context ((target-session target-window target-pane session target-str)
+                               &body body)
+  "Bind TARGET-SESSION, TARGET-WINDOW, and TARGET-PANE from TARGET-STR or SESSION."
+  `(multiple-value-bind (,target-session ,target-window ,target-pane)
+       (resolve-target-context *server-sessions* ,session ,target-str)
+     ,@body))
+
 (defmacro with-active-pane ((pane-var session) &body body)
   "Bind PANE-VAR to SESSION's active pane and evaluate BODY.
    Returns NIL when no active pane is present (no-op guard)."
@@ -73,6 +170,16 @@
   "Bind WIN-VAR to SESSION's active window and evaluate BODY only when present."
   `(let ((,win-var (session-active-window ,session)))
      (when ,win-var ,@body)))
+
+;;; -- Active window/pane pair helper -----------------------------------------
+;;;
+;;; Several handlers need both the active window and its active pane so they can
+;;; resolve optional targets relative to the current focused location.
+
+(defun %active-window-pane (session)
+  "Return SESSION's active window and its active pane as two values."
+  (let ((win (session-active-window session)))
+    (values win (and win (window-active-pane win)))))
 
 ;;; -- Swap-active-pane helper --------------------------------------------------
 ;;;
@@ -272,8 +379,7 @@
 
 (defun %copy-mode-active-p (session)
   "Return T when the active pane's screen is in copy mode."
-  (let* ((win (session-active-window session))
-         (ap  (and win (window-active-pane win))))
+  (multiple-value-bind (_win ap) (%active-window-pane session)
     (and ap
          (screen-copy-mode-p (pane-screen ap)))))
 
@@ -284,8 +390,7 @@
 
 (defun %select-pane-in-direction (session direction)
   "Select the pane adjacent to the active pane in DIRECTION."
-  (let* ((win (session-active-window session))
-         (ap  (and win (window-active-pane win))))
+  (multiple-value-bind (win ap) (%active-window-pane session)
     (when (and win ap)
       (let ((nb (pane-neighbor win ap direction)))
         (when nb (%select-pane-with-focus win nb))))))
@@ -344,4 +449,3 @@
                 (window-height w)
                 (length (window-panes w))
                 (if (eq w win) " [active]" ""))))))
-

@@ -167,7 +167,15 @@
                 ;; returned to the CLI command client - the `cl-tmux display -p`
                 ;; (and `cl-tmux list-sessions`, ...) stdout path.
                 (cl-tmux/prompt:*overlay* nil))
-            (let ((result (ignore-errors (%run-command-tokens session tokens))))
+            (let ((result
+                    (handler-case
+                        (%run-command-tokens session tokens)
+                      (error (condition)
+                        (format *error-output*
+                                "~&cl-tmux: command failed: ~{~A~^ ~}: ~A~%"
+                                tokens condition)
+                        (force-output *error-output*)
+                        nil))))
               ;; Reply with the captured output to the requesting client (a no-op
               ;; for the socket-less test conn, whose stream is NIL).
               (when (client-conn-stream conn)

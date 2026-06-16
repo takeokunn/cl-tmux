@@ -104,21 +104,20 @@ bind-key r source-file /dev/null"))
     (is (eql 0 (cl-tmux/options:get-server-option "escape-time"))
         "escape-time must be 0 after 'set -s escape-time 0'")))
 
-;;; ── Bare arg-command abbreviations in bind (single-token path) ───────────────
+;;; ── Bare arg-command shorthand rejection in bind (single-token path) ────────
 ;;;
-;;; `bind X <abbrev> args` (multi-token) already works — it is stored unvalidated
-;;; and resolved at dispatch via *arg-command-table*.  A BARE `bind X <abbrev>`
-;;; (single token) instead goes through %command-keyword, so each arg-command
-;;; abbreviation needs a *command-name-aliases* entry to be accepted.
+;;; `bind X <command> args` (multi-token) already works — it is stored
+;;; unvalidated and resolved at dispatch via *arg-command-table*.  A BARE
+;;; `bind X <shorthand>` (single token) goes through %command-keyword, and we no
+;;; longer keep backward-compat shorthands for the named-buffer family.
 
-(test config-bind-accepts-arg-command-abbreviations
-  "Bare `bind X <abbrev>` is accepted for each arg-bearing command abbreviation."
-  (dolist (abbrev '("capturep" "commandp" "deleteb" "has" "killw"
-                    "lastp" "resizew" "selectw" "setb" "swapp"))
+(test config-bind-rejects-named-buffer-shorthand-single-tokens
+  "Bare named-buffer shorthands are rejected in the single-token bind path."
+  (dolist (abbrev '("deleteb" "loadb" "pasteb" "saveb" "setb" "showb"))
     (with-isolated-config
-      (is (= 1 (cl-tmux/config:load-config-from-string
+      (is (= 0 (cl-tmux/config:load-config-from-string
                 (format nil "bind X ~A" abbrev)))
-          "bind X ~A must apply (1 directive); the abbreviation must resolve"
+          "bind X ~A must be rejected (0 applied); the shorthand is unsupported"
           abbrev))))
 
 (test config-bind-rejects-unknown-single-token-still
@@ -331,9 +330,9 @@ bind-key r source-file /dev/null"))
 ;;; ── run-shell -C : run a tmux command, not a shell command ───────────────────
 
 (test run-shell-C-table
-  "run-shell -C and the 'run' alias both execute the tmux command and report handled."
+  "run-shell -C executes the tmux command and reports handled."
   (dolist (c '(("run-shell" "status-left"  "FOO" "run-shell -C")
-               ("run"       "status-right" "BAR" "run alias -C")))
+               ("run-shell" "status-right" "BAR" "run-shell -C")))
     (destructuring-bind (verb option value desc) c
       (with-isolated-config
         (let ((handled (cl-tmux/config::%apply-run-shell-directive

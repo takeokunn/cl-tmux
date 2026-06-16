@@ -8,8 +8,8 @@
 ;;;;   * Main thread (see events.lisp): select(stdin, 50 ms) -> key dispatch or
 ;;;;     PTY forward -> render when *dirty*.
 ;;;;
-;;;; All PTY children are forked before any reader threads start (see main.lisp)
-;;;; to avoid fork-in-multithreaded-process hazards.
+;;;; PTY children may be spawned while reader/status threads are active, so
+;;;; teardown must reliably join background threads and close pane processes.
 
 ;;; -- Shared state -----------------------------------------------------------
 

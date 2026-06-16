@@ -21,11 +21,10 @@
         (cl-tmux::dispatch-command s1 :list-sessions nil)
         (is (overlay-active-p)
             ":list-sessions must produce an overlay")
-        (let ((output (format nil "~{~A~%~}" (overlay-lines))))
-          (is-true (search "mysession" output)
-                   "overlay should contain the session name")
-          (is-true (search "2 windows" output)
-                   "overlay should contain the window count"))))))
+        (assert-overlay-contains "mysession" *overlay*
+                                 "overlay should contain the session name")
+        (assert-overlay-contains "2 windows" *overlay*
+                                 "overlay should contain the window count")))))
 
 ;;; ── rename-session updates registry key ─────────────────────────────────────
 

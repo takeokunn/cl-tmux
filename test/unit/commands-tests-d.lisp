@@ -14,7 +14,9 @@
       (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-rename-window+
                               (lambda (w n) (setf hook-win w hook-name n)))
       (let ((win (make-window :id 1 :name "old" :width 20 :height 5 :panes nil)))
-        (rename-window win "new"))
+        (rename-window win "new")
+        (is (eq win hook-win)
+            "hook must receive the renamed window"))
       (is (stringp hook-name)
           "hook must receive the new name as a string")
       (is (string= "new" hook-name)
@@ -118,10 +120,11 @@
                  ("server-access -a -r bob"  "bob"   :read-only  "-r → :read-only")))
     (destructuring-bind (cmd user expected desc) row
       (with-fake-session (s :nwindows 1)
-        (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
+      (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
           (cl-tmux::%run-command-line s cmd)
           (is (equal expected
-                     (cdr (assoc user cl-tmux::*server-access-list* :test #'string=)))
+                     (alist-value user cl-tmux::*server-access-list*
+                                  :test #'string=))
               "~A" desc))))))
 
 (test server-access-w-modifies-existing-user-permission
@@ -131,7 +134,8 @@
           (*overlay* nil))
       (cl-tmux::%run-command-line s "server-access -w carol")
       (is (equal :read-write
-                 (cdr (assoc "carol" cl-tmux::*server-access-list* :test #'string=)))
+                 (alist-value "carol" cl-tmux::*server-access-list*
+                              :test #'string=))
           "-w must upgrade carol from read-only to read-write"))))
 
 (test server-access-modify-unknown-user-is-error-no-entry-created
@@ -153,7 +157,8 @@
       (is (null (assoc "alice" cl-tmux::*server-access-list* :test #'string=))
           "alice must be removed")
       (is (equal :read-only
-                 (cdr (assoc "bob" cl-tmux::*server-access-list* :test #'string=)))
+                 (alist-value "bob" cl-tmux::*server-access-list*
+                              :test #'string=))
           "bob must be left untouched"))))
 
 (test server-access-l-lists-entries-in-overlay
@@ -163,19 +168,25 @@
             (list (cons "alice" :read-write)))
           (*overlay* nil))
       (cl-tmux::%run-command-line s "server-access -l")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "alice" text) "listing must contain the user name")
-        (is (search "read-write" text)
-            "listing must contain the user's permission")))))
+      (assert-overlay-contains "alice" (overlay-lines)
+                               "server-access -l listing")
+      (assert-overlay-contains "read-write" (overlay-lines)
+                               "server-access -l listing"))))
 
-(test server-access-k-flag-accepted-without-error
-  "server-access -k USER (kill clients) is accepted as a no-op in single-user
-   cl-tmux and still applies the add when combined with -a."
+(test server-access-rejects-unimplemented-kill-flag
+  "server-access rejects unsupported flags and extra positionals before changing the access list."
   (with-fake-session (s :nwindows 1)
-    (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
-      (finishes (cl-tmux::%run-command-line s "server-access -a -k dave"))
-      (is (assoc "dave" cl-tmux::*server-access-list* :test #'string=)
-          "-k must not prevent the -a add"))))
+    (dolist (args '(("-a" "-k" "dave")
+                    ("-a" "dave" "extra")))
+      (let* ((initial (list (cons "alice" :read-write)))
+             (cl-tmux::*server-access-list* (copy-tree initial))
+             (*overlay* nil))
+        (is-false (cl-tmux::%cmd-server-access s args)
+                  "~S must be rejected" args)
+        (is (equal initial cl-tmux::*server-access-list*)
+            "~S must not mutate the access list" args)
+        (assert-overlay-contains "unsupported argument" *overlay*
+                                 args)))))
 
 ;;; ── bare (no-arg) forms of list-commands / list-panes ───────────────────────
 
@@ -185,22 +196,20 @@
   (with-fake-session (s :nwindows 1)
     (let ((*overlay* nil))
       (cl-tmux::%run-command-line s "list-commands")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (not (search "unknown command" text))
-            "bare list-commands must not be an unknown command")
-        (is (search "new-window" text)
-            "list-commands output must include a known command name")))))
+      (assert-overlay-not-contains "unknown command" (overlay-lines)
+                                   "bare list-commands")
+      (assert-overlay-contains "new-window" (overlay-lines)
+                               "bare list-commands"))))
 
 (test bare-list-panes-lists-panes-not-unknown
   "Bare `list-panes` (no args) must list the current window's panes."
   (with-fake-session (s :nwindows 1 :npanes 2)
     (let ((*overlay* nil))
       (cl-tmux::%run-command-line s "list-panes")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (not (search "unknown command" text))
-            "bare list-panes must not be an unknown command")
-        (is (search "(active)" text)
-            "list-panes output must mark the active pane")))))
+      (assert-overlay-not-contains "unknown command" (overlay-lines)
+                                   "bare list-panes")
+      (assert-overlay-contains "(active)" (overlay-lines)
+                               "bare list-panes"))))
 
 ;;; ── customize-mode: options/bindings customize tree ─────────────────────────
 
@@ -210,13 +219,12 @@
   (with-fake-session (s :nwindows 1)
     (let ((*overlay* nil))
       (cl-tmux::%run-command-line s "customize-mode")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "Session/Window Options" text)
-            "tree must group the session/window options")
-        (is (search "mode-keys" text)
-            "tree must list a known registered option name")
-        (is (search "Key Bindings" text)
-            "tree must include the key-bindings group")))))
+      (assert-overlay-contains "Session/Window Options" (overlay-lines)
+                               "customize-mode tree")
+      (assert-overlay-contains "mode-keys" (overlay-lines)
+                               "customize-mode tree")
+      (assert-overlay-contains "Key Bindings" (overlay-lines)
+                               "customize-mode tree"))))
 
 (test customize-mode-f-filter-restricts-to-matching-entries
   "customize-mode -f FILTER keeps only entries whose name/line contains FILTER
@@ -224,11 +232,26 @@
   (with-fake-session (s :nwindows 1)
     (let ((*overlay* nil))
       (cl-tmux::%run-command-line s "customize-mode -f mode-keys")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "mode-keys" text)
-            "filter must keep the matching option")
-        (is (not (search "status-interval" text))
-            "filter must drop options that do not match")))))
+      (assert-overlay-contains "mode-keys" (overlay-lines)
+                               "customize-mode -f mode-keys")
+      (assert-overlay-not-contains "status-interval" (overlay-lines)
+                                    "customize-mode -f mode-keys"))))
+
+(test customize-mode-rejects-unimplemented-arguments-before-rendering
+  "customize-mode must reject tmux-compat flags that cl-tmux does not implement."
+  (with-fake-session (s :nwindows 1)
+    (dolist (line '("customize-mode -F '#{pane_id}'"
+                   "customize-mode -t :.0"
+                   "customize-mode -N"
+                   "customize-mode -Z"
+                   "customize-mode mode-keys"))
+      (let ((*overlay* nil))
+        (is (null (cl-tmux::%run-command-line s line))
+            "~A must be rejected" line)
+        (assert-overlay-contains "customize-mode: unsupported argument"
+                                 (overlay-lines) line)
+        (assert-overlay-not-contains "Session/Window Options"
+                                     (overlay-lines) line)))))
 
 (test customize-mode-keyword-dispatch-opens-overlay
   "The bare :customize-mode keybinding form opens the customize overlay."

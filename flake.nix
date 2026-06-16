@@ -68,7 +68,10 @@
         # Run the FiveAM suite headlessly; non-zero exit fails the check.
         # PTY tests self-skip when /dev/ptmx is unavailable (sandbox).
         cl-tmux-tests = pkgs.runCommand "cl-tmux-tests"
-          { nativeBuildInputs = [ sbclWithTestDeps ]; }
+          {
+            nativeBuildInputs = [ sbclWithTestDeps pkgs.tmux cl-tmux ];
+            CL_TMUX_COMPAT_BINARY = "${cl-tmux}/bin/cl-tmux";
+          }
           ''
             export HOME=$TMPDIR
             cp -r ${./.} ./src-tree

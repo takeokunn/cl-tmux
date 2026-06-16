@@ -1,7 +1,7 @@
 (in-package #:cl-tmux/test)
 
 ;;;; PTY integration tests.  These spawn a real shell over a pseudo-terminal
-;;;; and exercise the fork/exec/write/read/select pipeline end to end.
+;;;; and exercise the spawn/write/read/select pipeline end to end.
 ;;;;
 ;;;; PTY allocation needs /dev/ptmx, which sandboxed Nix builds do not provide.
 ;;;; When allocation fails we (skip) rather than fail, so the same suite runs
@@ -76,7 +76,7 @@
       (is (null ready) "idle PTY should not be readable"))))
 
 (test split-then-relayout-keeps-panes-fitting
-  "Exercises the real resize path: forkpty per pane + ioctl(TIOCSWINSZ) +
+  "Exercises the real resize path: spawned PTY per pane + ioctl(TIOCSWINSZ) +
    screen-resize, across a split and a subsequent terminal resize."
   (unless (pty-available-p)
     (skip "no PTY available (sandboxed environment)"))
@@ -284,17 +284,21 @@
       (is (typep result '(simple-array (unsigned-byte 8) (*)))
           "result must be an octet vector"))))
 
-;;; ── New coverage: fork sentinel and microsecond constants ─────────────────────
+;;; ── New coverage: spawn helpers and microsecond constants ──────────────────
 
-(test fork-child-pid-is-zero
-  "+fork-child-pid+ is 0 (POSIX fork return value in the child)."
-  (is (= 0 cl-tmux/pty::+fork-child-pid+)
-      "+fork-child-pid+ must be 0"))
+(test non-empty-string-p-rejects-empty-and-non-strings
+  "%non-empty-string-p accepts only strings with positive length."
+  (is-true (cl-tmux/pty::%non-empty-string-p "x"))
+  (is-false (cl-tmux/pty::%non-empty-string-p ""))
+  (is-false (cl-tmux/pty::%non-empty-string-p nil))
+  (is-false (cl-tmux/pty::%non-empty-string-p 42)))
 
-(test fork-error-pid-is-negative-one
-  "+fork-error-pid+ is -1 (POSIX fork return value on error)."
-  (is (= -1 cl-tmux/pty::+fork-error-pid+)
-      "+fork-error-pid+ must be -1"))
+(test spawn-environment-assignments-preserves-override-order
+  "%spawn-environment-assignments emits TERM first, then valid extra env pairs."
+  (is (equal '("TERM=xterm-256color" "FOO=bar" "TERM=screen")
+             (cl-tmux/pty::%spawn-environment-assignments
+              "xterm-256color"
+              '(("FOO" . "bar") ("TERM" . "screen") ("BAD" . 1) (42 . "no"))))))
 
 (test microseconds-per-second-is-one-million
   "+microseconds-per-second+ is 1000000."

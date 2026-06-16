@@ -174,3 +174,12 @@
                         (when (null pane-str) current-pane)
                         (when window (window-active-pane window)))))
       (values session window pane))))
+
+(defun resolve-target-context (server session target-string)
+  "Resolve TARGET-STRING against SERVER using SESSION as the default context.
+   Returns (values session window pane), falling back to the current
+   session/window/pane when TARGET-STRING is absent or partially resolves."
+  (resolve-target server target-string
+                  :current-session session
+                  :current-window  (session-active-window session)
+                  :current-pane    (session-active-pane session)))

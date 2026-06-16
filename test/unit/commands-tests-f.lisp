@@ -119,6 +119,27 @@
   (let ((out (cl-tmux/commands:run-shell "true")))
     (is (stringp out) "return value must be a string even for a no-op command")))
 
+(test run-command-line-run-shell-rejects-unsupported-flags
+  "%run-command-line run-shell rejects flags that are not implemented."
+  (with-fake-session (s)
+    (let ((*overlay* nil))
+      (is (null (cl-tmux::%run-command-line s "run-shell -d 0 -t %1 echo ok"))
+          "unsupported run-shell flags must return NIL")
+      (is (search "unsupported argument" *overlay*)
+          "overlay must explain the unsupported argument")
+      (is (null (search "ok" *overlay*))
+          "unsupported run-shell flags must not execute the shell command")
+      (is (null (search "%1" *overlay*))
+          "unsupported run-shell flags must not leak flag values"))))
+
+(test run-command-line-run-shell-C-runs-tmux-command
+  "%run-command-line run-shell -C executes the argument as a tmux command."
+  (with-fake-session (s)
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line s "run-shell -C 'display-message from-run-shell-C'")
+      (is (search "from-run-shell-C" *overlay*)
+          "run-shell -C must dispatch the supplied tmux command"))))
+
 ;;; ── if-shell ─────────────────────────────────────────────────────────────────
 
 (test if-shell-dispatch-table
@@ -157,41 +178,27 @@
 ;;; active, a string for a single-row selection, and a newline-joined string for
 ;;; a multi-row selection.
 
-(defun %make-selecting-screen (content mark cursor &key (w 20) (h 5))
-  "Return a copy-mode screen pre-filled with CONTENT, with mark and cursor set
-   to MARK and CURSOR respectively, and copy-selecting T."
-  (let ((s (make-screen w h)))
-    (unless (string= content "")
-      (feed s content))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
-          (cl-tmux/terminal/types:screen-copy-mark      s) mark
-          (cl-tmux/terminal/types:screen-copy-cursor    s) cursor)
-    s))
-
 (test selection-text-returns-nil-when-no-selection
   "%selection-text returns NIL when copy-selecting is NIL (no active selection)."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-selecting s) nil)
+  (let ((s (copy-mode-screen :w 20 :h 5)))
     (is (null (cl-tmux/commands::%selection-text s))
         "%selection-text must return NIL when no selection is active")))
 
 (test selection-text-returns-nil-when-mark-nil
   "%selection-text returns NIL when copy-selecting is T but mark is NIL."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
-          (cl-tmux/terminal/types:screen-copy-mark      s) nil
-          (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 5))
+  (let ((s (copy-mode-screen :w 20 :h 5
+                             :selecting t
+                             :cursor (cons 0 5))))
     (is (null (cl-tmux/commands::%selection-text s))
         "%selection-text must return NIL when mark is NIL")))
 
 (test selection-text-single-row-returns-correct-text
   "%selection-text returns the correct string for a single-row selection."
-  (let ((s (%make-selecting-screen "hello world"
-                                   (cons 0 0)    ; mark: row 0, col 0
-                                   (cons 0 5)))) ; cursor: row 0, col 5
+  (let ((s (copy-mode-screen :w 20 :h 5
+                             :content "hello world"
+                             :mark (cons 0 0)
+                             :cursor (cons 0 5)
+                             :selecting t)))
     (let ((text (cl-tmux/commands::%selection-text s)))
       (is (stringp text) "%selection-text must return a string for a valid selection")
       (is (string= "hello" text)
@@ -199,16 +206,11 @@
 
 (test selection-text-multi-row-returns-newline-joined-text
   "%selection-text returns newline-joined text for a multi-row selection."
-  ;; Feed two rows: row 0 = "abc", then CR+LF, row 1 = "def".
-  (let ((s (make-screen 20 5)))
-    (feed s "abc")
-    (feed s (format nil "~C~C" #\Return #\Linefeed))
-    (feed s "def")
-    (cl-tmux/commands::copy-mode-enter s)
-    ;; Select from row 0 col 0 to row 1 col 3.
-    (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
-          (cl-tmux/terminal/types:screen-copy-mark      s) (cons 0 0)
-          (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 1 3))
+  (let ((s (copy-mode-screen :w 20 :h 5
+                             :content (format nil "abc~C~Cdef" #\Return #\Linefeed)
+                             :mark (cons 0 0)
+                             :cursor (cons 1 3)
+                             :selecting t)))
     (let ((text (cl-tmux/commands::%selection-text s)))
       (is (stringp text) "result must be a string")
       (is (find #\Newline text) "multi-row result must contain a newline")
@@ -218,10 +220,11 @@
 
 (test selection-text-reversed-mark-cursor-order
   "%selection-text normalises selection when cursor is before mark."
-  ;; mark at col 5, cursor at col 0: result should still be cols 0-4.
-  (let ((s (%make-selecting-screen "hello world"
-                                   (cons 0 5)    ; mark: row 0, col 5
-                                   (cons 0 0)))) ; cursor: row 0, col 0
+  (let ((s (copy-mode-screen :w 20 :h 5
+                             :content "hello world"
+                             :mark (cons 0 5)
+                             :cursor (cons 0 0)
+                             :selecting t)))
     (let ((text (cl-tmux/commands::%selection-text s)))
       (is (stringp text) "%selection-text must return a string even when mark > cursor")
       (is (string= "hello" text)

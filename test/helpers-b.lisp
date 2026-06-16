@@ -432,6 +432,29 @@
     (dolist (frame frames)
       (cl-tmux/transport:send-frame out frame))))
 
+(defun round-trip-frame (frame)
+  "Write FRAME to a temp file and return the first decoded frame from it.
+   Shared by transport tests that need the same write/read scaffold around
+   different payload assertions."
+  (with-temp-octet-file (path)
+    (write-frames-to-file path frame)
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      (read-frame in))))
+
+(defun assert-round-tripped-frame-type (frame expected-type)
+  "Assert that FRAME round-trips with EXPECTED-TYPE."
+  (multiple-value-bind (type payload) (round-trip-frame frame)
+    (declare (ignore payload))
+    (is (= expected-type type)
+        "round-trip type mismatch: expected ~D got ~S"
+        expected-type type)))
+
+(defun assert-round-tripped-frame-payload (frame check-fn)
+  "Assert that FRAME round-trips and pass its payload to CHECK-FN."
+  (multiple-value-bind (type payload) (round-trip-frame frame)
+    (declare (ignore type))
+    (funcall check-fn payload)))
+
 (defun write-partial-frame-to-file (path frame byte-count)
   "Write only the first BYTE-COUNT bytes of FRAME to PATH (creating a truncated frame).
    Used by truncation tests to simulate mid-frame EOF conditions without duplicating

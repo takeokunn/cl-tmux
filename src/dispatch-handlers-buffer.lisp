@@ -83,9 +83,9 @@
                                                    :if-exists :supersede
                                                    :if-does-not-exist :create)
                                   (write-string buffer f))
-                                (show-overlay (format nil "saved to ~A" path)))
+                                (%overlayf "saved to ~A" path))
                             (error (e)
-                              (show-overlay (format nil "save-buffer error: ~A" e)))))))
+                              (%overlayf "save-buffer error: ~A" e))))))
         (show-overlay "(no paste buffers to save)"))))
 
 ;;; -- %cmd-load-buffer --------------------------------------------------------
@@ -104,7 +104,7 @@
                                     (read-sequence s f)
                                     s))))
                           (cl-tmux/buffer:add-paste-buffer content)
-                          (show-overlay (format nil "loaded ~D bytes from ~A"
-                                                (length content) path)))
+                          (%overlayf "loaded ~D bytes from ~A"
+                                     (length content) path))
                       (error (e)
-                        (show-overlay (format nil "load-buffer error: ~A" e))))))))
+                        (%overlayf "load-buffer error: ~A" e)))))))

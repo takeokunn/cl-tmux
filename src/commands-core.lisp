@@ -42,14 +42,16 @@
                 (window-select-pane win chosen)))
             nil)))))
 
+(defun %window-with-max-id (windows)
+  "Return the window in WINDOWS with the greatest id."
+  (reduce (lambda (a b) (if (> (window-id b) (window-id a)) b a)) windows))
+
 (defun %previous-window-by-index (windows killed-id)
   "tmux session_previous: the window in WINDOWS (the non-empty remaining list)
    with the greatest id strictly LESS than KILLED-ID, wrapping to the greatest id
    overall when none is lower."
-  (flet ((max-by-id (ws)
-           (reduce (lambda (a b) (if (> (window-id b) (window-id a)) b a)) ws)))
-    (let ((lower (remove-if-not (lambda (w) (< (window-id w) killed-id)) windows)))
-      (max-by-id (or lower windows)))))
+  (let ((lower (remove-if-not (lambda (w) (< (window-id w) killed-id)) windows)))
+    (%window-with-max-id (or lower windows))))
 
 (defun %mru-window (windows)
   "The unambiguously most-recently-active window in WINDOWS — the one with the

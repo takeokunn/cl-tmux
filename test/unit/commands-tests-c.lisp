@@ -13,18 +13,24 @@
          (result (cl-tmux/commands:pipe-pane-open pane "cat")))
     (is-true result
         "pipe-pane-open must return a non-NIL stream on success")
+    (is-true (pane-pipe-process pane)
+        "pipe-pane-open must keep the subprocess object for bounded cleanup")
     ;; Clean up.
     (cl-tmux/commands:pipe-pane-close pane)))
 
 (test pipe-pane-open-close-round-trip
-  "pipe-pane-open followed by pipe-pane-close leaves pane-pipe-fd NIL."
+  "pipe-pane-open followed by pipe-pane-close clears pipe state."
   (let ((pane (%make-test-pane)))
     (cl-tmux/commands:pipe-pane-open pane "cat")
     (is-true (pane-pipe-fd pane)
         "pane-pipe-fd must be set after pipe-pane-open")
+    (is-true (pane-pipe-process pane)
+        "pane-pipe-process must be set after pipe-pane-open")
     (cl-tmux/commands:pipe-pane-close pane)
     (is (null (pane-pipe-fd pane))
-        "pane-pipe-fd must be NIL after pipe-pane-close")))
+        "pane-pipe-fd must be NIL after pipe-pane-close")
+    (is (null (pane-pipe-process pane))
+        "pane-pipe-process must be NIL after pipe-pane-close")))
 
 (test pipe-pane-close-noop-when-no-pipe
   "pipe-pane-close is a no-op when pane has no open pipe."
@@ -49,6 +55,22 @@
       (is (null (pane-pipe-fd pa)) "the active pane 1 must NOT be piped")
       ;; Clean up the forked cat process.
       (cl-tmux/commands:pipe-pane-close pb))))
+
+(test cmd-pipe-pane-rejects-unimplemented-direction-flags
+  "pipe-pane rejects tmux direction flags that are not implemented by cl-tmux."
+  (dolist (flag '("-I" "-O"))
+    (with-fake-session (sess :nwindows 1 :npanes 1)
+      (let* ((*overlay* nil)
+             (pane (session-active-pane sess))
+             (result (cl-tmux::%cmd-pipe-pane-arg sess (list flag "cat"))))
+        (is (null result)
+            "~A must not be accepted as a silent no-op" flag)
+        (is (search "unsupported argument" *overlay*)
+            "~A must explain that the flag is unsupported" flag)
+        (is (null (pane-pipe-fd pane))
+            "~A must not open a pipe" flag)
+        (is (null (pane-pipe-process pane))
+            "~A must not launch a pipe process" flag)))))
 
 (test cmd-send-keys-X-t-targets-pane-copy-mode
   "send-keys -X -t .%2 begin-selection acts on pane-id 2's copy mode, not the
@@ -90,6 +112,25 @@
          (result (cl-tmux/commands:pipe-pane-open pane "echo hi")))
     (is (null result)
         "pipe-pane-open must return NIL when the shell cannot be launched")))
+
+(test pipe-pane-open-times-out-and-cleans-up
+  "pipe-pane-open returns NIL and leaves the pane clean when launch times out."
+  (let* ((pane (%make-test-pane))
+         (original-launch (fdefinition 'uiop:launch-program)))
+    (unwind-protect
+        (progn
+          (setf (fdefinition 'uiop:launch-program)
+                (lambda (&rest args)
+                  (sleep 2)
+                  (apply original-launch args)))
+          (is (null (cl-tmux/commands:pipe-pane-open pane "cat"))
+              "pipe-pane-open must return NIL when launch exceeds timeout")
+          (is (null (pane-pipe-fd pane))
+              "pipe-pane-fd must be NIL after a timed-out open")
+          (is (null (pane-pipe-process pane))
+              "pane-pipe-process must be NIL after a timed-out open"))
+      (setf (fdefinition 'uiop:launch-program) original-launch)
+      (ignore-errors (cl-tmux/commands:pipe-pane-close pane)))))
 
 (test pipe-pane-write-bytes-reach-subprocess
   "pipe-pane-write with an open pipe sends bytes to the subprocess stdin.
@@ -220,4 +261,3 @@
           (is (= exp-er end-row)   "~A: end-row"   desc)
           (is (= exp-sc start-col) "~A: start-col" desc)
           (is (= exp-ec end-col)   "~A: end-col"   desc))))))
-

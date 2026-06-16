@@ -3,24 +3,13 @@
 ;;;; PTY management, terminal raw mode, and multiplexed I/O.
 ;;;;
 ;;;; Implemented in pure Common Lisp using:
-;;;;   • sb-posix  — fork, setsid, dup2, tcgetattr/tcsetattr
-;;;;   • CFFI      — posix_openpt, grantpt, unlockpt, ptsname,
-;;;;                 ioctl, execv, select (all from libc — no custom C)
+;;;;   • SB-EXT    — process spawning with a PTY stream
+;;;;   • CFFI      — ioctl, select, read/write (all from libc; no custom C)
+;;;;   • sb-posix  — terminal raw mode and fallback fd close
 ;;;;
 ;;;; FFI declarations and platform constants live in pty-ffi.lisp.
 
 ;;; ── Public: PTY creation ───────────────────────────────────────────────────
-
-(defun open-pty (rows cols)
-  "Open a master PTY device sized ROWS×COLS.
-   Returns (values master-fd slave-path-string)."
-  (let ((master (%posix-openpt (logior +o-rdwr+ +o-noctty+))))
-    (when (< master 0)
-      (error "posix_openpt failed"))
-    (%grantpt  master)
-    (%unlockpt master)
-    (set-pty-size master rows cols)
-    (values master (copy-seq (%ptsname master)))))  ; copy before next ptsname call
 
 (defun set-pty-size (master-fd rows cols)
   "Notify the kernel PTY driver of a new ROWS×COLS window size."
@@ -35,115 +24,93 @@
                           :pointer ws
                           :int)))
 
-;;; ── exec argument-vector macro ─────────────────────────────────────────────
+;;; ── Private: spawned PTY helpers ───────────────────────────────────────────
 
-(defmacro %execv (exec-ptr &rest ptr-args)
-  "Build a NULL-terminated C argv from PTR-ARGS and call execv(EXEC-PTR, argv).
-   The argv length is computed at macro-expansion time from the number of PTR-ARGS."
-  (let ((argc (1+ (length ptr-args)))
-        (argv (gensym "argv")))
-    `(cffi:with-foreign-object (,argv :pointer ,argc)
-       ,@(loop for ptr in ptr-args for i from 0
-               collect `(setf (cffi:mem-aref ,argv :pointer ,i) ,ptr))
-       (setf (cffi:mem-aref ,argv :pointer ,(length ptr-args)) (cffi:null-pointer))
-       (cffi:foreign-funcall "execv" :pointer ,exec-ptr :pointer ,argv :int))))
+(defvar *pty-processes* (make-hash-table :test #'eql)
+  "MASTER-FD -> SB-EXT process object for PTYs spawned by forkpty-with-shell.")
 
-;;; ── Fork sentinel constants ────────────────────────────────────────────────
+(defun %non-empty-string-p (value)
+  "Return T when VALUE is a non-empty string."
+  (and (stringp value) (plusp (length value))))
 
-(defconstant +fork-child-pid+ 0
-  "Return value of fork(2) in the child process (POSIX standard).")
+(defun %spawn-directory (start-dir)
+  "Return a truename pathname for START-DIR, or NIL when it is absent/invalid.
+   The old child path ignored chdir failures; keeping NIL preserves that behavior
+   by letting the child inherit the current directory."
+  (when (%non-empty-string-p start-dir)
+    (ignore-errors (truename start-dir))))
 
-(defconstant +fork-error-pid+ -1
-  "Return value of fork(2) on failure (POSIX standard).")
+(defun %env-assignment (name value)
+  "Render NAME/VALUE as one POSIX env(1) assignment string."
+  (format nil "~A=~A" name value))
 
-;;; ── Private: forkpty helpers ───────────────────────────────────────────────
+(defun %spawn-environment-assignments (term extra-env)
+  "Build ordered env(1) NAME=VALUE assignments for a pane process.
+   TERM is applied first; -e assignments follow, matching tmux's override order."
+  (let ((assignments '()))
+    (when (%non-empty-string-p term)
+      (push (%env-assignment "TERM" term) assignments))
+    (dolist (pair extra-env)
+      (when (and (consp pair)
+                 (stringp (car pair))
+                 (stringp (cdr pair)))
+        (push (%env-assignment (car pair) (cdr pair)) assignments)))
+    (nreverse assignments)))
 
-(defun %child-setup-tty (slave-path master-fd)
-  "Set up the slave PTY as the controlling terminal for a new child process.
-   MUST be called only in the child process after fork — NEVER from the parent.
-   Becomes session leader, opens the slave, installs it as the controlling
-   terminal, wires it to stdin/stdout/stderr, and closes the now-unneeded fds.
-   On failure (e.g., open returns -1 or ioctl fails) the child continues to
-   %child-exec-shell; if execv then also fails, _exit(1) ensures the child
-   does not accidentally return into the parent Lisp runtime."
-  (sb-posix:setsid)
-  (let ((slave (sb-posix:open slave-path (logior +o-rdwr+ +o-noctty+) 0)))
-    (cffi:foreign-funcall "ioctl"
-                          :int slave :unsigned-long +tiocsctty+ :int 0 :int)
-    (sb-posix:dup2 slave +stdin-fd+)
-    (sb-posix:dup2 slave +stdout-fd+)
-    (sb-posix:dup2 slave +stderr-fd+)
-    (sb-posix:close slave))
-  (sb-posix:close master-fd))
+(defun %target-program-and-args (default-command)
+  "Return the actual shell program and argument list for DEFAULT-COMMAND."
+  (if (%non-empty-string-p default-command)
+      (values "/bin/sh" (list "-c" default-command))
+      (values cl-tmux/config:*default-shell* nil)))
 
-(defun %child-setenv (name value)
-  "Call setenv(3) from the child process to set NAME=VALUE.
-   MUST be called only in the child process after fork — NEVER from the parent."
-  (cffi:with-foreign-string (name-ptr  name)
-    (cffi:with-foreign-string (value-ptr value)
-      (cffi:foreign-funcall "setenv"
-                            :pointer name-ptr
-                            :pointer value-ptr
-                            :int 1
-                            :int))))
+(defun %spawn-program-and-args (default-command term extra-env)
+  "Return PROGRAM, ARGS, and SEARCH-P for SB-EXT:RUN-PROGRAM.
+   When env assignments are needed, route through env(1), which execs the real
+   shell while keeping parent process environment handling out of Lisp FFI code."
+  (multiple-value-bind (target target-args) (%target-program-and-args default-command)
+    (let ((assignments (%spawn-environment-assignments term extra-env)))
+      (if assignments
+          (values "env" (append assignments (list target) target-args) t)
+          (values target target-args nil)))))
 
-(defun %exec-command (command)
-  "Replace the current process image with /bin/sh -c COMMAND.
-   MUST be called only in the child process after fork — NEVER from the parent."
-  (cffi:with-foreign-string (sh-ptr "/bin/sh")
-    (cffi:with-foreign-string (dash-c-ptr "-c")
-      (cffi:with-foreign-string (cmd-ptr command)
-        (%execv sh-ptr sh-ptr dash-c-ptr cmd-ptr)))))
+(defun %process-pty-fd (process)
+  "Return the master fd for PROCESS's PTY stream."
+  (let ((stream (sb-ext:process-pty process)))
+    (unless stream
+      (error "run-program did not return a PTY stream"))
+    (sb-sys:fd-stream-fd stream)))
 
-(defun %exec-shell (shell-path)
-  "Replace the current process image with SHELL-PATH directly.
-   MUST be called only in the child process after fork — NEVER from the parent."
-  (cffi:with-foreign-string (path-ptr shell-path)
-    (cffi:with-foreign-string (arg0-ptr shell-path)
-      (%execv path-ptr arg0-ptr))))
+(defun %remember-pty-process (master-fd process)
+  "Record PROCESS so pty-close can close SBCL's PTY stream object."
+  (setf (gethash master-fd *pty-processes*) process))
 
-(defun %child-exec-shell (&optional start-dir term default-command extra-env)
-  "Replace the current process image with a shell or default-command.
-   When START-DIR is a non-empty string, chdir to it before execv.
-   When TERM is a non-empty string, set TERM=TERM in the child environment.
-   When DEFAULT-COMMAND is a non-empty string, run sh -c DEFAULT-COMMAND
-   instead of *DEFAULT-SHELL* directly.
-   EXTRA-ENV: alist of (NAME . VALUE) pairs to set in the child environment
-   before exec (e.g. from new-window -e VAR=val).
-   MUST be called only in the child process after fork — NEVER from the parent."
-  (when (and start-dir (plusp (length start-dir)))
-    (ignore-errors (sb-posix:chdir start-dir)))
-  (when (and term (plusp (length term)))
-    (%child-setenv "TERM" term))
-  ;; Apply extra environment variables from -e flags (new-window / split-window).
-  (dolist (pair extra-env)
-    (when (and (consp pair) (stringp (car pair)) (stringp (cdr pair)))
-      (%child-setenv (car pair) (cdr pair))))
-  (if (and default-command (plusp (length default-command)))
-      (%exec-command default-command)
-      (%exec-shell cl-tmux/config:*default-shell*))
-  ;; execv failed — fall through to _exit.
-  (cffi:foreign-funcall "_exit" :int 1 :void))
+(defun %take-pty-process (master-fd)
+  "Remove and return the process object associated with MASTER-FD, if any."
+  (let ((process (gethash master-fd *pty-processes*)))
+    (remhash master-fd *pty-processes*)
+    process))
 
 (defun forkpty-with-shell (rows cols &key start-dir term default-command extra-env)
-  "Fork a child shell process on a fresh PTY of size ROWS×COLS.
-   START-DIR: when non-NIL, chdir to this path before exec.
+  "Spawn a child shell process on a fresh PTY of size ROWS×COLS.
+   START-DIR: when valid, run the child from this directory.
    TERM: when non-NIL, set TERM=TERM in the child environment.
    DEFAULT-COMMAND: when non-NIL, run via sh -c instead of the shell directly.
    EXTRA-ENV: alist of (NAME . VALUE) pairs set in the child environment.
-   Parent returns (values master-fd child-pid slave-path), where SLAVE-PATH is the
-   PTY device path (e.g. /dev/pts/3) the child sees — surfaced as #{pane_tty}.
-   Child execs and never returns to Lisp."
+   Returns (values master-fd child-pid slave-path).  SBCL exposes the master
+   stream and pid but not a portable slave-path, so SLAVE-PATH is currently the
+   empty string."
   (declare (type fixnum rows cols))
-  (multiple-value-bind (master slave-path) (open-pty rows cols)
-    (let ((pid (sb-posix:fork)))
-      (cond
-        ((= pid +fork-error-pid+) (error "fork failed"))
-        ((= pid +fork-child-pid+)              ; child
-         (%child-setup-tty slave-path master)
-         (%child-exec-shell start-dir term default-command extra-env))
-        (t                                     ; parent
-         (values master pid slave-path))))))
+  (multiple-value-bind (program args search-p)
+      (%spawn-program-and-args default-command term extra-env)
+    (let* ((process (sb-ext:run-program program args
+                                        :search search-p
+                                        :wait nil
+                                        :pty t
+                                        :directory (%spawn-directory start-dir)))
+           (master (%process-pty-fd process)))
+      (set-pty-size master rows cols)
+      (%remember-pty-process master process)
+      (values master (sb-ext:process-pid process) ""))))
 
 ;;; ── FFI memory transfer helpers (data layer) ────────────────────────────────
 ;;;
@@ -199,7 +166,10 @@
     (when (> child-pid 0)
       (cffi:foreign-funcall "kill" :int child-pid :int +sighup+ :int))
     (when (>= master-fd 0)
-      (sb-posix:close master-fd))))
+      (let ((process (%take-pty-process master-fd)))
+        (if process
+            (sb-ext:process-close process)
+            (sb-posix:close master-fd))))))
 
 ;;; ── Public: select-based I/O multiplexing ─────────────────────────────────
 
@@ -271,4 +241,3 @@
                 (values rows cols)
                 (values 24 80)))
           (values 24 80)))))          ; safe fallback if ioctl fails
-

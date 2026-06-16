@@ -198,6 +198,31 @@
         (is (string= "xabcy" (prompt-buffer *prompt*))
             "SS3 End must move to end")))))
 
+(test process-byte-prompt-csi-up-down-history
+  "CSI Up/Down sequences navigate prompt history when the prompt has history."
+  (with-fake-session (s)
+    (with-clean-prompt
+      (let ((state (cl-tmux::make-input-state)))
+        (prompt-start "test" "li"
+                      (lambda (buf) (declare (ignore buf)) nil)
+                      :history '("list-windows" "new-window"))
+        (dolist (byte '(27 91 65))
+          (cl-tmux::process-byte s byte state))
+        (is (string= "list-windows" (prompt-buffer *prompt*))
+            "CSI Up must load the newest history entry")
+        (dolist (byte '(27 91 65))
+          (cl-tmux::process-byte s byte state))
+        (is (string= "new-window" (prompt-buffer *prompt*))
+            "CSI Up again must load the next older history entry")
+        (dolist (byte '(27 91 66))
+          (cl-tmux::process-byte s byte state))
+        (is (string= "list-windows" (prompt-buffer *prompt*))
+            "CSI Down must move toward newer history")
+        (dolist (byte '(27 91 66))
+          (cl-tmux::process-byte s byte state))
+        (is (string= "li" (prompt-buffer *prompt*))
+            "CSI Down from newest history must restore the typed input")))))
+
 ;;; ── process-byte: copy-mode w, b, e word navigation ─────────────────────────
 
 (test copy-mode-w-moves-word-forward
@@ -260,7 +285,7 @@
   (dolist (c '((110 "n: search-next")
                (78  "N: search-prev")
                (89  "Y: copy-line")
-               (68  "D: copy-end-of-line")))
+               (68  "D: copy-pipe-end-of-line-and-cancel")))
     (destructuring-bind (byte desc) c
       (with-copy-mode-state (s screen state)
         (declare (ignore screen))

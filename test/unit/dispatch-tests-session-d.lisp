@@ -5,12 +5,9 @@
 
 (in-suite dispatch-suite)
 
-;;; ── display-popup / popup (arg-bearing handler + alias) ──────────────────────
+;;; ── display-popup (arg-bearing handler) ──────────────────────────────────────
 ;;;
-;;; `bind C-p popup -E "cmd"` is a very common .tmux.conf form.  Previously
-;;; display-popup only opened an interactive prompt and `popup` (its documented
-;;; alias, man tmux ALIASES) was unrecognised.  %cmd-display-popup parses the
-;;; flags, runs the command, and shows its output; `popup` aliases it everywhere.
+;;; %cmd-display-popup parses the flags, runs the command, and shows its output.
 
 (test cmd-display-popup-dimension-helper
   "%popup-dimension resolves nil→fallback, absolute cells, N% of axis, clamps to
@@ -49,7 +46,7 @@
 
 (test cmd-display-popup-no-command-opens-prompt
   "display-popup with no command opens the interactive popup-command prompt
-   rather than a popup overlay (legacy behaviour preserved)."
+   rather than a popup overlay."
   (with-fake-session (s :nwindows 1)
     (let ((*prompt* nil))
       (cl-tmux::%cmd-display-popup s '())
@@ -57,23 +54,7 @@
           "no command → no popup overlay yet")
       (is (prompt-active-p) "no command opens the popup-command prompt instead")
       (is (string= "popup command" (prompt-label *prompt*))
-          "the prompt label matches the legacy :display-popup prompt"))))
-
-(test config-bind-accepts-popup-alias
-  "`bind P popup -E \"cmd\"` is accepted by the config parser (popup resolves to
-   :display-popup); previously the unrecognised `popup` name was rejected."
-  (with-isolated-config
-    (is (= 1 (cl-tmux/config:load-config-from-string
-              "bind P popup -E \"echo hi\""))
-        "one directive applied — popup is a recognised command alias")))
-
-(test arg-command-table-has-popup-alias
-  "*arg-command-table* maps both display-popup and popup to %cmd-display-popup."
-  (let ((entry (assoc "popup" cl-tmux::*arg-command-table*
-                      :test (lambda (k names) (member k names :test #'string=)))))
-    (is (not (null entry)) "popup is registered in *arg-command-table*")
-    (is (eq #'cl-tmux::%cmd-display-popup (cdr entry))
-        "popup routes to %cmd-display-popup")))
+          "the prompt label matches the popup prompt"))))
 
 ;;; ── send-keys -N (repeat) and -H (hex) ───────────────────────────────────────
 ;;;
@@ -113,6 +94,17 @@
       (cl-tmux::%cmd-send-keys-arg s '("-X" "cursor-up"))
       (is (= (- row0 1) (car (screen-copy-cursor screen)))
           "a bare -X command runs exactly once (count defaults to 1)"))))
+
+(test send-keys-rejects-unsupported-mouse-flag
+  "send-keys rejects -M instead of accepting an unimplemented mouse passthrough."
+  (with-fake-session (s)
+    (let ((*overlay* nil))
+      (is (null (cl-tmux::%cmd-send-keys-arg s '("-M" "MouseDown1Pane")))
+          "unsupported -M must return NIL")
+      (is (overlay-active-p)
+          "unsupported -M must show an error overlay")
+      (assert-overlay-contains "unsupported argument" *overlay*
+                               "send-keys -M"))))
 
 ;;; ── send-prefix -t / -2 ─────────────────────────────────────────────────────
 
@@ -154,6 +146,49 @@
                  (cl-tmux::%run-command-line s "send-prefix -2")
                  (is (equal '((3333 (1))) (reverse writes))
                      "send-prefix -2 writes C-a when prefix2 is C-a"))
+            (setf (fdefinition 'cl-tmux/pty:pty-write) orig)))))))
+
+(test cmd-send-prefix-read-only-does-not-write
+  "send-prefix command is suppressed when the client is read-only."
+  (with-isolated-config
+    (with-fake-session (s)
+      (let* ((pane (window-active-pane (session-active-window s)))
+             (writes nil)
+             (orig (fdefinition 'cl-tmux/pty:pty-write)))
+        (setf (pane-fd pane) 3333)
+        (unwind-protect
+             (progn
+               (setf (fdefinition 'cl-tmux/pty:pty-write)
+                     (lambda (fd bytes)
+                       (push (list fd (coerce bytes 'list)) writes)))
+               (let ((cl-tmux::*client-read-only* t))
+                 (cl-tmux::%run-command-line s "send-prefix"))
+              (is (null writes)
+                  "send-prefix must not write to a pane for read-only clients"))
+          (setf (fdefinition 'cl-tmux/pty:pty-write) orig))))))
+
+(test cmd-send-prefix-rejects-unsupported-arguments-before-writing
+  "send-prefix rejects unsupported arguments before writing to a pane."
+  (with-isolated-config
+    (dolist (args '(("-Z") ("extra")))
+      (with-fake-session (s)
+        (let* ((pane (window-active-pane (session-active-window s)))
+               (writes nil)
+               (orig (fdefinition 'cl-tmux/pty:pty-write)))
+          (setf (pane-fd pane) 3333)
+          (unwind-protect
+               (progn
+                 (setf (fdefinition 'cl-tmux/pty:pty-write)
+                       (lambda (fd bytes)
+                         (push (list fd (coerce bytes 'list)) writes)))
+                 (let ((cl-tmux::*overlay* nil))
+                   (is (null (cl-tmux::%cmd-send-prefix-arg s args))
+                       "send-prefix rejects ~S" args)
+                   (is (null writes)
+                       "send-prefix does not write for ~S" args)
+                   (assert-overlay-contains "send-prefix: unsupported argument"
+                                             cl-tmux::*overlay*
+                                             (format nil "send-prefix reports an unsupported argument for ~S" args))))
             (setf (fdefinition 'cl-tmux/pty:pty-write) orig)))))))
 
 ;;; ── capture-pane saves to a buffer by default (scriptable form) ──────────────
@@ -209,6 +244,22 @@
           (is (null (search "active text" buf))
               "-t %2 must not fall back to the active pane"))))))
 
+(test cmd-capture-pane-rejects-unsupported-arguments
+  "capture-pane rejects output mode flags and positional tokens that cl-tmux does not implement."
+  (dolist (args '(("-a")
+                  ("-P")
+                  ("extra")
+                  ("-b" "cap" "extra")))
+    (with-empty-buffers
+      (with-fake-session (s)
+        (let ((*overlay* nil))
+          (feed (active-screen s) "must not capture")
+          (is (null (cl-tmux::%cmd-capture-pane-arg s args))
+              "~S must be rejected instead of accepted as a no-op" args)
+          (assert-overlay-contains "unsupported argument" *overlay* args)
+          (is (null (cl-tmux/buffer:get-paste-buffer 0))
+              "~S must not save a paste buffer after rejection" args))))))
+
 ;;; ── Named paste-buffer commands (-b name) ────────────────────────────────────
 
 (test cmd-set-buffer-b-stores-named
@@ -228,6 +279,22 @@
       (is (string= "foobar" (cl-tmux/buffer:get-buffer-by-name "b"))
           "-a appends to the named buffer"))))
 
+(test cmd-set-buffer-rejects-unsupported-arguments
+  "set-buffer rejects unknown flags and the removed -t target form."
+  (dolist (args '(("-Z" "hello")
+                  ("-t" "ignored" "hello")))
+    (with-empty-buffers
+      (with-fake-session (s)
+        (let ((*overlay* nil))
+          (is (null (cl-tmux::%cmd-set-buffer-arg s args))
+              "~S is rejected" args)
+          (assert-overlay-contains "set-buffer: unsupported argument"
+                                    *overlay* args)
+          (is (null (cl-tmux/buffer:get-paste-buffer 0))
+              "~S must not store a paste buffer after rejection" args)
+          (is (null (cl-tmux/buffer:get-buffer-by-name "ignored"))
+              "~S must not store a named buffer after rejection" args))))))
+
 (test cmd-show-buffer-b-shows-named
   "show-buffer -b name shows that buffer's content in an overlay."
   (with-empty-buffers
@@ -236,8 +303,8 @@
         (cl-tmux/buffer:set-named-buffer "b" "shown-content")
         (cl-tmux::%cmd-show-buffer-arg s '("-b" "b"))
         (is (overlay-active-p) "show-buffer -b opens an overlay")
-        (is (search "shown-content" (format nil "~{~A~%~}" (overlay-lines)))
-            "the overlay contains the named buffer's content")))))
+        (assert-overlay-contains "shown-content" *overlay*
+                                 "show-buffer -b")))))
 
 (test cmd-delete-buffer-b-deletes-named
   "delete-buffer -b name removes that named buffer."
@@ -285,6 +352,35 @@
                    "appended most recent buffer"))
           (ignore-errors (delete-file path)))))))
 
+(test cmd-save-buffer-rejects-unsupported-arguments
+  "save-buffer rejects unknown flags and stray positionals before writing."
+  (dolist (case '(:extra-arg :unknown-flag))
+    (with-empty-buffers
+      (with-fake-session (s)
+        (let* ((label (format nil "cl-tmux-save-buffer-reject-~D-~D.txt"
+                              (get-universal-time)
+                              (random 1000000)))
+               (path (namestring (merge-pathnames label (uiop:temporary-directory))))
+               (args (ecase case
+                       (:extra-arg (list "-b" "saved" path "extra"))
+                       (:unknown-flag (list "-Z" path)))))
+          (unwind-protect
+               (progn
+                (with-open-file (out path
+                                      :direction :output
+                                      :if-exists :supersede
+                                      :if-does-not-exist :create)
+                   (write-string "pre:" out))
+                 (cl-tmux/buffer:set-named-buffer "saved" "named text")
+                 (let ((*overlay* nil))
+                   (is (null (cl-tmux::%run-command-tokens s (cons "save-buffer" args)))
+                       "~S is rejected" args)
+                   (assert-overlay-contains "save-buffer: unsupported argument"
+                                             *overlay* args)
+                   (is (string= "pre:" (uiop:read-file-string path))
+                       "~S must not overwrite the file after rejection" args)))
+            (ignore-errors (delete-file path))))))))
+
 (test cmd-load-buffer-b-loads-named-buffer
   "load-buffer -b name path loads file contents into a named buffer."
   (with-empty-buffers
@@ -305,6 +401,34 @@
                    "loaded file into named buffer"))
           (ignore-errors (delete-file path)))))))
 
+(test cmd-load-buffer-rejects-unsupported-arguments
+  "load-buffer rejects unknown flags and extra positionals before loading."
+  (dolist (case '(:extra-arg :unknown-flag))
+    (with-empty-buffers
+      (with-fake-session (s)
+        (let* ((label (format nil "cl-tmux-load-buffer-reject-~D-~D.txt"
+                              (get-universal-time)
+                              (random 1000000)))
+               (path (namestring (merge-pathnames label (uiop:temporary-directory))))
+               (args (ecase case
+                       (:extra-arg (list path "extra"))
+                       (:unknown-flag (list "-Z" path)))))
+          (unwind-protect
+               (progn
+                (with-open-file (out path
+                                      :direction :output
+                                      :if-exists :supersede
+                                      :if-does-not-exist :create)
+                   (write-string "from file" out))
+                 (let ((*overlay* nil))
+                   (is (null (cl-tmux::%run-command-tokens s (cons "load-buffer" args)))
+                       "~S is rejected" args)
+                   (assert-overlay-contains "load-buffer: unsupported argument"
+                                             *overlay* args)
+                   (is (null (cl-tmux/buffer:get-paste-buffer 0))
+                       "~S must not load a paste buffer after rejection" args)))
+            (ignore-errors (delete-file path))))))))
+
 (test cmd-paste-buffer-d-deletes-named-after-paste
   "paste-buffer -d -b name deletes the named buffer after pasting it."
   (with-empty-buffers
@@ -313,6 +437,61 @@
       (cl-tmux::%cmd-paste-buffer-arg s '("-d" "-b" "b"))
       (is (null (cl-tmux/buffer:get-buffer-by-name "b"))
           "-d removes the named buffer after pasting"))))
+
+(test cmd-paste-buffer-rejects-unsupported-arguments
+  "paste-buffer rejects unknown flags and positional arguments before side effects."
+  (dolist (args '(("-d" "-b" "b" "extra")
+                  ("-Z" "-d" "-b" "b")))
+    (with-empty-buffers
+      (with-fake-session (s)
+        (let ((*overlay* nil))
+          (cl-tmux/buffer:set-named-buffer "b" "data")
+          (is (null (cl-tmux::%cmd-paste-buffer-arg s args))
+              "~S is rejected" args)
+          (assert-overlay-contains "paste-buffer: unsupported argument"
+                                    *overlay* args)
+          (is (string= "data" (cl-tmux/buffer:get-buffer-by-name "b"))
+              "~S must not delete the source buffer after rejection" args))))))
+
+(test cmd-delete-and-show-buffer-reject-unsupported-arguments
+  "delete-buffer and show-buffer reject unsupported arguments before mutation/output."
+  (dolist (case '((cl-tmux::%cmd-delete-buffer-arg
+                   ("-b" "b" "extra")
+                   "delete-buffer: unsupported argument")
+                  (cl-tmux::%cmd-delete-buffer-arg
+                   ("-Z" "-b" "b")
+                   "delete-buffer: unsupported argument")
+                  (cl-tmux::%cmd-show-buffer-arg
+                   ("-b" "b" "extra")
+                   "show-buffer: unsupported argument")
+                  (cl-tmux::%cmd-show-buffer-arg
+                   ("-Z" "-b" "b")
+                   "show-buffer: unsupported argument")))
+    (destructuring-bind (fn args message) case
+      (with-empty-buffers
+        (with-fake-session (s)
+          (let ((*overlay* nil))
+            (cl-tmux/buffer:set-named-buffer "b" "shown-content")
+            (is (null (funcall fn s args))
+                "~S rejects ~S" fn args)
+            (assert-overlay-contains message *overlay* fn)
+            (is (string= "shown-content" (cl-tmux/buffer:get-buffer-by-name "b"))
+                "~S must not mutate buffers after rejection" fn)))))))
+
+(test cmd-copy-mode-rejects-unsupported-arguments
+  "copy-mode rejects unknown flags and positionals before entering copy-mode."
+  (dolist (args '(("extra") ("-Z")))
+    (with-fake-session (s)
+      (let ((*overlay* nil)
+            (cl-tmux::*dirty* nil))
+        (is (null (cl-tmux::%cmd-copy-mode-arg s args))
+            "~S is rejected" args)
+        (assert-overlay-contains "copy-mode: unsupported argument"
+                                  *overlay* args)
+        (is-false (screen-copy-mode-p (active-screen s))
+                  "~S must not enter copy-mode after rejection" args)
+        (is-false cl-tmux::*dirty*
+                  "~S must not mark the UI dirty after rejection" args)))))
 
 (test cmd-capture-pane-b-stores-named
   "capture-pane -b name stores the captured content under that name."
@@ -359,7 +538,8 @@
            (pane1  (cl-tmux/model:window-active-pane win1))
            ;; Mark pane0 — join-pane -s win1 should still use pane1.
            (cl-tmux::*server-marked-pane* pane0))
-      (declare (ignore pane0))
+      (is (eq pane0 cl-tmux::*server-marked-pane*)
+          "precondition: pane0 must be the marked pane")
       ;; Point session at win0.
       (cl-tmux/model:session-select-window s win0)
       ;; Explicit -s @N (win1 window-id sigil) targets pane1, not the marked pane.
@@ -416,3 +596,17 @@
       (sleep 0.05)
       (is (not (eq result :pending))
           "wait-for (bare) must unblock after the channel is signaled"))))
+
+(test cmd-wait-for-unsupported-arguments-are-rejected-before-channel-state
+  "wait-for rejects unknown flags and extra channel names before touching channels."
+  (with-fake-session (s)
+    (let ((cl-tmux::*wait-channels* (make-hash-table :test #'equal)))
+      (dolist (args '(("-Z" "test-ch-unsupported")
+                      ("-L" "test-ch-unsupported" "extra")))
+        (let (cl-tmux::*overlay*)
+          (cl-tmux::%cmd-wait-for-arg s args)
+          (assert-overlay-contains "unsupported argument"
+                                    cl-tmux::*overlay*
+                                    "wait-for")
+          (is-false (gethash "test-ch-unsupported" cl-tmux::*wait-channels*)
+                    "wait-for must not create or mutate a channel after rejecting arguments"))))))

@@ -84,7 +84,6 @@
   (sb-ext:with-timeout 10
     (with-temp-socket-path (path)
       (with-connected-sockets (path listener client conn)
-        (declare (ignore listener client))
         (is-true conn "accept-connection must return a socket")))))
 
 ;;; ── Table-driven: multiple message types roundtrip ───────────────────────────
@@ -100,7 +99,6 @@
   (sb-ext:with-timeout 10
     (with-temp-socket-path (path)
       (with-connected-sockets (path listener client conn)
-        (declare (ignore listener))
         (let ((client-stream (socket-stream client))
               (server-stream (socket-stream conn)))
           ;; client → server: a key frame, then a detach frame
@@ -130,7 +128,6 @@
   (sb-ext:with-timeout 10
     (with-temp-socket-path (path)
       (with-connected-sockets (path listener client conn)
-        (declare (ignore listener))
         (let ((client-stream (socket-stream client))
               (server-stream (socket-stream conn)))
           ;; Send three distinct frames
@@ -183,7 +180,6 @@
   (sb-ext:with-timeout 10
     (with-temp-socket-path (path)
       (with-connected-sockets (path listener client conn)
-        (declare (ignore listener conn))
         (let ((s (socket-stream client)))
           (is (subtypep (stream-element-type s) '(unsigned-byte 8))
               "socket-stream element-type must be a subtype of (unsigned-byte 8)"))))))
@@ -197,7 +193,6 @@
   (sb-ext:with-timeout 10
     (with-temp-socket-path (path)
       (with-connected-sockets (path listener client conn)
-        (declare (ignore listener))
         (let ((client-stream (socket-stream client))
               (server-stream (socket-stream conn)))
           (send-frame client-stream
@@ -223,7 +218,6 @@
   (sb-ext:with-timeout 10
     (with-temp-socket-path (path)
       (with-connected-sockets (path listener client conn)
-        (declare (ignore listener))
         (let ((client-stream (socket-stream client))
               (server-stream (socket-stream conn)))
           ;; client → server

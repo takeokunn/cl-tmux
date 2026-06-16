@@ -11,12 +11,8 @@
 
 (test dispatch-attach-session-opens-prompt
   ":attach-session opens a prompt for the session name."
-  (with-fake-session (s)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :attach-session nil)
-      (is (prompt-active-p) ":attach-session must open a prompt")
-      (is (string= "attach-session -t name" (prompt-label *prompt*))
-          ":attach-session prompt label must be \"attach-session -t name\""))))
+  (with-dispatch-prompt (s :attach-session :label "attach-session -t name"
+                                          :context ":attach-session must open a prompt")))
 
 (test dispatch-attach-session-submit-table
   ":attach-session on-submit shows 'attached' for a registered session, 'not found' otherwise."
@@ -32,9 +28,56 @@
             (is (prompt-active-p) "prompt must open for ~A" desc)
             (funcall (prompt-on-submit *prompt*) input)
             (is (overlay-active-p) ":attach-session ~A must show overlay" desc)
-            (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-              (is (search expected-text text)
-                  "~A: overlay must contain \"~A\"" desc expected-text))))))))
+            (assert-overlay-contains expected-text *overlay*
+                                     (format nil "~A: overlay must contain ~S"
+                                             desc expected-text)))))))
+
+(test run-command-line-attach-session-target-switches-session
+  "attach-session -t <name> is scriptable and switches to the target session."
+  (with-loop-state
+    (with-empty-registry
+      (let ((s0 (make-fake-session :nwindows 1))
+            (s1 (make-fake-session :nwindows 1)))
+        (setf (cl-tmux::session-name s0) "0"
+              (cl-tmux::session-name s1) "work"
+              (cl-tmux::session-last-active s0) 10
+              (cl-tmux::session-last-active s1) 0
+              cl-tmux::*server-sessions* (list (cons "0" s0)
+                                               (cons "work" s1)))
+        (setf cl-tmux::*dirty* nil)
+        (is (eq s1 (cl-tmux::%run-command-line s0 "attach-session -t work"))
+            "attach-session -t must return the selected target session")
+        (is (eq s1 (cl-tmux::server-current-session))
+            "target session must become the current session")
+        (is-true cl-tmux::*dirty*
+                 "attach-session -t must mark the display dirty")))))
+
+(test run-command-line-attach-session-rejects-client-creation-args
+  "attach-session inside a running client rejects client-creation arguments."
+  (dolist (row '(("attach-session -c /tmp -t work" "client cwd")
+                 ("attach-session -d -t work" "detach other clients")
+                 ("attach-session work" "positional target")))
+    (destructuring-bind (line desc) row
+      (with-loop-state
+        (with-empty-registry
+          (let ((s0 (make-fake-session :nwindows 1))
+                (s1 (make-fake-session :nwindows 1)))
+            (setf (cl-tmux::session-name s0) "0"
+                  (cl-tmux::session-name s1) "work"
+                  (cl-tmux::session-last-active s0) 10
+                  (cl-tmux::session-last-active s1) 0
+                  cl-tmux::*server-sessions* (list (cons "0" s0)
+                                                   (cons "work" s1))
+                  cl-tmux::*dirty* nil
+                  cl-tmux::*overlay* nil)
+            (is (null (cl-tmux::%run-command-line s0 line))
+                "~A must be rejected" desc)
+            (is (eq s0 (cl-tmux::server-current-session))
+                "~A must not switch sessions" desc)
+            (is-false cl-tmux::*dirty*
+                      "~A must not mark the display dirty" desc)
+            (is (search "unsupported argument" cl-tmux::*overlay*)
+                "~A must explain the unsupported argument" desc)))))))
 
 (test dispatch-clear-prompt-history-empties-history
   ":clear-prompt-history sets *prompt-history* to NIL."
@@ -53,12 +96,35 @@
     ;; with-loop-state restores it, so just verify the return value above.
     ))
 
+(test run-command-line-detach-client-without-args-returns-detach
+  "detach-client without arguments detaches the active client."
+  (with-fake-session (s)
+    (setf cl-tmux::*running* t)
+    (is (eq :detach (cl-tmux::%run-command-line s "detach-client"))
+        "detach-client without arguments must return :detach")
+    (is-true cl-tmux::*running*
+             "detach-client returns a detach disposition; the caller owns loop shutdown")))
+
+(test run-command-line-detach-client-rejects-ignored-compat-args
+  "detach-client rejects tmux-compatible arguments that cl-tmux does not implement."
+  (with-fake-session (s)
+    (dolist (args '(("-P")
+                    ("-E" "echo detached")
+                    ("-s" "work")
+                    ("-t" "client-0")))
+      (setf cl-tmux::*running* t
+            cl-tmux::*overlay* nil)
+      (is (null (cl-tmux::%cmd-detach-client-arg s args))
+          "unsupported detach-client args must be rejected: ~S" args)
+      (is-true cl-tmux::*running*
+               "rejected detach-client args must not stop the event loop: ~S" args)
+      (is (overlay-active-p)
+          "rejected detach-client args must explain the failure: ~S" args))))
+
 (test dispatch-move-pane-opens-prompt
   ":move-pane opens a prompt for the destination window index."
-  (with-fake-session (s :nwindows 2)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :move-pane nil)
-      (is (prompt-active-p) ":move-pane must open a prompt"))))
+  (with-dispatch-prompt ((s :nwindows 2) :move-pane
+                         :context ":move-pane must open a prompt")))
 
 (test dispatch-refresh-client-marks-dirty
   ":refresh-client marks *dirty* to force an immediate redraw."
@@ -67,14 +133,105 @@
       (cl-tmux::dispatch-command s :refresh-client nil)
       (is-true cl-tmux::*dirty* ":refresh-client must set *dirty*"))))
 
+(test run-command-line-refresh-client-rejects-unsupported-args
+  "refresh-client rejects unsupported control-mode and target arguments."
+  (with-fake-session (s)
+    (let ((cl-tmux::*dirty* nil)
+          (cl-tmux::*overlay* nil))
+      (is (null (cl-tmux::%run-command-line s "refresh-client -S"))
+          "refresh-client -S must be rejected by the command runner")
+      (is-false cl-tmux::*dirty*
+                "rejected refresh-client args must not redraw")
+      (is (overlay-active-p)
+          "rejected refresh-client args must explain the failure"))
+    (dolist (args '(("-A" "%1:off")
+                    ("-t" "client-0")))
+      (setf cl-tmux::*dirty* nil
+            cl-tmux::*overlay* nil)
+      (is (null (cl-tmux::%cmd-refresh-client-arg s args))
+          "unsupported refresh-client args must be rejected: ~S" args)
+      (is-false cl-tmux::*dirty*
+                "rejected refresh-client args must not redraw: ~S" args)
+      (is (overlay-active-p)
+          "rejected refresh-client args must explain the failure: ~S" args))))
+
+(test run-command-line-lock-client-without-args-locks-session
+  "lock-client without arguments locks the active session."
+  (with-fake-session (s)
+    (setf (cl-tmux::session-locked-p s) nil)
+    (cl-tmux::%run-command-line s "lock-client")
+    (is-true (cl-tmux::session-locked-p s)
+             "lock-client must lock the active session")))
+
+(test run-command-line-lock-client-rejects-target-client
+  "lock-client rejects target-client arguments because cl-tmux has no client target model."
+  (with-fake-session (s)
+    (let ((cl-tmux::*overlay* nil))
+      (setf (cl-tmux::session-locked-p s) nil)
+      (is (null (cl-tmux::%run-command-line s "lock-client -t client-0"))
+          "lock-client -t must be rejected by the command runner")
+      (is-false (cl-tmux::session-locked-p s)
+                "rejected lock-client target must not lock the session")
+      (is (overlay-active-p)
+          "rejected lock-client target must explain the failure"))))
+
+(test run-command-line-lock-session-locks-current-session
+  "lock-session without -t locks the current session."
+  (with-fake-session (s)
+    (let ((cl-tmux::*overlay* nil))
+      (setf (cl-tmux::session-locked-p s) nil)
+      (cl-tmux::%run-command-line s "lock-session")
+      (is-true (cl-tmux::session-locked-p s)
+               "lock-session must lock the current session"))))
+
+(test run-command-line-lock-session-target-locks-target-session
+  "lock-session -t locks the named target session."
+  (with-empty-registry
+    (let ((s0 (make-fake-session :nwindows 1))
+          (s1 (make-fake-session :nwindows 1)))
+      (setf (cl-tmux::session-name s0) "0"
+            (cl-tmux::session-name s1) "work"
+            cl-tmux::*server-sessions* (list (cons "0" s0)
+                                             (cons "work" s1)))
+      (let ((cl-tmux::*overlay* nil))
+        (setf (cl-tmux::session-locked-p s0) nil
+              (cl-tmux::session-locked-p s1) nil)
+        (is-true (cl-tmux::%run-command-line s0 "lock-session -t work")
+                 "lock-session -t must be handled by the command runner")
+        (is-false (cl-tmux::session-locked-p s0)
+                  "lock-session -t must not lock the source session")
+        (is-true (cl-tmux::session-locked-p s1)
+                 "lock-session -t must lock the target session")))))
+
+(test run-command-line-lock-session-rejects-unsupported-arguments
+  "lock-session rejects unknown flags and positional tokens before locking anything."
+  (dolist (command '("lock-session extra"
+                     "lock-session -x"
+                     "lock-session -t work extra"))
+    (with-empty-registry
+      (let ((s0 (make-fake-session :nwindows 1))
+            (s1 (make-fake-session :nwindows 1)))
+        (setf (cl-tmux::session-name s0) "0"
+              (cl-tmux::session-name s1) "work"
+              cl-tmux::*server-sessions* (list (cons "0" s0)
+                                               (cons "work" s1)))
+        (let ((cl-tmux::*overlay* nil))
+          (setf (cl-tmux::session-locked-p s0) nil
+                (cl-tmux::session-locked-p s1) nil)
+          (is (null (cl-tmux::%run-command-line s0 command))
+              "~A must be rejected" command)
+          (is-false (cl-tmux::session-locked-p s0)
+                    "~A must not lock the source session" command)
+          (is-false (cl-tmux::session-locked-p s1)
+                    "~A must not lock the target session" command)
+          (is (overlay-active-p)
+              "~A must show an unsupported-argument overlay" command))))))
+
 (test dispatch-resize-window-opens-prompt
   ":resize-window opens a prompt for the new WxH dimensions."
-  (with-fake-session (s :nwindows 1)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :resize-window nil)
-      (is (prompt-active-p) ":resize-window must open a prompt")
-      (is (string= "resize-window WxH" (prompt-label *prompt*))
-          ":resize-window prompt label must be \"resize-window WxH\""))))
+  (with-dispatch-prompt ((s :nwindows 1) :resize-window
+                         :label "resize-window WxH"
+                         :context ":resize-window must open a prompt")))
 
 (test dispatch-resize-window-on-submit-resizes-window
   ":resize-window on-submit with a valid WxH resizes the active window."
@@ -89,6 +246,51 @@
             "window width must be 40 after resize")
         (is (= 12 (cl-tmux/model:window-height win))
             "window height must be 12 after resize")))))
+
+(test run-command-line-resize-window-targets-named-window
+  "resize-window -t resizes the named target window instead of the active one."
+  (with-fake-session (s :nwindows 2)
+    (let* ((windows (cl-tmux/model:session-windows s))
+           (active  (first windows))
+           (target  (second windows)))
+      (setf (cl-tmux/model:window-name target) "work")
+      (let ((cl-tmux::*overlay* nil))
+        (is (null (cl-tmux::%run-command-line s "resize-window -x 40 -y 12 -t work"))
+            "resize-window -t must complete without an error overlay")
+        (is (= 20 (cl-tmux/model:window-width active))
+            "active window width must remain unchanged")
+        (is (= 5 (cl-tmux/model:window-height active))
+            "active window height must remain unchanged")
+        (is (= 40 (cl-tmux/model:window-width target))
+            "target window width must be updated")
+        (is (= 12 (cl-tmux/model:window-height target))
+            "target window height must be updated")
+        (is (eq active (cl-tmux/model:session-active-window s))
+            "resize-window -t must not change the active window")))))
+
+(test run-command-line-resize-window-rejects-unsupported-arguments
+  "resize-window rejects unknown flags and positional tokens before resizing."
+  (with-fake-session (s :nwindows 2)
+    (let* ((windows (cl-tmux/model:session-windows s))
+           (active  (first windows))
+           (target  (second windows)))
+      (setf (cl-tmux/model:window-name target) "work")
+      (dolist (command '("resize-window -x 40 -y 12 extra"
+                         "resize-window -x 40 -y 12 -z"
+                         "resize-window -x 40 -y 12 -t work extra"))
+        (let ((cl-tmux::*overlay* nil))
+          (is (null (cl-tmux::%run-command-line s command))
+              "~A must be rejected" command)
+          (is (= 20 (cl-tmux/model:window-width active))
+              "~A must not resize the active window" command)
+          (is (= 5 (cl-tmux/model:window-height active))
+              "~A must not resize the active window" command)
+          (is (= 20 (cl-tmux/model:window-width target))
+              "~A must not resize the target window" command)
+          (is (= 5 (cl-tmux/model:window-height target))
+              "~A must not resize the target window" command)
+          (is (search "unsupported argument" cl-tmux::*overlay*)
+              "~A must explain the unsupported argument" command))))))
 
 (test dispatch-respawn-window-does-not-error
   ":respawn-window restarts panes in the active window without error."
@@ -110,12 +312,8 @@
 
 (test dispatch-set-environment-opens-prompt
   ":set-environment opens a prompt for NAME VALUE."
-  (with-fake-session (s)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :set-environment nil)
-      (is (prompt-active-p) ":set-environment must open a prompt")
-      (is (string= "set-env NAME VALUE" (prompt-label *prompt*))
-          ":set-environment prompt label must be \"set-env NAME VALUE\""))))
+  (with-dispatch-prompt (s :set-environment :label "set-env NAME VALUE"
+                                            :context ":set-environment must open a prompt")))
 
 (test dispatch-set-environment-empty-input-is-noop
   ":set-environment with empty input does not crash."
@@ -137,8 +335,8 @@
       (is (null (sb-ext:posix-getenv name))
           "set-environment -u must unset the variable"))))
 
-(test cmd-set-environment-t-consumes-target-session
-  "set-environment -t target NAME VALUE accepts and ignores the target-session argument."
+(test cmd-set-environment-t-is-rejected
+  "set-environment -t target NAME VALUE is rejected instead of ignoring target-session."
   (with-fake-session (s)
     (let ((name "CLTMUX_TEST_ENV_VAR_T")
           (target "CLTMUX_TEST_ENV_TARGET_T"))
@@ -146,24 +344,45 @@
            (progn
              (ignore-errors (sb-posix:unsetenv name))
              (ignore-errors (sb-posix:unsetenv target))
-             (cl-tmux::%cmd-set-environment-prompt s (list "-t" target name "value"))
-             (is (string= "value" (sb-ext:posix-getenv name))
-                 "set-environment -t must set NAME, not the target-session token")
+             (let ((cl-tmux::*overlay* nil))
+               (cl-tmux::%cmd-set-environment-prompt s (list "-t" target name "value"))
+               (is (search "unsupported" cl-tmux::*overlay*)
+                   "set-environment -t must show an unsupported flag error"))
+             (is (null (sb-ext:posix-getenv name))
+                 "set-environment -t must not set NAME")
              (is (null (sb-ext:posix-getenv target))
-                 "set-environment -t must not treat the target-session as a variable name"))
+                 "set-environment -t must not treat target-session as a variable name"))
         (ignore-errors (sb-posix:unsetenv name))
         (ignore-errors (sb-posix:unsetenv target))))))
 
-(test cmd-set-environment-g-t-u-unsets-variable
-  "set-environment -g -t target -u NAME accepts scope flags while unsetting NAME."
+(test cmd-set-environment-g-t-u-is-rejected
+  "set-environment -g -t target -u NAME is rejected and leaves NAME unchanged."
   (with-fake-session (s)
     (let ((name "CLTMUX_TEST_ENV_VAR_GT_U"))
       (unwind-protect
            (progn
              (sb-posix:setenv name "hello" 1)
-             (cl-tmux::%cmd-set-environment-prompt s (list "-g" "-t" "ignored" "-u" name))
+             (let ((cl-tmux::*overlay* nil))
+               (cl-tmux::%cmd-set-environment-prompt s (list "-g" "-t" "ignored" "-u" name))
+               (is (search "unsupported" cl-tmux::*overlay*)
+                   "set-environment -g -t target -u must show an unsupported flag error"))
+             (is (string= "hello" (sb-ext:posix-getenv name))
+                 "set-environment -g -t target -u must not unset NAME"))
+        (ignore-errors (sb-posix:unsetenv name))))))
+
+(test cmd-set-environment-unknown-flag-is-rejected-before-mutating
+  "set-environment rejects unsupported flags before touching the process environment."
+  (with-fake-session (s)
+    (let ((name "CLTMUX_TEST_ENV_VAR_UNKNOWN_FLAG"))
+      (unwind-protect
+           (progn
+             (ignore-errors (sb-posix:unsetenv name))
+             (let ((*overlay* nil))
+               (cl-tmux::%cmd-set-environment-prompt s (list "-Z" name "value"))
+               (is (search "unsupported argument" *overlay*)
+                   "set-environment -Z must show an unsupported-argument error"))
              (is (null (sb-ext:posix-getenv name))
-                 "set-environment -g -t target -u must unset NAME"))
+                 "set-environment -Z must not set NAME"))
         (ignore-errors (sb-posix:unsetenv name))))))
 
 (test cmd-show-environment-name-shows-value
@@ -179,26 +398,57 @@
         (ignore-errors (sb-posix:unsetenv name))))))
 
 (test cmd-show-environment-s-shell-format
-  "showenv -s NAME displays shell assignment form."
+  "show-environment -s NAME displays shell assignment form."
   (with-fake-session (s)
     (let ((name "CLTMUX_TEST_SHOWENV_S"))
       (unwind-protect
            (let ((*overlay* nil))
              (sb-posix:setenv name "visible" 1)
-             (cl-tmux::%run-command-line s (format nil "showenv -s ~A" name))
+             (cl-tmux::%run-command-line s (format nil "show-environment -s ~A" name))
              (is (search (format nil "~A='visible'; export ~A" name name) *overlay*)
-                 "showenv -s NAME must display shell assignment"))
+                 "show-environment -s NAME must display shell assignment"))
         (ignore-errors (sb-posix:unsetenv name))))))
 
 (test cmd-show-environment-missing-name-marks-unset
-  "showenv NAME marks missing variables as unset."
+  "show-environment NAME marks missing variables as unset."
   (with-fake-session (s)
     (let ((name "CLTMUX_TEST_SHOWENV_MISSING"))
       (ignore-errors (sb-posix:unsetenv name))
       (let ((*overlay* nil))
-        (cl-tmux::%run-command-line s (format nil "showenv ~A" name))
+        (cl-tmux::%run-command-line s (format nil "show-environment ~A" name))
         (is (search (format nil "-~A" name) *overlay*)
-            "showenv NAME must mark missing variables as unset")))))
+            "show-environment NAME must mark missing variables as unset")))))
+
+(test cmd-show-environment-g-is-rejected
+  "show-environment -g NAME is rejected instead of ignoring scope."
+  (with-fake-session (s)
+    (let ((name "CLTMUX_TEST_SHOWENV_G"))
+      (unwind-protect
+           (let ((*overlay* nil))
+             (sb-posix:setenv name "visible" 1)
+             (cl-tmux::%run-command-line s (format nil "show-environment -g ~A" name))
+             (is (search "unsupported" *overlay*)
+                 "show-environment -g must show an unsupported flag error")
+             (is (null (search "visible" *overlay*))
+                 "show-environment -g must not display environment values"))
+        (ignore-errors (sb-posix:unsetenv name))))))
+
+(test cmd-show-environment-unsupported-arguments-are-rejected-before-reading
+  "show-environment rejects unknown flags and extra NAME arguments before showing values."
+  (with-fake-session (s)
+    (let ((name "CLTMUX_TEST_SHOWENV_UNSUPPORTED"))
+      (unwind-protect
+           (progn
+             (sb-posix:setenv name "hidden" 1)
+             (dolist (args (list (list "-Z" name)
+                                 (list name "extra")))
+               (let ((*overlay* nil))
+                 (cl-tmux::%cmd-show-environment-arg s args)
+                 (is (search "unsupported argument" *overlay*)
+                     "show-environment must reject unsupported arguments")
+                 (is (null (search "hidden" *overlay*))
+                     "show-environment must not display values after rejecting arguments"))))
+        (ignore-errors (sb-posix:unsetenv name))))))
 
 (test dispatch-show-hooks-shows-overlay
   ":show-hooks opens an overlay describing registered command hooks."
@@ -214,9 +464,8 @@
           (cl-tmux::*prompt-history* nil))
       (cl-tmux::dispatch-command s :show-prompt-history nil)
       (is (overlay-active-p) ":show-prompt-history must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "no prompt history" text)
-            "overlay must say 'no prompt history' when empty")))))
+      (assert-overlay-contains "no prompt history" *overlay*
+                               "overlay must say 'no prompt history' when empty"))))
 
 (test dispatch-show-prompt-history-populated-shows-entries
   ":show-prompt-history with entries lists them."
@@ -225,9 +474,10 @@
           (cl-tmux::*prompt-history* (list "list-windows" "next-window")))
       (cl-tmux::dispatch-command s :show-prompt-history nil)
       (is (overlay-active-p) ":show-prompt-history must open an overlay")
-      (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-        (is (search "list-windows" text) "overlay must contain 'list-windows'")
-        (is (search "next-window" text) "overlay must contain 'next-window'")))))
+      (assert-overlay-contains "list-windows" *overlay*
+                               "overlay must contain 'list-windows'")
+      (assert-overlay-contains "next-window" *overlay*
+                               "overlay must contain 'next-window'"))))
 
 (test dispatch-show-server-options-shows-overlay
   ":show-server-options opens an overlay with server options."
@@ -251,20 +501,21 @@
 
 (test resolve-layout-name-returns-correct-keywords
   "%resolve-layout-name maps layout name strings to layout keywords."
-  (flet ((check (name kw)
-           (is (eq kw (cl-tmux::%resolve-layout-name name))
-               "%resolve-layout-name ~S must return ~S" name kw)))
-    (check "even-horizontal" :even-horizontal)
-    (check "even-h"          :even-horizontal)
-    (check "even-vertical"   :even-vertical)
-    (check "even-v"          :even-vertical)
-    (check "main-horizontal" :main-horizontal)
-    (check "main-h"          :main-horizontal)
-    (check "main-vertical"   :main-vertical)
-    (check "main-v"          :main-vertical)
-    (check "tiled"           :tiled)
-    (is (null (cl-tmux::%resolve-layout-name "bogus"))
-        "%resolve-layout-name must return NIL for unknown layout names")))
+  (dolist (case '(("even-horizontal" . :even-horizontal)
+                  ("even-h" . :even-horizontal)
+                  ("even-vertical" . :even-vertical)
+                  ("even-v" . :even-vertical)
+                  ("main-horizontal" . :main-horizontal)
+                  ("main-h" . :main-horizontal)
+                  ("main-vertical" . :main-vertical)
+                  ("main-v" . :main-vertical)
+                  ("tiled" . :tiled)))
+    (let ((name (car case))
+          (kw (cdr case)))
+      (is (eq kw (cl-tmux::%resolve-layout-name name))
+          "%resolve-layout-name ~S must return ~S" name kw)))
+  (is (null (cl-tmux::%resolve-layout-name "bogus"))
+      "%resolve-layout-name must return NIL for unknown layout names"))
 
 (test define-layout-name-table-macro-is-defined
   "define-layout-name-table is a defined macro."
@@ -446,12 +697,10 @@
          current '("-t" "target-sess" "#{session_name}"))
         (is (overlay-active-p)
             "display-message -t must open a transient overlay")
-        (let ((text (format nil "~{~A~%~}" (overlay-lines))))
-          (is (search "target-sess" text)
-              "overlay must expand #{session_name} to the TARGET session's name (got ~S)"
-              text)
-          (is (null (search "#{" text))
-              "the #{...} format must be expanded, not shown literally (got ~S)" text))))))
+        (assert-overlay-contains "target-sess" *overlay*
+                                 "display-message -t overlay")
+        (assert-overlay-not-contains "#{" *overlay*
+                                     "display-message -t overlay"))))))
 
 ;;; ── new-session -x / -y ──────────────────────────────────────────────────────
 ;;;
@@ -473,10 +722,10 @@
    This is the fork-free guard for new-session -x/-y dimension parsing."
   (multiple-value-bind (flags positionals)
       (cl-tmux::%parse-command-flags '("-x" "100" "-y" "40" "rest") "sncxy")
-    (is (string= "100" (cdr (assoc #\x flags)))
-        "-x must consume '100' as its value (got ~S)" (cdr (assoc #\x flags)))
-    (is (string= "40" (cdr (assoc #\y flags)))
-        "-y must consume '40' as its value (got ~S)" (cdr (assoc #\y flags)))
+    (is (string= "100" (alist-value #\x flags))
+        "-x must consume '100' as its value (got ~S)" (alist-value #\x flags))
+    (is (string= "40" (alist-value #\y flags))
+        "-y must consume '40' as its value (got ~S)" (alist-value #\y flags))
     ;; The trailing non-flag token must remain a positional; the consumed
     ;; values must NOT leak into positionals (which is what a 'snc' regression
     ;; would cause).

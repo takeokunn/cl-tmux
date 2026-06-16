@@ -5,17 +5,63 @@
 ;;; Defined first so all %cmd-* handlers below (and in the sibling
 ;;; dispatch-commands-*.lisp files) can use them without forward references.
 
-(defmacro with-command-flags ((flags args &optional (value-flags "")) &body body)
-  "Bind FLAGS to the parsed flag alist from ARGS, discarding positionals."
-  (let ((pos (gensym "POS")))
-    `(multiple-value-bind (,flags ,pos) (%parse-command-flags ,args ,value-flags)
-       (declare (ignore ,pos))
-       ,@body)))
-
 (defmacro with-command-flags+pos ((flags pos args &optional (value-flags "")) &body body)
   "Bind FLAGS and POS to the parsed flag alist and positional tokens from ARGS."
   `(multiple-value-bind (,flags ,pos) (%parse-command-flags ,args ,value-flags)
      ,@body))
+
+(defmacro with-command-input ((flags positionals args &optional (value-flags "") &rest options)
+                              &body body)
+  "Parse ARGS, validate FLAGS, and optionally constrain POSITIONALS before BODY."
+  (let* ((allowed-flags-p (not (null (member :allowed-flags options))))
+         (allowed-flags (when allowed-flags-p (getf options :allowed-flags)))
+         (min-positionals-p (not (null (member :min-positionals options))))
+         (min-positionals (when min-positionals-p (getf options :min-positionals)))
+         (max-positionals-p (not (null (member :max-positionals options))))
+         (max-positionals (when max-positionals-p (getf options :max-positionals)))
+         (message (getf options :message "unsupported argument")))
+    `(with-command-flags+pos (,flags ,positionals ,args ,value-flags)
+       (let ((positional-count (length ,positionals)))
+         (if (or (and ,allowed-flags-p
+                      (find-if-not (lambda (flag)
+                                     (member (car flag) ,allowed-flags :test #'char=))
+                                   ,flags))
+                 (and ,min-positionals-p (< positional-count ,min-positionals))
+                 (and ,max-positionals-p (> positional-count ,max-positionals)))
+             (progn
+             (show-overlay ,message)
+             nil)
+             (locally ,@body))))))
+
+(defun %maybe-quote-form (form)
+  "Return FORM unchanged when it is already quoted, otherwise quote it."
+  (if (and (consp form) (eq (car form) 'quote))
+      form
+      (list 'quote form)))
+
+(defmacro define-command-input-handler (name (session args) docstring
+                                        (flags positionals value-flags
+                                         &rest options)
+                                        &body body)
+  "Define a %cmd-* handler with shared command-input plumbing."
+  (let* ((allowed-flags-p (member :allowed-flags options))
+         (allowed-flags (when allowed-flags-p (getf options :allowed-flags)))
+         (min-positionals-p (member :min-positionals options))
+         (min-positionals (when min-positionals-p (getf options :min-positionals)))
+         (max-positionals-p (member :max-positionals options))
+         (max-positionals (when max-positionals-p (getf options :max-positionals)))
+         (message (getf options :message "unsupported argument")))
+    `(defun ,name (,session ,args)
+       ,docstring
+       (with-command-input (,flags ,positionals ,args ,value-flags
+                            :allowed-flags ,(%maybe-quote-form allowed-flags)
+                            ,@(when min-positionals-p
+                                `(:min-positionals ,min-positionals))
+                            ,@(when max-positionals-p
+                                `(:max-positionals ,max-positionals))
+                            :message ,message)
+         (declare (ignorable ,session ,flags ,positionals))
+         ,@body))))
 
 (defun %parse-flag-token (token value-flags remaining-tokens)
   "Parse one flag TOKEN into flag entries, supporting clustered boolean flags:
@@ -55,10 +101,26 @@
                (push token positionals))
         finally (return (values (nreverse flags) (nreverse positionals)))))
 
+(defun %command-prompt-ask-next (session template prompt-list answers idx num-prompts
+                                 single-key initial)
+  "Drive the sequential command-prompt -p flow."
+  (if (>= idx num-prompts)
+      (let ((cmd (%substitute-percent
+                  template
+                  (loop for i below num-prompts collect (aref answers i)))))
+        (%run-command-line session cmd))
+      (let ((label (nth idx prompt-list)))
+        (prompt-start label (if (zerop idx) initial "")
+                      (lambda (input)
+                        (setf (aref answers idx) input)
+                        (%command-prompt-ask-next session template prompt-list answers
+                                                  (1+ idx) num-prompts single-key initial))
+                      :single-key single-key))))
+
 (defun %parse-flag-int (flags char)
   "Return the integer value of flag CHAR in FLAGS, or NIL when the flag is absent.
    Uses parse-integer with :junk-allowed t so non-numeric values also return NIL."
-  (let ((v (cdr (assoc char flags))))
+  (let ((v (%flag-value flags char)))
     (and (stringp v) (parse-integer v :junk-allowed t))))
 
 (defun %resolve-pane-in-window (win target-str)
@@ -98,12 +160,12 @@
 ;;; -- Arg-aware command-line handlers -----------------------------------------
 ;;;
 ;;; Each %cmd-*-arg function handles one tmux command that takes arguments.
-;;; Flag parsing uses with-command-flags / with-command-flags+pos above.
+;;; Flag parsing uses with-command-flags+pos above.
 
 (defun %format-message-log-overlay ()
   "Return the show-messages overlay body for the current server message log."
   (if *message-log*
-      (format nil "~{~A~%~}" (mapcar #'cdr *message-log*))
+      (%overlay-lines-string (mapcar #'cdr *message-log*))
       "(no messages)"))
 
 (defun %cmd-display-message (session args)
@@ -112,54 +174,38 @@
    -l: literal — show ARGS verbatim WITHOUT expanding #{...} format variables.
    -d ms: display duration in milliseconds (overrides display-time option).
    -t target: build the format context from the target's session/window/pane.
-   -c target-client: accepted (consumes its argument) but a no-op — cl-tmux has a
-   single client, so there is no other client to target.  This keeps
-   `display-message -c <client> <fmt>` from mis-reading the client name as part of
-   the format.
-   -p/-v are tolerated (printing to stdout / verbose logging are no-ops in the
-   single-client UI; the message is still shown as an overlay).
    Uses show-transient-overlay so it auto-dismisses after the configured duration."
-  (with-command-flags+pos (flags positionals args "dtc")
+  (with-command-input (flags positionals args "dt"
+                             :allowed-flags '(#\l #\d #\t)
+                             :message "display-message: unsupported argument")
     (let* ((delay-ms   (%parse-flag-int flags #\d))
-           (target-str (cdr (assoc #\t flags)))
-           ;; -t: resolve to a target session/window/pane; fall back to active.
-           (tgt-session session)
-           (tgt-win    (session-active-window session))
-           (tgt-pane   (session-active-pane session)))
-      (when target-str
-        (multiple-value-bind (rs rw rp)
-            (resolve-target *server-sessions* target-str
-                            :current-session session
-                            :current-window  (session-active-window session)
-                            :current-pane    (session-active-pane session))
-          (when rs (setf tgt-session rs))
-          (when rw (setf tgt-win rw))
-          (when rp (setf tgt-pane rp))))
-    (let* ((win       tgt-win)
-           (pane      tgt-pane)
-           (ctx       (cl-tmux/format:format-context-from-session tgt-session win pane))
-           (raw       (format nil "~{~A~^ ~}" positionals))
-           ;; -l: literal — emit ARGS unchanged, skipping #{...} expansion so a
-           ;; message containing literal '#' / '#{' is shown as typed.
-           (text      (if (assoc #\l flags)
-                          raw
-                          (cl-tmux/format:expand-format raw ctx))))
-      (add-message-log text)
-      (if delay-ms
-          ;; Custom delay: temporarily override display-time for this message.
-          (let ((saved (cl-tmux/options:get-option "display-time" 750)))
-            (cl-tmux/options:set-option "display-time" delay-ms)
-            (show-transient-overlay text)
-            (cl-tmux/options:set-option "display-time" saved))
-          (show-transient-overlay text))))))
+           (target-str (%flag-value flags #\t)))
+      (with-target-context (tgt-session tgt-win tgt-pane session target-str)
+        (let* ((ctx       (cl-tmux/format:format-context-from-session tgt-session
+                                                                     tgt-win
+                                                                     tgt-pane))
+               (raw       (format nil "~{~A~^ ~}" positionals))
+               ;; -l: literal — emit ARGS unchanged, skipping #{...} expansion so a
+               ;; message containing literal '#' / '#{' is shown as typed.
+               (text      (if (%flag-present-p flags #\l)
+                              raw
+                              (cl-tmux/format:expand-format raw ctx))))
+          (add-message-log text)
+          (if delay-ms
+              ;; Custom delay: temporarily override display-time for this message.
+              (let ((saved (cl-tmux/options:get-option "display-time" 750)))
+                (cl-tmux/options:set-option "display-time" delay-ms)
+                (show-transient-overlay text)
+                (cl-tmux/options:set-option "display-time" saved))
+              (show-transient-overlay text)))))))
 
 (defun %cmd-show-messages-arg (session args)
-  "show-messages [-JT] [-t target-client]: show server messages.
-   -J, -T, and -t are accepted for tmux compatibility.  cl-tmux currently keeps
-   one server message log and one client, so these flags do not alter selection."
+  "show-messages: show server messages."
   (declare (ignore session))
-  (with-command-flags (flags args "t")
-    (declare (ignore flags))
+  (with-command-input (flags positionals args ""
+                             :allowed-flags '()
+                             :max-positionals 0
+                             :message "show-messages: unsupported argument")
     (show-overlay (%format-message-log-overlay))))
 
 (defun %cmd-swap-pane-arg (session args)
@@ -169,7 +215,10 @@
    -U/-D/-L/-R: swap the active pane with the adjacent pane in that direction.
    -d (keep active) and -Z (keep zoom) are accepted.
    With neither -s/-t nor a direction: swap forward (same as C-b })."
-  (with-command-flags (flags args "st")
+  (with-command-input (flags positionals args "st"
+                             :allowed-flags '(#\d #\U #\D #\L #\R #\Z #\s #\t)
+                             :max-positionals 0
+                             :message "swap-pane: unsupported argument")
     (with-active-window (win session)
       (cond
         ((assoc #\U flags) (swap-pane win :up))
@@ -191,10 +240,12 @@
      etc. in TEMPLATE and the expanded command is executed.
    Without -p: single prompt ':' that runs the typed command line (same as C-b :).
    Without TEMPLATE: input is executed directly as a command line.
+   -I initial: seed the prompt with INITIAL text before editing begins.
    -1: single-key prompt — each prompt accepts ONE keypress (no Enter)."
-  (with-command-flags+pos (flags positionals args "p")
-    (let* ((prompts-str (cdr (assoc #\p flags)))
-           (single-key  (and (assoc #\1 flags) t))   ; -1: one-keypress prompts
+  (with-command-flags+pos (flags positionals args "Ip")
+    (let* ((prompts-str (%flag-value flags #\p))
+           (initial     (or (%flag-value flags #\I) ""))
+           (single-key  (and (%flag-present-p flags #\1) t))   ; -1: one-keypress prompts
            (template    (format nil "~{~A~^ ~}" positionals))
            (prompt-list (when prompts-str
                           (mapcar (lambda (s) (string-trim " " s))
@@ -204,37 +255,27 @@
         ;; -p with template: multi-prompt with %%N substitution
         ((and prompt-list (plusp (length template)))
          (let ((answers (make-array num-prompts :initial-element "")))
-           (labels ((ask-prompt (idx)
-                      (if (>= idx num-prompts)
-                          ;; All prompts answered — substitute %%N → answer and run
-                          (let ((cmd (%substitute-percent
-                                      template
-                                      (loop for i below num-prompts collect (aref answers i)))))
-                            (%run-command-line session cmd))
-                          ;; Ask next prompt
-                          (let ((label (nth idx prompt-list)))
-                            (prompt-start label "" (lambda (input)
-                                                     (setf (aref answers idx) input)
-                                                     (ask-prompt (1+ idx)))
-                                          :single-key single-key)))))
-             (ask-prompt 0))))
+           (%command-prompt-ask-next session template prompt-list answers 0
+                                     num-prompts single-key initial)))
         ;; -p without template: each prompt result is concatenated
         (prompt-list
          (let ((label (first prompt-list)))
-           (prompt-start (or label ": ") ""
+           (prompt-start (or label ": ") initial
                          (lambda (input)
                            (unless (string= input "")
                              (add-prompt-history input)
                              (%run-command-line session input)))
-                         :single-key single-key)))
+                         :single-key single-key
+                         :history *prompt-history*)))
         ;; No -p: standard C-b : interactive prompt
         (t
-         (prompt-start ": " ""
+         (prompt-start ": " initial
                        (lambda (input)
                          (unless (string= input "")
                            (add-prompt-history input)
                            (%run-command-line session input)))
-                       :single-key single-key))))))
+                       :single-key single-key
+                       :history *prompt-history*))))))
 
 (defun %substitute-percent (template args)
   "Expand a command-prompt template: %1..%9 are replaced by the 1st..9th element
@@ -265,13 +306,16 @@
 (defun %cmd-last-pane-arg (session args)
   "last-pane [-Z]: jump to the previously active pane.
    -Z: zoom/unzoom the pane after selecting it (toggle zoom state)."
-  (with-command-flags (flags args "")
+  (with-command-input (flags positionals args ""
+                             :allowed-flags '(#\Z)
+                             :max-positionals 0
+                             :message "last-pane: unsupported argument")
     (let* ((win  (session-active-window session))
            (last (and win (window-last-active win))))
       (when last
         (%select-pane-with-focus win last)
         ;; -Z: toggle zoom on the newly selected pane's window.
-        (when (assoc #\Z flags)
+        (when (%flag-present-p flags #\Z)
           (with-active-window (w session)
             (window-zoom-toggle w)))))))
 
@@ -280,8 +324,11 @@
    Shows a transient overlay: 'has-session: yes' or 'has-session: no'.
    Without -t: checks if there is any session in *server-sessions*."
   (declare (ignore session))
-  (with-command-flags (flags args "t")
-    (let* ((target-name (cdr (assoc #\t flags)))
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\t)
+                             :max-positionals 0
+                             :message "has-session: unsupported argument")
+    (let* ((target-name (%flag-value flags #\t))
            (found       (if target-name
                             (server-find-session target-name)
                             (not (null *server-sessions*)))))

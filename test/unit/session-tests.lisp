@@ -114,6 +114,8 @@
            (w0 (find 0 wins :key #'window-id))
            (w1 (find 1 wins :key #'window-id))
            (w2 (find 2 wins :key #'window-id)))
+      (is-true w0 "precondition: window id=0 must exist before kill")
+      (is-true w2 "precondition: window id=2 must exist before kill")
       ;; Kill the middle window (id=1).
       (cl-tmux/commands:kill-window session w1)
       (let ((remaining (session-windows session)))

@@ -18,51 +18,48 @@
 
 (test key-name-to-bytes-table
   "%key-name-to-bytes maps named, control, meta, and CSI-modified keys to their byte sequences."
-  (flet ((bytes (name) (coerce (cl-tmux/commands::%key-name-to-bytes name) 'list)))
-    (dolist (row '(("Enter"    (13)                    "Enter → CR")
-                   ("Tab"      (9)                     "Tab → HT")
-                   ("Escape"   (27)                    "Escape → ESC")
-                   ("Space"    (32)                    "Space → SP")
-                   ("BSpace"   (127)                   "BSpace → DEL")
-                   ("Up"       (27 91 65)               "Up → ESC [ A")
-                   ("Down"     (27 91 66)               "Down → ESC [ B")
-                   ("F1"       (27 79 80)               "F1 → ESC O P")
-                   ("PageUp"   (27 91 53 126)           "PageUp → ESC [ 5 ~")
-                   ("C-c"      (3)                     "C-c → 0x03")
-                   ("C-a"      (1)                     "C-a → 0x01")
-                   ("C-z"      (26)                    "C-z → 0x1a")
-                   ("C-@"      (0)                     "C-@ → 0x00")
-                   ("M-x"      (27 120)                "M-x → ESC x")
-                   ("C-Up"     (27 91 49 59 53 65)     "C-Up → ESC[1;5A")
-                   ("M-Left"   (27 91 49 59 51 68)     "M-Left → ESC[1;3D")
-                   ("S-Down"   (27 91 49 59 50 66)     "S-Down → ESC[1;2B")
-                   ("C-M-Left" (27 91 49 59 55 68)     "C-M-Left → ESC[1;7D")
-                   ("S-Home"   (27 91 49 59 50 72)     "S-Home → ESC[1;2H")
-                   ("C-F5"     (27 91 49 53 59 53 126) "C-F5 → ESC[15;5~")
-                   ("C-PageUp" (27 91 53 59 53 126)    "C-PageUp → ESC[5;5~")
-                   ("S-Delete" (27 91 51 59 50 126)    "S-Delete → ESC[3;2~")))
-      (destructuring-bind (name expected desc) row
-        (is (equal expected (bytes name)) "~A" desc)))))
+  (dolist (row '(("Enter"    (13)                    "Enter → CR")
+                 ("Tab"      (9)                     "Tab → HT")
+                 ("Escape"   (27)                    "Escape → ESC")
+                 ("Space"    (32)                    "Space → SP")
+                 ("BSpace"   (127)                   "BSpace → DEL")
+                 ("Up"       (27 91 65)               "Up → ESC [ A")
+                 ("Down"     (27 91 66)               "Down → ESC [ B")
+                 ("F1"       (27 79 80)               "F1 → ESC O P")
+                 ("PageUp"   (27 91 53 126)           "PageUp → ESC [ 5 ~")
+                 ("C-c"      (3)                     "C-c → 0x03")
+                 ("C-a"      (1)                     "C-a → 0x01")
+                 ("C-z"      (26)                    "C-z → 0x1a")
+                 ("C-@"      (0)                     "C-@ → 0x00")
+                 ("M-x"      (27 120)                "M-x → ESC x")
+                 ("C-Up"     (27 91 49 59 53 65)     "C-Up → ESC[1;5A")
+                 ("M-Left"   (27 91 49 59 51 68)     "M-Left → ESC[1;3D")
+                 ("S-Down"   (27 91 49 59 50 66)     "S-Down → ESC[1;2B")
+                 ("C-M-Left" (27 91 49 59 55 68)     "C-M-Left → ESC[1;7D")
+                 ("S-Home"   (27 91 49 59 50 72)     "S-Home → ESC[1;2H")
+                 ("C-F5"     (27 91 49 53 59 53 126) "C-F5 → ESC[15;5~")
+                 ("C-PageUp" (27 91 53 59 53 126)    "C-PageUp → ESC[5;5~")
+                 ("S-Delete" (27 91 51 59 50 126)    "S-Delete → ESC[3;2~")))
+    (destructuring-bind (name expected desc) row
+      (is (equal expected (key-name-bytes name)) "~A" desc))))
 
 (test split-key-modifiers-decodes-csi-modifier
   "%split-key-modifiers strips C-/M-/S- prefixes into the CSI modifier code."
-  (flet ((mods (name) (multiple-value-list (cl-tmux/commands::%split-key-modifiers name))))
-    (dolist (c (list (list "Up"      '(1 "Up")   "no modifier -> 1")
-                     (list "C-Up"    '(5 "Up")   "Ctrl -> 5")
-                     (list "M-Left"  '(3 "Left") "Alt -> 3")
-                     (list "S-Down"  '(2 "Down") "Shift -> 2")
-                     (list "C-M-Left" '(7 "Left") "Ctrl+Alt -> 7")
-                     (list "C-S-Up"  '(6 "Up")   "Ctrl+Shift -> 6")))
-      (destructuring-bind (name expected desc) c
-        (is (equal expected (mods name)) "~A" desc)))))
+  (dolist (c (list (list "Up"      '(1 "Up")   "no modifier -> 1")
+                   (list "C-Up"    '(5 "Up")   "Ctrl -> 5")
+                   (list "M-Left"  '(3 "Left") "Alt -> 3")
+                   (list "S-Down"  '(2 "Down") "Shift -> 2")
+                   (list "C-M-Left" '(7 "Left") "Ctrl+Alt -> 7")
+                   (list "C-S-Up"  '(6 "Up")   "Ctrl+Shift -> 6")))
+    (destructuring-bind (name expected desc) c
+      (is (equal expected (split-key-modifiers-values name)) "~A" desc))))
 
 
 (test key-name-to-bytes-modified-does-not-break-control-chars
   "A C-/M- prefix on a plain char still yields the control/meta byte, not a CSI
    sequence (the modified-special path only triggers for named special keys)."
-  (flet ((bytes (name) (coerce (cl-tmux/commands::%key-name-to-bytes name) 'list)))
-    (is (equal '(3)      (bytes "C-c")) "C-c stays the control byte")
-    (is (equal '(27 120) (bytes "M-x")) "M-x stays ESC x")))
+  (is (equal '(3)      (key-name-bytes "C-c")) "C-c stays the control byte")
+  (is (equal '(27 120) (key-name-bytes "M-x")) "M-x stays ESC x"))
 
 (test key-name-to-bytes-unknown-returns-nil
   "%key-name-to-bytes returns NIL for text that is not a key name."
@@ -73,20 +70,20 @@
   "%translate-send-keys parses arguments shell-style and translates each: key
    names become their byte sequences, other args are sent literally.  Spaces
    separate arguments unless quoted (tmux semantics)."
-  (flet ((bytes (s) (coerce (cl-tmux/commands::%translate-send-keys s) 'list)))
-    (is (equal '(13) (bytes "Enter")) "single key → its bytes")
-    (is (equal '(27 91 65 27 91 65 27 91 66) (bytes "Up Up Down"))
-        "all-keys → concatenated (ESC[A ESC[A ESC[B)")
-    ;; tmux semantics: unquoted spaces split args, so they vanish between literals.
-    (is (equal (map 'list #'char-code "echohi") (bytes "echo hi"))
-        "unquoted 'echo hi' → two literal args, no space (tmux-correct)")
-    ;; A literal arg before a key: text then CR.
-    (is (equal (append (map 'list #'char-code "foo") '(13)) (bytes "foo Enter"))
-        "literal arg followed by a key → text then the key's bytes")
-    ;; Quoting preserves the embedded space.
-    (is (equal (append (map 'list #'char-code "echo hi") '(13))
-               (bytes "\"echo hi\" Enter"))
-        "quoted arg keeps its space, then Enter → CR")))
+  (is (equal '(13) (translate-send-keys-bytes "Enter")) "single key → its bytes")
+  (is (equal '(27 91 65 27 91 65 27 91 66) (translate-send-keys-bytes "Up Up Down"))
+      "all-keys → concatenated (ESC[A ESC[A ESC[B)")
+  ;; tmux semantics: unquoted spaces split args, so they vanish between literals.
+  (is (equal (map 'list #'char-code "echohi") (translate-send-keys-bytes "echo hi"))
+      "unquoted 'echo hi' → two literal args, no space (tmux-correct)")
+  ;; A literal arg before a key: text then CR.
+  (is (equal (append (map 'list #'char-code "foo") '(13))
+             (translate-send-keys-bytes "foo Enter"))
+      "literal arg followed by a key → text then the key's bytes")
+  ;; Quoting preserves the embedded space.
+  (is (equal (append (map 'list #'char-code "echo hi") '(13))
+             (translate-send-keys-bytes "\"echo hi\" Enter"))
+      "quoted arg keeps its space, then Enter → CR"))
 
 (test send-keys-to-pane-translates-named-key-to-pty
   "send-keys-to-pane translates a named key (Enter) and writes CR to the PTY."
@@ -296,36 +293,54 @@
    -d, makes the joined pane active.  The emptied source window is removed."
   (multiple-value-bind (sess src-win src-pane dst-win dst-pane) (%join-arg-fixture)
     (declare (ignore dst-pane))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
-      (cl-tmux::%cmd-join-pane-arg sess '("-s" ":src" "-t" ":dst" "-v"))
-      (is (member src-pane (window-panes dst-win))
-          "src-pane must now be in dst-window")
-      (is-false (member src-win (session-windows sess))
-          "emptied src-window must be removed from the session")
-      (is (eq src-pane (window-active-pane dst-win))
-          "the joined pane becomes active (no -d)"))))
+    (with-registered-sessions (("0" sess))
+      (let ((cl-tmux::*dirty* nil))
+        (cl-tmux::%cmd-join-pane-arg sess '("-s" ":src" "-t" ":dst" "-v"))
+        (is (member src-pane (window-panes dst-win))
+            "src-pane must now be in dst-window")
+        (is-false (member src-win (session-windows sess))
+            "emptied src-window must be removed from the session")
+        (is (eq src-pane (window-active-pane dst-win))
+            "the joined pane becomes active (no -d)")))))
 
 (test cmd-join-pane-d-keeps-destination-active
   "join-pane -d moves the pane but leaves the destination's original pane active."
   (multiple-value-bind (sess src-win src-pane dst-win dst-pane) (%join-arg-fixture)
     (declare (ignore src-win))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
-      (cl-tmux::%cmd-join-pane-arg sess '("-s" ":src" "-t" ":dst" "-d"))
-      (is (member src-pane (window-panes dst-win))
-          "src-pane is still moved into dst-window with -d")
-      (is (eq dst-pane (window-active-pane dst-win))
-          "-d keeps the destination's original pane active"))))
+    (with-registered-sessions (("0" sess))
+      (let ((cl-tmux::*dirty* nil))
+        (cl-tmux::%cmd-join-pane-arg sess '("-s" ":src" "-t" ":dst" "-d"))
+        (is (member src-pane (window-panes dst-win))
+            "src-pane is still moved into dst-window with -d")
+        (is (eq dst-pane (window-active-pane dst-win))
+            "-d keeps the destination's original pane active")))))
+
+(test cmd-join-pane-rejects-unimplemented-layout-flags
+  "join-pane rejects layout flags whose behavior is not implemented."
+  (dolist (args '(("-s" ":src" "-t" ":dst" "-b")
+                  ("-s" ":src" "-t" ":dst" "-l" "8")))
+    (multiple-value-bind (sess src-win src-pane dst-win dst-pane) (%join-arg-fixture)
+      (with-registered-sessions (("0" sess))
+        (let ((cl-tmux::*dirty* nil)
+              (*overlay* nil))
+          (is (null (cl-tmux::%cmd-join-pane-arg sess args))
+              "~S must be rejected instead of accepted as a no-op" args)
+          (is (search "unsupported argument" *overlay*)
+              "~S must explain that the argument is unsupported" args)
+          (is (equal (list src-pane) (window-panes src-win))
+              "~S must leave the source window unchanged" args)
+          (is (equal (list dst-pane) (window-panes dst-win))
+              "~S must leave the destination window unchanged" args)
+          (is-false cl-tmux::*dirty*
+                    "~S must not mark the model dirty after rejection" args)))))
 
 (test cmd-join-pane-same-window-is-noop
   "join-pane with src and dst the same window is a no-op (guarded, no crash)."
   (multiple-value-bind (sess src-win src-pane dst-win dst-pane) (%join-arg-fixture)
     (declare (ignore src-pane dst-win dst-pane))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess))))
+    (with-registered-sessions (("0" sess))
       (cl-tmux::%cmd-join-pane-arg sess '("-s" ":src" "-t" ":src"))
       (is (= 1 (length (window-panes src-win)))
           "same-window join leaves the source pane in place")
       (is (member src-win (session-windows sess))
           "the source window is not removed by a same-window no-op"))))
-
