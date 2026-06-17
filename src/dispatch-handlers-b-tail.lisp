@@ -24,7 +24,7 @@
                            (join-pane session src-win src-pane dst-win :h)))))))
 
   ;; ── list-panes ───────────────────────────────────────────────────────────
-  ;; List all panes in the active window (lsp alias).
+  ;; List all panes in the active window.
   (:list-panes
    (with-active-window (win session)
      (show-overlay
@@ -46,14 +46,14 @@
   (:list-commands
    (show-overlay
     (with-output-to-string (s)
-      (dolist (cmd (sort (copy-list cl-tmux/config::*bindable-commands*)
-                         #'string< :key #'symbol-name))
+      (dolist (cmd (%list-command-public-names))
         (format s "~(~A~)~%" cmd)))))
 
   ;; ── kill-server ──────────────────────────────────────────────────────────
   ;; Terminate the server and all sessions.
   (:kill-server
-   (loop for (nil . sess) in *server-sessions*
+   (loop for entry in *server-sessions*
+         for sess = (cdr entry)
          do (dolist (pane (all-panes sess))
               (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))
    (setf *running* nil)

@@ -50,6 +50,18 @@
 (defun %escape-input-continue (session buffer)
   (values nil (make-escape-input-k session buffer)))
 
+(defun %handle-escape-csi-u (session buffer length)
+  (multiple-value-bind (codepoint mod-value) (%csi-u-parse-params buffer length)
+    (let ((key (and codepoint (%csi-u-key-name codepoint mod-value))))
+      (cond
+        ((null key)
+         (unless (%copy-mode-active-p session)
+           (%forward-octets-synchronized session (subseq buffer 0 length))))
+        ((%try-bound-string-key-copy-mode-then-root session key))
+        (t
+         (unless (%copy-mode-active-p session)
+           (%forward-octets-synchronized session (subseq buffer 0 length))))))))
+
 (defun %escape-ss3-introducer-p (buffer length)
   (and (= length 2)
        (= (aref buffer 1) +byte-ss3-o+)))
@@ -124,10 +136,7 @@
 
 (defun %handle-escape-modifier-arrow (session buffer length)
   (let ((key (%modifier-arrow-key-name (aref buffer 4) (aref buffer 5))))
-    (unless (or (%try-bound-string-key session +table-root+ key)
-                (and key
-                     (%copy-mode-active-p session)
-                     (%try-bound-string-key session (%active-copy-mode-table) key)))
+    (unless (and key (%try-bound-string-key-root-then-copy-mode session key))
       (%forward-unless-copy-mode session buffer length)))
   (%ground-values))
 
@@ -135,14 +144,9 @@
   (cond
     ((%copy-mode-active-p session)
      (let* ((byte (aref buffer 1))
-            (meta-name (%meta-key-name byte))
-            (meta-control-name (%meta-control-key-name byte))
-            (entry (or (and meta-name
-                            (key-table-lookup (%active-copy-mode-table)
-                                              meta-name))
-                       (and meta-control-name
-                            (key-table-lookup (%active-copy-mode-table)
-                                              meta-control-name)))))
+            (entry (%key-table-entry-by-candidates
+                    (%active-copy-mode-table)
+                    (list (%meta-key-name byte)))))
        (if entry
            (%run-key-table-binding session entry nil)
            (let ((screen (%active-screen session)))
@@ -240,4 +244,5 @@
          (%ground-values))
         (:two-byte-non-csi (%handle-escape-two-byte-non-csi session buffer))
         (:overflow (%handle-escape-overflow session buffer length))
-        (otherwise (%escape-input-continue session buffer))))
+        (otherwise (%escape-input-continue session buffer)))))
+)

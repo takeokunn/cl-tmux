@@ -50,6 +50,17 @@
                    (subseq cmd 1))
       cmd))
 
+(defun %flag-token-contains-any-p (tok flags)
+  "Return T when TOK contains any character from FLAGS."
+  (and (stringp tok)
+       (some (lambda (flag) (find flag tok :test #'char=)) flags)))
+
+(defun %join-config-tokens (tokens)
+  "Join TOKENS into a single space-separated string.
+   Returns NIL for an empty token list."
+  (when tokens
+    (format nil "~{~A~^ ~}" tokens)))
+
 (defun %leading-flag-token-p (tok &key (allow-single-dash nil))
   "Return T when TOK looks like a leading directive flag token."
   (and (stringp tok)
@@ -71,15 +82,6 @@
              (setf tokens next-tokens)
              (unless continue-p (return))))
   tokens)
-
-(defun %flag-token-contains-any-p (tok chars)
-  "Return T when TOK contains any character in CHARS."
-  (and (stringp tok)
-       (some (lambda (ch) (find ch tok)) chars)))
-
-(defun %join-config-tokens (tokens)
-  "Join TOKENS into a single space-separated string, or NIL for an empty list."
-  (and tokens (format nil "~{~A~^ ~}" tokens)))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defun %resolve-config-directive-names (names)
@@ -289,7 +291,7 @@
        (t nil))))
 
 (define-key-directive-handlers
-  (("bind" "bind-key")
+  (("bind")
    (multiple-value-bind (table key command repeatable note)
        (%parse-bind-key-args args)
      (when command
@@ -297,7 +299,7 @@
        ;; NOTE is the optional -N description, surfaced by list-keys.
        (key-table-bind table key command :repeatable repeatable :note note)
        t)))
-  (("unbind" "unbind-key")
+  (("unbind")
    (multiple-value-bind (table key all-p)
        (%parse-unbind-key-args args)
      (cond

@@ -4,16 +4,16 @@
 ;;;; Loaded by dispatch-core-commands.lisp so the registry stays in one place.
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (load (merge-pathnames #p"dispatch-command-specs-common.lisp"
-                         *load-pathname*))
-  (load (merge-pathnames #p"dispatch-command-specs-core-session.lisp"
-                         *load-pathname*))
-  (load (merge-pathnames #p"dispatch-command-specs-core-window.lisp"
-                         *load-pathname*))
-  (load (merge-pathnames #p"dispatch-command-specs-core-pane.lisp"
-                         *load-pathname*))
-  (load (merge-pathnames #p"dispatch-command-specs-core-misc.lisp"
-                         *load-pathname*)))
+  (let* ((root (or (ignore-errors (asdf:system-source-directory :cl-tmux))
+                   *load-pathname*
+                   *compile-file-pathname*
+                   *default-pathname-defaults*))
+         (src (merge-pathnames #P"src/" root)))
+    (load (merge-pathnames #p"dispatch-command-specs-common.lisp" src))
+    (load (merge-pathnames #p"dispatch-command-specs-core-session.lisp" src))
+    (load (merge-pathnames #p"dispatch-command-specs-core-window.lisp" src))
+    (load (merge-pathnames #p"dispatch-command-specs-core-pane.lisp" src))
+    (load (merge-pathnames #p"dispatch-command-specs-core-misc.lisp" src))))
 
 (defun %dispatch-command-specs-core-from-entries (entries)
   (%dispatch-command-specs-from-entries entries #'%make-dispatch-command-spec))

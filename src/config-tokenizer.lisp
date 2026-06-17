@@ -203,7 +203,7 @@
     :switch-client-next :switch-client-prev :last-session
     :has-session :lock-session :unlock-session
     ;; Key bindings / config
-    :list-keys :source-file :bind-key :unbind-key
+    :list-keys :source-file
     ;; Selection / navigation
     :select-window ; the pressed digit chooses the window
     :select-window-prompt :select-pane-left :select-pane-right
@@ -243,7 +243,8 @@
    This is the user-bindable subset of commands cl-tmux:dispatch-command handles.
    It deliberately EXCLUDES copy-mode-internal commands (:copy-mode-exit,
    :copy-mode-begin-selection, :copy-mode-yank), which are produced by copy-mode
-   interception rather than by key lookup.
+   interception rather than by key lookup.  Prompt-only dispatcher IDs are also
+   excluded from the public command list.
    Updated whenever a new dispatchable command is added to dispatch-handlers.")
 
 (defun %command-keyword (name)

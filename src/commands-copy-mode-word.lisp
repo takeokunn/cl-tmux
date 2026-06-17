@@ -3,7 +3,6 @@
 ;;; ── Copy-mode word / WORD navigation ───────────────────────────────────────
 ;;;
 ;;; This file contains the word-motion core shared by vi w/b/e and W/B/E.
-;;; The line-jump and screen-jump commands remain in commands-copy-mode-nav.lisp.
 
 ;;; ── Row-character helper ─────────────────────────────────────────────────────
 
@@ -29,6 +28,22 @@
    independent of the 'word-separators' option that drives w/b/e."
   (or (char= ch #\Space) (char= ch #\Tab)))
 
+(defun %copy-mode-word-bounds (chars col max-col sep-pred)
+  "Return (values start-col end-col) for the word or separator cell at COL.
+   CHARS is a simple-vector of row characters.  MAX-COL is the last valid index.
+   SEP-PRED classifies separator characters."
+  (if (funcall sep-pred (aref chars col))
+      (values col col)
+      (let ((start col)
+            (end   col))
+        (loop while (and (> start 0)
+                         (not (funcall sep-pred (aref chars (1- start)))))
+              do (decf start))
+        (loop while (and (< end max-col)
+                         (not (funcall sep-pred (aref chars (1+ end)))))
+              do (incf end))
+        (values start end))))
+
 (defun %copy-mode-word-at-cursor (screen)
   "Return the word under the copy-mode cursor as a string.
    The boundary rules match copy-mode-select-word:
@@ -38,24 +53,49 @@
   (when (screen-copy-mode-p screen)
     (let* ((cur (or (screen-copy-cursor screen)
                     (cons (1- (screen-height screen)) 0)))
+             (w   (screen-width screen))
+             (max-col (1- w))
+             (row (max 0 (min (1- (screen-height screen)) (car cur))))
+             (col (max 0 (min max-col (cdr cur))))
+             (chars (%copy-mode-row-chars screen row)))
+        (multiple-value-bind (start end)
+            (%copy-mode-word-bounds chars col max-col #'%word-separator-p)
+          (coerce (subseq chars start (1+ end)) 'string)))))
+
+(defun %copy-mode-select-word-bounds (screen row col)
+  "Return (values start-col end-col) for the word or separator cell at ROW/COL.
+   On a separator, both values are COL so callers can select the single cell."
+  (let* ((width   (screen-width screen))
+         (max-col (1- width))
+         (chars   (%copy-mode-row-chars screen row)))
+    (%copy-mode-word-bounds chars col max-col #'%word-separator-p)))
+
+(defun copy-mode-select-word (screen)
+  "Select the word under the copy-mode cursor (tmux copy-mode `select-word`).
+   Word characters are defined by the same `word-separators` option used by the
+   w/b/e word-motion commands (via %word-separator-p), so selection is
+   consistent with word navigation.  The mark is placed on the first word
+   character and the cursor on the column just past the last word character so
+   that %selection-text extracts exactly the word (the single-row selection
+   reads columns [start-col, end-col) exclusively).  When the cursor is not on a
+   word character, only the single cell under the cursor is selected.  Marks the
+   screen dirty.  No-op when copy mode is inactive."
+  (when (screen-copy-mode-p screen)
+    (let* ((cur (or (screen-copy-cursor screen)
+                    (cons (1- (screen-height screen)) 0)))
            (w   (screen-width screen))
-           (max-col (1- w))
-           (row (max 0 (min (1- (screen-height screen)) (car cur))))
-           (col (max 0 (min max-col (cdr cur))))
-           (char-at (lambda (c)
-                      (cell-char (screen-display-cell screen c row)))))
-      (if (%word-separator-p (funcall char-at col))
-          (string (funcall char-at col))
-          (let ((start col)
-                (end   col))
-            (loop while (and (> start 0)
-                             (not (%word-separator-p (funcall char-at (1- start)))))
-                  do (decf start))
-            (loop while (and (< end max-col)
-                             (not (%word-separator-p (funcall char-at (1+ end)))))
-                  do (incf end))
-            (coerce (subseq (%copy-mode-row-chars screen row) start (1+ end))
-                    'string)))))))
+           (max-row (1- (screen-height screen)))
+           ;; Clamp row and col to the current grid so cell reads never escape.
+           (row (max 0 (min max-row (car cur))))
+           (col (max 0 (min (1- w) (cdr cur)))))
+      (multiple-value-bind (start end)
+          (%copy-mode-select-word-bounds screen row col)
+        (setf (screen-copy-mark   screen) (cons row start)
+              ;; Exclusive end may reach width so the last word cell is kept.
+              (screen-copy-cursor screen) (cons row (min w (1+ end)))))
+      (setf (screen-copy-mark-offset screen) (screen-copy-offset screen)
+            (screen-copy-selecting   screen) t
+            (screen-dirty-p          screen) t))))
 
 (defmacro with-copy-mode-dirty (screen &body body)
   "Execute BODY only when SCREEN is in copy mode; mark the screen dirty on exit."

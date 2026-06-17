@@ -138,22 +138,11 @@
             ;; overrides (bind -T copy-mode-vi ... / bind -T copy-mode ...).
             ;; Legacy Ctrl bytes and single-byte special keys are also probed
             ;; by their canonical tmux name ("C-b", "Enter", "BSpace", ...),
-            ;; matching keys stored by bind-key.
-            (let* ((ch           (code-char byte))
-                   (control-base (%control-byte-key-name byte))
-                   (control-key  (and control-base
-                                       (concatenate 'string "C-" control-base)))
-                   (special-key  (case byte
-                                   (9 "Tab")
-                                   (13 "Enter")
-                                   (127 "BSpace")
-                                   (t nil)))
-                   (entry        (or (key-table-lookup (%active-copy-mode-table) ch)
-                                     (key-table-lookup (%active-copy-mode-table)
-                                                       special-key)
-                                     (key-table-lookup (%active-copy-mode-table)
-                                                       control-key)))
-                   (handled      nil))
+            ;; matching keys stored by the key-binding table.
+            (let ((entry (%key-table-entry-by-candidates
+                          (%active-copy-mode-table)
+                          (%single-byte-key-candidates byte)))
+                  (handled nil))
               (when entry
                 (%run-key-table-binding session entry byte)
                 (setf handled t))

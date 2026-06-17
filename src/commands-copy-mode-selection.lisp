@@ -46,47 +46,54 @@
       (values (min mark-vrow cur-vrow) (max mark-vrow cur-vrow)
               start-col end-col))))
 
-;;; %extract-row-chars reads characters from a rectangular range as a string.
-;;; It accepts either a virtual row (via %copy-mode-virtual-row-string, used by
-;;; the selection path where %selection-bounds now returns virtual rows) or a
-;;; viewport row (used by %copy-row-range-to-paste-buffer in the nav module).
-;;; The selection path uses the virtual-row overload; nav uses viewport overload.
-;;; Pure data extraction - no I/O side effects.
+(defun %extract-chars (count char-at)
+  "Return a COUNT-length string built by calling CHAR-AT on each index.
+   CHAR-AT must return a character for the given 0-based index."
+  (let ((result (make-string count)))
+    (dotimes (i count result)
+      (setf (char result i) (funcall char-at i)))))
 
-(defun %extract-vrow-chars (screen vrow from-col to-col)
-  "Return a string of characters from SCREEN at VIRTUAL row VROW (0=oldest
-   scrollback, increasing toward live grid), columns FROM-COL to TO-COL (exclusive).
-   Inlines the virtual-row lookup so this file has no forward-reference to
-   commands-copy-mode-search.  Pure data extraction."
+(defun %extract-row-chars-from-reader (from-col to-col char-at)
+  "Return a string for the half-open column range [FROM-COL, TO-COL).
+   CHAR-AT is called with each absolute column index and must return a character.
+   Row lookup is intentionally factored out so callers can supply either a
+   virtual-row reader or a viewport-row reader."
   (if (>= from-col to-col)
       ""
-      (let* ((sb    (screen-scrollback screen))
-             (sb-n  (length sb))
-             (n     (- to-col from-col))
-             (result (make-array n :element-type 'character :initial-element #\Space)))
-        (dotimes (i n result)
-          (let ((col (+ from-col i)))
-            (setf (char result i)
-                  (if (< vrow sb-n)
-                      ;; Scrollback: vrow 0 = oldest = nth(sb-n-1), newest = nth(0).
-                      (let ((vec (nth (- sb-n 1 vrow) sb)))
-                        (if (and vec (< col (length vec)))
-                            (cell-char (aref vec col))
-                            #\Space))
-                      ;; Live grid row.
-                      (cell-char (screen-cell screen col (- vrow sb-n))))))))))
+      (%extract-chars
+       (- to-col from-col)
+       (lambda (i)
+         (funcall char-at (+ from-col i))))))
+
+(defun %extract-vrow-chars (screen vrow from-col to-col)
+  "Return a string of characters from SCREEN at virtual row VROW.
+   VROW is numbered from oldest scrollback (0) toward the live grid.  The row
+   lookup is virtual-row aware; extraction itself is shared with viewport rows."
+  (let* ((sb   (screen-scrollback screen))
+         (sb-n (length sb)))
+    (%extract-row-chars-from-reader
+     from-col
+     to-col
+     (lambda (col)
+       (if (< vrow sb-n)
+           ;; Scrollback: vrow 0 = oldest = nth(sb-n-1), newest = nth(0).
+           (let ((vec (nth (- sb-n 1 vrow) sb)))
+             (if (and vec (< col (length vec)))
+                 (cell-char (aref vec col))
+                 #\Space))
+           ;; Live grid row.
+           (cell-char (screen-cell screen col (- vrow sb-n))))))))
 
 (defun %extract-row-chars (screen row from-col to-col)
-  "Return a string of characters from SCREEN at viewport ROW, columns FROM-COL to
-   TO-COL (exclusive).  Reads through screen-display-cell so the projection honours
-   the copy-mode scroll offset.  ROW is a VIEWPORT row (0-based, same units as
-   screen-copy-cursor when copy-offset is 0).  Used by %copy-row-range-to-paste-buffer.
-   The selection path uses %extract-vrow-chars instead.  Pure data extraction."
-  (let* ((n      (- to-col from-col))
-         (result (make-string n)))
-    (dotimes (i n result)
-      (setf (char result i)
-            (cell-char (screen-display-cell screen (+ from-col i) row))))))
+  "Return a string of characters from SCREEN at viewport ROW.
+   ROW is a viewport row (0-based, same units as screen-copy-cursor when the
+   copy offset is 0).  The viewport and virtual-row readers share the same
+   extraction core; only the row lookup differs."
+  (%extract-row-chars-from-reader
+   from-col
+   to-col
+   (lambda (col)
+     (cell-char (screen-display-cell screen col row)))))
 
 (defun %selection-text (screen)
   "Compute the text selected by copy-mode in SCREEN.

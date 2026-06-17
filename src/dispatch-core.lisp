@@ -12,6 +12,8 @@
 ;;;;   - Named-command table macro + table
 ;;;;   - dispatch-prefix-command entry point
 ;;;;
+;;;; Focus event delivery helpers live in dispatch-core-focus.lisp.
+;;;;
 ;;;; The actual command handler rules live in dispatch-handlers.lisp.
 
 ;;; ── Cyclic navigation macro ─────────────────────────────────────────────────
@@ -171,6 +173,32 @@
   `(let ((,win-var (session-active-window ,session)))
      (when ,win-var ,@body)))
 
+;;; -- Focus transition helper --------------------------------------------------
+;;;
+;;; `%cmd-cycle-window` uses this macro before dispatch-core-focus.lisp is loaded,
+;;; so the definition has to live here to be available at compile time.
+
+(defmacro %with-window-focus-transition ((session) &body body)
+  "Run BODY (which may change SESSION's active window by any means) and then
+   deliver focus-out to the previously active window's pane and focus-in to the
+   newly active window's pane. Captures the active window/pane BEFORE BODY and
+   diffs AFTER, so it works for direct session-select-window calls and for
+   lookup-based switches (select-window-by-number, find-window) alike. Returns
+   BODY's primary value."
+  (let ((sess (gensym "SESSION")) (old-win (gensym "OLD-WIN"))
+        (old-pane (gensym "OLD-PANE")) (new-win (gensym "NEW-WIN")))
+    `(let* ((,sess     ,session)
+            (,old-win  (session-active-window ,sess))
+            (,old-pane (and ,old-win (window-active-pane ,old-win))))
+       (prog1 (progn ,@body)
+         (let ((,new-win (session-active-window ,sess)))
+           (unless (eq ,old-win ,new-win)
+             (%notify-pane-focus ,old-pane nil)
+             (%notify-pane-focus (and ,new-win (window-active-pane ,new-win)) t)
+             ;; tmux's session-window-changed event hook: the active window changed.
+             ;; (run-hooks fires both the add-hook and set-hook registries.)
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-window-changed+ ,sess)))))))
+
 ;;; -- Active window/pane pair helper -----------------------------------------
 ;;;
 ;;; Several handlers need both the active window and its active pane so they can
@@ -189,83 +217,6 @@
   "Swap the active pane of SESSION in DIRECTION (:left or :right)."
   (with-active-window (win session)
     (swap-pane win direction)))
-
-;;; -- Focus event delivery (?1004) -------------------------------------------
-;;;
-;;; When a pane's application has enabled focus events, switching the active pane
-;;; must deliver ESC[O (focus lost) to the pane being left and ESC[I (focus
-;;; gained) to the pane being entered.  focus-event-report (terminal layer) owns
-;;; the byte sequence; here we perform the PTY write.  Both are guarded by a live
-;;; fd, so panes without a PTY (fd <= 0, e.g. in tests) are a harmless no-op.
-
-(defun %session-of-window (win)
-  "The session in *server-sessions* whose window list contains WIN, or NIL.
-   Lets chokepoints that only have a window (e.g. %select-pane-with-focus) fire
-   .tmux.conf set-hook command hooks, which run-command-hooks dispatches against a
-   session."
-  (and win (loop for (nil . sess) in *server-sessions*
-                 when (member win (session-windows sess)) return sess)))
-
-(defun %session-of-pane (pane)
-  "The session in *server-sessions* one of whose windows contains PANE, or NIL.
-   Lets %notify-pane-focus fire .tmux.conf set-hook command hooks from a pane."
-  (and pane (loop for (nil . sess) in *server-sessions*
-                  when (loop for w in (session-windows sess)
-                             thereis (member pane (window-panes w)))
-                    return sess)))
-
-(defun %notify-pane-focus (pane focused-p)
-  "Notify PANE of a focus change: fire the pane-focus-in / pane-focus-out hook
-   (independent of ?1004), then send the application its focus-tracking report
-   (ESC[I gained / ESC[O lost) when it enabled focus events and PANE has a live
-   PTY.  A safe no-op when PANE is NIL."
-  (when pane
-    ;; Hook fires on every focus transition, regardless of whether the app
-    ;; enabled ?1004 focus reporting (matches tmux's pane-focus-in/out hooks).
-    ;; run-hooks fires both the add-hook and (via the pane's session) set-hook.
-    (cl-tmux/hooks:run-hooks (if focused-p
-                                 cl-tmux/hooks:+hook-pane-focus-in+
-                                 cl-tmux/hooks:+hook-pane-focus-out+)
-                             pane))
-  (when (and pane (> (pane-fd pane) 0))
-    (let ((seq (cl-tmux/terminal/actions:focus-event-report
-                (pane-screen pane) focused-p)))
-      (when seq
-        (pty-write (pane-fd pane) (babel:string-to-octets seq :encoding :utf-8))))))
-
-(defun %select-pane-with-focus (win new-pane)
-  "Make NEW-PANE the active pane of WIN, delivering focus-out to the previously
-   active pane and focus-in to NEW-PANE (for panes that enabled ?1004).  Used by
-   every interactive pane-switch path so focus tracking stays transparent."
-  (let ((old (window-active-pane win)))
-    (window-select-pane win new-pane)
-    (unless (eq old new-pane)
-      (%notify-pane-focus old nil)
-      (%notify-pane-focus new-pane t)
-      ;; tmux's window-pane-changed event hook: WIN's active pane changed.
-      ;; (run-hooks fires both registries, deriving the session from WIN.)
-      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-pane-changed+ win))))
-
-(defmacro %with-window-focus-transition ((session) &body body)
-  "Run BODY (which may change SESSION's active window by any means) and then
-   deliver focus-out to the previously active window's pane and focus-in to the
-   newly active window's pane.  Captures the active window/pane BEFORE BODY and
-   diffs AFTER, so it works for direct session-select-window calls and for
-   lookup-based switches (select-window-by-number, find-window) alike.  Returns
-   BODY's primary value."
-  (let ((sess (gensym "SESSION")) (old-win (gensym "OLD-WIN"))
-        (old-pane (gensym "OLD-PANE")) (new-win (gensym "NEW-WIN")))
-    `(let* ((,sess     ,session)
-            (,old-win  (session-active-window ,sess))
-            (,old-pane (and ,old-win (window-active-pane ,old-win))))
-       (prog1 (progn ,@body)
-         (let ((,new-win (session-active-window ,sess)))
-           (unless (eq ,old-win ,new-win)
-             (%notify-pane-focus ,old-pane nil)
-             (%notify-pane-focus (and ,new-win (window-active-pane ,new-win)) t)
-             ;; tmux's session-window-changed event hook: the active window changed.
-             ;; (run-hooks fires both the add-hook and set-hook registries.)
-             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-window-changed+ ,sess)))))))
 
 ;;; -- Private command helpers ------------------------------------------------
 
@@ -347,19 +298,23 @@
     (when (and target (not (eq target session)))
       (%switch-to-session target))))
 
-(defun %cmd-split (session orient &key no-focus size start-dir before full)
+(defun %cmd-split (session orient
+                   &key no-focus size start-dir before full input-only input-bytes)
   "Split the active pane of SESSION's active window in tree ORIENT (:h left/right,
    :v top/bottom).  Returns NIL when the pane is too small and no shell is forked.
    NO-FOCUS T skips focus change.  SIZE hints the new pane's extent.
    BEFORE T inserts the new pane before the active pane (split-window -b).
    FULL T spans the whole window (split-window -f).
+   INPUT-ONLY T creates a no-PTY pane and feeds INPUT-BYTES into its screen.
    START-DIR: when non-NIL, the new pane's shell starts in that directory."
   (let* ((win (session-active-window session))
-         (new (window-split win orient :no-focus no-focus :size size
-                                       :start-dir start-dir :before before
-                                       :full full)))
+         (new (window-split session win orient :no-focus no-focus :size size
+                                           :start-dir start-dir :before before
+                                           :full full :input-only input-only
+                                           :input-bytes input-bytes)))
     (when new
-      (start-reader-thread new)
+      (when (> (pane-fd new) 0)
+        (start-reader-thread new))
       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-split-window+ new)
       ;; A split creates a new pane — fire after-new-pane too (was defined but
       ;; never fired).

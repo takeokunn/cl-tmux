@@ -9,8 +9,9 @@
 (declaim (special cl-tmux::*clients*))
 
 (defun %list-command-public-names (&optional name)
-  "Return tmux public command names, optionally filtered by NAME."
-  (let ((names (copy-list *tmux-public-command-names*)))
+  "Return sorted tmux public command names, optionally filtered by NAME."
+  (let ((names (sort (copy-list *tmux-public-command-names*)
+                     #'string<)))
     (if (and name (plusp (length name)))
         (remove-if-not (lambda (command)
                          (string-equal command name))
@@ -18,13 +19,11 @@
         names)))
 
 (defun %format-list-command-entry (format-string command-name)
-  "Format one list-commands row with the command_list_* keys cl-tmux knows."
+  "Format one list-commands row with the public command name."
   (if format-string
       (cl-tmux/format:expand-format
        format-string
-       (list :command-list-name command-name
-             :command-list-alias ""
-             :command-list-usage ""))
+       (list :command-list-name command-name))
       command-name))
 
 (defun %list-row-matches-filter-p (filter line)
@@ -142,7 +141,11 @@
           :client-width cols
           :client-height rows
           :client-tty name))
-        (format nil "~A: ~A [~Ax~A]" name session rows cols))))
+        (format nil "~A: ~A [~Ax~A]"
+                name
+                (or (and session (session-name session)) "")
+                cols
+                rows))))
 
 (defun %format-list-session-entry (target-session fmt)
   "Format one list-sessions row using FMT."
@@ -173,8 +176,7 @@
   "Return list-windows overlay lines and a display flag."
   (let ((sessions (cond
                     (all-p
-                     (loop for target-session in (%registered-sessions-or-current session)
-                           append (%window-targets-for-session target-session)))
+                     (%registered-sessions-or-current session))
                     (target-str
                      (with-target-session (target-session target-str session)
                        (list target-session)))

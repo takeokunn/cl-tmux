@@ -26,12 +26,15 @@
 
 (defstruct (client-conn (:constructor %make-client-conn))
   "One attached client: its socket, a cached binary STREAM and FD, a private
-   keystroke STATE (so each client has independent prefix/copy-mode state), and
-   the ROWS×COLS geometry it last reported."
+   keystroke STATE (so each client has independent prefix/copy-mode state), the
+   ROWS×COLS geometry it last reported, an optional command-stdin target pane,
+   and its private message log."
   socket
   stream
   fd
   state
+  stdin-target
+  (message-log nil)
   (rows 24 :type fixnum)
   (cols 80 :type fixnum))
 
@@ -125,6 +128,15 @@
 
 ;;; ── Per-client message dispatch ─────────────────────────────────────────────
 
+(defun %server-split-window-input-command-p (cmd args)
+  "True when decoded command payload requests split-window -I."
+  (and (member cmd '(:split-window :splitw) :test #'eq)
+       (some (lambda (arg)
+               (and (> (length arg) 1)
+                    (char= (char arg 0) #\-)
+                    (find #\I arg :start 1)))
+             args)))
+
 (defun %handle-multi-client-message (type payload session conn)
   "Dispatch one message of TYPE/PAYLOAD from client CONN.  Returns a disposition:
      :quit           — a command ended the session (loop must stop);
@@ -145,10 +157,16 @@
      (%apply-effective-size session)
      nil)
     ((= type +msg-key+)
-     (case (process-client-keys session payload (client-conn-state conn))
-       (:quit   :quit)
-       (:detach :drop)
-       (t       (setf *dirty* t) nil)))
+     (let ((stdin-target (client-conn-stdin-target conn)))
+       (if stdin-target
+           (progn
+             (pane-feed stdin-target payload)
+             (setf *dirty* t)
+             nil)
+           (case (process-client-keys session payload (client-conn-state conn))
+             (:quit   :quit)
+             (:detach :drop)
+             (t       (setf *dirty* t) nil)))))
     ((= type +msg-command+)
      (multiple-value-bind (cmd target args) (decode-command-payload payload)
        (cond
@@ -158,32 +176,36 @@
          ;; command-forwarding path (`cl-tmux <cmd>` against a running server).
          ;; Reconstruct the token line: <name> [-t target] args..., and dispatch
          ;; through the same %run-command-tokens the command-prompt uses.
-         (cmd
+        (cmd
           (let ((tokens (append (list (string-downcase (symbol-name cmd)))
                                 (when target (list "-t" target))
                                 args))
+                (input-command-p (%server-split-window-input-command-p cmd args))
                 ;; Capture the command's overlay text (display-message, list-*, ...)
                 ;; instead of showing it to interactive clients, so it can be
                 ;; returned to the CLI command client - the `cl-tmux display -p`
                 ;; (and `cl-tmux list-sessions`, ...) stdout path.
                 (cl-tmux/prompt:*overlay* nil))
-            (let ((result
-                    (handler-case
-                        (%run-command-tokens session tokens)
-                      (error (condition)
-                        (format *error-output*
-                                "~&cl-tmux: command failed: ~{~A~^ ~}: ~A~%"
-                                tokens condition)
-                        (force-output *error-output*)
-                        nil))))
-              ;; Reply with the captured output to the requesting client (a no-op
-              ;; for the socket-less test conn, whose stream is NIL).
-              (when (client-conn-stream conn)
-                (ignore-errors
-                  (send-frame (client-conn-stream conn)
-                              (msg-reply (or cl-tmux/prompt:*overlay* "")))))
-              (setf *dirty* t)
-              (when (eq result :quit) :quit))))
+            (let ((*current-client-conn* conn))
+              (let ((result (handler-case
+                               (let ((*defer-split-window-input* input-command-p))
+                                 (%run-command-tokens session tokens))
+                             (error (condition)
+                               (format *error-output*
+                                       "~&cl-tmux: command failed: ~{~A~^ ~}: ~A~%"
+                                       tokens condition)
+                               (force-output *error-output*)
+                               nil))))
+                ;; Reply with the captured output to the requesting client (a no-op
+                ;; for the socket-less test conn, whose stream is NIL).
+                (when (client-conn-stream conn)
+                  (ignore-errors
+                    (send-frame (client-conn-stream conn)
+                                (msg-reply (or cl-tmux/prompt:*overlay* "")))))
+                (when (and input-command-p (cl-tmux/model::pane-p result))
+                  (setf (client-conn-stdin-target conn) result))
+                (setf *dirty* t)
+                (when (eq result :quit) :quit)))))
          (t (setf *dirty* t) nil))))
     (t :drop)))
 

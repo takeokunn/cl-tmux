@@ -70,9 +70,7 @@
   "Handle a complete ESC [ <param> ~ sequence at root."
   (let ((key (%csi-tilde-key buffer length)))
     (cond
-      ((and key (%try-bound-string-key session +table-root+ key)))
-      ((and key (%copy-mode-active-p session)
-            (%try-bound-string-key session (%active-copy-mode-table) key)))
+      ((and key (%try-bound-string-key-root-then-copy-mode session key)))
       ((and (member key '("PageUp" "PageDown") :test #'string=)
             (%copy-mode-active-p session))
        (let ((screen (%active-screen session)))

@@ -4,16 +4,6 @@
 ;;;; Uses selection helpers from commands-copy-mode-selection.lisp and search
 ;;;; helpers from commands-copy-mode-search.lisp.
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (let* ((source (or *load-truename* *compile-file-truename*))
-         (path (and source
-                    (merge-pathnames #P"commands-copy-mode-nav-copy.lisp"
-                                     (make-pathname :name nil
-                                                    :type nil
-                                                    :defaults source)))))
-    (when (probe-file path)
-      (load path))))
-
 ;;; ── Rectangle selection text ────────────────────────────────────────────────
 ;;;
 ;;; When rectangle select is active (screen-copy-rect-select-p), each row in
@@ -161,23 +151,22 @@
         (when (and (stringp option-cmd) (plusp (length option-cmd)))
           option-cmd))))
 
-(defun %do-copy-pipe (screen cmd)
-  "Copy selection to paste buffer and pipe to CMD (or copy-command option if NIL).
-   Shared logic for copy-pipe variants; does NOT exit copy mode."
-  (when (screen-copy-mode-p screen)
-    (let ((text (%get-selection-text screen)))
-      (when (and text (plusp (length text)))
-        (cl-tmux/buffer:add-paste-buffer text)
-        (let ((effective-cmd (%resolve-copy-pipe-cmd cmd)))
-          (when effective-cmd
-            (%run-shell-cmd-with-input effective-cmd text)))))))
+(defun %copy-pipe-text (cmd text)
+  "Copy TEXT to the paste buffer and pipe it to CMD or copy-command.
+   Returns T when TEXT was non-empty and processed."
+  (when (and text (plusp (length text)))
+    (cl-tmux/buffer:add-paste-buffer text)
+    (let ((effective-cmd (%resolve-copy-pipe-cmd cmd)))
+      (when effective-cmd
+        (%run-shell-cmd-with-input effective-cmd text)))
+    t))
 
 (defun copy-mode-copy-pipe (screen cmd)
   "Yank selected text to the paste buffer and pipe it to CMD (a shell string).
    If CMD is empty or NIL the global \"copy-command\" option is used.
    Exits copy mode after yanking (copy-pipe-and-cancel semantics)."
-  (%do-copy-pipe screen cmd)
   (when (screen-copy-mode-p screen)
+    (%copy-pipe-text cmd (%get-selection-text screen))
     (copy-mode-cancel-selection screen)
     (copy-mode-exit screen)))
 
@@ -185,8 +174,8 @@
   "Yank selected text to the paste buffer and pipe it to CMD (a shell string).
    If CMD is empty or NIL the global \"copy-command\" option is used.
    Stays in copy mode after yanking (copy-pipe semantics, no cancel)."
-  (%do-copy-pipe screen cmd)
   (when (screen-copy-mode-p screen)
+    (%copy-pipe-text cmd (%get-selection-text screen))
     (setf (screen-dirty-p screen) t)))
 
 (defun copy-mode-copy-pipe-end-of-line (screen cmd)
@@ -196,19 +185,6 @@
     (let* ((row (car (screen-copy-cursor screen)))
            (col (cdr (screen-copy-cursor screen)))
            (text (%copy-row-range-text screen row col (screen-width screen))))
-      (when (plusp (length text))
-        (cl-tmux/buffer:add-paste-buffer text)
-        (let ((effective-cmd (%resolve-copy-pipe-cmd cmd)))
-          (when effective-cmd
-            (%run-shell-cmd-with-input effective-cmd text)))))
+      (%copy-pipe-text cmd text))
     (copy-mode-cancel-selection screen)
     (copy-mode-exit screen)))
-
-;;; Navigation (word/line/screen jumps) and search are in separate files:
-;;;   commands-copy-mode-word.lisp   — word-forward/backward/end and
-;;;                                    space-forward/backward/end
-;;;   commands-copy-mode-nav.lisp    — line-start/end, cursor-jump macros,
-;;;                                    page/half-page scroll, begin-line-selection,
-;;;                                    copy-end-of-line, copy-line
-;;;   commands-copy-mode-search.lisp — %copy-mode-row-string, find-forward/backward,
-;;;                                    search-forward/backward, search-next/prev

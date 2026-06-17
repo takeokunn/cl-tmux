@@ -15,6 +15,8 @@
   (fd       -1  :type fixnum)         ; master PTY file descriptor
   (pid      -1  :type fixnum)         ; child process PID
   (pipe-fd  nil)                      ; NIL or stream for pipe-pane output tee
+  (pipe-output-stream nil)            ; NIL or stream for command stdout -> pane
+  (pipe-output-thread nil)            ; NIL or copier thread for command stdout
   (pipe-process nil)                  ; NIL or uiop process-info for pipe-pane command
   ;; ── Terminal emulator ─────────────────────────────────────────────────────
   (screen   nil)
@@ -27,6 +29,14 @@
   (tty      "" :type string)          ; slave PTY device path, e.g. /dev/pts/3 (#{pane_tty})
   ;; ── Per-pane option overrides ─────────────────────────────────────────────
   (local-options (make-hash-table :test #'equal) :type hash-table))
+
+(defun pane-pipe-active-p (pane)
+  "Return T when PANE has any pipe-pane direction active."
+  (and pane
+       (or (pane-pipe-fd pane)
+           (pane-pipe-output-stream pane)
+           (pane-pipe-output-thread pane)
+           (pane-pipe-process pane))))
 
 ;;; ── Response-queue drain helper (logic layer) ──────────────────────────────
 ;;;
@@ -68,6 +78,12 @@
    child environment.  Bound by callers that need per-pane env vars (e.g.
    new-window -e VAR=val).  Consumed by %fork-pane and reset to NIL after use.")
 
+(defun %pane-extra-env-strings ()
+  "Return *PANE-EXTRA-ENV* as a list of NAME=VALUE strings."
+  (loop for (name . value) in *pane-extra-env*
+        when (and (stringp name) (stringp value))
+        collect (format nil "~A=~A" name value)))
+
 ;;; ── Shared option-reading helper for pane spawn operations ─────────────────
 ;;;
 ;;; Both %fork-pane and respawn-pane read the same two options and apply the
@@ -83,37 +99,43 @@
     (values (and term (plusp (length term)) term)
             (and cmd  (plusp (length cmd))  cmd))))
 
-(defun %spawn-pty-with-default-options (h w &key start-dir extra-env)
+(defun %spawn-pty-with-default-options (h w &key start-dir default-command environment)
   "Spawn a PTY shell using the configured default-terminal and default-command.
    Returns (values fd pid slave-path).  Shared by %fork-pane and respawn-pane."
-  (multiple-value-bind (term command) (%read-shell-spawn-options)
-    (forkpty-with-shell h w
-                        :start-dir start-dir
-                        :term term
-                        :default-command command
-                        :extra-env extra-env)))
+  (forkpty-with-shell h w
+                      :start-dir start-dir
+                      :default-command default-command
+                      :environment environment))
 
-(defun %fork-pane (id x y w h &key start-dir)
+(defun %fork-pane (session id x y w h &key start-dir)
   "Spawn a shell and build a PTY-backed pane at position (X,Y) sized W×H.
    START-DIR: when non-NIL, the child shell is started in that directory.
-   The TERM environment variable is set from the 'default-terminal' option.
+   SESSION supplies the child environment overlay used for spawn.
    When 'default-command' is set to a non-empty string, it is run via sh -c.
    Extra environment variables may be injected via the *PANE-EXTRA-ENV* dynamic
    variable (alist of (NAME . VALUE)), which is consumed once and reset.
    Returns the new pane.  The PTY file descriptor and child PID are embedded
    in the pane struct; callers should call pty-close on them at teardown."
-  ;; Merge update-environment vars with *pane-extra-env*.
-  ;; *pane-extra-env* entries take precedence (placed last = later setenv).
-  (let ((environment-pairs (append (get-update-environment-vars) *pane-extra-env*)))
-    ;; Consume *pane-extra-env*: reset so a later pane spawn without -e starts clean.
-    (setf *pane-extra-env* nil)
-    (multiple-value-bind (fd pid slave-path)
-        (%spawn-pty-with-default-options h w :start-dir start-dir :extra-env environment-pairs)
-      (make-pane :id id :x x :y y :width w :height h
-                 :fd fd :pid pid :tty (or slave-path "")
-                 :screen (make-screen w h)))))
+  (multiple-value-bind (term command) (%read-shell-spawn-options)
+    (let ((environment (append (session-child-environment session :term term)
+                               (%pane-extra-env-strings))))
+      ;; Consume *pane-extra-env*: reset so a later pane spawn without -e starts clean.
+      (setf *pane-extra-env* nil)
+      (multiple-value-bind (fd pid slave-path)
+          (%spawn-pty-with-default-options h w :start-dir start-dir
+                                                :default-command command
+                                                :environment environment)
+        (make-pane :id id :x x :y y :width w :height h
+                   :fd fd :pid pid :tty (or slave-path "")
+                   :screen (make-screen w h))))))
 
-(defun respawn-pane (pane)
+(defun %make-input-pane (id x y w h)
+  "Build a pane without a backing PTY, used by split-window -I."
+  (make-pane :id id :x x :y y :width w :height h
+             :fd -1 :pid -1 :tty ""
+             :screen (make-screen w h)))
+
+(defun respawn-pane (session pane &key start-dir default-command extra-env)
   "Restart PANE's PTY process, keeping geometry and screen intact.
    Closes the old PTY fd (sending SIGHUP to the child), spawns a fresh shell on
    a new PTY, and updates the pane's FD and PID.  The existing screen is
@@ -126,11 +148,21 @@
     ;; Close the old PTY; ignore errors (process may have already exited).
     (ignore-errors (pty-close old-fd old-pid))
     ;; Open a fresh PTY-backed shell at the same geometry, respecting options.
-    (multiple-value-bind (new-fd new-pid slave-path)
-        (%spawn-pty-with-default-options h w)
-      (setf (pane-fd  pane) new-fd
-            (pane-pid pane) new-pid
-            (pane-tty pane) (or slave-path "")))
+    (multiple-value-bind (term command) (%read-shell-spawn-options)
+      (let ((environment (session-child-environment session
+                                                    :term term
+                                                    :extra-env (append extra-env
+                                                                       *pane-extra-env*))))
+        ;; Consume *pane-extra-env* so respawn matches pane creation semantics.
+        (setf *pane-extra-env* nil)
+        (multiple-value-bind (new-fd new-pid slave-path)
+            (%spawn-pty-with-default-options h w
+                                             :start-dir start-dir
+                                             :default-command (or default-command command)
+                                             :environment environment)
+          (setf (pane-fd pane) new-fd
+                (pane-pid pane) new-pid
+                (pane-tty pane) (or slave-path "")))))
     pane))
 
 ;;; ── pane-reposition ──────────────────────────────────────────────────────────
@@ -170,7 +202,8 @@
   (multiple-value-bind (content-y-offset content-height)
       (%pane-border-status-reservation height)
     (%update-pane-geometry pane x (+ y content-y-offset) width content-height)
-    (set-pty-size (pane-fd pane) content-height width)
+    (when (> (pane-fd pane) 0)
+      (set-pty-size (pane-fd pane) content-height width))
     (let ((screen (pane-screen pane)))
       (with-lock-held ((screen-lock screen))
         (screen-resize screen width content-height)))))

@@ -23,37 +23,58 @@
                     :timeout +config-shell-command-timeout+))
 
 (defun %apply-set-environment-directive (cmd args)
-  "Handle 'set-environment [-u|-r] VAR [VALUE]' config directives.
+  "Handle 'set-environment [-g] [-u|-r] [-t target] VAR [VALUE]' config directives.
    -u unsets the variable (tmux's unset flag); -r is accepted as a synonym for
    unset (cl-tmux has no separate update-environment list to remove from).
-   Returns T when handled, NIL otherwise."
+   -g mutates the process environment, while -t TARGET mutates the named session
+   overlay.  -g and -t are mutually exclusive.  Returns T when handled, NIL
+   otherwise."
   (when (string= cmd "set-environment")
     (let* ((remove-p   nil)
-           (rejected-p nil)
+           (global-p   nil)
+           (target-p   nil)
+           (target-name nil)
            (remaining  args))
       (setf remaining
             (%consume-leading-flag-tokens
              remaining
              (lambda (tok rest)
-               (when (%flag-token-contains-any-p tok '(#\u #\r))
-                 (setf remove-p t))
-               (when (%flag-token-contains-any-p tok '(#\g #\t))
-                 (setf rejected-p t))
-               (when (%flag-token-contains-any-p tok '(#\t))
-                 (when rest (setf rest (cdr rest))))
+               (cond
+                 ((member tok '("-u" "-r") :test #'string=)
+                  (setf remove-p t))
+                 ((string= tok "-g")
+                  (setf global-p t))
+                 ((string= tok "-t")
+                  (setf target-p t
+                        target-name (first rest))
+                  (when rest (setf rest (cdr rest)))))
                (values rest t))))
-      (unless rejected-p
-        (let ((var-name  (first remaining))
-              (var-value (second remaining)))
-          (when var-name
-            (if remove-p
-                ;; Unset: lazy lookup so SB-POSIX need not be loaded before cl-tmux.
-                (let ((fn (%config-posix-fn "UNSETENV")))
-                  (when fn (ignore-errors (funcall fn var-name))))
-                ;; Set: value required for non-remove form.
-                (when var-value
-                  (%config-setenv var-name var-value)))
-            t))))))
+      (cond
+        ((and global-p target-p)
+         nil)
+       (target-p
+         (let ((session (and target-name
+                             (cl-tmux::server-find-session target-name)))
+               (var-name  (first remaining))
+               (var-value (second remaining)))
+           (when (and session var-name)
+             (if remove-p
+                 (cl-tmux/model:session-unset-environment session var-name)
+                 (when var-value
+                   (cl-tmux/model:session-set-environment session var-name var-value)))
+             t)))
+        (t
+         (let ((var-name  (first remaining))
+               (var-value (second remaining)))
+           (when var-name
+             (if remove-p
+                 ;; Unset: lazy lookup so SB-POSIX need not be loaded before cl-tmux.
+                 (let ((fn (%config-posix-fn "UNSETENV")))
+                   (when fn (ignore-errors (funcall fn var-name))))
+                 ;; Set: value required for non-remove form.
+                 (when var-value
+                   (%config-setenv var-name var-value)))
+             t)))))))
 
 ;;; ── if-shell config-time conditional ────────────────────────────────────────
 ;;;

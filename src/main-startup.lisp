@@ -252,7 +252,7 @@
 
 (defun run-list-commands (raw-args)
   "Print tmux public command names to stdout and exit.
-   This covers the no-server query path used by scripts and compatibility tests.
+   This covers the no-server query path used by scripts and list-commands checks.
    The in-session list-commands command remains implemented by the dispatcher."
   (multiple-value-bind (fmt name) (%list-commands-arguments raw-args)
     (dolist (command-name (%list-command-public-names name))

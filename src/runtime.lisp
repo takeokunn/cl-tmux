@@ -129,13 +129,30 @@
 (defvar *message-log* nil
   "A list of (timestamp . text) cons pairs for :show-messages.")
 
+(defvar *current-client-conn* nil
+  "The client connection currently being served by the server-side command path,
+   or NIL when running commands without a specific client context.")
+
+(defun %message-log-limit ()
+  "The effective message-log cap: the `message-limit` option (tmux default 1000),
+   falling back to +max-message-log-entries+ when unset."
+  (or (cl-tmux/options:get-option "message-limit")
+      +max-message-log-entries+))
+
+(defun %append-message-log-entry (log entry)
+  "Prepend ENTRY to LOG and cap the result at the effective message-log limit."
+  (%cap-list (cons entry log) (%message-log-limit)))
+
 (defun add-message-log (msg)
   "Prepend MSG to *message-log*, capping the list at the `message-limit` option
    (tmux default 1000), falling back to +max-message-log-entries+ when unset."
-  (push (cons (get-universal-time) msg) *message-log*)
-  (let ((limit (or (cl-tmux/options:get-option "message-limit")
-                   +max-message-log-entries+)))
-    (setf *message-log* (%cap-list *message-log* limit))))
+  (let ((entry (cons (get-universal-time) msg)))
+    (setf *message-log* (%append-message-log-entry *message-log* entry))
+    (when *current-client-conn*
+      (setf (client-conn-message-log *current-client-conn*)
+            (%append-message-log-entry
+             (client-conn-message-log *current-client-conn*)
+             entry)))))
 
 ;;; -- Prompt history ----------------------------------------------------------
 

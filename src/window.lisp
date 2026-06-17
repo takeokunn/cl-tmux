@@ -160,15 +160,14 @@
   (let* ((axis-floor   (%axis-floor orient))
          ;; Requested cells for the NEW (second) child.
          (requested    (%requested-cells-from-hint hint avail orient))
-         ;; Upper bound: leave at least axis-floor cells for the FIRST child + 1 separator.
-         (upper-bound  (- avail axis-floor 1))
+         ;; Upper bound: leave at least axis-floor cells for the FIRST child.
+         (upper-bound  (- avail axis-floor))
          ;; Clamped size: both halves stay above axis-floor.
-         (clamped-size (max axis-floor (min upper-bound requested)))
-         ;; Ratio measures the FIRST child; new pane is the second.
-         (first-size   (- avail clamped-size 1)))
-    (/ first-size avail)))
+         (clamped-size (max axis-floor (min upper-bound requested))))
+    (/ clamped-size avail)))
 
-(defun window-split (window direction &key no-focus size start-dir before full)
+(defun window-split (session window direction
+                     &key no-focus size start-dir before full input-only input-bytes)
   "Split the active pane of WINDOW along DIRECTION (:h left/right, :v top/bottom).
    Returns the new pane, or NIL when the active pane is too small.
    NO-FOCUS T keeps the current active pane selected (the new pane is created
@@ -179,6 +178,7 @@
    FULL T makes the new pane span the FULL window dimension (split-window -f): the
    split is inserted at the tree ROOT, with the entire existing layout as one child
    and the new pane as the other, instead of subdividing only the active pane.
+   INPUT-ONLY T creates a pane without a PTY and feeds INPUT-BYTES into its screen.
    START-DIR: when non-NIL, the new pane's shell starts in that directory."
   (let ((active (window-active-pane window))
         (tree   (window-tree window)))
@@ -192,40 +192,44 @@
                                            direction)
                        (%split-fits-p active direction)))
           (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
-        (let* ((new-pane (%fork-pane (next-pane-id window) px py pw ph
-                                     :start-dir start-dir))
-               ;; A full split's extent is the whole window along the split axis;
-               ;; a normal split's is the active pane's extent.
-               (avail    (1- (if full
-                                 (%window-axis-extent window direction)
-                                 (%orient-pane-extent active direction))))
-               (new-ratio (if size
-                              (%ratio-from-size-hint size avail direction)
-                              1/2))
-               ;; ANCHOR is the existing node that becomes the new pane's sibling:
-               ;; the whole TREE for a full split, else just the active pane's LEAF.
-               (anchor   (if full tree leaf))
-               ;; When BEFORE is T: new pane is the first child; existing is second.
-               ;; The ratio fraction refers to the FIRST child's share of the extent.
-               ;; With BEFORE: ratio = new-pane's share = new-ratio.
-               ;; Without BEFORE: first=existing, second=new; ratio = (1 - new-ratio).
-               (split    (if before
-                             (make-layout-split direction
-                                                (make-layout-leaf new-pane)
-                                                anchor
-                                                new-ratio)
-                             (make-layout-split direction anchor
-                                                (make-layout-leaf new-pane)
-                                                (- 1 new-ratio)))))
-          (if full
-              ;; Full split: the new split becomes the tree root.
-              (setf (window-tree window) split)
-              (%replace-in-tree window leaf split))
-          (setf (pane-window new-pane) window)
-          (window-relayout-current window)
-          (unless no-focus
-            (setf (window-active window) new-pane))
-          new-pane)))))))
+            (let* ((new-pane (if input-only
+                                 (%make-input-pane (next-pane-id window) px py pw ph)
+                                 (%fork-pane session (next-pane-id window) px py pw ph
+                                             :start-dir start-dir)))
+                   ;; A full split's extent is the whole window along the split axis;
+                   ;; a normal split's is the active pane's extent.
+                   (avail    (1- (if full
+                                     (%window-axis-extent window direction)
+                                     (%orient-pane-extent active direction))))
+                   (new-ratio (if size
+                                  (%ratio-from-size-hint size avail direction)
+                                  1/2))
+                   ;; ANCHOR is the existing node that becomes the new pane's sibling:
+                   ;; the whole TREE for a full split, else just the active pane's LEAF.
+                   (anchor   (if full tree leaf))
+                   ;; When BEFORE is T: new pane is the first child; existing is second.
+                   ;; The ratio fraction refers to the FIRST child's share of the extent.
+                   ;; With BEFORE: ratio = new-pane's share = new-ratio.
+                   ;; Without BEFORE: first=existing, second=new; ratio = (1 - new-ratio).
+                   (split    (if before
+                                 (make-layout-split direction
+                                                    (make-layout-leaf new-pane)
+                                                    anchor
+                                                    new-ratio)
+                                 (make-layout-split direction anchor
+                                                    (make-layout-leaf new-pane)
+                                                    (- 1 new-ratio)))))
+              (if full
+                  ;; Full split: the new split becomes the tree root.
+                  (setf (window-tree window) split)
+                  (%replace-in-tree window leaf split))
+              (setf (pane-window new-pane) window)
+              (window-relayout-current window)
+              (when input-bytes
+                (pane-feed new-pane input-bytes))
+              (unless no-focus
+                (setf (window-active window) new-pane))
+              new-pane)))))))
 
 (defun %status-top-offset ()
   "Rows reserved at the TOP of the window for a top-positioned status bar:
@@ -351,21 +355,33 @@
                          (%build-spine-tree (rest panes))
                          1/2)))
 
+(defun %rotate-panes (panes direction)
+  "Return PANES rotated in DIRECTION.
+   :UP moves the first pane to the end; :DOWN moves the last pane to the front."
+  (ecase direction
+    (:up   (append (rest panes) (list (first panes))))
+    (:down (append (last panes) (butlast panes)))))
+
 (defun window-rotate (window &optional (direction :up))
   "Rotate pane ordering within WINDOW.
    :UP moves the first pane to the end (forward rotation, tmux default).
    :DOWN moves the last pane to the front (reverse rotation).
-   After rotation, the tree is rebuilt from the new panes order and relayouted."
-  (let ((panes (window-panes window)))
+   When WINDOW is zoomed, the saved pre-zoom layout is rotated and the visible
+   zoomed pane stays unchanged until unzoom."
+  (let* ((zoomed-p (window-zoom-p window))
+         (source-tree (or (and zoomed-p (window-zoom-tree window))
+                          (window-tree window)))
+         (panes (if zoomed-p
+                    (and source-tree (layout-leaves source-tree))
+                    (window-panes window))))
     (when (> (length panes) 1)
-      (let ((new-panes
-             (ecase direction
-               (:up   (append (rest panes) (list (first panes))))
-               (:down (cons (car (last panes))
-                            (butlast panes))))))
-        (setf (window-panes window) new-panes
-              (window-tree  window) (%build-spine-tree new-panes))
-        (window-relayout window (window-height window) (window-width window))))))
+      (let ((new-panes (%rotate-panes panes direction)))
+        (if zoomed-p
+            (setf (window-zoom-tree window) (%build-spine-tree new-panes))
+            (progn
+              (setf (window-panes window) new-panes
+                    (window-tree  window) (%build-spine-tree new-panes))
+              (window-relayout window (window-height window) (window-width window))))))))
 
 ;;; ── Zoom helpers — pure tree transforms ─────────────────────────────────────
 ;;;

@@ -53,7 +53,7 @@
   ;; ── Pipe pane / synchronize ────────────────────────────────────────────────
   (:pipe-pane
    (with-active-pane (ap session)
-     (if (pane-pipe-fd ap)
+     (if (pane-pipe-active-p ap)
          (pipe-pane-close ap)
          (prompt-nonempty "pipe-pane command"
                           (lambda (cmd) (pipe-pane-open ap cmd))))))

@@ -16,7 +16,13 @@
   (last-active 0   :type integer)   ; universal-time of last access; updated on touch
   (clients     nil :type list)      ; list of connected client descriptors
   (locked-p    nil :type boolean)   ; T when lock-session has been called
-  (group       nil))                ; NIL or group-id (string/integer); sessions in same group share windows
+  (group       nil)                 ; NIL or group-id (string/integer); sessions in same group share windows
+  (environment (make-hash-table :test #'equal))
+  (environment-unsets nil :type list))
+
+(defun session (&rest initargs)
+  "Compatibility constructor for callers that use the structure name as a function."
+  (apply #'make-session initargs))
 
 (defun session-active-window (session)
   "Return SESSION's active window, falling back to the first window when active is NIL."
@@ -52,7 +58,7 @@
    START-DIR: when non-NIL, the shell starts in that directory.
    The initial pane id respects the pane-base-index option."
   (let* ((pane-base-index (or (cl-tmux/options:get-option "pane-base-index") 0))
-         (pane (%fork-pane pane-base-index 0 0 cols rows :start-dir start-dir)))
+         (pane (%fork-pane nil pane-base-index 0 0 cols rows :start-dir start-dir)))
     (setf (window-panes  window) (list pane)
           (window-active window) pane
           (window-tree   window) (make-layout-leaf pane)
@@ -169,8 +175,13 @@
 
 ;;; ── update-environment support ──────────────────────────────────────────────
 
-(defparameter *update-environment*
+(defparameter +default-update-environment+
   '("DISPLAY" "SSH_AUTH_SOCK" "SSH_CONNECTION" "XAUTHORITY")
+  "Default update-environment variable names used for new sessions and
+   as the reset target when the option is unset.")
+
+(defparameter *update-environment*
+  (copy-list +default-update-environment+)
   "List of environment variable names to propagate into new panes.
    Mirrors tmux's update-environment server option.  Used as a fallback when
    the option string has not been set.")
@@ -181,3 +192,141 @@
   (loop for name in *update-environment*
         for value = (ignore-errors (sb-ext:posix-getenv name))
         when value collect (cons name value)))
+
+(defun %process-posix-fn (name)
+  "Look up NAME in SB-POSIX lazily so the helper stays available on platforms
+   where the package is not loaded yet."
+  (let ((pkg (find-package "SB-POSIX")))
+    (and pkg (find-symbol name pkg))))
+
+(defun process-environment-value (name)
+  "Return the current process environment value for NAME, or NIL."
+  (ignore-errors (sb-ext:posix-getenv name)))
+
+(defun process-environment-names ()
+  "Return the sorted set of variable names present in the current process environment."
+  (let ((names nil))
+    (dolist (entry (ignore-errors (sb-ext:posix-environ)))
+      (let ((name (%environment-entry-name entry)))
+        (when name
+          (pushnew name names :test #'string=))))
+    (sort names #'string<)))
+
+(defun process-set-environment (name value)
+  "Set NAME=VALUE in the current process environment when SB-POSIX is available."
+  (let ((fn (%process-posix-fn "SETENV")))
+    (when fn
+      (ignore-errors (funcall fn name value 1))))
+  value)
+
+(defun process-unset-environment (name)
+  "Remove NAME from the current process environment when SB-POSIX is available."
+  (let ((fn (%process-posix-fn "UNSETENV")))
+    (when fn
+      (ignore-errors (funcall fn name))))
+  name)
+
+(defun %environment-entry-name (entry)
+  "Return the NAME component of a NAME=VALUE environment ENTRY."
+  (let ((eq-pos (position #\= entry)))
+    (when eq-pos
+      (subseq entry 0 eq-pos))))
+
+(defun %environment-entry-value (entry)
+  "Return the VALUE component of a NAME=VALUE environment ENTRY."
+  (let ((eq-pos (position #\= entry)))
+    (when eq-pos
+      (subseq entry (1+ eq-pos)))))
+
+(defun %environment-strings-to-table (entries)
+  "Convert an environment ENTRY list to a hash table keyed by NAME."
+  (let ((table (make-hash-table :test #'equal)))
+    (dolist (entry entries table)
+      (let ((name (%environment-entry-name entry))
+            (value (%environment-entry-value entry)))
+        (when (and name value)
+          (setf (gethash name table) value))))))
+
+(defun %environment-table-to-list (table)
+  "Convert TABLE into a sorted list of NAME=VALUE strings."
+  (let (entries)
+    (maphash (lambda (name value)
+               (push (format nil "~A=~A" name value) entries))
+             table)
+    (sort entries #'string<
+          :key (lambda (entry)
+                 (%environment-entry-name entry)))))
+
+(defun session-environment-value (session name)
+  "Return SESSION's effective value for NAME.
+   Returns two values: the string value or NIL, and a source keyword:
+     :unset   — explicitly removed from the session overlay
+     :session — set in the session overlay
+     :process — inherited from the current process environment
+     NIL      — not present anywhere relevant."
+  (cond
+    ((member name (session-environment-unsets session) :test #'string=)
+     (values nil :unset))
+    (t
+     (multiple-value-bind (value present-p)
+         (gethash name (session-environment session))
+       (when present-p
+         (values value :session))))
+    (t
+     (let ((value (process-environment-value name)))
+       (if value
+           (values value :process)
+           (values nil nil))))))
+
+(defun session-environment-names (session)
+  "Return the sorted set of environment names relevant to SESSION."
+  (let ((names (mapcar #'car (get-update-environment-vars))))
+    (maphash (lambda (name value)
+               (declare (ignore value))
+               (pushnew name names :test #'string=))
+             (session-environment session))
+    (dolist (name (session-environment-unsets session))
+      (pushnew name names :test #'string=))
+    (sort names #'string<)))
+
+(defun session-set-environment (session name value)
+  "Store NAME=VALUE in SESSION's environment overlay."
+  (setf (session-environment-unsets session)
+        (delete name (session-environment-unsets session) :test #'string=))
+  (setf (gethash name (session-environment session)) value)
+  session)
+
+(defun session-unset-environment (session name)
+  "Record NAME as explicitly unset in SESSION's environment overlay."
+  (remhash name (session-environment session))
+  (pushnew name (session-environment-unsets session) :test #'string=)
+  session)
+
+(defun session-child-environment (session &key term extra-env)
+  "Return a full child environment snapshot for SESSION.
+   The merge order is:
+     1. current process environment
+     2. update-environment variables from the current process
+     3. SESSION overlay sets / unsets
+     4. TERM, when supplied
+     5. EXTRA-ENV, when supplied
+   SESSION may be NIL for bootstrap or pure geometry helpers; in that case the
+   session overlay step is skipped.
+   The result is a flat list of NAME=VALUE strings suitable for RUN-PROGRAM."
+  (let ((table (%environment-strings-to-table (sb-ext:posix-environ))))
+    (dolist (pair (get-update-environment-vars))
+      (setf (gethash (car pair) table) (cdr pair)))
+    (when session
+      (maphash (lambda (name value)
+                 (setf (gethash name table) value))
+               (session-environment session))
+      (dolist (name (session-environment-unsets session))
+        (remhash name table)))
+    (when (and term (plusp (length term)))
+      (setf (gethash "TERM" table) term))
+    (dolist (pair extra-env)
+      (when (and (consp pair)
+                 (stringp (car pair))
+                 (stringp (cdr pair)))
+        (setf (gethash (car pair) table) (cdr pair))))
+    (%environment-table-to-list table)))

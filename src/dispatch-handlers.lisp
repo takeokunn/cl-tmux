@@ -7,8 +7,9 @@
 ;;;; keyword dispatch symbol to an action on the current session.
 ;;;;
 ;;;; Macros and helper functions used by these handlers are defined in
-;;;; dispatch-core.lisp.  The generated dispatch-command function is the
-;;;; central entry point for ALL prefix-key command dispatch.
+;;;; dispatch-core.lisp and dispatch-handlers-support.lisp.  The generated
+;;;; dispatch-command function is the central entry point for ALL prefix-key
+;;;; command dispatch.
 ;;;;
 ;;;; Copy-mode command handlers live in dispatch-handlers-copy-mode.lisp.
 ;;;; Paste-buffer command handlers live in dispatch-handlers-buffer.lisp.
@@ -34,7 +35,6 @@
              `(write-string (cl-tmux/options:show-options ,scope-arg) stream)
              `(write-string (cl-tmux/options:show-options) stream))))))
 
-(define-show-options-handler %show-window-options  "window")
 (define-show-options-handler %show-session-options "session")
 (define-show-options-handler %show-server-options  "server"  :server)
 
@@ -87,51 +87,6 @@
 (defconstant +buffer-preview-length+ 40
   "Maximum characters shown in a paste-buffer preview listing.")
 
-(defun %confirm-prompt (msg ok-fn)
-  "Show MSG as a y/n prompt; call OK-FN (no args) when the user types y/Y."
-  (prompt-start msg ""
-                (lambda (input)
-                  (when (string-equal input "y")
-                    (funcall ok-fn)))
-                :single-key t))
-
-(defun prompt-nonempty (label callback &key history)
-  "Start a prompt labelled LABEL; call CALLBACK with the input only when non-empty."
-  (prompt-start label ""
-                (lambda (input)
-                  (unless (string= input "")
-                    (funcall callback input)))
-                :history history))
-
-(defun prompt-integer (label callback)
-  "Start a prompt labelled LABEL; call CALLBACK with the parsed integer when the
-   input parses as a valid integer.  Silently ignores non-numeric input."
-  (prompt-start label ""
-                (lambda (input)
-                  (let ((n (ignore-errors (parse-integer input))))
-                    (when n (funcall callback n))))))
-
-(defun %byte-vector (byte)
-  "Return a one-byte unsigned vector containing BYTE."
-  (make-array 1 :element-type '(unsigned-byte 8) :initial-element byte))
-
-(defun %copy-mode-search-prompt (session prompt-char search-fn)
-  "Open a copy-mode search prompt with PROMPT-CHAR prefix and call SEARCH-FN
-   on the entered term when non-empty."
-  (let ((screen (%active-screen session)))
-    (when screen
-      (prompt-nonempty prompt-char
-                       (lambda (term) (funcall search-fn screen term))))))
-
-(defun %show-jk-menu (title items &optional empty-msg)
-  "Show ITEMS as an interactive j/k menu titled TITLE.
-   When ITEMS is empty and EMPTY-MSG is given, show EMPTY-MSG as a plain overlay instead."
-  (if (and (null items) empty-msg)
-      (show-overlay empty-msg)
-      (progn
-        (show-menu (make-menu :title title :items items :selected-index 0))
-        (show-overlay (%format-menu *active-menu*)))))
-
 ;;; ── Copy-mode dispatch table helper ─────────────────────────────────────────
 ;;;
 ;;; 45 copy-mode handlers follow one uniform contract:
@@ -147,9 +102,9 @@
                  `(,(first entry) (%copy-mode-call session #',(second entry))))
                entries)))
 
-(defun %copy-mode-cursor-fn (direction)
-  "Return a one-arg function that moves the copy-mode cursor in DIRECTION."
-  (lambda (s) (copy-mode-move-cursor s direction)))
+(defun %copy-mode-call-with-null-arg (session fn)
+  "Call FN with SESSION and a trailing NIL argument via %COPY-MODE-CALL."
+  (%copy-mode-call session (lambda (s) (funcall fn s nil))))
 
 (define-command-handlers
   (:detach :detach)
@@ -178,7 +133,7 @@
    (with-active-window (win session)
      (let ((ap (window-active-pane win)))
        (when ap
-         (let ((new-pane (respawn-pane ap)))
+         (let ((new-pane (respawn-pane session ap)))
            (start-reader-thread new-pane))))))
   (:rename-window
    (with-active-window (win session)
@@ -200,31 +155,23 @@
   (:copy-mode-refresh-from-pane (values))
   ;; copy-pipe variants pass an extra NIL arg the standard path cannot encode.
   (:copy-mode-copy-pipe-and-cancel
-   (%copy-mode-call session (lambda (s) (copy-mode-copy-pipe s nil))))
+   (%copy-mode-call-with-null-arg session #'copy-mode-copy-pipe))
   (:copy-mode-copy-pipe-no-cancel
-   (%copy-mode-call session (lambda (s) (copy-mode-copy-pipe-no-cancel s nil))))
+   (%copy-mode-call-with-null-arg session #'copy-mode-copy-pipe-no-cancel))
   (:copy-mode-copy-pipe-end-of-line-and-cancel
-   (%copy-mode-call session (lambda (s) (copy-mode-copy-pipe-end-of-line s nil))))
+   (%copy-mode-call-with-null-arg session #'copy-mode-copy-pipe-end-of-line))
   ;; search prompts open an interactive prompt — they don't go through %copy-mode-call
   (:copy-mode-search-forward-prompt
    (%copy-mode-search-prompt session "/" #'copy-mode-search-forward))
   (:copy-mode-search-backward-prompt
    (%copy-mode-search-prompt session "?" #'copy-mode-search-backward))
-  ;; stubs: handled via extra-args in %dispatch-send-keys-X so the table lookup doesn't miss
-  (:copy-mode-search-forward-text  (values))
-  (:copy-mode-search-backward-text (values))
   ;; choose-buffer renders a live buffer listing overlay
   (:copy-mode-choose-buffer
    (show-built-overlay (stream)
-     (let ((buffers (cl-tmux/buffer:list-paste-buffers)))
-       (if buffers
-           (loop for buffer in buffers
-                 for index from 0
-                 do (format stream "~D: ~A~%"
-                            index
-                            (subseq buffer 0 (min +buffer-preview-length+
-                                                  (length buffer)))))
-           (format stream "(no paste buffers)~%")))))
+     (write-string (%paste-buffer-listing-string
+                    (cl-tmux/buffer:list-paste-buffers)
+                    :preview-length +buffer-preview-length+)
+                   stream)))
 
   ;; ── Resize commands ────────────────────────────────────────────────────────
   (:resize-left   (resize-pane (session-active-window session) :left))
@@ -431,10 +378,13 @@
   (:show-options
    (show-overlay (cl-tmux/options:show-options)))
   ;; show-window-options / show-session-options / show-server-options:
-  ;; per-scope option listing.  cl-tmux uses a flat global store; these show
-  ;; it with a scope header to match real tmux output format.
-  ;; The three bodies are generated by define-show-options-handler above.
-  (:show-window-options  (%show-window-options))
+  ;; per-scope option listing with tmux-style headers.
+  (:show-window-options
+   (with-active-window (win session)
+     (show-overlay
+      (with-output-to-string (stream)
+        (format stream "# window options~%")
+        (write-string (cl-tmux/options:show-window-options win) stream)))))
   (:show-session-options (%show-session-options))
   (:show-server-options  (%show-server-options))
   (:confirm-before

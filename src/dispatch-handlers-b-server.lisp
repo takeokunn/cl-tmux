@@ -16,8 +16,8 @@
      (format s "clients~%")
      (if *server-sessions*
          (loop for (name . sess) in *server-sessions*
-               do (format s "  ~A: ~Dx~D~%"
-                          name *term-cols* *term-rows*))
+               do (format s "  ~A: ~A  ~Dx~D~%"
+                          name (session-name sess) *term-cols* *term-rows*))
          (format s "  0: local  ~A  ~Dx~D~%"
                  (session-name session) *term-cols* *term-rows*))))
   (:suspend-client
@@ -29,7 +29,8 @@
    (ignore-errors (sb-posix:kill (sb-posix:getpid) sb-posix:sigtstp)))
   (:lock-server
    ;; Lock all sessions, not just the current one.
-   (loop for (nil . sess) in *server-sessions*
+   (loop for entry in *server-sessions*
+         for sess = (cdr entry)
          do (setf (session-locked-p sess) t)))
 
   ;; ── Environment ───────────────────────────────────────────────────────────
@@ -42,7 +43,7 @@
                              (name  (first parts))
                              (value (format nil "~{~A~^ ~}" (rest parts))))
                         (when (and name (plusp (length name)))
-                          (%call-sbcl-posix "SETENV" name value 1)
+                          (cl-tmux/model:session-set-environment session name value)
                           (%overlayf "set ~A=~A" name value))))))
 
   ;; ── resize-window ────────────────────────────────────────────────────────
@@ -74,7 +75,7 @@
    (with-active-window (win session)
      (let ((panes (window-panes win)))
        (dolist (pane panes)
-         (let ((new-pane (respawn-pane pane)))
+         (let ((new-pane (respawn-pane session pane)))
            (start-reader-thread new-pane))))))
 
   ;; ── Prompt history ───────────────────────────────────────────────────────

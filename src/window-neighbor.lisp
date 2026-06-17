@@ -96,6 +96,8 @@
   "Return the pane adjacent to PANE in DIRECTION (:left :right :up :down), or NIL.
    Among edge-touching candidates, returns the one whose center is closest to
    PANE's center along the perpendicular axis."
+  (when (window-zoom-p window)
+    (return-from pane-neighbor nil))
   (let* ((filter     (cdr (assoc direction *neighbor-filters*)))
          (center-fn  (cdr (assoc direction *neighbor-center-fn*)))
          (candidates (remove pane (window-panes window)))

@@ -15,16 +15,9 @@
   "Show an overlay listing all paste buffers with name, length, and preview.
    Lines read `name: NN bytes: preview`, matching tmux's named-buffer listing."
   (show-overlay
-   (with-output-to-string (stream)
-     (let ((buffers (cl-tmux/buffer:list-paste-buffers-with-names)))
-       (if buffers
-           (loop for (name . text) in buffers
-                 do (format stream "~A: ~D bytes: ~A~%"
-                            name
-                            (length text)
-                            (subseq text 0 (min +buffer-preview-length+
-                                                (length text)))))
-           (format stream "(no paste buffers)~%"))))))
+   (%named-paste-buffer-listing-string
+    (cl-tmux/buffer:list-paste-buffers-with-names)
+    :preview-length +buffer-preview-length+)))
 
 ;;; -- %cmd-show-buffer --------------------------------------------------------
 
@@ -39,14 +32,8 @@
   "Show a numbered list of paste buffers; prompt for an index and paste it."
   (let ((buffers (cl-tmux/buffer:list-paste-buffers)))
     (if buffers
-        (let ((listing
-                (with-output-to-string (stream)
-                  (loop for buffer in buffers
-                        for index from 0
-                        do (format stream "~D: ~A~%"
-                                   index
-                                   (subseq buffer 0 (min +buffer-preview-length+
-                                                         (length buffer))))))))
+        (let ((listing (%paste-buffer-listing-string buffers
+                                                     :preview-length +buffer-preview-length+)))
           (show-overlay listing)
           (prompt-integer "choose buffer (index)"
                           (lambda (idx)

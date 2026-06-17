@@ -5,6 +5,12 @@
 ;;; Escape-sequence detection for X10 and SGR mouse input lives here so the
 ;;; main escape decoder can stay focused on the control-flow around dispatch.
 
+(defun %parse-sgr-unsigned-decimal (string)
+  "Parse STRING as an unsigned decimal number, rejecting empty or junk input."
+  (when (and (plusp (length string))
+             (every #'digit-char-p string))
+    (parse-integer string)))
+
 (defun %parse-sgr-mouse (buffer length)
   "Parse an SGR mouse sequence from BUFFER (of LENGTH bytes).
    Expected: ESC [ < Pb ; Px ; Py M|m
@@ -23,11 +29,12 @@
                                     for semi  = (position #\; params-str :start start)
                                     collect (subseq params-str start (or semi (length params-str)))
                                     while semi)))
-      (when (= (length parts) 3)
-        (let ((btn (parse-integer (first  parts) :junk-allowed t))
-              (col (parse-integer (second parts) :junk-allowed t))
-              (row (parse-integer (third  parts) :junk-allowed t)))
-          (when (and (integerp btn) (integerp col) (integerp row))
+      (when (and (member final-char '(#\M #\m) :test #'char=)
+                 (= (length parts) 3))
+        (let ((btn (%parse-sgr-unsigned-decimal (first  parts)))
+              (col (%parse-sgr-unsigned-decimal (second parts)))
+              (row (%parse-sgr-unsigned-decimal (third  parts))))
+          (when (and btn col row (plusp col) (plusp row))
             ;; SGR coords are 1-based; convert to 0-based
             (values btn (1- col) (1- row) release-p)))))))
 

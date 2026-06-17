@@ -42,42 +42,59 @@
       (t
        (funcall k :global nil)))))
 
-(defun %scope-unset (name scope target)
-  "Remove NAME from the option store identified by SCOPE / TARGET."
+(defun %scope-option-accessors (scope target)
+  "Return getter, setter, and remover closures for SCOPE / TARGET."
   (ecase scope
-    (:pane   (remhash name (cl-tmux/model:pane-local-options target)))
-    (:window (remhash name (cl-tmux/model:window-local-options target)))
-    (:global (remhash name cl-tmux/options:*global-options*))))
-
-(defun %append-option-value (name current value)
-  "Combine CURRENT and VALUE for NAME using the option-specific append rule."
-  (cl-tmux/options:append-option-value name current value))
+    (:pane
+     (values (lambda (name &optional default)
+               (declare (ignore default))
+               (cl-tmux/options:get-option-for-pane name target))
+             (lambda (name value)
+               (cl-tmux/options:set-option-for-pane name value target))
+             (lambda (name)
+               (remhash name (cl-tmux/model:pane-local-options target)))))
+    (:window
+     (values (lambda (name &optional default)
+               (declare (ignore default))
+               (cl-tmux/options:get-option-for-window name target))
+             (lambda (name value)
+               (cl-tmux/options:set-option-for-window name value target))
+             (lambda (name)
+               (remhash name (cl-tmux/model:window-local-options target)))))
+    (:global
+     (values (lambda (name &optional default)
+               (cl-tmux/options:get-option name default))
+             (lambda (name value)
+               (cl-tmux/options:set-option name value))
+             (lambda (name)
+               (remhash name cl-tmux/options:*global-options*))))))
 
 (defun %scope-append (name value scope target)
   "Append VALUE to option NAME in the store identified by SCOPE / TARGET.
    Style options (e.g. status-style) join with ',' via append-option-value."
-  (ecase scope
-    (:pane
-     (cl-tmux/options:set-option-for-pane
-      name (%append-option-value name (cl-tmux/options:get-option-for-pane name target) value)
-      target))
-    (:window
-     (cl-tmux/options:set-option-for-window
-      name (%append-option-value name (cl-tmux/options:get-option-for-window name target) value)
-      target))
-    (:global
-     (cl-tmux/options:set-option
-      name (%append-option-value name (cl-tmux/options:get-option name nil) value)))))
+  (multiple-value-bind (getter setter remover)
+      (%scope-option-accessors scope target)
+    (declare (ignore remover))
+    (funcall setter
+             name
+             (cl-tmux/options:append-option-value name (funcall getter name nil) value))))
 
 (defun %scope-set (name value scope target)
   "Store VALUE for option NAME in the store identified by SCOPE / TARGET."
-  (ecase scope
-    (:pane   (cl-tmux/options:set-option-for-pane name value target))
-    (:window (cl-tmux/options:set-option-for-window name value target))
-    (:global (cl-tmux/options:set-option name value))))
+  (multiple-value-bind (getter setter remover)
+      (%scope-option-accessors scope target)
+    (declare (ignore getter remover))
+    (funcall setter name value)))
+
+(defun %scope-unset (name scope target)
+  "Remove NAME from the option store identified by SCOPE / TARGET."
+  (multiple-value-bind (getter setter remover)
+      (%scope-option-accessors scope target)
+    (declare (ignore getter setter))
+    (funcall remover name)))
 
 (defun %cmd-set-option (session args)
-  "set / set-option [-aFgopsuw] [-t target] <name> <value...>: set an option.
+  "set-option [-aFgopsuw] [-t target] <name> <value...>: set an option.
    Scope: -p pane-local, -w window-local, -g global (default), -s → global.
    Operation: -u unset, -a append, -o only-if-unset, default: set.
    -F expands #{...} in VALUE before storage (one-shot format resolution)."
@@ -109,13 +126,13 @@
                ;; Side-effects for special options (prefix/status/escape-time etc.)
                ;; always run after the operation, even when -o skips the write.
                ;; Passes RAW value — side-effect parsers expect strings, not coerced types.
-               (cl-tmux/config:%apply-option-side-effects name value)))))))))
+               (cl-tmux/config:%apply-option-side-effects name value (assoc #\u flags))))))))))
 
 (defun %cmd-set-window-option (session args)
-  "set-window-option / setw: like set-option but defaults to WINDOW scope (tmux
-   `setw` is `set -w`).  Prepends -w so a bare `setw mode-keys vi` is window-local;
-   an explicit -g still wins (global), since %cmd-set-option's (and windowp (not
-   globalp)) gate lets -g override the injected -w."
+  "set-window-option: like set-option but defaults to WINDOW scope.  Prepends
+   -w so a bare `set-window-option mode-keys vi` is window-local; an explicit
+   -g still wins (global), since %cmd-set-option's (and windowp (not globalp))
+   gate lets -g override the injected -w."
   (%cmd-set-option session (cons "-w" args)))
 
 (defun %show-options-scope (flags default-scope)
@@ -136,15 +153,25 @@
       (string-right-trim '(#\Newline #\Return)
                          (subseq line (length prefix))))))
 
+(defun %show-options-with-hooks (text flags)
+  "Append command-hook listings to TEXT when FLAGS contains -H.
+   tmux's -H flag includes hooks in show-options output; this implementation
+   reuses the existing command-hook formatter so the display path stays aligned."
+  (if (assoc #\H flags)
+      (if (plusp (length text))
+          (format nil "~A~%~A" text (cl-tmux/hooks:describe-command-hooks))
+          (cl-tmux/hooks:describe-command-hooks))
+      text))
+
 (defun %cmd-show-options* (session args default-scope)
   "show-options argument form.
-   Supports the common scriptable subset: -g/-w/-s scope flags, -t target
-   consumption, -q quiet missing options, -v value-only, and an optional option
-   NAME positional.  Targets are consumed for tmux-compatible syntax; option
-  storage is currently global/server-scoped."
+     Supports the common scriptable subset: -g/-w/-s scope flags, -t target
+     consumption, -q quiet missing options, -v value-only, -A inherited options,
+     -H hooks, and an optional option NAME positional.  Targets are consumed by
+     the scriptable tmux syntax; option storage is currently global/server-scoped."
   (declare (ignore session))
   (with-command-input (flags positionals args "t"
-                             :allowed-flags '(#\g #\w #\s #\t #\q #\v)
+                             :allowed-flags '(#\A #\H #\g #\w #\s #\t #\q #\v)
                              :max-positionals 1
                              :message "show-options: unsupported argument")
     (let* ((scope (%show-options-scope flags default-scope))
@@ -159,9 +186,11 @@
         (name
          (let ((out (cl-tmux/options:show-option name scope)))
            (unless (and quietp (search "(not set)" out))
-             (show-overlay out))))
+             (show-overlay (%show-options-with-hooks out flags)))))
         (t
-         (show-overlay (cl-tmux/options:show-options scope)))))))
+         (show-overlay (%show-options-with-hooks
+                        (cl-tmux/options:show-options scope)
+                        flags)))))))
 
 (defun %cmd-show-options-arg (session args)
   "show-options with arguments."
@@ -169,7 +198,31 @@
 
 (defun %cmd-show-window-options-arg (session args)
   "show-window-options with arguments; consumes tmux flags."
-  (%cmd-show-options* session args nil))
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\A #\H #\g #\w #\s #\t #\q #\v)
+                             :max-positionals 1
+                             :message "show-options: unsupported argument")
+    (let* ((name (first positionals))
+           (quietp (assoc #\q flags))
+           (value-only-p (assoc #\v flags))
+           (target-str (cdr (assoc #\t flags)))
+           (win (%resolve-window-target-or-active session target-str)))
+      (cond
+        ((and name value-only-p)
+         (let ((value (cl-tmux/options:show-window-option
+                       name win :value-only-p t)))
+           (when (or value (not quietp))
+             (show-overlay (or value "")))))
+        (name
+         (let ((out (cl-tmux/options:show-window-option
+                     name win :inherited-p (assoc #\A flags))))
+           (unless (and quietp (search "(not set)" out))
+             (show-overlay (%show-options-with-hooks out flags)))))
+        (t
+         (show-overlay (%show-options-with-hooks
+                        (cl-tmux/options:show-window-options
+                         win :inherited-p (assoc #\A flags))
+                        flags)))))))
 
 (defun %cmd-show-session-options-arg (session args)
   "show-session-options with arguments; consumes tmux flags."
@@ -209,8 +262,12 @@
     (let* ((target-str (cdr (assoc #\t flags)))
            (win        (%resolve-window-target-or-active session target-str))
            (name       (format nil "~{~A~^ ~}" positionals)))
-      (when (and win (plusp (length name)))
-        (rename-window win name)))))
+      (when win
+        (if (plusp (length name))
+            (rename-window win name)
+            (prompt-start "rename-window" (window-name win)
+                          (lambda (new-name)
+                            (rename-window win new-name))))))))
 
 (defun %rename-session-checked (session new-name)
   "Rename SESSION to NEW-NAME, keeping *server-sessions* keyed by the new name and
@@ -240,10 +297,13 @@
                              :message "rename-session: unsupported argument")
     (let ((target-str (cdr (assoc #\t flags)))
           (name       (format nil "~{~A~^ ~}" positionals)))
-      (when (plusp (length name))
-        (with-target-session (target-session target-str session
-                                  :on-missing :current)
-          (%rename-session-checked target-session name))))))
+      (with-target-session (target-session target-str session
+                                :on-missing :current)
+        (if (plusp (length name))
+            (%rename-session-checked target-session name)
+            (prompt-start "rename-session" (session-name target-session)
+                          (lambda (new-name)
+                            (%rename-session-checked target-session new-name))))))))
 
 (defun %cmd-select-window (session args)
   "select-window [-t target] [-l] [-n] [-p] [-T]: select a window.
@@ -260,33 +320,99 @@
                              :message "select-window: unsupported argument")
     (cond
       ((assoc #\l flags)
-       ;; -l: last window
-       (let ((prev (session-last-window session)))
-         (when prev
-           (%with-window-focus-transition (session)
-             (session-select-window session prev)))))
+       (%select-window-select-last session))
       ((assoc #\n flags)
-       ;; -n: next window
-       (%cmd-cycle-window session #'next-cyclic))
+       (%select-window-cycle-next session))
       ((assoc #\p flags)
-       ;; -p: previous window
-       (%cmd-cycle-window session #'prev-cyclic))
+       (%select-window-cycle-prev session))
       (t
-       ;; -t target
-       (let ((target (cdr (assoc #\t flags))))
-         (when target
-           (%with-window-focus-transition (session)
-             (let ((win (%resolve-window-target session target)))
-               (when win
-                 ;; -T toggle: already on the target → jump to last window instead.
-                 (if (and (assoc #\T flags)
-                          (eq win (session-active-window session))
-                          (session-last-window session))
-                     (session-select-window session (session-last-window session))
-                     (session-select-window session win)))))))))
+       (%select-window-select-target session
+                                     (cdr (assoc #\t flags))
+                                     (assoc #\T flags))))
     ;; after-select-window: tmux's per-command hook (run-hooks now fires both the
     ;; add-hook and the .tmux.conf set-hook registries).
     (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-window+ session)))
+
+(defun %select-window-select-last (session)
+  (let ((prev (session-last-window session)))
+    (when prev
+      (%with-window-focus-transition (session)
+        (session-select-window session prev)))))
+
+(defun %select-window-cycle-next (session)
+  (%cmd-cycle-window session #'next-cyclic))
+
+(defun %select-window-cycle-prev (session)
+  (%cmd-cycle-window session #'prev-cyclic))
+
+(defun %select-window-select-target (session target toggle-p)
+  (when target
+    (%with-window-focus-transition (session)
+      (let ((win (%resolve-window-target session target)))
+        (when win
+          ;; -T toggle: already on the target → jump to last window instead.
+          (if (and toggle-p
+                   (eq win (session-active-window session))
+                   (session-last-window session))
+              (session-select-window session (session-last-window session))
+              (session-select-window session win)))))))
+
+(defun %select-pane-disable-input (pane disabled-p)
+  (when pane
+    (setf (pane-input-disabled pane) disabled-p)))
+
+(defun %select-pane-set-title (pane title)
+  (when (and pane title)
+    (setf (pane-title pane) title)
+    (let ((screen (pane-screen pane)))
+      (when screen
+        (cl-tmux/terminal/actions:set-screen-title screen title)))))
+
+(defun %select-pane-mark (window pane)
+  (when (and window pane)
+    (dolist (p (window-panes window))
+      (setf (pane-marked p) nil))
+    (setf (pane-marked pane) t)))
+
+(defun %select-pane-clear-mark (window)
+  (when window
+    (dolist (p (window-panes window))
+      (setf (pane-marked p) nil))))
+
+(defun %select-pane-select-last (window)
+  (when window
+    (let ((last (window-last-active window)))
+      (when last
+        (%select-pane-with-focus window last)))))
+
+(defun %select-pane-select-target (window pane)
+  (when (and window pane (not (eq pane (window-active-pane window))))
+    (%select-pane-with-focus window pane)))
+
+(defun %select-pane-move-in-direction (session flags)
+  (cond
+    ((assoc #\L flags) (%select-pane-in-direction session :left))
+    ((assoc #\R flags) (%select-pane-in-direction session :right))
+    ((assoc #\U flags) (%select-pane-in-direction session :up))
+    ((assoc #\D flags) (%select-pane-in-direction session :down))))
+
+(defun %select-pane-configure-target (window target-pane flags)
+  (cond
+    ;; -d/-e: disable / enable input to the target pane.
+    ((assoc #\d flags) (%select-pane-disable-input target-pane t))
+    ((assoc #\e flags) (%select-pane-disable-input target-pane nil))
+    ;; -T title: set the target pane's title (and its screen title so
+    ;; #{pane_title} reflects it).
+    ((assoc #\T flags)
+     (%select-pane-set-title target-pane (cdr (assoc #\T flags))))
+    ;; -m: mark the target pane (unmark the others in its window first).
+    ((assoc #\m flags) (%select-pane-mark window target-pane))
+    ;; -M: clear the marked pane (unmark all panes in the active window).
+    ((assoc #\M flags) (%select-pane-clear-mark window))
+    ;; -l: select the previously active (last) pane in the active window.
+    ((assoc #\l flags) (%select-pane-select-last window))
+    ;; Default: select the target pane (no-op when it is already active).
+    (t (%select-pane-select-target window target-pane))))
 
 (defun %cmd-select-pane (session args)
   "select-pane [-L|-R|-U|-D|-l|-d|-e|-m|-M] [-t target] [-T title]: select or configure a pane.
@@ -306,39 +432,13 @@
            ;; Resolve -t to a pane-id within the active window; default = active pane.
            (target-pane (%resolve-pane-in-window win (cdr (assoc #\t flags)))))
       (cond
-        ((assoc #\L flags) (%select-pane-in-direction session :left))
-        ((assoc #\R flags) (%select-pane-in-direction session :right))
-        ((assoc #\U flags) (%select-pane-in-direction session :up))
-        ((assoc #\D flags) (%select-pane-in-direction session :down))
-        ;; -d/-e: disable / enable input to the target pane.
-        ((assoc #\d flags) (when target-pane (setf (pane-input-disabled target-pane) t)))
-        ((assoc #\e flags) (when target-pane (setf (pane-input-disabled target-pane) nil)))
-        ;; -T title: set the target pane's title (and its screen title so
-        ;; #{pane_title} reflects it).
-        ((assoc #\T flags)
-         (let ((title (cdr (assoc #\T flags))))
-           (when (and target-pane title)
-             (setf (pane-title target-pane) title)
-             (let ((screen (pane-screen target-pane)))
-               (when screen
-                 (cl-tmux/terminal/actions:set-screen-title screen title))))))
-        ;; -m: mark the target pane (unmark the others in its window first).
-        ((assoc #\m flags)
-         (when (and win target-pane)
-           (dolist (p (window-panes win)) (setf (pane-marked p) nil))
-           (setf (pane-marked target-pane) t)))
-        ;; -M: clear the marked pane (unmark all panes in the active window).
-        ((assoc #\M flags)
-         (when win (dolist (p (window-panes win)) (setf (pane-marked p) nil))))
-        ;; -l: select the previously active (last) pane in the active window.
-        ((assoc #\l flags)
-         (when win
-           (let ((last (window-last-active win)))
-             (when last (%select-pane-with-focus win last)))))
-        ;; Default: select the target pane (no-op when it is already active).
+        ((or (assoc #\L flags)
+             (assoc #\R flags)
+             (assoc #\U flags)
+             (assoc #\D flags))
+         (%select-pane-move-in-direction session flags))
         (t
-         (when (and win target-pane (not (eq target-pane (window-active-pane win))))
-           (%select-pane-with-focus win target-pane))))
+         (%select-pane-configure-target win target-pane flags)))
       ;; after-select-pane fires once after the command (run-hooks now fires both
       ;; the add-hook and the .tmux.conf set-hook registries).
       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-select-pane+ session))))

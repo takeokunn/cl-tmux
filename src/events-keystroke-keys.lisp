@@ -112,17 +112,11 @@
     (when codepoint (values codepoint mod))))
 
 (defun %control-byte-key-name (byte)
-  "Return a printable base key name for a legacy Ctrl BYTE, or NIL."
+  "Return a printable base key name for a Ctrl BYTE, or NIL."
   (cond
     ((<= 1 byte 26) (string (code-char (+ byte 96)))) ; ^A..^Z -> a..z
     ((<= 27 byte 31) (string (code-char (+ byte 64)))) ; ^[..\^_ -> [..\_
     (t nil)))
-
-(defun %meta-control-key-name (byte)
-  "Canonical key name for a legacy ESC + Ctrl BYTE sequence, such as C-M-b."
-  (let ((base (%control-byte-key-name byte)))
-    (when base
-      (concatenate 'string "C-M-" base))))
 
 (defun %meta-key-name (byte)
   "Canonical tmux key name for the Meta/Alt chord that arrives as ESC then BYTE.
@@ -135,6 +129,28 @@
     ((and (> byte +byte-space+) (< byte 127))  ; 33..126 — printable graphic
      (concatenate 'string "M-" (string (code-char byte))))
     (t nil)))
+
+(defun %single-byte-key-candidates (byte)
+  "Lookup candidates for a single raw input BYTE in the active key table.
+   The candidates are the raw character object, any named special key (Tab,
+   Enter, BSpace), and the canonical C-<base> control name when BYTE is a
+   control code."
+  (remove nil
+          (list (code-char byte)
+                (case byte
+                  (9 "Tab")
+                  (13 "Enter")
+                  (127 "BSpace")
+                  (t nil))
+                (let ((base (%control-byte-key-name byte)))
+                  (and base (concatenate 'string "C-" base))))))
+
+(defun %key-table-entry-by-candidates (table candidates)
+  "Return the first key-table entry in TABLE that matches one of CANDIDATES."
+  (loop for candidate in candidates
+        for entry = (key-table-lookup table candidate)
+        when entry
+          return entry))
 
 (defun %run-key-table-binding (session entry byte)
   "Execute the command bound to a key-table ENTRY.  Mirrors the root/prefix
@@ -167,6 +183,29 @@
    This is the hook that lets `bind -T prefix C-Up <cmd>` and `bind -n M-Left
    <cmd>` override the built-in resize/select behaviour."
   (and (%run-bound-string-key session table key-string) t))
+
+(defun %copy-mode-table-or-nil (session)
+  "Return the active copy-mode table when COPY-MODE is enabled, otherwise NIL."
+  (and (%copy-mode-active-p session)
+       (%active-copy-mode-table)))
+
+(defun %try-bound-string-key-in-order (session key-string &rest tables)
+  "Try KEY-STRING against TABLES in order until one binding runs."
+  (loop for table in tables
+        when (and table (%try-bound-string-key session table key-string))
+          return t))
+
+(defun %try-bound-string-key-root-then-copy-mode (session key-string)
+  "Try ROOT first, then the active copy-mode table when copy mode is enabled."
+  (%try-bound-string-key-in-order session key-string
+                                  +table-root+
+                                  (%copy-mode-table-or-nil session)))
+
+(defun %try-bound-string-key-copy-mode-then-root (session key-string)
+  "Try the active copy-mode table first, then ROOT."
+  (%try-bound-string-key-in-order session key-string
+                                  (%copy-mode-table-or-nil session)
+                                  +table-root+))
 
 (defun %prefix-string-entry-result (entry)
   "Return the CPS outcome/state pair for a prefix string-key ENTRY."
@@ -309,12 +348,3 @@
      (if (eq result :repeatable)
          (values nil #'%after-prefix-input-state)
          (values result #'%ground-input-state)))))
-
-(eval-when (:load-toplevel :execute)
-  (let* ((source (or *load-truename* *compile-file-truename*))
-         (base (and source
-                    (make-pathname :name nil :type nil :defaults source)))
-         (path (and base (merge-pathnames #P"events-keystroke-csi-u-legacy.lisp"
-                                          base))))
-    (when (and path (probe-file path))
-      (load path))))

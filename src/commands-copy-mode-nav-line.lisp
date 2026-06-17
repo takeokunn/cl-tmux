@@ -2,15 +2,6 @@
 
 ;;; Copy-mode line / screen navigation.
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (let* ((source (or *load-truename* *compile-file-truename*))
-         (word-file (and source
-                         (merge-pathnames #P"commands-copy-mode-word.lisp"
-                                          (make-pathname :name nil :type nil
-                                                         :defaults source)))))
-    (when (and word-file (probe-file word-file))
-      (load word-file))))
-
 (defmacro define-line-jump-commands (&rest specs)
   "Generate copy-mode column-jump functions from a declarative (name doc col-expr) table.
    COL-EXPR may reference SCREEN and the current ROW."
@@ -81,19 +72,22 @@
    "Move cursor to the last row of the viewport (height-1), keeping column."
    (1- (screen-height screen))))
 
+(defun %copy-mode-centre-cursor (screen row col)
+  "Move the copy-mode cursor to ROW, COL while preserving the copy-mode guard."
+  (when (screen-copy-mode-p screen)
+    (copy-mode-set-cursor screen row col)))
+
 (defun copy-mode-cursor-centre-vertical (screen)
   "Move cursor to the vertical centre row of the viewport, keeping column."
-  (when (screen-copy-mode-p screen)
-    (copy-mode-set-cursor screen
-                          (floor (screen-height screen) 2)
-                          (cdr (screen-copy-cursor screen)))))
+  (%copy-mode-centre-cursor screen
+                            (floor (screen-height screen) 2)
+                            (cdr (screen-copy-cursor screen))))
 
 (defun copy-mode-cursor-centre-horizontal (screen)
   "Move cursor to the horizontal centre column of the viewport, keeping row."
-  (when (screen-copy-mode-p screen)
-    (copy-mode-set-cursor screen
-                          (car (screen-copy-cursor screen))
-                          (floor (screen-width screen) 2))))
+  (%copy-mode-centre-cursor screen
+                            (car (screen-copy-cursor screen))
+                            (floor (screen-width screen) 2)))
 
 (define-copy-mode-scroll-commands
   (copy-mode-page-up

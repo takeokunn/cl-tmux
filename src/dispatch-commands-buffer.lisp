@@ -21,13 +21,45 @@
       (cl-tmux/buffer:get-buffer-by-name name)
       (cl-tmux/buffer:get-paste-buffer 0)))
 
-(defun %command-flag-value (flags flag)
-  "Return FLAG's value from FLAGS, or NIL when the flag is absent."
-  (cdr (assoc flag flags)))
+(defun %buffer-name-from-flags (flags)
+  "Return the named buffer selected by -b in FLAGS, or NIL when absent."
+  (%flag-value flags #\b))
 
 (defun %buffer-append-p (flags)
   "Return T when the command FLAGS include -a."
-  (and (%command-flag-value flags #\a) t))
+  (%flag-present-p flags #\a))
+
+(defun %popup-title-from-flags (flags)
+  "Return the popup title encoded by FLAGS, or the empty title when absent."
+  (or (%flag-value flags #\T) ""))
+
+(defun %popup-width-from-flags (flags)
+  "Return the popup width encoded by FLAGS, or NIL when absent."
+  (%flag-value flags #\w))
+
+(defun %popup-height-from-flags (flags)
+  "Return the popup height encoded by FLAGS, or NIL when absent."
+  (%flag-value flags #\h))
+
+(defun %menu-title-from-flags (flags)
+  "Return the menu title encoded by FLAGS, or the default menu title."
+  (or (%flag-value flags #\T) "Menu"))
+
+(defun %confirm-prompt-from-flags (flags)
+  "Return the custom confirm prompt encoded by FLAGS, or NIL when absent."
+  (%flag-value flags #\p))
+
+(defun %list-keys-table-name-from-flags (flags)
+  "Return the key table encoded by FLAGS, or NIL when absent."
+  (%flag-value flags #\T))
+
+(defun %copy-mode-scroll-to-top-p (flags)
+  "Return T when FLAGS request copy-mode to start at the top."
+  (and (%flag-present-p flags #\u) t))
+
+(defun %copy-mode-exit-on-bottom-p (flags)
+  "Return T when FLAGS request copy-mode to exit at the bottom."
+  (and (%flag-present-p flags #\e) t))
 
 (defun %buffer-positionals-text (positionals)
   "Join POSITIONALS with spaces, mirroring tmux's command-line token joining."
@@ -59,7 +91,7 @@
   (with-command-input (flags positionals args "b"
                              :allowed-flags '(#\a #\b)
                              :message "set-buffer: unsupported argument")
-    (let* ((name     (%command-flag-value flags #\b))
+    (let* ((name     (%buffer-name-from-flags flags))
            (append-p (%buffer-append-p flags))
            (data     (%buffer-positionals-text positionals)))
       (when positionals
@@ -97,15 +129,15 @@
    raw.  Bracketed paste is applied automatically by %paste-to-pane when the
    application has enabled it.  -p is accepted but not specially handled."
   (with-command-flags+pos (flags positionals args "bst")
-    (with-command-input (flags positionals args "bst"
+  (with-command-input (flags positionals args "bst"
                                 :allowed-flags '(#\d #\p #\r #\b #\s #\t)
                                 :max-positionals 0
                                 :message "paste-buffer: unsupported argument")
-      (let* ((name       (%command-flag-value flags #\b))
-             (delete-p   (and (%command-flag-value flags #\d) t))
-             (no-replace (and (%command-flag-value flags #\r) t))
-             (separator  (%command-flag-value flags #\s))
-             (target-str (%command-flag-value flags #\t))
+      (let* ((name       (%buffer-name-from-flags flags))
+             (delete-p   (%flag-present-p flags #\d))
+             (no-replace (%flag-present-p flags #\r))
+             (separator  (%flag-value flags #\s))
+             (target-str (%flag-value flags #\t))
              (raw        (%named-or-latest-paste-buffer name))
              ;; tmux default: LF → CR so a multi-line paste submits each line; -s
              ;; overrides the replacement, -r keeps the raw bytes.
@@ -126,7 +158,7 @@
                              :allowed-flags '(#\b)
                              :max-positionals 0
                              :message "delete-buffer: unsupported argument")
-    (let ((name (%command-flag-value flags #\b)))
+    (let ((name (%buffer-name-from-flags flags)))
       (if name
           (cl-tmux/buffer:delete-buffer-by-name name)
           (cl-tmux/buffer:delete-paste-buffer 0)))))
@@ -138,7 +170,7 @@
                              :allowed-flags '(#\b)
                              :max-positionals 0
                              :message "show-buffer: unsupported argument")
-    (let* ((name (%command-flag-value flags #\b))
+    (let* ((name (%buffer-name-from-flags flags))
            (text (%named-or-latest-paste-buffer name)))
       (show-overlay (or text "(no buffer)")))))
 
@@ -151,7 +183,7 @@
                              :allowed-flags '(#\a #\b)
                              :max-positionals 1
                              :message "save-buffer: unsupported argument")
-      (let* ((name (%command-flag-value flags #\b))
+    (let* ((name (%buffer-name-from-flags flags))
            (append-p (%buffer-append-p flags))
            (path (first positionals))
            (text (%named-or-latest-paste-buffer name)))
@@ -166,7 +198,7 @@
                              :allowed-flags '(#\b)
                              :max-positionals 1
                              :message "load-buffer: unsupported argument")
-    (let ((name (%command-flag-value flags #\b))
+    (let ((name (%buffer-name-from-flags flags))
           (path (first positionals)))
       (when path
         (cl-tmux/buffer:add-paste-buffer (%buffer-read-file path) name)))))
@@ -232,10 +264,10 @@
    bounds (cl-tmux popups render command output, not a live embedded terminal)."
   (declare (ignore session))
   (with-command-flags+pos (flags positionals args "whxydtcbT")
-    (let* ((title   (or (cdr (assoc #\T flags)) ""))
+    (let* ((title   (%popup-title-from-flags flags))
            (command (when positionals (format nil "~{~A~^ ~}" positionals)))
-           (width   (%popup-dimension (cdr (assoc #\w flags)) *term-cols* +popup-max-width+))
-           (height  (%popup-dimension (cdr (assoc #\h flags)) *term-rows*
+           (width   (%popup-dimension (%popup-width-from-flags flags) *term-cols* +popup-max-width+))
+           (height  (%popup-dimension (%popup-height-from-flags flags) *term-rows*
                                       (min +popup-max-height+ (- *term-rows* +popup-margin+))))
            (clamp-w (min width  *term-cols*))
            (clamp-h (min height (max 1 (- *term-rows* +popup-margin+)))))
@@ -253,10 +285,10 @@
    -x col / -y row: screen position (default: centred).  Clamped on screen.
    Item triples: label key command.  Empty label '' creates a visual separator.
    When selected, command is run via %run-command-line.
-   Preconfigured commands as keyword tokens run directly (for compatibility)."
+   Preconfigured commands as keyword tokens run directly."
   (declare (ignore session))  ; session used via closure in item command
   (with-command-flags+pos (flags positionals args "Txy")
-    (let* ((title (or (cdr (assoc #\T flags)) "Menu"))
+    (let* ((title (%menu-title-from-flags flags))
            (menu-x (%parse-flag-int flags #\x))
            (menu-y (%parse-flag-int flags #\y))
            ;; Build items from consecutive (label key command) triples.
@@ -280,7 +312,7 @@
    Only executes COMMAND when the user confirms with 'y' or 'Y'."
   (with-command-flags+pos (flags positionals args "p")
     (multiple-value-bind (window pane) (%active-window-pane session)
-      (let* ((custom-prompt (cdr (assoc #\p flags)))
+      (let* ((custom-prompt (%confirm-prompt-from-flags flags))
              (cmd-line      (format nil "~{~A~^ ~}" positionals))
              (ctx           (cl-tmux/format:format-context-from-session
                              session window pane))
@@ -302,14 +334,21 @@
   "list-keys [-T table] [-1] [key]: list key bindings.
    -T table: show bindings for TABLE only (e.g. prefix, root, copy-mode-vi).
    Without -T: show all tables.  KEY filters the output to matching bindings.
-   The -1 flag is accepted for tmux compatibility."
+   -1 keeps only the first line of output.
+   The parser accepts -T and an optional key filter."
   (declare (ignore session))
-  (with-command-flags+pos (flags positionals args "T")
-    (let* ((table-name (cdr (assoc #\T flags)))
+  (with-command-flags+pos (flags positionals args "T1")
+    (let* ((table-name (%list-keys-table-name-from-flags flags))
            (key        (first positionals))
            (output     (if key
                            (cl-tmux/config:describe-key-bindings-for-key table-name key)
-                           (cl-tmux/config:describe-key-bindings-for-table table-name))))
+                           (cl-tmux/config:describe-key-bindings-for-table table-name)))
+           (output     (if (assoc #\1 flags)
+                           (let ((newline (position #\Newline output)))
+                             (if newline
+                                 (subseq output 0 newline)
+                                 output))
+                           output)))
       (show-overlay (if (plusp (length output))
                         output
                         (format nil "(no bindings in table ~A)"
@@ -326,8 +365,8 @@
                              :allowed-flags '(#\u #\e)
                              :max-positionals 0
                              :message "copy-mode: unsupported argument")
-    (let* ((scroll-to-top  (and (assoc #\u flags) t))
-           (exit-on-bottom (and (assoc #\e flags) t))
+    (let* ((scroll-to-top  (%copy-mode-scroll-to-top-p flags))
+           (exit-on-bottom (%copy-mode-exit-on-bottom-p flags))
            (screen (%active-screen session)))
       (when screen
         (copy-mode-enter screen :scroll-to-top scroll-to-top

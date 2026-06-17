@@ -239,3 +239,57 @@
     (if (eq val :not-found)
         (format nil "~A: (not set)~%" name)
         (format nil "~A ~A~%" name (%option-value-string val)))))
+
+(defun %hash-present-p (key table)
+  "Return true when KEY is present in TABLE, regardless of the stored value."
+  (nth-value 1 (gethash key table)))
+
+(defun %registered-option-names ()
+  "Return option registry names in tmux display order."
+  (let ((names '()))
+    (maphash (lambda (name spec)
+               (declare (ignore spec))
+               (push name names))
+             *option-registry*)
+    (sort names #'string<)))
+
+(defun %window-local-option-present-p (name window)
+  "Return true when WINDOW has an explicit local option NAME."
+  (and window
+       (%hash-present-p name (cl-tmux/model:window-local-options window))))
+
+(defun %window-option-present-p (name window)
+  "Return true when NAME can be shown for WINDOW."
+  (or (%hash-present-p name *option-registry*)
+      (%hash-present-p name *global-options*)
+      (%window-local-option-present-p name window)))
+
+(defun %window-option-inherited-p (name window)
+  "Return true when WINDOW's effective NAME value is inherited."
+  (not (%window-local-option-present-p name window)))
+
+(defun show-window-option (name window &key inherited-p value-only-p)
+  "Return NAME rendered with WINDOW's effective option value.
+   INHERITED-P marks inherited values with '* ', matching tmux show-options -A."
+  (if (and window (%window-option-present-p name window))
+      (let ((value (get-option-for-window name window)))
+        (if value-only-p
+            (%option-value-string value)
+            (format nil "~A~A ~A~%"
+                    (if (and inherited-p
+                             (%window-option-inherited-p name window))
+                        "* "
+                        "")
+                    name
+                    (%option-value-string value))))
+      (unless value-only-p
+        (format nil "~A: (not set)~%" name))))
+
+(defun show-window-options (window &key inherited-p)
+  "Return 'name value' lines for WINDOW's effective options."
+  (with-output-to-string (s)
+    (when window
+      (dolist (name (%registered-option-names))
+        (write-string (show-window-option name window
+                                          :inherited-p inherited-p)
+                      s)))))

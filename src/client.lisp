@@ -50,6 +50,26 @@
 
 ;;; ── run-command-client ───────────────────────────────────────────────────────
 
+(defun %command-client-split-window-input-p (args)
+  "True when ARGS names split-window with -I, whose stdin must be sent too."
+  (and args
+       (member (string-downcase (first args)) '("split-window" "splitw")
+               :test #'string=)
+       (some (lambda (arg)
+               (and (> (length arg) 1)
+                    (char= (char arg 0) #\-)
+                    (find #\I arg :start 1)))
+             (rest args))))
+
+(defun %read-command-client-stdin-octets ()
+  "Read command-client stdin as UTF-8 bytes for split-window -I forwarding."
+  (babel:string-to-octets
+   (with-output-to-string (out)
+     (loop for ch = (read-char *standard-input* nil nil)
+           while ch
+           do (write-char ch out)))
+   :encoding :utf-8))
+
 (defun run-command-client (name args)
   "Forward ARGS — a command name followed by its arguments — to the running server
    for session NAME as a single +msg-command+ frame, then print the server's text
@@ -66,6 +86,10 @@
       (unwind-protect
            (let ((stream (socket-stream socket)))
              (send-frame stream (msg-command (first args) nil (rest args)))
+             (when (%command-client-split-window-input-p args)
+               (let ((bytes (%read-command-client-stdin-octets)))
+                 (when (plusp (length bytes))
+                   (send-frame stream (msg-key bytes)))))
              (force-output stream)
              (%read-command-reply stream (socket-fd socket)))
         (close-socket socket)))))

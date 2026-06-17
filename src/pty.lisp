@@ -33,6 +33,18 @@
   "Return T when VALUE is a non-empty string."
   (and (stringp value) (plusp (length value))))
 
+(defun %spawn-environment-assignments (term extra-env)
+  "Return TERM and valid EXTRA-ENV overrides as NAME=VALUE strings."
+  (let ((assignments nil))
+    (when (%non-empty-string-p term)
+      (push (format nil "TERM=~A" term) assignments))
+    (dolist (pair extra-env)
+      (when (and (consp pair)
+                 (stringp (car pair))
+                 (stringp (cdr pair)))
+        (push (format nil "~A=~A" (car pair) (cdr pair)) assignments)))
+    (nreverse assignments)))
+
 (defun %spawn-directory (start-dir)
   "Return a truename pathname for START-DIR, or NIL when it is absent/invalid.
    The old child path ignored chdir failures; keeping NIL preserves that behavior
@@ -40,38 +52,20 @@
   (when (%non-empty-string-p start-dir)
     (ignore-errors (truename start-dir))))
 
-(defun %env-assignment (name value)
-  "Render NAME/VALUE as one POSIX env(1) assignment string."
-  (format nil "~A=~A" name value))
-
-(defun %spawn-environment-assignments (term extra-env)
-  "Build ordered env(1) NAME=VALUE assignments for a pane process.
-   TERM is applied first; -e assignments follow, matching tmux's override order."
-  (let ((assignments '()))
-    (when (%non-empty-string-p term)
-      (push (%env-assignment "TERM" term) assignments))
-    (dolist (pair extra-env)
-      (when (and (consp pair)
-                 (stringp (car pair))
-                 (stringp (cdr pair)))
-        (push (%env-assignment (car pair) (cdr pair)) assignments)))
-    (nreverse assignments)))
-
 (defun %target-program-and-args (default-command)
-  "Return the actual shell program and argument list for DEFAULT-COMMAND."
+  "Return the actual shell program, argument list, and search flag."
   (if (%non-empty-string-p default-command)
-      (values "/bin/sh" (list "-c" default-command))
-      (values cl-tmux/config:*default-shell* nil)))
+      (values "/bin/sh" (list "-c" default-command) nil)
+      (values cl-tmux/config:*default-shell* nil
+              (not (and (stringp cl-tmux/config:*default-shell*)
+                        (plusp (length cl-tmux/config:*default-shell*))
+                        (char= (char cl-tmux/config:*default-shell* 0) #\/))))))
 
-(defun %spawn-program-and-args (default-command term extra-env)
-  "Return PROGRAM, ARGS, and SEARCH-P for SB-EXT:RUN-PROGRAM.
-   When env assignments are needed, route through env(1), which execs the real
-   shell while keeping parent process environment handling out of Lisp FFI code."
-  (multiple-value-bind (target target-args) (%target-program-and-args default-command)
-    (let ((assignments (%spawn-environment-assignments term extra-env)))
-      (if assignments
-          (values "env" (append assignments (list target) target-args) t)
-          (values target target-args nil)))))
+(defun %spawn-program-and-args (default-command)
+  "Return PROGRAM, ARGS, and SEARCH-P for SB-EXT:RUN-PROGRAM."
+  (multiple-value-bind (target target-args search-p)
+      (%target-program-and-args default-command)
+    (values target target-args search-p)))
 
 (defun %process-pty-fd (process)
   "Return the master fd for PROCESS's PTY stream."
@@ -90,22 +84,22 @@
     (remhash master-fd *pty-processes*)
     process))
 
-(defun forkpty-with-shell (rows cols &key start-dir term default-command extra-env)
+(defun forkpty-with-shell (rows cols &key start-dir default-command environment)
   "Spawn a child shell process on a fresh PTY of size ROWS×COLS.
    START-DIR: when valid, run the child from this directory.
-   TERM: when non-NIL, set TERM=TERM in the child environment.
    DEFAULT-COMMAND: when non-NIL, run via sh -c instead of the shell directly.
-   EXTRA-ENV: alist of (NAME . VALUE) pairs set in the child environment.
+   ENVIRONMENT: flat list of NAME=VALUE strings passed to RUN-PROGRAM.
    Returns (values master-fd child-pid slave-path).  SBCL exposes the master
    stream and pid but not a portable slave-path, so SLAVE-PATH is currently the
    empty string."
   (declare (type fixnum rows cols))
   (multiple-value-bind (program args search-p)
-      (%spawn-program-and-args default-command term extra-env)
+      (%spawn-program-and-args default-command)
     (let* ((process (sb-ext:run-program program args
                                         :search search-p
                                         :wait nil
                                         :pty t
+                                        :environment environment
                                         :directory (%spawn-directory start-dir)))
            (master (%process-pty-fd process)))
       (set-pty-size master rows cols)
@@ -191,30 +185,25 @@
   "Poll FDS for readability with a TIMEOUT-US microsecond timeout.
    timeout-us = 0 → non-blocking; -1 → block indefinitely.
    Returns the sub-list of fds that are ready to read, or NIL.
-
-   The read-set is meaningful ONLY when select(2) returns a positive count: on a
-   timeout it returns 0, and on an interrupted/failed call (e.g. EINTR from a
-   SIGCHLD) it returns -1 and leaves the read-set UNDEFINED.  We therefore gate on
-   the return value and never inspect stale bits — without this, an EINTR could
-   make an idle fd spuriously report readable (an intermittent false positive)."
+   The read-set is meaningful only when select(2) returns a positive count."
   (when fds
-  (let ((maxfd (reduce #'max fds)))
-    (cffi:with-foreign-objects ((rset :uint32 +fd-set-words+)
-                                (tv   :long   2))
-      (fd-zero! rset)
-      (dolist (fd fds) (fd-set! fd rset))
-      (let ((nready (if (>= timeout-us 0)
-                        (progn
-                          (%setup-timeval tv timeout-us)
+    (let ((maxfd (reduce #'max fds)))
+      (cffi:with-foreign-objects ((rset :uint32 +fd-set-words+)
+                                  (tv   :long   2))
+        (fd-zero! rset)
+        (dolist (fd fds) (fd-set! fd rset))
+        (let ((nready (if (>= timeout-us 0)
+                          (progn
+                            (%setup-timeval tv timeout-us)
+                            (%select (1+ maxfd) rset
+                                     (cffi:null-pointer) (cffi:null-pointer)
+                                     tv))
                           (%select (1+ maxfd) rset
                                    (cffi:null-pointer) (cffi:null-pointer)
-                                   tv))
-                        (%select (1+ maxfd) rset
-                                 (cffi:null-pointer) (cffi:null-pointer)
-                                 (cffi:null-pointer)))))
-        ;; Only a positive count leaves a valid read-set to inspect.
-        (when (> nready 0)
-          (%collect-ready-fds fds rset)))))))
+                                   (cffi:null-pointer)))))
+          ;; Only a positive count leaves a valid read-set to inspect.
+          (when (> nready 0)
+            (%collect-ready-fds fds rset)))))))
 
 ;;; ── Public: terminal geometry ──────────────────────────────────────────────
 

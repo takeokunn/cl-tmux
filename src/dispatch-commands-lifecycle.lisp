@@ -131,6 +131,19 @@
       ((or ref-pane (null target-str))
        (%handle-kill-result (kill-pane session ref-pane))))))
 
+(define-command-input-handler %cmd-kill-server (session args)
+  "kill-server: terminate the server and close every pane in every session."
+  (flags positionals ""
+         :allowed-flags '()
+         :max-positionals 0
+         :message "kill-server: unsupported argument")
+  (dolist (entry *server-sessions*)
+    (let ((sess (cdr entry)))
+      (dolist (pane (all-panes sess))
+        (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))))
+  (setf *running* nil)
+  :quit)
+
 (defun %swap-window-ids (session win-a win-b)
   "Exchange the index numbers (window-id) of WIN-A and WIN-B and re-sort the
    session's window list by id — tmux's swap-window, which trades the two windows'
@@ -221,25 +234,3 @@
          (setf (window-id src-win) target
                (session-windows session)
                (sort (copy-list (session-windows session)) #'< :key #'window-id)))))))
-
-(define-command-input-handler %cmd-if-shell (session args)
-  "if-shell [-bF] [-t target-pane] <cond> <then> [<else>]: when the format CONDITION expands to a
-   truthy value (non-empty and not \"0\"), run the THEN command line; otherwise
-   run ELSE if given.  Only the -F (format, no shell fork) form is handled; a
-   plain shell-condition if-shell is a no-op here (would require a fork)."
-  (flags positionals "t"
-         :allowed-flags '(#\b #\F #\t)
-         :max-positionals 3
-         :message "if-shell: unsupported argument")
-  (when (assoc #\F flags)
-    (let ((cond-str (first  positionals))
-          (then     (second positionals))
-          (else     (third  positionals)))
-      (when cond-str
-        (let* ((win  (session-active-window session))
-               (pane (session-active-pane session))
-               (ctx  (cl-tmux/format:format-context-from-session session win pane))
-               (val  (cl-tmux/format:expand-format cond-str ctx)))
-          (if (not (member val '("" "0") :test #'string=))
-              (when then (%run-command-line session then))
-              (when else (%run-command-line session else))))))))

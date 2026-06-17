@@ -33,7 +33,7 @@
   (set-key-binding #\. :move-window-prompt)
   ;; C-b ' — select-window-prompt (prompt for window index or name)
   (set-key-binding #\' :select-window-prompt)
-  ;; C-b E — select-layout-spread (even-horizontal layout alias)
+  ;; C-b E — select-layout-spread (even-horizontal layout)
   (set-key-binding #\E :select-layout-spread)
   ;; C-b Space — next-layout (cycle through layouts)
   (set-key-binding (code-char 32) :next-layout)
@@ -264,8 +264,8 @@
          (active-window (session-active-window session)))
     (when (and screen active-window
                (window-automatic-rename-p active-window)
-               ;; Per-window "automatic-rename" option (default on); honors
-               ;; `setw -w automatic-rename off`.  Independent of allow-rename:
+                ;; Per-window "automatic-rename" option (default on); honors
+                ;; `set-window-option -w automatic-rename off`.  Independent of allow-rename:
                ;; command-following must keep working even with allow-rename off
                ;; (that option only governs app-set OSC titles, handled below).
                (cl-tmux/options:get-option-for-context

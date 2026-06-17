@@ -2,16 +2,6 @@
 
 ;;; Copy-mode paragraph motion (vi { and }).
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (let* ((source (or *load-truename* *compile-file-truename*))
-         (selection-file (and source
-                              (merge-pathnames #P"commands-copy-mode-selection.lisp"
-                                               (make-pathname :name nil
-                                                              :type nil
-                                                              :defaults source)))))
-    (when (and selection-file (probe-file selection-file))
-      (load selection-file))))
-
 (defun %copy-mode-row-blank-p (screen vrow)
   "Return T if VROW (virtual row, 0 = oldest scrollback) is entirely blank."
   (every (lambda (ch)
@@ -64,4 +54,3 @@
            (total (+ sb-n (screen-height screen))))
       (%set-cursor-vrow screen
                         (%find-paragraph-boundary screen (1+ (%cursor-vrow screen)) :down total)))))
-

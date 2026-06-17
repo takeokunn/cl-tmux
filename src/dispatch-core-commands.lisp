@@ -198,11 +198,12 @@
 ;;; file stays focused on helper code and table construction.
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (load (merge-pathnames "dispatch-command-specs.lisp"
-                         (make-pathname :name nil :type nil
-                                        :defaults (or *compile-file-truename*
-                                                      *load-truename*
-                                                      *default-pathname-defaults*)))))
+  (let* ((root (or (ignore-errors (asdf:system-source-directory :cl-tmux))
+                   *load-pathname*
+                   *compile-file-pathname*
+                   *default-pathname-defaults*))
+         (src (merge-pathnames #P"src/" root)))
+    (load (merge-pathnames #P"dispatch-command-specs.lisp" src))))
 
 (defun %make-dispatch-named-table (specs)
   "Build a hash table mapping prompt-visible command names to dispatch keywords."
@@ -213,8 +214,12 @@
           (dolist (name (getf spec :named-names))
             (setf (gethash name table) keyword)))))))
 
+(defmacro define-named-command-table (&rest specs)
+  "Build a named-command dispatch table from command SPEC metadata."
+  `(%make-dispatch-named-table ',specs))
+
 (defparameter *named-command-dispatch*
-  (%make-dispatch-named-table *dispatch-command-specs*))
+  (%make-dispatch-named-table *dispatch-command-specs-core*))
 
 (defun %dispatch-named-command (session cmd-name)
   "Map CMD-NAME (a string) to a dispatch keyword and execute it on SESSION.

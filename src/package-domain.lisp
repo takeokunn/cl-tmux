@@ -52,6 +52,9 @@
    #:pane-pid
    #:pane-feed
    #:pane-pipe-fd
+   #:pane-pipe-active-p
+   #:pane-pipe-output-stream
+   #:pane-pipe-output-thread
    #:pane-pipe-process
    #:pane-window
    #:pane-marked
@@ -146,7 +149,17 @@
    ;; Global state
    #:create-initial-session
    #:all-panes
+   #:process-environment-value
+   #:process-environment-names
+   #:process-set-environment
+   #:process-unset-environment
+   #:session-environment-value
+   #:session-environment-names
+   #:session-set-environment
+   #:session-unset-environment
+   #:session-child-environment
    ;; update-environment
+   #:+default-update-environment+
    #:*update-environment*
    #:get-update-environment-vars))
 
@@ -245,6 +258,7 @@
            #:get-option-for-context
    ;; show-options helpers
    #:show-options #:show-option
+   #:show-window-options #:show-window-option
    ))
 
 (defpackage #:cl-tmux/renderer

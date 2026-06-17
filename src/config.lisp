@@ -191,12 +191,12 @@
   (#\H :resize-left)
   (#\J :resize-down)
   (#\K :resize-up)
-  ;; #\L and #\! carry tmux-incorrect placeholders here; events-loop.lisp
-  ;; overrides them to their real defaults (last-session and break-pane).
+  ;; These are the bootstrap defaults. events-loop.lisp installs the live
+  ;; bindings after startup (#\L -> last-session, #\! -> break-pane).
   (#\L :resize-right)
   (#\Z :zoom-toggle)        ; uppercase alias; events-loop.lisp adds lowercase z
   (#\$ :rename-session)
-  (#\! :if-shell)           ; events-loop.lisp overrides to :break-pane
+  (#\! :if-shell)
   (:digits :select-window))
 
 (defun install-default-prefix-string-bindings ()
@@ -260,7 +260,7 @@
       (key-table-bind table-name key command)))
   (values))
 
-(defconstant +default-copy-mode-bindings+
+(defparameter +default-copy-mode-bindings+
   '(("M-f" :copy-mode-word-end)
     ("M-b" :copy-mode-word-backward)
     ("M-e" :copy-mode-word-end)
@@ -312,7 +312,7 @@
     (#\r :copy-mode-refresh-from-pane))
   "Default tmux copy-mode bindings for the emacs-style table.")
 
-(defconstant +default-copy-mode-vi-bindings+
+(defparameter +default-copy-mode-vi-bindings+
   '((#\q :copy-mode-exit)
     (#\i :copy-mode-exit)
     (#\h :copy-mode-cursor-left)
@@ -348,6 +348,8 @@
     (#\P :copy-mode-other-end)
     (#\R :copy-mode-rectangle-toggle)
     (#\X :copy-mode-set-mark)
+    (#\# :copy-mode-search-backward-word)
+    (#\* :copy-mode-search-forward-word)
     (#\n :copy-mode-search-next)
     (#\N :copy-mode-search-prev)
     (#\f :copy-mode-jump-forward)

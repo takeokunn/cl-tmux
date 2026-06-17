@@ -162,11 +162,33 @@
 ;;; Each %cmd-*-arg function handles one tmux command that takes arguments.
 ;;; Flag parsing uses with-command-flags+pos above.
 
-(defun %format-message-log-overlay ()
-  "Return the show-messages overlay body for the current server message log."
-  (if *message-log*
-      (%overlay-lines-string (mapcar #'cdr *message-log*))
-      "(no messages)"))
+(defun %resolve-client-target (target-str)
+  "Resolve TARGET-STR to a client connection in *clients*.
+   Accepts tmux-like names such as client-0 and client0, plus a bare numeric index."
+  (when (and (stringp target-str) (plusp (length target-str)))
+    (let* ((index-str (cond
+                        ((and (>= (length target-str) 7)
+                              (string-equal "client-" target-str :end2 7))
+                         (subseq target-str 7))
+                        ((and (>= (length target-str) 6)
+                              (string-equal "client" target-str :end2 6))
+                         (subseq target-str 6))
+                        (t target-str)))
+           (index (parse-integer index-str :junk-allowed t)))
+      (and (integerp index)
+           (>= index 0)
+           (nth index *clients*)))))
+
+(defun %format-message-log-overlay (&optional client-conn)
+  "Return the show-messages overlay body for CLIENT-CONN, or the current client,
+   or the global server message log when no client context is available."
+  (let ((log (cond
+               (client-conn (client-conn-message-log client-conn))
+               (*current-client-conn* (client-conn-message-log *current-client-conn*))
+               (t *message-log*))))
+    (if log
+        (%overlay-lines-string (mapcar #'cdr log))
+        "(no messages)")))
 
 (defun %cmd-display-message (session args)
   "display-message [-l] [-d ms] [-t target] <fmt...>: expand the space-joined ARGS as a format string
@@ -200,13 +222,19 @@
               (show-transient-overlay text)))))))
 
 (defun %cmd-show-messages-arg (session args)
-  "show-messages: show server messages."
+  "show-messages [-J] [-T] [-t target-client]: show server messages."
   (declare (ignore session))
-  (with-command-input (flags positionals args ""
-                             :allowed-flags '()
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\J #\T #\t)
                              :max-positionals 0
                              :message "show-messages: unsupported argument")
-    (show-overlay (%format-message-log-overlay))))
+    (let* ((target-str (cdr (assoc #\t flags)))
+           (target-conn (and target-str (%resolve-client-target target-str))))
+      (cond
+        ((and target-str (null target-conn))
+         (show-overlay (format nil "show-messages: no such client: ~A" target-str)))
+        (t
+         (show-overlay (%format-message-log-overlay target-conn)))))))
 
 (defun %cmd-swap-pane-arg (session args)
   "swap-pane [-dUDLRZ] [-s src-pane] [-t dst-pane]: swap two panes.

@@ -2,15 +2,6 @@
 
 ;;; Copy-mode jump-to-char and line-jump commands.
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (let* ((source (or *load-truename* *compile-file-truename*))
-         (word-file (and source
-                         (merge-pathnames #P"commands-copy-mode-word.lisp"
-                                          (make-pathname :name nil :type nil
-                                                         :defaults source)))))
-    (when (and word-file (probe-file word-file))
-      (load word-file))))
-
 (defvar *copy-mode-last-jump* nil
   "Most recent jump-to-char state: (direction char till-p).")
 
@@ -26,7 +17,7 @@
           (loop for c from (1+ col) below w
                 when (char= (aref chars c) char)
                   do (setf (cdr (screen-copy-cursor screen))
-                           (if till-p (max col (1- c)) c))
+                           (if till-p (max 0 (1- c)) c))
                      (return t))
           (loop for c downfrom (1- col) to 0
                 when (char= (aref chars c) char)
@@ -50,19 +41,24 @@
   (copy-mode-jump-to         :forward  t   "Jump to just before next CHAR on current line (vi t<char>).")
   (copy-mode-jump-to-backward :backward t   "Jump to just after previous CHAR on current line (vi T<char>)."))
 
-(defun copy-mode-jump-again (screen)
-  "Repeat the last jump-to-char with the same direction, char, and mode (vi ;)."
+(defun %copy-mode-replay-last-jump (screen reverse-p)
+  "Replay the most recent jump-to-char, optionally reversing its direction."
   (when *copy-mode-last-jump*
     (destructuring-bind (dir ch till) *copy-mode-last-jump*
-      (let ((*copy-mode-last-jump* *copy-mode-last-jump*))
-        (%copy-mode-jump screen dir ch till)))))
+      (%copy-mode-jump screen
+                       (if reverse-p
+                           (if (eq dir :forward) :backward :forward)
+                           dir)
+                       ch
+                       till))))
+
+(defun copy-mode-jump-again (screen)
+  "Repeat the last jump-to-char with the same direction, char, and mode (vi ;)."
+  (%copy-mode-replay-last-jump screen nil))
 
 (defun copy-mode-jump-reverse (screen)
   "Reverse the last jump-to-char (vi ,): same char, opposite direction."
-  (when *copy-mode-last-jump*
-    (destructuring-bind (dir ch till) *copy-mode-last-jump*
-      (let ((*copy-mode-last-jump* *copy-mode-last-jump*))
-        (%copy-mode-jump screen (if (eq dir :forward) :backward :forward) ch till)))))
+  (%copy-mode-replay-last-jump screen t))
 
 (defun copy-mode-goto-line (screen line-number)
   "Jump to LINE-NUMBER (1-based: 1 = oldest scrollback row) in copy mode."
@@ -70,4 +66,3 @@
              (integerp line-number)
              (> line-number 0))
     (%set-cursor-vrow screen (1- line-number))))
-

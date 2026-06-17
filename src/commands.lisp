@@ -1,11 +1,12 @@
 (in-package #:cl-tmux/commands)
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (load (merge-pathnames "commands-capture-pane.lisp"
-                         (make-pathname :name nil :type nil
-                                        :defaults (or *compile-file-truename*
-                                                      *load-truename*
-                                                      *default-pathname-defaults*)))))
+  (let* ((root (or (ignore-errors (asdf:system-source-directory :cl-tmux))
+                   *load-pathname*
+                   *compile-file-pathname*
+                   *default-pathname-defaults*))
+         (src (merge-pathnames #P"src/" root)))
+    (load (merge-pathnames #P"commands-capture-pane.lisp" src))))
 
 ;;; ── Pane operations ────────────────────────────────────────────────────────
 ;;;
@@ -132,28 +133,59 @@
       (when (eq (session-active-window session) src-window)
         (session-select-window session (first remaining))))))
 
-(defun %join-pane-insert-into-dst (src-pane dst-window direction)
+(defun %join-pane-insert-into-dst (src-pane dst-window direction
+                                   &key before full size)
   "Insert SRC-PANE into DST-WINDOW as a DIRECTION split.
    Returns SRC-PANE on success, NIL when the destination has no active leaf."
   (let* ((active      (window-active-pane dst-window))
          (tree        (window-tree dst-window))
          (active-leaf (and active tree (layout-find-leaf tree active))))
-    (when active-leaf
+    (when (and active-leaf
+               (if full
+                   (cl-tmux/model::%split-axis-fits-p
+                    (cl-tmux/model::%window-axis-extent dst-window direction)
+                    direction)
+                   (cl-tmux/model::%split-fits-p active direction)))
+      ;; Refresh the destination layout before deriving the split size.  Test
+      ;; fixtures can carry stale pane dimensions even when the window/tree size
+      ;; is current, and `-l` must be computed from the rendered pane extent.
+      (cl-tmux/model::window-relayout-current dst-window)
+      (let* ((active      (window-active-pane dst-window))
+             (tree        (window-tree dst-window))
+             (active-leaf (layout-find-leaf tree active)))
+      ;; Match split-window's layout rules: -f uses the full window extent, -b
+      ;; swaps the child order, and -l supplies the target size hint.
       (multiple-value-bind (px py pw ph)
           (split-child-geometry active direction)
         (pane-reposition src-pane px py pw ph)
-        (let ((new-split (make-layout-split direction active-leaf
-                                            (make-layout-leaf src-pane) 1/2)))
-          (cl-tmux/model::%replace-in-tree dst-window active-leaf new-split)
+        (let* ((avail    (1- (if full
+                                 (cl-tmux/model::%window-axis-extent dst-window direction)
+                                 (cl-tmux/model::%orient-pane-extent active direction))))
+               (new-ratio (if size
+                              (cl-tmux/model::%ratio-from-size-hint size avail direction)
+                              1/2))
+               (anchor   (if full tree active-leaf))
+               (new-node (make-layout-leaf src-pane))
+               ;; `make-layout-split` stores the ratio for the FIRST child.
+               ;; `%ratio-from-size-hint` returns the desired share for the new pane.
+               (new-split (if before
+                              (make-layout-split direction new-node anchor
+                                                 new-ratio)
+                              (make-layout-split direction anchor new-node
+                                                 (- 1 new-ratio)))))
+          (if full
+              (setf (window-tree dst-window) new-split)
+              (cl-tmux/model::%replace-in-tree dst-window active-leaf new-split))
           (setf (window-panes dst-window)
                 (layout-leaves (window-tree dst-window))
                 (pane-window src-pane) dst-window)
           (window-relayout dst-window
                            (window-height dst-window)
                            (window-width  dst-window))
-          src-pane)))))
+          src-pane))))))
 
-(defun join-pane (session src-window src-pane dst-window direction)
+(defun join-pane (session src-window src-pane dst-window direction
+                  &key before full size)
   "Move SRC-PANE from SRC-WINDOW into DST-WINDOW as a split in DIRECTION.
    DIRECTION is :h (left/right) or :v (top/bottom).
    If SRC-WINDOW becomes empty after removal, it is killed.
@@ -161,7 +193,10 @@
   (when (and src-window src-pane dst-window)
     (window-remove-pane src-window src-pane)
     (%join-pane-kill-empty-src session src-window)
-    (%join-pane-insert-into-dst src-pane dst-window direction)))
+    (%join-pane-insert-into-dst src-pane dst-window direction
+                                :before before
+                                :full full
+                                :size size)))
 
 ;;; ── pipe-pane ───────────────────────────────────────────────────────────────
 ;;;
@@ -175,40 +210,86 @@
 (defconstant +pipe-pane-open-timeout+ 1
   "Seconds to wait for launching the pipe-pane subprocess.")
 
-(defun pipe-pane-open (pane command)
-  "Tee PANE's PTY output to a pipe connected to COMMAND.
-   If PANE already has an open pipe, it is closed first.
-   Returns the pipe write-fd on success, NIL on failure."
-  ;; Close any existing pipe.
-  (when (pane-pipe-fd pane)
+(defun %pipe-pane-copy-output (pane output-stream)
+  "Copy OUTPUT-STREAM from the command back into PANE's PTY."
+  (unwind-protect
+      (handler-case
+          (let ((buffer (make-string 4096)))
+            (loop
+              for count = (read-sequence buffer output-stream)
+              while (plusp count) do
+                (ignore-errors
+                  (pty-write (pane-fd pane) (subseq buffer 0 count)))))
+        (end-of-file () nil)
+        (error () nil))
+    (ignore-errors (close output-stream))))
+
+(defun %pipe-pane-start-output-thread (pane output-stream)
+  "Start the background copier for command stdout into PANE."
+  (bt:make-thread (lambda () (%pipe-pane-copy-output pane output-stream))
+                  :name (format nil "pipe-pane-output-~D" (pane-id pane))))
+
+(defun %pipe-pane-reset (pane)
+  "Clear all pipe-pane state slots on PANE."
+  (setf (pane-pipe-fd pane) nil
+        (pane-pipe-output-stream pane) nil
+        (pane-pipe-output-thread pane) nil
+        (pane-pipe-process pane) nil))
+
+(defun pipe-pane-open (pane command &key
+                            (pane-output-to-command-p t)
+                            (command-output-to-pane-p nil))
+  "Connect PANE and COMMAND with pipe-pane direction flags.
+   PANE-OUTPUT-TO-COMMAND-P routes pane output to the command's stdin.
+   COMMAND-OUTPUT-TO-PANE-P routes command stdout back into the pane.
+   Returns a non-NIL stream or process handle on success, NIL on failure."
+  ;; Close any existing pipe in either direction.
+  (when (pane-pipe-active-p pane)
     (pipe-pane-close pane))
-  ;; Open a new pipe to the command.
   (let ((proc nil)
-        (stream nil))
+        (input-stream nil)
+        (output-stream nil)
+        (output-thread nil))
     (handler-case
         (bt:with-timeout (+pipe-pane-open-timeout+)
           (let* ((shell (or cl-tmux/config:*default-shell* "/bin/sh"))
                  (new-proc
                    (uiop:launch-program (list shell "-c" command)
-                                       :input :stream :output nil
+                                       :input (if pane-output-to-command-p :stream nil)
+                                       :output (if command-output-to-pane-p :stream nil)
                                        :error-output nil))
-                 (new-stream (uiop:process-info-input new-proc)))
+                 (new-input (and pane-output-to-command-p
+                                 (uiop:process-info-input new-proc)))
+                 (new-output (and command-output-to-pane-p
+                                  (uiop:process-info-output new-proc))))
             (setf proc new-proc
-                  stream new-stream
-                  (pane-pipe-fd pane) stream
+                  input-stream new-input
+                  output-stream new-output
+                  (pane-pipe-fd pane) input-stream
+                  (pane-pipe-output-stream pane) output-stream
                   (pane-pipe-process pane) proc)
-            stream))
+            (when output-stream
+              (setf output-thread
+                    (%pipe-pane-start-output-thread pane output-stream)
+                    (pane-pipe-output-thread pane) output-thread))
+            (or input-stream output-stream proc t)))
       (bt:timeout ()
-        (ignore-errors (when stream (close stream)))
+        (ignore-errors (when input-stream (close input-stream)))
+        (ignore-errors (when output-stream (close output-stream)))
         (ignore-errors (%terminate-pipe-process proc))
-        (setf (pane-pipe-fd pane) nil
-              (pane-pipe-process pane) nil)
+        (ignore-errors (when output-thread
+                         (cl-tmux::%join-thread-with-timeout output-thread
+                                                             +pipe-pane-close-timeout+)))
+        (%pipe-pane-reset pane)
         nil)
       (error ()
-        (ignore-errors (when stream (close stream)))
+        (ignore-errors (when input-stream (close input-stream)))
+        (ignore-errors (when output-stream (close output-stream)))
         (ignore-errors (%terminate-pipe-process proc))
-        (setf (pane-pipe-fd pane) nil
-              (pane-pipe-process pane) nil)
+        (ignore-errors (when output-thread
+                         (cl-tmux::%join-thread-with-timeout output-thread
+                                                             +pipe-pane-close-timeout+)))
+        (%pipe-pane-reset pane)
         nil))))
 
 (defun %wait-pipe-process (process)
@@ -232,13 +313,20 @@
 
 (defun pipe-pane-close (pane)
   "Close PANE's output pipe if one is open."
-  (let ((stream (pane-pipe-fd pane))
+  (let ((input-stream (pane-pipe-fd pane))
+        (output-stream (pane-pipe-output-stream pane))
+        (output-thread (pane-pipe-output-thread pane))
         (process (pane-pipe-process pane)))
-    (when stream
-      (ignore-errors (close stream)))
+    (when input-stream
+      (ignore-errors (close input-stream)))
+    (when output-stream
+      (ignore-errors (close output-stream)))
     (%terminate-pipe-process process)
-    (setf (pane-pipe-fd pane) nil
-          (pane-pipe-process pane) nil)))
+    (when output-thread
+      (ignore-errors
+        (cl-tmux::%join-thread-with-timeout output-thread
+                                            +pipe-pane-close-timeout+)))
+    (%pipe-pane-reset pane)))
 
 (defun pipe-pane-write (pane bytes)
   "Write BYTES to PANE's output pipe if one is active.

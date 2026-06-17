@@ -9,8 +9,7 @@
 ;;; `bind -T copy-mode-vi v send-keys -X begin-selection` works.
 ;;;
 ;;; define-copy-mode-x-command-table makes the table declarative; each entry is
-;;; ("command-name" keyword). The macro removes the dead duplicate stop-selection
-;;; entry that previously appeared twice (assoc always returns the first match).
+;;; ("command-name" keyword).
 
 (defmacro define-copy-mode-x-command-table (&rest entries)
   "Build *COPY-MODE-X-COMMANDS* from a declarative name -> keyword table.
@@ -22,12 +21,10 @@
 
 (define-copy-mode-x-command-table
   ("begin-selection"              :copy-mode-begin-selection)
-  ("begin-selection-line"         :copy-mode-begin-line-selection)
   ("begin-line-selection"         :copy-mode-begin-line-selection)
   ;; clear-selection: drop the selection but stay in copy mode (the default vi
-  ;; Escape binding); stop-selection is tmux's alias for the same action.
+  ;; Escape binding).
   ("clear-selection"              :copy-mode-clear-selection)
-  ("stop-selection"               :copy-mode-clear-selection)
   ("copy-selection"               :copy-mode-yank)
   ("copy-selection-and-cancel"    :copy-mode-yank)
   ("cancel"                       :copy-mode-exit)
@@ -72,16 +69,10 @@
   ("scroll-up"                    :copy-mode-scroll-up-line)
   ("scroll-down"                  :copy-mode-scroll-down-line)
   ("scroll-middle"                :copy-mode-scroll-middle)
-  ("scroll-up-half-page"          :copy-mode-half-page-up)
-  ("scroll-down-half-page"        :copy-mode-half-page-down)
   ;; emacs-style names
   ("select-word"                  :copy-mode-select-word)
-  ;; copy-pipe: copy + pipe-to-cmd, stays in copy mode (no-cancel).
-  ;; copy-pipe-and-cancel: copy + pipe-to-cmd, exits copy mode.
-  ;; When send-keys -X copy-pipe "cmd" passes an explicit pipe command via
-  ;; extra-args, %dispatch-send-keys-X calls copy-mode-copy-pipe{,-no-cancel}
-  ;; directly with the argument.  These keyword fallbacks handle the no-arg case
-  ;; (using the copy-command global option).
+  ;; canonical copy-pipe names: these remain valid `send-keys -X` targets when
+  ;; tmux resolves them through keyword dispatch without an explicit argument.
   ("copy-pipe"                    :copy-mode-copy-pipe-no-cancel)
   ("copy-pipe-and-cancel"         :copy-mode-copy-pipe-and-cancel)
   ("copy-pipe-end-of-line-and-cancel"
@@ -106,15 +97,6 @@
   ;; other-end / toggle-position: swap the two ends of the selection (vi `o`).
   ("other-end"                    :copy-mode-other-end)
   ("toggle-position"              :copy-mode-other-end)
-  ;; pipe / pipe-and-cancel / pipe-no-clear: same semantics as copy-pipe variants.
-  ("pipe"                         :copy-mode-copy-pipe-no-cancel)
-  ("pipe-and-cancel"              :copy-mode-copy-pipe-and-cancel)
-  ("pipe-no-clear"                :copy-mode-copy-pipe-no-cancel)
-  ;; search-forward-text / search-backward-text (tmux 3.2+): scripted search
-  ;; with the text passed as an extra-arg instead of an interactive prompt.
-  ;; Handled specially in %dispatch-send-keys-X via the extra-args path.
-  ("search-forward-text"          :copy-mode-search-forward-text)
-  ("search-backward-text"         :copy-mode-search-backward-text)
   ;; Bracket matching (vi %): jump to matching bracket.
   ("next-matching-bracket"        :copy-mode-next-matching-bracket)
   ("previous-matching-bracket"    :copy-mode-previous-matching-bracket))

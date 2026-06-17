@@ -286,7 +286,7 @@
             :pane-marked          (if (and pane (cl-tmux/model:pane-marked pane)) "1" "0")
             :pane-input-off       (if (and pane (cl-tmux/model:pane-input-disabled pane)) "1" "0")
             :pane-dead            (if (and pane (<= (cl-tmux/model:pane-fd pane) 0)) "1" "0")
-            :pane-pipe            (if (and pane (cl-tmux/model:pane-pipe-fd pane)) "1" "0"))
+            :pane-pipe            (if (and pane (cl-tmux/model:pane-pipe-active-p pane)) "1" "0"))
       ;; ── Pane geometry variables ───────────────────────────────────────────
       (list :pane-width           (if pane (cl-tmux/model:pane-width  pane) 0)
             :pane-height          (if pane (cl-tmux/model:pane-height pane) 0)

@@ -1,8 +1,5 @@
 (in-package #:cl-tmux/commands)
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (load "src/commands-copy-mode-virtual.lisp"))
-
 ;;;; Copy-mode bracket matching helpers.
 
 ;;; ── Bracket matching (vi %) ───────────────────────────────────────────────────
@@ -99,22 +96,29 @@
                         (1- (length row-str)))))
       (loop for col from to-col downto 0 do
         (let ((c (char row-str col)))
-          (when (%closing-bracket-p c)
-            (return-from %find-previous-closing-bracket (values vrow col c)))))))
+            (when (%closing-bracket-p c)
+              (return-from %find-previous-closing-bracket (values vrow col c)))))))
   (values nil nil nil))
+
+(defun %copy-mode-bracket-state (screen)
+  "Return the current copy-mode cursor state as (values cursor vrow col row-str ch)."
+  (let* ((cursor   (or (screen-copy-cursor screen) (cons 0 0)))
+         (cur-vrow (%copy-mode-cursor-virtual-row screen))
+         (cur-col  (cdr cursor))
+         (row-str  (%copy-mode-virtual-row-string screen cur-vrow))
+         (ch       (if (< cur-col (length row-str))
+                       (char row-str cur-col)
+                       #\Space)))
+    (values cursor cur-vrow cur-col row-str ch)))
 
 (defun copy-mode-next-matching-bracket (screen)
   "Jump to the bracket matching the char at the cursor (vi %).
    Open bracket → scan forward to close; close bracket → scan backward to open.
    Not on a bracket → find next bracket forward then jump to its match."
   (when (screen-copy-mode-p screen)
-    (let* ((cursor   (or (screen-copy-cursor screen) (cons 0 0)))
-           (cur-vrow (%copy-mode-cursor-virtual-row screen))
-           (cur-col  (cdr cursor))
-           (row-str  (%copy-mode-virtual-row-string screen cur-vrow))
-           (ch       (if (< cur-col (length row-str))
-                         (char row-str cur-col)
-                         #\Space)))
+    (multiple-value-bind (cursor cur-vrow cur-col _row-str ch)
+        (%copy-mode-bracket-state screen)
+      (declare (ignore cursor))
       (multiple-value-bind (partner direction) (%bracket-pair ch)
         (cond
           ((and partner (eq direction :forward))
@@ -122,15 +126,15 @@
           ((and partner (eq direction :backward))
            (%bracket-scan-backward screen cur-vrow cur-col partner ch))
           (t
-           ;; Not on a bracket: find the next bracket forward, then match it.
-           (multiple-value-bind (next-vrow next-col next-ch)
-               (%find-next-bracket screen cur-vrow (1+ cur-col))
-             (when next-vrow
-               (multiple-value-bind (next-partner next-dir) (%bracket-pair next-ch)
-                 (when next-partner
-                   (if (eq next-dir :forward)
-                       (%bracket-scan-forward  screen next-vrow next-col next-ch next-partner)
-                       (%bracket-scan-backward screen next-vrow next-col next-partner next-ch)))))))))
+            ;; Not on a bracket: find the next bracket forward, then match it.
+            (multiple-value-bind (next-vrow next-col next-ch)
+                (%find-next-bracket screen cur-vrow (1+ cur-col))
+              (when next-vrow
+                (multiple-value-bind (next-partner next-dir) (%bracket-pair next-ch)
+                  (when next-partner
+                    (if (eq next-dir :forward)
+                        (%bracket-scan-forward screen next-vrow next-col next-ch next-partner)
+                        (%bracket-scan-backward screen next-vrow next-col next-partner next-ch)))))))))
       (setf (screen-dirty-p screen) t))))
 
 (defun copy-mode-previous-matching-bracket (screen)
@@ -138,13 +142,9 @@
    Cursor on a close bracket scans backward from it.  Otherwise the previous
    close bracket is found first, then matched backward."
   (when (screen-copy-mode-p screen)
-    (let* ((cursor   (or (screen-copy-cursor screen) (cons 0 0)))
-           (cur-vrow (%copy-mode-cursor-virtual-row screen))
-           (cur-col  (cdr cursor))
-           (row-str  (%copy-mode-virtual-row-string screen cur-vrow))
-           (ch       (if (< cur-col (length row-str))
-                         (char row-str cur-col)
-                         #\Space)))
+    (multiple-value-bind (cursor cur-vrow cur-col _row-str ch)
+        (%copy-mode-bracket-state screen)
+      (declare (ignore cursor))
       (multiple-value-bind (partner direction) (%bracket-pair ch)
         (if (and partner (eq direction :backward))
             (%bracket-scan-backward screen cur-vrow cur-col partner ch)

@@ -2,16 +2,6 @@
 
 ;;; Copy-mode copy-to-buffer helpers.
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (let* ((source (or *load-truename* *compile-file-truename*))
-         (path (and source
-                    (merge-pathnames #P"commands-copy-mode-selection.lisp"
-                                     (make-pathname :name nil
-                                                    :type nil
-                                                    :defaults source)))))
-    (when (probe-file path)
-      (load path))))
-
 (defun %copy-row-range-text (screen row from-col to-col)
   "Extract and right-trim text from SCREEN at ROW between FROM-COL and TO-COL."
   (string-right-trim " " (%extract-row-chars screen row from-col to-col)))

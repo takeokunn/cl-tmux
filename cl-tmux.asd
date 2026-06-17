@@ -37,8 +37,10 @@
        (:file "modes-d")   ; DEC modes — focus, DECSC, reset, ANSI SM/RM, charset (parts III-IV)
        (:file "sgr")
        (:file "csi")
+       (:file "parser-dcs")    ; DCS passthrough/XTGETTCAP/DECRQSS helpers (loads before parser)
        (:file "parser")
-       (:file "parser-osc")    ; OSC accumulator, Base64 decoder, *osc52-handler*
+       (:file "parser-osc-helpers") ; OSC helper layer: Base64, hex, OSC 7/52
+       (:file "parser-osc")    ; OSC accumulator + dispatcher state machine
        (:file "emulator")))
      (:file "pane")             ; leaf PTY data and wiring (loaded first: layout needs pane-reposition)
      (:file "layout")             ; tree structure + traversal (uses pane-reposition)
@@ -64,35 +66,52 @@
      (:file "commands-core")
      (:file "commands-copy-mode")      ; copy-mode core: enter/exit, scroll, cursor, selection
      (:file "commands-copy-mode-selection") ; selection bounds and text extraction helpers
+     (:file "commands-copy-mode-word") ; word/WORD motion helpers shared by navigation/search
+     (:file "commands-copy-mode-nav-line") ; line-start/end, cursor-jump macros, scroll wrappers
+     (:file "commands-copy-mode-nav-select") ; begin-line-selection
+     (:file "commands-copy-mode-nav-paragraph") ; paragraph boundaries
+     (:file "commands-copy-mode-nav-jump") ; jump-to-char and goto-line commands
+     (:file "commands-copy-mode-nav-copy") ; copy-end-of-line, copy-line helpers
      (:file "commands-copy-mode-clip") ; rectangle selection text, yank, copy-pipe, append-selection
-     (:file "commands-copy-mode-nav")    ; word/line navigation, page/half-page scroll, copy-D/Y
+     (:file "commands-copy-mode-virtual") ; virtual-row helpers shared by search/brackets
+     (:file "commands-copy-mode-brackets") ; bracket matching commands
      (:file "commands-copy-mode-search") ; search-forward/backward, search-next/prev
      (:file "commands")
      (:file "commands-keys")           ; send-keys translation, tokenizer, shell helpers
      (:file "renderer-format")     ; ANSI primitives
      (:file "renderer-style")     ; style-string parsing + SGR dispatch tables
-     (:file "renderer-pane")      ; pane cell rendering (clock, selection, copy-mode highlights)
-     (:file "renderer-borders")   ; split-tree separators + pane border rendering
-     (:file "renderer-overlay")   ; popup and menu box-drawing
-     (:file "renderer-statusbar") ; status bar composition
-     (:file "renderer-compose")   ; session frame compositing + entry points
+     (:file "renderer-pane-selection") ; selection bounds helpers
+     (:file "renderer-pane-clock")     ; big digits + display-panes clock overlay
+     (:file "renderer-pane-search")    ; pane content search match ranges
+     (:file "renderer-pane")           ; pane cell rendering (selection, copy-mode highlights)
+     (:file "renderer-borders")        ; split-tree separators + pane border rendering
+     (:file "renderer-overlay")        ; popup and menu box-drawing
+     (:file "renderer-statusbar-layout"); status bar layout helpers
+     (:file "renderer-statusbar")      ; status bar composition
+     (:file "renderer-compose-protocols") ; terminal protocol toggles
+     (:file "renderer-compose-overlay")   ; overlay rendering + mouse mode sequences
+     (:file "renderer-compose-effects")   ; bell / cursor / queue drain effects
+     (:file "renderer-compose")        ; session frame compositing + entry points
      (:file "renderer")           ; documentation stub (intentionally empty)
      (:file "input")
      (:file "runtime")       ; shared state + channel sync + prompt history + PTY reader threads
      (:file "runtime-timer") ; status interval timer, lock-after-time, monitor-silence
-     (:file "dispatch-core")            ; dispatch macros, focus helpers, core dispatch infrastructure
+     (:file "dispatch-core")            ; dispatch macros + core dispatch infrastructure
+     (:file "dispatch-core-focus")      ; focus event delivery helpers
      (:file "dispatch-core-commands")   ; copy-mode table, format helpers, new-session, named-command table
+     (:file "dispatch-handlers-support") ; shared prompt/menu helpers for dispatch handlers
      (:file "dispatch-commands")          ; flag-parser utils + display/prompt/pane %cmd-* handlers
      (:file "dispatch-commands-buffer")   ; paste-buffer + overlay popup/menu %cmd-* handlers
      (:file "dispatch-commands-option")   ; set-option (CPS) + rename/select %cmd-* handlers
-     (:file "dispatch-commands-lifecycle") ; kill/link/unlink/swap/move/source-file/if-shell %cmd-*
+     (:file "dispatch-commands-lifecycle") ; kill/link/unlink/swap/move/source-file %cmd-*
     (:file "dispatch-commands-pane")   ; layout/window/pane helpers + *key-table*
     (:file "dispatch-commands-pane-session") ; session/client lifecycle %cmd-*
     (:file "dispatch-commands-pane-x") ; copy-mode -X command name table (send-keys -X dispatch)
      (:file "dispatch-commands-shell")   ; shell/pane-ops %cmd-* (run-shell, if-shell, capture, resize, join, break, clear, rotate)
      (:file "dispatch-commands-list")    ; list-sessions/windows/panes/clients/commands + wait-for arg checks
      (:file "dispatch-commands-auto")   ; window-nav/session-mgmt %cmd-* (find-window, send-keys, respawn, pipe-pane)
-     (:file "dispatch-commands-server") ; server-access ACL + customize-mode tree browser
+     (:file "dispatch-commands-server") ; server-access ACL
+     (:file "dispatch-commands-server-customize") ; customize-mode tree browser
      (:file "dispatch-commands-runner") ; *arg-command-table* + %run-command-tokens + %run-command-line
      (:file "dispatch-control")         ; control-mode REPL + dispatch-prefix-command
      (:file "dispatch-handlers")        ; command handler rule table part I (detach through wait-for)
@@ -129,7 +148,7 @@
   :description "Test suite for cl-tmux"
   :depends-on (:cl-tmux :fiveam)
   :components
-  ((:module "test"
+  ((:module "tests"
     :serial t
     :components
     ((:file "package")
@@ -254,25 +273,23 @@
        (:file "protocol-tests")            ; octets/frame-header/round-trips/msg-command — part I
        (:file "protocol-tests-b")          ; read-u32, split-on-nul, encode/decode-command-payload, target-field-p — part II
        (:file "transport-tests")
-       (:file "net-tests")
        (:file "server-tests")
        (:file "server-tests-b")          ; list-sessions, rename-session, switch-client, last-session — part II
-       (:file "server-multi-tests")
        (:file "pty-ffi-tests")
        (:file "pty-rawmode-tests")
-       (:file "pty-tests")
        (:file "input-tests")
        (:file "runtime-tests")             ; globals, pane-reader-loop, monitor-activity/silence, prompt-history, alert-action — part I
        (:file "runtime-tests-c")          ; stop-reader-threads, add-message-log, add-prompt-history, wait-for-channel — part III
        (:file "runtime-tests-b")          ; add-message-log table-driven, add-prompt-history, wait-for-channel — part II
-       (:file "client-tests")
        (:file "main-tests")
        (:file "advanced-tests")))
-     (:module "compat"
+     (:module "integration"
       :serial t
       :components
-      ((:file "matrix-tests")
-       (:file "matrix-cli-tests")))
+      ((:file "net-tests")
+       (:file "server-multi-tests")
+       (:file "pty-tests")
+       (:file "client-tests")))
      (:file "suite"))))
   ;; Run with: (asdf:test-system :cl-tmux)
   :perform (test-op (op c)

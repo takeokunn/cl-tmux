@@ -1,9 +1,5 @@
 (in-package #:cl-tmux/commands)
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (load "src/commands-copy-mode-virtual.lisp")
-  (load "src/commands-copy-mode-brackets.lisp"))
-
 (declaim (special cl-tmux::*dirty*))
 
 ;;; ── Copy-mode search subsystem ──────────────────────────────────────────────

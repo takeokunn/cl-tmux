@@ -91,6 +91,106 @@
            (server-find-session target-name)
            (server-current-session))))))
 
+(defun %parse-wxh (str)
+  "Parse a \"WxH\" size string (e.g. the default-size option \"80x24\") into
+   (values W H), or NIL when STR is not of that form or either dimension
+   is not a positive integer."
+  (when (stringp str)
+    (let* ((x (position #\x str :test #'char-equal))
+           (w (and x (parse-integer str :end x :junk-allowed t)))
+           (h (and x (parse-integer str :start (1+ x) :junk-allowed t))))
+      (when (and w h (plusp w) (plusp h))
+        (values w h)))))
+
+(defun %next-free-session-name ()
+  "Return the lowest positive-integer string not already in use as a session name."
+  (loop for i from 1
+        for candidate = (format nil "~D" i)
+        unless (server-find-session candidate) return candidate))
+
+(defun %cmd-new-session-arg (session args)
+  "new-session [-A] [-d] [-s name] [-n window-name] [-c start-dir] [-x width] [-y height]: create a new session.
+   -A: if a session named NAME already exists, attach to it instead of creating a new one.
+   -d: create detached (do not switch to the new session).
+   -s name: session name.
+   -n name: initial window name.
+   -c dir: start directory for the initial window's shell.
+   -x width: initial columns (default: terminal width, or default-size when -d).
+   -y height: initial rows (default: terminal height minus status bar, or
+     default-size when -d).
+   A DETACHED session (-d) has no client to size it, so — like tmux — it uses the
+   default-size option (\"WxH\", default 80x24) when -x/-y are not given."
+  (with-command-flags+pos (flags positionals args "sncxyt")
+    (declare (ignore positionals))
+    (let* ((name            (or (cdr (assoc #\s flags))
+                                (format nil "~D" (1+ (length *server-sessions*)))))
+           (attach-if-exists (assoc #\A flags))
+           (detach-p         (assoc #\d flags))
+           (win-name         (cdr (assoc #\n flags)))
+           ;; -t <group>: the new session JOINS an existing session's group,
+           ;; sharing its window list (tmux "grouped sessions").
+           (group-target     (cdr (assoc #\t flags)))
+           (start-dir        (cdr (assoc #\c flags)))
+           ;; Detached sessions have no client → fall back to default-size, not the
+           ;; current terminal size.  NIL for attached sessions (use the terminal).
+           (default-wxh      (and detach-p
+                                  (cl-tmux/options:get-option "default-size" "80x24")))
+           ;; -x/-y override everything when given (junk-allowed).
+           (cols             (or (%parse-flag-int flags #\x)
+                                 (and default-wxh (nth-value 0 (%parse-wxh default-wxh)))
+                                 *term-cols*))
+           (rows             (or (%parse-flag-int flags #\y)
+                                 (and default-wxh (nth-value 1 (%parse-wxh default-wxh)))
+                                 (- *term-rows* *status-height*))))
+      ;; -A: attach to existing session if it exists
+      (when attach-if-exists
+        (let ((existing (server-find-session name)))
+          (when existing
+            (session-touch existing)
+            (unless detach-p (setf *dirty* t))
+            (return-from %cmd-new-session-arg existing))))
+      ;; Without -A, a name already in use cannot be taken over (server-add-session
+      ;; would orphan the existing session): an EXPLICIT -s duplicate is refused
+      ;; (tmux's "duplicate session"); an AUTO name bumps to the next free number.
+      (when (and (not attach-if-exists) (server-find-session name))
+        (if (cdr (assoc #\s flags))
+            (progn
+              (%overlayf "duplicate session: ~A" name)
+              (return-from %cmd-new-session-arg nil))
+            (setf name (%next-free-session-name))))
+      ;; -t <group>: join an existing session's group instead of spawning a new
+      ;; pane.  The grouped session SHARES the target's window list (and thus the
+      ;; live PTYs + reader threads already attached to those panes), so it must
+      ;; be built with a bare make-session — NOT new-session, which would spawn an
+      ;; initial PTY + reader thread that %link-session-to-group then orphans.
+      (when group-target
+        (let ((target (server-find-session group-target)))
+          (unless target
+            (%overlayf "can't find session: ~A" group-target)
+            (return-from %cmd-new-session-arg nil))
+          (let ((grouped (make-session :id (incf *session-id-counter*)
+                                       :name name
+                                       :last-active (get-universal-time))))
+            (server-add-session grouped)
+            (server-new-session-in-group grouped target)
+            (when (not detach-p)
+              (setf *dirty* t)
+              (show-transient-overlay
+               (format nil "new session: ~A" (session-name grouped))))
+            (return-from %cmd-new-session-arg grouped))))
+      (let ((new-sess (new-session name rows cols :start-dir start-dir)))
+        ;; Apply window name if given
+        (when (and win-name new-sess)
+          (let ((win (session-active-window new-sess)))
+            (when win (rename-window win win-name))))
+        ;; Without -d, show an overlay confirming the new session was created.
+        ;; With -d, the session is created in background and SESSION (the calling
+        ;; session) remains the active display — no dirty flag, no visual switch.
+        (when (and new-sess (not detach-p))
+          (show-transient-overlay
+           (format nil "new session: ~A" (session-name new-sess))))
+        new-sess))))
+
 (defun %destroy-session (session)
   "Tear down SESSION: close its panes' PTYs, remove it from the server registry,
    and fire the session-closed hook.  The single chokepoint for session
@@ -160,9 +260,9 @@
                                 session)))
       (if kill-all-others
           ;; -a: kill all sessions except target-sess (the "keep" session)
-          (loop for (nil . sess) in (remove-if (lambda (e) (eq (cdr e) target-sess))
-                                               *server-sessions*)
-                do (%destroy-session sess))
+          (dolist (entry (remove-if (lambda (e) (eq (cdr e) target-sess))
+                                    *server-sessions*))
+            (%destroy-session (cdr entry)))
           ;; No -a: kill target-sess
           (when target-sess
             (let ((name        (session-name target-sess))

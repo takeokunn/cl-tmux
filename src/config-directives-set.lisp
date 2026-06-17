@@ -127,26 +127,31 @@
           (error () raw-value)))
       raw-value))
 
+(defun %set-option-accessors (server-p)
+  "Return the getter, setter, and storage table for the requested scope."
+  (if server-p
+      (values #'cl-tmux/options:get-server-option
+              #'cl-tmux/options:set-server-option
+              cl-tmux/options:*server-options*)
+      (values #'cl-tmux/options:get-option
+              #'cl-tmux/options:set-option
+              cl-tmux/options:*global-options*)))
+
 (defun %route-set-value (name value server-p append-p unset-p)
   "Store VALUE under NAME in the appropriate option table, handling -u/-s/-a/-sa.
    Pure routing: all value coercion has already happened."
-  (cond
-    (unset-p
-     (if server-p
-         (remhash name cl-tmux/options:*server-options*)
-         (remhash name cl-tmux/options:*global-options*)))
-    ((and server-p append-p)
-     (cl-tmux/options:set-server-option
-      name (cl-tmux/options:append-option-value
-            name (cl-tmux/options:get-server-option name nil) value)))
-    (server-p
-     (cl-tmux/options:set-server-option name value))
-    (append-p
-     (cl-tmux/options:set-option
-      name (cl-tmux/options:append-option-value
-            name (cl-tmux/options:get-option name nil) value)))
-    (t
-     (cl-tmux/options:set-option name value))))
+  (multiple-value-bind (getter setter table)
+      (%set-option-accessors server-p)
+    (cond
+      (unset-p
+       (remhash name table))
+      (append-p
+       (funcall setter
+                name
+                (cl-tmux/options:append-option-value
+                 name (funcall getter name nil) value)))
+      (t
+       (funcall setter name value)))))
 
 (defun %apply-set-directive (cmd args)
   "Apply a flag-bearing set-family directive (e.g. `set -g status off`,
@@ -163,7 +168,7 @@
             (let ((value (%coerce-set-value raw-value format-p)))
               (%route-set-value name value server-p append-p unset-p)
               ;; Side-effect: intercept special options that need runtime state updates.
-              (%apply-option-side-effects name value)
+              (%apply-option-side-effects name value unset-p)
               t)))))))
 
 ;;; ── Option side-effect helpers ───────────────────────────────────────────────
@@ -201,45 +206,61 @@
    Each RULE has the form:
      (NAME-STRING &body BODY)   — NAME-STRING matched via STRING=; VALUE bound in BODY.
      (:any-of (NAME...) &body BODY) — VALUE bound in BODY when NAME is one of the list.
-   Generates a COND dispatch over NAME."
-  `(defun %apply-option-side-effects (name value)
+  Generates a COND dispatch over NAME."
+  `(defun %apply-option-side-effects (name value unset-p)
      "Apply runtime side-effects for options that touch non-option state.
       Dispatches on NAME; VALUE holds the new option value string."
-     (declare (ignorable value))
+     (declare (ignorable value unset-p))
      (cond
        ,@(mapcar #'%expand-option-side-effect-rule rules))))
 
 (define-option-side-effect-handlers
   ;; prefix / prefix2: parse and arm the key in the prefix table.
-  ("prefix"  (%bind-prefix-key value '*prefix-key-code*))
-  ("prefix2" (%bind-prefix-key value '*prefix2-key-code*))
+  ("prefix"
+   (if unset-p
+       (setf *prefix-key-code* +prefix-key-code+)
+       (%bind-prefix-key value '*prefix-key-code*)))
+  ("prefix2"
+   (if unset-p
+       (setf *prefix2-key-code* nil)
+       (%bind-prefix-key value '*prefix2-key-code*)))
   ;; default-shell: update the shell used for new panes immediately.
   ("default-shell"
-   (when (%nonempty-string-p value)
-     (setf *default-shell* value)))
+   (if unset-p
+       (setf *default-shell* "/bin/sh")
+       (when (%nonempty-string-p value)
+         (setf *default-shell* value))))
   ;; escape-time: sync into server-options so every set form takes effect.
   ("escape-time"
-   (when (%nonempty-string-p value)
-     (cl-tmux/options:set-server-option "escape-time" value)))
+   (if unset-p
+       (cl-tmux/options:set-server-option "escape-time" 500)
+       (when (%nonempty-string-p value)
+         (cl-tmux/options:set-server-option "escape-time" value))))
   ;; status: off/false/0 hides the bar; numeric line count (capped at 5) or on/true → 1.
   ("status"
-   (let* ((off-p (member value '("off" "false" "0") :test #'equal))
-          (n     (parse-integer value :junk-allowed t)))
-     (setf *status-height*
-           (cond (off-p 0)
-                 ((and n (> n 0)) (min n 5))
-                 (t 1)))))
+   (if unset-p
+       (setf *status-height* 1)
+       (let* ((off-p (member value '("off" "false" "0") :test #'equal))
+              (n     (parse-integer value :junk-allowed t)))
+         (setf *status-height*
+               (cond (off-p 0)
+                     ((and n (> n 0)) (min n 5))
+                     (t 1))))))
   ;; mouse: delegate to *mouse-reporting-hook* so config and renderer stay decoupled.
   ("mouse"
    (when *mouse-reporting-hook*
-     (let ((on-p (member value '("on" "true" "1") :test #'equal)))
+     (let ((on-p (and (not unset-p)
+                      (member value '("on" "true" "1") :test #'equal))))
        (ignore-errors (funcall *mouse-reporting-hook* (and on-p t))))))
   ;; update-environment: propagate the space-separated variable list into the model.
   ("update-environment"
-   (when (%nonempty-string-p value)
-     (setf cl-tmux/model:*update-environment*
-           (remove-if (lambda (s) (zerop (length s)))
-                      (uiop:split-string value :separator '(#\Space)))))))
+   (if unset-p
+       (setf cl-tmux/model:*update-environment*
+             (copy-list cl-tmux/model:+default-update-environment+))
+       (when (%nonempty-string-p value)
+         (setf cl-tmux/model:*update-environment*
+               (remove-if (lambda (s) (zerop (length s)))
+                          (uiop:split-string value :separator '(#\Space))))))))
 
 (defun %apply-set-hook-directive (cmd args)
   "Handle 'set-hook [-r] [-u] event [command]' directives.

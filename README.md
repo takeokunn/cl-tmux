@@ -67,7 +67,8 @@ Directory spec:
 A missing file is not an error — cl-tmux starts with its defaults.
 
 One directive per line; blank lines and lines beginning with `#` are ignored.
-Tokens are whitespace-separated (no quoting).
+Tokens are whitespace-separated, with double quotes and backslash escapes
+supported inside a token and single quotes treated literally.
 
 | Directive | Arguments | Effect |
 |---|---|---|
@@ -129,7 +130,7 @@ the same `process-byte` pipeline the standalone loop uses.
 ## Testing
 
 ```bash
-# Unit + PTY-integration suite (FiveAM). PTY tests self-skip where
+# Unit + integration suite (FiveAM). PTY tests self-skip where
 # /dev/ptmx is unavailable, so this also works in sandboxed builds:
 nix flake check                     # runs the suite as a Nix check
 # or, in the dev shell:
@@ -141,7 +142,7 @@ sbcl --eval '(require :asdf)' \
 # End-to-end smoke test: drives the *real* binary inside a PTY,
 # types a command, and verifies cl-tmux renders the output.
 nix build .
-sbcl --no-sysinit --no-userinit --script test/integration/e2e-smoke.lisp result/bin/cl-tmux
+sbcl --no-sysinit --no-userinit --script tests/e2e/e2e-smoke.lisp result/bin/cl-tmux
 ```
 
 The suite covers three layers: the VT100 emulator (cursor, erase, SGR,
@@ -178,17 +179,14 @@ cl-tmux/
 │   ├── server.lisp    # Detach-attach server (owns session, serves clients)
 │   ├── client.lisp    # Detach-attach client (thin terminal over a socket)
 │   └── main.lisp      # Binary entry point (standalone / server / attach)
-└── test/
+└── tests/
     ├── package.lisp        # test package + imports
-    ├── helpers.lisp        # screen-builder DSL, table-driven + layout helpers
-    ├── terminal-tests.lisp # VT100/ANSI + UTF-8 + double-width unit tests
-    ├── layout-tests.lisp   # pane geometry invariants
-    ├── model-tests.lisp    # session/window/pane lifecycle + resize
-    ├── config-tests.lisp   # key bindings + config-file loading
-    ├── renderer-tests.lisp # escape-code renderer output
-    ├── pty-tests.lisp      # live PTY/shell integration
+    ├── helpers.lisp        # shared unit-test helpers
+    ├── helpers-b.lisp      # shared integration-test helpers
     ├── suite.lisp          # aggregate runner
-    └── integration/e2e-smoke.lisp # drives the real binary in a PTY
+    ├── unit/               # feature-focused unit specs
+    ├── integration/        # PTY/socket/runtime integration specs
+    └── e2e/                # binary-level smoke tests
 ```
 
 ## Architecture
