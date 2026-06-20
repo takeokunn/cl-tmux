@@ -142,13 +142,19 @@
    Returns :REPEATABLE when the binding had the -r (repeatable) flag set, so
    the caller can stay in after-prefix state for the next key."
   (let* ((ch  (and byte (code-char byte)))
+         ;; Probe the prefix table by candidate spellings (raw char, named keys
+         ;; like Tab/Enter/BSpace, and C-<letter>) so `bind Tab ...` / `bind
+         ;; Enter ...` work — not just single printable chars.  Resolve the entry
+         ;; once and derive BOTH the command and the -r flag from it.
          (entry (if (%copy-mode-active-p session)
                     nil
-                    (and ch (key-table-lookup +table-prefix+ ch))))
+                    (and byte
+                         (%key-table-entry-by-candidates
+                          +table-prefix+ (%single-byte-key-candidates byte)))))
          (repeatable-p (and entry (key-table-repeatable-p entry)))
          (cmd (if (%copy-mode-active-p session)
                   (%copy-mode-cmd ch)
-                  (and ch (lookup-key-binding ch))))
+                  (and entry (key-table-command entry))))
          (result (cond
                    ;; (:sequence cmd1 cmd2 ...) — run each sub-command in order.
                    ((and (consp cmd) (eq (car cmd) :sequence))

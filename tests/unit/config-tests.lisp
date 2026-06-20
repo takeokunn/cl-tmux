@@ -168,6 +168,20 @@
     (dolist (sub '("new-window" "detach" "select-window"))
       (is (search sub text) "should list ~A" sub))))
 
+(test prefix-named-single-byte-key-reachable-at-runtime
+  "Runtime prefix dispatch resolves a named single-byte key binding (Enter, byte
+   13) via candidate probing, so `bind Enter <cmd>` is reachable — not just
+   printable single characters (audit #35)."
+  (with-isolated-config
+    (cl-tmux/config:load-config-from-string "bind Enter next-window")
+    (let ((entry (cl-tmux::%key-table-entry-by-candidates
+                  cl-tmux/config:+table-prefix+
+                  (cl-tmux::%single-byte-key-candidates 13))))
+      (is (not (null entry))
+          "Enter (byte 13) must resolve a prefix-table entry after bind Enter")
+      (is (eq :next-window (cl-tmux/config:key-table-command entry))
+          "the resolved entry must be the bound next-window command"))))
+
 (test default-prefix-string-bindings-are-listed-and-repeatable
   "Default prefix multi-byte keys are present in the key table and resize arrows are repeatable."
   (with-isolated-config
