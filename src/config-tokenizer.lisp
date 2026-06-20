@@ -306,7 +306,7 @@
     ("start"     . "start-server")     ("suspendc"  . "suspend-client")
     ("swapp"     . "swap-pane")        ("swapw"     . "swap-window")
     ("switchc"   . "switch-client")    ("bind-key"  . "bind")
-    ("unbind-key" . "unbind"))
+    ("unbind-key" . "unbind")          ("unlink"    . "unlink-window"))
   "tmux command-name aliases (the cmd_entry .alias field) mapped to the canonical
    name cl-tmux registers.  Consulted by %canonical-command-name so a .tmux.conf
    using the short forms (neww, splitw, killp, …) resolves transparently.")
