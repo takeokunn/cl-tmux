@@ -48,14 +48,25 @@
    operating on STORAGE-VAR (runtime values) and REGISTRY-VAR (type specs).
    GET-DOCSTRING and SET-DOCSTRING are optional docstring overrides."
   `(progn
-     (defun ,get-name (name &optional default)
+     (defun ,get-name (name &optional (default nil default-suppliedp))
        ,(or get-docstring
             (format nil "Return the current value of option NAME from ~A.~%~
-                         Returns DEFAULT (nil if not supplied) when NAME is not present."
-                    storage-var))
+                         When NAME is absent: returns the explicitly supplied DEFAULT~%~
+                         if one was given; otherwise falls back to the registered~%~
+                         spec default in ~A (mirroring tmux options_remove_or_default,~%~
+                         so a `set -u` of a registered option reads as its table default)."
+                    storage-var registry-var))
        (multiple-value-bind (value presentp)
            (gethash name ,storage-var)
-         (if presentp value default)))
+         (cond
+           (presentp value)
+           ;; An explicit caller DEFAULT (even NIL) is always honored.
+           (default-suppliedp default)
+           ;; No caller default: fall back to the registered spec default, so an
+           ;; unset (remhash) registered option reverts to its table default value
+           ;; rather than reading as absent (tmux options_remove_or_default).
+           (t (let ((spec (gethash name ,registry-var)))
+                (when spec (option-spec-default spec)))))))
      (defun ,set-name (name value)
        ,(or set-docstring
             (format nil "Coerce VALUE to the registered type for NAME and store it in ~A.~%~

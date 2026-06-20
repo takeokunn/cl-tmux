@@ -29,14 +29,16 @@
             *server-sessions*))
 
 (define-command-input-handler %cmd-link-window (session args)
-  "link-window [-s src] -t dst [-k]: share a window into another session.
+  "link-window [-s src] -t dst [-dk]: share a window into another session.
    -s src: source window target (session:window); default is the active window.
    -t dst: destination session (session or session:window).
    -k: kill any window already occupying the destination index first.
+   -d: do not make the linked window the active window of the destination session
+   (default: the newly linked window becomes current, matching tmux).
    The window object is SHARED — it appears in both sessions at the same index
    (cl-tmux stores the index in the window struct, so linked windows share it)."
   (flags positionals "st"
-         :allowed-flags '(#\s #\t #\k)
+         :allowed-flags '(#\s #\t #\k #\d)
          :max-positionals 0
          :message "link-window: unsupported argument")
   (let* ((src-str (%flag-value flags #\s))
@@ -67,6 +69,10 @@
                (when collision (kill-window dst-sess collision))
                (session-insert-window dst-sess src-win)
                (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-linked+ src-win)
+               ;; Without -d the newly linked window becomes current in the
+               ;; destination session (tmux selects it unless -d is given).
+               (unless (%flag-present-p flags #\d)
+                 (session-select-window dst-sess src-win))
                (show-overlay (if collision
                                  "link-window: linked (replaced existing)"
                                  "link-window: linked")))))))))
@@ -158,18 +164,25 @@
     t))
 
 (define-command-input-handler %cmd-swap-window (session args)
-  "swap-window [-s src] -t dst: exchange the index numbers of two windows.  SRC and
-   DST are window-id/name targets; with no -s the active window is the source.
+  "swap-window [-s src] -t dst [-d]: exchange the index numbers of two windows.  SRC
+   and DST are window-id/name targets; with no -s the active window is the source.
+   -d: do not change the active window (default: the swapped window becomes current,
+   matching tmux, which without -d makes the moved content current in both sessions).
    First command to use two value flags (-s and -t) at once."
   (flags positionals "st"
-         :allowed-flags '(#\s #\t)
+         :allowed-flags '(#\s #\t #\d)
          :max-positionals 0
          :message "swap-window: unsupported argument")
   (let* ((src-str (%flag-value flags #\s))
          (dst-str (%flag-value flags #\t))
          (src (%resolve-window-target-or-active session src-str))
          (dst (and dst-str (%resolve-window-target session dst-str))))
-    (%swap-window-ids session src dst)))
+    (when (%swap-window-ids session src dst)
+      ;; Without -d the swapped window becomes the current window.  tmux selects
+      ;; the moved content in both the destination and source sessions; cl-tmux's
+      ;; swap is intra-session, so the moved source window becomes current.
+      (unless (%flag-present-p flags #\d)
+        (session-select-window session src)))))
 
 (defun %cmd-source-file (session args)
   "source-file [-Fnqv] [-t target-pane] path...: load the tmux config file(s) at the given
@@ -197,14 +210,16 @@
         (incf (window-id w))))))
 
 (define-command-input-handler %cmd-move-window (session args)
-  "move-window [-s src-window] [-t dst-index] [-r] [-a]: move/renumber a window.
+  "move-window [-s src-window] [-t dst-index] [-r] [-a] [-d]: move/renumber a window.
    -s src: source window (name or id); default is the active window.
    -t n: destination window-id (numeric index to assign to the window).
    -r: renumber all windows sequentially from base-index (repack gaps).
    -a: insert after the current window (used with -t for relative positioning.
+   -d: do not make the moved window the active window (default: the moved window
+   becomes current, matching tmux).
    Without -s/-t: prompts interactively (no-op in arg-command path)."
   (flags positionals "st"
-         :allowed-flags '(#\s #\t #\r #\a)
+         :allowed-flags '(#\s #\t #\r #\a #\d)
          :max-positionals 0
          :message "move-window: unsupported argument")
   (let* ((src-str (%flag-value flags #\s))
@@ -233,4 +248,8 @@
            (%shuffle-windows-up session target src-win))
          (setf (window-id src-win) target
                (session-windows session)
-               (sort (copy-list (session-windows session)) #'< :key #'window-id)))))))
+               (sort (copy-list (session-windows session)) #'< :key #'window-id))
+         ;; Without -d the moved window becomes the current window (tmux selects
+         ;; the moved window in the destination session unless -d is given).
+         (unless (%flag-present-p flags #\d)
+           (session-select-window session src-win)))))))

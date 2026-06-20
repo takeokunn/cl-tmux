@@ -114,8 +114,10 @@ bind-key r source-file /dev/null"))
 set -u status")
     (is (= 1 cl-tmux/config:*status-height*)
         "unset status must restore the default height of 1")
-    (is (null (cl-tmux/options:get-option "status"))
-        "unset status must remove the option from storage")))
+    (is (null (nth-value 1 (gethash "status" cl-tmux/options:*global-options*)))
+        "unset status must remove the option from the storage table")
+    (is (string= "on" (cl-tmux/options:get-option "status"))
+        "after removal status reads as its registry default \"on\" (tmux options_remove_or_default)")))
 
 ;;; ── Bare arg-command shorthand rejection in bind (single-token path) ────────
 ;;;

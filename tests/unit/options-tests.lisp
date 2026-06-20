@@ -46,6 +46,45 @@
   (with-fresh-options
     (is (= 42 (cl-tmux/options:get-option "missing" 42)))))
 
+(test get-option-unset-reverts-to-registry-default
+  "After a registered option is removed (set -u), get-option with NO caller
+   default reverts to the registry spec default, mirroring tmux
+   options_remove_or_default.  An explicit caller default still wins."
+  ;; with-fresh-global-options copies *global-options* but SHARES *option-registry*,
+  ;; so default-terminal's spec ("screen") is still registered.
+  (with-fresh-global-options
+    (remhash "default-terminal" cl-tmux/options:*global-options*)
+    (is (string= "screen" (cl-tmux/options:get-option "default-terminal"))
+        "unset registered option must read as its registry default \"screen\"")
+    ;; A registered option with no caller default also falls back even if never set.
+    (remhash "history-limit" cl-tmux/options:*global-options*)
+    (is (= 2000 (cl-tmux/options:get-option "history-limit"))
+        "unset integer option must read as its registry default 2000")
+    ;; An explicitly supplied default (even NIL) is still honored over the registry.
+    (is (null (cl-tmux/options:get-option "default-terminal" nil))
+        "an explicit NIL caller default must override the registry fallback")
+    (is (= 7 (cl-tmux/options:get-option "default-terminal" 7))
+        "an explicit caller default must override the registry fallback")
+    ;; An UNregistered key still returns the caller default / NIL (no spec to fall back to).
+    (is (null (cl-tmux/options:get-option "totally-unknown-opt"))
+        "an unregistered absent key has no spec, so it reads as NIL")))
+
+(test get-server-option-unset-reverts-to-registry-default
+  "get-server-option falls back to the server registry spec default when a
+   registered server option is absent and no caller default is supplied."
+  (with-fresh-server-options
+    ;; *server-options* is empty here; *server-option-registry* is shared, so
+    ;; default-terminal's server spec ("screen") and escape-time (500) apply.
+    (is (string= "screen" (cl-tmux/options:get-server-option "default-terminal"))
+        "absent registered server option must read as its registry default")
+    (is (= 500 (cl-tmux/options:get-server-option "escape-time"))
+        "absent registered integer server option must read as its registry default")
+    ;; Explicit caller default (incl. NIL) still wins; unregistered key reads as default.
+    (is (null (cl-tmux/options:get-server-option "default-terminal" nil))
+        "an explicit NIL caller default must override the server registry fallback")
+    (is (null (cl-tmux/options:get-server-option "nonexistent-server-opt"))
+        "an unregistered absent server key reads as NIL")))
+
 ;;; set-option / get-option round-trip
 
 (test set-and-get-option-string

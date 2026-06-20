@@ -257,6 +257,34 @@
               "~A must not mutate the source window list" cmd)
           (is (equal dst-before (session-windows dst))
               "~A must not mutate the destination window list" cmd)))))
+
+(test run-command-line-link-window-selects-linked-window-by-default
+  "'link-window -s 0 -t dst -k' (no -d) makes the linked window current in dst."
+  (with-fake-session (src :nwindows 1)
+    (with-fake-session (dst :nwindows 1)
+      (setf (session-name src) "src"
+            (session-name dst) "dst")
+      (let* ((src-win (session-active-window src))
+             (dst-orig (session-active-window dst))
+             (cl-tmux::*server-sessions* (list (cons "src" src) (cons "dst" dst)))
+             (*overlay* nil))
+        (cl-tmux::%run-command-line src "link-window -s 0 -t dst -k")
+        (is (eq src-win (session-active-window dst))
+            "without -d the linked window becomes current in the destination")
+        (declare (ignore dst-orig))))))
+
+(test run-command-line-link-window-d-keeps-dst-active-window
+  "'link-window -d -s 0 -t dst -k' leaves the destination's active window unchanged."
+  (with-fake-session (src :nwindows 1)
+    (with-fake-session (dst :nwindows 2)
+      (setf (session-name src) "src"
+            (session-name dst) "dst")
+      (let* ((dst-active (session-active-window dst))
+             (cl-tmux::*server-sessions* (list (cons "src" src) (cons "dst" dst)))
+             (*overlay* nil))
+        (cl-tmux::%run-command-line src "link-window -d -s 0 -t dst -k")
+        (is (eq dst-active (session-active-window dst))
+            "-d must not change the destination's active window")))))
   (dolist (cmd '("unlink-window extra" "unlink-window -Z"))
     (with-fake-session (s :nwindows 2)
       (let ((before (copy-list (session-windows s)))
@@ -293,6 +321,24 @@
       (cl-tmux::%run-command-line s "swap-window -t 1")
       (is (= 1 (window-id active)) "the active window's index becomes 1")
       (is (= 0 (window-id w1)) "the other window's index becomes 0"))))
+
+(test run-command-line-swap-window-selects-moved-window-by-default
+  "'swap-window -s X -t Y' (no -d) makes the swapped source window current."
+  (with-fake-session (s :nwindows 3)
+    (let ((w0 (find 0 (session-windows s) :key #'window-id)))
+      (cl-tmux::%run-command-line s "swap-window -s 0 -t 2")
+      (is (eq w0 (session-active-window s))
+          "without -d the swapped source window becomes the active window"))))
+
+(test run-command-line-swap-window-d-keeps-active-window
+  "'swap-window -d -s X -t Y' leaves the active window unchanged."
+  (with-fake-session (s :nwindows 3)
+    (let ((w1 (find 1 (session-windows s) :key #'window-id)))
+      ;; Make a non-source window active so the swap would otherwise move focus.
+      (session-select-window s w1)
+      (cl-tmux::%run-command-line s "swap-window -d -s 0 -t 2")
+      (is (eq w1 (session-active-window s))
+          "-d must not change the active window"))))
 
 (test run-command-line-swap-window-unknown-target-is-noop
   "'swap-window -s 0 -t 99' (no such dst) leaves the window indices unchanged."
@@ -373,6 +419,26 @@
           "the active window takes the requested index 1")
       (is (= 2 (window-id w1))
           "the window formerly at 1 shifts up to 2"))))
+
+(test run-command-line-move-window-selects-moved-window-by-default
+  "'move-window -t N' (no -d) makes the moved window the active window."
+  (with-fake-session (s :nwindows 2)
+    (let ((win (session-active-window s))
+          (other (find 1 (session-windows s) :key #'window-id)))
+      ;; Make the non-source window active so the move would otherwise move focus.
+      (session-select-window s other)
+      (cl-tmux::%run-command-line s "move-window -s 0 -t 5")
+      (is (eq win (session-active-window s))
+          "without -d the moved window becomes the active window"))))
+
+(test run-command-line-move-window-d-keeps-active-window
+  "'move-window -d -t N' leaves the active window unchanged."
+  (with-fake-session (s :nwindows 2)
+    (let ((other (find 1 (session-windows s) :key #'window-id)))
+      (session-select-window s other)
+      (cl-tmux::%run-command-line s "move-window -d -s 0 -t 5")
+      (is (eq other (session-active-window s))
+          "-d must not change the active window"))))
 
 (test run-command-line-move-window-rejects-unsupported-arguments
   "move-window rejects unknown flags and extra positionals before moving."
