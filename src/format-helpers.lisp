@@ -52,6 +52,21 @@
                  (t (incf i))))
           finally (return nil))))
 
+(defun %top-level-pipe (content start)
+  "Index of the next '|' in CONTENT at/after START that is NOT inside a nested
+   #{...}, or NIL.  Pipes inside a nested format (e.g. a nested #{e|..}) belong
+   to it, not the field splitter."
+  (let ((depth 0) (i start) (n (length content)))
+    (loop while (< i n)
+          do (let ((c (char content i)))
+               (cond
+                 ((and (char= c #\#) (< (1+ i) n) (char= (char content (1+ i)) #\{))
+                  (incf depth) (incf i 2))
+                 ((and (char= c #\}) (plusp depth)) (decf depth) (incf i))
+                 ((and (char= c #\|) (zerop depth)) (return i))
+                 (t (incf i))))
+          finally (return nil))))
+
 (defun %split-two (rest)
   "Split REST on the first top-level comma into (values first second).
    When no comma is present, SECOND defaults to the empty string."
@@ -115,20 +130,65 @@
   (#\P :pane-index)
   (#\H :hostname))
 
+;;; ── Float operand parsing for #{e|...|f|...} ────────────────────────────────
+
+(defun %parse-double (string)
+  "Parse the leading numeric prefix of STRING as a double-float, mirroring
+   strtod's lenient behaviour: leading sign, digits, a decimal point, and an
+   exponent are consumed; trailing junk is ignored.  Returns 0.0d0 when no
+   number is present.  Never signals."
+  (if (not (stringp string))
+      0.0d0
+      (let* ((s (string-trim '(#\Space #\Tab) string))
+             (n (length s))
+             (i 0))
+        ;; optional leading sign
+        (when (and (< i n) (member (char s i) '(#\+ #\-) :test #'char=))
+          (incf i))
+        (let ((digits-start i) (seen-dot nil) (seen-exp nil))
+          (loop while (< i n)
+                for c = (char s i)
+                do (cond
+                     ((digit-char-p c) (incf i))
+                     ((and (char= c #\.) (not seen-dot) (not seen-exp))
+                      (setf seen-dot t) (incf i))
+                     ((and (member c '(#\e #\E) :test #'char=)
+                           (not seen-exp) (> i digits-start))
+                      (setf seen-exp t) (incf i)
+                      (when (and (< i n)
+                                 (member (char s i) '(#\+ #\-) :test #'char=))
+                        (incf i)))
+                     (t (return))))
+          (let ((token (subseq s 0 i)))
+            (if (and (plusp (length token))
+                     (some #'digit-char-p token))
+                (handler-case
+                    (let ((*read-eval* nil)
+                          (*read-default-float-format* 'double-float))
+                      (let ((v (read-from-string token nil 0.0d0)))
+                        (if (realp v) (coerce v 'double-float) 0.0d0)))
+                  (error () 0.0d0))
+                0.0d0))))))
+
 ;;; ── Arithmetic operator dispatch table (Prolog-like fact table) ─────────────
 ;;;
 ;;; define-arithmetic-op-table builds %dispatch-arithmetic-op from a declarative
 ;;; (op-string expr) fact table, following the define-csi-rules / define-strftime-code-table
-;;; pattern.  A is the left operand integer, B the right; RESULT receives the output.
+;;; pattern.  A and B are double-float operands (already cast to integer values in
+;;; integer mode); USE-FP selects float vs. truncating division.  Arithmetic rules
+;;; return a number; comparison rules return the string \"1\" or \"0\".
 
 (defmacro define-arithmetic-op-table (&rest rules)
   "Build %DISPATCH-ARITHMETIC-OP from a declarative (op-string expr) fact table.
-   Each EXPR is evaluated with integer variables A and B in scope and should
-   return the integer result.  Division and remainder guard against zero B.
-   Returns the computed integer, or NIL when OP-STRING is not recognised."
-  `(defun %dispatch-arithmetic-op (op a b)
-     "Evaluate arithmetic operator OP on integers A and B.
-      Returns the integer result, or NIL when OP is not a recognised operator."
+   Each EXPR is evaluated with double-float variables A and B and the boolean
+   USE-FP in scope.  Arithmetic EXPRs return a number; comparison EXPRs return a
+   \"1\"/\"0\" string.  Division and modulo guard against a zero divisor.
+   Returns the result, or NIL when OP-STRING is not recognised."
+  `(defun %dispatch-arithmetic-op (op a b use-fp)
+     "Evaluate operator OP on double-float operands A and B (USE-FP selects float
+      vs. truncating semantics).  Returns a number for arithmetic operators, a
+      \"1\"/\"0\" string for comparisons, or NIL when OP is not recognised."
+     (declare (ignorable use-fp))
      (cond
        ,@(mapcar (lambda (rule)
                    (destructuring-bind (op-string expr) rule
@@ -137,9 +197,26 @@
        (t nil))))
 
 (define-arithmetic-op-table
-  ("+" (+ a b))
-  ("-" (- a b))
-  ("*" (* a b))
-  ("/" (if (zerop b) 0 (truncate a b)))
-  ("%" (if (zerop b) 0 (rem a b))))
+  ("+"  (+ a b))
+  ("-"  (- a b))
+  ("*"  (* a b))
+  ("/"  (if (zerop b) 0 (if use-fp (/ a b) (truncate a b))))
+  ("%"  (if (zerop b) 0 (if use-fp (rem a b) (truncate (rem a b)))))
+  ("m"  (if (zerop b) 0 (if use-fp (rem a b) (truncate (rem a b)))))
+  ("==" (if (< (abs (- a b)) 1d-9) "1" "0"))
+  ("!=" (if (> (abs (- a b)) 1d-9) "1" "0"))
+  ("<"  (if (< a b) "1" "0"))
+  (">"  (if (> a b) "1" "0"))
+  ("<=" (if (<= a b) "1" "0"))
+  (">=" (if (>= a b) "1" "0")))
+
+(defun %format-arith-result (result prec)
+  "Render a numeric arithmetic RESULT to a string with PREC decimal places,
+   mirroring tmux's xasprintf(\"%.*f\", prec, result).  PREC 0 yields a bare
+   integer (e.g. \"3\", matching tmux's %.0f); PREC > 0 yields fixed decimals
+   (e.g. \"16.5000\").  Comparison operators already return their \"1\"/\"0\"
+   string and bypass this formatter."
+  (if (<= prec 0)
+      (format nil "~D" (truncate result))
+      (format nil "~,vF" prec (coerce result 'double-float))))
 

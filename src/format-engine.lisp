@@ -98,22 +98,52 @@
         (progn (write-char #\# out) (1- start))   ; no close: treat # literally
         (let ((content (subseq template start close)))
           (cond
-            ;; #{e|OP|A,B} — arithmetic (OP is +,-,*,/,%; integer operands).
+            ;; #{e|OP|[f|][PREC|]A,B} — arithmetic and comparison.
+            ;;   OP        : + - * / % m  (m alias for %), or == != < > <= >=.
+            ;;   f flag    : optional second field; operands parsed as doubles.
+            ;;   PREC      : optional precision field (digits); default 0 integer,
+            ;;               2 when f is present.  Last field is the A,B operands.
             ;; Checked before the colon branch (no colon in the e|..| syntax).
             ((and (>= (length content) 3)
                   (char= (char content 0) #\e)
                   (char= (char content 1) #\|))
-             (let* ((pipe2  (position #\| content :start 2))
-                    (op     (and pipe2 (subseq content 2 pipe2)))
-                    (args   (and pipe2 (subseq content (1+ pipe2)))))
-               (when (and op args)
-             (let* ((comma  (%top-level-comma args 0))
-                        (a-str  (expand-format (if comma (subseq args 0 comma) args) context))
-                        (b-str  (expand-format (if comma (subseq args (1+ comma)) "0") context))
-                        (a      (or (cl-tmux::%parse-integer-or-nil a-str :junk-allowed t) 0))
-                        (b      (or (cl-tmux::%parse-integer-or-nil b-str :junk-allowed t) 0))
-                        (result (%dispatch-arithmetic-op op a b)))
-                   (when result (write-string (format nil "~D" result) out))))))
+             (let* ((pipe2  (%top-level-pipe content 2))
+                    (op     (and pipe2 (subseq content 2 pipe2))))
+               (when (and op (plusp (length op)))
+                 ;; Collect remaining top-level '|'-separated fields after OP.
+                 ;; The LAST field is the operands; earlier fields are f/PREC flags.
+                 (let* ((fields '())
+                        (i      (1+ pipe2)))
+                   (loop for p = (%top-level-pipe content i)
+                         do (if p
+                                (progn (push (subseq content i p) fields) (setf i (1+ p)))
+                                (progn (push (subseq content i) fields) (return))))
+                   (setf fields (nreverse fields))
+                   (let* ((args   (car (last fields)))
+                          (flags  (butlast fields))
+                          (use-fp (member "f" flags :test #'string=))
+                          (prec-s (find-if (lambda (f)
+                                             (and (plusp (length f))
+                                                  (every #'digit-char-p f)))
+                                           flags))
+                          (prec   (cond (prec-s (parse-integer prec-s))
+                                        (use-fp 2)
+                                        (t 0)))
+                          (comma  (%top-level-comma args 0))
+                          (a-str  (expand-format (if comma (subseq args 0 comma) args) context))
+                          (b-str  (expand-format (if comma (subseq args (1+ comma)) "0") context))
+                          (a      (if use-fp
+                                      (%parse-double a-str)
+                                      (coerce (truncate (%parse-double a-str)) 'double-float)))
+                          (b      (if use-fp
+                                      (%parse-double b-str)
+                                      (coerce (truncate (%parse-double b-str)) 'double-float)))
+                          (result (%dispatch-arithmetic-op op a b (and use-fp t))))
+                     (when result
+                       (write-string (if (stringp result)
+                                         result
+                                         (%format-arith-result result prec))
+                                     out)))))))
             ;; #{?cond,true,false} — conditional.
             ;; cond-str is looked up in context first; a context hit uses the looked-up
             ;; value so #{?window_active,YES,NO} works alongside #{?1,yes,no}.

@@ -25,6 +25,43 @@
   "#{e|/|5,0} returns 0 (no error)."
   (is (string= "0" (fmt "#{e|/|5,0}"))))
 
+(test format-arithmetic-modulo-m-alias
+  "#{e|m|A,B} is an alias for modulo, like #{e|%|A,B}."
+  (is (string= "1" (fmt "#{e|m|10,3}")))
+  (is (string= "0" (fmt "#{e|m|9,3}")))
+  (is (string= "0" (fmt "#{e|m|5,0}"))))
+
+(test format-arithmetic-comparison-operators
+  "#{e|OP|A,B} supports comparison operators returning tmux's 1/0 strings."
+  (dolist (c '(("#{e|<|1,2}"   "1" "less-than true")
+               ("#{e|<|2,1}"   "0" "less-than false")
+               ("#{e|>|3,2}"   "1" "greater-than true")
+               ("#{e|>=|2,2}"  "1" "ge equal")
+               ("#{e|<=|2,3}"  "1" "le true")
+               ("#{e|==|5,5}"  "1" "eq true")
+               ("#{e|==|5,6}"  "0" "eq false")
+               ("#{e|!=|5,6}"  "1" "ne true")
+               ("#{e|!=|5,5}"  "0" "ne false")))
+    (destructuring-bind (spec expected desc) c
+      (is (string= expected (fmt spec)) "~A" desc))))
+
+(test format-arithmetic-float-flag-and-precision
+  "#{e|OP|f|PREC|A,B} performs float arithmetic and formats to PREC decimals."
+  ;; default float precision is 2 when f is present and no precision field given
+  (is (string= "16.50" (fmt "#{e|*|f|5.5,3}")))
+  ;; explicit precision field
+  (is (string= "16.5000" (fmt "#{e|*|f|4|5.5,3}")))
+  ;; float division keeps the fractional part
+  (is (string= "3.33" (fmt "#{e|/|f|10,3}")))
+  ;; without f, integer (truncating) division and no decimals
+  (is (string= "3" (fmt "#{e|/|10,3}"))))
+
+(test format-arithmetic-float-comparison-epsilon
+  "Float == / != use a 1e-9 epsilon tolerance like tmux."
+  (is (string= "1" (fmt "#{e|==|f|0.1,0.1}")))
+  (is (string= "0" (fmt "#{e|!=|f|0.1,0.1}")))
+  (is (string= "1" (fmt "#{e|<|f|0.1,0.2}"))))
+
 ;;; ── Additional format variables ─────────────────────────────────────────────
 
 (test format-context-version-is-cl-tmux-version
