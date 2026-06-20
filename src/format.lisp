@@ -315,24 +315,26 @@
 
 (defun %apply-comparison (op rest context)
   "Evaluate a comparison: ==/!= are string (in)equality; </>/<=/>= compare the
-   sides numerically (a non-numeric side parses as 0).  Split REST on the first
+   sides LEXICOGRAPHICALLY (strcmp), matching tmux's bare comparison operators in
+   format.c (which use strcmp, not a numeric compare).  Split REST on the first
    TOP-LEVEL comma, expand BOTH sides as formats, and return \"1\"/\"0\".  Sides
    are expanded (a bare word is literal, #{...} expands), so #{==:#{host},server}
-   compares the host value to the literal \"server\" and #{>:#{client_width},100}
-   compares numerically."
+   compares the host value to the literal \"server\" and #{<:10,9} is \"1\" because
+   \"10\" sorts before \"9\".  (Numeric comparison is a distinct tmux feature gated
+   behind the #{e|...} expression modifier, not these bare operators.)"
   (multiple-value-bind (a b) (%split-and-expand rest context)
     (cond
       ((string= op "==") (%bit01 (string= a b)))
       ((string= op "!=") (%bit01 (string/= a b)))
       (t
-       (let ((na (or (cl-tmux::%parse-integer-or-nil a :junk-allowed t) 0))
-             (nb (or (cl-tmux::%parse-integer-or-nil b :junk-allowed t) 0)))
-         (%bit01 (cond
-                   ((string= op "<")  (<  na nb))
-                   ((string= op ">")  (>  na nb))
-                   ((string= op "<=") (<= na nb))
-                   ((string= op ">=") (>= na nb))
-                   (t nil))))))))
+       ;; CL string</string>/string<=/string>= return a mismatch index (non-nil =
+       ;; true) on success and NIL on failure, so %bit01 treats them correctly.
+       (%bit01 (cond
+                 ((string= op "<")  (string<  a b))
+                 ((string= op ">")  (string>  a b))
+                 ((string= op "<=") (string<= a b))
+                 ((string= op ">=") (string>= a b))
+                 (t nil)))))))
 
 (defun %apply-logical (op rest context)
   "Evaluate a logical #{||:a,b} / #{&&:a,b}.  Split REST on the first TOP-LEVEL

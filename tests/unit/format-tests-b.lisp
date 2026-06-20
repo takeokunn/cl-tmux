@@ -103,32 +103,34 @@
   (is (string= "A" (fmt "#{?#{==:#{session_name},main},A,B}" :session-name "main")))
   (is (string= "B" (fmt "#{?#{==:#{session_name},main},A,B}" :session-name "nope"))))
 
-(test format-comparison-numeric-operators
-  "#{<:a,b} #{>:a,b} #{<=:a,b} #{>=:a,b} compare the sides numerically."
-  (dolist (c '(("#{<:5,10}"  "1" "5 < 10")
-               ("#{<:10,5}"  "0" "not 10 < 5")
-               ("#{>:10,5}"  "1" "10 > 5")
-               ("#{>:5,10}"  "0" "not 5 > 10")
-               ("#{<=:5,5}"  "1" "5 <= 5")
-               ("#{<=:6,5}"  "0" "not 6 <= 5")
-               ("#{>=:5,5}"  "1" "5 >= 5")
-               ("#{>=:4,5}"  "0" "not 4 >= 5")))
-    (destructuring-bind (spec expected desc) c
-      (is (string= expected (fmt spec)) "~A" desc))))
-
-(test format-comparison-numeric-nested-and-nonnumeric
-  "Numeric comparison expands nested sides; a non-numeric side parses as 0."
+(test format-comparison-lexicographic-nested-and-nonnumeric
+  "Bare comparison expands nested sides and compares lexicographically (strcmp)."
   (is (string= "1" (fmt "#{>:#{window_index},0}" :window-index "2"))
-      "#{window_index}=2 > 0")
-  (is (string= "1" (fmt "#{<:foo,5}"))
-      "a non-numeric side parses as 0, so 0 < 5"))
+      "\"2\" > \"0\" lexicographically")
+  (is (string= "0" (fmt "#{<:foo,5}"))
+      "\"foo\" is NOT < \"5\" lexicographically (f=102 > 5=53)"))
 
-(test format-comparison-numeric-drives-conditional
-  "A numeric comparison as a conditional test (e.g. wide-vs-narrow on width)."
+(test format-comparison-lexicographic-drives-conditional
+  "A bare comparison as a conditional test (single-digit operands, so the
+   lexicographic result coincides with the numeric one)."
   (is (string= "pos"
                (fmt "#{?#{>:#{window_index},0},pos,nonpos}" :window-index "1")))
   (is (string= "nonpos"
                (fmt "#{?#{>:#{window_index},0},pos,nonpos}" :window-index "0"))))
+
+(test format-comparison-lexicographic-strcmp-semantics
+  "Bare </>/<=/>= use strcmp (lexicographic), matching tmux's bare operators:
+   multi-digit and non-numeric pairs compare by character order, not value."
+  (dolist (c '(("#{<:10,9}"        "1" "\"10\" sorts before \"9\"")
+               ("#{>:10,9}"        "0" "\"10\" does not sort after \"9\"")
+               ("#{<:apple,banana}" "1" "\"apple\" < \"banana\"")
+               ("#{>:apple,banana}" "0" "\"apple\" not > \"banana\"")
+               ("#{<=:abc,abc}"    "1" "equal strings satisfy <=")
+               ("#{>=:abc,abc}"    "1" "equal strings satisfy >=")
+               ("#{<:abc,abc}"     "0" "equal strings are not <")
+               ("#{>:abc,abc}"     "0" "equal strings are not >")))
+    (destructuring-bind (spec expected desc) c
+      (is (string= expected (fmt spec)) "~A" desc))))
 
 (test format-conditional-nested-condition
   "#{?#{var},t,f} expands the nested condition before testing truthiness."
