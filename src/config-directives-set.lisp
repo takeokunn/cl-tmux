@@ -281,8 +281,10 @@
    are expanded at hook-fire time via %run-command-line.
    Returns T when handled, NIL otherwise."
   (when (string= cmd "set-hook")
-    ;; Consume ALL leading -X flags (not just -r/-u): -g/-a/-R are accepted and
-    ;; skipped so `set-hook -g <event> <cmd>` registers EVENT, not "-g".
+    ;; Consume ALL leading -X flags (not just -r/-u): -g/-a/-R/-w/-p are accepted
+    ;; and skipped so `set-hook -g <event> <cmd>` registers EVENT, not "-g"; -t
+    ;; takes a target argument that is consumed too (cl-tmux's hook model is
+    ;; global, so window/pane/target scope is accepted but not differentiated).
     (let* ((remove-p nil)
            (append-p nil)
            (rest     (let ((remaining args))
@@ -294,7 +296,10 @@
                                   (setf remove-p t))
                                 (when (string= tok "-a")
                                   (setf append-p t))
-                                (values rest t))))
+                                ;; -t takes a target argument: drop it too.
+                                (if (string= tok "-t")
+                                    (values (rest rest) t)
+                                    (values rest t)))))
                        remaining))
            (event    (first rest))
            ;; The command may be a single quoted token or split across tokens;
