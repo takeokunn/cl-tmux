@@ -65,7 +65,7 @@
 
 (defun %active-copy-mode-table ()
   "Return the copy-mode key table selected by the mode-keys option."
-  (if (string= (cl-tmux/options:get-option "mode-keys" "vi") "vi")
+  (if (string= (cl-tmux/options:get-option "mode-keys" "emacs") "vi")
       "copy-mode-vi"
       +table-copy-mode+))
 

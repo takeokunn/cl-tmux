@@ -600,6 +600,23 @@
     (is (stringp result) "%safe-getenv must return a string for missing var")
     (is (string= "" result) "%safe-getenv must return empty string for missing var")))
 
+(test mode-keys-from-editor-string-detects-vi-and-emacs
+  "%mode-keys-from-editor-string mirrors tmux's basename/substring vi detection."
+  (dolist (c '(("vi"               "vi")
+               ("vim"              "vi")
+               ("/usr/bin/vi"      "vi")
+               ("/usr/local/bin/nvim" "vi")
+               ("nano"             "emacs")
+               ("/usr/bin/emacs"   "emacs")
+               ("emacsclient -c"   "emacs")))
+    (destructuring-bind (input expected) c
+      (is (string= expected (cl-tmux::%mode-keys-from-editor-string input))
+          "~S must map to ~S" input expected)))
+  (is (null (cl-tmux::%mode-keys-from-editor-string nil))
+      "NIL editor must yield NIL (registry default left untouched)")
+  (is (null (cl-tmux::%mode-keys-from-editor-string ""))
+      "empty editor must yield NIL (registry default left untouched)"))
+
 (test build-hostname-context-has-expected-keys
   "%build-hostname-context returns a plist with :hostname, :term, :version, etc."
   (let ((ctx (cl-tmux::%build-hostname-context)))

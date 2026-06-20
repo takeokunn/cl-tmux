@@ -58,6 +58,28 @@
           (cl-tmux/format:expand-format condition-string context)
         (error () "1")))))
 
+(defun %mode-keys-from-editor-string (editor)
+  "Return \"vi\" or \"emacs\" derived from EDITOR, a $VISUAL/$EDITOR value, or
+   NIL when EDITOR is NIL or empty.  Mirrors tmux's main() logic: take the
+   basename (the part after the last '/') and check for the substring \"vi\"."
+  (when (and editor (plusp (length editor)))
+    (let* ((slash (position #\/ editor :from-end t))
+           (base  (if slash (subseq editor (1+ slash)) editor)))
+      (if (search "vi" base) "vi" "emacs"))))
+
+(defun %apply-editor-mode-keys ()
+  "Auto-detect vi vs emacs key bindings from $VISUAL (preferred) or $EDITOR and
+   apply the result to both the global status-keys and mode-keys options, matching
+   tmux's startup behavior.  Called before the user config is loaded so an explicit
+   `set -g mode-keys ...` in .tmux.conf still wins.  When neither variable is set,
+   the registry defaults (emacs) are left untouched."
+  (let* ((visual (%safe-getenv "VISUAL"))
+         (editor (if (plusp (length visual)) visual (%safe-getenv "EDITOR")))
+         (keys   (%mode-keys-from-editor-string editor)))
+    (when keys
+      (cl-tmux/options:set-option "status-keys" keys)
+      (cl-tmux/options:set-option "mode-keys" keys))))
+
 (defun %wire-option-callbacks ()
   "Install the option-reader callbacks that the terminal/emulator layer uses.
    Pure assignment — no I/O, no process spawning.  Extracted from %initialize-session-environment
@@ -77,6 +99,7 @@
    to avoid duplicating the initialization boilerplate."
   (cl-tmux/config:init-default-shell)
   (setf cl-tmux/config:*config-condition-evaluator* (%make-format-condition-evaluator))
+  (%apply-editor-mode-keys)
   (%wire-option-callbacks)
   (ignore-errors (load-config-file nil)))
 

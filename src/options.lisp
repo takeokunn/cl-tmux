@@ -178,7 +178,7 @@
   ("other-pane-height"        :integer 0)
   ;; Status bar extras
   ("status-keys"              :string  "emacs")  ; emacs or vi
-  ("mode-keys"                :string  "vi")     ; vi or emacs copy-mode keys
+  ("mode-keys"                :string  "emacs")  ; emacs or vi copy-mode keys (tmux default emacs; vi-autodetected from $VISUAL/$EDITOR at startup)
   ("status-left-style"        :string  "")
   ("status-right-style"       :string  "")
   ;; Pane border status line (top / bottom / off)

@@ -101,6 +101,15 @@
   (is (not (null (gethash "copy-mode-vi" cl-tmux/config:*key-tables*)))
       "\"copy-mode-vi\" table must exist in *key-tables*"))
 
+(test mode-keys-default-is-emacs
+  "The registry default for mode-keys is emacs, matching tmux (vi is autodetected
+   from $VISUAL/$EDITOR at startup, not the static default)."
+  (with-isolated-config
+    (is (string= "emacs" (cl-tmux/options:get-option "mode-keys"))
+        "unset mode-keys must default to emacs")
+    (is (string= "emacs" (cl-tmux/options:get-option "status-keys"))
+        "unset status-keys must default to emacs")))
+
 (test prefix-key-code-dynamic-var-defaults-to-constant
   "*prefix-key-code* defaults to the value of +prefix-key-code+."
   (is (= +prefix-key-code+ cl-tmux/config:*prefix-key-code*)
