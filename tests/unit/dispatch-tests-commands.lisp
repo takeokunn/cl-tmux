@@ -133,7 +133,27 @@
         (is (pane-marked ap) "pane must be marked before select-pane -M")
         (cl-tmux::%run-command-line s "select-pane -M")
         (is (null (pane-marked ap))
-            "select-pane -M must clear the pane mark")))))
+            "select-pane -M must clear the pane mark")
+        (is (null cl-tmux::*server-marked-pane*)
+            "select-pane -M must also clear the server-wide marked pane")))))
+
+(test run-command-line-select-pane-m-sets-server-marked-pane
+  "'select-pane -m' marks the target pane server-wide (sets *server-marked-pane*)
+   so join-pane/swap-pane can use it as the default source; re-marking the same
+   pane toggles the mark off, matching tmux's server_set/clear_marked."
+  (with-fake-two-pane-session (s)
+    (let* ((win (session-active-window s))
+           (ap (window-active-pane win))
+           (cl-tmux::*server-marked-pane* nil))
+      (cl-tmux::%run-command-line s "select-pane -m")
+      (is (pane-marked ap) "select-pane -m must mark the pane")
+      (is (eq ap cl-tmux::*server-marked-pane*)
+          "select-pane -m must set the server-wide marked pane")
+      (cl-tmux::%run-command-line s "select-pane -m")
+      (is (null (pane-marked ap))
+          "re-marking the same pane toggles the per-pane mark off")
+      (is (null cl-tmux::*server-marked-pane*)
+          "toggling off must clear the server-wide marked pane"))))
 
 (test run-command-line-select-pane-rejects-unsupported-arguments
   "select-pane rejects unknown flags and positional tokens before mutating panes."

@@ -16,15 +16,27 @@
         (cl-tmux/terminal/actions:set-screen-title screen title)))))
 
 (defun %select-pane-mark (window pane)
-  (when (and window pane)
-    (dolist (p (window-panes window))
-      (setf (pane-marked p) nil))
-    (setf (pane-marked pane) t)))
+  "Mark PANE as the server-wide marked pane (select-pane -m).  Delegates to the
+   %toggle-mark-pane chokepoint so the scriptable command path behaves like the
+   C-b m keybinding: it sets BOTH the per-pane flag and the *server-marked-pane*
+   singleton (which join-pane/swap-pane read as their default source), and
+   toggles the mark off when PANE is already the marked pane — matching tmux's
+   server_set_marked/server_clear_marked semantics."
+  (declare (ignore window))
+  (when pane
+    (%toggle-mark-pane pane)))
 
 (defun %select-pane-clear-mark (window)
+  "Clear the marked pane (select-pane -M): unmark every pane in WINDOW and also
+   clear the server-wide *server-marked-pane* singleton, so a mark set via
+   `select-pane -m` (or C-b m) is fully cleared rather than left dangling for
+   join-pane/swap-pane."
   (when window
     (dolist (p (window-panes window))
-      (setf (pane-marked p) nil))))
+      (setf (pane-marked p) nil)))
+  (when *server-marked-pane*
+    (setf (pane-marked *server-marked-pane*) nil
+          *server-marked-pane* nil)))
 
 (defun %select-pane-select-last (window)
   (when window

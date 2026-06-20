@@ -179,9 +179,10 @@
   (declare (ignore args))
   (require :sb-posix)
   (%initialize-session-environment)
-  ;; A control client may have no controlling tty; fall back to 80x24.
+  ;; A control client may have no controlling tty; fall back to 24 rows x 80 cols
+  ;; (terminal-size returns rows then cols, matching the runtime defaults).
   (multiple-value-bind (rows cols) (ignore-errors (terminal-size))
-    (setf *term-rows* (or rows 80) *term-cols* (or cols 24)))
+    (setf *term-rows* (or rows 24) *term-cols* (or cols 80)))
   (let* ((session (create-initial-session *term-rows* *term-cols*))
          (readers (progn (server-add-session session)
                          (mapcar #'start-reader-thread (all-panes session)))))
