@@ -120,17 +120,18 @@
     (is (null (cl-tmux/config:key-table-lookup "root" #\X))
         "root binding must be removed after unbind -n")))
 
-(test key-directive-aliases-are-rejected
-  "bind-key and unbind-key are rejected in config parsing."
+(test key-directive-aliases-are-accepted
+  "bind-key and unbind-key (tmux canonical command names) are accepted in config
+   parsing, matching real .tmux.conf files."
   (with-isolated-key-tables
-    (dolist (case '(("bind-key"   ("z" "new-window")
-                     "bind-key should no longer be accepted as a config directive")
-                    ("unbind-key" ("c")
-                     "unbind-key should no longer be accepted as a config directive")))
-      (destructuring-bind (verb args message) case
-        (when (string= verb "unbind-key")
-          (apply-config-directive '("bind" "c" "new-window")))
-        (assert-config-directive-rejected (cons verb args) message)))))
+    (is (apply-config-directive '("bind-key" "z" "new-window"))
+        "bind-key must be accepted as a config directive")
+    (is (not (null (lookup-key-binding #\z)))
+        "bind-key z new-window must create a prefix binding")
+    (is (apply-config-directive '("unbind-key" "z"))
+        "unbind-key must be accepted as a config directive")
+    (is (null (lookup-key-binding #\z))
+        "unbind-key z must remove the binding")))
 
 ;;; unbind with -T flag
 

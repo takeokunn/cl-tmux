@@ -199,9 +199,23 @@
                  ;; Single command: use the existing single-command path.
                  (let ((tokens (first sequences)))
                    (if (= (length tokens) 1)
-                       ;; Single word: resolve to a keyword.
+                       ;; Single word: bind the directly-bindable keyword when
+                       ;; there is one, otherwise store the (single-token) command
+                       ;; list so the alias-aware dispatch resolves it at key-press
+                       ;; (covers tmux aliases like `neww` and arg-only canonical
+                       ;; commands like `previous-window`).  tmux likewise accepts
+                       ;; any command name in a binding.
                        (let ((keyword (%command-keyword (first tokens))))
-                         (and keyword (values table key-token keyword repeatable note)))
+                         (cond
+                           (keyword
+                            (values table key-token keyword repeatable note))
+                           ;; A recognised command (canonical or tmux alias):
+                           ;; store the single-token command list, resolved by
+                           ;; the alias-aware dispatch at key-press.
+                           ((%known-command-name-p (first tokens))
+                            (values table key-token tokens repeatable note))
+                           ;; Genuine typo: reject at load time, matching tmux.
+                           (t nil)))
                        ;; Multi-token: store as token list.
                        (values table key-token tokens repeatable note)))
                  ;; Multiple commands: store as :sequence list of token lists.
@@ -295,7 +309,7 @@
        (t nil))))
 
 (define-key-directive-handlers
-  (("bind")
+  (("bind" "bind-key")
    (multiple-value-bind (table key command repeatable note)
        (%parse-bind-key-args args)
      (when command
@@ -303,7 +317,7 @@
        ;; NOTE is the optional -N description, surfaced by list-keys.
        (key-table-bind table key command :repeatable repeatable :note note)
        t)))
-  (("unbind")
+  (("unbind" "unbind-key")
    (multiple-value-bind (table key all-p)
        (%parse-unbind-key-args args)
      (cond

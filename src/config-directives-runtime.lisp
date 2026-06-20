@@ -117,7 +117,7 @@
    is a format string (true unless it expands to empty or \"0\").  -b (background)
    and -t target are accepted and ignored at config time.  Returns T when CMD is
    if-shell (handled), NIL otherwise."
-  (when (string= cmd "if-shell")
+  (when (member cmd '("if-shell" "if") :test #'string=)
     (let ((format-mode nil)
           (remaining   args))
       ;; Consume leading flag tokens (clusters like -bF are allowed; -t takes the
@@ -314,5 +314,5 @@
   "Intercept source-file: -q/-n/-v flags, glob patterns, and multiple paths
    (the fixed-arity directive table only handled a single bare path).  Returns T
    when CMD is source-file, else NIL."
-  (when (string= cmd "source-file")
+  (when (member cmd '("source-file" "source") :test #'string=)
     (source-files args)))

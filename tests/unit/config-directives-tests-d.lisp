@@ -87,15 +87,18 @@ bind-key r source-file /dev/null"))
           "common .tmux.conf patterns must load without signaling conditions"))))
 
 (test load-config-bind-T-copy-mode-vi-stores-correctly
-  "bind -T copy-mode-vi v send-keys -X begin-selection stores in copy-mode-vi table."
+  "bind-key -T copy-mode-vi v send-keys -X begin-selection stores in the
+   copy-mode-vi table.  The multi-token command is stored as a deferred token
+   list (run through the alias-aware dispatch at key-press, which sends -X
+   begin-selection to the pane's copy mode)."
   (with-isolated-config
     (cl-tmux/config:load-config-from-string
      "bind-key -T copy-mode-vi v send-keys -X begin-selection")
     (let ((entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\v)))
       (is (not (null entry)) "copy-mode-vi must have 'v' binding after load")
       (let ((cmd (cl-tmux/config:key-table-command entry)))
-        (is (eq :copy-mode-begin-selection cmd)
-            "command must be stored as the copy-mode dispatch keyword")))))
+        (is (equal '("send-keys" "-X" "begin-selection") cmd)
+            "command stored as a deferred token list for key-press dispatch")))))
 
 (test load-config-set-g-escape-time-stores-as-server-option
   "'set -s escape-time 0' stores in server options."
@@ -126,14 +129,20 @@ set -u status")
 ;;; `bind X <shorthand>` (single token) goes through %command-keyword, and the
 ;;; named-buffer family uses canonical command names only.
 
-(test config-bind-rejects-named-buffer-shorthand-single-tokens
-  "Bare named-buffer shorthands are rejected in the single-token bind path."
-  (dolist (abbrev '("deleteb" "loadb" "pasteb" "saveb" "setb" "showb"))
+(test config-bind-accepts-named-buffer-shorthand-single-tokens
+  "Real tmux named-buffer aliases (deleteb/loadb/pasteb/saveb/showb) bind as
+   deferred token lists; a non-alias like setb is still rejected."
+  (dolist (abbrev '("deleteb" "loadb" "pasteb" "saveb" "showb"))
     (with-isolated-config
-      (is (= 0 (cl-tmux/config:load-config-from-string
+      (is (= 1 (cl-tmux/config:load-config-from-string
                 (format nil "bind X ~A" abbrev)))
-          "bind X ~A must be rejected (0 applied); the shorthand is unsupported"
-          abbrev))))
+          "bind X ~A must be accepted (1 applied) — it is a real tmux alias"
+          abbrev)
+      (is (equal (list abbrev) (lookup-key-binding #\X))
+          "~A stores a deferred token list" abbrev)))
+  (with-isolated-config
+    (is (= 0 (cl-tmux/config:load-config-from-string "bind X setb"))
+        "setb is not a real tmux alias and must be rejected")))
 
 (test config-bind-rejects-unknown-single-token-still
   "The abbreviation aliases do not weaken typo rejection: an unknown single-token

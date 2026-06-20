@@ -275,11 +275,94 @@
    excluded from the public command list.
    Updated whenever a new dispatchable command is added to dispatch-handlers.")
 
+(defparameter *tmux-command-aliases*
+  '(;; tmux cmd_table short aliases (cmd_entry.alias) → cl-tmux's canonical name.
+    ("attach"    . "attach-session")   ("breakp"    . "break-pane")
+    ("capturep"  . "capture-pane")     ("clearhist" . "clear-history")
+    ("commandp"  . "command-prompt")   ("confirmb"  . "confirm-before")
+    ("copy"      . "copy-mode-enter")  ("copy-mode" . "copy-mode-enter")
+    ("deleteb"   . "delete-buffer")    ("display"   . "display-message")
+    ("displayp"  . "display-panes")    ("findw"     . "find-window")
+    ("has"       . "has-session")      ("if"        . "if-shell")
+    ("joinp"     . "join-pane")        ("killp"     . "kill-pane")
+    ("killw"     . "kill-window")      ("loadb"     . "load-buffer")
+    ("lockc"     . "lock-client")      ("locks"     . "lock-session")
+    ("ls"        . "list-sessions")    ("lsb"       . "list-buffers")
+    ("lsc"       . "list-clients")     ("lscm"      . "list-commands")
+    ("lsk"       . "list-keys")        ("lsp"       . "list-panes")
+    ("lsw"       . "list-windows")     ("menu"      . "display-menu")
+    ("movep"     . "move-pane")        ("movew"     . "move-window")
+    ("new"       . "new-session")      ("neww"      . "new-window")
+    ("pasteb"    . "paste-buffer")     ("popup"     . "display-popup")
+    ("renames"   . "rename-session")   ("renamew"   . "rename-window")
+    ("resizep"   . "resize-pane")      ("resizew"   . "resize-window")
+    ("respawnp"  . "respawn-pane")     ("respawnw"  . "respawn-window")
+    ("saveb"     . "save-buffer")      ("selectp"   . "select-pane")
+    ("selectw"   . "select-window")    ("send"      . "send-keys")
+    ("set"       . "set-option")       ("sets"      . "set-session-option")
+    ("setw"      . "set-window-option")("show"      . "show-options")
+    ("showb"     . "show-buffer")      ("showw"     . "show-window-options")
+    ("source"    . "source-file")      ("splitw"    . "split-window")
+    ("start"     . "start-server")     ("suspendc"  . "suspend-client")
+    ("swapp"     . "swap-pane")        ("swapw"     . "swap-window")
+    ("switchc"   . "switch-client")    ("bind-key"  . "bind")
+    ("unbind-key" . "unbind"))
+  "tmux command-name aliases (the cmd_entry .alias field) mapped to the canonical
+   name cl-tmux registers.  Consulted by %canonical-command-name so a .tmux.conf
+   using the short forms (neww, splitw, killp, …) resolves transparently.")
+
+(defun %canonical-command-name (name)
+  "Return the canonical cl-tmux command name for NAME, resolving tmux short
+   aliases (case-insensitive).  Returns NAME unchanged when it is not an alias."
+  (or (cdr (assoc name *tmux-command-aliases* :test #'string-equal))
+      name))
+
+(defparameter *known-command-names*
+  '(;; tmux cmd_table primary names (transparently bindable / dispatchable).
+    "attach-session" "bind-key" "break-pane" "capture-pane" "choose-buffer"
+    "choose-client" "choose-tree" "choose-window" "clear-history"
+    "clear-prompt-history" "clock-mode" "command-prompt" "confirm-before"
+    "copy-mode" "customize-mode" "delete-buffer" "detach-client" "display-menu"
+    "display-message" "display-panes" "display-popup" "find-window" "has-session"
+    "if-shell" "join-pane" "kill-pane" "kill-server" "kill-session" "kill-window"
+    "last-pane" "last-window" "link-window" "list-buffers" "list-clients"
+    "list-commands" "list-keys" "list-panes" "list-sessions" "list-windows"
+    "load-buffer" "lock-client" "lock-server" "lock-session" "move-pane"
+    "move-window" "new-session" "new-window" "next-layout" "next-window"
+    "paste-buffer" "pipe-pane" "previous-layout" "previous-window"
+    "refresh-client" "rename-session" "rename-window" "resize-pane"
+    "resize-window" "respawn-pane" "respawn-window" "rotate-window" "run-shell"
+    "save-buffer" "select-layout" "select-pane" "select-window" "send-keys"
+    "send-prefix" "server-access" "set-buffer" "set-environment" "set-hook"
+    "set-option" "set-window-option" "show-buffer" "show-environment"
+    "show-hooks" "show-messages" "show-options" "show-prompt-history"
+    "show-window-options" "source-file" "split-window" "start-server"
+    "suspend-client" "swap-pane" "swap-window" "switch-client" "unbind-key"
+    "unlink-window" "wait-for"
+    ;; cl-tmux additions / internal command names that are valid bind targets.
+    "copy-mode-enter" "choose-session" "detach" "detach-all-clients"
+    "show-server-options" "show-session-options" "set-session-option"
+    "server-info" "display-info" "mark-pane" "clear-mark" "zoom-toggle"
+    "synchronize-panes")
+  "Canonical tmux/cl-tmux command names accepted as bind targets.  Combined with
+   *tmux-command-aliases* and *bindable-commands*, this lets %known-command-name-p
+   accept any real command (canonical or alias) while still rejecting typos.")
+
+(defun %known-command-name-p (name)
+  "True when NAME is a recognised command — a bindable keyword, a known canonical
+   command name, or a tmux short alias for one.  Used to accept real commands
+   (canonical or abbreviated) in a binding while rejecting genuine typos."
+  (let ((canon (%canonical-command-name name)))
+    (or (%command-keyword canon)
+        (member canon *known-command-names* :test #'string-equal))))
+
 (defun %command-keyword (name)
   "Return the bindable command keyword named by NAME (case-insensitive), or NIL
-   if NAME is not a recognized command.  Canonical command names are resolved
-   via FIND-SYMBOL so unknown names are never interned into the keyword package.
-   Genuinely-unknown names still resolve to NIL so config typos are rejected at
-   load time."
+   if NAME is not a directly-bindable command keyword.  Canonical command names
+   are resolved via FIND-SYMBOL so unknown names are never interned into the
+   keyword package.  Names that are not bindable keywords (tmux short aliases
+   like neww, or arg-only commands like previous-window) return NIL; the bind
+   parser then stores them as a deferred command token-list resolved through the
+   alias-aware command dispatch at key-press time."
   (let ((keyword (find-symbol (string-upcase name) :keyword)))
     (and keyword (member keyword *bindable-commands*) keyword)))
