@@ -58,7 +58,14 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
   (+hook-window-linked+          "window-linked"          "Fired when a window is linked into a session")
   (+hook-window-unlinked+        "window-unlinked"        "Fired when a window is unlinked from a session")
   (+hook-session-closed+         "session-closed"         "Fired when a session is destroyed (kill-session)")
-  (+hook-pane-output+            "pane-output"            "Fired when a pane receives PTY output (args: pane bytes)"))
+  (+hook-pane-output+            "pane-output"            "Fired when a pane receives PTY output (args: pane bytes)")
+  (+hook-pane-died+              "pane-died"              "Fired when a pane's program exits and remain-on-exit keeps the pane visible")
+  (+hook-window-layout-changed+  "window-layout-changed"  "Fired when a window's layout changes")
+  (+hook-client-session-changed+ "client-session-changed"  "Fired when a client's attached session changes")
+  (+hook-pane-mode-changed+      "pane-mode-changed"      "Fired when a pane enters or leaves a mode (e.g. copy-mode)")
+  (+hook-client-focus-in+        "client-focus-in"        "Fired when the client terminal gains focus")
+  (+hook-client-focus-out+       "client-focus-out"       "Fired when the client terminal loses focus")
+  (+hook-command-error+          "command-error"          "Fired when a command fails with an error"))
 
 (defvar *hook-registry* (make-hash-table :test #'equal)
   "Maps event-name (string) to a list of callback functions.

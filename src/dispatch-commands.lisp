@@ -271,13 +271,17 @@
          (show-overlay (%format-message-log-overlay target-conn)))))))
 
 (defun %cmd-swap-pane-arg (session args)
-  "swap-pane [-UDLR] [-s src-pane] [-t dst-pane]: swap two panes.
+  "swap-pane [-dUDLR] [-s src-pane] [-t dst-pane]: swap two panes.
    -s src / -t dst: swap those two panes (pane-ids in the active window; each
      defaults to the active pane), e.g. swap-pane -s 1 -t 3.
    -U/-D/-L/-R: swap the active pane with the adjacent pane in that direction.
-   With neither -s/-t nor a direction: swap forward (same as C-b })."
+   With neither -s/-t nor a direction: swap forward (same as C-b }).
+   Unless -d is given, swap-pane makes the -t (destination) pane active, matching
+   tmux (window_set_active_pane on dst_wp for a same-window swap).  In the
+   directional/default paths the destination is the already-active pane, so it
+   stays active either way and -d is a no-op there."
   (with-command-input (flags positionals args "st"
-                             :allowed-flags '(#\U #\D #\L #\R #\s #\t)
+                             :allowed-flags '(#\d #\U #\D #\L #\R #\s #\t)
                              :max-positionals 0
                              :message "swap-pane: unsupported argument")
     (with-active-window (win session)
@@ -287,10 +291,14 @@
         ((%flag-present-p flags #\L) (swap-pane win :left))
         ((%flag-present-p flags #\R) (swap-pane win :right))
         ;; -s/-t: swap two specific panes (each defaults to the active pane).
+        ;; tmux activates the -t (dst) pane after a same-window swap unless -d.
         ((or (%flag-present-p flags #\s) (%flag-present-p flags #\t))
-         (swap-two-panes win
-                         (%resolve-pane-in-window win (%flag-value flags #\s))
-                         (%resolve-pane-in-window win (%flag-value flags #\t))))
+         (let ((dst (%resolve-pane-in-window win (%flag-value flags #\t))))
+           (when (swap-two-panes win
+                                 (%resolve-pane-in-window win (%flag-value flags #\s))
+                                 dst)
+             (unless (%flag-present-p flags #\d)
+               (%select-pane-with-focus win dst)))))
         ;; No direction, no -s/-t: swap forward (default tmux behaviour).
         (t (swap-pane win :right))))))
 

@@ -37,11 +37,36 @@
       (is (eq p2 (first (window-panes win)))
           "after swap-pane -t 2, pane 2 is first (swapped with active pane 1)"))))
 
+(test cmd-swap-pane-t-activates-dst-pane
+  "Without -d, swap-pane -t 2 makes the -t (dst) pane the active pane,
+   matching tmux's window_set_active_pane(dst_wp) for a same-window swap."
+  (with-fake-two-pane-session (s)
+    (let* ((win (session-active-window s))
+           (p1  (find 1 (window-panes win) :key #'pane-id))
+           (p2  (find 2 (window-panes win) :key #'pane-id)))
+      (is (eq p1 (window-active-pane win)) "pane 1 is active before swap")
+      (cl-tmux::%run-command-line s "swap-pane -t 2")
+      (is (eq p2 (window-active-pane win))
+          "after swap-pane -t 2, the -t pane (pane 2) is active"))))
+
+(test cmd-swap-pane-d-preserves-active-pane
+  "swap-pane -s 1 -t 3 -d swaps the panes but, because of -d, leaves the active
+   pane unchanged (does NOT activate the -t pane), matching tmux."
+  (with-fake-session (s :nwindows 1 :npanes 3)
+    (let* ((win (session-active-window s))
+           (p1  (find 1 (window-panes win) :key #'pane-id))
+           (p3  (find 3 (window-panes win) :key #'pane-id)))
+      (is (eq p1 (window-active-pane win)) "pane 1 is active before swap")
+      (cl-tmux::%run-command-line s "swap-pane -s 1 -t 3 -d")
+      (is (eq p3 (first (window-panes win)))
+          "with -d the panes still swap: pane 3 is first")
+      (is (eq p1 (window-active-pane win))
+          "with -d the active pane is preserved (still pane 1)"))))
+
 (test cmd-swap-pane-rejects-unsupported-arguments
   "swap-pane rejects unsupported flags, unknown flags, and positional tokens
    before mutating panes."
-  (dolist (command '("swap-pane -d"
-                     "swap-pane -Z"
+  (dolist (command '("swap-pane -Z"
                      "swap-pane -Z extra"
                      "swap-pane -x"
                      "swap-pane -s 1 -t 3 extra"))

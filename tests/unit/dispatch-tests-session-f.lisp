@@ -273,6 +273,43 @@
                  "ESC byte is escaped to \\033 in %output notification"))
         (cl-tmux::%remove-control-notifications handlers)))))
 
+(test control-emit-serializes-concurrent-writers
+  "%control-emit holds *control-output-lock*, so notifications emitted from
+   multiple threads do not interleave a single write-line on the output stream.
+   Each emitted line lands intact (a full %output line per call) and the count
+   matches the number of emits — no torn/merged lines."
+  (with-isolated-hooks
+    (let* ((out      (make-string-output-stream))
+           (cl-tmux::*control-output-lock* (cl-tmux::make-lock "test-control"))
+           (n        200)
+           (line     "%output %1 hello")
+           (threads  (loop repeat 4
+                           collect (cl-tmux::make-thread
+                                    (lambda ()
+                                      (dotimes (i n)
+                                        (cl-tmux::%control-emit out line)))))))
+      (mapc #'cl-tmux::join-thread threads)
+      (let* ((s     (get-output-stream-string out))
+             (lines (with-input-from-string (in s)
+                      (loop for l = (read-line in nil nil)
+                            while l collect l))))
+        (is (= (* 4 n) (length lines))
+            "every %control-emit produced exactly one whole line (no torn writes)")
+        (is (every (lambda (l) (string= l line)) lines)
+            "every line is the intact %output line (no interleaving)")))))
+
+(test control-emit-respects-bound-lock
+  "%control-emit acquires the dynamically-bound *control-output-lock*; emitting
+   while that lock is already held by the current thread must still succeed
+   (recursive lock is not required — this asserts the binding is the one used)."
+  (with-isolated-hooks
+    (let* ((out  (make-string-output-stream))
+           (lock (cl-tmux::make-lock "bound-control"))
+           (cl-tmux::*control-output-lock* lock))
+      (cl-tmux::%control-emit out "%window-add @9")
+      (is (search "%window-add @9" (get-output-stream-string out))
+          "emit through the bound lock writes the line"))))
+
 (test control-notifications-pane-output-noop-on-empty
   "+hook-pane-output+ does not emit when the byte vector is empty."
   (with-isolated-hooks

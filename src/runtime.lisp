@@ -406,6 +406,9 @@
     (when remain-on-exit
       ;; Write the remain-on-exit-format banner (reverse-video) to the pane screen.
       (%write-remain-on-exit-banner pane)
+      ;; tmux fires pane-died (in addition to the unconditional pane-exited above)
+      ;; only on the remain-on-exit branch, where the dead pane stays visible.
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-died+ pane)
       (setf *dirty* t)
       ;; Return the parking state: the driver loop calls it on each tick.
       #'reader-remain-on-exit-state)))

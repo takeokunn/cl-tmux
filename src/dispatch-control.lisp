@@ -21,10 +21,22 @@
     (cl-tmux/control:control-format-reply
      number (or cl-tmux/prompt:*overlay* "") :success success)))
 
+(defvar *control-output-lock* (make-lock "control-output")
+  "Mutex serializing every write to a control-mode (-C) client's output stream.
+   Reader threads emit %output / %window-* notifications through %control-emit on
+   their own threads, while the REPL writes command replies and %exit from the
+   control-mode loop thread; all of those write to the same OUTPUT.  Holding this
+   lock around each write keeps the framed control protocol from interleaving and
+   corrupting itself.  control-mode-loop rebinds this to a fresh per-client lock;
+   the top-level default lets the notification callbacks (and single-threaded unit
+   tests that fire hooks directly) run without a surrounding control-mode-loop.")
+
 (defun %control-emit (output line)
-  "Write LINE to OUTPUT and flush it."
-  (write-line line output)
-  (force-output output))
+  "Write LINE to OUTPUT and flush it, holding *control-output-lock* so the write
+   does not interleave with a concurrent REPL reply or another notification."
+  (with-lock-held (*control-output-lock*)
+    (write-line line output)
+    (force-output output)))
 
 (defun %control-window-of (obj)
   "Return OBJ's window when OBJ is a pane, otherwise OBJ itself."
@@ -119,18 +131,23 @@
    While the loop runs, %-notifications are emitted to OUTPUT as windows/sessions
    change (installed/removed around the loop).  Streams are parameters so the loop
    is testable without a real tty."
-  (let ((handlers (%install-control-notifications output)))
+  (let ((handlers (%install-control-notifications output))
+        (*control-output-lock* (make-lock "control-output")))
     (unwind-protect
          (loop with number = 0
                for line = (read-line input nil nil)
                while line
                unless (string= "" (string-trim '(#\Space #\Tab #\Return) line))
                  do (incf number)
-                    (write-line (%control-run-command session line number) output)
-                    (force-output output))
-      (%remove-control-notifications handlers)))
-  (write-line (cl-tmux/control:control-exit) output)
-  (force-output output))
+                    ;; Serialize the reply against async %output notifications
+                    ;; that reader threads emit to OUTPUT via %control-emit.
+                    (with-lock-held (*control-output-lock*)
+                      (write-line (%control-run-command session line number) output)
+                      (force-output output)))
+      (%remove-control-notifications handlers))
+    (with-lock-held (*control-output-lock*)
+      (write-line (cl-tmux/control:control-exit) output)
+      (force-output output))))
 
 ;;; -- dispatch-prefix-command -----------------------------------------------
 

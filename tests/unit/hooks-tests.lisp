@@ -26,6 +26,28 @@
     (destructuring-bind (expected actual) c
       (is (string= expected actual) "constant must equal ~S" expected))))
 
+
+(test new-hook-event-constants
+  "The newly added tmux hook event constants have the expected string values."
+  (dolist (c `(("pane-died"              ,cl-tmux/hooks:+hook-pane-died+)
+               ("window-layout-changed"  ,cl-tmux/hooks:+hook-window-layout-changed+)
+               ("client-session-changed" ,cl-tmux/hooks:+hook-client-session-changed+)
+               ("pane-mode-changed"      ,cl-tmux/hooks:+hook-pane-mode-changed+)
+               ("client-focus-in"        ,cl-tmux/hooks:+hook-client-focus-in+)
+               ("client-focus-out"       ,cl-tmux/hooks:+hook-client-focus-out+)
+               ("command-error"          ,cl-tmux/hooks:+hook-command-error+)))
+    (destructuring-bind (expected actual) c
+      (is (string= expected actual) "constant must equal ~S" expected))))
+
+(test run-hooks-pane-died-event
+  "add-hook and run-hooks work correctly for the pane-died event and forward the pane arg."
+  (with-isolated-hooks
+    (let ((received :unset))
+      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-pane-died+
+                               (lambda (pane) (setf received pane)))
+      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-died+ :the-pane)
+      (is (eq :the-pane received) "pane-died hook must fire and receive the pane argument"))))
+
 ;;; hook-event-constants-are-strings was removed: hook-event-constants already
 ;;; asserts string= for every constant, which implies stringp — the type check
 ;;; was a strict subset and added no new coverage.

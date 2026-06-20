@@ -222,6 +222,13 @@
    #:+hook-window-unlinked+
    #:+hook-session-closed+
    #:+hook-pane-output+
+   #:+hook-pane-died+
+   #:+hook-window-layout-changed+
+   #:+hook-client-session-changed+
+   #:+hook-pane-mode-changed+
+   #:+hook-client-focus-in+
+   #:+hook-client-focus-out+
+   #:+hook-command-error+
    ;; Registry and dispatch
    #:*hook-registry*
    #:add-hook
