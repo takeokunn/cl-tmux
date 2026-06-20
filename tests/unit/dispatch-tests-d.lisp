@@ -171,12 +171,24 @@
           "unset escape-time must restore the server default of 10"))))
 
 (test cmd-set-option-plain-routes-to-global
-  "A plain 'set-option' (no -w/-p) still sets the global option."
+  "A plain 'set-option' (no scope flag) of a SESSION-scoped option sets the global
+   store.  WINDOW-scoped names route to the active window instead (audit #7)."
   (with-option-session (s)
-      (cl-tmux/options:set-option "synchronize-panes" nil)
+      (cl-tmux::%cmd-set-option s '("history-limit" "5000"))
+      (is (= 5000 (cl-tmux/options:get-option "history-limit"))
+          "plain 'set-option' of a session option must set the global value")))
+
+(test cmd-set-option-plain-window-option-routes-to-window
+  "A plain 'set-option' of a WINDOW-scoped option name (no flag) routes to the
+   active window's local store, mirroring tmux options_scope_from_name (audit #7)."
+  (with-option-session (s)
+    (let ((win (cl-tmux/model:session-active-window s)))
       (cl-tmux::%cmd-set-option s '("synchronize-panes" "on"))
-      (is (eq t (cl-tmux/options:get-option "synchronize-panes"))
-          "plain 'set-option' must set the global synchronize-panes to T")))
+      (is (eq t (nth-value 0 (gethash "synchronize-panes"
+                                      (cl-tmux/model:window-local-options win))))
+          "plain set of a window option must write the active window's local store")
+      (is (null (cl-tmux/options:get-option "synchronize-panes"))
+          "plain set of a window option must NOT change the global value (stays default nil)"))))
 
 (test cmd-set-option-gw-stays-global
   "'set -g -w' must set the GLOBAL option (the explicit -g overrides -w) and

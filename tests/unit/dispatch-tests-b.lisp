@@ -324,10 +324,10 @@
    now a choice/string option (off|on|2..5), not a boolean."
   (with-fake-session (s)
     (with-isolated-options ()
-      (cl-tmux::%run-command-line s "set-option monitor-activity off")
+      (cl-tmux::%run-command-line s "set-option -g monitor-activity off")
       (is (null (cl-tmux/options:get-option "monitor-activity"))
           "set-option monitor-activity off → NIL (boolean coercion)")
-      (cl-tmux::%run-command-line s "set-option monitor-activity on")
+      (cl-tmux::%run-command-line s "set-option -g monitor-activity on")
       (is (eq t (cl-tmux/options:get-option "monitor-activity"))
           "set-option monitor-activity on → T"))))
 
@@ -357,7 +357,7 @@
    (audit #9: -s previously fell through to :global)."
   (let ((scope-seen nil)
         (target-seen :unset))
-    (cl-tmux::%with-option-scope (make-fake-session) '((#\s . t)) nil
+    (cl-tmux::%with-option-scope (make-fake-session) '((#\s . t)) nil nil
                                  (lambda (scope target)
                                    (setf scope-seen scope
                                          target-seen target)))

@@ -256,6 +256,7 @@
            #:define-tmux-options
            #:get-option #:set-option
            #:option-defined-p #:all-options
+           #:option-scope-from-name
            #:style-option-p #:append-option-value
            ;; Server options
            #:*server-options* #:*server-option-registry*

@@ -96,6 +96,45 @@
   "Return T if NAME is a registered option in *OPTION-REGISTRY*."
   (not (null (gethash name *option-registry*))))
 
+;;; ── Option scope classification (mirrors tmux options_scope_from_name) ─────
+;;;
+;;; tmux's options table tags each option with a scope; with no explicit
+;;; -g/-s/-w/-p flag, set-option infers the target store from that scope.
+;;; cl-tmux models SESSION and SERVER options through the global / server stores,
+;;; so the only inference that changes the routing destination is WINDOW scope
+;;; (the active window's local options).  OPTIONS_TABLE_WINDOW|PANE options
+;;; resolve to WINDOW scope when -p is absent, so they are listed here too.
+
+(defparameter *window-scoped-option-names*
+  (let ((ht (make-hash-table :test #'equal)))
+    (dolist (name '("aggressive-resize"
+                    "automatic-rename" "automatic-rename-format"
+                    "main-pane-height" "main-pane-width"
+                    "mode-style"
+                    "monitor-activity" "monitor-bell"
+                    "other-pane-height" "other-pane-width"
+                    "pane-active-border-style" "pane-base-index"
+                    "pane-border-format" "pane-border-indicators"
+                    "pane-border-lines" "pane-border-status" "pane-border-style"
+                    "remain-on-exit" "remain-on-exit-format"
+                    "synchronize-panes" "window-active-style" "window-size"
+                    "window-status-activity-style" "window-status-bell-style"
+                    "window-status-current-format" "window-status-current-style"
+                    "window-status-format" "window-status-last-style"
+                    "window-status-separator" "window-status-style"
+                    "window-style" "wrap-search")
+            ht)
+      (setf (gethash name ht) t)))
+  "Names of WINDOW-scoped (and window|pane) tmux options, used by
+   option-scope-from-name to route a flagless set-option to the active window.")
+
+(defun option-scope-from-name (name)
+  "Return the inferred scope keyword for option NAME when set-option is given no
+   explicit scope flag: :window for a window-scoped option, else :session
+   (which cl-tmux stores in the global table).  Mirrors tmux
+   options_scope_from_name (server/pane scopes are flag-driven here)."
+  (if (gethash name *window-scoped-option-names*) :window :session))
+
 (defun style-option-p (name)
   "True when NAME is a tmux STYLE option (its value is a comma-separated style
    string such as \"fg=red,bg=black,bold\").  tmux marks these OPTIONS_TABLE_IS_STYLE

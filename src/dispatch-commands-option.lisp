@@ -26,10 +26,17 @@
         session (session-active-window session) (session-active-pane session)))
       raw-value))
 
-(defun %with-option-scope (session flags target-str k)
-  "Resolve the option scope from FLAGS / TARGET-STR, then call K with (scope target).
-   SCOPE is :pane, :window, or :global; TARGET is the resolved pane/window (NIL for
-   :global).  Falls back to :global when -p/-w resolves to a NIL target."
+(defun %user-option-name-p (name)
+  "True when NAME is a user option (`@foo`): these stay global regardless of any
+   window-scope name inference."
+  (and (stringp name) (plusp (length name)) (char= (char name 0) #\@)))
+
+(defun %with-option-scope (session flags target-str name k)
+  "Resolve the option scope from FLAGS / TARGET-STR / option NAME, then call K with
+   (scope target).  SCOPE is :pane, :window, :server, or :global; TARGET is the
+   resolved pane/window (NIL otherwise).  Falls back to :global when -p/-w resolves
+   to a NIL target.  With NO explicit -g/-w/-p/-s flag, a WINDOW-scoped option name
+   (tmux options_scope_from_name) routes to the active window's local store."
   (let ((globalp (%flag-present-p flags #\g)))
     (cond
       ((and (%flag-present-p flags #\p) (not globalp))
@@ -45,6 +52,14 @@
       ;; -s routes to :server even alongside -g, matching the config-load path.
       ((%flag-present-p flags #\s)
        (funcall k :server nil))
+      ;; No explicit scope flag: infer from the option NAME (tmux
+      ;; options_scope_from_name).  A window-scoped option (not a user @-option)
+      ;; routes to the -t / active window; session/server names stay :global.
+      ((and name (not globalp)
+            (not (%user-option-name-p name))
+            (eq :window (cl-tmux/options:option-scope-from-name name)))
+       (let ((win (%resolve-window-target-or-active session target-str)))
+         (funcall k (if win :window :global) win)))
       (t
        (funcall k :global nil)))))
 
@@ -141,7 +156,7 @@
          nil)
         (t
          (let ((value (%expand-F-flag flags session raw-value)))
-           (%with-option-scope session flags target-str
+           (%with-option-scope session flags target-str name
              (lambda (scope target)
                (cond
                  (unset-p
