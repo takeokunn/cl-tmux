@@ -121,19 +121,34 @@
    -t idx: insert at specific index (assigned as the window id).
    -a: insert after the current window.
   -c dir: start directory for the new pane's shell (format strings expanded).
-  -e VAR=val: set environment variable in the new pane (repeatable)."
+  -e VAR=val: set environment variable in the new pane (repeatable).
+  -S: if a window with the -n name already exists, SELECT it instead of creating
+     a new one (with -d, do nothing); matches tmux new-window -S."
   (with-command-flags+pos (flags positionals args "ntceF")
     (declare (ignore positionals))
     (let* ((extra-env  (%collect-env-flags flags))
            (name       (%flag-value flags #\n))
+           (select-p   (%flag-present-p flags #\S))
            (detach-p   (%flag-present-p flags #\d))
            (kill-p     (%flag-present-p flags #\k))
            (print-p    (%flag-present-p flags #\P))
            (print-fmt  (%flag-value flags #\F))
            (after-p    (%flag-present-p flags #\a))
-           (raw-dir    (%flag-value flags #\c))
+           ;; -c overrides; else fall back to the session working directory
+           ;; (attach-session/new-session -c), matching tmux's new-window default.
+           (raw-dir    (or (%flag-value flags #\c)
+                           (session-start-directory session)))
            (start-dir  (%expand-start-dir session raw-dir))
            (at-idx     (%parse-flag-int flags #\t)))
+      ;; -S: if a window already has the -n name, select it instead of creating.
+      (when (and select-p name)
+        (let ((existing (find name (session-windows session)
+                              :key #'window-name :test #'string=)))
+          (when existing
+            (unless detach-p
+              (session-select-window session existing)
+              (setf *dirty* t))
+            (return-from %cmd-new-window-arg existing))))
       ;; -k: if a window with the target index already exists, kill it first.
       (when (and kill-p at-idx)
         (let ((existing (find at-idx (session-windows session) :key #'window-id)))

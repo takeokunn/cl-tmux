@@ -429,13 +429,11 @@
       (is (eq wb (session-active-window sess))
           "-C must restrict matching to visible content")
       (session-select-window sess wa)
-      (with-command-test-state (sess :overlay t)
-        (is (null (cl-tmux::%cmd-find-window-arg sess '("-Z" "beta")))
-            "-Z must be rejected")
-        (is (search "find-window: unsupported argument" *overlay*)
-            "-Z must explain that the argument is unsupported"))
-      (is (eq wa (session-active-window sess))
-          "-Z must not change the active window"))))
+      (cl-tmux::%cmd-find-window-arg sess '("-Z" "beta"))
+      (is (eq wb (session-active-window sess))
+          "-Z must select the matched window")
+      (is-true (cl-tmux/model:window-zoom-p wb)
+               "-Z must zoom the matched window's active pane"))))
 
 (test cmd-find-window-targets-another-session
   "find-window -t scopes the search to the targeted session."

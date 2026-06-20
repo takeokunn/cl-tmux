@@ -67,12 +67,18 @@
      -n / -p     switch to the next / previous session (cyclic over the registry).
      -l          switch to the last (most-recently-active-but-one) session.
      -r          refresh the client display when no session switch is requested.
+     -Z          keep the window zoomed when -t targets a pane (cl-tmux never
+                 unzooms on switch, so this is the default behaviour).
+     -E          do not apply update-environment on switch (cl-tmux never applies
+                 it on switch, so -E is already the effective default).
+     -c <client> target client (single-client standalone model: accepted/ignored).
+     -F <format> client format (accepted/ignored in the standalone model).
    -T is independent of the session flags, so `switch-client -t foo -T copy-mode`
    both moves the client and arms a key table.  Mirrors the keybinding handlers
    :switch-client / :switch-client-next/-prev / :last-session, reusing the same
    session-touch primitive."
-  (with-command-input (flags positionals args "Ttc"
-                             :allowed-flags '(#\T #\t #\n #\p #\l #\r)
+  (with-command-input (flags positionals args "TtcF"
+                             :allowed-flags '(#\T #\t #\n #\p #\l #\r #\Z #\E #\c #\F)
                              :max-positionals 0
                              :message "switch-client: unsupported argument")
     (declare (ignore positionals))
@@ -81,20 +87,25 @@
         (%switch-client-handle-refresh flags))))
 
 (defun %cmd-attach-session-arg (session args)
-  "attach-session [-t target]: in an already attached client, switch this client
-   to the target session, or to the current server session when no target is
-   given."
+  "attach-session [-c working-dir] [-t target]: in an already attached client,
+   switch this client to the target session, or to the current server session
+   when no target is given.
+   -c working-dir: set the target session's working directory (used as the
+     default start directory for new windows), matching tmux attach-session -c."
   (declare (ignore session))
-    (with-command-input (flags positionals args "t"
-                             :allowed-flags '(#\t)
+    (with-command-input (flags positionals args "ct"
+                             :allowed-flags '(#\c #\t)
                              :max-positionals 0
                              :message "attach-session: unsupported argument")
     (declare (ignore positionals))
-    (let ((target-name (%flag-value flags #\t)))
-      (%switch-to-session
-       (if target-name
-           (server-find-session target-name)
-           (server-current-session))))))
+    (let* ((target-name (%flag-value flags #\t))
+           (work-dir    (%flag-value flags #\c))
+           (target      (if target-name
+                            (server-find-session target-name)
+                            (server-current-session))))
+      (when (and target work-dir (plusp (length work-dir)))
+        (setf (session-start-directory target) work-dir))
+      (%switch-to-session target))))
 
 (defun %parse-wxh (str)
   "Parse a \"WxH\" size string (e.g. the default-size option \"80x24\") into
@@ -184,23 +195,55 @@
      (format nil "new session: ~A" (session-name new-sess))))
   new-sess)
 
+(defun %show-session-info-overlay (sess fmt)
+  "new-session -P: print info about the created session SESS to an overlay.
+   FMT (the -F format) overrides the default #{session_name}: template."
+  (when sess
+    (let* ((win  (session-active-window sess))
+           (pane (and win (window-active-pane win)))
+           (template (if (and fmt (plusp (length fmt))) fmt "#{session_name}:")))
+      (show-transient-overlay
+       (cl-tmux/format:expand-format
+        template
+        (cl-tmux/format:format-context-from-session sess win pane))))))
+
+(defun %new-session-apply-environment (sess env-pairs)
+  "Persist new-session -e VAR=val pairs onto SESS's environment overlay so they
+   are inherited by windows created later in the session (the initial pane picks
+   them up via *pane-extra-env* at fork time)."
+  (when sess
+    (dolist (pair env-pairs)
+      (cl-tmux/model:session-set-environment sess (car pair) (cdr pair)))))
+
 (defun %cmd-new-session-arg (session args)
-  "new-session [-A] [-d] [-s name] [-n window-name] [-c start-dir] [-x width] [-y height]: create a new session.
+  "new-session [-AdEPX] [-s name] [-n window-name] [-c start-dir] [-e VAR=val]
+   [-F format] [-x width] [-y height]: create a new session.
    -A: if a session named NAME already exists, attach to it instead of creating a new one.
   -d: create detached (do not switch to the new session).
   -s name: session name.
   -n name: initial window name.
   -c dir: start directory for the initial window's shell.
+  -e VAR=val: set an environment variable in the new session (repeatable).
+  -E: do NOT apply the update-environment option when creating the session.
+  -P: print information about the new session after creation.
+  -F format: with -P, the format string for the printed info (default
+     #{session_name}:).
+  -X: with -A, behave like attach-session -x (detach the other client); the
+     standalone single-client model has no other client, so it is a no-op.
    -x width: initial columns (default: terminal width, or default-size when -d).
    -y height: initial rows (default: terminal height minus status bar, or
      default-size when -d).
   A DETACHED session (-d) has no client to size it, so — like tmux — it uses the
    default-size option (\"WxH\", default 80x24) when -x/-y are not given."
-  (with-command-flags+pos (flags positionals args "sncxyt")
+  (with-command-flags+pos (flags positionals args "sncxyteF")
     (declare (ignore positionals))
     (let* ((name            (%new-session-name-from-flags flags))
            (attach-if-exists (%flag-present-p flags #\A))
            (detach-p         (%flag-present-p flags #\d))
+           (print-p          (%flag-present-p flags #\P))
+           (print-fmt        (%flag-value flags #\F))
+           (suppress-env-p   (%flag-present-p flags #\E))
+           (env-pairs        (%collect-env-flags flags))
            (win-name         (%flag-value flags #\n))
            ;; -t <group>: the new session JOINS an existing session's group,
            ;; sharing its window list (tmux "grouped sessions").
@@ -209,18 +252,32 @@
       (multiple-value-bind (cols rows)
           (%new-session-dimensions-from-flags flags detach-p)
         (when attach-if-exists
-          (return-from %cmd-new-session-arg
-            (%new-session-return-existing name detach-p)))
+          (let ((existing (%new-session-return-existing name detach-p)))
+            (when (and existing print-p)
+              (%show-session-info-overlay existing print-fmt))
+            (return-from %cmd-new-session-arg existing)))
         (setf name (%new-session-resolve-name name attach-if-exists flags))
         (when (null name)
           (return-from %cmd-new-session-arg nil))
         (when group-target
-          (return-from %cmd-new-session-arg
-            (%new-session-create-grouped name group-target detach-p)))
-        (%new-session-finalize
-         (new-session name rows cols :start-dir start-dir)
-         win-name
-         detach-p)))))
+          (let ((grouped (%new-session-create-grouped name group-target detach-p)))
+            (%new-session-apply-environment grouped env-pairs)
+            (when (and grouped print-p)
+              (%show-session-info-overlay grouped print-fmt))
+            (return-from %cmd-new-session-arg grouped)))
+        ;; -e makes the initial pane inherit VAR=val via *pane-extra-env*; -E
+        ;; suppresses update-environment for the whole creation (incl. that pane).
+        (let* ((cl-tmux/model:*suppress-update-environment* suppress-env-p)
+               (*pane-extra-env* (or env-pairs *pane-extra-env*))
+               (new-sess (new-session name rows cols :start-dir start-dir)))
+          ;; Persist -c as the session working directory for future windows.
+          (when (and new-sess start-dir)
+            (setf (session-start-directory new-sess) start-dir))
+          (%new-session-apply-environment new-sess env-pairs)
+          (let ((result (%new-session-finalize new-sess win-name detach-p)))
+            (when (and result print-p)
+              (%show-session-info-overlay result print-fmt))
+            result))))))
 
 (defun %destroy-session (session)
   "Tear down SESSION: close its panes' PTYs, remove it from the server registry,
@@ -336,12 +393,15 @@
         (window-relayout win rows cols)))))
 
 (defun %cmd-detach-arg (session args)
-  "detach: detach the active client.
-   cl-tmux does not implement target selection, print commands, or shell hooks
-   for detach; argument forms are rejected instead of silently collapsed onto
-   the active client."
-  (with-command-input (flags positionals args ""
-                             :allowed-flags '()
+  "detach-client / detach [-a] [-P] [-s target-session] [-t target-client]:
+   detach the active client.
+   -a: detach all clients other than the current one — the standalone model has a
+       single client, so the remaining client (the current one) is detached.
+   -P: send SIGHUP to the detaching client's parent (no-op: single-client model).
+   -s/-t: target session / client (accepted; the standalone model has one client).
+   All flag forms collapse onto detaching the one active client."
+  (with-command-input (flags positionals args "st"
+                             :allowed-flags '(#\a #\P #\s #\t)
                              :max-positionals 0
                              :message "detach: unsupported argument")
     (declare (ignore flags positionals))

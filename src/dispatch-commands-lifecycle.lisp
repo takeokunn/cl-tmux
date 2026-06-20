@@ -29,16 +29,19 @@
             *server-sessions*))
 
 (define-command-input-handler %cmd-link-window (session args)
-  "link-window [-s src] -t dst [-dk]: share a window into another session.
+  "link-window [-s src] -t dst [-abdk]: share a window into another session.
    -s src: source window target (session:window); default is the active window.
    -t dst: destination session (session or session:window).
    -k: kill any window already occupying the destination index first.
    -d: do not make the linked window the active window of the destination session
    (default: the newly linked window becomes current, matching tmux).
+   -a / -b: insert after / before the destination window — accepted; cl-tmux
+   stores the index in the window struct and linked windows SHARE it, so relative
+   reindexing is constrained and the window keeps its own index.
    The window object is SHARED — it appears in both sessions at the same index
    (cl-tmux stores the index in the window struct, so linked windows share it)."
   (flags positionals "st"
-         :allowed-flags '(#\s #\t #\k #\d)
+         :allowed-flags '(#\s #\t #\k #\d #\a #\b)
          :max-positionals 0
          :message "link-window: unsupported argument")
   (let* ((src-str (%flag-value flags #\s))

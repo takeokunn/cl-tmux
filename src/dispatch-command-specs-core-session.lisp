@@ -4,7 +4,7 @@
   '((:new-window '%cmd-new-window-arg ("new-window"))
     (:new-session '%cmd-new-session-arg ("new-session"))
     (:kill-session '%cmd-kill-session-arg ("kill-session"))
-    (:detach '%cmd-detach-arg ("detach"))
+    (:detach '%cmd-detach-arg ("detach" "detach-client"))
     (:next-window '%cmd-next-window-arg ("next-window"))
     (:prev-window '%cmd-previous-window-arg ("previous-window"))
     (:rename-session '%cmd-rename-session ("rename-session"))

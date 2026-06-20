@@ -48,6 +48,51 @@
           (is (eq s2 (cl-tmux::server-find-session "2"))
               "the existing session 2 is intact"))))))
 
+(test new-session-e-sets-session-environment
+  "new-session -e VAR=val stores VAR in the new session's environment overlay
+   (inherited by windows created later in the session)."
+  (with-fake-session (s2)
+    (setf (cl-tmux::session-name s2) "7")
+    (with-registered-sessions (("7" s2))
+      (let ((*overlay* nil))
+        (let ((new (cl-tmux::%cmd-new-session-arg
+                    s2 '("-d" "-s" "envy" "-e" "CLTMUX_NS_E=bar"))))
+          (is (not (null new)) "a session was created")
+          (multiple-value-bind (value source)
+              (cl-tmux/model:session-environment-value new "CLTMUX_NS_E")
+            (declare (ignore source))
+            (is (string= "bar" value)
+                "new-session -e stores VAR=val in the session environment")))))))
+
+(test new-session-P-prints-session-info
+  "new-session -dP prints the new session info (default #{session_name}:) to an
+   overlay, and -F overrides the format."
+  (with-fake-session (s2)
+    (setf (cl-tmux::session-name s2) "6")
+    (with-registered-sessions (("6" s2))
+      (let ((*overlay* nil))
+        (cl-tmux::%cmd-new-session-arg s2 '("-d" "-P" "-s" "printy"))
+        (is (and *overlay* (search "printy" *overlay*))
+            "new-session -P shows the session name in an overlay"))
+      (let ((*overlay* nil))
+        (cl-tmux::%cmd-new-session-arg
+         s2 '("-d" "-P" "-F" "ID=#{session_name}" "-s" "fmty"))
+        (is (and *overlay* (search "ID=fmty" *overlay*))
+            "new-session -F overrides the printed format")))))
+
+(test new-window-S-selects-existing-named-window
+  "new-window -S -n NAME selects an existing window with that name instead of
+   creating a new one (tmux new-window -S)."
+  (with-fake-session (s :nwindows 1)
+    (let ((w (session-active-window s)))
+      (setf (cl-tmux::window-name w) "ssh")
+      (let ((before (length (cl-tmux::session-windows s))))
+        (let ((result (cl-tmux::%cmd-new-window-arg s '("-S" "-n" "ssh"))))
+          (is (eq w result)
+              "new-window -S returns the existing window named ssh")
+          (is (= before (length (cl-tmux::session-windows s)))
+              "new-window -S must not create a second window"))))))
+
 ;;; ── new-session -t: grouped sessions ─────────────────────────────────────────
 
 (test new-session-t-shares-target-windows

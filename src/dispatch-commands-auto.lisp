@@ -51,11 +51,12 @@
    interactive :find-window binding (which lists matches in an overlay) is
    unchanged."
   (with-command-input (flags positionals args "t"
-                             :allowed-flags '(#\C #\N #\T #\i #\r #\t)
+                             :allowed-flags '(#\C #\N #\T #\Z #\i #\r #\t)
                              :max-positionals 1
                              :message "find-window: unsupported argument")
     (let* ((target-str   (%flag-value flags #\t))
            (pattern      (first positionals))
+           (zoom-p       (%flag-present-p flags #\Z))
            (name-only    (%flag-present-p flags #\N))
            (title-only   (%flag-present-p flags #\T))
            (content-only (%flag-present-p flags #\C))
@@ -81,6 +82,9 @@
                                (session-windows session-to-search))))
           (when match
             (session-select-window session-to-search match)
+            ;; -Z: zoom the matched window's active pane (tmux find-window -Z).
+            (when (and zoom-p (not (cl-tmux/model:window-zoom-p match)))
+              (cl-tmux/model:window-zoom-toggle match))
             (setf *dirty* t)
             t))))))
 
@@ -155,12 +159,27 @@
             t))))))
 
 (defun %cmd-refresh-client-arg (session args)
-  "refresh-client: force a full redraw."
+  "refresh-client [-cDLRSU] [-A pane] [-B sub] [-C size] [-f flags] [-l target]
+   [-t target-client]: refresh / redraw the client.
+   In the standalone single-client model every form collapses onto a redraw:
+     -S            redraw the status line only (cl-tmux redraws the whole frame).
+     -L/-R/-U/-D   pan the visible window — accepted; the full-screen single
+                   client is never larger than the terminal, so it is a no-op.
+     -c            reset panning to cursor tracking (no-op, see above).
+     -f / -F       set client flags — accepted; cl-tmux has no per-client flags.
+     -l            request the host clipboard via OSC 52 — accepted; there is no
+                   outer xterm client to query in the standalone model.
+     -C            set the client size (no-op: the size follows the terminal).
+     -A / -B       passthrough / subscription control (accepted, no-op).
+     -t            target client (single-client model).
+   Unknown flags are still rejected so invalid config surfaces an error."
   (declare (ignore session))
-  (with-command-input (flags positionals args ""
-                             :allowed-flags '()
+  (with-command-input (flags positionals args "ABCfFlt"
+                             :allowed-flags '(#\A #\B #\C #\D #\L #\R #\S #\U
+                                              #\c #\f #\F #\l #\t)
                              :max-positionals 0
                              :message "refresh-client: unsupported argument")
+    (declare (ignore flags positionals))
     (setf *dirty* t)
     t))
 

@@ -137,6 +137,7 @@
    #:session-clients
    #:session-locked-p
    #:session-group
+   #:session-start-directory
    #:session-touch
    ;; Pane hit testing
    #:pane-at-position
@@ -159,6 +160,7 @@
    #:session-set-environment
    #:session-unset-environment
    #:session-child-environment
+   #:*suppress-update-environment*
    ;; update-environment
    #:+default-update-environment+
    #:*update-environment*

@@ -17,6 +17,7 @@
   (clients     nil :type list)      ; list of connected client descriptors
   (locked-p    nil :type boolean)   ; T when lock-session has been called
   (group       nil)                 ; NIL or group-id (string/integer); sessions in same group share windows
+  (start-directory nil)             ; NIL or string: session working dir (new-session/attach-session -c)
   (environment (make-hash-table :test #'equal))
   (environment-unsets nil :type list))
 
@@ -302,11 +303,18 @@
   (pushnew name (session-environment-unsets session) :test #'string=)
   session)
 
+(defvar *suppress-update-environment* nil
+  "When non-NIL, session-child-environment SKIPS applying the update-environment
+   variables (merge step 2).  Bound to T around new-session -E so the created
+   session — including its initial pane — does not pick up update-environment,
+   matching tmux's `new-session -E`.")
+
 (defun session-child-environment (session &key term extra-env)
   "Return a full child environment snapshot for SESSION.
    The merge order is:
      1. current process environment
      2. update-environment variables from the current process
+        (skipped when *suppress-update-environment* — new-session -E)
      3. SESSION overlay sets / unsets
      4. TERM, when supplied
      5. EXTRA-ENV, when supplied
@@ -314,8 +322,9 @@
    session overlay step is skipped.
    The result is a flat list of NAME=VALUE strings suitable for RUN-PROGRAM."
   (let ((table (%environment-strings-to-table (sb-ext:posix-environ))))
-    (dolist (pair (get-update-environment-vars))
-      (setf (gethash (car pair) table) (cdr pair)))
+    (unless *suppress-update-environment*
+      (dolist (pair (get-update-environment-vars))
+        (setf (gethash (car pair) table) (cdr pair))))
     (when session
       (maphash (lambda (name value)
                  (setf (gethash name table) value))

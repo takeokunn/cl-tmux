@@ -52,10 +52,28 @@
         (is-true cl-tmux::*dirty*
                  "attach-session -t must mark the display dirty")))))
 
+(test run-command-line-attach-session-accepts-working-dir
+  "attach-session -c sets the target session's working directory and switches."
+  (with-loop-state
+    (with-empty-registry
+      (let ((s0 (make-fake-session :nwindows 1))
+            (s1 (make-fake-session :nwindows 1)))
+        (setf (cl-tmux::session-name s0) "0"
+              (cl-tmux::session-name s1) "work"
+              (cl-tmux::session-last-active s0) 10
+              (cl-tmux::session-last-active s1) 0
+              cl-tmux::*server-sessions* (list (cons "0" s0)
+                                               (cons "work" s1))
+              cl-tmux::*overlay* nil)
+        (cl-tmux::%run-command-line s0 "attach-session -c /tmp -t work")
+        (is (string= "/tmp" (cl-tmux::session-start-directory s1))
+            "attach-session -c stores the session working directory")
+        (is (eq s1 (cl-tmux::server-current-session))
+            "attach-session -c -t switches to the target session")))))
+
 (test run-command-line-attach-session-rejects-client-creation-args
   "attach-session inside a running client rejects client-creation arguments."
-  (dolist (row '(("attach-session -c /tmp -t work" "client cwd")
-                 ("attach-session -d -t work" "detach other clients")
+  (dolist (row '(("attach-session -d -t work" "detach other clients")
                  ("attach-session work" "positional target")))
     (destructuring-bind (line desc) row
       (with-loop-state
@@ -105,21 +123,31 @@
     (is-true cl-tmux::*running*
              "detach returns a detach disposition; the caller owns loop shutdown")))
 
-(test run-command-line-detach-rejects-ignored-args
-  "detach rejects arguments that cl-tmux does not implement."
+(test run-command-line-detach-accepts-single-client-flags
+  "detach-client -a/-P/-s/-t (single-client standalone forms) are accepted and
+   collapse onto detaching the active client."
   (with-fake-session (s)
-    (dolist (args '(("-P")
-                    ("-E" "echo detached")
+    (dolist (args '(("-a")
+                    ("-P")
                     ("-s" "work")
                     ("-t" "client-0")))
-      (setf cl-tmux::*running* t
-            cl-tmux::*overlay* nil)
-      (is (null (cl-tmux::%cmd-detach-arg s args))
-          "unsupported detach args must be rejected: ~S" args)
-      (is-true cl-tmux::*running*
-               "rejected detach args must not stop the event loop: ~S" args)
-      (assert-overlay-active
-          "rejected detach args must explain the failure: ~S" args))))
+      (setf cl-tmux::*overlay* nil)
+      (is (eq :detach (cl-tmux::%cmd-detach-arg s args))
+          "detach ~S must return a detach disposition" args)
+      (is (null cl-tmux::*overlay*)
+          "accepted detach args must not raise an overlay: ~S" args))))
+
+(test run-command-line-detach-rejects-unimplemented-args
+  "detach rejects -E (run a command on detach), which cl-tmux cannot implement."
+  (with-fake-session (s)
+    (setf cl-tmux::*running* t
+          cl-tmux::*overlay* nil)
+    (is (null (cl-tmux::%cmd-detach-arg s '("-E" "echo detached")))
+        "detach -E must be rejected")
+    (is-true cl-tmux::*running*
+             "a rejected detach must not stop the event loop")
+    (assert-overlay-active
+        "a rejected detach must explain the failure")))
 
 (test dispatch-move-pane-opens-prompt
   ":move-pane opens a prompt for the destination window index."
@@ -133,19 +161,36 @@
       (cl-tmux::dispatch-command s :refresh-client nil)
       (is-true cl-tmux::*dirty* ":refresh-client must set *dirty*"))))
 
-(test run-command-line-refresh-client-rejects-unsupported-flags
-  "refresh-client rejects unsupported tmux-compatible flags."
+(test run-command-line-refresh-client-accepts-tmux-flags
+  "refresh-client accepts its tmux flag set (-S status redraw, -L/R/U/D pan,
+   -c, -f/-F client flags, -l clipboard, -t target) and forces a redraw."
   (with-fake-session (s)
     (dolist (args '(("-S")
+                    ("-L") ("-R") ("-U") ("-D")
+                    ("-c")
+                    ("-f" "read-only")
+                    ("-l" "client-0")
                     ("-t" "client-0")))
       (setf cl-tmux::*dirty* nil
             cl-tmux::*overlay* nil)
-      (is (null (cl-tmux::%cmd-refresh-client-arg s args))
-          "refresh-client must reject unsupported args: ~S" args)
-      (is-false cl-tmux::*dirty*
-                "rejected refresh-client args must not redraw: ~S" args)
-      (is (search "unsupported argument" cl-tmux::*overlay*)
-          "refresh-client must explain the unsupported arg rejection: ~S" args))))
+      (is-true (cl-tmux::%cmd-refresh-client-arg s args)
+               "refresh-client must accept ~S" args)
+      (is-true cl-tmux::*dirty*
+               "accepted refresh-client args must redraw: ~S" args)
+      (is (null cl-tmux::*overlay*)
+          "accepted refresh-client args must not raise an overlay: ~S" args))))
+
+(test run-command-line-refresh-client-rejects-unknown-flags
+  "refresh-client still rejects flags outside the tmux args set."
+  (with-fake-session (s)
+    (setf cl-tmux::*dirty* nil
+          cl-tmux::*overlay* nil)
+    (is (null (cl-tmux::%cmd-refresh-client-arg s '("-Z")))
+        "refresh-client must reject an unknown flag")
+    (is-false cl-tmux::*dirty*
+              "a rejected refresh-client must not redraw")
+    (is (search "unsupported argument" cl-tmux::*overlay*)
+        "a rejected refresh-client must explain the rejection")))
 
 (test run-command-line-lock-client-without-args-locks-session
   "lock-client without arguments locks the active session."
@@ -337,6 +382,19 @@
             "set-environment -g must update the process environment")
         (is (null (gethash name (session-environment s)))
             "set-environment -g must not write the session overlay")))))
+
+(test cmd-set-environment-f-expands-value-as-format
+  "set-environment -F NAME VALUE expands VALUE as a format string before storing
+   it (tmux set-environment -F)."
+  (with-fake-session (s)
+    (let ((name "CLTMUX_TEST_ENV_VAR_F"))
+      (cl-tmux::%cmd-set-environment-prompt s (list "-F" name "#{session_name}"))
+      (multiple-value-bind (value source) (session-environment-value s name)
+        (declare (ignore source))
+        (is (string= (cl-tmux::session-name s) value)
+            "set-environment -F must expand #{session_name} to the session name")
+        (is (not (search "#{" value))
+            "set-environment -F must not store the unexpanded template")))))
 
 (test cmd-set-environment-t-target-session-writes-value
   "set-environment -t target NAME VALUE stores the value in the target session."

@@ -97,10 +97,12 @@
          (cl-tmux/model:session-set-environment session name value)))))
 
 (defun %cmd-show-environment-arg (session args)
-  "show-environment [-g] [-s] [-t target] [NAME]: show environment variables.
-   With NAME, show that variable.  -s prints shell assignment/unset syntax."
+  "show-environment [-hgs] [-t target] [NAME]: show environment variables.
+   With NAME, show that variable.  -s prints shell assignment/unset syntax.
+   -h shows hidden variables — cl-tmux does not track hidden variables
+   separately (every variable is already listed), so -h is accepted as a no-op."
   (with-command-input (flags positionals args "t"
-                             :allowed-flags '(#\g #\s #\t)
+                             :allowed-flags '(#\g #\h #\s #\t)
                              :max-positionals 1
                              :message "show-environment: unsupported argument")
     (let ((shell-p (%flag-present-p flags #\s))
@@ -115,15 +117,27 @@
               (%show-environment-list-overlay names value-fn shell-p)))))))
 
 (defun %cmd-set-environment-prompt (session args)
-  "set-environment [-g] [-u|-r] [-t target] NAME [VALUE]: set or unset an environment variable.
-   -u (tmux's unset flag) or -r unsets the variable.  Otherwise VALUE is required."
+  "set-environment [-Fhgru] [-t target] NAME [VALUE]: set or unset an environment variable.
+   -u (tmux's unset flag) or -r unsets the variable.  Otherwise VALUE is required.
+   -F: expand VALUE as a format string (e.g. #{...}) before storing it.
+   -h: mark the variable hidden — cl-tmux does not track hidden variables
+       separately, so it is accepted and the variable is stored normally."
   (with-command-input (flags positionals args "t"
-                             :allowed-flags '(#\g #\r #\t #\u)
+                             :allowed-flags '(#\F #\g #\h #\r #\t #\u)
                              :message "set-environment: unsupported argument")
     (let* ((remove-p (or (%flag-present-p flags #\u)
                          (%flag-present-p flags #\r)))
            (name (first positionals))
-           (value (format nil "~{~A~^ ~}" (rest positionals))))
+           (raw-value (format nil "~{~A~^ ~}" (rest positionals)))
+           ;; -F: expand the value as a format string before storing.
+           (value (if (%flag-present-p flags #\F)
+                      (cl-tmux/format:expand-format
+                       raw-value
+                       (cl-tmux/format:format-context-from-session
+                        session
+                        (session-active-window session)
+                        (session-active-pane session)))
+                      raw-value)))
       (%with-environment-scope (scope target-session session flags
                                  "set-environment: -g and -t are mutually exclusive"
                                  "set-environment: no such session: ~A")
