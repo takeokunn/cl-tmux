@@ -141,7 +141,7 @@
    Operation: -u unset, -a append, -o only-if-unset, default: set.
    -F expands #{...} in VALUE before storage (one-shot format resolution)."
   (with-command-input (flags positionals args "t"
-                             :allowed-flags '(#\a #\F #\g #\o #\p #\s #\u #\w #\t)
+                             :allowed-flags '(#\a #\F #\g #\o #\p #\q #\s #\u #\w #\t)
                              :message "set-option: unsupported argument")
     (let* ((name       (first positionals))
            (raw-value  (format nil "~{~A~^ ~}" (rest positionals)))

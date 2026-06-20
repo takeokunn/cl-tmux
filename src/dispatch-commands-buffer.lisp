@@ -82,29 +82,47 @@
     (write-string text out))
   text)
 
+(defun %set-buffer-send-to-clipboard (session text)
+  "Honour set-buffer -w: enqueue an OSC 52 sequence on the active pane's screen
+   so the host terminal copies TEXT to the system clipboard on the next frame.
+   No-op when set-clipboard is off or there is no active pane."
+  (let ((mode (or (ignore-errors (cl-tmux/options:get-option "set-clipboard")) "on"))
+        (pane (and session (session-active-pane session))))
+    (when (and pane text (not (string= mode "off")))
+      (let ((screen (pane-screen pane)))
+        (when screen
+          (push (cl-tmux/terminal/parser:osc52-clipboard-sequence text)
+                (screen-clipboard-queue screen)))))))
+
 (defun %cmd-set-buffer-arg (session args)
-  "set-buffer [-a] [-b name] [-n new-name] data...:
+  "set-buffer [-aw] [-b name] [-n new-name] [-t target-client] data...:
    set a paste buffer's contents.  -b name stores DATA under NAME; without -b
    an automatic name (bufferN) is assigned.  -n new-name renames the selected
-   buffer (or the most recent one) to NEW-NAME and ignores DATA."
-  (declare (ignore session))
-  (with-command-input (flags positionals args "bn"
-                             :allowed-flags '(#\a #\b #\n)
+   buffer (or the most recent one) to NEW-NAME and ignores DATA.  -w also sends
+   the buffer to the host clipboard via OSC 52 (honouring set-clipboard); -t
+   names the target client for that clipboard write (accepted; the standalone
+   model has a single client so it routes to the active pane)."
+  (with-command-input (flags positionals args "bnt"
+                             :allowed-flags '(#\a #\b #\n #\w #\t)
                              :message "set-buffer: unsupported argument")
     (let* ((name     (%buffer-name-from-flags flags))
            (new-name (%flag-value flags #\n))
            (append-p (%buffer-append-p flags))
+           (to-clip  (%flag-present-p flags #\w))
            (data     (%buffer-positionals-text positionals)))
       (cond
         (new-name
          (unless (cl-tmux/buffer:rename-paste-buffer name new-name)
            (show-overlay "no buffer")))
         (positionals
-         (if append-p
-             (let ((existing (or (%named-or-latest-paste-buffer name) "")))
-               (cl-tmux/buffer:add-paste-buffer
-                (concatenate 'string existing data) name))
-             (cl-tmux/buffer:add-paste-buffer data name)))))))
+         (let ((stored data))
+           (if append-p
+               (let ((existing (or (%named-or-latest-paste-buffer name) "")))
+                 (setf stored (concatenate 'string existing data))
+                 (cl-tmux/buffer:add-paste-buffer stored name))
+               (cl-tmux/buffer:add-paste-buffer data name))
+           (when to-clip
+             (%set-buffer-send-to-clipboard session stored))))))))
 
 (defun %replace-newlines-with (text sep)
   "Return TEXT with every LF replaced by the string SEP (which may be empty or
@@ -370,7 +388,7 @@
        (-s back-history source pane, -M mouse-drag entry, -H hide the position
        indicator)."
   (with-command-input (flags positionals args "ts"
-                             :allowed-flags '(#\u #\e #\q #\t #\s #\M #\H)
+                             :allowed-flags '(#\u #\e #\q #\t #\s #\M #\H #\d #\S)
                              :max-positionals 0
                              :message "copy-mode: unsupported argument")
     (let ((target-str (%flag-value flags #\t))
