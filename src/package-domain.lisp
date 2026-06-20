@@ -358,6 +358,12 @@
    #:copy-mode-scroll-up-line
    #:copy-mode-scroll-down-line
    #:copy-mode-scroll-middle
+   ;; *-and-cancel / selection-mode / scroll-to-mouse (send-keys -X)
+   #:copy-mode-scroll-down-and-cancel
+   #:copy-mode-page-down-and-cancel
+   #:copy-mode-cursor-down-and-cancel
+   #:copy-mode-selection-mode
+   #:copy-mode-scroll-to-mouse
    #:copy-mode-previous-paragraph
    #:copy-mode-next-paragraph
    ;; Line selection (V)

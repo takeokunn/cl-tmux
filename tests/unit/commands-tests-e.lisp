@@ -366,3 +366,56 @@
     (cl-tmux/commands::copy-mode-move-cursor s :left)
     (is (equal (cons 2 5) (cl-tmux/terminal/types:screen-copy-cursor s))
         "cursor must be unchanged outside copy mode")))
+
+;;; ── send-keys -X *-and-cancel / selection-mode (window-copy.c parity) ─────────
+
+(test copy-mode-scroll-down-and-cancel-exits-at-bottom
+  "scroll-down-and-cancel scrolls down one line and exits copy mode when the live
+   bottom (scroll-offset 0) is reached."
+  (let ((s (copy-mode-screen)))
+    (seed-scrollback s 5)
+    (setf (cl-tmux/terminal/types:screen-copy-offset s) 1)
+    (cl-tmux/commands::copy-mode-scroll-down-and-cancel s)
+    (is-false (cl-tmux/terminal/types:screen-copy-mode-p s)
+              "reaching the live bottom must exit copy mode")))
+
+(test copy-mode-scroll-down-and-cancel-stays-when-scrolled-back
+  "scroll-down-and-cancel stays in copy mode while still scrolled back, moving the
+   viewport one line newer."
+  (let ((s (copy-mode-screen)))
+    (seed-scrollback s 5)
+    (setf (cl-tmux/terminal/types:screen-copy-offset s) 3)
+    (cl-tmux/commands::copy-mode-scroll-down-and-cancel s)
+    (is-true (cl-tmux/terminal/types:screen-copy-mode-p s)
+             "still scrolled back must stay in copy mode")
+    (is (= 2 (cl-tmux/terminal/types:screen-copy-offset s))
+        "the viewport moved one line newer")))
+
+(test copy-mode-page-down-and-cancel-exits-at-bottom
+  "page-down-and-cancel scrolls a full page down and exits at the live bottom."
+  (let ((s (copy-mode-screen)))
+    (seed-scrollback s 2)
+    (setf (cl-tmux/terminal/types:screen-copy-offset s) 1)
+    (cl-tmux/commands::copy-mode-page-down-and-cancel s)
+    (is-false (cl-tmux/terminal/types:screen-copy-mode-p s)
+              "a full page down reaches the bottom and exits copy mode")))
+
+(test copy-mode-selection-mode-line-begins-line-selection
+  "selection-mode line begins a line-granularity selection."
+  (let ((s (copy-mode-screen)))
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 2))
+    (cl-tmux/commands::copy-mode-selection-mode s "line")
+    (is-true (cl-tmux/terminal/types:screen-copy-selecting s)
+             "selection-mode line must start selecting")
+    (is-true (cl-tmux/terminal/types:screen-copy-line-selection-p s)
+             "selection-mode line sets line-selection mode")))
+
+(test copy-mode-selection-mode-default-char-begins-selection
+  "selection-mode with no/char argument begins a character selection (not line)."
+  (let ((s (copy-mode-screen)))
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 2))
+    (cl-tmux/commands::copy-mode-selection-mode s "char")
+    (is-true (cl-tmux/terminal/types:screen-copy-selecting s)
+             "selection-mode char must start selecting")
+    (is-false (cl-tmux/terminal/types:screen-copy-line-selection-p s)
+              "char selection is not a line selection")))

@@ -78,6 +78,11 @@
   ("scroll-up"                    :copy-mode-scroll-up-line)
   ("scroll-down"                  :copy-mode-scroll-down-line)
   ("scroll-middle"                :copy-mode-scroll-middle)
+  ;; *-and-cancel variants: scroll/move, then exit copy mode at the live bottom.
+  ("scroll-down-and-cancel"       :copy-mode-scroll-down-and-cancel)
+  ("page-down-and-cancel"         :copy-mode-page-down-and-cancel)
+  ("cursor-down-and-cancel"       :copy-mode-cursor-down-and-cancel)
+  ("scroll-to-mouse"              :copy-mode-scroll-to-mouse)
   ;; emacs-style names
   ("select-word"                  :copy-mode-select-word)
   ;; canonical copy-pipe names: these remain valid `send-keys -X` targets when
@@ -127,7 +132,9 @@
     ;; pipe family: run the command WITHOUT copying to a buffer.
     ("pipe"                          :text copy-mode-pipe-no-cancel)
     ("pipe-no-clear"                 :text copy-mode-pipe-no-clear)
-    ("pipe-and-cancel"               :text copy-mode-pipe-and-cancel)))
+    ("pipe-and-cancel"               :text copy-mode-pipe-and-cancel)
+    ;; selection-mode <char|word|line>: set the selection granularity.
+    ("selection-mode"                :text copy-mode-selection-mode)))
 
 (defun %send-keys-x-explicit-arg-spec (command-name)
   "Return the explicit-argument spec for COMMAND-NAME."

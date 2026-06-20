@@ -88,6 +88,57 @@
                  (zerop (screen-copy-offset screen)))
         (copy-mode-exit screen)))))
 
+;;; ── send-keys -X *-and-cancel / selection-mode / scroll-to-mouse ─────────────
+;;;
+;;; These are real tmux window-copy commands (window-copy.c) that scroll/move and
+;;; then exit copy mode when the live bottom (offset 0) is reached.
+
+(defun copy-mode-scroll-down-and-cancel (screen)
+  "send-keys -X scroll-down-and-cancel: scroll the viewport down one line, then
+   exit copy mode when the live bottom (scroll-offset 0) is reached."
+  (when (screen-copy-mode-p screen)
+    (copy-mode-scroll screen -1)
+    (when (zerop (screen-copy-offset screen))
+      (copy-mode-exit screen))))
+
+(defun copy-mode-page-down-and-cancel (screen)
+  "send-keys -X page-down-and-cancel: scroll one full page down, then exit copy
+   mode when the live bottom is reached."
+  (when (screen-copy-mode-p screen)
+    (copy-mode-scroll screen (- (screen-height screen)))
+    (when (zerop (screen-copy-offset screen))
+      (copy-mode-exit screen))))
+
+(defun copy-mode-cursor-down-and-cancel (screen)
+  "send-keys -X cursor-down-and-cancel: move the cursor down; exit copy mode when
+   the cursor is already at the bottom of the history (it cannot move and the
+   viewport is at the live bottom)."
+  (when (screen-copy-mode-p screen)
+    (let ((before     (copy-tree (screen-copy-cursor screen)))
+          (before-off (screen-copy-offset screen)))
+      (copy-mode-move-cursor screen :down)
+      (when (and (equal before (screen-copy-cursor screen))
+                 (zerop (screen-copy-offset screen))
+                 (zerop before-off))
+        (copy-mode-exit screen)))))
+
+(defun copy-mode-selection-mode (screen mode)
+  "send-keys -X selection-mode <char|word|line>: set the selection granularity.
+   line begins a line selection, word selects the current word, anything else
+   (the default char) begins a character selection."
+  (when (screen-copy-mode-p screen)
+    (cond
+      ((and mode (string-equal mode "line")) (copy-mode-begin-line-selection screen))
+      ((and mode (string-equal mode "word")) (copy-mode-select-word screen))
+      (t (copy-mode-begin-selection screen)))))
+
+(defun copy-mode-scroll-to-mouse (screen)
+  "send-keys -X scroll-to-mouse: scroll the copy-mode viewport toward the mouse
+   drag position.  cl-tmux performs mouse-drag scrolling in the event layer, so
+   this scriptable form is accepted and refreshes the viewport."
+  (when (screen-copy-mode-p screen)
+    (setf (screen-dirty-p screen) t)))
+
 ;;; These top-level helpers are called from copy-mode-move-cursor for :up / :down.
 ;;; Keeping them at top level makes each path independently readable.
 
