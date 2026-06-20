@@ -29,6 +29,7 @@
   ;; REDRAW); copy-selection-and-cancel copies then exits (CANCEL).
   ("copy-selection"               :copy-mode-copy-selection-no-cancel)
   ("copy-selection-and-cancel"    :copy-mode-yank)
+  ("copy-selection-no-clear"      :copy-mode-copy-selection-no-clear)
   ("cancel"                       :copy-mode-exit)
   ("cursor-up"                    :copy-mode-cursor-up)
   ("cursor-down"                  :copy-mode-cursor-down)
@@ -61,7 +62,9 @@
   ("next-space-end"               :copy-mode-space-end)
   ("rectangle-toggle"             :copy-mode-rectangle-toggle)
   ("copy-end-of-line"             :copy-mode-copy-end-of-line)
+  ("copy-end-of-line-and-cancel"  :copy-mode-copy-end-of-line-and-cancel)
   ("copy-line"                    :copy-mode-copy-line)
+  ("copy-line-and-cancel"         :copy-mode-copy-line-and-cancel)
   ("append-selection"             :copy-mode-append-selection)
   ("append-selection-and-cancel"  :copy-mode-append-selection-and-cancel)
   ("back-to-indentation"          :copy-mode-back-to-indentation)

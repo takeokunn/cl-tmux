@@ -110,6 +110,15 @@
     (copy-mode-clear-selection screen)
     (setf (screen-dirty-p screen) t)))
 
+(defun copy-mode-copy-selection-no-clear (screen)
+  "Copy the current selection to the paste buffer (and clipboard / copy-command)
+   but do NOT clear the selection and stay in copy mode.  This is tmux's
+   `copy-selection-no-clear` send-keys -X command (window_copy_cmd_copy_selection
+   with clear=NEVER, returning WINDOW_COPY_CMD_NOTHING)."
+  (when (screen-copy-mode-p screen)
+    (%copy-mode-do-yank screen)
+    (setf (screen-dirty-p screen) t)))
+
 ;;; ── Rectangle-select toggle ─────────────────────────────────────────────────
 
 (defun copy-mode-toggle-rectangle (screen)

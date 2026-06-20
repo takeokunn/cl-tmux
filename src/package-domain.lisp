@@ -313,6 +313,7 @@
    #:copy-mode-enter
    #:copy-mode-exit
    #:copy-mode-copy-selection-no-cancel
+   #:copy-mode-copy-selection-no-clear
    #:copy-mode-scroll
    #:copy-mode-move-cursor
    #:copy-mode-set-cursor
@@ -357,7 +358,9 @@
    #:copy-mode-goto-line
    ;; Copy variants
    #:copy-mode-copy-end-of-line
+   #:copy-mode-copy-end-of-line-and-cancel
    #:copy-mode-copy-line
+   #:copy-mode-copy-line-and-cancel
    ;; Jump-to-char (vi f/F/t/T/;/,)
    #:copy-mode-jump-forward
    #:copy-mode-jump-backward
