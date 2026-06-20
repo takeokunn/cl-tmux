@@ -27,7 +27,8 @@
      m[/r][/i]:    → glob or regex match → \"1\" or \"0\"
      a:             → code-char(N)
      C[/r][/i]:    → pane content search → line-number string
-     fallback       → value modifier (b, d, U, L, l, =N, pN, s///) or plain lookup"
+     l              → literal: emit REST unexpanded (#{l:#{x}} → \"#{x}\")
+     fallback       → value modifier (b, d, U, L, n, =N, pN, s///) or plain lookup"
   (cond
     ;; comparison operators: #{==:a,b} #{!=:a,b} #{<:a,b} #{>:..} #{<=:..} #{>=:..}
     ((%comparison-op-p mod)
@@ -80,7 +81,12 @@
           (char= (char mod 0) #\C)
           (or (= (length mod) 1) (char= (char mod 1) #\/)))
      (write-string (%format-content-search mod rest context) out))
-    ;; Fallback: value modifier (b, d, U, L, l, =N, pN, s///) or plain context lookup.
+    ;; #{l:rest} — literal: emit REST exactly, WITHOUT resolving/expanding it.
+    ;; tmux's FORMAT_LITERAL modifier, e.g. #{l:#{pane_in_mode}} → "#{pane_in_mode}".
+    ;; Must precede the fallback (which would otherwise expand REST as an operand).
+    ((string= mod "l")
+     (write-string rest out))
+    ;; Fallback: value modifier (b, d, U, L, n, =N, pN, s///) or plain context lookup.
     (t
      (let* ((value    (%resolve-format-value rest context))
             (modified (%apply-format-modifier mod value)))
@@ -253,7 +259,8 @@
    Supported specifiers:  #S #I #W #P #H ##  #{var}  #{?c,t,f}  #[sgr]  #(cmd)
                           #{t:fmt} (strftime)  #{=N:var} #{=-N:var} (truncate)
                           #{pN:var} #{p-N:var} (pad)  #{b:var} #{d:var} (path)
-                          #{U:var} #{L:var} #{l:var} (case/length)
+                          #{U:var} #{L:var} (case)  #{n:var} (length)
+                          #{l:var} (literal — emit operand unexpanded)
                           #{s/PAT/REP/[i]:var} (substitute)"
   (with-output-to-string (out)
     (loop for i = 0 then (%expand-step template i context out)

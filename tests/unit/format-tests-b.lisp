@@ -170,7 +170,7 @@
   (let ((ctx (cl-tmux/format:format-context-from-session nil nil nil)))
     (is (string= "" (cl-tmux/format:expand-format "#{pane_current_path}" ctx)))))
 
-;;; ── New modifiers: #{t:strftime}, #{pN:var}, #{U:var}, #{L:var}, #{l:var} ──
+;;; ── New modifiers: #{t:strftime}, #{pN:var}, #{U:var}, #{L:var}, #{n:var}, #{l:var} ──
 
 (test format-modifier-strftime-table
   "#{t:FORMAT} expands to the current time using the given strftime format."
@@ -259,15 +259,28 @@
           "~A" desc))))
 
 (test format-modifier-length
-  "#{l:var} returns the character length of the value as a string."
-  (dolist (c '(("#{l:v}"            :v            "hello" "5" "hello is 5 chars")
-               ("#{l:v}"            :v            ""      "0" "empty string is 0")
-               ("#{l:session_name}" :session-name "abc"   "3" "resolves via var name")))
+  "#{n:var} returns the character length of the value as a string (tmux FORMAT_LENGTH;
+   #{l:...} is now the literal/unescape modifier)."
+  (dolist (c '(("#{n:v}"            :v            "hello" "5" "hello is 5 chars")
+               ("#{n:v}"            :v            ""      "0" "empty string is 0")
+               ("#{n:session_name}" :session-name "abc"   "3" "resolves via var name")))
     (destructuring-bind (spec key val expected desc) c
       (is (string= expected (fmt spec key val)) "~A" desc))))
 
 (test format-modifier-strftime-unit-tests
   "%strftime-format internal helpers produce correct output."
+
+(test format-modifier-literal
+  "#{l:rest} emits REST literally, bypassing #{...} expansion (tmux FORMAT_LITERAL)."
+  ;; Plain text passes through unchanged.
+  (is (string= "hello" (fmt "#{l:hello}"))
+      "literal plain text passes through")
+  ;; A nested #{...} operand is NOT expanded under l.
+  (is (string= "#{pane_in_mode}" (fmt "#{l:#{pane_in_mode}}" :pane-in-mode "1"))
+      "#{l:#{pane_in_mode}} emits the literal brace expression, not its value")
+  ;; A bare variable name under l is also literal (not looked up).
+  (is (string= "session_name" (fmt "#{l:session_name}" :session-name "main"))
+      "a variable name under l is emitted literally, not resolved"))
   ;; Month abbreviations
   (is (plusp (length (cl-tmux/format::%strftime-format "%b")))
       "%b produces a non-empty abbreviation")

@@ -237,7 +237,11 @@
   ("d" (%path-dirname  value))
   ("U" (string-upcase   value))
   ("L" (string-downcase value))
-  ("l" (format nil "~D" (length value)))
+  ;; #{n:var}: length (character count) of the resolved value, as a decimal string.
+  ;; (tmux's FORMAT_LENGTH modifier.)  The literal modifier #{l:...} is NOT in this
+  ;; table because it must bypass operand resolution; it is handled directly in
+  ;; %expand-brace-modifier (format-engine.lisp).
+  ("n" (format nil "~D" (length value)))
   ;; #{q:var}: backslash-quote shell-special characters (e.g. embedding a path).
   ("q" (%quote-format-value value))
   ;; #{E:var}: expand the VALUE of var as another format string.
@@ -251,8 +255,10 @@
   "Apply the format modifier MOD to the already-resolved string VALUE.
    Returns the transformed string, or NIL when MOD is not a recognised modifier
    (so the caller can fall back to a plain variable lookup).
-   Supported: b (basename), d (dirname), U (uppercase), L (lowercase), l (length),
-              =N / =-N (truncate), pN / p-N (pad to width), s/PAT/REP/[i]."
+   Supported: b (basename), d (dirname), U (uppercase), L (lowercase), n (length),
+              =N / =-N (truncate), pN / p-N (pad to width), s/PAT/REP/[i].
+   (l (literal) is handled in %expand-brace-modifier, not here, since it must
+    bypass operand resolution.)"
   (or (%dispatch-format-modifier mod value)
       (%apply-pad-modifier mod value)
       (multiple-value-bind (pat rep flags) (%parse-substitute-spec mod)
