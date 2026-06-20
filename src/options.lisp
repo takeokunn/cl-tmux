@@ -157,6 +157,7 @@
   ("display-panes-active-colour" :string "red")
   ;; Resize and timing
   ("repeat-time"              :integer 500)    ; ms window for repeatable bindings
+  ("initial-repeat-time"      :integer 0)      ; ms window for the FIRST repeat; 0 = use repeat-time (tmux 3.5+)
   ("double-click-time"        :integer 500)    ; ms window for double/triple mouse clicks
   ("lock-after-time"          :integer 0)      ; 0 = disabled
   ;; Terminal settings

@@ -176,6 +176,32 @@
               #'cl-tmux::%ground-input-state)
           "continuation must return to ground after repeat expiry"))))
 
+(test initial-repeat-time-option-registered-default-zero
+  "initial-repeat-time is a registered option defaulting to 0 (audit #34)."
+  (with-isolated-config
+    (is (eql 0 (cl-tmux/options:get-option "initial-repeat-time"))
+        "initial-repeat-time default must be 0 (fall back to repeat-time)")))
+
+(test repeat-window-ms-honors-initial-repeat-time
+  "%repeat-window-ms uses a non-zero initial-repeat-time for the FIRST repeat key
+   (count 1) and repeat-time for every other key (audit #34, tmux 3.5+)."
+  (with-isolated-config
+    (cl-tmux/options:set-option "repeat-time" 500)
+    ;; initial-repeat-time 0 → repeat-time for the first key too.
+    (cl-tmux/options:set-option "initial-repeat-time" 0)
+    (is (= 500 (cl-tmux::%repeat-window-ms 1))
+        "initial-repeat-time 0 → first key uses repeat-time")
+    (is (= 500 (cl-tmux::%repeat-window-ms 2))
+        "subsequent keys use repeat-time")
+    ;; initial-repeat-time 1500 → only the first key (count 1) uses it.
+    (cl-tmux/options:set-option "initial-repeat-time" 1500)
+    (is (= 1500 (cl-tmux::%repeat-window-ms 1))
+        "first repeat key uses a non-zero initial-repeat-time")
+    (is (= 500 (cl-tmux::%repeat-window-ms 2))
+        "second repeat key uses repeat-time, not initial-repeat-time")
+    (is (= 500 (cl-tmux::%repeat-window-ms 3))
+        "third repeat key uses repeat-time")))
+
 ;;; ── %try-mouse-passthrough mode tests ────────────────────────────────────────
 
 (test try-mouse-passthrough-mode1-blocks-release

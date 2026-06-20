@@ -81,20 +81,36 @@
    %flush-esc-if-timed-out to implement the tmux escape-time disambiguation window."
   (continuation #'%ground-input-state :type function)
   (repeat-entered-at nil)
+  ;; How many repeatable keys have been pressed in the current repeat sequence;
+  ;; 1 for the first, so the first repeat window can honour initial-repeat-time.
+  (repeat-key-count 0 :type (integer 0))
   (esc-entered-at nil))
 
+(defun %repeat-window-ms (repeat-key-count)
+  "Return the repeat-timeout window in milliseconds for the REPEAT-KEY-COUNT-th
+   repeatable key.  The first key of a repeat sequence (count 1) honours a
+   non-zero initial-repeat-time; every other key (and a zero initial-repeat-time)
+   uses repeat-time.  Mirrors tmux 3.5+'s server_client_repeat_time."
+  (let ((repeat-ms  (or (cl-tmux/options:get-option "repeat-time") 500))
+        (initial-ms (or (cl-tmux/options:get-option "initial-repeat-time") 0)))
+    (if (and (= repeat-key-count 1) (plusp initial-ms))
+        initial-ms
+        repeat-ms)))
+
 (defun %reset-repeat-if-expired (state)
-  "If STATE is in a repeatable prefix position and REPEAT-TIME ms have elapsed
-   since REPEAT-ENTERED-AT, reset to ground state.  Otherwise a no-op.
+  "If STATE is in a repeatable prefix position and the repeat window has elapsed
+   since REPEAT-ENTERED-AT, reset to ground state.  Otherwise a no-op.  The first
+   key of a sequence uses initial-repeat-time (when set), the rest repeat-time.
    Called once per event-loop iteration before processing any new byte."
   (when (input-state-repeat-entered-at state)
-    (let* ((repeat-ms  (or (cl-tmux/options:get-option "repeat-time") 500))
+    (let* ((window-ms  (%repeat-window-ms (input-state-repeat-key-count state)))
            (elapsed-ms (/ (- (get-internal-real-time)
                               (input-state-repeat-entered-at state))
                            (/ internal-time-units-per-second 1000))))
-      (when (>= elapsed-ms repeat-ms)
+      (when (>= elapsed-ms window-ms)
         (setf (input-state-continuation state) #'%ground-input-state
-              (input-state-repeat-entered-at state) nil)))))
+              (input-state-repeat-entered-at state) nil
+              (input-state-repeat-key-count state) 0)))))
 
 (defun process-byte (session byte state)
   "Feed BYTE to SESSION through the CPS keystroke pipeline STATE.
@@ -106,10 +122,12 @@
       ;; Track entry into repeat mode: a :repeatable outcome means the binding
       ;; had the -r flag; stamp the timestamp so %reset-repeat-if-expired works.
       (when (eq outcome :repeatable)
-        (setf (input-state-repeat-entered-at state) (get-internal-real-time)))
-      ;; Leaving repeat mode: clear the timestamp.
+        (setf (input-state-repeat-entered-at state) (get-internal-real-time))
+        (incf (input-state-repeat-key-count state)))
+      ;; Leaving repeat mode: clear the timestamp and reset the key count.
       (unless (eq new-cont #'%after-prefix-input-state)
-        (setf (input-state-repeat-entered-at state) nil))
+        (setf (input-state-repeat-entered-at state) nil
+              (input-state-repeat-key-count state) 0))
       ;; Track prefix state for #{client_prefix} format variable.
       (setf *prefix-active* (eq new-cont #'%after-prefix-input-state))
       ;; Track ESC accumulation: stamp esc-entered-at when we receive a lone ESC
