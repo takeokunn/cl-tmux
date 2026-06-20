@@ -216,3 +216,80 @@
       (%copy-pipe-text cmd text))
     (copy-mode-cancel-selection screen)
     (copy-mode-exit screen)))
+
+;;; ── tmux `pipe` family: pipe the selection to a command WITHOUT copying ──────
+;;; Distinct from the copy-pipe family above, which ALSO puts the text in the
+;;; paste buffer.  pipe / pipe-and-cancel / pipe-no-clear only run the command.
+
+(defun %pipe-text-only (cmd text)
+  "Pipe TEXT to CMD (or the copy-command option) WITHOUT placing it in the paste
+   buffer.  Returns T when TEXT was non-empty."
+  (when (and text (plusp (length text)))
+    (let ((effective-cmd (%resolve-copy-pipe-cmd cmd)))
+      (when effective-cmd
+        (%run-shell-cmd-with-input effective-cmd text)))
+    t))
+
+(defun copy-mode-pipe-no-cancel (screen cmd)
+  "Pipe the selection to CMD (no buffer copy), clear the selection, stay in copy
+   mode (tmux `pipe`)."
+  (when (screen-copy-mode-p screen)
+    (%pipe-text-only cmd (%get-selection-text screen))
+    (copy-mode-clear-selection screen)
+    (setf (screen-dirty-p screen) t)))
+
+(defun copy-mode-pipe-no-clear (screen cmd)
+  "Pipe the selection to CMD (no buffer copy) WITHOUT clearing the selection, stay
+   in copy mode (tmux `pipe-no-clear`)."
+  (when (screen-copy-mode-p screen)
+    (%pipe-text-only cmd (%get-selection-text screen))
+    (setf (screen-dirty-p screen) t)))
+
+(defun copy-mode-pipe-and-cancel (screen cmd)
+  "Pipe the selection to CMD (no buffer copy), then exit copy mode (tmux
+   `pipe-and-cancel`)."
+  (when (screen-copy-mode-p screen)
+    (%pipe-text-only cmd (%get-selection-text screen))
+    (copy-mode-cancel-selection screen)
+    (copy-mode-exit screen)))
+
+(defun copy-mode-copy-pipe-no-clear (screen cmd)
+  "Copy the selection to the paste buffer AND pipe it, WITHOUT clearing the
+   selection; stay in copy mode (tmux `copy-pipe-no-clear`)."
+  (when (screen-copy-mode-p screen)
+    (%copy-pipe-text cmd (%get-selection-text screen))
+    (setf (screen-dirty-p screen) t)))
+
+(defun copy-mode-copy-pipe-line (screen cmd)
+  "Copy the WHOLE current line to the paste buffer and pipe it; stay in copy mode
+   (tmux `copy-pipe-line`)."
+  (when (screen-copy-mode-p screen)
+    (let* ((row (car (screen-copy-cursor screen)))
+           (text (%copy-row-range-text screen row 0 (screen-width screen))))
+      (%copy-pipe-text cmd text))
+    (copy-mode-clear-selection screen)
+    (setf (screen-dirty-p screen) t)))
+
+(defun copy-mode-copy-pipe-line-and-cancel (screen cmd)
+  "Copy the whole current line to the paste buffer, pipe it, then exit copy mode
+   (tmux `copy-pipe-line-and-cancel`)."
+  (when (screen-copy-mode-p screen)
+    (let* ((row (car (screen-copy-cursor screen)))
+           (text (%copy-row-range-text screen row 0 (screen-width screen))))
+      (%copy-pipe-text cmd text))
+    (copy-mode-cancel-selection screen)
+    (copy-mode-exit screen)))
+
+;;; ── Explicit rectangle on/off (tmux rectangle-on / rectangle-off) ────────────
+
+(defun copy-mode-rectangle-on (screen)
+  "Turn ON rectangle (block) selection mode (tmux `rectangle-on`)."
+  (when (screen-copy-mode-p screen)
+    (setf (screen-copy-rect-select-p screen) t
+          (screen-dirty-p screen) t)))
+
+(defun copy-mode-rectangle-off (screen)
+  "Turn OFF rectangle (block) selection mode (tmux `rectangle-off`)."
+  (when (screen-copy-mode-p screen)
+    (setf (screen-copy-rect-select-p screen) nil
+          (screen-dirty-p screen) t)))

@@ -315,6 +315,11 @@
    #:copy-mode-exit
    #:copy-mode-copy-selection-no-cancel
    #:copy-mode-copy-selection-no-clear
+   #:copy-mode-pipe-no-cancel #:copy-mode-pipe-no-clear #:copy-mode-pipe-and-cancel
+   #:copy-mode-copy-pipe-no-clear #:copy-mode-copy-pipe-line
+   #:copy-mode-copy-pipe-line-and-cancel
+   #:copy-mode-rectangle-on #:copy-mode-rectangle-off
+   #:copy-mode-cursor-centre-vertical #:copy-mode-cursor-centre-horizontal
    #:copy-mode-scroll
    #:copy-mode-move-cursor
    #:copy-mode-set-cursor

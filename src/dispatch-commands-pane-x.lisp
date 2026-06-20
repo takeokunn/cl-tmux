@@ -61,6 +61,10 @@
   ("previous-space"               :copy-mode-space-backward)
   ("next-space-end"               :copy-mode-space-end)
   ("rectangle-toggle"             :copy-mode-rectangle-toggle)
+  ("rectangle-on"                 :copy-mode-rectangle-on)
+  ("rectangle-off"                :copy-mode-rectangle-off)
+  ("cursor-centre-vertical"       :copy-mode-cursor-centre-vertical)
+  ("cursor-centre-horizontal"     :copy-mode-cursor-centre-horizontal)
   ("copy-end-of-line"             :copy-mode-copy-end-of-line)
   ("copy-end-of-line-and-cancel"  :copy-mode-copy-end-of-line-and-cancel)
   ("copy-line"                    :copy-mode-copy-line)
@@ -116,7 +120,14 @@
     ("copy-pipe"                     :text copy-mode-copy-pipe-no-cancel)
     ("copy-pipe-and-cancel"          :text copy-mode-copy-pipe)
     ("copy-pipe-end-of-line-and-cancel"
-     :text copy-mode-copy-pipe-end-of-line)))
+     :text copy-mode-copy-pipe-end-of-line)
+    ("copy-pipe-no-clear"            :text copy-mode-copy-pipe-no-clear)
+    ("copy-pipe-line"                :text copy-mode-copy-pipe-line)
+    ("copy-pipe-line-and-cancel"     :text copy-mode-copy-pipe-line-and-cancel)
+    ;; pipe family: run the command WITHOUT copying to a buffer.
+    ("pipe"                          :text copy-mode-pipe-no-cancel)
+    ("pipe-no-clear"                 :text copy-mode-pipe-no-clear)
+    ("pipe-and-cancel"               :text copy-mode-pipe-and-cancel)))
 
 (defun %send-keys-x-explicit-arg-spec (command-name)
   "Return the explicit-argument spec for COMMAND-NAME."
