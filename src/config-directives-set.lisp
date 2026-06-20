@@ -263,9 +263,11 @@
                           (uiop:split-string value :separator '(#\Space))))))))
 
 (defun %apply-set-hook-directive (cmd args)
-  "Handle 'set-hook [-r] [-u] event [command]' directives.
+  "Handle 'set-hook [-a] [-r] [-u] event [command]' directives.
    -r or -u flag removes/unsets all hooks for the event; without them, registers
-   the command.  The command is stored as a raw string (not converted to keyword)
+   the command, REPLACING any existing hook for the event (tmux semantics).  -a
+   appends instead, preserving prior hooks.  The command is stored as a raw
+   string (not converted to keyword)
    so that format variables and arguments (e.g. 'display-message #{session_name}')
    are expanded at hook-fire time via %run-command-line.
    Returns T when handled, NIL otherwise."
@@ -273,6 +275,7 @@
     ;; Consume ALL leading -X flags (not just -r/-u): -g/-a/-R are accepted and
     ;; skipped so `set-hook -g <event> <cmd>` registers EVENT, not "-g".
     (let* ((remove-p nil)
+           (append-p nil)
            (rest     (let ((remaining args))
                        (setf remaining
                              (%consume-leading-flag-tokens
@@ -280,6 +283,8 @@
                               (lambda (tok rest)
                                 (when (member tok '("-r" "-u") :test #'string=)
                                   (setf remove-p t))
+                                (when (string= tok "-a")
+                                  (setf append-p t))
                                 (values rest t))))
                        remaining))
            (event    (first rest))
@@ -291,5 +296,9 @@
             (progn (cl-tmux/hooks:clear-command-hooks event) t)
             (when cmd-str
               ;; Store the raw command string for execution at hook-fire time.
-              (cl-tmux/hooks:set-command-hook event cmd-str)
+              ;; Without -a, set-hook REPLACES the event's hook (tmux semantics);
+              ;; with -a it appends, preserving any prior hooks.
+              (if append-p
+                  (cl-tmux/hooks:append-command-hook event cmd-str)
+                  (cl-tmux/hooks:set-command-hook event cmd-str))
               t))))))

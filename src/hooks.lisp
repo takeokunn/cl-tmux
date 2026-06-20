@@ -122,8 +122,15 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
    String hooks support #{format} variable expansion at fire time.")
 
 (defun set-command-hook (event-name command)
-  "Append COMMAND (a raw command-line string) to the dispatch list for EVENT-NAME.
-   Appending preserves declaration order across multiple set-hook calls."
+  "Set EVENT-NAME's command-hook list to the single COMMAND, REPLACING any hooks
+   already registered for that event.  This matches tmux's `set-hook` (without
+   -a), which overwrites the hook rather than accumulating.  Use
+   append-command-hook for the `-a` form that preserves prior hooks."
+  (setf (gethash event-name *command-hooks*) (list command)))
+
+(defun append-command-hook (event-name command)
+  "Append COMMAND (a raw command-line string) to EVENT-NAME's dispatch list,
+   preserving declaration order across calls.  This is tmux's `set-hook -a`."
   (setf (gethash event-name *command-hooks*)
         (append (gethash event-name *command-hooks*) (list command))))
 

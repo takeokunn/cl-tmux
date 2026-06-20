@@ -231,6 +231,7 @@
    #:list-hooks
    #:*command-hooks*
    #:set-command-hook
+   #:append-command-hook
    #:command-hooks
    #:clear-command-hooks
    #:list-command-hooks

@@ -193,8 +193,9 @@
    reachable from command-prompt / key bindings / control mode).
      -u  unset all command hooks for EVENT.
      -R  run EVENT's hooks immediately (after setting, if a command is also given).
-     -g / -a  accepted (cl-tmux keeps a flat command-hook table — global/append are
-              the only behaviours), so `set-hook -g ...` works as written.
+     -a  append the command to EVENT's hook list (preserving prior hooks); without
+         -a, set-hook REPLACES the event's hook, matching tmux.
+     -g  accepted (cl-tmux keeps a flat, server-wide command-hook table).
    Without -u, the tokens after EVENT are joined into one command line and stored
    as a raw string, expanded at hook-fire time via %run-command-line."
   (with-command-flags+pos (flags positionals args "")

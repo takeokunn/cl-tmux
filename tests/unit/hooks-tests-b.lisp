@@ -14,14 +14,23 @@
     (is (equal '(:next-window) (cl-tmux/hooks:command-hooks "after-new-window"))
         "command-hooks must return the registered keyword")))
 
-(test set-command-hook-accumulates-in-order
-  "Multiple set-command-hook calls accumulate in registration order."
+(test set-command-hook-replaces-existing
+  "set-command-hook REPLACES the event's hook list (tmux set-hook without -a)."
   (with-isolated-hooks
     (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
     (cl-tmux/hooks:set-command-hook "after-new-window" :rename-window)
+    (is (equal '(:rename-window)
+               (cl-tmux/hooks:command-hooks "after-new-window"))
+        "a second set-command-hook must replace, not accumulate")))
+
+(test append-command-hook-accumulates-in-order
+  "append-command-hook accumulates in registration order (tmux set-hook -a)."
+  (with-isolated-hooks
+    (cl-tmux/hooks:append-command-hook "after-new-window" :next-window)
+    (cl-tmux/hooks:append-command-hook "after-new-window" :rename-window)
     (is (equal '(:next-window :rename-window)
                (cl-tmux/hooks:command-hooks "after-new-window"))
-        "command hooks must accumulate in order")))
+        "append-command-hook must accumulate in order")))
 
 (test clear-command-hooks-removes-all
   "clear-command-hooks removes every command hook for an event."
@@ -49,14 +58,29 @@
       (is (null (cl-tmux/hooks:command-hooks "after-new-window"))
           "set-hook -u must leave the event with no command hooks"))))
 
+(test set-hook-replaces-by-default-and-appends-with-a
+  "The set-hook directive REPLACES the event's hook by default and APPENDS with
+   -a (tmux semantics), so a config re-setting the same event does not silently
+   accumulate duplicate command runs."
+  (with-isolated-hooks
+    (with-isolated-config
+      (cl-tmux/config:load-config-from-string "set-hook after-new-window next-window")
+      (cl-tmux/config:load-config-from-string "set-hook after-new-window previous-window")
+      (is (equal '("previous-window") (cl-tmux/hooks:command-hooks "after-new-window"))
+          "a plain second set-hook must REPLACE the prior hook")
+      (cl-tmux/config:load-config-from-string "set-hook -a after-new-window last-window")
+      (is (equal '("previous-window" "last-window")
+                 (cl-tmux/hooks:command-hooks "after-new-window"))
+          "set-hook -a must APPEND, preserving the prior hook"))))
+
 ;;; ── list-command-hooks ────────────────────────────────────────────────────────
 
 (test list-command-hooks-returns-alist
   "list-command-hooks returns an alist of (event-name . command-keyword-list)
    for every registered command hook event."
   (with-isolated-hooks
-    (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
-    (cl-tmux/hooks:set-command-hook "after-new-window" :rename-window)
+    (cl-tmux/hooks:append-command-hook "after-new-window" :next-window)
+    (cl-tmux/hooks:append-command-hook "after-new-window" :rename-window)
     (cl-tmux/hooks:set-command-hook "pane-exited"      :kill-pane)
     (let ((alist (cl-tmux/hooks:list-command-hooks)))
       (is (= 2 (length alist))
