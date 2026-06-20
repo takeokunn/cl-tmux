@@ -312,6 +312,7 @@
    #:select-window-by-number
    #:copy-mode-enter
    #:copy-mode-exit
+   #:copy-mode-copy-selection-no-cancel
    #:copy-mode-scroll
    #:copy-mode-move-cursor
    #:copy-mode-set-cursor

@@ -25,7 +25,10 @@
   ;; clear-selection: drop the selection but stay in copy mode (the default vi
   ;; Escape binding).
   ("clear-selection"              :copy-mode-clear-selection)
-  ("copy-selection"               :copy-mode-yank)
+  ;; copy-selection copies + clears the selection but STAYS in copy mode (tmux
+  ;; REDRAW); copy-selection-and-cancel copies then exits (CANCEL).
+  ("copy-selection"               :copy-mode-copy-selection-no-cancel)
+  ("copy-selection-and-cancel"    :copy-mode-yank)
   ("cancel"                       :copy-mode-exit)
   ("cursor-up"                    :copy-mode-cursor-up)
   ("cursor-down"                  :copy-mode-cursor-down)

@@ -150,7 +150,10 @@
              ;; -d flag: ask the server to detach any existing clients first.
              (when detach-others
                (send-frame stream (msg-command :detach-other-clients nil nil)))
-             (send-frame stream (msg-attach *term-rows* *term-cols*))
+             ;; Carry the read-only bit (attach-session -r set *client-read-only*
+             ;; in this client process) to the server in the attach frame's flags
+             ;; byte, so the server enforces it per-connection.
+             (send-frame stream (msg-attach *term-rows* *term-cols* *client-read-only*))
              (loop
                (%maybe-send-resize stream)
                (let ((ready (select-fds (list 0 server-socket-fd) +poll-timeout-us+)))

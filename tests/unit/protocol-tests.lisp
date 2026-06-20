@@ -79,6 +79,27 @@
         (is (= 24 rows))
         (is (= 80 cols))))))
 
+(test attach-readonly-flag-roundtrip
+  "msg-attach with readonly-p sets the trailing flags byte; decode-attach-flags
+   recovers +attach-flag-read-only+ while decode-size still recovers rows,cols."
+  (multiple-value-bind (type payload) (decode-frame (msg-attach 24 80 t))
+    (is (= +msg-attach+ type))
+    (multiple-value-bind (rows cols) (decode-size payload)
+      (is (= 24 rows) "rows still decode with the flags byte present")
+      (is (= 80 cols) "cols still decode with the flags byte present"))
+    (is (logtest (decode-attach-flags payload) +attach-flag-read-only+)
+        "read-only attach must set the +attach-flag-read-only+ bit")))
+
+(test attach-no-flag-decodes-zero
+  "A 2-arg msg-attach omits the flags byte; decode-attach-flags returns 0 so
+   read-only defaults off (backward-compatible with older clients)."
+  (multiple-value-bind (type payload) (decode-frame (msg-attach 24 80))
+    (declare (ignore type))
+    (is (= 4 (length payload)) "no readonly-p means a 4-byte rows,cols payload")
+    (is (= 0 (decode-attach-flags payload)) "absent flags byte decodes as 0")
+    (is (not (logtest (decode-attach-flags payload) +attach-flag-read-only+))
+        "read-only bit must be clear when no flags byte is sent")))
+
 (test resize-roundtrip
   "msg-resize round-trips rows,cols including large values."
   (multiple-value-bind (type payload) (decode-frame (msg-resize 300 1000))

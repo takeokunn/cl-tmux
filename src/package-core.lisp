@@ -78,7 +78,7 @@
    #:encode-frame #:decode-frame
    ;; Typed message constructors
    #:msg-attach #:msg-key #:msg-resize #:msg-detach #:msg-frame #:msg-bye
-   #:msg-command #:msg-reply
+   #:msg-command #:msg-reply #:decode-attach-flags #:+attach-flag-read-only+
    ;; Command message codec
    #:encode-command-payload #:decode-command-payload #:target-field-p
    ;; Command payload helpers — exported as stable API so tests use single-colon access

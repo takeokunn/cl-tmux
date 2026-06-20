@@ -78,18 +78,37 @@
       (push (cl-tmux/terminal/parser:osc52-clipboard-sequence text)
             (screen-clipboard-queue screen)))))
 
-(defun copy-mode-yank (screen)
-  "Copy selected text to paste buffer (and pipe via copy-command if configured),
-   then exit copy mode.  In rectangle-select mode the rectangular region is used.
-   When set-clipboard is on/external, also emits OSC 52 to the host terminal so
-   the selection reaches the system clipboard."
+(defun %copy-mode-do-yank (screen)
+  "Shared copy work for the yank/copy-selection family: place the current
+   selection text into the paste buffer, emit OSC 52 when set-clipboard is
+   on/external, and pipe via the copy-command option.  Does NOT touch the
+   selection or copy-mode state.  No-op when there is no selection text."
   (let ((text (%get-selection-text screen)))
     (when (and text (plusp (length text)))
       (cl-tmux/buffer:add-paste-buffer text)
       (%maybe-copy-to-clipboard screen text)
-      (%run-copy-command text)))
+      (%run-copy-command text))))
+
+(defun copy-mode-yank (screen)
+  "Copy selected text to paste buffer (and pipe via copy-command if configured),
+   then exit copy mode.  In rectangle-select mode the rectangular region is used.
+   When set-clipboard is on/external, also emits OSC 52 to the host terminal so
+   the selection reaches the system clipboard.  This is the exit-on-yank path
+   bound to vi y / Enter / emacs M-w / mouse-drag-release."
+  (%copy-mode-do-yank screen)
   (copy-mode-cancel-selection screen)
   (copy-mode-exit screen))
+
+(defun copy-mode-copy-selection-no-cancel (screen)
+  "Copy selected text to the paste buffer (and clipboard / copy-command), clear
+   the selection, but STAY in copy mode.  This is tmux's `copy-selection`
+   send-keys -X command: window_copy_cmd_copy_selection returns
+   WINDOW_COPY_CMD_REDRAW, so copy mode is preserved (only the selection is
+   cleared and the screen is redrawn)."
+  (when (screen-copy-mode-p screen)
+    (%copy-mode-do-yank screen)
+    (copy-mode-clear-selection screen)
+    (setf (screen-dirty-p screen) t)))
 
 ;;; ── Rectangle-select toggle ─────────────────────────────────────────────────
 

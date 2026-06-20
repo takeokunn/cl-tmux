@@ -35,6 +35,9 @@
   state
   stdin-target
   (message-log nil)
+  ;; T when the client attached read-only (attach-session -r): its keys/mouse are
+  ;; processed with *client-read-only* bound so pane input/paste/mouse are dropped.
+  (read-only-p nil)
   (rows 24 :type fixnum)
   (cols 80 :type fixnum))
 
@@ -152,6 +155,12 @@
      (multiple-value-bind (rows cols) (decode-size payload)
        (setf (client-conn-rows conn) rows
              (client-conn-cols conn) cols))
+     ;; attach-session -r: the read-only bit rides in the attach frame's optional
+     ;; flags byte.  Record it on CONN so the +msg-key+ branch can bind
+     ;; *client-read-only* and suppress pane input/paste/mouse for this client.
+     (when (= type +msg-attach+)
+       (setf (client-conn-read-only-p conn)
+             (logtest (decode-attach-flags payload) +attach-flag-read-only+)))
      ;; Mark CONN most-recent so window-size "latest" tracks the active client.
      (setf *clients* (cons conn (remove conn *clients*)))
      (%apply-effective-size session)
@@ -163,10 +172,15 @@
              (pane-feed stdin-target payload)
              (setf *dirty* t)
              nil)
-           (case (process-client-keys session payload (client-conn-state conn))
-             (:quit   :quit)
-             (:detach :drop)
-             (t       (setf *dirty* t) nil)))))
+           ;; Bind *client-read-only* to this connection's flag so the existing
+           ;; leaf-level enforcement (pane pty-write, paste, mouse forwarding)
+           ;; honours attach-session -r per client.  Detach/copy-mode commands do
+           ;; not pass through those gated sites, so they still work (CMD_READONLY).
+           (let ((*client-read-only* (client-conn-read-only-p conn)))
+             (case (process-client-keys session payload (client-conn-state conn))
+               (:quit   :quit)
+               (:detach :drop)
+               (t       (setf *dirty* t) nil))))))
     ((= type +msg-command+)
      (multiple-value-bind (cmd target args) (decode-command-payload payload)
        (cond

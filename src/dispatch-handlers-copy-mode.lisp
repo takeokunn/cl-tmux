@@ -19,6 +19,7 @@
   (:copy-mode-clear-selection             copy-mode-clear-selection)
   (:copy-mode-select-word                 copy-mode-select-word)
   (:copy-mode-yank                        copy-mode-yank)
+  (:copy-mode-copy-selection-no-cancel    copy-mode-copy-selection-no-cancel)
   (:copy-mode-word-forward                copy-mode-word-forward)
   (:copy-mode-word-backward               copy-mode-word-backward)
   (:copy-mode-word-end                    copy-mode-word-end)

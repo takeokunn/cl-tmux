@@ -114,6 +114,49 @@
             "^B d must produce :drop")
         (is-true cl-tmux::*running* "a detach must not end the session")))))
 
+(test multi-attach-readonly-flag-sets-conn-slot
+  "A +msg-attach+ frame whose flags byte sets +attach-flag-read-only+ marks the
+   connection read-only; a plain (no-flag) attach leaves it NIL."
+  (with-fake-session (s)
+    (let* ((conn   (%make-test-conn))
+           (cl-tmux::*clients* (list conn))
+           (ro-payload (cl-tmux/protocol::to-octets
+                        (concatenate 'list
+                                     (cl-tmux/protocol::u16-octets-pair 30 100)
+                                     (list cl-tmux/protocol:+attach-flag-read-only+)))))
+      (cl-tmux::%handle-multi-client-message cl-tmux::+msg-attach+ ro-payload s conn)
+      (is-true (cl-tmux::client-conn-read-only-p conn)
+               "attach flags byte with the read-only bit must set conn read-only-p")
+      ;; A subsequent plain attach (no flags byte) clears it again.
+      (cl-tmux::%handle-multi-client-message
+       cl-tmux::+msg-attach+ (cl-tmux/protocol::u16-octets-pair 30 100) s conn)
+      (is-false (cl-tmux::client-conn-read-only-p conn)
+                "a plain attach (no flags byte) must clear conn read-only-p"))))
+
+(test multi-readonly-conn-suppresses-pane-input
+  "When a connection is read-only, a printable key dispatched through
+   %handle-multi-client-message must NOT reach the active pane (no pty-write)."
+  (with-fake-session (s)
+    (with-isolated-config
+      (let* ((conn (%make-test-conn))
+             (cl-tmux::*clients* (list conn))
+             (writes nil))
+        (setf (cl-tmux::client-conn-read-only-p conn) t)
+        ;; Capture any pty-write the key would otherwise forward to the pane.
+        (flet ((rec (fd bytes) (declare (ignore fd)) (push bytes writes)))
+          (let ((orig (fdefinition 'cl-tmux::pty-write)))
+            (unwind-protect
+                 (progn
+                   (setf (fdefinition 'cl-tmux::pty-write) #'rec)
+                   (cl-tmux::%handle-multi-client-message
+                    cl-tmux::+msg-key+
+                    (make-array 1 :element-type '(unsigned-byte 8)
+                                  :initial-contents (list (char-code #\a)))
+                    s conn))
+              (setf (fdefinition 'cl-tmux::pty-write) orig))))
+        (is (null writes)
+            "a read-only connection must not pty-write a printable key to the pane")))))
+
 (test multi-handle-detach-message-drops-client
   "An explicit +msg-detach+ message yields :drop."
   (with-fake-session (s)

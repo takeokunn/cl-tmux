@@ -49,8 +49,10 @@
       "clear-selection must be a known send -X command")
   (is-false (copy-mode-x-command-value "stop-selection")
             "stop-selection is no longer a supported send -X command")
-  (is-false (copy-mode-x-command-value "copy-selection-and-cancel")
-            "copy-selection-and-cancel is no longer a supported send -X command")
+  ;; copy-selection-and-cancel IS now supported (audit #21) — copies then exits.
+  (is (eq :copy-mode-yank
+          (copy-mode-x-command-value "copy-selection-and-cancel"))
+      "copy-selection-and-cancel copies the selection and exits copy mode")
   (is-false (copy-mode-x-command-value "toggle-position")
             "toggle-position is no longer a supported send -X command")
   (is-false (copy-mode-x-command-value "scroll-mouse")

@@ -27,6 +27,11 @@
 (defconstant +msg-command+ 7 "client→server: a named command with optional -t target; payload = NUL-delimited [target NUL] command-name NUL [args...]")
 (defconstant +msg-reply+   8 "server→client: a forwarded command's text output (UTF-8 payload), for the CLI command client (e.g. display-message -p).")
 
+(defconstant +attach-flag-read-only+ 1
+  "Bit in the optional +msg-attach+ flags byte that marks the attaching client as
+   read-only (attach-session -r).  When set the server suppresses pane input,
+   paste, and mouse forwarding for that connection (tmux CLIENT_READONLY).")
+
 (defconstant +header-size+ 5 "1 type byte + 4 length bytes.")
 
 ;;; ── Octet helpers (data) ────────────────────────────────────────────────────
@@ -137,8 +142,6 @@
 ;;; ── Typed message constructors (data) ────────────────────────────────────────
 
 (define-wire-messages
-  (msg-attach  +msg-attach+  (rows cols)  (u16-octets-pair rows cols)
-   "client→server attach frame carrying the initial terminal size.")
   (msg-key     +msg-key+     (octets)     (to-octets octets)
    "client→server frame carrying raw input OCTETS for the active pane.")
   (msg-resize  +msg-resize+  (rows cols)  (u16-octets-pair rows cols)
@@ -153,6 +156,28 @@
    "server→client frame carrying a forwarded command's text output (UTF-8)."))
 
 ;;; ── Typed command message constructor ────────────────────────────────────────
+
+(defun msg-attach (rows cols &optional readonly-p)
+  "Build a +msg-attach+ frame carrying the initial terminal size.
+   Payload is [rows u16][cols u16] and, when READONLY-P is non-NIL, an extra
+   trailing flags byte with +attach-flag-read-only+ set (attach-session -r).
+   The trailing byte is omitted when READONLY-P is NIL, so the frame stays
+   byte-identical to older clients and decode-size (which reads only bytes 0..3)
+   is unaffected."
+  (encode-frame +msg-attach+
+                (if readonly-p
+                    (concatenate '(simple-array (unsigned-byte 8) (*))
+                                 (u16-octets-pair rows cols)
+                                 (vector +attach-flag-read-only+))
+                    (u16-octets-pair rows cols))))
+
+(defun decode-attach-flags (payload)
+  "Return the optional flags byte from a +msg-attach+ PAYLOAD, or 0 when absent.
+   Older clients send a 4-byte rows,cols payload with no flags byte; this returns
+   0 for them so callers can treat the read-only bit as off by default."
+  (if (>= (length payload) 5)
+      (aref payload 4)
+      0))
 
 (defun msg-command (command-name target args)
   "Build a +msg-command+ frame.

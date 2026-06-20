@@ -137,7 +137,7 @@
                 #:+header-size+
                 #:encode-frame #:decode-frame
                 #:msg-attach #:msg-key #:msg-resize #:msg-detach #:msg-frame #:msg-bye
-                #:msg-command #:msg-reply
+                #:msg-command #:msg-reply #:decode-attach-flags #:+attach-flag-read-only+
                 #:encode-command-payload #:decode-command-payload
                 #:u16-octets-pair
                 #:decode-size #:decode-text #:to-octets)

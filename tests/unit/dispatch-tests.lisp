@@ -209,7 +209,7 @@
                ("cursor-up"        :copy-mode-cursor-up)
                ("cursor-down"      :copy-mode-cursor-down)
                ("rectangle-toggle" :copy-mode-rectangle-toggle)
-               ("copy-selection"   :copy-mode-yank)
+               ("copy-selection"   :copy-mode-copy-selection-no-cancel)
                ("select-word"      :copy-mode-select-word)
                ("other-end"        :copy-mode-other-end)
                ("copy-pipe"        :copy-mode-copy-pipe-no-cancel)
@@ -227,6 +227,16 @@
   "send -X rectangle-toggle flips the screen's rectangle (block) selection flag
    instead of starting a stream selection."
   (with-copy-mode-active-screen (s screen)
+
+(test send-keys-x-copy-selection-stays-in-copy-mode
+  "send -X copy-selection copies the selection and clears it but STAYS in copy
+   mode (tmux WINDOW_COPY_CMD_REDRAW), whereas copy-selection-and-cancel exits."
+  (is (eq :copy-mode-copy-selection-no-cancel
+          (copy-mode-x-command-value "copy-selection"))
+      "copy-selection must map to the non-cancelling keyword")
+  (is (eq :copy-mode-yank
+          (copy-mode-x-command-value "copy-selection-and-cancel"))
+      "copy-selection-and-cancel must map to the exit-on-yank keyword"))
     (is-false (screen-copy-rect-select-p screen) "rect-select off on entry")
     (is (cl-tmux::%dispatch-send-keys-X s "rectangle-toggle")
         "rectangle-toggle must be a handled -X command")
