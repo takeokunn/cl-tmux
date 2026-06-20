@@ -351,7 +351,7 @@
            (cl-tmux::%scope-set "escape-time" "250" :server nil)
            (is (eql 250 (cl-tmux/options:get-server-option "escape-time"))
                "%scope-set :server must write escape-time to the server store"))
-      (cl-tmux/options:set-server-option "escape-time" (or original 500)))))
+      (cl-tmux/options:set-server-option "escape-time" (or original 10)))))
 
 (test run-command-line-set-option-append-flag
   "'set-option -a <name> <value>' appends to the option's current value."

@@ -74,10 +74,10 @@
    registered server option is absent and no caller default is supplied."
   (with-fresh-server-options
     ;; *server-options* is empty here; *server-option-registry* is shared, so
-    ;; default-terminal's server spec ("screen") and escape-time (500) apply.
+    ;; default-terminal's server spec ("screen") and escape-time (10) apply.
     (is (string= "screen" (cl-tmux/options:get-server-option "default-terminal"))
         "absent registered server option must read as its registry default")
-    (is (= 500 (cl-tmux/options:get-server-option "escape-time"))
+    (is (= 10 (cl-tmux/options:get-server-option "escape-time"))
         "absent registered integer server option must read as its registry default")
     ;; Explicit caller default (incl. NIL) still wins; unregistered key reads as default.
     (is (null (cl-tmux/options:get-server-option "default-terminal" nil))
@@ -166,9 +166,9 @@
 ;;; Server options
 
 (test server-options-escape-time-default
-  "*server-options* contains the default escape-time = 500."
-  (is (= 500 (cl-tmux/options:get-server-option "escape-time"))
-      "default escape-time must be 500"))
+  "*server-options* contains the default escape-time = 10."
+  (is (= 10 (cl-tmux/options:get-server-option "escape-time"))
+      "default escape-time must be 10"))
 
 (test server-options-exit-empty-default
   "*server-options* contains exit-empty = T by default."

@@ -167,8 +167,8 @@
       (is (equal cl-tmux/model:+default-update-environment+
                  cl-tmux/model:*update-environment*)
           "unset update-environment must restore the session default list")
-      (is (= 500 (cl-tmux/options:get-server-option "escape-time"))
-          "unset escape-time must restore the server default of 500"))))
+      (is (= 10 (cl-tmux/options:get-server-option "escape-time"))
+          "unset escape-time must restore the server default of 10"))))
 
 (test cmd-set-option-plain-routes-to-global
   "A plain 'set-option' (no -w/-p) still sets the global option."

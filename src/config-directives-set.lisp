@@ -233,7 +233,7 @@
   ;; escape-time: sync into server-options so every set form takes effect.
   ("escape-time"
    (if unset-p
-       (cl-tmux/options:set-server-option "escape-time" 500)
+       (cl-tmux/options:set-server-option "escape-time" 10)
        (when (%nonempty-string-p value)
          (cl-tmux/options:set-server-option "escape-time" value))))
   ;; status: off/false/0 hides the bar; numeric line count (capped at 5) or on/true → 1.

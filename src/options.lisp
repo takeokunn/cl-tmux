@@ -100,7 +100,7 @@
   ("window-status-last-style"     :string "")
   ("window-status-separator"  :string  " ")
   ("history-limit"            :integer 2000)
-  ("escape-time"              :integer 500)
+  ("escape-time"              :integer 10)
   ("base-index"               :integer 0)
   ("pane-base-index"          :integer 0)
   ("mouse"                    :boolean nil)
@@ -251,7 +251,7 @@
   "Specs for server-scoped options (set with set-option -s).")
 
 (define-server-options
-  ("escape-time"          :integer 500)
+  ("escape-time"          :integer 10)
   ("exit-empty"           :boolean t)
   ("exit-unattached"      :boolean nil)
   ("focus-events"         :boolean nil)  ; enable focus-events reporting (server-wide)
