@@ -22,14 +22,28 @@
   (copy-mode-line-start
    "Move cursor to column 0 of the current row (vi 0)."
    0)
-  (copy-mode-line-end
-   "Move cursor to the last column of the current row (vi $)."
-   (1- (screen-width screen)))
   (copy-mode-back-to-indentation
    "Move cursor to the first non-blank character of the current row (vi ^).
     Distinct from line-start: on an indented line ^ stops at the indent.
     Falls back to column 0 when the row is entirely blank."
    (or (position-if-not #'%space-separator-p (%copy-mode-row-chars screen row)) 0)))
+
+(defun copy-mode-line-end (screen)
+  "Move cursor to the last non-blank column of the current row (vi $).  Matches
+   tmux's cursor-end-of-line, which stops at the end of the line CONTENT, not the
+   screen edge; an entirely blank row goes to column 0.  In rectangle-select mode
+   the cursor goes to the last screen column instead, since the rectangle extends
+   to the pane edge."
+  (when (screen-copy-mode-p screen)
+    (let* ((row (car (screen-copy-cursor screen)))
+           (col (if (screen-copy-rect-select-p screen)
+                    (1- (screen-width screen))
+                    (or (position-if-not #'%space-separator-p
+                                         (%copy-mode-row-chars screen row)
+                                         :from-end t)
+                        0))))
+      (setf (screen-copy-cursor screen) (cons row col)
+            (screen-dirty-p screen) t))))
 
 (defmacro define-copy-mode-cursor-jump (&rest rules)
   "Generate one copy-mode cursor-jump defun per rule.

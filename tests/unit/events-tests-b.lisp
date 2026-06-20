@@ -306,17 +306,18 @@
           (is (= 0 col) "0 must move cursor column to 0")))))
 
 (test copy-mode-dollar-moves-to-line-end
-  "Plain '$' (byte 36) moves the cursor to the end of the current line."
+  "Plain '$' (byte 36) moves the cursor to the end of the line CONTENT (tmux
+   cursor-end-of-line), landing on the last non-blank character."
   (with-fake-session (s)
       (let ((screen (active-screen s))
             (state  (cl-tmux::make-input-state)))
+        (feed screen "abc")
         (cl-tmux::dispatch-command s :copy-mode-enter nil)
         ;; Start at col 0.
         (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
         (cl-tmux::process-byte s 36 state)   ; $
-        (let* ((col   (cdr (screen-copy-cursor screen)))
-               (width (screen-width screen)))
-          (is (= (1- width) col) "$ must move cursor column to width-1")))))
+        (is (= 2 (cdr (screen-copy-cursor screen)))
+            "$ must move the cursor to the last content column (col 2 for \"abc\")"))))
 
 (test copy-mode-ctrl-n-scrolls-down
   "C-n (byte 14) moves the cursor down by 1 in copy mode (same as j)."

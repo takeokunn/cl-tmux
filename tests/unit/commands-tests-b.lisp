@@ -6,17 +6,39 @@
 
 ;;; ── copy-mode-line-start / copy-mode-line-end ────────────────────────────────
 
-(test copy-mode-line-start-end-moves-table
-  "copy-mode-line-start sets col to 0; copy-mode-line-end sets col to width-1."
-  (dolist (c '((cl-tmux/commands::copy-mode-line-start (2 . 10) 0  "line-start → col 0")
-               (cl-tmux/commands::copy-mode-line-end   (2 .  3) 19 "line-end → col 19 (width-1)")))
-    (destructuring-bind (fn init-cursor expected-col desc) c
-      (let ((s (make-screen 20 5)))
-        (cl-tmux/commands::copy-mode-enter s)
-        (setf (cl-tmux/terminal/types:screen-copy-cursor s) init-cursor)
-        (funcall fn s)
-        (is (= expected-col (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-            "~A" desc)))))
+(test copy-mode-line-start-moves-to-col-0
+  "copy-mode-line-start (vi 0) sets the cursor column to 0."
+  (let ((s (make-screen 20 5)))
+    (cl-tmux/commands::copy-mode-enter s)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 10))
+    (cl-tmux/commands::copy-mode-line-start s)
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "line-start → col 0")))
+
+(test copy-mode-line-end-moves-to-last-content-column
+  "copy-mode-line-end (vi $) moves to the last NON-BLANK column (tmux's
+   cursor-end-of-line), not the screen edge; an entirely blank row goes to col 0;
+   rectangle-select mode goes to the last screen column."
+  ;; Content row: '$' lands on the last content char, not the screen edge.
+  (let ((s (copy-mode-screen :content "abc")))
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-line-end s)
+    (is (= 2 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "$ must land on the last content char 'c' (col 2), not the screen edge"))
+  ;; Entirely blank row: '$' falls back to column 0.
+  (let ((s (copy-mode-screen)))
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5))
+    (cl-tmux/commands::copy-mode-line-end s)
+    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "$ on an entirely blank row → column 0"))
+  ;; Rectangle-select mode: '$' goes to the last screen column (pane edge).
+  (let ((s (copy-mode-screen :content "abc")))
+    (setf (cl-tmux/terminal/types:screen-copy-rect-select-p s) t
+          (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
+    (cl-tmux/commands::copy-mode-line-end s)
+    (is (= (1- (cl-tmux/terminal/types:screen-width s))
+           (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "$ in rectangle-select mode goes to the last screen column")))
 
 (test copy-mode-line-start-end-noop-table
   "copy-mode-line-start and copy-mode-line-end leave the column unchanged when not in copy mode."
