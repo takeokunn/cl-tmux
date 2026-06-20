@@ -206,6 +206,44 @@
         (is (stringp (cdar result))
             "entry value must be a string")))))
 
+(test session-environment-value-falls-back-to-process
+  "session-environment-value reports a process-environment value with source
+   :process when the name is absent from the session overlay.  Regression: a
+   prior `(t ...)` middle cond clause made the :process branch dead code, so the
+   fallback never fired."
+  (let ((sess (make-session :id 1 :name "s"))
+        (name "CLTMUX_TEST_ENV_PROCESS_FALLBACK"))
+    (with-temporary-posix-environment-variable (name "from-process")
+      (multiple-value-bind (value source) (session-environment-value sess name)
+        (is (string= "from-process" value)
+            "absent-from-overlay names must inherit the process value")
+        (is (eq :process source)
+            "the inherited value must carry the :process source")))))
+
+(test session-environment-value-overlay-shadows-process
+  "A session overlay entry shadows the process environment (source :session)."
+  (let ((sess (make-session :id 1 :name "s"))
+        (name "CLTMUX_TEST_ENV_OVERLAY_SHADOW"))
+    (with-temporary-posix-environment-variable (name "from-process")
+      (session-set-environment sess name "from-overlay")
+      (multiple-value-bind (value source) (session-environment-value sess name)
+        (is (string= "from-overlay" value)
+            "the session overlay must take precedence over the process value")
+        (is (eq :session source)
+            "an overlay hit must carry the :session source")))))
+
+(test session-environment-value-explicit-unset-beats-process
+  "An explicit session unset hides a process-environment value (source :unset)."
+  (let ((sess (make-session :id 1 :name "s"))
+        (name "CLTMUX_TEST_ENV_UNSET_BEATS_PROCESS"))
+    (with-temporary-posix-environment-variable (name "from-process")
+      (session-unset-environment sess name)
+      (multiple-value-bind (value source) (session-environment-value sess name)
+        (is (null value)
+            "an explicit unset must hide the process value")
+        (is (eq :unset source)
+            "the explicit unset must carry the :unset source")))))
+
 (test kill-window-selects-previous-by-index
   "After killing the active window with no MRU history (timestamps tie at 0), tmux
    session_detach selects the PREVIOUS window by index — the greatest id strictly

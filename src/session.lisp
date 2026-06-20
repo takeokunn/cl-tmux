@@ -266,13 +266,17 @@
     (t
      (multiple-value-bind (value present-p)
          (gethash name (session-environment session))
-       (when present-p
-         (values value :session))))
-    (t
-     (let ((value (process-environment-value name)))
-       (if value
-           (values value :process)
-           (values nil nil))))))
+       (if present-p
+           (values value :session)
+           ;; Not in the session overlay: fall back to the live process
+           ;; environment (tmux inherits unset session vars from the server's
+           ;; environment).  Nesting this in the present-p else-branch keeps the
+           ;; fallback reachable — a previous `(t ...)` middle cond clause made
+           ;; it dead code, so :process was never reported.
+           (let ((process-value (process-environment-value name)))
+             (if process-value
+                 (values process-value :process)
+                 (values nil nil))))))))
 
 (defun session-environment-names (session)
   "Return the sorted set of environment names relevant to SESSION."
