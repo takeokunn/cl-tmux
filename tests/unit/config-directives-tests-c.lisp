@@ -117,6 +117,18 @@
     (destructuring-bind (input expected desc) row
       (is (equal expected (cl-tmux/config::%parse-key-token input)) "~A" desc))))
 
+(test parse-key-token-canonicalizes-multi-modifier-order
+  "%parse-key-token re-orders two-or-more modifier prefixes into canonical
+   C-/M-/S- order, so the spelling order in a binding does not matter and matches
+   what the event loop emits (audit #15)."
+  (dolist (row (list (list "M-C-x"    "C-M-x"    "M-C-x → C-M-x")
+                     (list "C-M-x"    "C-M-x"    "C-M-x stays canonical")
+                     (list "S-C-Up"   "C-S-Up"   "S-C-Up → C-S-Up")
+                     (list "M-C-Left" "C-M-Left" "M-C-Left → C-M-Left")
+                     (list "S-M-C-x"  "C-M-S-x"  "S-M-C-x → C-M-S-x (3 modifiers)")))
+    (destructuring-bind (input expected desc) row
+      (is (equal expected (cl-tmux/config::%parse-key-token input)) "~A" desc))))
+
 (test bind-control-letter-fires-via-control-char
   "bind C-a <cmd> binds the control character ^A (byte 1) so a real Ctrl-a
    keypress (which the event loop reads as byte 1) resolves to the command."

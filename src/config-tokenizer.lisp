@@ -156,6 +156,30 @@
    to the same binding."
   (cdr (assoc token *key-name-aliases* :test #'string-equal)))
 
+(defun %canonicalize-multi-modifier-key (token)
+  "When TOKEN is a chain of TWO OR MORE C-/M-/S- modifier prefixes (in any order
+   or case) over a base key, return it with the modifiers re-emitted in canonical
+   C-/M-/S- order (the order the event loop's %modifier-prefix produces), so
+   `bind M-C-x` and `bind C-M-x` — or `bind S-C-Up` and `bind C-S-Up` — resolve to
+   the same binding.  The base key is kept verbatim.  Returns NIL when TOKEN has
+   fewer than two modifier prefixes (e.g. plain `C-x`, handled by the
+   control-character branch) so the caller falls through."
+  (let ((ctrl nil) (meta nil) (shift nil) (count 0) (i 0) (len (length token)))
+    (loop while (and (<= (+ i 2) len) (char= (char token (1+ i)) #\-))
+          for m = (char-upcase (char token i))
+          do (case m
+               (#\C (setf ctrl t))
+               (#\M (setf meta t))
+               (#\S (setf shift t))
+               (otherwise (return)))
+             (incf count)
+             (incf i 2))
+    (let ((base (subseq token i)))
+      (when (and (>= count 2) (plusp (length base)))
+        (concatenate 'string
+                     (if ctrl "C-" "") (if meta "M-" "") (if shift "S-" "")
+                     base)))))
+
 (defun %parse-key-token (token)
   "Parse a bind-key key TOKEN into the key-table key.
    A single-character TOKEN denotes that character.  A \"C-<key>\" token denotes
@@ -167,6 +191,10 @@
    the key-table key format used by the lookup path."
   (cond
     ((= (length token) 1) (char token 0))
+    ;; Two-or-more-modifier combos (C-M-x, M-C-Left, ...) are canonicalized to
+    ;; C-/M-/S- order BEFORE the single C- control-character branch, so the
+    ;; spelling order does not matter and matches what the event loop emits.
+    ((%canonicalize-multi-modifier-key token))
     ((and (> (length token) 2)
           (char-equal (char token 0) #\C)
           (char= (char token 1) #\-))
