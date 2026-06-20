@@ -334,15 +334,41 @@
         while pos
         do (setf start (1+ pos))))
 
+(defun %palette-effective-rgb (screen index)
+  "Return the effective 0xRRGGBB colour for palette INDEX: the custom OSC 4 override
+   when one is set, otherwise the built-in xterm palette entry (NIL when INDEX is
+   outside 0..255)."
+  (or (%palette-override-get screen index)
+      (%xterm-palette-rgb index)))
+
 (defun %handle-osc-4 (screen body)
   "Handle OSC 4 (set/query palette colours).  BODY is a ';'-separated run of
    INDEX ; SPEC pairs.  For each pair whose SPEC is \"?\", enqueue a reply
-   reporting the standard xterm palette entry; set operations are ignored."
+   reporting the effective palette entry (custom override if set, else the built-in
+   xterm colour).  Otherwise SPEC is parsed as a colour and stored as a custom
+   override for INDEX; an unparseable SPEC is ignored."
   (let ((fields (%osc-split-fields body)))
     (loop for (index-spec spec) on fields by #'cddr
           while spec
           for index = (cl-tmux::%parse-integer-or-nil index-spec :junk-allowed t)
-          when (and index (string= spec "?"))
-            do (let ((rgb (%xterm-palette-rgb index)))
-                 (when rgb
-                   (push (%osc4-reply index rgb) (screen-response-queue screen)))))))
+          when index
+            do (if (string= spec "?")
+                   (let ((rgb (%palette-effective-rgb screen index)))
+                     (when rgb
+                       (push (%osc4-reply index rgb) (screen-response-queue screen))))
+                   (let ((rgb (%parse-osc-color spec)))
+                     (when rgb
+                       (%palette-override-set screen index rgb)))))))
+
+(defun %handle-osc-104 (screen body)
+  "Handle OSC 104 (reset palette colours).  An empty BODY resets every custom
+   palette override back to the built-in xterm palette; otherwise BODY is a
+   ';'-separated list of indices, each of which is reverted individually."
+  (let ((fields (%osc-split-fields body)))
+    (if (or (null fields)
+            (and (= (length fields) 1) (string= (first fields) "")))
+        (%palette-override-clear-all screen)
+        (dolist (index-spec fields)
+          (let ((index (cl-tmux::%parse-integer-or-nil index-spec :junk-allowed t)))
+            (when index
+              (%palette-override-clear screen index)))))))

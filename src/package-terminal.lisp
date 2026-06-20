@@ -129,6 +129,12 @@
    #:screen-osc-default-bg
    ;; OSC 8 current hyperlink
    #:screen-current-hyperlink
+   ;; OSC 4 / OSC 104 custom palette overrides
+   #:screen-palette-overrides
+   #:%palette-override-get
+   #:%palette-override-set
+   #:%palette-override-clear
+   #:%palette-override-clear-all
    ;; Line-wrap flags (capture-pane -J)
    #:screen-wrapped-rows
    #:%mark-line-wrapped

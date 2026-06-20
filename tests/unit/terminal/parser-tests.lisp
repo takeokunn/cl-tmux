@@ -149,6 +149,77 @@
                (cl-tmux/terminal/parser::%osc4-reply 196 #xFF0000))
       "OSC 4 reply must include the palette index"))
 
+;;; ── OSC 4 / OSC 104 custom palette overrides (audit #23) ─────────────────────
+
+(test osc-4-set-does-not-reply
+  "OSC 4 ; 1 ; rgb:... (a SET, not a query) enqueues no reply."
+  (with-screen (s 20 5)
+    (%feed-osc s "4;1;rgb:ffff/0000/ffff")
+    (is (null (cl-tmux/terminal/types:screen-response-queue s))
+        "an OSC 4 SET must not enqueue a reply")))
+
+(test osc-4-set-stores-custom-palette-override
+  "OSC 4 ; 1 ; rgb:... stores a custom override for palette index 1."
+  (with-screen (s 20 5)
+    (%feed-osc s "4;1;rgb:ffff/0000/ffff")
+    (is (= #xFF00FF (cl-tmux/terminal/types:%palette-override-get s 1))
+        "OSC 4 set must store the parsed colour as a custom override")))
+
+(test osc-4-query-reports-custom-override
+  "After OSC 4 sets index 1, OSC 4 ; 1 ; ? reports the custom colour, not the
+   built-in palette entry."
+  (with-screen (s 20 5)
+    (%feed-osc s "4;1;rgb:ffff/0000/ffff")
+    (%feed-osc s "4;1;?")
+    (is (string= (format nil "~C]4;1;rgb:ffff/0000/ffff~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "OSC 4 query after a set must report the custom override")))
+
+(test osc-4-set-and-query-in-one-sequence
+  "OSC 4 ; 2 ; #00ff00 ; 2 ; ? sets then queries index 2 in one sequence,
+   reporting the just-set colour."
+  (with-screen (s 20 5)
+    (%feed-osc s "4;2;#00ff00;2;?")
+    (is (string= (format nil "~C]4;2;rgb:0000/ffff/0000~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "set-then-query in one OSC 4 must report the set colour")))
+
+(test osc-4-set-junk-spec-is-ignored
+  "OSC 4 ; 3 ; tomato (an unparseable colour) stores no override and enqueues no
+   reply."
+  (with-screen (s 20 5)
+    (%feed-osc s "4;3;tomato")
+    (is (null (cl-tmux/terminal/types:%palette-override-get s 3))
+        "an unparseable OSC 4 colour must not store an override")
+    (is (null (cl-tmux/terminal/types:screen-response-queue s))
+        "an unparseable OSC 4 set must not enqueue a reply")))
+
+(test osc-104-resets-single-index
+  "OSC 104 ; 1 reverts index 1 to the built-in palette; a subsequent query reports
+   the standard xterm colour again."
+  (with-screen (s 20 5)
+    (%feed-osc s "4;1;rgb:ffff/0000/ffff")
+    (%feed-osc s "104;1")
+    (is (null (cl-tmux/terminal/types:%palette-override-get s 1))
+        "OSC 104 ; 1 must clear the index-1 override")
+    (%feed-osc s "4;1;?")
+    (is (string= (format nil "~C]4;1;rgb:8080/0000/0000~C\\" #\Escape #\Escape)
+                 (first (cl-tmux/terminal/types:screen-response-queue s)))
+        "after OSC 104 the query reports built-in index 1 (maroon 0x800000)")))
+
+(test osc-104-empty-body-resets-all
+  "OSC 104 with an empty body drops every custom palette override."
+  (with-screen (s 20 5)
+    (%feed-osc s "4;1;rgb:ffff/0000/ffff")
+    (%feed-osc s "4;200;#123456")
+    (%feed-osc s "104")
+    (is (null (cl-tmux/terminal/types:screen-palette-overrides s))
+        "OSC 104 (empty body) must clear all overrides")
+    (is (null (cl-tmux/terminal/types:%palette-override-get s 1))
+        "index 1 override must be gone after a full reset")
+    (is (null (cl-tmux/terminal/types:%palette-override-get s 200))
+        "index 200 override must be gone after a full reset")))
+
 (test osc-color-command-routes-query-and-set
   "%osc-color-command enqueues replies for '?' and delegates set bodies to the setter function."
   (with-screen (s 20 5)

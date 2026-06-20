@@ -169,6 +169,12 @@
   ;; OSC 8 current hyperlink URI: set by OSC 8 ; params ; URI, cleared by OSC 8 ; ;.
   ;; Stamped onto each cell written while non-NIL (see %write-normal-cell).
   (current-hyperlink nil :type (or null string))
+  ;; OSC 4 / OSC 104 custom palette overrides.  NIL means "no overrides — use the
+  ;; built-in xterm 256-colour palette".  Otherwise a lazily-allocated simple-vector
+  ;; of 256 entries; each entry is an 0xRRGGBB integer override or NIL (use built-in).
+  ;; Mirrors tmux's per-pane colour_palette override array (input_osc_4 /
+  ;; colour_palette_set); OSC 104 clears entries back to NIL.
+  (palette-overrides nil :type (or null simple-vector))
   ;; Per-row line-wrap flags (a lazily-created hash-table row→T, or NIL): a row is
   ;; marked when an autowrap actually carries its line onto the next row, so
   ;; capture-pane -J can rejoin lines that wrapped at the right margin.  Cleared
@@ -234,6 +240,42 @@
                      ((or (< y top) (> y bottom))   (setf (gethash y new) t))))
                  ht)
         (setf (screen-wrapped-rows screen) new)))))
+
+;;; ── OSC 4 / OSC 104 palette overrides ───────────────────────────────────────
+;;;
+;;; A custom palette entry set by OSC 4 shadows the built-in xterm palette for
+;;; that index.  Storage is lazily allocated (NIL until the first set) to keep the
+;;; common no-override screen cheap.  Mirrors tmux colour_palette_set/_get/_clear.
+
+(defun %palette-override-get (screen index)
+  "Return the custom 0xRRGGBB override for palette INDEX, or NIL when INDEX has no
+   override (caller falls back to the built-in xterm palette).  INDEX out of the
+   0..255 range returns NIL."
+  (let ((overrides (screen-palette-overrides screen)))
+    (and overrides
+         (<= 0 index 255)
+         (svref overrides index))))
+
+(defun %palette-override-set (screen index rgb)
+  "Set the custom 0xRRGGBB override for palette INDEX (0..255), allocating the
+   256-entry override vector on first use.  Out-of-range INDEX is ignored."
+  (when (<= 0 index 255)
+    (let ((overrides (or (screen-palette-overrides screen)
+                         (setf (screen-palette-overrides screen)
+                               (make-array 256 :initial-element nil)))))
+      (setf (svref overrides index) rgb))))
+
+(defun %palette-override-clear (screen index)
+  "Clear the custom override for palette INDEX (0..255), reverting it to the
+   built-in xterm palette.  No-op when no overrides exist or INDEX is out of range."
+  (let ((overrides (screen-palette-overrides screen)))
+    (when (and overrides (<= 0 index 255))
+      (setf (svref overrides index) nil))))
+
+(defun %palette-override-clear-all (screen)
+  "Drop all custom palette overrides (OSC 104 with an empty body), reverting every
+   index to the built-in xterm palette."
+  (setf (screen-palette-overrides screen) nil))
 
 ;;; ── Grid helpers ───────────────────────────────────────────────────────────
 

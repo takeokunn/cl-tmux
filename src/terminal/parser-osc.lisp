@@ -49,6 +49,8 @@
    (setf (screen-osc-default-bg screen) +osc-default-bg+))
   (4
    (%handle-osc-4 screen body))
+  (104
+   (%handle-osc-104 screen body))
   (52
    (%handle-osc-52 body)))
 
@@ -59,6 +61,8 @@
      OSC 7            — report current working directory
      OSC 10/11        — query/set default foreground/background colour
      OSC 110/111      — reset default foreground/background colour
+     OSC 4            — query/set palette colours (custom overrides)
+     OSC 104          — reset palette colour overrides
      OSC 52           — write clipboard data (Base64-encoded)
    The command field is the integer before the first ';'; a payload with NO ';'
    (e.g. OSC 110) is a parameterless command with an empty body."
