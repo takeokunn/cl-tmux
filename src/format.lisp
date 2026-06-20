@@ -91,6 +91,22 @@
 ;;; and [...] matches a character class.  We implement the first two here
 ;;; (sufficient for 95% of real configs; [...] is left as a literal match).
 
+(defun %regex-replace-all (string pat replacement &optional ignore-case)
+  "Replace every regex match of PAT in STRING with REPLACEMENT (via cl-ppcre),
+   mirroring tmux's #{s/PAT/REP/[i]:var} (regsub with REG_EXTENDED).  PAT is an
+   extended regular expression; REPLACEMENT supports \\N backreferences.
+   IGNORE-CASE T compiles PAT case-insensitively.  An empty PAT returns STRING
+   unchanged (matches the literal-era behaviour and avoids per-position inserts).
+   A malformed PAT degrades gracefully by returning STRING unchanged — invalid
+   regexes never break format expansion (mirrors %regex-match-p)."
+  (if (zerop (length pat))
+      string
+      (handler-case
+          (let ((scanner (cl-ppcre:create-scanner
+                          pat :case-insensitive-mode ignore-case)))
+            (cl-ppcre:regex-replace-all scanner string replacement))
+        (error () string))))
+
 (defun %glob-match-p (pattern string &key (start-p 0) (start-s 0))
   "Return T when STRING matches the shell glob PATTERN.
    Supported metacharacters: * (any sequence), ? (any one character).
@@ -241,7 +257,7 @@
       (%apply-pad-modifier mod value)
       (multiple-value-bind (pat rep flags) (%parse-substitute-spec mod)
         (if pat
-            (%string-replace-all value pat rep (find #\i flags))
+            (%regex-replace-all value pat rep (find #\i flags))
             (let ((n (%truncate-spec mod)))
               (cond
                 ((null n) nil)

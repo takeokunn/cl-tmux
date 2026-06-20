@@ -229,6 +229,54 @@ set -u status")
                  "source-files loads the globbed files without error")))
       (ignore-errors (uiop:delete-directory-tree dir :validate t)))))
 
+(test source-files-missing-plain-path-logs-message-without-q
+  "source-file on a missing plain path (no -q) logs tmux's 'No such file or
+   directory: PATH' to *message-log* and still returns T."
+  (let ((cl-tmux::*message-log* nil)
+        (missing "/no/such/cl-tmux-srcfile-abc.conf"))
+    (is (eq t (cl-tmux/config:source-files (list missing)))
+        "source-files still returns T for a missing file")
+    (is (= 1 (length cl-tmux::*message-log*))
+        "exactly one diagnostic was logged")
+    (is (search "No such file or directory" (cdr (first cl-tmux::*message-log*)))
+        "diagnostic mentions 'No such file or directory'")
+    (is (search missing (cdr (first cl-tmux::*message-log*)))
+        "diagnostic includes the offending path")))
+
+(test source-files-q-suppresses-missing-file-message
+  "With -q, a missing file logs NOTHING (tmux CMD_PARSE_QUIET) and returns T."
+  (let ((cl-tmux::*message-log* nil))
+    (is (eq t (cl-tmux/config:source-files
+               '("-q" "/no/such/cl-tmux-srcfile-xyz.conf"))))
+    (is (null cl-tmux::*message-log*)
+        "-q suppresses the diagnostic entirely")))
+
+(test source-files-glob-no-match-logs-message-without-q
+  "A glob pattern matching no files (no -q) logs 'No such file or directory: PATTERN'."
+  (let ((cl-tmux::*message-log* nil)
+        (pattern "/nonexistent-cl-tmux-glob-dir/*.conf"))
+    (is (eq t (cl-tmux/config:source-files (list pattern))))
+    (is (= 1 (length cl-tmux::*message-log*))
+        "glob-no-match logs exactly one diagnostic")
+    (is (search "No such file or directory" (cdr (first cl-tmux::*message-log*)))
+        "glob-no-match diagnostic mentions 'No such file or directory'")))
+
+(test source-files-existing-file-logs-no-message
+  "A successfully loaded file produces NO 'missing' diagnostic."
+  (with-isolated-config
+    (let ((cl-tmux::*message-log* nil))
+      (with-temp-config-file (p "bind z next-window")
+        (is (eq t (cl-tmux/config:source-files (list (namestring p)))))
+        (is (null cl-tmux::*message-log*)
+            "an existing, loaded file logs no missing-file diagnostic")))))
+
+(test glob-pattern-p-detects-metacharacters
+  "%glob-pattern-p is true for * ? [ and nil for a plain path."
+  (is-true  (cl-tmux/config::%glob-pattern-p "/etc/*.conf"))
+  (is-true  (cl-tmux/config::%glob-pattern-p "/etc/foo?.conf"))
+  (is-true  (cl-tmux/config::%glob-pattern-p "/etc/[ab].conf"))
+  (is-false (cl-tmux/config::%glob-pattern-p "/etc/foo.conf")))
+
 ;;; ── # comment handling (inline, quote- and format-aware) ─────────────────────
 
 (test strip-config-comment-respects-quotes-and-formats

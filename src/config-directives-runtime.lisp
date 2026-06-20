@@ -222,6 +222,25 @@
             #'string<)
       (list path)))
 
+(defun %glob-pattern-p (path)
+  "True when PATH contains a shell glob metacharacter (* ? or [), i.e. it is a
+   pattern rather than a literal path.  Mirrors the detection in %glob-expand."
+  (find-if (lambda (c) (member c '(#\* #\? #\[) :test #'char=)) path))
+
+(defun %source-file-report-missing (path)
+  "Surface tmux's source-file diagnostic for a missing file / no-glob-match
+   (cmd-source-file.c reports `cmdq_error(item, \"%s: %s\", strerror(ENOENT), path)`).
+   Routed through the runtime *message-log* sink (the same channel display-message
+   uses) so it appears in the show-messages overlay.  Resolved at call time, so the
+   config package's load-order independence from cl-tmux is preserved."
+  ;; add-message-log lives in the cl-tmux runtime package, which depends on this
+  ;; config package — so resolve it at RUNTIME via find-symbol (the same trick
+  ;; #{session_count} uses) to avoid a compile-time circular dependency.
+  (ignore-errors
+    (let ((fn (find-symbol "ADD-MESSAGE-LOG" "CL-TMUX")))
+      (when (and fn (fboundp fn))
+        (funcall fn (format nil "No such file or directory: ~A" path))))))
+
 (defun %parse-source-file-flags (args)
   "Parse the leading -Fnqv flags and -t target of source-file.  Returns
    (values PARSE-ONLY-P QUIET-P VERBOSE-P FORMAT-P POSITIONALS).  Clustered flags
@@ -266,16 +285,29 @@
    to).  Returns T."
   (multiple-value-bind (parse-only quiet verbose format-p positionals)
       (%parse-source-file-flags args)
-    (declare (ignore quiet verbose))
+    (declare (ignore verbose))
     (dolist (raw positionals)
       (let ((path (if format-p
                       (or (ignore-errors (cl-tmux/format:expand-format raw nil)) raw)
                       raw)))
         (when (plusp (length path))
-          (dolist (file (%glob-expand (%expand-leading-tilde path)))
-            (if parse-only
-                (%parse-config-file-only file)
-                (ignore-errors (load-config-file file))))))))
+          (let* ((expanded (%expand-leading-tilde path))
+                 (matches  (%glob-expand expanded)))
+            (cond
+              ;; Glob pattern that matched nothing: tmux's GLOB_NOMATCH error,
+              ;; suppressed only under -q.
+              ((and (%glob-pattern-p expanded) (null matches))
+               (unless quiet (%source-file-report-missing expanded)))
+              (t
+               (dolist (file matches)
+                 (if parse-only
+                     (%parse-config-file-only file)
+                     ;; load-config-file returns the directive count, or NIL when
+                     ;; the (plain) path did not exist.  Surface tmux's "No such
+                     ;; file or directory" for the missing case unless -q.
+                     (let ((applied (ignore-errors (load-config-file file))))
+                       (when (and (null applied) (not quiet))
+                         (%source-file-report-missing file))))))))))))
   t)
 
 (defun %apply-source-file-directive (cmd args)

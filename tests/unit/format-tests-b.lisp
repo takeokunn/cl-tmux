@@ -44,6 +44,25 @@
     (destructuring-bind (str pat rep ic expected desc) c
       (is (string= expected (cl-tmux/format::%string-replace-all str pat rep ic)) "~A" desc))))
 
+(test format-modifier-substitute-regex
+  "#{s/PAT/REP/:var} treats PAT as an extended regular expression (tmux regsub),
+   supporting character classes, anchors, quantifiers and \\N backreferences."
+  (dolist (c '(("#{s/[0-9]+/N/:p}"        :p "a12b345"   "aNbN"   "digit class + quantifier")
+               ("#{s/a.c/X/:p}"          :p "abc-aXc"   "X-X"    ". matches any char")
+               ("#{s/^foo/BAR/:p}"       :p "foofoo"    "BARfoo" "^ anchors to start only")
+               ("#{s/(a)(b)/\\2\\1/:p}"   :p "ab"        "ba"     "\\N backreferences in REP")
+               ("#{s/[A-Z]+/x/i:p}"      :p "abcABC"    "x"      "i flag folds case in the class")))
+    (destructuring-bind (spec key val expected desc) c
+      (is (string= expected (fmt spec key val)) "~A" desc))))
+
+(test format-regex-replace-all-malformed-unit
+  "%regex-replace-all returns the input unchanged on a malformed regex and on an
+   empty pattern (never signals, never inserts per-position)."
+  (is (string= "a(b" (cl-tmux/format::%regex-replace-all "a(b" "(" "X" nil))
+      "unbalanced paren is malformed → unchanged")
+  (is (string= "abc" (cl-tmux/format::%regex-replace-all "abc" "" "Z" nil))
+      "empty pattern → unchanged"))
+
 ;;; ── Nested #{...} (balanced braces) + comparison operators ───────────────────
 
 (test format-matching-close-brace-balances-nesting
