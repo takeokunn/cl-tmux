@@ -117,3 +117,31 @@
     (destructuring-bind (input expected desc) c
       (is (equal expected (cl-tmux/config::%parse-prefix-key input))
           "~A" desc))))
+
+(test parse-prefix-key-extended-notations
+  "%parse-prefix-key also accepts caret control notation, C-Space/C-@ (NUL), and
+   control symbols, while None/Any and named keys (M-/F-keys) parse to NIL so the
+   byte event loop never tries to match an unmatchable prefix."
+  (dolist (c '(("^A"      1   "caret ^A → 1")
+               ("^["      27  "caret ^[ → 27 (Escape byte)")
+               ("C-Space" 0   "C-Space → 0 (NUL)")
+               ("C-@"     0   "C-@ → 0 (NUL)")
+               ("None"    nil "None → NIL (disable, not a byte)")
+               ("Any"     nil "Any → NIL")
+               ("M-a"     nil "M-a → NIL (not single-byte matchable)")
+               ("F1"      nil "F1 → NIL (not single-byte matchable)")))
+    (destructuring-bind (input expected desc) c
+      (is (equal expected (cl-tmux/config::%parse-prefix-key input))
+          "~A" desc))))
+
+(test bind-prefix-key-none-disables
+  "`set -g prefix2 None` disables the secondary prefix (NIL); `set -g prefix None`
+   resets the primary prefix to the default +prefix-key-code+."
+  (let ((cl-tmux/config:*prefix-key-code*  1)
+        (cl-tmux/config:*prefix2-key-code* 7))
+    (cl-tmux/config::%bind-prefix-key "None" 'cl-tmux/config::*prefix2-key-code*)
+    (is (null cl-tmux/config:*prefix2-key-code*)
+        "prefix2 None must clear *prefix2-key-code* to NIL")
+    (cl-tmux/config::%bind-prefix-key "None" 'cl-tmux/config::*prefix-key-code*)
+    (is (= cl-tmux/config:+prefix-key-code+ cl-tmux/config:*prefix-key-code*)
+        "prefix None must reset *prefix-key-code* to the default")))

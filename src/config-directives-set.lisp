@@ -179,11 +179,20 @@
 
 (defun %bind-prefix-key (value key-code-var)
   "Parse VALUE as a prefix key; when valid, store the byte in KEY-CODE-VAR (a special-var symbol)
-   and arm that key in the prefix table."
-  (let ((byte (%parse-prefix-key value)))
-    (when byte
-      (setf (symbol-value key-code-var) byte)
-      (key-table-bind +table-prefix+ (code-char byte) :send-prefix))))
+   and arm that key in the prefix table.
+   VALUE \"None\" explicitly DISABLES the prefix (tmux KEYC_NONE): *prefix2-key-code*
+   becomes NIL, *prefix-key-code* resets to the default +prefix-key-code+.
+   A NIL parse of any other (unmatchable) name silently no-ops, leaving the prior
+   prefix unchanged."
+  (cond
+    ((string-equal value "None")
+     (setf (symbol-value key-code-var)
+           (if (eq key-code-var '*prefix2-key-code*) nil +prefix-key-code+)))
+    (t
+     (let ((byte (%parse-prefix-key value)))
+       (when byte
+         (setf (symbol-value key-code-var) byte)
+         (key-table-bind +table-prefix+ (code-char byte) :send-prefix))))))
 
 ;;; ── Declarative option-side-effect dispatch ──────────────────────────────────
 ;;;

@@ -25,15 +25,42 @@
   "Second prefix key byte, or NIL when not set.  Changed via 'set -g prefix2 C-a'.
    When set, pressing this key also arms the prefix key-table (same as the primary prefix).")
 
-(defun %parse-prefix-key (key-str)
-  "Parse a tmux key name KEY-STR into a byte value.
-   Supports: C-x control (logand char 0x1f), single printable char.
-   Returns an integer, or NIL for unrecognized names."
+(defun %prefix-control-byte (rest)
+  "Map REST (the part after a \"C-\"/\"^\" prefix) to its control BYTE, or NIL.
+   C-a..C-z -> 1..26; C-Space / C-@ -> 0 (NUL); C-[ C-\\ C-] C-^ C-_ -> 27..31.
+   Self-contained (config.lisp loads before config-tokenizer.lisp), so it does
+   not call %parse-control-char."
   (cond
-    ((and (= (length key-str) 3)
+    ((string-equal rest "Space") 0)
+    ((= (length rest) 1)
+     (let ((c (char-upcase (char rest 0))))
+       (cond
+         ((char= c #\@) 0)
+         ((char<= #\A c #\Z) (logand (char-code c) +ctrl-mask+))
+         ((member c '(#\[ #\\ #\] #\^ #\_) :test #'char=)
+          (logand (char-code c) +ctrl-mask+))
+         (t nil))))
+    (t nil)))
+
+(defun %parse-prefix-key (key-str)
+  "Parse a tmux key name KEY-STR into a byte value the single-byte event-loop
+   prefix check can match.
+   Supports: C-<key> and caret ^<key> control notation (incl. C-Space/C-@ -> NUL
+   and C-[ C-\\ C-] C-^ C-_), and a single printable char.  \"None\"/\"Any\" and any
+   other named key (M-a, F1, ...) return NIL — the byte event loop cannot match
+   those; %bind-prefix-key treats \"None\" as an explicit disable.
+   Returns an integer byte, or NIL for unmatchable/unrecognized names."
+  (cond
+    ((or (string-equal key-str "None") (string-equal key-str "Any")) nil)
+    ;; "C-<key>" modifier notation.
+    ((and (> (length key-str) 2)
           (char-equal (char key-str 0) #\C)
           (char= (char key-str 1) #\-))
-     (logand (char-code (char key-str 2)) +ctrl-mask+))
+     (%prefix-control-byte (subseq key-str 2)))
+    ;; Caret control notation: ^A, ^[, ^@ (alias for C-<key>).
+    ((and (> (length key-str) 1)
+          (char= (char key-str 0) #\^))
+     (%prefix-control-byte (subseq key-str 1)))
     ((= (length key-str) 1)
      (char-code (char key-str 0)))
     (t nil)))
