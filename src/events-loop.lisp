@@ -125,7 +125,11 @@
         (setf (input-state-repeat-entered-at state) (get-internal-real-time))
         (incf (input-state-repeat-key-count state)))
       ;; Leaving repeat mode: clear the timestamp and reset the key count.
-      (unless (eq new-cont #'%after-prefix-input-state)
+      ;; Repeat mode is armed for BOTH the prefix path (%after-prefix-input-state)
+      ;; and root -n -r bindings (%after-root-repeat-input-state); staying in either
+      ;; continuation keeps the repeat window open.
+      (unless (or (eq new-cont #'%after-prefix-input-state)
+                  (eq new-cont #'%after-root-repeat-input-state))
         (setf (input-state-repeat-entered-at state) nil
               (input-state-repeat-key-count state) 0))
       ;; Track prefix state for #{client_prefix} format variable.

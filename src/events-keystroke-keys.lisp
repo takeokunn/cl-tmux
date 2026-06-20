@@ -349,3 +349,38 @@
      (if (eq result :repeatable)
          (values nil #'%after-prefix-input-state)
          (values result #'%ground-input-state)))))
+
+;;; ── Root-table repeat mode (bind -n -r) ────────────────────────────────────
+;;;
+;;; tmux applies repeat mode to the root key table too, not just prefix: when a
+;;; `bind -n -r` binding fires, server_client_key_callback sets CLIENT_REPEAT and
+;;; keeps the root table active so the key can be pressed again without the prefix
+;;; within repeat-time.  %run-root-table-binding arms that state; the repeat state
+;;; re-looks-up the next byte in the root table, staying armed for another
+;;; repeatable binding and otherwise falling through to normal ground processing.
+
+(defun %run-root-table-binding (session byte)
+  "Run the root-table binding matching BYTE (the caller has already confirmed an
+   entry exists) and return the CPS (values OUTCOME NEXT-STATE) pair.  A -r
+   (repeatable) root binding arms repeat mode: it returns :REPEATABLE plus a
+   root-scoped repeat state so the key repeats without the prefix within
+   repeat-time, mirroring tmux's CLIENT_REPEAT on the root table."
+  (let ((entry (%key-table-entry-by-candidates
+                +table-root+ (%single-byte-key-candidates byte))))
+    (%run-key-table-binding session entry byte)
+    (setf *dirty* t)
+    (if (key-table-repeatable-p entry)
+        (values :repeatable #'%after-root-repeat-input-state)
+        (values nil #'%ground-input-state))))
+
+(define-cps-state %after-root-repeat-input-state (session byte)
+  ;; Repeat mode armed by a root (-n -r) binding.  Re-look-up the next byte in the
+  ;; root table: another repeatable binding keeps repeat mode armed (and re-stamps
+  ;; the timer via the :REPEATABLE outcome), while any other byte exits repeat mode
+  ;; and is reprocessed as a normal ground keystroke (root lookup, prefix, escape,
+  ;; or pane forward).  Non-repeatable root bindings therefore break the sequence,
+  ;; matching tmux server_client_key_callback's CLIENT_REPEAT handling.
+  ((%key-table-entry-by-candidates +table-root+ (%single-byte-key-candidates byte))
+   (%run-root-table-binding session byte))
+  (t
+   (%ground-input-state session byte)))

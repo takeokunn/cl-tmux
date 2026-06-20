@@ -157,12 +157,11 @@
   ;; ── Root key-table: check for bindings that fire without any prefix ────────
   ;; Looked up before the prefix-key check so that -n bindings can intercept
   ;; keys that would otherwise be forwarded to the pane.
-  ((let ((entry (%key-table-entry-by-candidates
-                 +table-root+ (%single-byte-key-candidates byte))))
-     (when entry
-       (%run-key-table-binding session entry byte)
-       (setf *dirty* t)))
-   (values nil #'%ground-input-state))
+  ((%key-table-entry-by-candidates +table-root+ (%single-byte-key-candidates byte))
+   ;; %run-root-table-binding runs the binding and arms repeat mode (returning
+   ;; :repeatable + a root-scoped repeat state) when the binding has the -r flag,
+   ;; so `bind -n -r` keys repeat without the prefix within repeat-time.
+   (%run-root-table-binding session byte))
   ;; ── Prefix key: arm command dispatcher ────────────────────────────────────
   ;; Check the RUNTIME variable *prefix-key-code* (not the compile-time constant
   ;; +prefix-key-code+) so that `set -g prefix C-a` actually remaps the prefix.
