@@ -74,7 +74,7 @@ set -g renumber-windows on
 set -g mode-keys vi
 bind r source-file /dev/null \; display-message \"Reloaded\"
 bind-key -T copy-mode-vi v send-keys -X begin-selection
-bind-key -T copy-mode-vi y send-keys -X copy-selection-and-cancel
+bind-key -T copy-mode-vi y send-keys -X copy-selection
 bind '\"' split-window -c #{pane_current_path}
 bind % split-window -h -c #{pane_current_path}
 bind c new-window -c #{pane_current_path}

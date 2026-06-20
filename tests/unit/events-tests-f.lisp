@@ -45,20 +45,13 @@
           (is (= expected (screen-copy-offset screen))
               "PageDown must scroll copy-offset down by screen-height lines"))))))
 
-(test prefix-pageup-enters-copy-mode-at-top
-  "C-b PageUp (tmux PPage) runs copy-mode -u and scrolls to the oldest content."
+(test copy-mode-pageup-is-bound-in-copy-mode-tables
+  "PageUp is installed as :copy-mode-page-up in both copy-mode tables."
   (with-isolated-config
-    (with-fake-session (s)
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (seed-scrollback screen 30)
-        (is-false (screen-copy-mode-p screen))
-        (dolist (b '(2 27 91 53 126)) ; C-b, ESC [ 5 ~
-          (cl-tmux::process-byte s b state))
-        (is-true (screen-copy-mode-p screen)
-                 "prefix PageUp must enter copy mode")
-        (is (= 30 (screen-copy-offset screen))
-            "copy-mode -u must scroll to the oldest scrollback row")))))
+    (is (eq :copy-mode-page-up (key-table-command-value "copy-mode" "PageUp"))
+        "copy-mode PageUp must be registered as :copy-mode-page-up")
+    (is (eq :copy-mode-page-up (key-table-command-value "copy-mode-vi" "PageUp"))
+        "copy-mode-vi PageUp must be registered as :copy-mode-page-up")))
 
 ;;; ── Prefix arrow keys select pane ────────────────────────────────────────────
 
@@ -364,16 +357,36 @@
           (list (cons "0" s0) (cons "1" s1) (cons "2" s2)))
     (values s0 s1 s2)))
 
+(defun %assert-switch-client-selection (current args expected description)
+  "Assert that SWITCH-CLIENT selects EXPECTED from CURRENT with ARGS."
+  (is (eq expected (cl-tmux::%cmd-switch-client current args))
+      description))
+
+(defun %assert-switch-client-rejection (session args)
+  "Assert that SWITCH-CLIENT rejects ARGS without mutating the session state."
+  (let ((*overlay* nil)
+        (cl-tmux::*dirty* nil))
+    (is-false (cl-tmux::%cmd-switch-client session args)
+              "~S must be rejected" args)
+    (assert-overlay-contains "switch-client: unsupported argument"
+                             (overlay-lines)
+                             (format nil "~S must report the rejection" args))
+    (is (eq session (cl-tmux::server-current-session))
+        "~S must leave the current session unchanged" args)
+    (is-false cl-tmux::*dirty*
+              "~S must not mark the display dirty" args)))
+
 (test cmd-switch-client-t-switches-to-named-session
   "switch-client -t <name> makes the named session the front (touched) one."
   (with-loop-state
     (with-empty-registry
       (multiple-value-bind (s0 s1 s2) (%make-three-session-registry)
         (declare (ignore s0 s1))
-        (let ((result (cl-tmux::%cmd-switch-client (cl-tmux::server-find-session "1")
-                                                   '("-t" "2"))))
-          (is (eq s2 result) "-t 2 selects session named 2")
-          (is-true cl-tmux::*dirty* "a session switch marks the screen dirty"))))))
+        (%assert-switch-client-selection (cl-tmux::server-find-session "1")
+                                         '("-t" "2")
+                                         s2
+                                         "-t 2 selects session named 2")
+        (is-true cl-tmux::*dirty* "a session switch marks the screen dirty")))))
 
 (test cmd-switch-client-n-and-p-cycle-sessions
   "switch-client -n / -p move to the next / previous session cyclically."
@@ -381,10 +394,10 @@
     (with-empty-registry
       (multiple-value-bind (s0 s1 s2) (%make-three-session-registry)
         ;; current = s1; registry order is (s0 s1 s2): next → s2, prev → s0.
-        (is (eq s2 (cl-tmux::%cmd-switch-client s1 '("-n")))
-            "-n from session 1 goes to session 2")
-        (is (eq s0 (cl-tmux::%cmd-switch-client s1 '("-p")))
-            "-p from session 1 goes to session 0")))))
+        (%assert-switch-client-selection s1 '("-n") s2
+                                         "-n from session 1 goes to session 2")
+        (%assert-switch-client-selection s1 '("-p") s0
+                                         "-p from session 1 goes to session 0")))))
 
 (test cmd-switch-client-l-switches-to-last-active
   "switch-client -l selects the second-most-recently-active session."
@@ -393,8 +406,8 @@
       (multiple-value-bind (s0 s1 s2) (%make-three-session-registry)
         (declare (ignore s0))
         ;; last-active stamps 10/30/20 → desc order s1,s2,s0 → second = s2.
-        (is (eq s2 (cl-tmux::%cmd-switch-client s1 '("-l")))
-            "-l from the front session 1 returns to session 2")))))
+        (%assert-switch-client-selection s1 '("-l") s2
+                                         "-l from the front session 1 returns to session 2")))))
 
 (test cmd-switch-client-t-and-T-are-orthogonal
   "switch-client -t <name> -T <table> performs the session move AND arms the
@@ -403,32 +416,23 @@
     (with-empty-registry
       (multiple-value-bind (s0 s1 s2) (%make-three-session-registry)
         (declare (ignore s0 s1))
-        (let ((result (cl-tmux::%cmd-switch-client (cl-tmux::server-find-session "1")
-                                                   '("-t" "2" "-T" "resize"))))
-          (is (eq s2 result) "-t still switches the session when -T is also given")
-          (is (string= "resize" cl-tmux::*key-table*)
-              "-T still arms the key table when -t is also given"))))))
+        (%assert-switch-client-selection (cl-tmux::server-find-session "1")
+                                         '("-t" "2" "-T" "resize")
+                                         s2
+                                         "-t still switches the session when -T is also given")
+        (is (string= "resize" cl-tmux::*key-table*)
+            "-T still arms the key table when -t is also given")))))
 
-(test cmd-switch-client-rejects-unimplemented-client-targeting
-  "switch-client rejects client-targeting/control flags that cl-tmux does not
-   implement instead of consuming them silently."
+(test cmd-switch-client-rejects-unsupported-client-targeting-and-control-flags
+  "switch-client rejects unsupported client-targeting/control flags."
   (with-loop-state
     (with-empty-registry
       (multiple-value-bind (s0 s1 s2) (%make-three-session-registry)
-        (declare (ignore s0 s2))
+        (declare (ignore s0))
         (dolist (args '(("-c" "client-0" "-t" "2")
                         ("-E" "-t" "2")
                         ("-Z" "-t" "2")))
-          (let ((*overlay* nil)
-                (cl-tmux::*dirty* nil))
-            (is-false (cl-tmux::%cmd-switch-client s1 args)
-                      "~S must be rejected" args)
-            (is (search "unsupported argument" *overlay*)
-                "~S must explain the unsupported flag" args)
-            (is (eq s1 (cl-tmux::server-current-session))
-                "~S must not switch to the target session" args)
-            (is-false cl-tmux::*dirty*
-                      "~S must not mark the screen dirty" args)))))))
+          (%assert-switch-client-rejection s1 args))))))
 
 (test cmd-switch-client-r-refreshes-without-session-switch
   "switch-client -r is accepted as a redraw request without changing sessions."
@@ -437,8 +441,8 @@
       (multiple-value-bind (s0 s1 s2) (%make-three-session-registry)
         (declare (ignore s0 s2))
         (setf cl-tmux::*dirty* nil)
-        (is-true (cl-tmux::%cmd-switch-client s1 '("-r"))
-                 "-r returns true as a handled refresh request")
+        (%assert-switch-client-selection s1 '("-r") t
+                                         "-r returns true as a handled refresh request")
         (is-true cl-tmux::*dirty*
                  "-r marks the display dirty")))))
 
@@ -474,18 +478,23 @@
     (is (eq :suspend-client (key-table-command-value "prefix" (code-char 26)))
         "C-z -> suspend-client")))
 
-(test default-prefix-pageup-binding-registered
-  "C-b PageUp is installed as copy-mode -u in the prefix table."
-  (with-isolated-config
-    (is (equal '("copy-mode" "-u")
-               (key-table-command-value "prefix" "PageUp"))
-        "PageUp -> copy-mode -u")))
+(test copy-mode-enter-u-scrolls-to-oldest-scrollback
+  "copy-mode-enter -u pre-scrolls to the oldest scrollback content."
+  (with-fake-session (s)
+    (let ((screen (active-screen s)))
+      (seed-scrollback screen 30)
+      (finishes (cl-tmux::%cmd-copy-mode-arg s '("-u"))
+        "copy-mode-enter -u must not signal an error")
+      (is-true (screen-copy-mode-p screen)
+               "copy-mode-enter -u must enter copy mode")
+      (is (= 30 (screen-copy-offset screen))
+          "copy-mode-enter -u must scroll to the oldest scrollback row"))))
 
 (test prefix-meta-1-applies-layout-end-to-end
   "C-b then Alt+1 (ESC 1) runs the bound select-layout even-horizontal on a
    two-pane window without error (the after-prefix meta path fires the default)."
   (with-isolated-config
-    (with-fake-session (s :nwindows 1 :npanes 2)
+    (with-fake-two-pane-session (s)
         (let ((state (cl-tmux::make-input-state)))
           (dolist (b '(2 27 49))  ; C-b ESC 1
             (cl-tmux::process-byte s b state))

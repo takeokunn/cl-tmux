@@ -48,7 +48,7 @@
   "%render-panes-and-borders with NIL window does not signal."
   (finishes
     (let ((buf (make-string-output-stream)))
-      (cl-tmux/renderer::%render-panes-and-borders buf nil nil nil 80))))
+      (cl-tmux/renderer::%render-panes-and-borders buf nil nil nil nil 80))))
 
 ;;; ── status-justify-line dispatch table ──────────────────────────────────────
 

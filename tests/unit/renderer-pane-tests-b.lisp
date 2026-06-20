@@ -127,8 +127,9 @@
 (test compute-selection-bounds-active-selection
   "%compute-selection-bounds returns sel-active=T when all prerequisites are present."
   (let ((screen (make-selecting-screen 10 5 1 2 3 4)))
-    (multiple-value-bind (active sr er sc ec rect-p)
+    (multiple-value-bind (active sr er sc ec rect-p mark-row mark-col)
         (cl-tmux/renderer::%compute-selection-bounds screen)
+      (declare (ignore mark-row mark-col))
       (is-true  active  "sel-active must be T when all prerequisites present")
       (is-false rect-p  "rect-p must be NIL for non-rectangle selection")
       (check-table (list (list sr 1 "start row must be min(mark-row, cursor-row)")
@@ -142,9 +143,9 @@
     (setf (cl-tmux/terminal/types:screen-copy-selecting screen) nil
           (cl-tmux/terminal/types:screen-copy-mark      screen) (cons 0 0)
           (cl-tmux/terminal/types:screen-copy-cursor    screen) (cons 1 1))
-    (multiple-value-bind (active sr er sc ec rect-p)
+    (multiple-value-bind (active sr er sc ec rect-p mark-row mark-col)
         (cl-tmux/renderer::%compute-selection-bounds screen)
-      (declare (ignore sr er sc ec rect-p))
+      (declare (ignore sr er sc ec rect-p mark-row mark-col))
       (is-false active "sel-active must be NIL when copy-selecting is NIL"))))
 
 (test compute-selection-bounds-nil-mark
@@ -153,18 +154,18 @@
     (setf (cl-tmux/terminal/types:screen-copy-selecting screen) t
           (cl-tmux/terminal/types:screen-copy-mark      screen) nil
           (cl-tmux/terminal/types:screen-copy-cursor    screen) (cons 1 1))
-    (multiple-value-bind (active sr er sc ec rect-p)
+    (multiple-value-bind (active sr er sc ec rect-p mark-row mark-col)
         (cl-tmux/renderer::%compute-selection-bounds screen)
-      (declare (ignore sr er sc ec rect-p))
+      (declare (ignore sr er sc ec rect-p mark-row mark-col))
       (is-false active "sel-active must be NIL when mark is NIL"))))
 
 (test compute-selection-bounds-reversed-rows-normalised
   "%compute-selection-bounds normalises row order so start <= end."
   ;; cursor above mark — rows should be swapped in the output
   (let ((screen (make-selecting-screen 10 5 3 5 1 2)))
-    (multiple-value-bind (active sr er sc ec rect-p)
+    (multiple-value-bind (active sr er sc ec rect-p mark-row mark-col)
         (cl-tmux/renderer::%compute-selection-bounds screen)
-      (declare (ignore rect-p))
+      (declare (ignore rect-p mark-row mark-col))
       (is-true active "sel-active must be T")
       (is (<= sr er) "start row (~D) must be <= end row (~D)" sr er)
       ;; cursor-row < mark-row: start-col = cursor-col, end-col = mark-col
@@ -176,9 +177,9 @@
 (test compute-selection-bounds-same-row-cols-normalised
   "%compute-selection-bounds normalises col order for same-row selections."
   (let ((screen (make-selecting-screen 10 5 2 7 2 3)))
-    (multiple-value-bind (active sr er sc ec rect-p)
+    (multiple-value-bind (active sr er sc ec rect-p mark-vrow mark-row mark-col)
         (cl-tmux/renderer::%compute-selection-bounds screen)
-      (declare (ignore rect-p))
+      (declare (ignore rect-p mark-vrow mark-row mark-col))
       (is-true active "sel-active must be T")
       (check-table (list (list sr 2 "both rows are 2: start")
                          (list er 2 "both rows are 2: end")
@@ -187,27 +188,26 @@
 
 (test compute-selection-bounds-copy-offset-applied
   "%compute-selection-bounds maps virtual rows to viewport rows using the CURRENT offset.
-   When the mark was placed at offset=0 (mark-offset=0, the default) and the viewport
-   has since scrolled to offset=2, the mark at viewport row 4 now resolves to viewport
-   row 4+2=6 (off-screen, clamped to height-1=4).  The cursor at viewport row 2 with
-   offset=2 resolves to virtual row 0, which at offset=2 is viewport row 2.
-   Selection: viewport rows 2-4 (mark is clamped to the bottom edge)."
+   The returned mark row is the clamped viewport row even when the virtual mark row
+   falls outside the visible pane."
   ;; No scrollback.  mark=(4,0) was set when offset=0 (mark-offset=0 by default).
   ;; Current offset=2, cursor=(2,0).
   (let ((screen (make-selecting-screen 10 5 4 0 2 0 :offset 2)))
-    (multiple-value-bind (active sr er sc ec rect-p)
+    (multiple-value-bind (active sr er sc ec rect-p mark-row mark-col)
         (cl-tmux/renderer::%compute-selection-bounds screen)
-      (declare (ignore sc ec rect-p))
+      (declare (ignore sc ec rect-p mark-col))
       (is-true active "sel-active must be T")
       (is (= 2 sr) "start row: cursor vrow=0 → viewport 0-0+2=2")
-      (is (= 4 er) "end row: mark vrow=4 → viewport 4-0+2=6, clamped to height-1=4"))))
+      (is (= 4 er) "end row: mark vrow=4 → viewport 4-0+2=6, clamped to height-1=4")
+      (is (= 4 mark-row) "mark-row must be the clamped viewport row"))))
 
 (test compute-selection-bounds-rect-columns-symmetric
   "%compute-selection-bounds uses min/max column symmetrically in rectangle mode."
   ;; mark at (row=1, col=6), cursor at (row=4, col=2): rect cols [2,7) inclusive
   (let ((screen (make-selecting-screen 10 6 1 6 4 2 :rect t)))
-    (multiple-value-bind (active sr er sc ec rect-p)
+    (multiple-value-bind (active sr er sc ec rect-p mark-vrow mark-row mark-col)
         (cl-tmux/renderer::%compute-selection-bounds screen)
+      (declare (ignore mark-vrow mark-row mark-col))
       (is-true  active  "sel-active must be T")
       (is-true  rect-p  "rect-p must be T when :rect t")
       (check-table (list (list sr 1 "start row = min(1,4) = 1")
@@ -220,9 +220,9 @@
   "%compute-selection-bounds swaps columns correctly when cursor-col > mark-col in rect mode."
   ;; mark at (row=2, col=3), cursor at (row=5, col=8)
   (let ((screen (make-selecting-screen 10 8 2 3 5 8 :rect t)))
-    (multiple-value-bind (active sr er sc ec rect-p)
+    (multiple-value-bind (active sr er sc ec rect-p mark-row mark-col)
         (cl-tmux/renderer::%compute-selection-bounds screen)
-      (declare (ignore sr er))
+      (declare (ignore sr er mark-row mark-col))
       (is-true  active  "sel-active must be T")
       (is-true  rect-p  "rect-p must be T")
       (is (= 3 sc) "start col = min(3,8) = 3")

@@ -9,9 +9,9 @@
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (import '(cl-tmux/config:lookup-key-binding
-             cl-tmux/config:*default-shell*
+            cl-tmux/config:*default-shell*
             cl-tmux/config:*status-height*
-            cl-tmux/config:set-key-binding
+            cl-tmux/config:key-table-bind
             cl-tmux/config:apply-config-directive
             cl-tmux/config:load-config-from-string
             cl-tmux/config:load-config-from-stream

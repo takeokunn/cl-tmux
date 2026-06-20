@@ -2,107 +2,16 @@
 
 ;;; -- Shell execution and pane manipulation commands -------------------------
 ;;;
-;;; send-keys-X copy-mode dispatch, run-shell, if-shell, capture-pane,
-;;; resize-pane, join-pane, break-pane, clear-history, rotate-window.
-
-;;; Flat records keep explicit-arg lookup and coercion separate:
-;;;   (command-name kind handler)
-(defparameter +send-keys-x-explicit-arg-specs+
-  '(("jump-forward"                  :char copy-mode-jump-forward)
-    ("jump-backward"                 :char copy-mode-jump-backward)
-    ("jump-to"                       :char copy-mode-jump-to)
-    ("jump-to-backward"              :char copy-mode-jump-to-backward)
-    ("goto-line"                     :line copy-mode-goto-line)
-    ("search-forward-text"           :text copy-mode-search-forward)
-    ("search-backward-text"          :text copy-mode-search-backward)
-    ("copy-pipe"                     :text copy-mode-copy-pipe-no-cancel)
-    ("copy-pipe-and-cancel"          :text copy-mode-copy-pipe)
-    ("copy-pipe-end-of-line-and-cancel"
-     :text copy-mode-copy-pipe-end-of-line)))
-
-(defun %send-keys-x-explicit-arg-spec (command-name)
-  "Return the explicit-argument spec for COMMAND-NAME."
-  (dolist (spec +send-keys-x-explicit-arg-specs+)
-    (destructuring-bind (name kind handler) spec
-      (when (string-equal command-name name)
-        (return (values kind handler))))))
-
-(defun %send-keys-x-explicit-arg-string (kind extra-args)
-  "Return the explicit argument string for KIND from EXTRA-ARGS."
-  (ecase kind
-    ((:char :line) (first extra-args))
-    (:text (format nil "~{~A~^ ~}" extra-args))))
-
-(defun %send-keys-x-coerce-explicit-arg (kind handler screen arg)
-  "Apply KIND-specific coercion to ARG and call HANDLER on SCREEN."
-  (when (and screen arg (plusp (length arg)))
-    (ecase kind
-      (:char (funcall handler screen (char arg 0)))
-      (:line (let ((line-number (ignore-errors (parse-integer arg))))
-               (when line-number
-                 (funcall handler screen line-number)
-                 t)))
-      (:text (funcall handler screen arg) t))))
-
-(defun %dispatch-send-keys-x-explicit-arg (screen command-name extra-args)
-  "Dispatch COMMAND-NAME with an explicit positional argument when it has one."
-  (multiple-value-bind (kind handler)
-      (%send-keys-x-explicit-arg-spec command-name)
-    (when handler
-      (%send-keys-x-coerce-explicit-arg kind handler screen
-                                        (%send-keys-x-explicit-arg-string kind
-                                                                         extra-args)))))
-
-(defun %dispatch-send-keys-x-with-temporary-focus (session target-pane target-window thunk)
-  "Run THUNK while TARGET-PANE is temporarily focused in TARGET-WINDOW.
-   Restores the real session/window focus afterward without delivering focus
-   events or updating recency metadata."
-  (let ((prev-win  (session-active-window session))
-        (prev-pane (and target-window (window-active-pane target-window))))
-    (unwind-protect
-         (progn
-           (setf (session-active session) target-window
-                 (window-active target-window) target-pane)
-           (funcall thunk))
-      (when target-window
-        (setf (window-active target-window) prev-pane))
-      (setf (session-active session) prev-win))))
-
-(defun %dispatch-send-keys-X (session command-name &optional target-pane target-window extra-args)
-  "Dispatch a send-keys -X COMMAND-NAME against TARGET-PANE's copy mode (default:
-   the active pane).  Copy-mode -X commands act on the session's ACTIVE screen, so
-   when TARGET-PANE is a non-active pane the command runs with a temporary focus
-   swap so it operates on the target while leaving the real focus unchanged.
-   Returns T when COMMAND-NAME is a recognised copy-mode command.
-   EXTRA-ARGS (a list of strings) holds any positional arguments after the command
-   name; used by the copy-pipe commands to carry the pipe-command string."
-  (let* ((pane   (or target-pane (session-active-pane session)))
-         (screen (and pane (cl-tmux/model:pane-screen pane))))
-    (cond
-      ((and extra-args
-            (%dispatch-send-keys-x-explicit-arg screen command-name extra-args))
-       t)
-      ;; Standard keyword dispatch.
-       (t
-       (let ((kw (cdr (assoc command-name *copy-mode-x-commands* :test #'string-equal))))
-         (when kw
-           (if (and target-pane target-window
-                    (not (eq target-pane (session-active-pane session))))
-               (%dispatch-send-keys-x-with-temporary-focus
-                session target-pane target-window
-                (lambda ()
-                  (dispatch-command session kw nil)))
-               (dispatch-command session kw nil))
-           t))))))
+;;; run-shell, if-shell, capture-pane, resize-pane, join-pane, break-pane,
+;;; clear-history, rotate-window.
 
 (defun %cmd-run-shell-arg (session args)
-  "run-shell [-bCdt] command:
+  "run-shell [-bC] command:
    run COMMAND in a shell and show the output.
    -b: run in background (fire-and-forget, no output shown).
-   -C executes COMMAND as a tmux command instead of a shell command.
-   -t and -d are accepted for parity with tmux but ignored."
-  (with-command-input (flags positionals args "dt"
-                             :allowed-flags '(#\b #\C #\d #\t)
+   -C executes COMMAND as a tmux command instead of a shell command."
+  (with-command-input (flags positionals args ""
+                             :allowed-flags '(#\b #\C)
                              :message "run-shell: unsupported argument")
     (let* ((command (format nil "~{~A~^ ~}" positionals)))
       (when (plusp (length command))
@@ -130,15 +39,15 @@
 
 (defun %run-shell-background-p (flags)
   "True when RUN-SHELL was called with the background flag."
-  (assoc #\b flags))
+  (%flag-present-p flags #\b))
 
 (defun %run-shell-tmux-command-p (flags)
   "True when RUN-SHELL should route COMMAND through tmux instead of the shell."
-  (assoc #\C flags))
+  (%flag-present-p flags #\C))
 
 (defun %if-shell-format-p (flags)
   "True when IF-SHELL should expand its condition as a format string."
-  (assoc #\F flags))
+  (%flag-present-p flags #\F))
 
 (defun %cmd-if-shell-format-arg (session target-session target-window target-pane
                                   cond-str then-str else-str)
@@ -165,7 +74,7 @@
                              :max-positionals 3
                              :message "if-shell: unsupported argument")
     (let* ((format-p (%if-shell-format-p flags))
-           (target-str (cdr (assoc #\t flags)))
+           (target-str (%flag-value flags #\t))
            (cond-str (first positionals))
            (then-str (second positionals))
            (else-str (third positionals)))
@@ -176,20 +85,23 @@
                                         cond-str then-str else-str)
               (%cmd-if-shell-shell-arg session cond-str then-str else-str)))))))
 
-(defun %resolve-active-target-window-pane (session target-str)
-  "Resolve TARGET-STR relative to SESSION's active window and pane."
-  (multiple-value-bind (cur-win cur-pane) (%active-window-pane session)
-    (%resolve-target-window-pane session target-str cur-win cur-pane)))
-
 (defun %capture-pane-options-from-flags (flags)
   "Decode capture-pane flags into a plist used by the command handler."
-  (list :print-p (assoc #\p flags)
-        :include-scrollback (assoc #\S flags)
-        :escapes (assoc #\e flags)
-        :join (assoc #\J flags)
-        :preserve (assoc #\N flags)
-        :target-str (cdr (assoc #\t flags))
-        :buffer-name (cdr (assoc #\b flags))))
+  (list :print-p (%flag-present-p flags #\p)
+        :include-scrollback (%flag-present-p flags #\S)
+        :escapes (%flag-present-p flags #\e)
+        :join (%flag-present-p flags #\J)
+        :preserve (%flag-present-p flags #\N)
+        :target-str (%flag-value flags #\t)
+        :buffer-name (%flag-value flags #\b)))
+
+(defun %capture-pane-deliver-content (content print-p buffer-name)
+  "Send captured CONTENT to the overlay or a paste buffer."
+  (if print-p
+      ;; -p: stdout equivalent — show the content in an overlay.
+      (show-overlay content)
+      ;; Default: save to a paste buffer (silent), like tmux.  -b names it.
+      (cl-tmux/buffer:add-paste-buffer content buffer-name)))
 
 (defun %cmd-capture-pane-arg (session args)
   "capture-pane [-p] [-S start] [-E end] [-b buffer] [-JeN] [-t target]: capture
@@ -220,24 +132,26 @@
            (escapes (getf options :escapes))
            (join (getf options :join))
            (preserve (getf options :preserve))
-           (target-str (getf options :target-str))
-           (pane (nth-value 1 (%resolve-active-target-window-pane session target-str)))
-           (content (and pane (capture-pane pane
-                                            :include-scrollback (and include-scrollback t)
-                                            :escapes (and escapes t)
-                                            :join    (and join t)
-                                            :preserve-trailing (and preserve t)))))
-      (when content
-        (if print-p
-            ;; -p: stdout equivalent — show the content in an overlay.
-            (show-overlay content)
-            ;; Default: save to a paste buffer (silent), like tmux.  -b names it.
-            (cl-tmux/buffer:add-paste-buffer content (getf options :buffer-name)))))))
+           (target-str (getf options :target-str)))
+      (with-target-context (target-session target-window pane session target-str)
+        (declare (ignore target-session target-window))
+        (let ((content (and pane (capture-pane pane
+                                               :include-scrollback (and include-scrollback t)
+                                               :escapes (and escapes t)
+                                               :join (and join t)
+                                               :preserve-trailing (and preserve t)))))
+          (when content
+            (%capture-pane-deliver-content content print-p
+                                           (getf options :buffer-name))))))))
 
 (defun %resize-pane-to-absolute-dimension (win pane target-size size-fn direction)
   (let ((delta (- target-size (funcall size-fn pane))))
     (unless (zerop delta)
       (resize-pane win direction delta))))
+
+(defparameter +resize-pane-absolute-specs+
+  '((#\x cl-tmux/model:pane-width :right)
+    (#\y cl-tmux/model:pane-height :down)))
 
 (defparameter +resize-pane-direction-specs+
   '((#\L :left)
@@ -245,10 +159,18 @@
     (#\U :up)
     (#\D :down)))
 
+(defun %resize-pane-apply-absolute-dimensions (win pane flags)
+  (dolist (spec +resize-pane-absolute-specs+)
+    (destructuring-bind (flag size-fn direction) spec
+      (let ((target-size (%parse-flag-int flags flag)))
+        (when target-size
+          (%resize-pane-to-absolute-dimension win pane target-size size-fn
+                                              direction))))))
+
 (defun %resize-pane-apply-relative-directions (flags win amount)
   (dolist (spec +resize-pane-direction-specs+)
     (destructuring-bind (flag direction) spec
-      (when (assoc flag flags)
+      (when (%flag-present-p flags flag)
         (when win
           (resize-pane win direction amount))))))
 
@@ -262,36 +184,24 @@
    -Z: zoom-toggle the target pane."
   (with-command-flags+pos (flags positionals args "txy")
     (let* ((amount-str (first positionals))
-           (amount     (or (and amount-str (parse-integer amount-str :junk-allowed t)) 5))
-           (x-val      (%parse-flag-int flags #\x))
-           (y-val      (%parse-flag-int flags #\y))
+           (amount (or (and amount-str (%parse-integer-or-nil amount-str :junk-allowed t))
+                       5))
+           (x-val (%parse-flag-int flags #\x))
+           (y-val (%parse-flag-int flags #\y))
            ;; Resolve target pane; fall back to active window for resize operations.
-           (target-str (cdr (assoc #\t flags)))
-           (win        (nth-value 0 (%resolve-active-target-window-pane session target-str))))
-      (cond
-        ((assoc #\Z flags)
-         (when win (window-zoom-toggle win)))
-        ;; -x/-y: absolute resize.  Move the relevant border by (target - current);
-        ;; a signed delta grows (positive) or shrinks (negative) the active pane.
-        ((or x-val y-val)
-         (when win
-           (let ((ap (window-active-pane win)))
-             (when ap
-               (when x-val
-                 (%resize-pane-to-absolute-dimension win ap x-val
-                                                      #'cl-tmux/model:pane-width
-                                                      :right))
-               (when y-val
-                 (%resize-pane-to-absolute-dimension win ap y-val
-                                                      #'cl-tmux/model:pane-height
-                                                      :down))))))
-        ((some (lambda (spec) (assoc (first spec) flags))
-               +resize-pane-direction-specs+)
-         (%resize-pane-apply-relative-directions flags win amount))))))
-
-(defun %cmd-resize-pane (session args)
-  "Compatibility wrapper for resize-pane command dispatch."
-  (%cmd-resize-pane-arg session args))
+           (target-str (%flag-value flags #\t)))
+      (with-target-context (target-session win pane session target-str)
+        (declare (ignore target-session))
+        (cond
+          ((%flag-present-p flags #\Z)
+           (when win (window-zoom-toggle win)))
+          ;; -x/-y: absolute resize. Move the relevant border by (target - current).
+          ((or x-val y-val)
+           (when (and win pane)
+             (%resize-pane-apply-absolute-dimensions win pane flags)))
+          ((some (lambda (spec) (%flag-present-p flags (first spec)))
+                 +resize-pane-direction-specs+)
+           (%resize-pane-apply-relative-directions flags win amount)))))))
 
 (defun %cmd-join-pane-arg (session args)
   "join-pane / move-pane [-bdfhv] [-l size] [-s src-pane] [-t dst-pane]: move
@@ -312,19 +222,19 @@
                                :message "join-pane: unsupported argument")
     (declare (ignore positionals))
     (multiple-value-bind (cur-win cur-pane) (%active-window-pane session)
-      (let* ((src-str  (cdr (assoc #\s flags)))
-            (dst-str  (cdr (assoc #\t flags)))
-            (dir      (if (assoc #\h flags) :h :v))
-            (before   (assoc #\b flags))
-            (full     (assoc #\f flags))
-            (size-str (cdr (assoc #\l flags)))
-            (size     (and size-str (%parse-split-size size-str)))
-            (src-win  (if *server-marked-pane*
-                           (pane-window *server-marked-pane*)
-                           cur-win))
-            (src-pane (or *server-marked-pane*
+      (let* ((src-str (%flag-value flags #\s))
+             (dst-str (%flag-value flags #\t))
+             (dir (if (%flag-present-p flags #\h) :h :v))
+             (before (%flag-present-p flags #\b))
+             (full (%flag-present-p flags #\f))
+             (size-str (%flag-value flags #\l))
+             (size (and size-str (%parse-split-size size-str)))
+             (src-win (if *server-marked-pane*
+                          (pane-window *server-marked-pane*)
+                          cur-win))
+             (src-pane (or *server-marked-pane*
                            cur-pane))
-             (dst-win  cur-win))
+             (dst-win cur-win))
         ;; -s: resolve the source pane (and its window).  When the target names a
         ;; window but no pane, take THAT window's active pane (not the current
         ;; window's, which is resolve-target's current-pane default).
@@ -341,72 +251,119 @@
                               :full full
                               :size size))
           ;; tmux makes the joined pane active unless -d.
-          (unless (assoc #\d flags)
+          (unless (%flag-present-p flags #\d)
             (window-select-pane dst-win src-pane))
           (setf *dirty* t)
           t)))))
 
+(defun %parse-break-pane-window-index (target)
+  (when (and target (> (length target) 0))
+    (let* ((colon (position #\: target))
+           (dot (position #\. target :start (if colon (1+ colon) 0)))
+           (start (cond
+                    ((and (> (length target) 1) (char= (char target 0) #\@)) 1)
+                    (colon (1+ colon))
+                    (t 0)))
+           (end (or dot (length target))))
+      (when (< start end)
+        (let ((index (%parse-integer-or-nil target :start start :end end
+                                             :junk-allowed t)))
+          (when (and index
+                     (every #'digit-char-p (subseq target start end)))
+            index))))))
+
+(defun %break-pane-target-window-id (target-str target-win cur-win after before)
+  (or (%parse-break-pane-window-index target-str)
+      (and target-win (window-id target-win))
+      (and (or after before) cur-win (window-id cur-win))))
+
+(defun %resolve-break-pane-endpoints (session src-str target-str cur-win cur-pane after before)
+  "Resolve the source pane/window and destination window id for break-pane."
+  (multiple-value-bind (src-win src-pane)
+      (%resolve-target-window-pane session src-str cur-win cur-pane)
+    (let* ((target-win (and target-str
+                            (nth-value 0
+                                       (%resolve-target-window-pane
+                                        session target-str cur-win cur-pane))))
+           (target-id (%break-pane-target-window-id target-str target-win
+                                                    cur-win after before)))
+      (values src-win src-pane target-id))))
+
 (defun %cmd-break-pane-arg (session args)
-  "break-pane [-d] [-n window-name] [-s src-pane]:
+  "break-pane [-abdP] [-F format] [-n window-name] [-s src-pane] [-t dst-window]:
    move a pane out of its window into a new window of its own.
    -d: don't switch to the new window (stay on the current one).
+   -a/-b: insert after/before the target window, shifting colliding ids upward.
+   -P: print information about the new pane.
+   -F format: print format for -P.
    -n name: name the new window (default: the shell basename).
    -s src-pane: the pane to break out (default: the active pane).
+   -t dst-window: destination window index for the new window.
    No-op when the source window has fewer than two panes.  This is the scriptable
    form; the interactive :break-pane keybinding is unchanged."
   (with-command-input (flags positionals args "nstF"
-                               :allowed-flags '(#\d #\n #\s)
+                               :allowed-flags '(#\a #\b #\d #\F #\n #\P #\s #\t)
                                :max-positionals 0
                                :message "break-pane: unsupported argument")
-    (multiple-value-bind (cur-win cur-pane) (%active-window-pane session)
-      (let* ((detach   (assoc #\d flags))
-             (name     (cdr (assoc #\n flags)))
-             (src-str  (cdr (assoc #\s flags)))
-             (src-win  cur-win)
-             (src-pane cur-pane))
-        ;; -s: resolve the source pane (and its window); a window-only target uses
-        ;; that window's own active pane (not the current window's).
-        (multiple-value-setq (src-win src-pane)
-          (%resolve-target-window-pane session src-str cur-win src-pane))
-        (let ((new-win (cl-tmux/commands:break-pane
-                        session :src-window src-win :pane src-pane
-                                :name name :select (not detach))))
-          (when new-win
-            (setf *dirty* t)
-            t))))))
+      (multiple-value-bind (cur-win cur-pane) (%active-window-pane session)
+        (let* ((detach   (%flag-present-p flags #\d))
+               (after    (%flag-present-p flags #\a))
+               (before   (%flag-present-p flags #\b))
+               (print-p  (%flag-present-p flags #\P))
+               (print-fmt (%flag-value flags #\F))
+               (name     (%flag-value flags #\n))
+               (src-str  (%flag-value flags #\s))
+               (target-str (%flag-value flags #\t)))
+          (multiple-value-bind (src-win src-pane target-id)
+              (%resolve-break-pane-endpoints session src-str target-str
+                                             cur-win cur-pane after before)
+            (let ((new-win (cl-tmux/commands:break-pane
+                            session :src-window src-win :pane src-pane
+                                    :name name :select (not detach)
+                                    :target-window-id target-id
+                                    :insert-after after
+                                    :insert-before before)))
+              (when new-win
+                (when print-p
+                  (%show-pane-info-overlay session new-win src-pane print-fmt))
+                (setf *dirty* t)
+                t)))))))
 
 (defun %cmd-clear-history-arg (session args)
-  "clear-history [-H] [-t target-pane]: clear a pane's scrollback history.
+  "clear-history [-t target-pane]: clear a pane's scrollback history.
    -t target-pane: the pane to clear (default: the active pane); a window-only
-   target clears that window's active pane.
-   -H: accepted (tmux also drops the alternate-screen history); cl-tmux clears the
-   pane's scrollback regardless.  This is the scriptable form; the interactive
-   :clear-history keybinding (active pane) is unchanged."
-  (with-command-flags+pos (flags positionals args "t")
+   target clears that window's active pane.  This is the scriptable form; the
+   interactive :clear-history keybinding (active pane) is unchanged."
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\t)
+                             :max-positionals 0
+                             :message "clear-history: unsupported argument")
     (declare (ignore positionals))
-    (let* ((target-str (cdr (assoc #\t flags)))
-           (pane       (nth-value 1 (%resolve-active-target-window-pane session target-str))))
-      (when pane
-        (cl-tmux/terminal/actions:clear-scrollback (pane-screen pane))
-        (setf *dirty* t)
-        t))))
+    (let ((target-str (%flag-value flags #\t)))
+      (with-target-context (target-session target-window pane session target-str)
+        (declare (ignore target-session target-window))
+        (when pane
+          (cl-tmux/terminal/actions:clear-scrollback (pane-screen pane))
+          (setf *dirty* t)
+          t)))))
 
 (defun %cmd-rotate-window-arg (session args)
-  "rotate-window [-DUZ] [-t target-window]: rotate the pane order in a window.
+  "rotate-window [-DU] [-t target-window]: rotate the pane order in a window.
    -U (the default) rotates forward (the first pane moves to the end); -D rotates
-   backward.  -Z keeps a zoomed window zoomed and rotates the saved layout.
+   backward.
    -t target-window: the window to rotate (default: the active window).
    This is the scriptable form; the interactive :rotate-window /
    :rotate-window-reverse bindings are unchanged."
   (with-command-input (flags positionals args "t"
-                               :allowed-flags '(#\D #\U #\Z #\t)
+                               :allowed-flags '(#\D #\U #\t)
                                :max-positionals 0
                                :message "rotate-window: unsupported argument")
     (declare (ignore positionals))
-    (let* ((target-str (cdr (assoc #\t flags)))
-           (dir        (if (assoc #\D flags) :down :up))
-           (win        (nth-value 0 (%resolve-active-target-window-pane session target-str))))
-      (when win
-        (window-rotate win dir)
-        (setf *dirty* t)
-        t))))
+    (let ((target-str (%flag-value flags #\t))
+          (dir (if (%flag-present-p flags #\D) :down :up)))
+      (with-target-context (target-session win pane session target-str)
+        (declare (ignore target-session pane))
+        (when win
+          (window-rotate win dir)
+          (setf *dirty* t)
+          t)))))

@@ -46,7 +46,7 @@
     (write-string (subseq msg 0 mlen) stream))
   (reset-attrs stream))
 
-(defun %render-panes-and-borders (buffer window panes active-pane terminal-cols)
+(defun %render-panes-and-borders (buffer session window panes active-pane terminal-cols)
   "Render all panes and split-tree borders for WINDOW into BUFFER.
    Snapshots zoom state under the window lock to avoid a race with
    window-zoom-toggle running on the main thread."
@@ -55,7 +55,7 @@
       (with-lock-held ((window-lock window))
         (setf zoomed (window-zoom-p window)
               tree   (window-tree   window))))
-    (dolist (pane panes) (render-pane buffer pane))
+          (dolist (pane panes) (render-pane buffer session pane))
     (when (and tree (not zoomed))
       (render-tree-borders buffer tree active-pane terminal-cols))))
 
@@ -77,7 +77,7 @@
     (if (session-locked-p session)
         (render-lock-screen buffer terminal-rows terminal-cols)
         (progn
-          (%render-panes-and-borders buffer window panes active-pane terminal-cols)
+          (%render-panes-and-borders buffer session window panes active-pane terminal-cols)
           ;; pane-border-status title lines (drawn after borders so they overwrite border cells)
           (when (and window panes
                      (string/= (cl-tmux/options:get-option "pane-border-status" "off") "off"))

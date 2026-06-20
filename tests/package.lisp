@@ -50,6 +50,7 @@
                 #:window-remove-pane
                 #:window-resize-active
                 #:window-refresh-panes
+                #:session-environment
                 #:session-environment-value
                 #:session-environment-names
                 #:session-set-environment
@@ -152,6 +153,7 @@
                 #:lookup-key-binding
                 #:define-initial-key-bindings
                 #:key-table-bind
+                #:key-table-unbind
                 #:key-table-command
                 #:apply-config-directive
                 #:*key-tables*)

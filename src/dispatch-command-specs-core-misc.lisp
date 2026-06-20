@@ -1,11 +1,9 @@
 (in-package #:cl-tmux)
 
 (defparameter *dispatch-command-specs-core-misc-entries*
-  '((:set-buffer '%cmd-set-buffer-arg ("set-buffer")
-                 :public-name "set-buffer")
-    (:display-message '%cmd-display-message ("display-message"))
-    (:display-menu '%cmd-display-menu-arg ("display-menu")
-                   :named-names ("menu"))
+  '((:set-buffer '%cmd-set-buffer-arg ("set-buffer"))
+      (:display-message '%cmd-display-message ("display-message"))
+    (:display-menu '%cmd-display-menu-arg ("display-menu"))
     (:set-hook '%cmd-set-hook ("set-hook"))
     (:set-option '%cmd-set-option ("set-option"))
     (:set-window-option '%cmd-set-window-option ("set-window-option"))

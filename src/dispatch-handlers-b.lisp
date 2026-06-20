@@ -41,14 +41,12 @@
            (start-reader-thread (window-active-pane new-win)))))))
   (:join-pane
    (with-active-window (dst-win session)
-     (prompt-start "join-pane from window" ""
-                   (lambda (idx-str)
-                     (let ((idx (ignore-errors (parse-integer idx-str))))
-                       (when idx
-                         (let* ((src-win  (nth idx (session-windows session)))
-                                (src-pane (and src-win (window-active-pane src-win))))
-                           (when src-pane
-                             (join-pane session src-win src-pane dst-win :h)))))))))
+     (prompt-integer "join-pane from window"
+                      (lambda (idx)
+                        (let* ((src-win  (nth idx (session-windows session)))
+                               (src-pane (and src-win (window-active-pane src-win))))
+                          (when src-pane
+                            (join-pane session src-win src-pane dst-win :h)))))))
 
   ;; ── Pipe pane / synchronize ────────────────────────────────────────────────
   (:pipe-pane

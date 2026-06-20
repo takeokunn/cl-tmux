@@ -83,6 +83,7 @@
      (:file "renderer-pane-selection") ; selection bounds helpers
      (:file "renderer-pane-clock")     ; big digits + display-panes clock overlay
      (:file "renderer-pane-search")    ; pane content search match ranges
+     (:file "renderer-pane-copy-mode") ; copy-mode pane overlay rendering
      (:file "renderer-pane")           ; pane cell rendering (selection, copy-mode highlights)
      (:file "renderer-borders")        ; split-tree separators + pane border rendering
      (:file "renderer-overlay")        ; popup and menu box-drawing
@@ -102,14 +103,18 @@
      (:file "dispatch-handlers-support") ; shared prompt/menu helpers for dispatch handlers
      (:file "dispatch-commands")          ; flag-parser utils + display/prompt/pane %cmd-* handlers
      (:file "dispatch-commands-buffer")   ; paste-buffer + overlay popup/menu %cmd-* handlers
-     (:file "dispatch-commands-option")   ; set-option (CPS) + rename/select %cmd-* handlers
+     (:file "dispatch-commands-option")   ; set-option (CPS) + show-options %cmd-*
+     (:file "dispatch-commands-option-pane") ; rename/select %cmd-* handlers
      (:file "dispatch-commands-lifecycle") ; kill/link/unlink/swap/move/source-file %cmd-*
     (:file "dispatch-commands-pane")   ; layout/window/pane helpers + *key-table*
     (:file "dispatch-commands-pane-session") ; session/client lifecycle %cmd-*
     (:file "dispatch-commands-pane-x") ; copy-mode -X command name table (send-keys -X dispatch)
      (:file "dispatch-commands-shell")   ; shell/pane-ops %cmd-* (run-shell, if-shell, capture, resize, join, break, clear, rotate)
      (:file "dispatch-commands-list")    ; list-sessions/windows/panes/clients/commands + wait-for arg checks
-     (:file "dispatch-commands-auto")   ; window-nav/session-mgmt %cmd-* (find-window, send-keys, respawn, pipe-pane)
+     (:file "dispatch-commands-auto")   ; window-nav/session-mgmt %cmd-* (find-window, refresh/lock, hooks, bind)
+     (:file "dispatch-commands-auto-env") ; show-environment/set-environment helpers + %cmd-* handlers
+     (:file "dispatch-commands-auto-pane") ; pane input/prefix runtime commands %cmd-* (send-keys, send-prefix)
+     (:file "dispatch-commands-auto-pane-process") ; pane process/pipe runtime commands %cmd-* (respawn, pipe-pane)
      (:file "dispatch-commands-server") ; server-access ACL
      (:file "dispatch-commands-server-customize") ; customize-mode tree browser
      (:file "dispatch-commands-runner") ; *arg-command-table* + %run-command-tokens + %run-command-line
@@ -123,7 +128,9 @@
     (:file "dispatch-handlers-b-tail") ; session/window/misc handlers
     (:file "dispatch-handlers-buffer") ; paste-buffer command handler helpers
      (:file "events-core")
-     (:file "events-mouse")   ; mouse event dispatch + overlay pager escape handler
+     (:file "events-mouse-status") ; status bar mouse handling
+     (:file "events-mouse")   ; mouse event dispatch
+     (:file "events-overlay-pager") ; overlay pager escape handler
     (:file "events-keystroke-escape")  ; escape decoder coordinator + CSI-u helpers
     (:file "events-keystroke-escape-mouse") ; X10/SGR mouse escape parsing
     (:file "events-keystroke-escape-prompt") ; prompt-local ESC sequences
@@ -239,10 +246,12 @@
        (:file "dispatch-tests-commands-d")   ; has-session, find-window/select-window-prompt, move/swap-window, bind/unbind-key, kill-pane, split, new-window — part IV
        (:file "dispatch-tests-session")    ; copy-mode paging, with-active-pane, format-menu, named-layout, kill-result, command-dispatch-outcome — part I
        (:file "dispatch-tests-session-e")  ; named-command table, select-layout, set-option -u, split-window, new-window, server-management, prefix, aliases — part V
-       (:file "dispatch-tests-session-b")  ; coverage: untested handlers, parse-flag-token, rename/new-window/split-window flags — part II
-       (:file "dispatch-tests-session-c")  ; options, move-window, new-session -s/-A/-t, control-mode REPL — part III
+        (:file "dispatch-tests-session-b")  ; coverage: untested handlers, parse-flag-token, rename/new-window/split-window flags — part II
+        (:file "dispatch-tests-session-b-tail") ; layout names, target resolvers, display-message, new-session size parsing — part IIb
+        (:file "dispatch-tests-session-c")  ; options, move-window, new-session -s/-A/-t, control-mode REPL — part III
        (:file "dispatch-tests-session-f")  ; new-session duplicate, grouped sessions, control-mode notifications, server-lifecycle, %output relay — part VI
-       (:file "dispatch-tests-session-d")  ; display-popup, send-keys -N/-H, capture-pane, named paste-buffer, join-pane, wait-for-arg — part IV
+       (:file "dispatch-tests-session-d")       ; display-popup, send-keys -N/-H, capture-pane — part IV
+       (:file "dispatch-tests-session-d-tail")  ; named paste-buffer, join-pane, wait-for-arg — part IVb
        (:file "events-tests")            ; keystroke pipeline — part I (escape, process-byte, mouse, key-table, copy-mode vi-nav)
        (:file "events-tests-f")          ; keystroke pipeline — part VI (PageUp/Down, prefix-arrow, send-prefix, modifier+arrow, meta/alt)
        (:file "events-tests-b")          ; locked-session, drag/modifier, copy-mode cursor, vi nav — part II
@@ -268,9 +277,11 @@
        (:file "commands-tests-d")        ; rename/select hooks, server-access, customize-mode, begin-line-selection multi-row — part VIII
        (:file "commands-tests-l")        ; copy-mode copy-line/copy-end-of-line, with-shell-timeout, kill hooks, toggle-rect, append-sel, copy-pipe, renumber-windows — part XII
        (:file "commands-tests-i")        ; rectangle-sel, run-copy-cmd, set-cursor, send-keys-l, jump-to-char, goto-line, search-incr — part IX
-       (:file "overlay-tests")
-       (:file "prompt-tests")
-       (:file "protocol-tests")            ; octets/frame-header/round-trips/msg-command — part I
+        (:file "overlay-tests")
+        (:file "prompt-tests")
+        (:file "prompt-tests-wiring")
+        (:file "config-tests-defaults")
+        (:file "protocol-tests")            ; octets/frame-header/round-trips/msg-command — part I
        (:file "protocol-tests-b")          ; read-u32, split-on-nul, encode/decode-command-payload, target-field-p — part II
        (:file "transport-tests")
        (:file "server-tests")

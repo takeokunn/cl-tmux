@@ -359,7 +359,7 @@
 (test cmd-respawn-window-without-k-errors-on-live-pane
   "respawn-window without -k errors when ANY pane in the window is still running,
    and does NOT respawn — matching tmux."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s))
            (p1  (first (window-panes win))))
       (setf (cl-tmux/model:pane-fd p1) 5)         ; one pane is live
@@ -413,7 +413,7 @@
 
 (test cmd-respawn-window-forwards-overrides
   "respawn-window forwards -c, repeated -e, and positional command overrides to every pane."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s))
            (panes (window-panes win))
            (calls nil)
@@ -470,7 +470,7 @@
 
 (test set-hook-after-select-pane-fires-config-command
   "set-hook -g after-select-pane <cmd> fires when select-pane runs (config path)."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (cl-tmux/hooks:clear-command-hooks "after-select-pane")
     (let ((*overlay* nil))
       (cl-tmux::%run-command-line
@@ -485,7 +485,7 @@
   (dolist (row '(("window-pane-changed" "swapped" "must fire via session lookup")
                  ("pane-focus-in"       "focused" "must fire via session lookup")))
     (destructuring-bind (hook-name word desc) row
-      (with-fake-session (s :nwindows 1 :npanes 2)
+      (with-fake-two-pane-session (s)
         (cl-tmux/hooks:clear-command-hooks hook-name)
         (let ((cl-tmux::*server-sessions* (list (cons "0" s)))
               (*overlay* nil))
@@ -531,6 +531,7 @@
                       "unbind"
                       "set-buffer"
                       "display-menu"
+                      "detach"
                       "set-hook"
                       "set-option"
                       "set-window-option"
@@ -540,6 +541,7 @@
                       "show-window-options"
                       "show-server-options"
                       "server-access"
+                      "copy-mode-enter"
                       "switch-client"
                       "wait-for")
                     names
@@ -550,12 +552,13 @@
                          "unbind-key"
                          "setw"
                          "new"
-                         "detach"
                          "prev-window"
                          "rename"
                          "ls"
                          "lsw"
-                         "copy-mode-enter"
+                         "detach-client"
+                         "copy-mode"
+                         "menu"
                          "split-horizontal"))
       (assert-not-member forbidden names
                          :test #'string=

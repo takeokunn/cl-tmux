@@ -16,12 +16,17 @@
 ;;; shared fixture.  The old local %make-pane-test-session has been removed in
 ;;; favour of the shared version.
 
+(defun %snippet-around (text needle &optional (radius 24))
+  (let ((pos (position needle text)))
+    (and pos
+         (subseq text pos (min (length text) (+ pos radius))))))
+
 ;;; -- render-pane (content + positioning) ------------------------------------
 
 (test render-pane-content-and-positioning
   (let* ((sess (make-renderer-test-session 5 2 :content "hi"))
          (pane (first (window-panes (session-active-window sess))))
-         (out  (render-pane-output pane)))
+         (out  (render-pane-output sess pane)))
     (is (find #\h out) "render-pane should emit the h glyph (got ~S)" out)
     (is (find #\i out) "render-pane should emit the i glyph (got ~S)" out)
     (is (search (format nil "~C[1;1H" #\Escape) out)
@@ -30,29 +35,36 @@
 (test render-pane-decscnm-reverses-output
   "With DECSCNM (reverse-screen) on, render-pane emits the reverse attribute (SGR 7)
    globally; the rendered output differs from the non-reversed render."
-  (let* ((sess   (make-renderer-test-session 5 2 :content "hi"))
-         (pane   (first (window-panes (session-active-window sess))))
-         (screen (pane-screen pane)))
-    (setf (cl-tmux/terminal/types:screen-reverse-screen screen) nil)
-    (let ((normal (render-pane-output pane)))
-      (setf (cl-tmux/terminal/types:screen-reverse-screen screen) t)
-      (let ((reversed (render-pane-output pane)))
-        (is (not (string= normal reversed))
-            "reverse-screen on must change the rendered output")
-        ;; render-cell-attrs emits the reverse attribute as the SGR token ";7"
-        ;; (default fg=7 emits ";37", which does not contain ";7").
-        (is (search ";7" reversed)
-            "reversed render must carry the reverse SGR ;7 (got ~S)" reversed)
-        (is (null (search ";7" normal))
-            "non-reversed render must not emit the reverse SGR ;7 (got ~S)" normal)))))
+  (with-isolated-options ("window-style" ""
+                          "window-active-style" "")
+    (let* ((sess   (make-renderer-test-session 2 1))
+           (pane   (first (window-panes (session-active-window sess))))
+           (screen (pane-screen pane)))
+      (setf (screen-cell screen 0 0)
+            (cl-tmux/terminal/types:make-cell :char #\A))
+      (setf (cl-tmux/terminal/types:screen-reverse-screen screen) nil)
+      (let ((normal (render-pane-output sess pane)))
+        (setf (cl-tmux/terminal/types:screen-reverse-screen screen) t)
+        (let ((reversed (render-pane-output sess pane)))
+          (let ((normal-snippet (%snippet-around normal #\A))
+                (reversed-snippet (%snippet-around reversed #\A)))
+            (is (not (string= normal reversed))
+                "reverse-screen on must change the rendered output")
+            (is (and reversed-snippet (search ";7" reversed-snippet))
+                "reversed render must carry the reverse SGR ;7 near the cell (got ~S)"
+                reversed-snippet)
+            (is (and normal-snippet (null (search ";7" normal-snippet)))
+                "non-reversed render must not emit the reverse SGR ;7 near the cell (got ~S)"
+                normal-snippet)))))))
 
 ;;; -- double-width glyphs are not double-printed ------------------------------
 
 (test render-pane-double-width-not-duplicated
-  (let* ((pane   (make-test-pane 5 2))
+  (let* ((sess   (make-renderer-test-session 5 2))
+         (pane   (first (window-panes (session-active-window sess))))
          (screen (pane-screen pane)))
     (cl-tmux/test::utf8-feed screen "あ")
-    (let ((out (render-pane-output pane)))
+    (let ((out (render-pane-output sess pane)))
       (is (= 1 (count #\あ out))
           "exactly one wide glyph should be printed (got ~D in ~S)"
           (count #\あ out) out))))
@@ -62,10 +74,11 @@
 (test render-pane-emits-osc-8-hyperlink
   "A cell written under OSC 8 is re-emitted with its hyperlink (set before the
    cell, cleared after) so the outer terminal makes it clickable."
-  (let* ((pane   (make-test-pane 10 2))
+  (let* ((sess   (make-renderer-test-session 10 2))
+         (pane   (first (window-panes (session-active-window sess))))
          (screen (pane-screen pane)))
     (feed screen (format nil "~C]8;;https://x~C\\X" #\Escape #\Escape))
-    (let ((out (render-pane-output pane)))
+    (let ((out (render-pane-output sess pane)))
       (is (search (format nil "~C]8;;https://x~C\\" #\Escape #\Escape) out)
           "render-pane must emit OSC 8 set for the hyperlinked cell (got ~S)" out)
       (is (search (format nil "~C]8;;~C\\" #\Escape #\Escape) out)
@@ -74,10 +87,11 @@
 (test render-pane-no-osc-8-without-hyperlink
   "Plain content (no OSC 8) emits no OSC 8 sequence — existing render output is
    unchanged for the common no-hyperlink case."
-  (let* ((pane   (make-test-pane 10 2))
+  (let* ((sess   (make-renderer-test-session 10 2))
+         (pane   (first (window-panes (session-active-window sess))))
          (screen (pane-screen pane)))
     (feed screen "plain")
-    (let ((out (render-pane-output pane)))
+    (let ((out (render-pane-output sess pane)))
       (is (null (search (format nil "~C]8;" #\Escape) out))
           "no OSC 8 must be emitted when no cell has a hyperlink (got ~S)" out))))
 
@@ -115,28 +129,23 @@
     (let* ((sess (make-renderer-test-session 5 2 :content "hi"))
            (pane (first (window-panes (session-active-window sess)))))
       ;; Baseline: no window-style → no colour-52 background emitted.
-      (let ((out (render-pane-output pane)))
+      (let ((out (render-pane-output sess pane)))
         (is (not (search "48;5;52" out))
             "default render must not contain the window-style bg (got ~S)" out))
       ;; Opt in: window-style recolours the default-bg cells.
       (cl-tmux/options:set-option "window-style" "bg=colour52")
-      (let ((out (render-pane-output pane)))
+      (let ((out (render-pane-output sess pane)))
         (is (search "48;5;52" out)
             "pane must emit bg colour52 (48;5;52) for default cells (got ~S)" out)))))
 
-(test render-pane-window-style-preserves-explicit-colors
-  "window-style recolours only default cells: a cell with an explicit non-default
-   background keeps it (the bg=0 → style substitution is guarded on the default)."
-  (with-isolated-config
-    (let* ((sess (make-renderer-test-session 4 1))
-           (pane (first (window-panes (session-active-window sess))))
-           (screen (pane-screen pane)))
-      ;; Paint one cell with an explicit bg=colour200 (SGR 48;5;200) then text.
-      (feed screen (esc "[48;5;200mX"))
-      (cl-tmux/options:set-option "window-style" "bg=colour52")
-      (let ((out (render-pane-output pane)))
-        (is (search "48;5;200" out)
-            "an explicit bg must survive window-style recolour (got ~S)" out)))))
+(test pane-cell-base-colors-preserves-explicit-background
+  "%pane-cell-base-colors only substitutes the pane defaults: an explicit
+   non-default background survives unchanged."
+  (let ((cell (cl-tmux/terminal/types:make-cell :char #\X :fg 7 :bg 200)))
+    (multiple-value-bind (fg bg)
+        (cl-tmux/renderer::%pane-cell-base-colors cell 31 52)
+      (is (= 31 fg) "default fg=7 should be replaced by the pane default")
+      (is (= 200 bg) "an explicit bg must survive window-style recolour"))))
 
 ;;; -- layout-subtree-rect and subtree-contains-p ------------------------------
 

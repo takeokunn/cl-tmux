@@ -128,7 +128,7 @@
 
 (test dispatch-next-pane-cycles
   "C-b o moves to the next pane within the active window."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s))
            (p0  (first  (window-panes win)))
            (p1  (second (window-panes win))))
@@ -209,9 +209,9 @@
                ("cursor-up"        :copy-mode-cursor-up)
                ("cursor-down"      :copy-mode-cursor-down)
                ("rectangle-toggle" :copy-mode-rectangle-toggle)
+               ("copy-selection"   :copy-mode-yank)
                ("select-word"      :copy-mode-select-word)
                ("other-end"        :copy-mode-other-end)
-               ("toggle-position"  :copy-mode-other-end)
                ("copy-pipe"        :copy-mode-copy-pipe-no-cancel)
                ("copy-pipe-and-cancel" :copy-mode-copy-pipe-and-cancel)
                ("copy-pipe-end-of-line-and-cancel"
@@ -486,7 +486,7 @@
 
 (test cmd-cycle-pane-advances-pane-selection
   "%cmd-cycle-pane advances the active pane via CYCLER."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s))
            (p0  (first  (window-panes win)))
            (p1  (second (window-panes win))))
@@ -540,7 +540,7 @@
 (test select-pane-with-focus-switches-and-tolerates-no-pty
   "%select-pane-with-focus changes the active pane and runs the focus-notify path
    without error even when panes have no PTY and focus events are enabled."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s))
            (p0  (first  (window-panes win)))
            (p1  (second (window-panes win))))

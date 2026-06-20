@@ -28,7 +28,7 @@
 
 (test cmd-swap-pane-t-swaps-active-with-target
   "swap-pane -t 2 swaps the active pane (1) with pane 2 (-s defaults to active)."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s))
            (p1  (find 1 (window-panes win) :key #'pane-id))
            (p2  (find 2 (window-panes win) :key #'pane-id)))
@@ -38,8 +38,11 @@
           "after swap-pane -t 2, pane 2 is first (swapped with active pane 1)"))))
 
 (test cmd-swap-pane-rejects-unsupported-arguments
-  "swap-pane rejects unknown flags and positional tokens before mutating panes."
-  (dolist (command '("swap-pane -Z extra"
+  "swap-pane rejects unsupported flags, unknown flags, and positional tokens
+   before mutating panes."
+  (dolist (command '("swap-pane -d"
+                     "swap-pane -Z"
+                     "swap-pane -Z extra"
                      "swap-pane -x"
                      "swap-pane -s 1 -t 3 extra"))
     (with-fake-session (s :nwindows 1 :npanes 3)
@@ -75,7 +78,7 @@
                ("y" 1 "y: active pane killed")
                ("n" 2 "n: pane preserved")))
     (destructuring-bind (answer expected-count desc) c
-      (with-fake-session (s :nwindows 1 :npanes 2)
+      (with-fake-two-pane-session (s)
         (let ((*prompt* nil))
           (cl-tmux::dispatch-command s :kill-pane-confirm nil)
           (is (prompt-active-p) "prompt must open for ~A" desc)

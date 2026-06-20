@@ -30,7 +30,7 @@
             (assert-overlay-active ":attach-session ~A must show overlay" desc)
             (assert-overlay-contains expected-text *overlay*
                                      (format nil "~A: overlay must contain ~S"
-                                             desc expected-text)))))))
+                                             desc expected-text))))))))
 
 (test run-command-line-attach-session-target-switches-session
   "attach-session -t <name> is scriptable and switches to the target session."
@@ -96,17 +96,17 @@
     ;; with-loop-state restores it, so just verify the return value above.
     ))
 
-(test run-command-line-detach-client-without-args-returns-detach
-  "detach-client without arguments detaches the active client."
+(test run-command-line-detach-without-args-returns-detach
+  "detach without arguments detaches the active client."
   (with-fake-session (s)
     (setf cl-tmux::*running* t)
-    (is (eq :detach (cl-tmux::%run-command-line s "detach-client"))
-        "detach-client without arguments must return :detach")
+    (is (eq :detach (cl-tmux::%run-command-line s "detach"))
+        "detach without arguments must return :detach")
     (is-true cl-tmux::*running*
-             "detach-client returns a detach disposition; the caller owns loop shutdown")))
+             "detach returns a detach disposition; the caller owns loop shutdown")))
 
-(test run-command-line-detach-client-rejects-ignored-args
-  "detach-client rejects arguments that cl-tmux does not implement."
+(test run-command-line-detach-rejects-ignored-args
+  "detach rejects arguments that cl-tmux does not implement."
   (with-fake-session (s)
     (dolist (args '(("-P")
                     ("-E" "echo detached")
@@ -114,12 +114,12 @@
                     ("-t" "client-0")))
       (setf cl-tmux::*running* t
             cl-tmux::*overlay* nil)
-      (is (null (cl-tmux::%cmd-detach-client-arg s args))
-          "unsupported detach-client args must be rejected: ~S" args)
+      (is (null (cl-tmux::%cmd-detach-arg s args))
+          "unsupported detach args must be rejected: ~S" args)
       (is-true cl-tmux::*running*
-               "rejected detach-client args must not stop the event loop: ~S" args)
+               "rejected detach args must not stop the event loop: ~S" args)
       (assert-overlay-active
-          "rejected detach-client args must explain the failure: ~S" args))))
+          "rejected detach args must explain the failure: ~S" args))))
 
 (test dispatch-move-pane-opens-prompt
   ":move-pane opens a prompt for the destination window index."
@@ -133,20 +133,19 @@
       (cl-tmux::dispatch-command s :refresh-client nil)
       (is-true cl-tmux::*dirty* ":refresh-client must set *dirty*"))))
 
-(test run-command-line-refresh-client-accepts-target-and-status-flags
-  "refresh-client accepts tmux-compatible target and status flags."
+(test run-command-line-refresh-client-rejects-unsupported-flags
+  "refresh-client rejects unsupported tmux-compatible flags."
   (with-fake-session (s)
     (dolist (args '(("-S")
                     ("-t" "client-0")))
       (setf cl-tmux::*dirty* nil
             cl-tmux::*overlay* nil)
-      (is (cl-tmux::%cmd-refresh-client-arg s args)
-          "refresh-client must accept tmux-compatible args: ~S" args)
-      (is-true cl-tmux::*dirty*
-               "accepted refresh-client args must redraw: ~S" args)
-      (assert-overlay-not-contains "unsupported argument"
-                                   (overlay-lines)
-                                   args))))
+      (is (null (cl-tmux::%cmd-refresh-client-arg s args))
+          "refresh-client must reject unsupported args: ~S" args)
+      (is-false cl-tmux::*dirty*
+                "rejected refresh-client args must not redraw: ~S" args)
+      (is (search "unsupported argument" cl-tmux::*overlay*)
+          "refresh-client must explain the unsupported arg rejection: ~S" args))))
 
 (test run-command-line-lock-client-without-args-locks-session
   "lock-client without arguments locks the active session."
@@ -156,17 +155,16 @@
     (is-true (cl-tmux::session-locked-p s)
              "lock-client must lock the active session")))
 
-(test run-command-line-lock-client-accepts-target-client
-  "lock-client accepts tmux-compatible target arguments."
+(test run-command-line-lock-client-rejects-target-client
+  "lock-client rejects tmux-compatible target arguments."
   (with-fake-session (s)
     (let ((cl-tmux::*overlay* nil))
       (setf (cl-tmux::session-locked-p s) nil)
-      (is (cl-tmux::%run-command-line s "lock-client -t client-0"))
-      (is-true (cl-tmux::session-locked-p s)
-               "lock-client must lock the active session")
-      (assert-overlay-contains "client locked"
-                               (overlay-lines)
-                               "lock-client -t client-0"))))
+      (is (null (cl-tmux::%run-command-line s "lock-client -t client-0")))
+      (is-false (cl-tmux::session-locked-p s)
+                "lock-client -t must not lock the active session")
+      (is (search "unsupported argument" cl-tmux::*overlay*)
+          "lock-client -t must explain the rejection"))))
 
 (test run-command-line-lock-session-locks-current-session
   "lock-session without -t locks the current session."
@@ -298,7 +296,7 @@
 
 (test dispatch-select-layout-main-h-and-v-do-not-error
   ":select-layout-main-h and :select-layout-main-v dispatch without error."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (dolist (cmd '(:select-layout-main-h :select-layout-main-v))
       (finishes (cl-tmux::dispatch-command s cmd nil)
                 "~A must not signal an error" cmd))))
@@ -333,20 +331,12 @@
   (with-fake-session (s)
     (let ((name "CLTMUX_TEST_ENV_VAR_G")
           (value "global value"))
-      (unwind-protect
-           (let ((old (ignore-errors (sb-ext:posix-getenv name))))
-             (unwind-protect
-                  (progn
-                    (ignore-errors (sb-posix:unsetenv name))
-                    (cl-tmux::%cmd-set-environment-prompt s (list "-g" name value))
-                    (is (string= value (sb-ext:posix-getenv name))
-                        "set-environment -g must update the process environment")
-                    (is (null (gethash name (session-environment s)))
-                        "set-environment -g must not write the session overlay"))
-               (if old
-                   (ignore-errors (sb-posix:setenv name old 1))
-                   (ignore-errors (sb-posix:unsetenv name)))))
-        (ignore-errors (sb-posix:unsetenv name))))))
+      (with-temporary-posix-environment-variable (name nil)
+        (cl-tmux::%cmd-set-environment-prompt s (list "-g" name value))
+        (is (string= value (sb-ext:posix-getenv name))
+            "set-environment -g must update the process environment")
+        (is (null (gethash name (session-environment s)))
+            "set-environment -g must not write the session overlay")))))
 
 (test cmd-set-environment-t-target-session-writes-value
   "set-environment -t target NAME VALUE stores the value in the target session."
@@ -383,7 +373,9 @@
   "set-environment rejects unsupported flags before touching the process environment."
   (with-fake-session (s)
     (let ((name "CLTMUX_TEST_ENV_VAR_UNKNOWN_FLAG"))
-      (session-unset-environment s name)
+      ;; NAME starts absent (unique per test), so a faithful reject leaves it
+      ;; untouched — neither value nor source — matching the non-mutation checks
+      ;; used by the other set-environment tests in this file.
       (let ((*overlay* nil))
         (cl-tmux::%cmd-set-environment-prompt s (list "-Z" name "value"))
         (is (search "unsupported argument" *overlay*)
@@ -397,50 +389,56 @@
   (with-fake-session (s)
     (let ((name "CLTMUX_TEST_SHOWENV_NAME"))
       (session-set-environment s name "visible")
-      (let ((*overlay* nil))
-        (cl-tmux::%run-command-line s (format nil "show-environment ~A" name))
-        (is (search (format nil "~A=visible" name) *overlay*)
-            "show-environment NAME must display NAME=VALUE")))))
+      (with-run-command-line-overlay (s (format nil "show-environment ~A" name))
+        (assert-overlay-contains (format nil "~A=visible" name)
+                                 *overlay*
+                                 "show-environment NAME")))))
 
 (test cmd-show-environment-s-shell-format
   "show-environment -s NAME displays shell assignment form."
   (with-fake-session (s)
     (let ((name "CLTMUX_TEST_SHOWENV_S"))
       (session-set-environment s name "visible")
-      (let ((*overlay* nil))
-        (cl-tmux::%run-command-line s (format nil "show-environment -s ~A" name))
-        (is (search (format nil "~A='visible'; export ~A" name name) *overlay*)
-            "show-environment -s NAME must display shell assignment")))))
+      (with-run-command-line-overlay (s (format nil "show-environment -s ~A" name))
+        (assert-overlay-contains (format nil "~A='visible'; export ~A" name name)
+                                 *overlay*
+                                 "show-environment -s")))))
 
 (test cmd-show-environment-missing-name-marks-unset
   "show-environment NAME marks missing variables as unset."
   (with-fake-session (s)
     (let ((name "CLTMUX_TEST_SHOWENV_MISSING"))
       (session-unset-environment s name)
-      (let ((*overlay* nil))
-        (cl-tmux::%run-command-line s (format nil "show-environment ~A" name))
-        (is (search (format nil "-~A" name) *overlay*)
-            "show-environment NAME must mark missing variables as unset")))))
+      (with-run-command-line-overlay (s (format nil "show-environment ~A" name))
+        (assert-overlay-contains (format nil "-~A" name)
+                                 *overlay*
+                                 "show-environment missing value")))))
+
+(test cmd-show-environment-listing-shows-header-and-entries
+  "show-environment without NAME displays the environment list."
+  (with-fake-session (s)
+    (let ((name-a "CLTMUX_TEST_SHOWENV_LIST_A")
+          (name-b "CLTMUX_TEST_SHOWENV_LIST_B"))
+      (session-set-environment s name-a "one")
+      (session-set-environment s name-b "two")
+      (with-run-command-line-overlay (s "show-environment")
+        (assert-overlay-contains-all
+            (list "environment"
+                  (format nil "  ~A=one" name-a)
+                  (format nil "  ~A=two" name-b))
+            *overlay*
+            "show-environment")))))
 
 (test cmd-show-environment-g-shows-process-value
   "show-environment -g NAME displays the process environment value."
   (with-fake-session (s)
     (let ((name "CLTMUX_TEST_SHOWENV_G")
           (value "visible"))
-      (unwind-protect
-           (let ((old (ignore-errors (sb-ext:posix-getenv name))))
-             (unwind-protect
-                  (progn
-                    (ignore-errors (sb-posix:unsetenv name))
-                    (ignore-errors (sb-posix:setenv name value 1))
-                    (let ((*overlay* nil))
-                      (cl-tmux::%run-command-line s (format nil "show-environment -g ~A" name))
-                      (is (search (format nil "~A=~A" name value) *overlay*)
-                          "show-environment -g must display NAME=VALUE"))))
-               (if old
-                   (ignore-errors (sb-posix:setenv name old 1))
-                   (ignore-errors (sb-posix:unsetenv name)))))
-        (ignore-errors (sb-posix:unsetenv name))))))
+      (with-temporary-posix-environment-variable (name value)
+        (with-run-command-line-overlay (s (format nil "show-environment -g ~A" name))
+          (assert-overlay-contains (format nil "~A=~A" name value)
+                                   *overlay*
+                                   "show-environment -g"))))))
 
 (test cmd-show-environment-t-target-session-displays-value
   "show-environment -t target NAME displays the target session value."
@@ -451,10 +449,10 @@
           (with-session-and-window-names (target "beta")
             (with-registered-sessions (("alpha" s) ("beta" target))
               (session-set-environment target name "visible")
-              (let ((*overlay* nil))
-                (cl-tmux::%run-command-line s (format nil "show-environment -t beta ~A" name))
-                (is (search (format nil "~A=visible" name) *overlay*)
-                    "show-environment -t must display the target session value")))))))))
+              (with-run-command-line-overlay (s (format nil "show-environment -t beta ~A" name))
+                (assert-overlay-contains (format nil "~A=visible" name)
+                                         *overlay*
+                                         "show-environment -t")))))))))
 
 (test cmd-show-environment-g-and-t-are-mutually-exclusive
   "show-environment -g -t target NAME is rejected when both scopes are given."
@@ -462,8 +460,9 @@
     (let ((name "CLTMUX_TEST_SHOWENV_GT"))
       (let ((*overlay* nil))
         (cl-tmux::%run-command-line s (format nil "show-environment -g -t ignored ~A" name))
-        (is (search "mutually exclusive" *overlay*)
-            "show-environment must reject -g together with -t")))))
+        (assert-overlay-contains "mutually exclusive"
+                                 *overlay*
+                                 "show-environment -g -t")))))
 
 (test cmd-show-environment-unsupported-arguments-are-rejected-before-reading
   "show-environment rejects unknown flags and extra NAME arguments before showing values."
@@ -474,8 +473,9 @@
                           (list name "extra")))
         (let ((*overlay* nil))
           (cl-tmux::%cmd-show-environment-arg s args)
-          (is (search "unsupported argument" *overlay*)
-              "show-environment must reject unsupported arguments")
+          (assert-overlay-contains "unsupported argument"
+                                   *overlay*
+                                   "show-environment unsupported")
           (is (null (search "hidden" *overlay*))
               "show-environment must not display values after rejecting arguments"))))))
 
@@ -604,6 +604,42 @@
     (destructuring-bind (flags char expected desc) c
       (is (equal expected (cl-tmux::%parse-flag-int flags char))
           "~A" desc))))
+
+;;; ── shared target resolvers ─────────────────────────────────────────────────
+
+(test resolve-pane-in-window-resolves-id-and-falls-back
+  "%resolve-pane-in-window resolves bare and sigil pane ids, and falls back to the active pane."
+  (with-fake-session (s :nwindows 1 :npanes 2)
+    (let* ((win  (session-active-window s))
+           (pane0 (window-active-pane win))
+           (pane1 (find-if-not (lambda (pane) (eq pane pane0))
+                               (window-panes win)))
+           (pane1-id (format nil "~A" (pane-id pane1))))
+      (is (eq pane1 (cl-tmux::%resolve-pane-in-window win pane1-id))
+          "bare pane id must resolve to the matching pane")
+      (is (eq pane1 (cl-tmux::%resolve-pane-in-window win (format nil "%~A" pane1-id)))
+          "sigil pane id must resolve to the matching pane")
+      (is (eq pane0 (cl-tmux::%resolve-pane-in-window win "not-a-pane"))
+          "invalid pane target must fall back to the active pane")
+      (is (eq pane0 (cl-tmux::%resolve-pane-in-window win nil))
+          "nil pane target must fall back to the active pane"))))
+
+(test resolve-window-target-resolves-id-and-name
+  "%resolve-window-target resolves window ids, shorthand names, and returns NIL for garbage."
+  (with-fake-session (s :nwindows 2)
+    (let* ((wins (session-windows s))
+           (w1   (second wins))
+           (w1-id (format nil "~A" (window-id w1)))
+           (w1-name "shell"))
+      (setf (window-name w1) w1-name)
+      (is (eq w1 (cl-tmux::%resolve-window-target s w1-id))
+          "bare window id must resolve to the matching window")
+      (is (eq w1 (cl-tmux::%resolve-window-target s w1-name))
+          "window name must resolve to the matching window")
+      (is (eq w1 (cl-tmux::%resolve-window-target s ":+"))
+          ":+ must resolve to the next window")
+      (is (null (cl-tmux::%resolve-window-target s "no-such-window"))
+          "unknown window target must return NIL"))))
 
 ;;; ── rename-session via command line updates *server-sessions* ───────────────
 
@@ -738,12 +774,12 @@
 ;;; avoids — but the FLAG PARSING that derives cols/rows is fork-free and runs in
 ;;; %cmd-new-session-arg BEFORE the fork: it calls
 ;;;   (%parse-command-flags args "sncxy")
-;;; and then parse-integer's the -x/-y values into cols/rows.  We test that
-;;; fork-free contract directly: x and y must be VALUE flags (in the "sncxy"
-;;; spec), and their integer conversion must yield the expected dimensions.  This
-;;; guards against a regression where "sncxy" reverts to "snc" — then -x/-y would
-;;; parse as boolean flags and "100"/"40" would leak into the positionals, which
-;;; the assertions below would catch.
+;;; and then resolves the -x/-y values into cols/rows.  We test that fork-free
+;;; contract directly: x and y must be VALUE flags (in the "sncxy" spec), and
+;;; the resulting detached-session dimensions must come from the parsed size
+;;; string.  This guards against a regression where "sncxy" reverts to "snc" —
+;;; then -x/-y would parse as boolean flags and "100"/"40" would leak into the
+;;; positionals, which the assertions below would catch.
 
 (test new-session-x-y-flags-are-value-flags
   "%parse-command-flags with the new-session 'sncxy' spec treats -x and -y as
@@ -767,11 +803,3 @@
     (assert-not-member "40" positionals
                        :test #'string=
                        :context "new-session positionals")))
-
-(test new-session-x-y-values-convert-to-integers
-  "Documents the cols/rows derivation: %cmd-new-session-arg converts the parsed
-   -x/-y strings to integers via parse-integer for the new session's dimensions."
-  (is (= 100 (parse-integer "100" :junk-allowed t))
-      "-x value '100' must convert to 100 columns")
-  (is (= 40 (parse-integer "40" :junk-allowed t))
-      "-y value '40' must convert to 40 rows"))

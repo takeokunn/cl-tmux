@@ -168,9 +168,9 @@
   (#.+byte-capital-a+ :call #'copy-mode-append-selection)
   ;; ── Search ────────────────────────────────────────────────────────────────
   ;; # — search backward for word under cursor
-  (35 :call #'copy-mode-search-backward-word)
+  (35 :call #'cl-tmux/commands::copy-mode-search-backward-word)
   ;; * — search forward for word under cursor
-  (42 :call #'copy-mode-search-forward-word)
+  (42 :call #'cl-tmux/commands::copy-mode-search-forward-word)
   ;; n — search next
   (#.+byte-n+         :call #'copy-mode-search-next)
   ;; N — search prev

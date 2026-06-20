@@ -179,10 +179,56 @@
       (loop for x below end
             do (write-char (cell-char (screen-display-cell screen x y)) s)))))
 
-(defun render-pane-output (pane)
+(defun render-pane-output (session pane)
   "Render PANE to a string using the production renderer."
   (with-output-to-string (s)
-    (cl-tmux/renderer::render-pane s pane)))
+    (cl-tmux/renderer::render-pane s session pane)))
+
+(defmacro with-copy-mode-render-fixture ((session-var pane-var screen-var w h
+                                          &key (content "")
+                                               (position-format "")
+                                               (options '()))
+                                         &body body)
+  "Bind a renderer session, its pane, and screen under isolated copy-mode defaults.
+   BODY may mutate the screen before calling render-pane-output.
+   OPTIONS is a flat list of option-name/value strings; callers may pass it as a
+   quoted literal list (e.g. :options '(\"name\" \"value\")), which is unwrapped
+   here before being spliced into with-isolated-options."
+  (let ((option-pairs (if (and (consp options) (eq (car options) 'quote))
+                          (second options)
+                          options)))
+    `(with-isolated-options ("copy-mode-position-style" "default"
+                             "copy-mode-position-format" ,position-format
+                             ,@option-pairs)
+       (let* ((,session-var (make-renderer-test-session ,w ,h :content ,content))
+              (,pane-var (first (window-panes (session-active-window ,session-var))))
+              (,screen-var (pane-screen ,pane-var)))
+         ,@body))))
+
+(defmacro with-copy-mode-selection-fixture ((session-var pane-var screen-var w h
+                                             &key (content "")
+                                                  (mark-row nil)
+                                                  (mark-col nil)
+                                                  (cursor-row nil)
+                                                  (cursor-col nil)
+                                                  (selecting-p t)
+                                                  (copy-mode-p t)
+                                                  (position-format "")
+                                                  (options '()))
+                                            &body body)
+  "Bind a copy-mode renderer fixture with selection state preconfigured."
+  `(with-copy-mode-render-fixture (,session-var ,pane-var ,screen-var ,w ,h
+                                   :content ,content
+                                   :position-format ,position-format
+                                   :options ,options)
+     (setf (screen-copy-mode-p ,screen-var) ,copy-mode-p
+           (screen-copy-selecting ,screen-var) ,selecting-p
+           (screen-copy-offset ,screen-var) 0
+           (screen-copy-mark ,screen-var)
+           (and ,mark-row ,mark-col (cons ,mark-row ,mark-col))
+           (screen-copy-cursor ,screen-var)
+           (and ,cursor-row ,cursor-col (cons ,cursor-row ,cursor-col)))
+     ,@body))
 
 (defun render-status-bar-output (sess rows cols &key ((:status-row status-row)
                                                      nil
@@ -229,8 +275,14 @@
 
 (defun key-table-command-value (table key)
   "Return the command bound to KEY in TABLE as a list or keyword."
-  (cl-tmux/config:key-table-command
-   (cl-tmux/config:key-table-lookup table key)))
+  (let ((command (cl-tmux/config:key-table-command
+                  (cl-tmux/config:key-table-lookup table key))))
+    (if (and (consp command)
+             (eq 'quote (first command))
+             (consp (second command))
+             (null (cddr command)))
+        (second command)
+        command)))
 
 (defun copy-mode-x-command-value (name)
   "Return the copy-mode -X command keyword bound to NAME."
@@ -266,6 +318,20 @@
      (dolist (needle ,needles)
        (is (search needle text)
            "~A must report ~S (got ~S)" ,context needle text))))
+
+(defmacro with-temporary-posix-environment-variable ((name value) &body body)
+  "Bind NAME to VALUE in the real process environment for BODY and restore it."
+  (let ((old-value (gensym "OLD")))
+    `(let ((,old-value (ignore-errors (sb-ext:posix-getenv ,name))))
+       (unwind-protect
+            (progn
+              (if ,value
+                  (ignore-errors (sb-posix:setenv ,name ,value 1))
+                  (ignore-errors (sb-posix:unsetenv ,name)))
+              ,@body)
+         (if ,old-value
+             (ignore-errors (sb-posix:setenv ,name ,old-value 1))
+             (ignore-errors (sb-posix:unsetenv ,name)))))))
 
 (defmacro assert-overlay-not-contains (needle overlay &optional (context "overlay"))
   "Assert that an active overlay does not contain NEEDLE in its rendered text."

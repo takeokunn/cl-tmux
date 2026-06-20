@@ -36,15 +36,27 @@
    precedence."
   (let ((sessions (mapcar #'cdr *server-sessions*)))
     (cond
-      ((assoc #\t flags)
-       (server-find-session (cdr (assoc #\t flags))))
-      ((assoc #\n flags)
+      ((%flag-present-p flags #\t)
+       (server-find-session (%flag-value flags #\t)))
+      ((%flag-present-p flags #\n)
        (and sessions (next-cyclic sessions session)))
-      ((assoc #\p flags)
+      ((%flag-present-p flags #\p)
        (and sessions (prev-cyclic sessions session)))
-      ((assoc #\l flags)
+      ((%flag-present-p flags #\l)
        (second (sort (copy-list sessions) #'> :key #'session-last-active)))
       (t nil))))
+
+(defun %switch-client-apply-key-table (flags)
+  "Apply SWITCH-CLIENT's -T key table side effect."
+  (let ((table (%flag-value flags #\T)))
+    (when table
+      (setf *key-table* (if (string= table +table-root+) nil table)))))
+
+(defun %switch-client-handle-refresh (flags)
+  "Handle SWITCH-CLIENT's -r refresh path when no session move is requested."
+  (when (%flag-present-p flags #\r)
+    (setf *dirty* t)
+    t))
 
 (defun %cmd-switch-client (session args)
   "switch-client [-lnpr] [-t target] [-T key-table]:
@@ -59,33 +71,26 @@
    both moves the client and arms a key table.  Mirrors the keybinding handlers
    :switch-client / :switch-client-next/-prev / :last-session, reusing the same
    session-touch primitive."
-  (with-command-input (flags positionals args "Tt"
+  (with-command-input (flags positionals args "Ttc"
                              :allowed-flags '(#\T #\t #\n #\p #\l #\r)
                              :max-positionals 0
                              :message "switch-client: unsupported argument")
     (declare (ignore positionals))
-    ;; -T key table (modal keymap) -- orthogonal to the session move below.
-    (let ((table (cdr (assoc #\T flags))))
-      (when table
-        (setf *key-table* (if (string= table +table-root+) nil table))))
-    (let ((result (%switch-to-session (%switch-client-target-session session flags))))
-      (cond
-        (result result)
-        ((assoc #\r flags)
-         (setf *dirty* t)
-         t)))))
+    (%switch-client-apply-key-table flags)
+    (or (%switch-to-session (%switch-client-target-session session flags))
+        (%switch-client-handle-refresh flags))))
 
 (defun %cmd-attach-session-arg (session args)
   "attach-session [-t target]: in an already attached client, switch this client
    to the target session, or to the current server session when no target is
    given."
   (declare (ignore session))
-  (with-command-input (flags positionals args "t"
+    (with-command-input (flags positionals args "t"
                              :allowed-flags '(#\t)
                              :max-positionals 0
                              :message "attach-session: unsupported argument")
     (declare (ignore positionals))
-    (let ((target-name (cdr (assoc #\t flags))))
+    (let ((target-name (%flag-value flags #\t)))
       (%switch-to-session
        (if target-name
            (server-find-session target-name)
@@ -97,8 +102,8 @@
    is not a positive integer."
   (when (stringp str)
     (let* ((x (position #\x str :test #'char-equal))
-           (w (and x (parse-integer str :end x :junk-allowed t)))
-           (h (and x (parse-integer str :start (1+ x) :junk-allowed t))))
+           (w (and x (%parse-integer-or-nil str :end x :junk-allowed t)))
+           (h (and x (%parse-integer-or-nil str :start (1+ x) :junk-allowed t))))
       (when (and w h (plusp w) (plusp h))
         (values w h)))))
 
@@ -108,88 +113,114 @@
         for candidate = (format nil "~D" i)
         unless (server-find-session candidate) return candidate))
 
+(defun %new-session-name-from-flags (flags)
+  "Return the requested session name, or the next auto-generated one."
+  (or (%flag-value flags #\s)
+      (format nil "~D" (1+ (length *server-sessions*)))))
+
+(defun %default-size-dimensions (detach-p)
+  "Return the default detached session dimensions, or NIL when attached."
+  (when detach-p
+    (multiple-value-bind (cols rows)
+        (%parse-wxh (cl-tmux/options:get-option "default-size" "80x24"))
+      (values cols rows))))
+
+(defun %new-session-dimensions-from-flags (flags detach-p)
+  "Return the initial session dimensions selected by X/Y flags and defaults."
+  (multiple-value-bind (default-cols default-rows)
+      (%default-size-dimensions detach-p)
+    (values (or (%parse-flag-int flags #\x)
+                default-cols
+                *term-cols*)
+            (or (%parse-flag-int flags #\y)
+                default-rows
+                (- *term-rows* *status-height*)))))
+
+(defun %new-session-return-existing (name detach-p)
+  "Return the already-existing session NAME for new-session -A, touching it."
+  (let ((existing (server-find-session name)))
+    (when existing
+      (session-touch existing)
+      (unless detach-p
+        (setf *dirty* t))
+      existing)))
+
+(defun %new-session-resolve-name (name attach-if-exists flags)
+  "Return the final session name, or NIL when an explicit duplicate is refused."
+  (if (and (not attach-if-exists)
+           (server-find-session name))
+      (if (%flag-present-p flags #\s)
+          (progn
+            (%overlayf "duplicate session: ~A" name)
+            nil)
+          (%next-free-session-name))
+      name))
+
+(defun %new-session-create-grouped (name group-target detach-p)
+  "Create a grouped session that shares windows with GROUP-TARGET."
+  (let ((target (server-find-session group-target)))
+    (unless target
+      (%overlayf "can't find session: ~A" group-target)
+      (return-from %new-session-create-grouped nil))
+    (let ((grouped (make-session :id (incf *session-id-counter*)
+                                 :name name
+                                 :last-active (get-universal-time))))
+      (server-add-session grouped)
+      (server-new-session-in-group grouped target)
+      (when (not detach-p)
+        (setf *dirty* t)
+        (show-transient-overlay
+         (format nil "new session: ~A" (session-name grouped))))
+      grouped)))
+
+(defun %new-session-finalize (new-sess win-name detach-p)
+  "Apply post-creation window naming and overlays to NEW-SESS."
+  (when (and win-name new-sess)
+    (let ((win (session-active-window new-sess)))
+      (when win
+        (rename-window win win-name))))
+  (when (and new-sess (not detach-p))
+    (show-transient-overlay
+     (format nil "new session: ~A" (session-name new-sess))))
+  new-sess)
+
 (defun %cmd-new-session-arg (session args)
   "new-session [-A] [-d] [-s name] [-n window-name] [-c start-dir] [-x width] [-y height]: create a new session.
    -A: if a session named NAME already exists, attach to it instead of creating a new one.
-   -d: create detached (do not switch to the new session).
-   -s name: session name.
-   -n name: initial window name.
-   -c dir: start directory for the initial window's shell.
+  -d: create detached (do not switch to the new session).
+  -s name: session name.
+  -n name: initial window name.
+  -c dir: start directory for the initial window's shell.
    -x width: initial columns (default: terminal width, or default-size when -d).
    -y height: initial rows (default: terminal height minus status bar, or
      default-size when -d).
-   A DETACHED session (-d) has no client to size it, so — like tmux — it uses the
+  A DETACHED session (-d) has no client to size it, so — like tmux — it uses the
    default-size option (\"WxH\", default 80x24) when -x/-y are not given."
   (with-command-flags+pos (flags positionals args "sncxyt")
     (declare (ignore positionals))
-    (let* ((name            (or (cdr (assoc #\s flags))
-                                (format nil "~D" (1+ (length *server-sessions*)))))
-           (attach-if-exists (assoc #\A flags))
-           (detach-p         (assoc #\d flags))
-           (win-name         (cdr (assoc #\n flags)))
+    (let* ((name            (%new-session-name-from-flags flags))
+           (attach-if-exists (%flag-present-p flags #\A))
+           (detach-p         (%flag-present-p flags #\d))
+           (win-name         (%flag-value flags #\n))
            ;; -t <group>: the new session JOINS an existing session's group,
            ;; sharing its window list (tmux "grouped sessions").
-           (group-target     (cdr (assoc #\t flags)))
-           (start-dir        (cdr (assoc #\c flags)))
-           ;; Detached sessions have no client → fall back to default-size, not the
-           ;; current terminal size.  NIL for attached sessions (use the terminal).
-           (default-wxh      (and detach-p
-                                  (cl-tmux/options:get-option "default-size" "80x24")))
-           ;; -x/-y override everything when given (junk-allowed).
-           (cols             (or (%parse-flag-int flags #\x)
-                                 (and default-wxh (nth-value 0 (%parse-wxh default-wxh)))
-                                 *term-cols*))
-           (rows             (or (%parse-flag-int flags #\y)
-                                 (and default-wxh (nth-value 1 (%parse-wxh default-wxh)))
-                                 (- *term-rows* *status-height*))))
-      ;; -A: attach to existing session if it exists
-      (when attach-if-exists
-        (let ((existing (server-find-session name)))
-          (when existing
-            (session-touch existing)
-            (unless detach-p (setf *dirty* t))
-            (return-from %cmd-new-session-arg existing))))
-      ;; Without -A, a name already in use cannot be taken over (server-add-session
-      ;; would orphan the existing session): an EXPLICIT -s duplicate is refused
-      ;; (tmux's "duplicate session"); an AUTO name bumps to the next free number.
-      (when (and (not attach-if-exists) (server-find-session name))
-        (if (cdr (assoc #\s flags))
-            (progn
-              (%overlayf "duplicate session: ~A" name)
-              (return-from %cmd-new-session-arg nil))
-            (setf name (%next-free-session-name))))
-      ;; -t <group>: join an existing session's group instead of spawning a new
-      ;; pane.  The grouped session SHARES the target's window list (and thus the
-      ;; live PTYs + reader threads already attached to those panes), so it must
-      ;; be built with a bare make-session — NOT new-session, which would spawn an
-      ;; initial PTY + reader thread that %link-session-to-group then orphans.
-      (when group-target
-        (let ((target (server-find-session group-target)))
-          (unless target
-            (%overlayf "can't find session: ~A" group-target)
-            (return-from %cmd-new-session-arg nil))
-          (let ((grouped (make-session :id (incf *session-id-counter*)
-                                       :name name
-                                       :last-active (get-universal-time))))
-            (server-add-session grouped)
-            (server-new-session-in-group grouped target)
-            (when (not detach-p)
-              (setf *dirty* t)
-              (show-transient-overlay
-               (format nil "new session: ~A" (session-name grouped))))
-            (return-from %cmd-new-session-arg grouped))))
-      (let ((new-sess (new-session name rows cols :start-dir start-dir)))
-        ;; Apply window name if given
-        (when (and win-name new-sess)
-          (let ((win (session-active-window new-sess)))
-            (when win (rename-window win win-name))))
-        ;; Without -d, show an overlay confirming the new session was created.
-        ;; With -d, the session is created in background and SESSION (the calling
-        ;; session) remains the active display — no dirty flag, no visual switch.
-        (when (and new-sess (not detach-p))
-          (show-transient-overlay
-           (format nil "new session: ~A" (session-name new-sess))))
-        new-sess))))
+           (group-target     (%flag-value flags #\t))
+           (start-dir        (%flag-value flags #\c)))
+      (multiple-value-bind (cols rows)
+          (%new-session-dimensions-from-flags flags detach-p)
+        (when attach-if-exists
+          (return-from %cmd-new-session-arg
+            (%new-session-return-existing name detach-p)))
+        (setf name (%new-session-resolve-name name attach-if-exists flags))
+        (when (null name)
+          (return-from %cmd-new-session-arg nil))
+        (when group-target
+          (return-from %cmd-new-session-arg
+            (%new-session-create-grouped name group-target detach-p)))
+        (%new-session-finalize
+         (new-session name rows cols :start-dir start-dir)
+         win-name
+         detach-p)))))
 
 (defun %destroy-session (session)
   "Tear down SESSION: close its panes' PTYs, remove it from the server registry,
@@ -254,8 +285,8 @@
    -t name: the target session (default: current session)."
   (with-command-flags+pos (flags positionals args "t")
     (declare (ignore positionals))
-    (let* ((kill-all-others (assoc #\a flags))
-           (target-name     (cdr (assoc #\t flags)))
+    (let* ((kill-all-others (%flag-present-p flags #\a))
+           (target-name     (%flag-value flags #\t))
            (target-sess     (or (and target-name (server-find-session target-name))
                                 session)))
       (if kill-all-others
@@ -283,21 +314,21 @@
     (declare (ignore positionals))
     (let* ((cols     (%parse-flag-int flags #\x))
            (rows     (%parse-flag-int flags #\y))
-           (target   (cdr (assoc #\t flags)))
+           (target   (%flag-value flags #\t))
            (win      (if target
                          (%resolve-window-target session target)
                          (session-active-window session))))
       (when (and win cols rows (> cols 0) (> rows 0))
         (window-relayout win rows cols)))))
 
-(defun %cmd-detach-client-arg (session args)
-  "detach-client: detach the active client.
+(defun %cmd-detach-arg (session args)
+  "detach: detach the active client.
    cl-tmux does not implement target selection, print commands, or shell hooks
-   for detach-client; argument forms are rejected instead of silently collapsed
-   onto the active client."
+   for detach; argument forms are rejected instead of silently collapsed onto
+   the active client."
   (with-command-input (flags positionals args ""
                              :allowed-flags '()
                              :max-positionals 0
-                             :message "detach-client: unsupported argument")
+                             :message "detach: unsupported argument")
     (declare (ignore flags positionals))
     (dispatch-command session :detach nil)))

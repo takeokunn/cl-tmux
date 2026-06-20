@@ -20,12 +20,11 @@
    #:describe-key-bindings
    #:describe-key-bindings-for-table
    #:describe-key-bindings-for-key
-   #:set-key-binding
-   #:remove-key-binding
    ;; Key-table system
    #:*key-tables*
    #:ensure-key-table
    #:key-table-bind
+   #:key-table-unbind
    #:key-table-lookup
    #:key-table-command
    #:key-table-repeatable-p

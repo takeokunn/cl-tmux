@@ -112,10 +112,19 @@
        (= (aref buffer 2) +byte-csi-param-1+)
        (= (aref buffer 3) +byte-csi-semi+)))
 
-(defun %escape-digit-leading-csi-p (buffer length)
+(defun %escape-digit-leading-csi-accumulating-p (buffer length)
   (and (>= length 4)
        (= (aref buffer 1) +byte-csi-bracket+)
-       (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)))
+       (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)
+       (cl-tmux/terminal/parser::csi-final-byte-before-p
+        (aref buffer (1- length)))))
+
+(defun %escape-digit-leading-csi-complete-p (buffer length)
+  (and (>= length 4)
+       (= (aref buffer 1) +byte-csi-bracket+)
+       (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)
+       (cl-tmux/terminal/parser::csi-final-byte-p
+        (aref buffer (1- length)))))
 
 (defun %escape-4byte-accumulating-p (buffer length)
   (and (= length 4)
@@ -181,7 +190,10 @@
      :modifier-arrow-accumulating)
     ((%escape-modifier-arrow-complete-p buffer length)
      :modifier-arrow-complete)
-    ((%escape-digit-leading-csi-p buffer length) :digit-leading-csi)
+    ((%escape-digit-leading-csi-accumulating-p buffer length)
+     :digit-leading-csi-accumulating)
+    ((%escape-digit-leading-csi-complete-p buffer length)
+     :digit-leading-csi-complete)
     ((%escape-4byte-accumulating-p buffer length) :four-byte-accumulating)
     ((%escape-two-byte-non-csi-p buffer length) :two-byte-non-csi)
     ((%escape-overflow-p length) :overflow)
@@ -236,7 +248,9 @@
         (:modifier-arrow-accumulating (%escape-input-continue session buffer))
         (:modifier-arrow-complete
          (%handle-escape-modifier-arrow session buffer length))
-        (:digit-leading-csi
+        (:digit-leading-csi-accumulating
+         (%escape-input-continue session buffer))
+        (:digit-leading-csi-complete
          (%forward-unless-copy-mode session buffer length)
          (%ground-values))
         (:four-byte-accumulating

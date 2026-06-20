@@ -309,8 +309,7 @@
           (when inner (clrhash inner)))
         t)
        ((and table key)
-        (let ((tbl (gethash table *key-tables*)))
-          (when tbl (remhash key tbl)))
+        (key-table-unbind table key)
         t)
        (t nil))))
   ;; unbind-all [-T table]: clear all bindings in a key-table (default: prefix).

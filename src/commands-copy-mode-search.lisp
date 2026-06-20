@@ -136,17 +136,23 @@
       (when term
         (copy-mode-search-backward screen term)))))
 
-(defun copy-mode-search-forward-word (screen)
-  "Search forward for the word under the copy-mode cursor, treating it literally."
+(defun %copy-mode-search-word (screen direction)
+  "Search for the literal word under the cursor in DIRECTION."
   (let ((term (%copy-mode-word-at-cursor screen)))
     (when term
-      (copy-mode-search-forward screen (%copy-mode-regex-escape term)))))
+      (ecase direction
+        (:forward
+         (copy-mode-search-forward screen (%copy-mode-regex-escape term)))
+        (:backward
+         (copy-mode-search-backward screen (%copy-mode-regex-escape term)))))))
+
+(defun copy-mode-search-forward-word (screen)
+  "Search forward for the word under the copy-mode cursor, treating it literally."
+  (%copy-mode-search-word screen :forward))
 
 (defun copy-mode-search-backward-word (screen)
   "Search backward for the word under the copy-mode cursor, treating it literally."
-  (let ((term (%copy-mode-word-at-cursor screen)))
-    (when term
-      (copy-mode-search-backward screen (%copy-mode-regex-escape term)))))
+  (%copy-mode-search-word screen :backward))
 
 ;;; ── Incremental search (C-s / C-r) ──────────────────────────────────────────
 ;;;

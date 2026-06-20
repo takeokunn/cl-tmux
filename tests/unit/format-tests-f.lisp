@@ -84,6 +84,33 @@
     (setf (cl-tmux/terminal/types:screen-copy-mode-p scr) nil
           (cl-tmux/terminal/types:screen-copy-selecting scr) nil)))
 
+(test format-context-copy-position-empty-outside-copy-mode
+  "#{copy_position} and #{copy_position_limit} are empty outside copy mode."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (ctx  (cl-tmux/format:format-context-from-session sess win pane)))
+    (dolist (spec '("#{copy_position}" "#{copy_position_limit}"))
+      (is (string= "" (cl-tmux/format:expand-format spec ctx))
+          "~S must expand to the empty string outside copy mode" spec))))
+
+(test format-context-copy-position-and-limit-in-copy-mode
+  "#{copy_position} reports the copy offset and #{copy_position_limit} reports
+   the scrollback length in copy mode."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win)))
+         (scr  (cl-tmux/model:pane-screen pane)))
+    (seed-scrollback scr 5)
+    (setf (cl-tmux/terminal/types:screen-copy-mode-p scr) t
+          (cl-tmux/terminal/types:screen-copy-offset scr) 3)
+    (let ((ctx (cl-tmux/format:format-context-from-session sess win pane)))
+      (is (string= "3" (cl-tmux/format:expand-format "#{copy_position}" ctx))
+          "copy_position must match screen-copy-offset")
+      (is (string= "5" (cl-tmux/format:expand-format "#{copy_position_limit}" ctx))
+          "copy_position_limit must match scrollback length"))
+    (setf (cl-tmux/terminal/types:screen-copy-mode-p scr) nil)))
+
 (test format-context-window-layout-non-empty-for-window-with-panes
   "format-context-from-session :window-layout is a non-empty string for a window with a tree."
   (let* ((sess (make-fake-session :nwindows 1 :npanes 2))

@@ -178,7 +178,7 @@
 
 (test dispatch-kill-pane-leaves-remaining-pane
   ":kill-pane on a 2-pane window removes the active pane but keeps the other."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win   (session-active-window s))
            (pane0 (first  (window-panes win)))
            (pane1 (second (window-panes win))))
@@ -195,7 +195,7 @@
 
 (test cmd-cycle-pane-prev-retreats-selection
   "%cmd-cycle-pane with prev-cyclic retreats the active pane."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s))
            (p0  (first  (window-panes win)))
            (p1  (second (window-panes win))))
@@ -258,7 +258,7 @@
   (dolist (row '((nil t   "from p0: wraps to p1")
                  (t   nil "from p1: retreats to p0")))
     (destructuring-bind (start-on-p1 expect-p1 desc) row
-      (with-fake-session (s :nwindows 1 :npanes 2)
+      (with-fake-two-pane-session (s)
         (let* ((win (session-active-window s))
                (p0  (first  (window-panes win)))
                (p1  (second (window-panes win))))

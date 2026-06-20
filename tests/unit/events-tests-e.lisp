@@ -28,11 +28,13 @@
     (window-select-pane win2 p2)
     (session-select-window sess win0)
     ;; Session prefix " s" = 2 chars.
-    ;; win0 "a": 4 + 1 = 5 chars, cols 2..6
-    ;; win1 "b": 4 + 1 = 5 chars, cols 7..11
-    ;; win2 "c": 4 + 1 = 5 chars, cols 12..16
-    ;; Column 14 should land in win2.
-    (is (eq win2 (cl-tmux::%status-col-to-window sess 14))
+    ;; win0 "a": 6 chars, cols 2..7
+    ;; separator: column 8
+    ;; win1 "b": 5 chars, cols 9..13
+    ;; separator: column 14
+    ;; win2 "c": 5 chars, cols 15..19
+    ;; Column 15 should land in win2.
+    (is (eq win2 (cl-tmux::%status-col-to-window sess 15))
         "%status-col-to-window must find the third window at the appropriate column")))
 
 ;;; ── %handle-escape-sgr-mouse NIL branch coverage ─────────────────────────────
@@ -190,20 +192,22 @@
       (is (null result)
           "mode 1 must not forward release events (fd=-1 means encode returns nil)"))))
 
-(test try-mouse-passthrough-mode2-blocks-non-motion-release
-  "Mode 2 (button-event): release of a non-motion button is NOT forwarded."
-  (let* ((screen (make-screen 20 5))
-         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0
-                            :width 20 :height 5 :screen screen))
-         (win    (make-window :id 1 :name "w" :width 20 :height 5
-                              :panes (list pane)
-                              :tree (make-layout-leaf pane))))
-    (setf (screen-mouse-mode screen) 2)
-    ;; Button 0 release (left-click release, not motion): should NOT be forwarded.
-    ;; (or (not T) (= 0 +mouse-btn-motion+)) = (or NIL NIL) = NIL → skip.
-    (let ((result (cl-tmux::%try-mouse-passthrough win pane 0 0 0 t)))
-      (is (null result)
-          "mode-2 must not forward non-motion button releases"))))
+(test try-mouse-passthrough-mode2-forwards-release
+  "Mode 2 (button-event): release events are forwarded."
+  (with-pipe-fds (rfd wfd)
+    (let* ((screen (make-screen 20 5))
+           (pane   (make-pane :id 1 :fd wfd :pid -1 :x 0 :y 0
+                              :width 20 :height 5 :screen screen))
+           (win    (make-window :id 1 :name "w" :width 20 :height 5
+                                :panes (list pane)
+                                :tree (make-layout-leaf pane))))
+      (setf (screen-mouse-mode screen) 2)
+      ;; Button 0 release (left-click release, not motion): should be forwarded.
+      (let ((result (cl-tmux::%try-mouse-passthrough win pane 0 0 0 t)))
+        (is (eq result t)
+            "mode-2 must forward non-motion button releases"))
+      (is-true (cl-tmux/pty:select-fds (list rfd) 20000)
+               "forwarded release must reach the pane PTY"))))
 
 (test try-mouse-passthrough-mode0-returns-nil
   "When the pane has mouse mode 0 (disabled), %try-mouse-passthrough returns NIL."
@@ -298,6 +302,27 @@
       (cl-tmux::process-byte s (char-code #\%) state)
       (is (equal (cons 0 6) (cl-tmux/terminal:screen-copy-cursor screen))
           "% must jump to the matching closing bracket"))))
+
+(test copy-mode-vi-word-search-keys-use-copy-mode-table
+  "The default copy-mode-vi # and * bindings search for the word under the cursor."
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "vi")
+    (with-copy-mode-state (s screen state)
+      (let ((text "xx a.b aXb a.b"))
+        (dotimes (i (length text))
+          (setf (cl-tmux/terminal/types:screen-cell screen i 0)
+                (cl-tmux/terminal/types:make-cell :char (char text i)))))
+      (setf (cl-tmux/terminal:screen-copy-cursor screen) (cons 0 3))
+      (cl-tmux::process-byte s (char-code #\*) state)
+      (is (equal (cons 0 11) (cl-tmux/terminal:screen-copy-cursor screen))
+          "* must search forward for the word under cursor through copy-mode-vi")
+      (setf (cl-tmux/terminal:screen-copy-cursor screen) (cons 0 12))
+      (cl-tmux::process-byte s (char-code #\#) state)
+      (is (equal (cons 0 11) (cl-tmux/terminal:screen-copy-cursor screen))
+          "# must search backward for the word under cursor through copy-mode-vi")
+      (is (string= "a\\.b"
+                   (cl-tmux/terminal/types:screen-copy-search-term screen))
+          "#/* must save the escaped literal word search term"))))
 
 (test copy-mode-vi-pageup-uses-copy-mode-key-table
   "In vi mode, CSI PageUp uses the copy-mode-vi table before the scroll fallback."
@@ -526,6 +551,29 @@
           (cl-tmux::process-byte s b state))
         (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))
           (is-true ready "the function key must be forwarded, not swallowed")
+          (when ready
+            (cffi:with-foreign-object (buf :uint8 16)
+              (let ((n (cffi:foreign-funcall "read"
+                                             :int rfd :pointer buf :unsigned-long 16
+                                             :long)))
+                (is (= 5 n) "all 5 bytes of ESC [ 1 5 ~ forwarded raw (got ~D)" n)
+                (is (= 27  (cffi:mem-aref buf :uint8 0)))
+                (is (= 126 (cffi:mem-aref buf :uint8 4)) "ends with '~'")))))))))
+
+(test digit-leading-csi-is-buffered-until-final-byte
+  "Digit-leading CSI input must stay buffered until a CSI final byte arrives.
+   This prevents ESC [ 1 5 from being forwarded before the terminating '~'."
+  (with-pipe-fds (rfd wfd)
+    (with-fake-session (s :nwindows 1)
+      (setf (pane-fd (window-active-pane (session-active-window s))) wfd)
+      (let ((state (cl-tmux::make-input-state)))
+        (dolist (b '(27 91 49 53))  ; ESC [ 1 5
+          (cl-tmux::process-byte s b state))
+        (is-false (cl-tmux/pty:select-fds (list rfd) 20000)
+                  "ESC [ 1 5 must stay buffered until a final byte arrives")
+        (cl-tmux::process-byte s 126 state)
+        (let ((ready (cl-tmux/pty:select-fds (list rfd) 200000)))
+          (is-true ready "the completed CSI must be forwarded after '~'")
           (when ready
             (cffi:with-foreign-object (buf :uint8 16)
               (let ((n (cffi:foreign-funcall "read"

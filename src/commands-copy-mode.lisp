@@ -53,7 +53,8 @@
         (screen-copy-selecting      screen) nil
         (screen-copy-line-selection-p screen) nil
         (screen-copy-rect-select-p  screen) nil
-        (screen-copy-exit-on-bottom screen) nil))
+        (screen-copy-exit-on-bottom screen) nil
+        (screen-copy-mode-entered-by-mouse-p screen) nil))
 
 (defun %clamp-row-col (screen row col)
   "Return (cons clamped-row clamped-col) with row in [0, height-1] and col in [0, width-1]."

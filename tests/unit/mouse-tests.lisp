@@ -5,17 +5,6 @@
 (def-suite mouse-suite :description "Mouse input parsing and dispatch")
 (in-suite mouse-suite)
 
-;;; ── Helper: build a byte vector from a string ────────────────────────────────
-
-(defun mouse-bytes (&rest byte-list)
-  "Build an adjustable octet vector from BYTE-LIST with a fill-pointer."
-  (let ((v (make-array (length byte-list)
-                       :element-type '(unsigned-byte 8)
-                       :fill-pointer (length byte-list)
-                       :adjustable t
-                       :initial-contents byte-list)))
-    v))
-
 ;;; ── SGR mouse parsing ────────────────────────────────────────────────────────
 
 (test parse-sgr-mouse-table
@@ -86,8 +75,7 @@
 
 (test mouse-option-gating-off-by-default
   "When the 'mouse' option is NIL, %dispatch-mouse-event is a no-op."
-  (with-two-pane-h-session (sess win p0 p1)
-    (cl-tmux/options:set-option "mouse" nil)
+  (with-two-pane-h-session (sess win p0 p1 :mouse nil)
     ;; Click in right pane — should NOT change focus because mouse is off
     (cl-tmux::%dispatch-mouse-event sess 0 50 5 nil)
     (is (eq p0 (window-active-pane win))
@@ -104,37 +92,15 @@
 ;;; ── Status bar click ─────────────────────────────────────────────────────────
 
 (test mouse-status-bar-click-selects-window
-  "A left click on the status bar row at the column of window 2 selects window 2."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 80 :height 23
-                          :screen (make-screen 80 23)))
-         (p1  (make-pane :id 2 :fd -1 :pid -1
-                          :x 0 :y 0 :width 80 :height 23
-                          :screen (make-screen 80 23)))
-         (win0 (make-window :id 1 :name "win0" :width 80 :height 23
-                            :panes (list p0) :tree (make-layout-leaf p0) :active p0))
-         (win1 (make-window :id 2 :name "win1" :width 80 :height 23
-                            :panes (list p1) :tree (make-layout-leaf p1) :active p1))
-         (sess (make-session :id 1 :name "s" :windows (list win0 win1) :active win0)))
-    (cl-tmux/options:set-option "mouse" t)
-    (unwind-protect
-         (with-loop-state
-           (let ((cl-tmux::*term-rows* 24) (cl-tmux::*term-cols* 80))
-             ;; Status bar is row 23 (1- *term-rows*).
-             ;; %status-col-to-window: leading " s" = 2 chars; win0 = "  win0 " = 7 chars
-             ;; (spaces + name + space = 2 + 4 + 1 = 7 is 4 + length("win0")).
-             ;; Skip prefix: " s" = 2; win0 entry: " [win0] " active = 4+4=8? Let's just
-             ;; call %status-col-to-window and check it finds win1 at some column.
-             (let ((win-at-col (cl-tmux::%status-col-to-window sess 15)))
-               ;; At column 15 we should be somewhere in the window list area.
-               ;; Just check the function doesn't error; deeper testing via dispatch.
-               (declare (ignore win-at-col)))
-             ;; Click at status bar row
-             (cl-tmux::%dispatch-mouse-event sess 0 15 23 nil)
-             ;; We can't easily predict the exact column without computing the format,
-             ;; so just assert no error was raised and *dirty* was set.
-             (is-true cl-tmux::*dirty* "status bar click marks screen dirty")))
-      (cl-tmux/options:set-option "mouse" nil))))
+  "A left click on the status bar row selects the window that is actually rendered there."
+  (with-two-window-status-session (sess win0 win1)
+    ;; Session name "0" contributes columns 0-1.  With the custom formats
+    ;; above, win0 occupies column 2, '|' is column 3, and win1 starts at 4.
+    (is (eq win1 (cl-tmux::%status-col-to-window sess 4))
+        "custom status-bar layout must map column 4 to the second window")
+    (cl-tmux::%dispatch-mouse-event sess 0 4 5 nil)
+    (is (eq win1 (session-active-window sess))
+        "clicking the rendered second window must select it")))
 
 (test status-col-to-window-basic
   "%status-col-to-window returns the window whose label contains the given col."
@@ -148,12 +114,12 @@
                             :panes (list p1) :tree (make-layout-leaf p1) :active p1))
          (sess (make-session :id 1 :name "s" :windows (list win0 win1) :active win0)))
     ;; Session name "s" = 1 char; prefix = " s" = 2 chars.
-    ;; win0 active " [a] " = 5 chars, columns 2–6.
-    ;; win1 inactive "  b " = 4 chars (4 + length("b")), columns 7–10.
+    ;; win0 active " 1:a* " = 6 chars, columns 2–7.
+    ;; The separator adds column 8, so win1 starts at column 9.
     (let ((found0 (cl-tmux::%status-col-to-window sess 3)))
       (is (eq win0 found0) "%status-col-to-window col 3 must be win0"))
-    (let ((found1 (cl-tmux::%status-col-to-window sess 8)))
-      (is (eq win1 found1) "%status-col-to-window col 8 must be win1"))
+    (let ((found1 (cl-tmux::%status-col-to-window sess 9)))
+      (is (eq win1 found1) "%status-col-to-window col 9 must be win1"))
     (let ((found-nil (cl-tmux::%status-col-to-window sess 1)))
       (is (null found-nil) "col 1 is in session-name prefix, not a window"))))
 
@@ -185,109 +151,116 @@
 
 (test mouse-key-name-builds-tmux-names
   "%mouse-key-name maps (button, release-p, location) to tmux mouse key names."
-  (dolist (c '((64 nil "Pane"   "WheelUpPane"       "wheel-up in pane")
-               (65 nil "Pane"   "WheelDownPane"     "wheel-down in pane")
-               (0  nil "Pane"   "MouseDown1Pane"    "left press in pane")
-               (0  t   "Pane"   "MouseUp1Pane"      "left release in pane")
-               (1  nil "Pane"   "MouseDown2Pane"    "middle press in pane")
-               (2  nil "Status" "MouseDown3Status"  "right press on status")
-               (64 nil "Status" "WheelUpStatus"     "wheel-up on status")
-               (32 nil "Pane"   nil                 "motion has no standard name")))
-    (destructuring-bind (btn release-p location expected desc) c
-      (is (equal expected (cl-tmux::%mouse-key-name btn release-p location))
-          "~A" desc))))
+  (check-table
+   (list (list (cl-tmux::%mouse-key-name 64 nil :pane)   "WheelUpPane"
+               "wheel-up in pane")
+         (list (cl-tmux::%mouse-key-name 65 nil :pane)   "WheelDownPane"
+               "wheel-down in pane")
+         (list (cl-tmux::%mouse-key-name 0 nil :pane)    "MouseDown1Pane"
+               "left press in pane")
+         (list (cl-tmux::%mouse-key-name 0 t :pane)      "MouseUp1Pane"
+               "left release in pane")
+         (list (cl-tmux::%mouse-key-name 1 nil :pane)    "MouseDown2Pane"
+               "middle press in pane")
+         (list (cl-tmux::%mouse-key-name 2 nil :status)  "MouseDown3Status"
+               "right press on status")
+         (list (cl-tmux::%mouse-key-name 64 nil :status) "WheelUpStatus"
+               "wheel-up on status")
+         (list (cl-tmux::%mouse-key-name 32 nil :pane)   nil
+               "motion has no standard name"))
+   :test #'equal))
+
+(test mouse-event-action-classifies-built-in-behavior
+  "%mouse-event-action turns raw mouse state into a symbolic built-in action."
+  (check-table
+   (list (list (cl-tmux::%mouse-event-action 0 nil :status) :status-click
+               "left click on status")
+         (list (cl-tmux::%mouse-event-action 64 nil :pane) :scroll-up
+               "wheel-up")
+         (list (cl-tmux::%mouse-event-action 65 nil :pane) :scroll-down
+               "wheel-down")
+         (list (cl-tmux::%mouse-event-action 0 nil :pane) :left-press
+               "left press in pane")
+         (list (cl-tmux::%mouse-event-action 0 t :pane) :left-release
+               "left release")
+         (list (cl-tmux::%mouse-event-action 1 nil :pane) :middle-press
+               "middle press")
+         (list (cl-tmux::%mouse-event-action 32 nil :pane) :motion
+               "motion")
+         (list (cl-tmux::%mouse-event-action 2 nil :status) nil
+               "right click on status is unbound"))
+   :test #'eql))
 
 (test mouse-wheel-up-binding-fires-and-overrides-default
   "bind -n WheelUpPane <cmd> fires on a wheel-up event instead of the built-in
    copy-mode scroll."
-  (with-isolated-config
-    (cl-tmux/options:set-option "mouse" t)
+  (with-isolated-mouse-session (s :nwindows 2)
     (cl-tmux/config:apply-config-directive
      '("bind" "-n" "WheelUpPane" "next-window"))
-    (with-fake-session (s :nwindows 2)
-      (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
-        (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
-        (is (eq (second (session-windows s)) (session-active-window s))
-            "bound WheelUpPane must run next-window")
-        (is-false (screen-copy-mode-p (active-screen s))
-            "the binding overrides the default copy-mode scroll")))))
+    (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
+    (is (eq (second (session-windows s)) (session-active-window s))
+        "bound WheelUpPane must run next-window")
+    (is-false (screen-copy-mode-p (active-screen s))
+        "the binding overrides the default copy-mode scroll")))
 
 (test mouse-unbound-wheel-up-keeps-default-behavior
   "With no WheelUpPane binding, wheel-up still enters copy mode (default)."
-  (with-isolated-config
-    (cl-tmux/options:set-option "mouse" t)
-    (with-fake-session (s :nwindows 1)
-      (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
-        (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
-        (is-true (screen-copy-mode-p (active-screen s))
-            "unbound wheel-up falls through to the built-in copy-mode scroll")))))
+  (with-isolated-mouse-session (s)
+    (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
+    (is-true (screen-copy-mode-p (active-screen s))
+        "unbound wheel-up falls through to the built-in copy-mode scroll")))
 
 (test mouse-copy-mode-table-binding-fires
   "In copy mode, a copy-mode-vi mouse binding fires, overriding the built-in
    wheel scroll (the copy-mode table is consulted before the root table)."
-  (with-isolated-config
-    (cl-tmux/options:set-option "mouse" t)
+  (with-isolated-mouse-session (s :nwindows 2)
     (cl-tmux/options:set-option "mode-keys" "vi")
     (cl-tmux/config:apply-config-directive
      '("bind" "-T" "copy-mode-vi" "WheelUpPane" "next-window"))
-    (with-fake-session (s :nwindows 2)
-      (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
-        (cl-tmux/commands:copy-mode-enter (active-screen s))
-        (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
-        (is (eq (second (session-windows s)) (session-active-window s))
-            "copy-mode-vi WheelUpPane must run next-window")))))
+    (cl-tmux/commands:copy-mode-enter (active-screen s))
+    (cl-tmux::%dispatch-mouse-event s 64 0 0 nil)
+    (is (eq (second (session-windows s)) (session-active-window s))
+        "copy-mode-vi WheelUpPane must run next-window")))
 
 ;;; ── Double / triple click detection ─────────────────────────────────────────
 
 (test mouse-click-count-increments-within-threshold
   "%mouse-click-count increments when a press is within the threshold at the same cell."
-  (is (= 2 (cl-tmux::%mouse-click-count '(1000 5 0 1) 1200 5 0 500))
-      "within 500ms, same cell → 2")
-  (is (= 3 (cl-tmux::%mouse-click-count '(1000 5 0 2) 1400 5 0 500))
-      "third click within threshold → 3"))
+  (check-table
+   (list (list (cl-tmux::%mouse-click-count '(1000 5 0 1) 1200 5 0 500)
+               2 "within 500ms, same cell → 2")
+         (list (cl-tmux::%mouse-click-count '(1000 5 0 2) 1400 5 0 500)
+               3 "third click within threshold → 3"))))
 
 (test mouse-click-count-resets-when-slow-or-moved
   "%mouse-click-count resets to 1 when the press is too slow, at a different cell,
    or there is no previous click."
-  (is (= 1 (cl-tmux::%mouse-click-count '(1000 5 0 1) 1600 5 0 500))
-      "beyond threshold → reset to 1")
-  (is (= 1 (cl-tmux::%mouse-click-count '(1000 5 0 1) 1100 6 0 500))
-      "different column → reset")
-  (is (= 1 (cl-tmux::%mouse-click-count '(1000 5 0 1) 1100 5 1 500))
-      "different row → reset")
-  (is (= 1 (cl-tmux::%mouse-click-count nil 1000 5 0 500))
-      "no previous click → 1"))
+  (check-table
+   (list (list (cl-tmux::%mouse-click-count '(1000 5 0 1) 1600 5 0 500)
+               1 "beyond threshold → reset to 1")
+         (list (cl-tmux::%mouse-click-count '(1000 5 0 1) 1100 6 0 500)
+               1 "different column → reset")
+         (list (cl-tmux::%mouse-click-count '(1000 5 0 1) 1100 5 1 500)
+               1 "different row → reset")
+         (list (cl-tmux::%mouse-click-count nil 1000 5 0 500)
+               1 "no previous click → 1"))))
 
 (test mouse-double-click-selects-word
   "Two quick left-clicks at the same cell select the word under the pointer."
-  (with-isolated-config
-    (cl-tmux/options:set-option "mouse" t)
-    (with-fake-session (s :nwindows 1)
-      (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
-        (feed (active-screen s) "foo bar baz")
-        ;; Two presses at col 5 row 0 (inside "bar"); the rapid succession is
-        ;; naturally within double-click-time (500ms).
-        (cl-tmux::%dispatch-mouse-event s 0 5 0 nil)
-        (cl-tmux::%dispatch-mouse-event s 0 5 0 nil)
-        (is (string= "bar" (cl-tmux/commands::%selection-text (active-screen s)))
-            "double-click selects the word 'bar'")))))
+  (with-isolated-mouse-session (s)
+    (feed (active-screen s) "foo bar baz")
+    ;; Two presses at col 5 row 0 (inside "bar"); the rapid succession is
+    ;; naturally within double-click-time (500ms).
+    (cl-tmux::%dispatch-mouse-event s 0 5 0 nil)
+    (cl-tmux::%dispatch-mouse-event s 0 5 0 nil)
+    (is (string= "bar" (cl-tmux/commands::%selection-text (active-screen s)))
+        "double-click selects the word 'bar'")))
 
 ;;; ── Border-at-position ───────────────────────────────────────────────────────
 
 (test border-at-position-h-split
   "%border-at-position finds the :h separator between two side-by-side panes."
-  (let* ((p0  (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (p1  (make-pane :id 2 :fd -1 :pid -1
-                          :x 41 :y 0 :width 40 :height 24
-                          :screen (make-screen 40 24)))
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree  (make-layout-split :h
-                                    (make-layout-leaf p0)
-                                    (make-layout-leaf p1)
-                                    1/2))))
+  (with-h-split-81-24 (p0 p1 win)
     ;; Separator is at column 40
     (multiple-value-bind (split orient)
         (cl-tmux::%border-at-position win 40 5)
@@ -342,17 +315,14 @@
 
 (test mouse-passthrough-mode2-forwards-release
   "In button-event mode (mode 2), release events ARE forwarded."
-  (let* ((scr  (make-screen 40 24))
-         (pane (make-pane :id 1 :fd -1 :pid -1
-                          :x 0 :y 0 :width 40 :height 24
-                          :screen scr)))
-    (setf (cl-tmux/terminal/types:screen-mouse-mode scr) 2)
-    ;; With fd=-1, %encode-mouse-for-pane returns NIL (can't write), but
-    ;; %try-mouse-passthrough still calls it — the result is NIL only due to
-    ;; the fd guard, NOT the mode filter.  We confirm by pressing first:
-    ;; mode-2 should not block the release from reaching the encoder.
-    ;; Since we can't actually write to fd=-1, we verify via pane-mouse-mode
-    ;; being non-zero (the should-forward branch is taken).
-    ;; Indirect check: mode 2 with a press also does not early-return:
-    (is-false (cl-tmux::%try-mouse-passthrough nil pane 0 5 3 nil)
-              "mode-2 press returns NIL from encode (fd=-1), not from filter")))
+  (with-pipe-fds (rfd wfd)
+    (let* ((scr  (make-screen 40 24))
+           (pane (make-pane :id 1 :fd wfd :pid -1
+                            :x 0 :y 0 :width 40 :height 24
+                            :screen scr)))
+      (setf (cl-tmux/terminal/types:screen-mouse-mode scr) 2)
+      (let ((result (cl-tmux::%try-mouse-passthrough nil pane 0 5 3 t)))
+        (is (eq result t)
+            "mode-2 must forward non-motion button releases"))
+      (is-true (cl-tmux/pty:select-fds (list rfd) 20000)
+               "forwarded release must reach the pane PTY"))))

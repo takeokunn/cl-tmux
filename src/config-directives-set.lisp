@@ -31,7 +31,7 @@
     (setf *default-shell* path)
     t)
   ("set-status-height" 1 (n)
-    (let ((height (parse-integer n :junk-allowed t)))
+    (let ((height (cl-tmux::%parse-integer-or-nil n :junk-allowed t)))
       (when (and height (plusp height))
         (setf *status-height* height)
         t)))
@@ -241,7 +241,7 @@
    (if unset-p
        (setf *status-height* 1)
        (let* ((off-p (member value '("off" "false" "0") :test #'equal))
-              (n     (parse-integer value :junk-allowed t)))
+              (n     (cl-tmux::%parse-integer-or-nil value :junk-allowed t)))
          (setf *status-height*
                (cond (off-p 0)
                      ((and n (> n 0)) (min n 5))

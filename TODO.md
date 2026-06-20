@@ -8,8 +8,6 @@ remaining compatibility checks and documentation cleanups.
 
 - Keep the canonical-only parser and treat tmux legacy shorthand forms as
   intentionally unsupported.
-  - `split-window -p` percent form is intentionally rejected; `-l N%` is the
-    supported percent syntax.
   - Config abbreviations / shorthand spellings are intentionally rejected by the
     config parser and covered by tests.
 

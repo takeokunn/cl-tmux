@@ -9,8 +9,8 @@
          :allowed-flags '(#\a #\t)
          :max-positionals 0
          :message "kill-window: unsupported argument")
-  (let* ((target-str  (cdr (assoc #\t flags)))
-         (kill-others (assoc #\a flags))
+  (let* ((target-str  (%flag-value flags #\t))
+         (kill-others (%flag-present-p flags #\a))
          (ref-win     (%resolve-window-target-or-active session target-str)))
     (if kill-others
         ;; -a: kill all EXCEPT the reference window
@@ -39,9 +39,9 @@
          :allowed-flags '(#\s #\t #\k)
          :max-positionals 0
          :message "link-window: unsupported argument")
-  (let* ((src-str (cdr (assoc #\s flags)))
-         (dst-str (cdr (assoc #\t flags)))
-         (kill-p  (assoc #\k flags))
+  (let* ((src-str (%flag-value flags #\s))
+         (dst-str (%flag-value flags #\t))
+         (kill-p  (%flag-present-p flags #\k))
          ;; Resolve source window (default: active window of current session).
          (src-win (if src-str
                       (nth-value 1 (%resolve-target-session-window session src-str
@@ -81,8 +81,8 @@
          :allowed-flags '(#\t #\k)
          :max-positionals 0
          :message "unlink-window: unsupported argument")
-  (let* ((target-str (cdr (assoc #\t flags)))
-         (kill-p     (assoc #\k flags))
+  (let* ((target-str (%flag-value flags #\t))
+         (kill-p     (%flag-present-p flags #\k))
          (win        (%resolve-window-target-or-active session target-str)))
     (cond
       ((null win)
@@ -112,9 +112,9 @@
          :allowed-flags '(#\a #\t)
          :max-positionals 0
          :message "kill-pane: unsupported argument")
-  (let* ((target-str (cdr (assoc #\t flags)))
-         (kill-all   (assoc #\a flags))
-         (n          (and target-str (parse-integer target-str :junk-allowed t)))
+  (let* ((target-str (%flag-value flags #\t))
+         (kill-all   (%flag-present-p flags #\a))
+         (n          (%parse-integer-or-nil target-str))
          (win        (session-active-window session))
          ;; Determine the pane to KEEP (when -a) or KILL.
          (ref-pane   (if (and n win)
@@ -165,8 +165,8 @@
          :allowed-flags '(#\s #\t)
          :max-positionals 0
          :message "swap-window: unsupported argument")
-  (let* ((src-str (cdr (assoc #\s flags)))
-         (dst-str (cdr (assoc #\t flags)))
+  (let* ((src-str (%flag-value flags #\s))
+         (dst-str (%flag-value flags #\t))
          (src (%resolve-window-target-or-active session src-str))
          (dst (and dst-str (%resolve-window-target session dst-str))))
     (%swap-window-ids session src dst)))
@@ -207,9 +207,9 @@
          :allowed-flags '(#\s #\t #\r #\a)
          :max-positionals 0
          :message "move-window: unsupported argument")
-  (let* ((src-str (cdr (assoc #\s flags)))
-         (repack  (assoc #\r flags))
-         (after   (assoc #\a flags))
+  (let* ((src-str (%flag-value flags #\s))
+         (repack  (%flag-present-p flags #\r))
+         (after   (%flag-present-p flags #\a))
          (src-win (%resolve-window-target-or-active session src-str))
          (dst-n   (%parse-flag-int flags #\t)))
     (cond

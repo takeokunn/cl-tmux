@@ -47,7 +47,8 @@
        nil))))
 
 (defun %cmd-server-access (session args)
-  "server-access [-l] [-a|-d] [-r|-w] [user]: manage the server access list.
+  "server-access [-l] [-a|-d] [-r|-w] [user]:
+   manage the server access list.
    -l       list the current access entries (name -> permission); also the
             default when no user and no -a/-d is given.
    -a user  add USER (read-write by default, read-only when -r is also given).
@@ -60,11 +61,11 @@
                        :allowed-flags '(#\l #\a #\d #\r #\w)
                        :max-positionals 1
                        :message "server-access: unsupported argument")
-    (let* ((listp (assoc #\l flags))
-           (addp  (assoc #\a flags))
-           (delp  (assoc #\d flags))
-           (perm  (cond ((assoc #\r flags) :read-only)
-                        ((assoc #\w flags) :read-write)
+    (let* ((listp (%flag-present-p flags #\l))
+           (addp  (%flag-present-p flags #\a))
+           (delp  (%flag-present-p flags #\d))
+           (perm  (cond ((%flag-present-p flags #\r) :read-only)
+                        ((%flag-present-p flags #\w) :read-write)
                         (t nil)))
            (user  (first positionals)))
       (cond

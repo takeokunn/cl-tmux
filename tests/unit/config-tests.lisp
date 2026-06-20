@@ -7,6 +7,8 @@
 ;;;;   • known bindings in the default prefix key-table,
 ;;;;   • the lookup-key-binding helper, and
 ;;;;   • structural invariants of the prefix key-table itself.
+;;;; The default-value, initialization, and parse coverage lives in
+;;;; config-tests-defaults.lisp so this file stays focused on the core model.
 
 (def-suite config-suite :description "Key bindings and configuration")
 (in-suite config-suite)
@@ -22,8 +24,8 @@
             cl-tmux/config:+accept-timeout-us+
             cl-tmux/config:+pty-buf-size+
             cl-tmux/config:+pty-poll-timeout-us+
-            cl-tmux/config:set-key-binding
-            cl-tmux/config:remove-key-binding)))
+            cl-tmux/config:key-table-bind
+            cl-tmux/config:key-table-unbind)))
 
 ;;; ── Constant value ─────────────────────────────────────────────────────────
 
@@ -50,14 +52,23 @@
 ;;; ── Structural invariants of prefix key-table ──────────────────────────────
 
 (test all-bindings-have-keyword-or-list-values
-  "Every value in the prefix key-table is a keyword symbol or a command token list."
+  "Every value in the prefix key-table is a keyword symbol or a command token form."
   (let* ((tbl (cl-tmux/config:ensure-key-table "prefix"))
          (keys nil))
     (maphash (lambda (k v) (declare (ignore k)) (push v keys)) tbl)
     (dolist (entry keys)
       (let ((cmd (cl-tmux/config:key-table-command entry)))
-        (is (or (keywordp cmd) (and (consp cmd) (every #'stringp cmd)))
-            "entry ~A should have a keyword or string-list command, got ~A"
+        (is (or (keywordp cmd)
+                (and (consp cmd)
+                     (or (every (lambda (part)
+                                  (or (stringp part) (symbolp part)))
+                                cmd)
+                         (and (eq 'quote (first cmd))
+                              (consp (second cmd))
+                              (every (lambda (part)
+                                       (or (stringp part) (symbolp part)))
+                                     (second cmd))))))
+            "entry ~A should have a keyword or token-list command, got ~A"
             entry cmd)))))
 
 (test all-bindings-have-char-or-string-keys
@@ -112,42 +123,42 @@
       (setf (fdefinition 'cl-tmux/config::install-default-prefix-bindings)
             saved-installer))))
 
-;;; ── set-key-binding / remove-key-binding ──────────────────────────────────
+;;; ── key-table-bind / key-table-unbind ─────────────────────────────────────
 
-(test set-key-binding-adds-new
-  "set-key-binding adds a brand-new binding that lookup-key-binding finds.
+(test key-table-bind-adds-new
+  "key-table-bind adds a brand-new binding that lookup-key-binding finds.
    Uses #\\@ (ASCII 64) which has no default binding."
   (with-isolated-config
     (is (null (lookup-key-binding #\@))
         "#\\@ should start unbound")
-    (set-key-binding #\@ :new-window)
+    (key-table-bind "prefix" #\@ :new-window)
     (is (eq :new-window (lookup-key-binding #\@))
-        "#\\@ should be bound to :new-window after set-key-binding")))
+        "#\\@ should be bound to :new-window after key-table-bind")))
 
-(test set-key-binding-replaces-existing
-  "set-key-binding on an existing key replaces the command without duplicating."
+(test key-table-bind-replaces-existing
+  "key-table-bind on an existing key replaces the command without duplicating."
   (with-isolated-config
-    (set-key-binding #\z :new-window)
+    (key-table-bind "prefix" #\z :new-window)
     (is (eq :new-window (lookup-key-binding #\z))
         "#\\z should be bound to :new-window")
     (let* ((tbl (cl-tmux/config:ensure-key-table "prefix"))
            (before (hash-table-count tbl)))
-      (set-key-binding #\z :detach)
+      (key-table-bind "prefix" #\z :detach)
       (is (eq :detach (lookup-key-binding #\z))
           "#\\z should now be bound to :detach")
       (let ((after (hash-table-count tbl)))
         (is (= before after)
             "prefix table size should not grow (replace, not duplicate)")))))
 
-(test remove-key-binding-removes
-  "remove-key-binding removes a binding so lookup returns NIL afterward."
+(test key-table-unbind-removes
+  "key-table-unbind removes a binding so lookup returns NIL afterward."
   (with-isolated-config
-    (set-key-binding #\z :new-window)
+    (key-table-bind "prefix" #\z :new-window)
     (is (eq :new-window (lookup-key-binding #\z))
         "#\\z should be bound before removal")
-    (remove-key-binding #\z)
+    (key-table-unbind "prefix" #\z)
     (is (null (lookup-key-binding #\z))
-        "#\\z should be unbound after remove-key-binding")))
+        "#\\z should be unbound after key-table-unbind")))
 
 ;;; ── describe-key-bindings (list-keys help text) ─────────────────────────────
 
@@ -697,79 +708,3 @@
       "*status-height* must be an integer")
   (is (plusp cl-tmux/config:*status-height*)
       "*status-height* must be positive"))
-
-;;; ── Table-driven default prefix bindings check ───────────────────────────
-;;;
-;;; The three near-identical lookup-X-binds-Y tests are consolidated here into
-;;; a single table-driven test covering all standard single-char bindings.
-
-(test default-prefix-bindings-table
-  "All standard single-char prefix bindings are registered with the correct commands."
-  (dolist (pair '((#\c :new-window)
-                  (#\n :next-window)
-                  (#\p :prev-window)
-                  (#\o :next-pane)
-                  (#\d :detach)
-                  (#\? :list-keys)
-                  (#\[ :copy-mode-enter)
-                  (#\] :paste-buffer)
-                  (#\x :kill-pane-confirm)
-                  (#\& :kill-window-confirm)
-                  (#\, :rename-window)
-                  (#\H :resize-left)
-                  (#\J :resize-down)
-                  (#\K :resize-up)
-                  ;; #\L and #\! are rebound to their tmux-correct commands by
-                  ;; events-loop.lisp (loaded after config.lisp): L = last-session
-                  ;; (switch-client -l), ! = break-pane.
-                  (#\L :last-session)
-                  (#\Z :zoom-toggle)
-                  (#\$ :rename-session)
-                  (#\! :break-pane)))
-    (let ((key (first pair))
-          (expected (second pair)))
-      (is (eq expected (lookup-key-binding key))
-          "key ~C must be bound to ~A (got ~A)"
-          key expected (lookup-key-binding key))))
-  ;; Also verify an unbound key returns NIL
-  (is (null (lookup-key-binding #\@))
-      "#\\@ (unbound) must return NIL"))
-
-;;; ── key-table-command on a valid entry ───────────────────────────────────
-
-(test key-table-command-extracts-car
-  "key-table-command returns the car of a key-table entry (the command keyword)."
-  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
-    (cl-tmux/config:key-table-bind "prefix" #\c :new-window)
-    (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\c)))
-      (is (not (null entry)) "entry must exist")
-      (is (eq :new-window (cl-tmux/config:key-table-command entry))
-          "key-table-command must return :new-window"))))
-
-;;; ── copy-mode table exists after initialize ───────────────────────────────
-
-(test key-tables-copy-mode-table-exists
-  "The copy-mode key-tables are created by initialize-default-key-tables."
-  (is (not (null (gethash "copy-mode" cl-tmux/config:*key-tables*)))
-      "\"copy-mode\" table must exist in *key-tables*")
-  (is (not (null (gethash "copy-mode-vi" cl-tmux/config:*key-tables*)))
-      "\"copy-mode-vi\" table must exist in *key-tables*"))
-
-;;; ── *prefix-key-code* dynamic variable ──────────────────────────────────────
-
-(test prefix-key-code-dynamic-var-defaults-to-constant
-  "*prefix-key-code* defaults to the value of +prefix-key-code+."
-  (is (= +prefix-key-code+ cl-tmux/config:*prefix-key-code*)
-      "*prefix-key-code* must equal +prefix-key-code+ by default"))
-
-;;; ── %parse-prefix-key ────────────────────────────────────────────────────────
-
-(test parse-prefix-key-table
-  "%parse-prefix-key: C-X keys, single chars, and unknown return expected values."
-  (dolist (c '(("C-a"        1   "C-a → 1 (logand 97 #x1f)")
-               ("C-b"        2   "C-b → 2 (logand 98 #x1f, the default prefix)")
-               ("A"          65  "single char 'A' → char-code 65")
-               ("UnknownKey" nil "unknown key name → NIL")))
-    (destructuring-bind (input expected desc) c
-      (is (equal expected (cl-tmux/config::%parse-prefix-key input))
-          "~A" desc))))

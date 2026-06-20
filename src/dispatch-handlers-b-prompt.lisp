@@ -4,11 +4,10 @@
 
 (define-command-handlers
   (:command-prompt
-   (prompt-nonempty ": "
-                    (lambda (input)
-                      (add-prompt-history input)
-                      (%run-command-line session input))
-                    :history *prompt-history*))
+   (prompt-history-nonempty ": "
+                             (lambda (input)
+                               (%run-command-line session input))
+                             :history *prompt-history*))
   (:move-window-prompt
    (with-active-window (win session)
      (prompt-integer "move-window to index"
@@ -24,7 +23,7 @@
                                            (cl-tmux/config::%command-keyword cmd-str))))
                         (if kw
                             (progn
-                              (set-key-binding key-tok kw)
+                              (key-table-bind +table-prefix+ key-tok kw)
                               (%overlayf "bound ~A -> ~(~A~)" key-tok kw))
                             (%overlayf "unknown command: ~A"
                                        (or cmd-str input)))))))
@@ -32,17 +31,17 @@
    (prompt-nonempty "unbind key: "
                     (lambda (input)
                       (let ((k (cl-tmux/config::%parse-key-token input)))
-                        (remove-key-binding k)
+                        (key-table-unbind +table-prefix+ k)
                         (%overlayf "unbound ~A" k)))))
   (:select-window-prompt
    (prompt-nonempty "select window (name or number): "
                     (lambda (input)
-                      (let* ((idx (ignore-errors (parse-integer input)))
-                             (win (or (and idx (find idx (session-windows session)
-                                                     :key #'window-id))
-                                      (find input (session-windows session)
-                                            :key #'window-name
-                                            :test #'string-equal))))
+                      (let ((win (or (and (every #'digit-char-p input)
+                                          (plusp (length input))
+                                          (find (parse-integer input)
+                                                (session-windows session)
+                                                :key #'window-id))
+                                     (find-window-by-target session input))))
                         (if win
                             (%with-window-focus-transition (session)
                               (session-select-window session win))

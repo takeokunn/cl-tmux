@@ -3,7 +3,7 @@
 ;;;; Session / window / misc handlers split out from dispatch-handlers-b.lisp.
 
 (define-command-handlers
-  ;; ── detach-client -a (detach all OTHER clients) ──────────────────────────
+  ;; ── detach -a (detach all OTHER clients) ──────────────────────────
   ;; In standalone mode this detaches the current session.
   ;; In server mode, this would detach all clients except the caller.
   ;; Here we lock all OTHER sessions as a proxy.
@@ -97,8 +97,4 @@
   (:unlink-window
    (%cmd-unlink-window session nil))
 
-  ;; ── select-pane -m / mark pane as the marked pane ────────────────────────
-  ;; :mark-pane already handles this; this alias keeps the tmux name.
-  (:select-pane-mark
-   (with-active-pane (ap session)
-     (%toggle-mark-pane ap))))
+  )

@@ -155,6 +155,16 @@
       (is (null (cl-tmux/hooks:command-hooks "after-new-window"))
           "runtime set-hook -u must clear the event's command hooks"))))
 
+(test runtime-set-hook-r-runs-event-hooks-immediately
+  "set-hook -R <event> <command> run at runtime registers the hook and fires it immediately."
+  (with-isolated-hooks
+    (with-fake-session (s :nwindows 2)
+      (cl-tmux::%run-command-line s "set-hook -R after-new-window next-window")
+      (is (equal '("next-window") (cl-tmux/hooks:command-hooks "after-new-window"))
+          "runtime set-hook -R must register the command hook")
+      (is (eq (second (session-windows s)) (session-active-window s))
+          "runtime set-hook -R must run the registered hook immediately"))))
+
 (test config-set-hook-g-flag-registers-under-event
   "set-hook -g <event> <cmd> in .tmux.conf registers under EVENT, not \"-g\"
    (regression: leading flags other than -r/-u were previously taken as the event)."

@@ -83,23 +83,28 @@
   text)
 
 (defun %cmd-set-buffer-arg (session args)
-  "set-buffer [-a] [-b name] data...: set a paste buffer's contents.
-   -b name: name the buffer (retrievable via paste-buffer -b name, etc.); without
-     -b an automatic name (bufferN) is assigned.
-   -a: append DATA to the existing buffer (named NAME, or the most recent)."
+  "set-buffer [-a] [-b name] [-n new-name] data...:
+   set a paste buffer's contents.  -b name stores DATA under NAME; without -b
+   an automatic name (bufferN) is assigned.  -n new-name renames the selected
+   buffer (or the most recent one) to NEW-NAME and ignores DATA."
   (declare (ignore session))
-  (with-command-input (flags positionals args "b"
-                             :allowed-flags '(#\a #\b)
+  (with-command-input (flags positionals args "bn"
+                             :allowed-flags '(#\a #\b #\n)
                              :message "set-buffer: unsupported argument")
     (let* ((name     (%buffer-name-from-flags flags))
+           (new-name (%flag-value flags #\n))
            (append-p (%buffer-append-p flags))
            (data     (%buffer-positionals-text positionals)))
-      (when positionals
-        (if append-p
-            (let ((existing (or (%named-or-latest-paste-buffer name) "")))
-              (cl-tmux/buffer:add-paste-buffer
-               (concatenate 'string existing data) name))
-            (cl-tmux/buffer:add-paste-buffer data name))))))
+      (cond
+        (new-name
+         (unless (cl-tmux/buffer:rename-paste-buffer name new-name)
+           (show-overlay "no buffer")))
+        (positionals
+         (if append-p
+             (let ((existing (or (%named-or-latest-paste-buffer name) "")))
+               (cl-tmux/buffer:add-paste-buffer
+                (concatenate 'string existing data) name))
+             (cl-tmux/buffer:add-paste-buffer data name)))))))
 
 (defun %replace-newlines-with (text sep)
   "Return TEXT with every LF replaced by the string SEP (which may be empty or
@@ -128,28 +133,27 @@
    CR (e.g. `paste-buffer -s ' '` joins lines with spaces); -r still wins, pasting
    raw.  Bracketed paste is applied automatically by %paste-to-pane when the
    application has enabled it.  -p is accepted but not specially handled."
-  (with-command-flags+pos (flags positionals args "bst")
   (with-command-input (flags positionals args "bst"
                                 :allowed-flags '(#\d #\p #\r #\b #\s #\t)
                                 :max-positionals 0
                                 :message "paste-buffer: unsupported argument")
-      (let* ((name       (%buffer-name-from-flags flags))
-             (delete-p   (%flag-present-p flags #\d))
-             (no-replace (%flag-present-p flags #\r))
-             (separator  (%flag-value flags #\s))
-             (target-str (%flag-value flags #\t))
-             (raw        (%named-or-latest-paste-buffer name))
-             ;; tmux default: LF → CR so a multi-line paste submits each line; -s
-             ;; overrides the replacement, -r keeps the raw bytes.
-             (text       (%paste-buffer-text raw no-replace separator)))
-        (with-target-context (target-session target-window target-pane session target-str)
-          (declare (ignore target-session target-window))
-          (when text
-            (%paste-to-pane target-pane text)
-            (when delete-p
-              (if name
-                  (cl-tmux/buffer:delete-buffer-by-name name)
-                  (cl-tmux/buffer:delete-paste-buffer 0)))))))))
+    (let* ((name       (%buffer-name-from-flags flags))
+           (delete-p   (%flag-present-p flags #\d))
+           (no-replace (%flag-present-p flags #\r))
+           (separator  (%flag-value flags #\s))
+           (target-str (%flag-value flags #\t))
+           (raw        (%named-or-latest-paste-buffer name))
+           ;; tmux default: LF → CR so a multi-line paste submits each line; -s
+           ;; overrides the replacement, -r keeps the raw bytes.
+           (text       (%paste-buffer-text raw no-replace separator)))
+      (with-target-context (target-session target-window target-pane session target-str)
+        (declare (ignore target-session target-window))
+        (when text
+          (%paste-to-pane target-pane text)
+          (when delete-p
+            (if name
+                (cl-tmux/buffer:delete-buffer-by-name name)
+                (cl-tmux/buffer:delete-paste-buffer 0))))))))
 
 (defun %cmd-delete-buffer-arg (session args)
   "delete-buffer [-b name]: delete the named buffer (or the most recent)."
@@ -192,10 +196,12 @@
 
 (defun %cmd-load-buffer-arg (session args)
   "load-buffer [-b name] path: load PATH into a paste buffer.
-   -b name stores the data under NAME; otherwise an automatic buffer name is used."
+   -b name stores the data under NAME; otherwise an automatic buffer name is
+   used. tmux also accepts -t target and -w for compatibility, so we parse
+   them even though the loader only persists the file contents here."
   (declare (ignore session))
-  (with-command-input (flags positionals args "b"
-                             :allowed-flags '(#\b)
+  (with-command-input (flags positionals args "bt"
+                             :allowed-flags '(#\b #\t #\w)
                              :max-positionals 1
                              :message "load-buffer: unsupported argument")
     (let ((name (%buffer-name-from-flags flags))
@@ -274,10 +280,9 @@
       (if command
           (%show-popup-command-output title command clamp-w clamp-h)
           ;; No command: fall back to the interactive popup-command prompt.
-          (prompt-start "popup command" ""
-                        (lambda (cmd)
-                          (unless (string= cmd "")
-                            (%show-popup-command-output title cmd clamp-w clamp-h))))))))
+          (prompt-nonempty "popup command"
+                           (lambda (cmd)
+                             (%show-popup-command-output title cmd clamp-w clamp-h)))))))
 
 (defun %cmd-display-menu-arg (session args)
   "display-menu [-T title] [-x x] [-y y] [label key command ...]: show an interactive menu.
@@ -324,11 +329,9 @@
         (when (plusp (length cmd-line))
           ;; Single-key prompt like tmux: one 'y'/'Y' keypress confirms (no Enter);
           ;; any other key cancels.
-          (prompt-start prompt-text ""
-                        (lambda (input)
-                          (when (member input '("y" "Y") :test #'string=)
-                            (%run-command-line session cmd-line)))
-                        :single-key t))))))
+          (%confirm-prompt prompt-text
+                           (lambda ()
+                             (%run-command-line session cmd-line))))))))
 
 (defun %cmd-list-keys-arg (session args)
   "list-keys [-T table] [-1] [key]: list key bindings.
@@ -343,7 +346,7 @@
            (output     (if key
                            (cl-tmux/config:describe-key-bindings-for-key table-name key)
                            (cl-tmux/config:describe-key-bindings-for-table table-name)))
-           (output     (if (assoc #\1 flags)
+           (output     (if (%flag-present-p flags #\1)
                            (let ((newline (position #\Newline output)))
                              (if newline
                                  (subseq output 0 newline)

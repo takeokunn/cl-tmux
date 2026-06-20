@@ -73,5 +73,5 @@
                        :allowed-flags '(#\f)
                        :max-positionals 0
                        :message "customize-mode: unsupported argument")
-    (show-overlay (%format-customize-tree (cdr (assoc #\f flags))))
+    (show-overlay (%format-customize-tree (%flag-value flags #\f)))
     t))

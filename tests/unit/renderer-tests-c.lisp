@@ -96,17 +96,6 @@
       ;; Restore so other tests are not affected.
       (setf (session-locked-p sess) nil))))
 
-;;; ── %status-copy-indicator edge cases ───────────────────────────────────────
-
-(test status-copy-indicator-in-copy-mode-zero-offset-returns-empty
-  "%status-copy-indicator in copy-mode with offset 0 returns empty string."
-  (let* ((screen (make-screen 10 5))
-         (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 5 :fd -1 :screen screen)))
-    (setf (screen-copy-mode-p screen) t
-          (screen-copy-offset screen) 0)
-    (is (string= "" (cl-tmux/renderer::%status-copy-indicator pane))
-        "%status-copy-indicator with offset 0 must return empty string")))
-
 ;;; ── %status-pane-indicator with non-nil pane ─────────────────────────────────
 
 (test status-pane-indicator-formats-pane-id
@@ -119,8 +108,8 @@
 
 ;;; ── %status-left-text with copy mode ─────────────────────────────────────────
 
-(test status-left-text-copy-mode-shows-indicator
-  "%status-left-text with copy mode active includes the copy indicator."
+(test status-left-text-copy-mode-has-no-indicator
+  "%status-left-text with copy mode active no longer includes the old copy indicator."
   (let ((cl-tmux/prompt:*prompt* nil))
     (let* ((sess   (make-fake-session :nwindows 1))
            (win    (session-active-window sess))
@@ -130,10 +119,10 @@
       (setf (screen-copy-mode-p   screen) t
             (screen-copy-offset   screen) 2)
       (let ((left (cl-tmux/renderer::%status-left-text sess win ap)))
-        (is (search "COPY" left)
-            "%status-left-text in copy mode must contain 'COPY' (got ~S)" left)
-        (is (search "+2" left)
-            "%status-left-text in copy mode must show offset '+2' (got ~S)" left)))))
+        (is (null (search "COPY" left))
+            "%status-left-text in copy mode must not contain the old 'COPY' indicator (got ~S)" left)
+        (is (null (search "+2" left))
+            "%status-left-text in copy mode must not show the old offset '+2' (got ~S)" left)))))
 
 ;;; ── %render-mouse-sequences (internal — three-way dispatch) ──────────────────
 ;;;
@@ -215,11 +204,13 @@
   ;; that occurred when manual make-window with 1×1 screens met an 81×24 layout).
   (let* ((l0  (tl-leaf 1 1 1))
          (l1  (tl-leaf 2 1 1))
-         (win (tl-window (make-layout-split :h l0 l1) 24 81)))
+         (win (tl-window (make-layout-split :h l0 l1) 24 81))
+         (sess (make-session :id 1 :name "0" :windows (list win))))
+    (session-select-window sess win)
     (setf (cl-tmux/model:window-zoom-p win) t)
     (let ((buf (make-string-output-stream)))
       (cl-tmux/renderer::%render-panes-and-borders
-       buf win (cl-tmux/model:window-panes win) (cl-tmux/model:window-active win) 81)
+       buf sess win (cl-tmux/model:window-panes win) (cl-tmux/model:window-active win) 81)
       (let ((out (get-output-stream-string buf)))
         (is (null (find #\│ out))
             "zoomed window must not emit vertical border │ (got ~S)" out)))))

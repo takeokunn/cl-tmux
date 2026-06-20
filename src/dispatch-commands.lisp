@@ -21,23 +21,32 @@
          (max-positionals (when max-positionals-p (getf options :max-positionals)))
          (message (getf options :message "unsupported argument")))
     `(with-command-flags+pos (,flags ,positionals ,args ,value-flags)
-       (let ((positional-count (length ,positionals)))
-         (if (or (and ,allowed-flags-p
-                      (find-if-not (lambda (flag)
-                                     (member (car flag) ,allowed-flags :test #'char=))
-                                   ,flags))
-                 (and ,min-positionals-p (< positional-count ,min-positionals))
-                 (and ,max-positionals-p (> positional-count ,max-positionals)))
-             (progn
+       (if (%command-input-invalid-p ,flags ,positionals
+                                     ,allowed-flags-p ,allowed-flags
+                                     ,min-positionals-p ,min-positionals
+                                     ,max-positionals-p ,max-positionals)
+           (progn
              (show-overlay ,message)
              nil)
-             (locally ,@body))))))
+           (locally ,@body)))))
 
 (defun %maybe-quote-form (form)
   "Return FORM unchanged when it is already quoted, otherwise quote it."
   (if (and (consp form) (eq (car form) 'quote))
       form
       (list 'quote form)))
+
+(defun %command-input-invalid-p (flags positionals allowed-flags-p allowed-flags
+                                 min-positionals-p min-positionals
+                                 max-positionals-p max-positionals)
+  "Return true when parsed command input violates shared flag or arity limits."
+  (let ((positional-count (length positionals)))
+    (or (and allowed-flags-p
+             (find-if-not (lambda (flag)
+                            (member (car flag) allowed-flags :test #'char=))
+                          flags))
+        (and min-positionals-p (< positional-count min-positionals))
+        (and max-positionals-p (> positional-count max-positionals)))))
 
 (defmacro define-command-input-handler (name (session args) docstring
                                         (flags positionals value-flags
@@ -62,6 +71,26 @@
                             :message ,message)
          (declare (ignorable ,session ,flags ,positionals))
          ,@body))))
+
+(defmacro %flag-case (flags &body clauses)
+  "COND over FLAGS where each clause key is either T or one or more flag chars."
+  (let ((flags-var (gensym "FLAGS")))
+    `(let ((,flags-var ,flags))
+       (cond
+         ,@(mapcar (lambda (clause)
+                     (destructuring-bind (keys &body body) clause
+                       (cond
+                         ((eq keys t)
+                          `(t ,@body))
+                         ((listp keys)
+                          `((or ,@(mapcar (lambda (key)
+                                            `(%flag-present-p ,flags-var ,key))
+                                          keys))
+                            ,@body))
+                         (t
+                          `((%flag-present-p ,flags-var ,keys)
+                            ,@body)))))
+                   clauses)))))
 
 (defun %parse-flag-token (token value-flags remaining-tokens)
   "Parse one flag TOKEN into flag entries, supporting clustered boolean flags:
@@ -104,24 +133,29 @@
 (defun %command-prompt-ask-next (session template prompt-list answers idx num-prompts
                                  single-key initial)
   "Drive the sequential command-prompt -p flow."
-  (if (>= idx num-prompts)
-      (let ((cmd (%substitute-percent
-                  template
-                  (loop for i below num-prompts collect (aref answers i)))))
-        (%run-command-line session cmd))
-      (let ((label (nth idx prompt-list)))
-        (prompt-start label (if (zerop idx) initial "")
-                      (lambda (input)
-                        (setf (aref answers idx) input)
-                        (%command-prompt-ask-next session template prompt-list answers
-                                                  (1+ idx) num-prompts single-key initial))
-                      :single-key single-key))))
+  (labels ((finish ()
+             (%run-command-line session
+                                (%substitute-percent
+                                 template
+                                 (loop for i below num-prompts
+                                       collect (aref answers i)))))
+           (advance (i)
+             (if (>= i num-prompts)
+                 (finish)
+                 (let ((label (nth i prompt-list))
+                       (seed  (if (zerop i) initial "")))
+                   (prompt-start label seed
+                                 (lambda (input)
+                                   (setf (aref answers i) input)
+                                   (advance (1+ i)))
+                                 :single-key single-key)))))
+    (advance idx)))
 
 (defun %parse-flag-int (flags char)
   "Return the integer value of flag CHAR in FLAGS, or NIL when the flag is absent.
    Uses parse-integer with :junk-allowed t so non-numeric values also return NIL."
   (let ((v (%flag-value flags char)))
-    (and (stringp v) (parse-integer v :junk-allowed t))))
+    (and (stringp v) (%parse-integer-or-nil v))))
 
 (defun %resolve-pane-in-window (win target-str)
   "Resolve TARGET-STR to a pane in WIN by pane-id; default to WIN's active pane.
@@ -131,7 +165,7 @@
                                    (char= (char target-str 0) #\%))
                               (subseq target-str 1)
                               target-str))
-                  (n (parse-integer digits :junk-allowed t)))
+                  (n (%parse-integer-or-nil digits)))
              (and n (find n (window-panes win) :key #'pane-id))))
       (and win (window-active-pane win))))
 
@@ -152,7 +186,7 @@
       ((member target-str '(":^" "^") :test #'string=) (first wins))
       ((member target-str '(":$" "$") :test #'string=) (car (last wins)))
       (t
-       (let ((n (parse-integer target-str :junk-allowed t)))
+       (let ((n (%parse-integer-or-nil target-str)))
          (if n
              (find n wins :key #'window-id)
              (find target-str wins :key #'window-name :test #'string-equal)))))))
@@ -174,7 +208,7 @@
                               (string-equal "client" target-str :end2 6))
                          (subseq target-str 6))
                         (t target-str)))
-           (index (parse-integer index-str :junk-allowed t)))
+           (index (%parse-integer-or-nil index-str)))
       (and (integerp index)
            (>= index 0)
            (nth index *clients*)))))
@@ -222,13 +256,13 @@
               (show-transient-overlay text)))))))
 
 (defun %cmd-show-messages-arg (session args)
-  "show-messages [-J] [-T] [-t target-client]: show server messages."
+  "show-messages [-t target-client]: show server messages."
   (declare (ignore session))
   (with-command-input (flags positionals args "t"
-                             :allowed-flags '(#\J #\T #\t)
+                             :allowed-flags '(#\t)
                              :max-positionals 0
                              :message "show-messages: unsupported argument")
-    (let* ((target-str (cdr (assoc #\t flags)))
+    (let* ((target-str (%flag-value flags #\t))
            (target-conn (and target-str (%resolve-client-target target-str))))
       (cond
         ((and target-str (null target-conn))
@@ -237,27 +271,26 @@
          (show-overlay (%format-message-log-overlay target-conn)))))))
 
 (defun %cmd-swap-pane-arg (session args)
-  "swap-pane [-dUDLRZ] [-s src-pane] [-t dst-pane]: swap two panes.
+  "swap-pane [-UDLR] [-s src-pane] [-t dst-pane]: swap two panes.
    -s src / -t dst: swap those two panes (pane-ids in the active window; each
      defaults to the active pane), e.g. swap-pane -s 1 -t 3.
    -U/-D/-L/-R: swap the active pane with the adjacent pane in that direction.
-   -d (keep active) and -Z (keep zoom) are accepted.
    With neither -s/-t nor a direction: swap forward (same as C-b })."
   (with-command-input (flags positionals args "st"
-                             :allowed-flags '(#\d #\U #\D #\L #\R #\Z #\s #\t)
+                             :allowed-flags '(#\U #\D #\L #\R #\s #\t)
                              :max-positionals 0
                              :message "swap-pane: unsupported argument")
     (with-active-window (win session)
       (cond
-        ((assoc #\U flags) (swap-pane win :up))
-        ((assoc #\D flags) (swap-pane win :down))
-        ((assoc #\L flags) (swap-pane win :left))
-        ((assoc #\R flags) (swap-pane win :right))
+        ((%flag-present-p flags #\U) (swap-pane win :up))
+        ((%flag-present-p flags #\D) (swap-pane win :down))
+        ((%flag-present-p flags #\L) (swap-pane win :left))
+        ((%flag-present-p flags #\R) (swap-pane win :right))
         ;; -s/-t: swap two specific panes (each defaults to the active pane).
-        ((or (assoc #\s flags) (assoc #\t flags))
+        ((or (%flag-present-p flags #\s) (%flag-present-p flags #\t))
          (swap-two-panes win
-                         (%resolve-pane-in-window win (cdr (assoc #\s flags)))
-                         (%resolve-pane-in-window win (cdr (assoc #\t flags)))))
+                         (%resolve-pane-in-window win (%flag-value flags #\s))
+                         (%resolve-pane-in-window win (%flag-value flags #\t))))
         ;; No direction, no -s/-t: swap forward (default tmux behaviour).
         (t (swap-pane win :right))))))
 
@@ -271,39 +304,37 @@
    -I initial: seed the prompt with INITIAL text before editing begins.
    -1: single-key prompt — each prompt accepts ONE keypress (no Enter)."
   (with-command-flags+pos (flags positionals args "Ip")
-    (let* ((prompts-str (%flag-value flags #\p))
-           (initial     (or (%flag-value flags #\I) ""))
-           (single-key  (and (%flag-present-p flags #\1) t))   ; -1: one-keypress prompts
-           (template    (format nil "~{~A~^ ~}" positionals))
-           (prompt-list (when prompts-str
-                          (mapcar (lambda (s) (string-trim " " s))
-                                  (uiop:split-string prompts-str :separator ","))))
-           (num-prompts (length prompt-list)))
-      (cond
-        ;; -p with template: multi-prompt with %%N substitution
-        ((and prompt-list (plusp (length template)))
-         (let ((answers (make-array num-prompts :initial-element "")))
-           (%command-prompt-ask-next session template prompt-list answers 0
-                                     num-prompts single-key initial)))
-        ;; -p without template: each prompt result is concatenated
-        (prompt-list
-         (let ((label (first prompt-list)))
-           (prompt-start (or label ": ") initial
-                         (lambda (input)
-                           (unless (string= input "")
-                             (add-prompt-history input)
-                             (%run-command-line session input)))
-                         :single-key single-key
-                         :history *prompt-history*)))
-        ;; No -p: standard C-b : interactive prompt
-        (t
-         (prompt-start ": " initial
-                       (lambda (input)
-                         (unless (string= input "")
-                           (add-prompt-history input)
-                           (%run-command-line session input)))
-                       :single-key single-key
-                       :history *prompt-history*))))))
+    (flet ((run-input (input)
+             (%run-command-line session input)))
+      (let* ((prompts-str (%flag-value flags #\p))
+             (initial     (or (%flag-value flags #\I) ""))
+             (single-key  (and (%flag-present-p flags #\1) t))   ; -1: one-keypress prompts
+             (template    (format nil "~{~A~^ ~}" positionals))
+             (prompt-list (when prompts-str
+                            (mapcar (lambda (s) (string-trim " " s))
+                                    (uiop:split-string prompts-str :separator ","))))
+             (num-prompts (length prompt-list)))
+        (cond
+          ;; -p with template: multi-prompt with %%N substitution
+          ((and prompt-list (plusp (length template)))
+           (let ((answers (make-array num-prompts :initial-element "")))
+             (%command-prompt-ask-next session template prompt-list answers 0
+                                       num-prompts single-key initial)))
+          ;; -p without template: each prompt result is concatenated
+          (prompt-list
+           (let ((label (first prompt-list)))
+             (prompt-history-nonempty (or label ": ")
+                                      #'run-input
+                                      :single-key single-key
+                                      :history *prompt-history*
+                                      :initial initial)))
+          ;; No -p: standard C-b : interactive prompt
+          (t
+           (prompt-history-nonempty ": "
+                                    #'run-input
+                                    :single-key single-key
+                                    :history *prompt-history*
+                                    :initial initial)))))))
 
 (defun %substitute-percent (template args)
   "Expand a command-prompt template: %1..%9 are replaced by the 1st..9th element
@@ -332,20 +363,16 @@
     (get-output-stream-string out)))
 
 (defun %cmd-last-pane-arg (session args)
-  "last-pane [-Z]: jump to the previously active pane.
-   -Z: zoom/unzoom the pane after selecting it (toggle zoom state)."
+  "last-pane: jump to the previously active pane."
   (with-command-input (flags positionals args ""
-                             :allowed-flags '(#\Z)
+                             :allowed-flags '()
                              :max-positionals 0
                              :message "last-pane: unsupported argument")
     (let* ((win  (session-active-window session))
            (last (and win (window-last-active win))))
+      (declare (ignore flags))
       (when last
-        (%select-pane-with-focus win last)
-        ;; -Z: toggle zoom on the newly selected pane's window.
-        (when (%flag-present-p flags #\Z)
-          (with-active-window (w session)
-            (window-zoom-toggle w)))))))
+        (%select-pane-with-focus win last)))))
 
 (defun %cmd-has-session-arg (session args)
   "has-session [-t name]: check if a named session exists.

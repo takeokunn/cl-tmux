@@ -51,11 +51,9 @@
    (with-active-window (win session)
      (prompt-nonempty "resize-window WxH"
                       (lambda (input)
-                        (let* ((x-pos (position #\x input :test #'char-equal))
-                               (cols  (when x-pos (parse-integer input :end x-pos :junk-allowed t)))
-                               (rows  (when x-pos (parse-integer input :start (1+ x-pos)
-                                                                 :junk-allowed t))))
-                          (when (and cols rows (> cols 0) (> rows 0))
+                        (multiple-value-bind (cols rows)
+                            (%parse-wxh input)
+                          (when (and cols rows)
                             (window-relayout win rows cols)
                             (%overlayf "resized to ~Dx~D" cols rows)))))))
 

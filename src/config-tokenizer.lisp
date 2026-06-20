@@ -2,8 +2,8 @@
 
 ;;; ── Config file parsing + directive processing ───────────────────────────
 ;;;
-;;; This file depends on the key-binding mutators defined in config.lisp
-;;; (set-key-binding, remove-key-binding) and the mutable specials
+;;; This file depends on the key-table mutators defined in config.lisp
+;;; (key-table-bind, key-table-unbind) and the mutable specials
 ;;; (*key-tables*, *default-shell*, *status-height*).
 
 ;;; ── Tokenizer phase helpers ──────────────────────────────────────────────
@@ -229,7 +229,7 @@
     :resize-window :respawn-window :attach-session :move-pane
     :previous-layout :link-window :unlink-window
     ;; Pane management (additional)
-    :list-panes :set-buffer :select-pane-mark
+    :list-panes :set-buffer
     ;; Info / listing
     :list-commands
     ;; Environment

@@ -55,6 +55,9 @@
   ;; copy-mode -e: when T, scrolling down to the live bottom (offset 0) auto-exits
   ;; copy mode.  Set by `copy-mode -e`; cleared on copy-mode entry/exit.
   (copy-exit-on-bottom nil :type boolean)
+  ;; copy-mode entered by mouse: suppress gutter line numbers while copy mode
+  ;; was opened via wheel/click, matching tmux's mouse-enter behavior.
+  (copy-mode-entered-by-mouse-p nil :type boolean)
   ;; Last printed character — used by CSI REP (repeat preceding char, final byte 'b').
   ;; NIL until the first character has been written to the screen.
   (last-char nil :type (or null character))

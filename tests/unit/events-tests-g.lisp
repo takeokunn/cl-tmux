@@ -173,21 +173,11 @@
 
 (test dispatch-mouse-gated-by-mouse-option
   "%dispatch-mouse-event is a no-op when the 'mouse' option is false."
-  (let* ((p0   (make-pane :id 1 :fd -1 :pid -1
-                           :x 0 :y 0 :width 40 :height 24
-                           :screen (make-screen 40 24)))
-         (win  (make-window :id 1 :name "w" :width 40 :height 24
-                            :panes (list p0)
-                            :tree  (make-layout-leaf p0)
-                            :active p0))
-         (sess (make-session :id 1 :name "0" :windows (list win) :active win)))
-    (cl-tmux/options:set-option "mouse" nil)
-    (with-loop-state
-      (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
-        ;; With mouse off, click must not enter copy mode.
-        (cl-tmux::%dispatch-mouse-event sess 0 5 5 nil)
-        (is-false (screen-copy-mode-p (pane-screen p0))
-            "mouse event must be ignored when mouse option is off")))))
+  (with-single-pane-mouse-session (sess win p0 :mouse nil)
+    ;; With mouse off, click must not enter copy mode.
+    (cl-tmux::%dispatch-mouse-event sess 0 5 5 nil)
+    (is-false (screen-copy-mode-p (pane-screen p0))
+              "mouse event must be ignored when mouse option is off")))
 
 ;;; ── %status-col-to-window helper ─────────────────────────────────────────────
 

@@ -123,6 +123,21 @@
     (destructuring-bind (input expected desc) row
       (is (equal expected (cl-tmux::%non-empty input)) "~A" desc))))
 
+;;; ── %parse-integer-or-nil pure helper ────────────────────────────────────────
+
+(test parse-integer-or-nil-table
+  "%parse-integer-or-nil parses numeric strings, supports parse-integer keywords, and returns NIL for invalid input."
+  (dolist (row '(("0"    0   nil                         "zero parses")
+                 ("42"   42  nil                         "multi-digit parses")
+                 ("-7"   -7  nil                         "signed integers parse")
+                 ("1f"   31  (:radix 16)                "hexadecimal parsing works")
+                 ("123x" 123 (:end 3)                   "substring parsing works")
+                 ("abc"  nil nil                        "alphabetic input returns NIL")
+                 (""     nil nil                        "empty string returns NIL")
+                 (nil    nil nil                        "NIL input returns NIL")))
+    (destructuring-bind (input expected args desc) row
+      (is (eql expected (apply #'cl-tmux::%parse-integer-or-nil input args)) "~A" desc))))
+
 ;;; ── resolve-target with pane specified as numeric index ─────────────────────
 
 (test resolve-target-pane-by-numeric-index

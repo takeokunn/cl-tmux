@@ -119,12 +119,20 @@
     (window-select-pane win p0)
     (values sess win p0 p1)))
 
+(defun %break-extra-window (id)
+  (let* ((pane (%make-test-pane :id (+ 100 id) :w 10))
+         (win (make-window :id id :name (format nil "w~D" id)
+                           :width 10 :height 5
+                           :tree (make-layout-leaf pane)
+                           :panes (list pane))))
+    (window-select-pane win pane)
+    win))
+
 (test cmd-break-pane-moves-active-pane-and-switches
   "break-pane (no -d) moves the active pane into a new window and switches to it."
   (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
     (declare (ignore p1))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (cl-tmux::%cmd-break-pane-arg sess '())
       (is (= 2 (length (session-windows sess)))
           "a new window is created (the session now has two)")
@@ -137,8 +145,7 @@
   "break-pane -d creates the new window but does NOT switch to it."
   (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
     (declare (ignore p0 p1))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (cl-tmux::%cmd-break-pane-arg sess '("-d"))
       (is (= 2 (length (session-windows sess))) "the new window is still created")
       (is (eq win (session-active-window sess))
@@ -148,37 +155,103 @@
   "break-pane -n NAME gives the new window that name."
   (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
     (declare (ignore p0 p1))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (cl-tmux::%cmd-break-pane-arg sess '("-n" "logs"))
       (let ((new-win (find-if (lambda (w) (not (eq w win))) (session-windows sess))))
         (is (string= "logs" (window-name new-win))
             "the new window must be named 'logs'")))))
 
-(test cmd-break-pane-rejects-unimplemented-arguments-before-moving-pane
-  "break-pane rejects unsupported tmux arguments before mutation."
-  (dolist (case (list (list '("-t" ":2") "target placement")
-                      (list '("-F" "#{pane_id}") "print format")
-                      (list '("-P") "print flag")
-                      (list '("-a") "append flag")
+(test cmd-break-pane-rejects-unsupported-arguments-before-moving-pane
+  "break-pane rejects unsupported arguments before mutation."
+  (dolist (case (list (list '("-Z") "unknown flag")
                       (list '("extra") "positional argument")))
     (destructuring-bind (args description) case
       (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
-        (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-              (cl-tmux::*dirty* nil)
-              (*overlay* nil))
-          (is (null (cl-tmux::%cmd-break-pane-arg sess args))
-              "~A must be rejected" description)
-          (is (search "break-pane: unsupported argument" *overlay*)
-              "~A must explain that the argument is unsupported" description)
+        (with-command-rejection-state (sess
+                                       (cl-tmux::%cmd-break-pane-arg sess args)
+                                       "break-pane: unsupported argument"
+                                       description)
           (is (= 1 (length (session-windows sess)))
               "~A must not create a new window" description)
           (is (equal (list p0 p1) (window-panes win))
               "~A must leave panes in their original window" description)
           (is (eq win (session-active-window sess))
-              "~A must leave the active window unchanged" description)
-          (is-false cl-tmux::*dirty*
-                    "~A must not mark the model dirty after rejection" description))))))
+              "~A must leave the active window unchanged" description))))))
+
+(test cmd-break-pane-t-places-new-window-at-target-index
+  "break-pane -t places the new window at the requested free index."
+  (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
+    (declare (ignore p1))
+    (with-command-test-state (sess)
+      (is-true (cl-tmux::%cmd-break-pane-arg sess '("-d" "-t" ":5")))
+      (let ((new-win (find 5 (session-windows sess) :key #'window-id)))
+        (is-true new-win "the requested window index must be created")
+        (is (member p0 (window-panes new-win))
+            "the active pane must move to the requested window"))
+      (is (eq win (session-active-window sess))
+          "-d keeps the source window active"))))
+
+(test cmd-break-pane-t-occupied-index-is-rejected-before-moving-pane
+  "break-pane -t rejects an occupied target index before moving the pane."
+  (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
+    (let ((other (%break-extra-window 2)))
+      (session-insert-window sess other)
+      (with-command-test-state (sess)
+        (is-false (cl-tmux::%cmd-break-pane-arg sess '("-d" "-t" ":2")))
+        (is (equal '(1 2) (mapcar #'window-id (session-windows sess)))
+            "occupied target rejection must not renumber windows")
+        (is (equal (list p0 p1) (window-panes win))
+            "occupied target rejection must leave panes in the source window")
+        (is (eq win (session-active-window sess))
+            "occupied target rejection must leave the active window unchanged")
+        (is-false cl-tmux::*dirty*
+                  "occupied target rejection must not dirty the model")))))
+
+(test cmd-break-pane-a-shifts-colliding-windows-after-target
+  "break-pane -a inserts after the target index and shifts collisions upward."
+  (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
+    (declare (ignore p1))
+    (let ((other (%break-extra-window 2)))
+      (session-insert-window sess other)
+      (with-command-test-state (sess)
+        (is-true (cl-tmux::%cmd-break-pane-arg sess '("-d" "-a" "-t" ":1")))
+        (is (equal '(1 2 3) (mapcar #'window-id (session-windows sess)))
+            "window ids must remain ordered after shuffling")
+        (let ((new-win (find 2 (session-windows sess) :key #'window-id)))
+          (is (member p0 (window-panes new-win))
+              "the broken pane must occupy the index after the target"))
+        (is (= 3 (window-id other))
+            "the previously colliding window must shift upward")
+        (is (eq win (session-active-window sess))
+            "-d keeps the source window active")))))
+
+(test cmd-break-pane-b-shifts-colliding-windows-before-target
+  "break-pane -b inserts before the target index and shifts collisions upward."
+  (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
+    (declare (ignore p1))
+    (let ((other (%break-extra-window 2)))
+      (session-insert-window sess other)
+      (with-command-test-state (sess)
+        (is-true (cl-tmux::%cmd-break-pane-arg sess '("-d" "-b" "-t" ":1")))
+        (is (equal '(1 2 3) (mapcar #'window-id (session-windows sess)))
+            "window ids must remain ordered after shuffling")
+        (let ((new-win (find 1 (session-windows sess) :key #'window-id)))
+          (is (member p0 (window-panes new-win))
+              "the broken pane must occupy the target index"))
+        (is (= 2 (window-id win))
+            "the source window must shift upward when inserting before it")
+        (is (= 3 (window-id other))
+            "later colliding windows must also shift upward")))))
+
+(test cmd-break-pane-p-f-prints-custom-format
+  "break-pane -P -F prints pane information with the requested format."
+  (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
+    (declare (ignore win p0 p1))
+    (with-command-test-state (sess :overlay t)
+      (is-true (cl-tmux::%cmd-break-pane-arg
+                sess '("-d" "-P" "-F" "MARK#{pane_id}")))
+      (assert-overlay-uses-custom-format '("MARK" "1") *overlay*
+                                         "break-pane -P -F overlay"))))
 
 ;;; ── clear-history (scriptable %cmd-clear-history-arg) ────────────────────────
 
@@ -203,8 +276,7 @@
   "clear-history -t :w clears the target pane's scrollback."
   (multiple-value-bind (sess win screen) (%clear-history-fixture)
     (declare (ignore win))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (cl-tmux::%cmd-clear-history-arg sess '("-t" ":w"))
       (is (null (cl-tmux/terminal/types:screen-scrollback screen))
           "clear-history -t must empty the target pane's scrollback"))))
@@ -213,11 +285,19 @@
   "clear-history with no -t clears the active pane's scrollback."
   (multiple-value-bind (sess win screen) (%clear-history-fixture)
     (declare (ignore win))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (cl-tmux::%cmd-clear-history-arg sess '())
       (is (null (cl-tmux/terminal/types:screen-scrollback screen))
           "clear-history must default to the active pane and empty its scrollback"))))
+
+(test cmd-clear-history-rejects-unsupported-h-flag
+  "clear-history rejects the unsupported -H flag."
+  (multiple-value-bind (sess win screen) (%clear-history-fixture)
+    (declare (ignore win screen))
+    (with-command-rejection-state (sess
+                                   (cl-tmux::%cmd-clear-history-arg sess '("-H"))
+                                   "clear-history: unsupported argument"
+                                   "clear-history -H"))))
 
 ;;; ── rotate-window (scriptable %cmd-rotate-window-arg) ────────────────────────
 
@@ -241,8 +321,7 @@
   "rotate-window -t :w (no direction) rotates forward: first pane moves to the end."
   (multiple-value-bind (sess win p0 p1 p2) (%rotate-window-fixture)
     (declare (ignore p2))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (cl-tmux::%cmd-rotate-window-arg sess '("-t" ":w"))
       (is (eq p1 (first (window-panes win)))
           "forward rotate makes the second pane first")
@@ -253,30 +332,25 @@
   "rotate-window -D -t :w rotates backward: the last pane moves to the front."
   (multiple-value-bind (sess win p0 p1 p2) (%rotate-window-fixture)
     (declare (ignore p0 p1))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (cl-tmux::%cmd-rotate-window-arg sess '("-D" "-t" ":w"))
       (is (eq p2 (first (window-panes win)))
           "-D (backward) makes the last pane first"))))
 
-(test cmd-rotate-window-z-keeps-zoom-and-rotates-saved-layout
-  "rotate-window -Z keeps the window zoomed and rotates the saved pane order."
+(test cmd-rotate-window-rejects-unsupported-arguments-before-rotating
+  "rotate-window rejects unsupported arguments before changing the pane order."
   (multiple-value-bind (sess win p0 p1 p2) (%rotate-window-fixture)
+    (declare (ignore p1 p2))
     (window-select-pane win p0)
     (cl-tmux/model:window-zoom-toggle win)
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
-      (is (cl-tmux::%cmd-rotate-window-arg sess '("-Z" "-t" ":w"))
-          "-Z must be accepted as a rotate-window flag")
+    (with-command-rejection-state (sess
+                                   (cl-tmux::%cmd-rotate-window-arg sess '("-Z" "-t" ":w"))
+                                   "rotate-window: unsupported argument"
+                                   "-Z")
       (is-true (cl-tmux/model::window-zoom-p win)
-               "rotate-window -Z must keep the window zoomed")
+               "rotate-window -Z must not change zoom state")
       (is (equal (list p0) (window-panes win))
-          "zoomed window must still expose only the active pane")
-      (cl-tmux/model:window-zoom-toggle win)
-      (is (equal (list p1 p2 p0) (window-panes win))
-          "unzooming after -Z rotate must restore the rotated pane order")
-      (is-true cl-tmux::*dirty*
-               "accepted -Z rotate must mark the model dirty"))))
+          "rotate-window -Z must not change the pane order"))))
 
 ;;; ── find-window (scriptable %cmd-find-window-arg) ────────────────────────────
 
@@ -312,7 +386,7 @@
   "find-window <pattern> selects the window whose name matches (case-insensitive)."
   (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
     (declare (ignore wa wg))
-    (let ((cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (cl-tmux::%cmd-find-window-arg sess '("BET"))
       (is (eq wb (session-active-window sess))
           "find-window BET must select the 'beta' window (case-insensitive)"))))
@@ -321,7 +395,7 @@
   "find-window matches pane titles, screen titles, and visible content by default."
   (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
     (declare (ignore wa wg))
-    (let ((cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (cl-tmux::%cmd-find-window-arg sess '("pane title"))
       (is (eq wb (session-active-window sess))
           "default find-window must match the pane title")
@@ -335,10 +409,10 @@
           "default find-window must match visible content"))))
 
 (test cmd-find-window-honors-search-mode-flags
-  "find-window accepts -i, -r, -T, -C, and -Z search-mode flags."
+  "find-window accepts -i, -r, -T, and -C search-mode flags."
   (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
     (declare (ignore wa wg))
-    (let ((cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (cl-tmux::%cmd-find-window-arg sess '("-i" "BETA"))
       (is (eq wb (session-active-window sess))
           "-i must be accepted and keep matching case-insensitively")
@@ -355,9 +429,13 @@
       (is (eq wb (session-active-window sess))
           "-C must restrict matching to visible content")
       (session-select-window sess wa)
-      (cl-tmux::%cmd-find-window-arg sess '("-Z" "beta"))
-      (is (eq wb (session-active-window sess))
-          "-Z must be accepted as a no-op"))))
+      (with-command-test-state (sess :overlay t)
+        (is (null (cl-tmux::%cmd-find-window-arg sess '("-Z" "beta")))
+            "-Z must be rejected")
+        (is (search "find-window: unsupported argument" *overlay*)
+            "-Z must explain that the argument is unsupported"))
+      (is (eq wa (session-active-window sess))
+          "-Z must not change the active window"))))
 
 (test cmd-find-window-targets-another-session
   "find-window -t scopes the search to the targeted session."
@@ -388,15 +466,13 @@
   "find-window rejects extra positional arguments."
   (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
     (declare (ignore wb wg))
-    (let ((cl-tmux::*dirty* nil)
-          (cl-tmux::*overlay* nil))
-      (session-select-window sess wa)
-      (is (null (cl-tmux::%cmd-find-window-arg sess '("ALP" "extra")))
-          "extra positional args must be rejected")
+    (session-select-window sess wa)
+    (with-command-rejection-state (sess
+                                   (cl-tmux::%cmd-find-window-arg sess '("ALP" "extra"))
+                                   "find-window: unsupported argument"
+                                   "find-window extra args")
       (is (eq wa (session-active-window sess))
           "rejected args must not change the active window")
-      (is-false cl-tmux::*dirty*
-                "rejected args must not mark the display dirty")
       (assert-overlay-active
        "rejected args must show an error overlay"))))
 
@@ -413,8 +489,7 @@
   "next-window (no -t) advances the current session's active window."
   (multiple-value-bind (sess wa wb wg) (%find-window-fixture)   ; alpha(active) beta gamma
     (declare (ignore wa wg))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (cl-tmux::%cmd-next-window-arg sess '())
       (is (eq wb (session-active-window sess))
           "next-window advances alpha → beta"))))
@@ -423,8 +498,7 @@
   "previous-window from the first window wraps to the last."
   (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
     (declare (ignore wa wb))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (cl-tmux::%cmd-previous-window-arg sess '())
       (is (eq wg (session-active-window sess))
           "previous-window from alpha wraps to gamma"))))
@@ -443,25 +517,18 @@
     (destructuring-bind (command command-name args) case
       (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
         (declare (ignore wb wg))
-        (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-              (cl-tmux::*dirty* nil)
-              (cl-tmux::*overlay* nil))
-          (is (null (funcall command sess args))
-              "~A rejects ~S" command-name args)
+        (with-command-rejection-state (sess
+                                       (funcall command sess args)
+                                       (format nil "~A: unsupported argument" command-name)
+                                       (format nil "~A rejects ~S" command-name args))
           (is (eq wa (session-active-window sess))
-              "~A leaves the active window unchanged for ~S" command-name args)
-          (is-false cl-tmux::*dirty*
-                    "~A leaves dirty clear for ~S" command-name args)
-          (is (search (format nil "~A: unsupported argument" command-name)
-                      cl-tmux::*overlay*)
-              "~A reports an unsupported argument for ~S" command-name args))))))
+              "~A leaves the active window unchanged for ~S" command-name args))))))
 
 (test cmd-last-window-selects-previously-active-window
   "last-window selects the most recently active non-current window."
   (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
     (declare (ignore wg))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (session-select-window sess wb)
       (setf (cl-tmux/model:window-last-active-time wb) 40
             (cl-tmux/model:window-last-active-time wa) 30)
@@ -476,20 +543,15 @@
   (dolist (args '(("-Z") ("extra")))
     (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
       (declare (ignore wg))
-      (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-            (cl-tmux::*dirty* nil)
-            (cl-tmux::*overlay* nil))
-        (session-select-window sess wb)
-        (setf (cl-tmux/model:window-last-active-time wb) 40
-              (cl-tmux/model:window-last-active-time wa) 30)
-        (is (null (cl-tmux::%cmd-last-window-arg sess args))
-            "last-window rejects ~S" args)
+      (session-select-window sess wb)
+      (setf (cl-tmux/model:window-last-active-time wb) 40
+            (cl-tmux/model:window-last-active-time wa) 30)
+      (with-command-rejection-state (sess
+                                     (cl-tmux::%cmd-last-window-arg sess args)
+                                     "last-window: unsupported argument"
+                                     (format nil "last-window rejects ~S" args))
         (is (eq wb (session-active-window sess))
-            "last-window leaves the active window unchanged for ~S" args)
-        (is-false cl-tmux::*dirty*
-                  "last-window leaves dirty clear for ~S" args)
-        (is (search "last-window: unsupported argument" cl-tmux::*overlay*)
-            "last-window reports an unsupported argument for ~S" args)))))
+            "last-window leaves the active window unchanged for ~S" args)))))
 
 (test cmd-next-window-t-targets-named-session
   "next-window -t NAME advances the NAMED session's window, leaving the current
@@ -544,8 +606,7 @@
    activity (or silence) flag is set."
   (multiple-value-bind (sess wa wb wg) (%find-window-fixture)  ; alpha(active) beta gamma
     (declare (ignore wa wb))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (setf (cl-tmux/model:window-activity-flag wg) t)   ; only gamma has an alert
       (cl-tmux::%cmd-next-window-arg sess '("-a"))
       (is (eq wg (session-active-window sess))
@@ -555,8 +616,7 @@
   "next-window -a with no alerted windows leaves the active window unchanged."
   (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
     (declare (ignore wb wg))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (cl-tmux::%cmd-next-window-arg sess '("-a"))
       (is (eq wa (session-active-window sess))
           "next-window -a with no alerts stays on the active window"))))
@@ -565,8 +625,7 @@
   "previous-window -a scans backward to the nearest window with an alert."
   (multiple-value-bind (sess wa wb wg) (%find-window-fixture)  ; alpha(active) beta gamma
     (declare (ignore wa wg))
-    (let ((cl-tmux::*server-sessions* (list (cons "0" sess)))
-          (cl-tmux::*dirty* nil))
+    (with-command-test-state (sess)
       (setf (cl-tmux/model:window-silence-flag wb) t)    ; beta has a silence alert
       (cl-tmux::%cmd-previous-window-arg sess '("-a"))
       (is (eq wb (session-active-window sess))

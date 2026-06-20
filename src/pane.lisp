@@ -38,6 +38,10 @@
            (pane-pipe-output-thread pane)
            (pane-pipe-process pane))))
 
+(defun pane-live-p (pane)
+  "Return T when PANE still has a live PTY master fd."
+  (and pane (> (pane-fd pane) 0)))
+
 ;;; ── Response-queue drain helper (logic layer) ──────────────────────────────
 ;;;
 ;;; Draining pending terminal-query responses lives here as a named step so that

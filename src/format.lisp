@@ -48,7 +48,7 @@
   "Parse a =N / =-N truncation modifier MOD into its integer N (negative N keeps
    the tail), or NIL when MOD is not a truncation spec."
   (when (and (>= (length mod) 2) (char= (char mod 0) #\=))
-    (parse-integer mod :start 1 :junk-allowed t)))
+    (cl-tmux::%parse-integer-or-nil mod :start 1 :junk-allowed t)))
 
 (defun %parse-substitute-spec (mod)
   "Parse a substitution modifier s<d>PAT<d>REP<d>[flags] into (values PAT REP
@@ -178,7 +178,7 @@
    Positive N left-aligns VALUE in a field of N chars (space-fill on the right).
    Negative N right-aligns VALUE in a field of ABS(N) chars (space-fill on the left)."
   (when (and (>= (length mod) 2) (char= (char mod 0) #\p))
-    (let ((n (parse-integer mod :start 1 :junk-allowed t)))
+    (let ((n (cl-tmux::%parse-integer-or-nil mod :start 1 :junk-allowed t)))
       (when n
         (let* ((abs-n (abs n))
                (len   (length value)))
@@ -309,8 +309,8 @@
       ((string= op "==") (%bit01 (string= a b)))
       ((string= op "!=") (%bit01 (string/= a b)))
       (t
-       (let ((na (or (parse-integer a :junk-allowed t) 0))
-             (nb (or (parse-integer b :junk-allowed t) 0)))
+       (let ((na (or (cl-tmux::%parse-integer-or-nil a :junk-allowed t) 0))
+             (nb (or (cl-tmux::%parse-integer-or-nil b :junk-allowed t) 0)))
          (%bit01 (cond
                    ((string= op "<")  (<  na nb))
                    ((string= op ">")  (>  na nb))
@@ -409,5 +409,4 @@
            (cl-tmux/model:window-active-pane window)
            active-fmt inactive-fmt
            (lambda (pane) (format-context-from-session session window pane)))))))
-
 

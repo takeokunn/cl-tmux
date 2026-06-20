@@ -31,15 +31,6 @@
   "Pane-number string for the status bar, or empty string when ACTIVE-PANE is NIL."
   (if active-pane (format nil " #~D" (pane-id active-pane)) ""))
 
-(defun %status-copy-indicator (active-pane)
-  "Copy-mode scroll offset string, or empty string.
-   Returns non-empty only when ACTIVE-PANE is in copy mode with a positive offset."
-  (if (and active-pane
-           (screen-copy-mode-p (pane-screen active-pane))
-           (> (screen-copy-offset (pane-screen active-pane)) 0))
-      (format nil " [COPY +~D]" (screen-copy-offset (pane-screen active-pane)))
-      ""))
-
 (defun %window-has-bell-p (window)
   "T when any pane in WINDOW has a pending (unconsumed) BEL.
    Mirrors the #{window_bell_flag} computation in format.lisp."
@@ -126,11 +117,10 @@
    Uses %status-window-list-styled so per-window style options take effect."
   (if (prompt-active-p)
       (prompt-text)
-      (format nil " ~A~A~A~A"
+      (format nil " ~A~A~A"
               (session-name session)
               (%status-window-list-styled session active-win)
-              (%status-pane-indicator active-pane)
-              (%status-copy-indicator active-pane))))
+              (%status-pane-indicator active-pane))))
 
 (defun %render-status-line (stream status-row sgr-code line)
   "Emit a fully-composed status LINE at STATUS-ROW, wrapped in SGR-CODE, then reset."
@@ -138,6 +128,53 @@
   (%emit-sgr stream sgr-code)
   (write-string line stream)
   (reset-attrs stream))
+
+(defun %render-status-bar-format0 (stream status-row sgr-code status-fmt0 context terminal-cols)
+  "Render the single-template status bar path for STATUS-FMT0."
+  (%render-status-line stream status-row sgr-code
+                       (%compose-aligned-line
+                        (handler-case (cl-tmux/format:expand-format status-fmt0 context)
+                          (error () status-fmt0))
+                        sgr-code terminal-cols)))
+
+(defun %status-bar-default-segments (session context sgr-code)
+  "Return the fallback status-bar segments and justification mode.
+   The left segment includes either prompt text or the session/window/pane
+   summary; the right segment uses status-right or the default clock string."
+  (let* ((active-win  (session-active-window session))
+         (active-pane (session-active-pane session))
+         (left-raw    (%status-expand-style-blocks
+                       (if (prompt-active-p)
+                           (prompt-text)
+                           (%status-format-or-default
+                            "status-left" context
+                            (lambda () (%status-left-text session active-win active-pane))))
+                       sgr-code))
+         (right-raw   (%status-expand-style-blocks
+                       (%status-format-or-default
+                        "status-right" context #'cl-tmux/format::%current-time-string)
+                       sgr-code))
+         (left-style-sgr  (%status-segment-style-sgr "status-left-style"  sgr-code))
+         (right-style-sgr (%status-segment-style-sgr "status-right-style" sgr-code))
+         (left        (%apply-segment-style
+                       (%clamp-status-segment
+                        left-raw (cl-tmux/options:get-option "status-left-length" 40))
+                       left-style-sgr sgr-code))
+         (right       (%apply-segment-style
+                       (%clamp-status-segment
+                        right-raw (cl-tmux/options:get-option "status-right-length" 40))
+                       right-style-sgr sgr-code))
+         (justify     (cl-tmux/options:get-option "status-justify" "left")))
+    (values left right justify)))
+
+(defun %render-status-bar-default (stream session status-row sgr-code context terminal-cols)
+  "Render the default left/right status bar path."
+  ;; Expand inline #[attr] style blocks into SGR escapes; #[default] reverts to
+  ;; SGR-CODE (the base status style) so the bar's bg/fg returns between segments.
+  (multiple-value-bind (left right justify)
+      (%status-bar-default-segments session context sgr-code)
+    (%render-status-line stream status-row sgr-code
+                         (%status-justify-line left right terminal-cols justify))))
 
 (defun render-status-bar (stream session terminal-rows terminal-cols
                           &key (status-row (1- terminal-rows)))
@@ -158,40 +195,9 @@
     ;; status-format[0] template path: when SET (and no prompt is active) the bar
     ;; is rendered from that single format, with #[align=…] regions positioned by
     ;; %compose-aligned-line and #{W:…}/#{…} expanded.  Procedural path follows.
-    (cond
-      ((and (stringp status-fmt0) (plusp (length status-fmt0)) (not (prompt-active-p)))
-       (%render-status-line stream status-row sgr-code
-                            (%compose-aligned-line
-                             (handler-case (cl-tmux/format:expand-format status-fmt0 context)
-                               (error () status-fmt0))
-                             sgr-code terminal-cols)))
-      (t
-       ;; Expand inline #[attr] style blocks into SGR escapes; #[default] reverts to
-       ;; SGR-CODE (the base status style) so the bar's bg/fg returns between segments.
-       (let* ((raw-left    (%status-expand-style-blocks
-                            (if (prompt-active-p)
-                                (prompt-text)
-                                (%status-format-or-default
-                                 "status-left" context
-                                 (lambda () (%status-left-text session active-win active-pane))))
-                            sgr-code))
-              (raw-right   (%status-expand-style-blocks
-                            (%status-format-or-default
-                             "status-right" context #'cl-tmux/format::%current-time-string)
-                            sgr-code))
-              (left-style-sgr  (%status-segment-style-sgr "status-left-style"  sgr-code))
-              (right-style-sgr (%status-segment-style-sgr "status-right-style" sgr-code))
-              (left        (%apply-segment-style
-                            (%clamp-status-segment
-                             raw-left (cl-tmux/options:get-option "status-left-length" 40))
-                            left-style-sgr sgr-code))
-              (right-str   (%apply-segment-style
-                            (%clamp-status-segment
-                             raw-right (cl-tmux/options:get-option "status-right-length" 40))
-                            right-style-sgr sgr-code))
-              (justify     (cl-tmux/options:get-option "status-justify" "left")))
-         (%render-status-line stream status-row sgr-code
-                              (%status-justify-line left right-str terminal-cols justify)))))))
+    (if (and (stringp status-fmt0) (plusp (length status-fmt0)) (not (prompt-active-p)))
+        (%render-status-bar-format0 stream status-row sgr-code status-fmt0 context terminal-cols)
+        (%render-status-bar-default stream session status-row sgr-code context terminal-cols))))
 
 (defun render-extra-status-line (stream session terminal-cols row index)
   "Render the INDEX-th extra status line (INDEX >= 1) at ROW from the option
@@ -225,17 +231,33 @@
    for how many status rows to draw; the pane layout reserves the matching count
    via cl-tmux/config:*status-height* (kept in sync by the `status` side-effect)."
   (let ((v (cl-tmux/options:get-option "status" t)))
-    (cond
-      ((null v) 0)
-      ((integerp v) (max 0 (min v 5)))
-      ((stringp v)
-       (cond
-         ((member v '("off" "false" "0") :test #'equal) 0)
-         (t (let ((n (parse-integer v :junk-allowed t)))
-              (cond ((and n (> n 0)) (min n 5))
-                    (n 0)        ; parsed to <= 0
-                    (t 1))))))   ; non-numeric truthy string (e.g. "on")
-      (t 1))))                   ; T or any other truthy value
+    (%status-line-count-from-value v)))
+
+(defparameter +status-line-false-values+
+  '("off" "false" "0")
+  "String values that disable the status bar entirely.")
+
+(defun %clamp-status-line-count (n)
+  "Clamp a status-line count to tmux's 0..5 range."
+  (max 0 (min n 5)))
+
+(defun %status-line-count-from-string (v)
+  "Map a raw STATUS string value to the number of rows to render."
+  (if (member v +status-line-false-values+ :test #'equal)
+      0
+      (let ((n (cl-tmux::%parse-integer-or-nil v :junk-allowed t)))
+        (cond
+          ((null n) 1)
+          ((plusp n) (%clamp-status-line-count n))
+          (t 0)))))
+
+(defun %status-line-count-from-value (v)
+  "Map a raw STATUS option value to the number of rows to render."
+  (cond
+    ((null v) 0)
+    ((integerp v) (%clamp-status-line-count v))
+    ((stringp v) (%status-line-count-from-string v))
+    (t 1)))                   ; T or any other truthy value
 
 (defun render-status-region (stream session terminal-rows terminal-cols lines position)
   "Render a LINES-row status region.  The main bar (status-left, the window

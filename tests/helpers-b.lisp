@@ -63,6 +63,26 @@
          (feed ,var (string ,fill-char))))
      ,@body))
 
+(defmacro with-command-test-state ((sess &key overlay) &body body)
+  "Run BODY with a single-session server state and a clean dirty flag."
+  `(let ((cl-tmux::*server-sessions* (list (cons "0" ,sess)))
+         (cl-tmux::*dirty* nil)
+         ,@(when overlay `((*overlay* nil))))
+     ,@body))
+
+(defmacro with-command-rejection-state ((sess command-form overlay-message
+                                              description)
+                                        &body body)
+  "Assert that COMMAND-FORM is rejected and reports OVERLAY-MESSAGE."
+  `(with-command-test-state (,sess :overlay t)
+     (is (null ,command-form)
+         "~A must be rejected" ,description)
+     (is (search ,overlay-message *overlay*)
+         "~A must explain that the argument is unsupported" ,description)
+     ,@body
+     (is-false cl-tmux::*dirty*
+               "~A must not mark the model dirty after rejection" ,description)))
+
 ;;; ── Shared layout-tree builders ─────────────────────────────────────────────
 ;;;
 ;;; tl-pane, tl-leaf, and tl-window are defined here (not in layout-tests.lisp)
@@ -201,7 +221,9 @@
      (window-select-pane ,win-var ,p0-var)
      ,@body))
 
-(defmacro with-two-pane-h-session ((sess-var win-var p0-var p1-var) &body body)
+(defmacro with-two-pane-h-session ((sess-var win-var p0-var p1-var
+                                    &key (mouse t))
+                                   &body body)
   "Bind SESS-VAR WIN-VAR P0-VAR P1-VAR to a 2-pane horizontal split session:
    p0 (x=0 w=40) | p1 (x=41 w=40), window 81x24, first pane active.
    Runs BODY inside WITH-LOOP-STATE for event-loop isolation."
@@ -216,7 +238,8 @@
           (,sess-var (make-session :id 1 :name "0" :windows (list ,win-var))))
      (window-select-pane ,win-var ,p0-var)
      (session-select-window ,sess-var ,win-var)
-     (with-loop-state ,@body)))
+     (with-mouse-option (,mouse)
+       (with-loop-state ,@body))))
 
 ;;; ── Two-pane layout session fixture ──────────────────────────────────────────
 ;;;
@@ -267,7 +290,18 @@
      (session-select-window ,sess-var ,win-var)
      (with-loop-state ,@body)))
 
-(defmacro with-two-pane-mouse-session ((sess-var win-var p0-var p1-var) &body body)
+(defmacro with-mouse-option ((mouse) &body body)
+  "Run BODY with the session mouse option set to MOUSE, then restore NIL.
+   This keeps mouse-enabled and mouse-disabled tests symmetric."
+  `(unwind-protect
+       (progn
+         (cl-tmux/options:set-option "mouse" ,mouse)
+         ,@body)
+     (cl-tmux/options:set-option "mouse" nil)))
+
+(defmacro with-two-pane-mouse-session ((sess-var win-var p0-var p1-var
+                                        &key (mouse t))
+                                       &body body)
   "Bind SESS-VAR WIN-VAR P0-VAR P1-VAR to a 2-pane horizontal split session
    suitable for mouse event tests: p0 (x=0 w=40) | p1 (x=41 w=40), window 81x24.
    Enables the 'mouse' session option for the duration of BODY, then restores it.
@@ -287,16 +321,16 @@
                                  :active ,p0-var))
           (,sess-var (make-session :id 1 :name "0"
                                    :windows (list ,win-var) :active ,win-var)))
-     (cl-tmux/options:set-option "mouse" t)
-     (unwind-protect
-          (with-loop-state
-            (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 81))
-              ,@body))
-       (cl-tmux/options:set-option "mouse" nil))))
+     (with-mouse-option (,mouse)
+       (with-loop-state
+         (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 81))
+           ,@body)))))
 
-(defmacro with-single-pane-mouse-session ((sess-var win-var p0-var) &body body)
-  "1-pane session (40×24) with mouse=t; restores mouse=nil via unwind-protect.
-   BODY runs inside WITH-LOOP-STATE with *term-rows*=25 and *term-cols*=40."
+(defmacro with-single-pane-mouse-session ((sess-var win-var p0-var &key (mouse t))
+                                          &body body)
+  "1-pane session (40×24) with optional MOUSE state; restores mouse=nil via
+   unwind-protect. BODY runs inside WITH-LOOP-STATE with *term-rows*=25 and
+   *term-cols*=40."
   `(let* ((,p0-var  (make-no-pty-pane 1 0 0 40 24))
           (,win-var (make-window :id 1 :name "w" :width 40 :height 24
                                  :panes (list ,p0-var)
@@ -304,12 +338,10 @@
                                  :active ,p0-var))
           (,sess-var (make-session :id 1 :name "0"
                                    :windows (list ,win-var) :active ,win-var)))
-     (cl-tmux/options:set-option "mouse" t)
-     (unwind-protect
-          (with-loop-state
-            (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
-              ,@body))
-       (cl-tmux/options:set-option "mouse" nil))))
+     (with-mouse-option (,mouse)
+       (with-loop-state
+         (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
+           ,@body)))))
 
 ;;; ---- Options fixture macros --------------------------------------------------
 ;;;
@@ -545,6 +577,27 @@
     (unless (string= w1-content "") (feed screen1 w1-content))
     (values sess win0 pane0 win1 pane1)))
 
+(defmacro with-two-window-status-session ((sess win0 win1
+                                           &key (rows 6) (cols 80)
+                                           (mouse t)
+                                           (current-format "A")
+                                           (format "B")
+                                           (separator "|"))
+                                          &body body)
+  "Run BODY with a 2-window status-bar session tailored for click-hit tests."
+  `(with-isolated-options ("mouse" ,mouse
+                           "window-status-current-format" ,current-format
+                           "window-status-format" ,format
+                           "window-status-separator" ,separator)
+     (multiple-value-bind (,sess ,win0 _p0 ,win1 _p1)
+         (make-two-window-session ,cols (1- ,rows))
+       (declare (ignore _p0 _p1))
+       (session-select-window ,sess ,win0)
+       (with-loop-state
+         (let ((cl-tmux::*term-rows* ,rows)
+               (cl-tmux::*term-cols* ,cols))
+           ,@body)))))
+
 ;;; ── Empty-session fixture ────────────────────────────────────────────────────
 ;;;
 ;;; The pattern (make-session :id 1 :name "0" :windows nil) appears verbatim
@@ -562,7 +615,14 @@
 (defmacro with-empty-buffers (&body body)
   "Run BODY with an empty paste buffer ring.
    Isolates buffer state so tests cannot contaminate each other."
-  `(let ((cl-tmux/buffer:*paste-buffers* nil)) ,@body))
+  `(let ((old-buffers cl-tmux/buffer:*paste-buffers*)
+         (old-index cl-tmux/buffer:*buffer-auto-index*))
+     (unwind-protect
+          (progn
+            (cl-tmux/buffer:clear-paste-buffers)
+            ,@body)
+       (setf cl-tmux/buffer:*paste-buffers* old-buffers
+             cl-tmux/buffer:*buffer-auto-index* old-index))))
 
 
 ;;; ── POSIX pipe fixture ───────────────────────────────────────────────────────
@@ -654,6 +714,12 @@
      (with-loop-state
        ,@body)))
 
+(defmacro with-fake-two-pane-session ((var) &body body)
+  "Bind VAR to the common one-window, two-pane fake session used by the
+   select-pane command tests and similar command dispatch checks."
+  `(with-fake-session (,var :nwindows 1 :npanes 2)
+     ,@body))
+
 (defmacro with-copy-mode-state ((session-var screen-var state-var) &body body)
   "Run BODY with SESSION-VAR bound to a fresh fake session in copy mode,
    SCREEN-VAR bound to its active screen, and STATE-VAR bound to a fresh input-state.
@@ -681,6 +747,20 @@
   `(with-isolated-config
      (let ((,var (make-fake-session ,@make-args)))
        ,@body)))
+
+(defmacro with-isolated-mouse-session ((var &key (nwindows 1) (npanes 1)
+                                            (rows 25) (cols 40)
+                                            (mouse t))
+                                       &body body)
+  "Run BODY with isolated config, mouse enabled, and a fake session.
+   NWINDOWS/NPANES control the session shape; ROWS/COLS default to the geometry
+   used by the mouse dispatch tests."
+  `(with-isolated-config
+     (with-mouse-option (,mouse)
+       (with-fake-session (,var :nwindows ,nwindows :npanes ,npanes)
+         (let ((cl-tmux::*term-rows* ,rows)
+               (cl-tmux::*term-cols* ,cols))
+           ,@body)))))
 
 (defmacro with-minimal-session ((pane-var win-var sess-var
                                  &key (width 20) (height 5)) &body body)
@@ -836,3 +916,45 @@
             (progn ,@body)
          (ignore-errors (sb-posix:close ,read-fd))
          (ignore-errors (sb-posix:close ,write-fd))))))
+
+(defmacro assert-pipe-pane-open-output-to-command-state (pane)
+  "Assert the state of PANE after opening a command that consumes pane output."
+  `(progn
+     (is-true (cl-tmux/model:pane-pipe-active-p ,pane)
+              "pane must be marked active after pipe-pane-open")
+     (is-true (cl-tmux/model:pane-pipe-fd ,pane)
+              "pane-pipe-fd must hold the command stdin stream")
+     (is (null (cl-tmux/model:pane-pipe-output-stream ,pane))
+         "pane-pipe-output-stream must remain NIL in output-to-command mode")
+     (is (null (cl-tmux/model:pane-pipe-output-thread ,pane))
+         "pane-pipe-output-thread must remain NIL in output-to-command mode")
+     (is-true (cl-tmux/model:pane-pipe-process ,pane)
+              "pane-pipe-process must keep the subprocess handle")))
+
+(defmacro assert-pipe-pane-open-command-output-state (pane)
+  "Assert the state of PANE after opening a command that writes back to pane."
+  `(progn
+     (is-true (cl-tmux/model:pane-pipe-active-p ,pane)
+              "pane must be marked active after pipe-pane-open")
+     (is (null (cl-tmux/model:pane-pipe-fd ,pane))
+         "pane-pipe-fd must remain NIL in command-output-to-pane mode")
+     (is-true (cl-tmux/model:pane-pipe-output-stream ,pane)
+              "pane-pipe-output-stream must hold the command stdout stream")
+     (is-true (cl-tmux/model:pane-pipe-output-thread ,pane)
+              "pane-pipe-output-thread must hold the copier thread")
+     (is-true (cl-tmux/model:pane-pipe-process ,pane)
+              "pane-pipe-process must keep the subprocess handle")))
+
+(defmacro assert-pipe-pane-closed-state (pane)
+  "Assert that PANE has no pipe resources left."
+  `(progn
+     (is (null (cl-tmux/model:pane-pipe-active-p ,pane))
+         "pane must be inactive after pipe-pane-close")
+     (is (null (cl-tmux/model:pane-pipe-fd ,pane))
+         "pane-pipe-fd must be NIL after pipe-pane-close")
+     (is (null (cl-tmux/model:pane-pipe-output-stream ,pane))
+         "pane-pipe-output-stream must be NIL after pipe-pane-close")
+     (is (null (cl-tmux/model:pane-pipe-output-thread ,pane))
+         "pane-pipe-output-thread must be NIL after pipe-pane-close")
+     (is (null (cl-tmux/model:pane-pipe-process ,pane))
+         "pane-pipe-process must be NIL after pipe-pane-close")))

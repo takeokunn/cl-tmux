@@ -117,28 +117,12 @@
   (:split-vertical   (%cmd-split session :h))        ; C-b % adds a vertical bar   → :h side-by-side
   (:split-horizontal-no-focus (%cmd-split session :v :no-focus t))
   (:split-vertical-no-focus   (%cmd-split session :h :no-focus t))
-  (:kill-pane   (%handle-kill-result (kill-pane session)))
+  (:kill-pane (%handle-kill-result (kill-pane session)))
   (:kill-window (%handle-kill-result (kill-window session (session-active-window session))))
-  (:kill-pane-confirm
-   (with-active-window (win session)
-     (let* ((ap  (window-active-pane win))
-            (msg (if ap (format nil "kill-pane ~D? (y/n)" (pane-id ap)) "kill-pane? (y/n)")))
-       (%confirm-prompt msg (lambda () (%handle-kill-result (kill-pane session)))))))
-  (:kill-window-confirm
-   (with-active-window (win session)
-     (%confirm-prompt (format nil "kill-window ~A? (y/n)" (window-name win))
-                      (lambda () (%handle-kill-result
-                                  (kill-window session (session-active-window session)))))))
-  (:respawn-pane
-   (with-active-window (win session)
-     (let ((ap (window-active-pane win)))
-       (when ap
-         (let ((new-pane (respawn-pane session ap)))
-           (start-reader-thread new-pane))))))
-  (:rename-window
-   (with-active-window (win session)
-     (prompt-start "rename-window" (window-name win)
-                   (lambda (name) (rename-window win name)))))
+  (:kill-pane-confirm (%kill-current-pane-confirm session))
+  (:kill-window-confirm (%kill-current-window-confirm session))
+  (:respawn-pane (%respawn-current-pane session))
+  (:rename-window (%rename-current-window session))
   (:list-keys (show-overlay (describe-key-bindings)))
 
   ;; ── Copy-mode handlers ─────────────────────────────────────────────────────
@@ -180,7 +164,7 @@
   (:resize-down   (resize-pane (session-active-window session) :down))
 
   ;; ── Paste / send ──────────────────────────────────────────────────────────
-  (:select-window (when byte (select-window-by-number session (- byte (char-code #\0)))))
+  (:select-window (%select-window-by-byte session byte))
   (:paste-buffer
    (let* ((text (cl-tmux/buffer:get-paste-buffer))
           (win  (session-active-window session))
@@ -190,8 +174,8 @@
    ;; Send the currently configured prefix key byte, not the compile-time default.
    ;; *prefix-key-code* is updated when `set prefix` runs; +prefix-key-code+ is fixed.
    (with-active-pane (ap session)
-     (when (and (not *client-read-only*) (> (pane-fd ap) 0))
-       (pty-write (pane-fd ap) (%byte-vector cl-tmux/config:*prefix-key-code*)))))
+     (and (not *client-read-only*)
+          (%send-byte-to-pane ap cl-tmux/config:*prefix-key-code*))))
 
   ;; ── Layout commands ────────────────────────────────────────────────────────
   (:select-layout-even-h    (%apply-named-layout-to-session session :even-horizontal))
@@ -212,22 +196,9 @@
      (window-zoom-toggle win)))
 
   ;; ── Session management ────────────────────────────────────────────────────
-  (:rename-session
-   (prompt-start "rename-session" (session-name session)
-                 (lambda (name)
-                   ;; Refuses a duplicate name and fires session-renamed (shared
-                   ;; chokepoint with the rename-session command).
-                   (%rename-session-checked session name))))
-  (:run-shell
-   (prompt-nonempty "run-shell"
-                    (lambda (cmd)
-                      (show-overlay (run-shell cmd)))))
-  (:if-shell
-   (prompt-nonempty "if-shell"
-                    (lambda (cmd)
-                      (if-shell cmd
-                                (lambda () (%overlayf "[if-shell] ~A: ok" cmd))
-                                :else-fn (lambda () (%overlayf "[if-shell] ~A: non-zero exit" cmd))))))
+  (:rename-session (%rename-current-session session))
+  (:run-shell (%run-shell-prompt))
+  (:if-shell (%if-shell-prompt))
 
   ;; :list-sessions / :list-sessions-full: static session list overlay.
   ((:list-sessions :list-sessions-full)
@@ -236,23 +207,8 @@
   ;; :choose-session: interactive j/k menu to switch sessions (C-b s).
   ;; Builds a menu with one entry per session; selecting switches to it.
   (:choose-session
-   (let* ((sessions (or *server-sessions*
-                        (list (cons (session-name session) session))))
-          (items    (loop for (name . sess) in sessions
-                          collect (cons (format nil "~A~A (~D window~:P)"
-                                                (if (eq sess session) "*" " ")
-                                                name
-                                                (length (cl-tmux/model:session-windows sess)))
-                                        ;; Command stored as (:switch-client name),
-                                        ;; dispatched by :menu-select.
-                                        (list :switch-client name)))))
-     (%show-jk-menu "choose-session (j/k, Enter)" items)))
-  (:new-session
-   (let* ((rows (- *term-rows* *status-height*))
-          (cols *term-cols*)
-          (n    (1+ (length *server-sessions*)))
-          (name (format nil "~D" n)))
-     (new-session name rows cols)))
+   (%show-session-menu session))
+  (:new-session (%new-session-default-name))
   (:kill-session
    ;; Destroy the current session, then apply detach-on-destroy: :quit (detach →
    ;; exit standalone) or NIL (switch to a survivor; the loop follows it).
@@ -261,71 +217,28 @@
      (let ((action (%detach-on-destroy-action name)))
        (when (eq action :quit) (setf *running* nil))
        action)))
-  (:has-session
-   (prompt-start "has-session" ""
-                 (lambda (name)
-                   (let ((found (server-find-session name)))
-                     (show-overlay (if found "yes" "no"))))))
+  (:has-session (%has-session-prompt))
 
   ;; ── Window management ──────────────────────────────────────────────────────
   (:list-windows (show-overlay (%format-window-list session)))
   ;; :choose-window: interactive j/k menu to select a window (C-b w).
   ;; Builds a menu with one entry per window; Enter selects, q/Esc dismisses.
   (:choose-window
-   (let* ((wins  (session-windows session))
-          (act   (session-active-window session))
-          (items (mapcar (lambda (w)
-                           (cons (format nil "~A~A: ~A (~D pane~:P)"
-                                         (if (eq w act) "*" " ")
-                                         (window-id w)
-                                         (window-name w)
-                                         (length (window-panes w)))
-                                 ;; Command: select this window by id.
-                                 (list :select-window (window-id w))))
-                         wins)))
-     (%show-jk-menu "choose-window (j/k, Enter)" items "(no windows)")))
+   (%show-window-menu session))
   (:last-window
    (let ((prev (session-last-window session)))
      (when prev
        (%with-window-focus-transition (session)
          (session-select-window session prev)
          (setf (window-last-active-time prev) (get-universal-time))))))
-  (:move-window
-   (with-active-window (win session)
-     (prompt-integer "move-window"
-                     (lambda (idx) (session-move-window session win idx)))))
-  (:swap-window
-   (with-active-window (win session)
-     ;; The typed value is a window INDEX (id), not a list position.
-     (prompt-integer "swap-window"
-                     (lambda (dst-id)
-                       (%swap-window-ids
-                        session win
-                        (find dst-id (session-windows session)
-                              :key #'window-id))))))
-  (:rotate-window
-   (with-active-window (win session)
-     (window-rotate win :up)))
-  (:rotate-window-reverse
-   (with-active-window (win session)
-     (window-rotate win :down)))
+  (:move-window (%move-current-window session))
+  (:swap-window (%swap-current-window session))
+  (:rotate-window (%rotate-current-window session :up))
+  (:rotate-window-reverse (%rotate-current-window session :down))
   (:find-window
    (prompt-nonempty "find-window"
                     (lambda (pattern)
-                      (let* ((wins    (session-windows session))
-                             (matches (remove-if-not
-                                       (lambda (w) (%window-matches-pattern-p w pattern))
-                                       wins)))
-                        (show-overlay
-                         (if matches
-                             (with-output-to-string (stream)
-                               (dolist (w matches)
-                                 (format stream "~A: ~A~A~%"
-                                         (cl-tmux/model:window-id w)
-                                         (window-name w)
-                                         (if (eq w (session-active-window session))
-                                             " [active]" ""))))
-                             (format nil "no windows matching ~S~%" pattern)))))))
+                      (%show-window-search-results session pattern))))
 
   ;; ── Pane management ────────────────────────────────────────────────────────
   (:swap-pane-forward  (%swap-active-pane session :right))
@@ -333,10 +246,7 @@
   (:swap-pane-up       (%swap-active-pane session :up))
   (:swap-pane-down     (%swap-active-pane session :down))
   (:last-pane
-   ;; Jump to the previously active pane.  The byte arg encodes a -Z zoom
-   ;; toggle modifier: when called with a specific flag byte, zoom the pane.
-   ;; In practice :last-pane is always dispatched without a zoom flag via C-b ;
-   ;; but %cmd-last-pane-arg (the arg-taking variant) can pass :zoom-toggle.
+   ;; Jump to the previously active pane.
    (let* ((win  (session-active-window session))
           (last (and win (window-last-active win))))
      (when last (%select-pane-with-focus win last))))
@@ -345,16 +255,7 @@
    ;; matching real tmux.  An (empty) transient overlay is the timing vehicle: it
    ;; auto-dismisses after display-panes-time ms (and on the next key), and clearing
    ;; it also clears *display-panes-active* so the numbers vanish with it.
-   (with-active-window (win session)
-     (let ((panes (window-panes win)))
-       (when panes
-         (let* ((panes-ms (or (cl-tmux/options:get-option "display-panes-time") 1000))
-                (saved-ms (cl-tmux/options:get-option "display-time" 750)))
-           (cl-tmux/options:set-option "display-time" panes-ms)
-           (show-transient-overlay "")            ; resets *display-panes-active* to NIL …
-           (setf cl-tmux/prompt:*display-panes-active* t)  ; … then we arm it
-           (cl-tmux/options:set-option "display-time" saved-ms)
-           (setf *dirty* t))))))
+   (%show-display-panes-overlay session))
 
   ;; ── Client switching ───────────────────────────────────────────────────────
   (:switch-client-next (%cmd-cycle-session session #'next-cyclic))
@@ -367,31 +268,18 @@
        (%switch-to-session second))))
 
   ;; ── Message / info ─────────────────────────────────────────────────────────
-  (:display-message
-   (prompt-nonempty "display-message"
-                    (lambda (msg)
-                      (%cmd-display-message session (list msg)))))
-  (:source-file
-   (prompt-nonempty "source-file"
-                    (lambda (path)
-                      (load-config-file (pathname path)))))
+  (:display-message (%display-message-prompt session))
+  (:source-file (%source-file-prompt))
   (:show-options
    (show-overlay (cl-tmux/options:show-options)))
   ;; show-window-options / show-session-options / show-server-options:
   ;; per-scope option listing with tmux-style headers.
   (:show-window-options
    (with-active-window (win session)
-     (show-overlay
-      (with-output-to-string (stream)
-        (format stream "# window options~%")
-        (write-string (cl-tmux/options:show-window-options win) stream)))))
+     (%show-window-options win)))
   (:show-session-options (%show-session-options))
   (:show-server-options  (%show-server-options))
-  (:confirm-before
-   (prompt-start "confirm? (y/n)" ""
-                 (lambda (input)
-                   (when (string-equal input "y")
-                     (show-overlay "[confirmed]")))))
+  (:confirm-before (%confirm-before-prompt))
 
   ;; :wait-for is the canonical wait-for-channel command.
   (:wait-for

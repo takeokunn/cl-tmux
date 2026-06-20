@@ -59,7 +59,7 @@
 (test cmd-select-pane-fires-after-select-pane-hook
   "%cmd-select-pane fires +hook-after-select-pane+ regardless of which form it took."
   (with-isolated-hooks
-    (with-fake-session (s :nwindows 1 :npanes 2)
+    (with-fake-two-pane-session (s)
       (let ((fired nil))
         (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-select-pane+
                                 (lambda (&rest _) (declare (ignore _)) (setf fired t)))
@@ -92,7 +92,7 @@
   "window-pane-changed fires when a window's active pane changes (any select-pane
    path routes through %select-pane-with-focus's diff)."
   (with-isolated-hooks
-    (with-fake-session (s :nwindows 1 :npanes 2)
+    (with-fake-two-pane-session (s)
       (let ((fired nil))
         (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-window-pane-changed+
                                 (lambda (&rest _) (declare (ignore _)) (setf fired t)))
@@ -104,7 +104,7 @@
   "resize-pane fires +hook-after-resize-pane+ (covers both the resize-pane command
    and the C-b H/J/K/L keybind path, which share this function)."
   (with-isolated-hooks
-    (with-fake-session (s :nwindows 1 :npanes 2)
+    (with-fake-two-pane-session (s)
       (let* ((win (cl-tmux/model:session-active-window s))
              (fired nil))
       (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-resize-pane+
@@ -203,7 +203,7 @@
 
 (test bare-list-panes-lists-panes-not-unknown
   "Bare `list-panes` (no args) must list the current window's panes."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let ((*overlay* nil))
       (cl-tmux::%run-command-line s "list-panes")
       (assert-overlay-not-contains "unknown command" (overlay-lines)

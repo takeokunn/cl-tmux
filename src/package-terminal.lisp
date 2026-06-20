@@ -77,6 +77,8 @@
    #:screen-copy-selecting
    ;; copy-mode -e: auto-exit when scrolled to live bottom
    #:screen-copy-exit-on-bottom
+   ;; Mouse-entered copy-mode suppresses gutter line numbers
+   #:screen-copy-mode-entered-by-mouse-p
    ;; REP (repeat preceding char) support
    #:screen-last-char
    ;; DECSCUSR cursor shape
@@ -319,6 +321,8 @@
    #:screen-copy-selecting
    ;; copy-mode -e: auto-exit when scrolled to live bottom
    #:screen-copy-exit-on-bottom
+   ;; Mouse-entered copy-mode suppresses gutter line numbers
+   #:screen-copy-mode-entered-by-mouse-p
    ;; Cell accessors
    #:cell-char
    #:cell-fg

@@ -20,10 +20,6 @@
   (environment (make-hash-table :test #'equal))
   (environment-unsets nil :type list))
 
-(defun session (&rest initargs)
-  "Compatibility constructor for callers that use the structure name as a function."
-  (apply #'make-session initargs))
-
 (defun session-active-window (session)
   "Return SESSION's active window, falling back to the first window when active is NIL."
   (or (session-active session)

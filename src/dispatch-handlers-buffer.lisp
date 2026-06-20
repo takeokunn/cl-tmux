@@ -60,38 +60,36 @@
   "Prompt for a file path and write paste buffer 0 to it."
   (let ((buffer (cl-tmux/buffer:get-paste-buffer 0)))
     (if buffer
-        (prompt-start "save-buffer to file" ""
-                      (lambda (path)
-                        (unless (string= path "")
-                          (handler-case
-                              (progn
-                                (with-open-file (f path
-                                                   :direction :output
-                                                   :if-exists :supersede
-                                                   :if-does-not-exist :create)
-                                  (write-string buffer f))
-                                (%overlayf "saved to ~A" path))
-                            (error (e)
-                              (%overlayf "save-buffer error: ~A" e))))))
+        (prompt-nonempty "save-buffer to file"
+                         (lambda (path)
+                           (handler-case
+                               (progn
+                                 (with-open-file (f path
+                                                    :direction :output
+                                                    :if-exists :supersede
+                                                    :if-does-not-exist :create)
+                                   (write-string buffer f))
+                                 (%overlayf "saved to ~A" path))
+                             (error (e)
+                               (%overlayf "save-buffer error: ~A" e)))))
         (show-overlay "(no paste buffers to save)"))))
 
 ;;; -- %cmd-load-buffer --------------------------------------------------------
 
 (defun %cmd-load-buffer ()
   "Prompt for a file path and load its content into the paste buffer ring."
-  (prompt-start "load-buffer from file" ""
-                (lambda (path)
-                  (unless (string= path "")
-                    (handler-case
-                        (let ((content
-                                (with-open-file (f path
-                                                   :direction :input
-                                                   :if-does-not-exist :error)
-                                  (let ((s (make-string (file-length f))))
-                                    (read-sequence s f)
-                                    s))))
-                          (cl-tmux/buffer:add-paste-buffer content)
-                          (%overlayf "loaded ~D bytes from ~A"
-                                     (length content) path))
-                      (error (e)
-                        (%overlayf "load-buffer error: ~A" e)))))))
+  (prompt-nonempty "load-buffer from file"
+                   (lambda (path)
+                     (handler-case
+                         (let ((content
+                                 (with-open-file (f path
+                                                    :direction :input
+                                                    :if-does-not-exist :error)
+                                   (let ((s (make-string (file-length f))))
+                                     (read-sequence s f)
+                                     s))))
+                           (cl-tmux/buffer:add-paste-buffer content)
+                           (%overlayf "loaded ~D bytes from ~A"
+                                      (length content) path))
+                       (error (e)
+                         (%overlayf "load-buffer error: ~A" e))))))

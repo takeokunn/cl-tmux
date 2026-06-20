@@ -105,8 +105,8 @@
 ;;; Standard table names: +table-prefix+, +table-root+,
 ;;; +table-copy-mode+, +table-copy-mode-vi+.
 ;;;
-;;; set-key-binding / remove-key-binding are thin wrappers around key-table-bind
-;;; for the prefix table — the only table that matters for the main dispatch path.
+;;; The prefix table is the main dispatch path; callers should mutate it
+;;; through key-table-bind / key-table-unbind directly.
 
 (defparameter *key-tables*
   (make-hash-table :test #'equal)
@@ -149,8 +149,7 @@
 ;;; ── Initial key-binding data (declarative) ────────────────────────────────
 ;;;
 ;;; define-initial-key-bindings registers key-table bindings at load time.
-;;; After load, set-key-binding / remove-key-binding delegate to key-table-bind
-;;; directly — no sync step needed.
+;;; After load, callers mutate the prefix table directly — no sync step needed.
 
 (defmacro define-initial-key-bindings (&rest pairs)
   "Define INSTALL-DEFAULT-PREFIX-BINDINGS, a function that populates the prefix
@@ -222,18 +221,14 @@
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (load "src/config-listing.lisp"))
 
-;;; ── Key-binding accessors (thin wrappers over key-tables) ─────────────────
+;;; ── Prefix-table helpers ─────────────────────────────────────────────────
 
-(defun set-key-binding (key command)
-  "Bind KEY (a character or string) to COMMAND (a keyword) in the prefix table.
-   Returns COMMAND."
-  (key-table-bind +table-prefix+ key command)
-  command)
-
-(defun remove-key-binding (key)
-  "Remove any binding for KEY (a character or string) from the prefix table."
-  (let ((tbl (gethash +table-prefix+ *key-tables*)))
-    (when tbl (remhash key tbl))))
+(defun key-table-unbind (table key)
+  "Remove any binding for KEY from TABLE and return T when TABLE existed."
+  (let ((tbl (gethash table *key-tables*)))
+    (when tbl
+      (remhash key tbl)
+      t)))
 
 ;;; ── Default emacs copy-mode bindings ─────────────────────────────────────
 
@@ -401,7 +396,7 @@
    Called once at load time and by test isolation helpers (idempotent)."
   (install-default-prefix-bindings)
   (install-default-prefix-string-bindings)
-  (set-key-binding (code-char +prefix-key-code+) :send-prefix)
+  (key-table-bind +table-prefix+ (code-char +prefix-key-code+) :send-prefix)
   (ensure-key-table +table-root+)
   (ensure-key-table +table-copy-mode+)
   (ensure-key-table +table-copy-mode-vi+)

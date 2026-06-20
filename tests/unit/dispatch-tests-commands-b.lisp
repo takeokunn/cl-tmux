@@ -195,7 +195,7 @@
 
 (test dispatch-last-pane-selects-previous-pane
   ":last-pane selects the previously active pane."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s))
            (p0  (first  (window-panes win)))
            (p1  (second (window-panes win))))
@@ -208,10 +208,11 @@
           ":last-pane must select the previously active pane"))))
 
 (test cmd-last-pane-rejects-unsupported-arguments
-  "last-pane rejects unknown flags and positional tokens before changing active pane."
+  "last-pane rejects stale flags and positional tokens before changing active pane."
   (dolist (command '("last-pane extra"
+                     "last-pane -Z"
                      "last-pane -x"))
-    (with-fake-session (s :nwindows 1 :npanes 2)
+    (with-fake-two-pane-session (s)
       (let* ((win (session-active-window s))
              (p0  (first  (window-panes win)))
              (p1  (second (window-panes win)))
@@ -242,7 +243,7 @@
 
 (test format-window-list-shows-pane-count
   "%format-window-list includes the pane count for each window."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let ((text (cl-tmux::%format-window-list s)))
       ;; The format string ends each line with "[N pane(s)]".
       (is (search "pane" text)

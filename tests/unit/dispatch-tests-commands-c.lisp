@@ -149,13 +149,13 @@
   (is (macro-function 'cl-tmux::define-named-command-table)
       "define-named-command-table must be a macro"))
 
-(test dispatch-named-command-detach-client
-  "%dispatch-named-command \"detach-client\" returns :detach."
+(test dispatch-named-command-detach
+  "%dispatch-named-command \"detach\" returns :detach."
   (with-fake-session (s)
-    (is (eq :detach (cl-tmux::%dispatch-named-command s "detach-client"))
-        "%dispatch-named-command \"detach-client\" must return :detach")
-    (is (eq :unknown-command (cl-tmux::%dispatch-named-command s "detach"))
-        "%dispatch-named-command \"detach\" must be rejected")))
+    (is (eq :detach (cl-tmux::%dispatch-named-command s "detach"))
+        "%dispatch-named-command \"detach\" must return :detach")
+    (is (eq :unknown-command (cl-tmux::%dispatch-named-command s "detach-client"))
+        "%dispatch-named-command \"detach-client\" must be rejected")))
 
 (test dispatch-named-command-list-sessions
   "%dispatch-named-command \"list-sessions\" opens an overlay."
@@ -166,12 +166,28 @@
       (assert-overlay-active
        "%dispatch-named-command 'list-sessions' must open an overlay"))))
 
-(test dispatch-named-command-copy-mode
-  "%dispatch-named-command \"copy-mode\" enters copy mode."
+(test dispatch-named-command-copy-mode-enter
+  "%dispatch-named-command \"copy-mode-enter\" enters copy mode."
   (with-fake-session (s)
-    (cl-tmux::%dispatch-named-command s "copy-mode")
+    (cl-tmux::%dispatch-named-command s "copy-mode-enter")
     (is (cl-tmux::%copy-mode-active-p s)
-        "%dispatch-named-command 'copy-mode' must enter copy mode")))
+        "%dispatch-named-command 'copy-mode-enter' must enter copy mode")
+    (is (eq :unknown-command (cl-tmux::%dispatch-named-command s "copy-mode"))
+        "%dispatch-named-command 'copy-mode' must be rejected")))
+
+(test dispatch-named-command-display-menu
+  "%dispatch-named-command \"display-menu\" opens a menu overlay."
+  (with-fake-session (s)
+    (let ((*overlay* nil)
+          (cl-tmux::*active-menu* nil))
+      (is (null (cl-tmux::%dispatch-named-command s "display-menu"))
+          "%dispatch-named-command \"display-menu\" must not return a dispatch keyword")
+      (is (not (null cl-tmux::*active-menu*))
+          "%dispatch-named-command \"display-menu\" must set *active-menu*")
+      (assert-overlay-active
+       "%dispatch-named-command 'display-menu' must open an overlay")
+      (is (eq :unknown-command (cl-tmux::%dispatch-named-command s "menu"))
+          "%dispatch-named-command \"menu\" must be rejected"))))
 
 ;;; ── dispatch-prefix-command in copy mode ────────────────────────────────────
 

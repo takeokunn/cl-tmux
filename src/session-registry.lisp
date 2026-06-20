@@ -35,7 +35,7 @@
      (cdr (assoc name *server-sessions* :test #'string=))
      ;; 2. $N: match by session id
      (when (char= (char name 0) #\$)
-       (let ((id (ignore-errors (parse-integer (subseq name 1)))))
+       (let ((id (%parse-integer-or-nil (subseq name 1))))
          (when id
            (find id (mapcar #'cdr *server-sessions*) :key #'session-id))))
      ;; 3. Name prefix match

@@ -105,7 +105,7 @@
         (is (null (search "rename-window:" out))
             "inactive status bar must NOT show the prompt text (got ~S)" out)))))
 
-(test render-status-bar-copy-mode-indicator
+(test render-status-bar-copy-mode-has-no-indicator
   (with-isolated-options ("status-left" nil "status-right" nil)
     (let* ((sess   (make-test-session 60 10 :content ""))
            (ap     (session-active-pane sess))
@@ -113,10 +113,10 @@
       (setf (screen-copy-mode-p screen) t
             (screen-copy-offset screen) 3)
       (let ((out (render-status-bar-output sess 10 60)))
-        (is (search "COPY" out)
-            "status bar should show COPY indicator in copy mode (got ~S)" out)
-        (is (search "+3" out)
-            "status bar should show the copy offset +3 (got ~S)" out)))))
+        (is (null (search "COPY" out))
+            "status bar should not show the old COPY indicator in copy mode (got ~S)" out)
+        (is (null (search "+3" out))
+            "status bar should not show the old copy offset +3 in copy mode (got ~S)" out)))))
 
 (test render-status-bar-no-copy-indicator-live
   (let* ((sess (make-test-session 60 10 :content ""))
@@ -265,29 +265,6 @@
 (test status-pane-indicator-nil-returns-empty
   (is (string= "" (cl-tmux/renderer::%status-pane-indicator nil))
       "%status-pane-indicator with nil should return empty string"))
-
-;;; ── %status-copy-indicator (pure) ───────────────────────────────────────────
-
-(test status-copy-indicator-in-copy-mode
-  (let* ((screen (make-screen 10 5))
-         (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 5 :fd -1 :screen screen)))
-    (setf (screen-copy-mode-p screen) t
-          (screen-copy-offset screen) 5)
-    (let ((out (cl-tmux/renderer::%status-copy-indicator pane)))
-      (is (search "COPY" out)
-          "%status-copy-indicator in copy mode should contain COPY (got ~S)" out)
-      (is (search "+5" out)
-          "%status-copy-indicator should contain the offset +5 (got ~S)" out))))
-
-(test status-copy-indicator-not-in-copy-mode
-  (let* ((screen (make-screen 10 5))
-         (pane   (make-pane :id 1 :x 0 :y 0 :width 10 :height 5 :fd -1 :screen screen)))
-    (is (string= "" (cl-tmux/renderer::%status-copy-indicator pane))
-        "%status-copy-indicator outside copy mode should return empty string")))
-
-(test status-copy-indicator-nil-pane-returns-empty
-  (is (string= "" (cl-tmux/renderer::%status-copy-indicator nil))
-      "%status-copy-indicator with nil pane should return empty string"))
 
 ;;; ── %status-window-list-styled window-list behaviour (via styled variant) ───
 ;;;

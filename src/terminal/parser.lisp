@@ -84,6 +84,14 @@
 (defconstant +csi-final-low+   #x40 "Lowest valid CSI final byte '@'.")
 (defconstant +csi-final-high+  #x7E "Highest valid CSI final byte '~'.")
 
+(declaim (inline csi-final-byte-before-p csi-final-byte-p))
+
+(defun csi-final-byte-before-p (byte)
+  (< byte +csi-final-low+))
+
+(defun csi-final-byte-p (byte)
+  (<= +csi-final-low+ byte +csi-final-high+))
+
 ;;; ── Parameterized state constructors ───────────────────────────────────────
 
 (defun %finish-param (param-accumulator subparams)
@@ -155,7 +163,7 @@
       ((and (>= byte +csi-intermed-low+) (<= byte +csi-intermed-high+))
        (make-csi-k params param-accumulator (code-char byte) private subparams))
       ;; Final byte (0x40-0x7E): flush accumulator, reverse collected params, dispatch.
-      ((and (>= byte +csi-final-low+) (<= byte +csi-final-high+))
+      ((csi-final-byte-p byte)
        (let ((all-params (nreverse (if (or param-accumulator subparams)
                                        (cons (%finish-param param-accumulator subparams)
                                              params)

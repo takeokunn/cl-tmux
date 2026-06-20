@@ -188,8 +188,15 @@
   ("clock-mode-style"         :integer 24)      ; 12 or 24 hour
   ;; Copy mode search
   ("wrap-search"              :boolean t)        ; wrap search in copy-mode
+  ("copy-mode-line-numbers"   :string  "off")
+  ("copy-mode-line-number-style" :string "")
+  ("copy-mode-current-line-number-style" :string "")
   ("copy-mode-current-match-style" :string "bg=magenta")
   ("copy-mode-match-style"    :string  "bg=green")
+  ("copy-mode-position-format" :string  "#[align=right]#{t/p:top_line_time}#{?#{e|>:#{top_line_time},0}, ,}[#{copy_position}/#{copy_position_limit}]#{?search_timed_out, (timed out),#{?search_count, (#{search_count}#{?search_count_partial,+,} results),}}")
+  ("copy-mode-position-style" :string  "#{E:mode-style}")
+  ("copy-mode-selection-style" :string  "#{E:mode-style}")
+  ("copy-mode-mark-style"     :string  "bg=red,fg=black")
   ;; Session lifecycle
   ("destroy-unattached"       :boolean nil)     ; destroy session when no clients
   ;; detach-on-destroy: off / on (default) / no-detached / previous / next.

@@ -4,7 +4,7 @@
 ;;;
 ;;; Named-layout macro, select-layout, list-panes, new-window, split-window,
 ;;; new-session, switch-client, destroy-session, kill-session, resize-window,
-;;; detach-client, and the copy-mode -X command table (for send-keys -X).
+;;; detach, and the copy-mode -X command table (for send-keys -X).
 
 ;;; -- Layout name → keyword dispatch macro ------------------------------------
 ;;;
@@ -65,10 +65,7 @@
                              :allowed-flags '(#\d)
                              :max-positionals 0
                              :message "display-panes: unsupported argument")
-    (let* ((duration-str (cdr (assoc #\d flags)))
-           (duration (and duration-str
-                          (ignore-errors
-                            (parse-integer duration-str :junk-allowed t))))
+    (let* ((duration (%display-panes-duration-from-flags flags))
            (saved (cl-tmux/options:get-option "display-panes-time" 1000)))
       (unwind-protect
            (progn
@@ -106,6 +103,13 @@
         (cl-tmux/format:format-context-from-session session win pane))
        (%format-pane-info session win pane))))
 
+(defun %display-panes-duration-from-flags (flags)
+  "Parse the -d duration argument for display-panes."
+  (let ((duration-str (%flag-value flags #\d)))
+    (and duration-str
+         (ignore-errors
+           (parse-integer duration-str :junk-allowed t)))))
+
 (defun %cmd-new-window-arg (session args)
   "new-window [-d] [-k] [-P] [-n name] [-t target-window] [-a] [-c start-dir] [-e VAR=val].
    -d: create the window but do not make it active (detached).
@@ -116,18 +120,18 @@
    -n name: name the new window.
    -t idx: insert at specific index (assigned as the window id).
    -a: insert after the current window.
-   -c dir: start directory for the new pane's shell (format strings expanded).
-   -e VAR=val: set environment variable in the new pane (repeatable)."
+  -c dir: start directory for the new pane's shell (format strings expanded).
+  -e VAR=val: set environment variable in the new pane (repeatable)."
   (with-command-flags+pos (flags positionals args "ntceF")
     (declare (ignore positionals))
     (let* ((extra-env  (%collect-env-flags flags))
-           (name       (cdr (assoc #\n flags)))
-           (detach-p   (assoc #\d flags))
-           (kill-p     (assoc #\k flags))
-           (print-p    (assoc #\P flags))
-           (print-fmt  (cdr (assoc #\F flags)))
-           (after-p    (assoc #\a flags))
-           (raw-dir    (cdr (assoc #\c flags)))
+           (name       (%flag-value flags #\n))
+           (detach-p   (%flag-present-p flags #\d))
+           (kill-p     (%flag-present-p flags #\k))
+           (print-p    (%flag-present-p flags #\P))
+           (print-fmt  (%flag-value flags #\F))
+           (after-p    (%flag-present-p flags #\a))
+           (raw-dir    (%flag-value flags #\c))
            (start-dir  (%expand-start-dir session raw-dir))
            (at-idx     (%parse-flag-int flags #\t)))
       ;; -k: if a window with the target index already exists, kill it first.
@@ -173,7 +177,7 @@
   "When true, split-window -I creates an input pane without reading local stdin.")
 
 (defun %cmd-split-window (session args)
-  "split-window [-h|-v] [-b] [-f] [-d] [-I] [-t target] [-l size] [-c start-dir] [-e VAR=val].
+  "split-window [-h|-v] [-b] [-f] [-d] [-I] [-t target] [-l size|-p pct] [-c start-dir] [-e VAR=val].
    -h: horizontal split (new pane to the right; side-by-side).
    -v: vertical split (new pane below — default).
    -b: insert before the active pane (left of / above) instead of after.
@@ -184,24 +188,26 @@
    -t target: split the target pane instead of the active pane.
    -l N: size in lines/columns (absolute integer), or -l N% as a percentage
      of the parent pane.
+   -p N: shorthand for -l N% (tmux compatibility).
    -c dir: start directory for the new pane's shell (format strings expanded).
    -e VAR=val: set environment variable in the new pane (repeatable).
    -P: print the new pane's details to overlay.
    -F format: with -P, the format string for the printed info (instead of the
      default session:window.pane [WxH]) — e.g. `split-window -dP -F '#{pane_id}'`."
-  (with-command-flags+pos (flags positionals args "lcetF")
+  (with-command-input (flags positionals args "lpcetF"
+                             :allowed-flags '(#\h #\v #\b #\f #\d #\I #\t
+                                              #\l #\p #\c #\e #\P #\F))
     (declare (ignore positionals))
-    (when (assoc #\p flags)
-      (return-from %cmd-split-window nil))
     (let* ((extra-env    (%collect-env-flags flags))
-           (horizontal-p (assoc #\h flags))
-           (before-p     (assoc #\b flags))
-           (full-p       (assoc #\f flags))
-           (detach-p     (assoc #\d flags))
-           (input-p      (assoc #\I flags))
-           (target-str   (cdr (assoc #\t flags)))
-           (lines-str    (cdr (assoc #\l flags)))
-           (raw-dir      (cdr (assoc #\c flags)))
+           (horizontal-p (%flag-present-p flags #\h))
+           (before-p     (%flag-present-p flags #\b))
+           (full-p       (%flag-present-p flags #\f))
+           (detach-p     (%flag-present-p flags #\d))
+           (input-p      (%flag-present-p flags #\I))
+           (target-str   (%flag-value flags #\t))
+           (lines-str    (or (%flag-value flags #\l)
+                             (%flag-value flags #\p)))
+           (raw-dir      (%flag-value flags #\c))
            (start-dir    (%expand-start-dir session raw-dir))
            ;; -l N → N cells; -l N% → fraction.
            (size         (%parse-split-size lines-str))
@@ -218,7 +224,7 @@
               ;; Switch active window and pane to the target for the split.
               (session-select-window session target-win)
               (window-select-pane target-win target-pane))))
-        (let* ((print-p (assoc #\P flags))
+        (let* ((print-p (%flag-present-p flags #\P))
                ;; Inject -e VAR=val pairs only for PTY-backed splits; -I does
                ;; not spawn a process and must not leak env to a later pane.
                (*pane-extra-env* (and (not input-p) extra-env))
@@ -235,7 +241,7 @@
           ;; -P: print the new pane's details.
           (when (and print-p result)
             (%show-pane-info-overlay session (pane-window result) result
-                                     (cdr (assoc #\F flags))))
+                                     (%flag-value flags #\F)))
           result)))))
 
 (defvar *key-table* nil

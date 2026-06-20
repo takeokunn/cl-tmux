@@ -44,6 +44,27 @@
     (%enforce-buffer-limit))
   text)
 
+(defun rename-paste-buffer (source-name target-name)
+  "Rename SOURCE-NAME, or the most recent buffer when SOURCE-NAME is NIL, to
+   TARGET-NAME and return the preserved TEXT.  Returns NIL when there is no
+   source buffer."
+  (let ((entry (if source-name
+                   (assoc source-name *paste-buffers* :test #'string=)
+                   (first *paste-buffers*))))
+    (when entry
+      (let ((source-name (car entry))
+            (text (cdr entry)))
+        (if (string= source-name target-name)
+            text
+            (progn
+              (setf *paste-buffers*
+                    (remove source-name *paste-buffers* :key #'car :test #'string=))
+              (setf *paste-buffers*
+                    (remove target-name *paste-buffers* :key #'car :test #'string=))
+              (push (cons target-name text) *paste-buffers*)
+              (%enforce-buffer-limit)
+              text))))))
+
 
 (defun get-paste-buffer (&optional (index 0))
   "Return the TEXT of the INDEXth paste buffer (0-based, most recent first), or NIL

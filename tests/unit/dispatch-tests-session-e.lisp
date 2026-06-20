@@ -8,7 +8,7 @@
 
 (test named-command-break-pane-is-recognized
   "%dispatch-named-command recognizes 'break-pane' and breaks the pane into a window."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let ((*overlay* nil))
       (cl-tmux::%dispatch-named-command s "break-pane")
       (is (null *overlay*)
@@ -28,7 +28,7 @@
 
 (test run-command-line-select-layout-even-horizontal
   "%run-command-line select-layout even-horizontal applies even-horizontal layout."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (cl-tmux::%run-command-line s "select-layout even-horizontal")
     ;; Layout must be applied without error — just check the window still has 2 panes.
     (is (= 2 (length (cl-tmux/model:window-panes (cl-tmux/model:session-active-window s))))
@@ -43,7 +43,7 @@
 
 (test run-command-line-select-layout-unknown-is-noop
   "%run-command-line select-layout with an unknown name is a no-op (no error)."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (is (null (cl-tmux::%run-command-line s "select-layout bogus-layout"))
         "unknown layout name must not raise an error")))
 
@@ -182,14 +182,14 @@
 
 (test run-command-line-list-panes-shows-overlay
   "%run-command-line list-panes shows an overlay listing panes."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (with-run-command-line-overlay (s "list-panes")
       (is (and *overlay* (plusp (length *overlay*)))
           "list-panes must produce a non-empty overlay"))))
 
 (test run-command-line-list-panes-format-uses-arg-handler
   "%run-command-line list-panes -F expands pane formats through the arg handler."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (with-session-name (s "alpha")
       (with-run-command-line-overlay
           (s "list-panes -F '#{session_name}:#{window_index}.#{pane_id}'")
@@ -240,7 +240,7 @@
 
 (test run-command-line-list-panes-filter-matches-expanded-rows
   "list-panes -f keeps rows whose expanded format contains the filter string."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (with-run-command-line-overlay
         (s "list-panes -f 2 -F '#{pane_id}'")
       (assert-overlay-not-contains "1" *overlay*
@@ -356,15 +356,13 @@
   (is (integerp (cl-tmux::%parse-split-size "30"))
       "an absolute value must stay an integer (cells)"))
 
-(test run-command-line-split-window-rejects-legacy-p-size-flag
-  "split-window rejects the legacy -p percent form; use -l N%."
-  (with-fake-session (s :nwindows 1 :npanes 1)
-    (let* ((win (session-active-window s))
-           (before (length (window-panes win))))
-    (is (null (cl-tmux::%cmd-split-window s '("-p" "30")))
-        "legacy -p must not be accepted as a split size")
-      (is (= before (length (window-panes win)))
-          "rejecting -p must not create a pane"))))
+(test run-command-line-split-window-p-uses-percentage-size
+  "split-window -p uses tmux's percentage sizing shorthand."
+  (with-pty-command-increasing-count
+      (s "split-window -p 30"
+         :count-form (length (cl-tmux/model:window-panes
+                              (cl-tmux/model:session-active-window s)))
+         :count-context "split-window -p 30 must add a pane to the active window")))
 
 (test run-command-line-split-window-I-feeds-stdin-without-pty
   "split-window -I creates a no-PTY pane and writes stdin into its screen."

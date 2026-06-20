@@ -53,6 +53,7 @@
    #:pane-feed
    #:pane-pipe-fd
    #:pane-pipe-active-p
+   #:pane-live-p
    #:pane-pipe-output-stream
    #:pane-pipe-output-thread
    #:pane-pipe-process
@@ -121,7 +122,6 @@
    ;; Rotate-window
    #:window-rotate
    ;; Session
-   #:session
    #:make-session
    #:*session-id-counter*
    #:session-id
@@ -153,6 +153,7 @@
    #:process-environment-names
    #:process-set-environment
    #:process-unset-environment
+   #:session-environment
    #:session-environment-value
    #:session-environment-names
    #:session-set-environment
@@ -171,7 +172,7 @@
   (:use #:cl)
   (:export #:+default-buffer-limit+
            #:*paste-buffers* #:*buffer-auto-index*
-           #:add-paste-buffer #:get-paste-buffer #:set-named-buffer
+           #:add-paste-buffer #:rename-paste-buffer #:get-paste-buffer #:set-named-buffer
            #:get-buffer-by-name #:buffer-names
            #:list-paste-buffers #:list-paste-buffers-with-names
            #:delete-paste-buffer #:delete-buffer-by-name #:clear-paste-buffers))

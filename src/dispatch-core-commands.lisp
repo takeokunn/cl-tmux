@@ -22,6 +22,19 @@
                  rules)
        (t (and ch (lookup-key-binding ch))))))
 
+(defun new-session (name rows cols &key start-dir)
+  "Create a new session named NAME with a full-screen window of ROWS x COLS.
+   START-DIR: when non-NIL, the initial shell starts in that directory.
+   Registers the session in *server-sessions* and starts reader threads."
+  (let ((session (create-initial-session rows cols :start-dir start-dir)))
+    (setf (session-name session) name)
+    (session-touch session)
+    (server-add-session session)
+    (dolist (pane (all-panes session))
+      (start-reader-thread pane))
+    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-created+ session)
+    session))
+
 (define-copy-mode-key-overrides
   ((#\q #\i) :copy-mode-exit)
   (#\Space :copy-mode-begin-selection)
@@ -111,19 +124,6 @@
       (format s "└~A┘"
               (make-string (+ 4 (length title)) :initial-element #\─)))))
 
-(defun new-session (name rows cols &key start-dir)
-  "Create a new session named NAME with a full-screen window of ROWS x COLS.
-   START-DIR: when non-NIL, the initial shell starts in that directory.
-   Registers the session in *server-sessions* and starts reader threads."
-  (let ((session (create-initial-session rows cols :start-dir start-dir)))
-    (setf (session-name session) name)
-    (session-touch session)
-    (server-add-session session)
-    (dolist (pane (all-panes session))
-      (start-reader-thread pane))
-    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-session-created+ session)
-    session))
-
 ;;; -- Signal-channel prompt helper --------------------------------------------
 ;;;
 ;;; :wait-for and :wait-for-signal had identical bodies; %signal-channel-prompt
@@ -132,11 +132,10 @@
 (defun %signal-channel-prompt (prompt-label)
   "Open a prompt labelled PROMPT-LABEL; on submit signal the named channel
    and show a confirmation overlay."
-  (prompt-start prompt-label ""
-                (lambda (name)
-                  (unless (string= name "")
-                    (signal-channel name)
-                    (%overlayf "signaled channel: ~A" name)))))
+  (prompt-nonempty prompt-label
+                   (lambda (name)
+                     (signal-channel name)
+                     (%overlayf "signaled channel: ~A" name))))
 
 ;;; -- Toggle-synchronize-panes helper -----------------------------------------
 ;;;
@@ -160,14 +159,13 @@
 
 (defun %set-option-from-prompt (prompt-label)
   "Open a prompt labelled PROMPT-LABEL; on submit parse 'name value' and call set-option."
-  (prompt-start prompt-label ""
-                (lambda (input)
-                  (unless (string= input "")
-                    (let* ((parts (uiop:split-string input :separator " "))
-                           (name  (first parts))
-                           (value (second parts)))
-                      (when (and name value)
-                        (cl-tmux/options:set-option name value)))))))
+  (prompt-nonempty prompt-label
+                   (lambda (input)
+                     (let* ((parts (uiop:split-string input :separator " "))
+                            (name  (first parts))
+                            (value (second parts)))
+                       (when (and name value)
+                         (cl-tmux/options:set-option name value))))))
 
 ;;; -- Paste helper --------------------------------------------------------------
 ;;;
@@ -176,7 +174,7 @@
 
 (defun %paste-to-pane (pane text)
   "Write TEXT to PANE's PTY, wrapping in bracketed-paste sequences when enabled."
-  (when (and text pane (> (pane-fd pane) 0))
+  (when (and text (cl-tmux/model:pane-live-p pane))
     (let* ((screen    (pane-screen pane))
            (bracketed (screen-bracketed-paste screen))
            (prefix    (when bracketed (format nil "~C[200~~" #\Escape)))

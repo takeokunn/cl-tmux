@@ -26,26 +26,18 @@
        (list :command-list-name command-name))
       command-name))
 
-(defun %list-row-matches-filter-p (filter line)
-  "T when FILTER is absent or appears in LINE, case-insensitively."
-  (or (null filter)
-      (search filter line :test #'char-equal)))
-
 (defun %filtered-overlay-lines-string (lines filter)
   "Return the subset of LINES matching FILTER as one overlay string."
   (%overlay-lines-string
    (loop for line in lines
-         when (%list-row-matches-filter-p filter line)
+         when (or (null filter)
+                  (search filter line :test #'char-equal))
            collect line)))
-
-(defun %show-filtered-overlay-lines (lines filter)
-  "Show LINES in an overlay, keeping only rows that match FILTER."
-  (show-overlay (%filtered-overlay-lines-string lines filter)))
 
 (defun %show-list-overlay-rows (rows filter &optional raw-text)
   "Show ROWS, using RAW-TEXT when FILTER is absent."
   (if filter
-      (%show-filtered-overlay-lines rows filter)
+      (show-overlay (%filtered-overlay-lines-string rows filter))
       (show-overlay (or raw-text (%overlay-lines-string rows)))))
 
 (defun %non-empty-overlay-lines (text)
@@ -250,8 +242,8 @@
   Shows overlay in standalone mode."
   (flags positionals "Ff" :allowed-flags (#\F #\f) :max-positionals 0
          :message "list-sessions: unsupported argument" :raw-text t)
-  ((fmt    (cdr (assoc #\F flags)))
-   (filter (cdr (assoc #\f flags))))
+  ((fmt    (%flag-value flags #\F))
+   (filter (%flag-value flags #\f)))
   (%list-session-overlay-lines session fmt)
   (if filter
       (%show-list-overlay-rows
@@ -269,10 +261,10 @@
    per-client session list."
   (flags positionals "Fft" :allowed-flags (#\F #\f #\t) :max-positionals 0
          :message "list-clients: unsupported argument")
-  ((fmt        (or (cdr (assoc #\F flags))
-                   "#{client_name}: #{client_session} [#{client_width}x#{client_height}]"))
-   (filter     (cdr (assoc #\f flags)))
-   (target-str (cdr (assoc #\t flags))))
+  ((fmt        (or (%flag-value flags #\F)
+                    "#{client_name}: #{client_session} [#{client_width}x#{client_height}]"))
+   (filter     (%flag-value flags #\f))
+   (target-str (%flag-value flags #\t)))
   (with-target-session (target-session target-str session
                                     :message "list-clients: no such session: ~A"
                                     :on-missing :error)
@@ -287,10 +279,10 @@
    -t target-session: list windows in the target session."
   (flags positionals "Fft" :allowed-flags (#\F #\f #\t #\a) :max-positionals 0
          :message "list-windows: unsupported argument")
-  ((fmt        (cdr (assoc #\F flags)))
-   (filter     (cdr (assoc #\f flags)))
-   (target-str (cdr (assoc #\t flags)))
-   (all-p      (assoc #\a flags)))
+  ((fmt        (%flag-value flags #\F))
+   (filter     (%flag-value flags #\f))
+   (target-str (%flag-value flags #\t))
+   (all-p      (%flag-present-p flags #\a)))
   (%list-window-overlay-lines session fmt target-str all-p)
   (%show-list-overlay-rows rows filter))
 
@@ -303,11 +295,11 @@
   (flags positionals "Fft" :allowed-flags (#\F #\f #\t #\a #\s)
          :max-positionals 0
          :message "list-panes: unsupported argument")
-  ((fmt        (cdr (assoc #\F flags)))
-   (filter     (cdr (assoc #\f flags)))
-   (target-str (cdr (assoc #\t flags)))
-   (all-p      (assoc #\a flags))
-   (session-p  (assoc #\s flags)))
+  ((fmt        (%flag-value flags #\F))
+   (filter     (%flag-value flags #\f))
+   (target-str (%flag-value flags #\t))
+   (all-p      (%flag-present-p flags #\a))
+   (session-p  (%flag-present-p flags #\s)))
   (%list-pane-overlay-lines session fmt target-str all-p session-p)
   (%show-list-overlay-rows rows filter))
 
@@ -316,7 +308,7 @@
    with a COMMAND name, show only that command (tmux's `list-commands <name>`)."
   (flags positionals "F" :allowed-flags (#\F) :max-positionals 1
          :message "list-commands: unsupported argument")
-  ((fmt  (cdr (assoc #\F flags)))
+  ((fmt  (%flag-value flags #\F))
    (name (first positionals)))
   (%list-command-overlay-lines fmt name)
   (%show-list-overlay-rows rows nil))
@@ -332,7 +324,7 @@
   (let ((channel (first positionals)))
     (when (and channel (plusp (length channel)))
       (cond
-        ((assoc #\S flags) (signal-channel channel))
-        ((assoc #\L flags) (lock-channel   channel))
-        ((assoc #\U flags) (unlock-channel channel))
+        ((%flag-present-p flags #\S) (signal-channel channel))
+        ((%flag-present-p flags #\L) (lock-channel   channel))
+        ((%flag-present-p flags #\U) (unlock-channel channel))
         (t                 (wait-for-channel channel))))))

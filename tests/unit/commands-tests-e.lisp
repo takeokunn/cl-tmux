@@ -48,7 +48,13 @@
           (copy-mode-x-command-value "clear-selection"))
       "clear-selection must be a known send -X command")
   (is-false (copy-mode-x-command-value "stop-selection")
-            "stop-selection is no longer a supported send -X command"))
+            "stop-selection is no longer a supported send -X command")
+  (is-false (copy-mode-x-command-value "copy-selection-and-cancel")
+            "copy-selection-and-cancel is no longer a supported send -X command")
+  (is-false (copy-mode-x-command-value "toggle-position")
+            "toggle-position is no longer a supported send -X command")
+  (is-false (copy-mode-x-command-value "scroll-mouse")
+            "scroll-mouse is no longer a supported send -X command"))
 
 (test copy-mode-x-line-positions-vs-history-extremes
   "top/middle/bottom-line (vi H/M/L) move within the viewport; history-top/bottom

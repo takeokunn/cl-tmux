@@ -84,20 +84,120 @@
 
 (test render-pane-clock-mode-overlay
   "When *clock-mode-pane-id* matches the pane id, render-pane draws the clock overlay."
-  (let* ((pane   (make-test-pane 20 6 :id 42))
-         (cl-tmux::*clock-mode-pane-id* 42))
-    (let ((out (render-pane-output pane)))
-      (is (find #\█ out)
-          "render-pane in clock mode must emit block-element digits (got ~S)" out))))
+  (with-copy-mode-render-fixture (sess pane screen 20 6)
+    (let ((cl-tmux::*clock-mode-pane-id* (pane-id pane)))
+      (let ((out (render-pane-output sess pane)))
+        (is (find #\█ out)
+            "render-pane in clock mode must emit block-element digits (got ~S)" out)))))
 
 (test render-pane-no-clock-when-id-mismatch
   "When *clock-mode-pane-id* does not match the pane id, the clock overlay is suppressed."
-  (let* ((pane   (make-test-pane 20 6 :id 1))
-         (cl-tmux::*clock-mode-pane-id* 99))
-    (let ((out (render-pane-output pane)))
-      (is (null (find #\█ out))
-          "render-pane without matching clock-mode id must not emit clock digits (got ~S)"
+  (with-copy-mode-render-fixture (sess pane screen 20 6)
+    (let ((cl-tmux::*clock-mode-pane-id* 99))
+      (let ((out (render-pane-output sess pane)))
+        (is (null (find #\█ out))
+            "render-pane without matching clock-mode id must not emit clock digits (got ~S)"
+            out)))))
+
+(test render-pane-copy-mode-position-overlay
+  "When copy mode is active, render-pane draws the copy-mode position banner."
+  (with-copy-mode-render-fixture (sess pane screen 20 6
+                                  :position-format "COPY-BANNER")
+    (setf (screen-copy-mode-p screen) t)
+    (let ((out (render-pane-output sess pane)))
+      (is (search "COPY-BANNER" out)
+          "render-pane in copy mode must emit the copy-mode position banner (got ~S)"
           out))))
+
+;;; -- copy-mode line numbers --------------------------------------------------
+
+(defun %strip-csi-sequences (out)
+  "Remove CSI escape sequences from OUT so the visible pane text can be compared."
+  (cl-ppcre:regex-replace-all (format nil "~C\\[[0-9;?]*[A-Za-z]" #\Escape)
+                              out
+                              ""))
+
+(test copy-mode-line-numbers-off-suppresses-gutter
+  "copy-mode-line-numbers off leaves the pane content unchanged."
+  (with-copy-mode-render-fixture (sess pane screen 4 2
+                                  :content "ABCDEFGH"
+                                  :options '("copy-mode-line-numbers" "off"))
+    (setf (screen-copy-mode-p screen) t
+          (screen-copy-cursor screen) (cons 1 0))
+    (let ((vis (%strip-csi-sequences (render-pane-output sess pane))))
+      (is (string= "ABCDEFGH" vis)
+          "copy-mode-line-numbers off must not reserve a gutter (got ~S)" vis))))
+
+(test copy-mode-line-numbers-relative-renders-gutter
+  "relative copy-mode line numbers render a gutter with the cursor row at 0."
+  (with-copy-mode-render-fixture (sess pane screen 4 2
+                                  :content "ABCDEFGH"
+                                  :options '("copy-mode-line-numbers" "relative"))
+    (setf (screen-copy-mode-p screen) t
+          (screen-copy-cursor screen) (cons 1 0))
+    (let ((vis (%strip-csi-sequences (render-pane-output sess pane))))
+      (is (string= " 1AB 0EF" vis)
+          "relative numbering must render the expected gutter labels (got ~S)" vis))))
+
+(test copy-mode-line-numbers-default-renders-zero-based-gutter
+  "default copy-mode line numbers use the viewport row index."
+  (with-copy-mode-render-fixture (sess pane screen 4 2
+                                  :content "ABCDEFGH"
+                                  :options '("copy-mode-line-numbers" "default"))
+    (setf (screen-copy-mode-p screen) t
+          (screen-copy-cursor screen) (cons 0 0))
+    (let ((vis (%strip-csi-sequences (render-pane-output sess pane))))
+      (is (string= " 0AB 1EF" vis)
+          "default numbering must render zero-based viewport rows (got ~S)" vis))))
+
+(test copy-mode-line-numbers-absolute-renders-one-based-gutter
+  "absolute copy-mode line numbers use the absolute pane history index."
+  (with-copy-mode-render-fixture (sess pane screen 4 2
+                                  :content "ABCDEFGH"
+                                  :options '("copy-mode-line-numbers" "absolute"))
+    (setf (screen-copy-mode-p screen) t
+          (screen-copy-cursor screen) (cons 0 0))
+    (let ((vis (%strip-csi-sequences (render-pane-output sess pane))))
+      (is (string= " 1AB 2EF" vis)
+          "absolute numbering must render one-based history rows (got ~S)" vis))))
+
+(test copy-mode-line-numbers-hybrid-renders-absolute-on-cursor-row
+  "hybrid copy-mode line numbers render absolute numbering on the cursor row and relative elsewhere."
+  (with-copy-mode-render-fixture (sess pane screen 4 2
+                                  :content "ABCDEFGH"
+                                  :options '("copy-mode-line-numbers" "hybrid"))
+    (setf (screen-copy-mode-p screen) t
+          (screen-copy-cursor screen) (cons 0 0))
+    (let ((vis (%strip-csi-sequences (render-pane-output sess pane))))
+      (is (string= " 1AB 1EF" vis)
+          "hybrid numbering must switch the cursor row to absolute numbering (got ~S)"
+          vis))))
+
+(test copy-mode-line-numbers-mouse-enter-suppresses-gutter
+  "copy-mode-entered-by-mouse-p suppresses line numbers, matching tmux mouse enter behaviour."
+  (with-copy-mode-render-fixture (sess pane screen 4 2
+                                  :content "ABCDEFGH"
+                                  :options '("copy-mode-line-numbers" "absolute"))
+    (setf (screen-copy-mode-p screen) t
+          (cl-tmux/terminal/types:screen-copy-mode-entered-by-mouse-p screen) t)
+    (let ((vis (%strip-csi-sequences (render-pane-output sess pane))))
+      (is (string= "ABCDEFGH" vis)
+          "mouse-entered copy mode must suppress the gutter (got ~S)" vis))))
+
+(test copy-mode-current-line-number-style-applies-to-cursor-row
+  "copy-mode-current-line-number-style overrides the base line-number style on the cursor row."
+  (with-copy-mode-render-fixture (sess pane screen 4 2
+                                  :content "ABCDEFGH"
+                                  :options '("copy-mode-line-numbers" "absolute"
+                                             "copy-mode-line-number-style" "fg=green"
+                                             "copy-mode-current-line-number-style" "fg=red"))
+    (setf (screen-copy-mode-p screen) t
+          (screen-copy-cursor screen) (cons 1 0))
+    (let ((out (render-pane-output sess pane)))
+      (is (= 1 (%count-substring (format nil "~C[32m" #\Escape) out))
+          "base line-number style must be emitted once for the non-cursor row (got ~S)" out)
+      (is (= 1 (%count-substring (format nil "~C[31m" #\Escape) out))
+          "current line-number style must be emitted once for the cursor row (got ~S)" out))))
 
 ;;; -- clock-mode-style (12/24h) and clock-mode-colour -------------------------
 
@@ -155,102 +255,135 @@
 
 ;;; -- in-sel branch coverage via render-pane ----------------------------------
 
-(defun %make-selecting-pane (w h content mark-row mark-col cursor-row cursor-col)
-  "Return a pane whose screen is in copy-mode with an active selection."
-  (let* ((screen (make-screen w h))
-         (pane   (make-pane :id 1 :x 0 :y 0 :width w :height h
-                            :fd -1 :screen screen)))
-    (feed screen content)
-    (setf (screen-copy-mode-p       screen) t
-          (screen-copy-selecting    screen) t
-          (screen-copy-offset       screen) 0
-          (screen-copy-mark         screen) (cons mark-row   mark-col)
-          (screen-copy-cursor       screen) (cons cursor-row cursor-col))
-    pane))
-
 (defun %reverse-video-p (out)
   "True when OUT contains the SGR reverse-video code (;7)."
   (not (null (search ";7" out))))
 
+(defun %count-substring (needle haystack)
+  "Count non-overlapping occurrences of NEEDLE in HAYSTACK."
+  (loop with start = 0
+        for pos = (search needle haystack :start2 start)
+        while pos
+        do (setf start (+ pos (length needle)))
+        count 1))
+
 (test in-sel-branch-not-selecting
   "When copy-selecting is NIL the sel-active gate is false."
-  (let* ((pane   (make-test-pane 8 4 :content "ABCDEFGH"))
-         (screen (pane-screen pane)))
-    (setf (screen-copy-mode-p    screen) t
-          (screen-copy-selecting screen) nil
-          (screen-copy-mark      screen) nil
-          (screen-copy-cursor    screen) nil)
-    (let ((out (render-pane-output pane)))
-      (is (null (%reverse-video-p out))
-          "no reverse-video SGR should appear when copy-selecting is NIL (got ~S)"
-          out))))
+  (with-isolated-options ("copy-mode-position-style" "default"
+                          "copy-mode-position-format" "")
+    (with-copy-mode-selection-fixture (sess pane screen 8 4
+                                          :content "ABCDEFGH"
+                                          :copy-mode-p nil
+                                          :selecting-p nil)
+      (let ((baseline (render-pane-output sess pane)))
+        (setf (screen-copy-selecting screen) nil
+              (screen-copy-mark screen) nil
+              (screen-copy-cursor screen) nil)
+        (let ((out (render-pane-output sess pane)))
+          (is (string= baseline out)
+              "copy-selecting NIL must not change the rendered output (got ~S)"
+              out))))))
 
 (test in-sel-branch-single-row
   "Single-row selection: only cells in [sel-start-c, sel-end-c) are highlighted."
-  (let* ((pane (%make-selecting-pane 8 4
-                                     "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
-                                     0 2 0 5)))
-    (let ((out (render-pane-output pane)))
+  (with-copy-mode-selection-fixture (sess pane screen 8 4
+                                        :content "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
+                                        :mark-row 0
+                                        :mark-col 2
+                                        :cursor-row 0
+                                        :cursor-col 5)
+    (let ((out (render-pane-output sess pane)))
       (is (%reverse-video-p out)
           "single-row selection: reverse-video SGR must appear (got ~S)" out))))
 
-(test mode-style-default-reverse-keeps-reverse-video-selection
-  "With the default mode-style (reverse), a selection is still drawn with the
-   reverse-video SGR — the colour path stays opt-in."
+(test copy-mode-selection-style-drives-selection-colour
+  "copy-mode-selection-style recolours selected cells, and mode-style no longer feeds selection highlighting."
   (with-isolated-config
-    (let ((pane (%make-selecting-pane 8 4 "ABCDEFGHIJKLMNOP" 0 2 0 5)))
-      (cl-tmux/options:set-option "mode-style" "reverse")
-      (let ((out (render-pane-output pane)))
-        (is (%reverse-video-p out)
-            "default mode-style must keep reverse-video selection (got ~S)" out)))))
+    (with-isolated-options ("mode-style" "bg=colour99"
+                            "copy-mode-selection-style" "bg=colour172"
+                            "copy-mode-position-style" "default"
+                            "copy-mode-position-format" ""
+                            "copy-mode-mark-style" "default")
+      (with-copy-mode-selection-fixture (sess pane screen 8 4
+                                            :content "ABCDEFGHIJKLMNOP"
+                                            :mark-row 0
+                                            :mark-col 2
+                                            :cursor-row 0
+                                            :cursor-col 5)
+        (let ((out (render-pane-output sess pane)))
+          (is (search "48;5;172" out)
+              "copy-mode-selection-style must emit bg colour172 on the selection (got ~S)" out)
+          (is (null (search "48;5;99" out))
+              "mode-style must not leak into copy-mode selection rendering (got ~S)" out))))))
 
-(test mode-style-colour-recolours-selection-without-reverse
-  "A colour-based mode-style highlights the selection with its bg instead of
-   reverse-video: bg=colour172 → 48;5;172 appears, the ;7 reverse code does not."
+(test copy-mode-mark-style-applies-mark-endpoint-style
+  "copy-mode-mark-style recolours the marked cell only, and the marked endpoint still flips to reverse-video."
   (with-isolated-config
-    (let ((pane (%make-selecting-pane 8 4 "ABCDEFGHIJKLMNOP" 0 2 0 5)))
-      (cl-tmux/options:set-option "mode-style" "bg=colour172")
-      (let ((out (render-pane-output pane)))
-        (is (search "48;5;172" out)
-            "colour mode-style must emit bg colour172 on the selection (got ~S)" out)
-        (is (null (%reverse-video-p out))
-            "colour mode-style must NOT also reverse-video the selection (got ~S)" out)))))
+    (with-isolated-options ("copy-mode-position-style" "default"
+                            "copy-mode-position-format" ""
+                            "copy-mode-mark-style" "fg=colour88,bg=colour172")
+      (with-copy-mode-selection-fixture (sess pane screen 8 4
+                                            :content "ABCDEFGHIJKLMNOP"
+                                            :cursor-row 1
+                                            :cursor-col 3
+                                            :selecting-p nil)
+        (cl-tmux/commands::copy-mode-set-mark screen)
+        (let ((out (render-pane-output sess pane)))
+          (is (= 1 (%count-substring "38;5;88" out))
+              "copy-mode-mark-style must emit fg colour88 once for the marked cell (got ~S)" out)
+          (is (= 1 (%count-substring "48;5;172" out))
+              "copy-mode-mark-style must emit bg colour172 once for the marked cell (got ~S)" out)
+          (is (%reverse-video-p out)
+              "the marked cell must still be rendered with reverse-video (got ~S)" out))))))
 
 (test in-sel-branch-first-row
   "First row of a multi-row selection: cols >= sel-start-c are highlighted."
-  (let* ((pane (%make-selecting-pane 8 4
-                                     "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
-                                     0 3 2 0)))
-    (let ((out (render-pane-output pane)))
+  (with-copy-mode-selection-fixture (sess pane screen 8 4
+                                        :content "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
+                                        :mark-row 0
+                                        :mark-col 3
+                                        :cursor-row 2
+                                        :cursor-col 0)
+    (let ((out (render-pane-output sess pane)))
       (is (%reverse-video-p out)
           "first-row branch: reverse-video SGR must appear (got ~S)" out))))
 
 (test in-sel-branch-last-row
   "Last row of a multi-row selection: cols < sel-end-c are highlighted."
-  (let* ((pane (%make-selecting-pane 8 4
-                                     "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
-                                     0 0 2 5)))
-    (let ((out (render-pane-output pane)))
+  (with-copy-mode-selection-fixture (sess pane screen 8 4
+                                        :content "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
+                                        :mark-row 0
+                                        :mark-col 0
+                                        :cursor-row 2
+                                        :cursor-col 5)
+    (let ((out (render-pane-output sess pane)))
       (is (%reverse-video-p out)
           "last-row branch: reverse-video SGR must appear (got ~S)" out))))
 
 (test in-sel-branch-middle-row
   "Middle rows of a multi-row selection are fully highlighted."
-  (let* ((pane (%make-selecting-pane 8 4
-                                     "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
-                                     0 0 3 0)))
-    (let ((out (render-pane-output pane)))
+  (with-copy-mode-selection-fixture (sess pane screen 8 4
+                                        :content "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"
+                                        :mark-row 0
+                                        :mark-col 0
+                                        :cursor-row 3
+                                        :cursor-col 0)
+    (let ((out (render-pane-output sess pane)))
       (is (%reverse-video-p out)
           "middle-row branch: reverse-video SGR must appear (got ~S)" out))))
 
 (test in-sel-branch-selecting-but-no-mark
   "When copy-selecting is T but mark is NIL, sel-active is false."
-  (let* ((pane   (make-test-pane 8 4 :content "ABCDEFGH"))
-         (screen (pane-screen pane)))
-    (setf (screen-copy-mode-p    screen) t
-          (screen-copy-selecting screen) t
-          (screen-copy-mark      screen) nil
-          (screen-copy-cursor    screen) (cons 0 3))
-    (let ((out (render-pane-output pane)))
-      (is (null (%reverse-video-p out))
-          "nil mark must suppress reverse-video (got ~S)" out))))
+  (with-isolated-options ("copy-mode-position-style" "default"
+                          "copy-mode-position-format" "")
+    (let* ((sess   (make-renderer-test-session 8 4 :content "ABCDEFGH"))
+           (pane   (first (window-panes (session-active-window sess))))
+           (screen (pane-screen pane)))
+      (let ((baseline (render-pane-output sess pane)))
+      (setf (screen-copy-mode-p    screen) t
+            (screen-copy-selecting screen) t
+            (screen-copy-mark      screen) nil
+            (screen-copy-cursor    screen) (cons 0 3))
+        (let ((out (render-pane-output sess pane)))
+          (is (string= baseline out)
+              "nil mark must suppress selection rendering changes (got ~S)" out))))))

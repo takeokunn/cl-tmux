@@ -361,45 +361,39 @@
 (test apply-set-environment-u-unsets-variable
   "'set-environment -u VAR' config directive unsets the variable (tmux unset flag)."
   (let ((name "CLTMUX_TEST_ENV_VAR_CFG"))
-    (sb-posix:setenv name "x" 1)
-    (is (string= "x" (sb-ext:posix-getenv name)) "precondition: var is set")
-    (assert-config-directive-applied (list "set-environment" "-u" name)
-                                     "set-environment -u")
-    (is (null (sb-ext:posix-getenv name))
-        "config set-environment -u must unset the variable")))
+    (with-temporary-posix-environment-variable (name "x")
+      (is (string= "x" (sb-ext:posix-getenv name)) "precondition: var is set")
+      (assert-config-directive-applied (list "set-environment" "-u" name)
+                                       "set-environment -u")
+      (is (null (sb-ext:posix-getenv name))
+          "config set-environment -u must unset the variable"))))
 
 (test apply-set-environment-t-writes-target-session
   "'set-environment -t target VAR VALUE' config directive writes the target session overlay."
   (let ((name "CLTMUX_TEST_ENV_VAR_CFG_T")
         (target-name "CLTMUX_TEST_ENV_TARGET_CFG_T"))
-    (unwind-protect
-         (progn
-           (ignore-errors (sb-posix:unsetenv name))
-           (let ((target (make-fake-session :nwindows 1 :npanes 1)))
-             (with-registered-sessions ((target-name target))
-               (assert-config-directive-applied (list "set-environment" "-t" target-name name "value")
-                                                "set-environment -t")
-               (multiple-value-bind (value source)
-                   (cl-tmux/model:session-environment-value target name)
-                 (is (string= "value" value)
-                     "config set-environment -t must write the target session")
-                 (is (eq :session source)
-                     "config set-environment -t must record a session source"))
-               (is (null (sb-ext:posix-getenv name))
-                   "config set-environment -t must not touch the process environment"))))
-      (ignore-errors (sb-posix:unsetenv name)))))
+    (with-temporary-posix-environment-variable (name nil)
+      (let ((target (make-fake-session :nwindows 1 :npanes 1)))
+        (with-registered-sessions ((target-name target))
+          (assert-config-directive-applied (list "set-environment" "-t" target-name name "value")
+                                           "set-environment -t")
+          (multiple-value-bind (value source)
+              (cl-tmux/model:session-environment-value target name)
+            (is (string= "value" value)
+                "config set-environment -t must write the target session")
+            (is (eq :session source)
+                "config set-environment -t must record a session source"))
+          (is (null (sb-ext:posix-getenv name))
+              "config set-environment -t must not touch the process environment"))))))
 
 (test apply-set-environment-g-t-u-is-rejected
   "'set-environment -g -t target -u VAR' config directive is rejected."
   (let ((name "CLTMUX_TEST_ENV_VAR_CFG_GT_U"))
-    (unwind-protect
-         (progn
-           (sb-posix:setenv name "x" 1)
-           (assert-config-directive-rejected (list "set-environment" "-g" "-t" "ignored" "-u" name)
-                                             "set-environment -g -t target -u")
-           (is (string= "x" (sb-ext:posix-getenv name))
-               "config set-environment -g -t target -u must not unset VAR"))
-      (ignore-errors (sb-posix:unsetenv name)))))
+    (with-temporary-posix-environment-variable (name "x")
+      (assert-config-directive-rejected (list "set-environment" "-g" "-t" "ignored" "-u" name)
+                                        "set-environment -g -t target -u")
+      (is (string= "x" (sb-ext:posix-getenv name))
+          "config set-environment -g -t target -u must not unset VAR"))))
 
 ;;; ── %apply-option-side-effects: prefix branch ────────────────────────────
 ;;;

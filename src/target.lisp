@@ -21,6 +21,11 @@
   "Return STRING when it is a non-empty string, otherwise NIL."
   (when (and string (plusp (length string))) string))
 
+(defun %parse-integer-or-nil (string &rest args)
+  "Parse STRING as an integer and return NIL when parsing fails."
+  (and (stringp string)
+       (ignore-errors (apply #'parse-integer string args))))
+
 ;;; ── Pure: parse a raw target string into three string components ─────────────
 
 (defun %parse-session-component (target-string colon-pos dot-pos)
@@ -103,7 +108,7 @@
    Returns the integer or NIL."
   (when (and (plusp (length target-str))
              (char= (char target-str 0) sigil-char))
-    (ignore-errors (parse-integer (subseq target-str 1)))))
+    (%parse-integer-or-nil (subseq target-str 1))))
 
 (defun %name-prefix-p (prefix name)
   "T when NAME starts with PREFIX (both strings)."
@@ -135,7 +140,7 @@
   ((let ((id (%sigil-id target-str #\@)))
      (when id (find id (session-windows session) :key #'window-id))))
   ((let* ((wins (session-windows session))
-          (idx  (ignore-errors (parse-integer target-str))))
+          (idx  (%parse-integer-or-nil target-str)))
      (when (and idx (>= idx 0) (< idx (length wins)))
        (nth idx wins))))
   ((let ((wins (session-windows session)))
@@ -152,7 +157,7 @@
   ((let ((id (%sigil-id target-str #\%)))
      (when id (find id (window-panes window) :key #'pane-id))))
   ((let* ((panes (window-panes window))
-          (idx   (ignore-errors (parse-integer target-str))))
+          (idx   (%parse-integer-or-nil target-str)))
      (when (and idx (>= idx 0) (< idx (length panes)))
        (nth idx panes)))))
 

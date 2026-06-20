@@ -85,7 +85,7 @@
 (test run-command-line-select-pane-by-id-table
   "'select-pane -t 2' and 'select-pane -t %2' both activate pane-id 2."
   (dolist (cmd '("select-pane -t 2" "select-pane -t %2"))
-    (with-fake-session (s :nwindows 1 :npanes 2)
+    (with-fake-two-pane-session (s)
       (let ((win (session-active-window s)))
         (is (= 1 (pane-id (window-active-pane win))) "~A: pane 1 is initially active" cmd)
         (cl-tmux::%run-command-line s cmd)
@@ -93,7 +93,7 @@
 
 (test run-command-line-select-pane-l-selects-last
   "'select-pane -l' returns to the previously active pane."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s)))
       ;; Start on pane 1, move to pane 2 (pane 1 becomes last-active).
       (cl-tmux::%run-command-line s "select-pane -t 2")
@@ -104,7 +104,7 @@
 
 (test run-command-line-select-pane-t-T-titles-target-pane
   "'select-pane -t N -T title' sets pane N's title, NOT the active pane's."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s))
            (p1  (window-active-pane win))
            (p2  (find 2 (window-panes win) :key #'pane-id)))
@@ -116,7 +116,7 @@
 
 (test run-command-line-select-pane-t-d-disables-target-pane-input
   "'select-pane -t N -d' disables input on pane N, NOT the active pane."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s))
            (p1  (window-active-pane win))
            (p2  (find 2 (window-panes win) :key #'pane-id)))
@@ -126,7 +126,7 @@
 
 (test run-command-line-select-pane-M-clears-mark
   "'select-pane -M' on a marked pane clears the server-wide mark (toggle)."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s)))
       (let ((ap (window-active-pane win)))
         (cl-tmux::dispatch-command s :mark-pane nil)
@@ -141,7 +141,7 @@
                      "select-pane -x"
                      "select-pane -d extra"
                      "select-pane -t 2 -T title extra"))
-    (with-fake-session (s :nwindows 1 :npanes 2)
+    (with-fake-two-pane-session (s)
       (let* ((win (session-active-window s))
              (initial (window-active-pane win))
              (target (find 2 (window-panes win) :key #'pane-id))
@@ -169,7 +169,7 @@
 
 (test run-command-line-kill-pane-by-target
   "'kill-pane -t N' kills the pane with pane-id N in the active window."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s)))   ; pane-ids 1,2
       (cl-tmux::%run-command-line s "kill-pane -t 2")
       (is (= 1 (length (window-panes win))) "one pane must be removed")
@@ -178,7 +178,7 @@
 
 (test run-command-line-kill-pane-invalid-target-is-noop
   "'kill-pane -t <nonexistent>' must NOT kill the active pane by accident."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s)))
       (cl-tmux::%run-command-line s "kill-pane -t 99")
       (is (= 2 (length (window-panes win)))
@@ -210,7 +210,7 @@
              (is (equal before (session-windows s))
                  "~A must not mutate the window list" cmd))))
         (:panes
-         (with-fake-session (s :nwindows 1 :npanes 2)
+         (with-fake-two-pane-session (s)
            (let* ((win (session-active-window s))
                   (before (copy-list (window-panes win)))
                   (*overlay* nil))
@@ -405,7 +405,7 @@
 (test run-command-line-if-shell-F-uses-target-context
   "if-shell -t <pane> -F evaluates the condition in the target pane's context,
    not the active pane's context."
-  (with-fake-session (s :nwindows 1 :npanes 2)
+  (with-fake-two-pane-session (s)
     (let* ((win (session-active-window s))
            (target (find 2 (window-panes win) :key #'pane-id))
            (*overlay* nil))
@@ -529,8 +529,8 @@
       (assert-overlay-not-contains "global" (overlay-lines)
                                    "show-messages -t client-1"))))
 
-(test run-command-line-show-messages-accepts-target-and-debug-flags
-  "show-messages accepts tmux-compatible target/debug flags."
+(test run-command-line-show-messages-rejects-stale-flags
+  "show-messages rejects stale tmux parity flags."
   (with-fake-session (s)
     (let* ((client (cl-tmux::%make-client-conn
                     :state (cl-tmux::make-input-state)
@@ -538,22 +538,11 @@
            (cl-tmux::*clients* (list client))
            (cl-tmux::*message-log* (list (cons 0 "alpha") (cons 1 "beta"))))
       (dolist (line '("show-messages -J"
-                      "show-messages -T"
-                      "show-messages -t client0"))
+                      "show-messages -T"))
         (let ((*overlay* nil))
           (cl-tmux::%run-command-line s line)
           (assert-overlay-active line)
-          (assert-overlay-contains "alpha" (overlay-lines) line)
-          (assert-overlay-contains "beta" (overlay-lines) line))))))
-
-(test run-command-line-show-messages-accepts-debug-flags
-  "show-messages accepts debug flags without changing the message overlay."
-  (with-fake-session (s)
-    (let ((*overlay* nil)
-          (cl-tmux::*message-log* (list (cons 0 "terminal-ish"))))
-      (cl-tmux::%run-command-line s "show-messages -T")
-      (assert-overlay-active "show-messages -T must open an overlay")
-      (assert-overlay-contains "terminal-ish" (overlay-lines)
-                                "show-messages -T")
-        (assert-overlay-not-contains "unsupported argument" (overlay-lines)
-                                       "show-messages -T"))))
+          (assert-overlay-contains "show-messages: unsupported argument"
+                                   (overlay-lines) line)
+          (assert-overlay-not-contains "alpha" (overlay-lines) line)
+          (assert-overlay-not-contains "beta" (overlay-lines) line))))))

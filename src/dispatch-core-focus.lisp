@@ -41,7 +41,7 @@
                                  cl-tmux/hooks:+hook-pane-focus-in+
                                  cl-tmux/hooks:+hook-pane-focus-out+)
                              pane))
-  (when (and pane (> (pane-fd pane) 0))
+  (when (cl-tmux/model:pane-live-p pane)
     (let ((seq (cl-tmux/terminal/actions:focus-event-report
                 (pane-screen pane) focused-p)))
       (when seq
@@ -59,4 +59,3 @@
       ;; tmux's window-pane-changed event hook: WIN's active pane changed.
       ;; (run-hooks fires both registries, deriving the session from WIN.)
       (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-pane-changed+ win))))
-

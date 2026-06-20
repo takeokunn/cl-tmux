@@ -88,10 +88,6 @@
   "Return the numeric value of a hexadecimal digit CHAR, or NIL if invalid."
   (digit-char-p char 16))
 
-(defun %parse-hex-integer (string)
-  "Parse STRING as a hexadecimal integer and return NIL on failure."
-  (ignore-errors (parse-integer string :radix 16)))
-
 (defun osc52-clipboard-sequence (text)
   "Build the OSC 52 set-clipboard escape sequence (ESC ] 52 ; c ; <base64> ST)
    that copies TEXT to the host system clipboard when written to the OUTER
@@ -213,10 +209,10 @@
 (defun %parse-hash-color (hex)
   "Parse a #RGB or #RRGGBB hex string (without the leading #) to 0xRRGGBB, or NIL."
   (case (length hex)
-    (6 (%parse-hex-integer hex))
-    (3 (let ((r (%parse-hex-integer (subseq hex 0 1)))
-             (g (%parse-hex-integer (subseq hex 1 2)))
-             (b (%parse-hex-integer (subseq hex 2 3))))
+    (6 (cl-tmux::%parse-integer-or-nil hex :radix 16))
+    (3 (let ((r (cl-tmux::%parse-integer-or-nil (subseq hex 0 1) :radix 16))
+             (g (cl-tmux::%parse-integer-or-nil (subseq hex 1 2) :radix 16))
+             (b (cl-tmux::%parse-integer-or-nil (subseq hex 2 3) :radix 16)))
          (when (and r g b)
            (logior (ash (%scale-hex-channel r) 16)
                    (ash (%scale-hex-channel g) 8)
@@ -233,7 +229,7 @@
              (mapcar (lambda (s)
                        (and (> (length s) 0)
                             (<= (length s) 4)
-                            (%parse-hex-integer s)))
+                            (cl-tmux::%parse-integer-or-nil s :radix 16)))
                      parts)))
         (when (every #'integerp channels)
           (destructuring-bind (r g b) channels
@@ -345,7 +341,7 @@
   (let ((fields (%osc-split-fields body)))
     (loop for (index-spec spec) on fields by #'cddr
           while spec
-          for index = (parse-integer index-spec :junk-allowed t)
+          for index = (cl-tmux::%parse-integer-or-nil index-spec :junk-allowed t)
           when (and index (string= spec "?"))
             do (let ((rgb (%xterm-palette-rgb index)))
                  (when rgb

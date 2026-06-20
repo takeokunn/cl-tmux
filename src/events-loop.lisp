@@ -9,92 +9,58 @@
 ;;; them onto a fresh *key-tables*, keeping the isolated table consistent with the
 ;;; live image (e.g. C-b z = zoom-toggle, C-b L = last-session).
 
+(defparameter *extended-prefix-bindings*
+  `((#\s :choose-session)
+    (#\( :switch-client-prev)
+    (#\) :switch-client-next)
+    (#\L :last-session)
+    (#\D :choose-client)
+    (#\w :choose-window)
+    (#\l :last-window)
+    (#\f :find-window)
+    (#\. :move-window-prompt)
+    (#\' :select-window-prompt)
+    (#\E :select-layout-spread)
+    (,(code-char 32) :next-layout)
+    ("M-1" '("select-layout" "even-horizontal"))
+    ("M-2" '("select-layout" "even-vertical"))
+    ("M-3" '("select-layout" "main-horizontal"))
+    ("M-4" '("select-layout" "main-vertical"))
+    ("M-5" '("select-layout" "tiled"))
+    ("M-n" '("next-window" "-a"))
+    ("M-p" '("previous-window" "-a"))
+    ("M-o" '("rotate-window" "-D"))
+    (#\! :break-pane)
+    (#\{ :swap-pane-backward)
+    (#\} :swap-pane-forward)
+    (#\; :last-pane)
+    (#\q :display-panes)
+    (#\z :zoom-toggle)
+    (#\m :mark-pane)
+    (,(code-char 77) :clear-mark)
+    ("PageUp" '("copy-mode-enter" "-u"))
+    (,(code-char 2) :send-prefix)
+    (,(code-char 35) :list-buffers)
+    (,(code-char 61) :choose-buffer)
+    (,(code-char 45) :delete-buffer)
+    (#\: :command-prompt)
+    (#\C '("customize-mode"))
+    (#\r :refresh-client)
+    (#\t :clock-mode)
+    (#\i :display-info)
+    (,(code-char 126) :show-messages)
+    (,(code-char 15) :rotate-window)
+    (,(code-char 26) :suspend-client))
+  "Prefix bindings that extend config.lisp's defaults.")
+
+(defun %install-extended-key-binding (binding)
+  (destructuring-bind (key command) binding
+    (key-table-bind +table-prefix+ key command)))
+
 (defun install-extended-key-bindings ()
   "Install the prefix bindings that extend config.lisp's defaults.  Idempotent.
    Called once at load time, and again by with-isolated-config under test."
-  ;; Session management
-  ;; C-b s — choose-session (interactive overlay listing all sessions)
-  (set-key-binding #\s :choose-session)
-  ;; C-b ( / C-b ) — switch to prev/next session
-  (set-key-binding #\( :switch-client-prev)
-  (set-key-binding #\) :switch-client-next)
-  ;; C-b L — last-session (switch to most recently active previous session)
-  (set-key-binding #\L :last-session)
-  ;; C-b D — choose-client (show overlay with client info)
-  (set-key-binding #\D :choose-client)
-  ;; Window management
-  ;; C-b w — choose-window (interactive menu listing all windows)
-  (set-key-binding #\w :choose-window)
-  ;; C-b l — last-window (switch to previously active window)
-  (set-key-binding #\l :last-window)
-  ;; C-b f — find-window (search window names and pane titles)
-  (set-key-binding #\f :find-window)
-  ;; C-b . — move-window-prompt (prompt for target index and move active window)
-  (set-key-binding #\. :move-window-prompt)
-  ;; C-b ' — select-window-prompt (prompt for window index or name)
-  (set-key-binding #\' :select-window-prompt)
-  ;; C-b E — select-layout-spread (even-horizontal layout)
-  (set-key-binding #\E :select-layout-spread)
-  ;; C-b Space — next-layout (cycle through layouts)
-  (set-key-binding (code-char 32) :next-layout)
-  ;; C-b M-1..M-5 — preset layouts (tmux defaults).  Alt+digit after the prefix
-  ;; arrives as ESC <digit> and fires via the after-prefix meta path; stored as
-  ;; command token-lists under the canonical "M-N" string keys, identical to
-  ;; what `bind -T prefix M-1 select-layout even-horizontal` would install.
-  (set-key-binding "M-1" '("select-layout" "even-horizontal"))
-  (set-key-binding "M-2" '("select-layout" "even-vertical"))
-  (set-key-binding "M-3" '("select-layout" "main-horizontal"))
-  (set-key-binding "M-4" '("select-layout" "main-vertical"))
-  (set-key-binding "M-5" '("select-layout" "tiled"))
-  ;; C-b M-n / C-b M-p — cycle to next/previous window with an alert.
-  (set-key-binding "M-n" '("next-window" "-a"))
-  (set-key-binding "M-p" '("previous-window" "-a"))
-  ;; C-b M-o — rotate panes backward.
-  (set-key-binding "M-o" '("rotate-window" "-D"))
-  ;; Pane management
-  ;; C-b ! — break-pane (move active pane to a new window)
-  (set-key-binding #\! :break-pane)
-  ;; C-b { / C-b } — swap-pane backward / forward
-  (set-key-binding #\{ :swap-pane-backward)
-  (set-key-binding #\} :swap-pane-forward)
-  ;; C-b ; — last-pane (jump to previously active pane)
-  (set-key-binding #\; :last-pane)
-  ;; C-b q — display-panes (show pane numbers)
-  (set-key-binding #\q :display-panes)
-  ;; C-b z — zoom-toggle (zoom in/out on active pane) — standard lowercase tmux binding
-  (set-key-binding #\z :zoom-toggle)
-  ;; C-b m — mark-pane (set the marked pane)
-  (set-key-binding #\m :mark-pane)
-  ;; C-b M — clear-mark (clear the marked pane)
-  (set-key-binding (code-char 77) :clear-mark)
-  ;; Copy/paste/buffers
-  ;; C-b PageUp (tmux PPage) — enter copy mode and scroll to the oldest content.
-  (set-key-binding "PageUp" '("copy-mode" "-u"))
-  ;; C-b C-b — send-prefix (forward one literal C-b byte to the active pane)
-  (set-key-binding (code-char 2) :send-prefix)
-  ;; C-b # — list-buffers (show all paste buffers)
-  (set-key-binding (code-char 35) :list-buffers)
-  ;; C-b = — choose-buffer (interactively pick a paste buffer)
-  (set-key-binding (code-char 61) :choose-buffer)
-  ;; C-b - — delete-buffer (delete most recent paste buffer)
-  (set-key-binding (code-char 45) :delete-buffer)
-  ;; Misc
-  ;; C-b : — command-prompt (open interactive command line)
-  (set-key-binding #\: :command-prompt)
-  ;; C-b C — customize-mode tree.
-  (set-key-binding #\C '("customize-mode"))
-  ;; C-b r — refresh-client (force a full terminal redraw)
-  (set-key-binding #\r :refresh-client)
-  ;; C-b t — clock-mode (toggle digital clock overlay on active pane)
-  (set-key-binding #\t :clock-mode)
-  ;; C-b i — display-info (show session/window/pane info summary)
-  (set-key-binding #\i :display-info)
-  ;; C-b ~ — show-messages (show recent display-message log)
-  (set-key-binding (code-char 126) :show-messages)
-  ;; C-b C-o (15) — rotate-window (rotate panes forward, matching real tmux)
-  (set-key-binding (code-char 15) :rotate-window)
-  ;; C-b C-z (26) — suspend-client.
-  (set-key-binding (code-char 26) :suspend-client)
+  (mapc #'%install-extended-key-binding *extended-prefix-bindings*)
   (values))
 
 ;; Install once at load time so the running image has the full default set.
@@ -188,7 +154,7 @@
                               (subseq accum 0 (fill-pointer accum))
                               (make-array 1 :element-type '(unsigned-byte 8)
                                             :initial-element +byte-esc+))))
-              (when (and pane (> (pane-fd pane) 0) (not *client-read-only*))
+              (when (and pane (cl-tmux/model:pane-live-p pane) (not *client-read-only*))
                 (pty-write (pane-fd pane) bytes))))
         (setf (input-state-continuation state) #'%ground-input-state
               (input-state-esc-entered-at state) nil

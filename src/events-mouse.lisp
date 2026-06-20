@@ -1,10 +1,11 @@
 (in-package #:cl-tmux)
 
-;;; -- Mouse event dispatch + overlay pager escape-sequence handler -----------
+;;; -- Mouse event dispatch ----------------------------------------------------
 ;;;
 ;;; X10 and SGR mouse encoding, passthrough, drag-resize, click-count,
 ;;; border detection, mouse-key naming, and %dispatch-mouse-event.
-;;; Also: %overlay-escape-second-byte / %overlay-escape-final for pager mode.
+;;; Mouse-only responsibilities stay here; overlay pager ESC handling lives in
+;;; src/events-overlay-pager.lisp.
 
 ;;; ── Mouse event dispatch ─────────────────────────────────────────────────────
 ;;;
@@ -42,7 +43,7 @@
                         (code-char enc-btn)
                         (code-char enc-col)
                         (code-char enc-row))))))
-    (when (and encoded (> (pane-fd pane) 0) (not *client-read-only*))
+    (when (and encoded (cl-tmux/model:pane-live-p pane) (not *client-read-only*))
       (pty-write (pane-fd pane) encoded)
       t)))
 
@@ -57,14 +58,14 @@
          (mode (and target-screen (screen-mouse-mode target-screen))))
     (when (and target-pane target-screen (plusp (or mode 0)))
       (let ((should-forward
-             (cond
+             (case mode
                ;; mode 1 (X10 / normal): button press only, not release
-               ((= mode 1) (not release-p))
+               (1 (not release-p))
                ;; mode 2 (button-event): press, release, button-motion (btn = +mouse-btn-motion+)
-               ((= mode 2) (or (not release-p) (= btn +mouse-btn-motion+)))
+               (2 t)
                ;; mode 3 (any-event): all including pure motion
-               ((= mode 3) t)
-               (t nil))))
+               (3 t)
+               (otherwise nil))))
         (when should-forward
           (%encode-mouse-for-pane target-pane target-screen btn col row release-p))))))
 
@@ -78,47 +79,10 @@
         (and screen
              (%encode-mouse-for-pane pane screen btn col row release-p))))))
 
-;;; ── Status bar column → window index mapping ─────────────────────────────────
-
-(defun %status-col-to-window (session col)
-  "Return the window at column COL of the status bar, or NIL.
-   Mirrors the layout produced by %status-window-list-styled, including the
-   per-window format, separator, and inline style blocks."
-  (labels ((window-entry-width (window)
-             (let* ((active-p (eq window (session-active-window session)))
-                    (context  (cl-tmux/format:format-context-from-window session window))
-                    (fmt      (cl-tmux/options:get-option-for-context
-                               (if active-p "window-status-current-format"
-                                   "window-status-format")
-                               :window window))
-                    (label    (cl-tmux/format:expand-format fmt context))
-                    (style    (cl-tmux/renderer::%window-status-style session window active-p))
-                    (sgr-code (when (and style (plusp (length style)))
-                                (cl-tmux/renderer::%status-sgr-from-style style)))
-                    (expanded (cl-tmux/renderer::%status-expand-style-blocks
-                               label
-                               (or sgr-code +sgr-default-status+))))
-               (cl-tmux/renderer::%visible-length expanded))))
-    (let ((current-col (+ 1 (length (session-name session))))
-          (separator-width (cl-tmux/renderer::%visible-length
-                            (cl-tmux/options:get-option "window-status-separator" " ")))
-          (first-p t))
-      (loop for window in (session-windows session)
-            do (unless first-p
-                 (incf current-col separator-width))
-               (setf first-p nil)
-               (let ((entry-len (window-entry-width window)))
-                 (when (and (>= col current-col)
-                            (< col (+ current-col entry-len)))
-                   (return window))
-                 (incf current-col entry-len))))))
-
-(defun %mouse-status-bar-click (session col)
-  "Handle a click at COL on the status bar row: select the clicked window."
-  (let ((window (%status-col-to-window session col)))
-    (when window
-      (%with-window-focus-transition (session)
-        (session-select-window session window)))))
+(defun %pane-local-coordinates (pane col row)
+  "Return COL and ROW translated into PANE-local coordinates."
+  (values (- col (pane-x pane))
+          (- row (pane-y pane))))
 
 ;;; ── Drag-resize state ────────────────────────────────────────────────────────
 
@@ -243,10 +207,17 @@
     (when tree
       (%assign-window-tree window (window-width window) (window-height window)))))
 
+(defun %mouse-location-name (location)
+  "Return the human-readable suffix used in tmux mouse key names."
+  (ecase location
+    (:status "Status")
+    (:border "Border")
+    (:pane "Pane")))
+
 (defun %mouse-key-name (btn release-p location)
   "Build the tmux mouse key name for a mouse event, e.g. \"WheelUpPane\",
    \"MouseDown1Pane\", \"MouseUp3Status\".  BTN is the X10 button code, RELEASE-P
-   selects MouseUp vs MouseDown, and LOCATION is \"Pane\"/\"Status\"/\"Border\".
+   selects MouseUp vs MouseDown, and LOCATION is one of :PANE/:STATUS/:BORDER.
    Returns NIL for events with no standard binding name (motion/drag, unknown
    buttons), so the caller falls back to the built-in mouse behaviour.
 
@@ -257,13 +228,179 @@
                   ((= btn +mouse-btn-left+)        "1")
                   ((= btn +mouse-btn-middle+)      "2")
                   ((= btn 2)                       "3")   ; right button (no named constant)
-                  (t nil))))
+                  (t nil)))
+        (location-name (%mouse-location-name location)))
     (cond
-      ((= btn +mouse-btn-scroll-up+)   (concatenate 'string "WheelUp" location))
-      ((= btn +mouse-btn-scroll-down+) (concatenate 'string "WheelDown" location))
+      ((= btn +mouse-btn-scroll-up+)   (concatenate 'string "WheelUp" location-name))
+      ((= btn +mouse-btn-scroll-down+) (concatenate 'string "WheelDown" location-name))
       (button (concatenate 'string (if release-p "MouseUp" "MouseDown")
-                           button location))
+                           button location-name))
       (t nil))))
+
+(defun %mouse-event-action (btn release-p location)
+  "Classify a mouse event into a symbolic built-in action."
+  (cond
+    ((and (eq location :status) (not release-p) (= btn +mouse-btn-left+))
+     :status-click)
+    ((= btn +mouse-btn-scroll-up+)
+     :scroll-up)
+    ((= btn +mouse-btn-scroll-down+)
+     :scroll-down)
+    ((and (= btn +mouse-btn-left+) (not release-p) (not (eq location :status)))
+     :left-press)
+    ((and (= btn +mouse-btn-left+) release-p)
+     :left-release)
+    ((and (= btn +mouse-btn-middle+) (not release-p) (not (eq location :status)))
+     :middle-press)
+    ((= btn +mouse-btn-motion+)
+     :motion)
+    (t nil)))
+
+(defun %mouse-hit-location (active-window col row)
+  "Return the mouse location as (values location split orientation).
+   LOCATION is one of :STATUS, :BORDER, or :PANE."
+  (let ((status-row (1- *term-rows*)))
+    (cond
+      ((= row status-row)
+       (values :status nil nil))
+      (active-window
+       (multiple-value-bind (split orient)
+           (%border-at-position active-window col row)
+         (if split
+             (values :border split orient)
+             (values :pane nil nil))))
+      (t
+       (values :pane nil nil)))))
+
+(defun %mouse-binding-consumed-p (session in-copy copy-table mouse-key)
+  "Return T when a user mouse binding handled the event."
+  (or (and in-copy (%try-bound-string-key session copy-table mouse-key))
+      (%try-bound-string-key session +table-root+ mouse-key)))
+
+(defun %mouse-event-context (session)
+  "Return the active mouse dispatch context for SESSION."
+  (let* ((active-window (session-active-window session))
+         (active-pane   (session-active-pane session))
+         (active-screen (and active-pane (pane-screen active-pane))))
+    (values active-window
+            active-pane
+            active-screen
+            (and active-screen (screen-copy-mode-p active-screen))
+            (%active-copy-mode-table))))
+
+(defun %dispatch-mouse-event-with-context (session active-window active-pane active-screen
+                                          in-copy copy-table btn col row release-p)
+  "Dispatch a mouse event after the active context has been resolved."
+  (multiple-value-bind (location border-split border-orient)
+      (%mouse-hit-location active-window col row)
+    (let ((mouse-key (%mouse-key-name btn release-p location)))
+      (unless (%mouse-binding-consumed-p session in-copy copy-table mouse-key)
+        (%handle-mouse-built-in-action session active-window active-pane active-screen
+                                       btn col row release-p location
+                                       border-split border-orient)))))
+
+(defun %handle-mouse-built-in-action (session active-window active-pane active-screen
+                                      btn col row release-p location
+                                      border-split border-orient)
+  "Run the built-in mouse action after key-table bindings have had a chance."
+  (case (%mouse-event-action btn release-p location)
+    (:status-click
+     (%mouse-status-bar-click session col))
+    (:scroll-up
+     (%mouse-handle-scroll-up active-screen))
+    (:scroll-down
+     (%mouse-handle-scroll-down active-screen))
+    (:left-press
+     (let* ((now (%now-ms))
+            (count (%mouse-click-count *last-mouse-click*
+                                       now row col
+                                       (or (cl-tmux/options:get-option "double-click-time")
+                                           500))))
+       (%mouse-handle-left-press active-window col row now count
+                                 border-split border-orient)))
+    (:left-release
+     (%mouse-handle-left-release active-window active-pane))
+    (:middle-press
+     (%mouse-handle-middle-press active-window col row))
+    (:motion
+     (%mouse-handle-motion active-window active-pane col row))
+    (t nil)))
+
+(defun %mouse-handle-scroll-up (active-screen)
+  "Enter copy mode if needed, then scroll back."
+  (when active-screen
+    (%mouse-enter-copy-mode-if-needed active-screen)
+    (copy-mode-scroll active-screen 3)))
+
+(defun %mouse-handle-scroll-down (active-screen)
+  "Scroll forward, leaving copy mode at the bottom."
+  (when active-screen
+    (copy-mode-scroll active-screen -3)
+    (when (and (screen-copy-mode-p active-screen)
+               (zerop (screen-copy-offset active-screen)))
+      (copy-mode-exit active-screen))))
+
+(defun %mouse-handle-left-press (active-window col row now count border-split border-orient)
+  "Handle a left-button press in pane space."
+  (setf *last-mouse-click*
+        (list now row col count))
+  (when active-window
+    (if border-split
+        (setf *mouse-drag-state* (list border-split border-orient))
+        (let ((target-pane (pane-at-position active-window col row)))
+          (when target-pane
+            ;; Clicking a pane should behave like a keyboard focus change.
+            (%select-pane-with-focus active-window target-pane)
+            (let ((screen (pane-screen target-pane)))
+              (%mouse-enter-copy-mode-if-needed screen)
+              (multiple-value-bind (pane-col pane-row)
+                  (%pane-local-coordinates target-pane col row)
+                (copy-mode-set-cursor screen pane-row pane-col)
+                (cond
+                  ((= count 2)  (copy-mode-select-word screen))
+                  ((>= count 3) (copy-mode-begin-line-selection screen))
+                  (t            (copy-mode-begin-selection screen))))))))))
+
+(defun %mouse-handle-left-release (active-window active-pane)
+  "End a border drag or yank a selection if one is active."
+  (if *mouse-drag-state*
+      (setf *mouse-drag-state* nil)
+      (when (and active-window active-pane)
+        (let ((screen (pane-screen active-pane)))
+          (when (and (screen-copy-mode-p screen)
+                     (screen-copy-selecting screen))
+            (copy-mode-yank screen))))))
+
+(defun %mouse-handle-middle-press (active-window col row)
+  "Focus the clicked pane and paste the top paste buffer."
+  (when active-window
+    (let ((target-pane (pane-at-position active-window col row)))
+      (when target-pane
+        (%select-pane-with-focus active-window target-pane)
+        (let ((text (cl-tmux/buffer:get-paste-buffer 0)))
+          (when text
+            (%paste-to-pane target-pane text)))))))
+
+(defun %mouse-enter-copy-mode-if-needed (screen)
+  "Enter copy mode and mark the session when SCREEN is not already in copy mode."
+  (when screen
+    (unless (screen-copy-mode-p screen)
+      (copy-mode-enter screen)
+      (setf (screen-copy-mode-entered-by-mouse-p screen) t))))
+
+(defun %mouse-handle-motion (active-window active-pane col row)
+  "Resize the active border drag or extend copy-mode selection."
+  (if *mouse-drag-state*
+      (destructuring-bind (split orient) *mouse-drag-state*
+        (when active-window
+          (%apply-drag-resize active-window split orient col row)))
+      (when (and active-window active-pane)
+        (let* ((target-pane  (pane-at-position active-window col row))
+               (screen       (and target-pane (pane-screen target-pane))))
+          (when (and screen (screen-copy-mode-p screen) (screen-copy-selecting screen))
+            (multiple-value-bind (pane-col pane-row)
+                (%pane-local-coordinates target-pane col row)
+              (copy-mode-set-cursor screen pane-row pane-col)))))))
 
 (defun %dispatch-mouse-event (session btn col row release-p)
   "Handle a parsed mouse event. BTN is the button number (X10 encoded minus 32),
@@ -276,175 +413,14 @@
    scroll/click/drag handling below."
   (let ((*current-mouse-event* (list :btn btn :col col :row row :release-p release-p)))
     (unwind-protect
-         (let* ((active-window (session-active-window session))
-                (active-pane   (session-active-pane session)))
-           (cond
-             ;; Mouse option disabled - mark dirty (redraws are gated on it) and bail.
-             ((not (cl-tmux/options:get-option "mouse"))
-              nil)
-             ;; When the pane under the pointer has requested mouse tracking, translate
-             ;; and forward the event to the pane's PTY. This takes priority over all
-             ;; tmux-UI mouse handling (copy-mode, resize, pane-select).
-             ((%try-mouse-passthrough active-window active-pane btn col row release-p)
-              nil)
-             ;; Built-in / user-binding handling.
-             (t
-              (let* ((status-row    (1- *term-rows*))
-                     (in-status     (= row status-row))
-                     (location      (cond (in-status "Status")
-                                          ((and active-window
-                                                (%border-at-position active-window col row))
-                                           "Border")
-                                          (t "Pane")))
-                     (mouse-key     (%mouse-key-name btn release-p location))
-                     ;; When the active pane is in copy mode, a copy-mode-table mouse binding
-                     ;; (e.g. `bind -T copy-mode-vi WheelUpPane send -X halfpage-up`) takes
-                     ;; precedence over both the root binding and the built-in handling.
-                     (active-screen (and active-pane (pane-screen active-pane)))
-                     (in-copy       (and active-screen (screen-copy-mode-p active-screen)))
-                     (copy-table    (%active-copy-mode-table)))
-                ;; User mouse binding wins over the built-in handling: copy-mode table first
-                ;; (when in copy mode), then the root table.
-                (unless (or (and in-copy (%try-bound-string-key session copy-table mouse-key))
-                            (%try-bound-string-key session +table-root+ mouse-key))
-                  (cond
-                    ;; ── Status bar click ────────────────────────────────────────────────────
-                    ((and in-status (not release-p) (= btn +mouse-btn-left+))
-                     (%mouse-status-bar-click session col))
-
-                    ;; ── Scroll wheel up: enter copy-mode + scroll back ───────────────────
-                    ((= btn +mouse-btn-scroll-up+)
-                     (when active-screen
-                       (unless (screen-copy-mode-p active-screen)
-                         (copy-mode-enter active-screen))
-                       (copy-mode-scroll active-screen 3)))
-
-                    ;; ── Scroll wheel down: scroll forward, exit copy-mode at bottom ──────
-                    ((= btn +mouse-btn-scroll-down+)
-                     (when active-screen
-                       (copy-mode-scroll active-screen -3)
-                       (when (and (screen-copy-mode-p active-screen)
-                                  (zerop (screen-copy-offset active-screen)))
-                         (copy-mode-exit active-screen))))
-
-                    ;; ── Left button press ─────────────────────────────────────────────────
-                    ((and (= btn +mouse-btn-left+) (not release-p) (not in-status))
-                     ;; Double/triple-click detection: a click at the same cell within
-                     ;; double-click-time of the previous one selects a word (2) or line (3+),
-                     ;; matching tmux's default DoubleClick1Pane / TripleClick1Pane bindings.
-                     (let* ((now   (%now-ms))
-                            (count (%mouse-click-count *last-mouse-click* now row col
-                                                       (or (cl-tmux/options:get-option "double-click-time")
-                                                           500))))
-                       (setf *last-mouse-click* (list now row col count))
-                       (when active-window
-                         ;; Check for border drag
-                         (multiple-value-bind (split orient)
-                             (%border-at-position active-window col row)
-                           (if split
-                               ;; Press on border: begin drag (store only what motion events need)
-                               (setf *mouse-drag-state* (list split orient))
-                               ;; Press in pane: focus pane and begin/extend the copy selection
-                               (let ((target-pane (pane-at-position active-window col row)))
-                                 (when target-pane
-                                   ;; %select-pane-with-focus so clicking a pane delivers ?1004
-                                   ;; focus events, consistent with keyboard pane switches.
-                                   (%select-pane-with-focus active-window target-pane)
-                                   (let* ((screen    (pane-screen target-pane))
-                                          (pane-col  (- col (pane-x target-pane)))
-                                          (pane-row  (- row (pane-y target-pane))))
-                                     (unless (screen-copy-mode-p screen)
-                                       (copy-mode-enter screen))
-                                     ;; Route cursor mutation through the commands layer.
-                                     (copy-mode-set-cursor screen pane-row pane-col)
-                                     (cond
-                                       ((= count 2)  (copy-mode-select-word screen))
-                                       ((>= count 3) (copy-mode-begin-line-selection screen))
-                                       (t            (copy-mode-begin-selection screen)))))))))))
-
-                    ;; ── Left button release: finalize selection or end drag ───────────────
-                    ((and (= btn +mouse-btn-left+) release-p)
-                     (if *mouse-drag-state*
-                         (setf *mouse-drag-state* nil)
-                         (when (and active-window active-pane)
-                           (let ((screen (pane-screen active-pane)))
-                             (when (and (screen-copy-mode-p screen)
-                                        (screen-copy-selecting screen))
-                               (copy-mode-yank screen))))))
-
-                    ;; ── Middle button press: paste the top paste-buffer into the pane ─────
-                    ;; xterm-style middle-click paste. Focuses the pane under the pointer and
-                    ;; writes the most recent paste-buffer (honouring bracketed-paste mode).
-                    ((and (= btn +mouse-btn-middle+) (not release-p) (not in-status))
-                     (when active-window
-                       (let ((target-pane (pane-at-position active-window col row)))
-                         (when target-pane
-                           (%select-pane-with-focus active-window target-pane)
-                           (let ((text (cl-tmux/buffer:get-paste-buffer 0)))
-                             (when text
-                               (%paste-to-pane target-pane text)))))))
-
-                    ;; ── Mouse motion with button 1 (btn 32): drag selection or resize ─────
-                    ((= btn +mouse-btn-motion+)
-                     (if *mouse-drag-state*
-                         ;; Border drag in progress - only split and orientation are stored
-                         (destructuring-bind (split orient) *mouse-drag-state*
-                           (when active-window
-                             (%apply-drag-resize active-window split orient col row)))
-                         ;; Motion in pane: update copy selection cursor
-                         (when (and active-window active-pane)
-                           (let* ((target-pane  (pane-at-position active-window col row))
-                                  (screen       (and target-pane (pane-screen target-pane))))
-                             (when (and screen (screen-copy-mode-p screen) (screen-copy-selecting screen))
-                               (let ((pane-col (- col (pane-x target-pane)))
-                                     (pane-row (- row (pane-y target-pane))))
-                                 ;; Route cursor mutation through the commands layer.
-                                 (copy-mode-set-cursor screen pane-row pane-col)))))))
-
-                    (t nil))))))
-      (setf *dirty* t)))))
-
-;;; ── Overlay pager escape-sequence handler ────────────────────────────────────
-;;;
-;;; When the overlay pager is active and ESC is received, we accumulate the byte
-;;; sequence.  ESC [ A (Up) scrolls -1 and ESC [ B (Down) scrolls +1.  Any other
-;;; sequence (including bare ESC) dismisses the overlay.
-;;;
-;;; The overlay escape handler uses two named continuation functions so each
-;;; protocol state is explicit and independently readable.
-
-(defun %overlay-escape-second-byte (buffer)
-  "CPS state: received ESC, now reading the second byte.
-   If the second byte is '[' we continue to %overlay-escape-final; otherwise dismiss."
-  (lambda (_ignored-session byte)
-    (declare (ignore _ignored-session))
-    (vector-push-extend byte buffer)
-    (if (= byte +byte-csi-bracket+)
-        (values nil (%overlay-escape-final buffer))
-        (progn
-          (clear-overlay)
-          (setf *dirty* t)
-          (values nil #'%ground-input-state)))))
-
-(defun %overlay-escape-final (buffer)
-  "CPS state: received ESC '[', now reading the final byte.
-   Up arrow scrolls -1; Down arrow scrolls +1; anything else dismisses."
-  (lambda (_ignored-session byte)
-    (declare (ignore _ignored-session))
-    (vector-push-extend byte buffer)
-    (cond
-      ;; ESC [ A — Up arrow: scroll overlay up
-      ((= byte +byte-arrow-up+)
-       (overlay-scroll -1)
-       (setf *dirty* t)
-       (values nil #'%ground-input-state))
-      ;; ESC [ B — Down arrow: scroll overlay down
-      ((= byte +byte-arrow-down+)
-       (overlay-scroll 1)
-       (setf *dirty* t)
-       (values nil #'%ground-input-state))
-      ;; Unrecognised final byte: dismiss the overlay
-      (t
-       (clear-overlay)
-       (setf *dirty* t)
-       (values nil #'%ground-input-state)))))
+         (multiple-value-bind (active-window active-pane active-screen in-copy copy-table)
+             (%mouse-event-context session)
+            (cond
+              ((not (cl-tmux/options:get-option "mouse"))
+               nil)
+              ((%try-mouse-passthrough active-window active-pane btn col row release-p)
+               nil)
+               (t
+                (%dispatch-mouse-event-with-context session active-window active-pane active-screen
+                                                    in-copy copy-table btn col row release-p)))
+         (setf *dirty* t)))))

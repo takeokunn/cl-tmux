@@ -324,6 +324,12 @@
             :scroll-position      (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
                                       (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr))
                                       "")
+            :copy-position        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
+                                      (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr))
+                                      "")
+            :copy-position-limit  (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
+                                      (format nil "~D" (length (cl-tmux/terminal:screen-scrollback pane-scr)))
+                                      "")
             :selection-active     (if (and pane-scr
                                            (cl-tmux/terminal:screen-copy-mode-p pane-scr)
                                            (cl-tmux/terminal:screen-copy-selecting pane-scr))

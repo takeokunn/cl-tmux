@@ -103,11 +103,12 @@
   (let* ((text      (map 'string #'code-char (subseq buffer 2 (1- length)))) ; drop ESC [ and u
          (semi      (position #\; text))
          (codepoint (if semi
-                        (ignore-errors (parse-integer text :end semi))
-                        (ignore-errors (parse-integer text))))
-         (mod       (or (and semi
-                             (ignore-errors (parse-integer text :start (1+ semi)
-                                                               :junk-allowed t)))
+                        (%parse-integer-or-nil text :end semi)
+                        (%parse-integer-or-nil text)))
+         (mod       (if semi
+                        (or (%parse-integer-or-nil text :start (1+ semi)
+                                                   :junk-allowed t)
+                            1)
                         1)))
     (when codepoint (values codepoint mod))))
 

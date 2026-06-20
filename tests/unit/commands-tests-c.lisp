@@ -13,12 +13,7 @@
          (result (cl-tmux/commands:pipe-pane-open pane "cat")))
     (is-true result
         "pipe-pane-open must return a non-NIL stream on success")
-    (is-true (pane-pipe-active-p pane)
-        "pipe-pane-open must mark the pane as active")
-    (is-true (pane-pipe-fd pane)
-        "pipe-pane-open must store the command stdin stream")
-    (is-true (pane-pipe-process pane)
-        "pipe-pane-open must keep the subprocess object for bounded cleanup")
+    (assert-pipe-pane-open-output-to-command-state pane)
     ;; Clean up.
     (cl-tmux/commands:pipe-pane-close pane)))
 
@@ -26,23 +21,9 @@
   "pipe-pane-open followed by pipe-pane-close clears pipe state."
   (let ((pane (%make-test-pane)))
     (cl-tmux/commands:pipe-pane-open pane "cat")
-    (is-true (pane-pipe-fd pane)
-        "pane-pipe-fd must be set after pipe-pane-open")
-    (is-true (pane-pipe-process pane)
-        "pane-pipe-process must be set after pipe-pane-open")
-    (is (null (pane-pipe-output-stream pane))
-        "pane-pipe-output-stream must be NIL for output-to-command mode")
-    (is (null (pane-pipe-output-thread pane))
-        "pane-pipe-output-thread must be NIL for output-to-command mode")
+    (assert-pipe-pane-open-output-to-command-state pane)
     (cl-tmux/commands:pipe-pane-close pane)
-    (is (null (pane-pipe-fd pane))
-        "pane-pipe-fd must be NIL after pipe-pane-close")
-    (is (null (pane-pipe-process pane))
-        "pane-pipe-process must be NIL after pipe-pane-close")
-    (is (null (pane-pipe-output-stream pane))
-        "pane-pipe-output-stream must be NIL after pipe-pane-close")
-    (is (null (pane-pipe-output-thread pane))
-        "pane-pipe-output-thread must be NIL after pipe-pane-close")))
+    (assert-pipe-pane-closed-state pane)))
 
 (test pipe-pane-close-noop-when-no-pipe
   "pipe-pane-close is a no-op when pane has no open pipe."
@@ -68,45 +49,26 @@
       ;; Clean up the forked cat process.
       (cl-tmux/commands:pipe-pane-close pb))))
 
-(test cmd-pipe-pane-flag-i-enables-command-output-to-pane
-  "pipe-pane -I opens the reverse direction: command stdout is copied back to the pane."
+(defun %run-pipe-pane-direction-case (args assertion)
   (with-fake-session (sess :nwindows 1 :npanes 1)
     (let* ((*overlay* nil)
            (pane (session-active-pane sess))
-           (result (cl-tmux::%cmd-pipe-pane-arg sess '("-I" "cat"))))
-      (is-true result
-          "pipe-pane -I must be accepted")
-      (is-true (pane-pipe-active-p pane)
-          "pipe-pane -I must mark the pane as active")
-      (is (null (pane-pipe-fd pane))
-          "pipe-pane -I must not open a command-stdin pipe")
-      (is-true (pane-pipe-output-stream pane)
-          "pipe-pane -I must capture command stdout")
-      (is-true (pane-pipe-output-thread pane)
-          "pipe-pane -I must start a copier thread")
-      (is-true (pane-pipe-process pane)
-          "pipe-pane -I must keep the subprocess object for cleanup")
+           (result (cl-tmux::%cmd-pipe-pane-arg sess args)))
+      (is-true result "pipe-pane command must be accepted")
+      (funcall assertion pane)
       (cl-tmux/commands:pipe-pane-close pane))))
+
+(test cmd-pipe-pane-flag-i-enables-command-output-to-pane
+  "pipe-pane -I opens the reverse direction: command stdout is copied back to the pane."
+  (%run-pipe-pane-direction-case '("-I" "cat")
+    (lambda (pane)
+      (assert-pipe-pane-open-command-output-state pane))))
 
 (test cmd-pipe-pane-flag-o-keeps-pane-output-to-command
   "pipe-pane -O keeps the default pane stdout -> command stdin direction."
-  (with-fake-session (sess :nwindows 1 :npanes 1)
-    (let* ((*overlay* nil)
-           (pane (session-active-pane sess))
-           (result (cl-tmux::%cmd-pipe-pane-arg sess '("-O" "cat"))))
-      (is-true result
-          "pipe-pane -O must be accepted")
-      (is-true (pane-pipe-active-p pane)
-          "pipe-pane -O must mark the pane as active")
-      (is-true (pane-pipe-fd pane)
-          "pipe-pane -O must open the command-stdin pipe")
-      (is (null (pane-pipe-output-stream pane))
-          "pipe-pane -O must not capture command stdout")
-      (is (null (pane-pipe-output-thread pane))
-          "pipe-pane -O must not start a copier thread")
-      (is-true (pane-pipe-process pane)
-          "pipe-pane -O must keep the subprocess object for cleanup")
-      (cl-tmux/commands:pipe-pane-close pane))))
+  (%run-pipe-pane-direction-case '("-O" "cat")
+    (lambda (pane)
+      (assert-pipe-pane-open-output-to-command-state pane))))
 
 (test cmd-send-keys-X-t-targets-pane-copy-mode
   "send-keys -X -t .%2 begin-selection acts on pane-id 2's copy mode, not the
@@ -161,14 +123,7 @@
                   (apply original-launch args)))
           (is (null (cl-tmux/commands:pipe-pane-open pane "cat"))
               "pipe-pane-open must return NIL when launch exceeds timeout")
-          (is (null (pane-pipe-fd pane))
-              "pipe-pane-fd must be NIL after a timed-out open")
-          (is (null (pane-pipe-output-stream pane))
-              "pane-pipe-output-stream must be NIL after a timed-out open")
-          (is (null (pane-pipe-output-thread pane))
-              "pane-pipe-output-thread must be NIL after a timed-out open")
-          (is (null (pane-pipe-process pane))
-              "pane-pipe-process must be NIL after a timed-out open"))
+          (assert-pipe-pane-closed-state pane))
       (setf (fdefinition 'uiop:launch-program) original-launch)
       (ignore-errors (cl-tmux/commands:pipe-pane-close pane)))))
 
