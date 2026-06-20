@@ -442,6 +442,46 @@ set -g prefix C-a~%"))))
         (is (= 2 (length (rest cmd)))
             "both inner commands must be captured")))))
 
+;;; top-level `;' command-sequence separator on ordinary config lines (tmux parity)
+
+(test apply-config-line-splits-top-level-semicolons
+  "apply-config-line splits a top-level unescaped `;' into separate command
+   sequences and applies each segment in order (tmux command-sequence parity)."
+  (with-isolated-options ("status" "on" "status-style" "")
+    (is (eq t (cl-tmux/config::apply-config-line
+               "set -g status off ; set -g status-style bg=red"))
+        "a multi-segment line returns T when at least one segment applied")
+    (is (string= "off" (cl-tmux/options:get-option "status"))
+        "the first segment (set -g status off) must be applied")
+    (is (string= "bg=red" (cl-tmux/options:get-option "status-style"))
+        "the second segment (set -g status-style bg=red) must be applied")))
+
+(test apply-config-line-ignores-empty-semicolon-segments
+  "apply-config-line discards empty segments produced by doubled/trailing `;'.
+   The separators are whitespace-delimited `;' tokens (an adjacent `;;' is one
+   token the tokenizer does not split — a known limitation)."
+  (with-isolated-options ("status" "on" "status-style" "")
+    (is (eq t (cl-tmux/config::apply-config-line
+               "set -g status off ; ; set -g status-style bg=red ;"))
+        "doubled and trailing `;' produce empty segments that are skipped")
+    (is (string= "off" (cl-tmux/options:get-option "status")))
+    (is (string= "bg=red" (cl-tmux/options:get-option "status-style")))))
+
+(test apply-config-line-bind-escaped-semicolon-stays-a-sequence
+  "Regression: `bind r source-file ... \\; display ...' keeps its `\\;'-joined body
+   as one bind sequence.  apply-config-line must NOT pre-split a bind line — bind
+   owns its `;' tokens and invokes %split-on-semicolons itself."
+  (with-isolated-config
+    (is (eq t (cl-tmux/config::apply-config-line
+               "bind r source-file ~/.tmux.conf \\; display-message Reloaded"))
+        "the whole bind line is applied as a single directive")
+    (let* ((entry (cl-tmux/config:key-table-lookup "prefix" #\r))
+           (cmd   (cl-tmux/config:key-table-command entry)))
+      (is (and (consp cmd) (eq :sequence (first cmd)))
+          "the binding must store a :sequence, not a pre-split single command")
+      (is (= 2 (length (rest cmd)))
+          "both source-file and display-message must be in the sequence"))))
+
 (test multiline-brace-block-does-not-corrupt-following-directive
   "After a multi-line brace block the reader resumes cleanly: a directive on the
    line after the closing brace is still applied."

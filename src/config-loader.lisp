@@ -54,13 +54,37 @@
              (incf i))
           finally (return line))))
 
+(defparameter *config-sequence-owning-verbs*
+  '("bind" "bind-key" "if-shell")
+  "Config verbs whose own bodies legitimately contain bare \";\" tokens as internal
+   command separators (bind/bind-key sequences, if-shell then/else units).
+   apply-config-line must NOT pre-split a line on a top-level \";\" for these verbs —
+   they invoke %split-on-semicolons themselves and expect to receive the full token
+   list, including the \";\" tokens.")
+
 (defun apply-config-line (line)
   "Apply a single config LINE.  Blank lines and # comments (full-line and inline,
-   respecting quotes and #{...} formats) are ignored.  Returns T when applied."
+   respecting quotes and #{...} formats) are ignored.  Returns T when applied.
+
+   A top-level unescaped \";\" separates command sequences and each segment is
+   dispatched in order (tmux's cmd-parse.y: a bare \";\" is a command separator,
+   while \"\\;\" is a literal \";\").  %config-tokens already collapses a
+   backslash-escaped \"\\;\" into a literal \";\" joined to the adjacent token, so
+   only genuinely-standalone \";\" tokens split.  Verbs that own their \";\" bodies
+   (see *config-sequence-owning-verbs*) are exempt: they receive the full token
+   list unchanged."
   (let ((trimmed (string-trim '(#\Space #\Tab #\Return #\Newline)
                               (%strip-config-comment line))))
     (and (plusp (length trimmed))
-         (apply-config-directive (%config-tokens trimmed)))))
+         (let ((tokens (%config-tokens trimmed)))
+           (if (member (first tokens) *config-sequence-owning-verbs*
+                       :test #'string=)
+               (apply-config-directive tokens)
+               (let ((applied nil))
+                 (dolist (segment (%split-on-semicolons tokens))
+                   (when (and segment (apply-config-directive segment))
+                     (setf applied t)))
+                 applied))))))
 
 ;;; ── %if / %else / %endif preprocessor support ───────────────────────────────
 ;;;
