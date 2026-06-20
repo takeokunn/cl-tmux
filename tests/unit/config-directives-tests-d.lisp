@@ -151,6 +151,27 @@ set -u status")
     (is (= 0 (cl-tmux/config:load-config-from-string "bind X totally-bogus-cmd"))
         "an unknown bare command must still be rejected (0 applied)")))
 
+(test load-realistic-tmux-conf-with-aliases
+  "A realistic .tmux.conf written with tmux short aliases loads transparently:
+   set/setw/bind-key all apply, and alias command bodies are stored for dispatch."
+  (with-isolated-config
+    (let ((applied (cl-tmux/config:load-config-from-string
+                    "set -g status on
+setw -g mode-keys vi
+bind-key c neww
+bind | splitw -h
+bind-key -T copy-mode-vi v send-keys -X begin-selection")))
+      (is (= 5 applied)
+          "all five alias-using config lines apply (none rejected)")
+      (is (string= "on" (cl-tmux/options:get-option "status"))
+          "set -g status on took effect")
+      (is (equal '("neww") (lookup-key-binding #\c))
+          "bind-key c neww stored (resolved to new-window at key-press)")
+      (is (equal '("splitw" "-h") (lookup-key-binding #\|))
+          "bind | splitw -h stored (resolved to split-window -h at key-press)")
+      (is (not (null (cl-tmux/config:key-table-lookup "copy-mode-vi" #\v)))
+          "bind-key -T copy-mode-vi created the copy-mode-vi binding"))))
+
 ;;; ── %elif chains (4-state cond stack) ────────────────────────────────────────
 ;;;
 ;;; A plain skip flag mishandles %elif after a matched branch.  These exercise the
