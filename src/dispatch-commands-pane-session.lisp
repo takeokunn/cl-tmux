@@ -280,29 +280,43 @@
           (t nil)))))   ; off / no-detached -> most-recent survivor (loop auto-follows)
 
 (defun %cmd-kill-session-arg (session args)
-  "kill-session [-a] [-t name]: kill session(s).
+  "kill-session [-a] [-C] [-t name]: kill session(s), or clear their alerts.
    -a: kill all sessions EXCEPT the one named by -t (or current session).
+   -C: do NOT kill; instead clear the alert flags (activity/silence) on every
+       window of the target session, matching tmux's `kill-session -C`.
    -t name: the target session (default: current session)."
   (with-command-flags+pos (flags positionals args "t")
     (declare (ignore positionals))
-    (let* ((kill-all-others (%flag-present-p flags #\a))
+    (let* ((clear-alerts    (%flag-present-p flags #\C))
+           (kill-all-others (%flag-present-p flags #\a))
            (target-name     (%flag-value flags #\t))
            (target-sess     (or (and target-name (server-find-session target-name))
                                 session)))
-      (if kill-all-others
-          ;; -a: kill all sessions except target-sess (the "keep" session)
-          (dolist (entry (remove-if (lambda (e) (eq (cdr e) target-sess))
-                                    *server-sessions*))
-            (%destroy-session (cdr entry)))
-          ;; No -a: kill target-sess
-          (when target-sess
-            (let ((name        (session-name target-sess))
-                  (was-current (eq target-sess session)))
-              (%destroy-session target-sess)
-              ;; Killing the session the client is viewing -> apply detach-on-destroy.
-              (when (and was-current
-                         (eq :quit (%detach-on-destroy-action name)))
-                (setf *running* nil))))))))
+      (cond
+        ;; -C: clear alerts instead of killing.  tmux resets every window's
+        ;; activity/silence (and bell) flags in the target session; cl-tmux does
+        ;; not model bell separately, so clearing activity+silence is the faithful
+        ;; subset.
+        (clear-alerts
+         (when target-sess
+           (dolist (win (session-windows target-sess))
+             (setf (window-activity-flag win) nil
+                   (window-silence-flag  win) nil))))
+        ;; -a: kill all sessions except target-sess (the "keep" session).
+        (kill-all-others
+         (dolist (entry (remove-if (lambda (e) (eq (cdr e) target-sess))
+                                   *server-sessions*))
+           (%destroy-session (cdr entry))))
+        ;; No -a/-C: kill target-sess.
+        (t
+         (when target-sess
+           (let ((name        (session-name target-sess))
+                 (was-current (eq target-sess session)))
+             (%destroy-session target-sess)
+             ;; Killing the session the client is viewing -> detach-on-destroy.
+             (when (and was-current
+                        (eq :quit (%detach-on-destroy-action name)))
+               (setf *running* nil)))))))))
 
 (defun %cmd-resize-window-arg (session args)
   "resize-window [-x cols] [-y rows] [-t target-window]: resize a window.

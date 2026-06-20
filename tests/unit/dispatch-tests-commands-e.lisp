@@ -55,6 +55,24 @@
         (is (eq :quit (cl-tmux::dispatch-command s :kill-session nil))
             ":kill-session with empty registry must return :quit")))))
 
+(test cmd-kill-session-C-clears-alerts-without-killing
+  "kill-session -C clears window activity/silence alerts and does NOT kill the
+   session (tmux's kill-session -C)."
+  (with-fake-session (s :nwindows 2)
+    (let ((name (session-name s)))
+      (let ((cl-tmux::*server-sessions* (list (cons name s))))
+        (dolist (win (session-windows s))
+          (setf (cl-tmux/model:window-activity-flag win) t
+                (cl-tmux/model:window-silence-flag  win) t))
+        (cl-tmux::%cmd-kill-session-arg s '("-C"))
+        (is (cl-tmux::server-find-session name)
+            "kill-session -C must not destroy the session")
+        (dolist (win (session-windows s))
+          (is (null (cl-tmux/model:window-activity-flag win))
+              "kill-session -C must clear each window's activity flag")
+          (is (null (cl-tmux/model:window-silence-flag win))
+              "kill-session -C must clear each window's silence flag"))))))
+
 ;;; ── :find-window dispatch ─────────────────────────────────────────────────────
 
 (test dispatch-simple-commands-open-prompt-table
