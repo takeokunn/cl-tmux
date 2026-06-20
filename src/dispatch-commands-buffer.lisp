@@ -358,22 +358,38 @@
                                 (or table-name "all")))))))
 
 (defun %cmd-copy-mode-arg (session args)
-  "copy-mode [-e] [-u]: enter copy mode.
+  "copy-mode [-eHMqu] [-s src-pane] [-t target-pane]: enter (or with -q, leave)
+   copy mode on the target pane.
    -u: pre-scroll to the oldest scrollback content (e.g. bind PageUp copy-mode -u).
    -e: exit copy mode automatically when the viewport is scrolled back down to
-       the live bottom (offset 0).  Standard for mouse-wheel copy-mode entry:
-       `bind -n WheelUpPane copy-mode -e` enters copy mode on scroll-up and
-       leaves it once the user scrolls back to the live output."
-  (with-command-input (flags positionals args ""
-                             :allowed-flags '(#\u #\e)
+       the live bottom (offset 0).  `bind -n WheelUpPane copy-mode -e`.
+   -q: cancel copy mode on the target pane instead of entering it.
+   -t target-pane: act on a specific pane (default: the active pane), the
+       universal tmux target convention (e.g. `copy-mode -t %3`).
+   -s src-pane / -M / -H: accepted for tmux compatibility but currently no-ops
+       (-s back-history source pane, -M mouse-drag entry, -H hide the position
+       indicator)."
+  (with-command-input (flags positionals args "ts"
+                             :allowed-flags '(#\u #\e #\q #\t #\s #\M #\H)
                              :max-positionals 0
                              :message "copy-mode: unsupported argument")
-    (let* ((scroll-to-top  (%copy-mode-scroll-to-top-p flags))
-           (exit-on-bottom (%copy-mode-exit-on-bottom-p flags))
-           (screen (%active-screen session)))
+    (let ((target-str (%flag-value flags #\t))
+          (screen nil))
+      (if target-str
+          (with-target-context (tsession twin tpane session target-str)
+            (declare (ignore tsession twin))
+            (setf screen (and tpane (pane-screen tpane))))
+          (setf screen (%active-screen session)))
       (when screen
-        (copy-mode-enter screen :scroll-to-top scroll-to-top
-                                :exit-on-bottom exit-on-bottom)
-        (setf *dirty* t)))))
+        (if (%flag-present-p flags #\q)
+            ;; -q cancels copy mode on the target pane (no-op when not active).
+            (when (screen-copy-mode-p screen)
+              (copy-mode-exit screen)
+              (setf *dirty* t))
+            (progn
+              (copy-mode-enter screen
+                               :scroll-to-top (%copy-mode-scroll-to-top-p flags)
+                               :exit-on-bottom (%copy-mode-exit-on-bottom-p flags))
+              (setf *dirty* t)))))))
 
 ;;; *set-option-command-names* removed — inlined into *arg-command-table* below.

@@ -208,6 +208,29 @@
     (is-true (cl-tmux/terminal/types:screen-copy-mode-p screen)
              "copy-mode -e must put the active screen into copy mode")))
 
+(test cmd-copy-mode-arg-q-exits-and-extra-flags-accepted
+  "copy-mode -q cancels copy mode on the target pane; -M/-H are accepted without
+   error and still enter copy mode (audit #6: only -e/-u were accepted before)."
+  (let* ((s      (make-fake-session :nwindows 1 :npanes 1))
+         (screen (active-screen s)))
+    (cl-tmux::%cmd-copy-mode-arg s '())
+    (is-true (cl-tmux/terminal/types:screen-copy-mode-p screen)
+             "copy-mode (no flags) enters copy mode")
+    (cl-tmux::%cmd-copy-mode-arg s '("-q"))
+    (is-false (cl-tmux/terminal/types:screen-copy-mode-p screen)
+              "copy-mode -q must cancel copy mode")
+    (finishes (cl-tmux::%cmd-copy-mode-arg s '("-q"))
+              "copy-mode -q on a non-copy pane must not error")
+    (finishes (cl-tmux::%cmd-copy-mode-arg s '("-M"))
+              "copy-mode -M must be accepted (was previously rejected)")
+    (is-true (cl-tmux/terminal/types:screen-copy-mode-p screen)
+             "copy-mode -M enters copy mode")
+    (cl-tmux::%cmd-copy-mode-arg s '("-q"))
+    (finishes (cl-tmux::%cmd-copy-mode-arg s '("-H"))
+              "copy-mode -H must be accepted (was previously rejected)")
+    (is-true (cl-tmux/terminal/types:screen-copy-mode-p screen)
+             "copy-mode -H enters copy mode")))
+
 ;;; ── display-message -t ───────────────────────────────────────────────────────
 ;;;
 ;;; display-message -t <target> resolves the format context from the target's
