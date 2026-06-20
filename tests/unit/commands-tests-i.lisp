@@ -261,6 +261,32 @@
     (is (= 2 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
         "jump-reverse after two forward jumps must return to col 2")))
 
+(test copy-mode-jump-to-again-advances-past-adjacent
+  "After t<char>, ; (jump-again) advances PAST the immediately-adjacent occurrence
+   instead of sticking one cell before the same char (tmux cx+2, audit #18).
+   'hello world' has 'l' at cols 2, 3, 9."
+  (let ((s (copy-mode-screen :w 20 :h 3 :content "hello world" :cursor (cons 0 0))))
+    (cl-tmux/commands::copy-mode-jump-to s #\l)          ; t l → col 1 (before 'l' @2)
+    (is (= 1 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "t l from col 0 lands at col 1")
+    (cl-tmux/commands::copy-mode-jump-again s)            ; ; must advance, not stick
+    (is (= 2 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "; after t advances to col 2 (before 'l' @3), not stuck at col 1")
+    (cl-tmux/commands::copy-mode-jump-again s)            ; ; → next 'l' @9 → col 8
+    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "; again advances to col 8 (before 'l' @9)")))
+
+(test copy-mode-jump-to-back-again-advances-past-adjacent
+  "After T<char>, ; advances PAST the adjacent occurrence backward (tmux cx-2,
+   audit #18).  'hello world' has 'l' at cols 2, 3."
+  (let ((s (copy-mode-screen :w 20 :h 3 :content "hello world" :cursor (cons 0 5))))
+    (cl-tmux/commands::copy-mode-jump-to-backward s #\l) ; T l → col 4 (after 'l' @3)
+    (is (= 4 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "T l from col 5 lands at col 4 (just after 'l' @3)")
+    (cl-tmux/commands::copy-mode-jump-again s)            ; ; must advance backward
+    (is (= 3 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "; after T advances to col 3 (after 'l' @2), not stuck at col 4")))
+
 ;;; ── copy-mode-set-mark ───────────────────────────────────────────────────────
 
 (test copy-mode-set-mark-stores-current-cursor

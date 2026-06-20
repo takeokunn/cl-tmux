@@ -13,13 +13,18 @@
            (col   (cdr (screen-copy-cursor screen)))
            (chars (%copy-mode-row-chars screen row))
            (w     (length chars)))
+      ;; For the till commands (t/T) the scan starts TWO cells past the cursor
+      ;; (forward: col+2, backward: col-2), matching tmux's px = cx ± 2.  This
+      ;; skips an occurrence immediately adjacent to the cursor so a repeat (;/,)
+      ;; advances instead of sticking one cell before the same char.  The plain
+      ;; find commands (f/F) start one cell past, landing on the char itself.
       (if (eq direction :forward)
-          (loop for c from (1+ col) below w
+          (loop for c from (if till-p (+ col 2) (1+ col)) below w
                 when (char= (aref chars c) char)
                   do (setf (cdr (screen-copy-cursor screen))
                            (if till-p (max 0 (1- c)) c))
                      (return t))
-          (loop for c downfrom (1- col) to 0
+          (loop for c downfrom (if till-p (- col 2) (1- col)) to 0
                 when (char= (aref chars c) char)
                   do (setf (cdr (screen-copy-cursor screen))
                            (if till-p (min (1- w) (1+ c)) c))
