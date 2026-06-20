@@ -290,14 +290,15 @@
       (is (null (cl-tmux/terminal/types:screen-scrollback screen))
           "clear-history must default to the active pane and empty its scrollback"))))
 
-(test cmd-clear-history-rejects-unsupported-h-flag
-  "clear-history rejects the unsupported -H flag."
+(test cmd-clear-history-h-flag-is-accepted
+  "clear-history -H (also clear hyperlinks, tmux args Ht:) is accepted and clears
+   the active pane's scrollback."
   (multiple-value-bind (sess win screen) (%clear-history-fixture)
-    (declare (ignore win screen))
-    (with-command-rejection-state (sess
-                                   (cl-tmux::%cmd-clear-history-arg sess '("-H"))
-                                   "clear-history: unsupported argument"
-                                   "clear-history -H"))))
+    (declare (ignore win))
+    (with-command-test-state (sess)
+      (cl-tmux::%cmd-clear-history-arg sess '("-H"))
+      (is (null (cl-tmux/terminal/types:screen-scrollback screen))
+          "clear-history -H must clear the scrollback"))))
 
 ;;; ── rotate-window (scriptable %cmd-rotate-window-arg) ────────────────────────
 
@@ -337,20 +338,17 @@
       (is (eq p2 (first (window-panes win)))
           "-D (backward) makes the last pane first"))))
 
-(test cmd-rotate-window-rejects-unsupported-arguments-before-rotating
-  "rotate-window rejects unsupported arguments before changing the pane order."
+(test cmd-rotate-window-z-is-accepted-and-rotates
+  "rotate-window -Z (keep-zoom flag, tmux args DUZt:) is accepted and still
+   rotates the pane order."
   (multiple-value-bind (sess win p0 p1 p2) (%rotate-window-fixture)
-    (declare (ignore p1 p2))
-    (window-select-pane win p0)
-    (cl-tmux/model:window-zoom-toggle win)
-    (with-command-rejection-state (sess
-                                   (cl-tmux::%cmd-rotate-window-arg sess '("-Z" "-t" ":w"))
-                                   "rotate-window: unsupported argument"
-                                   "-Z")
-      (is-true (cl-tmux/model::window-zoom-p win)
-               "rotate-window -Z must not change zoom state")
-      (is (equal (list p0) (window-panes win))
-          "rotate-window -Z must not change the pane order"))))
+    (declare (ignore p2))
+    (with-command-test-state (sess)
+      (cl-tmux::%cmd-rotate-window-arg sess '("-Z" "-t" ":w"))
+      (is (eq p1 (first (window-panes win)))
+          "rotate-window -Z rotates forward like the default")
+      (is (eq p0 (car (last (window-panes win))))
+          "rotate-window -Z moves the original first pane to the end"))))
 
 ;;; ── find-window (scriptable %cmd-find-window-arg) ────────────────────────────
 

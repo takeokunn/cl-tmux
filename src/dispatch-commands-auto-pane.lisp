@@ -33,9 +33,14 @@
    -H: each positional is a hexadecimal character code (e.g. `send -H 1b 5b 41`).
    -M: forward the current mouse event to the target pane.
    -R: reset the target pane's terminal state (RIS) before sending any keys.
+   -F: expand #{...} format variables in each key argument before sending.
+   -c target-client: target client (single-client standalone model: accepted).
+   -K: send keys to the client's key table (accepted; routed to the pane in the
+       standalone model).  tmux args \"c:FHKlMN:Rt:X\".
    Without -X: each positional is a key name or literal string typed into the pane."
-  (with-command-input (flags positionals args "tN"
-                             :allowed-flags '(#\l #\H #\M #\R #\X #\N #\t)
+  (with-command-input (flags positionals args "tNc"
+                             :allowed-flags '(#\l #\H #\M #\R #\X #\N #\t
+                                              #\c #\F #\K)
                              :message "send-keys: unsupported argument")
     (let* ((target-str (%flag-value flags #\t))
            (literal-p  (%flag-present-p flags #\l))
@@ -46,8 +51,15 @@
                          (max 1 (or (and n (%parse-integer-or-nil n :junk-allowed t))
                                     1)))))
       (with-target-context (target-session target-win target-pane session target-str)
-        (declare (ignore target-win))
-        (let ((session target-session))
+        (let ((session target-session)
+              ;; -F: expand #{...} in each key argument against the target.
+              (positionals
+                (if (%flag-present-p flags #\F)
+                    (let ((ctx (cl-tmux/format:format-context-from-session
+                                target-session target-win target-pane)))
+                      (mapcar (lambda (k) (cl-tmux/format:expand-format k ctx))
+                              positionals))
+                    positionals)))
           (%send-keys-reset-target-pane-terminal-state flags target-pane)
           (cond
             (m-p

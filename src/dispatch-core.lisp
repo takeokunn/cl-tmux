@@ -249,13 +249,15 @@
 ;; (cl-tmux/commands kill-pane / kill-window) can fire command hooks too.
 (setf cl-tmux/hooks:*command-hook-runner* #'run-command-hooks)
 
-(defun %cmd-new-window (session &key name start-dir detach at-index after-current)
+(defun %cmd-new-window (session &key name start-dir detach at-index after-current
+                                     before-current)
   "Create a new window in SESSION and start a reader thread for it.
    NAME: window name (defaults to shell basename).
    START-DIR: start directory for the new pane's shell.
    DETACH: when T, do not make the new window active.
    AT-INDEX: when an integer, try to assign that specific window id.
    AFTER-CURRENT: when T, insert after the current window's id.
+   BEFORE-CURRENT: when T, insert at (before) the current window's id.
    Returns the new window."
   (let* ((rows (- *term-rows* *status-height*))
          (cols *term-cols*)
@@ -266,6 +268,8 @@
                  ((and at-index (integerp at-index)) at-index)
                  ((and after-current prev-win)
                   (1+ (window-id prev-win)))
+                 ((and before-current prev-win)
+                  (window-id prev-win))
                  (t (or (cl-tmux/options:get-option "base-index") 0))))
          (win  (session-new-window session win-name rows cols base start-dir)))
     (start-reader-thread (window-active-pane win))

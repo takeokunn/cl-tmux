@@ -119,18 +119,18 @@
   (let ((out (cl-tmux/commands:run-shell "true")))
     (is (stringp out) "return value must be a string even for a no-op command")))
 
-(test run-command-line-run-shell-rejects-unsupported-flags
-  "%run-command-line run-shell rejects unsupported tmux parity flags such as -t and -d."
+(test run-command-line-run-shell-accepts-tmux-parity-flags
+  "%run-command-line run-shell accepts the tmux parity flags -c/-d/-t (their
+   arguments are consumed) and runs the remaining command (tmux args bCc:d:t:)."
   (with-fake-session (s)
     (let ((*overlay* nil))
-      (is (null (cl-tmux::%run-command-line s "run-shell -d 0 -t %1 echo ok"))
-          "run-shell command dispatch must reject unsupported parity flags")
-      (is (search "run-shell: unsupported argument" *overlay*)
-          "run-shell must explain that the flags are unsupported")
-      (is (null (search "ok" *overlay*))
-          "rejected run-shell flags must prevent the shell command from running")
+      (cl-tmux::%run-command-line s "run-shell -d 0 -t %1 echo ok")
+      (is (null (search "unsupported argument" *overlay*))
+          "run-shell -d/-t must be accepted, not rejected")
+      (is (search "ok" *overlay*)
+          "run-shell must run the command after consuming the flag arguments")
       (is (null (search "%1" *overlay*))
-          "rejected tmux parity flag values must not leak into the overlay"))))
+          "the -t value must be consumed, not run as part of the command"))))
 
 (test run-command-line-run-shell-C-runs-tmux-command
   "%run-command-line run-shell -C executes the argument as a tmux command."

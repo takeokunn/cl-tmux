@@ -33,13 +33,59 @@
   (:tiled           "tiled"))
 
 (defun %cmd-select-layout (session args)
-  "select-layout <name>: apply the named layout to the active window.
-   Accepted names: even-horizontal (even-h), even-vertical (even-v),
-   main-horizontal (main-h), main-vertical (main-v), tiled."
-  (let* ((name (first args))
-         (kw   (and name (%resolve-layout-name name))))
-    (when kw
-      (%apply-named-layout-to-session session kw))))
+  "select-layout [-npoE] [-t target-window] [layout-name]: apply or cycle layouts.
+   layout-name: even-horizontal (even-h), even-vertical (even-v),
+     main-horizontal (main-h), main-vertical (main-v), tiled.
+   -n: next preset layout; -p: previous preset layout.
+   -E: spread the panes out evenly (mapped to even-vertical).
+   -o: undo the last layout change (accepted; cl-tmux keeps no layout-undo
+       history, so it is a no-op).
+   -t target-window: the window to lay out (default: the active window)."
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\n #\p #\o #\E #\t)
+                             :max-positionals 1
+                             :message "select-layout: unsupported argument")
+    (let* ((target (%flag-value flags #\t))
+           (win    (if target
+                       (%resolve-window-target session target)
+                       (session-active-window session)))
+           (name   (first positionals)))
+      (when win
+        (cond
+          ((%flag-present-p flags #\n) (%cycle-layout session win :next))
+          ((%flag-present-p flags #\p) (%cycle-layout session win :prev))
+          ((%flag-present-p flags #\E) (%apply-named-layout-to-session session :even-vertical))
+          (name
+           (let ((kw (%resolve-layout-name name)))
+             (when kw (%apply-named-layout-to-session session kw)))))))))
+
+(defun %cmd-next-layout (session args)
+  "next-layout [-t target-window]: cycle the window to the next preset layout.
+   The scriptable form of the :next-layout binding."
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\t)
+                             :max-positionals 0
+                             :message "next-layout: unsupported argument")
+    (declare (ignore positionals))
+    (let* ((target (%flag-value flags #\t))
+           (win    (if target
+                       (%resolve-window-target session target)
+                       (session-active-window session))))
+      (when win (%cycle-layout session win :next)))))
+
+(defun %cmd-previous-layout (session args)
+  "previous-layout [-t target-window]: cycle the window to the previous preset
+   layout.  The scriptable form of the :previous-layout binding."
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\t)
+                             :max-positionals 0
+                             :message "previous-layout: unsupported argument")
+    (declare (ignore positionals))
+    (let* ((target (%flag-value flags #\t))
+           (win    (if target
+                       (%resolve-window-target session target)
+                       (session-active-window session))))
+      (when win (%cycle-layout session win :prev)))))
 
 (defun %cmd-list-panes (session args)
   "list-panes: list all panes in the active window (mirrors display-panes)."
@@ -58,12 +104,15 @@
            "(no panes)")))))
 
 (defun %cmd-display-panes-arg (session args)
-  "display-panes [-d duration]: show pane ids.
-   The renderer owns the actual pane-number overlay; this command-line form only
-   accepts the duration flag it implements."
-  (with-command-input (flags positionals args "d"
-                             :allowed-flags '(#\d)
-                             :max-positionals 0
+  "display-panes [-b] [-N] [-d duration] [-t target-client] [template]: show pane
+   ids.  tmux args \"bNd:t:\".
+   -d duration: how long to show the overlay (ms).
+   -b: do not block (accepted); -N: ignore key presses / stay until -d elapses
+   (accepted); -t target-client and [template] are accepted.
+   The renderer owns the actual pane-number overlay."
+  (with-command-input (flags positionals args "dt"
+                             :allowed-flags '(#\b #\N #\d #\t)
+                             :max-positionals 1
                              :message "display-panes: unsupported argument")
     (let* ((duration (%display-panes-duration-from-flags flags))
            (saved (cl-tmux/options:get-option "display-panes-time" 1000)))
@@ -120,6 +169,7 @@
    -n name: name the new window.
    -t idx: insert at specific index (assigned as the window id).
    -a: insert after the current window.
+   -b: insert before the current window.
   -c dir: start directory for the new pane's shell (format strings expanded).
   -e VAR=val: set environment variable in the new pane (repeatable).
   -S: if a window with the -n name already exists, SELECT it instead of creating
@@ -134,6 +184,7 @@
            (print-p    (%flag-present-p flags #\P))
            (print-fmt  (%flag-value flags #\F))
            (after-p    (%flag-present-p flags #\a))
+           (before-p   (%flag-present-p flags #\b))
            ;; -c overrides; else fall back to the session working directory
            ;; (attach-session/new-session -c), matching tmux's new-window default.
            (raw-dir    (or (%flag-value flags #\c)
@@ -162,7 +213,8 @@
                                       :start-dir start-dir
                                       :detach (and detach-p t)
                                       :at-index at-idx
-                                      :after-current (and after-p t))))
+                                      :after-current (and after-p t)
+                                      :before-current (and before-p t))))
         ;; -P: print new pane details to overlay.
         (when (and print-p new-win)
           (%show-pane-info-overlay session new-win (window-active-pane new-win) print-fmt))
@@ -208,10 +260,11 @@
    -e VAR=val: set environment variable in the new pane (repeatable).
    -P: print the new pane's details to overlay.
    -F format: with -P, the format string for the printed info (instead of the
-     default session:window.pane [WxH]) — e.g. `split-window -dP -F '#{pane_id}'`."
+     default session:window.pane [WxH]) — e.g. `split-window -dP -F '#{pane_id}'`.
+   -Z: zoom the window after splitting (tmux SPAWN_ZOOM)."
   (with-command-input (flags positionals args "lpcetF"
                              :allowed-flags '(#\h #\v #\b #\f #\d #\I #\t
-                                              #\l #\p #\c #\e #\P #\F))
+                                              #\l #\p #\c #\e #\P #\F #\Z))
     (declare (ignore positionals))
     (let* ((extra-env    (%collect-env-flags flags))
            (horizontal-p (%flag-present-p flags #\h))
@@ -257,6 +310,11 @@
           (when (and print-p result)
             (%show-pane-info-overlay session (pane-window result) result
                                      (%flag-value flags #\F)))
+          ;; -Z: zoom the window after the split (tmux SPAWN_ZOOM).
+          (when (and result (%flag-present-p flags #\Z))
+            (let ((rwin (pane-window result)))
+              (when (and rwin (not (cl-tmux/model:window-zoom-p rwin)))
+                (cl-tmux/model:window-zoom-toggle rwin))))
           result)))))
 
 (defvar *key-table* nil

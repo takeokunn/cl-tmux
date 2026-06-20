@@ -136,23 +136,30 @@
     (funcall remover name)))
 
 (defun %cmd-set-option (session args)
-  "set-option [-aFgopsuw] [-t target] <name> <value...>: set an option.
+  "set-option [-aFgopqsuUw] [-t target] <name> <value...>: set an option.
    Scope: -p pane-local, -w window-local, -g global (default), -s server-local.
-   Operation: -u unset, -a append, -o only-if-unset, default: set.
-   -F expands #{...} in VALUE before storage (one-shot format resolution)."
+   Operation: -u unset, -U unset on all panes (3.4+, accepted as -u here), -a
+   append, -o only-if-unset, default: set.
+   -F expands #{...} in VALUE before storage (one-shot format resolution).
+   -q suppresses errors about unknown options."
   (with-command-input (flags positionals args "t"
-                             :allowed-flags '(#\a #\F #\g #\o #\p #\q #\s #\u #\w #\t)
+                             :allowed-flags '(#\a #\F #\g #\o #\p #\q #\s #\u #\U #\w #\t)
                              :message "set-option: unsupported argument")
     (let* ((name       (first positionals))
            (raw-value  (format nil "~{~A~^ ~}" (rest positionals)))
            (target-str (%flag-value flags #\t))
-           (unset-p    (%flag-present-p flags #\u))
+           ;; -U (unset on all panes, 3.4+) collapses onto -u in this model.
+           (unset-p    (or (%flag-present-p flags #\u)
+                           (%flag-present-p flags #\U)))
            (append-p   (%flag-present-p flags #\a))
+           (quiet-p    (%flag-present-p flags #\q))
            (only-if-unset-p (%flag-present-p flags #\o)))
       (cond
         ((null name) nil)
         ((cl-tmux/config::%unsupported-set-option-p name)
-         (%overlayf "set-option: unsupported option ~A" name)
+         ;; -q suppresses the unknown-option error overlay.
+         (unless quiet-p
+           (%overlayf "set-option: unsupported option ~A" name))
          nil)
         (t
          (let ((value (%expand-F-flag flags session raw-value)))

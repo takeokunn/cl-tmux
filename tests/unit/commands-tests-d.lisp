@@ -238,19 +238,29 @@
                                     "customize-mode -f mode-keys"))))
 
 (test customize-mode-rejects-unsupported-arguments-before-rendering
-  "customize-mode must reject unsupported flags that cl-tmux does not implement."
+  "customize-mode rejects positional tokens it does not implement.  (The tmux
+   flags -N/-Z/-F/-t are accepted; only positional tokens are rejected.)"
   (with-fake-session (s :nwindows 1)
-    (dolist (line '("customize-mode -F '#{pane_id}'"
-                   "customize-mode -t :.0"
-                   "customize-mode -N"
-                   "customize-mode -Z"
-                   "customize-mode mode-keys"))
+    (dolist (line '("customize-mode mode-keys"))
       (let ((*overlay* nil))
         (is (null (cl-tmux::%run-command-line s line))
             "~A must be rejected" line)
         (assert-overlay-contains "customize-mode: unsupported argument"
                                  (overlay-lines) line)
         (assert-overlay-not-contains "Session/Window Options"
+                                     (overlay-lines) line)))))
+
+(test customize-mode-accepts-tmux-flags
+  "customize-mode accepts the tmux flags -N/-Z and -F/-t (whose arguments are
+   consumed) and renders the customize tree."
+  (with-fake-session (s :nwindows 1)
+    (dolist (line '("customize-mode -N"
+                    "customize-mode -Z"
+                    "customize-mode -t :.0"
+                    "customize-mode -F #{pane_id}"))
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s line)
+        (assert-overlay-not-contains "unsupported argument"
                                      (overlay-lines) line)))))
 
 (test customize-mode-keyword-dispatch-opens-overlay

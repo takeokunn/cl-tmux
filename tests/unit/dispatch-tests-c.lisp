@@ -308,16 +308,12 @@
                  "-d duration must be restored after arming the overlay"))
         (cl-tmux/options:set-option "display-panes-time" saved)))))
 
-(test run-command-line-display-panes-rejects-ignored-args
-  "display-panes rejects arguments that cl-tmux does not implement."
+(test run-command-line-display-panes-accepts-tmux-args
+  "display-panes accepts the tmux flags -b/-N, -t target-client and a [template]
+   positional (tmux args bNd:t:) without raising an unsupported-argument overlay."
   (with-fake-session (sess :nwindows 1 :npanes 1)
-    (let ((*overlay* nil)
-          (cl-tmux/prompt:*display-panes-active* nil))
-      (is (null (cl-tmux::%cmd-display-panes-arg sess '("-b")))
-          "ignored -b must not be accepted")
-      (is (not cl-tmux/prompt:*display-panes-active*)
-          "rejecting -b must not arm pane-number rendering")
-      (is (null (cl-tmux::%cmd-display-panes-arg sess '("-t" "client0")))
-          "ignored -t target-client must not be accepted")
-      (is (null (cl-tmux::%cmd-display-panes-arg sess '("template")))
-          "ignored template positionals must not be accepted"))))
+    (dolist (args '(("-b") ("-N") ("-t" "client0") ("template")))
+      (let ((*overlay* nil))
+        (cl-tmux::%cmd-display-panes-arg sess args)
+        (is (null (and *overlay* (search "unsupported argument" *overlay*)))
+            "~S must be accepted, not rejected" args)))))

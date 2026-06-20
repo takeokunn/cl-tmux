@@ -283,11 +283,13 @@
 
    With a COMMAND, run it in a shell and display its output in the popup directly.
    With NO command, open the interactive popup-command prompt.
-   -w/-h accept absolute cells or an N% of the terminal; -E/-EE and
-   -x/-y/-d/-t/-c/-b are parsed and tolerated.  Geometry is clamped to the overlay
-   bounds (cl-tmux popups render command output, not a live embedded terminal)."
+   -w/-h accept absolute cells or an N% of the terminal; -E/-EE (close on exit),
+   -C (close an open popup), -e VAR=val (env, repeatable), -B (no border),
+   -x/-y/-d/-t/-c/-b/-s/-S are parsed and tolerated.  Geometry is clamped to the
+   overlay bounds (cl-tmux popups render command output, not a live embedded
+   terminal)."
   (declare (ignore session))
-  (with-command-flags+pos (flags positionals args "whxydtcbT")
+  (with-command-flags+pos (flags positionals args "whxydtcbTesS")
     (let* ((title   (%popup-title-from-flags flags))
            (command (when positionals (format nil "~{~A~^ ~}" positionals)))
            (width   (%popup-dimension (%popup-width-from-flags flags) *term-cols* +popup-max-width+))
@@ -308,9 +310,12 @@
    -x col / -y row: screen position (default: centred).  Clamped on screen.
    Item triples: label key command.  Empty label '' creates a visual separator.
    When selected, command is run via %run-command-line.
-   Preconfigured commands as keyword tokens run directly."
+   Preconfigured commands as keyword tokens run directly.
+   -O/-C: keep-open / close-existing control flags (accepted).  -b/-c/-s/-S/-t
+   take arguments (border-lines/client/style/border-style/target) and are consumed
+   so they do not leak into the item triples."
   (declare (ignore session))  ; session used via closure in item command
-  (with-command-flags+pos (flags positionals args "Txy")
+  (with-command-flags+pos (flags positionals args "TxybcsSt")
     (let* ((title (%menu-title-from-flags flags))
            (menu-x (%parse-flag-int flags #\x))
            (menu-y (%parse-flag-int flags #\y))
@@ -329,13 +334,18 @@
         (show-overlay (%format-menu *active-menu*))))))
 
 (defun %cmd-confirm-before-arg (session args)
-  "confirm-before [-p prompt] command: prompt before running COMMAND.
+  "confirm-before [-y] [-p prompt] [-c confirm-key] [-t target] command:
+   prompt before running COMMAND.
    -p prompt: custom prompt text (default: 'command? (y/n)').
+   -y: assume yes — run COMMAND immediately without prompting (tmux -y).
+   -c confirm-key / -t target: the confirmation key / target client are consumed;
+       cl-tmux confirms on 'y'/'Y'.
    COMMAND is the remaining positional tokens as a command line.
    Only executes COMMAND when the user confirms with 'y' or 'Y'."
-  (with-command-flags+pos (flags positionals args "p")
+  (with-command-flags+pos (flags positionals args "pct")
     (multiple-value-bind (window pane) (%active-window-pane session)
       (let* ((custom-prompt (%confirm-prompt-from-flags flags))
+             (assume-yes    (%flag-present-p flags #\y))
              (cmd-line      (format nil "~{~A~^ ~}" positionals))
              (ctx           (cl-tmux/format:format-context-from-session
                              session window pane))
@@ -345,20 +355,26 @@
                                   (error () custom-prompt))
                                 (format nil "~A? (y/n)" cmd-line))))
         (when (plusp (length cmd-line))
-          ;; Single-key prompt like tmux: one 'y'/'Y' keypress confirms (no Enter);
-          ;; any other key cancels.
-          (%confirm-prompt prompt-text
-                           (lambda ()
-                             (%run-command-line session cmd-line))))))))
+          (if assume-yes
+              ;; -y: skip the prompt and run COMMAND immediately.
+              (%run-command-line session cmd-line)
+              ;; Single-key prompt like tmux: one 'y'/'Y' keypress confirms (no
+              ;; Enter); any other key cancels.
+              (%confirm-prompt prompt-text
+                               (lambda ()
+                                 (%run-command-line session cmd-line)))))))))
 
 (defun %cmd-list-keys-arg (session args)
-  "list-keys [-T table] [-1] [key]: list key bindings.
+  "list-keys [-1aN] [-P prefix] [-T table] [key]: list key bindings.
    -T table: show bindings for TABLE only (e.g. prefix, root, copy-mode-vi).
    Without -T: show all tables.  KEY filters the output to matching bindings.
    -1 keeps only the first line of output.
-   The parser accepts -T and an optional key filter."
+   -P prefix: a string to print before each key (consumed; accepted).
+   -N: list only key notes; -a: include keys without notes — accepted (cl-tmux
+       does not track per-binding notes, so the full listing is shown).
+   The parser accepts -T/-P and an optional key filter."
   (declare (ignore session))
-  (with-command-flags+pos (flags positionals args "T1")
+  (with-command-flags+pos (flags positionals args "T1P")
     (let* ((table-name (%list-keys-table-name-from-flags flags))
            (key        (first positionals))
            (output     (if key

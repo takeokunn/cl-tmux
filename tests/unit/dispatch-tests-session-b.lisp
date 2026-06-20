@@ -305,28 +305,39 @@
             "resize-window -t must not change the active window")))))
 
 (test run-command-line-resize-window-rejects-unsupported-arguments
-  "resize-window rejects unknown flags and positional tokens before resizing."
+  "resize-window rejects unknown flags and excess positional tokens before
+   resizing.  (tmux resize-window takes one optional [adjustment] positional.)"
   (with-fake-session (s :nwindows 2)
     (let* ((windows (cl-tmux/model:session-windows s))
            (active  (first windows))
            (target  (second windows)))
       (setf (cl-tmux/model:window-name target) "work")
-      (dolist (command '("resize-window -x 40 -y 12 extra"
-                         "resize-window -x 40 -y 12 -z"
-                         "resize-window -x 40 -y 12 -t work extra"))
+      (dolist (command '("resize-window -x 40 -y 12 -z"
+                         "resize-window -x 40 -y 12 -t work 1 2"))
         (let ((cl-tmux::*overlay* nil))
           (is (null (cl-tmux::%run-command-line s command))
               "~A must be rejected" command)
           (is (= 20 (cl-tmux/model:window-width active))
               "~A must not resize the active window" command)
-          (is (= 5 (cl-tmux/model:window-height active))
-              "~A must not resize the active window" command)
           (is (= 20 (cl-tmux/model:window-width target))
-              "~A must not resize the target window" command)
-          (is (= 5 (cl-tmux/model:window-height target))
               "~A must not resize the target window" command)
           (is (search "unsupported argument" cl-tmux::*overlay*)
               "~A must explain the unsupported argument" command))))))
+
+(test run-command-line-resize-window-directional-adjusts
+  "resize-window -L/-R/-U/-D adjust the window by the optional [adjustment]
+   (default 1) columns/rows."
+  (with-fake-session (s :nwindows 1)
+    (let ((active (first (cl-tmux/model:session-windows s))))
+      (cl-tmux::%run-command-line s "resize-window -R 5")
+      (is (= 25 (cl-tmux/model:window-width active))
+          "-R 5 grows the window width by 5")
+      (cl-tmux::%run-command-line s "resize-window -D 3")
+      (is (= 8 (cl-tmux/model:window-height active))
+          "-D 3 grows the window height by 3")
+      (cl-tmux::%run-command-line s "resize-window -L 2")
+      (is (= 23 (cl-tmux/model:window-width active))
+          "-L 2 shrinks the window width by 2"))))
 
 (test dispatch-respawn-window-does-not-error
   ":respawn-window restarts panes in the active window without error."

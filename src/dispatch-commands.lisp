@@ -225,14 +225,20 @@
         "(no messages)")))
 
 (defun %cmd-display-message (session args)
-  "display-message [-l] [-d ms] [-t target] <fmt...>: expand the space-joined ARGS as a format string
-   against the target (or active) session/window/pane, then log and show the result.
+  "display-message [-aClINpv] [-c client] [-d ms] [-F fmt] [-t target] <fmt...>:
+   expand the space-joined ARGS (or -F fmt) as a format string against the target
+   (or active) session/window/pane, then log and show the result.
+   tmux args \"aCc:d:lINpt:F:v\".
    -l: literal — show ARGS verbatim WITHOUT expanding #{...} format variables.
    -d ms: display duration in milliseconds (overrides display-time option).
+   -F fmt: use FMT as the format template instead of the positional ARGS.
    -t target: build the format context from the target's session/window/pane.
+   -c client: target client (single-client standalone model: accepted).
+   -a: list format variables; -C/-I/-N/-p/-v: client/print/verbose control flags —
+       accepted; the standalone model shows the message in the overlay.
    Uses show-transient-overlay so it auto-dismisses after the configured duration."
-  (with-command-input (flags positionals args "dt"
-                             :allowed-flags '(#\l #\d #\t)
+  (with-command-input (flags positionals args "dtcF"
+                             :allowed-flags '(#\a #\C #\c #\d #\l #\I #\N #\p #\t #\F #\v)
                              :message "display-message: unsupported argument")
     (let* ((delay-ms   (%parse-flag-int flags #\d))
            (target-str (%flag-value flags #\t)))
@@ -240,7 +246,9 @@
         (let* ((ctx       (cl-tmux/format:format-context-from-session tgt-session
                                                                      tgt-win
                                                                      tgt-pane))
-               (raw       (format nil "~{~A~^ ~}" positionals))
+               ;; -F fmt overrides the positional template.
+               (raw       (or (%flag-value flags #\F)
+                              (format nil "~{~A~^ ~}" positionals)))
                ;; -l: literal — emit ARGS unchanged, skipping #{...} expansion so a
                ;; message containing literal '#' / '#{' is shown as typed.
                (text      (if (%flag-present-p flags #\l)
@@ -279,9 +287,11 @@
    Unless -d is given, swap-pane makes the -t (destination) pane active, matching
    tmux (window_set_active_pane on dst_wp for a same-window swap).  In the
    directional/default paths the destination is the already-active pane, so it
-   stays active either way and -d is a no-op there."
+   stays active either way and -d is a no-op there.
+   -Z: keep the window zoomed if it was zoomed (accepted; cl-tmux does not
+       auto-unzoom on swap, so the zoom state is preserved)."
   (with-command-input (flags positionals args "st"
-                             :allowed-flags '(#\d #\U #\D #\L #\R #\s #\t)
+                             :allowed-flags '(#\d #\U #\D #\L #\R #\s #\t #\Z)
                              :max-positionals 0
                              :message "swap-pane: unsupported argument")
     (with-active-window (win session)
@@ -310,13 +320,19 @@
    Without -p: single prompt ':' that runs the typed command line (same as C-b :).
    Without TEMPLATE: input is executed directly as a command line.
    -I initial: seed the prompt with INITIAL text before editing begins.
-   -1: single-key prompt — each prompt accepts ONE keypress (no Enter)."
-  (with-command-flags+pos (flags positionals args "Ip")
+   -1: single-key prompt — each prompt accepts ONE keypress (no Enter).
+   -k: key prompt — like -1, the prompt accepts a single keypress.
+   -T type / -t target-client: accepted (their arguments are consumed so they do
+       not leak into the template); -i/-N/-F/-b/-e/-l are accepted as no-ops in
+       the standalone prompt model.  tmux args \"1beFiklI:Np:t:T:\"."
+  (with-command-flags+pos (flags positionals args "IptT")
     (flet ((run-input (input)
              (%run-command-line session input)))
       (let* ((prompts-str (%flag-value flags #\p))
              (initial     (or (%flag-value flags #\I) ""))
-             (single-key  (and (%flag-present-p flags #\1) t))   ; -1: one-keypress prompts
+             ;; -1 and -k both request a one-keypress prompt.
+             (single-key  (and (or (%flag-present-p flags #\1)
+                                   (%flag-present-p flags #\k)) t))
              (template    (format nil "~{~A~^ ~}" positionals))
              (prompt-list (when prompts-str
                             (mapcar (lambda (s) (string-trim " " s))
@@ -371,16 +387,28 @@
     (get-output-stream-string out)))
 
 (defun %cmd-last-pane-arg (session args)
-  "last-pane: jump to the previously active pane."
-  (with-command-input (flags positionals args ""
-                             :allowed-flags '()
+  "last-pane [-deZ] [-t target-window]: jump to the previously active pane.
+   tmux args \"det:Z\".
+   -d: disable keyboard input to the pane jumped to (PANE_INPUTOFF).
+   -e: re-enable keyboard input to the pane jumped to.
+   -Z: keep the window zoomed if it was zoomed (accepted; cl-tmux does not
+       auto-unzoom on pane switch, so the zoom state is preserved).
+   -t target-window: the window whose last pane to select (default: active)."
+  (with-command-input (flags positionals args "t"
+                             :allowed-flags '(#\d #\e #\Z #\t)
                              :max-positionals 0
                              :message "last-pane: unsupported argument")
-    (let* ((win  (session-active-window session))
-           (last (and win (window-last-active win))))
-      (declare (ignore flags))
-      (when last
-        (%select-pane-with-focus win last)))))
+    (let* ((target (%flag-value flags #\t))
+           (win    (if target
+                       (%resolve-window-target session target)
+                       (session-active-window session)))
+           (last   (and win (window-last-active win))))
+      (when (and win last)
+        (%select-pane-with-focus win last)
+        ;; -d/-e: toggle input to the pane we just selected.
+        (cond
+          ((%flag-present-p flags #\d) (%select-pane-disable-input last t))
+          ((%flag-present-p flags #\e) (%select-pane-disable-input last nil)))))))
 
 (defun %cmd-has-session-arg (session args)
   "has-session [-t name]: check if a named session exists.

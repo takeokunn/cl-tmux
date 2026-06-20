@@ -265,6 +265,10 @@
         ((string= (first remaining) "-a")
          (setf all-p     t
                remaining (rest remaining)))
+        ((string= (first remaining) "-q")
+         ;; -q: quiet — suppress "no such key" errors.  cl-tmux's unbind is
+         ;; already silent on a missing key, so -q is accepted and skipped.
+         (setf remaining (rest remaining)))
         ((string= (first remaining) "-T")
          (setf remaining (rest remaining))
          (when (null remaining) (return (values nil nil nil)))

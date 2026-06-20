@@ -82,9 +82,12 @@
    -m: mark the TARGET pane; -M: clear the marked pane (unmark all).
    -t target: pane-id within the active window (default: the active pane).  The
      pane-configuring forms (-d/-e/-T/-m) and plain selection all act on -t's pane,
-     not unconditionally the active one."
+     not unconditionally the active one.
+   -Z: keep the window zoomed if it was zoomed (tmux window_push_zoom).  cl-tmux
+     does not auto-unzoom on pane selection, so the zoom state is already
+     preserved; -Z is accepted for parity."
   (with-command-input (flags positionals args "tT"
-                             :allowed-flags '(#\L #\R #\U #\D #\l #\d #\e #\m #\M #\t #\T)
+                             :allowed-flags '(#\L #\R #\U #\D #\l #\d #\e #\m #\M #\t #\T #\Z)
                              :max-positionals 0
                              :message "select-pane: unsupported argument")
     (let* ((win    (session-active-window session))

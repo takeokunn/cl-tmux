@@ -6,12 +6,14 @@
 ;;; clear-history, rotate-window.
 
 (defun %cmd-run-shell-arg (session args)
-  "run-shell [-bC] command:
-   run COMMAND in a shell and show the output.
+  "run-shell [-bC] [-c start-dir] [-d delay] [-t target-pane] command:
+   run COMMAND in a shell and show the output.  tmux args \"bCc:d:t:\".
    -b: run in background (fire-and-forget, no output shown).
-   -C executes COMMAND as a tmux command instead of a shell command."
-  (with-command-input (flags positionals args ""
-                             :allowed-flags '(#\b #\C)
+   -C executes COMMAND as a tmux command instead of a shell command.
+   -c start-dir / -d delay / -t target-pane: accepted; their arguments are
+   consumed (the standalone model runs COMMAND in the current directory)."
+  (with-command-input (flags positionals args "cdt"
+                             :allowed-flags '(#\b #\C #\c #\d #\t)
                              :message "run-shell: unsupported argument")
     (let* ((command (format nil "~{~A~^ ~}" positionals)))
       (when (plusp (length command))
@@ -121,10 +123,16 @@
      separate line, like tmux).  Joining uses the screen's per-row wrap flags and
      applies to the visible region (scrollback rows are not joined).
   -N: preserve trailing spaces WITHOUT joining wrapped lines (the difference from -J).
-  -t target: target pane by id (for example %2) or session:window.pane."
+  -t target: target pane by id (for example %2) or session:window.pane.
+   -a: capture the alternate screen instead of the visible one (accepted; cl-tmux
+     captures the current screen when no alternate is active).
+   -C: escape non-printable characters as octal \\nnn (accepted).
+   -M/-P/-q/-T: hyperlink/pending/quiet/trailing-cell control flags (accepted;
+     tmux args \"ab:CeE:JMNpPqS:Tt:\")."
   (with-command-input (flags positionals args "tSEb"
                              :max-positionals 0
-                             :allowed-flags '(#\p #\S #\E #\b #\e #\J #\N #\t)
+                             :allowed-flags '(#\p #\S #\E #\b #\e #\J #\N #\t
+                                              #\a #\C #\M #\P #\q #\T)
                              :message "capture-pane: unsupported argument")
     (let* ((options (%capture-pane-options-from-flags flags))
            (print-p (getf options :print-p))
@@ -210,14 +218,15 @@
    -b inserts the moved pane before/above the destination pane.
    -f makes the split span the full window dimension along the split axis.
    -l size sets the new pane size (cells or percentage, tmux split-window syntax).
+   -p percentage: shorthand for -l percentage% (size as a percent of the parent).
    -s source pane (default: the active pane); -t destination pane, whose WINDOW
      receives the split (default: the active window).
    -d keeps the current pane active (no switch to the joined pane).
    No-op when source and destination resolve to the same window (nothing to move).
    This is the scriptable form; the interactive :join-pane / :move-pane keybindings
     (which prompt for a window index) are unchanged."
-  (with-command-input (flags positionals args "stl"
-                               :allowed-flags '(#\b #\d #\f #\h #\l #\s #\t #\v)
+  (with-command-input (flags positionals args "stlp"
+                               :allowed-flags '(#\b #\d #\f #\h #\l #\p #\s #\t #\v)
                                :max-positionals 0
                                :message "join-pane: unsupported argument")
     (declare (ignore positionals))
@@ -227,7 +236,10 @@
              (dir (if (%flag-present-p flags #\h) :h :v))
              (before (%flag-present-p flags #\b))
              (full (%flag-present-p flags #\f))
-             (size-str (%flag-value flags #\l))
+             ;; -l size, or -p N treated as N% (a fraction of the parent).
+             (pct-str  (%flag-value flags #\p))
+             (size-str (or (%flag-value flags #\l)
+                           (and pct-str (concatenate 'string pct-str "%"))))
              (size (and size-str (%parse-split-size size-str)))
              (src-win (if *server-marked-pane*
                           (pane-window *server-marked-pane*)
@@ -330,12 +342,15 @@
                 t)))))))
 
 (defun %cmd-clear-history-arg (session args)
-  "clear-history [-t target-pane]: clear a pane's scrollback history.
+  "clear-history [-H] [-t target-pane]: clear a pane's scrollback history.
    -t target-pane: the pane to clear (default: the active pane); a window-only
-   target clears that window's active pane.  This is the scriptable form; the
-   interactive :clear-history keybinding (active pane) is unchanged."
+   target clears that window's active pane.
+   -H: also clear the pane's hyperlinks (accepted; cl-tmux does not track
+       hyperlinks separately, so clearing the scrollback already covers it).
+   This is the scriptable form; the interactive :clear-history keybinding (active
+   pane) is unchanged.  tmux args \"Ht:\"."
   (with-command-input (flags positionals args "t"
-                             :allowed-flags '(#\t)
+                             :allowed-flags '(#\H #\t)
                              :max-positionals 0
                              :message "clear-history: unsupported argument")
     (declare (ignore positionals))
@@ -352,10 +367,12 @@
    -U (the default) rotates forward (the first pane moves to the end); -D rotates
    backward.
    -t target-window: the window to rotate (default: the active window).
+   -Z: keep the window zoomed if it was zoomed (accepted; cl-tmux does not
+       auto-unzoom on rotate, so the zoom state is preserved).
    This is the scriptable form; the interactive :rotate-window /
    :rotate-window-reverse bindings are unchanged."
   (with-command-input (flags positionals args "t"
-                               :allowed-flags '(#\D #\U #\t)
+                               :allowed-flags '(#\D #\U #\Z #\t)
                                :max-positionals 0
                                :message "rotate-window: unsupported argument")
     (declare (ignore positionals))

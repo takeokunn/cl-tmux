@@ -283,9 +283,9 @@
               "-t %2 must not fall back to the active pane"))))))
 
 (test cmd-capture-pane-rejects-unsupported-arguments
-  "capture-pane rejects output mode flags and positional tokens that cl-tmux does not implement."
-  (dolist (args '(("-a")
-                  ("-P")
+  "capture-pane rejects unknown flags and excess positional tokens.  (The tmux
+   flags -a/-C/-M/-P/-q/-T are accepted; args string \"ab:CeE:JMNpPqS:Tt:\".)"
+  (dolist (args '(("-z")
                   ("extra")
                   ("-b" "cap" "extra")))
     (with-empty-buffers
@@ -297,3 +297,15 @@
           (assert-overlay-contains "unsupported argument" *overlay* args)
           (is (null (cl-tmux/buffer:get-paste-buffer 0))
               "~S must not save a paste buffer after rejection" args))))))
+
+(test cmd-capture-pane-accepts-tmux-flags
+  "capture-pane accepts the tmux output-control flags -a/-C/-q and still captures."
+  (with-empty-buffers
+    (with-fake-session (s)
+      (let ((*overlay* nil))
+        (feed (active-screen s) "captured text")
+        (cl-tmux::%cmd-capture-pane-arg s '("-a" "-C" "-q"))
+        (is (null *overlay*)
+            "capture-pane -a/-C/-q must not raise an unsupported-argument overlay")
+        (is (not (null (cl-tmux/buffer:get-paste-buffer 0)))
+            "capture-pane saves the capture to a paste buffer")))))

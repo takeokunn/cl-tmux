@@ -64,13 +64,15 @@
         (dolist (l lines) (format s "  ~A~%" l))))))
 
 (defun %cmd-customize-mode (session args)
-  "customize-mode [-f filter]: show the customize tree (options + key bindings)
-   in an overlay.  -f FILTER limits the tree to entries whose name/line contains
-   FILTER (case-insensitive substring).  cl-tmux's tree is read-only; edit with
-   set-option / bind."
+  "customize-mode [-NZ] [-f filter] [-F format] [-t target]: show the customize
+   tree (options + key bindings) in an overlay.  -f FILTER limits the tree to
+   entries whose name/line contains FILTER (case-insensitive substring).
+   -N (no preview), -Z (zoom), -F format and -t target are accepted; their
+   arguments are consumed.  cl-tmux's tree is read-only; edit with set-option /
+   bind."
   (declare (ignore session))
-  (with-command-input (flags positionals args "f"
-                       :allowed-flags '(#\f)
+  (with-command-input (flags positionals args "fFt"
+                       :allowed-flags '(#\f #\F #\N #\Z #\t)
                        :max-positionals 0
                        :message "customize-mode: unsupported argument")
     (show-overlay (%format-customize-tree (%flag-value flags #\f)))

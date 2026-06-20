@@ -213,21 +213,27 @@
         (incf (window-id w))))))
 
 (define-command-input-handler %cmd-move-window (session args)
-  "move-window [-s src-window] [-t dst-index] [-r] [-a] [-d]: move/renumber a window.
+  "move-window [-s src-window] [-t dst-index] [-r] [-a] [-b] [-k] [-d]:
+   move/renumber a window (tmux args \"abdkrs:t:\").
    -s src: source window (name or id); default is the active window.
    -t n: destination window-id (numeric index to assign to the window).
    -r: renumber all windows sequentially from base-index (repack gaps).
-   -a: insert after the current window (used with -t for relative positioning.
+   -a: insert AFTER the destination window (index n+1).
+   -b: insert BEFORE the destination window (index n) — cl-tmux's default
+       placement, accepted explicitly.
+   -k: if the destination index is occupied, KILL the occupying window instead
+       of shuffling the windows up to make room.
    -d: do not make the moved window the active window (default: the moved window
    becomes current, matching tmux).
    Without -s/-t: prompts interactively (no-op in arg-command path)."
   (flags positionals "st"
-         :allowed-flags '(#\s #\t #\r #\a #\d)
+         :allowed-flags '(#\s #\t #\r #\a #\b #\k #\d)
          :max-positionals 0
          :message "move-window: unsupported argument")
   (let* ((src-str (%flag-value flags #\s))
          (repack  (%flag-present-p flags #\r))
          (after   (%flag-present-p flags #\a))
+         (kill-p  (%flag-present-p flags #\k))
          (src-win (%resolve-window-target-or-active session src-str))
          (dst-n   (%parse-flag-int flags #\t)))
     (cond
@@ -248,7 +254,13 @@
       ((and src-win dst-n)
        (let ((target (if after (1+ dst-n) dst-n)))
          (when (%window-id-occupied-p session target src-win)
-           (%shuffle-windows-up session target src-win))
+           (if kill-p
+               ;; -k: kill the window occupying the destination index.
+               (let ((occupant (find target (session-windows session)
+                                     :key #'window-id)))
+                 (when (and occupant (not (eq occupant src-win)))
+                   (kill-window session occupant)))
+               (%shuffle-windows-up session target src-win)))
          (setf (window-id src-win) target
                (session-windows session)
                (sort (copy-list (session-windows session)) #'< :key #'window-id))

@@ -66,8 +66,7 @@
 (test cmd-swap-pane-rejects-unsupported-arguments
   "swap-pane rejects unsupported flags, unknown flags, and positional tokens
    before mutating panes."
-  (dolist (command '("swap-pane -Z"
-                     "swap-pane -Z extra"
+  (dolist (command '("swap-pane -Z extra"
                      "swap-pane -x"
                      "swap-pane -s 1 -t 3 extra"))
     (with-fake-session (s :nwindows 1 :npanes 3)
@@ -294,23 +293,28 @@
       (assert-overlay-not-contains "0" *overlay*
                                    "display-message -l"))))
 
-(test display-message-rejects-unsupported-flags
-  "The in-server display-message command supports overlays via -l/-d/-t only;
-   client/stdout/verbose flags must fail instead of becoming
-   no-op behavior."
+(test display-message-accepts-tmux-flags
+  "display-message accepts the tmux client/stdout/verbose flags (tmux args
+   aCc:d:lINpt:F:v); the standalone model shows the expanded message in the
+   overlay rather than erroring."
   (with-fake-session (s)
     (dolist (command '("display-message -c someclient #{session_name}"
                        "display-message -p #{session_name}"
                        "display-message -v #{session_name}"))
       (let ((*overlay* nil)
             (cl-tmux::*message-log* nil))
-        (is (null (cl-tmux::%run-command-line s command))
-            "~A must be rejected" command)
-        (assert-overlay-contains "unsupported argument" *overlay* command)
-        (assert-overlay-not-contains "someclient" *overlay* command)
-        (assert-overlay-not-contains "0" *overlay* command)
-        (is (null cl-tmux::*message-log*)
-            "~A must not add a message-log entry" command)))))
+        (cl-tmux::%run-command-line s command)
+        (assert-overlay-not-contains "unsupported argument" *overlay* command)
+        (is (not (null cl-tmux::*message-log*))
+            "~A must add the expanded message to the log" command)))))
+
+(test display-message-F-uses-format-flag
+  "display-message -F fmt uses FMT as the template instead of the positional args."
+  (with-fake-session (s)
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line s "display-message -F #{session_name}")
+      (is (and *overlay* (search (cl-tmux::session-name s) *overlay*))
+          "display-message -F must expand the -F format template"))))
 
 (test run-command-line-empty-is-noop
   "%run-command-line with blank input does not signal an error."
