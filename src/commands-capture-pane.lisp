@@ -29,6 +29,8 @@
    background variant.  Handles 0-7 (standard), 8-15 (bright), 16-255 (256-colour)
    and +true-color-bit+ true-colour, matching the cell colour encoding."
   (cond
+    ;; Branch 0: terminal default colour (SGR 39 fg / 49 bg).
+    ((= color cl-tmux/terminal/types:+default-color+) (if is-bg "49" "39"))
     ;; Branch 1: 24-bit true-colour — +true-color-bit+ set, RGB in low 24 bits.
     ((>= color +true-color-bit+)
      (format nil "~D;2;~D;~D;~D" (if is-bg 48 38)

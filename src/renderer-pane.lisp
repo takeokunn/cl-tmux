@@ -108,10 +108,14 @@
                          (write-char ch stream)))))))))
 
 (defun %pane-cell-base-colors (cell def-fg def-bg)
+  "Substitute the pane's window-style default colours DEF-FG / DEF-BG only for
+   cells whose colour is the terminal-default sentinel (+default-color+).  Cells
+   carrying an explicit palette index (including 7=white / 0=black) or true-colour
+   are left untouched, matching tmux's COLOUR_DEFAULT-gated window-style recolour."
   (let ((raw-fg (cell-fg cell))
         (raw-bg (cell-bg cell)))
-    (values (if (and def-fg (= raw-fg 7)) def-fg raw-fg)
-            (if (and def-bg (= raw-bg 0)) def-bg raw-bg))))
+    (values (if (and def-fg (= raw-fg cl-tmux/terminal/types:+default-color+)) def-fg raw-fg)
+            (if (and def-bg (= raw-bg cl-tmux/terminal/types:+default-color+)) def-bg raw-bg))))
 
 (defun %pane-cell-mark-colors (row col sel-mark-row sel-mark-col
                                mark-style-fg mark-style-bg

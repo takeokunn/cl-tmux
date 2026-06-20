@@ -34,8 +34,8 @@
           (cl-tmux/terminal/types:screen-cur-attrs2   s) #b00000011
           (cl-tmux/terminal/types:screen-cur-ul-color s) 200)
     (cl-tmux/terminal/types:reset-sgr-pen s)
-    (is (= 7 (cl-tmux/terminal/types:screen-cur-fg       s)) "fg must reset to 7")
-    (is (= 0 (cl-tmux/terminal/types:screen-cur-bg       s)) "bg must reset to 0")
+    (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-fg       s)) "fg must reset to the default sentinel")
+    (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-bg       s)) "bg must reset to the default sentinel")
     (is (= 0 (cl-tmux/terminal/types:screen-cur-attrs    s)) "attrs must reset to 0")
     (is (= 0 (cl-tmux/terminal/types:screen-cur-attrs2   s)) "attrs2 must reset to 0")
     (is (= 0 (cl-tmux/terminal/types:screen-cur-ul-color s)) "ul-color must reset to 0")))
@@ -45,8 +45,8 @@
   (with-screen (s 10 5)
     (cl-tmux/terminal/types:reset-sgr-pen s)
     (cl-tmux/terminal/types:reset-sgr-pen s)
-    (is (= 7 (cl-tmux/terminal/types:screen-cur-fg s)) "double-reset fg must be 7")
-    (is (= 0 (cl-tmux/terminal/types:screen-cur-bg s)) "double-reset bg must be 0")))
+    (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-fg s)) "double-reset fg must be the default sentinel")
+    (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-bg s)) "double-reset bg must be the default sentinel")))
 
 ;;; ── bell-pending slot ────────────────────────────────────────────────────────
 

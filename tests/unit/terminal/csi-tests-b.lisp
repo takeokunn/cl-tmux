@@ -258,7 +258,7 @@
     (finishes (cl-tmux/terminal/csi:execute-csi s #\z nil nil '()))
     ;; Screen state must be at defaults.
     (check-cursor s 0 0)
-    (check-sgr-state s :fg 7 :bg 0 :attrs 0)))
+    (check-sgr-state s :fg cl-tmux/terminal/types:+default-color+ :bg cl-tmux/terminal/types:+default-color+ :attrs 0)))
 
 (test execute-csi-unknown-intermed-is-noop
   "execute-csi with a recognized final but unrecognized intermed byte is silently ignored."

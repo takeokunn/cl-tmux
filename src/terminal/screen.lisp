@@ -18,8 +18,8 @@
   (cursor-y 0 :type fixnum)
   ;; Current SGR state stamped on newly written cells.
   ;; Color encoding matches cell.fg / cell.bg: 0-255 palette, bit-24 = RGB true-color.
-  (cur-fg    7 :type (unsigned-byte 25))
-  (cur-bg    0 :type (unsigned-byte 25))
+  (cur-fg    +default-color+ :type (unsigned-byte 25))
+  (cur-bg    +default-color+ :type (unsigned-byte 25))
   (cur-attrs 0 :type (unsigned-byte 8))
   ;; Cursor visibility: toggled by DECTCEM (?25h = show, ?25l = hide).
   (cursor-visible t :type boolean)
@@ -318,11 +318,11 @@
 (declaim (inline reset-sgr-pen))
 (defun reset-sgr-pen (screen)
   "Reset all five SGR pen slots of SCREEN to their VT100 power-on defaults:
-   foreground 7 (white), background 0 (black), all attribute bits clear.
+   foreground/background = +default-color+ (terminal default), all attribute bits clear.
    Inlined canonical helper shared by cl-tmux/terminal/sgr and
    cl-tmux/terminal/actions (modes.lisp) to ensure a single source of truth."
-  (setf (screen-cur-fg       screen) 7
-        (screen-cur-bg       screen) 0
+  (setf (screen-cur-fg       screen) +default-color+
+        (screen-cur-bg       screen) +default-color+
         (screen-cur-attrs    screen) 0
         (screen-cur-attrs2   screen) 0
         (screen-cur-ul-color screen) 0))

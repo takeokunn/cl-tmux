@@ -15,6 +15,8 @@
    #:+attr2-overline+
    ;; True-colour encoding sentinel (bit 24 of a colour slot)
    #:+true-color-flag+
+   ;; Default-colour sentinel (SGR 39/49; distinct from palette 7/0)
+   #:+default-color+
    ;; XTPUSHTITLE/XTPOPTITLE stack depth limit (matches xterm)
    #:+title-stack-max-depth+
    ;; Grid allocation helper

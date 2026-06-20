@@ -141,11 +141,30 @@
 (test pane-cell-base-colors-preserves-explicit-background
   "%pane-cell-base-colors only substitutes the pane defaults: an explicit
    non-default background survives unchanged."
-  (let ((cell (cl-tmux/terminal/types:make-cell :char #\X :fg 7 :bg 200)))
+  (let ((cell (cl-tmux/terminal/types:make-cell :char #\X :fg cl-tmux/terminal/types:+default-color+ :bg 200)))
     (multiple-value-bind (fg bg)
         (cl-tmux/renderer::%pane-cell-base-colors cell 31 52)
-      (is (= 31 fg) "default fg=7 should be replaced by the pane default")
+      (is (= 31 fg) "default fg should be replaced by the pane default")
       (is (= 200 bg) "an explicit bg must survive window-style recolour"))))
+
+(test pane-cell-base-colors-recolours-only-default-sentinel
+  "%pane-cell-base-colors substitutes the pane defaults ONLY for cells whose
+   colour is the +default-color+ sentinel; explicit white(7)/black(0) survive."
+  ;; Default-sentinel cell: both fg and bg get the pane defaults.
+  (let ((cell (cl-tmux/terminal/types:make-cell
+               :char #\X
+               :fg cl-tmux/terminal/types:+default-color+
+               :bg cl-tmux/terminal/types:+default-color+)))
+    (multiple-value-bind (fg bg)
+        (cl-tmux/renderer::%pane-cell-base-colors cell 31 52)
+      (is (= 31 fg) "default-sentinel fg must take the pane default")
+      (is (= 52 bg) "default-sentinel bg must take the pane default")))
+  ;; Explicit white(7)/black(0): NOT recoloured (this is the gap fix).
+  (let ((cell (cl-tmux/terminal/types:make-cell :char #\X :fg 7 :bg 0)))
+    (multiple-value-bind (fg bg)
+        (cl-tmux/renderer::%pane-cell-base-colors cell 31 52)
+      (is (= 7 fg) "explicit white fg(7) must survive window-style recolour")
+      (is (= 0 bg) "explicit black bg(0) must survive window-style recolour"))))
 
 ;;; -- layout-subtree-rect and subtree-contains-p ------------------------------
 

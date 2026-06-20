@@ -40,6 +40,13 @@
   "Bit 24 of a colour slot: when set, bits 23-16 are R, 15-8 are G, 7-0 are B.
    Values 0-255 are palette indices; values >= +true-color-flag+ are true-colour RGB.")
 
+(defconstant +default-color+ 256
+  "Sentinel colour value meaning \"the terminal default\" (SGR 39 fg / SGR 49 bg).
+   Mirrors tmux's grid_cell fg/bg == 8 (COLOUR_DEFAULT), but placed at 256 — just
+   above the 0-255 palette and without the +true-color-flag+ bit — so it is
+   distinct from palette index 7 (white) and 0 (black).  Cells carrying this value
+   are the only ones window-style / window-active-style may recolour.")
+
 (defconstant +unicode-replacement-char+ #xFFFD
   "Unicode code point U+FFFD REPLACEMENT CHARACTER.
    Used as a fallback for invalid or unrepresentable code points.")
@@ -72,8 +79,8 @@
      0-255            — palette index (0-7 standard, 8-15 bright, 16-255 extended)
      >= +true-color-flag+ — true-colour RGB: bits 23-16 R, 15-8 G, 7-0 B"
   (char  #\Space :type character)
-  (fg    7       :type (unsigned-byte 25))  ; see color encoding above; default white
-  (bg    0       :type (unsigned-byte 25))  ; see color encoding above; default black
+  (fg    +default-color+ :type (unsigned-byte 25))  ; see color encoding; +default-color+ = terminal default fg (SGR 39)
+  (bg    +default-color+ :type (unsigned-byte 25))  ; see color encoding; +default-color+ = terminal default bg (SGR 49)
   (attrs 0       :type (unsigned-byte 8))   ; bit-field: see +attr-* constants
   ;; Extended attributes: double-underline (bit 0), overline (bit 1)
   (attrs2 0      :type (unsigned-byte 8))
@@ -89,7 +96,7 @@
   (width 1       :type (integer 0 2)))      ; 1 normal, 2 wide lead, 0 continuation
 
 (defun blank-cell ()
-  "Return a fresh default (space, colour 7/0, no attrs, single-width) cell."
+  "Return a fresh default (space, default fg/bg sentinel, no attrs, single-width) cell."
   (make-cell))
 
 (declaim (inline clamp))

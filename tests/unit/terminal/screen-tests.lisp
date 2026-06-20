@@ -16,8 +16,8 @@
       (dotimes (x (screen-width screen))
         (let ((c (screen-cell screen x y)))
           (unless (and (char= #\Space (cell-char c))
-                       (= 7 (cell-fg c))
-                       (= 0 (cell-bg c)))
+                       (= cl-tmux/terminal/types:+default-color+ (cell-fg c))
+                       (= cl-tmux/terminal/types:+default-color+ (cell-bg c)))
             (return-from check nil)))))))
 
 (defmacro assert-all-cells-blank (screen)
@@ -30,10 +30,10 @@
            (let ((c (screen-cell ,s x y)))
              (is (char= #\Space (cell-char c))
                  "cell (~D,~D) char must be space" x y)
-             (is (= 7 (cell-fg c))
-                 "cell (~D,~D) fg must be 7" x y)
-             (is (= 0 (cell-bg c))
-                 "cell (~D,~D) bg must be 0" x y)))))))
+             (is (= cl-tmux/terminal/types:+default-color+ (cell-fg c))
+                 "cell (~D,~D) fg must be the default sentinel" x y)
+             (is (= cl-tmux/terminal/types:+default-color+ (cell-bg c))
+                 "cell (~D,~D) bg must be the default sentinel" x y)))))))
 
 ;;; ── SUITE: screen construction ───────────────────────────────────────────────
 

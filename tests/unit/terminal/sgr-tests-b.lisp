@@ -23,20 +23,38 @@
         "apply-sgr 31 must set cur-fg to 1 (red)")
     ;; SGR 0 = reset
     (cl-tmux/terminal/sgr:apply-sgr s '(0))
-    (is (= 7 (cl-tmux/terminal/types:screen-cur-fg s))
-        "apply-sgr 0 must reset cur-fg to 7 (default)")
+    (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-fg s))
+        "apply-sgr 0 must reset cur-fg to the default sentinel")
+
+(test apply-sgr-39-sets-default-sentinel
+  "SGR 39 sets cur-fg to the +default-color+ sentinel (not palette 7)."
+  (with-screen (s 10 2)
+    (cl-tmux/terminal/sgr:apply-sgr s '(31))   ; red first
+    (cl-tmux/terminal/sgr:apply-sgr s '(39))   ; default fg
+    (is (= cl-tmux/terminal/types:+default-color+
+           (cl-tmux/terminal/types:screen-cur-fg s))
+        "SGR 39 must set cur-fg to the default sentinel")))
+
+(test apply-sgr-49-sets-default-sentinel
+  "SGR 49 sets cur-bg to the +default-color+ sentinel (not palette 0)."
+  (with-screen (s 10 2)
+    (cl-tmux/terminal/sgr:apply-sgr s '(42))   ; green bg first
+    (cl-tmux/terminal/sgr:apply-sgr s '(49))   ; default bg
+    (is (= cl-tmux/terminal/types:+default-color+
+           (cl-tmux/terminal/types:screen-cur-bg s))
+        "SGR 49 must set cur-bg to the default sentinel")))
     ;; Empty params = implicit reset
     (cl-tmux/terminal/sgr:apply-sgr s '(42))      ; bg green
     (cl-tmux/terminal/sgr:apply-sgr s nil)         ; empty = reset
-    (is (= 0 (cl-tmux/terminal/types:screen-cur-bg s))
-        "apply-sgr nil (empty) must reset cur-bg to 0")))
+    (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-bg s))
+        "apply-sgr nil (empty) must reset cur-bg to the default sentinel")))
 
 (test sgr-reset-sgr-pen-helper
   "reset-sgr-pen sets fg=7, bg=0, attrs=0 directly."
   (with-screen (s 10 2)
     (cl-tmux/terminal/sgr:apply-sgr s '(31 42 1))   ; fg=1, bg=2, bold
     (cl-tmux/terminal/types:reset-sgr-pen s)
-    (check-sgr-state s :fg 7 :bg 0 :attrs 0)))
+    (check-sgr-state s :fg cl-tmux/terminal/types:+default-color+ :bg cl-tmux/terminal/types:+default-color+ :attrs 0)))
 
 (test sgr-attr-on-helper
   "attr-on adds a single attribute bit without clearing others."
@@ -186,7 +204,7 @@
   (with-screen (s 10 2)
     (finishes (cl-tmux/terminal/sgr:%dispatch-sgr-code s 999))
     ;; SGR state should remain at default after an unknown code.
-    (check-sgr-state s :fg 7 :bg 0 :attrs 0)))
+    (check-sgr-state s :fg cl-tmux/terminal/types:+default-color+ :bg cl-tmux/terminal/types:+default-color+ :attrs 0)))
 
 (test attr2-on-and-off-helpers
   "attr2-on sets a bit in cur-attrs2; attr2-off clears it without touching others."

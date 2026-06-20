@@ -97,11 +97,11 @@
 
   ;; ── Standard foreground (30-37) + default (39) ────────────────────────────
   ((<= 30 p 37)  (setf (screen-cur-fg screen) (- p 30)))
-  ((= p 39)      (setf (screen-cur-fg screen) 7))
+  ((= p 39)      (setf (screen-cur-fg screen) +default-color+))
 
   ;; ── Standard background (40-47) + default (49) ────────────────────────────
   ((<= 40 p 47)  (setf (screen-cur-bg screen) (- p 40)))
-  ((= p 49)      (setf (screen-cur-bg screen) 0))
+  ((= p 49)      (setf (screen-cur-bg screen) +default-color+))
 
   ;; ── Bright foreground (90-97) ─────────────────────────────────────────────
   ((<= 90 p 97)    (setf (screen-cur-fg screen) (+ 8 (- p 90))))
@@ -244,6 +244,7 @@
    the background variant.  0-7 → 30-37/40-47; 8-15 → 90-97/100-107; 16-255 →
    38;5;N / 48;5;N; bit-24 set → 38;2;R;G;B / 48;2;R;G;B."
   (cond
+    ((= color +default-color+) (format out ";~D" (if bg-p 49 39)))
     ((logtest color #x1000000)
      (format out ";~D;2;~D;~D;~D" (if bg-p 48 38)
              (ldb (byte 8 16) color) (ldb (byte 8 8) color) (ldb (byte 8 0) color)))
@@ -258,9 +259,9 @@
 (defun %pen-to-sgr-params (fg bg attrs attrs2)
   "Reconstruct, from a reset, the SGR parameter string reproducing a pen with
    foreground FG, background BG (cell colour encoding) and attribute bitfields
-   ATTRS / ATTRS2.  E.g. bold red on default → \"0;1;31\".  The default fg (7) and
-   bg (0) are omitted (indistinguishable from a reset).  This is the inverse of
-   apply-sgr's pen mutation, used to answer DECRQSS 'm' (current SGR) queries."
+   ATTRS / ATTRS2.  E.g. bold red on default → \"0;1;31\".  The default fg/bg
+   (+default-color+) are omitted (already produced by the leading reset).  This is
+   the inverse of apply-sgr's pen mutation, used to answer DECRQSS 'm' queries."
   (with-output-to-string (out)
     (write-char #\0 out)                       ; always start from a reset
     (when (logtest attrs  +attr-bold+)              (%emit-sgr-param out 1))
@@ -273,5 +274,5 @@
     (when (logtest attrs  +attr-strikethrough+)     (%emit-sgr-param out 9))
     (when (logtest attrs2 +attr2-double-underline+) (%emit-sgr-param out 21))
     (when (logtest attrs2 +attr2-overline+)         (%emit-sgr-param out 53))
-    (unless (= fg 7) (%emit-sgr-color out fg nil))
-    (unless (= bg 0) (%emit-sgr-color out bg t))))
+    (unless (= fg +default-color+) (%emit-sgr-color out fg nil))
+    (unless (= bg +default-color+) (%emit-sgr-color out bg t))))

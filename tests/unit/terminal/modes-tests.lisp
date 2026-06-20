@@ -214,10 +214,10 @@
     ;; No save-cursor called — restore should fall back to (0,0) + default SGR
     (cl-tmux/terminal/actions:restore-cursor s)
     (check-cursor s 0 0)
-    (is (= 7 (cl-tmux/terminal/types:screen-cur-fg s))
-        "fg must be reset to default (7)")
-    (is (= 0 (cl-tmux/terminal/types:screen-cur-bg s))
-        "bg must be reset to default (0)")))
+    (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-fg s))
+        "fg must be reset to the default sentinel")
+    (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-bg s))
+        "bg must be reset to the default sentinel")))
 
 (test dec-pm-set-1049-enters-alt-screen
   "dec-pm-set with param 1049 saves the primary grid and installs a blank alt grid."

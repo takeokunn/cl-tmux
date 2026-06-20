@@ -60,8 +60,8 @@
   :description "make-cell with no arguments returns a space/default-color/no-attrs cell."
   (let ((c (cl-tmux/terminal/types:make-cell)))
     (is (char= #\Space (cell-char c)) "default char must be Space")
-    (check-table (list (list (cell-fg   c)                             7 "default fg must be 7 (white)")
-                       (list (cell-bg   c)                             0 "default bg must be 0 (black)")
+    (check-table (list (list (cell-fg   c)                             cl-tmux/terminal/types:+default-color+ "default fg must be the default-colour sentinel")
+                       (list (cell-bg   c)                             cl-tmux/terminal/types:+default-color+ "default bg must be the default-colour sentinel")
                        (list (cell-attrs c)                            0 "default attrs must be 0")
                        (list (cl-tmux/terminal/types:cell-attrs2    c) 0 "default attrs2 must be 0")
                        (list (cl-tmux/terminal/types:cell-ul-color  c) 0 "default ul-color must be 0")
@@ -115,8 +115,8 @@
   "blank-cell returns a space-character cell with default colours and width 1."
   (let ((c (cl-tmux/terminal/types:blank-cell)))
     (is (char= #\Space (cell-char c)) "blank-cell char must be space")
-    (check-table (list (list (cell-fg    c) 7 "blank-cell fg must be default (7)")
-                       (list (cell-bg    c) 0 "blank-cell bg must be default (0)")
+    (check-table (list (list (cell-fg    c) cl-tmux/terminal/types:+default-color+ "blank-cell fg must be the default-colour sentinel")
+                       (list (cell-bg    c) cl-tmux/terminal/types:+default-color+ "blank-cell bg must be the default-colour sentinel")
                        (list (cell-attrs c) 0 "blank-cell attrs must be 0")
                        (list (cell-width c) 1 "blank-cell width must be 1"))
                  :test #'equal)))
@@ -149,10 +149,10 @@
             "element ~D must be a cell" i)
         (is (char= #\Space (cell-char c))
             "element ~D char must be space" i)
-        (is (= 7 (cell-fg c))
-            "element ~D fg must be 7" i)
-        (is (= 0 (cell-bg c))
-            "element ~D bg must be 0" i)
+        (is (= cl-tmux/terminal/types:+default-color+ (cell-fg c))
+            "element ~D fg must be the default sentinel" i)
+        (is (= cl-tmux/terminal/types:+default-color+ (cell-bg c))
+            "element ~D bg must be the default sentinel" i)
         (is (= 1 (cell-width c))
             "element ~D width must be 1" i)))))
 
@@ -431,7 +431,7 @@
   (with-screen (s 6 3)
     (feed s "abc")
     (feed s (esc "[2J"))
-    (is (= 0 (bg-at s 0 0)) "default bg (0) when no SGR background was set")))
+    (is (= cl-tmux/terminal/types:+default-color+ (bg-at s 0 0)) "default bg sentinel when no SGR background was set")))
 
 (test bce-resets-foreground-and-attrs
   "A BCE-erased cell carries only the background; fg and attrs reset to default."
@@ -439,5 +439,5 @@
     (feed s (esc "[1;31;44m"))     ; bold, fg red, bg blue
     (feed s (esc "[2J"))
     (is (= 4 (bg-at s 0 0))   "bg carries over")
-    (is (= 7 (fg-at s 0 0))   "fg resets to default (7)")
+    (is (= cl-tmux/terminal/types:+default-color+ (fg-at s 0 0))   "fg resets to the default sentinel")
     (is (= 0 (attrs-at s 0 0)) "attrs reset to 0 (no bold on erased cell)")))

@@ -69,23 +69,23 @@
   (with-screen (s 10 2)
     (feed s (esc "[31;1mX"))
     (feed s (esc "[0mY"))
-    (check-cell s 1 0 :fg 7 :bg 0 :attrs 0)))
+    (check-cell s 1 0 :fg cl-tmux/terminal/types:+default-color+ :bg cl-tmux/terminal/types:+default-color+ :attrs 0)))
 
 (test sgr-default-fg-39
   "SGR 39 resets the foreground colour to the default (7) without touching bg or attrs."
   (with-screen (s 10 2)
     (feed s (esc "[31m"))    ; fg → 1 (red)
-    (feed s (esc "[39mX"))   ; fg → 7 (default)
-    (check-sgr-state s :fg 7 :bg 0 :attrs 0)
-    (is (= 7 (fg-at s 0 0)) "cell fg must be default (7) after SGR 39")))
+    (feed s (esc "[39mX"))   ; fg → default sentinel
+    (check-sgr-state s :fg cl-tmux/terminal/types:+default-color+ :bg cl-tmux/terminal/types:+default-color+ :attrs 0)
+    (is (= cl-tmux/terminal/types:+default-color+ (fg-at s 0 0)) "cell fg must be the default sentinel after SGR 39")))
 
 (test sgr-default-bg-49
   "SGR 49 resets the background colour to the default (0) without touching fg or attrs."
   (with-screen (s 10 2)
     (feed s (esc "[42m"))    ; bg → 2 (green)
-    (feed s (esc "[49mX"))   ; bg → 0 (default)
-    (check-sgr-state s :fg 7 :bg 0 :attrs 0)
-    (is (= 0 (bg-at s 0 0)) "cell bg must be default (0) after SGR 49")))
+    (feed s (esc "[49mX"))   ; bg → default sentinel
+    (check-sgr-state s :fg cl-tmux/terminal/types:+default-color+ :bg cl-tmux/terminal/types:+default-color+ :attrs 0)
+    (is (= cl-tmux/terminal/types:+default-color+ (bg-at s 0 0)) "cell bg must be the default sentinel after SGR 49")))
 
 (test sgr-bold-dim-off-22
   "SGR 22 clears both the bold bit (0) and the dim bit (1)."
@@ -236,11 +236,11 @@
 (test pen-to-sgr-params-table
   "%pen-to-sgr-params reconstructs the SGR parameter string from fg/bg/attrs/unicode."
   (dolist (c (list
-              '(7 0 0 0  "0"                "default pen")
-              '(1 0 1 0  "0;1;31"           "bold red fg")
-              (list (logior #x1000000 (ash 255 16) (ash 128 8) 0) 0 0 0
-                    "0;38;2;255;128;0"      "truecolor fg 255;128;0")
-              '(7 12 0 0 "0;104"            "bright bg 12")))
+              (list cl-tmux/terminal/types:+default-color+ cl-tmux/terminal/types:+default-color+ 0 0  "0"          "default pen")
+              (list 1 cl-tmux/terminal/types:+default-color+ 1 0  "0;1;31"       "bold red fg (default bg)")
+              (list (logior #x1000000 (ash 255 16) (ash 128 8) 0) cl-tmux/terminal/types:+default-color+ 0 0
+                    "0;38;2;255;128;0"        "truecolor fg (default bg)")
+              (list cl-tmux/terminal/types:+default-color+ 12 0 0 "0;104"        "bright bg 12 (default fg)")))
     (destructuring-bind (fg bg attrs unicode expected desc) c
       (is (string= expected
                    (cl-tmux/terminal/sgr:%pen-to-sgr-params fg bg attrs unicode))
@@ -251,7 +251,7 @@
   (with-screen (s 10 2)
     (feed s (esc "[3;8;9mX"))    ; italic + conceal + strikethrough on
     (feed s (esc "[0mY"))        ; SGR reset
-    (check-cell s 1 0 :fg 7 :bg 0 :attrs 0)))
+    (check-cell s 1 0 :fg cl-tmux/terminal/types:+default-color+ :bg cl-tmux/terminal/types:+default-color+ :attrs 0)))
 
 (test sgr-22-does-not-clear-italic
   "SGR 22 (bold+dim off) must NOT clear the italic bit (5)."
