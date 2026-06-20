@@ -40,6 +40,11 @@
       ((and (%flag-present-p flags #\w) (not globalp))
        (let ((win (%resolve-window-target-or-active session target-str)))
          (funcall k (if win :window :global) win)))
+      ;; -s selects the SERVER option store (a namespace distinct from the global
+      ;; session/window options).  Server options have no global/session split, so
+      ;; -s routes to :server even alongside -g, matching the config-load path.
+      ((%flag-present-p flags #\s)
+       (funcall k :server nil))
       (t
        (funcall k :global nil)))))
 
@@ -68,7 +73,14 @@
              (lambda (name value)
                (cl-tmux/options:set-option name value))
              (lambda (name)
-               (remhash name cl-tmux/options:*global-options*))))))
+               (remhash name cl-tmux/options:*global-options*))))
+    (:server
+     (values (lambda (name &optional default)
+               (cl-tmux/options:get-server-option name default))
+             (lambda (name value)
+               (cl-tmux/options:set-server-option name value))
+             (lambda (name)
+               (remhash name cl-tmux/options:*server-options*))))))
 
 (defun %scope-append (name value scope target)
   "Append VALUE to option NAME in the store identified by SCOPE / TARGET.
@@ -96,7 +108,7 @@
 
 (defun %cmd-set-option (session args)
   "set-option [-aFgopsuw] [-t target] <name> <value...>: set an option.
-   Scope: -p pane-local, -w window-local, -g global (default), -s → global.
+   Scope: -p pane-local, -w window-local, -g global (default), -s server-local.
    Operation: -u unset, -a append, -o only-if-unset, default: set.
    -F expands #{...} in VALUE before storage (one-shot format resolution)."
   (with-command-input (flags positionals args "t"

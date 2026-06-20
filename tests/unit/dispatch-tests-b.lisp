@@ -327,6 +327,32 @@
     (is (null (cl-tmux/options:get-option "-g"))
         "must NOT create an option literally named '-g'")))
 
+(test with-option-scope-s-flag-selects-server-scope
+  "%with-option-scope routes the -s flag to :server scope with a NIL target
+   (audit #9: -s previously fell through to :global)."
+  (let ((scope-seen nil)
+        (target-seen :unset))
+    (cl-tmux::%with-option-scope (make-fake-session) '((#\s . t)) nil
+                                 (lambda (scope target)
+                                   (setf scope-seen scope
+                                         target-seen target)))
+    (is (eq :server scope-seen) "-s must select :server scope")
+    (is (null target-seen) "server scope has no per-object target")))
+
+(test scope-set-server-writes-server-store
+  "%scope-set with :server scope writes the server option store, readable via
+   get-server-option (audit #9 end-to-end: server routing reaches the store).
+   Uses the real store with restore — mirroring the config-path server tests —
+   because rebinding *server-options* in a test unit does not reliably shadow the
+   accessor's special binding."
+  (let ((original (cl-tmux/options:get-server-option "escape-time")))
+    (unwind-protect
+         (progn
+           (cl-tmux::%scope-set "escape-time" "250" :server nil)
+           (is (eql 250 (cl-tmux/options:get-server-option "escape-time"))
+               "%scope-set :server must write escape-time to the server store"))
+      (cl-tmux/options:set-server-option "escape-time" (or original 500)))))
+
 (test run-command-line-set-option-append-flag
   "'set-option -a <name> <value>' appends to the option's current value."
   (with-fake-session (s)
