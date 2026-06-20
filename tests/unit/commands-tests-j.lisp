@@ -106,6 +106,35 @@
     (is (= 0 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
         "search-prev must find 'abc' on row 0")))
 
+(test copy-mode-search-next-honors-backward-direction
+  "n/N are relative to the LAST search heading, not hardcoded (audit #19): after a
+   backward search (?), n continues BACKWARD and N reverses to forward."
+  ;; Three rows, each containing "abc".
+  (let ((s (make-screen 30 5)))
+    (feed s "abc")
+    (feed s (format nil "~C~C" #\Return #\Linefeed))
+    (feed s "abc")
+    (feed s (format nil "~C~C" #\Return #\Linefeed))
+    (feed s "abc")
+    (cl-tmux/commands::copy-mode-enter s)
+    ;; Backward search from row 2 finds the previous "abc" on row 1.
+    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 0))
+    (cl-tmux/commands::copy-mode-search-backward s "abc")
+    (is (= 1 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "precondition: backward search lands on row 1")
+    (is (eq :backward (cl-tmux/terminal/types:screen-copy-search-direction s))
+        "? must record :backward as the search heading")
+    ;; n repeats in the SAME (backward) direction → row 0.
+    (cl-tmux/commands::copy-mode-search-next s)
+    (is (= 0 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "n after ? must continue BACKWARD to row 0")
+    (is (eq :backward (cl-tmux/terminal/types:screen-copy-search-direction s))
+        "n must not overwrite the stored search direction")
+    ;; N reverses to forward → returns to row 1.
+    (cl-tmux/commands::copy-mode-search-prev s)
+    (is (= 1 (car (cl-tmux/terminal/types:screen-copy-cursor s)))
+        "N after ? must reverse to FORWARD, returning to row 1")))
+
 ;;; ── %scroll-up-one-line direct tests ─────────────────────────────────────────
 
 (test scroll-up-one-line-moves-cursor-up-within-viewport

@@ -87,6 +87,7 @@
    #:screen-bell-pending
    ;; Copy-mode search term (/ ? n N)
    #:screen-copy-search-term
+   #:screen-copy-search-direction
    ;; Copy-mode line-selection flag (V)
    #:screen-copy-line-selection-p
    ;; Copy-mode rectangle-select flag (r)
@@ -353,6 +354,7 @@
    #:screen-consume-bell
    ;; Copy-mode search term
    #:screen-copy-search-term
+   #:screen-copy-search-direction
    ;; Copy-mode line-selection flag
    #:screen-copy-line-selection-p
    ;; Copy-mode rectangle-select flag

@@ -150,6 +150,10 @@
   (bell-pending nil :type boolean)
   ;; Copy-mode search state: the last search term entered via / or ?
   (copy-search-term nil :type (or null string))
+  ;; Direction of the last explicit search (/ → :forward, ? → :backward), so n
+  ;; repeats in that direction and N reverses it.  NIL until the first search;
+  ;; the n/N commands treat NIL as :forward.
+  (copy-search-direction nil :type (or null keyword))
   ;; Copy-mode line-selection flag: T when V (line-select) mode is active
   (copy-line-selection-p nil :type boolean)
   ;; Copy-mode rectangle-select flag: T when 'r' toggles rectangle mode

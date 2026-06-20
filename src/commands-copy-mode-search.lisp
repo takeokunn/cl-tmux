@@ -89,12 +89,17 @@
 
 ;;; ── Public search commands ───────────────────────────────────────────────────
 
-(defun %copy-mode-search-direction (screen term direction)
+(defun %copy-mode-search-direction (screen term direction &optional (save-direction-p t))
   "Shared search engine for copy-mode-search-{forward,backward}.
    DIRECTION is :forward or :backward.  Saves TERM; wraps when wrap-search is on.
-   Forward starts one past the cursor col; backward starts at the cursor col."
+   Forward starts one past the cursor col; backward starts at the cursor col.
+   When SAVE-DIRECTION-P (the default for / and ?), records DIRECTION as the
+   last-search direction; n/N pass NIL so a repeat does not overwrite the
+   original heading."
   (when (and (screen-copy-mode-p screen) term (plusp (length term)))
     (setf (screen-copy-search-term screen) term)
+    (when save-direction-p
+      (setf (screen-copy-search-direction screen) direction))
     (let* ((cursor     (or (screen-copy-cursor screen) (cons 0 0)))
            (start-vrow (%copy-mode-cursor-virtual-row screen))
            (forwardp   (eq direction :forward))
@@ -123,18 +128,30 @@
   (%copy-mode-search-direction screen term :backward))
 
 (defun copy-mode-search-next (screen)
-  "Repeat the last search in the forward direction."
+  "Repeat the last search in its ORIGINAL direction (vi n): forward when the last
+   / search went forward, backward when the last ? search went backward.  Does
+   not change the stored direction, so a run of n keeps the same heading."
   (when (screen-copy-mode-p screen)
     (let ((term (screen-copy-search-term screen)))
       (when term
-        (copy-mode-search-forward screen term)))))
+        (%copy-mode-search-direction
+         screen term
+         (or (screen-copy-search-direction screen) :forward)
+         nil)))))
 
 (defun copy-mode-search-prev (screen)
-  "Repeat the last search in the backward direction."
+  "Repeat the last search in the OPPOSITE of its original direction (vi N).
+   Does not change the stored direction, so n and N stay relative to the same / ?
+   heading across repeats."
   (when (screen-copy-mode-p screen)
     (let ((term (screen-copy-search-term screen)))
       (when term
-        (copy-mode-search-backward screen term)))))
+        (%copy-mode-search-direction
+         screen term
+         (if (eq (or (screen-copy-search-direction screen) :forward) :forward)
+             :backward
+             :forward)
+         nil)))))
 
 (defun %copy-mode-search-word (screen direction)
   "Search for the literal word under the cursor in DIRECTION."
@@ -200,7 +217,9 @@
    (lambda (term)
      (setf *copy-mode-isearch-origin* nil)
      (when (and term (plusp (length term)))
-       (setf (screen-copy-search-term screen) term)))
+       (setf (screen-copy-search-term screen) term
+             ;; Record the heading so n/N repeat relative to this isearch.
+             (screen-copy-search-direction screen) direction)))
    :on-change
    (lambda (text)
      (%copy-mode-isearch-from-origin screen text direction)
