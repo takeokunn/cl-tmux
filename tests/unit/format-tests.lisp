@@ -340,14 +340,16 @@
 ;;; ── Internal helper unit tests ───────────────────────────────────────────────
 
 (test truthy-p-table
-  "%truthy-p: non-empty/non-zero/non-false strings are truthy; empty, \"0\", \"false\" are not."
+  "%truthy-p matches tmux format_true: any non-empty string is truthy except the
+   single character \"0\"; \"false\" is truthy (only empty and \"0\" are false)."
   (dolist (c '(("1"     t   "\"1\" is truthy")
                ("yes"   t   "\"yes\" is truthy")
                ("hello" t   "arbitrary non-empty string is truthy")
                (""      nil "empty string is not truthy")
                ("0"     nil "\"0\" is not truthy")
-               ("false" nil "\"false\" is not truthy")
-               ("FALSE" nil "\"FALSE\" is not truthy (case-insensitive)")))
+               ("00"    t   "\"00\" is truthy (only the single char \"0\" is false)")
+               ("false" t   "\"false\" is truthy in tmux (format_true)")
+               ("FALSE" t   "\"FALSE\" is truthy (the word is not special)")))
     (destructuring-bind (input expected desc) c
       (if expected
           (is-true  (cl-tmux/format::%truthy-p input) "~A" desc)

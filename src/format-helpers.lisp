@@ -31,9 +31,12 @@
   (intern (string-upcase (substitute #\- #\_ name)) :keyword))
 
 (defun %truthy-p (str)
-  "T when STR is truthy: non-nil, non-empty, not \"0\", not \"false\" (case-insensitive)."
+  "T when STR is truthy, matching tmux's format_true: any non-empty string is
+   truthy EXCEPT the single character \"0\".  Note this means \"false\", \"00\",
+   \"0.0\" and \"-0\" are all TRUTHY in tmux — only the empty string and exactly
+   \"0\" are false."
   (and (plusp (length str))
-       (not (member str '("0" "false") :test #'string-equal))))
+       (not (string= str "0"))))
 
 (defun %top-level-comma (content start)
   "Index of the next comma in CONTENT at/after START that is NOT inside a nested

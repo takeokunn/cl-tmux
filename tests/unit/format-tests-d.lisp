@@ -97,13 +97,15 @@
 
 (test truthy-p-table-driven
   "%truthy-p boundary table: various inputs and expected truthiness."
+  ;; tmux format_true: only the empty string and exactly "0" are false; every
+  ;; other non-empty string (including "false") is truthy.
   (let ((cases '(("1"     . t)
                  ("yes"   . t)
                  ("true"  . t)
                  (""      . nil)
                  ("0"     . nil)
-                 ("false" . nil)
-                 ("FALSE" . nil))))
+                 ("false" . t)
+                 ("FALSE" . t))))
     (dolist (c cases)
       (let ((input    (car c))
             (expected (cdr c)))
