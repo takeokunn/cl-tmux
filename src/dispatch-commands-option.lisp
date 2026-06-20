@@ -82,6 +82,20 @@
              (lambda (name)
                (remhash name cl-tmux/options:*server-options*))))))
 
+(defun %scope-present-p (name scope target)
+  "Return true when option NAME is explicitly present in SCOPE / TARGET's OWN
+   store, without consulting inherited (parent/global) scopes.  Mirrors tmux's
+   options_get_only, used by set-option -o (only-if-unset)."
+  (ecase scope
+    (:pane
+     (nth-value 1 (gethash name (cl-tmux/model:pane-local-options target))))
+    (:window
+     (nth-value 1 (gethash name (cl-tmux/model:window-local-options target))))
+    (:global
+     (nth-value 1 (gethash name cl-tmux/options:*global-options*)))
+    (:server
+     (nth-value 1 (gethash name cl-tmux/options:*server-options*)))))
+
 (defun %scope-append (name value scope target)
   "Append VALUE to option NAME in the store identified by SCOPE / TARGET.
    Style options (e.g. status-style) join with ',' via append-option-value."
@@ -135,7 +149,7 @@
                  (append-p
                   (%scope-append name value scope target))
                  ((and only-if-unset-p
-                       (nth-value 1 (gethash name cl-tmux/options:*global-options*)))
+                       (%scope-present-p name scope target))
                   nil)
                  (t
                   (%scope-set name value scope target)))

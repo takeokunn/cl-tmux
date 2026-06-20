@@ -19,6 +19,33 @@
       (is (null (cl-tmux/options:get-option "synchronize-panes"))
           "global synchronize-panes must remain NIL — 'set -w' must not touch it"))))
 
+(test cmd-set-option-o-w-checks-window-local-not-global
+  "'set -o -w name value' consults the WINDOW-LOCAL store, not the global table:
+   a global value must NOT block a window-local -o set (audit #4 — the
+   only-if-unset check used to always read *global-options*)."
+  (with-option-session (s)
+    (let ((win (cl-tmux/model:session-active-window s)))
+      (remhash "@plugin-opt" (cl-tmux/model:window-local-options win))
+      (cl-tmux/options:set-option "@plugin-opt" "global-value")
+      (cl-tmux::%cmd-set-option s '("-o" "-w" "@plugin-opt" "win-value"))
+      (is (string= "win-value"
+                   (nth-value 0 (gethash "@plugin-opt"
+                                         (cl-tmux/model:window-local-options win))))
+          "-o -w must set the window-local option when unset, even with a global value")
+      (is (string= "global-value" (cl-tmux/options:get-option "@plugin-opt"))
+          "-o -w must not touch the global value"))))
+
+(test cmd-set-option-o-w-skips-when-window-local-already-set
+  "'set -o -w name value' is a no-op when the WINDOW already has a local override."
+  (with-option-session (s)
+    (let ((win (cl-tmux/model:session-active-window s)))
+      (cl-tmux/options:set-option-for-window "@plugin-opt" "win-user-value" win)
+      (cl-tmux::%cmd-set-option s '("-o" "-w" "@plugin-opt" "default-value"))
+      (is (string= "win-user-value"
+                   (nth-value 0 (gethash "@plugin-opt"
+                                         (cl-tmux/model:window-local-options win))))
+          "-o -w must leave the existing window-local value untouched"))))
+
 (test cmd-set-window-option-defaults-to-window-scope
   "set-window-option (no -g) sets a WINDOW-local option, not global —
    tmux's set-window-option is `set -w`."
