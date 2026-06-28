@@ -18,7 +18,13 @@
   default)
 
 (defvar *option-registry* (make-hash-table :test #'equal)
-  "Hash-table mapping option name strings to OPTION-SPEC instances.")
+  "Hash-table mapping option name strings to OPTION-SPEC instances.
+   This is the mutable runtime registry; keys may be removed via set-option -u.")
+
+(defvar *known-option-registry* (make-hash-table :test #'equal)
+  "Read-only registry of built-in tmux option specs (populated by define-tmux-options).
+   Used as a fallback source of defaults when a key is absent from *option-registry*,
+   mirroring tmux's options_remove_or_default behaviour for `set-option -u`.")
 
 ;;; ── Unified option-table registration macro ───────────────────────────────
 ;;;
@@ -54,16 +60,32 @@
 ;;; ── Convenience wrappers for the two standard option tables ───────────────
 
 (defmacro define-tmux-options (&rest specs)
-  "Register tmux options in *OPTION-REGISTRY* (spec metadata) and initialise
-   *GLOBAL-OPTIONS* with their defaults (runtime state).  Each SPEC has the form
-   (name type default) where TYPE is :boolean, :integer, or :string."
-  `(define-option-table *option-registry* *global-options* ,@specs))
+  "Register tmux options in *OPTION-REGISTRY* and *KNOWN-OPTION-REGISTRY* (spec
+   metadata) and initialise *GLOBAL-OPTIONS* with their defaults (runtime state).
+   Each SPEC has the form (name type default) where TYPE is :boolean, :integer,
+   or :string.  *KNOWN-OPTION-REGISTRY* is the immutable fallback used by
+   get-option when a key has been removed from *OPTION-REGISTRY* via set-option -u."
+  `(progn
+     (define-option-table *option-registry* *global-options* ,@specs)
+     ;; Populate the known (immutable) registry so set-option -u can fall back to defaults.
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (name type default) spec
+                   `(setf (gethash ,name *known-option-registry*)
+                          (make-option-spec :name ,name :type ,type :default ,default))))
+               specs)))
 
 (defmacro define-server-options (&rest specs)
-  "Register server options in *SERVER-OPTION-REGISTRY* and initialise
-   *SERVER-OPTIONS* with their defaults.  Each SPEC has the form
-   (name type default)."
-  `(define-option-table *server-option-registry* *server-options* ,@specs))
+  "Register server options in *SERVER-OPTION-REGISTRY* and *KNOWN-SERVER-OPTION-REGISTRY*
+   (spec metadata) and initialise *SERVER-OPTIONS* with their defaults.  Each SPEC has
+   the form (name type default).  *KNOWN-SERVER-OPTION-REGISTRY* is the immutable fallback."
+  `(progn
+     (define-option-table *server-option-registry* *server-options* ,@specs)
+     ;; Populate the known (immutable) registry.
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (name type default) spec
+                   `(setf (gethash ,name *known-server-option-registry*)
+                          (make-option-spec :name ,name :type ,type :default ,default))))
+               specs)))
 
 ;;; Registered options
 
@@ -248,7 +270,11 @@
 ;;; Server-option registry and defaults
 
 (defvar *server-option-registry* (make-hash-table :test #'equal)
-  "Specs for server-scoped options (set with set-option -s).")
+  "Mutable runtime registry for server-scoped option specs (set with set-option -s).")
+
+(defvar *known-server-option-registry* (make-hash-table :test #'equal)
+  "Read-only registry of built-in tmux server option specs (populated by define-server-options).
+   Used as a fallback source of defaults when a key is absent from *server-option-registry*.")
 
 (define-server-options
   ("escape-time"          :integer 10)

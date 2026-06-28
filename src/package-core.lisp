@@ -74,12 +74,19 @@
    #:+msg-attach+ #:+msg-key+ #:+msg-resize+ #:+msg-detach+ #:+msg-frame+ #:+msg-bye+
    #:+msg-command+ #:+msg-reply+
    #:+header-size+
+   ;; Frame layout constants
+   #:+payload-length-offset+
+   #:+attach-flag-read-only+
+   #:+attach-size-bytes+
+   #:+attach-flags-offset+
+   #:+cols-offset-in-size-payload+
    ;; Frame codec
    #:encode-frame #:decode-frame
    ;; Typed message constructors
    #:msg-attach #:msg-key #:msg-resize #:msg-detach #:msg-frame #:msg-bye
-   #:msg-command #:msg-reply #:decode-attach-flags #:+attach-flag-read-only+
-   ;; Command message codec
+   #:msg-command #:msg-reply #:decode-attach-flags
+   ;; Command message codec (protocol-command.lisp, same package)
+   #:+field-delimiter+
    #:encode-command-payload #:decode-command-payload #:target-field-p
    ;; Command payload helpers — exported as stable API so tests use single-colon access
    #:split-on-nul-bytes #:command-name-to-string

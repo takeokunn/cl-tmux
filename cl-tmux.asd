@@ -22,6 +22,7 @@
      (:file "pty-rawmode")   ; terminal raw mode management
      (:file "pty")           ; PTY lifecycle, I/O, multiplexing
      (:file "protocol")
+     (:file "protocol-command")  ; +msg-command+ payload codec (same package as protocol)
      (:file "transport")
      (:file "net")
      (:module "terminal"

@@ -134,29 +134,62 @@
                               (1+ (screen-cursor-y screen)))
                           (1+ (screen-cursor-x screen)))))
 
-(defun %decrqm-boolean (x)
-  "Encode a flag for a DECRQM reply: T → 1 (set), NIL → 2 (reset)."
+;;; ── DECRQM mode-state helpers ──────────────────────────────────────────────
+;;;
+;;; %decrqm-flag-code encodes a boolean flag as the DECRQM wire integer (1 =
+;;; set, 2 = reset).  define-decrqm-mode-table is a Prolog-style fact table
+;;; that generates %decrqm-mode-state from a declarative (mode accessor) list,
+;;; with special sentinels for mouse-mode comparisons, the alt-screen predicate,
+;;; and fixed values.
+
+(defun %decrqm-flag-code (x)
+  "Encode a flag for a DECRQM reply: T → 1 (set, wire code), NIL → 2 (reset).
+   The wire protocol uses 1/2, not 0/1, to distinguish 'set' from 'not recognised' (0)."
   (if x 1 2))
 
-(defun %decrqm-mode-state (screen mode)
-  "DECRQM reply value for DEC private MODE: 1 = set, 2 = reset, 0 = not recognised.
-   Reports from the screen's tracked mode flags so an application querying support
-   gets an accurate answer; an unknown mode reports 0 (so the app falls back)."
-  (case mode
-    (1    (%decrqm-boolean (screen-app-cursor-keys screen)))            ; DECCKM
-    (5    (%decrqm-boolean (screen-reverse-screen screen)))             ; DECSCNM reverse video
-    (6    (%decrqm-boolean (screen-origin-mode screen)))                ; DECOM
-    (7    (%decrqm-boolean (screen-autowrap screen)))                   ; DECAWM autowrap
-    (25   (%decrqm-boolean (screen-cursor-visible screen)))             ; DECTCEM
-    (1000 (%decrqm-boolean (= (screen-mouse-mode screen) 1)))           ; X10/normal mouse
-    (1002 (%decrqm-boolean (= (screen-mouse-mode screen) 2)))           ; button-event mouse
-    (1003 (%decrqm-boolean (= (screen-mouse-mode screen) 3)))           ; any-event mouse
-    (1004 (%decrqm-boolean (screen-focus-events screen)))               ; focus reporting
-    (1006 (%decrqm-boolean (screen-mouse-sgr-mode screen)))             ; SGR mouse encoding
-    ((47 1047 1049) (%decrqm-boolean (and (screen-alt-cells screen) t))) ; alternate screen
-    (2004 (%decrqm-boolean (screen-bracketed-paste screen)))            ; bracketed paste
-    (2026 2)   ; synchronized output: accepted but not a persistent mode → reset
-    (t    0)))
+(defmacro define-decrqm-mode-table (&rest specs)
+  "Generate %DECRQM-MODE-STATE from a declarative (mode-number accessor-fn) table.
+   SPECS forms:
+     (mode-num accessor-fn)         — call (accessor-fn screen) and encode as flag
+     (mode-num :mouse-mode N)       — flag code for (= (screen-mouse-mode screen) N)
+     (mode-num :alt-screen)         — flag code for (and (screen-alt-cells screen) t)
+     (mode-num :fixed code)         — always return CODE (for modes not tracked dynamically)"
+  `(defun %decrqm-mode-state (screen mode)
+     "DECRQM reply value for DEC private MODE: 1 = set, 2 = reset, 0 = not recognised.
+      Reports from the screen's tracked mode flags so an application querying support
+      gets an accurate answer; an unknown mode reports 0 (so the app falls back)."
+     (case mode
+       ,@(mapcar (lambda (spec)
+                   (destructuring-bind (mode-number &rest rest) spec
+                     (cond
+                       ((and (= (length rest) 1) (symbolp (first rest)))
+                        `(,mode-number (%decrqm-flag-code (,(first rest) screen))))
+                       ((and (= (length rest) 2) (eq (first rest) :mouse-mode))
+                        `(,mode-number (%decrqm-flag-code (= (screen-mouse-mode screen) ,(second rest)))))
+                       ((and (= (length rest) 1) (eq (first rest) :alt-screen))
+                        `(,mode-number (%decrqm-flag-code (and (screen-alt-cells screen) t))))
+                       ((and (= (length rest) 2) (eq (first rest) :fixed))
+                        `(,mode-number ,(second rest)))
+                       (t (error "Unrecognised define-decrqm-mode-table spec: ~S" spec)))))
+                 specs)
+       (t 0))))
+
+(define-decrqm-mode-table
+  (1    screen-app-cursor-keys)       ; DECCKM — application cursor keys
+  (5    screen-reverse-screen)        ; DECSCNM — reverse video
+  (6    screen-origin-mode)           ; DECOM — origin mode
+  (7    screen-autowrap)              ; DECAWM — auto-wrap
+  (25   screen-cursor-visible)        ; DECTCEM — cursor visibility
+  (1000 :mouse-mode 1)                ; X10 / normal mouse
+  (1002 :mouse-mode 2)                ; button-event mouse
+  (1003 :mouse-mode 3)                ; any-event mouse
+  (1004 screen-focus-events)          ; focus event reporting
+  (1006 screen-mouse-sgr-mode)        ; SGR mouse encoding
+  (47   :alt-screen)                  ; alternate screen (old form)
+  (1047 :alt-screen)                  ; alternate screen (new form)
+  (1049 :alt-screen)                  ; alternate screen + save cursor
+  (2004 screen-bracketed-paste)       ; bracketed paste
+  (2026 :fixed 2))                    ; synchronized output: not a persistent mode → always reset
 
 (defun enqueue-decrqm-reply (screen mode)
   "Push the DECRQM report (ESC [ ? MODE ; Pm $ y) onto SCREEN's response queue,
@@ -168,8 +201,8 @@
   "DECRQM reply value for an ANSI (non-private) MODE: 1 = set, 2 = reset, 0 = not
    recognised.  Covers IRM (4) and LNM (20); other ANSI modes report 0."
   (case mode
-    (4  (%decrqm-boolean (screen-insert-mode screen)))     ; IRM — insert/replace mode
-    (20 (%decrqm-boolean (screen-newline-mode screen)))    ; LNM — line feed/new line mode
+    (4  (%decrqm-flag-code (screen-insert-mode screen)))   ; IRM — insert/replace mode
+    (20 (%decrqm-flag-code (screen-newline-mode screen)))  ; LNM — line feed/new line mode
     (t  0)))
 
 (defun enqueue-decrqm-ansi-reply (screen mode)
@@ -178,14 +211,32 @@
   (%enqueue-reply screen
                   (format nil "~C[~D;~D$y" #\Escape mode (%decrqm-ansi-mode-state screen mode))))
 
+;;; ── XTWINOPS size-report constants ─────────────────────────────────────────
+;;;
+;;; XTWINOPS (CSI Ps ; … t) operations 18 and 19 query the grid size.
+;;; The reply encodes the op as a different code: 18 → code 8 (text-area
+;;; report), 19 → code 9 (screen report).  Named constants document the
+;;; mapping so the dispatch rule and the reply encoder stay in sync.
+
+(defconstant +xtwinops-text-area-query+ 18
+  "XTWINOPS op 18: query text-area size in characters; reply uses code 8.")
+(defconstant +xtwinops-screen-query+    19
+  "XTWINOPS op 19: query screen size in characters; reply uses code 9.")
+(defconstant +xtwinops-text-area-reply+ 8
+  "XTWINOPS reply code for op 18 (text-area query): ESC [ 8 ; rows ; cols t.")
+(defconstant +xtwinops-screen-reply+    9
+  "XTWINOPS reply code for op 19 (screen query): ESC [ 9 ; rows ; cols t.")
+
 (defun enqueue-xtwinops-reply (screen op)
   "Push the XTWINOPS size REPORT for operation OP onto SCREEN's response queue:
-     18 → text-area in CHARACTERS: ESC [ 8 ; rows ; cols t
-     19 → screen    in characters:  ESC [ 9 ; rows ; cols t
+     +xtwinops-text-area-query+ (18) → ESC [ 8 ; rows ; cols t
+     +xtwinops-screen-query+    (19) → ESC [ 9 ; rows ; cols t
    Only ops 18/19 (grid-size queries) produce a reply; other XTWINOPS operations
    (resize/move/iconify) are silently ignored — a multiplexer cannot resize the
    outer window and a wrong pixel size would mislead callers more than no reply."
-  (let ((code (case op (18 8) (19 9))))
+  (let ((code (case op
+                (#.+xtwinops-text-area-query+ +xtwinops-text-area-reply+)
+                (#.+xtwinops-screen-query+    +xtwinops-screen-reply+))))
     (when code
       (%enqueue-reply screen (format nil "~C[~D;~D;~Dt" #\Escape
                                      code (screen-height screen) (screen-width screen))))))
@@ -357,20 +408,15 @@
 
   ;; XTPUSHTITLE – push window title onto the title stack (CSI > Ps t).
   ;; Saves the current title so it can be restored later.  The stack is
-  ;; bounded to 8 entries (xterm limit) — the oldest entry is discarded when
-  ;; the limit is exceeded.  Used by neovim and other TUIs.
+  ;; bounded to +title-stack-max-depth+ entries (xterm limit) — the oldest
+  ;; entry is discarded when the limit is exceeded.  Used by neovim and other TUIs.
   ((and (eql private #\>) (char= final #\t))
-   (let ((stack (screen-title-stack screen)))
-     (setf (screen-title-stack screen)
-           (cons (screen-title screen) (if (>= (length stack) 8) (butlast stack) stack)))))
+   (push-title-stack screen))
 
   ;; XTPOPTITLE – pop and restore the most recently pushed title (CSI < Ps t).
   ;; A pop on an empty stack is a no-op, matching xterm.
   ((and (eql private #\<) (char= final #\t))
-   (let ((stack (screen-title-stack screen)))
-     (when stack
-       (setf (screen-title screen) (car stack)
-             (screen-title-stack screen) (cdr stack)))))
+   (pop-title-stack screen))
 
   ;; XTVERSION — query terminal name/version (CSI > q)
   ((and (eql private #\>) (char= final #\q))
@@ -438,9 +484,10 @@
    (decstr-action screen))
 
   ;; XTWINOPS — window operations / reports (CSI Ps ; … t, no private marker).
-  ;; We answer the size REPORTS (18 = text area in characters, 19 = screen in
-  ;; characters) so apps can learn the grid size; window-manipulation operations
-  ;; (resize/move/iconify) are no-ops for a multiplexer.
+  ;; We answer the size REPORTS (+xtwinops-text-area-query+ = text area in
+  ;; characters, +xtwinops-screen-query+ = screen in characters) so apps can
+  ;; learn the grid size; window-manipulation operations (resize/move/iconify)
+  ;; are no-ops for a multiplexer.
   ((and (null private) (char= final #\t))
    (enqueue-xtwinops-reply screen p1))
 

@@ -12,9 +12,14 @@
    Prevents indefinite blocking on a hung or slow peer.
    This budget is shared across both the header and payload read phases.")
 
+(defconstant +max-frame-payload-bytes+ (* 64 1024 1024)
+  "Maximum payload size (64 MiB) accepted by read-frame before rejecting.
+   Prevents a malicious or buggy peer from triggering unbounded heap allocation.")
+
 (defun send-frame (stream frame)
   "Write FRAME (an octet vector produced by the cl-tmux/protocol msg-* helpers)
    to binary STREAM and flush it."
+  (%validate-outgoing-frame frame)
   (write-sequence frame stream)
   (finish-output stream))
 
@@ -25,6 +30,37 @@
    inline call so that the two phases of READ-FRAME can each be named and tested
    independently: the header phase and the payload phase are distinct contracts."
   (read-sequence buffer stream :start start :end end))
+
+(defun %payload-length-acceptable-p (payload-length)
+  "Return true when PAYLOAD-LENGTH is a valid declared payload size.
+   The contract: PAYLOAD-LENGTH must be a non-negative integer no greater than
+   +max-frame-payload-bytes+.  This check is security-relevant: it prevents a
+   malicious or buggy peer from causing unbounded heap growth by sending a frame
+   header that declares an astronomically large payload length before any bytes
+   of payload are read."
+  (and (integerp payload-length)
+       (<= 0 payload-length +max-frame-payload-bytes+)))
+
+(defun %validate-outgoing-frame (frame)
+  "Validate FRAME (an octet vector) before writing it to a stream.
+   Three invariants are enforced:
+     1. FRAME must be a vector at least +header-size+ bytes long.
+     2. Payload length declared in the header must not exceed
+        +max-frame-payload-bytes+.
+     3. Total byte count must equal +header-size+ plus declared payload length
+        (the frame is self-consistent: no trailing garbage, no truncation).
+   Signals an error when any invariant is violated."
+  (unless (and (vectorp frame) (>= (length frame) +header-size+))
+    (error "Invalid frame: must be a vector of at least ~D bytes, got ~S"
+           +header-size+ frame))
+  (let* ((payload-length  (read-u32 frame +payload-length-offset+))
+         (expected-total  (+ +header-size+ payload-length)))
+    (unless (%payload-length-acceptable-p payload-length)
+      (error "Invalid frame: declared payload length ~D exceeds +max-frame-payload-bytes+ (~D)"
+             payload-length +max-frame-payload-bytes+))
+    (unless (= (length frame) expected-total)
+      (error "Invalid frame: total length ~D does not match header+payload (~D + ~D = ~D)"
+             (length frame) +header-size+ payload-length expected-total))))
 
 ;;; ── CPS read-frame state machine ────────────────────────────────────────────
 ;;;
@@ -43,8 +79,9 @@
                              :adjustable t
                              :fill-pointer +header-size+)))
     (when (= +header-size+ (%read-exact buffer stream 0 +header-size+))
-      (let ((payload-length (read-u32 buffer 1)))
-        (funcall continuation buffer payload-length)))))
+      (let ((payload-length (read-u32 buffer +payload-length-offset+)))
+        (when (%payload-length-acceptable-p payload-length)
+          (funcall continuation buffer payload-length))))))
 
 (defun %read-payload-k (buffer payload-length stream continuation)
   "Phase 2: grow BUFFER to fit PAYLOAD-LENGTH bytes, read the payload from STREAM

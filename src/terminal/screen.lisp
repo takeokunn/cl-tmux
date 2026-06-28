@@ -4,18 +4,6 @@
 ;;;;
 ;;;; Depends on cell.lisp (BLANK-CELL, CLAMP) being loaded first.
 
-;;; ── OSC default colours ─────────────────────────────────────────────────────
-;;;
-;;; Conventional white-on-black defaults for OSC 10/11 reset (OSC 110/111).
-;;; Defined here so they live in cl-tmux/terminal/types and can be used by
-;;; both screen.lisp (struct slot defaults) and parser-osc-helpers.lisp.
-
-(defconstant +osc-default-fg+ #xFFFFFF
-  "Default foreground colour (0xRRGGBB) reset to by OSC 110.")
-
-(defconstant +osc-default-bg+ #x000000
-  "Default background colour (0xRRGGBB) reset to by OSC 111.")
-
 ;;; ── Screen ─────────────────────────────────────────────────────────────────
 
 (defstruct (screen (:constructor %make-screen))

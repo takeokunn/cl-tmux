@@ -37,10 +37,18 @@
         (sb-bsd-sockets:socket-accept listener))
     (sb-ext:timeout () nil)))
 
+(defconstant +connect-timeout-seconds+ 5
+  "Maximum seconds to block in connect-to before signalling a timeout error.
+   Prevents the client from hanging indefinitely when the server socket path
+   exists but no process is accepting connections.")
+
 (defun connect-to (path)
-  "Connect a fresh Unix-domain stream socket to the listener at PATH."
+  "Connect a fresh Unix-domain stream socket to the listener at PATH.
+   The connect attempt is bounded by +connect-timeout-seconds+; signals
+   SB-EXT:TIMEOUT when the server does not accept within that window."
   (let ((socket (make-instance 'sb-bsd-sockets:local-socket :type :stream)))
-    (sb-bsd-sockets:socket-connect socket path)
+    (sb-ext:with-timeout +connect-timeout-seconds+
+      (sb-bsd-sockets:socket-connect socket path))
     socket))
 
 (defun socket-stream (socket)

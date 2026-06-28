@@ -273,20 +273,21 @@
       (is (= cx (screen-cursor-x s))
           "REP 0 must not advance the cursor"))))
 
-;;; ── Coverage gap: %decrqm-boolean direct tests ───────────────────────────────
+;;; ── Coverage gap: %decrqm-flag-code direct tests ────────────────────────────
 ;;;
-;;; Audit finding: %decrqm-boolean and %decrqm-ansi-mode-state have no direct
-;;; unit tests — they are reachable only through the end-to-end CSI path.
+;;; Audit finding: %decrqm-flag-code (formerly %decrqm-boolean) and
+;;; %decrqm-ansi-mode-state have no direct unit tests — they are reachable
+;;; only through the end-to-end CSI path.
 
 (def-suite decrqm-internal
   :description "Direct coverage of DECRQM internal helpers"
   :in terminal-suite)
 (in-suite decrqm-internal)
 
-(test decrqm-boolean-table
-  "%decrqm-boolean returns 1 for T (set) and 2 for NIL (reset)."
-  (is (= 1 (cl-tmux/terminal/csi::%decrqm-boolean t))   "%decrqm-boolean T must return 1")
-  (is (= 2 (cl-tmux/terminal/csi::%decrqm-boolean nil)) "%decrqm-boolean NIL must return 2"))
+(test decrqm-flag-code-table
+  "%decrqm-flag-code returns 1 for T (set, wire code) and 2 for NIL (reset)."
+  (is (= 1 (cl-tmux/terminal/csi::%decrqm-flag-code t))   "%decrqm-flag-code T must return 1")
+  (is (= 2 (cl-tmux/terminal/csi::%decrqm-flag-code nil)) "%decrqm-flag-code NIL must return 2"))
 
 (test decrqm-ansi-mode-state-irm-table
   "%decrqm-ansi-mode-state reports IRM (mode 4) as 1 when insert-mode T, 2 when NIL."

@@ -269,10 +269,16 @@
            #:get-option-for-window #:set-option-for-window
            #:get-option-for-pane   #:set-option-for-pane
            #:get-option-for-context
-   ;; show-options helpers
-   #:show-options #:show-option
-   #:show-window-options #:show-window-option
-   ))
+           ;; Scope/presence predicates (options-scope.lisp)
+           #:array-option-indexed-name-p
+           #:option-present-for-scope-p
+           #:option-present-for-display-p
+           #:option-settable-for-scope-p
+           ;; Display helpers (options-display.lisp)
+           #:show-options #:show-option #:show-option-values
+           #:show-window-options #:show-window-option
+           #:window-option-present-for-display-p
+           ))
 
 (defpackage #:cl-tmux/renderer
   (:use #:cl #:bordeaux-threads

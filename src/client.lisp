@@ -68,6 +68,14 @@
                     (find #\I arg :start 1)))
              (rest args))))
 
+(defun %utf8-char-byte-count (character)
+  "Return the number of UTF-8 bytes needed to encode CHARACTER."
+  (let ((code-point (char-code character)))
+    (cond ((< code-point #x80)   1)
+          ((< code-point #x800)  2)
+          ((< code-point #x10000) 3)
+          (t                      4))))
+
 (defun %read-command-client-stdin-octets ()
   "Read command-client stdin as UTF-8 bytes for split-window -I forwarding.
    Stops at EOF or when +stdin-read-max-octets+ have been accumulated, whichever
@@ -79,8 +87,7 @@
        (loop for character = (read-char *standard-input* nil nil)
              while (and character (< byte-count +stdin-read-max-octets+))
              do (write-char character output-accumulator)
-                (incf byte-count (babel:string-size-in-octets (string character)
-                                                               :encoding :utf-8)))))
+                (incf byte-count (%utf8-char-byte-count character)))))
    :encoding :utf-8))
 
 (defun run-command-client (name args)

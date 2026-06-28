@@ -330,3 +330,35 @@
          (decoded  (cl-tmux/protocol:split-on-nul-bytes buf)))
     (is (equal strings decoded)
         "round-trip through encode-fields-to-buffer + split-on-nul-bytes must be lossless")))
+
+;;; ── Pinning tests for wire-protocol constants ────────────────────────────────
+
+(test field-delimiter-constant-is-ascii-nul
+  "+field-delimiter+ must equal 0 (ASCII NUL), the byte used to separate
+   NUL-delimited fields in a +msg-command+ payload.  Pinning prevents silent
+   drift if the constant is ever accidentally edited."
+  (is (= 0 cl-tmux/protocol:+field-delimiter+)
+      "+field-delimiter+ must be 0 (ASCII NUL)"))
+
+(test attach-flag-read-only-constant-value-is-bit-zero
+  "+attach-flag-read-only+ must equal 1 (bit 0 of the flags byte).  This pins
+   the bit position so that encode/decode of the read-only flag remain
+   compatible with the tmux CLIENT_READONLY wire convention."
+  (is (= 1 cl-tmux/protocol:+attach-flag-read-only+)
+      "+attach-flag-read-only+ must equal 1 (bit 0)")
+  (is (= 1 (logcount cl-tmux/protocol:+attach-flag-read-only+))
+      "+attach-flag-read-only+ must have exactly one bit set"))
+
+(test frame-layout-offset-constants-are-consistent
+  "The frame-layout constants must be mutually consistent:
+     +payload-length-offset+ (1) + 4 bytes == +header-size+ (5)
+     +attach-flags-offset+ == +attach-size-bytes+ (rows,cols occupy 4 bytes)
+     +cols-offset-in-size-payload+ must equal 2 (after the 2-byte rows u16)"
+  (is (= +header-size+
+         (+ cl-tmux/protocol:+payload-length-offset+ 4))
+      "+payload-length-offset+ + 4 must equal +header-size+")
+  (is (= cl-tmux/protocol:+attach-flags-offset+
+         cl-tmux/protocol:+attach-size-bytes+)
+      "+attach-flags-offset+ must equal +attach-size-bytes+")
+  (is (= 2 cl-tmux/protocol:+cols-offset-in-size-payload+)
+      "+cols-offset-in-size-payload+ must equal 2"))

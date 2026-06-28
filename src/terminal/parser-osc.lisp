@@ -40,13 +40,13 @@
                        #'(lambda (rgb)
                            (setf (screen-osc-default-fg screen) rgb))))
   (110
-   (setf (screen-osc-default-fg screen) +osc-default-fg+))
+   (reset-osc-default-fg screen))
   (11
    (%osc-color-command screen 11 body (screen-osc-default-bg screen)
                        #'(lambda (rgb)
                            (setf (screen-osc-default-bg screen) rgb))))
   (111
-   (setf (screen-osc-default-bg screen) +osc-default-bg+))
+   (reset-osc-default-bg screen))
   (4
    (%handle-osc-4 screen body))
   (104

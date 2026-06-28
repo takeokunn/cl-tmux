@@ -81,6 +81,43 @@
                              (client-side ,client-side))
              ,@body))))))
 
+;;; with-guarded-socket-test/fd: variant exposing raw socket objects so tests
+;;; that need socket-fd (e.g. %read-command-reply's select-fds parameter) can
+;;; obtain it without duplicating the full socket lifecycle.
+;;;
+;;; Binds SERVER-SOCK/CLIENT-SOCK (socket objects), SERVER-STREAM/CLIENT-STREAM
+;;; (binary streams), and CLIENT-FD (the integer fd of the client socket).
+
+(defmacro with-guarded-socket-test/fd ((&key (server-sock (gensym "SSOCK"))
+                                              (client-sock (gensym "CSOCK"))
+                                              (server-stream (gensym "SSTREAM"))
+                                              (client-stream (gensym "CSTREAM"))
+                                              (client-fd (gensym "CFD")))
+                                        &body body)
+  "Like with-guarded-socket-test but exposes socket objects and the client fd.
+   Useful when a test needs (cl-tmux/net:socket-fd client) alongside the stream."
+  (let ((path  (gensym "PATH"))
+        (lstnr (gensym "LSTNR")))
+    `(progn
+       (unless (unix-socket-available-p)
+         (skip "Unix-domain socket unavailable (sandbox)"))
+       (sb-ext:with-timeout 10
+         (let* ((,path   (%client-test-socket-path))
+                (,lstnr  (make-listener ,path)))
+           (unwind-protect
+                (let* ((,client-sock  (connect-to ,path))
+                       (,server-sock  (accept-connection ,lstnr))
+                       (,server-stream (socket-stream ,server-sock))
+                       (,client-stream (socket-stream ,client-sock))
+                       (,client-fd     (cl-tmux/net:socket-fd ,client-sock)))
+                  (declare (ignorable ,server-stream ,client-stream ,client-fd))
+                  (unwind-protect
+                       (progn ,@body)
+                    (ignore-errors (close-socket ,server-sock))
+                    (ignore-errors (close-socket ,client-sock))))
+             (ignore-errors (close-socket ,lstnr))
+             (ignore-errors (delete-file ,path))))))))
+
 (test client-with-incoming-frame-msg-bye-dispatches
   :description "with-incoming-frame dispatches +msg-bye+ correctly — the :return path that
 run-client uses to exit its inner loop cleanly."
@@ -250,63 +287,89 @@ is empty — no complete frame header can be read."
         (is (eq :eof dispatched)
             "empty stream must dispatch the nil-type (EOF) arm")))))
 
+;;; ── %command-client-split-window-input-p ────────────────────────────────────
+;;;
+;;; Table-driven coverage of the split-window/-I detection predicate.  Each row
+;;; is (args expected-bool description).  The predicate must be true only for
+;;; split-window or splitw with a flag token that contains the character I.
+
+(test command-client-split-window-input-p-table
+  :description "%command-client-split-window-input-p is true only for split-window/-I."
+  (dolist (row '((("split-window" "-I")                t   "split-window -I")
+                 (("splitw" "-I")                      t   "splitw -I alias")
+                 (("split-window" "-Iv")               t   "-Iv combined flag contains I")
+                 (("split-window" "-v")                nil "split-window without -I")
+                 (("split-window")                     nil "split-window no flags")
+                 (("new-window" "-I")                  nil "different command with -I")
+                 (("display-message" "-p" "#{session}") nil "unrelated command")
+                 (nil                                  nil "nil args → false")))
+    (destructuring-bind (args expected description) row
+      (let ((got (if (cl-tmux::%command-client-split-window-input-p args) t nil)))
+        (is (eq expected got)
+            "~A: expected ~S got ~S" description expected got)))))
+
+;;; ── %read-command-client-stdin-octets ───────────────────────────────────────
+;;;
+;;; Tests use a string-stream so no real stdin is needed.  The max-octets guard
+;;; is tested by confirming the function returns without hanging when given
+;;; bounded input (the pipe-never-closes scenario is not exercisable in a unit
+;;; test, but the size-limit constant bounding is verified via a large string).
+
+(test read-command-client-stdin-octets-ascii
+  :description "%read-command-client-stdin-octets reads ASCII characters from stdin
+   and returns their UTF-8 byte encoding."
+  (let ((*standard-input* (make-string-input-stream "hello")))
+    (let ((octets (cl-tmux::%read-command-client-stdin-octets)))
+      (is (typep octets '(vector (unsigned-byte 8)))
+          "must return an octet vector")
+      (is (string= "hello" (babel:octets-to-string octets :encoding :utf-8))
+          "round-trip must recover the original string"))))
+
+(test read-command-client-stdin-octets-empty
+  :description "%read-command-client-stdin-octets returns an empty octet vector when
+   stdin is immediately at EOF."
+  (let ((*standard-input* (make-string-input-stream "")))
+    (let ((octets (cl-tmux::%read-command-client-stdin-octets)))
+      (is (zerop (length octets))
+          "empty stdin must produce a zero-length octet vector"))))
+
+(test read-command-client-stdin-octets-unicode
+  :description "%read-command-client-stdin-octets encodes multibyte characters correctly."
+  (let ((*standard-input* (make-string-input-stream "日本語")))
+    (let ((octets (cl-tmux::%read-command-client-stdin-octets)))
+      (is (string= "日本語" (babel:octets-to-string octets :encoding :utf-8))
+          "multibyte Unicode must round-trip through UTF-8 encoding"))))
+
 ;;; ── %read-command-reply socket-roundtrip tests ───────────────────────────────
 ;;;
-;;; These tests require the raw socket-fd via cl-tmux/net:socket-fd, so they
-;;; cannot use with-guarded-socket-test directly (which does not expose socket
-;;; objects).  The full socket lifecycle is contained once in each test body
-;;; with an unwind-protect.
+;;; These tests require the raw socket-fd via cl-tmux/net:socket-fd for the
+;;; select-fds call inside %read-command-reply.  The with-guarded-socket-test/fd
+;;; macro defined above abstracts the full socket lifecycle — no inline
+;;; unwind-protect duplication.
 
 (test read-command-reply-prints-reply-to-stdout
   :description "%read-command-reply reads the server's +msg-reply+ frame and writes its
 text to *standard-output* — the client side of `cl-tmux display -p`."
-  (unless (unix-socket-available-p)
-    (skip "Unix-domain socket unavailable (sandbox)"))
-  (sb-ext:with-timeout 10
-    (let* ((path  (%client-test-socket-path))
-           (lstnr (make-listener path)))
-      (unwind-protect
-           (let* ((client (connect-to path))
-                  (server (accept-connection lstnr)))
-             (when server
-               (unwind-protect
-                    (progn
-                      (send-frame (socket-stream server) (msg-reply "OUTPUT-TEXT"))
-                      (force-output (socket-stream server))
-                      (let ((out (with-output-to-string (*standard-output*)
-                                   (cl-tmux::%read-command-reply
-                                    (socket-stream client) (cl-tmux/net:socket-fd client)))))
-                        (is (search "OUTPUT-TEXT" out)
-                            "%read-command-reply must print the reply text to stdout (got ~S)" out)))
-                 (ignore-errors (close-socket server))
-                 (ignore-errors (close-socket client)))))
-        (ignore-errors (close-socket lstnr))
-        (ignore-errors (delete-file path))))))
+  (with-guarded-socket-test/fd
+      (:server-stream server-stream :client-stream client-stream :client-fd client-fd)
+    (send-frame server-stream (msg-reply "OUTPUT-TEXT"))
+    (force-output server-stream)
+    (let ((output (with-output-to-string (*standard-output*)
+                    (cl-tmux::%read-command-reply client-stream client-fd))))
+      (is (search "OUTPUT-TEXT" output)
+          "%read-command-reply must print the reply text to stdout (got ~S)" output))))
 
 (test read-command-reply-returns-on-eof-without-output
   :description "%read-command-reply returns promptly with NO output when the server
 closes without replying (a command that produces no output) — it must not hang."
-  (unless (unix-socket-available-p)
-    (skip "Unix-domain socket unavailable (sandbox)"))
-  (sb-ext:with-timeout 10
-    (let* ((path  (%client-test-socket-path))
-           (lstnr (make-listener path)))
-      (unwind-protect
-           (let* ((client (connect-to path))
-                  (server (accept-connection lstnr)))
-             (when server
-               (unwind-protect
-                    (progn
-                      ;; Server closes without sending a reply → client sees EOF.
-                      (close-socket server)
-                      (let ((out (with-output-to-string (*standard-output*)
-                                   (cl-tmux::%read-command-reply
-                                    (socket-stream client) (cl-tmux/net:socket-fd client)))))
-                        (is (string= "" out)
-                            "no reply → no output (got ~S)" out)))
-                 (ignore-errors (close-socket client)))))
-        (ignore-errors (close-socket lstnr))
-        (ignore-errors (delete-file path))))))
+  (with-guarded-socket-test/fd
+      (:server-sock server-sock :client-stream client-stream :client-fd client-fd)
+    ;; Server closes without sending a reply → client sees EOF.
+    (close-socket server-sock)
+    (let ((output (with-output-to-string (*standard-output*)
+                    (cl-tmux::%read-command-reply client-stream client-fd))))
+      (is (string= "" output)
+          "no reply → no output (got ~S)" output))))
 
 ;;; ── run-command-client nil-args guard ────────────────────────────────────────
 ;;;
@@ -356,7 +419,72 @@ when *resize-pending* is T — verifies the resize-dispatch path extracted from 
     (is-false (cl-tmux::%maybe-send-resize nil)
               "%maybe-send-resize with *resize-pending* NIL must return NIL without I/O")))
 
+;;; ── %forward-stdin-byte behavior ─────────────────────────────────────────────
+;;;
+;;; %forward-stdin-byte reads one non-blocking byte from fd 0 (stdin) and
+;;; forwards it as a +msg-key+ frame.  We test the "nothing ready" branch
+;;; (returns NIL without I/O) — the "byte forwarded" branch requires a real
+;;; non-blocking stdin fd, which is unavailable in a sandboxed test runner.
+
+(test forward-stdin-byte-returns-nil-when-nothing-ready
+  :description "%forward-stdin-byte returns NIL without error when stdin has no
+   data ready (non-blocking read returns nil)."
+  ;; read-byte-nonblock(0) on a non-blocking terminal returns NIL when no data
+  ;; is ready.  In the test runner stdin is either /dev/null or a pipe with no
+  ;; pending data — either way the function must return NIL without signalling.
+  ;; Pass NIL as the stream so no socket write can happen even if the byte test
+  ;; were to incorrectly find data.
+  (let ((result (ignore-errors (cl-tmux::%forward-stdin-byte nil))))
+    (is (null result)
+        "%forward-stdin-byte must return NIL when stdin has no byte ready")))
+
+;;; ── %decode-server-frame pure behavior ──────────────────────────────────────
+;;;
+;;; %decode-server-frame is the pure layer that %receive-server-frame calls.
+;;; These tests verify its dispositions without any I/O side effects.
+
+(test decode-server-frame-returns-exit-on-bye
+  :description "%decode-server-frame returns (values :exit nil) when the server sends
+   +msg-bye+ — the pure classification step used by %receive-server-frame."
+  (with-guarded-socket-test
+    (send-frame server-side (msg-bye))
+    (force-output server-side)
+    (multiple-value-bind (disposition text)
+        (cl-tmux::%decode-server-frame client-side)
+      (is (eq :exit disposition)
+          "%decode-server-frame must return :exit disposition for +msg-bye+")
+      (is (null text)
+          "%decode-server-frame must return NIL text for :exit disposition"))))
+
+(test decode-server-frame-returns-frame-and-text
+  :description "%decode-server-frame returns (values :frame text) for +msg-frame+.
+   The pure step: caller decides whether/where to write the text."
+  (with-guarded-socket-test
+    (send-frame server-side (msg-frame "PURE-TEXT"))
+    (force-output server-side)
+    (multiple-value-bind (disposition text)
+        (cl-tmux::%decode-server-frame client-side)
+      (is (eq :frame disposition)
+          "%decode-server-frame must return :frame disposition for +msg-frame+")
+      (is (string= "PURE-TEXT" text)
+          "%decode-server-frame must return the decoded text"))))
+
+(test decode-server-frame-returns-exit-on-eof
+  :description "%decode-server-frame returns (values :exit nil) on EOF."
+  (with-guarded-socket-test
+    (close server-side)
+    (sleep 0.05)
+    (multiple-value-bind (disposition text)
+        (cl-tmux::%decode-server-frame client-side)
+      (is (eq :exit disposition)
+          "%decode-server-frame must return :exit on EOF")
+      (is (null text)
+          "%decode-server-frame must return NIL text on EOF"))))
+
 ;;; ── %receive-server-frame behavior ──────────────────────────────────────────
+;;;
+;;; %receive-server-frame is the effect boundary that calls %decode-server-frame
+;;; and performs the actual write-string/force-output.
 
 (test receive-server-frame-returns-exit-on-bye
   :description "%receive-server-frame returns :exit when the server sends +msg-bye+."

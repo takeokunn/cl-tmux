@@ -150,7 +150,7 @@
   (assert-round-tripped-frame-type (msg-reply   "output text")   +msg-reply+)
   (assert-round-tripped-frame-type (msg-command :new-window nil nil) +msg-command+))
 
-;;; ── Transport constant value ─────────────────────────────────────────────────
+;;; ── Transport constant values ────────────────────────────────────────────────
 
 (test read-frame-timeout-constant-is-positive-integer
   "The +read-frame-timeout-seconds+ constant must be a positive integer so
@@ -159,6 +159,50 @@
       "+read-frame-timeout-seconds+ must be an integer")
   (is (plusp cl-tmux/transport::+read-frame-timeout-seconds+)
       "+read-frame-timeout-seconds+ must be positive"))
+
+(test max-frame-payload-constant-is-large-positive-integer
+  "+max-frame-payload-bytes+ must be a large positive integer (≥ 1 MiB) so
+   that the security guard in read-frame accepts realistic frame sizes."
+  (is (integerp cl-tmux/transport::+max-frame-payload-bytes+)
+      "+max-frame-payload-bytes+ must be an integer")
+  (is (>= cl-tmux/transport::+max-frame-payload-bytes+ (* 1024 1024))
+      "+max-frame-payload-bytes+ must be at least 1 MiB"))
+
+;;; ── %validate-outgoing-frame and send-frame validation ──────────────────────
+
+(test send-frame-rejects-too-short-frames
+  "send-frame must signal an error when the frame vector is shorter than
+   +header-size+ (not a valid frame at all)."
+  (with-temp-octet-file (path)
+    (with-open-file (out path :direction :output :if-exists :supersede
+                              :element-type '(unsigned-byte 8))
+      (signals error
+        (send-frame out (make-array 3 :element-type '(unsigned-byte 8)))
+        "send-frame with a 3-byte frame (shorter than 5-byte header) must signal"))))
+
+(test send-frame-rejects-length-field-mismatch
+  "%validate-outgoing-frame's third validation clause: total frame length must
+   equal +header-size+ plus the declared payload length.  When these disagree
+   (declared-length > actual payload, or actual payload > declared-length),
+   send-frame must signal an error before any bytes reach the stream."
+  (flet ((mismatched-frame (declared-payload-length actual-payload-size)
+           ;; Build a frame whose header claims DECLARED-PAYLOAD-LENGTH bytes
+           ;; but whose actual payload is ACTUAL-PAYLOAD-SIZE bytes.
+           (let* ((total (+ +header-size+ actual-payload-size))
+                  (frame (make-array total :element-type '(unsigned-byte 8)
+                                           :initial-element 0)))
+             (setf (aref frame 0) +msg-frame+)
+             (replace frame (cl-tmux/protocol:u32-octets declared-payload-length) :start1 1)
+             frame)))
+    (with-temp-octet-file (path)
+      (with-open-file (out path :direction :output :if-exists :supersede
+                                :element-type '(unsigned-byte 8))
+        (signals error
+          (send-frame out (mismatched-frame 10 0))
+          "declared=10 actual=0 must signal (header claims more bytes than present)")
+        (signals error
+          (send-frame out (mismatched-frame 1 5))
+          "declared=1 actual=5 must signal (header claims fewer bytes than present)")))))
 
 ;;; ── msg-command frame transport round-trip ───────────────────────────────────
 

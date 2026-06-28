@@ -309,3 +309,37 @@
   (with-fresh-global-options
     (is (= 1 (cl-tmux/options:set-option "pane-base-index" "1")))
     (is (= 1 (cl-tmux/options:get-option "pane-base-index")))))
+
+;;; Tests for options-scope.lisp exports
+
+(test option-scope-from-name-window-options
+  "option-scope-from-name returns :window for window-scoped option names."
+  (dolist (name '("automatic-rename" "mode-keys" "mode-style"
+                  "monitor-activity" "synchronize-panes"
+                  "window-active-style" "wrap-search"
+                  "pane-border-status" "remain-on-exit"))
+    (is (eq :window (cl-tmux/options:option-scope-from-name name))
+        "~A should be :window scope" name)))
+
+(test option-scope-from-name-session-options
+  "option-scope-from-name returns :session for non-window option names."
+  (dolist (name '("status" "status-interval" "history-limit"
+                  "escape-time" "default-terminal" "prefix"
+                  "display-time" "buffer-limit"))
+    (is (eq :session (cl-tmux/options:option-scope-from-name name))
+        "~A should be :session scope" name)))
+
+(test array-option-indexed-name-p-indexed-entries
+  "array-option-indexed-name-p returns T for BASE[N] option names."
+  (dolist (name '("command-alias[0]" "command-alias[1]"
+                  "terminal-features[0]" "terminal-overrides[0]"
+                  "status-format[0]"))
+    (is (cl-tmux/options:array-option-indexed-name-p name)
+        "~A should be an indexed array entry" name)))
+
+(test array-option-indexed-name-p-non-indexed
+  "array-option-indexed-name-p returns NIL for plain option names."
+  (dolist (name '("status" "history-limit" "command-alias"
+                  "terminal-features" "" "foo[]" "foo[bar]"))
+    (is (null (cl-tmux/options:array-option-indexed-name-p name))
+        "~A should not be an indexed array entry" name)))

@@ -230,6 +230,10 @@
    #:invoke-charset
    #:screen-invoked-charset
    #:set-screen-title
+   #:push-title-stack
+   #:pop-title-stack
+   #:reset-osc-default-fg
+   #:reset-osc-default-bg
    #:set-screen-cwd))
 
 ;; sgr package: apply-sgr + the inverse %pen-to-sgr-params (DECRQSS reports)
