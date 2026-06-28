@@ -219,4 +219,4 @@
                                             content-origin-x origin-y content-width)
         ;; Clock-mode overlay: draw a digital clock if this pane is the clock pane.
         (when (eql cl-tmux::*clock-mode-pane-id* (pane-id pane))
-          (draw-clock-to-screen stream content-origin-x origin-y content-width pane-height))))))
+          (draw-clock-to-screen stream content-origin-x origin-y content-width pane-height)))))))
