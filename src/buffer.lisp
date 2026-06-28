@@ -52,13 +52,13 @@
                    (assoc source-name *paste-buffers* :test #'string=)
                    (first *paste-buffers*))))
     (when entry
-      (let ((source-name (car entry))
-            (text (cdr entry)))
-        (if (string= source-name target-name)
+      (let ((old-name (car entry))
+            (text     (cdr entry)))
+        (if (string= old-name target-name)
             text
             (progn
               (setf *paste-buffers*
-                    (remove source-name *paste-buffers* :key #'car :test #'string=))
+                    (remove old-name *paste-buffers* :key #'car :test #'string=))
               (setf *paste-buffers*
                     (remove target-name *paste-buffers* :key #'car :test #'string=))
               (push (cons target-name text) *paste-buffers*)

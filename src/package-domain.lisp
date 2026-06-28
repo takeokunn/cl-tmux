@@ -19,6 +19,7 @@
    ;; Dismissible overlay (list-keys help, …)
    #:*overlay* #:*overlay-scroll-offset* #:*display-panes-active*
    #:overlay-active-p #:overlay-shown-at #:show-overlay #:show-transient-overlay
+   #:show-display-panes-overlay
    #:clear-overlay #:overlay-lines
    #:overlay-scroll #:*overlay-shown-at*
    ;; Popup overlay

@@ -46,18 +46,22 @@
      (:file "layout")             ; tree structure + traversal (uses pane-reposition)
      (:file "layout-persistence") ; layout string serialization/deserialization
      (:file "layout-geometry")    ; rectangle assignment + resize helpers (uses pane-id, pane-x/y/w/h)
-     (:file "window")          ; window struct + core operations (split/relayout/resize)
+     (:file "window")             ; window struct + core ops (split/relayout/constants)
+     (:file "window-operations")  ; window resize/rotate/zoom (uses window + layout helpers)
      (:file "window-neighbor") ; directional pane navigation (uses window-panes)
      (:file "window-layout")   ; named layouts (apply-named-layout, uses window accessors)
-     (:file "session")  ; session management (uses window)
+     (:file "session")             ; session lifecycle: struct + windows + touch + all-panes
+     (:file "session-environment") ; environment management: update-env/overlay/child-env
      (:file "format-helpers")  ; tmux-style format: pure data helpers + shorthand/arithmetic tables
      (:file "format-strftime") ; strftime support (#{t:format}): %strftime-letter-p + formatting engine
      (:file "format")         ; format modifier helpers, glob/regex, iteration expanders
      (:file "format-engine")  ; core %expand-brace, bracket/paren expanders, CPS processor, expand-format
      (:file "format-context") ; context builder: model objects → expand-format plist
      (:file "target")   ; session/window/pane target resolution (-t flag)
-     (:file "options")     ; global option registry: hash tables + define-tmux/server-options data
-     (:file "options-api") ; option accessor API: type coercions, get/set, scoped overrides, show-options
+     (:file "options")        ; global option registry: hash tables + define-tmux/server-options data
+     (:file "options-scope")  ; scope dispatch + array-name parsing + spec lookup + presence predicates
+     (:file "options-api")    ; type coercions, define-option-accessor, public get/set API, scoped overrides
+     (:file "options-display") ; option display/rendering helpers (show-options, show-option-values)
      (:file "buffer")   ; paste-buffer ring (uses options for buffer-limit)
      (:file "control-mode")  ; control mode (-C) wire-protocol formatters
      (:file "hooks")    ; user-defined hook registry
@@ -261,6 +265,7 @@
        (:file "events-tests-d")          ; app-cursor-keys (ss3), new bindings, :mark-pane, root table, fn-keys — part V
        (:file "events-tests-g")          ; select-layout-spread, new key bindings, choose-window, mouse-reporting, tmux defaults — part VII
        (:file "events-tests-i")          ; copy-mode v-select, middle-cursor-jump, mouse X10, CSI-tilde outside mode, CSI-3byte — part IX
+       (:file "events-tests-j")          ; vi-normal-key dispatch, %dispatch-menu-key, %rename-from-osc-title — part X
        (:file "mouse-tests")
        (:file "commands-tests")          ; resize-pane, scroll, kill-pane, select/rename, begin-sel/yank/other-end — part I
        (:file "commands-tests-e")        ; copy-mode-clear-sel, WORD-motion, select-word, move-cursor — part II
@@ -288,6 +293,7 @@
        (:file "server-tests-b")          ; list-sessions, rename-session, switch-client, last-session — part II
        (:file "pty-ffi-tests")
        (:file "pty-rawmode-tests")
+       (:file "pty-tests")              ; PTY argument-assembly unit tests (spawn helpers)
        (:file "input-tests")
        (:file "runtime-tests")             ; globals, pane-reader-loop, monitor-activity/silence, prompt-history, alert-action — part I
        (:file "runtime-tests-c")          ; stop-reader-threads, add-message-log, add-prompt-history, wait-for-channel — part III

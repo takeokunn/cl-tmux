@@ -173,12 +173,7 @@
 
 (test resolve-target-nil-returns-current-defaults
   "resolve-target with NIL target returns the current-* defaults."
-  (let* ((p1   (make-no-pty-pane 1 0 0 80 24))
-         (win  (make-window :id 1 :name "w" :width 80 :height 24
-                            :panes (list p1)))
-         (sess (make-session :id 1 :name "s" :windows (list win))))
-    (window-select-pane win p1)
-    (session-select-window sess win)
+  (multiple-value-bind (sess win p1) (make-single-pane-session)
     (multiple-value-bind (rs rw rp)
         (cl-tmux::resolve-target nil nil
                                  :current-session sess
@@ -190,12 +185,8 @@
 
 (test resolve-target-session-by-name
   "resolve-target resolves a named session from the registry."
-  (let* ((p1   (make-no-pty-pane 1 0 0 80 24))
-         (win  (make-window :id 1 :name "w" :width 80 :height 24
-                            :panes (list p1)))
-         (sess (make-session :id 1 :name "mysess" :windows (list win))))
-    (window-select-pane win p1)
-    (session-select-window sess win)
+  (multiple-value-bind (sess win p1)
+      (make-single-pane-session :session-name "mysess")
     (let ((registry (list (cons "mysess" sess))))
       (multiple-value-bind (rs rw rp)
           (cl-tmux::resolve-target registry "mysess")
@@ -205,6 +196,7 @@
 
 (test resolve-target-session-colon-window
   "resolve-target resolves 'sess:win' to the named session and window."
+  ;; Two-window session — needs manual construction.
   (let* ((p1   (make-no-pty-pane 1 0 0 80 24))
          (w1   (make-window :id 1 :name "editor" :width 80 :height 24
                             :panes (list p1)))
@@ -222,6 +214,7 @@
 
 (test resolve-target-full-path
   "resolve-target resolves 'sess:win.pane' fully."
+  ;; Two-pane window — needs manual construction.
   (let* ((p1   (make-no-pty-pane 1  0 0 40 24))
          (p2   (make-no-pty-pane 2 41 0 40 24))
          (win  (make-window :id 1 :name "w" :width 81 :height 24
@@ -238,6 +231,7 @@
 (test resolve-target-bare-pane-sigil-resolves-pane
   "resolve-target with a BARE %N resolves that pane in the current window —
    tmux's position-independent pane id, not a session fallback."
+  ;; Two-pane window — needs manual construction.
   (let* ((p1   (make-no-pty-pane 1  0 0 40 24))
          (p2   (make-no-pty-pane 2 41 0 40 24))
          (win  (make-window :id 1 :name "w" :width 81 :height 24
@@ -254,12 +248,8 @@
 
 (test resolve-target-unknown-session-falls-back-to-current
   "resolve-target falls back to current-session when target session is unknown."
-  (let* ((p1   (make-no-pty-pane 1 0 0 80 24))
-         (win  (make-window :id 1 :name "w" :width 80 :height 24
-                            :panes (list p1)))
-         (sess (make-session :id 1 :name "s" :windows (list win))))
-    (window-select-pane win p1)
-    (session-select-window sess win)
+  (multiple-value-bind (sess _win _p1) (make-single-pane-session)
+    (declare (ignore _win _p1))
     (multiple-value-bind (rs _rw _rp)
         (cl-tmux::resolve-target nil "nonexistent"
                                  :current-session sess)

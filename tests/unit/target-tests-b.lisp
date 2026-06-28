@@ -187,12 +187,7 @@
 
 (test resolve-target-empty-string-uses-current-defaults
   "resolve-target with an empty string behaves identically to NIL target."
-  (let* ((p1   (make-no-pty-pane 1 0 0 80 24))
-         (win  (make-window :id 1 :name "w" :width 80 :height 24
-                            :panes (list p1)))
-         (sess (make-session :id 1 :name "s" :windows (list win))))
-    (window-select-pane win p1)
-    (session-select-window sess win)
+  (multiple-value-bind (sess win p1) (make-single-pane-session)
     (multiple-value-bind (rs rw rp)
         (cl-tmux::resolve-target nil ""
                                  :current-session sess

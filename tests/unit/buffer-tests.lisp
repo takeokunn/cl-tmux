@@ -315,3 +315,59 @@
         "list returns texts, most recent first")
     (is (= 2 (length (cl-tmux/buffer:buffer-names))) "two auto-named buffers")
     (is (every #'stringp (cl-tmux/buffer:buffer-names)) "names are strings")))
+
+;;; ── rename-paste-buffer direct unit tests ───────────────────────────────────
+;;;
+;;; These tests cover the cases identified in the audit:
+;;;   1. Rename with an explicit source name
+;;;   2. Rename when source-name is NIL (rename the most recent buffer)
+;;;   3. Source and target names are the same (no-op, returns text)
+;;;   4. Source does not exist (returns NIL)
+
+(test rename-paste-buffer-renames-by-name
+  "rename-paste-buffer renames the named buffer and returns its text."
+  (with-empty-buffers
+    (cl-tmux/buffer:add-paste-buffer "content" "old")
+    (let ((result (cl-tmux/buffer:rename-paste-buffer "old" "new")))
+      (is (string= "content" result)
+          "rename must return the preserved text")
+      (is (null (cl-tmux/buffer:get-buffer-by-name "old"))
+          "old name must be absent after rename")
+      (is (string= "content" (cl-tmux/buffer:get-buffer-by-name "new"))
+          "text must be accessible under the new name"))))
+
+(test rename-paste-buffer-nil-source-renames-most-recent
+  "rename-paste-buffer with NIL source renames the most recent buffer."
+  (with-empty-buffers
+    (cl-tmux/buffer:add-paste-buffer "older")
+    (cl-tmux/buffer:add-paste-buffer "newest")
+    (let ((result (cl-tmux/buffer:rename-paste-buffer nil "myname")))
+      (is (string= "newest" result)
+          "must return the text of the most recent buffer")
+      (is (string= "newest" (cl-tmux/buffer:get-buffer-by-name "myname"))
+          "most recent buffer must now be accessible as 'myname'")
+      (is (string= "older" (cl-tmux/buffer:get-paste-buffer
+                             (1- (length (cl-tmux/buffer:list-paste-buffers)))))
+          "older buffer must remain unchanged"))))
+
+(test rename-paste-buffer-same-name-is-noop
+  "rename-paste-buffer returns the text without reordering when source = target."
+  (with-empty-buffers
+    (cl-tmux/buffer:add-paste-buffer "value" "foo")
+    (let ((result (cl-tmux/buffer:rename-paste-buffer "foo" "foo")))
+      (is (string= "value" result)
+          "same-name rename must return the text")
+      (is (string= "value" (cl-tmux/buffer:get-buffer-by-name "foo"))
+          "buffer must still exist under the same name")
+      (is (= 1 (length (cl-tmux/buffer:list-paste-buffers)))
+          "must not create a duplicate entry"))))
+
+(test rename-paste-buffer-absent-source-returns-nil
+  "rename-paste-buffer returns NIL when the source buffer does not exist."
+  (with-empty-buffers
+    (cl-tmux/buffer:add-paste-buffer "other" "something")
+    (let ((result (cl-tmux/buffer:rename-paste-buffer "nonexistent" "newname")))
+      (is (null result)
+          "absent source must return NIL")
+      (is (null (cl-tmux/buffer:get-buffer-by-name "newname"))
+          "target name must not appear when source was absent"))))

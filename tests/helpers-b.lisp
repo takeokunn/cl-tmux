@@ -858,7 +858,7 @@
          (cl-tmux/prompt:*prompt* nil)
          (cl-tmux/prompt:*overlay* nil)
          (cl-tmux/prompt:*overlay-scroll-offset* 0)
-         (cl-tmux/prompt:*overlay-shown-at* 0)
+         (cl-tmux/prompt::*overlay-shown-at* 0)
          (cl-tmux/prompt:*display-panes-active* nil)
          (cl-tmux/prompt:*active-menu* nil)
          (cl-tmux/prompt:*active-popup* nil))
@@ -958,3 +958,50 @@
          "pane-pipe-output-thread must be NIL after pipe-pane-close")
      (is (null (cl-tmux/model:pane-pipe-process ,pane))
          "pane-pipe-process must be NIL after pipe-pane-close")))
+
+;;; ── Single-pane session fixture ──────────────────────────────────────────────
+;;;
+;;; Many target-resolution and session tests need the same fixture:
+;;;   one no-PTY pane + one window + one session, with focus properly set.
+;;; make-single-pane-session encodes that pattern once, eliminating the
+;;; ≥9 repetitions of the 5-line inline boilerplate.
+
+(defun make-single-pane-session (&key (session-name "s") (window-name "w")
+                                       (width 80) (height 24)
+                                       (session-id 1) (window-id 1) (pane-id 1))
+  "Build and return a minimal (session window pane) triple.
+   The pane is no-PTY (fd = -1, pid = -1) sized WIDTH × HEIGHT.
+   The window wraps the pane in a leaf tree, with the pane as active.
+   The session holds the window as its sole entry and active window.
+   Returns (values session window pane).
+   Callers that only need the session can ignore the extra values."
+  (let* ((pane (make-pane :id pane-id :x 0 :y 0 :width width :height height
+                           :fd -1 :pid -1 :screen (make-screen width height)))
+         (win  (make-window :id window-id :name window-name
+                            :width width :height height
+                            :panes (list pane)
+                            :tree  (make-layout-leaf pane)
+                            :active pane))
+         (sess (make-session :id session-id :name session-name
+                             :windows (list win) :active win)))
+    (window-select-pane win pane)
+    (session-select-window sess win)
+    (values sess win pane)))
+
+;;; ── Session + env-var fixture macro ──────────────────────────────────────────
+;;;
+;;; Three session-environment-value tests share the same outer shape:
+;;;   (let ((sess ...) (name ...))
+;;;     (with-temporary-posix-environment-variable (name "from-process")
+;;;       <body using sess and name>))
+;;; with-session-and-env-var encodes that pattern once.
+
+(defmacro with-session-and-env-var ((sess-var name-var env-name env-value) &body body)
+  "Bind SESS-VAR to a fresh empty session and NAME-VAR to ENV-NAME.
+   Sets ENV-NAME to ENV-VALUE in the real process environment for the duration
+   of BODY, then restores the old value (or unsets it if it was absent).
+   Uses with-temporary-posix-environment-variable for POSIX isolation."
+  `(let ((,sess-var (make-session :id 1 :name "s"))
+         (,name-var ,env-name))
+     (with-temporary-posix-environment-variable (,name-var ,env-value)
+       ,@body)))

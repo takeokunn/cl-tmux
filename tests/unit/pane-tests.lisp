@@ -358,3 +358,65 @@
   (let ((win (make-window :id 1 :name "w" :panes nil)))
     (is (null (pane-at-position win 0 0))
         "pane-at-position on empty window must return NIL")))
+
+;;; ── pane-live-p direct unit tests ────────────────────────────────────────────
+
+(test pane-live-p-true-when-fd-positive
+  "pane-live-p returns T when the pane has a positive PTY master fd."
+  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 80 :height 24
+                          :fd 5 :pid 42 :screen (make-screen 80 24))))
+    (is-true (pane-live-p pane)
+             "pane with fd > 0 must be live")))
+
+(test pane-live-p-false-when-fd-negative
+  "pane-live-p returns NIL when the pane's fd is -1 (no PTY, e.g. input-only pane)."
+  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 80 :height 24
+                          :fd -1 :pid -1 :screen (make-screen 80 24))))
+    (is-false (pane-live-p pane)
+              "pane with fd = -1 must not be live")))
+
+(test pane-live-p-false-when-fd-zero
+  "pane-live-p returns NIL when fd is 0 (fd 0 is stdin, not a PTY master)."
+  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 80 :height 24
+                          :fd 0 :pid -1 :screen (make-screen 80 24))))
+    (is-false (pane-live-p pane)
+              "pane with fd = 0 must not be reported as live")))
+
+(test pane-live-p-false-for-nil
+  "pane-live-p returns NIL when passed NIL."
+  (is-false (pane-live-p nil)
+            "pane-live-p NIL must return NIL"))
+
+;;; ── pane-pipe-active-p direct unit tests ─────────────────────────────────────
+
+(test pane-pipe-active-p-false-when-all-nil
+  "pane-pipe-active-p returns NIL when all pipe slots are NIL."
+  (let ((pane (make-no-pty-pane 1 0 0 80 24)))
+    (is-false (pane-pipe-active-p pane)
+              "pane with no pipe resources must not be active")))
+
+(test pane-pipe-active-p-true-when-pipe-fd-set
+  "pane-pipe-active-p returns T when pipe-fd is set."
+  (let ((pane (make-no-pty-pane 1 0 0 80 24)))
+    (setf (pane-pipe-fd pane) :fake-fd)
+    (is-true (pane-pipe-active-p pane)
+             "pipe-fd set → pipe must be active")))
+
+(test pane-pipe-active-p-true-when-pipe-output-stream-set
+  "pane-pipe-active-p returns T when pipe-output-stream is set."
+  (let ((pane (make-no-pty-pane 1 0 0 80 24)))
+    (setf (pane-pipe-output-stream pane) :fake-stream)
+    (is-true (pane-pipe-active-p pane)
+             "pipe-output-stream set → pipe must be active")))
+
+(test pane-pipe-active-p-true-when-pipe-process-set
+  "pane-pipe-active-p returns T when pipe-process is set."
+  (let ((pane (make-no-pty-pane 1 0 0 80 24)))
+    (setf (pane-pipe-process pane) :fake-process)
+    (is-true (pane-pipe-active-p pane)
+             "pipe-process set → pipe must be active")))
+
+(test pane-pipe-active-p-false-for-nil
+  "pane-pipe-active-p returns NIL when passed NIL."
+  (is-false (pane-pipe-active-p nil)
+            "pane-pipe-active-p NIL must return NIL"))

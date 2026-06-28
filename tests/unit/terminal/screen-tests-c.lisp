@@ -150,3 +150,183 @@
         (is (equal expected (funcall accessor s)) "~A" desc)))))
 
 ;;; ── SUITE: copy-mode extra slots ─────────────────────────────────────────────
+
+(def-suite copy-mode-extra-slots
+  :description "copy-mode-entered-by-mouse-p and copy-exit-on-bottom slots"
+  :in terminal-suite)
+(in-suite copy-mode-extra-slots)
+
+(test copy-mode-entered-by-mouse-defaults-nil
+  "copy-mode-entered-by-mouse-p defaults to NIL on a fresh screen."
+  (with-screen (s 10 5)
+    (is-false (cl-tmux/terminal/types:screen-copy-mode-entered-by-mouse-p s)
+              "copy-mode-entered-by-mouse-p must be NIL initially")))
+
+(test copy-mode-entered-by-mouse-can-be-set
+  "copy-mode-entered-by-mouse-p can be set and cleared via setf."
+  (with-screen (s 10 5)
+    (setf (cl-tmux/terminal/types:screen-copy-mode-entered-by-mouse-p s) t)
+    (is-true (cl-tmux/terminal/types:screen-copy-mode-entered-by-mouse-p s)
+             "must be T after setf t")
+    (setf (cl-tmux/terminal/types:screen-copy-mode-entered-by-mouse-p s) nil)
+    (is-false (cl-tmux/terminal/types:screen-copy-mode-entered-by-mouse-p s)
+              "must be NIL after setf nil")))
+
+(test copy-exit-on-bottom-defaults-nil
+  "copy-exit-on-bottom defaults to NIL on a fresh screen."
+  (with-screen (s 10 5)
+    (is-false (cl-tmux/terminal/types:screen-copy-exit-on-bottom s)
+              "copy-exit-on-bottom must be NIL initially")))
+
+(test copy-exit-on-bottom-can-be-set
+  "copy-exit-on-bottom can be set and cleared via setf."
+  (with-screen (s 10 5)
+    (setf (cl-tmux/terminal/types:screen-copy-exit-on-bottom s) t)
+    (is-true (cl-tmux/terminal/types:screen-copy-exit-on-bottom s)
+             "must be T after setf t")
+    (setf (cl-tmux/terminal/types:screen-copy-exit-on-bottom s) nil)
+    (is-false (cl-tmux/terminal/types:screen-copy-exit-on-bottom s)
+              "must be NIL after setf nil")))
+
+;;; ── SUITE: OSC 10/11 default colour slots ─────────────────────────────────
+
+(def-suite osc-default-color-slots
+  :description "screen-osc-default-fg and screen-osc-default-bg slot contracts"
+  :in terminal-suite)
+(in-suite osc-default-color-slots)
+
+(test osc-default-fg-initial-value-matches-constant
+  "screen-osc-default-fg on a fresh screen equals +osc-default-fg+ (white)."
+  (with-screen (s 10 5)
+    (is (= cl-tmux/terminal/types:+osc-default-fg+
+           (cl-tmux/terminal/types:screen-osc-default-fg s))
+        "osc-default-fg must equal +osc-default-fg+ (#xFFFFFF)")))
+
+(test osc-default-bg-initial-value-matches-constant
+  "screen-osc-default-bg on a fresh screen equals +osc-default-bg+ (black)."
+  (with-screen (s 10 5)
+    (is (= cl-tmux/terminal/types:+osc-default-bg+
+           (cl-tmux/terminal/types:screen-osc-default-bg s))
+        "osc-default-bg must equal +osc-default-bg+ (#x000000)")))
+
+(test osc-default-fg-can-be-set-and-reset-via-sequence
+  "OSC 10 ; #RRGGBB changes osc-default-fg; OSC 110 resets it to white."
+  (with-screen (s 10 5)
+    ;; Set foreground to a custom colour via OSC 10 ; #112233 ST
+    (feed s (format nil "~C]10;#112233~C\\" #\Escape #\Escape))
+    (is (= #x112233 (cl-tmux/terminal/types:screen-osc-default-fg s))
+        "OSC 10 must update osc-default-fg to #x112233")
+    ;; Reset via OSC 110 ST
+    (feed s (format nil "~C]110~C\\" #\Escape #\Escape))
+    (is (= cl-tmux/terminal/types:+osc-default-fg+
+           (cl-tmux/terminal/types:screen-osc-default-fg s))
+        "OSC 110 must reset osc-default-fg to +osc-default-fg+")))
+
+(test osc-default-bg-can-be-set-and-reset-via-sequence
+  "OSC 11 ; #RRGGBB changes osc-default-bg; OSC 111 resets it to black."
+  (with-screen (s 10 5)
+    ;; Set background to a custom colour via OSC 11 ; #AABBCC ST
+    (feed s (format nil "~C]11;#aabbcc~C\\" #\Escape #\Escape))
+    (is (= #xAABBCC (cl-tmux/terminal/types:screen-osc-default-bg s))
+        "OSC 11 must update osc-default-bg to #xAABBCC")
+    ;; Reset via OSC 111 ST
+    (feed s (format nil "~C]111~C\\" #\Escape #\Escape))
+    (is (= cl-tmux/terminal/types:+osc-default-bg+
+           (cl-tmux/terminal/types:screen-osc-default-bg s))
+        "OSC 111 must reset osc-default-bg to +osc-default-bg+")))
+
+;;; ── SUITE: OSC 8 current-hyperlink slot ──────────────────────────────────
+
+(def-suite current-hyperlink-slots
+  :description "screen-current-hyperlink slot: nil default, set via OSC 8, clear via OSC 8 empty"
+  :in terminal-suite)
+(in-suite current-hyperlink-slots)
+
+(test screen-current-hyperlink-defaults-nil
+  "screen-current-hyperlink is NIL on a fresh screen."
+  (with-screen (s 10 5)
+    (is (null (cl-tmux/terminal/types:screen-current-hyperlink s))
+        "current-hyperlink must be NIL on a fresh screen")))
+
+(test screen-current-hyperlink-set-by-osc8
+  "OSC 8 ; ; URI sets screen-current-hyperlink to the URI string."
+  (with-screen (s 10 5)
+    (feed s (format nil "~C]8;;https://example.com~C\\" #\Escape #\Escape))
+    (is (string= "https://example.com"
+                 (cl-tmux/terminal/types:screen-current-hyperlink s))
+        "current-hyperlink must be the URI after OSC 8 ; ; URI")))
+
+(test screen-current-hyperlink-cleared-by-osc8-empty
+  "OSC 8 ; ; (empty URI) clears screen-current-hyperlink back to NIL."
+  (with-screen (s 10 5)
+    (feed s (format nil "~C]8;;https://example.com~C\\" #\Escape #\Escape))
+    (is (cl-tmux/terminal/types:screen-current-hyperlink s)
+        "pre-condition: hyperlink must be set")
+    ;; Clear with empty URI
+    (feed s (format nil "~C]8;;~C\\" #\Escape #\Escape))
+    (is (null (cl-tmux/terminal/types:screen-current-hyperlink s))
+        "current-hyperlink must be NIL after OSC 8 with empty URI")))
+
+(test screen-current-hyperlink-stamped-onto-written-cells
+  "Characters written while a hyperlink is active carry the URI in their cell hyperlink slot."
+  (with-screen (s 10 5)
+    (feed s (format nil "~C]8;;https://cl.org~C\\" #\Escape #\Escape))
+    (feed s "AB")
+    ;; The hyperlink must be stamped on both cells
+    (is (string= "https://cl.org"
+                 (cl-tmux/terminal/types:cell-hyperlink (cell-at s 0 0)))
+        "cell (0,0) must carry the hyperlink URI")
+    (is (string= "https://cl.org"
+                 (cl-tmux/terminal/types:cell-hyperlink (cell-at s 1 0)))
+        "cell (1,0) must carry the hyperlink URI")
+    ;; After clearing the hyperlink, new cells must have NIL
+    (feed s (format nil "~C]8;;~C\\" #\Escape #\Escape))
+    (feed s "C")
+    (is (null (cl-tmux/terminal/types:cell-hyperlink (cell-at s 2 0)))
+        "cell (2,0) after clearing hyperlink must have NIL")))
+
+;;; ── SUITE: %clear-line-wrapped ────────────────────────────────────────────
+
+(def-suite clear-line-wrapped-suite
+  :description "%clear-line-wrapped: removes wrap flag, is a no-op when absent"
+  :in terminal-suite)
+(in-suite clear-line-wrapped-suite)
+
+(test clear-line-wrapped-removes-set-flag
+  "%clear-line-wrapped removes a wrap flag that was previously set."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/types:%mark-line-wrapped s 2)
+    (is-true (cl-tmux/terminal/types:%line-wrapped-p s 2)
+             "pre-condition: row 2 must be marked wrapped")
+    (cl-tmux/terminal/types:%clear-line-wrapped s 2)
+    (is-false (cl-tmux/terminal/types:%line-wrapped-p s 2)
+              "row 2 must not be wrapped after %clear-line-wrapped")))
+
+(test clear-line-wrapped-is-noop-on-unmarked-row
+  "%clear-line-wrapped on a row that was never marked is a no-op (no error)."
+  (with-screen (s 10 5)
+    ;; No hash-table exists yet; calling clear on an unmarked row must not signal.
+    (finishes (cl-tmux/terminal/types:%clear-line-wrapped s 3))
+    (is-false (cl-tmux/terminal/types:%line-wrapped-p s 3)
+              "unmarked row must still be unwrapped after clear")))
+
+(test clear-line-wrapped-does-not-disturb-other-rows
+  "%clear-line-wrapped removes only the specified row's flag."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/types:%mark-line-wrapped s 0)
+    (cl-tmux/terminal/types:%mark-line-wrapped s 1)
+    (cl-tmux/terminal/types:%mark-line-wrapped s 2)
+    (cl-tmux/terminal/types:%clear-line-wrapped s 1)
+    (is-true  (cl-tmux/terminal/types:%line-wrapped-p s 0) "row 0 must remain wrapped")
+    (is-false (cl-tmux/terminal/types:%line-wrapped-p s 1) "row 1 must be cleared")
+    (is-true  (cl-tmux/terminal/types:%line-wrapped-p s 2) "row 2 must remain wrapped")))
+
+(test clear-line-wrapped-is-noop-when-no-hash-table
+  "%clear-line-wrapped on a screen with no wrapped-rows hash-table is silent."
+  (with-screen (s 10 5)
+    ;; Fresh screen has nil wrapped-rows — ensure there is no error.
+    (is (null (cl-tmux/terminal/types:screen-wrapped-rows s))
+        "pre-condition: fresh screen has no wrap table")
+    (finishes (cl-tmux/terminal/types:%clear-line-wrapped s 0))
+    (is-false (cl-tmux/terminal/types:%line-wrapped-p s 0)
+              "row 0 must be unwrapped on a nil-table screen")))

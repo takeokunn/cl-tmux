@@ -54,6 +54,14 @@
         *overlay-shown-at* (get-universal-time)
         *display-panes-active* nil))
 
+(defun show-display-panes-overlay (text)
+  "Like SHOW-TRANSIENT-OVERLAY but activates *DISPLAY-PANES-ACTIVE* so the
+   renderer draws per-pane index numbers over the session frame."
+  (setf *overlay* text
+        *overlay-scroll-offset* 0
+        *overlay-shown-at* (get-universal-time)
+        *display-panes-active* t))
+
 (defun clear-overlay ()
   "Dismiss the active overlay and reset the scroll offset."
   (setf *overlay* nil
