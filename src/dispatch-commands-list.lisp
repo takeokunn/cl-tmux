@@ -108,7 +108,7 @@
 
 (defun %lc-alias (canonical-name)
   "Return the tmux short alias for CANONICAL-NAME, or NIL when none exists."
-  (loop for (alias . canon) in *tmux-command-aliases*
+  (loop for (alias . canon) in cl-tmux/config::*tmux-command-aliases*
         when (string= canon canonical-name) return alias))
 
 (defun %lc-usage (canonical-name)
@@ -127,7 +127,7 @@
    Returns (values :ambiguous message-string) on ambiguous prefix.
    Returns (values :unknown nil) when no match found."
   (let* ((all (%lc-all-names))
-         (alias-canon (%canonical-command-name input)))
+         (alias-canon (cl-tmux/config::%canonical-command-name input)))
     (cond
       ;; Exact canonical match
       ((find input all :test #'string=)
