@@ -272,33 +272,18 @@
                              :char #\X :fg 7 :bg 0 :attrs 0 :width 1))))
     (values sess win screen)))
 
-(test cmd-clear-history-clears-target-pane-scrollback
-  "clear-history -t :w clears the target pane's scrollback."
-  (multiple-value-bind (sess win screen) (%clear-history-fixture)
-    (declare (ignore win))
-    (with-command-test-state (sess)
-      (cl-tmux::%cmd-clear-history-arg sess '("-t" ":w"))
-      (is (null (cl-tmux/terminal/types:screen-scrollback screen))
-          "clear-history -t must empty the target pane's scrollback"))))
-
-(test cmd-clear-history-defaults-to-active-pane
-  "clear-history with no -t clears the active pane's scrollback."
-  (multiple-value-bind (sess win screen) (%clear-history-fixture)
-    (declare (ignore win))
-    (with-command-test-state (sess)
-      (cl-tmux::%cmd-clear-history-arg sess '())
-      (is (null (cl-tmux/terminal/types:screen-scrollback screen))
-          "clear-history must default to the active pane and empty its scrollback"))))
-
-(test cmd-clear-history-h-flag-is-accepted
-  "clear-history -H (also clear hyperlinks, tmux args Ht:) is accepted and clears
-   the active pane's scrollback."
-  (multiple-value-bind (sess win screen) (%clear-history-fixture)
-    (declare (ignore win))
-    (with-command-test-state (sess)
-      (cl-tmux::%cmd-clear-history-arg sess '("-H"))
-      (is (null (cl-tmux/terminal/types:screen-scrollback screen))
-          "clear-history -H must clear the scrollback"))))
+(test cmd-clear-history-all-forms-clear-scrollback
+  "clear-history clears the target pane's scrollback for any flag combination.
+   Each row: (args expected-message)."
+  (dolist (row '((("-t" ":w") "clear-history -t must empty the target pane's scrollback")
+                 (nil         "clear-history must default to the active pane and empty its scrollback")
+                 (("-H")      "clear-history -H must clear the scrollback")))
+    (destructuring-bind (args msg) row
+      (multiple-value-bind (sess win screen) (%clear-history-fixture)
+        (declare (ignore win))
+        (with-command-test-state (sess)
+          (cl-tmux::%cmd-clear-history-arg sess args)
+          (is (null (cl-tmux/terminal/types:screen-scrollback screen)) msg))))))
 
 ;;; ── rotate-window (scriptable %cmd-rotate-window-arg) ────────────────────────
 
