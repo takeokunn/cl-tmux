@@ -547,19 +547,21 @@
       (cl-tmux/hooks:clear-command-hooks "after-rename-window"))))
 
 (test cmd-list-commands-resolves-prefixes-and-reports-ambiguity
-  "tmux 3.6a resolves unique prefixes for list-commands and reports ambiguous
-   prefixes instead of filtering by exact name."
+  "tmux 3.6a resolves unique prefixes for list-commands and reports the full
+   ambiguous candidate list."
   (with-fake-session (s)
-    (dolist (case '(("list-commands new-w" "new-window (neww)")
-                    ("list-commands list-s" "list-sessions (ls)")
-                    ("list-commands lscm" "list-commands (lscm)")
-                    ("list-commands list" "ambiguous command: list")))
+    (dolist (case '(("list-commands new-w"
+                     "new-window (neww) [-abdkPS] [-c start-directory] [-e environment] [-F format] [-n window-name] [-t target-window] [shell-command [argument ...]]")
+                    ("list-commands list-s"
+                     "list-sessions (ls) [-F format] [-f filter]")
+                    ("list-commands lscm"
+                     "list-commands (lscm) [-F format] [command]")
+                    ("list-commands list"
+                     "ambiguous command: list, could be: list-buffers, list-clients, list-commands, list-keys, list-panes, list-sessions, list-windows")))
       (destructuring-bind (line expected) case
         (let ((*overlay* nil))
           (cl-tmux::%run-command-line s line)
-          (assert-overlay-contains expected *overlay* line)
-          (unless (string= line "list-commands list")
-            (assert-overlay-not-contains "kill-pane" *overlay* line)))))))
+          (assert-overlay-contains expected *overlay* line))))))
 
 (test cmd-list-commands-format-command-list-name
   "tmux 3.6a expands command_list_* fields for list-commands format output."

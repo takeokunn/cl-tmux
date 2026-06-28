@@ -75,6 +75,7 @@
                 #:session-name
                 #:pane-id
                 #:pane-x #:pane-y #:pane-width #:pane-height #:pane-fd #:pane-pid
+                #:pane-live-p
                 #:pane-neighbor
                 #:pane-at-position
                 #:apply-named-layout
