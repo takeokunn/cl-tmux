@@ -8,6 +8,182 @@
 
 (declaim (special cl-tmux::*clients*))
 
+;;; ── list-commands usage string table ─────────────────────────────────────────
+;;;
+;;; Maps canonical-name → usage-flags-string matching the real tmux cmd_entry.args
+;;; field so `list-commands -F #{command_list_usage}` output is script-compatible.
+
+(defparameter *command-usage-table*
+  '(("attach-session"       . "[-dErx] [-c working-directory] [-f flags] [-t target-session]")
+    ("bind-key"             . "[-nrN] [-T key-table] [-X] key [note] command [argument ...]")
+    ("break-pane"           . "[-abdP] [-F format] [-n window-name] [-s src-pane] [-t dst-window]")
+    ("capture-pane"         . "[-aCeJNpPqS] [-b buffer-name] [-E end-line] [-s src-pane] [-S start-line] [-t target-pane]")
+    ("choose-buffer"        . "[-GNrZ] [-F format] [-f filter] [-O sort-order] [-t target-pane] [template]")
+    ("choose-client"        . "[-GNrZ] [-F format] [-f filter] [-O sort-order] [-t target-pane] [template]")
+    ("choose-tree"          . "[-GNrsw] [-F format] [-f filter] [-O sort-order] [-t target-pane] [template]")
+    ("clear-history"        . "[-H] [-t target-pane]")
+    ("clear-prompt-history" . "[-T prompt-type]")
+    ("clock-mode"           . "[-t target-pane]")
+    ("command-prompt"       . "[-1bFikN] [-I inputs] [-p prompts] [-t target-client] [-T prompt-type] [template]")
+    ("confirm-before"       . "[-b] [-p prompt] [-t target-client] command")
+    ("copy-mode"            . "[-eHMuq] [-s src-pane] [-t target-pane]")
+    ("customize-mode"       . "[-NZ] [-F format] [-f filter] [-t target-pane]")
+    ("delete-buffer"        . "[-b buffer-name]")
+    ("detach-client"        . "[-aP] [-E shell-command] [-s target-session] [-t target-client]")
+    ("display-menu"         . "[-O] [-b border-lines] [-c target-client] [-C menu-cursor] [-H selected-style] [-s style] [-S separator-style] [-t target-pane] [-T title] [-x position] [-y position] name key command ...")
+    ("display-message"      . "[-aINpv] [-c target-client] [-d delay] [-F format] [-l message] [-t target-pane] [message]")
+    ("display-panes"        . "[-bN] [-d duration] [-F format] [-t target-client] [template]")
+    ("display-popup"        . "[-BCE] [-b border-lines] [-c target-client] [-d start-directory] [-e environment] [-h height] [-s style] [-S border-style] [-t target-pane] [-T title] [-w width] [-x position] [-y position] [shell-command [argument ...]]")
+    ("find-window"          . "[-CimnNrTZ] [-F format] [-t target-pane] match-string")
+    ("has-session"          . "[-t target-session]")
+    ("if-shell"             . "[-bF] [-t target-pane] shell-command command [command]")
+    ("join-pane"            . "[-bdfhv] [-l size] [-s src-pane] [-t dst-pane]")
+    ("kill-pane"            . "[-a] [-t target-pane]")
+    ("kill-server"          . "")
+    ("kill-session"         . "[-aC] [-t target-session]")
+    ("kill-window"          . "[-a] [-t target-window]")
+    ("last-pane"            . "[-deZ] [-t target-window]")
+    ("last-window"          . "[-t target-session]")
+    ("link-window"          . "[-adbk] [-s src-window] [-t dst-window]")
+    ("list-buffers"         . "[-F format] [-f filter]")
+    ("list-clients"         . "[-F format] [-f filter] [-t target-session]")
+    ("list-commands"        . "[-F format] [command]")
+    ("list-keys"            . "[-1aN] [-P prefix-string] [-T key-table] [key]")
+    ("list-panes"           . "[-as] [-F format] [-f filter] [-t target]")
+    ("list-sessions"        . "[-F format] [-f filter]")
+    ("list-windows"         . "[-a] [-F format] [-f filter] [-t target-session]")
+    ("load-buffer"          . "[-b buffer-name] [-t target-client] path")
+    ("lock-client"          . "[-t target-client]")
+    ("lock-server"          . "")
+    ("lock-session"         . "[-at] [-t target-session]")
+    ("move-pane"            . "[-bdfhv] [-l size] [-s src-pane] [-t dst-pane]")
+    ("move-window"          . "[-abrdk] [-s src-window] [-t dst-window]")
+    ("new-session"          . "[-AdDEPX] [-c start-directory] [-e environment] [-f flags] [-F format] [-n window-name] [-s session-name] [-t target-session] [-x width] [-y height] [shell-command [argument ...]]")
+    ("new-window"           . "[-abdkPS] [-c start-directory] [-e environment] [-F format] [-n window-name] [-t target-window] [shell-command [argument ...]]")
+    ("next-layout"          . "[-t target-window]")
+    ("next-window"          . "[-a] [-t target-session]")
+    ("paste-buffer"         . "[-dpr] [-b buffer-name] [-s separator] [-t target-pane]")
+    ("pipe-pane"            . "[-IOo] [-t target-pane] [shell-command]")
+    ("previous-layout"      . "[-t target-window]")
+    ("previous-window"      . "[-a] [-t target-session]")
+    ("refresh-client"       . "[-cDlLRSU] [-A pane:state] [-B name:what:format] [-C size] [-f flags] [-l target] [-t target-client] [adjustment]")
+    ("rename-session"       . "[-t target-session] new-name")
+    ("rename-window"        . "[-t target-window] new-name")
+    ("resize-pane"          . "[-DLMRUZ] [-t target-pane] [-x width] [-y height] [adjustment]")
+    ("resize-window"        . "[-aADLRU] [-t target-window] [-x width] [-y height] [adjustment]")
+    ("respawn-pane"         . "[-k] [-c start-directory] [-e environment] [-t target-pane] [shell-command [argument ...]]")
+    ("respawn-window"       . "[-k] [-c start-directory] [-e environment] [-t target-window] [shell-command [argument ...]]")
+    ("rotate-window"        . "[-DUZ] [-t target-window]")
+    ("run-shell"            . "[-bC] [-c shell-command] [-d delay] [-t target-pane]")
+    ("save-buffer"          . "[-a] [-b buffer-name] path")
+    ("select-layout"        . "[-Enop] [-t target-window] [layout-name]")
+    ("select-pane"          . "[-DdegGlLlMmRUZ] [-T title] [-t target-pane]")
+    ("select-window"        . "[-lnpT] [-t target-window]")
+    ("send-keys"            . "[-FHKlMRX] [-N repeat-count] [-t target-pane] key ...")
+    ("send-prefix"          . "[-2] [-t target-pane]")
+    ("server-access"        . "[-adlrw] [user]")
+    ("set-buffer"           . "[-aw] [-b buffer-name] [-n new-buffer-name] [-t target-client] data")
+    ("set-environment"      . "[-Fhgru] [-t target-session] name [value]")
+    ("set-hook"             . "[-agpRuw] [-t target-pane] hook-name [command]")
+    ("set-option"           . "[-aFgopqsuUw] [-t target-pane] option [value]")
+    ("set-window-option"    . "[-aFgoqu] [-t target-window] option [value]")
+    ("show-buffer"          . "[-b buffer-name]")
+    ("show-environment"     . "[-hgs] [-t target-session] [name]")
+    ("show-messages"        . "[-JT] [-t target-client]")
+    ("show-options"         . "[-AgHpqsvw] [-t target-pane] [option]")
+    ("show-window-options"  . "[-gvA] [-t target-window] [option]")
+    ("show-session-options" . "[-gvA] [-t target-session] [option]")
+    ("show-server-options"  . "[-gvA] [option]")
+    ("source-file"          . "[-Fnqv] [path ...]")
+    ("split-window"         . "[-bdfhIvPZ] [-c start-directory] [-e environment] [-F format] [-l size] [-t target-pane] [shell-command [argument ...]]")
+    ("start-server"         . "")
+    ("suspend-client"       . "[-t target-client]")
+    ("swap-pane"            . "[-dDUZ] [-s src-pane] [-t dst-pane]")
+    ("swap-window"          . "[-d] [-s src-window] [-t dst-window]")
+    ("switch-client"        . "[-ElnprZ] [-c target-client] [-f flags] [-t target-session] [-T key-table]")
+    ("unbind-key"           . "[-anq] [-T key-table] key")
+    ("unlink-window"        . "[-k] [-t target-window]")
+    ("wait-for"             . "[-SLU] channel"))
+  "Maps canonical command name to tmux usage flags string.")
+
+(defun %lc-alias (canonical-name)
+  "Return the tmux short alias for CANONICAL-NAME, or NIL when none exists."
+  (loop for (alias . canon) in *tmux-command-aliases*
+        when (string= canon canonical-name) return alias))
+
+(defun %lc-usage (canonical-name)
+  "Return the usage flags string for CANONICAL-NAME, or empty string when unknown."
+  (or (cdr (assoc canonical-name *command-usage-table* :test #'string=))
+      ""))
+
+(defun %lc-all-names ()
+  "Return all list-commands canonical names in sorted order."
+  (sort (mapcar #'car *command-usage-table*) #'string<))
+
+(defun %lc-resolve-name (input)
+  "Resolve INPUT for list-commands.
+   Returns (values :exact canonical-name) on exact match (name or alias).
+   Returns (values :prefix canonical-name) on unique prefix match.
+   Returns (values :ambiguous message-string) on ambiguous prefix.
+   Returns (values :unknown nil) when no match found."
+  (let* ((all (%lc-all-names))
+         (alias-canon (%canonical-command-name input)))
+    (cond
+      ;; Exact canonical match
+      ((find input all :test #'string=)
+       (values :exact input))
+      ;; Exact alias match (alias-canon differs from input = known alias)
+      ((not (string= alias-canon input))
+       (values :exact alias-canon))
+      (t
+       ;; Prefix search among canonical names
+       (let ((matches (remove-if-not
+                       (lambda (name)
+                         (and (>= (length name) (length input))
+                              (string= input name :end2 (length input))))
+                       all)))
+         (cond
+           ((null matches) (values :unknown nil))
+           ((= 1 (length matches)) (values :prefix (first matches)))
+           (t (values :ambiguous
+                      (format nil "ambiguous command: ~A, could be: ~{~A~^, ~}"
+                              input (sort (copy-list matches) #'string<))))))))))
+
+(defun %lc-subst-all (string pat replacement)
+  "Replace all non-overlapping occurrences of PAT in STRING with REPLACEMENT."
+  (let ((plen (length pat))
+        (result (make-array 0 :element-type 'character :adjustable t :fill-pointer 0)))
+    (loop with i = 0
+          while (< i (length string))
+          do (let ((pos (search pat string :start2 i)))
+               (if pos
+                   (progn
+                     (loop for c across (subseq string i pos) do
+                       (vector-push-extend c result))
+                     (loop for c across replacement do
+                       (vector-push-extend c result))
+                     (setf i (+ pos plen)))
+                   (progn
+                     (loop for c across (subseq string i) do
+                       (vector-push-extend c result))
+                     (setf i (length string))))))
+    (coerce result 'string)))
+
+(defun %lc-render-command (canonical-name format-string)
+  "Render one command entry using FORMAT-STRING or default usage output."
+  (let* ((alias (%lc-alias canonical-name))
+         (usage (%lc-usage canonical-name)))
+    (if format-string
+        (let ((line format-string))
+          (setf line (%lc-subst-all line "#{command_list_name}" canonical-name))
+          (setf line (%lc-subst-all line "#{command_list_alias}" (or alias "")))
+          (setf line (%lc-subst-all line "#{command_list_usage}" usage))
+          line)
+        ;; Default: "name (alias) usage" or "name usage" when no alias.
+        (if alias
+            (format nil "~A (~A) ~A" canonical-name alias usage)
+            (format nil "~A ~A" canonical-name usage)))))
+
 (defun %list-command-public-names (&optional name)
   "Return sorted tmux public command names, optionally filtered by NAME."
   (let ((names (sort (copy-list *tmux-public-command-names*)
@@ -20,11 +196,7 @@
 
 (defun %format-list-command-entry (format-string command-name)
   "Format one list-commands row with the public command name."
-  (if format-string
-      (cl-tmux/format:expand-format
-       format-string
-       (list :command-list-name command-name))
-      command-name))
+  (%lc-render-command command-name format-string))
 
 (defun %filtered-overlay-lines-string (lines filter)
   "Return the subset of LINES matching FILTER as one overlay string."
@@ -303,15 +475,56 @@
   (%list-pane-overlay-lines session fmt target-str all-p session-p)
   (%show-list-overlay-rows rows filter))
 
-(define-list-overlay-handler %cmd-list-commands-arg (session args)
-  "list-commands [-F format] [command]: list tmux public commands one per line;
-   with a COMMAND name, show only that command (tmux's `list-commands <name>`)."
-  (flags positionals "F" :allowed-flags (#\F) :max-positionals 1
-         :message "list-commands: unsupported argument")
-  ((fmt  (%flag-value flags #\F))
-   (name (first positionals)))
-  (%list-command-overlay-lines fmt name)
-  (%show-list-overlay-rows rows nil))
+(defun %cmd-list-commands-arg (session args)
+  "list-commands [-F format] [command]: list tmux command signatures.
+   With no argument, lists all commands one per line.
+   With a command name/prefix, shows that command with prefix resolution.
+   -F format expands #{command_list_name}, #{command_list_alias},
+   #{command_list_usage} fields."
+  (declare (ignore session))
+  ;; Manual flag parse to produce tmux-compatible per-error messages.
+  (let ((format-string nil)
+        (positionals nil)
+        (error-message nil))
+    (loop with toks = args
+          while (and toks (not error-message))
+          for tok = (pop toks)
+          do (cond
+               ((string= tok "-F")
+                (if toks
+                    (setf format-string (pop toks))
+                    (setf error-message
+                          "command list-commands: -F expects an argument")))
+               ((and (>= (length tok) 2)
+                     (char= (char tok 0) #\-)
+                     (char/= (char tok 1) #\-))
+                (setf error-message
+                      (format nil "command list-commands: unknown flag ~A" tok)))
+               (t
+                (push tok positionals))))
+    (when error-message
+      (show-overlay error-message)
+      (return-from %cmd-list-commands-arg nil))
+    (setf positionals (nreverse positionals))
+    (when (> (length positionals) 1)
+      (show-overlay "command list-commands: too many arguments (need at most 1)")
+      (return-from %cmd-list-commands-arg nil))
+    (let ((name-input (first positionals)))
+      (if name-input
+          ;; Single command lookup with prefix/alias resolution.
+          (multiple-value-bind (kind result) (%lc-resolve-name name-input)
+            (ecase kind
+              (:exact     (show-overlay (%lc-render-command result format-string)))
+              (:prefix    (show-overlay (%lc-render-command result format-string)))
+              (:ambiguous (show-overlay result))
+              (:unknown   (show-overlay
+                           (format nil "unknown command: ~A" name-input)))))
+          ;; All commands: one line each.
+          (show-overlay
+           (with-output-to-string (s)
+             (dolist (name (%lc-all-names))
+               (write-string (%lc-render-command name format-string) s)
+               (terpri s))))))))
 
 (define-command-input-handler %cmd-wait-for-arg (session args)
   "wait-for [-SLU] channel: channel synchronization.

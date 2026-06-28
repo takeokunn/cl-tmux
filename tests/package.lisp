@@ -184,6 +184,7 @@
                 #:prompt-history-next
                 #:prompt-clear
                 #:prompt-text
+                #:prompt-vi-normal-p
                 #:*overlay*
                 #:*overlay-scroll-offset*
                 #:overlay-active-p

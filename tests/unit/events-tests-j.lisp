@@ -14,7 +14,9 @@
 (defmacro with-vi-normal-prompt ((buf-var) &body body)
   "Run BODY with a vi-normal-mode prompt seeded with \"hello\".
    BUF-VAR is bound to a function of zero arguments that returns the current
-   prompt-buffer string at the time it is called."
+   prompt-buffer string at the time it is called.
+   BUF-VAR is declared IGNORABLE so tests that do not call funcall on it
+   do not trigger a compiler warning."
   (let ((fn-sym (gensym "PROBE")))
     `(with-clean-prompt
        (prompt-start "test" "hello" (lambda (s) (declare (ignore s)) nil))
@@ -24,51 +26,54 @@
            (declare (ignorable ,buf-var))
            ,@body)))))
 
+;;; NOTE on declarations in test bodies:
+;;; CL DECLARE forms MUST appear before any executable forms in a body.
+;;; Tests that do not use get-buf rely on IGNORABLE declared by the macro above.
+;;; No extra (declare ...) is needed or allowed after executable forms.
+
 (test vi-normal-key-h-moves-cursor-left
   "%handle-vi-normal-key with h (104) moves the prompt cursor one step left."
   (with-vi-normal-prompt (get-buf)
-    ;; Position cursor at end (after "hello", index 5).
+    ;; get-buf is ignorable (declared by with-vi-normal-prompt).
     (prompt-cursor-eol)
     (let ((pos-before (prompt-cursor-index *prompt*)))
       (is-true (cl-tmux::%handle-vi-normal-key 104) "h must return T")
       (is (= (1- pos-before) (prompt-cursor-index *prompt*))
-          "h must move cursor one position left")
-      (declare (ignore get-buf)))))
+          "h must move cursor one position left"))))
 
 (test vi-normal-key-l-moves-cursor-right
   "%handle-vi-normal-key with l (108) moves the prompt cursor one step right."
   (with-vi-normal-prompt (get-buf)
-    ;; Position cursor at start.
+    ;; get-buf is ignorable (declared by with-vi-normal-prompt).
     (prompt-cursor-bol)
     (let ((pos-before (prompt-cursor-index *prompt*)))
       (is-true (cl-tmux::%handle-vi-normal-key 108) "l must return T")
       (is (= (1+ pos-before) (prompt-cursor-index *prompt*))
-          "l must move cursor one position right")
-      (declare (ignore get-buf)))))
+          "l must move cursor one position right"))))
 
 (test vi-normal-key-0-moves-to-bol
   "%handle-vi-normal-key with 0 (48) moves the cursor to beginning of line."
   (with-vi-normal-prompt (get-buf)
+    ;; get-buf is ignorable (declared by with-vi-normal-prompt).
     (prompt-cursor-eol)
     (is-true (cl-tmux::%handle-vi-normal-key 48) "0 must return T")
-    (is (= 0 (prompt-cursor-index *prompt*)) "0 must move cursor to BOL")
-    (declare (ignore get-buf))))
+    (is (= 0 (prompt-cursor-index *prompt*)) "0 must move cursor to BOL")))
 
 (test vi-normal-key-caret-moves-to-bol
   "%handle-vi-normal-key with ^ (94) moves the cursor to beginning of line."
   (with-vi-normal-prompt (get-buf)
+    ;; get-buf is ignorable (declared by with-vi-normal-prompt).
     (prompt-cursor-eol)
     (is-true (cl-tmux::%handle-vi-normal-key 94) "^ must return T")
-    (is (= 0 (prompt-cursor-index *prompt*)) "^ must move cursor to BOL")
-    (declare (ignore get-buf))))
+    (is (= 0 (prompt-cursor-index *prompt*)) "^ must move cursor to BOL")))
 
 (test vi-normal-key-dollar-moves-to-eol
   "%handle-vi-normal-key with $ (36) moves the cursor to end of line."
   (with-vi-normal-prompt (get-buf)
+    ;; get-buf is ignorable (declared by with-vi-normal-prompt).
     (prompt-cursor-bol)
     (is-true (cl-tmux::%handle-vi-normal-key 36) "$ must return T")
-    (is (= 5 (prompt-cursor-index *prompt*)) "$ must move cursor to EOL")
-    (declare (ignore get-buf))))
+    (is (= 5 (prompt-cursor-index *prompt*)) "$ must move cursor to EOL")))
 
 (test vi-normal-key-x-deletes-char-under-cursor
   "%handle-vi-normal-key with x (120) deletes the character under the cursor."
@@ -81,7 +86,7 @@
 (test vi-normal-key-capital-d-kills-to-end
   "%handle-vi-normal-key with D (68) kills from cursor to end of line."
   (with-vi-normal-prompt (get-buf)
-    ;; Position at index 2 (between 'e' and 'l' → "hel" remains after kill).
+    ;; Position at index 2 (between 'e' and 'l').
     (prompt-cursor-bol)
     (cl-tmux::handle-prompt-key 6)   ; C-f → index 1
     (cl-tmux::handle-prompt-key 6)   ; C-f → index 2
@@ -93,42 +98,42 @@
 (test vi-normal-key-i-enters-insert-mode
   "%handle-vi-normal-key with i (105) clears vi-normal-p (enters insert mode)."
   (with-vi-normal-prompt (get-buf)
+    ;; get-buf is ignorable (declared by with-vi-normal-prompt).
     (is-true (cl-tmux::%handle-vi-normal-key 105) "i must return T")
     (is-false (prompt-vi-normal-p *prompt*)
-              "i must clear vi-normal-p")
-    (declare (ignore get-buf))))
+              "i must clear vi-normal-p")))
 
 (test vi-normal-key-a-appends-and-enters-insert-mode
   "%handle-vi-normal-key with a (97) moves right and enters insert mode."
   (with-vi-normal-prompt (get-buf)
+    ;; get-buf is ignorable (declared by with-vi-normal-prompt).
     (prompt-cursor-bol)
     (let ((pos-before (prompt-cursor-index *prompt*)))
       (is-true (cl-tmux::%handle-vi-normal-key 97) "a must return T")
       (is (= (1+ pos-before) (prompt-cursor-index *prompt*))
           "a must move cursor one position right")
       (is-false (prompt-vi-normal-p *prompt*)
-                "a must clear vi-normal-p (insert mode)"))
-    (declare (ignore get-buf))))
+                "a must clear vi-normal-p (insert mode)"))))
 
 (test vi-normal-key-capital-a-appends-at-eol
   "%handle-vi-normal-key with A (65) moves to EOL and enters insert mode."
   (with-vi-normal-prompt (get-buf)
+    ;; get-buf is ignorable (declared by with-vi-normal-prompt).
     (prompt-cursor-bol)
     (is-true (cl-tmux::%handle-vi-normal-key 65) "A must return T")
     (is (= 5 (prompt-cursor-index *prompt*)) "A must move cursor to EOL")
     (is-false (prompt-vi-normal-p *prompt*)
-              "A must clear vi-normal-p (insert mode)")
-    (declare (ignore get-buf))))
+              "A must clear vi-normal-p (insert mode)")))
 
 (test vi-normal-key-capital-i-inserts-at-bol
   "%handle-vi-normal-key with I (73) moves to BOL and enters insert mode."
   (with-vi-normal-prompt (get-buf)
+    ;; get-buf is ignorable (declared by with-vi-normal-prompt).
     (prompt-cursor-eol)
     (is-true (cl-tmux::%handle-vi-normal-key 73) "I must return T")
     (is (= 0 (prompt-cursor-index *prompt*)) "I must move cursor to BOL")
     (is-false (prompt-vi-normal-p *prompt*)
-              "I must clear vi-normal-p (insert mode)")
-    (declare (ignore get-buf))))
+              "I must clear vi-normal-p (insert mode)")))
 
 (test vi-normal-key-enter-submits-prompt
   "%handle-vi-normal-key with Enter (13) runs on-submit and clears the prompt."
@@ -159,10 +164,10 @@
 (test vi-normal-key-unhandled-returns-nil
   "%handle-vi-normal-key with an unrecognised byte returns NIL (fall through)."
   (with-vi-normal-prompt (get-buf)
+    ;; get-buf is ignorable (declared by with-vi-normal-prompt).
     ;; Byte 33 = '!' — not a vi navigation key.
     (is-false (cl-tmux::%handle-vi-normal-key 33)
-              "unhandled key must return NIL (fall through to insert mode)")
-    (declare (ignore get-buf))))
+              "unhandled key must return NIL (fall through to insert mode)")))
 
 (test vi-normal-key-noop-when-prompt-absent
   "%handle-vi-normal-key is a no-op (returns NIL) when no prompt is active."
@@ -257,7 +262,8 @@
                 "%dispatch-menu-key must return NIL for j")
       (is-false (cl-tmux::%dispatch-menu-key s 13)
                 "%dispatch-menu-key must return NIL for Enter")
-      (declare (ignore dispatched)))))
+      ;; dispatched accumulates cmds from the capture lambda; verify it's a list
+      (is-true (listp dispatched) "capture list must be a proper list"))))
 
 ;;; ── define-prompt-vi-key-rules macro smoke test ─────────────────────────────
 

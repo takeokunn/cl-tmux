@@ -235,7 +235,11 @@
            (show-overlay (or value "")))))
       (name
        (let ((out (funcall single-renderer name inherited-p)))
-         (unless (and quietp (search "(not set)" out))
+         ;; tmux -q suppresses output for unknown/unset options: both "(not set)"
+         ;; and "invalid option:" (returned for completely unregistered names).
+         (unless (and quietp
+                      (or (search "(not set)" out)
+                          (search "invalid option:" out)))
            (%show-options-overlay out flags))))
       (t
        (%show-options-overlay (funcall all-renderer inherited-p) flags)))))

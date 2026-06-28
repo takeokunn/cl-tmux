@@ -181,8 +181,12 @@ scope, but unset @ user options are invalid."
 
 (defun show-window-option (name window &key inherited-p value-only-p global-p)
   "Return NAME rendered as tmux show-window-options/show-options -w output.
-   Local mode shows only explicit window-local values.  INHERITED-P includes
-   fallback values and marks them as `name* value`, matching tmux show -Aw."
+   When called for a specific option NAME:
+   - Without -g/-A: returns the effective value (local → global → spec default),
+     matching `tmux show-window-options <name>` which always shows effective value.
+   - With -A: marks inherited (non-local) values with a leading '* ' prefix.
+   - With -g: shows global/default value when present.
+   INHERITED-P only controls the '* ' marker and is relevant for full-list output."
   (multiple-value-bind (local-value local-present-p)
       (%window-local-option-value name window)
     (let ((inherited-output-p nil)
@@ -199,14 +203,22 @@ scope, but unset @ user options are invalid."
         ((and inherited-p (%global-window-option-present-p name))
          (setf present-p t
                inherited-output-p t
+               value (get-option name)))
+        ;; Single-option queries always fall back to the effective (inherited) value,
+        ;; matching real tmux: `show-window-options mode-keys` returns the effective
+        ;; value even when mode-keys is not set window-locally.  This fallback path
+        ;; does NOT mark the output with '* ' (no -A flag) but still returns a line.
+        ((%global-window-option-present-p name)
+         (setf present-p t
                value (get-option name))))
       (when present-p
         (if value-only-p
             (%option-value-string value)
-            (format nil "~A~A ~A~%"
-                    name
-                    (if inherited-output-p "*" "")
-                    (%option-value-string value)))))))
+            ;; tmux show-options -A marks inherited values with a leading "* "
+            ;; prefix (e.g. "* mode-keys vi"), not a trailing "*" suffix.
+            (if inherited-output-p
+                (format nil "* ~A ~A~%" name (%option-value-string value))
+                (format nil "~A ~A~%" name (%option-value-string value))))))))
 
 (defun show-window-options (window &key inherited-p global-p)
   "Return tmux-style window option lines.
