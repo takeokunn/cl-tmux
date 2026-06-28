@@ -460,33 +460,22 @@
 
 ;;; ── if-shell -F <cond> <then> [<else>] (format-conditional) ──────────────────
 
-(test run-command-line-if-shell-F-true-runs-then
-  "if-shell -F with a truthy condition runs the THEN command line."
-  (with-fake-session (s)
-    (let ((*overlay* nil))
-      (cl-tmux::%run-command-line s "if-shell -F 1 \"display-message yes\"")
-      (assert-overlay-contains "yes" (overlay-lines)
-                                "truthy if-shell -F"))))
-
-(test run-command-line-if-shell-F-false-runs-else
-  "if-shell -F with a falsey condition (\"0\") runs the ELSE command line."
-  (with-fake-session (s)
-    (let ((*overlay* nil))
-      (cl-tmux::%run-command-line
-       s "if-shell -F 0 \"display-message yes\" \"display-message no\"")
-      (assert-overlay-contains "no" (overlay-lines)
-                                "falsey if-shell -F"))))
-
-(test run-command-line-if-shell-F-format-condition
-  "if-shell -F evaluates a #{...} format as its condition.  A non-zero value is
-   truthy.  We use #{window_count}=1 (truthy) rather than #{window_index} (which
-   equals the window id; with base-index=0 the first window has id 0 = falsey)."
-  (with-fake-session (s)
-    (let ((*overlay* nil))
-      (cl-tmux::%run-command-line
-       s "if-shell -F \"#{window_count}\" \"display-message named\"")
-      (assert-overlay-contains "named" (overlay-lines)
-                                "a non-zero #{window_count} (1)"))))
+(test run-command-line-if-shell-F-overlay-table
+  "if-shell -F with truthy/falsey/format conditions and accepted flags each produce
+   the expected overlay fragment.  Each row: (command expected-fragment message)."
+  (dolist (row '(("if-shell -F 1 \"display-message yes\""
+                  "yes" "truthy if-shell -F")
+                 ("if-shell -F 0 \"display-message yes\" \"display-message no\""
+                  "no" "falsey if-shell -F")
+                 ("if-shell -F \"#{window_count}\" \"display-message named\""
+                  "named" "a non-zero #{window_count} (1)")
+                 ("if-shell -b -t %1 -F 1 \"display-message if-target-ok\""
+                  "if-target-ok" "if-shell -b/-t")))
+    (destructuring-bind (cmd expected msg) row
+      (with-fake-session (s)
+        (let ((*overlay* nil))
+          (cl-tmux::%run-command-line s cmd)
+          (assert-overlay-contains expected (overlay-lines) msg))))))
 
 (test run-command-line-if-shell-F-uses-target-context
   "if-shell -t <pane> -F evaluates the condition in the target pane's context,
@@ -511,14 +500,6 @@
       (assert-overlay-inactive
        "an empty (falsey) condition with no else must not run THEN"))))
 
-(test run-command-line-if-shell-accepts-b-and-t-flags
-  "if-shell accepts tmux's -b and -t flags without treating the target as CONDITION."
-  (with-fake-session (s)
-    (let ((*overlay* nil))
-      (cl-tmux::%run-command-line
-       s "if-shell -b -t %1 -F 1 \"display-message if-target-ok\"")
-      (assert-overlay-contains "if-target-ok" (overlay-lines)
-                                "if-shell -b/-t"))))
 
 (test run-command-line-if-shell-rejects-unsupported-arguments
   "if-shell rejects unknown flags and extra positionals before running anything."
