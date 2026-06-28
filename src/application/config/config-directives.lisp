@@ -83,6 +83,13 @@
              (unless continue-p (return))))
   tokens)
 
+(defmacro %consuming-flags ((tokens tok rest) &body cond-clauses)
+  `(%consume-leading-flag-tokens
+    ,tokens
+    (lambda (,tok ,rest)
+      (cond ,@cond-clauses)
+      (values ,rest t))))
+
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defun %resolve-config-directive-names (names)
     "Return the directive NAMES list, allowing a named list symbol."

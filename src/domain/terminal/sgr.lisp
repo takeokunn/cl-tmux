@@ -121,6 +121,19 @@
 ;;;   apply_sgr([48,2,R,G,B|T], S)  :- set_bg_truecolor(S,R,G,B), apply_sgr(T, S).
 ;;;   apply_sgr([P|T], S)           :- dispatch_sgr(S, P),      apply_sgr(T, S).
 
+;;; Dispatch table for the semicolon-protocol colour arms (38/48/58 × 5/2).
+;;; Each entry is ((P . KIND) . SETTER-FUNCTION) where
+;;;   KIND=5 → 256-colour (consumed by %consume-256-color-param)
+;;;   KIND=2 → true-colour  (consumed by %set-truecolor)
+
+(defparameter *color-proto-dispatch*
+  (list (cons (cons 38 5) #'(setf screen-cur-fg))
+        (cons (cons 38 2) #'(setf screen-cur-fg))
+        (cons (cons 48 5) #'(setf screen-cur-bg))
+        (cons (cons 48 2) #'(setf screen-cur-bg))
+        (cons (cons 58 5) #'(setf screen-cur-ul-color))
+        (cons (cons 58 2) #'(setf screen-cur-ul-color))))
+
 ;;; %set-truecolor encodes a 38;2;R;G;B or 48;2;R;G;B run into #x1RRGGBB and
 ;;; stores it via the supplied SETTER helper.  This keeps the clamp/logior
 ;;; arithmetic shared between the fg and bg arms.
@@ -192,37 +205,21 @@
         ((consp p)
          (%apply-sgr-group screen p)
          (%apply-sgr-parameters screen (rest parameter-tail)))
-        ;; 256-color foreground: 38;5;N
-        ((and (= p 38) (eql (second parameter-tail) 5) (third parameter-tail))
-         (%apply-sgr-parameters screen
-                                 (%consume-256-color-param screen
-                                                           #'(setf screen-cur-fg)
-                                                           parameter-tail)))
-        ;; True-color foreground: 38;2;R;G;B → store as #x1RRGGBB
-        ;; Each component is clamped to 0-255 to stay within (unsigned-byte 25).
-        ((and (= p 38) (eql (second parameter-tail) 2) (cddr parameter-tail))
-         (%apply-sgr-parameters screen
-                                (%set-truecolor screen #'(setf screen-cur-fg) parameter-tail)))
-        ;; 256-color background: 48;5;N
-        ((and (= p 48) (eql (second parameter-tail) 5) (third parameter-tail))
-         (%apply-sgr-parameters screen
-                                 (%consume-256-color-param screen
-                                                           #'(setf screen-cur-bg)
-                                                           parameter-tail)))
-        ;; True-color background: 48;2;R;G;B → store as #x1RRGGBB
-        ((and (= p 48) (eql (second parameter-tail) 2) (cddr parameter-tail))
-         (%apply-sgr-parameters screen
-                                (%set-truecolor screen #'(setf screen-cur-bg) parameter-tail)))
-        ;; Underline-color 256: 58;5;N
-        ((and (= p 58) (eql (second parameter-tail) 5) (third parameter-tail))
-         (%apply-sgr-parameters screen
-                                 (%consume-256-color-param screen
-                                                           #'(setf screen-cur-ul-color)
-                                                           parameter-tail)))
-        ;; Underline-color true-color: 58;2;R;G;B
-        ((and (= p 58) (eql (second parameter-tail) 2) (cddr parameter-tail))
-         (%apply-sgr-parameters screen
-                                (%set-truecolor screen #'(setf screen-cur-ul-color) parameter-tail)))
+        ;; Semicolon-protocol colour arms: 38/48/58 × kind 5 (256-colour) or
+        ;; kind 2 (true-colour).  All six (p × kind) combinations share one
+        ;; dispatch path via *color-proto-dispatch*.
+        ((member p '(38 48 58))
+         (let* ((kind  (second parameter-tail))
+                (entry (assoc (cons p kind) *color-proto-dispatch* :test #'equal)))
+           (if (and entry (eql kind 5) (third parameter-tail))
+               (%apply-sgr-parameters screen
+                                      (%consume-256-color-param screen (cdr entry) parameter-tail))
+               (if (and entry (eql kind 2) (cddr parameter-tail))
+                   (%apply-sgr-parameters screen
+                                          (%set-truecolor screen (cdr entry) parameter-tail))
+                   (progn
+                     (%dispatch-sgr-code screen p)
+                     (%apply-sgr-parameters screen (rest parameter-tail)))))))
         (t
          (%dispatch-sgr-code screen p)
          (%apply-sgr-parameters screen (rest parameter-tail)))))))

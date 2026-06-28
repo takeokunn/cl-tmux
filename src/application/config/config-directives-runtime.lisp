@@ -36,19 +36,15 @@
            (target-name nil)
            (remaining  args))
       (setf remaining
-            (%consume-leading-flag-tokens
-             remaining
-             (lambda (tok rest)
-               (cond
-                 ((member tok '("-u" "-r") :test #'string=)
-                  (setf remove-p t))
-                 ((string= tok "-g")
-                  (setf global-p t))
-                 ((string= tok "-t")
-                  (setf target-p t
-                        target-name (first rest))
-                  (when rest (setf rest (cdr rest)))))
-               (values rest t))))
+            (%consuming-flags (remaining tok rest)
+              ((member tok '("-u" "-r") :test #'string=)
+               (setf remove-p t))
+              ((string= tok "-g")
+               (setf global-p t))
+              ((string= tok "-t")
+               (setf target-p t
+                     target-name (first rest))
+               (when rest (setf rest (cdr rest))))))
       (cond
         ((and global-p target-p)
          nil)
@@ -123,14 +119,10 @@
       ;; Consume leading flag tokens (clusters like -bF are allowed; -t takes the
       ;; next token).  Stop at the first non-flag token — the CONDITION.
       (setf remaining
-            (%consume-leading-flag-tokens
-             remaining
-             (lambda (tok rest)
-               (cond
-                 ((string= tok "-t") (when rest (setf rest (cdr rest))))
-                 (t (when (%flag-token-contains-any-p tok '(#\F))
-                      (setf format-mode t))))
-               (values rest t))))
+            (%consuming-flags (remaining tok rest)
+              ((string= tok "-t") (when rest (setf rest (cdr rest))))
+              (t (when (%flag-token-contains-any-p tok '(#\F))
+                   (setf format-mode t)))))
       (when (>= (length remaining) 2)
         (let* ((condition (first remaining))
                (truthy-p  (if format-mode
@@ -178,18 +170,12 @@
           (remaining      args))
       ;; Consume leading flag tokens.
       (setf remaining
-            (%consume-leading-flag-tokens
-             remaining
-             (lambda (tok rest)
-               (cond
-                 ((string= tok "-C") (setf tmux-command-p t))
-                 ((string= tok "-b")) ; background flag, no argument
-                 ((member tok '("-t" "-d") :test #'string=)
-                  ;; These flags take the next token as their value.
-                  (when rest (setf rest (cdr rest))))
-                 ;; Unknown bare -X flag: skip the single flag token only.
-                 (t nil))
-               (values rest t))))
+            (%consuming-flags (remaining tok rest)
+              ((string= tok "-C") (setf tmux-command-p t))
+              ((string= tok "-b"))
+              ((member tok '("-t" "-d") :test #'string=)
+               (when rest (setf rest (cdr rest))))
+              (t nil)))
       ;; Remaining tokens (joined) form the shell command.
       (let ((command (%join-config-tokens remaining)))
         (cond

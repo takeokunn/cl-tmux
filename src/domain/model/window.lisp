@@ -137,9 +137,9 @@
 (defun %window-axis-extent (window direction)
   "Return the WINDOW dimension along DIRECTION's split axis.
    :h → window-width (columns); :v → window-height (rows)."
-  (if (eq direction :h)
-      (window-width  window)
-      (window-height window)))
+  (ecase direction
+    (:h (window-width  window))
+    (:v (window-height window))))
 
 ;;; ── Size-hint conversion ────────────────────────────────────────────────────
 ;;;
@@ -152,10 +152,10 @@
   "Convert a split size HINT to a cell count within AVAIL along ORIENT.
    Returns an integer: the requested cell count for the new (second) child."
   (declare (ignorable orient))
-  (cond
-    ((and (integerp hint) (> hint 0))     hint)
-    ((and (realp hint) (< 0.0 hint 1.0)) (round (* avail hint)))
-    (t (floor avail 2))))
+  (typecase hint
+    (integer (if (> hint 0) hint (floor avail 2)))
+    (real    (if (< 0.0 hint 1.0) (round (* avail hint)) (floor avail 2)))
+    (t       (floor avail 2))))
 
 (defun %ratio-from-size-hint (hint avail orient)
   "Convert a size HINT (integer cells or real percentage) to a split ratio for
