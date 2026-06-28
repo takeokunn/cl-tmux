@@ -466,23 +466,22 @@
 
 ;;; ── next-window / previous-window (scriptable -t) ────────────────────────────
 
-(test cmd-next-window-cycles-current-session
-  "next-window (no -t) advances the current session's active window."
-  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)   ; alpha(active) beta gamma
-    (declare (ignore wa wg))
-    (with-command-test-state (sess)
-      (cl-tmux::%cmd-next-window-arg sess '())
-      (is (eq wb (session-active-window sess))
-          "next-window advances alpha → beta"))))
+(test cmd-next-and-previous-window-table
+  "next-window advances to the next window; previous-window wraps to the last.
+   Both operate on the current session (no -t flag).
+   Each row: (direction expected-window-key description)."
+  (dolist (row '((:next     :wb "next-window advances alpha → beta")
+                 (:previous :wg "previous-window from alpha wraps to gamma")))
+    (destructuring-bind (dir expected-key desc) row
+      (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+        (declare (ignore wa))
+        (with-command-test-state (sess)
+          (ecase dir
+            (:next     (cl-tmux::%cmd-next-window-arg     sess '()))
+            (:previous (cl-tmux::%cmd-previous-window-arg sess '())))
+          (let ((expected (ecase expected-key (:wb wb) (:wg wg))))
+            (is (eq expected (session-active-window sess)) desc)))))))
 
-(test cmd-previous-window-wraps-backward
-  "previous-window from the first window wraps to the last."
-  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
-    (declare (ignore wa wb))
-    (with-command-test-state (sess)
-      (cl-tmux::%cmd-previous-window-arg sess '())
-      (is (eq wg (session-active-window sess))
-          "previous-window from alpha wraps to gamma"))))
 
 (test cmd-window-cycle-rejects-unsupported-arguments-before-cycling
   "next-window/previous-window reject unsupported arguments before changing the
