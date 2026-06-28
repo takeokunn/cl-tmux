@@ -402,22 +402,19 @@ and leaves *running* untouched."
         (is (eq sess found)
             "prefix 'my' should match session named 'mysession'")))))
 
-(test server-find-session-by-id
-  :description "server-find-session with '$N' notation matches by session id."
-  (with-empty-registry
-    (let ((sess (make-session :id 42 :name "thesession" :windows nil)))
-      (cl-tmux::server-add-session sess)
-      (let ((found (cl-tmux::server-find-session "$42")))
-        (is (eq sess found)
-            "$42 should find the session with id 42")))))
-
-(test server-find-session-by-id-not-found
-  :description "server-find-session with '$N' returns NIL when no session has that id."
-  (with-empty-registry
-    (let ((sess (make-session :id 1 :name "sess" :windows nil)))
-      (cl-tmux::server-add-session sess)
-      (is (null (cl-tmux::server-find-session "$999"))
-          "$999 must return NIL when no session has id 999"))))
+(test server-find-session-by-id-table
+  "server-find-session '$N' matches by id when present; returns NIL when absent.
+   Each row: (session-id query expect-found description)."
+  (dolist (row '((42 "$42"  t   "$42 should find the session with id 42")
+                 (1  "$999" nil "$999 must return NIL when no session has id 999")))
+    (destructuring-bind (id query expect-found desc) row
+      (with-empty-registry
+        (let ((sess (make-session :id id :name "s" :windows nil)))
+          (cl-tmux::server-add-session sess)
+          (let ((found (cl-tmux::server-find-session query)))
+            (if expect-found
+                (is (eq sess found) desc)
+                (is (null found)    desc))))))))
 
 ;;; ── server-current-session ───────────────────────────────────────────────────
 

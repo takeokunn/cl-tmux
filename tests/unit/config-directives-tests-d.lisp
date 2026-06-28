@@ -259,19 +259,23 @@ bind-key -T copy-mode-vi v send-keys -X begin-selection")))
                  "source-files loads the globbed files without error")))
       (ignore-errors (uiop:delete-directory-tree dir :validate t)))))
 
-(test source-files-missing-plain-path-logs-message-without-q
-  "source-file on a missing plain path (no -q) logs tmux's 'No such file or
-   directory: PATH' to *message-log* and still returns T."
-  (let ((cl-tmux::*message-log* nil)
-        (missing "/no/such/cl-tmux-srcfile-abc.conf"))
-    (is (eq t (cl-tmux/config:source-files (list missing)))
-        "source-files still returns T for a missing file")
-    (is (= 1 (length cl-tmux::*message-log*))
-        "exactly one diagnostic was logged")
-    (is (search "No such file or directory" (cdr (first cl-tmux::*message-log*)))
-        "diagnostic mentions 'No such file or directory'")
-    (is (search missing (cdr (first cl-tmux::*message-log*)))
-        "diagnostic includes the offending path")))
+(test source-files-missing-path-logs-message-table
+  "source-file on a missing path or unmatched glob (no -q) logs
+   'No such file or directory: PATH' and returns T.
+   Each row: (path description)."
+  (dolist (row '(("/no/such/cl-tmux-srcfile-abc.conf"
+                  "plain missing path logs No such file or directory")
+                 ("/nonexistent-cl-tmux-glob-dir/*.conf"
+                  "unmatched glob logs No such file or directory")))
+    (destructuring-bind (path desc) row
+      (let ((cl-tmux::*message-log* nil))
+        (is (eq t (cl-tmux/config:source-files (list path))) desc)
+        (is (= 1 (length cl-tmux::*message-log*))
+            "exactly one diagnostic was logged")
+        (is (search "No such file or directory" (cdr (first cl-tmux::*message-log*)))
+            "diagnostic mentions 'No such file or directory'")
+        (is (search path (cdr (first cl-tmux::*message-log*)))
+            "diagnostic includes the offending path")))))
 
 (test source-files-q-suppresses-missing-file-message
   "With -q, a missing file logs NOTHING (tmux CMD_PARSE_QUIET) and returns T."
@@ -280,16 +284,6 @@ bind-key -T copy-mode-vi v send-keys -X begin-selection")))
                '("-q" "/no/such/cl-tmux-srcfile-xyz.conf"))))
     (is (null cl-tmux::*message-log*)
         "-q suppresses the diagnostic entirely")))
-
-(test source-files-glob-no-match-logs-message-without-q
-  "A glob pattern matching no files (no -q) logs 'No such file or directory: PATTERN'."
-  (let ((cl-tmux::*message-log* nil)
-        (pattern "/nonexistent-cl-tmux-glob-dir/*.conf"))
-    (is (eq t (cl-tmux/config:source-files (list pattern))))
-    (is (= 1 (length cl-tmux::*message-log*))
-        "glob-no-match logs exactly one diagnostic")
-    (is (search "No such file or directory" (cdr (first cl-tmux::*message-log*)))
-        "glob-no-match diagnostic mentions 'No such file or directory'")))
 
 (test source-files-existing-file-logs-no-message
   "A successfully loaded file produces NO 'missing' diagnostic."
@@ -301,11 +295,15 @@ bind-key -T copy-mode-vi v send-keys -X begin-selection")))
             "an existing, loaded file logs no missing-file diagnostic")))))
 
 (test glob-pattern-p-detects-metacharacters
-  "%glob-pattern-p is true for * ? [ and nil for a plain path."
-  (is-true  (cl-tmux/config::%glob-pattern-p "/etc/*.conf"))
-  (is-true  (cl-tmux/config::%glob-pattern-p "/etc/foo?.conf"))
-  (is-true  (cl-tmux/config::%glob-pattern-p "/etc/[ab].conf"))
-  (is-false (cl-tmux/config::%glob-pattern-p "/etc/foo.conf")))
+  "%glob-pattern-p is true for * ? [ metacharacters; NIL for plain paths."
+  (dolist (row '(("/etc/*.conf"    t   "* is a glob metacharacter")
+                 ("/etc/foo?.conf" t   "? is a glob metacharacter")
+                 ("/etc/[ab].conf" t   "[ is a glob metacharacter")
+                 ("/etc/foo.conf"  nil "plain path has no glob metacharacters")))
+    (destructuring-bind (path expected desc) row
+      (if expected
+          (is-true  (cl-tmux/config::%glob-pattern-p path) desc)
+          (is-false (cl-tmux/config::%glob-pattern-p path) desc)))))
 
 ;;; ── # comment handling (inline, quote- and format-aware) ─────────────────────
 
