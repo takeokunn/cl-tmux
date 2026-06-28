@@ -432,26 +432,25 @@
 
 ;;; ── Extended keys (CSI u) key-name parsing ───────────────────────────────────
 
-(test csi-u-key-name-modifier-combinations
-  "%csi-u-key-name maps a CSI-u codepoint+modifier to the canonical key name."
-  (dolist (c '((97 1 "a"       "plain a (mod 1)")
-               (97 2 "S-a"     "Shift (mod 2)")
-               (97 3 "M-a"     "Alt (mod 3)")
-               (97 5 "C-a"     "Ctrl (mod 5)")
-               (97 6 "C-S-a"   "Ctrl+Shift (mod 6)")
-               (97 7 "C-M-a"   "Ctrl+Alt (mod 7)")
-               (97 8 "C-M-S-a" "Ctrl+Alt+Shift (mod 8)")))
+(test csi-u-key-name-table
+  "%csi-u-key-name maps codepoint+modifier to the canonical key name, covering
+   modifier combinations and special codepoints (Tab/Enter/Escape/Space/BSpace).
+   Each row: (code mod expected description)."
+  (dolist (c '((97 1 "a"        "plain a (mod 1)")
+               (97 2 "S-a"      "Shift (mod 2)")
+               (97 3 "M-a"      "Alt (mod 3)")
+               (97 5 "C-a"      "Ctrl (mod 5)")
+               (97 6 "C-S-a"    "Ctrl+Shift (mod 6)")
+               (97 7 "C-M-a"    "Ctrl+Alt (mod 7)")
+               (97 8 "C-M-S-a"  "Ctrl+Alt+Shift (mod 8)")
+               (9   1 "Tab"     "Tab (code 9 mod 1)")
+               (9   2 "S-Tab"   "S-Tab (code 9 mod 2)")
+               (13  1 "Enter"   "Enter (code 13 mod 1)")
+               (27  1 "Escape"  "Escape (code 27 mod 1)")
+               (32  5 "C-Space" "C-Space (code 32 mod 5)")
+               (127 1 "BSpace"  "BSpace (code 127 mod 1)")))
     (destructuring-bind (code mod expected desc) c
       (is (string= expected (cl-tmux::%csi-u-key-name code mod)) "~A" desc))))
-
-(test csi-u-key-name-special-keys
-  "%csi-u-key-name names the special codepoints (Tab/Enter/Escape/Space/BSpace)."
-  (dolist (c '((9   1 "Tab")    (9  2 "S-Tab")
-               (13  1 "Enter")  (27 1 "Escape")
-               (32  5 "C-Space") (127 1 "BSpace")))
-    (destructuring-bind (code mod expected) c
-      (is (string= expected (cl-tmux::%csi-u-key-name code mod))
-          "code ~D mod ~D → ~S" code mod expected))))
 
 (test csi-u-key-name-unhandled-codepoint
   "An unhandled (control/out-of-range) codepoint yields NIL."
