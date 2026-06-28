@@ -129,22 +129,16 @@
 
 ;;; ── detach-on-destroy: client fate when its session is destroyed ─────────────
 
-(test detach-on-destroy-on-quits-even-with-survivors
-  "detach-on-destroy on (default): destroying the viewed session detaches (:quit)
-   even when other sessions survive."
-  (with-fake-session (s1)
-    (with-isolated-options ("detach-on-destroy" "on")
-      (with-registered-sessions (("1" s1))
-        (is (eq :quit (cl-tmux::%detach-on-destroy-action "0"))
-            "on + survivors → :quit")))))
-
-(test detach-on-destroy-off-switches-to-survivor
-  "detach-on-destroy off: destroying the viewed session switches to a survivor."
-  (with-fake-session (s1)
-    (with-isolated-options ("detach-on-destroy" "off")
-      (with-registered-sessions (("1" s1))
-        (is (null (cl-tmux::%detach-on-destroy-action "0"))
-            "off + survivors → nil (switch, loop follows)")))))
+(test detach-on-destroy-with-survivors-table
+  "detach-on-destroy on→:quit (detach); off→nil (switch to survivor).
+   Each row: (opt-val expected description)."
+  (dolist (row '(("on"  :quit "on + survivors → :quit (detach)")
+                 ("off" nil   "off + survivors → nil (switch, loop follows)")))
+    (destructuring-bind (opt-val expected desc) row
+      (with-fake-session (s1)
+        (with-isolated-options ("detach-on-destroy" opt-val)
+          (with-registered-sessions (("1" s1))
+            (is (eq expected (cl-tmux::%detach-on-destroy-action "0")) desc)))))))
 
 (test detach-on-destroy-no-survivors-always-quits
   "With no surviving sessions, detach-on-destroy always detaches (:quit)."
@@ -178,52 +172,39 @@
           (is (eq sc (cl-tmux::%current-session sa))
               "next switched to the alphabetically-next survivor (c)"))))))
 
-(test dispatch-kill-session-default-on-detaches-with-survivors
-  ":kill-session with detach-on-destroy on (default) + a survivor returns :quit."
-  (with-fake-session (s1)
-    (with-isolated-options ("detach-on-destroy" "on")
-      (let ((s2 (make-fake-session)))
-        (setf (cl-tmux::session-name s1) "cur" (cl-tmux::session-name s2) "other")
-        (with-registered-sessions (("cur" s1) ("other" s2))
-          (is (eq :quit (cl-tmux::dispatch-command s1 :kill-session nil))
-              "kill current with survivors + on → :quit (detach)"))))))
-
-(test dispatch-kill-session-off-keeps-running-with-survivors
-  ":kill-session with detach-on-destroy off keeps running (switches to survivor)."
-  (with-fake-session (s1)
-    (with-isolated-options ("detach-on-destroy" "off")
-      (let ((s2 (make-fake-session)))
-        (setf (cl-tmux::session-name s1) "cur" (cl-tmux::session-name s2) "other")
-        (with-registered-sessions (("cur" s1) ("other" s2))
-          (is (null (cl-tmux::dispatch-command s1 :kill-session nil))
-              "kill current with survivors + off → nil (keep running)"))))))
+(test dispatch-kill-session-detach-on-destroy-table
+  ":kill-session on→:quit (detach); off→nil (switch to survivor).
+   Each row: (opt-val expected description)."
+  (dolist (row '(("on"  :quit "on + survivors → :quit (detach)")
+                 ("off" nil   "off + survivors → nil (keep running)")))
+    (destructuring-bind (opt-val expected desc) row
+      (with-fake-session (s1)
+        (with-isolated-options ("detach-on-destroy" opt-val)
+          (let ((s2 (make-fake-session)))
+            (setf (cl-tmux::session-name s1) "cur" (cl-tmux::session-name s2) "other")
+            (with-registered-sessions (("cur" s1) ("other" s2))
+              (is (eq expected (cl-tmux::dispatch-command s1 :kill-session nil)) desc))))))))
 
 ;;; ── destroy-unattached: destroy the session left behind on a switch ──────────
 
-(test destroy-unattached-off-keeps-left-session
-  "With destroy-unattached off (default), switching away leaves the old session."
-  (with-fake-session (a)
-    (with-isolated-options ("destroy-unattached" nil)
-      (let ((b (make-fake-session)))
-        (setf (cl-tmux::session-name a) "a" (cl-tmux::session-last-active a) 20
-              (cl-tmux::session-name b) "b" (cl-tmux::session-last-active b) 10)
-        (with-registered-sessions (("a" a) ("b" b))
-          (cl-tmux::%switch-to-session b)
-          (is (cl-tmux::server-find-session "a")
-              "old session survives when destroy-unattached is off"))))))
+(test destroy-unattached-table
+  "destroy-unattached off keeps the old session; on destroys it on switch-away.
+   Each row: (opt-val expect-a-survives description)."
+  (dolist (row '((nil t "off: old session survives")
+                 (t   nil "on: old session is destroyed")))
+    (destructuring-bind (opt-val expect-a-survives desc) row
+      (with-fake-session (a)
+        (with-isolated-options ("destroy-unattached" opt-val)
+          (let ((b (make-fake-session)))
+            (setf (cl-tmux::session-name a) "a" (cl-tmux::session-last-active a) 20
+                  (cl-tmux::session-name b) "b" (cl-tmux::session-last-active b) 10)
+            (with-registered-sessions (("a" a) ("b" b))
+              (cl-tmux::%switch-to-session b)
+              (if expect-a-survives
+                  (is-true  (cl-tmux::server-find-session "a") desc)
+                  (is-false (cl-tmux::server-find-session "a") desc))
+              (is-true (cl-tmux::server-find-session "b") "target session always survives"))))))))
 
-(test destroy-unattached-on-destroys-left-session
-  "With destroy-unattached on, switching away destroys the session left behind."
-  (with-fake-session (a)
-    (with-isolated-options ("destroy-unattached" t)
-      (let ((b (make-fake-session)))
-        (setf (cl-tmux::session-name a) "a" (cl-tmux::session-last-active a) 20
-              (cl-tmux::session-name b) "b" (cl-tmux::session-last-active b) 10)
-        (with-registered-sessions (("a" a) ("b" b))
-          (cl-tmux::%switch-to-session b)
-          (is (null (cl-tmux::server-find-session "a"))
-              "old session is destroyed when destroy-unattached is on")
-          (is (cl-tmux::server-find-session "b") "target session survives"))))))
 
 (test destroy-unattached-no-destroy-switching-to-current
   "Switching to the already-current session destroys nothing (old == target)."
