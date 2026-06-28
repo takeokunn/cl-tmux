@@ -220,6 +220,28 @@
   ;; client-resized hook: the client terminal changed size (SIGWINCH).
   (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-client-resized+))
 
+(defun %rename-from-osc-title (screen allow-title)
+  "Return the OSC 0/2 screen title when ALLOW-TITLE is non-NIL and the title
+   is non-empty, otherwise return the empty string.
+   Used by %auto-rename-name as a fallback when no real process is running or
+   when the automatic-rename-format expansion yields an empty result."
+  (if allow-title
+      (let ((title (screen-title screen)))
+        (if (plusp (length title)) title ""))
+      ""))
+
+(defun %rename-from-format-string (session window pane screen allow-title)
+  "Expand automatic-rename-format for a real-PTY pane and return the result.
+   Falls back to (%rename-from-osc-title screen allow-title) when the format
+   expansion yields an empty string."
+  (let* ((format-string (or (cl-tmux/options:get-option "automatic-rename-format")
+                            "#{pane_current_command}"))
+         (context (cl-tmux/format:format-context-from-session session window pane))
+         (expanded-name (cl-tmux/format:expand-format format-string context)))
+    (if (and expanded-name (plusp (length expanded-name)))
+        expanded-name
+        (%rename-from-osc-title screen allow-title))))
+
 (defun %auto-rename-name (session window pane screen &key (allow-title t))
   "Compute the new automatic window name using automatic-rename-format option.
    For panes with no real process (pid <= 0), prefer the OSC 0/2 screen title
@@ -227,21 +249,11 @@
    Falls back to the OSC 0/2 screen title when the format yields an empty string.
    ALLOW-TITLE NIL (allow-rename off) suppresses the OSC-title fallback, so
    command-following still works but applications cannot rename via their title."
-  (let* ((has-real-process (let ((pid (and pane (cl-tmux/model:pane-pid pane))))
-                             (and pid (> pid 0))))
-         (osc-title (if allow-title (screen-title screen) "")))
-    (if (not has-real-process)
-        ;; No real PTY: OSC title is more meaningful than the shell-basename fallback.
-        (if (plusp (length osc-title)) osc-title "")
-        ;; Real PTY: expand the automatic-rename-format option.
-        (let* ((fmt (or (cl-tmux/options:get-option "automatic-rename-format")
-                        "#{pane_current_command}"))
-               (ctx (cl-tmux/format:format-context-from-session session window pane))
-               (new-name (cl-tmux/format:expand-format fmt ctx)))
-          (if (and new-name (plusp (length new-name)))
-              new-name
-              ;; Fallback to OSC 0/2 screen title
-              (if (plusp (length osc-title)) osc-title ""))))))
+  (let* ((pid (and pane (cl-tmux/model:pane-pid pane)))
+         (has-real-process (and pid (> pid 0))))
+    (if has-real-process
+        (%rename-from-format-string session window pane screen allow-title)
+        (%rename-from-osc-title screen allow-title))))
 
 (defun %maybe-rename-window-from-title (session)
   "If automatic-rename is enabled for the active window, update its name using

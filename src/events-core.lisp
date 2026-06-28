@@ -42,6 +42,30 @@
 ;;; When status-keys = "vi" and the prompt is in vi normal mode,
 ;;; single-byte commands navigate / edit rather than inserting text.
 ;;; Returns T when the byte was consumed by vi-normal dispatch.
+;;;
+;;; define-prompt-vi-key-rules follows the same Prolog-like rule style as
+;;; define-copy-mode-vi-rules (events-copy-mode-dispatch.lisp) and
+;;; define-prompt-key-rules (above).  It generates %HANDLE-VI-NORMAL-KEY from
+;;; a declarative dispatch table of (pattern &rest body) rules.
+
+(defmacro define-prompt-vi-key-rules (&rest rules)
+  "Build %HANDLE-VI-NORMAL-KEY from a byte-dispatch table.
+   Each RULE is (PATTERN &rest BODY) where PATTERN is a byte literal or constant.
+   The generated function returns T when the byte was consumed, NIL otherwise."
+  `(defun %handle-vi-normal-key (byte)
+     "Dispatch BYTE in vi normal mode.  Returns T when the key was handled.
+      Navigation: h (left), l (right), 0/^ (BOL), $ (EOL).
+      Editing:    x (delete char), D (delete to end).
+      Mode switch: a/i/A/I return to insert mode.
+      Enter:      submit; ESC/C-c: cancel."
+     (let ((prompt *prompt*))
+       (when (and prompt (prompt-vi-normal-p prompt))
+         (case byte
+           ,@(mapcar
+              (lambda (rule)
+                (destructuring-bind (pattern &rest body) rule
+                  `(,pattern ,@body)))
+              rules))))))
 
 (defun %handle-vi-normal-key (byte)
   "Dispatch BYTE in vi normal mode.  Returns T when the key was handled.

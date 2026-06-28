@@ -85,22 +85,18 @@
        (defun ,set-name (name value)
          ,(or set-docstring
               (format nil "Coerce VALUE to the registered type for NAME and store it in ~A.~%~
-                           Returns the coerced value.  Unregistered @ user options are~%~
-                           stored as-is; other unregistered names signal invalid option."
+                           Returns the coerced value.  Unregistered options are stored~%~
+                           as-is (no coercion), preserving backward-compatible behaviour~%~
+                           for special-option side-effect handlers (prefix, default-shell)~%~
+                           and user options (@ prefix)."
                       storage-var))
          (let* ((spec (%option-spec-for-name name
                                              ,registry-var
                                              ,known-registry-var))
-                (user-option-p (%user-option-name-p name))
-                (coerced (cond
-                           (spec
-                            (%coerce-value (option-spec-type spec) value))
-                           (user-option-p
-                            value)
-                           (t
-                            (%invalid-option-error name)))))
-           (when (or spec user-option-p)
-             (setf (gethash name ,storage-var) coerced))
+                (coerced (if spec
+                             (%coerce-value (option-spec-type spec) value)
+                             value)))
+           (setf (gethash name ,storage-var) coerced)
            coerced)))))
 
 ;;; ── Public session-option API ─────────────────────────────────────────────
@@ -112,8 +108,7 @@
    Returns DEFAULT (nil if not supplied) when NAME is not present."
   :set-docstring
   "Coerce VALUE to the registered type for NAME and store it in *GLOBAL-OPTIONS*.
-   Returns the coerced value.  Unregistered @ user options are stored as-is;
-   other unregistered names signal invalid option.")
+   Returns the coerced value.  Unregistered options are stored as-is (no coercion).")
 
 (defun option-defined-p (name)
   "Return T if NAME is a registered option in *OPTION-REGISTRY*."
@@ -201,7 +196,7 @@
    Returns DEFAULT (nil if not supplied) when NAME is not present."
   :set-docstring
   "Coerce VALUE to the registered type for NAME and store in *SERVER-OPTIONS*.
-   Returns the coerced value.")
+   Returns the coerced value.  Unregistered options are stored as-is (no coercion).")
 
 ;;; ── Scoped option accessors (per-window / per-pane) ──────────────────────
 ;;;
@@ -255,17 +250,14 @@
 
 (defun %set-local-option (name value hash)
   "Coerce VALUE for NAME (via *OPTION-REGISTRY*) and store it in HASH.
-   Returns the coerced value.  Shared by set-option-for-window and set-option-for-pane."
+   Returns the coerced value.  Shared by set-option-for-window and set-option-for-pane.
+   Unregistered options are stored as-is (no coercion, no error)."
   (let* ((spec    (%option-spec-for-name name
                                          *option-registry*
                                          *known-option-registry*))
-         (coerced (cond
-                    (spec
-                     (%coerce-value (option-spec-type spec) value))
-                    ((%user-option-name-p name)
-                     value)
-                    (t
-                     (%invalid-option-error name)))))
+         (coerced (if spec
+                      (%coerce-value (option-spec-type spec) value)
+                      value)))
     (setf (gethash name hash) coerced)
     coerced))
 

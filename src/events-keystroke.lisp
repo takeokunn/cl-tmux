@@ -21,6 +21,50 @@
     (vector-push-extend byte buf)
     buf))
 
+;;; ── Menu key dispatch helper ─────────────────────────────────────────────────
+;;;
+;;; When the interactive menu overlay is active, most keystrokes are consumed
+;;; and routed to the menu navigation commands rather than the active pane.
+;;; Extracted from %ground-input-state to keep the top-level CPS state readable.
+
+(defun %dispatch-menu-key (session byte)
+  "Dispatch BYTE to the active menu overlay and mark the display dirty.
+   j — next item; k — previous item; Enter — select; q/Esc — dismiss;
+   digit 0-9 — jump to that item index then refresh.  All other keys are
+   swallowed (the menu remains open).  Always returns NIL so the caller stays in
+   ground state regardless of which key was pressed."
+  (cond
+    ;; j — next item
+    ((= byte +byte-j+)
+     (dispatch-command session :menu-next byte)
+     (setf *dirty* t))
+    ;; k — previous item
+    ((= byte +byte-k+)
+     (dispatch-command session :menu-prev byte)
+     (setf *dirty* t))
+    ;; Enter — select current item
+    ((= byte 13)
+     (dispatch-command session :menu-select byte)
+     (setf *dirty* t))
+    ;; q / Escape — dismiss menu
+    ((or (= byte +byte-q+) (= byte +byte-esc+))
+     (dispatch-command session :menu-dismiss byte)
+     (setf *dirty* t))
+    ;; Digit 0-9: jump to that item index, then dispatch menu-next with 0 delta
+    ;; to trigger overlay refresh via the dispatch-handlers.lisp path.
+    ((and (>= byte 48) (<= byte 57))
+     (let* ((n   (- byte 48))
+            (len (length (menu-items *active-menu*))))
+       (when (< n len)
+         (setf (menu-selected-index *active-menu*) n)
+         ;; Trigger show-overlay refresh via dispatch (avoids direct %format-menu call).
+         (dispatch-command session :menu-next byte)
+         (dispatch-command session :menu-prev byte)
+         (setf *dirty* t))))
+    ;; All other keys swallowed while menu is open
+    (t nil))
+  nil)
+
 ;;; ── Named CPS state functions ────────────────────────────────────────────────
 ;;;
 ;;; Rules read like Prolog clauses:
@@ -39,40 +83,11 @@
   ;; ── Active menu: j/k navigate, Enter selects, q/Esc dismisses ───────────────
   ;; Menu takes priority over overlay so choose-session/choose-window is
   ;; navigable with the keyboard; the overlay just renders the menu content.
-  ;; Dispatch to :menu-next/:menu-prev/:menu-select/:menu-dismiss which each
-  ;; call show-overlay to redraw.  No direct call to %format-menu here because
-  ;; this file loads before dispatch-core.lisp (where %format-menu is defined).
+  ;; %dispatch-menu-key handles all key variants and always returns NIL so we
+  ;; stay in ground state.  No direct call to %format-menu here because this
+  ;; file loads before dispatch-core.lisp (where %format-menu is defined).
   ((menu-active-p)
-   (cond
-     ;; j — next item
-     ((= byte +byte-j+)
-      (dispatch-command session :menu-next byte)
-      (setf *dirty* t))
-     ;; k — previous item
-     ((= byte +byte-k+)
-      (dispatch-command session :menu-prev byte)
-      (setf *dirty* t))
-     ;; Enter — select current item
-     ((= byte 13)
-      (dispatch-command session :menu-select byte)
-      (setf *dirty* t))
-     ;; q / Escape — dismiss menu
-     ((or (= byte +byte-q+) (= byte +byte-esc+))
-      (dispatch-command session :menu-dismiss byte)
-      (setf *dirty* t))
-     ;; Digit 0-9: jump to that item index, then dispatch menu-next with 0 delta
-     ;; to trigger overlay refresh via the dispatch-handlers.lisp path.
-     ((and (>= byte 48) (<= byte 57))
-      (let* ((n   (- byte 48))
-             (len (length (menu-items *active-menu*))))
-        (when (< n len)
-          (setf (menu-selected-index *active-menu*) n)
-          ;; Trigger show-overlay refresh via dispatch (avoids direct %format-menu call).
-          (dispatch-command session :menu-next byte)
-          (dispatch-command session :menu-prev byte)
-          (setf *dirty* t))))
-     ;; All other keys swallowed while menu is open
-     (t nil))
+   (%dispatch-menu-key session byte)
    (values nil #'%ground-input-state))
   ;; ── Global overlays take priority ─────────────────────────────────────────
   ;; j/k scroll; q/Esc dismiss; Up/Down arrows accumulate as ESC sequences and

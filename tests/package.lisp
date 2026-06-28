@@ -120,7 +120,9 @@
                 ;; Pane geometry (direct reposition)
                 #:pane-reposition
                 ;; Session window management
-                #:session-insert-window)
+                #:session-insert-window
+                ;; Pane liveness check
+                #:pane-live-p)
   (:import-from #:cl-tmux
                 ;; Session groups
                 #:*session-groups*
