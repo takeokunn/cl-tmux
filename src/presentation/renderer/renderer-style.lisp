@@ -85,7 +85,7 @@
 ;;; Defined BEFORE %border-color-sgr so SBCL sees it as a known special at
 ;;; compile time and does not emit an undefined-variable warning.
 
-(defparameter *%color-name-table*
+(defvar *%color-name-table*
   '(("black"    . "30")
     ("red"      . "31")
     ("green"    . "32")
@@ -102,7 +102,8 @@
     ("brightmagenta" . "95")
     ("brightcyan"    . "96")
     ("brightwhite"   . "97"))
-  "Alist mapping color name strings to integer SGR base code strings (foreground codes).")
+  "Read-only alist mapping color name strings to integer SGR base code strings (foreground codes).
+Never rebound at runtime — use DEFVAR so image restarts do not reset the binding.")
 
 ;;; ── Single-source border-colour lookup ───────────────────────────────────────
 ;;;

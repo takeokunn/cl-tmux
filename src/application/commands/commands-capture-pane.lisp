@@ -7,13 +7,26 @@
 ;;; when re-displayed (e.g. the `capture-pane -ep` idiom, or session-restore tools).
 
 ;;; Cell attribute bit → SGR code mapping.
-;;; Bit 0 = bold (SGR 1), bit 1 = dim (SGR 2), bit 2 = reverse (SGR 7),
-;;; bit 3 = underline (SGR 4), bit 4 = blink (SGR 5), bit 5 = italic (SGR 3),
-;;; bit 6 = conceal (SGR 8), bit 7 = strikethrough (SGR 9).
 ;;; Mirrors the renderer's cell-attr table — changes to that table must be
 ;;; reflected here.
+(defconstant +attr-bit-bold+          0 "Cell attribute bit for bold (SGR 1).")
+(defconstant +attr-bit-dim+           1 "Cell attribute bit for dim (SGR 2).")
+(defconstant +attr-bit-reverse+       2 "Cell attribute bit for reverse video (SGR 7).")
+(defconstant +attr-bit-underline+     3 "Cell attribute bit for underline (SGR 4).")
+(defconstant +attr-bit-blink+         4 "Cell attribute bit for blink (SGR 5).")
+(defconstant +attr-bit-italic+        5 "Cell attribute bit for italic (SGR 3).")
+(defconstant +attr-bit-conceal+       6 "Cell attribute bit for conceal (SGR 8).")
+(defconstant +attr-bit-strikethrough+ 7 "Cell attribute bit for strikethrough (SGR 9).")
+
 (defparameter *capture-sgr-attr-codes*
-  '((0 . 1) (1 . 2) (2 . 7) (3 . 4) (4 . 5) (5 . 3) (6 . 8) (7 . 9))
+  `((,+attr-bit-bold+          . 1)
+    (,+attr-bit-dim+           . 2)
+    (,+attr-bit-reverse+       . 7)
+    (,+attr-bit-underline+     . 4)
+    (,+attr-bit-blink+         . 5)
+    (,+attr-bit-italic+        . 3)
+    (,+attr-bit-conceal+       . 8)
+    (,+attr-bit-strikethrough+ . 9))
   "Cell attribute bit → SGR code: bold/dim/reverse/underline/blink/italic/
    conceal/strikethrough (mirrors the renderer's cell-attr table).")
 

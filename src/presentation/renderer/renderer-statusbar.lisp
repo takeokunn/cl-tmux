@@ -66,10 +66,6 @@
   "Read NAME from WINDOW's option context."
   (cl-tmux/options:get-option-for-context name :window window))
 
-(defun %status-bucket-stream (buckets current)
-  "Return the active output stream for CURRENT in BUCKETS."
-  (getf buckets current))
-
 (defun %window-status-style (session window active-p)
   "Resolve the status-bar style string for WINDOW's tab.
    Active window → window-status-current-style.  For a non-active window, the
@@ -87,7 +83,7 @@
           ((window-activity-flag window)            activity-style)
           ((eq window (session-last-window session)) last-style)))))
 
-(defun %status-window-list-styled (session active-win)
+(defun %status-window-list-styled (session active-window)
   "Window-tab string with current-style applied to the active window entry.
    Uses window-status-format, window-status-current-format, window-status-separator,
    window-status-current-style, window-status-style, and the alert-state styles
@@ -106,7 +102,7 @@
           (unless first-p (write-string separator window-stream))
           (setf first-p nil)
           (let* ((context  (cl-tmux/format:format-context-from-window session window))
-                 (active-p (eq window active-win))
+                 (active-p (eq window active-window))
                  (fmt      (cl-tmux/options:get-option-for-context
                             (if active-p "window-status-current-format" "window-status-format")
                             :window window))
@@ -130,14 +126,14 @@
               (when styled-p
                 (reset-attrs window-stream)))))))))
 
-(defun %status-left-text (session active-win active-pane)
+(defun %status-left-text (session active-window active-pane)
   "Left portion of the status bar: prompt text or session/window/pane info.
    Uses %status-window-list-styled so per-window style options take effect."
   (if (prompt-active-p)
       (prompt-text)
       (format nil " ~A~A~A"
               (session-name session)
-              (%status-window-list-styled session active-win)
+              (%status-window-list-styled session active-window)
               (%status-pane-indicator active-pane))))
 
 (defun %render-status-line (stream status-row sgr-code line)
@@ -159,15 +155,15 @@
   "Return the fallback status-bar segments and justification mode.
    The left segment includes either prompt text or the session/window/pane
    summary; the right segment uses status-right or the default clock string."
-  (let* ((active-win  (session-active-window session))
-         (active-pane (session-active-pane session))
-         (left-raw    (%status-expand-style-blocks
-                       (if (prompt-active-p)
-                           (prompt-text)
-                           (%status-format-or-default
-                            "status-left" context
-                            (lambda () (%status-left-text session active-win active-pane))))
-                       sgr-code))
+  (let* ((active-window (session-active-window session))
+         (active-pane   (session-active-pane session))
+         (left-raw      (%status-expand-style-blocks
+                         (if (prompt-active-p)
+                             (prompt-text)
+                             (%status-format-or-default
+                              "status-left" context
+                              (lambda () (%status-left-text session active-window active-pane))))
+                         sgr-code))
          (right-raw   (%status-expand-style-blocks
                        (%status-format-or-default
                         "status-right" context #'cl-tmux/format::%current-time-string)
@@ -200,12 +196,12 @@
    STATUS-ROW defaults to (1- TERMINAL-ROWS), i.e. the bottom row.
    Respects status-style, status-justify, status-left-length, status-right-length,
    and window-status-current-style options."
-  (let* ((active-win  (session-active-window session))
-         (active-pane (session-active-pane session))
+  (let* ((active-window (session-active-window session))
+         (active-pane   (session-active-pane session))
          ;; Pass terminal dimensions so #{client_width} / #{client_height} work
          ;; in status-left, status-right, and window-status-format strings.
-         (context     (cl-tmux/format:format-context-from-session
-                       session active-win active-pane
+         (context       (cl-tmux/format:format-context-from-session
+                         session active-window active-pane
                        :client-width  terminal-cols
                        :client-height (max 0 (- terminal-rows 1))))
          (sgr-code    (%status-sgr-from-style (%effective-status-style)))

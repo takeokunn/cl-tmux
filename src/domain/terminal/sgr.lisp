@@ -121,19 +121,6 @@
 ;;;   apply_sgr([48,2,R,G,B|T], S)  :- set_bg_truecolor(S,R,G,B), apply_sgr(T, S).
 ;;;   apply_sgr([P|T], S)           :- dispatch_sgr(S, P),      apply_sgr(T, S).
 
-;;; Dispatch table for the semicolon-protocol colour arms (38/48/58 × 5/2).
-;;; Each entry is ((P . KIND) . SETTER-FUNCTION) where
-;;;   KIND=5 → 256-colour (consumed by %consume-256-color-param)
-;;;   KIND=2 → true-colour  (consumed by %set-truecolor)
-
-(defparameter *color-proto-dispatch*
-  (list (cons (cons 38 5) #'(setf screen-cur-fg))
-        (cons (cons 38 2) #'(setf screen-cur-fg))
-        (cons (cons 48 5) #'(setf screen-cur-bg))
-        (cons (cons 48 2) #'(setf screen-cur-bg))
-        (cons (cons 58 5) #'(setf screen-cur-ul-color))
-        (cons (cons 58 2) #'(setf screen-cur-ul-color))))
-
 ;;; %set-truecolor encodes a 38;2;R;G;B or 48;2;R;G;B run into #x1RRGGBB and
 ;;; stores it via the supplied SETTER helper.  This keeps the clamp/logior
 ;;; arithmetic shared between the fg and bg arms.

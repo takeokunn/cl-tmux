@@ -106,6 +106,41 @@
     (window-select-pane win (or active (first (window-panes win))))
     win))
 
+;;; ── Multi-pane window fixtures ──────────────────────────────────────────────
+;;;
+;;; %three-pane-window is shared by apply-named-layout tests (main-horizontal,
+;;; main-vertical, other-pane-* overrides) in layout-tests-c.lisp.
+;;; Defined here so any future test file can use it without cross-file coupling.
+
+(defun %three-pane-window (width height)
+  "Build a window of WIDTH x HEIGHT containing three no-PTY panes with no preset tree.
+   Used by apply-named-layout tests that set up and check main/other pane sizes."
+  (make-window :id 1 :name "w" :width width :height height
+               :panes (list (make-no-pty-pane 1 0 0 width height)
+                            (make-no-pty-pane 2 0 0 width height)
+                            (make-no-pty-pane 3 0 0 width height))))
+
+;;; ── %closest-to-center fixture macro ─────────────────────────────────────────
+;;;
+;;; Three %closest-to-center tests in layout-geometry-tests-b.lisp each build
+;;; a reference pane plus two or three candidate panes with repeated
+;;; (make-pane :id N :fd -1 :pid -1 ...) calls.  with-center-test-panes
+;;; captures that boilerplate in one place.
+
+(defmacro with-center-test-panes ((&rest pane-specs) &body body)
+  "Bind panes according to PANE-SPECS and run BODY.
+   Each PANE-SPEC is (VAR id x y width height).
+   Eliminates the repeated (make-pane :id N :fd -1 :pid -1 :x X :y Y
+   :width W :height H :screen (make-screen W H)) boilerplate in
+   %closest-to-center tests."
+  `(let* ,(mapcar (lambda (spec)
+                    (destructuring-bind (var id x y width height) spec
+                      `(,var (make-pane :id ,id :fd -1 :pid -1
+                                        :x ,x :y ,y :width ,width :height ,height
+                                        :screen (make-screen ,width ,height)))))
+                  pane-specs)
+     ,@body))
+
 ;;; ── Minimal 2-pane layout fixture ─────────────────────────────────────────────
 ;;;
 ;;; Many layout-geometry tests pair two 1×1 placeholder panes as inputs to

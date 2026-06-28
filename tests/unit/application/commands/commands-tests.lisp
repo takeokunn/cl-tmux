@@ -360,3 +360,61 @@
     (cl-tmux/commands::%join-pane-insert-into-dst src win :h)
     (is (eq win (pane-window src))
         "pane-window must be updated to dst-window after insertion")))
+
+;;; ── swap-two-panes direct unit tests ─────────────────────────────────────────
+;;;
+;;; swap-two-panes has zero dedicated tests; its geometry-swap path is only
+;;; exercised indirectly through swap-pane direction dispatch.  The tests below
+;;; cover the no-op paths (same pane, missing pane) and the index-exchange path.
+
+(test swap-two-panes-same-pane-is-noop
+  "swap-two-panes returns NIL when both arguments are the same pane object."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first (window-panes win))))
+    (is (null (swap-two-panes win p0 p0))
+        "same pane → no-op, returns NIL")
+    (is (eq p0 (first (window-panes win)))
+        "panes list must be unchanged after same-pane no-op")))
+
+(test swap-two-panes-nil-pane-is-noop
+  "swap-two-panes returns NIL when either argument is NIL."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first (window-panes win))))
+    (is (null (swap-two-panes win nil p0))
+        "NIL first argument → no-op, returns NIL")
+    (is (null (swap-two-panes win p0 nil))
+        "NIL second argument → no-op, returns NIL")))
+
+(test swap-two-panes-missing-pane-is-noop
+  "swap-two-panes returns NIL when a pane is not in the window."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first (window-panes win)))
+         (outsider (make-pane :id 99 :x 0 :y 0 :width 5 :height 5
+                              :fd -1 :pid -1 :screen (make-screen 5 5))))
+    (is (null (swap-two-panes win p0 outsider))
+        "pane not in window → no-op, returns NIL")
+    (is (eq p0 (first (window-panes win)))
+        "panes list must be unchanged")))
+
+(test swap-two-panes-exchanges-list-order-and-geometry
+  "swap-two-panes exchanges both the pane list positions and screen geometry."
+  (let* ((win (%vsplit-window 20))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win)))
+         ;; Capture original geometry.
+         (x0  (pane-x p0)) (y0 (pane-y p0)) (w0 (pane-width p0)) (h0 (pane-height p0))
+         (x1  (pane-x p1)) (y1 (pane-y p1)) (w1 (pane-width p1)) (h1 (pane-height p1)))
+    (is (eq p0 (swap-two-panes win p0 p1))
+        "swap-two-panes returns the first argument (pane-a) on success")
+    ;; List order exchanged.
+    (is (eq p1 (first  (window-panes win))) "p1 must now be first in panes list")
+    (is (eq p0 (second (window-panes win))) "p0 must now be second in panes list")
+    ;; Geometry exchanged.
+    (is (= x1 (pane-x p0))     "p0 x must be p1's old x after swap")
+    (is (= y1 (pane-y p0))     "p0 y must be p1's old y after swap")
+    (is (= w1 (pane-width  p0)) "p0 width must be p1's old width after swap")
+    (is (= h1 (pane-height p0)) "p0 height must be p1's old height after swap")
+    (is (= x0 (pane-x p1))     "p1 x must be p0's old x after swap")
+    (is (= y0 (pane-y p1))     "p1 y must be p0's old y after swap")
+    (is (= w0 (pane-width  p1)) "p1 width must be p0's old width after swap")
+    (is (= h0 (pane-height p1)) "p1 height must be p0's old height after swap")))

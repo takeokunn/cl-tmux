@@ -38,7 +38,7 @@
 
    IMPLICIT FREE VARIABLES: the generated ecase body is evaluated in the
    lexical scope of apply-named-layout's let*, so every RULE's call-form
-   may freely reference 'window', 'panes', 'n', 'w', and 'h' by name.
+   may freely reference 'window', 'panes', 'n', 'width', and 'height' by name.
    This is intentional: the macro acts as a code template, not a closure,
    and the Prolog-fact reading of each rule relies on those names being in
    scope at the call site."
@@ -54,10 +54,10 @@
       override them when set and fitting.  The option values are read by the
       cl-tmux-layer caller and passed in as plain integers, since this model-layer
       code loads before options.  Rebuilds the window tree and calls layout-assign."
-     (let* ((panes (window-panes window))
-            (n     (length panes))
-            (w     (window-width  window))
-            (h     (window-height window)))
+     (let* ((panes  (window-panes window))
+            (n      (length panes))
+            (width  (window-width  window))
+            (height (window-height window)))
        (declare (ignorable main-pane-width main-pane-height
                            other-pane-width other-pane-height))
        (when (plusp n)
@@ -74,17 +74,17 @@
 ;;; repositions every leaf's pane to the correct rectangle, so a pre-loop
 ;;; was redundant and fragile (side-effect order dependency).
 
-(defun %layout-even-h (window panes w h)
+(defun %layout-even-h (window panes width height)
   "Apply the :even-horizontal layout: equal-width columns separated by 1-col borders.
    The pane count is derived from PANES; no separate count parameter is needed."
   (setf (window-tree window) (%build-flat-tree panes :h))
-  (%assign-window-tree window w h))
+  (%assign-window-tree window width height))
 
-(defun %layout-even-v (window panes w h)
+(defun %layout-even-v (window panes width height)
   "Apply the :even-vertical layout: equal-height rows separated by 1-row borders.
    The pane count is derived from PANES; no separate count parameter is needed."
   (setf (window-tree window) (%build-flat-tree panes :v))
-  (%assign-window-tree window w h))
+  (%assign-window-tree window width height))
 
 ;;; ── %layout-main — unified main-horizontal / main-vertical ──────────────────
 ;;;
@@ -113,7 +113,7 @@
        (- available other-size))
       (t main-size))))
 
-(defun %layout-main (window panes w h outer-orient inner-orient main-size
+(defun %layout-main (window panes width height outer-orient inner-orient main-size
                      &optional (other-size 0))
   "Apply a main-axis layout: the first (main) pane takes MAIN-SIZE cells along the
    OUTER-ORIENT axis; the rest are evenly distributed along INNER-ORIENT in the
@@ -123,21 +123,21 @@
    fitting — see %main-pane-extent.  The split ratio is derived from the resolved
    main extent against the available extent (one row/column reserved for the
    separator), clamped so both regions stay > 0."
-  (let* ((rest-panes (rest panes))
-         (extent     (ecase outer-orient (:v h) (:h w)))
+  (let* ((rest-panes  (rest panes))
+         (extent      (orient-case outer-orient :h width :v height))
          ;; available-cells in %assign-split is (1- extent); the main pane's
          ;; first-extent = round(available * ratio), so ratio = main-extent/available.
-         (available  (max 1 (1- extent)))
+         (available   (max 1 (1- extent)))
          (main-extent (%main-pane-extent available main-size other-size))
-         (ratio      (max 1/100 (min 99/100 (/ main-extent available))))
-         (tree       (if rest-panes
-                         (make-layout-split outer-orient
-                                            (make-layout-leaf (first panes))
-                                            (%build-flat-tree rest-panes inner-orient)
-                                            ratio)
-                         (make-layout-leaf (first panes)))))
+         (ratio       (max 1/100 (min 99/100 (/ main-extent available))))
+         (tree        (if rest-panes
+                          (make-layout-split outer-orient
+                                             (make-layout-leaf (first panes))
+                                             (%build-flat-tree rest-panes inner-orient)
+                                             ratio)
+                          (make-layout-leaf (first panes)))))
     (setf (window-tree window) tree)
-    (%assign-window-tree window w h)))
+    (%assign-window-tree window width height)))
 
 ;;; ── %build-grid-tree ────────────────────────────────────────────────────────
 ;;;
@@ -154,7 +154,7 @@
         (%build-flat-tree (first row-pane-groups) :h)
         (%build-grid-tree (rest row-pane-groups)))))
 
-(defun %layout-tiled (window panes n w h)
+(defun %layout-tiled (window panes n width height)
   "Apply the :tiled layout: near-square grid, cols = ceil(sqrt n), rows = ceil(n / cols)."
   (let* ((cols  (ceiling (sqrt n)))
          (rows  (ceiling n cols))
@@ -164,20 +164,20 @@
                               (end   (min (* (1+ row-index) cols) n)))
                           (subseq panes start end)))))
     (setf (window-tree window) (%build-grid-tree row-pane-groups))
-    (%assign-window-tree window w h)))
+    (%assign-window-tree window width height)))
 
 ;;; ── apply-named-layout — declarative fact table ──────────────────────────────
 ;;;
 ;;; One clause per layout:
-;;;   layout_rule(:even-horizontal) :- %layout-even-h(window, panes, w, h)
-;;;   layout_rule(:even-vertical)   :- %layout-even-v(window, panes, w, h)
-;;;   layout_rule(:main-horizontal) :- %layout-main(window, panes, w, h, :v, :h)
-;;;   layout_rule(:main-vertical)   :- %layout-main(window, panes, w, h, :h, :v)
-;;;   layout_rule(:tiled)           :- %layout-tiled(window, panes, n, w, h)
+;;;   layout_rule(:even-horizontal) :- %layout-even-h(window, panes, width, height)
+;;;   layout_rule(:even-vertical)   :- %layout-even-v(window, panes, width, height)
+;;;   layout_rule(:main-horizontal) :- %layout-main(window, panes, width, height, :v, :h)
+;;;   layout_rule(:main-vertical)   :- %layout-main(window, panes, width, height, :h, :v)
+;;;   layout_rule(:tiled)           :- %layout-tiled(window, panes, n, width, height)
 
 (define-named-layout-rules
-  (:even-horizontal (%layout-even-h window panes w h))
-  (:even-vertical   (%layout-even-v window panes w h))
-  (:main-horizontal (%layout-main   window panes w h :v :h main-pane-height other-pane-height))
-  (:main-vertical   (%layout-main   window panes w h :h :v main-pane-width  other-pane-width))
-  (:tiled           (%layout-tiled  window panes n w h)))
+  (:even-horizontal (%layout-even-h window panes width height))
+  (:even-vertical   (%layout-even-v window panes width height))
+  (:main-horizontal (%layout-main   window panes width height :v :h main-pane-height other-pane-height))
+  (:main-vertical   (%layout-main   window panes width height :h :v main-pane-width  other-pane-width))
+  (:tiled           (%layout-tiled  window panes n width height)))

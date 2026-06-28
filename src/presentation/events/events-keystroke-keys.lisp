@@ -75,14 +75,18 @@
 (defun %csi-u-base-key (codepoint)
   "Base key name for a CSI-u CODEPOINT: a named key for the specials (Tab, Enter,
    Escape, Space, BSpace) else the literal character for a printable code; NIL for
-   an unhandled (control/out-of-range) codepoint."
+   an unhandled (control/out-of-range) codepoint.
+   The graphic range is +byte-first-graphic+ (33='!') through +byte-last-graphic+
+   (126='~'), excluding Space (32, handled above) and DEL (127 = +byte-del+, mapped
+   to BSpace)."
   (case codepoint
     (9   "Tab")
     (13  "Enter")
     (27  "Escape")
     (32  "Space")
     (127 "BSpace")
-    (t   (when (<= 33 codepoint 126) (string (code-char codepoint))))))
+    (t   (when (<= +byte-first-graphic+ codepoint +byte-last-graphic+)
+           (string (code-char codepoint))))))
 
 (defun %csi-u-key-name (codepoint mod-value)
   "Canonical tmux key name for the CSI-u sequence ESC [ CODEPOINT ; MOD-VALUE u.
@@ -113,21 +117,30 @@
     (when codepoint (values codepoint mod))))
 
 (defun %control-byte-key-name (byte)
-  "Return a printable base key name for a Ctrl BYTE, or NIL."
+  "Return a printable base key name for a Ctrl BYTE, or NIL.
+   Ctrl bytes 1-26 (^A..^Z) map to lowercase a-z via byte+96.
+   Ctrl bytes +byte-esc+ (27) through 31 (^[..^_) map to [..\_ via
+   byte + +byte-ctrl-to-upper-offset+ (64).  The +64 offset recovers the symbol
+   character: ESC (27) → '[' (91), FS (28) → '\\', GS (29) → ']', RS (30) → '^',
+   US (31) → '_'."
   (cond
-    ((<= 1 byte 26) (string (code-char (+ byte 96)))) ; ^A..^Z -> a..z
-    ((<= 27 byte 31) (string (code-char (+ byte 64)))) ; ^[..\^_ -> [..\_
+    ((<= 1 byte 26)
+     (string (code-char (+ byte 96))))                          ; ^A..^Z → a..z
+    ((<= +byte-esc+ byte 31)
+     (string (code-char (+ byte +byte-ctrl-to-upper-offset+))))  ; ^[..^_ → [..\_
     (t nil)))
 
 (defun %meta-key-name (byte)
   "Canonical tmux key name for the Meta/Alt chord that arrives as ESC then BYTE.
    \"M-a\", \"M-1\", \"M-/\", and \"M-Space\" (byte 32).  Returns NIL for control
-   bytes and DEL, which are not standalone meta chords, so the caller forwards
-   them unchanged.  This is the exact inverse of the M-<char> encoding produced
-   by send-keys (commands.lisp), keeping input decode and output encode symmetric."
+   bytes and DEL (+byte-del+, 127), which are not standalone meta chords, so the
+   caller forwards them unchanged.  The upper bound (< byte +byte-del+) makes the
+   DEL exclusion self-documenting.  This is the exact inverse of the M-<char> encoding
+   produced by send-keys (commands.lisp), keeping input decode and output encode
+   symmetric."
   (cond
     ((= byte +byte-space+) "M-Space")
-    ((and (> byte +byte-space+) (< byte 127))  ; 33..126 — printable graphic
+    ((and (> byte +byte-space+) (< byte +byte-del+))  ; 33..126 — printable graphic
      (concatenate 'string "M-" (string (code-char byte))))
     (t nil)))
 

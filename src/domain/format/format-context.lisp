@@ -203,9 +203,9 @@
    Returns a plist of context keys.  The authoritative list of all #{...}
    variables is the set of keywords in the returned plist — read the append
    sections below for the current, complete set."
-  (let* ((session-wins          (and session (cl-tmux/model:session-windows session)))
+  (let* ((session-windows       (and session (cl-tmux/model:session-windows session)))
          (session-active-window (and session (cl-tmux/model:session-active-window session)))
-         (window-count          (length session-wins))
+         (window-count          (length session-windows))
          (window-raw-flags      (%window-raw-flags window session-active-window session))
          (window-flags          (if (zerop (length window-raw-flags)) " " window-raw-flags))
          (window-panes          (and window (cl-tmux/model:window-panes window)))

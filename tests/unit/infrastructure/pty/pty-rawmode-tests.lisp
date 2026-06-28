@@ -75,32 +75,28 @@
 
 (test enable-raw-mode-signals-on-non-tty
   "enable-raw-mode! calls tcgetattr; on a non-TTY fd it signals a condition."
-  (multiple-value-bind (rfd wfd) (sb-posix:pipe)
-    (unwind-protect
-         (signals error (cl-tmux/pty:enable-raw-mode! rfd))
-      (ignore-errors (sb-posix:close rfd))
-      (ignore-errors (sb-posix:close wfd)))))
+  (with-pipe-fds (rfd wfd)
+    (declare (ignore wfd))
+    (signals error (cl-tmux/pty:enable-raw-mode! rfd))))
 
 (test disable-raw-mode-attempts-restore-when-saved
   "disable-raw-mode! calls tcsetattr when an entry exists in *saved-termios-table*.
    On a non-TTY fd tcsetattr fails with ENOTTY, confirming the code path was entered."
-  (multiple-value-bind (rfd wfd) (sb-posix:pipe)
-    (unwind-protect
-         ;; Inject a fake saved entry for rfd in an isolated table so the
-         ;; disable-raw-mode! 'when saved' branch is actually entered.
-         (let ((cl-tmux/pty::*saved-termios-table*
-                (let ((tbl (make-hash-table :test #'eql)))
-                  (setf (gethash rfd tbl) :fake-termios)
-                  tbl)))
-           ;; tcsetattr on a pipe will signal a POSIX error — that is expected.
-           ;; The key assertion is that disable-raw-mode! entered the restore branch.
-           (handler-case
-               (cl-tmux/pty:disable-raw-mode! rfd)
-             (error ()
-               ;; Expected: ENOTTY from tcsetattr on the pipe fd.
-               nil)))
-      (ignore-errors (sb-posix:close rfd))
-      (ignore-errors (sb-posix:close wfd)))))
+  (with-pipe-fds (rfd wfd)
+    (declare (ignore wfd))
+    ;; Inject a fake saved entry for rfd in an isolated table so the
+    ;; disable-raw-mode! 'when saved' branch is actually entered.
+    (let ((cl-tmux/pty::*saved-termios-table*
+           (let ((tbl (make-hash-table :test #'eql)))
+             (setf (gethash rfd tbl) :fake-termios)
+             tbl)))
+      ;; tcsetattr on a pipe will signal a POSIX error — that is expected.
+      ;; The key assertion is that disable-raw-mode! entered the restore branch.
+      (handler-case
+          (cl-tmux/pty:disable-raw-mode! rfd)
+        (error ()
+          ;; Expected: ENOTTY from tcsetattr on the pipe fd.
+          nil)))))
 
 ;;; ── *saved-termios-table* isolation ─────────────────────────────────────────
 
@@ -144,21 +140,19 @@
 (test disable-raw-mode-removes-entry-from-table
   "disable-raw-mode! removes the fd entry from *saved-termios-table* after
    attempting to restore, even when tcsetattr fails (e.g., on a pipe fd)."
-  (multiple-value-bind (rfd wfd) (sb-posix:pipe)
-    (unwind-protect
-         (let ((cl-tmux/pty::*saved-termios-table*
-                (let ((tbl (make-hash-table :test #'eql)))
-                  (setf (gethash rfd tbl) :fake-termios)
-                  tbl)))
-           ;; tcsetattr on a pipe signals ENOTTY — we ignore that.
-           (handler-case
-               (cl-tmux/pty:disable-raw-mode! rfd)
-             (error () nil))
-           ;; The entry must be gone regardless of tcsetattr outcome.
-           (is (null (gethash rfd cl-tmux/pty::*saved-termios-table*))
-               "disable-raw-mode! must remove the fd entry from *saved-termios-table*"))
-      (ignore-errors (sb-posix:close rfd))
-      (ignore-errors (sb-posix:close wfd)))))
+  (with-pipe-fds (rfd wfd)
+    (declare (ignore wfd))
+    (let ((cl-tmux/pty::*saved-termios-table*
+           (let ((tbl (make-hash-table :test #'eql)))
+             (setf (gethash rfd tbl) :fake-termios)
+             tbl)))
+      ;; tcsetattr on a pipe signals ENOTTY — we ignore that.
+      (handler-case
+          (cl-tmux/pty:disable-raw-mode! rfd)
+        (error () nil))
+      ;; The entry must be gone regardless of tcsetattr outcome.
+      (is (null (gethash rfd cl-tmux/pty::*saved-termios-table*))
+          "disable-raw-mode! must remove the fd entry from *saved-termios-table*"))))
 
 ;;; ── enable-raw-mode! / disable-raw-mode! are fbound ─────────────────────────
 

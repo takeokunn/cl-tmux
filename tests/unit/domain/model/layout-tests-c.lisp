@@ -141,7 +141,7 @@
 
 ;;; ── define-axis-rules / %split-fits-p ────────────────────────────────────────
 
-(test split-fits-p-table
+(test split-fits-p-layout-tree-suite
   "%split-fits-p: T when room exists to split on the axis, NIL when too small.
    min-width=2 → h needs ≥5 cols; min-height=1 → v needs ≥3 rows."
   (dolist (row '((t   5 24 :h "5-col pane fits h-split (needs 5)")
@@ -164,20 +164,9 @@
     (destructuring-bind (input expected desc) c
       (is (string= expected (cl-tmux/model::%layout-checksum input)) "~A" desc))))
 
-;;; ── Table-driven: resize-direction-orientation mapping ───────────────────────
-;;;
-;;; The 4-case mapping is already tested in layout-geometry-tests.lisp;
-;;; a table-driven form here validates the same facts via a single loop.
-
-(test resize-direction-orientation-all-directions-table
-  "Table-driven: all four directions map to the correct split orientation."
-  (let ((cases '((:left  . :h)
-                 (:right . :h)
-                 (:up    . :v)
-                 (:down  . :v))))
-    (dolist (c cases)
-      (is (eq (cdr c) (cl-tmux/model::resize-direction-orientation (car c)))
-          "direction ~A must map to orientation ~A" (car c) (cdr c)))))
+; resize-direction-orientation-all-directions-table removed.
+; The identical 4-case mapping is already tested in layout-geometry-tests.lisp
+; as resize-direction-orientation-mapping; the duplicate was removed.
 
 ;;; ── main-horizontal / main-vertical honour main-pane size ────────────────────
 ;;;
@@ -186,12 +175,7 @@
 ;;; pane is sized to exactly that many cells along the outer axis; the rest share
 ;;; the remainder.
 
-(defun %three-pane-window (w h)
-  "A window of three no-PTY panes (W x H) with no preset tree."
-  (make-window :id 1 :name "w" :width w :height h
-               :panes (list (make-no-pty-pane 1 0 0 w h)
-                            (make-no-pty-pane 2 0 0 w h)
-                            (make-no-pty-pane 3 0 0 w h))))
+;;; %three-pane-window is defined in tests/helpers-b.lisp.
 
 (test main-layout-honours-main-pane-size
   "apply-named-layout :main-vertical sizes the main pane to main-pane-width;

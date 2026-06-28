@@ -8,36 +8,70 @@
 ;;; All tests isolate themselves via with-isolated-hooks, which rebinds
 ;;; *hook-registry* to a fresh table so registrations never leak.
 
+;;; ── Shared constant-table assertion helper ───────────────────────────────────
+
+(defun %assert-hook-constant-table (pairs)
+  "Assert that each (expected-string actual-constant) pair in PAIRS satisfies
+   string= equality.  Extracted to eliminate the identical dolist +
+   destructuring-bind + is (string=) boilerplate from the three test forms
+   hook-event-constants, new-hook-event-constants, and
+   remaining-hook-event-constants."
+  (dolist (pair pairs)
+    (destructuring-bind (expected actual) pair
+      (is (string= expected actual) "hook constant must equal ~S" expected))))
+
 ;;; ── Hook event constant values ───────────────────────────────────────────────
 
 (test hook-event-constants
   "Hook event constants defined via define-hook-events have the expected string values."
-  (dolist (c `(("after-new-window"    ,cl-tmux/hooks:+hook-after-new-window+)
-               ("after-new-pane"      ,cl-tmux/hooks:+hook-after-new-pane+)
-               ("pane-exited"         ,cl-tmux/hooks:+hook-pane-exited+)
-               ("after-rename-window" ,cl-tmux/hooks:+hook-after-rename-window+)
-               ("session-created"     ,cl-tmux/hooks:+hook-session-created+)
-               ("after-kill-pane"     ,cl-tmux/hooks:+hook-after-kill-pane+)
-               ("after-kill-window"   ,cl-tmux/hooks:+hook-after-kill-window+)
-               ("after-split-window"  ,cl-tmux/hooks:+hook-after-split-window+)
-               ("client-attached"     ,cl-tmux/hooks:+hook-client-attached+)
-               ("client-detached"     ,cl-tmux/hooks:+hook-client-detached+)
-               ("alert-bell"          ,cl-tmux/hooks:+hook-alert-bell+)))
-    (destructuring-bind (expected actual) c
-      (is (string= expected actual) "constant must equal ~S" expected))))
-
+  (%assert-hook-constant-table
+   `(("after-new-window"    ,cl-tmux/hooks:+hook-after-new-window+)
+     ("after-new-pane"      ,cl-tmux/hooks:+hook-after-new-pane+)
+     ("pane-exited"         ,cl-tmux/hooks:+hook-pane-exited+)
+     ("after-rename-window" ,cl-tmux/hooks:+hook-after-rename-window+)
+     ("session-created"     ,cl-tmux/hooks:+hook-session-created+)
+     ("after-kill-pane"     ,cl-tmux/hooks:+hook-after-kill-pane+)
+     ("after-kill-window"   ,cl-tmux/hooks:+hook-after-kill-window+)
+     ("after-split-window"  ,cl-tmux/hooks:+hook-after-split-window+)
+     ("client-attached"     ,cl-tmux/hooks:+hook-client-attached+)
+     ("client-detached"     ,cl-tmux/hooks:+hook-client-detached+)
+     ("alert-bell"          ,cl-tmux/hooks:+hook-alert-bell+))))
 
 (test new-hook-event-constants
   "The newly added tmux hook event constants have the expected string values."
-  (dolist (c `(("pane-died"              ,cl-tmux/hooks:+hook-pane-died+)
-               ("window-layout-changed"  ,cl-tmux/hooks:+hook-window-layout-changed+)
-               ("client-session-changed" ,cl-tmux/hooks:+hook-client-session-changed+)
-               ("pane-mode-changed"      ,cl-tmux/hooks:+hook-pane-mode-changed+)
-               ("client-focus-in"        ,cl-tmux/hooks:+hook-client-focus-in+)
-               ("client-focus-out"       ,cl-tmux/hooks:+hook-client-focus-out+)
-               ("command-error"          ,cl-tmux/hooks:+hook-command-error+)))
-    (destructuring-bind (expected actual) c
-      (is (string= expected actual) "constant must equal ~S" expected))))
+  (%assert-hook-constant-table
+   `(("pane-died"              ,cl-tmux/hooks:+hook-pane-died+)
+     ("window-layout-changed"  ,cl-tmux/hooks:+hook-window-layout-changed+)
+     ("client-session-changed" ,cl-tmux/hooks:+hook-client-session-changed+)
+     ("pane-mode-changed"      ,cl-tmux/hooks:+hook-pane-mode-changed+)
+     ("client-focus-in"        ,cl-tmux/hooks:+hook-client-focus-in+)
+     ("client-focus-out"       ,cl-tmux/hooks:+hook-client-focus-out+)
+     ("command-error"          ,cl-tmux/hooks:+hook-command-error+))))
+
+(test remaining-hook-event-constants
+  "The remaining hook event constants not covered by hook-event-constants or
+   new-hook-event-constants have the expected string values.
+   Covers: alert-activity, alert-silence, pane-focus-in/out, after-select-pane/window,
+   session-window-changed, window-pane-changed, window-renamed, session-renamed,
+   after-resize-pane, client-resized, window-linked/unlinked, session-closed,
+   pane-output."
+  (%assert-hook-constant-table
+   `(("alert-activity"         ,cl-tmux/hooks:+hook-alert-activity+)
+     ("alert-silence"          ,cl-tmux/hooks:+hook-alert-silence+)
+     ("pane-focus-in"          ,cl-tmux/hooks:+hook-pane-focus-in+)
+     ("pane-focus-out"         ,cl-tmux/hooks:+hook-pane-focus-out+)
+     ("after-select-pane"      ,cl-tmux/hooks:+hook-after-select-pane+)
+     ("after-select-window"    ,cl-tmux/hooks:+hook-after-select-window+)
+     ("session-window-changed" ,cl-tmux/hooks:+hook-session-window-changed+)
+     ("window-pane-changed"    ,cl-tmux/hooks:+hook-window-pane-changed+)
+     ("window-renamed"         ,cl-tmux/hooks:+hook-window-renamed+)
+     ("session-renamed"        ,cl-tmux/hooks:+hook-session-renamed+)
+     ("after-resize-pane"      ,cl-tmux/hooks:+hook-after-resize-pane+)
+     ("client-resized"         ,cl-tmux/hooks:+hook-client-resized+)
+     ("window-linked"          ,cl-tmux/hooks:+hook-window-linked+)
+     ("window-unlinked"        ,cl-tmux/hooks:+hook-window-unlinked+)
+     ("session-closed"         ,cl-tmux/hooks:+hook-session-closed+)
+     ("pane-output"            ,cl-tmux/hooks:+hook-pane-output+))))
 
 (test run-hooks-pane-died-event
   "add-hook and run-hooks work correctly for the pane-died event and forward the pane arg."
@@ -176,6 +210,38 @@
           (cl-tmux/hooks:add-hook hook (lambda () (setf good-ran t)))
           (finishes (cl-tmux/hooks:run-hooks hook))
           (is-true good-ran "~A: non-error hook must still run" desc))))))
+
+(test hooks-error-handler-receives-event-and-condition
+  "*hooks-error-handler*, when installed, is called with the event-name and the
+   condition when a hook signals; errors are still suppressed so other hooks run."
+  (with-isolated-hooks
+    (let ((captured-event nil)
+          (captured-condition nil)
+          (good-ran nil))
+      (let ((cl-tmux/hooks:*hooks-error-handler*
+             (lambda (event condition)
+               (setf captured-event event
+                     captured-condition condition))))
+        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-new-window+
+                                 (lambda () (error "handler test error")))
+        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-new-window+
+                                 (lambda () (setf good-ran t)))
+        (finishes (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+))
+        (is (string= cl-tmux/hooks:+hook-after-new-window+ captured-event)
+            "handler must receive the event name")
+        (is (typep captured-condition 'error)
+            "handler must receive the condition object")
+        (is-true good-ran "non-error hook must still run after error-handler fires")))))
+
+(test hooks-error-handler-nil-means-silent-suppression
+  "When *hooks-error-handler* is NIL, hook errors are silently suppressed (original
+   behaviour preserved)."
+  (with-isolated-hooks
+    (let ((cl-tmux/hooks:*hooks-error-handler* nil))
+      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-new-window+
+                               (lambda () (error "silent error")))
+      (finishes (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+)
+                "nil handler must not re-signal the hook error"))))
 
 ;;; ── run-hooks argument passing ───────────────────────────────────────────────
 

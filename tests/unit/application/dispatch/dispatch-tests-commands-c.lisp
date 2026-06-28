@@ -142,12 +142,32 @@
       (with-fake-session (s :nwindows 1 :npanes 1)
         (finishes (cl-tmux::%cmd-split s orient :no-focus t) "~A" desc)))))
 
-;;; ── define-named-command-table macro ─────────────────────────────────────────
+;;; ── %make-dispatch-named-table helper ────────────────────────────────────────
 
-(test define-named-command-table-macro-is-defined
-  "define-named-command-table is a defined macro."
-  (is (macro-function 'cl-tmux::define-named-command-table)
-      "define-named-command-table must be a macro"))
+(test make-dispatch-named-table-builds-lookup-table
+  "%make-dispatch-named-table returns a hash table mapping command names to keywords."
+  (let* ((specs (list (list :named-keyword :detach :named-names (list "detach" "d"))
+                      (list :named-keyword :new-window :named-names (list "new-window" "neww"))))
+         (table (cl-tmux::%make-dispatch-named-table specs)))
+    (is (hash-table-p table)
+        "%make-dispatch-named-table must return a hash table")
+    (is (eq :detach (gethash "detach" table))
+        "canonical name 'detach' must map to :detach")
+    (is (eq :detach (gethash "d" table))
+        "alias 'd' must also map to :detach")
+    (is (eq :new-window (gethash "new-window" table))
+        "canonical name 'new-window' must map to :new-window")
+    (is (eq :new-window (gethash "neww" table))
+        "alias 'neww' must map to :new-window")))
+
+(test make-dispatch-named-table-skips-specs-without-keyword
+  "%make-dispatch-named-table ignores specs that lack a :named-keyword."
+  (let* ((specs (list (list :named-names (list "orphan"))))
+         (table (cl-tmux::%make-dispatch-named-table specs)))
+    (is (hash-table-p table)
+        "%make-dispatch-named-table must return a hash table even for empty specs")
+    (is (null (gethash "orphan" table))
+        "a spec with no :named-keyword must not add any entry")))
 
 (test dispatch-named-command-detach
   "%dispatch-named-command \"detach\" returns :detach."

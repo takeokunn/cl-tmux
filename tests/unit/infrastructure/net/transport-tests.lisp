@@ -168,6 +168,26 @@
   (is (>= cl-tmux/transport::+max-frame-payload-bytes+ (* 1024 1024))
       "+max-frame-payload-bytes+ must be at least 1 MiB"))
 
+;;; ── Shared frame-construction helper ────────────────────────────────────────
+;;;
+;;; %make-frame-with-declared-length covers both the mismatch case (declared ≠
+;;; actual) and the oversized case (declared > +max-frame-payload-bytes+).
+;;; Having one constructor removes the two one-off flets that previously
+;;; duplicated the exact same byte-patching pattern.
+
+(defun %make-frame-with-declared-length (declared-payload-length actual-payload-bytes)
+  "Build a frame whose 4-byte length field claims DECLARED-PAYLOAD-LENGTH bytes
+   but whose actual body contains ACTUAL-PAYLOAD-BYTES bytes of (zero-filled) payload.
+   Byte 0 carries the +msg-frame+ type tag; bytes 1-4 are the overwritten length
+   field; the remainder is zeroed payload.
+   Used to construct both mismatched-length frames (declared != actual) and
+   oversized-declared frames (declared > +max-frame-payload-bytes+)."
+  (let* ((total (+ +header-size+ actual-payload-bytes))
+         (frame (make-array total :element-type '(unsigned-byte 8) :initial-element 0)))
+    (setf (aref frame 0) +msg-frame+)
+    (replace frame (cl-tmux/protocol:u32-octets declared-payload-length) :start1 1)
+    frame))
+
 ;;; ── %validate-outgoing-frame and send-frame validation ──────────────────────
 
 (test send-frame-rejects-too-short-frames
@@ -185,24 +205,15 @@
    equal +header-size+ plus the declared payload length.  When these disagree
    (declared-length > actual payload, or actual payload > declared-length),
    send-frame must signal an error before any bytes reach the stream."
-  (flet ((mismatched-frame (declared-payload-length actual-payload-size)
-           ;; Build a frame whose header claims DECLARED-PAYLOAD-LENGTH bytes
-           ;; but whose actual payload is ACTUAL-PAYLOAD-SIZE bytes.
-           (let* ((total (+ +header-size+ actual-payload-size))
-                  (frame (make-array total :element-type '(unsigned-byte 8)
-                                           :initial-element 0)))
-             (setf (aref frame 0) +msg-frame+)
-             (replace frame (cl-tmux/protocol:u32-octets declared-payload-length) :start1 1)
-             frame)))
-    (with-temp-octet-file (path)
-      (with-open-file (out path :direction :output :if-exists :supersede
-                                :element-type '(unsigned-byte 8))
-        (signals error
-          (send-frame out (mismatched-frame 10 0))
-          "declared=10 actual=0 must signal (header claims more bytes than present)")
-        (signals error
-          (send-frame out (mismatched-frame 1 5))
-          "declared=1 actual=5 must signal (header claims fewer bytes than present)")))))
+  (with-temp-octet-file (path)
+    (with-open-file (out path :direction :output :if-exists :supersede
+                              :element-type '(unsigned-byte 8))
+      (signals error
+        (send-frame out (%make-frame-with-declared-length 10 0))
+        "declared=10 actual=0 must signal (header claims more bytes than present)")
+      (signals error
+        (send-frame out (%make-frame-with-declared-length 1 5))
+        "declared=1 actual=5 must signal (header claims fewer bytes than present)"))))
 
 ;;; ── msg-command frame transport round-trip ───────────────────────────────────
 

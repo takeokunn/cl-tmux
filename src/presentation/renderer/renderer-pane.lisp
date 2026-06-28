@@ -168,14 +168,14 @@
       ;; window-style / window-active-style: the active pane uses window-active-style,
       ;; every other pane window-style.  Empty (the default) → NIL defaults → no
       ;; recolouring, so panes render exactly as before unless the user opts in.
-      (multiple-value-bind (def-fg def-bg)
-        (let* ((win      (pane-window pane))
-               (active-p (and win (eq pane (window-active-pane win))))
-               (style    (cl-tmux/options:get-option-for-pane
-                          (if active-p "window-active-style" "window-style")
-                          pane)))
-          (%window-style-default-colors style))
-        (multiple-value-bind (selection-style-fg selection-style-bg)
+      (let* ((pane-win      (pane-window pane))
+             (pane-active-p (and pane-win (eq pane (window-active-pane pane-win))))
+             (window-style  (cl-tmux/options:get-option-for-pane
+                             (if pane-active-p "window-active-style" "window-style")
+                             pane)))
+        (multiple-value-bind (def-fg def-bg)
+            (%window-style-default-colors window-style)
+          (multiple-value-bind (selection-style-fg selection-style-bg)
             ;; copy-mode-selection-style overrides the default reverse-video
             ;; selection highlight when it provides colours.
             (%window-style-default-colors

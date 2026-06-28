@@ -131,20 +131,24 @@
                  (#\F format-p))))
     (values flag-present-p append-p server-p unset-p format-p remaining)))
 
-(defun %coerce-set-value (raw-value format-p)
+(defun %coerce-set-value (raw-value format-p hostname)
   "Coerce RAW-VALUE for storage.  When FORMAT-P is T, expand it as a format
-   string using a minimal context (hostname + cl-tmux version); on expansion
-   failure the raw string is returned unchanged.  Pure: no side-effects."
+   string using a minimal context (HOSTNAME + cl-tmux version); on expansion
+   failure the raw string is returned unchanged.
+   HOSTNAME must be pre-computed by the caller to keep this function pure
+   (no I/O side-effects)."
   (if format-p
-      (let ((ctx (list :hostname (machine-instance)
+      (let ((ctx (list :hostname hostname
                        :version (cl-tmux/version:version-string))))
         (handler-case
             (cl-tmux/format:expand-format raw-value ctx)
           (error () raw-value)))
       raw-value))
 
-(defun %set-option-accessors (server-p)
-  "Return the getter, setter, and storage table for the requested scope."
+(defun %option-scope-triple (server-p)
+  "Return (values GETTER SETTER TABLE) for the option scope indicated by SERVER-P.
+   When SERVER-P is true, the server options store is used; otherwise the global
+   options store.  The triple is consumed by %route-set-value."
   (if server-p
       (values #'cl-tmux/options:get-server-option
               #'cl-tmux/options:set-server-option
@@ -157,7 +161,7 @@
   "Store VALUE under NAME in the appropriate option table, handling -u/-s/-a/-sa.
    Pure routing: all value coercion has already happened."
   (multiple-value-bind (getter setter table)
-      (%set-option-accessors server-p)
+      (%option-scope-triple server-p)
     (cond
       (unset-p
        (remhash name table))
@@ -181,10 +185,13 @@
         (let ((name      (first positionals))
               (raw-value (%join-config-tokens (rest positionals))))
           (unless (%unsupported-set-option-p name)
-            (let ((value (%coerce-set-value raw-value format-p)))
+            ;; Hoist (machine-instance) here so %coerce-set-value stays pure.
+            ;; The hostname is only needed when format-p is T; compute it lazily.
+            (let* ((hostname (when format-p (ignore-errors (machine-instance))))
+                   (value    (%coerce-set-value raw-value format-p hostname)))
               (%route-set-value name value server-p append-p unset-p)
               ;; Side-effect: intercept special options that need runtime state updates.
-              (%apply-option-side-effects name value unset-p)
+              (apply-option-side-effects name value unset-p)
               t)))))))
 
 ;;; ── Option side-effect helpers ───────────────────────────────────────────────
@@ -212,7 +219,7 @@
 
 ;;; ── Declarative option-side-effect dispatch ──────────────────────────────────
 ;;;
-;;; define-option-side-effect-handlers builds %apply-option-side-effects from a
+;;; define-option-side-effect-handlers builds apply-option-side-effects from a
 ;;; Prolog-style fact table: one (NAME-STRING &body BODY) arm per option.  Each arm
 ;;; is guarded by (string= name NAME-STRING); VALUE is bound in BODY.  This matches
 ;;; define-csi-rules / define-config-directives in style.
@@ -227,12 +234,12 @@
           `((string= name ,name-string) ,@body)))))
 
 (defmacro define-option-side-effect-handlers (&rest rules)
-  "Build %APPLY-OPTION-SIDE-EFFECTS from a declarative table of RULES.
+  "Build APPLY-OPTION-SIDE-EFFECTS from a declarative table of RULES.
    Each RULE has the form:
      (NAME-STRING &body BODY)   — NAME-STRING matched via STRING=; VALUE bound in BODY.
      (:any-of (NAME...) &body BODY) — VALUE bound in BODY when NAME is one of the list.
-  Generates a COND dispatch over NAME."
-  `(defun %apply-option-side-effects (name value unset-p)
+   Generates a COND dispatch over NAME."
+  `(defun apply-option-side-effects (name value unset-p)
      "Apply runtime side-effects for options that touch non-option state.
       Dispatches on NAME; VALUE holds the new option value string."
      (declare (ignorable value unset-p))

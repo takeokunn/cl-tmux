@@ -166,6 +166,16 @@
 
 ;;; ── run-client ───────────────────────────────────────────────────────────────
 
+(defun %receive-if-ready (stream server-socket-fd ready)
+  "If SERVER-SOCKET-FD appears in the READY fd list, read and dispatch one server
+   frame from STREAM via %receive-server-frame.  Returns :exit when the server
+   signals end-of-session, NIL otherwise (including when the fd was not ready).
+   Completes the naming symmetry with %maybe-send-resize and %forward-stdin-byte:
+   every run-client event-loop action is a named helper so all three are
+   independently unit-testable without driving the full attach loop."
+  (when (member server-socket-fd ready)
+    (%receive-server-frame stream)))
+
 (defun run-client (name &key detach-others)
   "Attach to the server at (socket-path NAME): forward stdin + resizes, render
    the frames the server returns, and exit on detach / server close.
@@ -193,7 +203,6 @@
                (let ((ready (select-fds (list 0 server-socket-fd) +poll-timeout-us+)))
                  (when (member 0 ready)
                    (%forward-stdin-byte stream))
-                 (when (member server-socket-fd ready)
-                   (when (eq :exit (%receive-server-frame stream))
-                     (return)))))))
+                 (when (eq :exit (%receive-if-ready stream server-socket-fd ready))
+                   (return))))))
       (close-socket socket))))

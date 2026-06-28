@@ -5,7 +5,7 @@
 (def-suite layout-geometry-suite :description "Rectangle assignment and resize helpers")
 (in-suite layout-geometry-suite)
 
-;;; ── Orientation helpers (%axis-floor, %orient-pane-extent) ──────────────────
+;;; ── Orientation helpers (%axis-floor) ──────────────────────────────────────
 
 (test axis-floor-returns-correct-minimum
   "%axis-floor returns +pane-min-height+ for :v, +pane-min-width+ for :h."

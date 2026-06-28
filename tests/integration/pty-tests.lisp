@@ -286,12 +286,12 @@
 
 ;;; ── New coverage: spawn helpers and microsecond constants ──────────────────
 
-(test non-empty-string-p-rejects-empty-and-non-strings
-  "%non-empty-string-p accepts only strings with positive length."
-  (is-true (cl-tmux/pty::%non-empty-string-p "x"))
-  (is-false (cl-tmux/pty::%non-empty-string-p ""))
-  (is-false (cl-tmux/pty::%non-empty-string-p nil))
-  (is-false (cl-tmux/pty::%non-empty-string-p 42)))
+(test string-non-empty-p-rejects-empty-and-non-strings
+  "%string-non-empty-p accepts only strings with positive length."
+  (is-true (cl-tmux/pty::%string-non-empty-p "x"))
+  (is-false (cl-tmux/pty::%string-non-empty-p ""))
+  (is-false (cl-tmux/pty::%string-non-empty-p nil))
+  (is-false (cl-tmux/pty::%string-non-empty-p 42)))
 
 (test spawn-environment-assignments-preserves-override-order
   "%spawn-environment-assignments emits TERM first, then valid extra env pairs."

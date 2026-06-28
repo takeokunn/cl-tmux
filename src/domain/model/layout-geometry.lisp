@@ -2,53 +2,36 @@
 
 ;;; ── Tree geometry: rectangle assignment ────────────────────────────────────
 
-;;; ── define-orient-dispatch — symmetric :h/:v dispatch table ────────────────
-;;;
-;;; Many helpers in this file have two symmetric ecase branches — one for :h
-;;; (columns) and one for :v (rows).  define-orient-dispatch captures both
-;;; branches as a Prolog-like fact table so each orient choice is declared
-;;; exactly once and the two branches are visually aligned.
-;;;
-;;; Pattern (Prolog analogy):
-;;;   orient_case(:h, H-form).
-;;;   orient_case(:v, V-form).
-;;;
-;;; Expands to: (ecase ORIENT-VAR (:h H-FORM) (:v V-FORM))
+;;; orient-case is defined in layout.lisp (which loads before this file).
+;;; It dispatches on :h/:v and is used extensively below.
 
-(defmacro orient-case (orient-var &key h v)
-  "Dispatch on ORIENT-VAR (:h or :v), evaluating H or V respectively.
-   A concise replacement for repeated (ecase orient (:h ...) (:v ...))."
-  `(ecase ,orient-var
-     (:h ,h)
-     (:v ,v)))
-
-(defun %assign-split (node x y w h)
+(defun %assign-split (node x y width height)
   "Assign rectangles to the two children of layout-split NODE.
    The :h and :v cases are symmetric: :h divides WIDTH, :v divides HEIGHT."
   (let* ((orient          (layout-split-orientation node))
          (ratio           (layout-split-ratio node))
          ;; :h splits divide the width (cols); :v splits divide the height (rows).
-         (available-cells (1- (orient-case orient :h w :v h)))
+         (available-cells (1- (orient-case orient :h width :v height)))
          (first-extent    (max 1 (min (1- available-cells) (round (* available-cells ratio)))))
          (second-extent   (- available-cells first-extent)))
     (orient-case orient
       :h (progn
-           (layout-assign (layout-split-first  node)  x                    y  first-extent h)
-           (layout-assign (layout-split-second node) (+ x first-extent 1)  y  second-extent h))
+           (layout-assign (layout-split-first  node)  x                      y  first-extent  height)
+           (layout-assign (layout-split-second node) (+ x first-extent 1)    y  second-extent height))
       :v (progn
-           (layout-assign (layout-split-first  node)  x  y                    w  first-extent)
-           (layout-assign (layout-split-second node)  x (+ y first-extent 1)  w  second-extent)))))
+           (layout-assign (layout-split-first  node)  x  y                    width  first-extent)
+           (layout-assign (layout-split-second node)  x (+ y first-extent 1)  width  second-extent)))))
 
-(defun layout-assign (node x y w h)
-  "Walk NODE, updating every leaf's pane geometry to fit the X,Y,W,H rectangle.
+(defun layout-assign (node x y width height)
+  "Walk NODE, updating every leaf's pane geometry to fit the X,Y,WIDTH,HEIGHT rectangle.
    Reserves one row/column for the separator at each internal split node.
    This is an ORCHESTRATE-layer function: it calls %update-pane-geometry (a DATA
    slot mutation in pane.lisp) on every leaf, so callers such as window-relayout
    can drive the PTY/screen resize as a separate step after the full tree has been
    repositioned.  It is NOT a pure transform — it mutates pane slots in place."
   (etypecase node
-    (layout-leaf  (%update-pane-geometry (layout-leaf-pane node) x y (max 1 w) (max 1 h)))
-    (layout-split (%assign-split node x y w h))))
+    (layout-leaf  (%update-pane-geometry (layout-leaf-pane node) x y (max 1 width) (max 1 height)))
+    (layout-split (%assign-split node x y width height))))
 
 ;;; ── Pane neighbor lookup and hit testing — see window-neighbor.lisp ─────────
 ;;;
@@ -99,12 +82,11 @@
    The exact geometry is fixed by the subsequent WINDOW-RELAYOUT; this only
    seeds the new pane/screen with a sensible size."
   (orient-case orient
-    :v (let* ((avail (- (pane-height pane) 1))
-              (fh    (floor avail 2)))
-         (values (pane-x pane) (+ (pane-y pane) fh 1)
-                 (pane-width pane) (- avail fh)))
-    :h (let* ((avail (- (pane-width pane) 1))
-              (fw    (floor avail 2)))
-         (values (+ (pane-x pane) fw 1) (pane-y pane)
-                 (- avail fw) (pane-height pane)))))
-
+    :v (let* ((available-rows (- (pane-height pane) 1))
+              (first-rows     (floor available-rows 2)))
+         (values (pane-x pane) (+ (pane-y pane) first-rows 1)
+                 (pane-width pane) (- available-rows first-rows)))
+    :h (let* ((available-cols (- (pane-width pane) 1))
+              (first-cols     (floor available-cols 2)))
+         (values (+ (pane-x pane) first-cols 1) (pane-y pane)
+                 (- available-cols first-cols) (pane-height pane)))))

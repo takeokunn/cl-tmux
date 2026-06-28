@@ -93,3 +93,46 @@
 (defconstant +byte-ascii-u+    117 "ASCII 'u' (0x75) — CSI-u (fixterms extended-keys) final byte.")
 (defconstant +byte-focus-in+    73 "ASCII 'I' (0x49) — ESC [ I focus-gained report (?1004).")
 (defconstant +byte-focus-out+   79 "ASCII 'O' (0x4F) — ESC [ O focus-lost report (?1004).")
+
+;;; ── Printable ASCII graphic range constants ──────────────────────────────────
+;;; These bounds are used in CSI-u and meta-key decoding guards to delimit the
+;;; printable ASCII range.  Named here so the intent of range checks is explicit
+;;; rather than encoded as magic literals.
+(defconstant +byte-first-graphic+ 33
+  "ASCII '!' — the first printable non-space graphic character (0x21).
+   Used as the lower bound of the CSI-u printable codepoint range.")
+(defconstant +byte-last-graphic+  126
+  "ASCII '~' — the last printable ASCII character before DEL (0x7E).
+   Used as the upper bound of the CSI-u printable codepoint range.")
+(defconstant +byte-del+           127
+  "ASCII DEL (0x7F).  Excluded from meta-key decoding since it is
+   mapped as a named key (BSpace) rather than a printable chord target.")
+
+;;; ── Ctrl-letter escape offset ────────────────────────────────────────────────
+;;; The canonical transformation from a raw Ctrl byte (1–26) to its uppercase
+;;; ASCII letter (A–Z) is byte+64.  This constant documents the arithmetic.
+(defconstant +byte-ctrl-to-upper-offset+ 64
+  "Offset added to a Ctrl byte (1..26 for ^A..^Z, 27..31 for ^[..^_) to recover
+   the corresponding uppercase ASCII letter or symbol.  Named to replace the
+   opaque '+64' literal in %control-byte-key-name.")
+
+;;; ── Copy-mode uppercase / control constants ──────────────────────────────────
+;;; Raw byte values for uppercase letters and Ctrl codes used in the copy-mode
+;;; dispatch table that previously lacked named constants (the table used bare integers).
+(defconstant +byte-capital-j+   74 "Uppercase 'J' — scroll viewport down one line (0x4A).")
+(defconstant +byte-capital-k+   75 "Uppercase 'K' — scroll viewport up one line (0x4B).")
+(defconstant +byte-capital-w+   87 "Uppercase 'W' — WORD-forward whitespace-delimited (0x57).")
+(defconstant +byte-capital-b+   66
+  "Uppercase 'B' — WORD-backward whitespace-delimited (0x42).
+   NOTE: shares numeric value 66 with +byte-arrow-down+.  They are semantically disjoint:
+   arrow-down is the final byte of a CSI sequence and never appears as a raw byte in
+   single-byte copy-mode dispatch.")
+(defconstant +byte-capital-e+   69 "Uppercase 'E' — WORD-end whitespace-delimited (0x45).")
+(defconstant +byte-caret+       94 "Caret '^' — back-to-indentation in copy mode (0x5E).")
+(defconstant +byte-lowercase-z+ 122 "Lowercase 'z' — scroll-middle in copy mode (0x7A).")
+(defconstant +byte-ctrl-v+      22 "C-v — toggle rectangle select in copy mode (0x16).")
+(defconstant +byte-hash+        35 "Hash '#' — search backward for word under cursor (0x23).")
+(defconstant +byte-asterisk+    42 "Asterisk '*' — search forward for word under cursor (0x2A).")
+(defconstant +byte-ctrl-s+      19 "C-s — incremental forward search in copy mode (0x13).")
+(defconstant +byte-ctrl-r+      18 "C-r — incremental backward search in copy mode (0x12).")
+(defconstant +byte-ctrl-j+      10 "C-j — newline / accept (equivalent to Enter in copy mode) (0x0A).")

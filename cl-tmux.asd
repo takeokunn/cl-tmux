@@ -275,6 +275,7 @@
          (:file "screen-tests")  ; construction/p/cell-access/cursor/resize/dirty/sgr-pen/bell — part I
          (:file "screen-tests-b")  ; copy-mode slots, alt-screen, mouse-sgr, response-queue, origin-mode, tab-stops, lock, cells/parser — part II
          (:file "screen-tests-c")  ; screen-clear-dirty, reset-sgr-pen, bell-pending, screen-consume-bell, slots, copy-mode extra slots — part III
+         (:file "screen-tests-d")  ; title-stack, cwd, pending-wrap, focus-events, g0/g1/active-g, passthrough/clipboard-queue, palette-overrides, wrap-helpers, ANSI modes, copy-search-dir, rect-select — part IV
          (:file "cursor-tests")  ; scroll-region-clamp, set-cursor, direct-action, tab-stops, ri, nel, wide-char, advance — part I
          (:file "cursor-tests-b")  ; %place-wide-char, table-driven, combining-char-p, write-char combining, DEC graphics — part II
          (:file "cursor-tests-c")  ; cursor-ri, cursor-nel, write-char-at-cursor wide, %advance-cursor no-wrap, movement behavioral — part III

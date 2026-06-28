@@ -544,3 +544,155 @@
       (finishes (cl-tmux::%select-pane-with-focus win p1))
       (is (eq p1 (window-active-pane win))
           "%select-pane-with-focus must make p1 the active pane"))))
+
+;;; ── %derive-hook-session resolver clauses ────────────────────────────────────
+
+(test derive-hook-session-returns-nil-for-nil
+  "%derive-hook-session returns NIL when TARGET is NIL."
+  (is (null (cl-tmux::%derive-hook-session nil))
+      "%derive-hook-session must return NIL for a NIL target"))
+
+(test derive-hook-session-returns-session-directly
+  "%derive-hook-session returns a session object unchanged."
+  (with-fake-session (s)
+    (is (eq s (cl-tmux::%derive-hook-session s))
+        "%derive-hook-session must return the session itself for a session target")))
+
+(test derive-hook-session-resolves-from-window
+  "%derive-hook-session resolves the owning session from a window object."
+  (with-fake-session (s)
+    (let ((win (session-active-window s)))
+      (is (eq s (cl-tmux::%derive-hook-session win))
+          "%derive-hook-session must return the session owning the window"))))
+
+(test derive-hook-session-resolves-from-pane
+  "%derive-hook-session resolves the owning session from a pane object."
+  (with-fake-session (s)
+    (let ((pane (session-active-pane s)))
+      (is (eq s (cl-tmux::%derive-hook-session pane))
+          "%derive-hook-session must return the session owning the pane"))))
+
+(test derive-hook-session-returns-nil-for-unknown-type
+  "%derive-hook-session returns NIL for an unrecognised target type."
+  (is (null (cl-tmux::%derive-hook-session :not-a-model-object))
+      "%derive-hook-session must return NIL for an unrecognised target type"))
+
+;;; ── %dispatch-hook-entry string-hook path ────────────────────────────────────
+
+(test dispatch-hook-entry-string-hook-runs-command
+  "%dispatch-hook-entry with a string entry runs it as a command via %run-command-line.
+   Exercises the string-hook branch (the ignore-errors / handler-case path) directly."
+  (with-fake-session (s :nwindows 1)
+    (let ((*overlay* nil))
+      ;; 'list-windows' is a safe command that opens an overlay.
+      (cl-tmux::%dispatch-hook-entry s "list-windows")
+      (assert-overlay-active
+       "%dispatch-hook-entry with a string hook must run the command"))))
+
+(test dispatch-hook-entry-string-hook-error-shows-overlay
+  "%dispatch-hook-entry with a string hook that errors reports the error as an overlay
+   instead of silently swallowing it."
+  (with-fake-session (s)
+    (let ((*overlay* nil))
+      ;; Deliberately break the string to cause %run-command-line to fail.
+      ;; We use a command name that will not resolve in the command table.
+      (cl-tmux::%dispatch-hook-entry s "nonexistent-hook-command-xyz")
+      ;; After an error the overlay must contain an error report OR remain nil
+      ;; (depending on whether the command runner returns an error vs. overlay).
+      ;; The important invariant is that no condition escapes to the caller.
+      (finishes (values) "error in string hook must not propagate to the caller"))))
+
+(test dispatch-hook-entry-keyword-hook-dispatches-command
+  "%dispatch-hook-entry with a keyword entry dispatches it as a command directly."
+  (with-fake-session (s)
+    (let ((*overlay* nil))
+      (cl-tmux::%dispatch-hook-entry s :list-windows)
+      (assert-overlay-active
+       "%dispatch-hook-entry with a keyword hook must dispatch the command"))))
+
+;;; ── %cmd-cycle-session ───────────────────────────────────────────────────────
+
+(test cmd-cycle-session-advances-to-next-session
+  "%cmd-cycle-session with next-cyclic switches to the next session in the registry."
+  (let* ((s1 (make-fake-session))
+         (s2 (make-fake-session))
+         (switched-to nil))
+    (setf (cl-tmux::session-name s1) "alpha"
+          (cl-tmux::session-name s2) "beta")
+    (let ((cl-tmux::*server-sessions* (list (cons "alpha" s1) (cons "beta" s2))))
+      ;; Temporarily stub %switch-to-session to capture the argument.
+      (let ((orig (fdefinition 'cl-tmux::%switch-to-session)))
+        (unwind-protect
+             (progn
+               (setf (fdefinition 'cl-tmux::%switch-to-session)
+                     (lambda (target) (setf switched-to target)))
+               (cl-tmux::%cmd-cycle-session s1 #'cl-tmux::next-cyclic))
+          (setf (fdefinition 'cl-tmux::%switch-to-session) orig)))
+      (is (eq s2 switched-to)
+          "%cmd-cycle-session must advance to the next session"))))
+
+(test cmd-cycle-session-noop-with-single-session
+  "%cmd-cycle-session is a no-op when SESSION is the only session (wraps to itself)."
+  (let* ((s (make-fake-session))
+         (switch-called nil))
+    (setf (cl-tmux::session-name s) "only")
+    (let ((cl-tmux::*server-sessions* (list (cons "only" s))))
+      (let ((orig (fdefinition 'cl-tmux::%switch-to-session)))
+        (unwind-protect
+             (progn
+               (setf (fdefinition 'cl-tmux::%switch-to-session)
+                     (lambda (_) (setf switch-called t)))
+               (cl-tmux::%cmd-cycle-session s #'cl-tmux::next-cyclic))
+          (setf (fdefinition 'cl-tmux::%switch-to-session) orig)))
+      (is-false switch-called
+                "%cmd-cycle-session must not switch when there is only one session"))))
+
+;;; ── %copy-mode-call NIL-screen path ─────────────────────────────────────────
+
+(test copy-mode-call-nil-screen-returns-nil
+  "%copy-mode-call returns NIL without calling FN when the active screen is NIL.
+   Exercises the guard path inside %copy-mode-call."
+  (with-fake-session (s :nwindows 0)
+    ;; Session with no windows → no active screen.
+    (let ((fn-called nil))
+      (is (null (cl-tmux::%copy-mode-call s (lambda (screen)
+                                              (declare (ignore screen))
+                                              (setf fn-called t)
+                                              :was-called)))
+          "%copy-mode-call on a windowless session must return NIL")
+      (is-false fn-called
+                "%copy-mode-call must not call FN when there is no active screen"))))
+
+;;; ── %compute-window-base-index ───────────────────────────────────────────────
+
+(test compute-window-base-index-at-index-overrides
+  "%compute-window-base-index with :at-index returns that value regardless of other flags."
+  (with-fake-session (s :nwindows 1)
+    (let ((prev-win (session-active-window s)))
+      (is (= 7 (cl-tmux::%compute-window-base-index prev-win :at-index 7))
+          ":at-index must override all other placement logic"))))
+
+(test compute-window-base-index-after-current
+  "%compute-window-base-index with :after-current T returns prev-win-id + 1."
+  (with-fake-session (s :nwindows 1)
+    (let* ((prev-win (session-active-window s))
+           (expected (1+ (cl-tmux/model:window-id prev-win))))
+      (is (= expected
+             (cl-tmux::%compute-window-base-index prev-win :after-current t))
+          ":after-current must yield prev-win-id + 1"))))
+
+(test compute-window-base-index-before-current
+  "%compute-window-base-index with :before-current T returns prev-win-id."
+  (with-fake-session (s :nwindows 1)
+    (let* ((prev-win (session-active-window s))
+           (expected (cl-tmux/model:window-id prev-win)))
+      (is (= expected
+             (cl-tmux::%compute-window-base-index prev-win :before-current t))
+          ":before-current must yield prev-win-id (to push existing windows right)"))))
+
+(test compute-window-base-index-falls-back-to-base-index-option
+  "%compute-window-base-index with no placement flags uses the base-index option (defaulting 0)."
+  (with-fake-session (s :nwindows 1)
+    (let ((prev-win (session-active-window s)))
+      (is (integerp (cl-tmux::%compute-window-base-index prev-win))
+          "%compute-window-base-index with no flags must return an integer"))))

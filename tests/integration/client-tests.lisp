@@ -521,3 +521,62 @@ and returns NIL (continue the event loop)."
             "%receive-server-frame must return NIL for +msg-frame+")
         (is (string= "HELLO" painted)
             "%receive-server-frame must write the frame text to *standard-output*")))))
+
+;;; ── %utf8-char-byte-count table-driven tests ────────────────────────────────
+;;;
+;;; %utf8-char-byte-count is a private helper with four boundary thresholds.
+;;; These table-driven tests make every boundary condition explicit — analogous
+;;; to the %command-client-split-window-input-p table above — so the split
+;;; points are auditable without requiring Unicode knowledge.
+
+(test utf8-char-byte-count-table
+  :description "%utf8-char-byte-count returns the correct UTF-8 byte width for
+boundary values in each of the four encoding ranges.  Tests at and just below
+each threshold (0x80, 0x800, 0x10000) make the boundaries explicit."
+  ;; Each row: (char-code expected-byte-count description)
+  (dolist (row '((#x0000  1 "U+0000 is 1-byte (lowest codepoint)")
+                 (#x0041  1 "U+0041 'A' is 1-byte ASCII")
+                 (#x007F  1 "U+007F is 1-byte (just below 2-byte threshold 0x80)")
+                 (#x0080  2 "U+0080 is 2-byte (exactly at 2-byte threshold)")
+                 (#x00FF  2 "U+00FF is 2-byte (Latin-1 supplement)")
+                 (#x07FF  2 "U+07FF is 2-byte (just below 3-byte threshold 0x800)")
+                 (#x0800  3 "U+0800 is 3-byte (exactly at 3-byte threshold)")
+                 (#x3042  3 "U+3042 hiragana is 3-byte")
+                 (#xFFFF  3 "U+FFFF is 3-byte (just below 4-byte threshold 0x10000)")
+                 (#x10000 4 "U+10000 is 4-byte (exactly at 4-byte threshold)")
+                 (#x1F600 4 "U+1F600 emoji is 4-byte")))
+    (destructuring-bind (code expected description) row
+      ;; Guard: skip codepoints beyond the Lisp image's char-code-limit.
+      (when (< code char-code-limit)
+        (let ((got (cl-tmux::%utf8-char-byte-count (code-char code))))
+          (is (= expected got)
+              "~A: expected ~D bytes, got ~D" description expected got))))))
+
+;;; ── %receive-if-ready behavior ──────────────────────────────────────────────
+;;;
+;;; %receive-if-ready is the event-loop glue that calls %receive-server-frame
+;;; only when the server fd appears in the ready set.  These tests cover the
+;;; "not ready" branch (returns NIL without I/O) and the "ready → delegates"
+;;; branch (returns :exit when the server sends +msg-bye+).
+
+(test receive-if-ready-returns-nil-when-fd-not-in-ready-set
+  :description "%receive-if-ready returns NIL without I/O when the server fd is
+NOT in the READY list — the non-blocking guard must prevent reads on idle fds."
+  ;; Any fd value not in the ready list; NIL stream ensures no I/O if guard fails.
+  (is (null (cl-tmux::%receive-if-ready nil 99 '(0 1 2)))
+      "%receive-if-ready must return NIL when the server fd is not ready"))
+
+(test receive-if-ready-returns-exit-on-bye-when-fd-ready
+  :description "%receive-if-ready returns :exit when the server socket fd is in
+the READY list and %receive-server-frame returns :exit (+msg-bye+ frame)."
+  (with-guarded-socket-test/fd (:server-stream server-stream :client-stream client-stream
+                                 :client-fd client-fd)
+    (send-frame server-stream (msg-bye))
+    (force-output server-stream)
+    ;; Wait for the frame to be readable.
+    (cl-tmux/pty:select-fds (list client-fd) 1000000)
+    ;; Ready set contains the client fd: %receive-if-ready must dispatch.
+    (let ((result (cl-tmux::%receive-if-ready client-stream client-fd
+                                              (list client-fd))))
+      (is (eq :exit result)
+          "%receive-if-ready must return :exit when server sends +msg-bye+ and fd is ready"))))

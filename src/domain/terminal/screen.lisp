@@ -1,16 +1,27 @@
 (in-package #:cl-tmux/terminal/types)
 
-;;;; Mutable screen struct and grid operations.
+;;;; Screen struct definition and pure grid operations (DATA layer).
 ;;;;
-;;;; Depends on cell.lisp (BLANK-CELL, CLAMP) being loaded first.
+;;;; Depends on cell.lisp (BLANK-CELL, CLAMP, +default-color+) being loaded first.
+;;;;
+;;;; Layer boundaries:
+;;;;   DATA:      defstruct definition, slot defaults, %make-blank-cells
+;;;;   CONSTRUCT: make-screen — allocates lock, cells, scroll-bottom, parser
+;;;;   GRID:      screen-cell, setf screen-cell, screen-resize
+;;;;   LINE-WRAP: %mark-line-wrapped, %line-wrapped-p, %clear-*
+;;;;   PALETTE:   %palette-override-get/set/clear/clear-all
+;;;;
+;;;; screen-clear-dirty, screen-consume-bell, reset-sgr-pen → screen-logic.lisp
+;;;; Line-wrap helpers are also defined in this file (below the struct).
+;;;; Palette-override helpers are also defined in this file (below line-wrap).
 
 ;;; ── Screen ─────────────────────────────────────────────────────────────────
 
 (defstruct (screen (:constructor %make-screen))
   "Virtual terminal screen: cursor, cell grid, and CPS parser continuation."
-  ;; Geometry
-  (width    80 :type fixnum)
-  (height   24 :type fixnum)
+  ;; Geometry — defaults match the VT100 standard 80×24 terminal.
+  (width    +default-screen-width+  :type fixnum)
+  (height   +default-screen-height+ :type fixnum)
   ;; Row-major grid: index = y*width + x
   (cells    #() :type simple-vector)
   ;; Cursor position — screen-cursor-x / screen-cursor-y are the stable public names.
@@ -23,9 +34,10 @@
   (cur-attrs 0 :type (unsigned-byte 8))
   ;; Cursor visibility: toggled by DECTCEM (?25h = show, ?25l = hide).
   (cursor-visible t :type boolean)
-  ;; Scroll region (inclusive 0-based row indices)
-  (scroll-top    0  :type fixnum)
-  (scroll-bottom 23 :type fixnum)
+  ;; Scroll region (inclusive 0-based row indices).
+  ;; Default scroll-bottom = height-1; matches VT100 power-on state.
+  (scroll-top    0                             :type fixnum)
+  (scroll-bottom (1- +default-screen-height+) :type fixnum)
   ;; CPS parser: a closure (screen byte) -> next-state-fn.
   ;; The DATA defstruct carries a placeholder (#'identity) so that the
   ;; cl-tmux/terminal/parser package need not be present at defstruct compile time.
@@ -34,8 +46,10 @@
   (parser #'identity :type function)
   ;; Dirty flag: set whenever a cell changes; cleared by renderer after paint
   (dirty-p t :type boolean)
-  ;; Lock for thread safety (renderer <-> PTY-reader threads)
-  (lock (make-lock "screen"))
+  ;; Lock for thread safety (renderer <-> PTY-reader threads).
+  ;; Allocated by make-screen (CONSTRUCT layer), not here, so this DATA-layer
+  ;; defstruct remains free of side-effecting allocations at load time.
+  (lock nil)
   ;; Alt-screen support (?1049h / ?1049l)
   (alt-cells nil)                           ; saved normal-screen cell grid, or nil
   (alt-cursor-x 0 :type fixnum)            ; cursor column saved on alt-screen entry
@@ -190,14 +204,18 @@
   (make-array cell-count :initial-contents (loop repeat cell-count collect (blank-cell))))
 
 (defun make-screen (width height)
-  "Create a blank WIDTH x HEIGHT screen with cursor at origin and the CPS parser
-   wired to CL-TMUX/TERMINAL/PARSER:GROUND-STATE.
-   The parser slot is updated after construction so that the DATA-layer defstruct
-   carries no compile-time forward-reference to the CPS layer."
+  "Create a blank WIDTH x HEIGHT screen with cursor at origin.
+   Allocates the bordeaux-threads mutex here (CONSTRUCT layer) so that the
+   defstruct default for the lock slot can be NIL, keeping the DATA layer free
+   of side-effecting allocations at load time.
+   The CPS parser is wired to CL-TMUX/TERMINAL/PARSER:GROUND-STATE after
+   construction so that the DATA-layer defstruct carries no compile-time
+   forward-reference to the CPS layer."
   (let ((screen (%make-screen :width         width
                                :height        height
                                :cells         (%make-blank-cells (* width height))
-                               :scroll-bottom (1- height))))
+                               :scroll-bottom (1- height)
+                               :lock          (make-lock "screen"))))
     ;; Wire the real ground-state now that all packages are loaded.
     (setf (screen-parser screen)
           (lambda (s byte) (cl-tmux/terminal/parser:ground-state s byte)))
@@ -292,40 +310,9 @@
               (+ (* y (screen-width screen)) x))
         cell))
 
-(defun screen-clear-dirty (screen)
-  "Clear the dirty flag on SCREEN."
-  (setf (screen-dirty-p screen) nil))
-
-(defun screen-consume-bell (screen)
-  "Return T and atomically clear SCREEN's bell-pending flag when a BEL is pending.
-   Returns NIL without side effects when no bell is pending.
-
-   Canonical placement rationale: this function mutates a single flag slot and is
-   called exclusively by the renderer (cl-tmux/renderer-compose) to consume a BEL
-   without reaching into the struct directly.  It lives here so both the renderer
-   and the LOGIC layer share one definition without a load-order circularity."
-  (when (screen-bell-pending screen)
-    (setf (screen-bell-pending screen) nil)
-    t))
-
-;;; ── SGR pen reset (canonical, data layer) ─────────────────────────────────
-;;;
-;;; Both cl-tmux/terminal/actions (modes.lisp) and cl-tmux/terminal/sgr perform
-;;; an identical five-slot SGR reset.  The canonical definition lives here, in
-;;; the TYPES layer that both packages depend on, to eliminate duplication without
-;;; creating a load-order circularity between the DISPATCH and LOGIC layers.
-
-(declaim (inline reset-sgr-pen))
-(defun reset-sgr-pen (screen)
-  "Reset all five SGR pen slots of SCREEN to their VT100 power-on defaults:
-   foreground/background = +default-color+ (terminal default), all attribute bits clear.
-   Inlined canonical helper shared by cl-tmux/terminal/sgr and
-   cl-tmux/terminal/actions (modes.lisp) to ensure a single source of truth."
-  (setf (screen-cur-fg       screen) +default-color+
-        (screen-cur-bg       screen) +default-color+
-        (screen-cur-attrs    screen) 0
-        (screen-cur-attrs2   screen) 0
-        (screen-cur-ul-color screen) 0))
+;;; screen-clear-dirty, screen-consume-bell, and reset-sgr-pen are defined in
+;;; screen-logic.lisp (loaded immediately after this file).  They mutate screen
+;;; slots and belong in the LOGIC layer, not in this DATA file.
 
 ;;; ── Resize ─────────────────────────────────────────────────────────────────
 
