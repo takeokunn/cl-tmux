@@ -300,16 +300,20 @@
     (session-select-window sess win)
     (values sess win p0 p1 p2)))
 
-(test cmd-rotate-window-rotates-forward-by-default
-  "rotate-window -t :w (no direction) rotates forward: first pane moves to the end."
-  (multiple-value-bind (sess win p0 p1 p2) (%rotate-window-fixture)
-    (declare (ignore p2))
-    (with-command-test-state (sess)
-      (cl-tmux::%cmd-rotate-window-arg sess '("-t" ":w"))
-      (is (eq p1 (first (window-panes win)))
-          "forward rotate makes the second pane first")
-      (is (eq p0 (car (last (window-panes win))))
-          "the original first pane moves to the end"))))
+(test cmd-rotate-window-forward-variants-table
+  "rotate-window default and -Z both rotate forward: first pane moves to end.
+   Each row: (args description)."
+  (dolist (row (list (list '("-t" ":w")      "default (no direction): p1 becomes first, p0 moves to end")
+                     (list '("-Z" "-t" ":w") "-Z accepted, still rotates forward")))
+    (destructuring-bind (args desc) row
+      (multiple-value-bind (sess win p0 p1 p2) (%rotate-window-fixture)
+        (declare (ignore p2))
+        (with-command-test-state (sess)
+          (cl-tmux::%cmd-rotate-window-arg sess args)
+          (is (eq p1 (first (window-panes win)))
+              "~A: second pane becomes first" desc)
+          (is (eq p0 (car (last (window-panes win))))
+              "~A: original first pane moves to end" desc))))))
 
 (test cmd-rotate-window-d-rotates-backward
   "rotate-window -D -t :w rotates backward: the last pane moves to the front."
@@ -319,18 +323,6 @@
       (cl-tmux::%cmd-rotate-window-arg sess '("-D" "-t" ":w"))
       (is (eq p2 (first (window-panes win)))
           "-D (backward) makes the last pane first"))))
-
-(test cmd-rotate-window-z-is-accepted-and-rotates
-  "rotate-window -Z (keep-zoom flag, tmux args DUZt:) is accepted and still
-   rotates the pane order."
-  (multiple-value-bind (sess win p0 p1 p2) (%rotate-window-fixture)
-    (declare (ignore p2))
-    (with-command-test-state (sess)
-      (cl-tmux::%cmd-rotate-window-arg sess '("-Z" "-t" ":w"))
-      (is (eq p1 (first (window-panes win)))
-          "rotate-window -Z rotates forward like the default")
-      (is (eq p0 (car (last (window-panes win))))
-          "rotate-window -Z moves the original first pane to the end"))))
 
 ;;; ── find-window (scriptable %cmd-find-window-arg) ────────────────────────────
 

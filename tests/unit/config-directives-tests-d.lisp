@@ -369,10 +369,14 @@ bind-key -T copy-mode-vi v send-keys -X begin-selection")))
 
 (test if-shell-format-true-p-rules
   "%if-shell-format-true-p: empty and \"0\" are false; other text is true."
-  (is-true  (cl-tmux/config::%if-shell-format-true-p "1"))
-  (is-true  (cl-tmux/config::%if-shell-format-true-p "yes"))
-  (is-false (cl-tmux/config::%if-shell-format-true-p "0"))
-  (is-false (cl-tmux/config::%if-shell-format-true-p "")))
+  (dolist (row '(("1"   t   "non-zero string is true")
+                 ("yes" t   "non-empty non-zero string is true")
+                 ("0"   nil "\"0\" is false")
+                 (""    nil "empty string is false")))
+    (destructuring-bind (input expected desc) row
+      (if expected
+          (is-true  (cl-tmux/config::%if-shell-format-true-p input) desc)
+          (is-false (cl-tmux/config::%if-shell-format-true-p input) desc)))))
 
 ;;; ── if-shell brace-block then/else bodies (tmux 3.x { ... } syntax) ──────────
 
