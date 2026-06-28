@@ -210,32 +210,23 @@
 
 ;;; ── split-child-geometry direct tests (pure, no PTY) ─────────────────────
 
-(test split-child-geometry-h-orient
-  "split-child-geometry :h gives the right half of a pane."
-  (let ((p (make-pane :id 1 :x 0 :y 0 :width 41 :height 20 :fd -1 :pid -1
-                      :screen (make-screen 41 20))))
-    (multiple-value-bind (px py pw ph)
-        (cl-tmux/model::split-child-geometry p :h)
-      ;; avail = 41 - 1 = 40; fw = floor(40/2) = 20; child at x = 20+1 = 21, w = 40-20 = 20
-      (check-table (list (list px 21 "child x = parent-x + fw + 1")
-                         (list py 0  "y = 0")
-                         (list pw 20 "width = 20")
-                         (list ph 20 "height = 20"))
-                   :test #'equal))))
+(test split-child-geometry-table
+  "split-child-geometry returns the correct child position and size for :h and :v.
+   For :h the child is the right half; for :v it is the bottom half.
+   Each row: (orient pane-w pane-h expected-x expected-y expected-w expected-h)."
+  (dolist (row '((:h 41 20 21 0  20 20)
+                 (:v 80 25 0  13 80 12)))
+    (destructuring-bind (orient w h ex ey ew eh) row
+      (let ((p (make-pane :id 1 :x 0 :y 0 :width w :height h :fd -1 :pid -1
+                          :screen (make-screen w h))))
+        (multiple-value-bind (px py pw ph)
+            (cl-tmux/model::split-child-geometry p orient)
+          (is (eql ex px) "~A split: child x" orient)
+          (is (eql ey py) "~A split: child y" orient)
+          (is (eql ew pw) "~A split: child width" orient)
+          (is (eql eh ph) "~A split: child height" orient))))))
 
-(test split-child-geometry-v-orient
-  "split-child-geometry :v gives the bottom half of a pane."
-  (let ((p (make-pane :id 1 :x 0 :y 0 :width 80 :height 25 :fd -1 :pid -1
-                      :screen (make-screen 80 25))))
-    (multiple-value-bind (px py pw ph)
-        (cl-tmux/model::split-child-geometry p :v)
-      ;; avail = 25 - 1 = 24; fh = floor(24/2) = 12; child at y = 12+1 = 13, h = 24-12 = 12
-      (check-table (list (list px 0  "x = 0")
-                         (list py 13 "child y = parent-y + fh + 1")
-                         (list pw 80 "width = 80")
-                         (list ph 12 "height = 12"))
-                   :test #'equal))))
-
+;;; ── %new-split-ratio
 ;;; ── %new-split-ratio direct tests (pure, no PTY) ─────────────────────────
 
 (test new-split-ratio-table
@@ -263,25 +254,20 @@
 
 ;;; ── Private helper tests ────────────────────────────────────────────────────
 
-(test split-fits-p-returns-t-when-large-enough
-  "%split-fits-p returns T when the pane axis is >= 2*min + 1."
-  (let ((p (make-pane :id 1 :fd -1 :pid -1 :width 5 :height 3
-                      :screen (make-screen 5 3))))
-    ;; :h needs >= 2*2+1 = 5 cols: exactly 5 → fits
-    (is-true  (cl-tmux/model::%split-fits-p p :h))
-    ;; :v needs >= 2*1+1 = 3 rows: exactly 3 → fits
-    (is-true  (cl-tmux/model::%split-fits-p p :v))))
-
-(test split-fits-p-returns-nil-when-too-small
-  "%split-fits-p returns NIL when the pane is too small to split."
-  (let ((p-narrow (make-pane :id 1 :fd -1 :pid -1 :width 4 :height 5
-                              :screen (make-screen 4 5)))
-        (p-short  (make-pane :id 1 :fd -1 :pid -1 :width 5 :height 2
-                              :screen (make-screen 5 2))))
-    ;; :h needs 5, only 4 → does not fit
-    (is-false (cl-tmux/model::%split-fits-p p-narrow :h))
-    ;; :v needs 3, only 2 → does not fit
-    (is-false (cl-tmux/model::%split-fits-p p-short :v))))
+(test split-fits-p-table
+  "%split-fits-p returns T when the pane axis meets the minimum, NIL otherwise.
+   :h needs width >= 5 (2*2+1); :v needs height >= 3 (2*1+1).
+   Each row: (orient width height expected description)."
+  (dolist (row '((:h 5  3  t   "h exactly-minimum width of 5 → fits")
+                 (:v 5  3  t   "v exactly-minimum height of 3 → fits")
+                 (:h 4  5  nil "h width 4 < 5 → does not fit")
+                 (:v 5  2  nil "v height 2 < 3 → does not fit")))
+    (destructuring-bind (orient w h expected desc) row
+      (let ((p (make-pane :id 1 :fd -1 :pid -1 :width w :height h
+                          :screen (make-screen w h))))
+        (if expected
+            (is-true  (cl-tmux/model::%split-fits-p p orient) desc)
+            (is-false (cl-tmux/model::%split-fits-p p orient) desc))))))
 
 (test window-split-full-obeys-axis-minimums
   "window-split :full refuses root splits that cannot leave both panes at min size."
