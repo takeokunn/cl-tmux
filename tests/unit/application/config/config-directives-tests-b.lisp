@@ -521,10 +521,10 @@
   "%endif pops the innermost state from the stack."
   (let ((stack (cl-tmux/config::%update-config-cond-stack :endif "%endif" '(:active :seeking))))
     (is (equal '(:seeking) stack)
-        "%endif must pop the top state, leaving the outer level"))
+        "%endif must pop the top state, leaving the outer level; got ~S" stack))
   (let ((stack (cl-tmux/config::%update-config-cond-stack :endif "%endif" '(:taken))))
     (is (equal '() stack)
-        "%endif on a single-element stack must yield NIL (empty)")))
+        "%endif on a single-element stack must yield NIL (empty); got ~S" stack)))
 
 (test update-config-cond-stack-nested-if-dead-when-outer-seeking
   "A nested %if when the outer level is :seeking pushes :dead (not evaluated)."
@@ -532,4 +532,4 @@
     ;; Outer block is :seeking (no branch matched yet) → inner %if must push :dead.
     (let ((stack (cl-tmux/config::%update-config-cond-stack :if "%if 1" '(:seeking))))
       (is (equal '(:dead :seeking) stack)
-          "nested %if inside :seeking must push :dead"))))
+          "nested %if inside :seeking must push :dead; got ~S" stack))))
