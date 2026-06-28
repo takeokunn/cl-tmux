@@ -202,43 +202,23 @@
 
 ;;; ── Jump-to-char (vi f/F/t/T/;/,) ──────────────────────────────────────────
 
-(test copy-mode-jump-forward-finds-char
-  "jump-forward moves cursor to the next occurrence of the target char on the line."
-  (let ((s (copy-mode-screen :w 20 :h 3
-                             :content "hello world"
-                             :cursor (cons 0 0))))
-    (cl-tmux/commands::copy-mode-jump-forward s #\l)
-    (is (= 2 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "jump-forward 'l' from col 0 must land on col 2 (first 'l')")))
-
-(test copy-mode-jump-forward-no-match-stays-put
-  "jump-forward does not move the cursor when the char is not found ahead."
-  (let ((s (copy-mode-screen :w 20 :h 3
-                             :content "hello world"
-                             :cursor (cons 0 0))))
-    (setf (cdr (cl-tmux/terminal/types:screen-copy-cursor s)) 10) ; col 10 = 'd'
-    (cl-tmux/commands::copy-mode-jump-forward s #\z)
-    (is (= 10 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "no-match forward must leave cursor unchanged")))
-
-(test copy-mode-jump-backward-finds-char
-  "jump-backward moves cursor to the previous occurrence of the target char."
-  (let ((s (copy-mode-screen :w 20 :h 3
-                             :content "hello world"
-                             :cursor (cons 0 0))))
-    (setf (cdr (cl-tmux/terminal/types:screen-copy-cursor s)) 10) ; start near end
-    (cl-tmux/commands::copy-mode-jump-backward s #\l)
-    (is (= 9 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "jump-backward 'l' from col 10 must land on col 9 ('l' in 'world')")))
-
-(test copy-mode-jump-to-stops-before-char
-  "jump-to (vi t) lands one column BEFORE the target char (till)."
-  (let ((s (copy-mode-screen :w 20 :h 3
-                             :content "hello world"
-                             :cursor (cons 0 0))))
-    (cl-tmux/commands::copy-mode-jump-to s #\l)
-    (is (= 1 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "jump-to 'l' from col 0 must land on col 1 (one before col 2)")))
+(test copy-mode-jump-basic-movements
+  "jump-forward, jump-backward, and jump-to land the cursor at the expected column.
+   Each row: (fn-sym initial-col char expected-col description)."
+  (dolist (row '((cl-tmux/commands::copy-mode-jump-forward  0  #\l 2
+                  "jump-forward 'l' from col 0 must land on col 2 (first 'l')")
+                 (cl-tmux/commands::copy-mode-jump-forward  10 #\z 10
+                  "no-match forward must leave cursor unchanged")
+                 (cl-tmux/commands::copy-mode-jump-backward 10 #\l 9
+                  "jump-backward 'l' from col 10 must land on col 9 ('l' in 'world')")
+                 (cl-tmux/commands::copy-mode-jump-to       0  #\l 1
+                  "jump-to 'l' from col 0 must land on col 1 (one before col 2)")))
+    (destructuring-bind (fn-sym initial-col char expected-col desc) row
+      (let ((s (copy-mode-screen :w 20 :h 3 :content "hello world"
+                                 :cursor (cons 0 initial-col))))
+        (funcall (symbol-function fn-sym) s char)
+        (is (= expected-col (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
+            desc)))))
 
 (test copy-mode-jump-again-repeats-last
   "jump-again (vi ;) repeats the last jump-forward."
