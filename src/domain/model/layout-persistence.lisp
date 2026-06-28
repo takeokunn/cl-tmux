@@ -54,8 +54,8 @@
                     (pane-width leaf-pane) (pane-height leaf-pane)
                     (pane-x leaf-pane) (pane-y leaf-pane)
                     (pane-id leaf-pane))
-  :on-split (let ((open-bracket  (ecase split-orient (:h #\{) (:v #\[)))
-                  (close-bracket (ecase split-orient (:h #\}) (:v #\]))))
+  :on-split (let ((open-bracket  (orient-case split-orient :h #\{ :v #\[))
+                  (close-bracket (orient-case split-orient :h #\} :v #\])))
                (multiple-value-bind (min-x min-y width height) (%split-bounding-box node)
                  (format nil "~Dx~D,~D,~D~C~A,~A~C"
                          width height min-x min-y
