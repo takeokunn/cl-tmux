@@ -21,45 +21,55 @@
       (cl-tmux/buffer:get-buffer-by-name name)
       (cl-tmux/buffer:get-paste-buffer 0)))
 
-(defun %buffer-name-from-flags (flags)
-  "Return the named buffer selected by -b in FLAGS, or NIL when absent."
-  (%flag-value flags #\b))
+(defmacro define-flag-accessors (&rest specs)
+  "Generate flag accessor functions from a fact table.
+   Each SPEC is (fn-name doc :value flag-char [default]) or
+                (fn-name doc :present flag-char).
+   :value   — returns the flag value, or DEFAULT when the flag is absent.
+   :present — returns the %flag-present-p result (truthy or NIL)."
+  `(progn
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (fn-name doc type char &optional default) spec
+                   `(defun ,fn-name (flags)
+                      ,doc
+                      ,(ecase type
+                         (:value  (if default
+                                      `(or (%flag-value flags ,char) ,default)
+                                      `(%flag-value flags ,char)))
+                         (:present `(%flag-present-p flags ,char))))))
+               specs)))
 
-(defun %buffer-append-p (flags)
-  "Return T when the command FLAGS include -a."
-  (%flag-present-p flags #\a))
-
-(defun %popup-title-from-flags (flags)
-  "Return the popup title encoded by FLAGS, or the empty title when absent."
-  (or (%flag-value flags #\T) ""))
-
-(defun %popup-width-from-flags (flags)
-  "Return the popup width encoded by FLAGS, or NIL when absent."
-  (%flag-value flags #\w))
-
-(defun %popup-height-from-flags (flags)
-  "Return the popup height encoded by FLAGS, or NIL when absent."
-  (%flag-value flags #\h))
-
-(defun %menu-title-from-flags (flags)
-  "Return the menu title encoded by FLAGS, or the default menu title."
-  (or (%flag-value flags #\T) "Menu"))
-
-(defun %confirm-prompt-from-flags (flags)
-  "Return the custom confirm prompt encoded by FLAGS, or NIL when absent."
-  (%flag-value flags #\p))
-
-(defun %list-keys-table-name-from-flags (flags)
-  "Return the key table encoded by FLAGS, or NIL when absent."
-  (%flag-value flags #\T))
-
-(defun %copy-mode-scroll-to-top-p (flags)
-  "Return T when FLAGS request copy-mode to start at the top."
-  (and (%flag-present-p flags #\u) t))
-
-(defun %copy-mode-exit-on-bottom-p (flags)
-  "Return T when FLAGS request copy-mode to exit at the bottom."
-  (and (%flag-present-p flags #\e) t))
+(define-flag-accessors
+  (%buffer-name-from-flags
+   "Return the named buffer selected by -b in FLAGS, or NIL when absent."
+   :value #\b)
+  (%buffer-append-p
+   "Return T when the command FLAGS include -a."
+   :present #\a)
+  (%popup-title-from-flags
+   "Return the popup title encoded by FLAGS, or the empty title when absent."
+   :value #\T "")
+  (%popup-width-from-flags
+   "Return the popup width encoded by FLAGS, or NIL when absent."
+   :value #\w)
+  (%popup-height-from-flags
+   "Return the popup height encoded by FLAGS, or NIL when absent."
+   :value #\h)
+  (%menu-title-from-flags
+   "Return the menu title encoded by FLAGS, or the default menu title."
+   :value #\T "Menu")
+  (%confirm-prompt-from-flags
+   "Return the custom confirm prompt encoded by FLAGS, or NIL when absent."
+   :value #\p)
+  (%list-keys-table-name-from-flags
+   "Return the key table encoded by FLAGS, or NIL when absent."
+   :value #\T)
+  (%copy-mode-scroll-to-top-p
+   "Return T when FLAGS request copy-mode to start at the top."
+   :present #\u)
+  (%copy-mode-exit-on-bottom-p
+   "Return T when FLAGS request copy-mode to exit at the bottom."
+   :present #\e))
 
 (defun %buffer-positionals-text (positionals)
   "Join POSITIONALS with spaces, mirroring tmux's command-line token joining."
