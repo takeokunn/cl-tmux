@@ -220,24 +220,20 @@
           (is (not (equal value (cl-tmux/options:get-option name nil)))
               "~A must not be stored when terminal matching is unsupported" name))))))
 
-(test cmd-set-option-o-skips-when-already-set
-  "'set -o name value' is a no-op when the option already has a value — the
-   only-if-unset plugin idiom must NOT clobber a user override."
-  (with-option-session (s)
-      (cl-tmux/options:set-option "@plugin-opt" "user-value")
-      (cl-tmux::%cmd-set-option s '("-o" "@plugin-opt" "default-value"))
-      (is (string= "user-value" (cl-tmux/options:get-option "@plugin-opt"))
-          "-o must leave the existing value untouched")))
-
-(test cmd-set-option-o-sets-when-unset
-  "'set -o name value' DOES set the option when it has no value yet (seeds a
-   default that a later plain set can still override)."
-  (with-option-session (s)
-      ;; Ensure no prior override exists.
-      (remhash "@plugin-opt" cl-tmux/options:*global-options*)
-      (cl-tmux::%cmd-set-option s '("-o" "@plugin-opt" "default-value"))
-      (is (string= "default-value" (cl-tmux/options:get-option "@plugin-opt"))
-          "-o must set the option when it is currently unset")))
+(test cmd-set-option-o-flag-variants
+  "set -o only sets the option when no value exists: skips if already set,
+   writes default if absent.
+   Each row: (pre-value expected description)."
+  (dolist (row '(("user-value" "user-value"    "-o must leave existing value untouched")
+                 (nil          "default-value" "-o must set the option when currently unset")))
+    (destructuring-bind (pre-value expected desc) row
+      (with-option-session (s)
+        (if pre-value
+            (cl-tmux/options:set-option "@plugin-opt" pre-value)
+            (remhash "@plugin-opt" cl-tmux/options:*global-options*))
+        (cl-tmux::%cmd-set-option s '("-o" "@plugin-opt" "default-value"))
+        (is (string= expected (cl-tmux/options:get-option "@plugin-opt"))
+            desc)))))
 
 (test run-command-line-bind-with-args-binds-key
   "Runtime 'bind <key> <command>' (with args) binds via the config directive path,

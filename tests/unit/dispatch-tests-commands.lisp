@@ -322,23 +322,18 @@
       (is (= 1 (window-id active)) "the active window's index becomes 1")
       (is (= 0 (window-id w1)) "the other window's index becomes 0"))))
 
-(test run-command-line-swap-window-selects-moved-window-by-default
-  "'swap-window -s X -t Y' (no -d) makes the swapped source window current."
-  (with-fake-session (s :nwindows 3)
-    (let ((w0 (find 0 (session-windows s) :key #'window-id)))
-      (cl-tmux::%run-command-line s "swap-window -s 0 -t 2")
-      (is (eq w0 (session-active-window s))
-          "without -d the swapped source window becomes the active window"))))
-
-(test run-command-line-swap-window-d-keeps-active-window
-  "'swap-window -d -s X -t Y' leaves the active window unchanged."
-  (with-fake-session (s :nwindows 3)
-    (let ((w1 (find 1 (session-windows s) :key #'window-id)))
-      ;; Make a non-source window active so the swap would otherwise move focus.
-      (session-select-window s w1)
-      (cl-tmux::%run-command-line s "swap-window -d -s 0 -t 2")
-      (is (eq w1 (session-active-window s))
-          "-d must not change the active window"))))
+(test run-command-line-swap-window-selects-source-or-keeps-active
+  "swap-window without -d selects the swapped source window; with -d the
+   pre-selected window stays active.
+   Each row: (pre-select-id command description)."
+  (dolist (row '((0 "swap-window -s 0 -t 2"    "no -d: swapped source becomes active")
+                 (1 "swap-window -d -s 0 -t 2" "-d: pre-selected window stays active")))
+    (destructuring-bind (pre-id cmd desc) row
+      (with-fake-session (s :nwindows 3)
+        (let ((pre-win (find pre-id (session-windows s) :key #'window-id)))
+          (session-select-window s pre-win)
+          (cl-tmux::%run-command-line s cmd)
+          (is (eq pre-win (session-active-window s)) desc))))))
 
 (test run-command-line-swap-window-unknown-target-is-noop
   "'swap-window -s 0 -t 99' (no such dst) leaves the window indices unchanged."
@@ -420,25 +415,20 @@
       (is (= 2 (window-id w1))
           "the window formerly at 1 shifts up to 2"))))
 
-(test run-command-line-move-window-selects-moved-window-by-default
-  "'move-window -t N' (no -d) makes the moved window the active window."
-  (with-fake-session (s :nwindows 2)
-    (let ((win (session-active-window s))
-          (other (find 1 (session-windows s) :key #'window-id)))
-      ;; Make the non-source window active so the move would otherwise move focus.
-      (session-select-window s other)
-      (cl-tmux::%run-command-line s "move-window -s 0 -t 5")
-      (is (eq win (session-active-window s))
-          "without -d the moved window becomes the active window"))))
-
-(test run-command-line-move-window-d-keeps-active-window
-  "'move-window -d -t N' leaves the active window unchanged."
-  (with-fake-session (s :nwindows 2)
-    (let ((other (find 1 (session-windows s) :key #'window-id)))
-      (session-select-window s other)
-      (cl-tmux::%run-command-line s "move-window -d -s 0 -t 5")
-      (is (eq other (session-active-window s))
-          "-d must not change the active window"))))
+(test run-command-line-move-window-selects-active-window-variants
+  "move-window without -d selects the moved window as active; with -d the
+   original active window is preserved.
+   Each row: (command detach-p description)."
+  (dolist (row '(("move-window -s 0 -t 5"    nil "no -d: moved window becomes active")
+                 ("move-window -d -s 0 -t 5" t   "-d: original window stays active")))
+    (destructuring-bind (cmd detach-p desc) row
+      (with-fake-session (s :nwindows 2)
+        (let* ((win   (session-active-window s))
+               (other (find 1 (session-windows s) :key #'window-id)))
+          (session-select-window s other)
+          (cl-tmux::%run-command-line s cmd)
+          (is (eq (if detach-p other win) (session-active-window s))
+              desc))))))
 
 (test run-command-line-move-window-rejects-unsupported-arguments
   "move-window rejects unknown flags and extra positionals before moving."

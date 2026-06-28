@@ -456,22 +456,18 @@
           (is (eq :new-window (cl-tmux/config:key-table-command entry))
               "~A: command must be :new-window" desc))))))
 
-(test key-table-repeatable-flag
-  "key-table-bind with :repeatable T marks the entry as repeatable."
-  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
-    (cl-tmux/config:key-table-bind "prefix" #\r :resize-left :repeatable t)
-    (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\r)))
-      (is (not (null entry)) "binding must be found")
-      (is (cl-tmux/config:key-table-repeatable-p entry)
-          "entry must be repeatable"))))
-
-(test key-table-not-repeatable-by-default
-  "key-table-bind without :repeatable does not mark the entry as repeatable."
-  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
-    (cl-tmux/config:key-table-bind "prefix" #\c :new-window)
-    (let ((entry (cl-tmux/config:key-table-lookup "prefix" #\c)))
-      (is (not (cl-tmux/config:key-table-repeatable-p entry))
-          "entry must not be repeatable by default"))))
+(test key-table-repeatable-flag-variants
+  "key-table-bind with :repeatable T marks the entry repeatable; without the flag
+   it defaults to not repeatable.  Each row: (key cmd rep expected description)."
+  (dolist (row '((#\r :resize-left t   t   ":repeatable T must be repeatable")
+                 (#\c :new-window  nil nil "no :repeatable flag must not be repeatable")))
+    (destructuring-bind (key cmd rep expected desc) row
+      (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+        (cl-tmux/config:key-table-bind "prefix" key cmd :repeatable rep)
+        (let ((entry (cl-tmux/config:key-table-lookup "prefix" key)))
+          (is (not (null entry)) "binding must be found: ~A" desc)
+          (is (eql expected (cl-tmux/config:key-table-repeatable-p entry))
+              desc))))))
 
 (test key-table-lookup-missing-returns-nil
   "key-table-lookup returns NIL for an absent key and for a non-existent table."

@@ -206,37 +206,23 @@
         (is (stringp (cdar result))
             "entry value must be a string")))))
 
-(test session-environment-value-falls-back-to-process
-  "session-environment-value reports a process-environment value with source
-   :process when the name is absent from the session overlay.  Regression: a
-   prior `(t ...)` middle cond clause made the :process branch dead code, so the
-   fallback never fired."
-  (with-session-and-env-var (sess name "CLTMUX_TEST_ENV_PROCESS_FALLBACK" "from-process")
-    (multiple-value-bind (value source) (session-environment-value sess name)
-      (is (string= "from-process" value)
-          "absent-from-overlay names must inherit the process value")
-      (is (eq :process source)
-          "the inherited value must carry the :process source"))))
-
-(test session-environment-value-overlay-shadows-process
-  "A session overlay entry shadows the process environment (source :session)."
-  (with-session-and-env-var (sess name "CLTMUX_TEST_ENV_OVERLAY_SHADOW" "from-process")
-    (session-set-environment sess name "from-overlay")
-    (multiple-value-bind (value source) (session-environment-value sess name)
-      (is (string= "from-overlay" value)
-          "the session overlay must take precedence over the process value")
-      (is (eq :session source)
-          "an overlay hit must carry the :session source"))))
-
-(test session-environment-value-explicit-unset-beats-process
-  "An explicit session unset hides a process-environment value (source :unset)."
-  (with-session-and-env-var (sess name "CLTMUX_TEST_ENV_UNSET_BEATS_PROCESS" "from-process")
-    (session-unset-environment sess name)
-    (multiple-value-bind (value source) (session-environment-value sess name)
-      (is (null value)
-          "an explicit unset must hide the process value")
-      (is (eq :unset source)
-          "the explicit unset must carry the :unset source"))))
+(test session-environment-value-table
+  "session-environment-value returns the correct value and source for the three
+   scenarios: absent overlay (falls back to process), overlay set (shadows process),
+   and explicit unset (hides process).
+   Each row: (env-name action expected-value expected-source description)."
+  (dolist (row '(("CLTMUX_TEST_SESSION_ENV_A" :none  "from-process"  :process "absent overlay must inherit process value")
+                 ("CLTMUX_TEST_SESSION_ENV_B" :set   "from-overlay"  :session "overlay must shadow process value")
+                 ("CLTMUX_TEST_SESSION_ENV_C" :unset nil             :unset   "explicit unset must hide process value")))
+    (destructuring-bind (name-str action expected-val expected-src desc) row
+      (with-session-and-env-var (sess name name-str "from-process")
+        (ecase action
+          (:none  nil)
+          (:set   (session-set-environment sess name "from-overlay"))
+          (:unset (session-unset-environment sess name)))
+        (multiple-value-bind (value source) (session-environment-value sess name)
+          (is (equal expected-val value) desc)
+          (is (eq expected-src source) desc))))))
 
 (test kill-window-selects-previous-by-index
   "After killing the active window with no MRU history (timestamps tie at 0), tmux

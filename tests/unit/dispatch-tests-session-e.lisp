@@ -26,20 +26,18 @@
 
 ;;; ── select-layout arg command ────────────────────────────────────────────────
 
-(test run-command-line-select-layout-even-horizontal
-  "%run-command-line select-layout even-horizontal applies even-horizontal layout."
-  (with-fake-two-pane-session (s)
-    (cl-tmux::%run-command-line s "select-layout even-horizontal")
-    ;; Layout must be applied without error — just check the window still has 2 panes.
-    (is (= 2 (length (cl-tmux/model:window-panes (cl-tmux/model:session-active-window s))))
-        "select-layout even-horizontal must leave pane count unchanged")))
-
-(test run-command-line-select-layout-main-horizontal
-  "%run-command-line select-layout main-horizontal applies main-horizontal layout."
-  (with-fake-session (s :nwindows 1 :npanes 3)
-    (cl-tmux::%run-command-line s "select-layout main-horizontal")
-    (is (= 3 (length (cl-tmux/model:window-panes (cl-tmux/model:session-active-window s))))
-        "select-layout main-horizontal must leave pane count unchanged")))
+(test run-command-line-select-layout-known-layouts-do-not-error
+  "select-layout applies named layouts without error and leaves the pane count unchanged.
+   Each row: (npanes layout-name description)."
+  (dolist (row '((2 "even-horizontal" "even-horizontal must not change pane count")
+                 (3 "main-horizontal" "main-horizontal must not change pane count")))
+    (destructuring-bind (npanes layout desc) row
+      (with-fake-session (s :nwindows 1 :npanes npanes)
+        (cl-tmux::%run-command-line s (format nil "select-layout ~A" layout))
+        (is (= npanes
+               (length (cl-tmux/model:window-panes
+                        (cl-tmux/model:session-active-window s))))
+            desc)))))
 
 (test run-command-line-select-layout-unknown-is-noop
   "%run-command-line select-layout with an unknown name is a no-op (no error)."

@@ -91,23 +91,18 @@
 
 ;;; ── %resolve-copy-pipe-cmd (direct unit tests) ──────────────────────────────
 
-(test resolve-copy-pipe-cmd-uses-explicit-command
-  "%resolve-copy-pipe-cmd returns the explicit CMD when it is a non-empty string."
+(test resolve-copy-pipe-cmd-explicit-and-fallback-table
+  "%resolve-copy-pipe-cmd uses explicit CMD when non-empty, falls back to the
+   copy-command option when CMD is empty.
+   Each row: (cmd expected description)."
   (let ((cl-tmux/options:*global-options*
          (let ((h (make-hash-table :test #'equal)))
            (setf (gethash "copy-command" h) "fallback")
            h)))
-    (is (string= "printf hi" (cl-tmux/commands::%resolve-copy-pipe-cmd "printf hi"))
-        "explicit copy-pipe command must win over the global option")))
-
-(test resolve-copy-pipe-cmd-falls-back-to-option
-  "%resolve-copy-pipe-cmd falls back to the global copy-command option when CMD is empty."
-  (let ((cl-tmux/options:*global-options*
-         (let ((h (make-hash-table :test #'equal)))
-           (setf (gethash "copy-command" h) "fallback")
-           h)))
-    (is (string= "fallback" (cl-tmux/commands::%resolve-copy-pipe-cmd ""))
-        "empty CMD must use the global copy-command option")))
+    (dolist (row '(("printf hi" "printf hi" "explicit command must win over the option")
+                   (""          "fallback"  "empty CMD must use the global copy-command option")))
+      (destructuring-bind (cmd expected desc) row
+        (is (string= expected (cl-tmux/commands::%resolve-copy-pipe-cmd cmd)) desc)))))
 
 (test resolve-copy-pipe-cmd-returns-nil-when-unavailable
   "%resolve-copy-pipe-cmd returns NIL when neither CMD nor the global option is usable."
@@ -294,26 +289,20 @@
     (is-false (cl-tmux/terminal/types:screen-copy-selecting s)
               "set-mark must not activate selection mode")))
 
-(test copy-mode-set-mark-noop-outside-copy-mode
-  "copy-mode-set-mark is a no-op when not in copy mode."
-  (let ((s (make-screen 20 5)))
-    (setf (screen-copy-mode-p s)  nil
-          (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0)
-          (cl-tmux/terminal/types:screen-copy-mark   s) nil)
-    (cl-tmux/commands::copy-mode-set-mark s)
-    (is-false (cl-tmux/terminal/types:screen-copy-mark s)
-              "mark must remain nil when not in copy mode")))
+(test copy-mode-set-mark-noop-table
+  "copy-mode-set-mark is a no-op when not in copy mode or when the cursor is NIL.
+   Each row: (copy-mode-p cursor description)."
+  (dolist (row '((nil (0 . 0) "mark must remain NIL when not in copy mode")
+                 (t   nil     "mark must remain NIL when cursor is NIL")))
+    (destructuring-bind (mode-p cursor desc) row
+      (let ((s (make-screen 20 5)))
+        (setf (screen-copy-mode-p s)                       mode-p
+              (cl-tmux/terminal/types:screen-copy-cursor s) cursor
+              (cl-tmux/terminal/types:screen-copy-mark   s) nil)
+        (cl-tmux/commands::copy-mode-set-mark s)
+        (is-false (cl-tmux/terminal/types:screen-copy-mark s) desc)))))
 
-(test copy-mode-set-mark-noop-without-cursor
-  "copy-mode-set-mark is a no-op when copy-cursor is nil."
-  (let ((s (make-screen 20 5)))
-    (setf (screen-copy-mode-p s)  t
-          (cl-tmux/terminal/types:screen-copy-cursor s) nil
-          (cl-tmux/terminal/types:screen-copy-mark   s) nil)
-    (cl-tmux/commands::copy-mode-set-mark s)
-    (is-false (cl-tmux/terminal/types:screen-copy-mark s)
-              "mark must remain nil when cursor is nil")))
-
+;;; ── copy-mode-goto-line ──
 ;;; ── copy-mode-goto-line ──────────────────────────────────────────────────────
 
 (test copy-mode-goto-line-jumps-to-live-row
@@ -470,31 +459,21 @@
     (is (equal (cons 0 3) (screen-copy-cursor s))
         "cursor must remain at (0,3) when not in copy mode")))
 
-(test copy-mode-previous-matching-bracket-on-close
-  "Cursor on ')' jumps backward to its matching '('."
-  (let ((s (make-screen 20 5)))
-    (setf (screen-copy-mode-p s) t)
-    (dotimes (i 7)
-      (setf (cl-tmux/terminal/types:screen-cell s i 2)
-            (cl-tmux/terminal/types:make-cell :char (char "( foo )" i))))
-    (setf (screen-copy-cursor s) (cons 2 6)
-          (screen-copy-offset  s) 0)
-    (cl-tmux/commands::copy-mode-previous-matching-bracket s)
-    (is (= 0 (cdr (screen-copy-cursor s)))
-        "cursor must land on the matching '(' at column 0")))
-
-(test copy-mode-previous-matching-bracket-finds-previous-close
-  "Cursor after a matched pair finds the previous ')' and jumps to its matching '('."
-  (let ((s (make-screen 20 5)))
-    (setf (screen-copy-mode-p s) t)
-    (dotimes (i 12)
-      (setf (cl-tmux/terminal/types:screen-cell s i 2)
-            (cl-tmux/terminal/types:make-cell :char (char "( foo ) tail" i))))
-    (setf (screen-copy-cursor s) (cons 2 8)
-          (screen-copy-offset  s) 0)
-    (cl-tmux/commands::copy-mode-previous-matching-bracket s)
-    (is (= 0 (cdr (screen-copy-cursor s)))
-        "cursor must land on the opener that matches the previous close bracket")))
+(test copy-mode-previous-matching-bracket-table
+  "previous-matching-bracket jumps backward to the matching '(' from various positions.
+   Each row: (string nchars cursor-col description)."
+  (dolist (row '(("( foo )"      7  6 "cursor on ')' jumps to matching '('")
+                 ("( foo ) tail" 12 8 "cursor after a matched pair finds the previous close")))
+    (destructuring-bind (str nchars col desc) row
+      (let ((s (make-screen 20 5)))
+        (setf (screen-copy-mode-p s) t)
+        (dotimes (i nchars)
+          (setf (cl-tmux/terminal/types:screen-cell s i 2)
+                (cl-tmux/terminal/types:make-cell :char (char str i))))
+        (setf (screen-copy-cursor s) (cons 2 col)
+              (screen-copy-offset  s) 0)
+        (cl-tmux/commands::copy-mode-previous-matching-bracket s)
+        (is (= 0 (cdr (screen-copy-cursor s))) desc)))))
 
 (test copy-mode-previous-matching-bracket-noop-outside-copy-mode
   "Previous bracket matching is a no-op when not in copy mode."
