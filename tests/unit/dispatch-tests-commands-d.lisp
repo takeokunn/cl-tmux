@@ -33,24 +33,18 @@
 
 ;;; ── :find-window on-submit paths ─────────────────────────────────────────────
 
-(test dispatch-find-window-matching-pattern-shows-results
-  ":find-window on-submit with a matching pattern shows the matching windows."
-  (with-fake-session (s :nwindows 2)
-    (let ((*prompt* nil) (*overlay* nil))
-      (cl-tmux::dispatch-command s :find-window nil)
-      (is (prompt-active-p) "prompt must be open")
-      ;; All window names start with a digit; "0" matches the first window.
-      (funcall (prompt-on-submit *prompt*) "0")
-      (assert-overlay-contains "0" (overlay-lines) ":find-window"))))
-
-(test dispatch-find-window-no-match-shows-no-windows-message
-  ":find-window on-submit with no matches shows a 'no windows matching' overlay."
-  (with-fake-session (s :nwindows 1)
-    (let ((*prompt* nil) (*overlay* nil))
-      (cl-tmux::dispatch-command s :find-window nil)
-      (is (prompt-active-p) "prompt must be open")
-      (funcall (prompt-on-submit *prompt*) "zzz-no-such-window-xyz")
-      (assert-overlay-contains "no windows" (overlay-lines) ":find-window"))))
+(test dispatch-find-window-on-submit-table
+  ":find-window on-submit shows matching windows or 'no windows' when nothing matches.
+   Each row: (nwindows query expected-text description)."
+  (dolist (row '((2 "0"                     "0"          "matching name appears in the overlay")
+                 (1 "zzz-no-such-window-xyz" "no windows" "no match shows 'no windows' overlay")))
+    (destructuring-bind (nwindows query expected-text desc) row
+      (with-fake-session (s :nwindows nwindows)
+        (let ((*prompt* nil) (*overlay* nil))
+          (cl-tmux::dispatch-command s :find-window nil)
+          (is (prompt-active-p) "prompt must be open")
+          (funcall (prompt-on-submit *prompt*) query)
+          (assert-overlay-contains expected-text (overlay-lines) desc))))))
 
 ;;; ── :select-window-prompt with name lookup ────────────────────────────────────
 
@@ -103,25 +97,18 @@
 
 ;;; ── :bind-key on-submit ──────────────────────────────────────────────────────
 
-(test dispatch-bind-key-known-command-shows-confirmation
-  ":bind-key on-submit with a known key+command pair shows a confirmation overlay."
-  (with-fake-session (s)
-    (let ((*prompt* nil) (*overlay* nil))
-      (cl-tmux::dispatch-command s :bind-key nil)
-      (is (prompt-active-p) "prompt must be open")
-      ;; "z detach" — z is a valid key token, detach is a known command.
-      (funcall (prompt-on-submit *prompt*) "z detach")
-      (assert-overlay-contains "bound" (overlay-lines) ":bind-key"))))
-
-(test dispatch-bind-key-unknown-command-shows-error
-  ":bind-key on-submit with an unknown command shows an error overlay."
-  (with-fake-session (s)
-    (let ((*prompt* nil) (*overlay* nil))
-      (cl-tmux::dispatch-command s :bind-key nil)
-      (is (prompt-active-p) "prompt must be open")
-      (funcall (prompt-on-submit *prompt*) "z totally-unknown-cmd-xyz")
-      (assert-overlay-contains "unknown command" (overlay-lines)
-                                ":bind-key"))))
+(test dispatch-bind-key-on-submit-table
+  ":bind-key on-submit shows 'bound' for a known command or 'unknown command' for a bad one.
+   Each row: (input expected-text description)."
+  (dolist (row '(("z detach"                  "bound"           "known command shows confirmation")
+                 ("z totally-unknown-cmd-xyz"  "unknown command" "unknown command shows error")))
+    (destructuring-bind (input expected-text desc) row
+      (with-fake-session (s)
+        (let ((*prompt* nil) (*overlay* nil))
+          (cl-tmux::dispatch-command s :bind-key nil)
+          (is (prompt-active-p) "prompt must be open")
+          (funcall (prompt-on-submit *prompt*) input)
+          (assert-overlay-contains expected-text (overlay-lines) desc))))))
 
 ;;; ── :unbind-key on-submit ────────────────────────────────────────────────────
 
