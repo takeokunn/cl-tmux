@@ -10,19 +10,23 @@
 ;;; ── Macro: define-copy-mode-vi-rules ────────────────────────────────────────
 ;;;
 ;;; Each RULE is (BYTE-OR-BYTE-LIST ACTION...).
-;;; Two shorthands reduce boilerplate in the common cases:
+;;; Three shorthands reduce boilerplate in the common cases:
 ;;;   (PATTERN :repeat FN)  → (%copy-mode-repeat FN screen count) (values t nil)
 ;;;   (PATTERN :call   FN)  → (FN screen) (values t nil)
-;;; For non-standard bodies (search prompts, continuations) the forms are
-;;; used verbatim.  The macro generates %dispatch-copy-mode-byte which is
-;;; called with a screen, a raw byte, and the already-computed repeat count.
+;;;   (PATTERN :jump   FN)  → (setf *dirty* t)
+;;;                           (values t (%copy-mode-char-jump-continuation FN screen count))
+;;; For non-standard bodies (search prompts) the forms are used verbatim.
+;;; The macro generates %dispatch-copy-mode-byte which is called with a
+;;; screen, a raw byte, and the already-computed repeat count.
 
 (defmacro define-copy-mode-vi-rules (&rest rules)
   "Generate %DISPATCH-COPY-MODE-BYTE (SCREEN BYTE COUNT SESSION) from an ordered
    table of copy-mode vi rules.  Each RULE is (PATTERN BODY...) where:
      (PATTERN :repeat FN)  →  (%copy-mode-repeat FN screen count) (values t nil)
      (PATTERN :call   FN)  →  (FN screen) (values t nil)
-     (PATTERN body...)     →  body... verbatim (for complex/continuation arms)
+     (PATTERN :jump   FN)  →  (setf *dirty* t)
+                               (values t (%copy-mode-char-jump-continuation FN screen count))
+     (PATTERN body...)     →  body... verbatim (for search prompts, etc.)
    PATTERN is an integer, a list of integers, or a read-time constant.
    The first matching PATTERN wins (ordered-cut semantics like Prolog).
    Returns (values HANDLED NEXT-STATE) where HANDLED is T or NIL and NEXT-STATE
@@ -49,7 +53,11 @@
                           (if (and (consp fn) (eq (car fn) 'function))
                               `((,(cadr fn) screen) (values t nil))
                               `((funcall ,fn screen) (values t nil)))))
-                       ;; Verbatim body — for search prompts, continuations, etc.
+                       ;; :jump FN — char-jump continuation (vi f/F/t/T: needs a second byte)
+                       ((and (= 2 (length body)) (eq (first body) :jump))
+                        `((setf *dirty* t)
+                          (values t (%copy-mode-char-jump-continuation ,(second body) screen count))))
+                       ;; Verbatim body — for search prompts, etc.
                        (t body))))
                 `(,pattern ,@expanded))))
           rules)
@@ -66,8 +74,8 @@
   "Return a CPS continuation that reads one byte then calls JUMP-FN on SCREEN
    for that character COUNT times, then returns to %ground-input-state.
    Used for vi f/F/t/T commands which need a second byte (the target character)."
-  (lambda (_session byte2)
-    (declare (ignore _session))
+  (lambda (_ignored-session byte2)
+    (declare (ignore _ignored-session))
     (dotimes (_ count) (funcall jump-fn screen (code-char byte2)))
     (setf *dirty* t)
     (%ground-values)))
@@ -77,7 +85,8 @@
 ;;; Reads as Prolog facts: each arm maps one or more byte values to an action.
 ;;; :repeat FN   — move/scroll commands that honour a numeric prefix count.
 ;;; :call   FN   — one-shot commands (enter/exit, yank, selection toggles, marks).
-;;; Verbatim bodies — search prompts (need SESSION) and char-jump continuations.
+;;; :jump   FN   — char-jump commands (vi f/F/t/T) that consume a second byte.
+;;; Verbatim bodies — search prompts that need SESSION.
 
 (define-copy-mode-vi-rules
   ;; ── Exit copy mode ────────────────────────────────────────────────────────
@@ -187,23 +196,15 @@
   (19 :call #'copy-mode-search-forward-incremental)
   ;; C-r (18) — incremental backward search
   (18 :call #'copy-mode-search-backward-incremental)
-  ;; ── Char-jump motions (need a second byte — verbatim continuation bodies) ─
+  ;; ── Char-jump motions (need a second byte — use :jump shorthand) ────────────
   ;; f — jump forward to char on line (vi f<char>)
-  (#.+byte-f+
-   (setf *dirty* t)
-   (values t (%copy-mode-char-jump-continuation #'copy-mode-jump-forward screen count)))
+  (#.+byte-f+          :jump #'copy-mode-jump-forward)
   ;; F — jump backward to char on line (vi F<char>)
-  (#.+byte-capital-f+
-   (setf *dirty* t)
-   (values t (%copy-mode-char-jump-continuation #'copy-mode-jump-backward screen count)))
+  (#.+byte-capital-f+  :jump #'copy-mode-jump-backward)
   ;; t — jump to just before next char (vi t<char>)
-  (#.+byte-t+
-   (setf *dirty* t)
-   (values t (%copy-mode-char-jump-continuation #'copy-mode-jump-to screen count)))
+  (#.+byte-t+          :jump #'copy-mode-jump-to)
   ;; T — jump to just after previous char (vi T<char>)
-  (#.+byte-capital-t+
-   (setf *dirty* t)
-   (values t (%copy-mode-char-jump-continuation #'copy-mode-jump-to-backward screen count)))
+  (#.+byte-capital-t+  :jump #'copy-mode-jump-to-backward)
   ;; ── Paragraph jumps ───────────────────────────────────────────────────────
   ;; { — previous-paragraph (jump to nearest blank line above)
   (123 :repeat #'copy-mode-previous-paragraph)
