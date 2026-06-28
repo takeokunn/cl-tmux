@@ -63,7 +63,9 @@
    ;; Multiplexed I/O
    #:select-fds            ; (fds timeout-us) → ready-fd-list
    ;; Terminal geometry
-   #:terminal-size))       ; () → (values rows cols)
+   #:terminal-size         ; () → (values rows cols)
+   ;; Port adapter (installs cl-tmux/ports vars at server startup)
+   #:install-pty-port))
 
 ;;; ── Client/server wire protocol ──────────────────────────────────────────
 

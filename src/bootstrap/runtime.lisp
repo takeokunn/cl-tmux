@@ -73,6 +73,14 @@
 (defparameter *wait-channels* (make-hash-table :test #'equal)
   "Maps channel-name string to a plist (:lock lock :cv cv :locked bool).")
 
+(defmacro with-channel-plist ((lk cv ch) &body body)
+  "Bind LK and CV to the :lock and :cv fields of the channel plist CH."
+  (let ((ch-var (gensym "CH")))
+    `(let* ((,ch-var ,ch)
+            (,lk (getf ,ch-var :lock))
+            (,cv (getf ,ch-var :cv)))
+       ,@body)))
+
 (defun %ensure-channel (name)
   "Return the plist for channel NAME, creating it if absent."
   (or (gethash name *wait-channels*)
@@ -87,20 +95,17 @@
    +wait-for-channel-timeout+ seconds elapse.  Returns T if signaled, NIL
    on timeout.  A bounded wait prevents indefinite blocking when the
    corresponding signal-channel is never called."
-  (let* ((ch (%ensure-channel name))
-         (lk (getf ch :lock))
-         (cv (getf ch :cv)))
+  (with-channel-plist (lk cv (%ensure-channel name))
     (with-lock-held (lk)
       (condition-wait cv lk :timeout +wait-for-channel-timeout+))))
 
 (defun signal-channel (name)
   "Signal all threads blocked on channel NAME."
-  (let* ((ch (%ensure-channel name))
-         (lk (getf ch :lock))
-         (cv (getf ch :cv)))
+  (let ((ch (%ensure-channel name)))
     (unless (getf ch :locked)
-      (with-lock-held (lk)
-        (condition-notify cv)))))
+      (with-channel-plist (lk cv ch)
+        (with-lock-held (lk)
+          (condition-notify cv))))))
 
 (defun lock-channel (name)
   "Lock channel NAME so signal-channel is suppressed (a no-op) until unlocked.

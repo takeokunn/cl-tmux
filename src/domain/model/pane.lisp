@@ -59,13 +59,13 @@
       (setf (screen-response-queue screen) nil)
       (when (> (pane-fd pane) 0)
         (dolist (reply replies)
-          (pty-write (pane-fd pane) reply))))))
+          (write-pty (pane-fd pane) reply))))))
 
 (defun pane-feed (pane bytes)
   "Feed raw PTY bytes into PANE's screen, then drain any device-report replies
    (DA1/DA2/CPR/DSR/DECRQM/XTGETTCAP/DECRQSS/OSC-color) back to the PTY.
    The response queue is populated by the CPS parser under the screen lock;
-   it is drained outside the lock so pty-write never blocks while holding it."
+   it is drained outside the lock so write-pty never blocks while holding it."
   (let ((screen (pane-screen pane)))
     (with-lock-held ((screen-lock screen))
       (screen-process-bytes screen bytes))
@@ -105,11 +105,12 @@
 
 (defun %spawn-pty-with-default-options (h w &key start-dir default-command environment)
   "Spawn a PTY shell using the configured default-terminal and default-command.
-   Returns (values fd pid slave-path).  Shared by %fork-pane and respawn-pane."
-  (forkpty-with-shell h w
-                      :start-dir start-dir
-                      :default-command default-command
-                      :environment environment))
+   Returns (values fd pid slave-path).  Shared by %fork-pane and respawn-pane.
+   Calls the cl-tmux/ports:spawn-pty port (installed by install-pty-port)."
+  (spawn-pty h w
+             :start-dir start-dir
+             :default-command default-command
+             :environment environment))
 
 (defun %fork-pane (session id x y w h &key start-dir)
   "Spawn a shell and build a PTY-backed pane at position (X,Y) sized W×H.
@@ -119,7 +120,7 @@
    Extra environment variables may be injected via the *PANE-EXTRA-ENV* dynamic
    variable (alist of (NAME . VALUE)), which is consumed once and reset.
    Returns the new pane.  The PTY file descriptor and child PID are embedded
-   in the pane struct; callers should call pty-close on them at teardown."
+   in the pane struct; callers should call close-pty on them at teardown."
   (multiple-value-bind (term command) (%read-shell-spawn-options)
     (let ((environment (append (session-child-environment session :term term)
                                (%pane-extra-env-strings))))
@@ -150,7 +151,7 @@
         (w       (pane-width  pane))
         (h       (pane-height pane)))
     ;; Close the old PTY; ignore errors (process may have already exited).
-    (ignore-errors (pty-close old-fd old-pid))
+    (ignore-errors (close-pty old-fd old-pid))
     ;; Open a fresh PTY-backed shell at the same geometry, respecting options.
     (multiple-value-bind (term command) (%read-shell-spawn-options)
       (let ((environment (session-child-environment session
@@ -209,7 +210,7 @@
         (%pane-border-status-reservation status height)
       (%update-pane-geometry pane x (+ y content-y-offset) width content-height)
       (when (> (pane-fd pane) 0)
-        (set-pty-size (pane-fd pane) content-height width))
+        (resize-pty (pane-fd pane) content-height width))
       (let ((screen (pane-screen pane)))
         (with-lock-held ((screen-lock screen))
           (screen-resize screen width content-height))))))

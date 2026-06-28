@@ -1,3 +1,44 @@
+;;; ── Domain Ports (Dependency Inversion) ─────────────────────────────────────
+;;;
+;;; cl-tmux/ports defines the abstract interface for PTY operations.
+;;; Domain code (cl-tmux/model) calls these port functions.
+;;; Infrastructure (cl-tmux/pty) installs concrete implementations at startup.
+;;; This enforces the Dependency Inversion Principle:
+;;;   high-level module (domain) → abstraction (ports)
+;;;   low-level module (infra)   → implements abstraction
+
+(defpackage #:cl-tmux/ports
+  (:use #:cl)
+  (:export
+   ;; PTY port variables (set by install-pty-port at server startup)
+   #:*spawn-pty*
+   #:*write-pty*
+   #:*resize-pty*
+   #:*close-pty*
+   ;; PTY port functions (called by domain model)
+   #:spawn-pty
+   #:write-pty
+   #:resize-pty
+   #:close-pty))
+
+;;; ── Session Repository (DDD Repository Pattern) ──────────────────────────────
+;;;
+;;; cl-tmux/repository defines the abstract repository interface for sessions.
+;;; Domain code declares what operations exist (generic functions).
+;;; The composition root (bootstrap) provides the concrete in-memory implementation.
+
+(defpackage #:cl-tmux/repository
+  (:use #:cl)
+  (:export
+   ;; Repository protocol (generic functions)
+   #:repo-find-session
+   #:repo-add-session
+   #:repo-remove-session
+   #:repo-all-sessions
+   #:repo-current-session
+   ;; Active repository instance
+   #:*session-repo*))
+
 (defpackage #:cl-tmux/prompt
   (:use #:cl)
   (:export
@@ -40,7 +81,7 @@
 
 (defpackage #:cl-tmux/model
   (:use #:cl #:bordeaux-threads
-        #:cl-tmux/config #:cl-tmux/pty #:cl-tmux/terminal)
+        #:cl-tmux/config #:cl-tmux/ports #:cl-tmux/terminal)
   (:export
    ;; Pane
    #:pane
@@ -455,6 +496,9 @@
    #:server-remove-session
    #:server-all-sessions
    #:server-current-session
+   ;; Repository adapter
+   #:install-session-repository
+   #:in-memory-session-store
    ;; Session groups
    #:*session-groups*
    #:*group-id-counter*

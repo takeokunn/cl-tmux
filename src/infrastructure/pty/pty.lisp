@@ -230,3 +230,17 @@
                 (values rows cols)
                 (values 24 80)))
           (values 24 80)))))          ; safe fallback if ioctl fails
+
+;;; ── Port adapter ─────────────────────────────────────────────────────────────
+;;;
+;;; install-pty-port wires this module's CFFI-backed functions into the
+;;; cl-tmux/ports abstraction layer so that domain code (cl-tmux/model) calls
+;;; through the port rather than referencing cl-tmux/pty symbols directly.
+;;; Must be called before any pane is created (server startup or test setup).
+
+(defun install-pty-port ()
+  "Register the CFFI PTY implementation as the active cl-tmux/ports adapter."
+  (setf cl-tmux/ports:*spawn-pty* #'forkpty-with-shell
+        cl-tmux/ports:*write-pty* #'pty-write
+        cl-tmux/ports:*resize-pty* #'set-pty-size
+        cl-tmux/ports:*close-pty* #'pty-close))

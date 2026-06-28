@@ -585,6 +585,16 @@
           (progn ,@body)
        (pty-close ,fd-var ,pid-var))))
 
+;;; ── PTY port initialization ─────────────────────────────────────────────────
+;;;
+;;; Any test that creates a real pane (create-initial-session, session-new-window,
+;;; respawn-pane) goes through cl-tmux/ports:spawn-pty.  Install the CFFI adapter
+;;; now so the port vars are non-NIL for the duration of the test run.
+;;; Tests that need a mock port can rebind *spawn-pty* / *write-pty* / etc.
+;;; around individual test bodies.
+
+(cl-tmux/pty:install-pty-port)
+
 ;;; ── No-PTY pane builder ─────────────────────────────────────────────────────
 
 (defun make-no-pty-pane (id x y w h)

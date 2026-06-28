@@ -12,6 +12,39 @@
 ;;;; Sessions in the same group see the same windows; switching a window in one
 ;;;; automatically switches all others in the group.
 
+;;; ── In-memory session store (concrete repository) ────────────────────────────
+;;;
+;;; Implements the cl-tmux/repository protocol by delegating to the global
+;;; *server-sessions* alist already maintained by server-* functions.
+;;; Wired into *session-repo* at server startup via install-session-repository.
+
+(defstruct in-memory-session-store
+  "Concrete Repository implementation backed by *server-sessions*.")
+
+(defmethod cl-tmux/repository:repo-find-session
+    ((store in-memory-session-store) name)
+  (server-find-session name))
+
+(defmethod cl-tmux/repository:repo-add-session
+    ((store in-memory-session-store) session)
+  (server-add-session session))
+
+(defmethod cl-tmux/repository:repo-remove-session
+    ((store in-memory-session-store) name)
+  (server-remove-session name))
+
+(defmethod cl-tmux/repository:repo-all-sessions
+    ((store in-memory-session-store))
+  (server-all-sessions))
+
+(defmethod cl-tmux/repository:repo-current-session
+    ((store in-memory-session-store))
+  (server-current-session))
+
+(defun install-session-repository ()
+  "Register the in-memory session store as the active cl-tmux/repository adapter."
+  (setf cl-tmux/repository:*session-repo* (make-in-memory-session-store)))
+
 ;;; ── Session registry ──────────────────────────────────────────────────────────
 
 (defun server-add-session (session)
