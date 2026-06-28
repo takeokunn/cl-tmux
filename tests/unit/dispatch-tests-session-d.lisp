@@ -188,7 +188,7 @@
                    (let ((cl-tmux::*client-read-only* read-only-p))
                      (cl-tmux::%run-command-line s "send-prefix"))
                    (is (null writes) desc))
-              (setf (fdefinition 'cl-tmux/pty:pty-write) orig)))))))))
+              (setf (fdefinition 'cl-tmux/pty:pty-write) orig))))))))
 
 
 (test cmd-send-prefix-rejects-unsupported-arguments-before-writing
