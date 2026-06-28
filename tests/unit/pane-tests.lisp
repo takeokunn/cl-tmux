@@ -361,62 +361,42 @@
 
 ;;; ── pane-live-p direct unit tests ────────────────────────────────────────────
 
-(test pane-live-p-true-when-fd-positive
-  "pane-live-p returns T when the pane has a positive PTY master fd."
-  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 80 :height 24
-                          :fd 5 :pid 42 :screen (make-screen 80 24))))
-    (is-true (pane-live-p pane)
-             "pane with fd > 0 must be live")))
-
-(test pane-live-p-false-when-fd-negative
-  "pane-live-p returns NIL when the pane's fd is -1 (no PTY, e.g. input-only pane)."
-  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 80 :height 24
-                          :fd -1 :pid -1 :screen (make-screen 80 24))))
-    (is-false (pane-live-p pane)
-              "pane with fd = -1 must not be live")))
-
-(test pane-live-p-false-when-fd-zero
-  "pane-live-p returns NIL when fd is 0 (fd 0 is stdin, not a PTY master)."
-  (let ((pane (make-pane :id 1 :x 0 :y 0 :width 80 :height 24
-                          :fd 0 :pid -1 :screen (make-screen 80 24))))
-    (is-false (pane-live-p pane)
-              "pane with fd = 0 must not be reported as live")))
-
-(test pane-live-p-false-for-nil
-  "pane-live-p returns NIL when passed NIL."
-  (is-false (pane-live-p nil)
-            "pane-live-p NIL must return NIL"))
+(test pane-live-p-table
+  "pane-live-p returns T only when fd > 0; fd <= 0 and NIL are all not-live.
+   :nil sentinel means pass NIL directly instead of creating a pane.
+   Each row: (fd expected description)."
+  (dolist (row '((5    t   "pane with fd > 0 must be live")
+                 (-1   nil "pane with fd = -1 must not be live")
+                 (0    nil "pane with fd = 0 must not be reported as live")
+                 (:nil nil "pane-live-p NIL must return NIL")))
+    (destructuring-bind (fd expected desc) row
+      (let ((pane (if (eq fd :nil)
+                      nil
+                      (make-pane :id 1 :x 0 :y 0 :width 80 :height 24
+                                 :fd fd :pid -1 :screen (make-screen 80 24)))))
+        (if expected
+            (is-true  (pane-live-p pane) desc)
+            (is-false (pane-live-p pane) desc))))))
 
 ;;; ── pane-pipe-active-p direct unit tests ─────────────────────────────────────
 
-(test pane-pipe-active-p-false-when-all-nil
-  "pane-pipe-active-p returns NIL when all pipe slots are NIL."
-  (let ((pane (make-no-pty-pane 1 0 0 80 24)))
-    (is-false (pane-pipe-active-p pane)
-              "pane with no pipe resources must not be active")))
-
-(test pane-pipe-active-p-true-when-pipe-fd-set
-  "pane-pipe-active-p returns T when pipe-fd is set."
-  (let ((pane (make-no-pty-pane 1 0 0 80 24)))
-    (setf (pane-pipe-fd pane) :fake-fd)
-    (is-true (pane-pipe-active-p pane)
-             "pipe-fd set → pipe must be active")))
-
-(test pane-pipe-active-p-true-when-pipe-output-stream-set
-  "pane-pipe-active-p returns T when pipe-output-stream is set."
-  (let ((pane (make-no-pty-pane 1 0 0 80 24)))
-    (setf (pane-pipe-output-stream pane) :fake-stream)
-    (is-true (pane-pipe-active-p pane)
-             "pipe-output-stream set → pipe must be active")))
-
-(test pane-pipe-active-p-true-when-pipe-process-set
-  "pane-pipe-active-p returns T when pipe-process is set."
-  (let ((pane (make-no-pty-pane 1 0 0 80 24)))
-    (setf (pane-pipe-process pane) :fake-process)
-    (is-true (pane-pipe-active-p pane)
-             "pipe-process set → pipe must be active")))
-
-(test pane-pipe-active-p-false-for-nil
-  "pane-pipe-active-p returns NIL when passed NIL."
-  (is-false (pane-pipe-active-p nil)
-            "pane-pipe-active-p NIL must return NIL"))
+(test pane-pipe-active-p-table
+  "pane-pipe-active-p returns truthy when any pipe slot is non-NIL, NIL otherwise.
+   :nil sentinel means pass NIL directly. :none means no slot is set.
+   Each row: (setup expected description)."
+  (dolist (row '((:none      nil "pane with no pipe resources must not be active")
+                 (:pipe-fd   t   "pipe-fd set => pipe must be active")
+                 (:pipe-out  t   "pipe-output-stream set => pipe must be active")
+                 (:pipe-proc t   "pipe-process set => pipe must be active")
+                 (:nil       nil "pane-pipe-active-p NIL must return NIL")))
+    (destructuring-bind (setup expected desc) row
+      (let ((pane (unless (eq setup :nil) (make-no-pty-pane 1 0 0 80 24))))
+        (ecase setup
+          (:none      nil)
+          (:pipe-fd   (setf (pane-pipe-fd             pane) :fake-fd))
+          (:pipe-out  (setf (pane-pipe-output-stream  pane) :fake-stream))
+          (:pipe-proc (setf (pane-pipe-process        pane) :fake-process))
+          (:nil       nil))
+        (if expected
+            (is-true  (pane-pipe-active-p pane) desc)
+            (is-false (pane-pipe-active-p pane) desc))))))
