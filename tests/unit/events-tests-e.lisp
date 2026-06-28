@@ -350,16 +350,21 @@
                    (cl-tmux/terminal/types:screen-copy-search-term screen))
           "#/* must save the escaped literal word search term"))))
 
-(test copy-mode-vi-pageup-uses-copy-mode-key-table
-  "In vi mode, CSI PageUp uses the copy-mode-vi table before the scroll fallback."
-  (with-isolated-config
-    (cl-tmux/options:set-option "mode-keys" "vi")
-    (cl-tmux/config:key-table-bind "copy-mode-vi" "PageUp" :copy-mode-exit)
-    (with-copy-mode-state (s screen state)
-      (dolist (byte '(27 91 53 126))
-        (cl-tmux::process-byte s byte state))
-      (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
-                "copy-mode-vi PageUp binding must fire"))))
+(test copy-mode-vi-named-special-bindings-fire
+  "In vi mode, named special-key bindings in copy-mode-vi fire via process-byte.
+   Each row: (key bytes description)."
+  (dolist (row '(("PageUp" (27 91 53 126)     "copy-mode-vi PageUp binding must fire")
+                 ("C-v"    (22)               "C-v must dispatch the named copy-mode-vi binding")
+                 ("Enter"  (13)               "Enter must dispatch the named copy-mode-vi binding")
+                 ("C-Up"   (27 91 49 59 53 65) "C-Up must dispatch the named copy-mode-vi binding")))
+    (destructuring-bind (key bytes msg) row
+      (with-isolated-config
+        (cl-tmux/options:set-option "mode-keys" "vi")
+        (cl-tmux/config:key-table-bind "copy-mode-vi" key :copy-mode-exit)
+        (with-copy-mode-state (s screen state)
+          (dolist (b bytes)
+            (cl-tmux::process-byte s b state))
+          (is-false (cl-tmux/terminal:screen-copy-mode-p screen) msg))))))
 
 (test copy-mode-vi-control-b-uses-copy-mode-table-before-prefix
   "In vi mode, a C-b byte runs copy-mode-vi C-b instead of arming prefix."
@@ -372,37 +377,6 @@
       (is (= (min (screen-height screen) 30)
              (screen-copy-offset screen))
           "C-b must dispatch copy-mode-vi page-up, not the prefix key"))))
-
-(test copy-mode-vi-control-v-uses-named-control-binding
-  "Control bytes are resolved through copy-mode-vi C-* bindings."
-  (with-isolated-config
-    (cl-tmux/options:set-option "mode-keys" "vi")
-    (cl-tmux/config:key-table-bind "copy-mode-vi" "C-v" :copy-mode-exit)
-    (with-copy-mode-state (s screen state)
-      (cl-tmux::process-byte s 22 state)
-      (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
-                "C-v must dispatch the named copy-mode-vi binding"))))
-
-(test copy-mode-vi-enter-uses-named-special-binding
-  "Single-byte Enter is resolved through the copy-mode-vi Enter binding."
-  (with-isolated-config
-    (cl-tmux/options:set-option "mode-keys" "vi")
-    (cl-tmux/config:key-table-bind "copy-mode-vi" "Enter" :copy-mode-exit)
-    (with-copy-mode-state (s screen state)
-      (cl-tmux::process-byte s 13 state)
-      (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
-                "Enter must dispatch the named copy-mode-vi binding"))))
-
-(test copy-mode-vi-control-up-uses-copy-mode-table
-  "Modifier arrow sequences in vi copy mode resolve through copy-mode-vi."
-  (with-isolated-config
-    (cl-tmux/options:set-option "mode-keys" "vi")
-    (cl-tmux/config:key-table-bind "copy-mode-vi" "C-Up" :copy-mode-exit)
-    (with-copy-mode-state (s screen state)
-      (dolist (b '(27 91 49 59 53 65)) ; ESC [ 1 ; 5 A
-        (cl-tmux::process-byte s b state))
-      (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
-                "C-Up must dispatch the named copy-mode-vi binding"))))
 
 (test copy-mode-pagedown-uses-emacs-copy-mode-key-table
   "In emacs mode, CSI PageDown uses the copy-mode table."
