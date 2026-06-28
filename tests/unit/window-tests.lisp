@@ -154,45 +154,31 @@
 
 ;;; ── Resizing a pane ─────────────────────────────────────────────────────────
 
-(test resize-pane-vertical
-  "resize-pane :right grows the active pane and shrinks its right neighbour."
-  (unless (pty-available-p)
-    (skip "no PTY available (sandboxed environment)"))
-  (with-session (session 24 80)
-    (let* ((win (session-active-window session))
-           (p0  (window-active-pane win)))
-      (window-split session win :h)               ; p0 | p1 side-by-side, active becomes p1
-      (window-select-pane win p0)         ; make the left pane active
-      (let* ((p1        (second (window-panes win)))
-             (w0-before (pane-width p0))
-             (w1-before (pane-width p1)))
-        (resize-pane win :right 5)
-        (is (= (+ w0-before 5) (pane-width p0))
-            "active (left) pane should grow by 5: ~D → ~D"
-            w0-before (pane-width p0))
-        (is (= (- w1-before 5) (pane-width p1))
-            "right neighbour should shrink by 5: ~D → ~D"
-            w1-before (pane-width p1))))))
-
-(test resize-pane-horizontal
-  "resize-pane :down grows the active pane and shrinks the pane below it."
-  (unless (pty-available-p)
-    (skip "no PTY available (sandboxed environment)"))
-  (with-session (session 24 80)
-    (let* ((win (session-active-window session))
-           (p0  (window-active-pane win)))
-      (window-split session win :v)               ; p0 / p1 stacked top/bottom, active becomes p1
-      (window-select-pane win p0)         ; make the top pane active
-      (let* ((p1        (second (window-panes win)))
-             (h0-before (pane-height p0))
-             (h1-before (pane-height p1)))
-        (resize-pane win :down 3)
-        (is (= (+ h0-before 3) (pane-height p0))
-            "active (top) pane should grow by 3: ~D → ~D"
-            h0-before (pane-height p0))
-        (is (= (- h1-before 3) (pane-height p1))
-            "lower neighbour should shrink by 3: ~D → ~D"
-            h1-before (pane-height p1))))))
+(test resize-pane-table
+  "resize-pane adjusts the active pane and its neighbor by delta in the given axis.
+   Each row: (split-orient resize-dir delta dimension-accessor grow-desc shrink-desc)."
+  (dolist (row (list (list :h :right 5 #'pane-width
+                           "active (left) pane should grow by 5"
+                           "right neighbour should shrink by 5")
+                     (list :v :down  3 #'pane-height
+                           "active (top) pane should grow by 3"
+                           "lower neighbour should shrink by 3")))
+    (destructuring-bind (split-orient resize-dir delta measure grow-desc shrink-desc) row
+      (unless (pty-available-p)
+        (skip "no PTY available (sandboxed environment)"))
+      (with-session (session 24 80)
+        (let* ((win (session-active-window session))
+               (p0  (window-active-pane win)))
+          (window-split session win split-orient)
+          (window-select-pane win p0)
+          (let* ((p1        (second (window-panes win)))
+                 (a-before  (funcall measure p0))
+                 (b-before  (funcall measure p1)))
+            (resize-pane win resize-dir delta)
+            (is (= (+ a-before delta) (funcall measure p0))
+                "~A: ~D → ~D" grow-desc a-before (funcall measure p0))
+            (is (= (- b-before delta) (funcall measure p1))
+                "~A: ~D → ~D" shrink-desc b-before (funcall measure p1))))))))
 
 (test resize-pane-wrong-axis-is-noop
   "A :up/:down resize on a vertical split leaves pane widths unchanged."

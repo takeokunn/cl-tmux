@@ -128,28 +128,25 @@
     (window-select-pane win pane)
     win))
 
-(test cmd-break-pane-moves-active-pane-and-switches
-  "break-pane (no -d) moves the active pane into a new window and switches to it."
-  (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
-    (declare (ignore p1))
-    (with-command-test-state (sess)
-      (cl-tmux::%cmd-break-pane-arg sess '())
-      (is (= 2 (length (session-windows sess)))
-          "a new window is created (the session now has two)")
-      (let ((new-win (find-if (lambda (w) (not (eq w win))) (session-windows sess))))
-        (is (member p0 (window-panes new-win)) "the active pane moved to the new window")
-        (is (eq new-win (session-active-window sess))
-            "the session switches to the new window without -d")))))
+(test cmd-break-pane-switch-variants-table
+  "break-pane always moves the active pane to a new window; -d controls
+   whether the session switches to that new window.
+   Each row: (args expect-switch-to-new description)."
+  (dolist (row '((()     t   "no -d: session switches to the new window")
+                 (("-d") nil "-d: session stays on the current window")))
+    (destructuring-bind (args expect-switch desc) row
+      (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
+        (declare (ignore p1))
+        (with-command-test-state (sess)
+          (cl-tmux::%cmd-break-pane-arg sess args)
+          (is (= 2 (length (session-windows sess)))
+              "a new window must always be created")
+          (let* ((new-win (find-if (lambda (w) (not (eq w win))) (session-windows sess)))
+                 (expected-active (if expect-switch new-win win)))
+            (is (member p0 (window-panes new-win))
+                "active pane must always move to the new window")
+            (is (eq expected-active (session-active-window sess)) desc)))))))
 
-(test cmd-break-pane-d-stays-on-current-window
-  "break-pane -d creates the new window but does NOT switch to it."
-  (multiple-value-bind (sess win p0 p1) (%break-arg-fixture)
-    (declare (ignore p0 p1))
-    (with-command-test-state (sess)
-      (cl-tmux::%cmd-break-pane-arg sess '("-d"))
-      (is (= 2 (length (session-windows sess))) "the new window is still created")
-      (is (eq win (session-active-window sess))
-          "-d keeps the current window active"))))
 
 (test cmd-break-pane-n-names-new-window
   "break-pane -n NAME gives the new window that name."
