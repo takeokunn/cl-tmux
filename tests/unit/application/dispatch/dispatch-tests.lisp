@@ -590,16 +590,18 @@
 (test derive-hook-session-resolves-from-window
   "%derive-hook-session resolves the owning session from a window object."
   (with-fake-session (s)
-    (let ((win (session-active-window s)))
-      (is (eq s (cl-tmux::%derive-hook-session win))
-          "%derive-hook-session must return the session owning the window"))))
+    (with-command-test-state (s)
+      (let ((win (session-active-window s)))
+        (is (eq s (cl-tmux::%derive-hook-session win))
+            "%derive-hook-session must return the session owning the window")))))
 
 (test derive-hook-session-resolves-from-pane
   "%derive-hook-session resolves the owning session from a pane object."
   (with-fake-session (s)
-    (let ((pane (session-active-pane s)))
-      (is (eq s (cl-tmux::%derive-hook-session pane))
-          "%derive-hook-session must return the session owning the pane"))))
+    (with-command-test-state (s)
+      (let ((pane (session-active-pane s)))
+        (is (eq s (cl-tmux::%derive-hook-session pane))
+            "%derive-hook-session must return the session owning the pane")))))
 
 (test derive-hook-session-returns-nil-for-unknown-type
   "%derive-hook-session returns NIL for an unrecognised target type."

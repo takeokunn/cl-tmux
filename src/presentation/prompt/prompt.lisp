@@ -256,11 +256,12 @@
 ;;; -- Vi-mode character deletion -----------------------------------------------
 
 (defun %clamp-cursor-after-delete (prompt old-index old-len)
-  "Clamp PROMPT's cursor-index so it does not exceed (1- OLD-LEN) after deletion.
-   OLD-INDEX is the cursor position before deletion; OLD-LEN is the pre-deletion buffer length."
+  "Clamp PROMPT's cursor-index so it does not exceed (1- new-len) after deletion.
+   OLD-INDEX is the cursor position before deletion; OLD-LEN is the pre-deletion buffer length.
+   Uses >= so the cursor is clamped when it equals new-len (past-end of the shortened buffer)."
   (let ((new-len (1- old-len)))
-    (when (> old-index new-len)
-      (setf (prompt-cursor-index prompt) (max 0 new-len)))))
+    (when (>= old-index new-len)
+      (setf (prompt-cursor-index prompt) (max 0 (1- new-len))))))
 
 (defun prompt-delete-char ()
   "Delete the character at the cursor (vi `x`): removes the character under the cursor.
