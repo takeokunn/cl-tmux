@@ -107,19 +107,21 @@
 
 ;;; Type coercion
 
-(test boolean-coercion-on-string
-  "Setting a :boolean option with on/true/1 coerces to T."
-  (with-fresh-global-options
-    (is (eq t (cl-tmux/options:set-option "mouse" "on")))
-    (is (eq t (cl-tmux/options:set-option "mouse" "true")))
-    (is (eq t (cl-tmux/options:set-option "mouse" "1")))))
+(test boolean-coercion-table
+  "set-option coerces :boolean option strings: on/true/1 → T, off/0/false → NIL.
+   Each row: (str expected description)."
+  (dolist (row '(("on"    t   "on → T")
+                 ("true"  t   "true → T")
+                 ("1"     t   "1 → T")
+                 ("off"   nil "off → NIL")
+                 ("0"     nil "0 → NIL")
+                 ("false" nil "false → NIL")))
+    (destructuring-bind (str expected desc) row
+      (with-fresh-global-options
+        (if expected
+            (is-true  (cl-tmux/options:set-option "mouse" str) desc)
+            (is-false (cl-tmux/options:set-option "mouse" str) desc))))))
 
-(test boolean-coercion-false-strings
-  "Setting a :boolean option with any other string coerces to NIL."
-  (with-fresh-global-options
-    (is (null (cl-tmux/options:set-option "mouse" "off")))
-    (is (null (cl-tmux/options:set-option "mouse" "0")))
-    (is (null (cl-tmux/options:set-option "mouse" "false")))))
 
 (test status-numeric-value-survives-coercion
   "The `status` option is a CHOICE/number (off|on|2..5), NOT a boolean: a line
