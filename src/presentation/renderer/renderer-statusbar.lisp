@@ -19,6 +19,29 @@
         (when (and path (probe-file path))
           (load path))))))
 
+;;; ── Alert-priority style table ─────────────────────────────────────────────
+;;;
+;;; define-window-alert-priority-table expands to a COND expression that walks
+;;; a declarative priority list: each entry is (condition-expr style-var) where
+;;; style-var must already be bound to a string.  The first entry whose
+;;; condition is true AND whose style is non-empty wins.  FALLBACK is the
+;;; unconditional last resort.
+;;;
+;;; Matches the define-csi-rules / define-alert-action-rules convention used
+;;; elsewhere: declarative (fact . result) pairs instead of hand-rolled cond.
+
+(defmacro define-window-alert-priority-table (fallback &rest entries)
+  "Expand to a COND expression that returns the first non-empty style whose
+   alert condition is true, or FALLBACK when no alert matches.
+   Each ENTRY is (condition-expr style-var).
+   Condition-expr and style-var are evaluated once, in order."
+  `(cond
+     ,@(mapcar (lambda (entry)
+                 (destructuring-bind (condition style-var) entry
+                   `((and ,condition (plusp (length ,style-var))) ,style-var)))
+               entries)
+     (t ,fallback)))
+
 ;;; ── Status bar data formatters (pure) ─────────────────────────────────────
 
 (defun %status-current-time ()
@@ -59,15 +82,10 @@
             (activity-style (%window-option window "window-status-activity-style"))
             (last-style     (%window-option window "window-status-last-style"))
             (normal-style   (%window-option window "window-status-style")))
-        (cond
-          ((and (%window-has-bell-p window) (plusp (length bell-style)))
-           bell-style)
-          ((and (window-activity-flag window) (plusp (length activity-style)))
-           activity-style)
-          ((and (eq window (session-last-window session))
-                (plusp (length last-style)))
-           last-style)
-          (t normal-style)))))
+        (define-window-alert-priority-table normal-style
+          ((%window-has-bell-p window)              bell-style)
+          ((window-activity-flag window)            activity-style)
+          ((eq window (session-last-window session)) last-style)))))
 
 (defun %status-window-list-styled (session active-win)
   "Window-tab string with current-style applied to the active window entry.
