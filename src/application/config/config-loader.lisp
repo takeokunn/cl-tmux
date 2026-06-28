@@ -219,35 +219,45 @@
   (every (lambda (state) (eq state :active)) cond-stack))
 
 (defun %update-config-cond-stack (pp-type trimmed cond-stack)
-  "Update COND-STACK for a preprocessor line of type PP-TYPE."
+  "Compute the new COND-STACK for a preprocessor line of type PP-TYPE.
+   Returns a fresh list; does not mutate the input.
+   States: :ACTIVE (this branch is taken), :SEEKING (no branch matched yet),
+   :TAKEN (a branch already matched; skip remaining), :DEAD (outer block skipped)."
   (case pp-type
     (:if
-     ;; Only evaluate a nested condition when every outer level is active.
-     (let ((cond-str (string-trim " \t" (subseq trimmed 3))))
-       (push (cond ((not (%config-cond-stack-active-p cond-stack)) :dead)
-                   ((%eval-config-condition cond-str) :active)
-                   (t :seeking))
-             cond-stack)))
+     ;; Push a new level.  When an outer level is not :active, the nested %if is
+     ;; :dead regardless of the condition (its body is already being skipped).
+     (let* ((cond-str (string-trim " \t" (subseq trimmed 3)))
+            (new-state (cond ((not (%config-cond-stack-active-p cond-stack)) :dead)
+                             ((%eval-config-condition cond-str) :active)
+                             (t :seeking))))
+       (cons new-state cond-stack)))
     (:elif
-     (when cond-stack
-       (let ((cond-str (string-trim " \t" (subseq trimmed 5))))
-         (setf (first cond-stack)
-               (case (first cond-stack)
-                 (:seeking (if (%eval-config-condition cond-str) :active :seeking))
-                 (:active  :taken)
-                 (t        (first cond-stack)))))))
+     ;; Transition the top-of-stack state; leave lower levels unchanged.
+     (if (null cond-stack)
+         cond-stack
+         (let* ((cond-str (string-trim " \t" (subseq trimmed 5)))
+                (old-top  (first cond-stack))
+                (new-top  (case old-top
+                            (:seeking (if (%eval-config-condition cond-str) :active :seeking))
+                            (:active  :taken)
+                            (t        old-top))))
+           (cons new-top (rest cond-stack)))))
     (:else
-     (when cond-stack
-       (setf (first cond-stack)
-             (case (first cond-stack)
-               (:seeking :active)
-               (:active  :taken)
-               (t        (first cond-stack))))))
+     ;; Transition the top-of-stack state for the else branch.
+     (if (null cond-stack)
+         cond-stack
+         (let* ((old-top (first cond-stack))
+                (new-top (case old-top
+                           (:seeking :active)
+                           (:active  :taken)
+                           (t        old-top))))
+           (cons new-top (rest cond-stack)))))
     (:endif
-     (when cond-stack
-       (pop cond-stack)))
-    (otherwise cond-stack))
-  cond-stack)
+     ;; Pop the innermost level.
+     (rest cond-stack))
+    (otherwise
+     cond-stack)))
 
 (defun %apply-config-logical-line (line stream cond-stack)
   "Apply LINE when the current COND-STACK is active."
