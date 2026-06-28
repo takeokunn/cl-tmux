@@ -40,26 +40,30 @@
    *overlay-shown-at* variable directly."
   *overlay-shown-at*)
 
+(defun %set-overlay (text)
+  "Internal helper: install TEXT as the active overlay and reset the scroll
+   offset.  Callers are responsible for setting *overlay-shown-at* and
+   *display-panes-active* to whatever the variant requires."
+  (setf *overlay* text
+        *overlay-scroll-offset* 0))
+
 (defun show-overlay (text)
   "Display TEXT as an overlay; navigated with j/k, dismissed with q or Esc."
-  (setf *overlay* text
-        *overlay-scroll-offset* 0
-        *display-panes-active* nil))
+  (%set-overlay text)
+  (setf *display-panes-active* nil))
 
 (defun show-transient-overlay (text)
   "Display TEXT as a transient overlay that auto-dismisses after display-time ms.
    Used for display-message and similar short notifications."
-  (setf *overlay* text
-        *overlay-scroll-offset* 0
-        *overlay-shown-at* (get-universal-time)
+  (%set-overlay text)
+  (setf *overlay-shown-at* (get-universal-time)
         *display-panes-active* nil))
 
 (defun show-display-panes-overlay (text)
   "Like SHOW-TRANSIENT-OVERLAY but activates *DISPLAY-PANES-ACTIVE* so the
    renderer draws per-pane index numbers over the session frame."
-  (setf *overlay* text
-        *overlay-scroll-offset* 0
-        *overlay-shown-at* (get-universal-time)
+  (%set-overlay text)
+  (setf *overlay-shown-at* (get-universal-time)
         *display-panes-active* t))
 
 (defun clear-overlay ()
