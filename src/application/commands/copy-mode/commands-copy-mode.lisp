@@ -128,9 +128,9 @@
    (the default char) begins a character selection."
   (when (screen-copy-mode-p screen)
     (cond
-      ((and mode (string-equal mode "line")) (copy-mode-begin-line-selection screen))
-      ((and mode (string-equal mode "word")) (copy-mode-select-word screen))
-      (t (copy-mode-begin-selection screen)))))
+      ((string-equal mode "line") (copy-mode-begin-line-selection screen))
+      ((string-equal mode "word") (copy-mode-select-word screen))
+      (t                          (copy-mode-begin-selection screen)))))
 
 (defun copy-mode-scroll-to-mouse (screen)
   "send-keys -X scroll-to-mouse: scroll the copy-mode viewport toward the mouse

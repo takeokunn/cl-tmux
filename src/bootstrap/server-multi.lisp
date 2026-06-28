@@ -78,6 +78,12 @@
 
 ;;; ── Effective geometry (smallest attached client) ───────────────────────────
 
+(defun %client-size-reduce (fn)
+  "Apply FN (e.g. #'min or #'max) across all attached clients' rows and cols,
+   returning (values ROWS COLS)."
+  (values (reduce fn *clients* :key #'client-conn-rows)
+          (reduce fn *clients* :key #'client-conn-cols)))
+
 (defun %effective-client-size ()
   "Return (values ROWS COLS) the session should render at, per the `window-size`
    option over the attached clients:
@@ -95,16 +101,14 @@
       (let ((mode (or (cl-tmux/options:get-option "window-size") "smallest")))
         (cond
           ((string-equal mode "largest")
-           (values (reduce #'max *clients* :key #'client-conn-rows)
-                   (reduce #'max *clients* :key #'client-conn-cols)))
+           (%client-size-reduce #'max))
           ((string-equal mode "latest")
            (let ((c (first *clients*)))
              (values (client-conn-rows c) (client-conn-cols c))))
           ((string-equal mode "manual")
            (values *term-rows* *term-cols*))
           (t                            ; "smallest" and any unknown value
-           (values (reduce #'min *clients* :key #'client-conn-rows)
-                   (reduce #'min *clients* :key #'client-conn-cols)))))))
+           (%client-size-reduce #'min))))))
 
 (defun %apply-effective-size (session)
   "Set *term-rows*/*term-cols* to the effective (smallest-client) geometry,
