@@ -361,22 +361,28 @@
       (funcall fn s)
       (is-false *prompt* "~S must not open a prompt outside copy mode" fn))))
 
-(test copy-mode-search-forward-incremental-opens-prompt
-  "Opens a prompt labelled search-forward when in copy mode."
-  (let ((s (make-screen 10 5)))
-    (setf (screen-copy-mode-p s)  t
-          (screen-copy-cursor  s)  (cons 2 3)
-          (screen-copy-offset  s)  0
-          *prompt* nil
-          cl-tmux/commands::*copy-mode-isearch-origin* nil)
-    (unwind-protect
-        (progn
-          (cl-tmux/commands::copy-mode-search-forward-incremental s)
-          (is-true  *prompt* "prompt must be open")
-          (is (string= "search-forward" (prompt-label *prompt*))
-              "prompt label must be search-forward"))
-      (setf *prompt* nil
-            cl-tmux/commands::*copy-mode-isearch-origin* nil))))
+(test copy-mode-search-incremental-opens-prompt-with-correct-label
+  "copy-mode-search-forward/backward-incremental each open a prompt with the
+   correct direction label.  Each row: (fn-sym cursor label)."
+  (dolist (row '((cl-tmux/commands::copy-mode-search-forward-incremental
+                  (2 . 3) "search-forward")
+                 (cl-tmux/commands::copy-mode-search-backward-incremental
+                  (3 . 5) "search-backward")))
+    (destructuring-bind (fn-sym cursor label) row
+      (let ((s (make-screen 10 5)))
+        (setf (screen-copy-mode-p s)  t
+              (screen-copy-cursor  s)  cursor
+              (screen-copy-offset  s)  0
+              *prompt* nil
+              cl-tmux/commands::*copy-mode-isearch-origin* nil)
+        (unwind-protect
+            (progn
+              (funcall fn-sym s)
+              (is-true *prompt* "prompt must be open")
+              (is (string= label (prompt-label *prompt*))
+                  "prompt label must be ~S" label))
+          (setf *prompt* nil
+                cl-tmux/commands::*copy-mode-isearch-origin* nil))))))
 
 (test copy-mode-search-forward-incremental-saves-origin
   "Saves cursor+offset in *copy-mode-isearch-origin* when prompt opens."
@@ -396,65 +402,33 @@
       (setf *prompt* nil
             cl-tmux/commands::*copy-mode-isearch-origin* nil))))
 
-(test copy-mode-search-forward-incremental-cancel-restores-cursor
-  "prompt-clear (ESC/C-g) restores cursor and offset to pre-search position."
-  (let ((s (make-screen 10 5)))
-    (setf (screen-copy-mode-p s)  t
-          (screen-copy-cursor  s)  (cons 2 3)
-          (screen-copy-offset  s)  0
-          *prompt* nil
-          cl-tmux/commands::*copy-mode-isearch-origin* nil)
-    (cl-tmux/commands::copy-mode-search-forward-incremental s)
-    ;; Simulate the search having moved the cursor away.
-    (setf (screen-copy-cursor s) (cons 0 1)
-          (screen-copy-offset s) 2)
-    ;; Cancel — must invoke the on-cancel closure which restores origin.
-    (prompt-clear)
-    (is (equal (cons 2 3) (screen-copy-cursor s))
-        "cursor must be restored to pre-search position after cancel")
-    (is (= 0 (screen-copy-offset s))
-        "offset must be restored to pre-search value after cancel")
-    (is-false cl-tmux/commands::*copy-mode-isearch-origin*
-              "isearch origin must be cleared after cancel")))
-
 ;;; ── copy-mode-search-backward-incremental ────────────────────────────────────
 
-(test copy-mode-search-backward-incremental-opens-prompt
-  "Opens a prompt labelled search-backward when in copy mode."
-  (let ((s (make-screen 10 5)))
-    (setf (screen-copy-mode-p s)  t
-          (screen-copy-cursor  s)  (cons 3 5)
-          (screen-copy-offset  s)  0
-          *prompt* nil
-          cl-tmux/commands::*copy-mode-isearch-origin* nil)
-    (unwind-protect
-        (progn
-          (cl-tmux/commands::copy-mode-search-backward-incremental s)
-          (is-true  *prompt* "prompt must be open")
-          (is (string= "search-backward" (prompt-label *prompt*))
-              "prompt label must be search-backward"))
-      (setf *prompt* nil
-            cl-tmux/commands::*copy-mode-isearch-origin* nil))))
-
-(test copy-mode-search-backward-incremental-cancel-restores-cursor
-  "prompt-clear (ESC/C-g) restores cursor and offset when backward search is cancelled."
-  (let ((s (make-screen 10 5)))
-    (setf (screen-copy-mode-p s)  t
-          (screen-copy-cursor  s)  (cons 3 5)
-          (screen-copy-offset  s)  1
-          *prompt* nil
-          cl-tmux/commands::*copy-mode-isearch-origin* nil)
-    (cl-tmux/commands::copy-mode-search-backward-incremental s)
-    ;; Simulate search having moved the cursor away.
-    (setf (screen-copy-cursor s) (cons 1 0)
-          (screen-copy-offset s) 3)
-    (prompt-clear)
-    (is (equal (cons 3 5) (screen-copy-cursor s))
-        "cursor must be restored to pre-search position after cancel")
-    (is (= 1 (screen-copy-offset s))
-        "offset must be restored to pre-search value after cancel")
-    (is-false cl-tmux/commands::*copy-mode-isearch-origin*
-              "isearch origin must be cleared after cancel")))
+(test copy-mode-search-incremental-cancel-restores-cursor
+  "prompt-clear (ESC/C-g) restores cursor and offset to pre-search position for
+   both forward and backward incremental search.
+   Each row: (fn-sym init-cursor init-offset moved-cursor moved-offset)."
+  (dolist (row '((cl-tmux/commands::copy-mode-search-forward-incremental
+                  (2 . 3) 0 (0 . 1) 2)
+                 (cl-tmux/commands::copy-mode-search-backward-incremental
+                  (3 . 5) 1 (1 . 0) 3)))
+    (destructuring-bind (fn-sym init-cursor init-offset moved-cursor moved-offset) row
+      (let ((s (make-screen 10 5)))
+        (setf (screen-copy-mode-p s)  t
+              (screen-copy-cursor  s)  init-cursor
+              (screen-copy-offset  s)  init-offset
+              *prompt* nil
+              cl-tmux/commands::*copy-mode-isearch-origin* nil)
+        (funcall fn-sym s)
+        (setf (screen-copy-cursor s) moved-cursor
+              (screen-copy-offset s) moved-offset)
+        (prompt-clear)
+        (is (equal init-cursor (screen-copy-cursor s))
+            "cursor must be restored to pre-search position after cancel")
+        (is (= init-offset (screen-copy-offset s))
+            "offset must be restored to pre-search value after cancel")
+        (is-false cl-tmux/commands::*copy-mode-isearch-origin*
+                  "isearch origin must be cleared after cancel")))))
 
 ;;; ── copy-mode-next-matching-bracket ─────────────────────────────────────────
 
