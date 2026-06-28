@@ -218,9 +218,9 @@ scope, but unset @ user options are invalid."
        (values value inherited-output-p present-p))))
 
 (define-window-option-resolution-rules
-  ;; -g flag: show global/default value when the option is present globally.
-  (global-p :no
-   (when (%global-window-option-present-p name) (get-option name)))
+  ;; -g flag: show global/default value — only when the option is globally present.
+  ((and global-p (%global-window-option-present-p name)) :no
+   (get-option name))
   ;; Window-local value is present: return it directly (no inherited marker).
   (local-present-p :no local-value)
   ;; -A (inherited-p) flag: show inherited effective value with '* ' prefix.

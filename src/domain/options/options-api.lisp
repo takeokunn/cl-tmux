@@ -121,7 +121,13 @@
 ;;; and SERVER options via the global / server stores, so the only inference
 ;;; that changes routing is WINDOW scope.
 
-(defparameter *window-scoped-option-names*
+(defun %build-window-scoped-option-table ()
+  "Return a hash-table of window-scoped tmux option names → T.
+   Classifies the options whose scope is WINDOW (or window|pane) per tmux's
+   options_scope_from_name; used to route a flagless set-option call to the
+   active window's local store rather than the global session store.  Extracted
+   into a named function so the initialization logic is separately testable and
+   the defparameter form stays free of embedded mutation code."
   (let ((ht (make-hash-table :test #'equal)))
     (dolist (name '("aggressive-resize"
                     "automatic-rename" "automatic-rename-format"
@@ -139,9 +145,12 @@
                     "window-status-current-format" "window-status-current-style"
                     "window-status-format" "window-status-last-style"
                     "window-status-separator" "window-status-style"
-                    "window-style" "wrap-search")
-            ht)
-      (setf (gethash name ht) t)))
+                    "window-style" "wrap-search"))
+      (setf (gethash name ht) t))
+    ht))
+
+(defparameter *window-scoped-option-names*
+  (%build-window-scoped-option-table)
   "Names of WINDOW-scoped (and window|pane) tmux options, used by
    option-scope-from-name to route a flagless set-option to the active window.")
 
