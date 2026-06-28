@@ -453,35 +453,25 @@
         (is (null value) "set-environment -Z must not set NAME")
         (is (null source) "set-environment -Z must not create NAME")))))
 
-(test cmd-show-environment-name-shows-value
-  "show-environment NAME displays NAME=VALUE."
-  (with-fake-session (s)
-    (let ((name "CLTMUX_TEST_SHOWENV_NAME"))
-      (session-set-environment s name "visible")
-      (with-run-command-line-overlay (s (format nil "show-environment ~A" name))
-        (assert-overlay-contains (format nil "~A=visible" name)
-                                 *overlay*
-                                 "show-environment NAME")))))
-
-(test cmd-show-environment-s-shell-format
-  "show-environment -s NAME displays shell assignment form."
-  (with-fake-session (s)
-    (let ((name "CLTMUX_TEST_SHOWENV_S"))
-      (session-set-environment s name "visible")
-      (with-run-command-line-overlay (s (format nil "show-environment -s ~A" name))
-        (assert-overlay-contains (format nil "~A='visible'; export ~A" name name)
-                                 *overlay*
-                                 "show-environment -s")))))
-
-(test cmd-show-environment-missing-name-marks-unset
-  "show-environment NAME marks missing variables as unset."
-  (with-fake-session (s)
-    (let ((name "CLTMUX_TEST_SHOWENV_MISSING"))
-      (session-unset-environment s name)
-      (with-run-command-line-overlay (s (format nil "show-environment ~A" name))
-        (assert-overlay-contains (format nil "-~A" name)
-                                 *overlay*
-                                 "show-environment missing value")))))
+(test cmd-show-environment-single-name-forms
+  "show-environment with a single NAME argument displays or marks the value correctly.
+   Each row: (flags set-value expected-fmt message)."
+  (dolist (row '((""   "visible"  "~A=visible"               "show-environment NAME")
+                 ("-s" "visible"  "~A='visible'; export ~A"  "show-environment -s")
+                 (""   nil        "-~A"                       "show-environment missing")))
+    (destructuring-bind (flags set-value expected-fmt msg) row
+      (with-fake-session (s)
+        (let ((name "CLTMUX_TEST_SHOWENV_UNIFIED"))
+          (if set-value
+              (session-set-environment s name set-value)
+              (session-unset-environment s name))
+          (with-run-command-line-overlay
+              (s (if (string= flags "")
+                     (format nil "show-environment ~A" name)
+                     (format nil "show-environment ~A ~A" flags name)))
+            (assert-overlay-contains (format nil expected-fmt name name)
+                                     *overlay*
+                                     msg)))))))
 
 (test cmd-show-environment-listing-shows-header-and-entries
   "show-environment without NAME displays the environment list."
