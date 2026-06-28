@@ -270,45 +270,29 @@
       (is (eq original-pane (session-active-pane s))
           "session focus must be restored to the original pane"))))
 
-(test send-keys-x-copy-pipe-and-cancel-no-arg-copies-and-exits
-  "send -X copy-pipe-and-cancel without an explicit command still uses the
-   copy-pipe path, allowing copy-command fallback and exiting copy mode."
-  (let ((cl-tmux/buffer:*paste-buffers* nil))
-    (with-option-session (s)
-      (with-loop-state
-        (cl-tmux/options:set-option "copy-command" "")
-        (let ((screen (active-screen s)))
-          (feed screen "pipe-me")
-          (cl-tmux::dispatch-command s :copy-mode-enter nil)
-          (setf (screen-copy-selecting screen) t
-                (screen-copy-mark screen) (cons 0 0)
-                (screen-copy-cursor screen) (cons 0 7))
-          (is (cl-tmux::%dispatch-send-keys-X s "copy-pipe-and-cancel")
-              "copy-pipe-and-cancel must be handled through the -X table")
-          (is (string= "pipe-me" (cl-tmux/buffer:get-paste-buffer 0))
-              "selected text must be copied into the paste buffer")
-          (is-false (screen-copy-mode-p screen)
-                    "copy-pipe-and-cancel must exit copy mode"))))))
-
-(test send-keys-x-copy-pipe-and-cancel-explicit-command-pipes-and-exits
-  "send -X copy-pipe-and-cancel with an argument pipes the copied text to the
-   provided command instead of falling back to copy-command."
-  (let ((cl-tmux/buffer:*paste-buffers* nil))
-    (with-option-session (s)
-      (with-loop-state
-        (cl-tmux/options:set-option "copy-command" "")
-        (let ((screen (active-screen s)))
-          (feed screen "pipe-me")
-          (cl-tmux::dispatch-command s :copy-mode-enter nil)
-          (setf (screen-copy-selecting screen) t
-                (screen-copy-mark screen) (cons 0 0)
-                (screen-copy-cursor screen) (cons 0 7))
-          (is (cl-tmux::%dispatch-send-keys-X s "copy-pipe-and-cancel" nil nil '("cat"))
-              "copy-pipe-and-cancel with an argument must be handled")
-          (is (string= "pipe-me" (cl-tmux/buffer:get-paste-buffer 0))
-              "selected text must still be copied into the paste buffer")
-          (is-false (screen-copy-mode-p screen)
-                    "copy-pipe-and-cancel with an argument must exit copy mode"))))))
+(test send-keys-x-copy-pipe-and-cancel-variants
+  "send -X copy-pipe-and-cancel without an arg and with an explicit command both
+   copy the selection to the paste buffer and exit copy mode.
+   Each row: (pipe-args description)."
+  (dolist (row '((nil       "copy-pipe-and-cancel (no explicit command)")
+                 (("cat")   "copy-pipe-and-cancel with explicit command")))
+    (destructuring-bind (pipe-args desc) row
+      (let ((cl-tmux/buffer:*paste-buffers* nil))
+        (with-option-session (s)
+          (with-loop-state
+            (cl-tmux/options:set-option "copy-command" "")
+            (let ((screen (active-screen s)))
+              (feed screen "pipe-me")
+              (cl-tmux::dispatch-command s :copy-mode-enter nil)
+              (setf (screen-copy-selecting screen) t
+                    (screen-copy-mark screen) (cons 0 0)
+                    (screen-copy-cursor screen) (cons 0 7))
+              (is (cl-tmux::%dispatch-send-keys-X s "copy-pipe-and-cancel" nil nil pipe-args)
+                  "~A must be handled" desc)
+              (is (string= "pipe-me" (cl-tmux/buffer:get-paste-buffer 0))
+                  "~A must copy to the paste buffer" desc)
+              (is-false (screen-copy-mode-p screen)
+                        "~A must exit copy mode" desc))))))))
 
 (test send-keys-x-copy-pipe-end-of-line-and-cancel-copies-to-eol-and-exits
   "send -X copy-pipe-end-of-line-and-cancel with an explicit command should
