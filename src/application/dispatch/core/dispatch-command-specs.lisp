@@ -6,7 +6,7 @@
 (eval-when (:compile-toplevel :load-toplevel :execute)
   ;; Keep the shared table anchored to the source tree even when ASDF loads
   ;; the compiled fasl from its cache.
-  (load (merge-pathnames #p"dispatch-command-specs-core.lisp"
+  (load (merge-pathnames #p"application/dispatch/core/dispatch-command-specs-core.lisp"
                          (merge-pathnames #P"src/"
                                           (or (ignore-errors (asdf:system-source-directory :cl-tmux))
                                               *load-pathname*

@@ -250,7 +250,12 @@
   (values))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (load "src/config-listing.lisp"))
+  ;; Resolve against the system source directory (robust to CWD and to ASDF
+  ;; loading the compiled fasl from its cache), matching package.lisp.
+  (let ((root (or (ignore-errors (asdf:system-source-directory :cl-tmux))
+                  *load-pathname*
+                  *compile-file-pathname*)))
+    (load (merge-pathnames #P"src/application/config/config-listing.lisp" root))))
 
 ;;; ── Prefix-table helpers ─────────────────────────────────────────────────
 

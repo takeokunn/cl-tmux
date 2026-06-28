@@ -201,7 +201,7 @@
                    *compile-file-pathname*
                    *default-pathname-defaults*))
          (src (merge-pathnames #P"src/" root)))
-    (load (merge-pathnames #P"dispatch-command-specs.lisp" src))))
+    (load (merge-pathnames #P"application/dispatch/core/dispatch-command-specs.lisp" src))))
 
 (defun %make-dispatch-named-table (specs)
   "Build a hash table mapping prompt-visible command names to dispatch keywords."

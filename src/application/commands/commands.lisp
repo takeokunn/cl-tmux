@@ -6,7 +6,7 @@
                    *compile-file-pathname*
                    *default-pathname-defaults*))
          (src (merge-pathnames #P"src/" root)))
-    (load (merge-pathnames #P"commands-capture-pane.lisp" src))
+    (load (merge-pathnames #P"application/commands/commands-capture-pane.lisp" src))
     ))
 
 ;;; ── Pane operations ────────────────────────────────────────────────────────

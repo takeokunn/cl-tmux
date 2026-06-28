@@ -14,8 +14,8 @@
                      *load-pathname*
                      *compile-file-pathname*))
            (base (merge-pathnames #P"src/" root)))
-      (load (merge-pathnames #P"package-version.lisp" base))
-      (load (merge-pathnames #P"package-core.lisp" base))
-      (load (merge-pathnames #P"package-terminal.lisp" base))
-      (load (merge-pathnames #P"package-domain.lisp" base)))
+      (load (merge-pathnames #P"bootstrap/package-version.lisp" base))
+      (load (merge-pathnames #P"bootstrap/package-core.lisp" base))
+      (load (merge-pathnames #P"bootstrap/package-terminal.lisp" base))
+      (load (merge-pathnames #P"bootstrap/package-domain.lisp" base)))
     (setf *package-fragments-loaded* t)))

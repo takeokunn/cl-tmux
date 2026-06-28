@@ -11,5 +11,5 @@
                   (and *compile-file-pathname*
                        (uiop:pathname-directory-pathname *compile-file-pathname*))
                   *default-pathname-defaults*)))
-    (load (merge-pathnames #P"dispatch-commands-option-pane-window.lisp" src))
-    (load (merge-pathnames #P"dispatch-commands-option-pane-pane.lisp" src))))
+    (load (merge-pathnames #P"application/dispatch/commands/dispatch-commands-option-pane-window.lisp" src))
+    (load (merge-pathnames #P"application/dispatch/commands/dispatch-commands-option-pane-pane.lisp" src))))
