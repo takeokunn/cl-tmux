@@ -65,6 +65,12 @@
 (defconstant +title-stack-max-depth+ 8
   "Maximum depth of the XTPUSHTITLE / XTPOPTITLE title stack (matches xterm).")
 
+(defconstant +osc-default-fg+ #xFFFFFF
+  "Default foreground colour for OSC 10/110 colour resets (white).")
+
+(defconstant +osc-default-bg+ #x000000
+  "Default background colour for OSC 11/111 colour resets (black).")
+
 ;;; ── Cell ───────────────────────────────────────────────────────────────────
 
 (defstruct cell

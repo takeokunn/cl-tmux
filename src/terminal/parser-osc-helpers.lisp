@@ -196,9 +196,9 @@
         body)))
 
 ;;;; OSC colour helpers shared by parser-osc and tests.
-
-(defparameter +osc-default-fg+ #xFFFFFF)
-(defparameter +osc-default-bg+ #x000000)
+;;;
+;;; +osc-default-fg+ and +osc-default-bg+ are defconstant in cell.lisp (data layer)
+;;; exported from cl-tmux/terminal/types. Access them via the types package.
 
 (defun %scale-hex-channel (channel)
   "Scale a 4-bit or 8-bit hex channel to 8-bit integer."

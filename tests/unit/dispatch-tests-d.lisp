@@ -550,87 +550,49 @@
                                "after-rename-window set-hook")
       (cl-tmux/hooks:clear-command-hooks "after-rename-window"))))
 
-(test cmd-list-commands-filters-by-name
-  "list-commands <name> shows only that command (tmux's filter); bare
-   list-commands shows the full list."
+(test cmd-list-commands-resolves-prefixes-and-reports-ambiguity
+  "tmux 3.6a resolves unique prefixes for list-commands and reports ambiguous
+   prefixes instead of filtering by exact name."
   (with-fake-session (s)
-    (let ((*overlay* nil))
-      (cl-tmux::%run-command-line s "list-commands new-window")
-      (assert-overlay-contains "new-window" *overlay*
-                               "list-commands new-window")
-      (assert-overlay-not-contains "kill-pane" *overlay*
-                                   "list-commands new-window"))))
-
-(test cmd-list-commands-uses-public-tmux-command-names
-  "list-commands lists tmux public commands from the core registry."
-  (let ((names (cl-tmux::%list-command-public-names)))
-    (is (equal "attach-session" (first names)))
-    (assert-members '("list-commands"
-                      "bind"
-                      "unbind"
-                      "set-buffer"
-                      "display-menu"
-                      "detach"
-                      "set-hook"
-                      "set-option"
-                      "set-window-option"
-                      "show-session-options"
-                      "show-options"
-                      "show-messages"
-                      "show-window-options"
-                      "show-server-options"
-                      "server-access"
-                      "copy-mode-enter"
-                      "switch-client"
-                      "wait-for")
-                    names
-                    :test #'string=
-                    :context "public dispatch names")
-    (dolist (forbidden '("set"
-                         "bind-key"
-                         "unbind-key"
-                         "setw"
-                         "new"
-                         "prev-window"
-                         "rename"
-                         "ls"
-                         "lsw"
-                         "detach-client"
-                         "copy-mode"
-                         "menu"
-                         "split-horizontal"))
-      (assert-not-member forbidden names
-                         :test #'string=
-                         :context "public dispatch names"))))
+    (dolist (case '(("list-commands new-w" "new-window (neww)")
+                    ("list-commands list-s" "list-sessions (ls)")
+                    ("list-commands lscm" "list-commands (lscm)")
+                    ("list-commands list" "ambiguous command: list")))
+      (destructuring-bind (line expected) case
+        (let ((*overlay* nil))
+          (cl-tmux::%run-command-line s line)
+          (assert-overlay-contains expected *overlay* line)
+          (unless (string= line "list-commands list")
+            (assert-overlay-not-contains "kill-pane" *overlay* line)))))))
 
 (test cmd-list-commands-format-command-list-name
-  "list-commands -F expands the command_list_* fields we keep."
+  "tmux 3.6a expands command_list_* fields for list-commands format output."
   (with-fake-session (s)
-    (let ((*overlay* nil))
-      (cl-tmux::%run-command-line
-       s "list-commands -F '#{command_list_name}|#{command_list_alias}|#{command_list_usage}' list-sessions")
-      (assert-overlay-contains "list-sessions" *overlay*
-                               "formatted list-commands")
-      (assert-overlay-contains "list-sessions||" *overlay*
-                               "formatted list-commands")
-      (assert-overlay-not-contains "#{command_list_name}" *overlay*
-                                   "formatted list-commands")
-      (assert-overlay-not-contains "#{command_list_alias}" *overlay*
-                                   "formatted list-commands")
-      (assert-overlay-not-contains "#{command_list_usage}" *overlay*
-                                   "formatted list-commands"))))
+    (dolist (case '(("list-commands -F '#{command_list_name}|#{command_list_alias}|#{command_list_usage}' list-sessions"
+                     "list-sessions|ls|[-F format] [-f filter]")
+                    ("list-commands -F '#{command_list_name}|#{command_list_alias}|#{command_list_usage}' list-commands"
+                     "list-commands|lscm|[-F format] [command]")))
+      (destructuring-bind (line expected) case
+        (let ((*overlay* nil))
+          (cl-tmux::%run-command-line s line)
+          (assert-overlay-contains expected *overlay* line)
+          (assert-overlay-not-contains "#{command_list_name}" *overlay* line)
+          (assert-overlay-not-contains "#{command_list_alias}" *overlay* line)
+          (assert-overlay-not-contains "#{command_list_usage}" *overlay* line))))))
 
 (test cmd-list-commands-unsupported-arguments-are-rejected-before-output
-  "list-commands rejects unknown flags and extra filters instead of ignoring them."
+  "tmux 3.6a rejects invalid list-commands flags and excess arguments before
+   output."
   (with-fake-session (s)
-    (dolist (line '("list-commands -Z new-window"
-                    "list-commands new-window kill-pane"))
-      (let ((*overlay* nil))
-        (cl-tmux::%run-command-line s line)
-        (assert-overlay-contains "unsupported argument" *overlay*
-                                 "list-commands")
-        (assert-overlay-not-contains "new-window" *overlay*
-                                     "list-commands")))))
+    (dolist (case '(("list-commands -Z" "command list-commands: unknown flag -Z")
+                    ("list-commands -F" "command list-commands: -F expects an argument")
+                    ("list-commands new-window kill-pane"
+                     "command list-commands: too many arguments (need at most 1)")))
+      (destructuring-bind (line expected) case
+        (let ((*overlay* nil))
+          (cl-tmux::%run-command-line s line)
+          (assert-overlay-contains expected *overlay* line)
+          (assert-overlay-not-contains "new-window" *overlay* line))))))
 
 (test run-command-line-rename-window-no-arg-opens-prompt
   "'rename-window' with no argument falls through to the prompt (name table)."

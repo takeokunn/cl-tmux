@@ -8,9 +8,10 @@
 ;;;; rendering happen server-side, so the client is the same for any session.
 ;;;;
 ;;;; Event-loop decomposition:
-;;;;   %maybe-send-resize   — pure resize check + frame send (testable without terminal)
-;;;;   %forward-stdin-byte  — read one byte from stdin and forward it to the server
-;;;;   %receive-server-frame — read and dispatch one server frame (paint / exit / ignore)
+;;;;   %maybe-send-resize    — pure resize check + frame send (testable without terminal)
+;;;;   %forward-stdin-byte   — read one byte from stdin and forward it to the server
+;;;;   %decode-server-frame  — pure: read one server frame, return disposition + text
+;;;;   %receive-server-frame — effect boundary: call decode, then write text to stdout
 
 ;;; ── Constants ────────────────────────────────────────────────────────────────
 
@@ -23,6 +24,11 @@
    for +msg-reply+.  Prevents a continuously broadcasting server from delaying the
    reply indefinitely — a server that saturates this limit is considered to have
    not replied and the client returns as if it timed out.")
+
+(defconstant +stdin-read-max-octets+ (* 4 1024 1024)
+  "Maximum bytes buffered from stdin for split-window -I forwarding (4 MiB).
+   Bounds memory use when stdin is a large pipe that never closes — reads stop
+   once this limit is reached even if stdin still has data available.")
 
 ;;; ── %read-command-reply ──────────────────────────────────────────────────────
 
@@ -51,7 +57,8 @@
 ;;; ── run-command-client ───────────────────────────────────────────────────────
 
 (defun %command-client-split-window-input-p (args)
-  "True when ARGS names split-window with -I, whose stdin must be sent too."
+  "True when ARGS names split-window (or its alias splitw) with the -I flag,
+   indicating that the client must also forward its stdin to the new pane."
   (and args
        (member (string-downcase (first args)) '("split-window" "splitw")
                :test #'string=)
@@ -62,12 +69,18 @@
              (rest args))))
 
 (defun %read-command-client-stdin-octets ()
-  "Read command-client stdin as UTF-8 bytes for split-window -I forwarding."
+  "Read command-client stdin as UTF-8 bytes for split-window -I forwarding.
+   Stops at EOF or when +stdin-read-max-octets+ have been accumulated, whichever
+   comes first — prevents an indefinite hang when stdin is a long-running pipe
+   that never closes (e.g. `some-process | cl-tmux split-window -I`)."
   (babel:string-to-octets
-   (with-output-to-string (out)
-     (loop for ch = (read-char *standard-input* nil nil)
-           while ch
-           do (write-char ch out)))
+   (with-output-to-string (output-accumulator)
+     (let ((byte-count 0))
+       (loop for character = (read-char *standard-input* nil nil)
+             while (and character (< byte-count +stdin-read-max-octets+))
+             do (write-char character output-accumulator)
+                (incf byte-count (babel:string-size-in-octets (string character)
+                                                               :encoding :utf-8)))))
    :encoding :utf-8))
 
 (defun run-command-client (name args)
@@ -117,18 +130,32 @@
       (send-frame stream (msg-key (vector stdin-byte)))
       t)))
 
+(defun %decode-server-frame (stream)
+  "Pure step: read one frame from the server STREAM and classify it.
+   Returns (values disposition text) where:
+     disposition  :exit    — server signalled end-of-session (+msg-bye+ or EOF);
+                  :frame   — a rendered screen frame was received;
+                  :ignore  — an unrecognised frame type (continue event loop).
+     text         the decoded string payload for a :frame disposition, NIL otherwise.
+   No I/O side effects — the caller (%receive-server-frame) decides what to write."
+  (with-incoming-frame (type payload stream)
+    ((null type)        (values :exit nil))
+    ((= type +msg-bye+) (values :exit nil))
+    ((= type +msg-frame+)
+     (values :frame (decode-text payload)))
+    (t (values :ignore nil))))
+
 (defun %receive-server-frame (stream)
-  "Read and dispatch one frame from the server STREAM.
+  "Effect boundary: read and dispatch one frame from the server STREAM.
+   Calls %decode-server-frame (pure), then writes any :frame text to
+   *standard-output* (the only side-effecting step).
    Returns :exit when the server signals end-of-session (+msg-bye+ or EOF),
    NIL to continue the event loop."
-  (with-incoming-frame (type payload stream)
-    ((null type)        :exit)
-    ((= type +msg-bye+) :exit)
-    ((= type +msg-frame+)
-     (write-string (decode-text payload))
-     (force-output)
-     nil)
-    (t nil)))
+  (multiple-value-bind (disposition text) (%decode-server-frame stream)
+    (case disposition
+      (:exit   :exit)
+      (:frame  (write-string text) (force-output) nil)
+      (t       nil))))
 
 ;;; ── run-client ───────────────────────────────────────────────────────────────
 

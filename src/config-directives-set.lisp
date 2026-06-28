@@ -68,6 +68,22 @@
 ;;; The set-verb list is shared via +set-directive-aliases+ rather than
 ;;; duplicated in the directive table and predicate.
 
+;;; define-flag-mapping generates a block of (when FLAG-CHAR-P (setf VAR t)) forms
+;;; from a declarative (FLAG-CHAR VARIABLE) fact table, matching define-csi-rules
+;;; and define-config-directives in style.
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun %expand-flag-mapping-rule (rule tok-sym)
+    "Expand one (FLAG-CHAR VARIABLE) rule into a conditional setf form."
+    (destructuring-bind (flag-char variable) rule
+      `(when (%flag-token-contains-any-p ,tok-sym '(,flag-char))
+         (setf ,variable t)))))
+
+(defmacro define-flag-mapping (tok-sym &rest rules)
+  "Expand RULES — each (FLAG-CHAR VARIABLE) — into conditional setf forms.
+   TOK-SYM names the token variable in scope at the expansion site."
+  `(progn ,@(mapcar (lambda (r) (%expand-flag-mapping-rule r tok-sym)) rules)))
+
 (defun %set-directive-p (cmd)
   "Return T when CMD is one of the standard set-option directive verbs."
   (member cmd +set-directive-aliases+
@@ -102,17 +118,17 @@
         (format-p       nil)
         (remaining      args))
     (loop while (and remaining
-                     (let ((tok (first remaining)))
-                       (and (>= (length tok) 2) (char= (char tok 0) #\-))))
-          do (let ((tok (pop remaining)))
+                     (let ((token (first remaining)))
+                       (and (>= (length token) 2) (char= (char token 0) #\-))))
+          do (let ((token (pop remaining)))
                (setf flag-present-p t)
-               (when (%flag-token-contains-any-p tok '(#\a)) (setf append-p t))
-               (when (%flag-token-contains-any-p tok '(#\s)) (setf server-p t))
-               (when (%flag-token-contains-any-p tok '(#\u)) (setf unset-p  t))
-               ;; -F: expand the value as a format string before storing.
-               (when (%flag-token-contains-any-p tok '(#\F)) (setf format-p t))
-               ;; -g, -w, -p, -o, -q: accepted silently.
-               ))
+               ;; Declarative flag table: each (FLAG-CHAR VARIABLE) arm.
+               ;; -g, -w, -p, -o, -q are accepted silently (not listed here).
+               (define-flag-mapping token
+                 (#\a append-p)
+                 (#\s server-p)
+                 (#\u unset-p)
+                 (#\F format-p))))
     (values flag-present-p append-p server-p unset-p format-p remaining)))
 
 (defun %coerce-set-value (raw-value format-p)

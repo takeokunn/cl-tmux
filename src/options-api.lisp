@@ -1,9 +1,19 @@
 (in-package #:cl-tmux/options)
 
-;;;; Option accessor API: type coercions, get/set functions,
-;;;;  scoped window/pane overrides, and show-options helpers.
+;;;; Option accessor API: type coercions, get/set functions, scoped overrides.
+;;;;
+;;;; Scope-resolution helpers (%scope-*, %array-*, %option-spec-for-name, and
+;;;; the option-present-for-* predicates) live in options-scope.lisp which is
+;;;; loaded before this file.
+;;;;
+;;;; Display helpers (show-options, show-option, show-window-options, etc.)
+;;;; live in options-display.lisp which is loaded after this file.
 
 ;;; ── Type coercions ────────────────────────────────────────────────────────
+;;;
+;;; define-type-coercions generates %coerce-value from a declarative table of
+;;; (TYPE-KEYWORD &rest BODY) facts, consistent with define-csi-rules and
+;;; define-config-directives in style.
 
 (defmacro define-type-coercions (&rest specs)
   "Generate a %COERCE-VALUE (type value) function from a declarative fact table.
@@ -36,51 +46,64 @@
   (:string
    (format nil "~A" value)))
 
-;;; ── Option accessor generator ─────────────────────────────────────────────
+;;; ── define-option-accessor ────────────────────────────────────────────────
 ;;;
-;;; define-option-accessor generates a matched get/set pair for one option
-;;; storage hash-table + registry hash-table, eliminating the structural
-;;; duplication between the global and server option APIs.
+;;; Generates a matched get/set pair for one option storage hash-table plus
+;;; registry hash-table, eliminating the structural duplication between the
+;;; global and server option APIs.
 
 (defmacro define-option-accessor (get-name set-name storage-var registry-var
                                   &key get-docstring set-docstring)
   "Generate GET-NAME (name &optional default) and SET-NAME (name value) functions
    operating on STORAGE-VAR (runtime values) and REGISTRY-VAR (type specs).
    GET-DOCSTRING and SET-DOCSTRING are optional docstring overrides."
-  `(progn
-     (defun ,get-name (name &optional (default nil default-suppliedp))
-       ,(or get-docstring
-            (format nil "Return the current value of option NAME from ~A.~%~
-                         When NAME is absent: returns the explicitly supplied DEFAULT~%~
-                         if one was given; otherwise falls back to the registered~%~
-                         spec default in ~A (mirroring tmux options_remove_or_default,~%~
-                         so a `set -u` of a registered option reads as its table default)."
-                    storage-var registry-var))
-       (multiple-value-bind (value presentp)
-           (gethash name ,storage-var)
-         (cond
-           (presentp value)
-           ;; An explicit caller DEFAULT (even NIL) is always honored.
-           (default-suppliedp default)
-           ;; No caller default: fall back to the registered spec default, so an
-           ;; unset (remhash) registered option reverts to its table default value
-           ;; rather than reading as absent (tmux options_remove_or_default).
-           (t (let ((spec (gethash name ,registry-var)))
-                (when spec (option-spec-default spec)))))))
-     (defun ,set-name (name value)
-       ,(or set-docstring
-            (format nil "Coerce VALUE to the registered type for NAME and store it in ~A.~%~
-                         Returns the coerced value.  If NAME is not in ~A the value is~%~
-                         stored as-is (no coercion)."
-                    storage-var registry-var))
-       (let* ((spec    (gethash name ,registry-var))
-              (coerced (if spec
-                           (%coerce-value (option-spec-type spec) value)
-                           value)))
-         (setf (gethash name ,storage-var) coerced)
-         coerced))))
+  (let ((known-registry-var (if (eq registry-var '*server-option-registry*)
+                                '*known-server-option-registry*
+                                '*known-option-registry*)))
+    `(progn
+       (defun ,get-name (name &optional (default nil default-suppliedp))
+         ,(or get-docstring
+              (format nil "Return the current value of option NAME from ~A.~%~
+                           When NAME is absent: returns the explicitly supplied DEFAULT~%~
+                           if one was given; otherwise falls back to the registered~%~
+                           spec default in ~A (mirroring tmux options_remove_or_default,~%~
+                           so a `set -u` of a registered option reads as its table default)."
+                      storage-var registry-var))
+         (multiple-value-bind (value presentp)
+             (gethash name ,storage-var)
+           (cond
+             (presentp value)
+             ;; An explicit caller DEFAULT (even NIL) is always honored.
+             (default-suppliedp default)
+             ;; No caller default: fall back to the tmux spec default, so an unset
+             ;; registered option reverts to its table default value.
+             (t (let ((spec (or (gethash name ,registry-var)
+                                (gethash name ,known-registry-var))))
+                  (if spec
+                      (option-spec-default spec)
+                      nil))))))
+       (defun ,set-name (name value)
+         ,(or set-docstring
+              (format nil "Coerce VALUE to the registered type for NAME and store it in ~A.~%~
+                           Returns the coerced value.  Unregistered @ user options are~%~
+                           stored as-is; other unregistered names signal invalid option."
+                      storage-var))
+         (let* ((spec (%option-spec-for-name name
+                                             ,registry-var
+                                             ,known-registry-var))
+                (user-option-p (%user-option-name-p name))
+                (coerced (cond
+                           (spec
+                            (%coerce-value (option-spec-type spec) value))
+                           (user-option-p
+                            value)
+                           (t
+                            (%invalid-option-error name)))))
+           (when (or spec user-option-p)
+             (setf (gethash name ,storage-var) coerced))
+           coerced)))))
 
-;;; ── Public API ────────────────────────────────────────────────────────────
+;;; ── Public session-option API ─────────────────────────────────────────────
 
 (define-option-accessor get-option set-option
   *global-options* *option-registry*
@@ -89,8 +112,8 @@
    Returns DEFAULT (nil if not supplied) when NAME is not present."
   :set-docstring
   "Coerce VALUE to the registered type for NAME and store it in *GLOBAL-OPTIONS*.
-   Returns the coerced value.  If NAME is not in *OPTION-REGISTRY* the value is
-   stored as-is (no coercion).")
+   Returns the coerced value.  Unregistered @ user options are stored as-is;
+   other unregistered names signal invalid option.")
 
 (defun option-defined-p (name)
   "Return T if NAME is a registered option in *OPTION-REGISTRY*."
@@ -98,18 +121,17 @@
 
 ;;; ── Option scope classification (mirrors tmux options_scope_from_name) ─────
 ;;;
-;;; tmux's options table tags each option with a scope; with no explicit
-;;; -g/-s/-w/-p flag, set-option infers the target store from that scope.
-;;; cl-tmux models SESSION and SERVER options through the global / server stores,
-;;; so the only inference that changes the routing destination is WINDOW scope
-;;; (the active window's local options).  OPTIONS_TABLE_WINDOW|PANE options
-;;; resolve to WINDOW scope when -p is absent, so they are listed here too.
+;;; tmux tags each option with a scope; without an explicit -g/-s/-w/-p flag,
+;;; set-option infers the target store from that scope.  cl-tmux models SESSION
+;;; and SERVER options via the global / server stores, so the only inference
+;;; that changes routing is WINDOW scope.
 
 (defparameter *window-scoped-option-names*
   (let ((ht (make-hash-table :test #'equal)))
     (dolist (name '("aggressive-resize"
                     "automatic-rename" "automatic-rename-format"
                     "main-pane-height" "main-pane-width"
+                    "mode-keys"
                     "mode-style"
                     "monitor-activity" "monitor-bell"
                     "other-pane-height" "other-pane-width"
@@ -136,19 +158,18 @@
   (if (gethash name *window-scoped-option-names*) :window :session))
 
 (defun style-option-p (name)
-  "True when NAME is a tmux STYLE option (its value is a comma-separated style
+  "True when NAME is a tmux STYLE option (value is a comma-separated style
    string such as \"fg=red,bg=black,bold\").  tmux marks these OPTIONS_TABLE_IS_STYLE
    and `set -a` appends to them with a ',' separator, unlike plain string options
    which concatenate directly.  Every style option's name ends in \"-style\" EXCEPT
    clock-mode-style — a 12/24-hour choice that merely shares the suffix."
   (and (stringp name)
-       (let* ((suffix "-style") (sl (length suffix)) (nl (length name)))
-         ;; nl > sl (strict): a style option must have a real name BEFORE the
-         ;; "-style" suffix, so the bare suffix "-style" is not a style option.
-         (and (> nl sl)
-              (string= name suffix :start1 (- nl sl))
+       (let* ((suffix "-style") (suffix-len (length suffix)) (name-len (length name)))
+         ;; name-len > suffix-len (strict): a style option must have a non-empty
+         ;; prefix before the \"-style\" suffix.
+         (and (> name-len suffix-len)
+              (string= name suffix :start1 (- name-len suffix-len))
               (string/= name "clock-mode-style")))))
-
 
 (defun append-option-value (name old value)
   "Compute the new value for `set -a NAME` given the option's current OLD value and
@@ -184,162 +205,85 @@
 
 ;;; ── Scoped option accessors (per-window / per-pane) ──────────────────────
 ;;;
-;;; These functions implement the fallback chain:
-;;;   pane-local  → global  → registered default
-;;;   window-local → global → registered default
+;;; These functions implement the tmux fallback chain:
+;;;   pane-local  → window-local → global → registered default
 ;;;
 ;;; The cl-tmux/model package is referenced by qualified name to avoid a
 ;;; circular dependency (model depends on config which depends on options).
 
+(defun %resolve-option-in-scope-chain (name pane-options window-options)
+  "Walk PANE-OPTIONS → WINDOW-OPTIONS → *global-options* → spec default.
+   Each level is a hash-table or NIL (to skip that level).  Returns the first
+   present value, honoring present-but-falsey overrides via gethash present-p.
+   Pure logic: no side-effects beyond hash lookups."
+  (multiple-value-bind (pane-value pane-present-p)
+      (if pane-options (gethash name pane-options) (values nil nil))
+    (if pane-present-p
+        pane-value
+        (multiple-value-bind (window-value window-present-p)
+            (if window-options (gethash name window-options) (values nil nil))
+          (if window-present-p
+              window-value
+              (multiple-value-bind (global-value global-present-p)
+                  (gethash name *global-options*)
+                (if global-present-p
+                    global-value
+                    (let ((spec (gethash name *option-registry*)))
+                      (when spec (option-spec-default spec))))))))))
+
 (defun get-option-for-context (name &key pane window)
   "Resolve option NAME with full tmux scope precedence: pane-local -> window-local
    -> global -> registered default.  PANE and/or WINDOW may be NIL (skip that
-   level).  Uses gethash present-p so a present-but-falsey override is honored
-   (consistent with get-option-for-window/pane).  When both PANE and WINDOW are
-   NIL this is equivalent to get-option.
+   level).  Uses gethash present-p so a present-but-falsey override is honored.
+   When both PANE and WINDOW are NIL this is equivalent to get-option.
 
    This is the single source of truth for scoped option resolution;
    get-option-for-window and get-option-for-pane delegate here."
-  (multiple-value-bind (pv pp)
-      (if pane
-          (gethash name (cl-tmux/model:pane-local-options pane))
-          (values nil nil))
-    (if pp
-        pv
-        (multiple-value-bind (wv wp)
-            (if window
-                (gethash name (cl-tmux/model:window-local-options window))
-                (values nil nil))
-          (if wp
-              wv
-              (multiple-value-bind (gv gp) (gethash name *global-options*)
-                (if gp
-                    gv
-                    (let ((spec (gethash name *option-registry*)))
-                      (when spec (option-spec-default spec))))))))))
+  (%resolve-option-in-scope-chain
+   name
+   (when pane   (cl-tmux/model:pane-local-options   pane))
+   (when window (cl-tmux/model:window-local-options window))))
 
 (defun get-option-for-window (name window)
   "Look up NAME in WINDOW's local options, falling back to *global-options*,
    then to the registered spec default.  Returns NIL when not found anywhere.
 
-   Delegates to get-option-for-context with only :window supplied (pane level
-   skipped); the present-p resolution ladder lives there in one place.  A
-   window-local value explicitly set to a FALSEY value is honored and does NOT
-   fall through to the global value."
+   Delegates to get-option-for-context with only :window supplied; the
+   present-p resolution ladder lives in one place.  A window-local value
+   explicitly set to a falsey value is honored and does NOT fall through."
   (get-option-for-context name :window window))
 
 (defun %set-local-option (name value hash)
   "Coerce VALUE for NAME (via *OPTION-REGISTRY*) and store it in HASH.
    Returns the coerced value.  Shared by set-option-for-window and set-option-for-pane."
-  (let* ((spec    (gethash name *option-registry*))
-         (coerced (if spec (%coerce-value (option-spec-type spec) value) value)))
+  (let* ((spec    (%option-spec-for-name name
+                                         *option-registry*
+                                         *known-option-registry*))
+         (coerced (cond
+                    (spec
+                     (%coerce-value (option-spec-type spec) value))
+                    ((%user-option-name-p name)
+                     value)
+                    (t
+                     (%invalid-option-error name)))))
     (setf (gethash name hash) coerced)
     coerced))
 
 (defun set-option-for-window (name value window)
-  "Coerce VALUE and store under NAME in WINDOW's local-options hash.  Returns the coerced value."
+  "Coerce VALUE and store under NAME in WINDOW's local-options hash.
+   Returns the coerced value."
   (%set-local-option name value (cl-tmux/model:window-local-options window)))
 
 (defun get-option-for-pane (name pane)
   "Look up NAME in PANE's local options, falling back to *global-options*,
    then to the registered spec default.  Returns NIL when not found anywhere.
 
-   Delegates to get-option-for-context with only :pane supplied (window level
-   skipped); the present-p resolution ladder lives there in one place.  A
-   pane-local value explicitly set to a FALSEY value is honored and does NOT
-   fall through to the global value."
+   Delegates to get-option-for-context with only :pane supplied; the
+   present-p resolution ladder lives in one place.  A pane-local value
+   explicitly set to a falsey value is honored and does NOT fall through."
   (get-option-for-context name :pane pane))
 
 (defun set-option-for-pane (name value pane)
-  "Coerce VALUE and store under NAME in PANE's local-options hash.  Returns the coerced value."
+  "Coerce VALUE and store under NAME in PANE's local-options hash.
+   Returns the coerced value."
   (%set-local-option name value (cl-tmux/model:pane-local-options pane)))
-
-;;; ── show-options helpers ──────────────────────────────────────────────────
-
-(defun %scope-ht (scope)
-  "Return the options hash-table for SCOPE: *server-options* when SCOPE is :server,
-   *global-options* otherwise."
-  (if (eq scope :server) *server-options* *global-options*))
-
-(defun %option-value-string (value)
-  "Format VALUE for show-options output in tmux-compatible format.
-   Strings: printed as-is (no quotes).  Booleans: 'on'/'off'.
-   Integers: decimal.  NIL: 'off'.  Anything else: princ-to-string."
-  (cond
-    ((eq value t)   "on")
-    ((eq value nil) "off")
-    ((stringp value) value)
-    (t (princ-to-string value))))
-
-(defun show-options (&optional scope)
-  "Return a string of 'name value' lines for all options in SCOPE.
-   SCOPE is :server for server options, otherwise global options are used.
-   Output matches real tmux format: 'option-name value' (no Lisp quoting)."
-  (with-output-to-string (s)
-    (let ((pairs '()))
-      (maphash (lambda (k v) (push (cons k v) pairs)) (%scope-ht scope))
-      (dolist (pair (sort pairs #'string< :key #'car))
-        (format s "~A ~A~%" (car pair) (%option-value-string (cdr pair)))))))
-
-(defun show-option (name &optional scope)
-  "Return a string showing the current value of a single option NAME.
-   SCOPE is :server for server options.
-   Output matches real tmux format: 'option-name value'."
-  (let ((val (gethash name (%scope-ht scope) :not-found)))
-    (if (eq val :not-found)
-        (format nil "~A: (not set)~%" name)
-        (format nil "~A ~A~%" name (%option-value-string val)))))
-
-(defun %hash-present-p (key table)
-  "Return true when KEY is present in TABLE, regardless of the stored value."
-  (nth-value 1 (gethash key table)))
-
-(defun %registered-option-names ()
-  "Return option registry names in tmux display order."
-  (let ((names '()))
-    (maphash (lambda (name spec)
-               (declare (ignore spec))
-               (push name names))
-             *option-registry*)
-    (sort names #'string<)))
-
-(defun %window-local-option-present-p (name window)
-  "Return true when WINDOW has an explicit local option NAME."
-  (and window
-       (%hash-present-p name (cl-tmux/model:window-local-options window))))
-
-(defun %window-option-present-p (name window)
-  "Return true when NAME can be shown for WINDOW."
-  (or (%hash-present-p name *option-registry*)
-      (%hash-present-p name *global-options*)
-      (%window-local-option-present-p name window)))
-
-(defun %window-option-inherited-p (name window)
-  "Return true when WINDOW's effective NAME value is inherited."
-  (not (%window-local-option-present-p name window)))
-
-(defun show-window-option (name window &key inherited-p value-only-p)
-  "Return NAME rendered with WINDOW's effective option value.
-   INHERITED-P marks inherited values with '* ', matching tmux show-options -A."
-  (if (and window (%window-option-present-p name window))
-      (let ((value (get-option-for-window name window)))
-        (if value-only-p
-            (%option-value-string value)
-            (format nil "~A~A ~A~%"
-                    (if (and inherited-p
-                             (%window-option-inherited-p name window))
-                        "* "
-                        "")
-                    name
-                    (%option-value-string value))))
-      (unless value-only-p
-        (format nil "~A: (not set)~%" name))))
-
-(defun show-window-options (window &key inherited-p)
-  "Return 'name value' lines for WINDOW's effective options."
-  (with-output-to-string (s)
-    (when window
-      (dolist (name (%registered-option-names))
-        (write-string (show-window-option name window
-                                          :inherited-p inherited-p)
-                      s)))))

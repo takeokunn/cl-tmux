@@ -126,6 +126,9 @@
    #:screen-response-queue
    #:screen-passthrough-queue
    #:screen-clipboard-queue
+   ;; OSC 10/11 default foreground/background colour constants (data layer)
+   #:+osc-default-fg+
+   #:+osc-default-bg+
    ;; OSC 10/11 default foreground/background colours
    #:screen-osc-default-fg
    #:screen-osc-default-bg

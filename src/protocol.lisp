@@ -4,9 +4,11 @@
 ;;;;
 ;;;; A multiplexer server holds the sessions/PTYs; a thin client attaches over a
 ;;;; Unix socket, forwarding keystrokes and resizes and receiving rendered
-;;;; frames.  This file is the pure, transport-agnostic codec — no sockets, no
-;;;; global state — so it is fully unit-testable.  The socket transport and the
-;;;; server/client loops build on top of it.
+;;;; frames.  This file is the pure, transport-agnostic frame codec — no sockets,
+;;;; no global state — so it is fully unit-testable.  The socket transport and
+;;;; the server/client loops build on top of it.
+;;;;
+;;;; +msg-command+ payload codec lives in protocol-command.lisp (same package).
 ;;;;
 ;;;; Each frame on the wire is:
 ;;;;
@@ -34,62 +36,59 @@
 
 (defconstant +header-size+ 5 "1 type byte + 4 length bytes.")
 
+;;; ── Frame layout constants ───────────────────────────────────────────────────
+
+(defconstant +payload-length-offset+ 1
+  "Byte offset of the u32-big-endian payload-length field inside a frame header.")
+
+(defconstant +attach-size-bytes+ 4
+  "Number of bytes occupied by the rows,cols pair in a +msg-attach+ payload.")
+
+(defconstant +attach-flags-offset+ 4
+  "Byte offset of the optional flags byte within a +msg-attach+ payload.")
+
+(defconstant +cols-offset-in-size-payload+ 2
+  "Byte offset of the cols u16 within a rows,cols size payload.")
+
 ;;; ── Octet helpers (data) ────────────────────────────────────────────────────
 ;;;
-;;; define-uint-encoders is a Prolog-like macro: each spec (name bits doc)
-;;; is a fact that generates a big-endian encoder defun.  The byte-extraction
-;;; forms are derived mechanically from the bit-width at macro-expansion time.
+;;; define-uint-codec is a Prolog-like macro: each spec (encoder-name
+;;; decoder-name bits doc) is a fact that generates a paired big-endian encoder
+;;; and decoder defun.  The byte-extraction and shift forms are derived
+;;; mechanically from the bit-width at macro-expansion time.
 
-(defmacro define-uint-encoders (&rest specs)
-  "Build big-endian integer encoder functions from a declarative table.
-   Each SPEC is (name bits docstring).  Generates one DEFUN per entry:
-   (name N) → a fresh vector of BITS/8 bytes, most-significant first."
+(defmacro define-uint-codec (&rest specs)
+  "Build paired big-endian integer encoder and decoder functions from a
+   declarative table.  Each SPEC is (encoder-name decoder-name bits docstring)."
   `(progn
      ,@(mapcar
         (lambda (spec)
-          (destructuring-bind (name bits docstring) spec
-            `(defun ,name (n)
-               ,docstring
-               (vector ,@(loop for shift from (- bits 8) downto 0 by 8
-                               collect `(ldb (byte 8 ,shift) n))))))
+          (destructuring-bind (encoder-name decoder-name bits docstring) spec
+            (let ((bytes (/ bits 8)))
+              `(progn
+                 (defun ,encoder-name (n)
+                   ,(format nil "~A — encoder: N (0..~D) as ~D big-endian octet~:P."
+                            docstring (1- (expt 2 bits)) bytes)
+                   (vector ,@(loop for shift from (- bits 8) downto 0 by 8
+                                   collect `(ldb (byte 8 ,shift) n))))
+                 (defun ,decoder-name (buffer start)
+                   ,(format nil "~A — decoder: big-endian ~D-bit value from BUFFER at START."
+                            docstring bits)
+                   (logior ,@(loop for i from 0 below bytes
+                                   for shift from (- bits 8) downto 0 by 8
+                                   collect (if (zerop shift)
+                                               `(aref buffer (+ start ,i))
+                                               `(ash (aref buffer (+ start ,i)) ,shift)))))))))
         specs)))
 
-(define-uint-encoders
-  (u16-octets 16 "N (0..65535) as two big-endian octets.")
-  (u32-octets 32 "N (0..2^32-1) as four big-endian octets."))
+(define-uint-codec
+  (u16-octets read-u16 16 "Big-endian unsigned 16-bit integer codec")
+  (u32-octets read-u32 32 "Big-endian unsigned 32-bit integer codec"))
 
 (defun u16-octets-pair (a b)
   "A,B (each 0..65535) as four big-endian octets (two u16s)."
   (concatenate '(simple-array (unsigned-byte 8) (*))
                (u16-octets a) (u16-octets b)))
-
-;;; ── Big-endian integer decoders (data) ─────────────────────────────────────
-;;;
-;;; define-uint-decoders is the symmetric counterpart to define-uint-encoders.
-;;; Each spec (name bits doc) generates a DEFUN that reads BITS/8 bytes from
-;;; BUFFER at START, assembling them most-significant byte first via LOGIOR/ASH.
-
-(defmacro define-uint-decoders (&rest specs)
-  "Build big-endian integer decoder functions from a declarative table.
-   Each SPEC is (name bits docstring). Generates one DEFUN per entry:
-   (name buffer start) → integer decoded from BITS/8 bytes."
-  `(progn
-     ,@(mapcar
-        (lambda (spec)
-          (destructuring-bind (name bits docstring) spec
-            (let ((bytes (/ bits 8)))
-              `(defun ,name (buffer start)
-                 ,docstring
-                 (logior ,@(loop for i from 0 below bytes
-                                 for shift from (- bits 8) downto 0 by 8
-                                 collect (if (zerop shift)
-                                             `(aref buffer (+ start ,i))
-                                             `(ash (aref buffer (+ start ,i)) ,shift))))))))
-        specs)))
-
-(define-uint-decoders
-  (read-u16 16 "Decode a big-endian u16 from BUFFER at START.")
-  (read-u32 32 "Decode a big-endian u32 from BUFFER at START."))
 
 (defun to-octets (sequence)
   "Coerce SEQUENCE of (unsigned-byte 8) into a simple octet vector."
@@ -98,14 +97,14 @@
 ;;; ── Frame codec (logic) ─────────────────────────────────────────────────────
 
 (defun encode-frame (type payload)
-  "Encode one frame of TYPE carrying PAYLOAD (a sequence of octets) into a fresh
-   octet vector: [TYPE][LENGTH u32-be][PAYLOAD]."
+  "Encode one frame of TYPE carrying PAYLOAD into a fresh octet vector:
+   [TYPE][LENGTH u32-be][PAYLOAD].  The vector is assembled declaratively
+   via CONCATENATE — no mutable setf/replace calls."
   (let* ((payload-length (length payload))
-         (frame (make-array (+ +header-size+ payload-length) :element-type '(unsigned-byte 8))))
-    (setf (aref frame 0) type)
-    (replace frame (u32-octets payload-length) :start1 1)
-    (replace frame payload :start1 +header-size+)
-    frame))
+         (length-bytes   (u32-octets payload-length))
+         (payload-vector (to-octets payload)))
+    (concatenate '(simple-array (unsigned-byte 8) (*))
+                 (vector type) length-bytes payload-vector)))
 
 (defun decode-frame (buffer &optional (start 0) (end (length buffer)))
   "Parse one frame from BUFFER[START..END).
@@ -115,7 +114,7 @@
   (if (< (- end start) +header-size+)
       (values nil nil start)
       (let* ((type           (aref buffer start))
-             (payload-length (read-u32 buffer (1+ start)))
+             (payload-length (read-u32 buffer (+ start +payload-length-offset+)))
              (payload-start  (+ start +header-size+))
              (next           (+ payload-start payload-length)))
         (if (> next end)
@@ -175,8 +174,8 @@
   "Return the optional flags byte from a +msg-attach+ PAYLOAD, or 0 when absent.
    Older clients send a 4-byte rows,cols payload with no flags byte; this returns
    0 for them so callers can treat the read-only bit as off by default."
-  (if (>= (length payload) 5)
-      (aref payload 4)
+  (if (>= (length payload) (1+ +attach-flags-offset+))
+      (aref payload +attach-flags-offset+)
       0))
 
 (defun msg-command (command-name target args)
@@ -190,125 +189,8 @@
 
 (defun decode-size (payload)
   "Decode a rows,cols payload (u16,u16) into (values ROWS COLS)."
-  (values (read-u16 payload 0) (read-u16 payload 2)))
+  (values (read-u16 payload 0) (read-u16 payload +cols-offset-in-size-payload+)))
 
 (defun decode-text (payload)
   "Decode a UTF-8 frame PAYLOAD into a string."
   (babel:octets-to-string (to-octets payload) :encoding :utf-8))
-
-;;; ── +msg-command+ encoder/decoder ──────────────────────────────────────────
-;;;
-;;; Payload format: NUL-delimited fields.
-;;;   [target NUL] command-keyword-name NUL [arg NUL ...]
-;;; When target is NIL the target field is omitted entirely.
-;;; The command keyword name is encoded without the leading colon.
-
-(defconstant +field-delimiter+ 0
-  "ASCII NUL byte used to separate fields in a +msg-command+ payload.
-   Every field in the NUL-delimited encoding is terminated by this byte.")
-
-;;; ── Target-sigil detection macro ─────────────────────────────────────────────
-;;;
-;;; define-target-sigils is a declarative table that drives the target-field-p
-;;; predicate.  Each rule describes one detection policy:
-;;;   (first-char CHAR)     — the field starts with CHAR (e.g. '$' for sessions)
-;;;   (contains-char CHAR)  — the field contains CHAR anywhere (e.g. ':' or '.')
-;;; Adding a new sigil never requires touching the function body.
-
-(defmacro define-target-sigils (&rest rules)
-  "Generate TARGET-FIELD-P from a declarative sigil/substring table.
-   Each RULE is either (first-char CHAR) or (contains-char CHAR).
-   Produces a DEFUN whose body is a flat OR over all rule tests."
-  `(defun target-field-p (field)
-     "Return true when FIELD looks like a tmux target rather than a command name.
-   A field is a target when it starts with '$' (session sigil), contains ':'
-   (session:window syntax), or contains '.' (window.pane syntax).
-   This predicate is the sole policy point for target detection; keeping it
-   separate from the NUL-field-splitting logic ensures that command names
-   containing these characters are never misidentified."
-     (and (plusp (length field))
-          (or ,@(mapcar (lambda (rule)
-                          (destructuring-bind (kind char) rule
-                            (ecase kind
-                              (first-char  `(char= (char field 0) ,char))
-                              (contains-char `(find ,char field)))))
-                        rules)))))
-
-(define-target-sigils
-  (first-char   #\$)
-  (contains-char #\:)
-  (contains-char #\.))
-
-(defun command-name-to-string (command-name)
-  "Convert COMMAND-NAME (keyword or string) to a lowercase string for wire encoding."
-  (if (keywordp command-name)
-      (string-downcase (symbol-name command-name))
-      command-name))
-
-(defun assemble-command-fields (name-str target args)
-  "Build the ordered list of NUL-delimited field strings for a command payload.
-   TARGET is prepended when non-NIL; ARGS are appended after NAME-STR."
-  (append (when target (list target))
-          (list name-str)
-          args))
-
-(defun encode-fields-to-buffer (field-octets)
-  "Pack FIELD-OCTETS (a list of octet vectors) into a fresh buffer.
-   Each field is written followed by a +field-delimiter+ (NUL) byte; the total
-   length equals the sum of all field lengths plus one delimiter per field."
-  (let* ((data-bytes (reduce #'+ field-octets :key #'length :initial-value 0))
-         (total-len  (+ data-bytes (length field-octets)))
-         (buffer     (make-array total-len :element-type '(unsigned-byte 8))))
-    (loop with write-pos = 0
-          for field-bytes in field-octets
-          do (replace buffer field-bytes :start1 write-pos)
-             (incf write-pos (length field-bytes))
-             (setf (aref buffer write-pos) +field-delimiter+)
-             (incf write-pos))
-    buffer))
-
-(defun encode-command-payload (command-name &key target args)
-  "Encode a command message payload.
-   COMMAND-NAME is a keyword or string naming the command.
-   TARGET is an optional -t target string (NIL = current session).
-   ARGS is an optional list of argument strings.
-   Returns a fresh octet vector of NUL-delimited UTF-8 fields."
-  (let* ((name-str      (command-name-to-string command-name))
-         (field-strings (assemble-command-fields name-str target args))
-         (field-octets  (mapcar (lambda (s)
-                                  (babel:string-to-octets s :encoding :utf-8))
-                                field-strings)))
-    (encode-fields-to-buffer field-octets)))
-
-(defun split-on-nul-bytes (octets)
-  "Split OCTETS on NUL bytes and return a list of decoded UTF-8 strings.
-   Each NUL-terminated region becomes one string; bytes after the final NUL
-   (if any) are ignored.  Returns NIL for an empty or NUL-free input."
-  (loop with start = 0
-        for i from 0 below (length octets)
-        when (zerop (aref octets i))
-          collect (babel:octets-to-string octets :start start :end i :encoding :utf-8)
-          and do (setf start (1+ i))))
-
-(defun decode-command-payload (payload)
-  "Decode a +msg-command+ PAYLOAD into (values command-keyword target args).
-   COMMAND-KEYWORD is a keyword symbol of the command name.
-   TARGET is a string or NIL when absent.
-   ARGS is a list of argument strings (may be nil).
-   The first NUL-delimited field is examined by TARGET-FIELD-P to determine
-   whether it is a target or the command name; all remaining fields are args.
-   Returns (values NIL NIL NIL) when the payload contains no NUL-terminated
-   fields (empty or NUL-free input)."
-  (let ((fields (split-on-nul-bytes (to-octets payload))))
-    (cond
-      ((null fields)
-       (values nil nil nil))
-      ((and (>= (length fields) 2)
-            (target-field-p (first fields)))
-       (values (intern (string-upcase (second fields)) :keyword)
-               (first fields)
-               (cddr fields)))
-      (t
-       (values (intern (string-upcase (first fields)) :keyword)
-               nil
-               (rest fields))))))

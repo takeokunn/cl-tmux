@@ -135,13 +135,15 @@
         (let* ((condition (first remaining))
                (truthy-p  (if format-mode
                               (%if-shell-format-true-p condition)
-                              ;; Run the condition shell command; treat any error
+                              ;; Run the condition shell command; treat any condition
                               ;; (including a timeout signal from UIOP) as non-zero
                               ;; (falsy), so config loading cannot hang indefinitely.
+                              ;; SERIOUS-CONDITION is wider than ERROR and covers
+                              ;; UIOP timeout signals (e.g. uiop:subprocess-error).
                               (handler-case
                                   (eql 0 (nth-value 2
                                            (%run-config-shell-command condition)))
-                                (error () nil)))))
+                                (serious-condition () nil)))))
           ;; THEN/ELSE bodies are each either a brace block { ... } (tmux 3.x) or a
           ;; single quoted command token.  %take-brace-or-command consumes one unit
           ;; and returns its command(s) as ready-to-apply token-lists.
@@ -205,9 +207,10 @@
              ;; handler-case makes a timeout signal (UIOP:SUBPROCESS-ERROR or similar)
              ;; explicit: the command is abandoned and loading continues rather than
              ;; silently treating the timeout as a non-zero exit.
+             ;; SERIOUS-CONDITION is wider than ERROR and covers UIOP timeout signals.
              (handler-case
                  (%run-config-shell-command expanded)
-               (error () nil)))
+               (serious-condition () nil)))
            t))))))
 
 (defun %glob-expand (path)

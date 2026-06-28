@@ -71,22 +71,26 @@
 ;;; is caught at compile time and a rename touches only one place.
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (defun %constant-value (symbol fallback)
+  (defun %defconstant-rebind-guard (symbol fallback)
+    "Return SYMBOL's current value when it is already bound, else FALLBACK.
+     Guards defconstant re-evaluation at image reload: SBCL signals an error when
+     a defconstant is re-evaluated with a different value, so we preserve the
+     already-bound value rather than supplying the literal again."
     (if (boundp symbol)
         (symbol-value symbol)
         fallback)))
 
 (defconstant +table-prefix+
-  (%constant-value '+table-prefix+ "prefix")
+  (%defconstant-rebind-guard '+table-prefix+ "prefix")
   "Name of the default key-table (requires prefix key).")
 (defconstant +table-root+
-  (%constant-value '+table-root+ "root")
+  (%defconstant-rebind-guard '+table-root+ "root")
   "Name of the root key-table (no prefix required).")
 (defconstant +table-copy-mode+
-  (%constant-value '+table-copy-mode+ "copy-mode")
+  (%defconstant-rebind-guard '+table-copy-mode+ "copy-mode")
   "Name of the copy-mode key-table.")
 (defconstant +table-copy-mode-vi+
-  (%constant-value '+table-copy-mode-vi+ "copy-mode-vi")
+  (%defconstant-rebind-guard '+table-copy-mode-vi+ "copy-mode-vi")
   "Name of the vi copy-mode key-table.")
 
 ;;; ── Shell default ─────────────────────────────────────────────────────────
