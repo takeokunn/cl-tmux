@@ -229,21 +229,16 @@
 
 ;;; ── %paste-to-pane helper ────────────────────────────────────────────────────
 
-(test paste-to-pane-no-crash-fd-minus-one
-  "%paste-to-pane with fd=-1 pane is a no-op (guard skips the write)."
-  (let* ((screen (make-screen 20 5))
-         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
-                            :screen screen)))
-    (finishes (cl-tmux::%paste-to-pane pane "hello world")
-              "%paste-to-pane must not error with fd=-1 pane")))
-
-(test paste-to-pane-nil-text-is-noop
-  "%paste-to-pane with nil text is a no-op."
-  (let* ((screen (make-screen 20 5))
-         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
-                            :screen screen)))
-    (finishes (cl-tmux::%paste-to-pane pane nil)
-              "%paste-to-pane with nil text must not error")))
+(test paste-to-pane-noop-cases-table
+  "%paste-to-pane is a no-op for fd=-1 panes and for nil text.
+   Each row: (text description)."
+  (dolist (row '(("hello world" "fd=-1: guard skips the write, no error")
+                 (nil           "nil text: no-op, no error")))
+    (destructuring-bind (text desc) row
+      (let* ((screen (make-screen 20 5))
+             (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0 :width 20 :height 5
+                                :screen screen)))
+        (finishes (cl-tmux::%paste-to-pane pane text) desc)))))
 
 ;;; ── %format-tree-entry helper ────────────────────────────────────────────────
 

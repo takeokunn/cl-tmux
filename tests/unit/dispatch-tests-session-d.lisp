@@ -168,42 +168,28 @@
                      "send-prefix -2 writes C-a when prefix2 is C-a"))
             (setf (fdefinition 'cl-tmux/pty:pty-write) orig)))))))
 
-(test cmd-send-prefix-read-only-does-not-write
-  "send-prefix command is suppressed when the client is read-only."
-  (with-isolated-config
-    (with-fake-session (s)
-      (let* ((pane (window-active-pane (session-active-window s)))
-             (writes nil)
-             (orig (fdefinition 'cl-tmux/pty:pty-write)))
-        (setf (pane-fd pane) 3333)
-        (unwind-protect
-             (progn
-               (setf (fdefinition 'cl-tmux/pty:pty-write)
-                     (lambda (fd bytes)
-                       (push (list fd (coerce bytes 'list)) writes)))
-               (let ((cl-tmux::*client-read-only* t))
-                 (cl-tmux::%run-command-line s "send-prefix"))
-              (is (null writes)
-                  "send-prefix must not write to a pane for read-only clients"))
-          (setf (fdefinition 'cl-tmux/pty:pty-write) orig))))))
+(test cmd-send-prefix-no-write-cases-table
+  "send-prefix suppresses the write for read-only clients and dead panes.
+   Each row: (fd-val read-only-p description)."
+  (dolist (row '((3333 t   "read-only client must suppress the write")
+                 (-1   nil "dead pane (fd=-1) must suppress the write")))
+    (destructuring-bind (fd-val read-only-p desc) row
+      (with-isolated-config
+        (with-fake-session (s)
+          (let* ((pane (window-active-pane (session-active-window s)))
+                 (writes nil)
+                 (orig (fdefinition 'cl-tmux/pty:pty-write)))
+            (setf (pane-fd pane) fd-val)
+            (unwind-protect
+                 (progn
+                   (setf (fdefinition 'cl-tmux/pty:pty-write)
+                         (lambda (fd bytes)
+                           (push (list fd (coerce bytes 'list)) writes)))
+                   (let ((cl-tmux::*client-read-only* read-only-p))
+                     (cl-tmux::%run-command-line s "send-prefix"))
+                   (is (null writes) desc))
+              (setf (fdefinition 'cl-tmux/pty:pty-write) orig)))))))))
 
-(test cmd-send-prefix-dead-pane-does-not-write
-  "send-prefix skips dead panes (pane-fd = -1) and does not attempt a write."
-  (with-isolated-config
-    (with-fake-session (s)
-      (let* ((pane (window-active-pane (session-active-window s)))
-             (writes nil)
-             (orig (fdefinition 'cl-tmux/pty:pty-write)))
-        (setf (pane-fd pane) -1)
-        (unwind-protect
-             (progn
-               (setf (fdefinition 'cl-tmux/pty:pty-write)
-                     (lambda (fd bytes)
-                       (push (list fd (coerce bytes 'list)) writes)))
-               (cl-tmux::%run-command-line s "send-prefix")
-               (is (null writes)
-                   "send-prefix must not write when the target pane is dead"))
-          (setf (fdefinition 'cl-tmux/pty:pty-write) orig))))))
 
 (test cmd-send-prefix-rejects-unsupported-arguments-before-writing
   "send-prefix rejects unsupported arguments before writing to a pane."
