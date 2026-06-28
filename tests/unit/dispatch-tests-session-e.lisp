@@ -356,13 +356,18 @@
   (is (integerp (cl-tmux::%parse-split-size "30"))
       "an absolute value must stay an integer (cells)"))
 
-(test run-command-line-split-window-p-uses-percentage-size
-  "split-window -p uses tmux's percentage sizing shorthand."
-  (with-pty-command-increasing-count
-      (s "split-window -p 30"
-         :count-form (length (cl-tmux/model:window-panes
-                              (cl-tmux/model:session-active-window s)))
-         :count-context "split-window -p 30 must add a pane to the active window")))
+(test run-command-line-split-window-variants-add-pane
+  "split-window with no flags, -h, or -p each adds one pane to the active window.
+   Each row: (command message)."
+  (dolist (row '(("split-window"       "split-window must add a pane to the active window")
+                 ("split-window -h"    "split-window -h must add a pane to the active window")
+                 ("split-window -p 30" "split-window -p 30 must add a pane to the active window")))
+    (destructuring-bind (cmd msg) row
+      (with-pty-command-increasing-count
+          (s cmd
+             :count-form (length (cl-tmux/model:window-panes
+                                  (cl-tmux/model:session-active-window s)))
+             :count-context msg)))))
 
 (test run-command-line-split-window-I-feeds-stdin-without-pty
   "split-window -I creates a no-PTY pane and writes stdin into its screen."
@@ -381,22 +386,6 @@
           "split-window -I pane must not have a child process")
       (is (search "from stdin" (row-string (pane-screen new-pane) 0))
           "stdin bytes must be rendered into the new pane's screen"))))
-
-(test run-command-line-split-window-default-vertical-stack
-  "%run-command-line split-window (no flags) adds a new pane below."
-  (with-pty-command-increasing-count
-      (s "split-window"
-         :count-form (length (cl-tmux/model:window-panes
-                              (cl-tmux/model:session-active-window s)))
-         :count-context "split-window must add a pane to the active window")))
-
-(test run-command-line-split-window-h-flag
-  "%run-command-line split-window -h adds a pane to the right."
-  (with-pty-command-increasing-count
-      (s "split-window -h"
-         :count-form (length (cl-tmux/model:window-panes
-                              (cl-tmux/model:session-active-window s)))
-         :count-context "split-window -h must add a pane to the active window")))
 
 (test split-window-P-F-uses-custom-format
   "split-window -d -P -F '...' prints the CUSTOM format for the new pane instead of
