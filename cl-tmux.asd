@@ -115,6 +115,7 @@
     (:file "dispatch-commands-pane-session") ; session/client lifecycle %cmd-*
     (:file "dispatch-commands-pane-x") ; copy-mode -X command name table (send-keys -X dispatch)
      (:file "dispatch-commands-shell")   ; shell/pane-ops %cmd-* (run-shell, if-shell, capture, resize, join, break, clear, rotate)
+     (:file "dispatch-commands-list-data") ; *command-usage-table* pure data (canonical-name → usage-flags)
      (:file "dispatch-commands-list")    ; list-sessions/windows/panes/clients/commands + wait-for arg checks
      (:file "dispatch-commands-auto")   ; window-nav/session-mgmt %cmd-* (find-window, refresh/lock, hooks, bind)
      (:file "dispatch-commands-auto-env") ; show-environment/set-environment helpers + %cmd-* handlers
@@ -132,6 +133,7 @@
     (:file "dispatch-handlers-b")     ; command handler rule table part II (break/join through mark/layout)
     (:file "dispatch-handlers-b-tail") ; session/window/misc handlers
     (:file "dispatch-handlers-buffer") ; paste-buffer command handler helpers
+     (:file "events-constants")  ; VT100 / mouse / CSI byte constants (pure data, no logic)
      (:file "events-core")
      (:file "events-mouse-status") ; status bar mouse handling
      (:file "events-mouse")   ; mouse event dispatch
