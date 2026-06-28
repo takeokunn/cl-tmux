@@ -192,13 +192,6 @@
     (is (search "unsupported argument" cl-tmux::*overlay*)
         "a rejected refresh-client must explain the rejection")))
 
-(test run-command-line-lock-client-without-args-locks-session
-  "lock-client without arguments locks the active session."
-  (with-fake-session (s)
-    (setf (cl-tmux::session-locked-p s) nil)
-    (cl-tmux::%run-command-line s "lock-client")
-    (is-true (cl-tmux::session-locked-p s)
-             "lock-client must lock the active session")))
 
 (test run-command-line-lock-client-rejects-target-client
   "lock-client rejects tmux-compatible target arguments."
@@ -211,14 +204,17 @@
       (is (search "unsupported argument" cl-tmux::*overlay*)
           "lock-client -t must explain the rejection"))))
 
-(test run-command-line-lock-session-locks-current-session
-  "lock-session without -t locks the current session."
-  (with-fake-session (s)
-    (let ((cl-tmux::*overlay* nil))
-      (setf (cl-tmux::session-locked-p s) nil)
-      (cl-tmux::%run-command-line s "lock-session")
-      (is-true (cl-tmux::session-locked-p s)
-               "lock-session must lock the current session"))))
+(test run-command-line-lock-commands-lock-current-session-table
+  "lock-client and lock-session both lock the active session when no -t is given.
+   Each row: (command description)."
+  (dolist (row '(("lock-client"  "lock-client must lock the active session")
+                 ("lock-session" "lock-session must lock the current session")))
+    (destructuring-bind (cmd desc) row
+      (with-fake-session (s)
+        (let ((cl-tmux::*overlay* nil))
+          (setf (cl-tmux::session-locked-p s) nil)
+          (cl-tmux::%run-command-line s cmd)
+          (is-true (cl-tmux::session-locked-p s) desc))))))
 
 (test run-command-line-lock-session-target-locks-target-session
   "lock-session -t locks the named target session."
