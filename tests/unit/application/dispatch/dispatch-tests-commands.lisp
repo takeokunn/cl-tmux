@@ -265,13 +265,11 @@
       (setf (session-name src) "src"
             (session-name dst) "dst")
       (let* ((src-win (session-active-window src))
-             (dst-orig (session-active-window dst))
              (cl-tmux::*server-sessions* (list (cons "src" src) (cons "dst" dst)))
              (*overlay* nil))
         (cl-tmux::%run-command-line src "link-window -s 0 -t dst -k")
         (is (eq src-win (session-active-window dst))
-            "without -d the linked window becomes current in the destination")
-        (declare (ignore dst-orig))))))
+            "without -d the linked window becomes current in the destination")))))
 
 (test run-command-line-link-window-d-keeps-dst-active-window
   "'link-window -d -s 0 -t dst -k' leaves the destination's active window unchanged."

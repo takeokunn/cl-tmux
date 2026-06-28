@@ -241,13 +241,27 @@
       (dolist (entry (cl-tmux/hooks:command-hooks event-name))
         (cond
           ((stringp entry)
-           (ignore-errors (%run-command-line session entry)))
+           (handler-case (%run-command-line session entry)
+             (error (condition)
+               (%overlayf "hook error: ~A" condition))))
           ((keywordp entry)
            (dispatch-command session entry 0)))))))
 
 ;; Install run-command-hooks as the command-hook runner so lower layers
 ;; (cl-tmux/commands kill-pane / kill-window) can fire command hooks too.
 (setf cl-tmux/hooks:*command-hook-runner* #'run-command-hooks)
+
+(defun %compute-window-base-index (prev-win &key at-index after-current before-current)
+  "Return the base window-id to use when inserting a new window.
+   AT-INDEX overrides everything when it is an integer.
+   AFTER-CURRENT inserts after PREV-WIN's id (adds 1).
+   BEFORE-CURRENT inserts at PREV-WIN's id (pushes existing windows right).
+   Otherwise uses the configured base-index option, defaulting to 0."
+  (cond
+    ((and at-index (integerp at-index)) at-index)
+    ((and after-current prev-win) (1+ (window-id prev-win)))
+    ((and before-current prev-win) (window-id prev-win))
+    (t (or (cl-tmux/options:get-option "base-index") 0))))
 
 (defun %cmd-new-window (session &key name start-dir detach at-index after-current
                                      before-current)
@@ -259,19 +273,15 @@
    AFTER-CURRENT: when T, insert after the current window's id.
    BEFORE-CURRENT: when T, insert at (before) the current window's id.
    Returns the new window."
-  (let* ((rows (- *term-rows* *status-height*))
-         (cols *term-cols*)
+  (let* ((rows     (- *term-rows* *status-height*))
+         (cols     *term-cols*)
          (win-name (or name (cl-tmux/model::%shell-basename)))
          (prev-win (session-active-window session))
-         ;; Determine base-index for id assignment.
-         (base (cond
-                 ((and at-index (integerp at-index)) at-index)
-                 ((and after-current prev-win)
-                  (1+ (window-id prev-win)))
-                 ((and before-current prev-win)
-                  (window-id prev-win))
-                 (t (or (cl-tmux/options:get-option "base-index") 0))))
-         (win  (session-new-window session win-name rows cols base start-dir)))
+         (base     (%compute-window-base-index prev-win
+                                               :at-index      at-index
+                                               :after-current  after-current
+                                               :before-current before-current))
+         (win      (session-new-window session win-name rows cols base start-dir)))
     (start-reader-thread (window-active-pane win))
     (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+ win)
     (when (and detach prev-win)

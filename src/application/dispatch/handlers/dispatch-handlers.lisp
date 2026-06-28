@@ -70,7 +70,10 @@
 
 (defun dispatch-command (session cmd byte)
   "Dispatch CMD to its registered handler.  Sets *dirty* for all outcomes
-   except :quit and :detach, which are returned as-is."
+   except :quit and :detach, which are returned as-is.
+   NOTE: *dirty* is set even when CMD has no registered handler (unknown command).
+   This is intentional — an unrecognised command is still a user interaction
+   that may require a display refresh (e.g. to dismiss a stale overlay)."
   (declare (ignorable byte))
   (let* ((handler (gethash cmd *command-dispatch-table*))
          (outcome (when handler (funcall handler session byte))))

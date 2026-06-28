@@ -44,7 +44,9 @@
   (:export
    #:prompt #:make-prompt #:prompt-p
    #:prompt-label #:prompt-buffer #:prompt-cursor-index #:prompt-on-submit
+   #:prompt-on-change #:prompt-on-cancel
    #:prompt-vi-normal-p #:prompt-single-key
+   #:with-active-prompt
    #:*prompt* #:prompt-active-p #:prompt-start
    #:prompt-input #:prompt-backspace #:prompt-clear #:prompt-text
    #:prompt-notify-change
@@ -119,7 +121,8 @@
    #:window-select-pane
    #:window-split
    #:window-relayout
-   #:%assign-window-tree    ; (window w h) → layout-assign with top-status y-offset
+   #:window-relayout-current
+   #:%assign-window-tree    ; (window w h &optional top-offset) → layout-assign with y-offset
    #:%status-top-offset     ; () → rows reserved at top for a top status bar
    #:window-remove-pane
    #:window-resize-active
@@ -217,7 +220,8 @@
   (:export #:+default-buffer-limit+
            #:*paste-buffers* #:*buffer-auto-index*
            #:add-paste-buffer #:rename-paste-buffer #:get-paste-buffer #:set-named-buffer
-           #:get-buffer-by-name #:buffer-names
+           #:get-named-buffer #:get-buffer-by-name #:buffer-names
+           #:initialize-osc52-handler
            #:list-paste-buffers #:list-paste-buffers-with-names
            #:delete-paste-buffer #:delete-buffer-by-name #:clear-paste-buffers))
 
@@ -273,6 +277,8 @@
    #:+hook-client-focus-in+
    #:+hook-client-focus-out+
    #:+hook-command-error+
+   ;; Error handler (optional, called with (event-name condition) on hook error)
+   #:*hooks-error-handler*
    ;; Registry and dispatch
    #:*hook-registry*
    #:add-hook
@@ -507,6 +513,7 @@
    #:new-session
    ;; Session/window/pane targeting (-t flag)
    #:resolve-target
+   #:resolve-target-context
    #:find-session-by-target
    #:find-window-by-target
    #:find-pane-by-target

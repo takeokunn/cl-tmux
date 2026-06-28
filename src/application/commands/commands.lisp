@@ -178,7 +178,7 @@
       ;; Refresh the destination layout before deriving the split size.  Test
       ;; fixtures can carry stale pane dimensions even when the window/tree size
       ;; is current, and `-l` must be computed from the rendered pane extent.
-      (cl-tmux/model::window-relayout-current dst-window)
+      (cl-tmux/model:window-relayout-current dst-window)
       (let* ((active      (window-active-pane dst-window))
              (tree        (window-tree dst-window))
              (active-leaf (layout-find-leaf tree active)))

@@ -1,7 +1,5 @@
 (in-package #:cl-tmux/commands)
 
-(declaim (special cl-tmux::*dirty*))
-
 ;;; ── Copy-mode search subsystem ──────────────────────────────────────────────
 ;;;
 ;;; copy_mode_search_forward(Screen, Term)  :- scan rows from cursor downward
@@ -101,7 +99,7 @@
     (when save-direction-p
       (setf (screen-copy-search-direction screen) direction))
     (let* ((cursor     (or (screen-copy-cursor screen) (cons 0 0)))
-           (start-vrow (%copy-mode-cursor-virtual-row screen))
+           (start-vrow (%copy-mode-cursor-vrow screen))
            (forwardp   (eq direction :forward))
            (finder     (if forwardp #'%copy-mode-find-forward #'%copy-mode-find-backward))
            (start-col  (if forwardp (1+ (cdr cursor)) (cdr cursor))))
@@ -223,7 +221,7 @@
    :on-change
    (lambda (text)
      (%copy-mode-isearch-from-origin screen text direction)
-     (setf cl-tmux::*dirty* t))
+     (setf (screen-dirty-p screen) t))
    :on-cancel
    (lambda ()
      (let ((origin *copy-mode-isearch-origin*))

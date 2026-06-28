@@ -103,17 +103,19 @@
     (values (and term (plusp (length term)) term)
             (and cmd  (plusp (length cmd))  cmd))))
 
-(defun %spawn-pty-with-default-options (h w &key start-dir default-command environment)
+(defun %spawn-pty-with-default-options (rows cols &key start-dir default-command environment)
   "Spawn a PTY shell using the configured default-terminal and default-command.
+   ROWS is the number of terminal rows; COLS is the number of terminal columns.
    Returns (values fd pid slave-path).  Shared by %fork-pane and respawn-pane.
    Calls the cl-tmux/ports:spawn-pty port (installed by install-pty-port)."
-  (spawn-pty h w
+  (spawn-pty rows cols
              :start-dir start-dir
              :default-command default-command
              :environment environment))
 
-(defun %fork-pane (session id x y w h &key start-dir)
-  "Spawn a shell and build a PTY-backed pane at position (X,Y) sized W×H.
+(defun %fork-pane (session id x y cols rows &key start-dir)
+  "Spawn a shell and build a PTY-backed pane at position (X,Y) sized COLS x ROWS.
+   COLS is the number of terminal columns; ROWS is the number of terminal rows.
    START-DIR: when non-NIL, the child shell is started in that directory.
    SESSION supplies the child environment overlay used for spawn.
    When 'default-command' is set to a non-empty string, it is run via sh -c.
@@ -127,12 +129,12 @@
       ;; Consume *pane-extra-env*: reset so a later pane spawn without -e starts clean.
       (setf *pane-extra-env* nil)
       (multiple-value-bind (fd pid slave-path)
-          (%spawn-pty-with-default-options h w :start-dir start-dir
-                                                :default-command command
-                                                :environment environment)
-        (make-pane :id id :x x :y y :width w :height h
+          (%spawn-pty-with-default-options rows cols :start-dir start-dir
+                                                     :default-command command
+                                                     :environment environment)
+        (make-pane :id id :x x :y y :width cols :height rows
                    :fd fd :pid pid :tty (or slave-path "")
-                   :screen (make-screen w h))))))
+                   :screen (make-screen cols rows))))))
 
 (defun %make-input-pane (id x y w h)
   "Build a pane without a backing PTY, used by split-window -I."
@@ -148,8 +150,8 @@
    Returns the updated pane."
   (let ((old-fd  (pane-fd  pane))
         (old-pid (pane-pid pane))
-        (w       (pane-width  pane))
-        (h       (pane-height pane)))
+        (cols    (pane-width  pane))
+        (rows    (pane-height pane)))
     ;; Close the old PTY; ignore errors (process may have already exited).
     (ignore-errors (close-pty old-fd old-pid))
     ;; Open a fresh PTY-backed shell at the same geometry, respecting options.
@@ -161,7 +163,7 @@
         ;; Consume *pane-extra-env* so respawn matches pane creation semantics.
         (setf *pane-extra-env* nil)
         (multiple-value-bind (new-fd new-pid slave-path)
-            (%spawn-pty-with-default-options h w
+            (%spawn-pty-with-default-options rows cols
                                              :start-dir start-dir
                                              :default-command (or default-command command)
                                              :environment environment)

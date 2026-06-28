@@ -44,8 +44,9 @@
      (:module "domain/terminal"
       :serial t
       :components
-      ((:file "cell")      ; immutable cell type, char-width table
-       (:file "screen")    ; mutable screen struct and grid operations
+      ((:file "cell")         ; immutable cell type, char-width table
+       (:file "screen")       ; screen struct (DATA layer): defstruct, grid helpers, resize
+       (:file "screen-logic") ; screen mutation helpers (LOGIC layer): screen-clear-dirty, screen-consume-bell, reset-sgr-pen
        (:file "scroll")    ; row helpers + scroll-up/down + decstbm (loads before cursor/erase/edit)
        (:file "erase")     ; erase-region, erase-display, erase-line rule tables
        (:file "edit")      ; delete/insert chars+lines (uses %copy-row, %clear-row from scroll)
@@ -170,7 +171,8 @@
       :pathname "bootstrap"
       :serial t
       :components
-      ((:file "runtime")       ; shared state + channel sync + prompt history + PTY reader threads
+      ((:file "runtime")        ; shared state + channel sync + prompt history + SIGWINCH
+       (:file "runtime-reader") ; PTY reader CPS state machine + alert-action dispatch table
        (:file "runtime-timer"))) ; status interval timer, lock-after-time, monitor-silence
      ;; dispatch context, subdivided into cohesive sub-areas. Load order is
      ;; byte-identical to the old flat module; handlers split early (support)
@@ -366,7 +368,8 @@
          (:file "renderer-tests-b")  ; renderer — part II (status-bar, status-position, BEL rendering, status-left-expanded)
          (:file "renderer-tests-f")  ; renderer — part VI (parse-style-string, style-to-sgr, status-length, window-status-format, render-popup/menu)
          (:file "renderer-tests-c")  ; renderer — part III (mouse/focus/keys, lock-screen, justify, cursor-shape, zoom-suppression)
-         (:file "renderer-tests-e")))  ; renderer — part V (%clamp-status-segment, cursor-shape in output, status-bar-line gap, inline-style, bell relay)
+         (:file "renderer-tests-e")  ; renderer — part V (%clamp-status-segment, cursor-shape in output, status-bar-line gap, inline-style, bell relay)
+         (:file "renderer-tests-g")))  ; renderer — part VII (%split-align-attr, %status-align-buckets, %status-bar-default-segments, %content-search-match-p flag matrix)
        (:module "application/dispatch"
         :serial t
         :components

@@ -264,7 +264,7 @@
   (with-isolated-state
     (let ((cl-tmux/prompt:*overlay* "test overlay"))
       ;; Set shown-at to a time far in the past so it has definitely expired.
-      (setf cl-tmux/prompt::*overlay-shown-at* (- (get-universal-time) 10))
+      (setf cl-tmux/prompt:*overlay-shown-at* (- (get-universal-time) 10))
       (with-isolated-options ("display-time" 500)  ; 500 ms = 0.5 s
         (let ((result (cl-tmux::%maybe-auto-dismiss-overlay)))
           (is-true result "%maybe-auto-dismiss-overlay must return T when overlay expires")
@@ -275,7 +275,7 @@
   (with-isolated-state
     (let ((cl-tmux/prompt:*overlay* "recent overlay"))
       ;; shown-at = now → not expired.
-      (setf cl-tmux/prompt::*overlay-shown-at* (get-universal-time))
+      (setf cl-tmux/prompt:*overlay-shown-at* (get-universal-time))
       (with-isolated-options ("display-time" 5000)  ; 5000 ms = 5 s
         (let ((result (cl-tmux::%maybe-auto-dismiss-overlay)))
           (is-false result "%maybe-auto-dismiss-overlay must return NIL for recent overlay")

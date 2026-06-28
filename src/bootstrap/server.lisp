@@ -72,30 +72,53 @@
 ;;; Prolog-dispatch pattern: a declarative rule table whose keys are message-type
 ;;; predicates and whose bodies are handler forms.  TYPE and PAYLOAD are bound in
 ;;; every rule body.  The generated function returns the serve-loop outcome.
+;;;
+;;; define-message-dispatch-fn is the shared COND-expansion engine used by both
+;;; define-msg-dispatch (single-client server) and define-multi-msg-dispatch
+;;; (multi-client server, server-multi.lisp).  Both wrappers delegate to it so
+;;; the two event loops can never diverge in their macro structure.
+
+(defmacro define-message-dispatch-fn (fn-name lambda-list docstring &rest rules)
+  "Build a named message-dispatch function from a declarative rule table.
+   FN-NAME is the symbol to DEFUN; LAMBDA-LIST is its full argument list;
+   DOCSTRING is its documentation string.  Each RULE is (condition &rest body).
+   The generated function dispatches via COND and returns whatever the matching
+   arm returns.  Shared infrastructure for define-msg-dispatch (server.lisp) and
+   define-multi-msg-dispatch (server-multi.lisp).
+
+   Prolog analogy:
+     fn(nil, ...) :- rule1-body.
+     fn(T1,  ...) :- rule2-body.
+     fn(T2,  ...) :- rule3-body."
+  `(defun ,fn-name ,lambda-list
+     ,docstring
+     (cond
+       ,@(mapcar (lambda (rule)
+                   (destructuring-bind (condition &rest body) rule
+                     `(,condition ,@body)))
+                 rules))))
 
 (defmacro define-msg-dispatch (&rest rules)
-  "Build a %handle-client-message function from a declarative message-type rule
-   table.  Each RULE is (condition &rest body).  TYPE, PAYLOAD, SESSION, and
-   STATE are bound in every rule body.  The generated function dispatches via
-   COND and returns whatever the matching arm returns.
+  "Build %handle-client-message from a declarative message-type rule table.
+   Each RULE is (condition &rest body).  TYPE, PAYLOAD, SESSION, and STATE are
+   bound in every rule body.  Delegates to define-message-dispatch-fn so this
+   macro and define-multi-msg-dispatch (server-multi.lisp) share the same
+   COND-expansion engine and cannot diverge in structure.
 
    Prolog analogy:
      handle_msg(nil,         _, _, _) :- disconnect.
      handle_msg(msg_detach,  _, _, _) :- disconnect.
      handle_msg(msg_attach,  p, s, _) :- apply_client_size(s, p).
      handle_msg(msg_key,     p, s, k) :- process_client_keys(s, p, k)."
-  `(defun %handle-client-message (type payload session state)
-     "Dispatch one incoming client message by TYPE.
-      Returns :quit (session ends, caller must clear *running*), :detach
-      (client disconnects cleanly), :disconnect (EOF / unknown-type teardown),
-      or NIL (continue serving).
-      SESSION is the current session; STATE is the per-client keystroke state."
-     (declare (ignorable state))
-     (cond
-       ,@(mapcar (lambda (rule)
-                   (destructuring-bind (condition &rest body) rule
-                     `(,condition ,@body)))
-                 rules))))
+  `(define-message-dispatch-fn
+       %handle-client-message
+       (type payload session state)
+       "Dispatch one incoming client message by TYPE.
+        Returns :quit (session ends, caller must clear *running*), :detach
+        (client disconnects cleanly), :disconnect (EOF / unknown-type teardown),
+        or NIL (continue serving).
+        SESSION is the current session; STATE is the per-client keystroke state."
+     ,@rules))
 
 (define-msg-dispatch
   ;; EOF: peer closed the connection.

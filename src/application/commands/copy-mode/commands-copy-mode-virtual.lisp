@@ -13,9 +13,7 @@
    VROW 0 = oldest scrollback; VROW (total-1) = bottom of live grid."
   (%extract-vrow-chars screen vrow 0 (screen-width screen)))
 
-(defun %copy-mode-cursor-virtual-row (screen)
-  "Virtual row index of the current copy-mode cursor."
-  (%copy-mode-cursor-vrow screen))
+;;; %copy-mode-cursor-vrow (canonical) is defined in commands-copy-mode-selection.lisp.
 
 (defun %copy-mode-set-virtual-row (screen vrow col)
   "Position the copy-mode cursor at (VROW, COL), adjusting offset so VROW is visible."

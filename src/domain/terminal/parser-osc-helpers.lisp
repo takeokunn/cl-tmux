@@ -132,46 +132,50 @@
 ;;; OSC 7 embeds the current working directory in a file:// URL; we only care
 ;;; about the path component.
 
+(defun %flush-utf8-octets (octets out)
+  "Write accumulated UTF-8 OCTETS to the string stream OUT and reset OCTETS.
+   Attempts babel:octets-to-string with :utf-8; on error, falls back to
+   per-byte code-char (Latin-1-like) so no data is silently dropped."
+  (when (> (length octets) 0)
+    (write-string
+     (or (handler-case
+             (babel:octets-to-string octets :encoding :utf-8)
+           (error () nil))
+         (coerce (loop for i below (length octets)
+                       collect (code-char (aref octets i)))
+                 'string))
+     out)
+    (setf (fill-pointer octets) 0)))
+
 (defun %percent-decode (encoded-string)
-  "Decode %XX percent-escapes in ENCODED-STRING, UTF-8 aware: %20 → space, %E2%9C%93 → ✓.
-   A '%' not followed by two hex digits is left literal.  No-op when ENCODED_STRING
-   contains no escapes."
-  (labels ((flush-octets (octets out)
-             (when (> (length octets) 0)
-               (write-string
-                (or (handler-case
-                        (babel:octets-to-string octets :encoding :utf-8)
-                      (error () nil))
-                    (coerce (loop for i below (length octets)
-                                  collect (code-char (aref octets i)))
-                            'string))
-                out)
-               (setf (fill-pointer octets) 0))))
-    (let ((octets (make-array 0 :element-type '(unsigned-byte 8)
-                               :fill-pointer 0 :adjustable t))
-          (len (length encoded-string)))
-      (with-output-to-string (out)
-        (loop with i = 0
-              while (< i len)
-              for ch = (char encoded-string i)
-              do (cond
-                   ((and (char= ch #\%)
-                         (<= (+ i 2) (1- len)))
-                    (let ((hi (%hex-digit-16 (char encoded-string (1+ i))))
-                          (lo (%hex-digit-16 (char encoded-string (+ i 2)))))
-                      (if (and hi lo)
-                          (progn
-                            (vector-push-extend (+ (* hi 16) lo) octets)
-                            (incf i 3))
-                          (progn
-                            (flush-octets octets out)
-                            (write-char ch out)
-                            (incf i)))))
-                   (t
-                    (flush-octets octets out)
-                    (write-char ch out)
-                    (incf i))))
-        (flush-octets octets out)))))
+  "Decode %XX percent-escapes in ENCODED-STRING, UTF-8 aware: %20 -> space, %E2%9C%93 -> checkmark.
+   A '%' not followed by two hex digits is left literal.  No-op when ENCODED-STRING
+   contains no escapes.  Decoded octets are flushed as UTF-8 runs via %FLUSH-UTF8-OCTETS."
+  (let ((octets (make-array 0 :element-type '(unsigned-byte 8)
+                              :fill-pointer 0 :adjustable t))
+        (len (length encoded-string)))
+    (with-output-to-string (out)
+      (loop with i = 0
+            while (< i len)
+            for ch = (char encoded-string i)
+            do (cond
+                 ((and (char= ch #\%)
+                       (<= (+ i 2) (1- len)))
+                  (let ((hi (%hex-digit-16 (char encoded-string (1+ i))))
+                        (lo (%hex-digit-16 (char encoded-string (+ i 2)))))
+                    (if (and hi lo)
+                        (progn
+                          (vector-push-extend (+ (* hi 16) lo) octets)
+                          (incf i 3))
+                        (progn
+                          (%flush-utf8-octets octets out)
+                          (write-char ch out)
+                          (incf i)))))
+                 (t
+                  (%flush-utf8-octets octets out)
+                  (write-char ch out)
+                  (incf i))))
+      (%flush-utf8-octets octets out))))
 
 (defun %handle-osc-8 (screen body)
   "Handle OSC 8 hyperlink state.  BODY is PARAMS;URI, where URI may be empty to
@@ -258,7 +262,9 @@
       (t nil))))
 
 (defun %osc-hex-channel (byte)
-  "Format an 8-bit BYTE as a four-digit uppercase hex channel (e.g. #xFF → \"00FF\")."
+  "Format an 8-bit BYTE as a four-digit uppercase hex channel for xterm OSC colour replies.
+   Multiplies by #x101 (= 257), which is the unique linear scale factor that maps
+   0x00 -> 0x0000 and 0xFF -> 0xFFFF: e.g. #x80 -> #x8080, #xFF -> #xFFFF."
   (format nil "~(~4,'0X~)" (* byte #x101)))
 
 (defun %osc-rgb-components (rgb)

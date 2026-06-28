@@ -8,6 +8,30 @@
 (def-suite target-suite :description "Session/window/pane target resolution")
 (in-suite target-suite)
 
+;;; ── %parse-integer-or-nil direct tests ──────────────────────────────────────
+;;;
+;;; %parse-integer-or-nil is a private helper; the success path is covered
+;;; implicitly by the numeric-index lookup paths in find-window-by-target /
+;;; find-pane-by-target.  This test covers the failure paths directly.
+
+(test parse-integer-or-nil-returns-nil-for-non-integer-string
+  "%parse-integer-or-nil must return NIL when STRING does not represent an integer."
+  (dolist (bad '("" "abc" "1.5" "12abc" " "))
+    (is (null (cl-tmux::%parse-integer-or-nil bad))
+        "~S must return NIL from %parse-integer-or-nil" bad)))
+
+(test parse-integer-or-nil-returns-nil-for-nil-input
+  "%parse-integer-or-nil must return NIL when given NIL (not a string)."
+  (is (null (cl-tmux::%parse-integer-or-nil nil))
+      "NIL input must yield NIL"))
+
+(test parse-integer-or-nil-parses-valid-integer
+  "%parse-integer-or-nil must return the integer value when the string is valid."
+  (dolist (pair '(("0" 0) ("42" 42) ("-3" -3)))
+    (destructuring-bind (str expected) pair
+      (is (= expected (cl-tmux::%parse-integer-or-nil str))
+          "~S must parse to ~D" str expected))))
+
 ;;; ── %parse-session-component direct tests ───────────────────────────────────
 ;;;
 ;;; %parse-session-component has non-trivial logic for the colon/dot cases.

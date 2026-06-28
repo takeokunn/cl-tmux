@@ -14,14 +14,9 @@
   (is (= cl-tmux/model::+pane-min-width+  (cl-tmux/model::%axis-floor :h))
       ":h axis minimum must equal +pane-min-width+"))
 
-(test orient-pane-extent-returns-dimension
-  "%orient-pane-extent returns height for :v, width for :h."
-  (let ((pane (make-pane :id 1 :fd -1 :pid -1 :width 40 :height 15
-                         :screen (make-screen 40 15))))
-    (is (= 15 (cl-tmux/model::%orient-pane-extent pane :v))
-        ":v extent must equal pane height (15)")
-    (is (= 40 (cl-tmux/model::%orient-pane-extent pane :h))
-        ":h extent must equal pane width (40)")))
+;;; orient-pane-extent coverage lives in layout-geometry-tests-b.lisp
+;;; (define-axis-rules-generates-correct-dispatch), not here:
+;;; %orient-pane-extent is defined in window.lisp, not layout-geometry.lisp.
 
 ;;; ── layout-assign direct tests (pure geometry, no PTY) ─────────────────────
 

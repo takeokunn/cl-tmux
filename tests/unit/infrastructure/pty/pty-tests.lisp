@@ -2,33 +2,33 @@
 
 ;;;; Unit tests for pty.lisp: argument-assembly helpers.
 ;;;; These cover %spawn-directory, %spawn-environment-assignments,
-;;;; and %non-empty-string-p without spawning a real PTY process.
+;;;; and %string-non-empty-p without spawning a real PTY process.
 
 (def-suite pty-unit-suite :description "PTY argument-assembly helpers (unit)")
 (in-suite pty-unit-suite)
 
-;;; ── %non-empty-string-p ──────────────────────────────────────────────────────
+;;; ── %string-non-empty-p ──────────────────────────────────────────────────────
 
-(test non-empty-string-p-true-for-non-empty-string
-  "%non-empty-string-p returns T for a non-empty string."
-  (is-true (cl-tmux/pty::%non-empty-string-p "hello")
+(test string-non-empty-p-true-for-non-empty-string
+  "%string-non-empty-p returns T for a non-empty string."
+  (is-true (cl-tmux/pty::%string-non-empty-p "hello")
            "non-empty string must return T"))
 
-(test non-empty-string-p-false-for-empty-string
-  "%non-empty-string-p returns NIL for an empty string."
-  (is-false (cl-tmux/pty::%non-empty-string-p "")
+(test string-non-empty-p-false-for-empty-string
+  "%string-non-empty-p returns NIL for an empty string."
+  (is-false (cl-tmux/pty::%string-non-empty-p "")
             "empty string must return NIL"))
 
-(test non-empty-string-p-false-for-nil
-  "%non-empty-string-p returns NIL for NIL."
-  (is-false (cl-tmux/pty::%non-empty-string-p nil)
+(test string-non-empty-p-false-for-nil
+  "%string-non-empty-p returns NIL for NIL."
+  (is-false (cl-tmux/pty::%string-non-empty-p nil)
             "NIL must return NIL"))
 
-(test non-empty-string-p-false-for-non-string
-  "%non-empty-string-p returns NIL for non-string values."
-  (is-false (cl-tmux/pty::%non-empty-string-p 42)
+(test string-non-empty-p-false-for-non-string
+  "%string-non-empty-p returns NIL for non-string values."
+  (is-false (cl-tmux/pty::%string-non-empty-p 42)
             "integer must return NIL")
-  (is-false (cl-tmux/pty::%non-empty-string-p '(a b))
+  (is-false (cl-tmux/pty::%string-non-empty-p '(a b))
             "list must return NIL"))
 
 ;;; ── %spawn-environment-assignments ──────────────────────────────────────────

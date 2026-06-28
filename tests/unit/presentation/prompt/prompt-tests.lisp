@@ -383,3 +383,129 @@
         "C-w must kill only 'X', leaving 'foo ' in the buffer")
     (is (= 4 (prompt-cursor-index *prompt*))
         "cursor must move to index 4 (after the space)")))
+
+;;; -- prompt-delete-char (vi x) -----------------------------------------------
+;;;
+;;; Direct unit tests for prompt-delete-char isolated from the event-dispatch
+;;; layer.  (Event-level coverage already exists in events-tests-j.lisp via
+;;; vi-normal-key-x-deletes-char-under-cursor, but the pure function is not
+;;; isolated-tested there.)
+
+(test prompt-delete-char-removes-char-under-cursor
+  "prompt-delete-char (vi x) removes the character at the cursor; cursor stays."
+  (with-noop-prompt ("abc")
+    (setf (prompt-cursor-index *prompt*) 1)   ; cursor on 'b'
+    (prompt-delete-char)
+    (is (string= "ac" (prompt-buffer *prompt*))
+        "delete-char must remove the character at the cursor")
+    (is (= 1 (prompt-cursor-index *prompt*))
+        "cursor must remain at index 1 after deletion")))
+
+(test prompt-delete-char-at-start
+  "prompt-delete-char at cursor 0 removes the first character."
+  (with-noop-prompt ("xyz")
+    (setf (prompt-cursor-index *prompt*) 0)
+    (prompt-delete-char)
+    (is (string= "yz" (prompt-buffer *prompt*))
+        "delete-char at index 0 must remove the first character")
+    (is (= 0 (prompt-cursor-index *prompt*))
+        "cursor must stay at 0 after deleting the first character")))
+
+(test prompt-delete-char-clamps-cursor-when-last-char-deleted
+  "prompt-delete-char clamps the cursor when the last character in the buffer
+   is deleted, so it does not exceed (1- new-length).
+   Scenario: buffer \"ab\", cursor at 1 (the last char 'b'); after deleting 'b'
+   the buffer becomes \"a\" (length 1) and the cursor must clamp from 1 to 0
+   because index 1 is now past-end of the shortened buffer."
+  (with-noop-prompt ("ab")
+    ;; cursor starts at 2 (past-end after prompt-start); move to 1 to point at 'b'
+    (setf (prompt-cursor-index *prompt*) 1)
+    (prompt-delete-char)
+    (is (string= "a" (prompt-buffer *prompt*))
+        "delete-char on 'b' in \"ab\" must leave \"a\"")
+    (is (= 0 (prompt-cursor-index *prompt*))
+        "cursor must clamp from 1 to 0 after the last char is deleted")))
+
+(test prompt-delete-char-at-end-is-noop
+  "prompt-delete-char at cursor = length of buffer (past-end position) is a no-op."
+  (with-noop-prompt ("abc")
+    ;; cursor-index 3 = length of "abc" — past the last character
+    (is (= 3 (prompt-cursor-index *prompt*)))
+    (prompt-delete-char)
+    (is (string= "abc" (prompt-buffer *prompt*))
+        "delete-char at past-end position must not modify the buffer")
+    (is (= 3 (prompt-cursor-index *prompt*))
+        "cursor must not move when delete-char is a no-op")))
+
+(test prompt-delete-char-inactive-is-noop
+  "prompt-delete-char with no active prompt is a safe no-op."
+  (with-clean-prompt
+    (finishes (prompt-delete-char) "must not signal when prompt is inactive")
+    (is (null (prompt-active-p)) "prompt must remain inactive")))
+
+;;; -- prompt-clear on-cancel callback -----------------------------------------
+
+(test prompt-clear-invokes-on-cancel-callback
+  "prompt-clear calls the on-cancel callback when one is set."
+  (with-clean-prompt
+    (let ((cancel-fired nil))
+      (prompt-start "search" "" (make-noop-submit)
+                    :on-cancel (lambda () (setf cancel-fired t)))
+      (prompt-clear)
+      (is (null (prompt-active-p))
+          "prompt must be dismissed after prompt-clear")
+      (is-true cancel-fired
+               "on-cancel callback must be invoked by prompt-clear"))))
+
+(test prompt-clear-on-cancel-nil-is-noop
+  "prompt-clear with no on-cancel callback does not error."
+  (with-clean-prompt
+    (prompt-start "p" "x" (make-noop-submit))
+    (finishes (prompt-clear)
+              "prompt-clear with no on-cancel must not signal")
+    (is (null (prompt-active-p)) "prompt must be dismissed")))
+
+;;; -- prompt-notify-change direct coverage ------------------------------------
+;;;
+;;; prompt-notify-change is exported but previously had no isolated unit test;
+;;; regressions were only detectable via copy-mode-search integration tests.
+
+(test prompt-notify-change-invokes-on-change-with-current-buffer
+  "prompt-notify-change calls the on-change callback with the current buffer string."
+  (with-clean-prompt
+    (let ((received :unset))
+      (prompt-start "search" "hello" (make-noop-submit)
+                    :on-change (lambda (text) (setf received text)))
+      (prompt-notify-change)
+      (is (string= "hello" received)
+          "on-change callback must receive the current buffer string"))))
+
+(test prompt-notify-change-no-on-change-is-noop
+  "prompt-notify-change with no on-change callback is a safe no-op."
+  (with-clean-prompt
+    (prompt-start "p" "text" (make-noop-submit))
+    (finishes (prompt-notify-change)
+              "prompt-notify-change with no on-change must not signal")))
+
+(test prompt-notify-change-inactive-prompt-is-noop
+  "prompt-notify-change with no active prompt is a safe no-op."
+  (with-clean-prompt
+    (finishes (prompt-notify-change)
+              "prompt-notify-change with no active prompt must not signal")
+    (is (null (prompt-active-p)) "prompt must remain inactive")))
+
+(test prompt-notify-change-reflects-buffer-edits
+  "prompt-notify-change after buffer edits reports the updated buffer contents."
+  (with-clean-prompt
+    (let ((last-received nil))
+      (prompt-start "search" "" (make-noop-submit)
+                    :on-change (lambda (text) (setf last-received text)))
+      (prompt-input #\a)
+      (is (string= "a" last-received)
+          "on-change must be called with 'a' after typing 'a'")
+      (prompt-input #\b)
+      (is (string= "ab" last-received)
+          "on-change must be called with 'ab' after typing 'b'")
+      (prompt-backspace)
+      (is (string= "a" last-received)
+          "on-change must be called with 'a' after backspace"))))

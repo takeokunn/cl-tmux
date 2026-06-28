@@ -67,6 +67,12 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
   (+hook-client-focus-out+       "client-focus-out"       "Fired when the client terminal loses focus")
   (+hook-command-error+          "command-error"          "Fired when a command fails with an error"))
 
+(defvar *hooks-error-handler* nil
+  "When non-NIL, a function (event-name condition) called whenever a hook
+   signals an error.  The error is still suppressed after the handler returns
+   so that remaining hooks for the same event continue to run.
+   When NIL (the default) hook errors are silently discarded.")
+
 (defvar *hook-registry* (make-hash-table :test #'equal)
   "Maps event-name (string) to a list of callback functions.
    The first element of the list is the most recently added hook (front-push).")
@@ -86,14 +92,15 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
 
 (defun run-hooks (event-name &rest args)
   "Call each registered hook for EVENT-NAME with ARGS.
-   Errors signalled by individual hooks are silently suppressed so that
-   a broken hook never prevents the rest from running.
-   Trade-off: silent suppression makes debugging a broken hook difficult;
-   if a hook never fires, check whether it signals an unhandled condition.
-   A future *hooks-error-handler* hook-point could surface these at debug time."
+   Errors signalled by individual hooks are always suppressed so that a broken
+   hook never prevents the rest from running.  When *hooks-error-handler* is
+   non-NIL, it is called as (funcall *hooks-error-handler* event-name condition)
+   before suppression, allowing callers to log or surface errors at debug time."
   (dolist (cb (gethash event-name *hook-registry*))
     (handler-case (apply cb args)
-      (error () nil)))
+      (error (condition)
+        (when *hooks-error-handler*
+          (ignore-errors (funcall *hooks-error-handler* event-name condition))))))
   ;; Also fire .tmux.conf set-hook command hooks for this event, against the
   ;; session derived from the hook TARGET (the first arg — a session/window/pane).
   ;; This unifies the two hook registries so every event supports `set-hook`, not

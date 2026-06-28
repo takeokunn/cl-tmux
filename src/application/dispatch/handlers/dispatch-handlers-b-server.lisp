@@ -2,6 +2,11 @@
 
 ;;;; Server / environment / prompt-history handlers split out from dispatch-handlers-b.lisp.
 
+(defconstant +ctrl-char-recover-mask+ #x40
+  "Bitmask to recover the printable letter from a control-character byte.
+   (logior ctrl-byte +ctrl-char-recover-mask+) yields the ASCII letter.
+   Example: C-b is 0x02; (logior 0x02 0x40) = 0x42 = #\\b.")
+
 (define-command-handlers
   ;; ── Server management ─────────────────────────────────────────────────────
   (:server-info
@@ -9,7 +14,7 @@
     (format nil "server info~%  sessions: ~D~%  term: ~Dx~D~%  prefix: C-~A (~D)"
             (length *server-sessions*)
             *term-cols* *term-rows*
-            (code-char (logior cl-tmux/config:*prefix-key-code* #x40))
+            (code-char (logior cl-tmux/config:*prefix-key-code* +ctrl-char-recover-mask+))
             cl-tmux/config:*prefix-key-code*)))
   (:list-clients
    (show-built-overlay (s)
@@ -24,6 +29,9 @@
    ;; Send SIGTSTP to the running process to suspend the client, matching
    ;; real tmux's C-b C-z behaviour.  Reset mouse and extended-keys reporting
    ;; first so the parent shell is not left receiving them while suspended.
+   ;; ASSUMPTION: SIGTSTP is not blocked in this process (it is unblocked at
+   ;; startup).  If blocked, kill returns without suspending and the client
+   ;; continues running — which is preferable to a hard error.
    (disable-mouse-reporting)
    (disable-extended-keys)
    (ignore-errors (sb-posix:kill (sb-posix:getpid) sb-posix:sigtstp)))

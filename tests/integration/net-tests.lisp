@@ -15,6 +15,45 @@
 (def-suite net-suite :description "Unix-domain socket transport (sb-bsd-sockets)")
 (in-suite net-suite)
 
+;;; ── %make-probe-socket-path ──────────────────────────────────────────────────
+;;;
+;;; %make-probe-socket-path is a private helper that generates a throwaway socket
+;;; path in the temp directory.  It is called only by unix-socket-available-p, so
+;;; it has no direct test coverage.  These tests pin its contract: the returned
+;;; path must be a non-empty string in the temp directory, and two successive
+;;; calls must return distinct paths (collision-resistance).
+
+(test make-probe-socket-path-returns-nonempty-string
+  "cl-tmux/net::%make-probe-socket-path must return a non-empty string."
+  (let ((path (cl-tmux/net::%make-probe-socket-path)))
+    (is (stringp path)
+        "%make-probe-socket-path must return a string, got ~S" path)
+    (is (plusp (length path))
+        "%make-probe-socket-path must return a non-empty string")))
+
+(test make-probe-socket-path-is-in-temp-directory
+  "%make-probe-socket-path must produce a path inside the system temp directory."
+  (let* ((path    (cl-tmux/net::%make-probe-socket-path))
+         (tmpdir  (string-right-trim "/" (or (sb-ext:posix-getenv "TMPDIR") "/tmp"))))
+    (is (and (> (length path) (length tmpdir))
+             (string= tmpdir (subseq path 0 (length tmpdir))))
+        "%make-probe-socket-path must be under the temp directory ~S, got ~S"
+        tmpdir path)))
+
+(test make-probe-socket-path-has-sock-suffix
+  "%make-probe-socket-path must produce a path ending in \".sock\"."
+  (let ((path (cl-tmux/net::%make-probe-socket-path)))
+    (is (string= ".sock" (subseq path (- (length path) 5)))
+        "%make-probe-socket-path must end with .sock, got ~S" path)))
+
+(test make-probe-socket-path-successive-calls-return-distinct-paths
+  "Two successive calls to %make-probe-socket-path must return different paths
+   (collision-resistance for concurrent test runs or parallel probing)."
+  (let ((path1 (cl-tmux/net::%make-probe-socket-path))
+        (path2 (cl-tmux/net::%make-probe-socket-path)))
+    (is (not (string= path1 path2))
+        "%make-probe-socket-path must not return the same path on two calls")))
+
 ;;; ── unix-socket-available-p ──────────────────────────────────────────────────
 
 (test unix-socket-availability-is-boolean

@@ -172,18 +172,30 @@
 ;;; :paste-buffer and :choose-buffer both need to write text to the active pane's
 ;;; PTY, honouring bracketed-paste mode.  %paste-to-pane factors that out.
 
+(defconstant +bracketed-paste-begin+
+  (if (boundp '+bracketed-paste-begin+)
+      (symbol-value '+bracketed-paste-begin+)
+      (format nil "~C[200~~" #\Escape))
+  "Bracketed-paste begin escape sequence: ESC [ 2 0 0 ~")
+
+(defconstant +bracketed-paste-end+
+  (if (boundp '+bracketed-paste-end+)
+      (symbol-value '+bracketed-paste-end+)
+      (format nil "~C[201~~" #\Escape))
+  "Bracketed-paste end escape sequence: ESC [ 2 0 1 ~")
+
 (defun %paste-to-pane (pane text)
   "Write TEXT to PANE's PTY, wrapping in bracketed-paste sequences when enabled."
   (when (and text (cl-tmux/model:pane-live-p pane))
     (let* ((screen    (pane-screen pane))
-           (bracketed (screen-bracketed-paste screen))
-           (prefix    (when bracketed (format nil "~C[200~~" #\Escape)))
-           (suffix    (when bracketed (format nil "~C[201~~" #\Escape))))
-      (when prefix
-        (pty-write (pane-fd pane) (babel:string-to-octets prefix :encoding :utf-8)))
+           (bracketed (screen-bracketed-paste screen)))
+      (when bracketed
+        (pty-write (pane-fd pane)
+                   (babel:string-to-octets +bracketed-paste-begin+ :encoding :utf-8)))
       (pty-write (pane-fd pane) (babel:string-to-octets text :encoding :utf-8))
-      (when suffix
-        (pty-write (pane-fd pane) (babel:string-to-octets suffix :encoding :utf-8))))))
+      (when bracketed
+        (pty-write (pane-fd pane)
+                   (babel:string-to-octets +bracketed-paste-end+ :encoding :utf-8))))))
 
 ;;; -- Shared command dispatch registry ----------------------------------------
 ;;;
@@ -204,17 +216,17 @@
     (load (merge-pathnames #P"application/dispatch/core/dispatch-command-specs.lisp" src))))
 
 (defun %make-dispatch-named-table (specs)
-  "Build a hash table mapping prompt-visible command names to dispatch keywords."
+  "Build a hash-table mapping prompt-visible command names to dispatch keywords.
+   SPECS is a list of plists; each plist may contain:
+     :named-keyword KEYWORD — the dispatch keyword to register under these names
+     :named-names   LIST    — strings to map to KEYWORD
+   Specs that lack :named-keyword are silently ignored."
   (let ((table (make-hash-table :test #'equalp)))
     (dolist (spec specs table)
       (let ((keyword (getf spec :named-keyword)))
         (when keyword
           (dolist (name (getf spec :named-names))
             (setf (gethash name table) keyword)))))))
-
-(defmacro define-named-command-table (&rest specs)
-  "Build a named-command dispatch table from command SPEC metadata."
-  `(%make-dispatch-named-table ',specs))
 
 (defparameter *named-command-dispatch*
   (%make-dispatch-named-table *dispatch-command-specs-core*))

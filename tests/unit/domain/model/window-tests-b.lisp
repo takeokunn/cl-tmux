@@ -195,6 +195,25 @@
     (is (equal (list w0 w1) (session-windows sess))
         "same-index swap must be a no-op")))
 
+(test swap-window-out-of-range-is-noop
+  "session-swap-windows with an out-of-range index leaves the list unchanged."
+  (let* ((w0 (make-window :id 1 :name "0"))
+         (w1 (make-window :id 2 :name "1"))
+         (sess (make-session :id 1 :name "s" :windows (list w0 w1))))
+    (session-swap-windows sess 0 5)
+    (is (equal (list w0 w1) (session-windows sess))
+        "out-of-range index must be a no-op")))
+
+(test move-window-returns-unchanged-when-window-not-found
+  "session-move-window is a no-op when the window is not in the session."
+  (let* ((w0 (make-window :id 1 :name "0"))
+         (w1 (make-window :id 2 :name "1"))
+         (w-other (make-window :id 99 :name "other"))
+         (sess (make-session :id 1 :name "s" :windows (list w0 w1))))
+    (session-move-window sess w-other 0)
+    (is (equal (list w0 w1) (session-windows sess))
+        "list must be unchanged when window is not a member")))
+
 ;;; ── rotate-window-shifts-panes ───────────────────────────────────────────────
 
 (test rotate-window-shifts-panes

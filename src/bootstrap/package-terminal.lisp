@@ -19,6 +19,9 @@
    #:+default-color+
    ;; XTPUSHTITLE/XTPOPTITLE stack depth limit (matches xterm)
    #:+title-stack-max-depth+
+   ;; Default terminal geometry constants (VT100 standard)
+   #:+default-screen-width+
+   #:+default-screen-height+
    ;; Grid allocation helper
    #:%make-blank-cells
    ;; Cell struct + helpers

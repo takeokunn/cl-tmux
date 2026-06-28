@@ -167,6 +167,7 @@
                 #:resize-pane
                 #:select-window-by-number
                 #:swap-pane
+                #:swap-two-panes
                 #:capture-pane
                 ;; Advanced pane commands
                 #:break-pane
@@ -186,10 +187,18 @@
                 #:prompt-clear
                 #:prompt-text
                 #:prompt-vi-normal-p
+                #:prompt-notify-change
+                #:prompt-delete-char
+                #:with-active-prompt
                 #:*overlay*
                 #:*overlay-scroll-offset*
+                #:*overlay-shown-at*
+                #:overlay-shown-at
+                #:*display-panes-active*
                 #:overlay-active-p
                 #:show-overlay
+                #:show-transient-overlay
+                #:show-display-panes-overlay
                 #:clear-overlay
                 #:overlay-lines
                 #:overlay-scroll
@@ -206,6 +215,8 @@
                 #:prompt-label
                 #:prompt-buffer
                 #:prompt-on-submit
+                #:prompt-on-change
+                #:prompt-on-cancel
                 #:prompt-single-key
                 #:prompt-cursor-index
                 #:prompt-cursor-bol

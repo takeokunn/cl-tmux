@@ -45,6 +45,8 @@
 ;;; %node->string uses define-layout-fold to dispatch over tree node types,
 ;;; eliminating the manual etypecase branch.  In the split branch, the bounding
 ;;; box is derived from already-laid-out leaf coordinates via %split-bounding-box.
+;;;
+;;; orient-case dispatches on :h/:v (defined in layout.lisp).
 
 (define-layout-fold %node->string (node)
   :docstring "Serialize a layout node (leaf or split) to a layout string fragment.
@@ -54,8 +56,8 @@
                     (pane-width leaf-pane) (pane-height leaf-pane)
                     (pane-x leaf-pane) (pane-y leaf-pane)
                     (pane-id leaf-pane))
-  :on-split (let ((open-bracket  (ecase split-orient (:h #\{) (:v #\[)))
-                  (close-bracket (ecase split-orient (:h #\}) (:v #\]))))
+  :on-split (let ((open-bracket  (orient-case split-orient :h #\{ :v #\[))
+                  (close-bracket (orient-case split-orient :h #\} :v #\])))
                (multiple-value-bind (min-x min-y width height) (%split-bounding-box node)
                  (format nil "~Dx~D,~D,~D~C~A,~A~C"
                          width height min-x min-y
@@ -94,39 +96,15 @@
       str))
 
 (defun %read-digits (str pos)
-  "Read decimal digits from STR starting at POS.
+  "Read decimal digits from STR starting at POS (pure, no mutation).
    Returns (values integer end-pos) where end-pos is past the last digit."
-  (let ((start pos))
-    (loop while (and (< pos (length str))
-                     (digit-char-p (char str pos)))
-          do (incf pos))
-    (values (parse-integer str :start start :end pos) pos)))
-
-;;; -- define-parse-dispatch-rules: declarative layout parse-character table -----
-;;;
-;;; Analogous to define-csi-rules / define-command-handlers: each clause names
-;;; a dispatch character and the form that handles it.  %parse-node dispatches
-;;; via cond generated from this table.
-;;;
-;;; Pattern (Prolog analogy):
-;;;   parse_node_rule(#\{, Body) :- split_h_body(Body).
-;;;   parse_node_rule(#\[, Body) :- split_v_body(Body).
-;;;   parse_node_rule(#\,, Body) :- leaf_body(Body).
-;;;   parse_node_rule(_,   Body) :- warn_and_fail.
-
-(defmacro define-parse-dispatch-rules (&rest rules)
-  "Build %parse-node's internal dispatch from a declarative character->form table.
-   Each RULE is (dispatch-character &rest body-forms).
-   The final rule may use T as the character to serve as a catch-all.
-   Generates a cond dispatch over DISPATCH-CHAR.
-   Implicit free variables available in each body-form: STR PANES DISPATCH-POS DISPATCH-CHAR."
-  `(cond
-     ,@(mapcar (lambda (rule)
-                 (destructuring-bind (ch &rest body) rule
-                   (if (eq ch t)
-                       `(t ,@body)
-                       `((char= dispatch-char ,ch) ,@body))))
-               rules)))
+  (labels ((scan (current-pos)
+             (if (and (< current-pos (length str))
+                      (digit-char-p (char str current-pos)))
+                 (scan (1+ current-pos))
+                 current-pos)))
+    (let ((end (scan pos)))
+      (values (parse-integer str :start pos :end end) end))))
 
 ;;; %parse-node uses forward-reference to %parse-split-body.
 ;;; We declare it here so the compiler accepts the mutual recursion.
@@ -148,40 +126,42 @@
           (values (make-layout-split orient child1 child2)
                   (%advance-if-char str child2-end str-length close-ch)))))))
 
+(defun %parse-geometry-prefix (str pos)
+  "Scan past the WxH,X,Y prefix in STR starting at POS.
+   Returns the index of the dispatch character ({, [, or , for a leaf)."
+  (let* ((x-sep-pos   (or (position #\x str :start pos)            (length str)))
+         (x-comma-pos (or (position #\, str :start (1+ x-sep-pos)) (length str)))
+         (y-comma-pos (or (position #\, str :start (1+ x-comma-pos)) (length str))))
+    (or (position-if (lambda (c) (or (char= c #\{) (char= c #\[) (char= c #\,)))
+                     str :start (1+ y-comma-pos))
+        (length str))))
+
 (defun %parse-node (str panes pos)
   "Parse one layout node starting at POS in STR.
    Returns (values node end-pos)."
   ;; Format: WxH,X,Y then one of: { (h-split), [ (v-split), , pane-id (leaf).
-  ;; Scan past W digits, the 'x' separator, the H digits, then X and Y commas.
-  (let* ((x-sep-pos    (or (position #\x str :start pos)  (length str)))
-         (x-comma-pos  (or (position #\, str :start (1+ x-sep-pos)) (length str)))
-         (y-comma-pos  (or (position #\, str :start (1+ x-comma-pos)) (length str)))
-         ;; Y value ends at the first {, [, , or end of string
-         (dispatch-pos (or (position-if (lambda (c) (or (char= c #\{) (char= c #\[) (char= c #\,)))
-                                        str :start (1+ y-comma-pos))
-                           (length str))))
+  (let ((dispatch-pos (%parse-geometry-prefix str pos)))
     (if (>= dispatch-pos (length str))
         (values nil dispatch-pos)
         (let ((dispatch-char (char str dispatch-pos)))
-          (define-parse-dispatch-rules
-            (#\{ (%parse-split-body str panes (1+ dispatch-pos) #\} :h))
-            (#\[ (%parse-split-body str panes (1+ dispatch-pos) #\] :v))
-            (#\, (multiple-value-bind (pane-id pane-id-end)
-                     (%read-digits str (1+ dispatch-pos))
-                   (let ((found-pane (find pane-id panes :key #'pane-id)))
-                     (values (when found-pane (make-layout-leaf found-pane)) pane-id-end))))
-            (t   (warn "~A: unrecognized dispatch character ~S at position ~D; skipping."
-                       '%parse-node dispatch-char dispatch-pos)
-                 (values nil dispatch-pos)))))))
+          (cond
+            ((char= dispatch-char #\{) (%parse-split-body str panes (1+ dispatch-pos) #\} :h))
+            ((char= dispatch-char #\[) (%parse-split-body str panes (1+ dispatch-pos) #\] :v))
+            ((char= dispatch-char #\,)
+             (multiple-value-bind (pane-id pane-id-end)
+                 (%read-digits str (1+ dispatch-pos))
+               (let ((found-pane (find pane-id panes :key #'pane-id)))
+                 (values (when found-pane (make-layout-leaf found-pane)) pane-id-end))))
+            (t (values nil dispatch-pos)))))))  ; pure: no warn side-effect
 
 (defun string->layout (layout-string panes)
   "Decode LAYOUT-STRING (tmux format, checksum optional) and rebuild the layout
    tree.  PANES is a list of existing pane objects matched by pane-id.
    Returns the root layout node, or NIL on parse failure.
 
-   NOTE: This function is currently exercised only in tests.  It is exported as
-   future infrastructure for session restore (persisting and replaying a window's
-   layout without re-running the PTY diff).  No production src/ caller exists yet."
+   TODO: Hook this up as infrastructure for session restore (persisting and
+   replaying a window's layout without re-running the PTY diff).
+   No production src/ caller exists yet."
   (handler-case
       (let ((str (%skip-checksum layout-string)))
         (multiple-value-bind (node end)

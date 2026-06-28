@@ -178,7 +178,7 @@
                ;; Side-effects for special options (prefix/status/escape-time etc.)
                ;; always run after the operation, even when -o skips the write.
                ;; Passes RAW value — side-effect parsers expect strings, not coerced types.
-               (cl-tmux/config:%apply-option-side-effects name value unset-p)))))))))
+               (cl-tmux/config:apply-option-side-effects name value unset-p)))))))))
 
 (defun %cmd-set-window-option (session args)
   "set-window-option: like set-option but defaults to WINDOW scope.  Prepends

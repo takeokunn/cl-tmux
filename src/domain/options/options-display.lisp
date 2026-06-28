@@ -179,6 +179,58 @@ scope, but unset @ user options are invalid."
        (sort names #'string<)))
     (t '())))
 
+;;; ── Window-option resolution rules ──────────────────────────────────────
+;;;
+;;; define-window-option-resolution-rules builds %resolve-window-option-value
+;;; from a declarative table of (GUARD INHERITED-MARKER &body BODY) rules.
+;;; Each rule contributes one cond arm; BODY is evaluated with NAME in scope
+;;; and must return the option value for that arm.
+;;; INHERITED-MARKER is :yes when the arm yields an inherited value (triggers
+;;; the tmux '* ' display prefix for -A / inherited-p output).
+
+(defmacro define-window-option-resolution-rules (&rest rules)
+  "Generate %resolve-window-option-value
+     (name local-value local-present-p global-p inherited-p)
+   from a declarative list of RULES.  Each RULE is:
+     (GUARD INHERITED-MARKER &body BODY)
+   where GUARD is a form with NAME / LOCAL-VALUE / LOCAL-PRESENT-P / GLOBAL-P /
+   INHERITED-P in scope, INHERITED-MARKER is :yes when the arm yields an inherited
+   value (triggers the '* ' display prefix), and BODY computes the resolved value.
+   Returns (values value inherited-output-p present-p)."
+  `(defun %resolve-window-option-value (name local-value local-present-p
+                                         global-p inherited-p)
+     "Walk the window-option resolution ladder for NAME and return
+      (values value inherited-output-p present-p).
+      Caller pre-computes local-value/local-present-p via %window-local-option-value
+      and forwards the global-p/inherited-p flags from the show-window-option call."
+     (declare (ignorable local-value local-present-p global-p inherited-p))
+     (let ((inherited-output-p nil) (present-p nil) (value nil))
+       (cond
+         ,@(mapcar
+            (lambda (rule)
+              (destructuring-bind (guard inherited-marker &rest body) rule
+                `(,guard
+                  (setf present-p t
+                        ,@(when (eq inherited-marker :yes)
+                            '(inherited-output-p t))
+                        value (progn ,@body)))))
+            rules))
+       (values value inherited-output-p present-p))))
+
+(define-window-option-resolution-rules
+  ;; -g flag: show global/default value when the option is present globally.
+  (global-p :no
+   (when (%global-window-option-present-p name) (get-option name)))
+  ;; Window-local value is present: return it directly (no inherited marker).
+  (local-present-p :no local-value)
+  ;; -A (inherited-p) flag: show inherited effective value with '* ' prefix.
+  ((and inherited-p (%global-window-option-present-p name)) :yes
+   (get-option name))
+  ;; Bare single-option query: fall back to the effective (inherited) value
+  ;; matching real tmux — `show-window-options mode-keys` returns the effective
+  ;; value even when not set window-locally.  No '* ' marker without -A.
+  ((%global-window-option-present-p name) :no (get-option name)))
+
 (defun show-window-option (name window &key inherited-p value-only-p global-p)
   "Return NAME rendered as tmux show-window-options/show-options -w output.
    When called for a specific option NAME:
@@ -189,28 +241,9 @@ scope, but unset @ user options are invalid."
    INHERITED-P only controls the '* ' marker and is relevant for full-list output."
   (multiple-value-bind (local-value local-present-p)
       (%window-local-option-value name window)
-    (let ((inherited-output-p nil)
-          (present-p nil)
-          (value nil))
-      (cond
-        (global-p
-         (when (%global-window-option-present-p name)
-           (setf present-p t
-                 value (get-option name))))
-        (local-present-p
-         (setf present-p t
-               value local-value))
-        ((and inherited-p (%global-window-option-present-p name))
-         (setf present-p t
-               inherited-output-p t
-               value (get-option name)))
-        ;; Single-option queries always fall back to the effective (inherited) value,
-        ;; matching real tmux: `show-window-options mode-keys` returns the effective
-        ;; value even when mode-keys is not set window-locally.  This fallback path
-        ;; does NOT mark the output with '* ' (no -A flag) but still returns a line.
-        ((%global-window-option-present-p name)
-         (setf present-p t
-               value (get-option name))))
+    (multiple-value-bind (value inherited-output-p present-p)
+        (%resolve-window-option-value name local-value local-present-p
+                                      global-p inherited-p)
       (when present-p
         (if value-only-p
             (%option-value-string value)

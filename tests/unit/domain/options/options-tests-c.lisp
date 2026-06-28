@@ -180,3 +180,98 @@
         (is (string= name (cl-tmux/options:option-spec-name spec))    "~A: name" desc)
         (is (eq type (cl-tmux/options:option-spec-type spec))         "~A: type" desc)
         (is (equal default (cl-tmux/options:option-spec-default spec)) "~A: default" desc)))))
+
+;;; ── show-window-options unit tests ──────────────────────────────────────
+;;;
+;;; Direct API tests for cl-tmux/options:show-window-option and
+;;; show-window-options (render layer below the dispatch handlers).
+;;; These verify the formatting and scope-fallback logic in isolation,
+;;; without going through the full command dispatch.
+
+(test show-window-option-returns-global-value-for-registered-option
+  "show-window-option falls back to the global value for a registered window-
+   scoped option when the window has no local override."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+        (cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (setf (gethash "mode-keys" ht) "vi")
+           ht)))
+    (let ((out (cl-tmux/options:show-window-option "mode-keys" win)))
+      (is (not (null out))
+          "show-window-option must return a non-nil string for a global option")
+      (is (search "mode-keys" out)
+          "output must contain the option name")
+      (is (search "vi" out)
+          "output must contain the global value"))))
+
+(test show-window-option-returns-window-local-value
+  "show-window-option returns the window-local value when explicitly set,
+   overriding any global value."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+        (cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (setf (gethash "mode-keys" ht) "emacs")
+           ht)))
+    (cl-tmux/options:set-option-for-window "mode-keys" "vi" win)
+    (let ((out (cl-tmux/options:show-window-option "mode-keys" win)))
+      (is (not (null out))
+          "show-window-option must return a non-nil string")
+      (is (search "vi" out)
+          "output must reflect the window-local override, not the global value"))))
+
+(test show-window-option-inherited-marks-with-asterisk
+  "show-window-option with :inherited-p T marks inherited values with '* ' prefix."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+        (cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (setf (gethash "mode-keys" ht) "vi")
+           ht)))
+    ;; No window-local override; global value is inherited.
+    (let ((out (cl-tmux/options:show-window-option "mode-keys" win :inherited-p t)))
+      (is (not (null out))
+          "show-window-option with :inherited-p must return a non-nil string")
+      (is (search "* mode-keys" out)
+          "inherited value must be prefixed with '* '"))))
+
+(test show-window-option-value-only-returns-bare-value
+  "show-window-option with :value-only-p T returns just the value string."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+        (cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (setf (gethash "mode-keys" ht) "vi")
+           ht)))
+    (let ((out (cl-tmux/options:show-window-option "mode-keys" win :value-only-p t)))
+      (is (string= "vi" out)
+          "show-window-option :value-only-p must return just the value"))))
+
+(test show-window-option-returns-nil-for-unset-user-option
+  "show-window-option returns NIL for an unset user @-option."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+        (cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+    (is (null (cl-tmux/options:show-window-option "@nonexistent" win))
+        "show-window-option must return NIL for an absent user option")))
+
+(test show-window-options-lists-window-local-options
+  "show-window-options without flags lists only the window-local options."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+        (cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+    (cl-tmux/options:set-option-for-window "mode-keys" "vi" win)
+    (cl-tmux/options:set-option-for-window "synchronize-panes" t win)
+    (let ((out (cl-tmux/options:show-window-options win)))
+      (is (search "mode-keys" out)
+          "show-window-options must list mode-keys local option")
+      (is (search "synchronize-panes" out)
+          "show-window-options must list synchronize-panes local option"))))
+
+(test show-window-options-global-flag-lists-global-options
+  "show-window-options with :global-p T lists global window-scoped options."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+        (cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (setf (gethash "mode-keys" ht) "emacs")
+           ht)))
+    (let ((out (cl-tmux/options:show-window-options win :global-p t)))
+      (is (search "mode-keys" out)
+          "show-window-options :global-p must include global window options")
+      (is (search "emacs" out)
+          "show-window-options :global-p must show the global value"))))

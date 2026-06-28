@@ -121,17 +121,28 @@
 
 ;;; ── Frame broadcast ─────────────────────────────────────────────────────────
 
+(defun %render-frame (session)
+  "Pure: render SESSION at the current *term-rows* x *term-cols* and return the
+   encoded +msg-frame+ byte vector.  No I/O side effects — the only inputs are
+   the session model and the two dynamic vars."
+  (msg-frame (render-session-to-string session *term-rows* *term-cols*)))
+
+(defun %send-broadcast-frame (frame)
+  "Effect boundary: send the pre-rendered FRAME to every attached client.
+   A client whose send raises an error is silently dropped so one dead peer
+   cannot wedge the broadcast loop."
+  (dolist (conn (copy-list *clients*))
+    (handler-case (send-frame (client-conn-stream conn) frame)
+      (error () (%drop-client conn)))))
+
 (defun %broadcast-frame (session)
-  "When *dirty* and at least one client is attached, render ONE frame and send it
-   to every client, then clear *dirty*.  A client whose send raises is dropped so
-   one dead peer cannot wedge the loop."
+  "When *dirty* and at least one client is attached, render ONE frame via
+   %render-frame (pure) and broadcast it via %send-broadcast-frame (effect
+   boundary), then clear *dirty*.  Factored into pure/effect layers so
+   each step is independently testable."
   (when (and *dirty* *clients*)
     (setf *dirty* nil)
-    (let ((frame (msg-frame (render-session-to-string
-                             session *term-rows* *term-cols*))))
-      (dolist (conn (copy-list *clients*))
-        (handler-case (send-frame (client-conn-stream conn) frame)
-          (error () (%drop-client conn)))))))
+    (%send-broadcast-frame (%render-frame session))))
 
 ;;; ── Per-client message dispatch ─────────────────────────────────────────────
 
@@ -144,88 +155,112 @@
                     (find #\I arg :start 1)))
              args)))
 
-(defun %handle-multi-client-message (type payload session conn)
-  "Dispatch one message of TYPE/PAYLOAD from client CONN.  Returns a disposition:
+;;; define-multi-msg-dispatch builds %handle-multi-client-message from a
+;;; declarative rule table, delegating to define-message-dispatch-fn (server.lisp)
+;;; so both event loops share the same COND-expansion engine.  TYPE, PAYLOAD,
+;;; SESSION, and CONN are bound in every rule body.
+
+(defmacro define-multi-msg-dispatch (&rest rules)
+  "Build %handle-multi-client-message from a declarative message-type rule table.
+   Each RULE is (condition &rest body).  TYPE, PAYLOAD, SESSION, and CONN are
+   bound in every rule body.  Delegates to define-message-dispatch-fn (defined in
+   server.lisp) so the single-client and multi-client dispatch macros share the
+   same COND-expansion engine and cannot structurally diverge."
+  `(define-message-dispatch-fn
+       %handle-multi-client-message
+       (type payload session conn)
+       "Dispatch one message of TYPE/PAYLOAD from client CONN.  Returns a disposition:
      :quit           — a command ended the session (loop must stop);
      :drop           — CONN should be removed (EOF / detach / unknown type);
      :detach-others  — drop every OTHER client (the `attach -d` request);
      NIL             — keep serving.
    Resize/attach updates CONN's geometry and re-applies the effective size; keys
    run through the shared prefix/copy-mode pipeline with CONN's private state."
-  (cond
-    ((null type) :drop)
-    ((= type +msg-detach+) :drop)
-    ((or (= type +msg-attach+) (= type +msg-resize+))
-     (multiple-value-bind (rows cols) (decode-size payload)
-       (setf (client-conn-rows conn) rows
-             (client-conn-cols conn) cols))
-     ;; attach-session -r: the read-only bit rides in the attach frame's optional
-     ;; flags byte.  Record it on CONN so the +msg-key+ branch can bind
-     ;; *client-read-only* and suppress pane input/paste/mouse for this client.
-     (when (= type +msg-attach+)
-       (setf (client-conn-read-only-p conn)
-             (logtest (decode-attach-flags payload) +attach-flag-read-only+)))
-     ;; Mark CONN most-recent so window-size "latest" tracks the active client.
-     (setf *clients* (cons conn (remove conn *clients*)))
-     (%apply-effective-size session)
-     nil)
-    ((= type +msg-key+)
-     (let ((stdin-target (client-conn-stdin-target conn)))
-       (if stdin-target
-           (progn
-             (pane-feed stdin-target payload)
-             (setf *dirty* t)
-             nil)
-           ;; Bind *client-read-only* to this connection's flag so the existing
-           ;; leaf-level enforcement (pane pty-write, paste, mouse forwarding)
-           ;; honours attach-session -r per client.  Detach/copy-mode commands do
-           ;; not pass through those gated sites, so they still work (CMD_READONLY).
-           (let ((*client-read-only* (client-conn-read-only-p conn)))
-             (case (process-client-keys session payload (client-conn-state conn))
-               (:quit   :quit)
-               (:detach :drop)
-               (t       (setf *dirty* t) nil))))))
-    ((= type +msg-command+)
-     (multiple-value-bind (cmd target args) (decode-command-payload payload)
-       (cond
-         ;; The one built-in control command: drop all OTHER clients (attach -d).
-         ((eq cmd :detach-other-clients) :detach-others)
-         ;; Any other named command is run server-side — the CLI / control
-         ;; command-forwarding path (`cl-tmux <cmd>` against a running server).
-         ;; Reconstruct the token line: <name> [-t target] args..., and dispatch
-         ;; through the same %run-command-tokens the command-prompt uses.
-        (cmd
-          (let ((tokens (append (list (string-downcase (symbol-name cmd)))
-                                (when target (list "-t" target))
-                                args))
-                (input-command-p (%server-split-window-input-command-p cmd args))
-                ;; Capture the command's overlay text (display-message, list-*, ...)
-                ;; instead of showing it to interactive clients, so it can be
-                ;; returned to the CLI command client - the `cl-tmux display -p`
-                ;; (and `cl-tmux list-sessions`, ...) stdout path.
-                (cl-tmux/prompt:*overlay* nil))
-            (let ((*current-client-conn* conn))
-              (let ((result (handler-case
-                               (let ((*defer-split-window-input* input-command-p))
-                                 (%run-command-tokens session tokens))
-                             (error (condition)
-                               (format *error-output*
-                                       "~&cl-tmux: command failed: ~{~A~^ ~}: ~A~%"
-                                       tokens condition)
-                               (force-output *error-output*)
-                               nil))))
-                ;; Reply with the captured output to the requesting client (a no-op
-                ;; for the socket-less test conn, whose stream is NIL).
-                (when (client-conn-stream conn)
-                  (ignore-errors
-                    (send-frame (client-conn-stream conn)
-                                (msg-reply (or cl-tmux/prompt:*overlay* "")))))
-                (when (and input-command-p (cl-tmux/model::pane-p result))
-                  (setf (client-conn-stdin-target conn) result))
-                (setf *dirty* t)
-                (when (eq result :quit) :quit)))))
-         (t (setf *dirty* t) nil))))
-    (t :drop)))
+     ,@rules))
+
+(define-multi-msg-dispatch
+  ;; EOF: peer closed the connection.
+  ((null type) :drop)
+  ;; Client requested clean detach.
+  ((= type +msg-detach+) :drop)
+  ;; Initial attach or resize: update CONN's geometry and re-apply effective size.
+  ((or (= type +msg-attach+) (= type +msg-resize+))
+   (multiple-value-bind (rows cols) (decode-size payload)
+     (setf (client-conn-rows conn) rows
+           (client-conn-cols conn) cols))
+   ;; attach-session -r: the read-only bit rides in the attach frame's optional
+   ;; flags byte.  Record it on CONN so the +msg-key+ branch can bind
+   ;; *client-read-only* and suppress pane input/paste/mouse for this client.
+   (when (= type +msg-attach+)
+     (setf (client-conn-read-only-p conn)
+           (logtest (decode-attach-flags payload) +attach-flag-read-only+)))
+   ;; Mark CONN most-recent so window-size "latest" tracks the active client.
+   (setf *clients* (cons conn (remove conn *clients*)))
+   (%apply-effective-size session)
+   nil)
+  ;; Keystroke: feed to the pane's stdin-target (split-window -I) or run through
+  ;; the shared prefix/copy-mode pipeline with CONN's private state.
+  ((= type +msg-key+)
+   (let ((stdin-target (client-conn-stdin-target conn)))
+     (if stdin-target
+         (progn
+           (pane-feed stdin-target payload)
+           (setf *dirty* t)
+           nil)
+         ;; Bind *client-read-only* to this connection's flag so the existing
+         ;; leaf-level enforcement (pane pty-write, paste, mouse forwarding)
+         ;; honours attach-session -r per client.  Detach/copy-mode commands do
+         ;; not pass through those gated sites, so they still work (CMD_READONLY).
+         (let ((*client-read-only* (client-conn-read-only-p conn)))
+           (case (process-client-keys session payload (client-conn-state conn))
+             (:quit   :quit)
+             (:detach :drop)
+             (t       (setf *dirty* t) nil))))))
+  ;; Command forwarding: run-command from a CLI client or control-mode client.
+  ((= type +msg-command+)
+   (multiple-value-bind (cmd target args) (decode-command-payload payload)
+     (cond
+       ;; The one built-in control command: drop all OTHER clients (attach -d).
+       ((eq cmd :detach-other-clients) :detach-others)
+       ;; Any other named command is run server-side — the CLI / control
+       ;; command-forwarding path (`cl-tmux <cmd>` against a running server).
+       ;; Reconstruct the token line: <name> [-t target] args..., and dispatch
+       ;; through the same %run-command-tokens the command-prompt uses.
+       ;; Sequencing contract: decode-command-payload → build tokens → run command
+       ;; → send reply → record stdin-target → mark dirty → return :quit if needed.
+       (cmd
+        (let* ((tokens         (append (list (string-downcase (symbol-name cmd)))
+                                       (when target (list "-t" target))
+                                       args))
+               (input-command-p (%server-split-window-input-command-p cmd args))
+               ;; Capture the command's overlay text (display-message, list-*, ...)
+               ;; instead of showing it to interactive clients, so it can be
+               ;; returned to the CLI command client - the `cl-tmux display -p`
+               ;; (and `cl-tmux list-sessions`, ...) stdout path.
+               (cl-tmux/prompt:*overlay* nil))
+          (let* ((*current-client-conn* conn)
+                 (result (handler-case
+                             (let ((*defer-split-window-input* input-command-p))
+                               (%run-command-tokens session tokens))
+                           (error (condition)
+                             (format *error-output*
+                                     "~&cl-tmux: command failed: ~{~A~^ ~}: ~A~%"
+                                     tokens condition)
+                             (force-output *error-output*)
+                             nil))))
+            ;; Reply with the captured output to the requesting client (a no-op
+            ;; for the socket-less test conn, whose stream is NIL).
+            (when (client-conn-stream conn)
+              (ignore-errors
+                (send-frame (client-conn-stream conn)
+                            (msg-reply (or cl-tmux/prompt:*overlay* "")))))
+            (when (and input-command-p (cl-tmux/model::pane-p result))
+              (setf (client-conn-stdin-target conn) result))
+            (setf *dirty* t)
+            (when (eq result :quit) :quit))))
+       (t (setf *dirty* t) nil))))
+  ;; Unknown message type: treat as disconnect.
+  (t :drop))
 
 ;;; ── Event-loop iteration ────────────────────────────────────────────────────
 

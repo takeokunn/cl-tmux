@@ -215,6 +215,103 @@
         (send-frame out (%make-frame-with-declared-length 1 5))
         "declared=1 actual=5 must signal (header claims fewer bytes than present)"))))
 
+(test send-frame-rejects-oversized-declared-payload-length
+  "%validate-outgoing-frame's second validation clause: a frame whose declared
+   payload-length field exceeds +max-frame-payload-bytes+ must be rejected by
+   send-frame before any bytes reach the stream.  This guards against a
+   malicious or buggy peer that sets the 4-byte length field to a value larger
+   than 64 MiB -- even when the frame vector is self-consistent (total length
+   does match header + declared payload), the size guard fires first."
+  (with-temp-octet-file (path)
+    (with-open-file (out path :direction :output :if-exists :supersede
+                              :element-type '(unsigned-byte 8))
+      ;; Declared length is exactly one byte over the allowed ceiling.
+      (signals error
+        (send-frame out (%make-frame-with-declared-length
+                         (1+ cl-tmux/transport::+max-frame-payload-bytes+)
+                         0))
+        "declared length = max+1 must signal (exceeds +max-frame-payload-bytes+)")
+      ;; Declared length is the maximum u32 value -- an extreme case.
+      (signals error
+        (send-frame out (%make-frame-with-declared-length #xFFFFFFFF 0))
+        "declared length = 0xFFFFFFFF must signal (far exceeds +max-frame-payload-bytes+)"))))
+
+;;; ── %payload-length-acceptable-p direct coverage ─────────────────────────────
+;;;
+;;; This predicate is security-critical: it guards read-frame against a malicious
+;;; peer that injects a huge declared payload length in the 4-byte header field.
+;;; Testing it directly pins the exact security boundary independently of
+;;; send-frame/%validate-outgoing-frame.
+
+(test payload-length-acceptable-p-accepts-valid-lengths
+  "%payload-length-acceptable-p must return true for 0 and for the exact ceiling
+   +max-frame-payload-bytes+, and for a mid-range value."
+  (is-true  (cl-tmux/transport::%payload-length-acceptable-p 0)
+            "0-byte payload must be acceptable")
+  (is-true  (cl-tmux/transport::%payload-length-acceptable-p 1)
+            "1-byte payload must be acceptable")
+  (is-true  (cl-tmux/transport::%payload-length-acceptable-p
+             cl-tmux/transport::+max-frame-payload-bytes+)
+            "exactly +max-frame-payload-bytes+ must be acceptable (ceiling is inclusive)"))
+
+(test payload-length-acceptable-p-rejects-oversized-lengths
+  "%payload-length-acceptable-p must return NIL for values that exceed the ceiling,
+   for negative values, and for the maximum u32 value (0xFFFFFFFF).
+   These cases represent the security boundary: if any of them returned true,
+   read-frame would attempt to allocate the declared buffer before the peer
+   has sent any payload bytes."
+  (is-false (cl-tmux/transport::%payload-length-acceptable-p -1)
+            "negative payload length must be rejected")
+  (is-false (cl-tmux/transport::%payload-length-acceptable-p
+             (1+ cl-tmux/transport::+max-frame-payload-bytes+))
+            "+max-frame-payload-bytes+ + 1 must be rejected (one over the ceiling)")
+  (is-false (cl-tmux/transport::%payload-length-acceptable-p #xFFFFFFFF)
+            "#xFFFFFFFF must be rejected (far exceeds the ceiling)"))
+
+;;; ── read-frame rejects oversized declared payload-length in stream ──────────
+;;;
+;;; These tests cover the read path that the send-frame tests do NOT cover:
+;;; a malicious remote peer injects a 5-byte header whose length field exceeds
+;;; +max-frame-payload-bytes+.  read-frame must return NIL (not attempt to
+;;; allocate the oversized buffer declared by the header).
+
+(test read-frame-rejects-oversized-declared-payload-in-stream
+  "A stream whose 5-byte header declares a payload length exceeding
+   +max-frame-payload-bytes+ must cause read-frame to return NIL rather than
+   attempting to allocate the oversized buffer.  This covers the read-side
+   security guard that is distinct from the send-frame/%validate-outgoing-frame
+   write-side guard already tested by send-frame-rejects-oversized-declared-payload-length."
+  (with-temp-octet-file (path)
+    ;; Write a 5-byte header whose length field is max+1 (one byte over the ceiling).
+    ;; No payload bytes follow -- a real attacker would stop here.
+    (with-open-file (out path :direction :output :if-exists :supersede
+                              :element-type '(unsigned-byte 8))
+      (let* ((oversized-length (1+ cl-tmux/transport::+max-frame-payload-bytes+))
+             (header (make-array +header-size+ :element-type '(unsigned-byte 8)
+                                               :initial-element 0)))
+        (setf (aref header 0) +msg-frame+)
+        (replace header (cl-tmux/protocol:u32-octets oversized-length) :start1 1)
+        (write-sequence header out)))
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      (is (null (read-frame in))
+          "read-frame must return NIL when the declared payload length exceeds +max-frame-payload-bytes+"))))
+
+(test read-frame-rejects-max-u32-declared-payload-in-stream
+  "A stream whose header declares the maximum u32 payload length (0xFFFFFFFF)
+   must cause read-frame to return NIL immediately without attempting any allocation.
+   This is the extreme boundary of the security guard."
+  (with-temp-octet-file (path)
+    (with-open-file (out path :direction :output :if-exists :supersede
+                              :element-type '(unsigned-byte 8))
+      (let ((header (make-array +header-size+ :element-type '(unsigned-byte 8)
+                                              :initial-element 0)))
+        (setf (aref header 0) +msg-frame+)
+        (replace header (cl-tmux/protocol:u32-octets #xFFFFFFFF) :start1 1)
+        (write-sequence header out)))
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      (is (null (read-frame in))
+          "read-frame must return NIL when the declared length is #xFFFFFFFF"))))
+
 ;;; ── msg-command frame transport round-trip ───────────────────────────────────
 
 (test transport-msg-command-frame-roundtrips

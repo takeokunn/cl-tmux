@@ -292,6 +292,22 @@
   "Return the value bound to KEY in ALIST."
   (cdr (assoc key alist :test test)))
 
+;;; ── Key-table binding assertions ───────────────────────────────────────────
+
+(defmacro check-copy-mode-bindings (table-name &rest rows)
+  "Assert that each (KEY EXPECTED MESSAGE) binding in ROWS is present in
+   TABLE-NAME with the expected command.  TABLE-NAME is a string (e.g.
+   \"copy-mode\" or \"copy-mode-vi\").  Each ROW may be a literal or a form
+   that evaluates to a list — all are passed straight to DOLIST as the list.
+
+   Generates compact per-key assertions without duplicating the
+   (key-table-lookup → key-table-command → is eq) scaffolding."
+  `(dolist (row (list ,@(mapcar (lambda (row) `(list ,@row)) rows)))
+     (destructuring-bind (key expected message) row
+       (let ((entry (cl-tmux/config:key-table-lookup ,table-name key)))
+         (is (eq expected (cl-tmux/config:key-table-command entry))
+             "~A ~A: ~A" ,table-name key message)))))
+
 ;;; ── Overlay assertions ─────────────────────────────────────────────────────
 
 (defun overlay-text (overlay)

@@ -441,3 +441,67 @@
     (is (= 4 (bg-at s 0 0))   "bg carries over")
     (is (= cl-tmux/terminal/types:+default-color+ (fg-at s 0 0))   "fg resets to the default sentinel")
     (is (= 0 (attrs-at s 0 0)) "attrs reset to 0 (no bold on erased cell)")))
+
+;;; ── SUITE: named cross-file constants ────────────────────────────────────────
+;;;
+;;; Verify the values of constants that are referenced across multiple files.
+;;; Any change to these values is a breaking change to color or geometry
+;;; handling — tests here document the canonical values.
+
+(def-suite cross-file-constants
+  :description "Cross-file magic constants: true-color flag, default-color, screen geometry, OSC defaults"
+  :in terminal-suite)
+(in-suite cross-file-constants)
+
+(test true-color-flag-is-bit-24
+  "+true-color-flag+ must equal #x1000000 (bit 24 of a colour slot)."
+  (is (= #x1000000 cl-tmux/terminal/types:+true-color-flag+)
+      "+true-color-flag+ must be #x1000000 (bit 24)"))
+
+(test true-color-flag-does-not-overlap-palette-range
+  "+true-color-flag+ must be strictly above palette indices 0..255."
+  (is (> cl-tmux/terminal/types:+true-color-flag+ 255)
+      "+true-color-flag+ must be above palette index 255")
+  (is (> cl-tmux/terminal/types:+true-color-flag+ cl-tmux/terminal/types:+default-color+)
+      "+true-color-flag+ must be above +default-color+ sentinel"))
+
+(test default-color-sentinel-is-256
+  "+default-color+ must equal 256 (just above the 0-255 palette range)."
+  (is (= 256 cl-tmux/terminal/types:+default-color+)
+      "+default-color+ must be 256"))
+
+(test title-stack-max-depth-is-8
+  "+title-stack-max-depth+ must equal 8 (matches xterm)."
+  (is (= 8 cl-tmux/terminal/types:+title-stack-max-depth+)
+      "+title-stack-max-depth+ must be 8"))
+
+(test osc-default-fg-is-white
+  "+osc-default-fg+ must equal #xFFFFFF (white on-screen default)."
+  (is (= #xFFFFFF cl-tmux/terminal/types:+osc-default-fg+)
+      "+osc-default-fg+ must be #xFFFFFF"))
+
+(test osc-default-bg-is-black
+  "+osc-default-bg+ must equal #x000000 (black on-screen default)."
+  (is (= #x000000 cl-tmux/terminal/types:+osc-default-bg+)
+      "+osc-default-bg+ must be #x000000"))
+
+(test default-screen-width-is-80
+  "+default-screen-width+ must equal 80 (VT100 standard column count)."
+  (is (= 80 cl-tmux/terminal/types:+default-screen-width+)
+      "+default-screen-width+ must be 80"))
+
+(test default-screen-height-is-24
+  "+default-screen-height+ must equal 24 (VT100 standard row count)."
+  (is (= 24 cl-tmux/terminal/types:+default-screen-height+)
+      "+default-screen-height+ must be 24"))
+
+(test constants-table
+  "Table-driven check: all exported named constants have the expected numeric values."
+  (check-table (list (list cl-tmux/terminal/types:+true-color-flag+       #x1000000 "+true-color-flag+ = #x1000000")
+                     (list cl-tmux/terminal/types:+default-color+         256        "+default-color+ = 256")
+                     (list cl-tmux/terminal/types:+title-stack-max-depth+ 8          "+title-stack-max-depth+ = 8")
+                     (list cl-tmux/terminal/types:+osc-default-fg+        #xFFFFFF   "+osc-default-fg+ = #xFFFFFF")
+                     (list cl-tmux/terminal/types:+osc-default-bg+        #x000000   "+osc-default-bg+ = #x000000")
+                     (list cl-tmux/terminal/types:+default-screen-width+  80         "+default-screen-width+ = 80")
+                     (list cl-tmux/terminal/types:+default-screen-height+ 24         "+default-screen-height+ = 24"))
+               :test #'equal))

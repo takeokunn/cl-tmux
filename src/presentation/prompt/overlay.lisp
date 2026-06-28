@@ -52,18 +52,21 @@
   (%set-overlay text)
   (setf *display-panes-active* nil))
 
-(defun show-transient-overlay (text)
+(defun show-transient-overlay (text &key (timestamp (get-universal-time)))
   "Display TEXT as a transient overlay that auto-dismisses after display-time ms.
-   Used for display-message and similar short notifications."
+   Used for display-message and similar short notifications.
+   TIMESTAMP defaults to (get-universal-time); supply an explicit value in tests
+   so assertions can verify the recorded value deterministically."
   (%set-overlay text)
-  (setf *overlay-shown-at* (get-universal-time)
+  (setf *overlay-shown-at* timestamp
         *display-panes-active* nil))
 
-(defun show-display-panes-overlay (text)
+(defun show-display-panes-overlay (text &key (timestamp (get-universal-time)))
   "Like SHOW-TRANSIENT-OVERLAY but activates *DISPLAY-PANES-ACTIVE* so the
-   renderer draws per-pane index numbers over the session frame."
+   renderer draws per-pane index numbers over the session frame.
+   TIMESTAMP defaults to (get-universal-time); supply an explicit value in tests."
   (%set-overlay text)
-  (setf *overlay-shown-at* (get-universal-time)
+  (setf *overlay-shown-at* timestamp
         *display-panes-active* t))
 
 (defun clear-overlay ()

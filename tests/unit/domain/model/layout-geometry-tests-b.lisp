@@ -45,50 +45,40 @@
 
 (test closest-to-center-picks-nearest
   "%closest-to-center picks the candidate whose center-fn value is closest to pane."
-  (let* ((pane (make-pane :id 0 :fd -1 :pid -1 :x 0 :y 10 :width 10 :height 4
-                           :screen (make-screen 10 4)))
-         ;; center-y of pane = 10 + 4>>1 = 12
-         ;; candidate a: center-y = 0 + 4>>1 = 2 → distance 10
-         ;; candidate b: center-y = 8 + 4>>1 = 10 → distance 2 (closest)
-         (a    (make-pane :id 1 :fd -1 :pid -1 :x 0 :y  0 :width 10 :height 4
-                           :screen (make-screen 10 4)))
-         (b    (make-pane :id 2 :fd -1 :pid -1 :x 0 :y  8 :width 10 :height 4
-                           :screen (make-screen 10 4))))
+  ;; center-y of pane = 10 + 4>>1 = 12
+  ;; candidate a: center-y = 0 + 4>>1 = 2 → distance 10
+  ;; candidate b: center-y = 8 + 4>>1 = 10 → distance 2 (closest)
+  (with-center-test-panes ((pane 0 0 10 10 4)
+                            (a    1 0  0 10 4)
+                            (b    2 0  8 10 4))
     (is (eq b (cl-tmux/model::%closest-to-center (list a b) pane
                                                   #'cl-tmux/model::%pane-center-y))
         "b is closer by center-y and must be returned")))
 
 (test closest-to-center-tie-favors-first-candidate
   "%closest-to-center favors the earlier candidate on an exact tie."
-  (let* ((pane (make-pane :id 0 :fd -1 :pid -1 :x 0 :y 10 :width 10 :height 4
-                           :screen (make-screen 10 4)))
-         ;; center-y of pane = 12
-         ;; candidate a: center-y = 8 + 4>>1 = 10 → distance 2
-         ;; candidate b: center-y = 12 + 4>>1 = 14 → distance 2  (tied)
-         (a    (make-pane :id 1 :fd -1 :pid -1 :x 0 :y  8 :width 10 :height 4
-                           :screen (make-screen 10 4)))
-         (b    (make-pane :id 2 :fd -1 :pid -1 :x 0 :y 12 :width 10 :height 4
-                           :screen (make-screen 10 4))))
-    ;; On a tie, reduce returns whichever of a and b was seen first, because
-    ;; the predicate uses <=, so when distances are equal it keeps the first.
+  ;; center-y of pane = 12
+  ;; candidate a: center-y = 8 + 4>>1 = 10 → distance 2
+  ;; candidate b: center-y = 12 + 4>>1 = 14 → distance 2  (tied)
+  ;; On a tie, reduce returns whichever of a and b was seen first, because
+  ;; the predicate uses <=, so when distances are equal it keeps the first.
+  (with-center-test-panes ((pane 0 0 10 10 4)
+                            (a    1 0  8 10 4)
+                            (b    2 0 12 10 4))
     (is (eq a (cl-tmux/model::%closest-to-center (list a b) pane
                                                   #'cl-tmux/model::%pane-center-y))
         "on a tie, the first candidate (a) must be returned")))
 
 (test closest-to-center-three-candidates-non-trivial
   "%closest-to-center correctly picks the middle candidate among three."
-  (let* ((pane (make-pane :id 0 :fd -1 :pid -1 :x 20 :y 0 :width 4 :height 10
-                           :screen (make-screen 4 10)))
-         ;; center-x of pane = 20 + 4>>1 = 22
-         ;; candidate far-left:  center-x = 0  + 4>>1 = 2  → distance 20
-         ;; candidate near-left: center-x = 16 + 4>>1 = 18 → distance 4  (closest)
-         ;; candidate far-right: center-x = 40 + 4>>1 = 42 → distance 20
-         (far-left  (make-pane :id 1 :fd -1 :pid -1 :x  0 :y 0 :width 4 :height 10
-                                :screen (make-screen 4 10)))
-         (near-left (make-pane :id 2 :fd -1 :pid -1 :x 16 :y 0 :width 4 :height 10
-                                :screen (make-screen 4 10)))
-         (far-right (make-pane :id 3 :fd -1 :pid -1 :x 40 :y 0 :width 4 :height 10
-                                :screen (make-screen 4 10))))
+  ;; center-x of pane = 20 + 4>>1 = 22
+  ;; candidate far-left:  center-x = 0  + 4>>1 = 2  → distance 20
+  ;; candidate near-left: center-x = 16 + 4>>1 = 18 → distance 4  (closest)
+  ;; candidate far-right: center-x = 40 + 4>>1 = 42 → distance 20
+  (with-center-test-panes ((pane       0 20 0 4 10)
+                            (far-left  1  0 0 4 10)
+                            (near-left 2 16 0 4 10)
+                            (far-right 3 40 0 4 10))
     (is (eq near-left
             (cl-tmux/model::%closest-to-center (list far-left near-left far-right)
                                                 pane #'cl-tmux/model::%pane-center-x))

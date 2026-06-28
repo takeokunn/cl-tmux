@@ -112,24 +112,27 @@
 ;;; ── Public entry point ─────────────────────────────────────────────────────
 ;;;
 ;;; apply-sgr handles compound multi-parameter codes by consuming params ahead
-;;; of the single-code dispatcher.  The helper loop is a CPS-like left-fold
-;;; over the parameter list:
-;;;   apply_sgr([], Screen)         :- true.
-;;;   apply_sgr([38,5,N|T], S)      :- set_fg_256(S, N),        apply_sgr(T, S).
-;;;   apply_sgr([38,2,R,G,B|T], S)  :- set_fg_truecolor(S,R,G,B), apply_sgr(T, S).
-;;;   apply_sgr([48,5,N|T], S)      :- set_bg_256(S, N),        apply_sgr(T, S).
-;;;   apply_sgr([48,2,R,G,B|T], S)  :- set_bg_truecolor(S,R,G,B), apply_sgr(T, S).
-;;;   apply_sgr([P|T], S)           :- dispatch_sgr(S, P),      apply_sgr(T, S).
+;;; of the single-code dispatcher.  The helper loop is a left-fold over the
+;;; parameter list:
+;;;   apply_sgr([], Screen)              :- true.
+;;;   apply_sgr([38,5,N|T], S)           :- set_fg_256(S, N),           apply_sgr(T, S).
+;;;   apply_sgr([38,2,R,G,B|T], S)       :- set_fg_truecolor(S,R,G,B),  apply_sgr(T, S).
+;;;   apply_sgr([48,5,N|T], S)           :- set_bg_256(S, N),           apply_sgr(T, S).
+;;;   apply_sgr([48,2,R,G,B|T], S)       :- set_bg_truecolor(S,R,G,B),  apply_sgr(T, S).
+;;;   apply_sgr([58,5,N|T], S)           :- set_ul_256(S, N),           apply_sgr(T, S).
+;;;   apply_sgr([58,2,R,G,B|T], S)       :- set_ul_truecolor(S,R,G,B),  apply_sgr(T, S).
+;;;   apply_sgr([P|T], S)                :- dispatch_sgr(S, P),         apply_sgr(T, S).
 
-;;; %set-truecolor encodes a 38;2;R;G;B or 48;2;R;G;B run into #x1RRGGBB and
-;;; stores it via the supplied SETTER helper.  This keeps the clamp/logior
-;;; arithmetic shared between the fg and bg arms.
+;;; %set-truecolor encodes a 38;2;R;G;B, 48;2;R;G;B, or 58;2;R;G;B run into
+;;; +true-color-flag+ | (R<<16) | (G<<8) | B and stores it via the supplied
+;;; SETTER helper.  This keeps the clamp/logior arithmetic shared across all
+;;; three colour slots.
 
 (declaim (inline %set-truecolor))
 (defun %set-truecolor (screen setter parameter-list)
   "Encode the R;G;B triple at positions 3-5 of PARAMETER-LIST as #x1RRGGBB and
    call SETTER with (SCREEN value) to store the result.  SETTER should be one of
-   #'(setf screen-cur-fg) or #'(setf screen-cur-bg).
+   #'(setf screen-cur-fg), #'(setf screen-cur-bg), or #'(setf screen-cur-ul-color).
    Returns the tail of PARAMETER-LIST after the five consumed parameters."
   (let* ((r (clamp (or (third  parameter-list) 0) 0 255))
          (g (clamp (or (fourth parameter-list) 0) 0 255))
@@ -150,8 +153,8 @@
   (funcall setter (clamp (third parameter-tail) 0 255) screen)
   (cdddr parameter-tail))
 
-(defun %sgr-color-setter (lead)
-  "Return the color setter for colon-grouped SGR LEAD values."
+(defun %sgr-lead-setter (lead)
+  "Return the color setter function for SGR extended-colour LEAD values (38/48/58)."
   (case lead
     (38 #'(setf screen-cur-fg))
     (48 #'(setf screen-cur-bg))
@@ -160,103 +163,112 @@
 (defun %apply-sgr-group (screen group)
   "Apply ONE colon-delimited SGR sub-parameter GROUP (a list whose head is the
    leading SGR code), as produced by the parser for ISO 8613-6 colon syntax:
-     (38|48|58 2 [cs] R G B) → true-colour.  R G B are the LAST three values, so
-        an optional colourspace-id field — present (38:2:cs:R:G:B) or empty,
-        which arrives as 0 (38:2::R:G:B) — is skipped.
-     (38|48|58 5 [cs] N)     → 256-colour; N is the LAST value.
+     (38|48|58 2 [cs] R G B) -> true-colour.  R G B are the LAST three values, so
+        an optional colourspace-id field -- present (38:2:cs:R:G:B) or empty,
+        which arrives as 0 (38:2::R:G:B) -- is skipped.
+     (38|48|58 5 [cs] N)     -> 256-colour; N is the LAST value.
   Any other group applies its leading value as a plain SGR code, so e.g.
-   4:3 (undercurl) → underline (4)."
-  (let ((lead (first group))
-        (kind (second group)))
+   4:3 (undercurl) -> underline (4)."
+  (let ((lead   (first group))
+        (kind   (second group))
+        (setter (%sgr-lead-setter (first group))))
     (cond
-      ((and (member lead '(38 48 58)) (eql kind 2) (>= (length group) 5))
+      ((and setter (eql kind 2) (>= (length group) 5))
        (let ((rgb (last group 3)))
-         (funcall (%sgr-color-setter lead)
+         (funcall setter
                   (logior #x1000000
                           (ash (clamp (or (first  rgb) 0) 0 255) 16)
                           (ash (clamp (or (second rgb) 0) 0 255) 8)
                           (clamp (or (third rgb) 0) 0 255))
                   screen)))
-      ((and (member lead '(38 48 58)) (eql kind 5) (>= (length group) 3))
-       (funcall (%sgr-color-setter lead) (clamp (or (car (last group)) 0) 0 255) screen))
+      ((and setter (eql kind 5) (>= (length group) 3))
+       (funcall setter (clamp (or (car (last group)) 0) 0 255) screen))
       (t (%dispatch-sgr-code screen lead)))))
 
-(defun %apply-sgr-parameters (screen parameter-tail)
-  "Consume PARAMETER-TAIL and apply each SGR arm to SCREEN."
-  (when parameter-tail
-    (let ((p (first parameter-tail)))
-      (cond
-        ;; A colon-grouped parameter (list): a self-contained colour or
-        ;; styled code.  MUST be checked first — the integer branches
-        ;; below would error on a list.
-        ((consp p)
-         (%apply-sgr-group screen p)
-         (%apply-sgr-parameters screen (rest parameter-tail)))
-        ;; Semicolon-protocol colour arms: 38/48/58 × kind 5 (256-colour) or
-        ;; kind 2 (true-colour).  All six (p × kind) combinations share one
-        ;; dispatch path via *color-proto-dispatch*.
-        ((member p '(38 48 58))
-         (let* ((kind  (second parameter-tail))
-                (entry (assoc (cons p kind) *color-proto-dispatch* :test #'equal)))
-           (if (and entry (eql kind 5) (third parameter-tail))
-               (%apply-sgr-parameters screen
-                                      (%consume-256-color-param screen (cdr entry) parameter-tail))
-               (if (and entry (eql kind 2) (cddr parameter-tail))
-                   (%apply-sgr-parameters screen
-                                          (%set-truecolor screen (cdr entry) parameter-tail))
-                   (progn
-                     (%dispatch-sgr-code screen p)
-                     (%apply-sgr-parameters screen (rest parameter-tail)))))))
-        (t
-         (%dispatch-sgr-code screen p)
-         (%apply-sgr-parameters screen (rest parameter-tail)))))))
+(defun %apply-sgr-color-arm (screen tail)
+  "Apply a semicolon-protocol colour arm starting with the lead code at (first TAIL).
+   The lead code must be 38, 48, or 58.  Returns the new tail after consumption.
+   Handles kind-5 (256-colour) and kind-2 (true-colour) sub-protocols; falls back
+   to dispatching the lead as a plain SGR code when the arm is malformed."
+  (let* ((lead   (first tail))
+         (kind   (second tail))
+         (setter (%sgr-lead-setter lead)))
+    (cond
+      ((and setter (eql kind 5) (third tail))
+       (%consume-256-color-param screen setter tail))
+      ((and setter (eql kind 2) (cddr tail))
+       (%set-truecolor screen setter tail))
+      (t
+       (%dispatch-sgr-code screen lead)
+       (rest tail)))))
+
+(defun %apply-sgr-parameters (screen parameters)
+  "Consume PARAMETERS iteratively and apply each SGR arm to SCREEN.
+   Uses a non-recursive loop to avoid stack overflow on pathologically long
+   SGR sequences (e.g. sequences with thousands of parameters)."
+  (let ((tail parameters))
+    (loop while tail do
+      (let ((p (first tail)))
+        (cond
+          ;; A colon-grouped parameter (list): a self-contained colour or
+          ;; styled code.  MUST be checked first -- the integer branches
+          ;; below would error on a list.
+          ((consp p)
+           (%apply-sgr-group screen p)
+           (setf tail (rest tail)))
+          ;; Semicolon-protocol colour arms: 38/48/58 with kind 5 (256-colour)
+          ;; or kind 2 (true-colour).  Delegate to %apply-sgr-color-arm which
+          ;; flattens the three-level nesting and returns the new tail.
+          ((member p '(38 48 58))
+           (setf tail (%apply-sgr-color-arm screen tail)))
+          (t
+           (%dispatch-sgr-code screen p)
+           (setf tail (rest tail))))))
+    (values)))
 
 (defun apply-sgr (screen params)
   "Apply a sequence of SGR codes to SCREEN.
    PARAMS is a list of fixnum SGR parameter values; an empty or nil list is
    treated as (0) (i.e. a plain SGR reset).
    Multi-parameter codes handled as a unit:
-     38;5;N / 48;5;N   — 256-color fg/bg (N clamped to 0-255)
-     38;2;R;G;B / 48;2;R;G;B — true-color fg/bg (stored as #x1RRGGBB;
-                                bit 24 is the true-color flag)"
+     38;5;N / 48;5;N / 58;5;N     -- 256-color fg/bg/underline (N clamped to 0-255)
+     38;2;R;G;B / 48;2;R;G;B / 58;2;R;G;B -- true-color fg/bg/underline
+                                   (stored as #x1RRGGBB; bit 24 is the true-color flag)"
   (%apply-sgr-parameters screen (or params '(0))))
 
-;;; ── Inverse: pen → SGR parameter string (DECRQSS status report) ──────────────
+;;; ── Inverse: pen -> SGR parameter string (DECRQSS status report) ----------
 
-(defun %emit-sgr-color (out color bg-p)
-  "Write the ';'-prefixed SGR colour fragment for cell COLOR to OUT; BG-P selects
-   the background variant.  0-7 → 30-37/40-47; 8-15 → 90-97/100-107; 16-255 →
-   38;5;N / 48;5;N; bit-24 set → 38;2;R;G;B / 48;2;R;G;B."
+(defun %emit-sgr-color (out color background-p)
+  "Write the ';'-prefixed SGR colour fragment for cell COLOR to OUT;
+   BACKGROUND-P selects the background variant (foreground when NIL).
+   0-7 -> 30-37/40-47; 8-15 -> 90-97/100-107; 16-255 ->
+   38;5;N / 48;5;N; +true-color-flag+ set -> 38;2;R;G;B / 48;2;R;G;B."
   (cond
-    ((= color +default-color+) (format out ";~D" (if bg-p 49 39)))
+    ((= color +default-color+) (format out ";~D" (if background-p 49 39)))
     ((logtest color #x1000000)
-     (format out ";~D;2;~D;~D;~D" (if bg-p 48 38)
+     (format out ";~D;2;~D;~D;~D" (if background-p 48 38)
              (ldb (byte 8 16) color) (ldb (byte 8 8) color) (ldb (byte 8 0) color)))
-    ((<= 0 color 7)    (format out ";~D" (+ (if bg-p 40 30) color)))
-    ((<= 8 color 15)   (format out ";~D" (+ (if bg-p 100 90) (- color 8))))
-    ((<= 16 color 255) (format out ";~D;5;~D" (if bg-p 48 38) color))))
-
-(defun %emit-sgr-param (out n)
-  "Append one ';N' SGR parameter fragment to OUT."
-  (format out ";~D" n))
+    ((<= 0 color 7)    (format out ";~D" (+ (if background-p 40 30) color)))
+    ((<= 8 color 15)   (format out ";~D" (+ (if background-p 100 90) (- color 8))))
+    ((<= 16 color 255) (format out ";~D;5;~D" (if background-p 48 38) color))))
 
 (defun %pen-to-sgr-params (fg bg attrs attrs2)
   "Reconstruct, from a reset, the SGR parameter string reproducing a pen with
    foreground FG, background BG (cell colour encoding) and attribute bitfields
-   ATTRS / ATTRS2.  E.g. bold red on default → \"0;1;31\".  The default fg/bg
+   ATTRS / ATTRS2.  E.g. bold red on default -> \"0;1;31\".  The default fg/bg
    (+default-color+) are omitted (already produced by the leading reset).  This is
    the inverse of apply-sgr's pen mutation, used to answer DECRQSS 'm' queries."
   (with-output-to-string (out)
     (write-char #\0 out)                       ; always start from a reset
-    (when (logtest attrs  +attr-bold+)              (%emit-sgr-param out 1))
-    (when (logtest attrs  +attr-dim+)               (%emit-sgr-param out 2))
-    (when (logtest attrs  +attr-italic+)            (%emit-sgr-param out 3))
-    (when (logtest attrs  +attr-underline+)         (%emit-sgr-param out 4))
-    (when (logtest attrs  +attr-blink+)             (%emit-sgr-param out 5))
-    (when (logtest attrs  +attr-reverse+)           (%emit-sgr-param out 7))
-    (when (logtest attrs  +attr-conceal+)           (%emit-sgr-param out 8))
-    (when (logtest attrs  +attr-strikethrough+)     (%emit-sgr-param out 9))
-    (when (logtest attrs2 +attr2-double-underline+) (%emit-sgr-param out 21))
-    (when (logtest attrs2 +attr2-overline+)         (%emit-sgr-param out 53))
+    (when (logtest attrs  +attr-bold+)              (format out ";~D" 1))
+    (when (logtest attrs  +attr-dim+)               (format out ";~D" 2))
+    (when (logtest attrs  +attr-italic+)            (format out ";~D" 3))
+    (when (logtest attrs  +attr-underline+)         (format out ";~D" 4))
+    (when (logtest attrs  +attr-blink+)             (format out ";~D" 5))
+    (when (logtest attrs  +attr-reverse+)           (format out ";~D" 7))
+    (when (logtest attrs  +attr-conceal+)           (format out ";~D" 8))
+    (when (logtest attrs  +attr-strikethrough+)     (format out ";~D" 9))
+    (when (logtest attrs2 +attr2-double-underline+) (format out ";~D" 21))
+    (when (logtest attrs2 +attr2-overline+)         (format out ";~D" 53))
     (unless (= fg +default-color+) (%emit-sgr-color out fg nil))
     (unless (= bg +default-color+) (%emit-sgr-color out bg t))))

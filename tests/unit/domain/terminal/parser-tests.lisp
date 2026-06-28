@@ -89,37 +89,6 @@
     (is (cl-tmux/terminal/types:screen-bell-pending s)
         "bell-pending must be T after BEL byte")))
 
-(test osc-0-sets-screen-title
-  "OSC 0 ; title BEL sets screen-title to the title string."
-  (with-screen (s 20 5)
-    (screen-process-bytes s
-      (babel:string-to-octets
-        (format nil "~C]0;my-window~C" #\Escape (code-char 7))
-        :encoding :utf-8))
-    (is (string= "my-window" (cl-tmux/terminal/types:screen-title s))
-        "screen-title must be set to 'my-window' after OSC 0")))
-
-(test osc-2-sets-screen-title
-  "OSC 2 ; title BEL also sets screen-title (same as OSC 0)."
-  (with-screen (s 20 5)
-    (screen-process-bytes s
-      (babel:string-to-octets
-        (format nil "~C]2;xterm-title~C" #\Escape (code-char 7))
-        :encoding :utf-8))
-    (is (string= "xterm-title" (cl-tmux/terminal/types:screen-title s))
-        "screen-title must be set to 'xterm-title' after OSC 2")))
-
-(test osc-1-sets-screen-title
-  "OSC 1 ; name BEL (icon name) also sets screen-title — cl-tmux keeps a single
-   title, so OSC 0/1/2 all set it."
-  (with-screen (s 20 5)
-    (screen-process-bytes s
-      (babel:string-to-octets
-        (format nil "~C]1;icon-name~C" #\Escape (code-char 7))
-        :encoding :utf-8))
-    (is (string= "icon-name" (cl-tmux/terminal/types:screen-title s))
-        "screen-title must be set to 'icon-name' after OSC 1")))
-
 ;;; ── OSC 10/11 dynamic colours ────────────────────────────────────────────────
 
 (defun %feed-osc (s payload)
@@ -127,6 +96,17 @@
   (screen-process-bytes s
     (babel:string-to-octets (format nil "~C]~A~C\\" #\Escape payload #\Escape)
                             :encoding :utf-8)))
+
+(test osc-0-1-2-set-screen-title
+  "OSC 0, 1, and 2 all set screen-title (cl-tmux keeps a single title slot).
+   Uses a table-driven loop to avoid repeating the identical 5-line pattern."
+  (dolist (row '((0 "my-window"  "OSC 0 sets the window title")
+                 (1 "icon-name"  "OSC 1 (icon name) also sets screen-title")
+                 (2 "xterm-title" "OSC 2 also sets the window title")))
+    (destructuring-bind (cmd title desc) row
+      (with-screen (s 20 5)
+        (%feed-osc s (format nil "~D;~A" cmd title))
+        (is (string= title (cl-tmux/terminal/types:screen-title s)) "~A" desc)))))
 
 (test parse-osc-color-forms
   "%parse-osc-color parses #RRGGBB, #RGB and rgb:R/G/B; rejects junk."
@@ -148,6 +128,18 @@
   (is (string= (format nil "~C]4;196;rgb:ffff/0000/0000~C\\" #\Escape #\Escape)
                (cl-tmux/terminal/parser::%osc4-reply 196 #xFF0000))
       "OSC 4 reply must include the palette index"))
+
+(test osc-rgb-reply-channel-doubling-arithmetic
+  "%osc-rgb-reply uses the 0x101 (= 257) scale factor to expand each 8-bit
+   channel to a 16-bit xterm hex string: 0x00->\"0000\", 0xFF->\"ffff\",
+   0x80->\"8080\".  This covers the (* byte #x101) idiom in %osc-hex-channel."
+  (dolist (row '((#x000000 "0000" "0000" "0000" "black  #x00->\"0000\"")
+                 (#xFFFFFF "ffff" "ffff" "ffff" "white  #xFF->\"ffff\"")
+                 (#x800000 "8080" "0000" "0000" "maroon #x80->\"8080\"")
+                 (#x010203 "0101" "0202" "0303" "mixed  #x01->\"0101\" #x02->\"0202\" #x03->\"0303\"")))
+    (destructuring-bind (rgb er eg eb desc) row
+      (let ((reply (cl-tmux/terminal/parser::%osc-rgb-reply "]11;rgb:" rgb)))
+        (is (search (format nil "~A/~A/~A" er eg eb) reply) "~A" desc)))))
 
 ;;; ── OSC 4 / OSC 104 custom palette overrides (audit #23) ─────────────────────
 

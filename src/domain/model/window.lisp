@@ -65,9 +65,7 @@
 
 (defun %orient-pane-extent (pane orient)
   "Current extent of PANE along ORIENT's split axis."
-  (ecase orient
-    (:v (pane-height pane))
-    (:h (pane-width  pane))))
+  (orient-case orient :v (pane-height pane) :h (pane-width pane)))
 
 (defconstant +pane-separator-width+ 1
   "Width in cells of the separator drawn between panes in a split layout.")
@@ -137,9 +135,7 @@
 (defun %window-axis-extent (window direction)
   "Return the WINDOW dimension along DIRECTION's split axis.
    :h → window-width (columns); :v → window-height (rows)."
-  (ecase direction
-    (:h (window-width  window))
-    (:v (window-height window))))
+  (orient-case direction :h (window-width window) :v (window-height window)))
 
 ;;; ── Size-hint conversion ────────────────────────────────────────────────────
 ;;;
@@ -248,23 +244,27 @@
       cl-tmux/config:*status-height*
       0))
 
-(defun %assign-window-tree (window w h)
-  "Assign WINDOW's split tree into a W×H area, offset DOWN by the top status
-   reservation (%status-top-offset).  The single layout-assign chokepoint so a
-   top status bar shifts every pane below it — used by window-relayout, the named
-   layouts, and the resize handlers alike."
+(defun %assign-window-tree (window w h &optional (top-offset 0))
+  "Assign WINDOW's split tree into a W x H area, offset DOWN by TOP-OFFSET rows.
+   TOP-OFFSET defaults to 0; callers pass the result of %status-top-offset when
+   they want the top status-bar shift (e.g. window-relayout), or leave it at 0
+   for pure geometry operations (named layouts, resize handlers) that already
+   handle the offset themselves.  Separating offset-reading from layout-assign
+   keeps this function pure — option reads happen at the orchestration call site."
   (when (window-tree window)
-    (layout-assign (window-tree window) 0 (%status-top-offset) w h)))
+    (layout-assign (window-tree window) 0 top-offset w h)))
 
 (defun window-relayout (window rows cols)
   "Re-fit WINDOW's panes into ROWS x COLS using the binary split tree.
+   Reads the live status-position option here (orchestration boundary) and passes
+   the computed offset to %assign-window-tree so that function stays pure.
    After assigning geometry via the tree, each pane's screen and PTY are
    notified via pane-reposition — completing the data/logic separation:
    layout-assign owns geometry, pane-reposition owns the I/O side effects."
   (setf (window-width  window) cols
         (window-height window) rows)
   (when (window-tree window)
-    (%assign-window-tree window cols rows)
+    (%assign-window-tree window cols rows (%status-top-offset))
     (window-refresh-panes window)
     (dolist (pane (window-panes window))
       (pane-reposition pane

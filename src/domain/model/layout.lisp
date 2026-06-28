@@ -134,6 +134,24 @@
             (if p2 (values p2 s2)
                 (layout-find-parent (layout-split-second node) child)))))))
 
+;;; ── orient-case: concise :h/:v dispatch ────────────────────────────────────
+;;;
+;;; Defined here (layout.lisp, the earliest-loading layout file) so that every
+;;; later file — layout-geometry.lisp, window.lisp, window-layout.lisp —
+;;; can use it without forward-reference issues.
+;;;
+;;; Pattern (Prolog analogy):
+;;;   orient_case(:h, H-form).
+;;;   orient_case(:v, V-form).
+;;;
+;;; Expands to: (ecase ORIENT-VAR (:h H-FORM) (:v V-FORM))
+
+(defmacro orient-case (orient-var &key h v)
+  "Dispatch on ORIENT-VAR (:h or :v), evaluating H or V respectively.
+   A concise replacement for repeated (ecase orient (:h ...) (:v ...))."
+  `(ecase ,orient-var
+     (:h ,h)
+     (:v ,v)))
 ;;; ── Tree geometry: assign rectangles ───────────────────────────────────────
 
 ;;; ── %axis-floor: pure data lookup ───────────────────────────────────────────
@@ -144,20 +162,18 @@
 
 (defun %axis-floor (orient)
   "Minimum pane extent (cells) along ORIENT's split axis: rows for :v, cols for :h."
-  (ecase orient
-    (:v +pane-min-height+)
-    (:h +pane-min-width+)))
+  (orient-case orient :h +pane-min-width+ :v +pane-min-height+))
 
 (define-layout-fold layout-min-extent (node orient)
   :docstring "Minimum cells NODE requires along ORIENT's axis (:v → rows, :h → cols),
    including 1-cell separators at same-axis internal nodes."
   :on-null  0
   :on-leaf  (%axis-floor orient)
-  :on-split (let ((fe (layout-min-extent split-first  orient))
-                  (se (layout-min-extent split-second orient)))
+  :on-split (let ((first-extent  (layout-min-extent split-first  orient))
+                  (second-extent (layout-min-extent split-second orient)))
                (if (eq split-orient orient)
-                   (+ fe 1 se)   ; same-axis split: stack + 1-cell separator
-                   (max fe se))))
+                   (+ first-extent 1 second-extent) ; same-axis split: stack + 1-cell separator
+                   (max first-extent second-extent))))
 
 ;;; ── Named layouts (tree builder only) ───────────────────────────────────────
 ;;;

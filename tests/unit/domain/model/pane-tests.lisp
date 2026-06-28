@@ -400,3 +400,36 @@
         (if expected
             (is-true  (pane-pipe-active-p pane) desc)
             (is-false (pane-pipe-active-p pane) desc))))))
+
+;;; ── %pane-border-status-reservation direct tests ─────────────────────────────
+;;;
+;;; The path where height = 1 means the pane is "too short" — even when
+;;; status is "top" or "bottom", no row can be reserved without leaving
+;;; the content height at 0.  The function must fall back to offset=0, height=1.
+
+(test pane-border-status-reservation-too-short-does-not-reserve
+  "%pane-border-status-reservation returns (0, height) for any non-off status
+   when height is 1 (too short to reserve a row for the title bar)."
+  (dolist (status '("top" "bottom"))
+    (multiple-value-bind (y-offset content-height)
+        (cl-tmux/model::%pane-border-status-reservation status 1)
+      (is (= 0 y-offset)
+          "~A with height=1: y-offset must be 0 (no row to reserve)" status)
+      (is (= 1 content-height)
+          "~A with height=1: content-height must be 1 (no reservation)" status))))
+
+(test pane-border-status-reservation-top-normal
+  "%pane-border-status-reservation with status=top and height > 1 reserves the
+   first row: y-offset 1, content-height (height - 1)."
+  (multiple-value-bind (y-offset content-height)
+      (cl-tmux/model::%pane-border-status-reservation "top" 10)
+    (is (= 1 y-offset) "top: y-offset must be 1")
+    (is (= 9 content-height) "top: content-height must be height-1")))
+
+(test pane-border-status-reservation-off-returns-full-height
+  "%pane-border-status-reservation with status=off returns (0, height) regardless
+   of height — the off path must never reserve a row."
+  (multiple-value-bind (y-offset content-height)
+      (cl-tmux/model::%pane-border-status-reservation "off" 24)
+    (is (= 0 y-offset) "off: y-offset must be 0")
+    (is (= 24 content-height) "off: content-height must be full height")))

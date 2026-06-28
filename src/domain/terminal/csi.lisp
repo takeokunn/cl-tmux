@@ -162,14 +162,17 @@
        ,@(mapcar (lambda (spec)
                    (destructuring-bind (mode-number &rest rest) spec
                      (cond
-                       ((and (= (length rest) 1) (symbolp (first rest)))
-                        `(,mode-number (%decrqm-flag-code (,(first rest) screen))))
+                       ;; Keyword sentinel specs must be checked BEFORE the plain-symbol
+                       ;; accessor branch, because keywords satisfy (symbolp ...) too.
                        ((and (= (length rest) 2) (eq (first rest) :mouse-mode))
                         `(,mode-number (%decrqm-flag-code (= (screen-mouse-mode screen) ,(second rest)))))
                        ((and (= (length rest) 1) (eq (first rest) :alt-screen))
                         `(,mode-number (%decrqm-flag-code (and (screen-alt-cells screen) t))))
                        ((and (= (length rest) 2) (eq (first rest) :fixed))
                         `(,mode-number ,(second rest)))
+                       ;; Plain symbol: an accessor function — must be a non-keyword symbol.
+                       ((and (= (length rest) 1) (symbolp (first rest)) (not (keywordp (first rest))))
+                        `(,mode-number (%decrqm-flag-code (,(first rest) screen))))
                        (t (error "Unrecognised define-decrqm-mode-table spec: ~S" spec)))))
                  specs)
        (t 0))))

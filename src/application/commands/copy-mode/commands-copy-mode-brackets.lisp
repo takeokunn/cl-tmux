@@ -103,7 +103,7 @@
 (defun %copy-mode-bracket-state (screen)
   "Return the current copy-mode cursor state as (values cursor vrow col row-str ch)."
   (let* ((cursor   (or (screen-copy-cursor screen) (cons 0 0)))
-         (cur-vrow (%copy-mode-cursor-virtual-row screen))
+         (cur-vrow (%copy-mode-cursor-vrow screen))
          (cur-col  (cdr cursor))
          (row-str  (%copy-mode-virtual-row-string screen cur-vrow))
          (ch       (if (< cur-col (length row-str))

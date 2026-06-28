@@ -35,7 +35,7 @@
    #:load-config-from-string
    #:source-files
    #:apply-config-directive
-   #:%apply-option-side-effects
+   #:apply-option-side-effects
    #:config-file-path
    ;; %if condition evaluator hook (set by top-level package)
    #:*config-condition-evaluator*

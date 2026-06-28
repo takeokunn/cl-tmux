@@ -893,7 +893,7 @@
          (cl-tmux/prompt:*prompt* nil)
          (cl-tmux/prompt:*overlay* nil)
          (cl-tmux/prompt:*overlay-scroll-offset* 0)
-         (cl-tmux/prompt::*overlay-shown-at* 0)
+         (cl-tmux/prompt:*overlay-shown-at* 0)
          (cl-tmux/prompt:*display-panes-active* nil)
          (cl-tmux/prompt:*active-menu* nil)
          (cl-tmux/prompt:*active-popup* nil))
@@ -942,13 +942,15 @@
 
 (defmacro with-pipe-fds ((read-fd write-fd) &body body)
   "Open a POSIX pipe; bind READ-FD and WRITE-FD; close both on exit.
+   BODY may begin with (declare ...) forms; they are valid in locally's body.
    Shared by input-tests.lisp, pty-tests.lisp, and pty-rawmode-tests.lisp."
   (let ((pair-sym (gensym "PAIR")))
     `(let* ((,pair-sym (multiple-value-list (sb-posix:pipe)))
             (,read-fd  (first  ,pair-sym))
             (,write-fd (second ,pair-sym)))
+       (declare (ignore ,pair-sym))
        (unwind-protect
-            (progn ,@body)
+            (locally ,@body)
          (ignore-errors (sb-posix:close ,read-fd))
          (ignore-errors (sb-posix:close ,write-fd))))))
 

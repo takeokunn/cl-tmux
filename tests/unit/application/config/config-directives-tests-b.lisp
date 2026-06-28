@@ -207,6 +207,20 @@
     (is (equal '("-F" "-b") seen)
         "callback must see the leading flags in order")))
 
+(test source-file-F-expands-format-path
+  "source-file -F expands the path as a format string before loading.
+   Uses a known literal path (no #{...} variables) to confirm that -F does
+   not break plain paths (the expanded form equals the original string)."
+  (with-isolated-config
+    (with-temp-config-file (p "set -g status-left FFORMAT")
+      ;; A plain path contains no #{} variables; expand-format returns it unchanged.
+      ;; This test confirms the -F code path does not corrupt literal paths.
+      (let ((result (cl-tmux/config:apply-config-directive
+                     (list "source-file" "-F" (namestring p)))))
+        (is-true result "source-file -F with a plain path must succeed")
+        (is (string= "FFORMAT" (cl-tmux/options:get-option "status-left"))
+            "-F with a plain path must load and execute the file normally")))))
+
 ;;; ── run-shell directive ───────────────────────────────────────────────────
 
 (test run-shell-apply-directive-table
@@ -436,3 +450,86 @@
     (cl-tmux/config:apply-config-directive '("unbind-all" "-T" "root"))
     (is (null (cl-tmux/config:key-table-lookup "root" #\x))
         "root binding must be cleared after unbind-all -T root")))
+
+;;; ── %update-config-cond-stack unit tests ─────────────────────────────────
+;;;
+;;; These test the four-state machine (:active / :seeking / :taken / :dead)
+;;; used by load-config-from-stream to process %if/%elif/%else/%endif blocks.
+;;; Each test drives the helper directly so the state transitions are clear.
+
+(test update-config-cond-stack-if-pushes-active-when-truthy
+  "%if on an empty stack with a truthy condition pushes :active."
+  (let ((cl-tmux/config:*config-condition-evaluator* (lambda (s) (declare (ignore s)) "1")))
+    (let ((stack (cl-tmux/config::%update-config-cond-stack :if "%if 1" nil)))
+      (is (equal '(:active) stack)
+          "truthy %if must push :active onto an empty stack"))))
+
+(test update-config-cond-stack-if-pushes-seeking-when-falsy
+  "%if on an empty stack with a falsy condition pushes :seeking."
+  (let ((cl-tmux/config:*config-condition-evaluator* (lambda (s) (declare (ignore s)) "0")))
+    (let ((stack (cl-tmux/config::%update-config-cond-stack :if "%if 0" nil)))
+      (is (equal '(:seeking) stack)
+          "falsy %if must push :seeking (no branch matched yet)"))))
+
+(test update-config-cond-stack-elif-active-becomes-taken
+  "%elif when current state is :active transitions to :taken (already matched)."
+  ;; A branch was active → following %elif must skip (state = :taken).
+  (let ((cl-tmux/config:*config-condition-evaluator* (lambda (s) (declare (ignore s)) "1")))
+    (let ((stack (cl-tmux/config::%update-config-cond-stack :elif "%elif 1" '(:active))))
+      (is (equal '(:taken) stack)
+          ":active → %elif must transition to :taken"))))
+
+(test update-config-cond-stack-elif-taken-stays-taken
+  "%elif when current state is :taken stays :taken (already consumed one branch)."
+  (let ((cl-tmux/config:*config-condition-evaluator* (lambda (s) (declare (ignore s)) "1")))
+    (let ((stack (cl-tmux/config::%update-config-cond-stack :elif "%elif 1" '(:taken))))
+      (is (equal '(:taken) stack)
+          ":taken → %elif must remain :taken"))))
+
+(test update-config-cond-stack-elif-dead-stays-dead
+  "%elif when current state is :dead stays :dead (outer block is skipped)."
+  (let ((cl-tmux/config:*config-condition-evaluator* (lambda (s) (declare (ignore s)) "1")))
+    (let ((stack (cl-tmux/config::%update-config-cond-stack :elif "%elif 1" '(:dead))))
+      (is (equal '(:dead) stack)
+          ":dead → %elif must remain :dead (outer block controls)"))))
+
+(test update-config-cond-stack-else-seeking-becomes-active
+  "%else when current state is :seeking transitions to :active."
+  (let ((stack (cl-tmux/config::%update-config-cond-stack :else "%else" '(:seeking))))
+    (is (equal '(:active) stack)
+        ":seeking → %else must transition to :active")))
+
+(test update-config-cond-stack-else-active-becomes-taken
+  "%else when current state is :active transitions to :taken."
+  (let ((stack (cl-tmux/config::%update-config-cond-stack :else "%else" '(:active))))
+    (is (equal '(:taken) stack)
+        ":active → %else must transition to :taken")))
+
+(test update-config-cond-stack-else-taken-stays-taken
+  "%else when current state is :taken stays :taken."
+  (let ((stack (cl-tmux/config::%update-config-cond-stack :else "%else" '(:taken))))
+    (is (equal '(:taken) stack)
+        ":taken → %else must remain :taken")))
+
+(test update-config-cond-stack-else-dead-stays-dead
+  "%else when current state is :dead stays :dead."
+  (let ((stack (cl-tmux/config::%update-config-cond-stack :else "%else" '(:dead))))
+    (is (equal '(:dead) stack)
+        ":dead → %else must remain :dead")))
+
+(test update-config-cond-stack-endif-pops-state
+  "%endif pops the innermost state from the stack."
+  (let ((stack (cl-tmux/config::%update-config-cond-stack :endif "%endif" '(:active :seeking))))
+    (is (equal '(:seeking) stack)
+        "%endif must pop the top state, leaving the outer level"))
+  (let ((stack (cl-tmux/config::%update-config-cond-stack :endif "%endif" '(:taken))))
+    (is (equal '() stack)
+        "%endif on a single-element stack must yield NIL (empty)")))
+
+(test update-config-cond-stack-nested-if-dead-when-outer-seeking
+  "A nested %if when the outer level is :seeking pushes :dead (not evaluated)."
+  (let ((cl-tmux/config:*config-condition-evaluator* (lambda (s) (declare (ignore s)) "1")))
+    ;; Outer block is :seeking (no branch matched yet) → inner %if must push :dead.
+    (let ((stack (cl-tmux/config::%update-config-cond-stack :if "%if 1" '(:seeking))))
+      (is (equal '(:dead :seeking) stack)
+          "nested %if inside :seeking must push :dead"))))

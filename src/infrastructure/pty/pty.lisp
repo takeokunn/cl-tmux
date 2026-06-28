@@ -29,14 +29,14 @@
 (defvar *pty-processes* (make-hash-table :test #'eql)
   "MASTER-FD -> SB-EXT process object for PTYs spawned by forkpty-with-shell.")
 
-(defun %non-empty-string-p (value)
+(defun %string-non-empty-p (value)
   "Return T when VALUE is a non-empty string."
   (and (stringp value) (plusp (length value))))
 
 (defun %spawn-environment-assignments (term extra-env)
   "Return TERM and valid EXTRA-ENV overrides as NAME=VALUE strings."
   (let ((assignments nil))
-    (when (%non-empty-string-p term)
+    (when (%string-non-empty-p term)
       (push (format nil "TERM=~A" term) assignments))
     (dolist (pair extra-env)
       (when (and (consp pair)
@@ -49,12 +49,12 @@
   "Return a truename pathname for START-DIR, or NIL when it is absent/invalid.
    The old child path ignored chdir failures; keeping NIL preserves that behavior
    by letting the child inherit the current directory."
-  (when (%non-empty-string-p start-dir)
+  (when (%string-non-empty-p start-dir)
     (ignore-errors (truename start-dir))))
 
 (defun %target-program-and-args (default-command)
   "Return the actual shell program, argument list, and search flag."
-  (if (%non-empty-string-p default-command)
+  (if (%string-non-empty-p default-command)
       (values "/bin/sh" (list "-c" default-command) nil)
       (values cl-tmux/config:*default-shell* nil
               (not (and (stringp cl-tmux/config:*default-shell*)
@@ -114,18 +114,18 @@
 
 (declaim (inline %octets-to-foreign %foreign-to-octets))
 
-(defun %octets-to-foreign (octets ptr len)
-  "Copy LEN bytes from Lisp OCTETS vector into foreign memory PTR."
+(defun %octets-to-foreign (octets foreign-ptr len)
+  "Copy LEN bytes from Lisp OCTETS vector into foreign memory FOREIGN-PTR."
   (declare (type (simple-array (unsigned-byte 8) (*)) octets)
            (type fixnum len))
   (dotimes (i len)
-    (setf (cffi:mem-aref ptr :uint8 i) (aref octets i))))
+    (setf (cffi:mem-aref foreign-ptr :uint8 i) (aref octets i))))
 
-(defun %foreign-to-octets (ptr byte-count)
-  "Copy BYTE-COUNT bytes from foreign memory PTR into a fresh Lisp octet vector."
+(defun %foreign-to-octets (foreign-ptr byte-count)
+  "Copy BYTE-COUNT bytes from foreign memory FOREIGN-PTR into a fresh Lisp octet vector."
   (declare (type fixnum byte-count))
   (let ((result (make-array byte-count :element-type '(unsigned-byte 8))))
-    (dotimes (i byte-count) (setf (aref result i) (cffi:mem-aref ptr :uint8 i)))
+    (dotimes (i byte-count) (setf (aref result i) (cffi:mem-aref foreign-ptr :uint8 i)))
     result))
 
 ;;; ── Public: PTY I/O ────────────────────────────────────────────────────────

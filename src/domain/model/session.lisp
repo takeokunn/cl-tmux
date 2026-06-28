@@ -123,8 +123,8 @@
          ;; Reserve one row at the bottom for the status bar.
          (pane-rows (- rows *status-height*))
          ;; Respect base-index for the first window id.
-         (base-idx  (or (cl-tmux/options:get-option "base-index") 0)))
-    (session-new-window session (%shell-basename) pane-rows cols base-idx start-dir)
+         (base-index  (or (cl-tmux/options:get-option "base-index") 0)))
+    (session-new-window session (%shell-basename) pane-rows cols base-index start-dir)
     session))
 
 (defun all-panes (session)

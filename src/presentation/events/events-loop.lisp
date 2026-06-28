@@ -53,14 +53,13 @@
     (,(code-char 26) :suspend-client))
   "Prefix bindings that extend config.lisp's defaults.")
 
-(defun %install-extended-key-binding (binding)
-  (destructuring-bind (key command) binding
-    (key-table-bind +table-prefix+ key command)))
-
 (defun install-extended-key-bindings ()
   "Install the prefix bindings that extend config.lisp's defaults.  Idempotent.
    Called once at load time, and again by with-isolated-config under test."
-  (mapc #'%install-extended-key-binding *extended-prefix-bindings*)
+  (mapc (lambda (binding)
+          (destructuring-bind (key command) binding
+            (key-table-bind +table-prefix+ key command)))
+        *extended-prefix-bindings*)
   (values))
 
 ;; Install once at load time so the running image has the full default set.

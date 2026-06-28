@@ -439,25 +439,18 @@
    to the session.  Two successive calls yield strictly increasing ids."
   (unless (pty-available-p)
     (skip "no PTY available (sandboxed environment)"))
-  (let* ((before cl-tmux/model::*session-id-counter*)
-         (sess1  (create-initial-session 24 80)))
-    (unwind-protect
-         (progn
-           (is (= (1+ before) (session-id sess1))
-               "first session id must be before + 1 after create-initial-session")
-           (is (= (1+ before) cl-tmux/model::*session-id-counter*)
-               "*session-id-counter* must be incremented by create-initial-session"))
-      (dolist (p (all-panes sess1))
-        (ignore-errors (pty-close (pane-fd p) (pane-pid p)))))))
+  (let ((before cl-tmux/model::*session-id-counter*))
+    (with-session (sess1 24 80)
+      (is (= (1+ before) (session-id sess1))
+          "first session id must be before + 1 after create-initial-session")
+      (is (= (1+ before) cl-tmux/model::*session-id-counter*)
+          "*session-id-counter* must be incremented by create-initial-session"))))
 
 (test create-initial-session-session-touch-called
   "create-initial-session sets session-last-active to a non-zero universal time."
   (unless (pty-available-p)
     (skip "no PTY available (sandboxed environment)"))
-  (let ((before (get-universal-time))
-        (sess   (create-initial-session 24 80)))
-    (unwind-protect
-         (is (>= (session-last-active sess) before)
-             "session-last-active must be set by create-initial-session")
-      (dolist (p (all-panes sess))
-        (ignore-errors (pty-close (pane-fd p) (pane-pid p)))))))
+  (let ((before (get-universal-time)))
+    (with-session (sess 24 80)
+      (is (>= (session-last-active sess) before)
+          "session-last-active must be set by create-initial-session"))))
