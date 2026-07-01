@@ -64,9 +64,9 @@
           (values t
                   (viewport-row start-vrow)
                   (viewport-row end-vrow)
-                   (selection-start-col)
-                   (selection-end-col)
-                   rect-p
-                   (viewport-row mark-vrow)
-                   mark-col)))
-      (values nil 0 0 0 0 nil 0 0 0)))
+                  (selection-start-col)
+                  (selection-end-col)
+                  rect-p
+                  (viewport-row mark-vrow)
+                  mark-col)))
+      (values nil 0 0 0 0 nil 0 0)))

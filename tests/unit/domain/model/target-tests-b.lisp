@@ -196,3 +196,47 @@
       (is (eq sess rs) "empty-string target must use current-session")
       (is (eq win  rw) "empty-string target must use current-window")
       (is (eq p1   rp) "empty-string target must use current-pane"))))
+
+;;; ── resolve-target-context ───────────────────────────────────────────────────
+;;;
+;;; resolve-target-context is the public entry point dispatch-core.lisp uses for
+;;; -t flag resolution; it derives current-session/window/pane defaults from
+;;; SESSION rather than requiring callers to pass them explicitly.
+
+(test resolve-target-context-nil-target-defaults-to-session-active-objects
+  "resolve-target-context with a NIL target-string resolves to SESSION's own
+   active window and active pane, derived internally rather than passed in."
+  (multiple-value-bind (sess win pane) (make-single-pane-session)
+    (multiple-value-bind (rs rw rp)
+        (cl-tmux::resolve-target-context nil sess nil)
+      (is (eq sess rs) "session must default to the SESSION argument")
+      (is (eq win  rw) "window must default to session-active-window")
+      (is (eq pane rp) "pane must default to session-active-pane"))))
+
+(test resolve-target-context-resolves-window-within-session
+  "resolve-target-context resolves a bare window-name target against SESSION,
+   without requiring the caller to pass current-window/current-pane explicitly."
+  (let* ((p1   (make-no-pty-pane 1 0 0 80 24))
+         (w1   (make-window :id 1 :name "editor" :width 80 :height 24
+                            :panes (list p1)))
+         (w2   (make-window :id 2 :name "shell" :width 80 :height 24
+                            :panes (list (make-no-pty-pane 2 0 0 80 24))))
+         (sess (make-session :id 1 :name "work" :windows (list w1 w2))))
+    (window-select-pane w1 p1)
+    (session-select-window sess w1)
+    (multiple-value-bind (rs rw _rp)
+        (cl-tmux::resolve-target-context (list (cons "work" sess)) sess ":shell")
+      (declare (ignore _rp))
+      (is (eq sess rs) "session must remain SESSION")
+      (is (eq w2   rw) "':shell' must resolve to window w2 within SESSION"))))
+
+(test resolve-target-context-falls-back-when-server-omits-session
+  "resolve-target-context still resolves relative to SESSION even when SERVER
+   does not contain SESSION under any registry key (e.g. a not-yet-registered
+   session), since the target-string does not name a session component."
+  (multiple-value-bind (sess win pane) (make-single-pane-session)
+    (multiple-value-bind (rs rw rp)
+        (cl-tmux::resolve-target-context nil sess "0")
+      (is (eq sess rs) "session must remain SESSION")
+      (is (eq win  rw) "numeric target '0' must resolve to SESSION's own window")
+      (is (eq pane rp) "pane must default to session-active-pane"))))

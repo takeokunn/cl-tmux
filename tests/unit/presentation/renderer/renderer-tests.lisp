@@ -45,6 +45,7 @@
 ;;; ── render-status-bar ───────────────────────────────────────────────────────
 
 (test render-status-bar-shows-names
+  "render-status-bar shows the session name and the active window's index:name."
   (with-isolated-options ("status-left" nil "status-right" nil)
     (let* ((sess (make-test-session 40 10 :content ""))
            (out  (render-status-bar-output sess 10 40)))
@@ -106,6 +107,7 @@
             "inactive status bar must NOT show the prompt text (got ~S)" out)))))
 
 (test render-status-bar-copy-mode-has-no-indicator
+  "The status bar no longer shows a legacy COPY/offset indicator when a pane is in copy mode."
   (with-isolated-options ("status-left" nil "status-right" nil)
     (let* ((sess   (make-test-session 60 10 :content ""))
            (ap     (session-active-pane sess))
@@ -119,12 +121,14 @@
             "status bar should not show the old copy offset +3 in copy mode (got ~S)" out)))))
 
 (test render-status-bar-no-copy-indicator-live
+  "The status bar never shows a COPY indicator for a pane that is not in copy mode."
   (let* ((sess (make-test-session 60 10 :content ""))
          (out  (render-status-bar-output sess 10 60)))
     (is (not (search "COPY" out))
         "live status bar should NOT show the COPY indicator (got ~S)" out)))
 
 (test render-status-bar-truncates-long-line
+  "On a narrow terminal, the status bar's visible content is clamped to the terminal width."
   ;; A very narrow terminal forces the status line to be truncated via subseq.
   ;; The bar is: move-to, ESC[44;97m, <status content>, ESC[0m.  The visible
   ;; status content sits between the colour SGR and the trailing reset, and the
@@ -172,6 +176,7 @@
 ;;; ── render-session-to-string (full frame) ───────────────────────────────────
 
 (test render-session-to-string-full-frame
+  "render-session-to-string emits pane content plus cursor-hide/show sequences and the status bar."
   (with-isolated-options ("status-left" nil "status-right" nil)
     (let* ((sess (make-test-session 20 5 :content "hi"))
            (out  (render-session-to-string sess 6 20)))
@@ -187,6 +192,7 @@
           "frame should contain the active-window fragment 1:1 (got ~S)" out))))
 
 (test render-session-vertical-split-emits-separators
+  "A side-by-side split renders a vertical separator, highlights the active pane's border, and shows both panes' content."
   (let* ((sess  (make-split-session 5 3 :h))
          (win   (session-active-window sess))
          (panes (window-panes win))
@@ -205,6 +211,7 @@
           "vertical split frame should contain pane 1 content B (got ~S)" out))))
 
 (test render-session-horizontal-split-emits-separators
+  "A stacked (top/bottom) split renders a horizontal separator and shows both panes' content."
   (let* ((sess  (make-split-session 5 3 :v))
          (win   (session-active-window sess))
          (panes (window-panes win)))
@@ -234,6 +241,7 @@
           "vertical border at the terminal edge should be suppressed (got ~S)" out))))
 
 (test render-session-writes-to-standard-output
+  "render-session (unlike render-session-to-string) writes its frame directly to *standard-output*."
   (let ((out (let ((*standard-output* (make-string-output-stream)))
                (render-session (make-test-session 10 4 :content "hi") 5 10)
                (get-output-stream-string *standard-output*))))
@@ -245,6 +253,7 @@
 ;;; ── clear-display ───────────────────────────────────────────────────────────
 
 (test clear-display-emits-clear-and-home
+  "clear-display writes the ANSI erase-screen (ESC[2J) and cursor-home (ESC[H) sequences."
   (let ((out (let ((*standard-output* (make-string-output-stream)))
                (clear-display)
                (get-output-stream-string *standard-output*))))
@@ -256,6 +265,7 @@
 ;;; ── %status-pane-indicator (pure) ───────────────────────────────────────────
 
 (test status-pane-indicator-with-active-pane
+  "%status-pane-indicator formats a live pane as #<pane-id>."
   (let* ((screen (make-screen 10 5))
          (pane   (make-pane :id 7 :x 0 :y 0 :width 10 :height 5 :fd -1 :screen screen))
          (out    (cl-tmux/renderer::%status-pane-indicator pane)))
@@ -263,6 +273,7 @@
         "%status-pane-indicator should contain the pane id (got ~S)" out)))
 
 (test status-pane-indicator-nil-returns-empty
+  "%status-pane-indicator returns the empty string for a NIL pane."
   (is (string= "" (cl-tmux/renderer::%status-pane-indicator nil))
       "%status-pane-indicator with nil should return empty string"))
 

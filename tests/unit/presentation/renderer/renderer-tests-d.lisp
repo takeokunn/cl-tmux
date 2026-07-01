@@ -219,12 +219,14 @@
 ;;; ── %justify-right (pure) ───────────────────────────────────────────────────
 
 (test status-bar-line-fits-in-terminal-cols
+  "%justify-right never returns a line longer than the requested column width."
   (let ((line (cl-tmux/renderer::%justify-right "left-text" "12:34" 20)))
     (is (<= (length line) 20)
         "%justify-right output must fit within cols=20 (got ~D: ~S)"
         (length line) line)))
 
 (test status-bar-line-contains-left-and-time
+  "%justify-right's output contains both the left text and the right-justified time string."
   (let ((line (cl-tmux/renderer::%justify-right "mysession" "09:00" 40)))
     (is (search "mysession" line)
         "%justify-right should contain left text (got ~S)" line)
@@ -232,6 +234,7 @@
         "%justify-right should contain the time string (got ~S)" line)))
 
 (test status-bar-line-truncates-when-too-long
+  "%justify-right clamps its output to cols when the left text and time overflow a narrow terminal."
   ;; Terminal is only 5 cols wide; result must be clamped.
   (let ((line (cl-tmux/renderer::%justify-right "very-long-left-text" "99:99" 5)))
     (is (= 5 (length line))

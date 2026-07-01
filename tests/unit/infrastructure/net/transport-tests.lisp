@@ -194,8 +194,7 @@
   "send-frame must signal an error when the frame vector is shorter than
    +header-size+ (not a valid frame at all)."
   (with-temp-octet-file (path)
-    (with-open-file (out path :direction :output :if-exists :supersede
-                              :element-type '(unsigned-byte 8))
+    (with-output-octet-stream (out path)
       (signals error
         (send-frame out (make-array 3 :element-type '(unsigned-byte 8)))
         "send-frame with a 3-byte frame (shorter than 5-byte header) must signal"))))
@@ -206,8 +205,7 @@
    (declared-length > actual payload, or actual payload > declared-length),
    send-frame must signal an error before any bytes reach the stream."
   (with-temp-octet-file (path)
-    (with-open-file (out path :direction :output :if-exists :supersede
-                              :element-type '(unsigned-byte 8))
+    (with-output-octet-stream (out path)
       (signals error
         (send-frame out (%make-frame-with-declared-length 10 0))
         "declared=10 actual=0 must signal (header claims more bytes than present)")
@@ -223,8 +221,7 @@
    than 64 MiB -- even when the frame vector is self-consistent (total length
    does match header + declared payload), the size guard fires first."
   (with-temp-octet-file (path)
-    (with-open-file (out path :direction :output :if-exists :supersede
-                              :element-type '(unsigned-byte 8))
+    (with-output-octet-stream (out path)
       ;; Declared length is exactly one byte over the allowed ceiling.
       (signals error
         (send-frame out (%make-frame-with-declared-length
@@ -284,8 +281,7 @@
   (with-temp-octet-file (path)
     ;; Write a 5-byte header whose length field is max+1 (one byte over the ceiling).
     ;; No payload bytes follow -- a real attacker would stop here.
-    (with-open-file (out path :direction :output :if-exists :supersede
-                              :element-type '(unsigned-byte 8))
+    (with-output-octet-stream (out path)
       (let* ((oversized-length (1+ cl-tmux/transport::+max-frame-payload-bytes+))
              (header (make-array +header-size+ :element-type '(unsigned-byte 8)
                                                :initial-element 0)))
@@ -301,8 +297,7 @@
    must cause read-frame to return NIL immediately without attempting any allocation.
    This is the extreme boundary of the security guard."
   (with-temp-octet-file (path)
-    (with-open-file (out path :direction :output :if-exists :supersede
-                              :element-type '(unsigned-byte 8))
+    (with-output-octet-stream (out path)
       (let ((header (make-array +header-size+ :element-type '(unsigned-byte 8)
                                               :initial-element 0)))
         (setf (aref header 0) +msg-frame+)
@@ -372,8 +367,7 @@
 (test send-frame-finishes-without-signalling
   "send-frame on an open binary output stream must not signal."
   (with-temp-octet-file (path)
-    (with-open-file (out path :direction :output :if-exists :supersede
-                              :element-type '(unsigned-byte 8))
+    (with-output-octet-stream (out path)
       (finishes (send-frame out (msg-detach))
                 "send-frame must not signal on a valid binary output stream"))))
 
@@ -438,8 +432,7 @@
   "%read-exact reads exactly (- end start) bytes from a stream with enough data."
   (with-temp-octet-file (path)
     ;; Write 10 known bytes to the file.
-    (with-open-file (out path :direction :output :if-exists :supersede
-                              :element-type '(unsigned-byte 8))
+    (with-output-octet-stream (out path)
       (write-sequence #(10 20 30 40 50 60 70 80 90 100) out))
     (with-open-file (in path :element-type '(unsigned-byte 8))
       (let ((buffer (make-array 10 :element-type '(unsigned-byte 8))))
@@ -453,8 +446,7 @@
   "%read-exact returns less than requested when the stream ends before END."
   (with-temp-octet-file (path)
     ;; Write only 3 bytes but ask for 10.
-    (with-open-file (out path :direction :output :if-exists :supersede
-                              :element-type '(unsigned-byte 8))
+    (with-output-octet-stream (out path)
       (write-sequence #(1 2 3) out))
     (with-open-file (in path :element-type '(unsigned-byte 8))
       (let ((buffer (make-array 10 :element-type '(unsigned-byte 8) :initial-element 0)))
@@ -467,8 +459,7 @@
 (test read-exact-respects-start-offset
   "%read-exact writes bytes starting at the given START offset in the buffer."
   (with-temp-octet-file (path)
-    (with-open-file (out path :direction :output :if-exists :supersede
-                              :element-type '(unsigned-byte 8))
+    (with-output-octet-stream (out path)
       (write-sequence #(7 8 9) out))
     (with-open-file (in path :element-type '(unsigned-byte 8))
       (let ((buffer (make-array 6 :element-type '(unsigned-byte 8) :initial-element 0)))
@@ -548,8 +539,7 @@
    frame header when the stream contains a complete 5-byte header."
   (let ((frame (msg-key #(1 2 3))))   ; 5-byte header + 3-byte payload
     (with-temp-octet-file (path)
-      (with-open-file (out path :direction :output :if-exists :supersede
-                                :element-type '(unsigned-byte 8))
+      (with-output-octet-stream (out path)
         ;; Write only the 5-byte header (first +header-size+ bytes of frame).
         (write-sequence frame out :end +header-size+))
       (with-open-file (in path :element-type '(unsigned-byte 8))
@@ -567,8 +557,7 @@
    stream contains fewer than +header-size+ bytes."
   (with-temp-octet-file (path)
     ;; Write only 3 bytes — not a complete header.
-    (with-open-file (out path :direction :output :if-exists :supersede
-                              :element-type '(unsigned-byte 8))
+    (with-output-octet-stream (out path)
       (write-sequence #(1 2 3) out))
     (with-open-file (in path :element-type '(unsigned-byte 8))
       (let ((called nil))
@@ -590,8 +579,7 @@
    continuation is reached."
   (with-temp-octet-file (path)
     ;; Craft a 5-byte header whose length field = max+1.
-    (with-open-file (out path :direction :output :if-exists :supersede
-                              :element-type '(unsigned-byte 8))
+    (with-output-octet-stream (out path)
       (let* ((oversized (1+ cl-tmux/transport::+max-frame-payload-bytes+))
              (header    (make-array +header-size+ :element-type '(unsigned-byte 8)
                                                   :initial-element 0)))
@@ -625,8 +613,7 @@
    a buffer whose tail contains those bytes verbatim."
   (with-temp-octet-file (path)
     ;; Write 4 payload bytes to the file.
-    (with-open-file (out path :direction :output :if-exists :supersede
-                              :element-type '(unsigned-byte 8))
+    (with-output-octet-stream (out path)
       (write-sequence #(10 20 30 40) out))
     (with-open-file (in path :element-type '(unsigned-byte 8))
       ;; Construct a 5-element adjustable header buffer (simulating what
@@ -647,8 +634,7 @@
    stream ends before all declared payload bytes have arrived."
   (with-temp-octet-file (path)
     ;; Write only 2 bytes but declare 4.
-    (with-open-file (out path :direction :output :if-exists :supersede
-                              :element-type '(unsigned-byte 8))
+    (with-output-octet-stream (out path)
       (write-sequence #(1 2) out))
     (with-open-file (in path :element-type '(unsigned-byte 8))
       (let* ((header-buf (make-array +header-size+ :element-type '(unsigned-byte 8)

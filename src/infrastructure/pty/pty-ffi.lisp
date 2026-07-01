@@ -13,12 +13,6 @@
 
 ;;; ── CFFI: libc surface (no extra library needed) ───────────────────────────
 
-(cffi:defcfun ("posix_openpt" %posix-openpt) :int (oflag :int))
-(cffi:defcfun ("grantpt"      %grantpt)      :int (fd :int))
-(cffi:defcfun ("unlockpt"     %unlockpt)     :int (fd :int))
-;;; ptsname returns a pointer to a static string — copy it immediately
-(cffi:defcfun ("ptsname"      %ptsname)      :string (fd :int))
-
 ;;; Raw fd read / write
 (cffi:defcfun ("read"  %read)  :long
   (fd :int) (buf :pointer) (count :unsigned-long))
@@ -35,15 +29,6 @@
 
 ;;; ── Platform constants ─────────────────────────────────────────────────────
 
-;;; open(2) flags
-(defconstant +o-rdwr+
-  #+darwin #x0002
-  #-darwin #o000002)
-
-(defconstant +o-noctty+
-  #+darwin  #x20000
-  #-darwin  #o000400)
-
 ;;; Standard file descriptor numbers
 (defconstant +stdin-fd+  0 "Standard input.")
 (defconstant +stdout-fd+ 1 "Standard output.")
@@ -53,10 +38,6 @@
 (defconstant +sighup+ 1 "POSIX SIGHUP — sent to a process group leader on terminal close.")
 
 ;;; ioctl request codes (TIOC*)
-(defconstant +tiocsctty+
-  #+darwin #x20007461
-  #-darwin #x540E)
-
 (defconstant +tiocgwinsz+
   #+darwin #x40087468
   #-darwin #x5413)

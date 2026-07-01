@@ -220,6 +220,30 @@
       (is (equal (sort (copy-list names) #'string<) names)
           "process-environment-names must already be sorted"))))
 
+;;; ── process-set-environment / process-unset-environment ──────────────────────
+
+(test process-set-environment-writes-and-returns-value
+  "process-set-environment writes NAME=VALUE into the real process environment
+   (readable back via process-environment-value) and returns VALUE."
+  (with-temporary-posix-environment-variable ("CLTMUX_TEST_PROC_SET_ENV" nil)
+    (let ((result (cl-tmux/model:process-set-environment
+                   "CLTMUX_TEST_PROC_SET_ENV" "written-value")))
+      (is (string= "written-value" result)
+          "process-set-environment must return the VALUE argument")
+      (is (string= "written-value"
+                   (cl-tmux/model:process-environment-value "CLTMUX_TEST_PROC_SET_ENV"))
+          "the value must be readable back via process-environment-value"))))
+
+(test process-unset-environment-removes-value-and-returns-name
+  "process-unset-environment removes a previously-set variable from the real
+   process environment and returns NAME."
+  (with-temporary-posix-environment-variable ("CLTMUX_TEST_PROC_UNSET_ENV" "present")
+    (let ((result (cl-tmux/model:process-unset-environment "CLTMUX_TEST_PROC_UNSET_ENV")))
+      (is (string= "CLTMUX_TEST_PROC_UNSET_ENV" result)
+          "process-unset-environment must return NAME")
+      (is (null (cl-tmux/model:process-environment-value "CLTMUX_TEST_PROC_UNSET_ENV"))
+          "the variable must be gone from the process environment after unset"))))
+
 ;;; ── %apply-session-overlay ───────────────────────────────────────────────────
 
 (test apply-session-overlay-merges-set-and-removes-unset

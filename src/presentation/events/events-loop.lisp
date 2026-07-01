@@ -69,6 +69,32 @@
         (%rename-from-format-string session window pane screen allow-title)
         (%rename-from-osc-title screen allow-title))))
 
+(defun %automatic-rename-enabled-p (active-window)
+  "Return T when ACTIVE-WINDOW should have its name auto-tracked.
+   Honors both the WINDOW-AUTOMATIC-RENAME-P struct flag and the per-window
+   \"automatic-rename\" option (`set-window-option -w automatic-rename off`).
+   Independent of allow-rename: command-following must keep working even with
+   allow-rename off (that option only governs app-set OSC titles)."
+  (and (window-automatic-rename-p active-window)
+       (cl-tmux/options:get-option-for-context
+        "automatic-rename" :window active-window)))
+
+(defun %apply-automatic-rename (session active-window active-pane screen)
+  "Compute the automatic name for ACTIVE-WINDOW and apply it via RENAME-WINDOW
+   when it differs from the current name.  allow-rename (default on) gates
+   only the app's OSC-title fallback inside %AUTO-RENAME-NAME; `set -g
+   allow-rename off` stops apps renaming windows via their title without
+   freezing automatic command-following."
+  (let ((new-name (%auto-rename-name session active-window active-pane screen
+                                     :allow-title (cl-tmux/options:get-option
+                                                   "allow-rename"))))
+    (when (and (plusp (length new-name))
+               (string/= new-name (window-name active-window)))
+      ;; Auto-rename must NOT disable automatic-rename, or it would fire only
+      ;; once; keep it on so the name keeps tracking the foreground process.
+      (rename-window active-window new-name :disable-automatic-rename nil)
+      (setf *dirty* t))))
+
 (defun %maybe-rename-window-from-title (session)
   "If automatic-rename is enabled for SESSION's active window, update its name
    using automatic-rename-format (default: #{pane_current_command}).  Falls
@@ -76,26 +102,8 @@
   (let* ((active-pane   (session-active-pane session))
          (screen        (when active-pane (pane-screen active-pane)))
          (active-window (session-active-window session)))
-    (when (and screen active-window
-               (window-automatic-rename-p active-window)
-                ;; Per-window "automatic-rename" option (default on); honors
-                ;; `set-window-option -w automatic-rename off`.  Independent of allow-rename:
-               ;; command-following must keep working even with allow-rename off
-               ;; (that option only governs app-set OSC titles, handled below).
-               (cl-tmux/options:get-option-for-context
-                "automatic-rename" :window active-window))
-      ;; allow-rename (default on) gates only the app's OSC-title fallback inside
-      ;; %auto-rename-name; `set -g allow-rename off` stops apps renaming windows
-      ;; via their title without freezing automatic command-following.
-      (let ((new-name (%auto-rename-name session active-window active-pane screen
-                                         :allow-title (cl-tmux/options:get-option
-                                                       "allow-rename"))))
-        (when (and (plusp (length new-name))
-                   (string/= new-name (window-name active-window)))
-          ;; Auto-rename must NOT disable automatic-rename, or it would fire only
-          ;; once; keep it on so the name keeps tracking the foreground process.
-          (rename-window active-window new-name :disable-automatic-rename nil)
-          (setf *dirty* t))))))
+    (when (and screen active-window (%automatic-rename-enabled-p active-window))
+      (%apply-automatic-rename session active-window active-pane screen))))
 
 (defun %handle-dirty (session)
   "Fit the active window to current terminal size and repaint."
@@ -123,6 +131,46 @@
    Prevents CPU starvation when *running* is T but no bytes arrive for many
    consecutive poll cycles.  See also +event-loop-max-idle-iterations+.")
 
+(defun %read-and-dispatch-one-byte (session state idle-counter)
+  "Read at most one byte (bounded by +poll-timeout-us+) and route it to
+   PROCESS-BYTE.  Returns the next IDLE-COUNTER value: reset to 0 on a byte
+   arrival (also stamping *last-activity-time* and stopping the loop via
+   *running* on :quit/:detach), or incremented — and yielded via
+   +event-loop-idle-sleep-seconds+ once it reaches
+   +event-loop-max-idle-iterations+ — when no byte arrived."
+  (let ((byte (read-byte-nonblock +poll-timeout-us+)))
+    (if byte
+        (progn
+          ;; Stamp last-activity-time so lock-after-time can measure idle.
+          (setf *last-activity-time* (get-universal-time))
+          (when (member (process-byte session byte state) '(:quit :detach))
+            (setf *running* nil))
+          0)
+        (let ((next-idle-counter (1+ idle-counter)))
+          (if (>= next-idle-counter +event-loop-max-idle-iterations+)
+              (progn (sleep +event-loop-idle-sleep-seconds+) 0)
+              next-idle-counter)))))
+
+(defun %process-one-event-cycle (session state idle-counter)
+  "Run one full iteration of the event loop's body for SESSION: resolve the
+   most-recently-touched session, honour repeat-time/escape-time, read and
+   dispatch one byte, then handle any pending resize/dirty repaint.
+   Returns the next IDLE-COUNTER value (see %READ-AND-DISPATCH-ONE-BYTE)."
+  ;; Follow the most-recently-touched session: session-switch commands
+  ;; (switch-client, choose-tree, last-session) session-touch their target, and
+  ;; re-resolving here makes the single client's display + input follow the
+  ;; switch.  Falls back to the initial SESSION when the registry is empty.
+  (let ((session (%current-session session)))
+    ;; Honour repeat-time: reset to ground when the repeat window closes.
+    (%reset-repeat-if-expired state)
+    ;; Honour escape-time: forward a lone ESC to the pane when no follow-up byte
+    ;; has arrived within escape-time ms (critical for vim ESC in insert mode).
+    (%flush-esc-if-timed-out state session)
+    (let ((next-idle-counter (%read-and-dispatch-one-byte session state idle-counter)))
+      (when *resize-pending* (%handle-resize session))
+      (when *dirty*           (%handle-dirty session))
+      next-idle-counter)))
+
 (defun event-loop (session)
   "In-process event loop: read stdin, route keystrokes, repaint on dirty.
    The loop is bounded by +event-loop-max-idle-iterations+ idle reads before
@@ -133,28 +181,4 @@
   (let ((state        (make-input-state))
         (idle-counter 0))
     (loop while *running* do
-      ;; Follow the most-recently-touched session: session-switch commands
-      ;; (switch-client, choose-tree, last-session) session-touch their target, and
-      ;; re-resolving here makes the single client's display + input follow the
-      ;; switch.  Falls back to the initial SESSION when the registry is empty.
-      (let ((session (%current-session session)))
-        ;; Honour repeat-time: reset to ground when the repeat window closes.
-        (%reset-repeat-if-expired state)
-        ;; Honour escape-time: forward a lone ESC to the pane when no follow-up byte
-        ;; has arrived within escape-time ms (critical for vim ESC in insert mode).
-        (%flush-esc-if-timed-out state session)
-        (let ((byte (read-byte-nonblock +poll-timeout-us+)))
-          (if byte
-              (progn
-                (setf idle-counter 0)
-                ;; Stamp last-activity-time so lock-after-time can measure idle.
-                (setf *last-activity-time* (get-universal-time))
-                (when (member (process-byte session byte state) '(:quit :detach))
-                  (setf *running* nil)))
-              (progn
-                (incf idle-counter)
-                (when (>= idle-counter +event-loop-max-idle-iterations+)
-                  (setf idle-counter 0)
-                  (sleep +event-loop-idle-sleep-seconds+)))))
-        (when *resize-pending* (%handle-resize session))
-        (when *dirty*           (%handle-dirty session))))))
+      (setf idle-counter (%process-one-event-cycle session state idle-counter)))))

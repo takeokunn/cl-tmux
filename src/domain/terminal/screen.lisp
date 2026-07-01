@@ -49,7 +49,7 @@
   ;; Lock for thread safety (renderer <-> PTY-reader threads).
   ;; Allocated by make-screen (CONSTRUCT layer), not here, so this DATA-layer
   ;; defstruct remains free of side-effecting allocations at load time.
-  (lock nil)
+  (lock nil :type (or null bordeaux-threads:lock))
   ;; Alt-screen support (?1049h / ?1049l)
   (alt-cells nil)                           ; saved normal-screen cell grid, or nil
   (alt-cursor-x 0 :type fixnum)            ; cursor column saved on alt-screen entry
@@ -316,6 +316,14 @@
 
 ;;; ── Resize ─────────────────────────────────────────────────────────────────
 
+(defun %copy-overlapping-cells (screen old-cells old-width copy-cols copy-rows)
+  "Copy the top-left COPY-COLS x COPY-ROWS rectangle from OLD-CELLS (a raw
+   vector with OLD-WIDTH stride) into SCREEN's freshly installed grid."
+  (dotimes (y copy-rows)
+    (dotimes (x copy-cols)
+      (setf (screen-cell screen x y)
+            (aref old-cells (+ (* y old-width) x))))))
+
 (defun screen-resize (screen new-width new-height)
   "Resize SCREEN to NEW-WIDTH x NEW-HEIGHT in place, preserving the
    overlapping top-left rectangle of content.  Resets the scroll region to
@@ -326,25 +334,20 @@
 
    Callers that share the screen with a reader thread must hold SCREEN's
    lock; this function does no locking of its own."
-  (if (and (= new-width  (screen-width  screen))
-           (= new-height (screen-height screen)))
-      screen
+  (when (and (= new-width  (screen-width  screen))
+             (= new-height (screen-height screen)))
+    (return-from screen-resize screen))
   (let* ((old-width  (screen-width  screen))
          (old-height (screen-height screen))
-         (old-cells  (screen-cells  screen))
-         (new-cells  (%make-blank-cells (* new-width new-height)))
-         (copy-rows  (min old-height new-height))
-         (copy-cols  (min old-width  new-width)))
+         (old-cells  (screen-cells  screen)))
     ;; Install the new grid before using screen-cell so the index arithmetic
     ;; uses new-width.  Copy the old content via the raw old-cells vector
     ;; (old-width stride) into the new grid using the screen-cell abstraction.
-    (setf (screen-cells  screen) new-cells
+    (setf (screen-cells  screen) (%make-blank-cells (* new-width new-height))
           (screen-width  screen) new-width
           (screen-height screen) new-height)
-    (dotimes (y copy-rows)
-      (dotimes (x copy-cols)
-        (setf (screen-cell screen x y)
-              (aref old-cells (+ (* y old-width) x)))))
+    (%copy-overlapping-cells screen old-cells old-width
+                              (min old-width new-width) (min old-height new-height))
     (setf (screen-scroll-top    screen) 0
           (screen-scroll-bottom screen) (1- new-height)
           (screen-cursor-x      screen) (clamp (screen-cursor-x screen) 0 (1- new-width))
@@ -352,4 +355,4 @@
           (screen-dirty-p       screen) t)
     ;; Content reflows on resize; drop the -J wrap flags (re-marked as new wraps occur).
     (%clear-all-line-wrapped screen)
-    screen)))
+    screen))

@@ -265,6 +265,43 @@
       ;; dispatched accumulates cmds from the capture lambda; verify it's a list
       (is-true (listp dispatched) "capture list must be a proper list"))))
 
+;;; ── %dispatch-menu-key: digit 0-9 jump-to-item branch ────────────────────────
+;;;
+;;; A digit byte in range jumps *active-menu*'s selected-index directly (rather
+;;; than dispatching :menu-next/-prev), then dispatches :menu-next/:menu-prev
+;;; with a 0 net delta purely to trigger the overlay refresh.  Out-of-range
+;;; digits (>= the item count) are a no-op: the index and dispatch log are
+;;; both untouched.
+
+(test dispatch-menu-key-digit-in-range-jumps-to-index
+  "A digit byte within range sets menu-selected-index to that digit and
+   triggers a refresh via :menu-next then :menu-prev."
+  (with-fake-session (s)
+    (let ((cl-tmux/prompt:*active-menu*
+            (cl-tmux/prompt:make-menu
+             :items '(("one" . :a) ("two" . :b) ("three" . :c)))))
+      (with-dispatch-capture (dispatched)
+        (let ((cl-tmux::*dirty* nil))
+          (cl-tmux::%dispatch-menu-key s (+ (char-code #\0) 2))
+          (is (= 2 (cl-tmux/prompt:menu-selected-index cl-tmux/prompt:*active-menu*))
+              "digit '2' must jump menu-selected-index to 2")
+          (is (equal (list :menu-prev :menu-next) dispatched)
+              "digit jump must dispatch :menu-next then :menu-prev to refresh")
+          (is-true cl-tmux::*dirty* "digit jump must mark the display dirty"))))))
+
+(test dispatch-menu-key-digit-out-of-range-is-noop
+  "A digit byte >= the item count leaves menu-selected-index and the dispatch
+   log untouched (no refresh is triggered for an invalid index)."
+  (with-fake-session (s)
+    (let ((cl-tmux/prompt:*active-menu*
+            (cl-tmux/prompt:make-menu :items '(("one" . :a)) :selected-index 0)))
+      (with-dispatch-capture (dispatched)
+        (cl-tmux::%dispatch-menu-key s (+ (char-code #\0) 5))
+        (is (zerop (cl-tmux/prompt:menu-selected-index cl-tmux/prompt:*active-menu*))
+            "out-of-range digit must not change menu-selected-index")
+        (is (null dispatched)
+            "out-of-range digit must not dispatch any menu command")))))
+
 ;;; ── define-prompt-vi-key-rules macro smoke test ─────────────────────────────
 
 (test define-prompt-vi-key-rules-is-defined

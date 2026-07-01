@@ -297,6 +297,25 @@
         (is-true client   "connect-to must return a socket")
         (is-true conn     "accept-connection must return a socket")))))
 
+;;; ── make-listener explicit :backlog ──────────────────────────────────────────
+
+(test make-listener-accepts-explicit-backlog
+  :description "make-listener with an explicit :backlog keyword still binds and
+   accepts a connection (the keyword is forwarded to socket-listen without error)."
+  (unless (unix-socket-available-p)
+    (skip "Unix-domain socket bind unavailable (sandbox)"))
+  (sb-ext:with-timeout 10
+    (with-temp-socket-path (path)
+      (let ((listener (make-listener path :backlog 4)))
+        (unwind-protect
+             (let* ((client (connect-to path))
+                    (conn   (accept-connection listener)))
+               (unwind-protect
+                    (is-true conn "accept-connection must succeed with a custom backlog")
+                 (ignore-errors (close-socket client))
+                 (ignore-errors (close-socket conn))))
+          (ignore-errors (close-socket listener)))))))
+
 ;;; ── close-socket on never-used socket ────────────────────────────────────────
 
 (test close-socket-on-fresh-socket-does-not-signal

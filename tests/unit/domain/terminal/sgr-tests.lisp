@@ -246,6 +246,31 @@
                    (cl-tmux/terminal/sgr:%pen-to-sgr-params fg bg attrs unicode))
           "~A → ~S" desc expected))))
 
+;;; ── Coverage gap: %pen-to-sgr-params attrs2 (double-underline / overline) ────
+;;;
+;;; pen-to-sgr-params-table above only ever passes attrs2=0, so the two
+;;; attrs2-driven emission branches (SGR 21 double-underline, SGR 53 overline)
+;;; were never exercised by the inverse-SGR reconstruction.
+
+(test pen-to-sgr-params-attrs2-table
+  "%pen-to-sgr-params emits ;21 for double-underline and ;53 for overline when
+   set in ATTRS2, and both together when both bits are set."
+  (dolist (c (list
+              (list cl-tmux/terminal/types:+attr2-double-underline+
+                    "0;21" "double-underline bit alone → ;21")
+              (list cl-tmux/terminal/types:+attr2-overline+
+                    "0;53" "overline bit alone → ;53")
+              (list (logior cl-tmux/terminal/types:+attr2-double-underline+
+                            cl-tmux/terminal/types:+attr2-overline+)
+                    "0;21;53" "both bits → ;21;53 in declaration order")))
+    (destructuring-bind (attrs2 expected desc) c
+      (is (string= expected
+                   (cl-tmux/terminal/sgr:%pen-to-sgr-params
+                    cl-tmux/terminal/types:+default-color+
+                    cl-tmux/terminal/types:+default-color+
+                    0 attrs2))
+          "~A → ~S" desc expected))))
+
 (test sgr-reset-clears-new-attrs
   "SGR 0 after setting italic, conceal, and strikethrough zeroes all attr bits."
   (with-screen (s 10 2)

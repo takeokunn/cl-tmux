@@ -89,6 +89,23 @@
                        (list (pane-height p1) 12 "p1 height unchanged: no tree"))
                  :test #'equal)))
 
+;;; ── window-relayout-current ─────────────────────────────────────────────────
+
+(test window-relayout-current-uses-stored-dimensions
+  "window-relayout-current relayouts WINDOW using its own stored width/height
+   (equivalent to (window-relayout window (window-height w) (window-width w)))."
+  (let* ((p0  (make-no-pty-pane 1 0 0 1 1))
+         (win (make-window :id 1 :name "w" :width 90 :height 30
+                           :tree (make-layout-leaf p0)
+                           :panes (list p0) :active p0)))
+    (window-relayout-current win)
+    (check-table (list (list (window-width  win)              90 "window width unchanged")
+                       (list (window-height win)              30 "window height unchanged")
+                       (list (pane-width  p0)                 90 "pane width fills stored window width")
+                       (list (pane-height p0)                 30 "pane height fills stored window height")
+                       (list (screen-width  (pane-screen p0)) 90 "screen width matches stored window width")
+                       (list (screen-height (pane-screen p0)) 30 "screen height matches stored window height")))))
+
 ;;; ── ensure-window-fits ───────────────────────────────────────────────────────
 
 (test ensure-window-fits-relayouts-on-size-change
@@ -243,6 +260,45 @@
       (is (equal expected
                  (cl-tmux/model::%new-split-ratio orient avail ratio delta grow-first))
           "~A" desc))))
+
+;;; ── %requested-cells-from-hint direct tests (pure, no PTY) ───────────────────
+
+(test requested-cells-from-hint-table
+  "%requested-cells-from-hint converts a size HINT to a cell count within AVAIL.
+   Integer hints > 0 pass through unchanged; non-positive integers fall back to
+   half of AVAIL.  Real hints in (0,1) scale AVAIL; reals outside that range
+   also fall back to half of AVAIL.
+   Each row: (hint avail orient expected description)."
+  (dolist (row '((20   80 :h 20 "positive integer hint passes through unchanged")
+                 (0    80 :h 40 "zero integer hint falls back to half of avail")
+                 (-5   80 :h 40 "negative integer hint falls back to half of avail")
+                 (0.25 80 :h 20 "real hint in (0,1) scales avail proportionally")
+                 (0.3  80 :h 24 "real hint 0.3 scales and rounds to nearest cell")
+                 (1.0  80 :h 40 "real hint >= 1.0 falls back to half of avail")
+                 (0.0  80 :h 40 "real hint <= 0.0 falls back to half of avail")
+                 (nil  80 :h 40 "non-numeric hint falls back to half of avail")))
+    (destructuring-bind (hint avail orient expected desc) row
+      (is (eql expected
+               (cl-tmux/model::%requested-cells-from-hint hint avail orient))
+          "~A" desc))))
+
+;;; ── %ratio-from-size-hint direct tests (pure, no PTY) ─────────────────────────
+
+(test ratio-from-size-hint-clamps-to-axis-floor
+  "%ratio-from-size-hint clamps the requested cell count so both the new pane
+   and its sibling keep at least the axis floor (+pane-min-width+ for :h)."
+  ;; avail=10, :h axis-floor=2; requesting 1 cell must clamp up to 2/10.
+  (is (= 1/5 (cl-tmux/model::%ratio-from-size-hint 1 10 :h))
+      "requested cell count below the axis floor clamps up to axis-floor/avail")
+  ;; avail=10, :h axis-floor=2; requesting 9 cells must clamp down to leave
+  ;; axis-floor=2 for the first child, i.e. (10-2)/10 = 8/10.
+  (is (= 4/5 (cl-tmux/model::%ratio-from-size-hint 9 10 :h))
+      "requested cell count above (avail - axis-floor) clamps down"))
+
+(test ratio-from-size-hint-mid-range-passes-through
+  "%ratio-from-size-hint returns the exact ratio for a hint safely within bounds."
+  (is (= 1/4 (cl-tmux/model::%ratio-from-size-hint 20 80 :h))
+      "hint well within [axis-floor, avail - axis-floor] passes through unclamped"))
 
 ;;; ── window-refresh-panes ────────────────────────────────────────────────────
 

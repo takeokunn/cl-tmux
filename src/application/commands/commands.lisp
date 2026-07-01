@@ -162,56 +162,69 @@
       (when (eq (session-active-window session) src-window)
         (session-select-window session (first remaining))))))
 
+(defun %join-pane-active-leaf (dst-window)
+  "Return (values active-pane tree active-leaf) for DST-WINDOW's current split
+   tree, or NIL for ACTIVE-LEAF when the window has no active pane or tree."
+  (let* ((active (window-active-pane dst-window))
+         (tree   (window-tree dst-window)))
+    (values active tree (and active tree (layout-find-leaf tree active)))))
+
+(defun %join-pane-fits-p (dst-window active direction full)
+  "True when a new DIRECTION split will fit in DST-WINDOW.
+   FULL splits are checked against the whole window's axis extent; otherwise
+   against the ACTIVE pane's own extent."
+  (if full
+      (cl-tmux/model::%split-axis-fits-p
+       (cl-tmux/model::%window-axis-extent dst-window direction)
+       direction)
+      (cl-tmux/model::%split-fits-p active direction)))
+
+(defun %join-pane-build-split-node (src-pane dst-window active tree active-leaf
+                                    direction before full size)
+  "Build the new layout-split node inserting a fresh leaf for SRC-PANE next to
+   ACTIVE-LEAF (or replacing the whole TREE, when FULL) for a DIRECTION split.
+   SIZE is an optional tmux `-l` size hint for the new pane's share; BEFORE
+   swaps the child order so the new pane sits before the anchor.
+   `make-layout-split` stores the ratio for the FIRST child, while
+   `%ratio-from-size-hint` returns the desired share for the NEW pane, hence
+   the ratio is inverted on the BEFORE-less branch."
+  (let* ((available (1- (if full
+                            (cl-tmux/model::%window-axis-extent dst-window direction)
+                            (cl-tmux/model::%orient-pane-extent active direction))))
+         (new-ratio (if size
+                        (cl-tmux/model::%ratio-from-size-hint size available direction)
+                        1/2))
+         (anchor    (if full tree active-leaf))
+         (new-node  (make-layout-leaf src-pane)))
+    (if before
+        (make-layout-split direction new-node anchor new-ratio)
+        (make-layout-split direction anchor new-node (- 1 new-ratio)))))
+
 (defun %join-pane-insert-into-dst (src-pane dst-window direction
                                    &key before full size)
   "Insert SRC-PANE into DST-WINDOW as a DIRECTION split.
    Returns SRC-PANE on success, NIL when the destination has no active leaf."
-  (let* ((active      (window-active-pane dst-window))
-         (tree        (window-tree dst-window))
-         (active-leaf (and active tree (layout-find-leaf tree active))))
-    (when (and active-leaf
-               (if full
-                   (cl-tmux/model::%split-axis-fits-p
-                    (cl-tmux/model::%window-axis-extent dst-window direction)
-                    direction)
-                   (cl-tmux/model::%split-fits-p active direction)))
+  (multiple-value-bind (active tree active-leaf) (%join-pane-active-leaf dst-window)
+    (when (and active-leaf (%join-pane-fits-p dst-window active direction full))
       ;; Refresh the destination layout before deriving the split size.  Test
       ;; fixtures can carry stale pane dimensions even when the window/tree size
       ;; is current, and `-l` must be computed from the rendered pane extent.
       (cl-tmux/model:window-relayout-current dst-window)
-      (let* ((active      (window-active-pane dst-window))
-             (tree        (window-tree dst-window))
-             (active-leaf (layout-find-leaf tree active)))
-      ;; Match split-window's layout rules: -f uses the full window extent, -b
-      ;; swaps the child order, and -l supplies the target size hint.
-      (multiple-value-bind (px py pw ph)
-          (split-child-geometry active direction)
-        (pane-reposition src-pane px py pw ph)
-        (let* ((avail    (1- (if full
-                                 (cl-tmux/model::%window-axis-extent dst-window direction)
-                                 (cl-tmux/model::%orient-pane-extent active direction))))
-               (new-ratio (if size
-                              (cl-tmux/model::%ratio-from-size-hint size avail direction)
-                              1/2))
-               (anchor   (if full tree active-leaf))
-               (new-node (make-layout-leaf src-pane))
-               ;; `make-layout-split` stores the ratio for the FIRST child.
-               ;; `%ratio-from-size-hint` returns the desired share for the new pane.
-               (new-split (if before
-                              (make-layout-split direction new-node anchor
-                                                 new-ratio)
-                              (make-layout-split direction anchor new-node
-                                                 (- 1 new-ratio)))))
-          (if full
-              (setf (window-tree dst-window) new-split)
-              (cl-tmux/model::%replace-in-tree dst-window active-leaf new-split))
-          (setf (window-panes dst-window)
-                (layout-leaves (window-tree dst-window))
-                (pane-window src-pane) dst-window)
-          (window-relayout dst-window
-                           (window-height dst-window)
-                           (window-width  dst-window))
-          src-pane))))))
+      (multiple-value-bind (active tree active-leaf) (%join-pane-active-leaf dst-window)
+        ;; Match split-window's layout rules: -f uses the full window extent,
+        ;; -b swaps the child order, and -l supplies the target size hint.
+        (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
+          (pane-reposition src-pane px py pw ph)
+          (let ((new-split (%join-pane-build-split-node
+                             src-pane dst-window active tree active-leaf
+                             direction before full size)))
+            (if full
+                (setf (window-tree dst-window) new-split)
+                (cl-tmux/model::%replace-in-tree dst-window active-leaf new-split))
+            (setf (window-panes dst-window) (layout-leaves (window-tree dst-window))
+                  (pane-window src-pane) dst-window)
+            (window-relayout dst-window (window-height dst-window) (window-width dst-window))
+            src-pane))))))
 
 (defun join-pane (session src-window src-pane dst-window direction
                   &key before full size)

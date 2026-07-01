@@ -214,14 +214,11 @@ and marks *dirty* so the server re-renders."
 (test handle-client-message-resize-returns-nil-and-marks-dirty
   :description "%handle-client-message +msg-resize+ resizes the session and marks *dirty*."
   (with-fake-session (s)
-    (let ((cl-tmux::*term-rows* 24)
-          (cl-tmux::*term-cols* 80)
-          (cl-tmux::*dirty*    nil)
-          (cl-tmux::*running*  t))
+    (with-server-size-state ()
       (multiple-value-bind (_type payload) (decode-frame (msg-resize 30 100))
         (declare (ignore _type))
         (let ((result (cl-tmux::%handle-client-message +msg-resize+ payload s
-                                                       (cl-tmux::make-input-state))))
+                                                         (cl-tmux::make-input-state))))
           (is (null result) "+msg-resize+ must return NIL (continue serving)")
           (is-true cl-tmux::*dirty* "+msg-resize+ must set *dirty*")
           (is (= 30 cl-tmux::*term-rows*) "rows must update to 30")
@@ -232,14 +229,11 @@ and marks *dirty* so the server re-renders."
 (test handle-client-message-attach-applies-size-and-marks-dirty
   :description "%handle-client-message +msg-attach+ applies client dimensions and marks *dirty*."
   (with-fake-session (s)
-    (let ((cl-tmux::*term-rows* 24)
-          (cl-tmux::*term-cols* 80)
-          (cl-tmux::*dirty*    nil)
-          (cl-tmux::*running*  t))
+    (with-server-size-state ()
       (multiple-value-bind (_type payload) (decode-frame (msg-attach 40 120))
         (declare (ignore _type))
         (let ((result (cl-tmux::%handle-client-message +msg-attach+ payload s
-                                                       (cl-tmux::make-input-state))))
+                                                         (cl-tmux::make-input-state))))
           (is (null result) "+msg-attach+ must return NIL (continue serving)")
           (is-true cl-tmux::*dirty* "+msg-attach+ must set *dirty*")
           (is (= 40 cl-tmux::*term-rows*) "rows must update from attach payload")
@@ -251,8 +245,7 @@ and marks *dirty* so the server re-renders."
   :description "apply-client-size is safe when the session has no active window:
 it still updates *term-rows*/*term-cols* without signalling."
   (let ((s (make-session :id 1 :name "empty" :windows nil)))
-    (let ((cl-tmux::*term-rows* 24)
-          (cl-tmux::*term-cols* 80))
+    (with-server-size-state ()
       (multiple-value-bind (_type payload) (decode-frame (msg-resize 20 60))
         (declare (ignore _type))
         (finishes (cl-tmux::apply-client-size s payload))
@@ -446,17 +439,16 @@ effects for the :quit disposition."
   :description "apply-client-size calls window-relayout on the session's active window
 so pane geometry tracks the new terminal dimensions."
   (with-fake-session (s)
-    (let* ((win  (session-active-window s))
-           (cl-tmux::*term-rows* 24)
-           (cl-tmux::*term-cols* 80))
-      (multiple-value-bind (_t payload) (decode-frame (msg-resize 36 120))
-        (declare (ignore _t))
-        (cl-tmux::apply-client-size s payload))
-      ;; Verify the window dimensions were updated by the relayout.
-      (is (= 36 cl-tmux::*term-rows*) "rows must update to 36")
-      (is (= 120 cl-tmux::*term-cols*) "cols must update to 120")
-      (is (= 120 (window-width win))
-          "active window width must match new cols after apply-client-size"))))
+    (with-server-size-state ()
+      (let ((win (session-active-window s)))
+        (multiple-value-bind (_t payload) (decode-frame (msg-resize 36 120))
+          (declare (ignore _t))
+          (cl-tmux::apply-client-size s payload))
+        ;; Verify the window dimensions were updated by the relayout.
+        (is (= 36 cl-tmux::*term-rows*) "rows must update to 36")
+        (is (= 120 cl-tmux::*term-cols*) "cols must update to 120")
+        (is (= 120 (window-width win))
+            "active window width must match new cols after apply-client-size")))))
 
 ;;; ── process-client-keys printable byte returns nil ────────────────────────────
 

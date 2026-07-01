@@ -260,6 +260,46 @@
       (is (equal '("x") cl-tmux::*prompt-history*)
           "in-memory history still works without a file"))))
 
+;;; ── save-prompt-history (direct) ─────────────────────────────────────────────
+
+(test save-prompt-history-writes-oldest-first
+  "save-prompt-history writes *prompt-history* (newest-first in memory) to the
+   history-file oldest-first, so a later load-prompt-history restores the
+   original newest-first order."
+  (with-isolated-options ()
+    (let ((path (format nil "~A/cl-tmux-save-hist-~D.txt"
+                        (string-right-trim "/" (or (sb-ext:posix-getenv "TMPDIR") "/tmp"))
+                        (get-universal-time))))
+      (unwind-protect
+           (progn
+             (cl-tmux/options:set-option "history-file" path)
+             (let ((cl-tmux::*prompt-history* '("newest" "middle" "oldest")))
+               (cl-tmux::save-prompt-history))
+             (with-open-file (s path :direction :input)
+               (is (string= "oldest" (read-line s))
+                   "the first line written must be the oldest entry")
+               (is (string= "middle" (read-line s))
+                   "the second line written must be the middle entry")
+               (is (string= "newest" (read-line s))
+                   "the third line written must be the newest entry")))
+        (ignore-errors (delete-file path))))))
+
+(test save-prompt-history-no-op-when-history-file-unset
+  "save-prompt-history is a no-op (does not error, does not create a file) when
+   history-file is unset."
+  (with-isolated-options ("history-file" "")
+    (let ((cl-tmux::*prompt-history* '("a" "b")))
+      (finishes (cl-tmux::save-prompt-history)
+                "save-prompt-history must not error with history-file unset"))))
+
+(test save-prompt-history-swallows-io-errors
+  "save-prompt-history ignores I/O errors (e.g., an unwritable directory) rather
+   than signalling."
+  (with-isolated-options ("history-file" "/nonexistent-dir-xyz/hist.txt")
+    (let ((cl-tmux::*prompt-history* '("a")))
+      (finishes (cl-tmux::save-prompt-history)
+                "save-prompt-history must swallow I/O errors from an invalid path"))))
+
 (test alert-action-fires-p-policy-matrix
   "%alert-action-fires-p maps an activity/silence action × current-ness to a fire
    decision: none→never, current→only current, any→always, other→only non-current."

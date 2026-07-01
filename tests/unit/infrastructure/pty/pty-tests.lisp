@@ -120,6 +120,79 @@
   (is (fboundp 'cl-tmux/pty:set-pty-size)
       "set-pty-size must be fbound"))
 
+;;; ── forkpty-with-shell end-to-end (real PTY) ─────────────────────────────────
+
+(test forkpty-with-shell-returns-sane-fd-and-pid
+  "forkpty-with-shell spawns a real child shell and returns a non-negative
+   master fd and a positive pid."
+  (unless (pty-available-p) (skip "no PTY available (sandboxed environment)"))
+  (with-pty-shell (fd pid)
+    (is (>= fd 0) "master fd must be non-negative")
+    (is (plusp pid) "child pid must be positive")))
+
+(test forkpty-with-shell-slave-path-is-a-string
+  "forkpty-with-shell returns an empty string for slave-path (SBCL exposes no
+   portable slave path), not NIL."
+  (unless (pty-available-p) (skip "no PTY available (sandboxed environment)"))
+  (multiple-value-bind (fd pid slave-path) (forkpty-with-shell 24 80)
+    (unwind-protect
+         (is (string= "" slave-path) "slave-path must be the empty string")
+      (pty-close fd pid))))
+
+(test set-pty-size-does-not-error-on-real-pty
+  "set-pty-size succeeds (no error) when called on a real spawned PTY master fd."
+  (unless (pty-available-p) (skip "no PTY available (sandboxed environment)"))
+  (with-pty-shell (fd pid)
+    (finishes (cl-tmux/pty:set-pty-size fd 30 100)
+              "set-pty-size must not signal on a live PTY master fd")))
+
+;;; ── pty-write / pty-read-blocking (real pipe) ────────────────────────────────
+
+(test pty-write-string-round-trips-through-pipe
+  "pty-write encodes a UTF-8 string and writes it to the fd; the bytes are
+   readable back via pty-read-blocking."
+  (with-pipe-fds (rfd wfd)
+    (pty-write wfd "hi")
+    (let ((result (pty-read-blocking rfd 16)))
+      (is (equalp #(104 105) result)
+          "pty-read-blocking must return the written bytes ('hi' = 104 105)"))))
+
+(test pty-write-octet-vector-round-trips-through-pipe
+  "pty-write accepts a raw octet vector and writes it verbatim."
+  (with-pipe-fds (rfd wfd)
+    (pty-write wfd (make-array 3 :element-type '(unsigned-byte 8)
+                               :initial-contents '(1 2 3)))
+    (let ((result (pty-read-blocking rfd 16)))
+      (is (equalp #(1 2 3) result)
+          "pty-read-blocking must return the written octets unchanged"))))
+
+(test pty-write-empty-octet-vector-is-noop
+  "pty-write with a zero-length octet vector performs no write (no bytes land
+   on the read end)."
+  (with-pipe-fds (rfd wfd)
+    (pty-write wfd (make-array 0 :element-type '(unsigned-byte 8)))
+    (is (null (cl-tmux/pty:select-fds (list rfd) 10000))
+        "an empty write must leave the read end with no data")))
+
+(test pty-read-blocking-returns-nil-on-eof
+  "pty-read-blocking returns NIL when the write end of the pipe is closed
+   before any data is written (EOF)."
+  (with-pipe-fds (rfd wfd)
+    (sb-posix:close wfd)
+    (is (null (pty-read-blocking rfd 16))
+        "pty-read-blocking must return NIL on EOF")))
+
+;;; ── terminal-size ─────────────────────────────────────────────────────────────
+
+(test terminal-size-returns-two-positive-values
+  "terminal-size returns (values rows cols), both positive integers — either
+   the real ioctl-reported size or the documented fallback."
+  (multiple-value-bind (rows cols) (cl-tmux/pty:terminal-size)
+    (is (integerp rows) "rows must be an integer")
+    (is (integerp cols) "cols must be an integer")
+    (is (plusp rows) "rows must be positive")
+    (is (plusp cols) "cols must be positive")))
+
 ;;; ── %target-program-and-args ─────────────────────────────────────────────────
 
 (test target-program-and-args-with-default-command-uses-sh-c

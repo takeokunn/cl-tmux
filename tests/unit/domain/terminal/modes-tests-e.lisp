@@ -157,3 +157,99 @@
               "unrecognized param must not affect insert-mode")
     (is-false (cl-tmux/terminal/types:screen-newline-mode s)
               "unrecognized param must not affect newline-mode")))
+
+;;; ── SUITE: push-title-stack / pop-title-stack direct calls ──────────────────
+;;;
+;;; These back XTPUSHTITLE / XTPOPTITLE (CSI > Ps t / CSI < Ps t); the
+;;; CSI-parser path is covered by xtpushtitle-*/xtpoptitle-* tests in
+;;; csi-tests-c.lisp.  These tests call the action functions directly.
+
+(def-suite title-stack-direct-suite
+  :description "Direct calls to push-title-stack / pop-title-stack"
+  :in terminal-suite)
+(in-suite title-stack-direct-suite)
+
+(test push-title-stack-prepends-current-title
+  "push-title-stack conses the current title onto the (initially empty) stack."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/actions:set-screen-title s "one")
+    (cl-tmux/terminal/actions:push-title-stack s)
+    (is (equal '("one") (cl-tmux/terminal/types:screen-title-stack s))
+        "push-title-stack must prepend the current title onto the stack")))
+
+(test push-title-stack-multiple-pushes-newest-first
+  "Repeated push-title-stack calls build the stack newest-first."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/actions:set-screen-title s "one")
+    (cl-tmux/terminal/actions:push-title-stack s)
+    (cl-tmux/terminal/actions:set-screen-title s "two")
+    (cl-tmux/terminal/actions:push-title-stack s)
+    (is (equal '("two" "one") (cl-tmux/terminal/types:screen-title-stack s))
+        "stack must be newest-first, got ~S" (cl-tmux/terminal/types:screen-title-stack s))))
+
+(test push-title-stack-discards-oldest-past-max-depth
+  "push-title-stack discards the oldest entry once the stack exceeds
+   +title-stack-max-depth+ entries (xterm limit)."
+  (with-screen (s 10 5)
+    (dotimes (i (1+ cl-tmux/terminal/types:+title-stack-max-depth+))
+      (cl-tmux/terminal/actions:set-screen-title s (format nil "t~D" i))
+      (cl-tmux/terminal/actions:push-title-stack s))
+    (is (= cl-tmux/terminal/types:+title-stack-max-depth+
+           (length (cl-tmux/terminal/types:screen-title-stack s)))
+        "title-stack must be capped at +title-stack-max-depth+ entries, got ~D"
+        (length (cl-tmux/terminal/types:screen-title-stack s)))))
+
+(test pop-title-stack-restores-and-removes-top-entry
+  "pop-title-stack restores the most recently pushed title and removes it
+   from the stack."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/actions:set-screen-title s "original")
+    (cl-tmux/terminal/actions:push-title-stack s)
+    (cl-tmux/terminal/actions:set-screen-title s "changed")
+    (cl-tmux/terminal/actions:pop-title-stack s)
+    (is (string= "original" (cl-tmux/terminal/types:screen-title s))
+        "pop-title-stack must restore the previously pushed title")
+    (is (null (cl-tmux/terminal/types:screen-title-stack s))
+        "pop-title-stack must remove the popped entry from the stack")))
+
+(test pop-title-stack-on-empty-stack-is-noop
+  "pop-title-stack on an empty stack does not change the current title
+   and does not signal an error."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/actions:set-screen-title s "kept")
+    (finishes (cl-tmux/terminal/actions:pop-title-stack s))
+    (is (string= "kept" (cl-tmux/terminal/types:screen-title s))
+        "pop-title-stack on an empty stack must leave the title unchanged")))
+
+;;; ── SUITE: reset-osc-default-fg / reset-osc-default-bg direct calls ─────────
+;;;
+;;; These back OSC 110 / OSC 111 (reset default fg/bg colour to xterm defaults).
+;;; The OSC-parser dispatch path is covered by parser-tests.lisp; these tests
+;;; call the action functions directly.
+
+(def-suite osc-default-color-reset-direct-suite
+  :description "Direct calls to reset-osc-default-fg / reset-osc-default-bg"
+  :in terminal-suite)
+(in-suite osc-default-color-reset-direct-suite)
+
+(test reset-osc-default-fg-restores-constant
+  "reset-osc-default-fg sets screen-osc-default-fg back to +osc-default-fg+,
+   overwriting any value set by a prior OSC 10 sequence."
+  (with-screen (s 10 5)
+    (setf (cl-tmux/terminal/types:screen-osc-default-fg s) #x123456)
+    (cl-tmux/terminal/actions:reset-osc-default-fg s)
+    (is (= cl-tmux/terminal/types:+osc-default-fg+
+           (cl-tmux/terminal/types:screen-osc-default-fg s))
+        "reset-osc-default-fg must restore +osc-default-fg+, got ~X"
+        (cl-tmux/terminal/types:screen-osc-default-fg s))))
+
+(test reset-osc-default-bg-restores-constant
+  "reset-osc-default-bg sets screen-osc-default-bg back to +osc-default-bg+,
+   overwriting any value set by a prior OSC 11 sequence."
+  (with-screen (s 10 5)
+    (setf (cl-tmux/terminal/types:screen-osc-default-bg s) #x654321)
+    (cl-tmux/terminal/actions:reset-osc-default-bg s)
+    (is (= cl-tmux/terminal/types:+osc-default-bg+
+           (cl-tmux/terminal/types:screen-osc-default-bg s))
+        "reset-osc-default-bg must restore +osc-default-bg+, got ~X"
+        (cl-tmux/terminal/types:screen-osc-default-bg s))))

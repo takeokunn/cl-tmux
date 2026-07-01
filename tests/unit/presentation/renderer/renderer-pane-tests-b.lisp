@@ -177,9 +177,9 @@
 (test compute-selection-bounds-same-row-cols-normalised
   "%compute-selection-bounds normalises col order for same-row selections."
   (let ((screen (make-selecting-screen 10 5 2 7 2 3)))
-    (multiple-value-bind (active sr er sc ec rect-p mark-vrow mark-row mark-col)
+    (multiple-value-bind (active sr er sc ec rect-p mark-row mark-col)
         (cl-tmux/renderer::%compute-selection-bounds screen)
-      (declare (ignore rect-p mark-vrow mark-row mark-col))
+      (declare (ignore rect-p mark-row mark-col))
       (is-true active "sel-active must be T")
       (check-table (list (list sr 2 "both rows are 2: start")
                          (list er 2 "both rows are 2: end")
@@ -205,9 +205,9 @@
   "%compute-selection-bounds uses min/max column symmetrically in rectangle mode."
   ;; mark at (row=1, col=6), cursor at (row=4, col=2): rect cols [2,7) inclusive
   (let ((screen (make-selecting-screen 10 6 1 6 4 2 :rect t)))
-    (multiple-value-bind (active sr er sc ec rect-p mark-vrow mark-row mark-col)
+    (multiple-value-bind (active sr er sc ec rect-p mark-row mark-col)
         (cl-tmux/renderer::%compute-selection-bounds screen)
-      (declare (ignore mark-vrow mark-row mark-col))
+      (declare (ignore mark-row mark-col))
       (is-true  active  "sel-active must be T")
       (is-true  rect-p  "rect-p must be T when :rect t")
       (check-table (list (list sr 1 "start row = min(1,4) = 1")

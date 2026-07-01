@@ -218,6 +218,15 @@
   (with-active-window (win session)
     (swap-pane win direction)))
 
+;;; -- Resize-active-window-pane helper ------------------------------------------
+;;;
+;;; :resize-left/-right/-up/-down share the same shape: resize the active
+;;; pane of SESSION's active window in DIRECTION.
+
+(defun %resize-active-window-pane (session direction)
+  "Resize the active pane of SESSION's active window in DIRECTION."
+  (resize-pane (session-active-window session) direction))
+
 ;;; -- Private command helpers ------------------------------------------------
 
 (defun %derive-hook-session (target)

@@ -17,6 +17,24 @@
       (is-false (session-locked-p s)
                 "session must be unlocked after any byte"))))
 
+;;; ── process-byte with an active menu: menu takes priority over overlay ──────
+
+(test process-byte-routes-to-active-menu-before-overlay
+  "%ground-input-state routes to %dispatch-menu-key whenever *active-menu* is
+   set, even while an overlay is also showing — the ground-state clause
+   ordering places the menu check ahead of overlay-active-p."
+  (with-fake-session (s)
+    (let ((*overlay* "some overlay text")
+          (cl-tmux/prompt:*active-menu*
+            (cl-tmux/prompt:make-menu :items '(("one" . :a) ("two" . :b)))))
+      (with-input-state (input-state)
+        ;; 'q' would dismiss a plain overlay, but with a menu active it must
+        ;; instead dispatch :menu-dismiss and close the MENU, leaving the
+        ;; overlay's own state untouched by the overlay-dismiss path.
+        (is (null (cl-tmux::process-byte s (char-code #\q) input-state)))
+        (is-false (cl-tmux/prompt:menu-active-p)
+                  "q while a menu is active must dismiss the menu")))))
+
 ;;; ── %sgr-mouse-sequence-p edge cases ────────────────────────────────────────
 
 (test sgr-mouse-sequence-p-returns-nil-for-short-buffer

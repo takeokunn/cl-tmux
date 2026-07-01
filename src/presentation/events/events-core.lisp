@@ -9,7 +9,7 @@
 ;;; the codebase (define-command-handlers, define-csi-rules, define-state).
 
 ;;; UTF-8 accumulation state for the prompt (module-level; main-thread-only).
-(defvar *prompt-utf8-acc* 0
+(defvar *prompt-utf8-accumulator* 0
   "Accumulated code-point bits from UTF-8 lead byte processing.")
 (defvar *prompt-utf8-left* 0
   "Number of UTF-8 continuation bytes still expected (0 when idle).")
@@ -23,7 +23,7 @@
    Always marks *dirty* after dispatching."
   `(defun handle-prompt-key (byte)
      "Route one input BYTE to the active prompt.
-      UTF-8 multi-byte sequences are decoded via *prompt-utf8-acc* /
+      UTF-8 multi-byte sequences are decoded via *prompt-utf8-accumulator* /
       *prompt-utf8-left* before the dispatch table is consulted."
      (cond
        ,@(mapcar
@@ -69,46 +69,46 @@
 
 (define-prompt-vi-key-rules
   ;; Navigation
-  (104 (prompt-cursor-back)    t)              ; h — left
-  (108 (prompt-cursor-forward) t)              ; l — right
-  (48  (prompt-cursor-bol)     t)              ; 0 — beginning of line
-  (94  (prompt-cursor-bol)     t)              ; ^ — beginning of line
-  (36  (prompt-cursor-eol)     t)              ; $ — end of line
-  (119 (prompt-cursor-forward) t)              ; w — word forward (approx: move right)
-  (98  (prompt-cursor-back)    t)              ; b — word backward (approx: move left)
+  (#.+byte-h+       (prompt-cursor-back)    t)  ; h — left
+  (#.+byte-l+       (prompt-cursor-forward) t)  ; l — right
+  (#.+byte-digit-0+ (prompt-cursor-bol)     t)  ; 0 — beginning of line
+  (#.+byte-caret+   (prompt-cursor-bol)     t)  ; ^ — beginning of line
+  (#.+byte-dollar+  (prompt-cursor-eol)     t)  ; $ — end of line
+  (#.+byte-w+       (prompt-cursor-forward) t)  ; w — word forward (approx: move right)
+  (#.+byte-b+       (prompt-cursor-back)    t)  ; b — word backward (approx: move left)
   ;; Editing
-  (120 (prompt-delete-char)    t)              ; x — delete char under cursor
-  (68  (prompt-kill-to-end)    t)              ; D — delete to end of line
+  (#.+byte-capital-d+   (prompt-kill-to-end)  t) ; D — delete to end of line
+  (#.+byte-lowercase-x+ (prompt-delete-char)  t) ; x — delete char under cursor
   ;; Enter insert mode
-  (97  (prompt-cursor-forward)                 ; a — append (move right, enter insert)
+  (#.+byte-lowercase-a+ (prompt-cursor-forward)  ; a — append (move right, enter insert)
        (setf (prompt-vi-normal-p prompt) nil)
        t)
-  (65  (prompt-cursor-eol)                     ; A — append at end
+  (#.+byte-capital-a+ (prompt-cursor-eol)        ; A — append at end
        (setf (prompt-vi-normal-p prompt) nil)
        t)
-  (105 (setf (prompt-vi-normal-p prompt) nil)  ; i — insert mode
+  (#.+byte-i+ (setf (prompt-vi-normal-p prompt) nil)  ; i — insert mode
        t)
-  (73  (prompt-cursor-bol)                     ; I — insert at beginning
+  (#.+byte-capital-i+ (prompt-cursor-bol)        ; I — insert at beginning
        (setf (prompt-vi-normal-p prompt) nil)
        t)
-  (13  (let ((active-prompt prompt))           ; Enter — submit
+  (#.+byte-enter+ (let ((active-prompt prompt))  ; Enter — submit
          (when (prompt-on-submit active-prompt)
            (funcall (prompt-on-submit active-prompt) (prompt-buffer active-prompt)))
          (prompt-clear))
        t)
-  (27  (prompt-clear) t)                       ; ESC in normal mode — cancel
-  (3   (prompt-clear) t)                       ; C-c — cancel
+  (#.+byte-esc+    (prompt-clear) t)             ; ESC in normal mode — cancel
+  (#.+byte-ctrl-c+ (prompt-clear) t)              ; C-c — cancel
   (otherwise nil))                    ; unhandled — fall through to insert
 
 (define-prompt-key-rules
-  (13                                       ; Enter — submit and dismiss
-   (setf *prompt-utf8-acc* 0 *prompt-utf8-left* 0)
+  (#.+byte-enter+                           ; Enter — submit and dismiss
+   (setf *prompt-utf8-accumulator* 0 *prompt-utf8-left* 0)
    (let ((active-prompt *prompt*))
      (when (and active-prompt (prompt-on-submit active-prompt))
        (funcall (prompt-on-submit active-prompt) (prompt-buffer active-prompt)))
      (prompt-clear)))
-  (27                                       ; Esc
-   (setf *prompt-utf8-acc* 0 *prompt-utf8-left* 0)
+  (#.+byte-esc+                             ; Esc
+   (setf *prompt-utf8-accumulator* 0 *prompt-utf8-left* 0)
    (let ((p *prompt*))
      (cond
        ;; vi mode: ESC enters normal mode (does NOT cancel the prompt).
@@ -117,49 +117,55 @@
         (setf (prompt-vi-normal-p p) t))
        ;; emacs mode or already in vi-normal: cancel.
        (t (prompt-clear)))))
-  (3   (setf *prompt-utf8-acc* 0 *prompt-utf8-left* 0) (prompt-clear)) ; C-c — cancel
-  (1   (prompt-cursor-bol))                 ; C-a — beginning of line
-  (5   (prompt-cursor-eol))                 ; C-e — end of line
-  (2   (prompt-cursor-back))                ; C-b — cursor left
-  (6   (prompt-cursor-forward))             ; C-f — cursor right
-  (11  (prompt-kill-to-end))                ; C-k — kill to end
-  (21  (prompt-kill-to-start))              ; C-u — kill to start
-  (23  (prompt-kill-word-back))             ; C-w — kill previous word
-  ((or (= byte 127) (= byte 8))
+  (#.+byte-ctrl-c+ (setf *prompt-utf8-accumulator* 0 *prompt-utf8-left* 0)
+   (prompt-clear))                          ; C-c — cancel
+  (#.+byte-ctrl-a+ (prompt-cursor-bol))      ; C-a — beginning of line
+  (#.+byte-ctrl-e+ (prompt-cursor-eol))      ; C-e — end of line
+  (#.+byte-ctrl-b+ (prompt-cursor-back))     ; C-b — cursor left
+  (#.+byte-ctrl-f+ (prompt-cursor-forward))  ; C-f — cursor right
+  (#.+byte-ctrl-k+ (prompt-kill-to-end))     ; C-k — kill to end
+  (#.+byte-ctrl-u+ (prompt-kill-to-start))   ; C-u — kill to start
+  (#.+byte-ctrl-w+ (prompt-kill-word-back))  ; C-w — kill previous word
+  ((or (= byte #.+byte-del+) (= byte #.+byte-backspace+))
    (prompt-backspace))                      ; Backspace / DEL
   ;; Single-key prompt (confirm-before, command-prompt -1): the first printable
   ;; key IS the answer — submit it immediately as a 1-char string, no Enter.
   ;; Control keys (Esc, C-c) are < 32 and fall through to their cancel handlers.
-  ((and *prompt* (prompt-single-key *prompt*) (>= byte 32) (< byte 127))
-   (setf *prompt-utf8-acc* 0 *prompt-utf8-left* 0)
+  ((and *prompt* (prompt-single-key *prompt*)
+        (>= byte #.+byte-space+) (< byte #.+byte-del+))
+   (setf *prompt-utf8-accumulator* 0 *prompt-utf8-left* 0)
    (let ((active-prompt *prompt*)
-         (ch            (code-char byte)))
+         (character     (code-char byte)))
      (when (prompt-on-submit active-prompt)
-       (funcall (prompt-on-submit active-prompt) (string ch)))
+       (funcall (prompt-on-submit active-prompt) (string character)))
      (prompt-clear)))
   ;; Vi normal mode: intercept printable bytes before insert dispatch.
   ((%handle-vi-normal-key byte) nil)        ; consumed by vi-normal — already handled
-  ((and (>= byte 32) (< byte 127))
+  ((and (>= byte #.+byte-space+) (< byte #.+byte-del+))
    (prompt-input (code-char byte)))         ; printable ASCII — insert
   ;; UTF-8 continuation byte: fold into accumulator
-  ((= (logand byte #xC0) #x80)
+  ((= (logand byte +byte-utf8-continuation-tag-mask+) +byte-utf8-continuation-tag+)
    (when (plusp *prompt-utf8-left*)
-     (setf *prompt-utf8-acc*  (logior (ash *prompt-utf8-acc* 6)
-                                       (logand byte #x3F)))
+     (setf *prompt-utf8-accumulator*
+           (logior (ash *prompt-utf8-accumulator* 6)
+                   (logand byte +byte-utf8-continuation-data-mask+)))
      (decf *prompt-utf8-left*)
      (when (zerop *prompt-utf8-left*)
-       (let ((code-point *prompt-utf8-acc*))
-         (setf *prompt-utf8-acc* 0)
+       (let ((code-point *prompt-utf8-accumulator*))
+         (setf *prompt-utf8-accumulator* 0)
          (let ((character (ignore-errors (code-char code-point))))
            (when character (prompt-input character)))))))
   ;; UTF-8 lead byte: begin multi-byte decode
-  ((and (>= byte #xC0) (/= byte #xFF))
+  ((and (>= byte +byte-utf8-lead-min+) (/= byte +byte-utf8-lead-invalid+))
    (multiple-value-bind (accumulator bytes-left)
-       (cond ((< byte #xE0) (values (logand byte #x1F) 1))
-             ((< byte #xF0) (values (logand byte #x0F) 2))
-             (t             (values (logand byte #x07) 3)))
-     (setf *prompt-utf8-acc*  accumulator
-           *prompt-utf8-left* bytes-left)))
+       (cond ((< byte +byte-utf8-2byte-lead-max+)
+              (values (logand byte +byte-utf8-2byte-lead-data-mask+) 1))
+             ((< byte +byte-utf8-3byte-lead-max+)
+              (values (logand byte +byte-utf8-3byte-lead-data-mask+) 2))
+             (t
+              (values (logand byte +byte-utf8-4byte-lead-data-mask+) 3)))
+     (setf *prompt-utf8-accumulator* accumulator
+           *prompt-utf8-left*        bytes-left)))
   (t nil))                                  ; other control bytes — ignore
 
 ;;; (byte constants live in events-constants.lisp, loaded before this file)

@@ -100,6 +100,54 @@
   "Call FN with SESSION and a trailing NIL argument via %COPY-MODE-CALL."
   (%copy-mode-call session (lambda (s) (funcall fn s nil))))
 
+;;; ── Directional-handler dispatch table helper ───────────────────────────────
+;;;
+;;; Several handler groups share one uniform contract:
+;;;   (KEYWORD (HELPER-FN session DIRECTION-OR-NAME-KEYWORD))
+;;; define-directional-handlers encodes that contract so each group reads as
+;;; pure keyword → direction data, with no repeated-shape clauses.
+
+(defmacro define-directional-handlers (helper-fn &rest entries)
+  "Register handlers that all call (HELPER-FN session DIRECTION).
+   Each ENTRY is (KEYWORD DIRECTION).  Expands to define-command-handlers."
+  `(define-command-handlers
+     ,@(mapcar (lambda (entry)
+                 `(,(first entry) (,helper-fn session ,(second entry))))
+               entries)))
+
+;;; ── Resize commands ──────────────────────────────────────────────────────────
+
+(define-directional-handlers %resize-active-window-pane
+  (:resize-left   :left)
+  (:resize-right  :right)
+  (:resize-up     :up)
+  (:resize-down   :down))
+
+;;; ── Pane selection ────────────────────────────────────────────────────────
+
+(define-directional-handlers %select-pane-in-direction
+  (:select-pane-left   :left)
+  (:select-pane-right  :right)
+  (:select-pane-up     :up)
+  (:select-pane-down   :down))
+
+;;; ── Pane swap ─────────────────────────────────────────────────────────────
+
+(define-directional-handlers %swap-active-pane
+  (:swap-pane-forward  :right)
+  (:swap-pane-backward :left)
+  (:swap-pane-up       :up)
+  (:swap-pane-down     :down))
+
+;;; ── Layout selection ──────────────────────────────────────────────────────
+
+(define-directional-handlers %apply-named-layout-to-session
+  (:select-layout-even-h    :even-horizontal)
+  (:select-layout-even-v    :even-vertical)
+  (:select-layout-tiled     :tiled)
+  (:select-layout-main-h    :main-horizontal)
+  (:select-layout-main-v    :main-vertical))
+
 (define-command-handlers
   (:detach :detach)
   (:new-window (%cmd-new-window session))
@@ -151,12 +199,6 @@
                     :preview-length +buffer-preview-length+)
                    stream)))
 
-  ;; ── Resize commands ────────────────────────────────────────────────────────
-  (:resize-left   (resize-pane (session-active-window session) :left))
-  (:resize-right  (resize-pane (session-active-window session) :right))
-  (:resize-up     (resize-pane (session-active-window session) :up))
-  (:resize-down   (resize-pane (session-active-window session) :down))
-
   ;; ── Paste / send ──────────────────────────────────────────────────────────
   (:select-window (%select-window-by-byte session byte))
   (:paste-buffer
@@ -170,19 +212,6 @@
    (with-active-pane (ap session)
      (and (not *client-read-only*)
           (%send-byte-to-pane ap cl-tmux/config:*prefix-key-code*))))
-
-  ;; ── Layout commands ────────────────────────────────────────────────────────
-  (:select-layout-even-h    (%apply-named-layout-to-session session :even-horizontal))
-  (:select-layout-even-v    (%apply-named-layout-to-session session :even-vertical))
-  (:select-layout-tiled     (%apply-named-layout-to-session session :tiled))
-  (:select-layout-main-h    (%apply-named-layout-to-session session :main-horizontal))
-  (:select-layout-main-v    (%apply-named-layout-to-session session :main-vertical))
-
-  ;; ── Pane selection ────────────────────────────────────────────────────────
-  (:select-pane-left   (%select-pane-in-direction session :left))
-  (:select-pane-right  (%select-pane-in-direction session :right))
-  (:select-pane-up     (%select-pane-in-direction session :up))
-  (:select-pane-down   (%select-pane-in-direction session :down))
 
   ;; ── Zoom ──────────────────────────────────────────────────────────────────
   (:zoom-toggle
@@ -235,10 +264,6 @@
                       (%show-window-search-results session pattern))))
 
   ;; ── Pane management ────────────────────────────────────────────────────────
-  (:swap-pane-forward  (%swap-active-pane session :right))
-  (:swap-pane-backward (%swap-active-pane session :left))
-  (:swap-pane-up       (%swap-active-pane session :up))
-  (:swap-pane-down     (%swap-active-pane session :down))
   (:last-pane
    ;; Jump to the previously active pane.
    (let* ((win  (session-active-window session))

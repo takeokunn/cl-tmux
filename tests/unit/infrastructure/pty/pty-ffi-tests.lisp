@@ -22,21 +22,15 @@
 ;;; ── Platform constants ───────────────────────────────────────────────────────
 
 (test platform-constants-are-defined
-  "+o-rdwr+, +o-noctty+, +tiocgwinsz+, +tiocswinsz+ are all positive fixnums."
-  (is (plusp cl-tmux/pty::+o-rdwr+))
-  (is (plusp cl-tmux/pty::+o-noctty+))
+  "+tiocgwinsz+, +tiocswinsz+ are positive fixnums."
   (is (plusp cl-tmux/pty::+tiocgwinsz+))
   (is (plusp cl-tmux/pty::+tiocswinsz+))
   (is (= 32 cl-tmux/pty::+fd-set-words+)))
 
-(test signal-and-ioctl-constants-are-positive-fixnums
-  "+sighup+ is 1; +tiocsctty+, +tiocgwinsz+, +tiocswinsz+ are positive fixnums."
+(test signal-constant-is-positive-fixnum
+  "+sighup+ is 1."
   (is (= 1 cl-tmux/pty::+sighup+)
-      "SIGHUP must be signal number 1 on POSIX")
-  (is (plusp cl-tmux/pty::+tiocsctty+)
-      "+tiocsctty+ must be a positive fixnum")
-  (is (integerp cl-tmux/pty::+tiocsctty+)
-      "+tiocsctty+ must be an integer"))
+      "SIGHUP must be signal number 1 on POSIX"))
 
 (test fd-set-words-matches-expected-size
   "+fd-set-words+ is 32, matching a 128-byte fd_set on 64-bit platforms."
@@ -150,11 +144,6 @@
     (is-true  (cl-tmux/pty::fd-isset-p 992 rset) "fd 992 must be set")
     (is-false (cl-tmux/pty::fd-isset-p 993 rset) "fd 993 must remain clear")))
 
-(test platform-constants-distinguish-read-write-flags
-  "+o-rdwr+ and +o-noctty+ are distinct non-zero values."
-  (is (not (= cl-tmux/pty::+o-rdwr+ cl-tmux/pty::+o-noctty+))
-      "+o-rdwr+ and +o-noctty+ must be distinct constants"))
-
 (test ioctl-request-codes-are-distinct
   "+tiocgwinsz+ and +tiocswinsz+ are distinct (get ≠ set) ioctl codes."
   (is (not (= cl-tmux/pty::+tiocgwinsz+ cl-tmux/pty::+tiocswinsz+))
@@ -163,13 +152,9 @@
 ;;; ── FFI function reachability ────────────────────────────────────────────────
 
 (test cffi-functions-are-fbound
-  "All CFFI-declared functions (%posix-openpt, %grantpt, %unlockpt, %ptsname,
-   %read, %write, %select) must be fbound after the FFI declarations are loaded."
-  (dolist (sym '(cl-tmux/pty::%posix-openpt
-                 cl-tmux/pty::%grantpt
-                 cl-tmux/pty::%unlockpt
-                 cl-tmux/pty::%ptsname
-                 cl-tmux/pty::%read
+  "All CFFI-declared functions (%read, %write, %select) must be fbound after
+   the FFI declarations are loaded."
+  (dolist (sym '(cl-tmux/pty::%read
                  cl-tmux/pty::%write
                  cl-tmux/pty::%select))
     (is (fboundp sym)

@@ -10,7 +10,8 @@
 ;;;;   LOGIC  — expand-format (format.lisp) consumes the plist; never touches model
 ;;;;
 ;;;; OS introspection (pgrep/ps for pane_current_command, lsof/proc for cwd)
-;;;; is intentionally co-located here: both are context-building concerns.
+;;;; lives in format-context-os-probe.lisp, a distinct I/O-probing concern from
+;;;; the pure plist-building logic in this file.
 
 ;;; ── Context builder helpers ─────────────────────────────────────────────────
 
@@ -49,116 +50,6 @@
   "Return the hostname up to the first dot, or the full string if no dot."
   (subseq h 0 (or (position #\. h) (length h))))
 
-;;; ── #{pane_current_command} via pgrep/ps ────────────────────────────────────
-;;;
-;;; The foreground command of a pane's PTY is the youngest child of the shell
-;;; process (pane-pid).  pgrep -P <pid> lists children; ps -o comm= formats
-;;; the name.  Results are cached per (pid . cache-time) to avoid spawning
-;;; two subprocesses on every render cycle.
-
-(defvar *pane-command-cache* (make-hash-table :test #'eql)
-  "TTL cache mapping an integer PID to a (universal-time . command-name) cons.
-   The CAR is the CL universal-time of the last query; the CDR is the foreground
-   command name string returned by pgrep/ps.  Entries older than
-   +PANE-COMMAND-CACHE-TTL+ seconds are re-queried on the next access.")
-
-(defconstant +pane-command-cache-ttl+ 2
-  "Seconds before #{pane_current_command} is re-queried from the OS.")
-
-(defconstant +pane-command-probe-timeout+ 1
-  "Seconds to allow pgrep/ps foreground-command probes to run.")
-
-(defconstant +pane-cwd-proc-timeout+ 1
-  "Seconds to allow /proc cwd probes to run.")
-
-(defconstant +pane-cwd-lsof-timeout+ 2
-  "Seconds to allow lsof cwd probes to run.")
-
-(defun %run-format-probe (args timeout)
-  "Run a short OS probe and return trimmed stdout, or the empty string on failure."
-  (handler-case
-      (string-trim " \t\n\r"
-                   (uiop:run-program args
-                                     :output :string
-                                     :ignore-error-status t
-                                     :timeout timeout))
-    (error () "")))
-
-(defun %fetch-pane-command (pid)
-  "Query the OS for the foreground command running in PID's terminal.
-   Spawns pgrep -P PID to find the youngest child process, then ps -o comm= to
-   retrieve its name.  Only the first child PID line is used (pgrep may list
-   several).  Returns a command name string on success, or NIL on any failure
-   (pgrep/ps not available, no children, process already gone, timeout, etc.)."
-  (let ((child-out (%run-format-probe (list "pgrep" "-P" (format nil "~D" pid))
-                                      +pane-command-probe-timeout+)))
-    (when (plusp (length child-out))
-      ;; pgrep returns one PID per line; take the first
-      (let ((first-cpid (string-trim " \t\r"
-                                     (first (uiop:split-string child-out
-                                                               :separator '(#\Newline))))))
-        (when (and (plusp (length first-cpid))
-                   (every #'digit-char-p first-cpid))
-          (let ((name (%run-format-probe (list "ps" "-o" "comm=" "-p" first-cpid)
-                                         +pane-command-probe-timeout+)))
-            (when (plusp (length name)) name)))))))
-
-(defun %lsof-extract-cwd (lsof-output)
-  "Extract the current working directory path from LSOF-OUTPUT (the text returned
-   by lsof -Fn).  lsof -Fn prints file-name lines as 'nPATH'; this function returns
-   the PATH part of the first such line whose character after 'n' is non-empty.
-   Returns NIL when no suitable line is found."
-  (dolist (line (uiop:split-string lsof-output :separator '(#\Newline)) nil)
-    (when (and (> (length line) 1) (char= (char line 0) #\n))
-      (let ((path (subseq line 1)))
-        (when (plusp (length path))
-          (return path))))))
-
-(defun %pane-cwd-from-os (pane)
-  "Query the OS for the current working directory of PANE's shell process.
-   On Linux reads /proc/PID/cwd via readlink; on macOS uses lsof -p PID -a -d cwd.
-   Returns a non-empty path string, or NIL on failure (no PID, OS error, timeout)."
-  (let ((pid (and pane (cl-tmux/model:pane-pid pane))))
-    (when (and pid (> pid 0))
-      (or
-       ;; Linux: /proc/PID/cwd is a symlink to the cwd.
-       (let ((proc-path (format nil "/proc/~D/cwd" pid)))
-         (when (probe-file proc-path)
-           (let ((cwd (%run-format-probe (list "readlink" proc-path)
-                                         +pane-cwd-proc-timeout+)))
-             (when (plusp (length cwd)) cwd))))
-       ;; macOS: lsof reports the cwd as file descriptor 'cwd'.
-       ;; Try both full path (/usr/sbin/lsof) and bare name in case PATH varies.
-	       (let* ((lsof-binary (or (and (probe-file "/usr/sbin/lsof") "/usr/sbin/lsof")
-	                               "lsof"))
-	              (lsof-output (%run-format-probe
-	                            (list lsof-binary "-p" (format nil "~D" pid)
-	                                  "-a" "-d" "cwd" "-Fn")
-	                            +pane-cwd-lsof-timeout+))
-	              (extracted-path (%lsof-extract-cwd lsof-output)))
-	         (when (and extracted-path (plusp (length extracted-path)))
-	           extracted-path))))))
-
-(defun %pane-current-command (pane)
-  "Return the foreground command name for PANE's PTY process.
-   Consults *PANE-COMMAND-CACHE* first; re-queries the OS via %FETCH-PANE-COMMAND
-   only when the cached entry is missing or older than +PANE-COMMAND-CACHE-TTL+
-   seconds.  Falls back to the shell basename when OS introspection is unavailable
-   (no PID, pgrep/ps absent, or PID already gone)."
-  (let ((pid (and pane (cl-tmux/model:pane-pid pane))))
-    (if (and pid (> pid 0))
-        (let* ((cached (gethash pid *pane-command-cache*))
-               (now    (get-universal-time))
-               (stale  (or (null cached)
-                           (> (- now (car cached)) +pane-command-cache-ttl+))))
-          (if stale
-              (let ((cmd (or (%fetch-pane-command pid)
-                             (cl-tmux/model::%shell-basename))))
-                (setf (gethash pid *pane-command-cache*) (cons now cmd))
-                cmd)
-              (cdr cached)))
-        (cl-tmux/model::%shell-basename))))
-
 ;;; ── Context plist helpers ───────────────────────────────────────────────────
 ;;;
 ;;; These helpers extract sub-computations from format-context-from-session to
@@ -186,6 +77,173 @@
           (max 1 (ignore-errors
                    (length (symbol-value (find-symbol "*SERVER-SESSIONS*" "CL-TMUX")))))))
 
+;;; ── Context plist section builders ──────────────────────────────────────────
+;;;
+;;; Each of these builds one logically-grouped slice of the full context
+;;; plist. format-context-from-session appends the six slices together.
+
+(defun %session-context-plist (session window-count)
+  "Build the session-scoped slice of the format-context plist for SESSION.
+   WINDOW-COUNT is the pre-computed number of windows in SESSION."
+  (list :%session              session
+        :session-id            (if session (cl-tmux/model:session-id session) 0)
+        :session-name          (if session (cl-tmux/model:session-name session) "")
+        :session-windows       window-count
+        :session-attached      (if (and session (cl-tmux/model:session-clients session)) "1" "0")
+        :session-last-attached (if session
+                                   (format nil "~D" (cl-tmux/model:session-last-active session))
+                                   "0")
+        :session-group         (if (and session (cl-tmux/model:session-group session))
+                                   (format nil "~A" (cl-tmux/model:session-group session)) "")
+        :session-count         (%server-session-count-string)
+        :session-path          (ignore-errors (sb-posix:getcwd))
+        :client-session        (if session (cl-tmux/model:session-name session) "")))
+
+(defun %window-context-plist (window session session-active-window session-windows
+                              window-count window-panes window-flags window-raw-flags
+                              window-layout)
+  "Build the window-scoped slice of the format-context plist for WINDOW.
+   SESSION-ACTIVE-WINDOW, SESSION-WINDOWS, WINDOW-COUNT, WINDOW-PANES,
+   WINDOW-FLAGS, WINDOW-RAW-FLAGS, and WINDOW-LAYOUT are pre-computed by the
+   caller so they need not be recomputed here."
+  (list :window-index          (if window (cl-tmux/model:window-id window) 0)
+        :window-id             (if window (cl-tmux/model:window-id window) 0)
+        :window-name           (if window (cl-tmux/model:window-name window) "")
+        :window-count          window-count
+        :window-active         (if (and window session-active-window
+                                        (eq window session-active-window)) "1" "0")
+        :window-flags          window-flags
+        :window-raw-flags      window-raw-flags
+        :window-zoomed-flag    (if (and window (cl-tmux/model:window-zoom-p window)) "Z" " ")
+        :window-panes          (length window-panes)
+        :window-layout         window-layout
+        :window-visible-layout window-layout
+        :window-width          (if window (cl-tmux/model:window-width  window) 0)
+        :window-height         (if window (cl-tmux/model:window-height window) 0)
+        :window-format         (if window "1" "0")
+        :window-bell-flag      (if (%window-has-pending-bell-p window) "!" " ")
+        :window-activity-flag  (if (and window (cl-tmux/model:window-activity-flag window)) "#" " ")
+        :window-silence-flag   (if (and window (cl-tmux/model:window-silence-flag window)) "~" " ")
+        :window-start-flag     (if (and window session-windows (eq window (first session-windows))) "1" "0")
+        :window-end-flag       (if (and window session-windows
+                                        (eq window (first (last session-windows)))) "1" "0")
+        :window-last-flag      (if (and window session
+                                        (eq window (cl-tmux/model:session-last-window session)))
+                                   "1" "0")))
+
+(defun %pane-structural-context-plist (pane window pane-title pane-current-path pane-synchronized)
+  "Build the pane-structural slice of the format-context plist for PANE.
+   PANE-TITLE, PANE-CURRENT-PATH, and PANE-SYNCHRONIZED are pre-computed by
+   the caller so they need not be recomputed here."
+  (list :%c-search-pane       pane
+        :pane-index           (if pane (cl-tmux/model:pane-id pane) 0)
+        :pane-id              (if pane (cl-tmux/model:pane-id pane) 0)
+        :pane-title           pane-title
+        :pane-tty             (if pane (cl-tmux/model:pane-tty pane) "")
+        :pane-current-path    pane-current-path
+        :pane-current-command (%pane-current-command pane)
+        :pane-format          (if pane "1" "0")
+        :pane-active          (if (and pane window
+                                       (eq pane (cl-tmux/model:window-active-pane window)))
+                                  "1" "0")
+        :pane-synchronized    pane-synchronized
+        :pane-marked          (if (and pane (cl-tmux/model:pane-marked pane)) "1" "0")
+        :pane-input-off       (if (and pane (cl-tmux/model:pane-input-disabled pane)) "1" "0")
+        :pane-dead            (if (and pane (<= (cl-tmux/model:pane-fd pane) 0)) "1" "0")
+        :pane-pipe            (if (and pane (cl-tmux/model:pane-pipe-active-p pane)) "1" "0")))
+
+(defun %pane-geometry-context-plist (pane window)
+  "Build the pane-geometry slice of the format-context plist for PANE within WINDOW."
+  (list :pane-width           (if pane (cl-tmux/model:pane-width  pane) 0)
+        :pane-height          (if pane (cl-tmux/model:pane-height pane) 0)
+        :pane-pid             (if pane (cl-tmux/model:pane-pid    pane) 0)
+        :pane-left            (if pane (cl-tmux/model:pane-x      pane) 0)
+        :pane-top             (if pane (cl-tmux/model:pane-y      pane) 0)
+        :pane-right           (if pane (+ (cl-tmux/model:pane-x pane)
+                                          (cl-tmux/model:pane-width pane) -1) 0)
+        :pane-bottom          (if pane (+ (cl-tmux/model:pane-y pane)
+                                          (cl-tmux/model:pane-height pane) -1) 0)
+        :pane-at-top          (if (and pane (= (cl-tmux/model:pane-y pane) 0)) "1" "0")
+        :pane-at-left         (if (and pane (= (cl-tmux/model:pane-x pane) 0)) "1" "0")
+        :pane-at-bottom       (if (and pane window
+                                       (= (+ (cl-tmux/model:pane-y    pane)
+                                             (cl-tmux/model:pane-height pane))
+                                          (cl-tmux/model:window-height window)))
+                                  "1" "0")
+        :pane-at-right        (if (and pane window
+                                       (= (+ (cl-tmux/model:pane-x   pane)
+                                             (cl-tmux/model:pane-width pane))
+                                          (cl-tmux/model:window-width window)))
+                                  "1" "0")))
+
+(defun %screen-context-plist (pane-scr cursor-x cursor-y)
+  "Build the screen/copy-mode slice of the format-context plist for PANE-SCR.
+   PANE-SCR is the pane's screen object (or NIL); CURSOR-X and CURSOR-Y are
+   its pre-computed cursor coordinates."
+  (list :cursor-x             cursor-x
+        :cursor-y             cursor-y
+        :cursor-character
+        (if (and pane-scr
+                 (< -1 cursor-x (cl-tmux/terminal:screen-width  pane-scr))
+                 (< -1 cursor-y (cl-tmux/terminal:screen-height pane-scr)))
+            (string (cl-tmux/terminal:cell-char
+                     (cl-tmux/terminal:screen-cell pane-scr cursor-x cursor-y)))
+            "")
+        :pane-in-mode         (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr)) "1" "0")
+        :pane-mode            (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr)) "copy-mode" "")
+        :scroll-position      (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
+                                  (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr))
+                                  "")
+        :copy-position        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
+                                  (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr))
+                                  "")
+        :copy-position-limit  (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
+                                  (format nil "~D" (length (cl-tmux/terminal:screen-scrollback pane-scr)))
+                                  "")
+        :selection-active     (if (and pane-scr
+                                       (cl-tmux/terminal:screen-copy-mode-p pane-scr)
+                                       (cl-tmux/terminal:screen-copy-selecting pane-scr))
+                                  "1" "0")
+        :selection-present    (if (and pane-scr
+                                       (cl-tmux/terminal:screen-copy-mode-p pane-scr)
+                                       (cl-tmux/terminal:screen-copy-selecting pane-scr))
+                                  "1" "0")
+        :copy-cursor-x        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
+                                  (format nil "~D" (cdr (cl-tmux/terminal:screen-copy-cursor pane-scr)))
+                                  "")
+        :copy-cursor-y        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
+                                  (format nil "~D" (car (cl-tmux/terminal:screen-copy-cursor pane-scr)))
+                                  "")
+        :history-size         (format nil "~D"
+                                      (if pane-scr
+                                          (length (cl-tmux/terminal:screen-scrollback pane-scr))
+                                          0))))
+
+(defun %client-context-plist (client-width client-height client-tty hostname pid-str)
+  "Build the client/server/host/environment slice of the format-context plist.
+   CLIENT-WIDTH, CLIENT-HEIGHT, and CLIENT-TTY describe the attached client;
+   HOSTNAME and PID-STR are pre-computed by the caller."
+  (list :client-width         client-width
+        :client-height        client-height
+        :client-tty           client-tty
+        :client-name          client-tty
+        :client-termname      (or (ignore-errors (sb-ext:posix-getenv "TERM")) "")
+        :client-pid           pid-str
+        :client-prefix        (if (ignore-errors
+                                    (symbol-value (find-symbol "*PREFIX-ACTIVE*" "CL-TMUX")))
+                                  "1" "0")
+        :client-last-session  ""
+        :server-pid           pid-str
+        :version              (cl-tmux/version:version-string)
+        :hostname             hostname
+        :host                 hostname
+        :host-short           (%short-hostname hostname)
+        :time                 (%current-time-string)
+        :term-program         (or (ignore-errors (sb-ext:posix-getenv "TERM_PROGRAM")) "")
+        :colorterm            (or (ignore-errors (sb-ext:posix-getenv "COLORTERM")) "")
+        :history-limit        (format nil "~D"
+                                      (or (cl-tmux/options:get-option "history-limit") 2000))))
+
 ;;; ── Context builder ─────────────────────────────────────────────────────────
 
 (defun format-context-from-session (session window pane
@@ -200,9 +258,10 @@
      :CLIENT-HEIGHT  — terminal height reported to the client (default 0)
      :CLIENT-TTY     — path to the client tty device (default \"\")
 
-   Returns a plist of context keys.  The authoritative list of all #{...}
-   variables is the set of keywords in the returned plist — read the append
-   sections below for the current, complete set."
+   Returns a plist of context keys, assembled from six section builders
+   (session, window, pane-structural, pane-geometry, screen, client). The
+   authoritative list of all #{...} variables is the set of keywords in the
+   returned plist — read each section builder for its slice of the keys."
   (let* ((session-windows       (and session (cl-tmux/model:session-windows session)))
          (session-active-window (and session (cl-tmux/model:session-active-window session)))
          (window-count          (length session-windows))
@@ -231,144 +290,14 @@
          (hostname              (machine-instance))
          (pid-str               (%process-pid-string)))
     (append
-      ;; ── Session-scoped variables ──────────────────────────────────────────
-      (list :%session              session
-            :session-id            (if session (cl-tmux/model:session-id session) 0)
-            :session-name          (if session (cl-tmux/model:session-name session) "")
-            :session-windows       window-count
-            :session-attached      (if (and session (cl-tmux/model:session-clients session)) "1" "0")
-            :session-last-attached (if session
-                                       (format nil "~D" (cl-tmux/model:session-last-active session))
-                                       "0")
-            :session-group         (if (and session (cl-tmux/model:session-group session))
-                                       (format nil "~A" (cl-tmux/model:session-group session)) "")
-            :session-count         (%server-session-count-string)
-            :session-path          (ignore-errors (sb-posix:getcwd))
-            :client-session        (if session (cl-tmux/model:session-name session) ""))
-      ;; ── Window-scoped variables ───────────────────────────────────────────
-      (list :window-index          (if window (cl-tmux/model:window-id window) 0)
-            :window-id             (if window (cl-tmux/model:window-id window) 0)
-            :window-name           (if window (cl-tmux/model:window-name window) "")
-            :window-count          window-count
-            :window-active         (if (and window session-active-window
-                                            (eq window session-active-window)) "1" "0")
-            :window-flags          window-flags
-            :window-raw-flags      window-raw-flags
-            :window-zoomed-flag    (if (and window (cl-tmux/model:window-zoom-p window)) "Z" " ")
-            :window-panes          (length window-panes)
-            :window-layout         window-layout
-            :window-visible-layout window-layout
-            :window-width          (if window (cl-tmux/model:window-width  window) 0)
-            :window-height         (if window (cl-tmux/model:window-height window) 0)
-            :window-format         (if window "1" "0")
-            :window-bell-flag      (if (%window-has-pending-bell-p window) "!" " ")
-            :window-activity-flag  (if (and window (cl-tmux/model:window-activity-flag window)) "#" " ")
-            :window-silence-flag   (if (and window (cl-tmux/model:window-silence-flag window)) "~" " ")
-            :window-start-flag     (if (and window session-windows (eq window (first session-windows))) "1" "0")
-            :window-end-flag       (if (and window session-windows
-                                            (eq window (first (last session-windows)))) "1" "0")
-            :window-last-flag      (if (and window session
-                                            (eq window (cl-tmux/model:session-last-window session)))
-                                       "1" "0"))
-      ;; ── Pane structural variables ─────────────────────────────────────────
-      (list :%c-search-pane       pane
-            :pane-index           (if pane (cl-tmux/model:pane-id pane) 0)
-            :pane-id              (if pane (cl-tmux/model:pane-id pane) 0)
-            :pane-title           pane-title
-            :pane-tty             (if pane (cl-tmux/model:pane-tty pane) "")
-            :pane-current-path    pane-current-path
-            :pane-current-command (%pane-current-command pane)
-            :pane-format          (if pane "1" "0")
-            :pane-active          (if (and pane window
-                                           (eq pane (cl-tmux/model:window-active-pane window)))
-                                      "1" "0")
-            :pane-synchronized    pane-synchronized
-            :pane-marked          (if (and pane (cl-tmux/model:pane-marked pane)) "1" "0")
-            :pane-input-off       (if (and pane (cl-tmux/model:pane-input-disabled pane)) "1" "0")
-            :pane-dead            (if (and pane (<= (cl-tmux/model:pane-fd pane) 0)) "1" "0")
-            :pane-pipe            (if (and pane (cl-tmux/model:pane-pipe-active-p pane)) "1" "0"))
-      ;; ── Pane geometry variables ───────────────────────────────────────────
-      (list :pane-width           (if pane (cl-tmux/model:pane-width  pane) 0)
-            :pane-height          (if pane (cl-tmux/model:pane-height pane) 0)
-            :pane-pid             (if pane (cl-tmux/model:pane-pid    pane) 0)
-            :pane-left            (if pane (cl-tmux/model:pane-x      pane) 0)
-            :pane-top             (if pane (cl-tmux/model:pane-y      pane) 0)
-            :pane-right           (if pane (+ (cl-tmux/model:pane-x pane)
-                                              (cl-tmux/model:pane-width pane) -1) 0)
-            :pane-bottom          (if pane (+ (cl-tmux/model:pane-y pane)
-                                              (cl-tmux/model:pane-height pane) -1) 0)
-            :pane-at-top          (if (and pane (= (cl-tmux/model:pane-y pane) 0)) "1" "0")
-            :pane-at-left         (if (and pane (= (cl-tmux/model:pane-x pane) 0)) "1" "0")
-            :pane-at-bottom       (if (and pane window
-                                           (= (+ (cl-tmux/model:pane-y    pane)
-                                                 (cl-tmux/model:pane-height pane))
-                                              (cl-tmux/model:window-height window)))
-                                      "1" "0")
-            :pane-at-right        (if (and pane window
-                                           (= (+ (cl-tmux/model:pane-x   pane)
-                                                 (cl-tmux/model:pane-width pane))
-                                              (cl-tmux/model:window-width window)))
-                                      "1" "0"))
-      ;; ── Screen / copy-mode variables ──────────────────────────────────────
-      (list :cursor-x             cursor-x
-            :cursor-y             cursor-y
-            :cursor-character
-            (if (and pane-scr
-                     (< -1 cursor-x (cl-tmux/terminal:screen-width  pane-scr))
-                     (< -1 cursor-y (cl-tmux/terminal:screen-height pane-scr)))
-                (string (cl-tmux/terminal:cell-char
-                         (cl-tmux/terminal:screen-cell pane-scr cursor-x cursor-y)))
-                "")
-            :pane-in-mode         (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr)) "1" "0")
-            :pane-mode            (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr)) "copy-mode" "")
-            :scroll-position      (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                      (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr))
-                                      "")
-            :copy-position        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                      (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr))
-                                      "")
-            :copy-position-limit  (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                      (format nil "~D" (length (cl-tmux/terminal:screen-scrollback pane-scr)))
-                                      "")
-            :selection-active     (if (and pane-scr
-                                           (cl-tmux/terminal:screen-copy-mode-p pane-scr)
-                                           (cl-tmux/terminal:screen-copy-selecting pane-scr))
-                                      "1" "0")
-            :selection-present    (if (and pane-scr
-                                           (cl-tmux/terminal:screen-copy-mode-p pane-scr)
-                                           (cl-tmux/terminal:screen-copy-selecting pane-scr))
-                                      "1" "0")
-            :copy-cursor-x        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                      (format nil "~D" (cdr (cl-tmux/terminal:screen-copy-cursor pane-scr)))
-                                      "")
-            :copy-cursor-y        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                      (format nil "~D" (car (cl-tmux/terminal:screen-copy-cursor pane-scr)))
-                                      "")
-            :history-size         (format nil "~D"
-                                          (if pane-scr
-                                              (length (cl-tmux/terminal:screen-scrollback pane-scr))
-                                              0)))
-      ;; ── Client, server, host, and environment variables ──────────────────
-      (list :client-width         client-width
-            :client-height        client-height
-            :client-tty           client-tty
-            :client-name          client-tty
-            :client-termname      (or (ignore-errors (sb-ext:posix-getenv "TERM")) "")
-            :client-pid           pid-str
-            :client-prefix        (if (ignore-errors
-                                        (symbol-value (find-symbol "*PREFIX-ACTIVE*" "CL-TMUX")))
-                                      "1" "0")
-            :client-last-session  ""
-            :server-pid           pid-str
-            :version              (cl-tmux/version:version-string)
-            :hostname             hostname
-            :host                 hostname
-            :host-short           (%short-hostname hostname)
-            :time                 (%current-time-string)
-            :term-program         (or (ignore-errors (sb-ext:posix-getenv "TERM_PROGRAM")) "")
-            :colorterm            (or (ignore-errors (sb-ext:posix-getenv "COLORTERM")) "")
-            :history-limit        (format nil "~D"
-                                          (or (cl-tmux/options:get-option "history-limit") 2000))))))
+     (%session-context-plist session window-count)
+     (%window-context-plist window session session-active-window session-windows
+                            window-count window-panes window-flags window-raw-flags
+                            window-layout)
+     (%pane-structural-context-plist pane window pane-title pane-current-path pane-synchronized)
+     (%pane-geometry-context-plist pane window)
+     (%screen-context-plist pane-scr cursor-x cursor-y)
+     (%client-context-plist client-width client-height client-tty hostname pid-str))))
 
 (defun format-context-from-window (session window
                                    &key (client-width 0) (client-height 0)

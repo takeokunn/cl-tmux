@@ -352,14 +352,13 @@
 (test frame-layout-offset-constants-are-consistent
   "The frame-layout constants must be mutually consistent:
      +payload-length-offset+ (1) + 4 bytes == +header-size+ (5)
-     +attach-flags-offset+ == +attach-size-bytes+ (rows,cols occupy 4 bytes)
+     +attach-flags-offset+ must equal 4 (rows,cols occupy 4 bytes)
      +cols-offset-in-size-payload+ must equal 2 (after the 2-byte rows u16)"
   (is (= +header-size+
          (+ cl-tmux/protocol:+payload-length-offset+ 4))
       "+payload-length-offset+ + 4 must equal +header-size+")
-  (is (= cl-tmux/protocol:+attach-flags-offset+
-         cl-tmux/protocol:+attach-size-bytes+)
-      "+attach-flags-offset+ must equal +attach-size-bytes+")
+  (is (= 4 cl-tmux/protocol:+attach-flags-offset+)
+      "+attach-flags-offset+ must equal 4 (rows,cols occupy 4 bytes)")
   (is (= 2 cl-tmux/protocol:+cols-offset-in-size-payload+)
       "+cols-offset-in-size-payload+ must equal 2"))
 

@@ -81,7 +81,6 @@
    ;; Frame layout constants
    #:+payload-length-offset+
    #:+attach-flag-read-only+
-   #:+attach-size-bytes+
    #:+attach-flags-offset+
    #:+cols-offset-in-size-payload+
    ;; Frame codec

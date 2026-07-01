@@ -274,6 +274,34 @@
              (char= #\\ (char seq (1- (length seq)))))
         "terminates with ST (ESC backslash)")))
 
+;;; ── list-paste-buffers-with-names ────────────────────────────────────────────
+
+(test list-paste-buffers-with-names-returns-name-text-pairs
+  "list-paste-buffers-with-names returns (NAME . TEXT) conses, most recent first."
+  (with-empty-buffers
+    (cl-tmux/buffer:add-paste-buffer "one" "first")
+    (cl-tmux/buffer:add-paste-buffer "two" "second")
+    (let ((entries (cl-tmux/buffer:list-paste-buffers-with-names)))
+      (is (= 2 (length entries)) "must have one entry per buffer")
+      (is (equal '("second" . "two") (first entries))
+          "most recent buffer must come first, as (NAME . TEXT)"))))
+
+(test list-paste-buffers-with-names-empty-ring
+  "list-paste-buffers-with-names returns NIL for an empty ring."
+  (with-empty-buffers
+    (is (null (cl-tmux/buffer:list-paste-buffers-with-names))
+        "empty ring must yield NIL")))
+
+(test list-paste-buffers-with-names-returns-copy
+  "list-paste-buffers-with-names returns a fresh alist; mutating it does not
+   affect the internal buffer ring."
+  (with-empty-buffers
+    (cl-tmux/buffer:add-paste-buffer "x" "name1")
+    (let ((entries (cl-tmux/buffer:list-paste-buffers-with-names)))
+      (setf (car entries) (cons "mutated" "mutated"))
+      (is (string= "x" (cl-tmux/buffer:get-named-buffer "name1"))
+          "mutating the returned alist must not affect the internal ring"))))
+
 ;;; ── Named buffers (set-buffer -b / paste-buffer -b) ──────────────────────────
 
 (test named-buffer-set-and-get-by-name

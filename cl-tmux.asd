@@ -22,9 +22,12 @@
        (:file "config-tokenizer")    ; config tokenizer + key/command parse tables
        (:file "config-directives-macro")   ; generic directive-dispatch macro infra + posix/tilde/flag helpers
        (:file "config-bind-parsing")        ; bind/unbind-specific parsing + key-table dispatch
-       (:file "config-directives-set")     ; fixed-arity table + set-option flag handling + side effects
+       (:file "config-directives-set")     ; fixed-arity table + set-option flag handling/routing
+       (:file "config-option-side-effects") ; option runtime side effects + set-hook directive
        (:file "config-directives-runtime") ; set-environment, if-shell, run-shell, source-file
-       (:file "config-loader")))     ; apply-config-directive + preprocessor + load-config-file
+       (:file "config-loader")        ; directive dispatch + comment stripping + apply-config-line
+       (:file "config-preprocessor")  ; %if/%elif/%else/%endif state machine + brace/continuation joining
+       (:file "config-paths")))       ; config-file path resolution + load-config-file
      (:module "domain/ports"
       :serial t
       :components
@@ -51,7 +54,8 @@
        (:file "scroll")    ; row helpers + scroll-up/down + decstbm (loads before cursor/erase/edit)
        (:file "erase")     ; erase-region, erase-display, erase-line rule tables
        (:file "edit")      ; delete/insert chars+lines (uses %copy-row, %clear-row from scroll)
-       (:file "cursor")    ; cursor movement, character writing (uses scroll-up-one)
+       (:file "cursor")    ; cursor movement (uses scroll-up-one)
+       (:file "char-write") ; combining chars, DEC graphics, wide/normal cell writes (uses cursor-down/scroll, insert-chars)
        (:file "modes")     ; DEC modes — alt-screen + DEC PM rule table (parts I-II)
        (:file "modes-d")   ; DEC modes — focus, DECSC, reset, ANSI SM/RM, charset (parts III-IV)
        (:file "sgr")
@@ -85,6 +89,7 @@
        (:file "format-operators")  ; comparison and logical operators (#{==:}/#{!=:}/#{||:}/#{&&:})
        (:file "format-iteration")  ; W:/S:/P: window/session/pane iteration expanders
        (:file "format-engine")     ; core %expand-brace, bracket/paren expanders, CPS processor, expand-format
+       (:file "format-context-os-probe") ; OS probes (pgrep/ps/lsof/proc) for pane_current_command/pane_current_path
        (:file "format-context")))  ; context builder: model objects → expand-format plist
      (:module "domain/repository"
       :serial t
@@ -316,6 +321,7 @@
         ((:file "layout-tests")  ; layout-tree core: leaves/split/resize/collapse/persistence — part I
          (:file "layout-tests-b")  ; named-layout helpers, apply-named-layout — part II
          (:file "layout-tests-c")  ; layout persistence internals: split-bounding-box, node-to-string, read-digits, round-trips — part III
+         (:file "layout-tests-d")  ; main-pane-extent table, layout-split defaults, checksum constants, zoomed pane-neighbor guard — part IV
          (:file "layout-geometry-tests")  ; orientation helpers, layout-assign, resize-find-split, pane-at-position, split-child — part I
          (:file "layout-geometry-tests-b")  ; %ranges-overlap-p, pane-center, closest-to-center, define-axis-rules, nested min-extent — part II
          (:file "pane-tests")

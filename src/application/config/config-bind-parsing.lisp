@@ -33,20 +33,15 @@
       ;; Multi-token: store as token list.
       (values table key-token tokens repeatable note)))
 
-(defun %parse-bind-key-args (args)
-  "Parse the ARGS list for a bind directive (excludes the \"bind\" verb itself).
-   Returns (values table key command repeatable note) where TABLE is +TABLE-PREFIX+
-   by default and NOTE is the -N description string (or NIL), or NIL when ARGS do
-   not form a valid binding.
-
-   Flags consumed:
-     -n          Use the root key table instead of the prefix table.
-     -r          Mark the binding as repeatable (no prefix needed after first press).
-     -T <table>  Bind in the named key table TABLE.
-     -N <note>   Attach a human-readable description to the binding (list-keys)."
+(defun %parse-bind-key-flags (args)
+  "Consume the leading -n/-r/-T/-N bind-directive flags from ARGS.
+   Returns (values remaining-tokens table repeatable note), or NIL when a
+   value-taking flag (-T or -N) is missing its argument.
+   TABLE defaults to +TABLE-PREFIX+; REPEATABLE and NOTE default to NIL."
   (let ((table      +table-prefix+)
         (repeatable nil)
-        (note       nil))
+        (note       nil)
+        (missing-arg-p nil))
     ;; Consume all leading flag tokens with %consuming-flags, collecting -n/-r/-T/-N.
     ;; Stops at the first token that does not start with '-' (the key name).
     ;; The lambda body mutates its local REST (returned as first value) so that
@@ -61,33 +56,52 @@
               ;; -T requires a following table name argument; bail on missing arg.
               (if rest
                   (setf table (pop rest))
-                  (return-from %parse-bind-key-args nil)))
+                  (setf missing-arg-p t)))
              ;; -N "note": tmux 3.1+ key-binding description.  Must be consumed here
              ;; so the key name is not mis-read as "-N" nor the note as the command.
              ((string= tok "-N")
               (if rest
                   (setf note (pop rest))
-                  (return-from %parse-bind-key-args nil))))))
-      ;; After flags: remaining = (key cmd-token...) — need key + at least one cmd.
-      (when (null (rest remaining))
-        (return-from %parse-bind-key-args nil))
-      (let* ((key-token  (%parse-key-token (first remaining)))
-             ;; Strip optional { ... } block wrapper (tmux 3.x brace syntax) so
-             ;; it reuses the semicolon-sequence machinery below.
-             (cmd-tokens (%strip-brace-block (rest remaining)))
-             ;; Split on ";" tokens to support multi-command sequences:
-             ;;   bind r source-file ~/.tmux.conf \; display "Reloaded!"
-             ;; — or: bind r { source-file ~/.tmux.conf ; display "Reloaded!" }
-             (sequences  (%split-on-semicolons cmd-tokens)))
-        ;; An empty block (`bind r { }`) leaves no command — reject it.
-        (when (null cmd-tokens)
-          (return-from %parse-bind-key-args nil))
+                  (setf missing-arg-p t))))))
+      (unless missing-arg-p
+        (values remaining table repeatable note)))))
+
+(defun %resolve-bind-key-command (table key-token remaining repeatable note)
+  "Resolve REMAINING (the tokens after key/table/flag parsing: KEY CMD-TOKEN...)
+   into a bind-key binding.  Returns (values table key command repeatable note),
+   or NIL when REMAINING has no command, is an empty brace block, or names an
+   unrecognised single-word command."
+  (when remaining
+    (let* ((cmd-tokens (%strip-brace-block (rest remaining)))
+           ;; Split on ";" tokens to support multi-command sequences:
+           ;;   bind r source-file ~/.tmux.conf \; display "Reloaded!"
+           ;; — or: bind r { source-file ~/.tmux.conf ; display "Reloaded!" }
+           (sequences  (%split-on-semicolons cmd-tokens)))
+      ;; An empty block (`bind r { }`) leaves no command — reject it.
+      (when cmd-tokens
         (if (= (length sequences) 1)
             ;; Single command: delegate to %resolve-single-command-binding.
             (%resolve-single-command-binding table key-token (first sequences)
                                              repeatable note)
             ;; Multiple commands: store as :sequence list of token lists.
             (values table key-token (cons :sequence sequences) repeatable note))))))
+
+(defun %parse-bind-key-args (args)
+  "Parse the ARGS list for a bind directive (excludes the \"bind\" verb itself).
+   Returns (values table key command repeatable note) where TABLE is +TABLE-PREFIX+
+   by default and NOTE is the -N description string (or NIL), or NIL when ARGS do
+   not form a valid binding.
+
+   Flags consumed:
+     -n          Use the root key table instead of the prefix table.
+     -r          Mark the binding as repeatable (no prefix needed after first press).
+     -T <table>  Bind in the named key table TABLE.
+     -N <note>   Attach a human-readable description to the binding (list-keys)."
+  (multiple-value-bind (remaining table repeatable note) (%parse-bind-key-flags args)
+    ;; After flags: remaining = (key cmd-token...) — need key + at least one cmd.
+    (when (and remaining (rest remaining))
+      (%resolve-bind-key-command table (%parse-key-token (first remaining))
+                                 remaining repeatable note))))
 
 ;;; ── Semicolon-sequence splitter ──────────────────────────────────────────
 ;;;

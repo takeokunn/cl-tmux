@@ -17,6 +17,7 @@
 ;;; ── move-to (1-based conversion) ────────────────────────────────────────────
 
 (test move-to-is-one-based
+  "move-to converts 0-based row/col arguments to 1-based ESC[row;colH sequences."
   (is (string= (format nil "~C[1;1H" #\Escape)
                (with-output-to-string (s)
                  (cl-tmux/renderer::move-to s 0 0)))
@@ -38,6 +39,7 @@
         (is (search expected out) "~A (got ~S)" desc out)))))
 
 (test render-cell-attrs-frame
+  "render-cell-attrs always wraps its SGR codes in a leading ESC[0 reset and a trailing m."
   (let ((out (cell-attrs-string 1 2 1)))
     (is (eql 0 (search (format nil "~C[0" #\Escape) out))
         "render-cell-attrs should start with ESC[0 (got ~S)" out)
@@ -45,7 +47,7 @@
         "render-cell-attrs should end with m (got ~S)" out)))
 
 (test render-cell-attrs-default-color-omitted
-  ;; fg/bg outside 0..15 emit no colour code — only the leading reset remains.
+  "fg/bg outside 0..15 emit no colour code — only the leading reset remains."
   (let ((out (cell-attrs-string -1 -1 0)))
     (is (string= (format nil "~C[0m" #\Escape) out)
         "out-of-range fg/bg should omit colour codes (got ~S)" out)))

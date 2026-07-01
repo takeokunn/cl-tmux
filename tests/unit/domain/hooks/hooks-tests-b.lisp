@@ -40,6 +40,14 @@
     (is (null (cl-tmux/hooks:command-hooks "after-new-window"))
         "after clear-command-hooks the event must have no command hooks")))
 
+(test clear-command-hooks-unregistered-event-is-noop
+  "clear-command-hooks on an event with no registered command hooks is a safe no-op."
+  (with-isolated-hooks
+    (finishes (cl-tmux/hooks:clear-command-hooks "totally-unknown-event"))
+    (finishes (cl-tmux/hooks:clear-command-hooks "after-new-window"))
+    (is (null (cl-tmux/hooks:command-hooks "after-new-window"))
+        "command-hooks must still report NIL for the never-registered event")))
+
 ;;; ── set-hook -u (unset) directive ────────────────────────────────────────────
 ;;;
 ;;; The `set-hook -u <event>` directive clears every command hook registered for
@@ -270,7 +278,7 @@
   ":show-hooks dispatches without error and opens an overlay listing the hooks."
   (with-isolated-hooks
     (with-fake-session (s)
-      (let ((*overlay* nil))
+      (with-clean-overlay
         (cl-tmux/hooks:set-command-hook "after-new-window" :next-window)
         (cl-tmux::dispatch-command s :show-hooks nil)
         (assert-overlay-active ":show-hooks must open an overlay")

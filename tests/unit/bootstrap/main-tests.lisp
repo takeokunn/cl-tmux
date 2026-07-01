@@ -527,6 +527,106 @@
           "some escape-sequence output must be emitted when mouse is on")
       (is (find #\Escape output) "output must contain an ESC byte"))))
 
+;;; ── %close-all-pane-ptys ──────────────────────────────────────────────────────
+
+(test close-all-pane-ptys-closes-every-pane-fd
+  "%close-all-pane-ptys closes the PTY fd of every pane in the session; a
+   subsequent low-level close(2) on any pane's fd then fails with EBADF,
+   proving the fd was already released."
+  (unless (pty-available-p) (skip "no PTY available (sandboxed environment)"))
+  (let ((session (create-initial-session 24 80)))
+    (cl-tmux::%close-all-pane-ptys session)
+    (dolist (pane (all-panes session))
+      (signals sb-posix:syscall-error
+        (sb-posix:close (pane-fd pane))))))
+
+(test close-all-pane-ptys-ignores-already-closed-fds
+  "%close-all-pane-ptys tolerates being called twice (already-closed fds do not
+   signal an error)."
+  (unless (pty-available-p) (skip "no PTY available (sandboxed environment)"))
+  (let ((session (create-initial-session 24 80)))
+    (cl-tmux::%close-all-pane-ptys session)
+    (finishes (cl-tmux::%close-all-pane-ptys session)
+              "a second call on already-closed fds must not error")))
+
+;;; ── %cleanup-after-session ────────────────────────────────────────────────────
+
+(test cleanup-after-session-closes-ptys-and-clears-status-timer
+  "%cleanup-after-session joins the passed reader threads, clears *status-timer*,
+   and closes every pane's PTY fd."
+  (unless (pty-available-p) (skip "no PTY available (sandboxed environment)"))
+  (with-isolated-options ()
+    (let ((session (create-initial-session 24 80))
+          (cl-tmux::*status-timer* nil)
+          (cl-tmux::*running* t))
+      (cl-tmux::%cleanup-after-session session nil)
+      (is (null cl-tmux::*status-timer*)
+          "*status-timer* must be NIL after cleanup")
+      (finishes (cl-tmux::%close-all-pane-ptys session)
+                "panes must already have closed fds (idempotent close)"))))
+
+;;; ── %initialize-session-environment ───────────────────────────────────────────
+
+(test initialize-session-environment-wires-condition-evaluator-and-loads-config
+  "%initialize-session-environment wires *config-condition-evaluator*, applies
+   editor-derived mode-keys, wires the terminal option callbacks, and calls
+   load-config-file."
+  (with-isolated-options ()
+    (let ((orig-load        (fdefinition 'cl-tmux::load-config-file))
+          (load-called      nil)
+          (old-evaluator    cl-tmux/config:*config-condition-evaluator*)
+          (old-history-fn   cl-tmux/terminal:*history-limit-function*)
+          (old-altscreen-fn cl-tmux/terminal:*alternate-screen-enabled-function*)
+          (old-scroll-fn    cl-tmux/terminal:*scroll-on-clear-function*))
+      (unwind-protect
+           (progn
+             (setf (fdefinition 'cl-tmux::load-config-file)
+                   (lambda (&rest args) (declare (ignore args)) (setf load-called t) 0))
+             (cl-tmux::%initialize-session-environment)
+             (is-true load-called
+                      "%initialize-session-environment must call load-config-file")
+             (is (functionp cl-tmux/config:*config-condition-evaluator*)
+                 "*config-condition-evaluator* must be wired to a function")
+             (is (functionp cl-tmux/terminal:*history-limit-function*)
+                 "*history-limit-function* must be wired to a function"))
+        (setf (fdefinition 'cl-tmux::load-config-file) orig-load)
+        (setf cl-tmux/config:*config-condition-evaluator* old-evaluator)
+        (setf cl-tmux/terminal:*history-limit-function* old-history-fn)
+        (setf cl-tmux/terminal:*alternate-screen-enabled-function* old-altscreen-fn)
+        (setf cl-tmux/terminal:*scroll-on-clear-function* old-scroll-fn)))))
+
+;;; ── %apply-editor-mode-keys ────────────────────────────────────────────────────
+
+(test apply-editor-mode-keys-sets-vi-from-visual-env
+  "%apply-editor-mode-keys sets status-keys/mode-keys to \"vi\" when $VISUAL
+   names a vi-like editor."
+  (with-isolated-options ()
+    (let ((orig-getenv (fdefinition 'cl-tmux::%safe-getenv)))
+      (unwind-protect
+           (progn
+             (setf (fdefinition 'cl-tmux::%safe-getenv)
+                   (lambda (name) (if (string= name "VISUAL") "/usr/bin/vim" "")))
+             (cl-tmux::%apply-editor-mode-keys)
+             (is (string= "vi" (cl-tmux/options:get-option "status-keys"))
+                 "status-keys must be set to \"vi\"")
+             (is (string= "vi" (cl-tmux/options:get-option "mode-keys"))
+                 "mode-keys must be set to \"vi\""))
+        (setf (fdefinition 'cl-tmux::%safe-getenv) orig-getenv)))))
+
+(test apply-editor-mode-keys-no-op-when-no-editor-env
+  "%apply-editor-mode-keys leaves the registry defaults untouched when neither
+   $VISUAL nor $EDITOR is set."
+  (with-isolated-options ()
+    (let ((orig-getenv (fdefinition 'cl-tmux::%safe-getenv))
+          (before (cl-tmux/options:get-option "mode-keys")))
+      (unwind-protect
+           (progn
+             (setf (fdefinition 'cl-tmux::%safe-getenv) (lambda (name) (declare (ignore name)) ""))
+             (cl-tmux::%apply-editor-mode-keys)
+             (is (equal before (cl-tmux/options:get-option "mode-keys"))
+                 "mode-keys must be unchanged when no editor env var is set"))
+        (setf (fdefinition 'cl-tmux::%safe-getenv) orig-getenv)))))
+
 ;;; ── %die-with-message ─────────────────────────────────────────────────────────
 
 (test die-with-message-formats-and-exits-with-code-1

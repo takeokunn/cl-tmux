@@ -73,6 +73,27 @@
   :in terminal-suite)
 (in-suite special)
 
+;;; ── Coverage gap: DEFINE-STATE generated docstrings ──────────────────────────
+;;;
+;;; ground-state, escape-state, and osc-state are exported from
+;;; cl-tmux/terminal/parser but, before DEFINE-STATE injected a generated
+;;; docstring, carried no function-level documentation (only block comments).
+
+(test define-state-macro-is-defined
+  "define-state is a defined macro in the parser package."
+  (is (macro-function 'cl-tmux/terminal/parser::define-state)
+      "define-state must be a macro"))
+
+(test ground-escape-osc-state-have-docstrings
+  "The exported DEFINE-STATE entry points ground-state, escape-state, and
+   osc-state each carry a non-empty function docstring."
+  (dolist (fn-symbol '(cl-tmux/terminal/parser:ground-state
+                       cl-tmux/terminal/parser:escape-state
+                       cl-tmux/terminal/parser:osc-state))
+    (let ((doc (documentation fn-symbol 'function)))
+      (is (and (stringp doc) (plusp (length doc)))
+          "~A must have a non-empty docstring" fn-symbol))))
+
 (test bel-sets-bell-pending
   "BEL (byte #x07) sets screen-bell-pending to T without altering the screen or cursor."
   (with-screen (s 10 2)

@@ -289,4 +289,71 @@
           (when expected-bottom
             (is (= expected-bottom bottom) "~A: bottom" desc)))))))
 
+;;; ── SUITE: csi-rules-macro-and-helpers ───────────────────────────────────────
+;;;
+;;; Coverage gap: define-csi-rules (the dispatch-table macro) and %csi-leading-int
+;;; (the scalar-param extraction helper) were exercised only indirectly through
+;;; execute-csi end-to-end paths, mirroring the direct define-sgr-rules /
+;;; %pen-to-sgr-params coverage already present in sgr-tests-b.lisp.
+
+(def-suite csi-rules-macro-and-helpers
+  :description "Direct coverage of define-csi-rules and %csi-leading-int"
+  :in terminal-suite)
+(in-suite csi-rules-macro-and-helpers)
+
+(test define-csi-rules-macro-is-defined
+  "define-csi-rules is a defined macro in the csi package."
+  (is (macro-function 'cl-tmux/terminal/csi::define-csi-rules)
+      "define-csi-rules must be a macro"))
+
+(test execute-csi-has-docstring
+  "execute-csi (exported) has a non-empty docstring injected by define-csi-rules."
+  (let ((doc (documentation 'cl-tmux/terminal/csi:execute-csi 'function)))
+    (is (and (stringp doc) (plusp (length doc)))
+        "execute-csi must have a non-empty docstring")))
+
+(test csi-leading-int-table
+  "%csi-leading-int returns a plain integer as-is, the head of a colon-group
+   list, 0 for an absent (NIL) parameter, and 0 for a NIL-headed colon group."
+  (dolist (row (list (list 42       42 "plain integer passes through")
+                     (list '(4 3)   4  "colon-group list → its head")
+                     (list nil      0  "absent parameter → 0")
+                     (list '(nil 3) 0  "colon-group with NIL head → 0")))
+    (destructuring-bind (param expected desc) row
+      (is (= expected (cl-tmux/terminal/csi::%csi-leading-int param)) "~A" desc))))
+
+;;; ── SUITE: csi-decstr-ansi-mode-dispatch ─────────────────────────────────────
+;;;
+;;; Coverage gap: DECSTR (CSI ! p) and the ANSI Set/Reset Mode rules (CSI Ps h /
+;;; CSI Ps l with no private marker) were tested only via direct calls to
+;;; decstr-action / set-ansi-mode / reset-ansi-mode (modes-tests-e.lisp), never
+;;; through the execute-csi/parser dispatch path that actually routes to them.
+
+(def-suite csi-decstr-ansi-mode-dispatch
+  :description "CSI-level dispatch coverage for DECSTR and ANSI Set/Reset Mode"
+  :in terminal-suite)
+(in-suite csi-decstr-ansi-mode-dispatch)
+
+(test decstr-via-csi-resets-insert-mode-without-clearing-screen
+  "ESC[!p (DECSTR) reached via the parser clears IRM but leaves screen content alone."
+  (with-screen (s 10 5)
+    (feed s "ABCDE")
+    (feed s (esc "[4h"))          ; enable IRM first
+    (is-true (cl-tmux/terminal/types:screen-insert-mode s) "IRM must be set before DECSTR")
+    (feed s (esc "[!p"))          ; DECSTR — soft reset
+    (is-false (cl-tmux/terminal/types:screen-insert-mode s)
+              "DECSTR via CSI must clear IRM")
+    (is (string= "ABCDE" (row-string s 0 :end 5))
+        "DECSTR must not clear existing screen content")))
+
+(test ansi-mode-h-l-via-csi-toggles-insert-mode
+  "ESC[4h / ESC[4l (ANSI IRM, no private marker) toggle screen-insert-mode via
+   the execute-csi set-ansi-mode/reset-ansi-mode rules."
+  (with-screen (s 10 5)
+    (is-false (cl-tmux/terminal/types:screen-insert-mode s) "IRM must be off by default")
+    (feed s (esc "[4h"))
+    (is-true (cl-tmux/terminal/types:screen-insert-mode s) "ESC[4h must set IRM")
+    (feed s (esc "[4l"))
+    (is-false (cl-tmux/terminal/types:screen-insert-mode s) "ESC[4l must clear IRM")))
+
 ;;; ── SUITE: csi-unknown-sequences ─────────────────────────────────────────────

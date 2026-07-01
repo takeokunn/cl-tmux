@@ -163,6 +163,31 @@
       (is (eq :not-called received)
           "handler must NOT be invoked for a clipboard read request ('?')"))))
 
+;;; ── Coverage gap: osc52-clipboard-sequence (outbound OSC 52 builder) ────────
+;;;
+;;; osc52-clipboard-sequence is exported from cl-tmux/terminal/parser but was
+;;; previously exercised only indirectly (its counterpart, inbound OSC 52
+;;; decoding via %handle-osc-52, is covered by the tests above).  This is the
+;;; OUTBOUND direction: build the escape sequence cl-tmux writes to the real
+;;; terminal to copy TEXT onto the host clipboard.
+
+(test osc52-clipboard-sequence-round-trips-through-base64-decode
+  "osc52-clipboard-sequence builds ESC ] 52 ; c ; <base64> ESC \\, and the
+   embedded Base64 payload decodes back to the original UTF-8 text."
+  (let* ((text   "hello, cl-tmux!")
+         (seq    (cl-tmux/terminal/parser:osc52-clipboard-sequence text))
+         (prefix (format nil "~C]52;c;" #\Escape)))
+    (is (string= prefix (subseq seq 0 (length prefix)))
+        "sequence must start with ESC ] 52 ; c ;")
+    (is (string= (format nil "~C\\" #\Escape) (subseq seq (- (length seq) 2)))
+        "sequence must end with the ST terminator ESC \\")
+    (let* ((payload (subseq seq (length prefix) (- (length seq) 2)))
+           (decoded (babel:octets-to-string
+                     (cl-tmux/terminal/parser::%base64-decode payload)
+                     :encoding :utf-8)))
+      (is (string= text decoded)
+          "the embedded Base64 payload must decode back to the original text"))))
+
 ;;; ── OSC 7: current working directory (file://host/path) ──────────────────────
 
 (test osc7-path-extraction

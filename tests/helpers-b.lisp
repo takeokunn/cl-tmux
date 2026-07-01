@@ -70,6 +70,17 @@
          ,@(when overlay `((*overlay* nil))))
      ,@body))
 
+(defmacro with-server-size-state ((&key (rows 24) (cols 80)) &body body)
+  "Run BODY with the server's terminal-size and event-loop specials isolated:
+   *term-rows*/*term-cols* seeded to ROWS/COLS, *dirty* cleared, and *running*
+   set.  Extracted so tests exercising +msg-resize+/+msg-attach+/apply-client-size
+   share one fixture instead of repeating the same four-binding LET."
+  `(let ((cl-tmux::*term-rows* ,rows)
+         (cl-tmux::*term-cols* ,cols)
+         (cl-tmux::*dirty*    nil)
+         (cl-tmux::*running*  t))
+     ,@body))
+
 (defmacro with-command-rejection-state ((sess command-form overlay-message
                                               description)
                                         &body body)
@@ -523,6 +534,15 @@
                         (merge-pathnames ,label (uiop:temporary-directory)))))
        (unwind-protect (progn ,@body)
          (ignore-errors (delete-file ,path-var))))))
+
+(defmacro with-output-octet-stream ((stream-var path) &body body)
+  "Open PATH as a fresh binary output octet stream, bind STREAM-VAR, run BODY.
+   Collapses the repeated (with-open-file (... :direction :output :if-exists
+   :supersede :element-type '(unsigned-byte 8)) ...) opener used by tests that
+   hand-construct malformed or partial frames directly onto a file stream."
+  `(with-open-file (,stream-var ,path :direction :output :if-exists :supersede
+                                      :element-type '(unsigned-byte 8))
+     ,@body))
 
 (defun write-frames-to-file (path &rest frames)
   "Write each FRAME (octet vector) to PATH via cl-tmux/transport:send-frame.

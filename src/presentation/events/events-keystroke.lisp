@@ -13,13 +13,35 @@
   "Accumulated numeric prefix for copy-mode repeat counts.
    Set to 0 between commands.  Updated exclusively on the event-loop thread.")
 
+;;; ── Overlay pager key dispatch helper ────────────────────────────────────────
+;;;
+;;; Extracted from %ground-input-state's overlay-active-p clause to keep the
+;;; top-level CPS state a flat ordered list.  Returns the CPS continuation to
+;;; resume with: NIL for ground state, or the escape-accumulator continuation
+;;; armed by a lone Esc (which may turn out to be an arrow key).
+
+(defun %dispatch-overlay-key (byte)
+  "Handle one BYTE while the overlay pager is active.
+   j/k scroll; q dismisses; Esc arms escape accumulation (may be an arrow key);
+   all other keys are swallowed so the pager stays open until dismissed.
+   Always marks *dirty* and returns the CPS continuation to resume with (NIL
+   for ground state)."
+  (setf *dirty* t)
+  (cond
+    ((= byte +byte-j+)   (overlay-scroll 1)  nil)
+    ((= byte +byte-k+)   (overlay-scroll -1) nil)
+    ((= byte +byte-q+)   (clear-overlay)     nil)
+    ((= byte +byte-esc+) (%overlay-escape-second-byte (%make-escape-buffer byte)))
+    (t nil)))
+
 (defun %make-escape-buffer (byte)
   "Return a fresh adjustable byte vector with BYTE as its sole element.
    Used to start escape-sequence accumulation: the ESC byte is the first element
    and subsequent bytes are appended as the CPS continuation reads them."
-  (let ((buf (make-array 8 :element-type '(unsigned-byte 8) :fill-pointer 0 :adjustable t)))
-    (vector-push-extend byte buf)
-    buf))
+  (let ((escape-buffer (make-array 8 :element-type '(unsigned-byte 8)
+                                      :fill-pointer 0 :adjustable t)))
+    (vector-push-extend byte escape-buffer)
+    escape-buffer))
 
 ;;; ── Menu key dispatch helper ─────────────────────────────────────────────────
 ;;;
@@ -64,7 +86,7 @@
    (dispatch-command session :menu-prev byte)
    (setf *dirty* t))
   ;; Enter — select current item
-  ((= byte 13)
+  ((= byte +byte-enter+)
    (dispatch-command session :menu-select byte)
    (setf *dirty* t))
   ;; q / Escape — dismiss menu
@@ -112,37 +134,44 @@
         (setf *copy-mode-prefix* 0)
         count)))
 
+(defun %run-copy-mode-key-table-entry-or-dispatch (session screen byte count)
+  "Resolve BYTE against the active copy-mode key table and either run the
+   matching user binding or fall through to %DISPATCH-COPY-MODE-BYTE.
+   First checks the active copy-mode key table for user-defined overrides
+   (`bind -T copy-mode-vi ...` / `bind -T copy-mode ...`); legacy Ctrl bytes
+   and single-byte special keys are probed by their canonical tmux name
+   (\"C-b\", \"Enter\", \"BSpace\", ...), matching keys stored by the
+   key-binding table.  Returns the CPS continuation to resume with (a
+   char-jump continuation) or NIL for ground state."
+  (let ((entry (%key-table-entry-by-candidates
+                (%active-copy-mode-table)
+                (%single-byte-key-candidates byte))))
+    (if entry
+        (progn (%run-key-table-binding session entry byte) nil)
+        (multiple-value-bind (dispatched new-state)
+            (%dispatch-copy-mode-byte screen byte count session)
+          (declare (ignore dispatched))
+          new-state))))
+
 (defun %dispatch-copy-mode-ground-byte (session byte)
   "Handle one BYTE of unprefixed copy-mode navigation from ground state.
    Copy mode has its own active table, so ordinary bytes are resolved there
    before root/prefix bindings.  Numeric prefix digits accumulate via
    %copy-mode-accumulate-digit; once a non-digit byte resolves the count, the
-   byte is looked up first in the active copy-mode key table (user overrides
-   from `bind -T copy-mode[-vi] ...`) and otherwise dispatched through
-   %dispatch-copy-mode-byte.  Returns (values NIL NEXT-STATE) where NEXT-STATE
-   is the CPS continuation to resume with (ground state unless a char-jump
-   command armed a one-byte continuation)."
+   byte is resolved via %run-copy-mode-key-table-entry-or-dispatch.  Returns
+   (values NIL NEXT-STATE) where NEXT-STATE is the CPS continuation to resume
+   with (ground state unless a char-jump command armed a one-byte
+   continuation)."
   (let ((screen (%active-screen session)))
     (when screen
       (let ((count (%copy-mode-accumulate-digit byte)))
         (when count
-          ;; First: check the active copy-mode key table for user-defined
-          ;; overrides (bind -T copy-mode-vi ... / bind -T copy-mode ...).
-          ;; Legacy Ctrl bytes and single-byte special keys are also probed
-          ;; by their canonical tmux name ("C-b", "Enter", "BSpace", ...),
-          ;; matching keys stored by the key-binding table.
-          (let ((entry (%key-table-entry-by-candidates
-                        (%active-copy-mode-table)
-                        (%single-byte-key-candidates byte))))
-            (if entry
-                (%run-key-table-binding session entry byte)
-                (multiple-value-bind (dispatched new-state)
-                    (%dispatch-copy-mode-byte screen byte count session)
-                  (declare (ignore dispatched))
-                  (when new-state
-                    (setf *dirty* t)
-                    (return-from %dispatch-copy-mode-ground-byte
-                      (values nil new-state))))))))))
+          (let ((new-state (%run-copy-mode-key-table-entry-or-dispatch
+                             session screen byte count)))
+            (when new-state
+              (setf *dirty* t)
+              (return-from %dispatch-copy-mode-ground-byte
+                (values nil new-state))))))))
   (setf *dirty* t)
   (values nil #'%ground-input-state))
 
@@ -175,20 +204,7 @@
   ;; are routed to overlay-scroll inside make-escape-input-k; all other keys
   ;; are swallowed so the pager stays open until explicitly dismissed.
   ((overlay-active-p)
-   (cond
-     ;; scroll down one line
-     ((= byte +byte-j+)   (overlay-scroll 1)  (setf *dirty* t))
-     ;; scroll up one line
-     ((= byte +byte-k+)   (overlay-scroll -1) (setf *dirty* t))
-     ;; dismiss
-     ((= byte +byte-q+)   (clear-overlay)     (setf *dirty* t))
-     ((= byte +byte-esc+)                                         ; Esc — may be arrow
-      (setf *dirty* t)
-      (return-from %ground-input-state
-        (values nil (%overlay-escape-second-byte (%make-escape-buffer byte)))))
-     ;; all other keys: swallow (keep overlay open)
-     (t nil))
-   (values nil #'%ground-input-state))
+   (values nil (%dispatch-overlay-key byte)))
   ;; ── Active prompt captures all input ──────────────────────────────────────
   ((prompt-active-p)
    (if (= byte +byte-esc+)

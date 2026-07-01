@@ -281,3 +281,89 @@
      s #'(setf cl-tmux/terminal/types:screen-cur-fg) '(38 5 300))
     (is (= 255 (cl-tmux/terminal/types:screen-cur-fg s))
         "index 300 must be clamped to 255")))
+
+;;; ── Coverage gap: %encode-truecolor-rgb, %apply-sgr-group, %apply-sgr-color-arm ──
+;;;
+;;; %apply-sgr-group (colon-delimited groups) and %apply-sgr-color-arm
+;;; (semicolon-protocol arms) were previously exercised only indirectly via
+;;; apply-sgr/feed integration tests, so a future edit that let the two
+;;; parallel implementations diverge would not have been caught by a direct
+;;; unit test.  %encode-truecolor-rgb is the shared true-colour arithmetic
+;;; helper both implementations now delegate to.
+
+(test encode-truecolor-rgb-clamps-and-encodes
+  "%encode-truecolor-rgb clamps each channel to 0-255 and encodes #x1RRGGBB."
+  (is (= (logior #x1000000 (ash 255 16) (ash 128 8) 0)
+         (cl-tmux/terminal/sgr::%encode-truecolor-rgb 255 128 0))
+      "in-range channels must encode directly")
+  (is (= (logior #x1000000 (ash 255 16) (ash 0 8) 255)
+         (cl-tmux/terminal/sgr::%encode-truecolor-rgb 300 -5 999))
+      "out-of-range channels must clamp to 0-255 (300→255, -5→0, 999→255)")
+  (is (= #x1000000 (cl-tmux/terminal/sgr::%encode-truecolor-rgb nil nil nil))
+      "NIL channels must default to 0"))
+
+(test apply-sgr-group-truecolor-sets-fg
+  "%apply-sgr-group applies a (38 2 R G B) colon group as a true-colour fg."
+  (with-screen (s 10 2)
+    (cl-tmux/terminal/sgr::%apply-sgr-group
+     s (list 38 2 255 128 0))
+    (is (= (logior #x1000000 (ash 255 16) (ash 128 8) 0)
+           (cl-tmux/terminal/types:screen-cur-fg s))
+        "%apply-sgr-group (38 2 255 128 0) must encode true-colour fg")))
+
+(test apply-sgr-group-truecolor-skips-colourspace-field
+  "%apply-sgr-group takes the LAST three values as R G B, skipping an optional
+   leading colourspace-id field, e.g. (38 2 1 255 128 0)."
+  (with-screen (s 10 2)
+    (cl-tmux/terminal/sgr::%apply-sgr-group
+     s (list 38 2 1 255 128 0))
+    (is (= (logior #x1000000 (ash 255 16) (ash 128 8) 0)
+           (cl-tmux/terminal/types:screen-cur-fg s))
+        "colourspace-id field must be skipped; RGB taken from the tail")))
+
+(test apply-sgr-group-256color-sets-bg
+  "%apply-sgr-group applies a (48 5 N) colon group as a 256-colour bg."
+  (with-screen (s 10 2)
+    (cl-tmux/terminal/sgr::%apply-sgr-group s (list 48 5 200))
+    (is (= 200 (cl-tmux/terminal/types:screen-cur-bg s))
+        "%apply-sgr-group (48 5 200) must set cur-bg to 200")))
+
+(test apply-sgr-group-plain-code-fallback
+  "%apply-sgr-group with a non-colour lead (e.g. undercurl (4 3)) dispatches
+   the lead as a plain SGR code."
+  (with-screen (s 10 2)
+    (cl-tmux/terminal/sgr::%apply-sgr-group s (list 4 3))
+    (is (logbitp 3 (cl-tmux/terminal/types:screen-cur-attrs s))
+        "(4 3) must fall back to dispatching plain SGR 4 (underline)")))
+
+(test apply-sgr-color-arm-256color-advances-tail
+  "%apply-sgr-color-arm consumes a 38;5;N semicolon arm and returns the tail
+   after the three consumed elements."
+  (with-screen (s 10 2)
+    (let ((tail (cl-tmux/terminal/sgr::%apply-sgr-color-arm s '(38 5 200 1))))
+      (is (= 200 (cl-tmux/terminal/types:screen-cur-fg s))
+          "%apply-sgr-color-arm must set cur-fg to 200")
+      (is (equal '(1) tail)
+          "%apply-sgr-color-arm must return the tail after 38;5;200"))))
+
+(test apply-sgr-color-arm-truecolor-advances-tail
+  "%apply-sgr-color-arm consumes a 48;2;R;G;B semicolon arm and returns the
+   tail after the five consumed elements."
+  (with-screen (s 10 2)
+    (let ((tail (cl-tmux/terminal/sgr::%apply-sgr-color-arm
+                 s '(48 2 0 128 255 7))))
+      (is (= (logior #x1000000 (ash 0 16) (ash 128 8) 255)
+             (cl-tmux/terminal/types:screen-cur-bg s))
+          "%apply-sgr-color-arm must set cur-bg to the true-colour encoding")
+      (is (equal '(7) tail)
+          "%apply-sgr-color-arm must return the tail after 48;2;0;128;255"))))
+
+(test apply-sgr-color-arm-malformed-falls-back-to-plain-code
+  "%apply-sgr-color-arm with a malformed/incomplete arm (e.g. bare 38 with no
+   kind) falls back to dispatching the lead as a plain SGR code."
+  (with-screen (s 10 2)
+    (let ((tail (cl-tmux/terminal/sgr::%apply-sgr-color-arm s '(38))))
+      ;; 38 is not a recognized plain SGR code, so this is a no-op dispatch;
+      ;; the important behaviour under test is the returned tail.
+      (is (equal '() tail)
+          "%apply-sgr-color-arm must return the tail after the lead alone"))))

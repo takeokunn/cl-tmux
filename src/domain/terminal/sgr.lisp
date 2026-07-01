@@ -123,10 +123,22 @@
 ;;;   apply_sgr([58,2,R,G,B|T], S)       :- set_ul_truecolor(S,R,G,B),  apply_sgr(T, S).
 ;;;   apply_sgr([P|T], S)                :- dispatch_sgr(S, P),         apply_sgr(T, S).
 
-;;; %set-truecolor encodes a 38;2;R;G;B, 48;2;R;G;B, or 58;2;R;G;B run into
-;;; +true-color-flag+ | (R<<16) | (G<<8) | B and stores it via the supplied
-;;; SETTER helper.  This keeps the clamp/logior arithmetic shared across all
-;;; three colour slots.
+;;; %encode-truecolor-rgb and %set-truecolor encode a 38;2;R;G;B, 48;2;R;G;B, or
+;;; 58;2;R;G;B run into +true-color-flag+ | (R<<16) | (G<<8) | B and store it via
+;;; the supplied SETTER helper.  This keeps the clamp/logior arithmetic shared
+;;; across all three colour slots AND across the semicolon (%set-truecolor) and
+;;; colon-group (%apply-sgr-group) SGR syntaxes, which slice their R G B values
+;;; out of differently-shaped lists but must encode them identically.
+
+(declaim (inline %encode-truecolor-rgb))
+(defun %encode-truecolor-rgb (red green blue)
+  "Clamp RED, GREEN, and BLUE to 0-255 and encode them as #x1RRGGBB (bit 24 is
+   the true-colour flag).  Shared by every SGR true-colour arm (semicolon and
+   colon syntax alike) so the encoding arithmetic is written exactly once."
+  (logior #x1000000
+          (ash (clamp (or red   0) 0 255) 16)
+          (ash (clamp (or green 0) 0 255) 8)
+          (clamp (or blue 0) 0 255)))
 
 (declaim (inline %set-truecolor))
 (defun %set-truecolor (screen setter parameter-list)
@@ -134,10 +146,10 @@
    call SETTER with (SCREEN value) to store the result.  SETTER should be one of
    #'(setf screen-cur-fg), #'(setf screen-cur-bg), or #'(setf screen-cur-ul-color).
    Returns the tail of PARAMETER-LIST after the five consumed parameters."
-  (let* ((r (clamp (or (third  parameter-list) 0) 0 255))
-         (g (clamp (or (fourth parameter-list) 0) 0 255))
-         (b (clamp (or (fifth  parameter-list) 0) 0 255)))
-    (funcall setter (logior #x1000000 (ash r 16) (ash g 8) b) screen))
+  (funcall setter
+           (%encode-truecolor-rgb (third parameter-list) (fourth parameter-list)
+                                   (fifth parameter-list))
+           screen)
   (nthcdr 5 parameter-list))
 
 ;;; %consume-256-color-param handles the 38;5;N / 48;5;N / 58;5;N sub-protocol
@@ -175,11 +187,7 @@
     (cond
       ((and setter (eql kind 2) (>= (length group) 5))
        (let ((rgb (last group 3)))
-         (funcall setter
-                  (logior #x1000000
-                          (ash (clamp (or (first  rgb) 0) 0 255) 16)
-                          (ash (clamp (or (second rgb) 0) 0 255) 8)
-                          (clamp (or (third rgb) 0) 0 255))
+         (funcall setter (%encode-truecolor-rgb (first rgb) (second rgb) (third rgb))
                   screen)))
       ((and setter (eql kind 5) (>= (length group) 3))
        (funcall setter (clamp (or (car (last group)) 0) 0 255) screen))

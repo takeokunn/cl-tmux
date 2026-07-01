@@ -84,6 +84,59 @@
     (is (= p0-w (pane-width  p1)) "former neighbour width must be original active width")
     (is (= p0-h (pane-height p1)) "former neighbour height must be original active height")))
 
+(test swap-pane-forward-backward-aliases-match-right-left
+  "swap-pane :forward and :backward are aliases for :right and :left."
+  (dolist (row '((:forward :right "forward is an alias for right")
+                 (:backward :left  "backward is an alias for left")))
+    (destructuring-bind (alias canonical desc) row
+      (let* ((win-a (%vsplit-window 20))
+             (win-b (%vsplit-window 20)))
+        (swap-pane win-a alias)
+        (swap-pane win-b canonical)
+        (is (equal (mapcar #'pane-id (window-panes win-a))
+                   (mapcar #'pane-id (window-panes win-b)))
+            "~A: pane order after alias must match canonical direction" desc)))))
+
+(test swap-pane-down-swaps-spatially-adjacent-pane-below
+  "swap-pane :down on a horizontal (top/bottom) split swaps the active (top)
+   pane with its spatial neighbour below, exchanging geometry and list order."
+  (let* ((win (%hsplit-window 10))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win)))
+         (y0-before (pane-y p0))
+         (y1-before (pane-y p1)))
+    (window-select-pane win p0)
+    (is (eq p0 (swap-pane win :down)) "swap-pane :down returns the active pane")
+    (is (= y1-before (pane-y p0)) "active pane y must become the neighbour's former y")
+    (is (= y0-before (pane-y p1)) "neighbour y must become the active pane's former y")
+    (is (eq p1 (first  (window-panes win))) "former neighbour now occupies index 0")
+    (is (eq p0 (second (window-panes win))) "active pane now occupies index 1")))
+
+(test swap-pane-up-swaps-spatially-adjacent-pane-above
+  "swap-pane :up on a horizontal (top/bottom) split, with the bottom pane
+   active, swaps it with its spatial neighbour above."
+  (let* ((win (%hsplit-window 10))
+         (p0  (first  (window-panes win)))
+         (p1  (second (window-panes win)))
+         (y0-before (pane-y p0))
+         (y1-before (pane-y p1)))
+    (window-select-pane win p1)            ; bottom pane active
+    (is (eq p1 (swap-pane win :up)) "swap-pane :up returns the active pane")
+    (is (= y0-before (pane-y p1)) "active pane y must become the neighbour's former y")
+    (is (= y1-before (pane-y p0)) "neighbour y must become the active pane's former y")))
+
+(test swap-pane-up-down-no-spatial-neighbour-is-noop
+  "swap-pane :up/:down on a vertical (left/right) split has no spatially
+   adjacent pane in that axis, so pane-neighbor returns NIL and swap-pane
+   is a no-op (returns NIL, panes list unchanged)."
+  (dolist (dir '(:up :down))
+    (let* ((win (%vsplit-window 20))
+           (p0  (first (window-panes win))))
+      (is (null (swap-pane win dir))
+          "swap-pane ~A must return NIL when there is no spatial neighbour" dir)
+      (is (eq p0 (first (window-panes win)))
+          "panes list must be unchanged after a no-op ~A swap" dir))))
+
 ;;; ── capture-pane ─────────────────────────────────────────────────────────────
 
 (defun %make-pane-with-content (content &key (w 20) (h 5))

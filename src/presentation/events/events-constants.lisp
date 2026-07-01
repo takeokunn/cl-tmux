@@ -136,3 +136,55 @@
 (defconstant +byte-ctrl-s+      19 "C-s — incremental forward search in copy mode (0x13).")
 (defconstant +byte-ctrl-r+      18 "C-r — incremental backward search in copy mode (0x12).")
 (defconstant +byte-ctrl-j+      10 "C-j — newline / accept (equivalent to Enter in copy mode) (0x0A).")
+
+;;; ── Prompt-editing control-byte constants ───────────────────────────────────
+;;; Named for every raw byte used in the prompt key-dispatch tables
+;;; (define-prompt-key-rules / define-prompt-vi-key-rules) so those tables read
+;;; like the copy-mode dispatch table above rather than bare integer literals.
+(defconstant +byte-enter+       13  "Carriage return — submits the active prompt (0x0D).")
+(defconstant +byte-ctrl-c+       3  "C-c — cancel the active prompt (0x03).")
+(defconstant +byte-ctrl-a+       1  "C-a — cursor to beginning of line (0x01).")
+(defconstant +byte-ctrl-e+       5  "C-e — cursor to end of line (0x05).")
+(defconstant +byte-ctrl-b+       2  "C-b — cursor left one character (0x02).")
+(defconstant +byte-ctrl-f+       6  "C-f — cursor right one character (0x06).")
+(defconstant +byte-ctrl-k+      11  "C-k — kill from cursor to end of line (0x0B).")
+(defconstant +byte-ctrl-u+      21  "C-u — kill from cursor to beginning of line (0x15).")
+(defconstant +byte-ctrl-w+      23  "C-w — kill the previous word (0x17).")
+(defconstant +byte-backspace+    8  "ASCII backspace, ^H (0x08).")
+(defconstant +byte-lowercase-a+ 97  "Lowercase 'a' — vi-normal append after cursor (0x61).")
+(defconstant +byte-lowercase-x+ 120 "Lowercase 'x' — vi-normal delete char under cursor (0x78).")
+(defconstant +byte-capital-i+   73
+  "Uppercase 'I' — vi-normal insert at beginning of line (0x49).
+   NOTE: shares numeric value 73 with +byte-focus-in+.  They are semantically
+   disjoint: focus-in is the final byte of an ESC [ I CSI report and never
+   appears as a raw byte in single-byte prompt dispatch.")
+
+;;; ── UTF-8 lead/continuation-byte decode constants ───────────────────────────
+;;; Used by HANDLE-PROMPT-KEY to fold a multi-byte UTF-8 sequence into a single
+;;; code point one octet at a time.  See RFC 3629 §3 for the bit-layout this
+;;; mirrors: continuation bytes are 10xxxxxx: lead bytes for 2/3/4-byte
+;;; sequences are 110xxxxx / 1110xxxx / 11110xxx respectively.
+(defconstant +byte-utf8-continuation-tag-mask+ #xC0
+  "Mask isolating the top two bits of a byte, used to recognise a UTF-8
+   continuation byte (10xxxxxx) via (= (logand byte MASK) #x80).")
+(defconstant +byte-utf8-continuation-tag+ #x80
+  "Bit pattern of a UTF-8 continuation byte's top two bits (10xxxxxx).")
+(defconstant +byte-utf8-continuation-data-mask+ #x3F
+  "Mask extracting the 6 payload bits of a UTF-8 continuation byte (00111111).")
+(defconstant +byte-utf8-lead-min+ #xC0
+  "Smallest possible UTF-8 lead byte; bytes below this are ASCII or stray
+   continuation bytes, never the start of a multi-byte sequence.")
+(defconstant +byte-utf8-lead-invalid+ #xFF
+  "0xFF is never a valid UTF-8 lead byte (reserved by the encoding).")
+(defconstant +byte-utf8-2byte-lead-max+ #xE0
+  "Lead bytes below this value (but >= +byte-utf8-lead-min+) start a 2-byte
+   sequence (110xxxxx) carrying 5 payload bits, masked with #x1F.")
+(defconstant +byte-utf8-3byte-lead-max+ #xF0
+  "Lead bytes below this value (but >= +byte-utf8-2byte-lead-max+) start a
+   3-byte sequence (1110xxxx) carrying 4 payload bits, masked with #x0F.")
+(defconstant +byte-utf8-2byte-lead-data-mask+ #x1F
+  "Payload-bit mask for a 2-byte UTF-8 lead byte (110xxxxx).")
+(defconstant +byte-utf8-3byte-lead-data-mask+ #x0F
+  "Payload-bit mask for a 3-byte UTF-8 lead byte (1110xxxx).")
+(defconstant +byte-utf8-4byte-lead-data-mask+ #x07
+  "Payload-bit mask for a 4-byte UTF-8 lead byte (11110xxx).")

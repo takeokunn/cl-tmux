@@ -59,17 +59,6 @@
     (when (< j len) (incf j))        ; skip closing '
     j))
 
-(defun %config-token-finish (current tokens in-token)
-  "Flush CURRENT into TOKENS when IN-TOKEN is true."
-  (if in-token
-      (values (cons (copy-seq current) tokens) nil)
-      (values tokens in-token)))
-
-(defun %config-token-append-char (current in-token ch)
-  "Append CH to CURRENT and report the tokenizer as active."
-  (vector-push-extend ch current)
-  (values current t))
-
 (defun %config-tokens (line)
   "Tokenize LINE into a list of strings, handling:
    - unquoted whitespace as delimiter
@@ -77,51 +66,41 @@
    - 'single quoted' strings (literal content, no escapes)
    - \\ (backslash) escaping of the next character outside quotes
    Returns a list of token strings."
-  (let* ((tokens   '())
-         (current  (make-array 0 :element-type 'character :adjustable t :fill-pointer 0))
-         (in-token nil)
-         (len      (length line)))
-    (let ((i 0))
-      (loop while (< i len) do
-        (let ((ch (char line i)))
-          (cond
-            ((char= ch #\\)
-             (setf i (%tokenize-backslash-escape line i len
-                                                 (lambda (escaped-char)
-                                                   (multiple-value-bind (next-current next-in-token)
-                                                       (%config-token-append-char current in-token escaped-char)
-                                                     (setf current next-current
-                                                           in-token next-in-token))))))
-            ((char= ch #\")
-             (setf in-token t
-                   i (%tokenize-double-quoted line i len
-                                              (lambda (quoted-char)
-                                                (multiple-value-bind (next-current next-in-token)
-                                                    (%config-token-append-char current in-token quoted-char)
-                                                  (setf current next-current
-                                                        in-token next-in-token))))))
-            ((char= ch #\')
-             (setf in-token t
-                   i (%tokenize-single-quoted line i len
-                                              (lambda (quoted-char)
-                                                (multiple-value-bind (next-current next-in-token)
-                                                    (%config-token-append-char current in-token quoted-char)
-                                                  (setf current next-current
-                                                        in-token next-in-token))))))
-            ((%whitespace-p ch)
-             (multiple-value-setq (tokens in-token)
-               (%config-token-finish current tokens in-token))
-             (setf (fill-pointer current) 0)
-             (incf i))
-            (t
-             (multiple-value-bind (next-current next-in-token)
-                 (%config-token-append-char current in-token ch)
-               (setf current next-current
-                     in-token next-in-token))
-             (incf i)))))
-      (multiple-value-setq (tokens in-token)
-        (%config-token-finish current tokens in-token))
-      (setf (fill-pointer current) 0))
+  (let ((tokens   '())
+        (current  (make-array 0 :element-type 'character :adjustable t :fill-pointer 0))
+        (in-token nil)
+        (len      (length line)))
+    (flet ((push-char (ch)
+             "Append CH to the in-progress token and mark it active.
+              Shared by every character-class callback below so the
+              append-and-flag dance is written once."
+             (vector-push-extend ch current)
+             (setf in-token t))
+           (finish-token ()
+             "Flush the in-progress token into TOKENS, when any is open."
+             (when in-token
+               (push (copy-seq current) tokens)
+               (setf (fill-pointer current) 0
+                     in-token nil))))
+      (let ((i 0))
+        (loop while (< i len) do
+          (let ((ch (char line i)))
+            (cond
+              ((char= ch #\\)
+               (setf i (%tokenize-backslash-escape line i len #'push-char)))
+              ((char= ch #\")
+               (setf i (%tokenize-double-quoted line i len #'push-char)
+                     in-token t))
+              ((char= ch #\')
+               (setf i (%tokenize-single-quoted line i len #'push-char)
+                     in-token t))
+              ((%whitespace-p ch)
+               (finish-token)
+               (incf i))
+              (t
+               (push-char ch)
+               (incf i))))))
+      (finish-token))
     (nreverse tokens)))
 
 (defun %parse-control-char (rest)

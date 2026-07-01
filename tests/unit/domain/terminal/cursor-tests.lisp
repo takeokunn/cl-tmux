@@ -1,6 +1,7 @@
 (in-package #:cl-tmux/test)
 
-;;;; Cursor movement and character-writing tests (src/terminal/cursor.lisp).
+;;;; Cursor movement and character-writing tests
+;;;; (src/domain/terminal/cursor.lisp, src/domain/terminal/char-write.lisp).
 ;;;; Tests: scroll-region clamping, direct action functions, %advance-cursor
 ;;;;        autowrap behaviour, set-cursor, cursor-ri, cursor-cht/cbt,
 ;;;;        combining-char handling, DEC-graphics remapping, and %place-wide-char.

@@ -47,6 +47,7 @@
                 #:window-select-pane
                 #:window-split
                 #:window-relayout
+                #:window-relayout-current
                 #:window-remove-pane
                 #:window-resize-active
                 #:window-refresh-panes

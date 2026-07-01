@@ -41,11 +41,10 @@
 (defconstant +payload-length-offset+ 1
   "Byte offset of the u32-big-endian payload-length field inside a frame header.")
 
-(defconstant +attach-size-bytes+ 4
-  "Number of bytes occupied by the rows,cols pair in a +msg-attach+ payload.")
-
 (defconstant +attach-flags-offset+ 4
-  "Byte offset of the optional flags byte within a +msg-attach+ payload.")
+  "Byte offset of the optional flags byte within a +msg-attach+ payload.
+   Equal to the number of bytes occupied by the rows,cols pair that precedes
+   it in a +msg-attach+ payload.")
 
 (defconstant +cols-offset-in-size-payload+ 2
   "Byte offset of the cols u16 within a rows,cols size payload.")

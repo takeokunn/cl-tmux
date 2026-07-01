@@ -24,6 +24,7 @@
 ;;; -- render-pane (content + positioning) ------------------------------------
 
 (test render-pane-content-and-positioning
+  "render-pane emits the pane's cell glyphs preceded by a cursor-position sequence for row 0."
   (let* ((sess (make-renderer-test-session 5 2 :content "hi"))
          (pane (first (window-panes (session-active-window sess))))
          (out  (render-pane-output sess pane)))
@@ -60,6 +61,7 @@
 ;;; -- double-width glyphs are not double-printed ------------------------------
 
 (test render-pane-double-width-not-duplicated
+  "A double-width glyph occupying two cells is printed exactly once, not twice."
   (let* ((sess   (make-renderer-test-session 5 2))
          (pane   (first (window-panes (session-active-window sess))))
          (screen (pane-screen pane)))

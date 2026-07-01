@@ -283,6 +283,92 @@
       (is (= 256 (length overrides))
           "palette-overrides vector must have 256 entries"))))
 
+;;; ── SUITE: %palette-override-get / %palette-override-set / %palette-override-clear ──
+;;;
+;;; Single-index round-trip and boundary behaviour, distinct from the
+;;; %palette-override-clear-all bulk-reset suite below.
+
+(def-suite palette-override-get-set-clear-suite
+  :description "%palette-override-get/set/clear: single-index round-trip and out-of-range handling"
+  :in terminal-suite)
+(in-suite palette-override-get-set-clear-suite)
+
+(test palette-override-get-returns-nil-before-any-set
+  "%palette-override-get returns NIL for any index on a fresh screen (no vector allocated)."
+  (with-screen (s 10 5)
+    (is (null (cl-tmux/terminal/types:%palette-override-get s 0))
+        "index 0 must be NIL before any set")
+    (is (null (cl-tmux/terminal/types:%palette-override-get s 255))
+        "index 255 must be NIL before any set")))
+
+(test palette-override-set-then-get-round-trips
+  "%palette-override-get returns the exact RGB value passed to %palette-override-set."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/types:%palette-override-set s 42 #xABCDEF)
+    (is (= #xABCDEF (cl-tmux/terminal/types:%palette-override-get s 42))
+        "index 42 must round-trip the set value")))
+
+(test palette-override-set-does-not-disturb-other-indices
+  "%palette-override-set at one index leaves other indices NIL."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/types:%palette-override-set s 5 #x123456)
+    (is (null (cl-tmux/terminal/types:%palette-override-get s 4))
+        "index 4 must remain NIL")
+    (is (null (cl-tmux/terminal/types:%palette-override-get s 6))
+        "index 6 must remain NIL")))
+
+(test palette-override-get-out-of-range-index-returns-nil
+  "%palette-override-get returns NIL for indices outside 0..255, even after other sets."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/types:%palette-override-set s 0 #xFFFFFF)
+    (is (null (cl-tmux/terminal/types:%palette-override-get s -1))
+        "negative index must return NIL")
+    (is (null (cl-tmux/terminal/types:%palette-override-get s 256))
+        "index 256 (above range) must return NIL")))
+
+(test palette-override-set-out-of-range-index-is-ignored
+  "%palette-override-set silently ignores an out-of-range index (no error, no allocation forced)."
+  (with-screen (s 10 5)
+    (finishes (cl-tmux/terminal/types:%palette-override-set s 256 #xFFFFFF))
+    (finishes (cl-tmux/terminal/types:%palette-override-set s -1 #xFFFFFF))))
+
+(test palette-override-clear-resets-single-index-to-nil
+  "%palette-override-clear reverts one index to NIL, leaving other indices intact."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/types:%palette-override-set s 10 #x111111)
+    (cl-tmux/terminal/types:%palette-override-set s 20 #x222222)
+    (cl-tmux/terminal/types:%palette-override-clear s 10)
+    (is (null (cl-tmux/terminal/types:%palette-override-get s 10))
+        "index 10 must be NIL after %palette-override-clear")
+    (is (= #x222222 (cl-tmux/terminal/types:%palette-override-get s 20))
+        "index 20 must be unaffected by clearing index 10")))
+
+(test palette-override-clear-on-unset-index-is-noop
+  "%palette-override-clear on an index that was never set does not signal."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/types:%palette-override-set s 0 #xABCDEF)
+    (finishes (cl-tmux/terminal/types:%palette-override-clear s 100))
+    (is (null (cl-tmux/terminal/types:%palette-override-get s 100))
+        "unset index 100 must remain NIL")))
+
+(test palette-override-clear-with-no-overrides-allocated-is-noop
+  "%palette-override-clear on a fresh screen (no overrides vector yet) does not signal."
+  (with-screen (s 10 5)
+    (is (null (cl-tmux/terminal/types:screen-palette-overrides s))
+        "pre-condition: no overrides vector allocated")
+    (finishes (cl-tmux/terminal/types:%palette-override-clear s 0))
+    (is (null (cl-tmux/terminal/types:screen-palette-overrides s))
+        "overrides vector must remain NIL (clear must not force allocation)")))
+
+(test palette-override-clear-out-of-range-index-is-ignored
+  "%palette-override-clear silently ignores an out-of-range index."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/types:%palette-override-set s 0 #xFFFFFF)
+    (finishes (cl-tmux/terminal/types:%palette-override-clear s 256))
+    (finishes (cl-tmux/terminal/types:%palette-override-clear s -1))
+    (is (= #xFFFFFF (cl-tmux/terminal/types:%palette-override-get s 0))
+        "index 0 must be untouched by out-of-range clears")))
+
 ;;; ── SUITE: %palette-override-clear-all ──────────────────────────────────────
 
 (def-suite palette-clear-all-suite

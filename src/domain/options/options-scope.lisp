@@ -7,7 +7,7 @@
 ;;;; spec-lookup logic.  It is loaded before options-api.lisp, which depends
 ;;;; on the helpers defined here.
 
-;;; ── User-option predicate + error helper ─────────────────────────────────
+;;; ── User-option predicate ─────────────────────────────────────────────────
 
 (defun %user-option-name-p (name)
   "Return true for tmux user options, whose names begin with @."
@@ -15,15 +15,11 @@
        (plusp (length name))
        (char= #\@ (char name 0))))
 
-(defun %invalid-option-error (name)
-  "Signal tmux-compatible invalid option error for NAME."
-  (error "invalid option: ~A" name))
-
 ;;; ── Scope dispatch helpers ───────────────────────────────────────────────
 ;;;
 ;;; The :server / nil (session) duality appears in three parallel pairs of
 ;;; hash-tables.  All callers should go through these one-liners so that
-;;; adding a third scope only changes these four functions.
+;;; adding a third scope only changes these three functions.
 
 (defun %scope-options (scope)
   "Return the runtime option table for SCOPE (:server or session/nil)."
@@ -36,13 +32,6 @@
 (defun %scope-known-registry (scope)
   "Return the stable tmux 3.6a spec registry for SCOPE (:server or session/nil)."
   (if (eq scope :server) *known-server-option-registry* *known-option-registry*))
-
-(defun %scope-triple (scope)
-  "Return three values: (options registry known-registry) for SCOPE.
-   Eliminates the repeated triple-call pattern seen in %option-spec-for-name callers."
-  (values (%scope-options scope)
-          (%scope-registry scope)
-          (%scope-known-registry scope)))
 
 ;;; ── Array-option name parsing ─────────────────────────────────────────────
 ;;;
