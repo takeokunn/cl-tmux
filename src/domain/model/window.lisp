@@ -166,6 +166,64 @@
          (clamped-size (max axis-floor (min upper-bound requested))))
     (/ clamped-size avail)))
 
+(defun %split-fit-p (window active direction full)
+  "T when a split along DIRECTION would fit: a full split (FULL T) is measured
+   against WINDOW's own extent; a normal split is measured against ACTIVE pane's
+   extent."
+  (if full
+      (%split-axis-fits-p (%window-axis-extent window direction) direction)
+      (%split-fits-p active direction)))
+
+(defun %new-split-pane (session window direction active input-only start-dir)
+  "Construct the new pane created by a split of ACTIVE along DIRECTION.
+   Returns the new pane, either PTY-backed (via %fork-pane) or, when INPUT-ONLY
+   is T, a screen-only pane with a blank screen (later fed via pane-feed)."
+  (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
+    (if input-only
+        (%make-input-pane (next-pane-id window) px py pw ph)
+        (%fork-pane session (next-pane-id window) px py pw ph :start-dir start-dir))))
+
+(defun %split-ratio (window active direction full size)
+  "Return the split ratio for the new (second) child of a split along DIRECTION.
+   AVAIL is the whole window extent for a full split, else the active pane's
+   extent; SIZE is the caller's size hint (or NIL for an even 1/2 split)."
+  (let ((avail (1- (if full
+                       (%window-axis-extent window direction)
+                       (%orient-pane-extent active direction)))))
+    (if size
+        (%ratio-from-size-hint size avail direction)
+        1/2)))
+
+(defun %compute-new-pane-split (session window direction leaf active
+                                &key size start-dir before full input-only input-bytes)
+  "Build the new pane and its layout-split node for a window-split.
+   ANCHOR is the existing node that becomes the new pane's sibling: the whole
+   tree for a full split, else just the active pane's LEAF.  BEFORE T inserts
+   the new pane as the first child, existing as second; otherwise the reverse.
+   Returns (values new-pane split-node)."
+  (let* ((new-pane  (%new-split-pane session window direction active
+                                     input-only start-dir))
+         (new-ratio (%split-ratio window active direction full size))
+         (anchor    (if full (window-tree window) leaf))
+         (split     (if before
+                        (make-layout-split direction
+                                           (make-layout-leaf new-pane)
+                                           anchor
+                                           new-ratio)
+                        (make-layout-split direction anchor
+                                           (make-layout-leaf new-pane)
+                                           (- 1 new-ratio)))))
+    (when input-bytes
+      (pane-feed new-pane input-bytes))
+    (values new-pane split)))
+
+(defun %splice-split-into-tree (window leaf split full)
+  "Splice SPLIT into WINDOW's tree, replacing LEAF (normal split) or becoming
+   the new tree root (FULL split)."
+  (if full
+      (setf (window-tree window) split)
+      (%replace-in-tree window leaf split)))
+
 (defun window-split (session window direction
                      &key no-focus size start-dir before full input-only input-bytes)
   "Split the active pane of WINDOW along DIRECTION (:h left/right, :v top/bottom).
@@ -184,52 +242,18 @@
         (tree   (window-tree window)))
     (when (and active tree)
       (let ((leaf (layout-find-leaf tree active)))
-        ;; Fit check: a full split is measured against the WINDOW extent, a normal
-        ;; split against the active pane.
-        (when (and leaf
-                   (if full
-                       (%split-axis-fits-p (%window-axis-extent window direction)
-                                           direction)
-                       (%split-fits-p active direction)))
-          (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
-            (let* ((new-pane (if input-only
-                                 (%make-input-pane (next-pane-id window) px py pw ph)
-                                 (%fork-pane session (next-pane-id window) px py pw ph
-                                             :start-dir start-dir)))
-                   ;; A full split's extent is the whole window along the split axis;
-                   ;; a normal split's is the active pane's extent.
-                   (avail    (1- (if full
-                                     (%window-axis-extent window direction)
-                                     (%orient-pane-extent active direction))))
-                   (new-ratio (if size
-                                  (%ratio-from-size-hint size avail direction)
-                                  1/2))
-                   ;; ANCHOR is the existing node that becomes the new pane's sibling:
-                   ;; the whole TREE for a full split, else just the active pane's LEAF.
-                   (anchor   (if full tree leaf))
-                   ;; When BEFORE is T: new pane is the first child; existing is second.
-                   ;; The ratio fraction refers to the FIRST child's share of the extent.
-                   ;; With BEFORE: ratio = new-pane's share = new-ratio.
-                   ;; Without BEFORE: first=existing, second=new; ratio = (1 - new-ratio).
-                   (split    (if before
-                                 (make-layout-split direction
-                                                    (make-layout-leaf new-pane)
-                                                    anchor
-                                                    new-ratio)
-                                 (make-layout-split direction anchor
-                                                    (make-layout-leaf new-pane)
-                                                    (- 1 new-ratio)))))
-              (if full
-                  ;; Full split: the new split becomes the tree root.
-                  (setf (window-tree window) split)
-                  (%replace-in-tree window leaf split))
-              (setf (pane-window new-pane) window)
-              (window-relayout-current window)
-              (when input-bytes
-                (pane-feed new-pane input-bytes))
-              (unless no-focus
-                (setf (window-active window) new-pane))
-              new-pane)))))))
+        (when (and leaf (%split-fit-p window active direction full))
+          (multiple-value-bind (new-pane split)
+              (%compute-new-pane-split session window direction leaf active
+                                       :size size :start-dir start-dir :before before
+                                       :full full :input-only input-only
+                                       :input-bytes input-bytes)
+            (%splice-split-into-tree window leaf split full)
+            (setf (pane-window new-pane) window)
+            (window-relayout-current window)
+            (unless no-focus
+              (setf (window-active window) new-pane))
+            new-pane))))))
 
 (defun %status-top-offset ()
   "Rows reserved at the TOP of the window for a top-positioned status bar:

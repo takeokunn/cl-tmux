@@ -94,6 +94,21 @@
         (or modified (%lookup context (%variable-to-keyword content)))
         out)))))
 
+(defun %matching-close-brace (template start)
+  "Index of the } that closes the #{ whose content begins at START, accounting
+   for nested #{...}.  Returns NIL when there is no matching close brace.
+   For brace-free content this is just the first }, so non-nested formats are
+   delimited exactly as before."
+  (let ((depth 1) (i start) (n (length template)))
+    (loop while (< i n)
+          for c = (char template i)
+          if (and (char= c #\#) (< (1+ i) n) (char= (char template (1+ i)) #\{))
+            do (progn (incf depth) (incf i 2))
+          else if (char= c #\})
+            do (progn (decf depth)
+                      (if (zerop depth) (return i) (incf i)))
+          else do (incf i))))
+
 (defun %expand-brace (template start context out)
   "Expand #{...} content starting at START (just past the '{').
    Writes to OUT and returns the index just past the closing '}'.

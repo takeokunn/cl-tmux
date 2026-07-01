@@ -53,19 +53,16 @@
     (ignore-errors (truename start-dir))))
 
 (defun %target-program-and-args (default-command)
-  "Return the actual shell program, argument list, and search flag."
+  "Return (values PROGRAM ARGS SEARCH-P) for SB-EXT:RUN-PROGRAM.
+   When DEFAULT-COMMAND is a non-empty string, run it via /bin/sh -c.
+   Otherwise run the configured default shell directly, searching PATH for it
+   (SEARCH-P) unless it is already given as an absolute path."
   (if (%string-non-empty-p default-command)
       (values "/bin/sh" (list "-c" default-command) nil)
       (values cl-tmux/config:*default-shell* nil
               (not (and (stringp cl-tmux/config:*default-shell*)
                         (plusp (length cl-tmux/config:*default-shell*))
                         (char= (char cl-tmux/config:*default-shell* 0) #\/))))))
-
-(defun %spawn-program-and-args (default-command)
-  "Return PROGRAM, ARGS, and SEARCH-P for SB-EXT:RUN-PROGRAM."
-  (multiple-value-bind (target target-args search-p)
-      (%target-program-and-args default-command)
-    (values target target-args search-p)))
 
 (defun %process-pty-fd (process)
   "Return the master fd for PROCESS's PTY stream."
@@ -94,7 +91,7 @@
    empty string."
   (declare (type fixnum rows cols))
   (multiple-value-bind (program args search-p)
-      (%spawn-program-and-args default-command)
+      (%target-program-and-args default-command)
     (let* ((process (sb-ext:run-program program args
                                         :search search-p
                                         :wait nil
@@ -212,10 +209,20 @@
 (defconstant +max-sane-cols+ 1000
   "Upper bound on terminal columns accepted from ioctl; values above this are clamped.")
 
+(defconstant +default-term-rows+ 24
+  "Fallback terminal height in rows, used when ioctl fails or reports a
+   nonsensical size (e.g., a transient 0x0 read). Mirrors the *term-rows*
+   defvar default in runtime.lisp.")
+(defconstant +default-term-cols+ 80
+  "Fallback terminal width in columns, used when ioctl fails or reports a
+   nonsensical size (e.g., a transient 0x0 read). Mirrors the *term-cols*
+   defvar default in runtime.lisp.")
+
 (defun terminal-size ()
   "Return (values rows cols) of the terminal attached to stdout.
-   Falls back to 24×80 if ioctl fails or reports an out-of-range size
-   (a transient 0×0 or garbage read must not drive a resize)."
+   Falls back to +default-term-rows+ x +default-term-cols+ if ioctl fails or
+   reports an out-of-range size (a transient 0x0 or garbage read must not
+   drive a resize)."
   (cffi:with-foreign-object (ws '(:struct winsize))
     (let ((r (cffi:foreign-funcall "ioctl"
                                    :int +stdout-fd+
@@ -228,8 +235,8 @@
             (if (and (<= 1 rows +max-sane-rows+)
                      (<= 1 cols +max-sane-cols+))
                 (values rows cols)
-                (values 24 80)))
-          (values 24 80)))))          ; safe fallback if ioctl fails
+                (values +default-term-rows+ +default-term-cols+)))
+          (values +default-term-rows+ +default-term-cols+))))) ; safe fallback if ioctl fails
 
 ;;; ── Port adapter ─────────────────────────────────────────────────────────────
 ;;;

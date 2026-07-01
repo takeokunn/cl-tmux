@@ -320,3 +320,112 @@ given a non-NIL initial state (loop while *running*)."
                    (error "state function called despite *running*=NIL"))))
       (finishes (cl-tmux::%run-reader-states pane boom)
                 "%run-reader-states must exit immediately when *running* is NIL"))))
+
+;;; ── %cap-list ─────────────────────────────────────────────────────────────────
+
+(test cap-list-returns-list-unchanged-when-under-limit
+  "%cap-list returns the list unchanged when its length is <= limit."
+  (let ((lst '(1 2 3)))
+    (is (equal '(1 2 3) (cl-tmux::%cap-list lst 5))
+        "%cap-list must return list unchanged when length <= limit")
+    (is (equal '(1 2 3) (cl-tmux::%cap-list lst 3))
+        "%cap-list must return list unchanged when length == limit")))
+
+(test cap-list-truncates-when-over-limit
+  "%cap-list returns a subseq of at most LIMIT elements when the list is longer."
+  (let ((lst '(a b c d e)))
+    (is (equal '(a b c) (cl-tmux::%cap-list lst 3))
+        "%cap-list must truncate to exactly LIMIT elements")))
+
+(test cap-list-returns-nil-for-nil-input
+  "%cap-list returns NIL for NIL input (empty list)."
+  (is (null (cl-tmux::%cap-list nil 5))
+      "%cap-list of NIL must return NIL"))
+
+(test cap-list-returns-nil-for-zero-limit
+  "%cap-list returns NIL when limit is 0."
+  (is (null (cl-tmux::%cap-list '(1 2 3) 0))
+      "%cap-list with limit 0 must return NIL"))
+
+;;; ── with-channel-plist macro ──────────────────────────────────────────────────
+
+(test with-channel-plist-binds-lock-and-cv
+  "with-channel-plist binds LK and CV to the :lock and :cv fields of a channel plist."
+  (let ((cl-tmux::*wait-channels* (make-hash-table :test #'equal)))
+    (let ((ch (cl-tmux::%ensure-channel "wplist-test")))
+      (cl-tmux::with-channel-plist (lk cv ch)
+        (is (eq (getf ch :lock) lk) "LK must be the :lock field")
+        (is (eq (getf ch :cv) cv)   "CV must be the :cv field")))))
+
+(test with-channel-plist-is-a-macro
+  "with-channel-plist is defined as a macro."
+  (is (macro-function 'cl-tmux::with-channel-plist)
+      "with-channel-plist must be a macro"))
+
+;;; ── %read-history-lines ──────────────────────────────────────────────────────
+
+(test read-history-lines-returns-lines-reversed
+  "%read-history-lines reads non-empty lines from a stream and returns them newest-first."
+  (let ((content (format nil "line1~%line2~%line3~%")))
+    (with-input-from-string (stream content)
+      (let ((result (cl-tmux::%read-history-lines stream)))
+        (is (equal '("line3" "line2" "line1") result)
+            "%read-history-lines must return lines reversed (newest first)")))))
+
+(test read-history-lines-skips-empty-lines
+  "%read-history-lines skips empty lines in the stream."
+  (let ((content (format nil "first~%~%second~%")))
+    (with-input-from-string (stream content)
+      (let ((result (cl-tmux::%read-history-lines stream)))
+        (is (= 2 (length result))
+            "%read-history-lines must skip empty lines")
+        (is (member "first" result :test #'string=) "first must appear")
+        (is (member "second" result :test #'string=) "second must appear")))))
+
+(test read-history-lines-returns-nil-for-empty-stream
+  "%read-history-lines returns NIL when stream is empty."
+  (with-input-from-string (stream "")
+    (let ((result (cl-tmux::%read-history-lines stream)))
+      (is (null result)
+          "%read-history-lines must return NIL for empty stream"))))
+
+;;; ── %message-log-limit ────────────────────────────────────────────────────────
+
+(test message-log-limit-returns-option-when-set
+  "%message-log-limit returns the message-limit option value when set."
+  (with-isolated-options ("message-limit" 42)
+    (is (= 42 (cl-tmux::%message-log-limit))
+        "%message-log-limit must return the option value when set")))
+
+(test message-log-limit-returns-default-when-unset
+  "%message-log-limit falls back to +max-message-log-entries+ when option is unset.
+   with-fresh-options alone is not enough here: message-limit is a KNOWN tmux
+   option (registered with a table default of 1000 in *known-option-registry*),
+   so get-option still resolves it even with an empty *option-registry* (mirrors
+   set-option -u semantics).  Clearing *known-option-registry* too makes the
+   option genuinely unknown, exercising %message-log-limit's OR fallback."
+  (with-fresh-options
+    (let ((cl-tmux/options::*known-option-registry* (make-hash-table :test #'equal)))
+      (is (= cl-tmux::+max-message-log-entries+
+             (cl-tmux::%message-log-limit))
+          "%message-log-limit must fall back to the default constant"))))
+
+;;; ── %append-message-log-entry ─────────────────────────────────────────────────
+
+(test append-message-log-entry-prepends
+  "%append-message-log-entry prepends the entry to the log."
+  (with-isolated-options ("message-limit" 100)
+    (let* ((log nil)
+           (entry (cons (get-universal-time) "hello"))
+           (result (cl-tmux::%append-message-log-entry log entry)))
+      (is (= 1 (length result)) "result must have exactly 1 entry")
+      (is (eq entry (first result)) "entry must be first"))))
+
+(test append-message-log-entry-caps-at-limit
+  "%append-message-log-entry caps the log at the effective message-limit."
+  (with-isolated-options ("message-limit" 3)
+    (let* ((old-log (list (cons 1 "a") (cons 2 "b") (cons 3 "c")))
+           (new-entry (cons 4 "d"))
+           (result (cl-tmux::%append-message-log-entry old-log new-entry)))
+      (is (= 3 (length result)) "result must not exceed limit=3")
+      (is (eq new-entry (first result)) "newest entry must be first"))))

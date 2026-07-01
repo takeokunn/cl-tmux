@@ -362,3 +362,83 @@
       "+attach-flags-offset+ must equal +attach-size-bytes+")
   (is (= 2 cl-tmux/protocol:+cols-offset-in-size-payload+)
       "+cols-offset-in-size-payload+ must equal 2"))
+
+;;; ── decode-frame start/end window narrowing ──────────────────────────────────
+
+(test decode-frame-with-nonzero-start-and-matching-end
+  "decode-frame with start > 0 parses correctly when the window [start, end)
+   is exactly the size of one frame."
+  ;; Put a detach frame at offset 5 in a larger buffer.
+  (let* ((prefix  (make-array 5 :element-type '(unsigned-byte 8) :initial-element 0))
+         (frame   (msg-detach))
+         (buffer  (concatenate '(simple-array (unsigned-byte 8) (*)) prefix frame)))
+    (multiple-value-bind (type payload next)
+        (decode-frame buffer 5 (length buffer))
+      (is (= +msg-detach+ type)
+          "type must be +msg-detach+ when decoded at offset 5")
+      (is (= 0 (length payload))
+          "detach frame carries no payload")
+      (is (= (length buffer) next)
+          "next index must equal total buffer length after consuming the frame"))))
+
+(test decode-frame-start-equals-end-returns-nil
+  "decode-frame with start = end (window of zero bytes) returns (values NIL NIL start)
+   regardless of what the buffer contains before or after start."
+  (let ((frame (msg-resize 10 20)))
+    (multiple-value-bind (type payload next)
+        (decode-frame frame 3 3)
+      (is (null type)    "type must be NIL for a zero-byte window")
+      (is (null payload) "payload must be NIL for a zero-byte window")
+      (is (= 3 next)     "start index must be returned unchanged"))))
+
+;;; ── msg-attach with large u16 boundary values ────────────────────────────────
+
+(test msg-attach-max-u16-rows-cols-roundtrip
+  "msg-attach with the maximum u16 values (65535 × 65535) round-trips via
+   decode-frame + decode-size without truncation or overflow."
+  (multiple-value-bind (type payload)
+      (decode-frame (msg-attach 65535 65535))
+    (is (= +msg-attach+ type))
+    (multiple-value-bind (rows cols) (decode-size payload)
+      (is (= 65535 rows) "rows must survive the max-u16 round-trip")
+      (is (= 65535 cols) "cols must survive the max-u16 round-trip"))))
+
+;;; ── decode-attach-flags with various payload lengths ─────────────────────────
+
+(test decode-attach-flags-exactly-four-bytes-returns-zero
+  "decode-attach-flags on a 4-byte payload (no flags byte) returns 0."
+  (let ((payload (cl-tmux/protocol:u16-octets-pair 24 80)))
+    (is (= 0 (decode-attach-flags payload))
+        "4-byte payload must decode flags as 0")))
+
+(test decode-attach-flags-five-bytes-returns-byte-value
+  "decode-attach-flags on a 5-byte payload returns byte 4."
+  (let* ((size-bytes (cl-tmux/protocol:u16-octets-pair 10 20))
+         (payload    (concatenate '(simple-array (unsigned-byte 8) (*))
+                                  size-bytes #(42))))
+    (is (= 42 (decode-attach-flags payload))
+        "5-byte payload must return the fifth byte as the flags value")))
+
+;;; ── encode-command-payload ordering ─────────────────────────────────────────
+
+(test encode-command-payload-without-target-starts-with-command-name
+  "encode-command-payload without a target produces a payload whose first
+   NUL-terminated field is the command name (not a target)."
+  (let* ((payload (encode-command-payload :list-sessions))
+         (fields  (cl-tmux/protocol:split-on-nul-bytes payload)))
+    (is (equal '("list-sessions") fields)
+        "no-target payload must contain exactly the command name as one field")))
+
+(test encode-command-payload-with-target-places-target-first
+  "encode-command-payload with a target prepends the target before the command name."
+  (let* ((payload (encode-command-payload :send-keys :target "$0:1.0"))
+         (fields  (cl-tmux/protocol:split-on-nul-bytes payload)))
+    (is (equal '("$0:1.0" "send-keys") fields)
+        "target must be the first NUL-terminated field")))
+
+(test encode-command-payload-with-args-appends-args-after-command
+  "encode-command-payload with args appends each arg after the command name."
+  (let* ((payload (encode-command-payload :send-keys :args '("C-c" "q")))
+         (fields  (cl-tmux/protocol:split-on-nul-bytes payload)))
+    (is (equal '("send-keys" "C-c" "q") fields)
+        "args must follow the command name in order")))

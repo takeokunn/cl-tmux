@@ -11,6 +11,15 @@
 ;;;;             → renderer-overlay → renderer
 ;;;; All files share the cl-tmux/renderer package (no defpackage here).
 
+;;; ── Named constants ──────────────────────────────────────────────────────────
+
+(defconstant +menu-default-box-width+
+    (if (boundp '+menu-default-box-width+)
+        (symbol-value '+menu-default-box-width+)
+        40)
+  "Default menu box width in columns when the terminal is wide enough (display-menu
+   has no -w flag of its own; tmux sizes the menu to its widest item, capped here).")
+
 ;;; ── Box-drawing shared helpers ──────────────────────────────────────────────
 
 (defun %emit-styled-char (stream ch sgr)
@@ -173,7 +182,7 @@
   (let* ((items          (menu-items menu))
          (item-count     (length items))
          (title          (menu-title menu))
-         (box-width      (min 40 terminal-cols))
+         (box-width      (min +menu-default-box-width+ terminal-cols))
          (box-height     (+ item-count 2))
          ;; -x/-y: explicit position when set, else centre.  Clamp so the whole
          ;; box fits on screen (origin in [0, dim - box-extent]).

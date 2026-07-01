@@ -26,44 +26,125 @@
 ;;; When the interactive menu overlay is active, most keystrokes are consumed
 ;;; and routed to the menu navigation commands rather than the active pane.
 ;;; Extracted from %ground-input-state to keep the top-level CPS state readable.
+;;;
+;;; define-menu-key-rules follows the same Prolog-like rule style as
+;;; define-copy-mode-vi-rules and define-cps-state: each RULE is a
+;;; (CONDITION &rest BODY) clause, matched in order.  Uniform "dispatch one
+;;; menu command" arms are declarative facts; the digit-jump and default arms
+;;; keep their custom bodies verbatim.
 
-(defun %dispatch-menu-key (session byte)
-  "Dispatch BYTE to the active menu overlay and mark the display dirty.
-   j — next item; k — previous item; Enter — select; q/Esc — dismiss;
-   digit 0-9 — jump to that item index then refresh.  All other keys are
-   swallowed (the menu remains open).  Always returns NIL so the caller stays in
-   ground state regardless of which key was pressed."
-  (cond
-    ;; j — next item
-    ((= byte +byte-j+)
-     (dispatch-command session :menu-next byte)
-     (setf *dirty* t))
-    ;; k — previous item
-    ((= byte +byte-k+)
-     (dispatch-command session :menu-prev byte)
-     (setf *dirty* t))
-    ;; Enter — select current item
-    ((= byte 13)
-     (dispatch-command session :menu-select byte)
-     (setf *dirty* t))
-    ;; q / Escape — dismiss menu
-    ((or (= byte +byte-q+) (= byte +byte-esc+))
-     (dispatch-command session :menu-dismiss byte)
-     (setf *dirty* t))
-    ;; Digit 0-9: jump to that item index, then dispatch menu-next with 0 delta
-    ;; to trigger overlay refresh via the dispatch-handlers.lisp path.
-    ((and (>= byte 48) (<= byte 57))
-     (let* ((n   (- byte 48))
-            (len (length (menu-items *active-menu*))))
-       (when (< n len)
-         (setf (menu-selected-index *active-menu*) n)
-         ;; Trigger show-overlay refresh via dispatch (avoids direct %format-menu call).
-         (dispatch-command session :menu-next byte)
-         (dispatch-command session :menu-prev byte)
-         (setf *dirty* t))))
-    ;; All other keys swallowed while menu is open
-    (t nil))
-  nil)
+(defmacro define-menu-key-rules (&rest rules)
+  "Build %DISPATCH-MENU-KEY from an ordered table of (CONDITION &rest BODY)
+   rules.  Each matched BODY is responsible for marking *dirty* itself; the
+   generated function always returns NIL so the caller stays in ground state
+   regardless of which key was pressed."
+  `(defun %dispatch-menu-key (session byte)
+     "Dispatch BYTE to the active menu overlay and mark the display dirty.
+      j — next item; k — previous item; Enter — select; q/Esc — dismiss;
+      digit 0-9 — jump to that item index then refresh.  All other keys are
+      swallowed (the menu remains open).  Always returns NIL so the caller
+      stays in ground state regardless of which key was pressed."
+     (declare (ignorable session byte))
+     (cond
+       ,@(mapcar
+          (lambda (rule)
+            (destructuring-bind (condition &rest body) rule
+              `(,condition ,@body)))
+          rules)
+       (t nil))
+     nil))
+
+(define-menu-key-rules
+  ;; j — next item
+  ((= byte +byte-j+)
+   (dispatch-command session :menu-next byte)
+   (setf *dirty* t))
+  ;; k — previous item
+  ((= byte +byte-k+)
+   (dispatch-command session :menu-prev byte)
+   (setf *dirty* t))
+  ;; Enter — select current item
+  ((= byte 13)
+   (dispatch-command session :menu-select byte)
+   (setf *dirty* t))
+  ;; q / Escape — dismiss menu
+  ((or (= byte +byte-q+) (= byte +byte-esc+))
+   (dispatch-command session :menu-dismiss byte)
+   (setf *dirty* t))
+  ;; Digit 0-9: jump to that item index, then dispatch menu-next with 0 delta
+  ;; to trigger overlay refresh via the dispatch-handlers.lisp path.
+  ((and (>= byte +byte-digit-0+) (<= byte +byte-digit-9+))
+   (let* ((digit  (- byte +byte-digit-0+))
+          (length (length (menu-items *active-menu*))))
+     (when (< digit length)
+       (setf (menu-selected-index *active-menu*) digit)
+       ;; Trigger show-overlay refresh via dispatch (avoids direct %format-menu call).
+       (dispatch-command session :menu-next byte)
+       (dispatch-command session :menu-prev byte)
+       (setf *dirty* t)))))
+
+;;; ── Copy-mode ground-state dispatch ──────────────────────────────────────────
+;;;
+;;; Extracted from %ground-input-state so the top-level CPS state stays a flat
+;;; ordered list of clauses.  %copy-mode-accumulate-digit is itself a small CPS
+;;; state function: it accepts the pending BYTE and returns (values COUNT-OR-NIL)
+;;; — NIL means "byte consumed into *copy-mode-prefix*, wait for the next byte";
+;;; a non-NIL COUNT means "prefix accumulation is complete, dispatch with COUNT".
+;;; This expresses the digit accumulator as data flowing through the same
+;;; (byte) → outcome protocol as the rest of the keystroke pipeline, rather than
+;;; as an ad hoc mutation buried inside the ground-state cond.
+
+(defun %copy-mode-accumulate-digit (byte)
+  "Fold BYTE into *copy-mode-prefix* when it continues a numeric prefix.
+   Returns NIL when BYTE was consumed as a prefix digit (caller should wait for
+   the next byte).  Returns the resolved repeat COUNT (>= 1) and resets
+   *copy-mode-prefix* to 0 when BYTE is not a prefix digit — i.e. when the
+   accumulated count is ready to be applied to a navigation command.
+   '0' with prefix=0 is NOT accumulated (vi convention: bare 0 = beginning of
+   line, only 1-9 or a non-zero prefix followed by 0 continue the prefix)."
+  (if (and (>= byte +byte-digit-0+) (<= byte +byte-digit-9+)
+           (or (> byte +byte-digit-0+) (plusp *copy-mode-prefix*)))
+      (progn
+        (setf *copy-mode-prefix*
+              (+ (* *copy-mode-prefix* 10) (- byte +byte-digit-0+)))
+        nil)
+      (let ((count (max 1 *copy-mode-prefix*)))
+        (setf *copy-mode-prefix* 0)
+        count)))
+
+(defun %dispatch-copy-mode-ground-byte (session byte)
+  "Handle one BYTE of unprefixed copy-mode navigation from ground state.
+   Copy mode has its own active table, so ordinary bytes are resolved there
+   before root/prefix bindings.  Numeric prefix digits accumulate via
+   %copy-mode-accumulate-digit; once a non-digit byte resolves the count, the
+   byte is looked up first in the active copy-mode key table (user overrides
+   from `bind -T copy-mode[-vi] ...`) and otherwise dispatched through
+   %dispatch-copy-mode-byte.  Returns (values NIL NEXT-STATE) where NEXT-STATE
+   is the CPS continuation to resume with (ground state unless a char-jump
+   command armed a one-byte continuation)."
+  (let ((screen (%active-screen session)))
+    (when screen
+      (let ((count (%copy-mode-accumulate-digit byte)))
+        (when count
+          ;; First: check the active copy-mode key table for user-defined
+          ;; overrides (bind -T copy-mode-vi ... / bind -T copy-mode ...).
+          ;; Legacy Ctrl bytes and single-byte special keys are also probed
+          ;; by their canonical tmux name ("C-b", "Enter", "BSpace", ...),
+          ;; matching keys stored by the key-binding table.
+          (let ((entry (%key-table-entry-by-candidates
+                        (%active-copy-mode-table)
+                        (%single-byte-key-candidates byte))))
+            (if entry
+                (%run-key-table-binding session entry byte)
+                (multiple-value-bind (dispatched new-state)
+                    (%dispatch-copy-mode-byte screen byte count session)
+                  (declare (ignore dispatched))
+                  (when new-state
+                    (setf *dirty* t)
+                    (return-from %dispatch-copy-mode-ground-byte
+                      (values nil new-state))))))))))
+  (setf *dirty* t)
+  (values nil #'%ground-input-state))
 
 ;;; ── Named CPS state functions ────────────────────────────────────────────────
 ;;;
@@ -135,40 +216,7 @@
   ;; Numeric prefix: digit bytes 0-9 accumulate *copy-mode-prefix*.  '0' with a
   ;; zero prefix goes to line-start instead (vi convention: 0 = BOL when no count).
   ((and (%copy-mode-active-p session) (/= byte +byte-esc+))
-   (let ((screen (%active-screen session)))
-     (when screen
-       ;; Digit accumulation: build a numeric count for the next command.
-       ;; '0' with prefix=0 falls through to line-start (handled by case below).
-       (cond
-         ;; Accumulate digit into prefix (1-9 always; 0 only when prefix already set)
-         ((and (>= byte +byte-digit-0+) (<= byte +byte-digit-9+)
-               (or (> byte +byte-digit-0+) (plusp *copy-mode-prefix*)))
-          (setf *copy-mode-prefix*
-                (+ (* *copy-mode-prefix* 10) (- byte +byte-digit-0+))))
-         ;; Non-digit (or bare '0'): dispatch with accumulated count then reset.
-         (t
-          (let ((count (max 1 *copy-mode-prefix*)))
-            (setf *copy-mode-prefix* 0)
-            ;; First: check the active copy-mode key table for user-defined
-            ;; overrides (bind -T copy-mode-vi ... / bind -T copy-mode ...).
-            ;; Legacy Ctrl bytes and single-byte special keys are also probed
-            ;; by their canonical tmux name ("C-b", "Enter", "BSpace", ...),
-            ;; matching keys stored by the key-binding table.
-            (let ((entry (%key-table-entry-by-candidates
-                          (%active-copy-mode-table)
-                          (%single-byte-key-candidates byte)))
-                  (handled nil))
-              (when entry
-                (%run-key-table-binding session entry byte)
-                (setf handled t))
-              (unless handled
-                (multiple-value-bind (dispatched new-state)
-                    (%dispatch-copy-mode-byte screen byte count session)
-                  (when (and dispatched new-state)
-                    (return-from %ground-input-state
-                      (values nil new-state))))))))))
-   (setf *dirty* t)
-   (values nil #'%ground-input-state)))
+   (%dispatch-copy-mode-ground-byte session byte))
   ;; ── Root key-table: check for bindings that fire without any prefix ────────
   ;; Looked up before the prefix-key check so that -n bindings can intercept
   ;; keys that would otherwise be forwarded to the pane.

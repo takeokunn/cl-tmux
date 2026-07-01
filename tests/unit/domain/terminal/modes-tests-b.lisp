@@ -1,6 +1,6 @@
 (in-package #:cl-tmux/test)
 
-;;;; modes tests — part B: set-cursor-shape, bell-pending, set-charset/title,
+;;;; modes tests — part B: set-cursor-shape, bell-pending, designate-charset/title,
 ;;;; reset-terminal-modes, DECNKM, DECOM, origin-mode, screen-display-cell
 ;;;; continuation, DECSTBM, mouse/focus-reporting edge cases.
 
@@ -93,31 +93,32 @@
     (is (cl-tmux/terminal/types:screen-bell-pending s)
         "BEL byte must set screen-bell-pending to T")))
 
-;;; ── SUITE: set-charset and set-screen-title ──────────────────────────────────
+;;; ── SUITE: designate-charset and set-screen-title ─────────────────────────────
 ;;;
-;;; set-charset stores the character set keyword.
+;;; designate-charset (G0, the default active slot) stores the character set
+;;; keyword into screen-charset.
 ;;; set-screen-title stores the OSC window title string.
 
 (def-suite set-charset-set-title-suite
-  :description "set-charset and set-screen-title direct action tests"
+  :description "designate-charset and set-screen-title direct action tests"
   :in terminal-suite)
 (in-suite set-charset-set-title-suite)
 
 (test set-charset-stores-ascii-keyword
-  :description "set-charset :ascii sets screen-charset to :ascii."
+  :description "designate-charset :g0 :ascii sets screen-charset to :ascii."
   (with-screen (s 10 5)
     ;; Start with dec-graphics, then reset to ascii
     (setf (cl-tmux/terminal/types:screen-charset s) :dec-graphics)
-    (cl-tmux/terminal/actions:set-charset s :ascii)
+    (cl-tmux/terminal/actions:designate-charset s :g0 :ascii)
     (is (eq :ascii (cl-tmux/terminal/types:screen-charset s))
-        "screen-charset must be :ascii after set-charset :ascii")))
+        "screen-charset must be :ascii after designate-charset :g0 :ascii")))
 
 (test set-charset-stores-dec-graphics-keyword
-  :description "set-charset :dec-graphics sets screen-charset to :dec-graphics."
+  :description "designate-charset :g0 :dec-graphics sets screen-charset to :dec-graphics."
   (with-screen (s 10 5)
-    (cl-tmux/terminal/actions:set-charset s :dec-graphics)
+    (cl-tmux/terminal/actions:designate-charset s :g0 :dec-graphics)
     (is (eq :dec-graphics (cl-tmux/terminal/types:screen-charset s))
-        "screen-charset must be :dec-graphics after set-charset :dec-graphics")))
+        "screen-charset must be :dec-graphics after designate-charset :g0 :dec-graphics")))
 
 (test set-screen-title-stores-string
   :description "set-screen-title stores the given title in screen-title."

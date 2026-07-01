@@ -20,7 +20,8 @@
       :components
       ((:file "config")
        (:file "config-tokenizer")    ; config tokenizer + key/command parse tables
-       (:file "config-directives")         ; directive macros + bind/unbind parsing + key dispatch
+       (:file "config-directives-macro")   ; generic directive-dispatch macro infra + posix/tilde/flag helpers
+       (:file "config-bind-parsing")        ; bind/unbind-specific parsing + key-table dispatch
        (:file "config-directives-set")     ; fixed-arity table + set-option flag handling + side effects
        (:file "config-directives-runtime") ; set-environment, if-shell, run-shell, source-file
        (:file "config-loader")))     ; apply-config-directive + preprocessor + load-config-file
@@ -54,6 +55,7 @@
        (:file "modes")     ; DEC modes — alt-screen + DEC PM rule table (parts I-II)
        (:file "modes-d")   ; DEC modes — focus, DECSC, reset, ANSI SM/RM, charset (parts III-IV)
        (:file "sgr")
+       (:file "csi-replies")   ; CSI reply-queue helpers (DSR/DA/CPR/DECRQM/XTWINOPS); loads before csi
        (:file "csi")
        (:file "parser-dcs")    ; DCS passthrough/XTGETTCAP/DECRQSS helpers (loads before parser)
        (:file "parser")
@@ -65,7 +67,7 @@
       :components
       ((:file "pane")             ; leaf PTY data and wiring (loaded first: layout needs pane-reposition)
        (:file "layout")             ; tree structure + traversal (uses pane-reposition)
-       (:file "layout-persistence") ; layout string serialization/deserialization
+       (:file "layout-persistence") ; layout string serialization
        (:file "layout-geometry")    ; rectangle assignment + resize helpers (uses pane-id, pane-x/y/w/h)
        (:file "window")             ; window struct + core ops (split/relayout/constants)
        (:file "window-operations")  ; window resize/rotate/zoom (uses window + layout helpers)
@@ -76,11 +78,14 @@
      (:module "domain/format"
       :serial t
       :components
-      ((:file "format-helpers")  ; tmux-style format: pure data helpers + shorthand/arithmetic tables
-       (:file "format-strftime") ; strftime support (#{t:format}): %strftime-letter-p + formatting engine
-       (:file "format")         ; format modifier helpers, glob/regex, iteration expanders
-       (:file "format-engine")  ; core %expand-brace, bracket/paren expanders, CPS processor, expand-format
-       (:file "format-context"))) ; context builder: model objects → expand-format plist
+      ((:file "format-helpers")    ; tmux-style format: pure data helpers + shorthand/arithmetic tables
+       (:file "format-strftime")   ; strftime support (#{t:format}): %strftime-letter-p + formatting engine
+       (:file "format-modifiers")  ; value-modifiers (#{b:}/#{d:}/#{=N:}/#{pN:}/#{s///:}/#{q:}/#{E:})
+       (:file "format-search")     ; glob/regex matching + pane content search (#{m:}/#{m/r:}/#{C:})
+       (:file "format-operators")  ; comparison and logical operators (#{==:}/#{!=:}/#{||:}/#{&&:})
+       (:file "format-iteration")  ; W:/S:/P: window/session/pane iteration expanders
+       (:file "format-engine")     ; core %expand-brace, bracket/paren expanders, CPS processor, expand-format
+       (:file "format-context")))  ; context builder: model objects → expand-format plist
      (:module "domain/repository"
       :serial t
       :components
@@ -229,6 +234,7 @@
       :components
       ((:file "events-constants")  ; VT100 / mouse / CSI byte constants (pure data, no logic)
        (:file "events-core")
+       (:file "events-loop-bindings") ; extended prefix key-binding table installation
        (:file "events-mouse-status") ; status bar mouse handling
        (:file "events-mouse")   ; mouse event dispatch
        (:file "events-overlay-pager") ; overlay pager escape handler
@@ -239,6 +245,7 @@
        (:file "events-keystroke")          ; CPS state functions: ground-state, after-prefix-state
        (:file "events-copy-mode-dispatch") ; define-copy-mode-vi-rules macro + %dispatch-copy-mode-byte
        (:file "events-keystroke-keys")    ; arrow-key table, modifier/CSI-u helpers, %make-prefix-csi-k
+       (:file "events-loop-timers") ; CPS process-byte + escape/repeat timer plumbing + synchronize-panes
        (:file "events-loop")))
      (:module "bootstrap-server"
       :pathname "bootstrap"
@@ -281,13 +288,17 @@
          (:file "cursor-tests")  ; scroll-region-clamp, set-cursor, direct-action, tab-stops, ri, nel, wide-char, advance — part I
          (:file "cursor-tests-b")  ; %place-wide-char, table-driven, combining-char-p, write-char combining, DEC graphics — part II
          (:file "cursor-tests-c")  ; cursor-ri, cursor-nel, write-char-at-cursor wide, %advance-cursor no-wrap, movement behavioral — part III
+         (:file "cursor-tests-d")  ; cursor-lf direct, cursor-nl newline-mode, %materialize-tab-stops, BCE background, boundary table — part IV
+         (:file "cursor-tests-e")  ; custom multi-stop %next-tab-stop/%prev-tab-stop via HTS/TBC, table-driven regression — part V
          (:file "scroll-tests")  ; scroll-ops/erase/scroll-region/delete-insert-chars — part I
          (:file "scroll-tests-b")  ; direct-row-primitives, direct-action-erase, constrained-scroll, history-limit — part II
          (:file "scroll-tests-c")  ; direct-line-edit (il/dl), scroll-screen-to-history, DEC-rect (DECERA/DECFRA/DECCRA) — part III
+         (:file "scroll-tests-d")  ; clear-scrollback, BCE background via %erase-cell, *scroll-on-clear-function* edge cases — part IV
          (:file "modes-tests")  ; RIS/alt-screen/DECSC/mouse/bracketed-paste/focus — part I
          (:file "modes-tests-b")  ; set-cursor-shape/bell-pending/set-charset/set-screen-title/reset-modes/alt-screen-direct — part II
          (:file "modes-tests-c")  ; screen-invoked-charset/G0-G1, set-screen-cwd, erase-display-mode-3, IRM, LNM, DECSCNM, DECSTR — part III
          (:file "modes-tests-d")  ; mouse DEC private modes, bracketed paste, focus events, app-cursor, auto-wrap, reset-sgr-pen, display-cell — part IV
+         (:file "modes-tests-e")  ; decstr-action/decaln-action direct calls, set-ansi-mode/reset-ansi-mode direct calls — part V
          (:file "sgr-tests")  ; sgr suite: fg/bg tables, truecolor, colon SGR, pen-to-sgr-params — part I
          (:file "sgr-tests-b")  ; direct-action-sgr, sgr-extended, extra codes, define-sgr-rules, consume-256-color — part II
          (:file "csi-tests")  ; cursor-movement/DECSCUSR/CBT/SU-SD — part I
@@ -311,7 +322,8 @@
          (:file "window-tests")  ; window-relayout/split/resize/zoom/lock/pane-neighbor — part I
          (:file "window-tests-b")  ; apply-named-layout (5 layouts), last-window/move/swap/rotate — part II
          (:file "window-tests-c")  ; find-window-by-name, list-windows-format, auto-rename-from-osc — part III
-         (:file "session-tests")))
+         (:file "session-tests")
+         (:file "session-tests-b")))  ; start-directory, suppress-update-environment, environment helpers, all-panes ordering
        (:module "domain/format"
         :serial t
         :components
@@ -422,7 +434,8 @@
          (:file "commands-tests-j")  ; join-pane helpers, resize-pane up, noop guards, search, scroll, extract-chars, row-string — part X
          (:file "commands-tests-d")  ; rename/select hooks, server-access, customize-mode, begin-line-selection multi-row — part VIII
          (:file "commands-tests-l")  ; copy-mode copy-line/copy-end-of-line, with-shell-timeout, kill hooks, toggle-rect, append-sel, copy-pipe, renumber-windows — part XII
-         (:file "commands-tests-i")))  ; rectangle-sel, run-copy-cmd, set-cursor, send-keys-l, jump-to-char, goto-line, search-incr — part IX
+         (:file "commands-tests-i")  ; rectangle-sel, run-copy-cmd, set-cursor, send-keys-l, jump-to-char, goto-line, search-incr — part IX
+         (:file "commands-tests-p")))  ; copy-selection-no-cancel/no-clear, pipe family, copy-pipe-no-clear/line/-and-cancel, rectangle-on/off, cursor-down-and-cancel, scroll-to-mouse, copy-*-and-cancel, last-jump — part XVII
        (:module "presentation/prompt"
         :serial t
         :components

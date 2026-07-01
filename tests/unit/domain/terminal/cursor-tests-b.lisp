@@ -168,14 +168,14 @@
 ;;; through %dec-graphics-char before placing them on the grid.
 
 (def-suite dec-graphics-suite
-  :description "DEC special graphics charset: character remapping via set-charset"
+  :description "DEC special graphics charset: character remapping via designate-charset"
   :in terminal-suite)
 (in-suite dec-graphics-suite)
 
 (test set-charset-dec-graphics-remaps-box-drawing
-  :description "After set-charset :dec-graphics, writing 'j' places the box-drawing corner U+2518."
+  :description "After designate-charset :g0 :dec-graphics, writing 'j' places the box-drawing corner U+2518."
   (with-screen (s 10 5)
-    (cl-tmux/terminal/actions:set-charset s :dec-graphics)
+    (cl-tmux/terminal/actions:designate-charset s :g0 :dec-graphics)
     (cl-tmux/terminal/actions:write-char-at-cursor s #\j)
     ;; 'j' maps to U+2518 (LOWER RIGHT CORNER ┘)
     (is (char= #\┘ (char-at s 0 0))
@@ -183,9 +183,9 @@
         (char-at s 0 0))))
 
 (test set-charset-dec-graphics-remaps-horizontal-line
-  :description "After set-charset :dec-graphics, writing 'q' places the horizontal line U+2500."
+  :description "After designate-charset :g0 :dec-graphics, writing 'q' places the horizontal line U+2500."
   (with-screen (s 10 5)
-    (cl-tmux/terminal/actions:set-charset s :dec-graphics)
+    (cl-tmux/terminal/actions:designate-charset s :g0 :dec-graphics)
     (cl-tmux/terminal/actions:write-char-at-cursor s #\q)
     ;; 'q' maps to U+2500 (BOX DRAWINGS LIGHT HORIZONTAL ─)
     (is (char= #\─ (char-at s 0 0))
@@ -193,9 +193,9 @@
         (char-at s 0 0))))
 
 (test set-charset-ascii-no-remapping
-  :description "After set-charset :ascii (default), characters are written unchanged."
+  :description "After designate-charset :g0 :ascii (default), characters are written unchanged."
   (with-screen (s 10 5)
-    (cl-tmux/terminal/actions:set-charset s :ascii)
+    (cl-tmux/terminal/actions:designate-charset s :g0 :ascii)
     (cl-tmux/terminal/actions:write-char-at-cursor s #\j)
     ;; In ASCII mode, 'j' is 'j'
     (is (char= #\j (char-at s 0 0))
@@ -230,7 +230,7 @@
     (dolist (entry cases)
       (destructuring-bind (in expected desc) entry
         (with-screen (s 10 5)
-          (cl-tmux/terminal/actions:set-charset s :dec-graphics)
+          (cl-tmux/terminal/actions:designate-charset s :g0 :dec-graphics)
           (cl-tmux/terminal/actions:write-char-at-cursor s in)
           (is (char= expected (char-at s 0 0))
               "DEC graphics ~C: expected ~C got ~C (~A)"
@@ -239,7 +239,7 @@
 (test set-charset-dec-graphics-unmapped-char-passes-through
   :description "Characters not in the DEC graphics table pass through unchanged."
   (with-screen (s 10 5)
-    (cl-tmux/terminal/actions:set-charset s :dec-graphics)
+    (cl-tmux/terminal/actions:designate-charset s :g0 :dec-graphics)
     ;; '#\5' (a digit) is not in the DEC special-graphics set — only certain
     ;; lowercase letters and symbols are remapped, so digits/uppercase pass through.
     (cl-tmux/terminal/actions:write-char-at-cursor s #\5)

@@ -48,6 +48,14 @@
     (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-fg s)) "double-reset fg must be the default sentinel")
     (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-bg s)) "double-reset bg must be the default sentinel")))
 
+(test screen-cur-fg-and-cur-bg-default-to-sentinel
+  :description "A fresh screen's cur-fg and cur-bg SGR pen slots start at the default-colour sentinel."
+  (with-screen (s 10 5)
+    (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-fg s))
+        "fresh screen cur-fg must be the default sentinel")
+    (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-bg s))
+        "fresh screen cur-bg must be the default sentinel")))
+
 ;;; ── bell-pending slot ────────────────────────────────────────────────────────
 
 (def-suite bell-pending-suite

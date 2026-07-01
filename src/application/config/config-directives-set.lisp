@@ -276,7 +276,7 @@
               (n     (cl-tmux::%parse-integer-or-nil value :junk-allowed t)))
          (setf *status-height*
                (cond (off-p 0)
-                     ((and n (> n 0)) (min n 5))
+                     ((and n (> n 0)) (min n +max-status-lines+))
                      (t 1))))))
   ;; mouse: delegate to *mouse-reporting-hook* so config and renderer stay decoupled.
   ("mouse"

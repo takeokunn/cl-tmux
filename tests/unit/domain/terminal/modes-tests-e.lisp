@@ -1,0 +1,159 @@
+(in-package #:cl-tmux/test)
+
+;;;; modes tests — part E: direct-action-only coverage for decstr-action,
+;;;; decaln-action, set-ansi-mode, and reset-ansi-mode.  These functions were
+;;;; previously exercised only indirectly through the CSI/ESC parser path
+;;;; (modes-tests-c.lisp, parser-tests.lisp); this file calls them directly.
+
+;;; ── SUITE: decstr-action direct calls ───────────────────────────────────────
+
+(def-suite decstr-action-direct-suite
+  :description "Direct calls to decstr-action (DECSTR soft reset)"
+  :in terminal-suite)
+(in-suite decstr-action-direct-suite)
+
+(test decstr-action-resets-modes-without-clearing-screen
+  "decstr-action called directly restores modes/SGR to defaults but does not
+   erase the grid or move the cursor — mirrors the CSI ! p parser-path test but
+   isolates the action function from CSI parsing."
+  (with-screen (s 10 5)
+    (feed s "hello")
+    (setf (cl-tmux/terminal/types:screen-insert-mode s)    t
+          (cl-tmux/terminal/types:screen-autowrap s)       nil
+          (cl-tmux/terminal/types:screen-cursor-visible s) nil)
+    (cl-tmux/terminal/actions:set-cursor s 5 0)
+    (cl-tmux/terminal/actions:decstr-action s)
+    (is (not (cl-tmux/terminal/types:screen-insert-mode s)) "decstr-action must clear IRM")
+    (is-true (cl-tmux/terminal/types:screen-autowrap s)     "decstr-action must restore autowrap")
+    (is-true (cl-tmux/terminal/types:screen-cursor-visible s)
+             "decstr-action must restore cursor visibility")
+    (is (string= "hello" (row-string s 0 :end 5))
+        "decstr-action must not clear the screen (got ~S)" (row-string s 0 :end 5))
+    (is (= 5 (screen-cursor-x s)) "decstr-action must not move the cursor")))
+
+(test decstr-action-resets-sgr-pen
+  "decstr-action resets the SGR pen so a subsequent write uses default attributes."
+  (with-screen (s 10 5)
+    (setf (cl-tmux/terminal/types:screen-cur-attrs s) #x01
+          (cl-tmux/terminal/types:screen-cur-fg    s) 1)
+    (cl-tmux/terminal/actions:decstr-action s)
+    (is (= 0 (cl-tmux/terminal/types:screen-cur-attrs s))
+        "decstr-action must clear the active SGR attributes")
+    (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-fg s))
+        "decstr-action must reset fg to the default sentinel")))
+
+(test decstr-action-clears-app-cursor-keys-bracketed-paste-and-saved-cursor
+  "decstr-action clears application cursor keys, bracketed paste, and any
+   DECSC-saved cursor snapshot (so a later DECRC homes rather than restoring
+   stale state), per its docstring."
+  (with-screen (s 10 5)
+    (setf (cl-tmux/terminal/types:screen-app-cursor-keys s) t
+          (cl-tmux/terminal/types:screen-bracketed-paste s) t)
+    (cl-tmux/terminal/actions:save-cursor s)
+    (cl-tmux/terminal/actions:decstr-action s)
+    (is-false (cl-tmux/terminal/types:screen-app-cursor-keys s)
+              "decstr-action must clear application cursor keys")
+    (is-false (cl-tmux/terminal/types:screen-bracketed-paste s)
+              "decstr-action must clear bracketed-paste mode")
+    (is (null (cl-tmux/terminal/types:screen-saved-cursor s))
+        "decstr-action must clear the DECSC saved-cursor snapshot")))
+
+;;; ── SUITE: decaln-action direct calls ───────────────────────────────────────
+
+(def-suite decaln-action-direct-suite
+  :description "Direct calls to decaln-action (DECALN screen-alignment test pattern)"
+  :in terminal-suite)
+(in-suite decaln-action-direct-suite)
+
+(test decaln-action-fills-every-cell-with-e
+  "decaln-action fills every cell of the grid with the character 'E'."
+  (with-screen (s 5 3)
+    (cl-tmux/terminal/actions:decaln-action s)
+    (dotimes (y 3)
+      (dotimes (x 5)
+        (is (char= #\E (char-at s x y))
+            "cell (~D,~D) must be 'E' after decaln-action, got ~C" x y (char-at s x y))))))
+
+(test decaln-action-homes-the-cursor
+  "decaln-action moves the cursor to (0,0) after filling the grid."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/actions:set-cursor s 7 3)
+    (cl-tmux/terminal/actions:decaln-action s)
+    (check-cursor s 0 0)))
+
+(test decaln-action-marks-screen-dirty
+  "decaln-action marks the screen dirty so the renderer repaints."
+  (with-screen (s 5 3)
+    (screen-clear-dirty s)
+    (is-false (cl-tmux/terminal/types:screen-dirty-p s) "dirty must be NIL before decaln-action")
+    (cl-tmux/terminal/actions:decaln-action s)
+    (is (cl-tmux/terminal/types:screen-dirty-p s) "screen must be dirty after decaln-action")))
+
+(test decaln-action-overwrites-existing-content
+  "decaln-action overwrites any pre-existing grid content with 'E'."
+  (with-screen (s 5 3)
+    (feed s "hello")
+    (cl-tmux/terminal/actions:decaln-action s)
+    (is (char= #\E (char-at s 0 0))
+        "pre-existing 'h' must be overwritten by 'E'")))
+
+;;; ── SUITE: set-ansi-mode / reset-ansi-mode direct calls ─────────────────────
+;;;
+;;; set-ansi-mode / reset-ansi-mode are generated by define-ansi-mode-rules and
+;;; back the non-private CSI Ps h / CSI Ps l sequences (IRM mode 4, LNM mode 20).
+;;; The CSI-parser path is covered by irm-*/lnm-* tests in modes-tests-c.lisp;
+;;; these tests call the action functions directly.
+
+(def-suite ansi-mode-direct-suite
+  :description "Direct calls to set-ansi-mode / reset-ansi-mode"
+  :in terminal-suite)
+(in-suite ansi-mode-direct-suite)
+
+(test set-ansi-mode-4-sets-insert-mode
+  "set-ansi-mode with param 4 (IRM) sets screen-insert-mode to T."
+  (with-screen (s 10 5)
+    (is-false (cl-tmux/terminal/types:screen-insert-mode s) "insert-mode must be NIL by default")
+    (cl-tmux/terminal/actions:set-ansi-mode s '(4))
+    (is-true (cl-tmux/terminal/types:screen-insert-mode s)
+             "set-ansi-mode '(4) must set screen-insert-mode to T")))
+
+(test reset-ansi-mode-4-clears-insert-mode
+  "reset-ansi-mode with param 4 (IRM) clears screen-insert-mode to NIL."
+  (with-screen (s 10 5)
+    (setf (cl-tmux/terminal/types:screen-insert-mode s) t)
+    (cl-tmux/terminal/actions:reset-ansi-mode s '(4))
+    (is-false (cl-tmux/terminal/types:screen-insert-mode s)
+              "reset-ansi-mode '(4) must clear screen-insert-mode")))
+
+(test set-ansi-mode-20-sets-newline-mode
+  "set-ansi-mode with param 20 (LNM) sets screen-newline-mode to T."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/actions:set-ansi-mode s '(20))
+    (is-true (cl-tmux/terminal/types:screen-newline-mode s)
+             "set-ansi-mode '(20) must set screen-newline-mode to T")))
+
+(test reset-ansi-mode-20-clears-newline-mode
+  "reset-ansi-mode with param 20 (LNM) clears screen-newline-mode to NIL."
+  (with-screen (s 10 5)
+    (setf (cl-tmux/terminal/types:screen-newline-mode s) t)
+    (cl-tmux/terminal/actions:reset-ansi-mode s '(20))
+    (is-false (cl-tmux/terminal/types:screen-newline-mode s)
+              "reset-ansi-mode '(20) must clear screen-newline-mode")))
+
+(test set-ansi-mode-accepts-multiple-params-in-one-call
+  "set-ansi-mode processes every param in the list, setting both flags at once."
+  (with-screen (s 10 5)
+    (cl-tmux/terminal/actions:set-ansi-mode s '(4 20))
+    (is-true (cl-tmux/terminal/types:screen-insert-mode s) "param 4 must set insert-mode")
+    (is-true (cl-tmux/terminal/types:screen-newline-mode s) "param 20 must set newline-mode")))
+
+(test ansi-mode-unknown-param-is-silently-ignored
+  "set-ansi-mode and reset-ansi-mode with an unrecognized param number are no-ops
+   that do not signal an error."
+  (with-screen (s 10 5)
+    (finishes (cl-tmux/terminal/actions:set-ansi-mode s '(9999)))
+    (finishes (cl-tmux/terminal/actions:reset-ansi-mode s '(9999)))
+    (is-false (cl-tmux/terminal/types:screen-insert-mode s)
+              "unrecognized param must not affect insert-mode")
+    (is-false (cl-tmux/terminal/types:screen-newline-mode s)
+              "unrecognized param must not affect newline-mode")))

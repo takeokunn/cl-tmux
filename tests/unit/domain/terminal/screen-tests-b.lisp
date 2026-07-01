@@ -41,6 +41,19 @@
     (is (string= "hello" (cl-tmux/terminal/types:screen-copy-search-term s))
         "copy-search-term must hold the stored string")))
 
+(test screen-copy-mark-offset-defaults-zero
+  :description "copy-mark-offset is 0 on a fresh screen."
+  (with-screen (s 10 5)
+    (is (= 0 (cl-tmux/terminal/types:screen-copy-mark-offset s))
+        "copy-mark-offset must default to 0")))
+
+(test screen-copy-mark-offset-can-be-set
+  :description "copy-mark-offset can be set to an arbitrary integer via setf."
+  (with-screen (s 10 5)
+    (setf (cl-tmux/terminal/types:screen-copy-mark-offset s) 7)
+    (is (= 7 (cl-tmux/terminal/types:screen-copy-mark-offset s))
+        "copy-mark-offset must hold the value after setf")))
+
 ;;; ── SUITE: alt-screen cursor save slots ─────────────────────────────────────
 
 (def-suite alt-screen-slots

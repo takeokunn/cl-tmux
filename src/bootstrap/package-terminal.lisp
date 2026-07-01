@@ -17,6 +17,8 @@
    #:+true-color-flag+
    ;; Default-colour sentinel (SGR 39/49; distinct from palette 7/0)
    #:+default-color+
+   ;; Fallback code point for invalid/undecodable input (U+FFFD)
+   #:+unicode-replacement-char+
    ;; XTPUSHTITLE/XTPOPTITLE stack depth limit (matches xterm)
    #:+title-stack-max-depth+
    ;; Default terminal geometry constants (VT100 standard)
@@ -228,7 +230,6 @@
    #:set-bell-pending
    #:set-ansi-mode
    #:reset-ansi-mode
-   #:set-charset
    #:designate-charset
    #:invoke-charset
    #:screen-invoked-charset

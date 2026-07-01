@@ -6,6 +6,11 @@
 ;;;; overlay-scroll, and the popup and menu struct constructors.
 ;;;; These were split out of prompt-tests.lisp to match the source split
 ;;;; between prompt.lisp and overlay.lisp.
+;;;;
+;;;; All overlay tests use with-clean-overlay (from helpers-b.lisp) to
+;;;; guarantee no leaked *overlay* / *overlay-scroll-offset* /
+;;;; *overlay-shown-at* / *display-panes-active* state between tests,
+;;;; mirroring the with-clean-prompt convention in prompt-tests.lisp.
 
 (def-suite overlay-suite :description "Dismissible overlay, popup, and menu state")
 (in-suite overlay-suite)
@@ -14,14 +19,14 @@
 
 (test overlay-inactive-by-default
   "With no overlay set, overlay-active-p is NIL and overlay-lines is empty."
-  (let ((*overlay* nil))
+  (with-clean-overlay
     (assert-overlay-inactive)
     (is (null (overlay-lines)))))
 
 (test overlay-show-splits-lines-and-clears
   "show-overlay activates a multi-line overlay; overlay-lines splits on newline;
    clear-overlay dismisses it."
-  (let ((*overlay* nil))
+  (with-clean-overlay
     (show-overlay (format nil "line1~%line2~%line3"))
     (assert-overlay-active)
     (is (equal '("line1" "line2" "line3") (overlay-lines)))
@@ -31,7 +36,7 @@
 
 (test overlay-single-line
   "A single-line overlay yields exactly one line (no trailing empty line)."
-  (let ((*overlay* nil))
+  (with-clean-overlay
     (show-overlay "solo")
     (is (equal '("solo") (overlay-lines)))))
 
@@ -42,8 +47,7 @@
 
 (test overlay-scroll-down-advances-offset
   "overlay-scroll with a positive delta increases *overlay-scroll-offset*."
-  (let ((*overlay* nil)
-        (*overlay-scroll-offset* 0))
+  (with-clean-overlay
     (show-overlay (format nil "line1~%line2~%line3~%line4"))
     (overlay-scroll 1)
     (is (= 1 *overlay-scroll-offset*) "one scroll-down step must advance offset to 1")
@@ -52,8 +56,7 @@
 
 (test overlay-scroll-up-decreases-offset
   "overlay-scroll with a negative delta decreases *overlay-scroll-offset*."
-  (let ((*overlay* nil)
-        (*overlay-scroll-offset* 0))
+  (with-clean-overlay
     (show-overlay (format nil "line1~%line2~%line3"))
     (overlay-scroll 2)                         ; advance first
     (is (= 2 *overlay-scroll-offset*))
@@ -62,8 +65,7 @@
 
 (test overlay-scroll-clamps-at-zero
   "overlay-scroll never makes *overlay-scroll-offset* negative (clamps at 0)."
-  (let ((*overlay* nil)
-        (*overlay-scroll-offset* 0))
+  (with-clean-overlay
     (show-overlay (format nil "line1~%line2"))
     (overlay-scroll -5)
     (is (= 0 *overlay-scroll-offset*)
@@ -71,8 +73,7 @@
 
 (test overlay-scroll-clamps-at-max
   "overlay-scroll never exceeds (1- line-count) (clamps at max-offset)."
-  (let ((*overlay* nil)
-        (*overlay-scroll-offset* 0))
+  (with-clean-overlay
     ;; Three lines -> max-offset = 2.
     (show-overlay (format nil "line1~%line2~%line3"))
     (overlay-scroll 100)
@@ -81,24 +82,22 @@
 
 (test overlay-scroll-noop-when-no-overlay
   "overlay-scroll is a no-op when no overlay is active."
-  (let ((*overlay* nil)
-        (*overlay-scroll-offset* 0))
+  (with-clean-overlay
     (overlay-scroll 5)
     (is (= 0 *overlay-scroll-offset*)
         "offset must remain 0 with no active overlay")))
 
 (test show-overlay-resets-scroll-offset
   "show-overlay resets *overlay-scroll-offset* to 0 regardless of prior value."
-  (let ((*overlay* nil)
-        (*overlay-scroll-offset* 99))
-    (show-overlay "fresh")
-    (is (= 0 *overlay-scroll-offset*)
-        "show-overlay must reset scroll offset to 0")))
+  (with-clean-overlay
+    (let ((*overlay-scroll-offset* 99))
+      (show-overlay "fresh")
+      (is (= 0 *overlay-scroll-offset*)
+          "show-overlay must reset scroll offset to 0"))))
 
 (test clear-overlay-resets-scroll-offset
   "clear-overlay resets *overlay-scroll-offset* to 0."
-  (let ((*overlay* nil)
-        (*overlay-scroll-offset* 0))
+  (with-clean-overlay
     (show-overlay (format nil "a~%b"))
     (overlay-scroll 1)
     (clear-overlay)
@@ -108,7 +107,7 @@
 (test overlay-lines-trailing-newline
   "A trailing newline yields a final empty line: overlay-lines collects the
    empty segment after the last newline."
-  (let ((*overlay* nil))
+  (with-clean-overlay
     (show-overlay (format nil "a~%"))
     (is (equal '("a" "") (overlay-lines))
         "text ending in newline produces a trailing empty line")
@@ -117,8 +116,7 @@
 
 (test overlay-scroll-zero-delta-is-noop
   "overlay-scroll with delta 0 leaves *overlay-scroll-offset* unchanged."
-  (let ((*overlay* nil)
-        (*overlay-scroll-offset* 0))
+  (with-clean-overlay
     (show-overlay (format nil "line1~%line2~%line3"))
     (overlay-scroll 1)
     (is (= 1 *overlay-scroll-offset*))
@@ -128,20 +126,19 @@
 
 (test show-overlay-empty-string
   "show-overlay with an empty string activates overlay-active-p and overlay-lines returns a single empty line."
-  (let ((*overlay* nil)
-        (*overlay-scroll-offset* 5))
-    (show-overlay "")
-    (assert-overlay-active
-     "overlay must be active after show-overlay with empty string")
-    (is (= 0 *overlay-scroll-offset*)
-        "show-overlay must reset scroll offset even for empty string")
-    (is (equal '("") (overlay-lines))
-        "empty string produces a list with one empty line")))
+  (with-clean-overlay
+    (let ((*overlay-scroll-offset* 5))
+      (show-overlay "")
+      (assert-overlay-active
+       "overlay must be active after show-overlay with empty string")
+      (is (= 0 *overlay-scroll-offset*)
+          "show-overlay must reset scroll offset even for empty string")
+      (is (equal '("") (overlay-lines))
+          "empty string produces a list with one empty line"))))
 
 (test clear-overlay-when-no-overlay-is-noop
   "clear-overlay when no overlay is active is a safe no-op."
-  (let ((*overlay* nil)
-        (*overlay-scroll-offset* 0))
+  (with-clean-overlay
     (finishes (clear-overlay))
     (assert-overlay-inactive
      "overlay must remain inactive after clear-overlay on nil overlay")
@@ -158,9 +155,7 @@
 (test make-popup-defaults
   "make-popup fills all slots to their documented defaults."
   (let ((p (make-popup)))
-    (check-table (list (list (popup-x p)      0  "default x is 0")
-                       (list (popup-y p)      0  "default y is 0")
-                       (list (popup-width p)  40 "default width is 40")
+    (check-table (list (list (popup-width p)  40 "default width is 40")
                        (list (popup-height p) 10 "default height is 10")
                        (list (popup-screen p) nil "default screen is nil (text-only)")
                        (list (popup-pane p)   nil "default pane is nil (text-only)"))
@@ -170,11 +165,9 @@
 
 (test make-popup-keyword-args
   "make-popup accepts keyword arguments that override all defaults."
-  (let ((p (make-popup :x 5 :y 10 :width 80 :height 24
+  (let ((p (make-popup :width 80 :height 24
                        :title "Test Popup" :close-on-exit nil)))
-    (check-table (list (list (popup-x p)      5  "x is 5")
-                       (list (popup-y p)      10 "y is 10")
-                       (list (popup-width p)  80 "width is 80")
+    (check-table (list (list (popup-width p)  80 "width is 80")
                        (list (popup-height p) 24 "height is 24"))
                  :test #'equal)
     (is (string= "Test Popup" (popup-title p)))
@@ -224,6 +217,19 @@
           "menu-items returns the full items list")
       (is (= 2 (menu-selected-index m))
           "selected-index is set to 2"))))
+
+(test menu-x-and-y-default-to-nil
+  "menu-x and menu-y (display-menu -x/-y position) default to NIL, meaning
+   'centre on screen'."
+  (let ((m (make-menu)))
+    (is (null (menu-x m)) "default menu-x is NIL (centre)")
+    (is (null (menu-y m)) "default menu-y is NIL (centre)")))
+
+(test menu-x-and-y-keyword-args
+  "make-menu :x and :y set a fixed display-menu position, overriding centring."
+  (let ((m (make-menu :x 5 :y 10)))
+    (is (= 5  (menu-x m)) "menu-x must be set to the supplied value")
+    (is (= 10 (menu-y m)) "menu-y must be set to the supplied value")))
 
 (test menu-selected-index-mutable
   "setf on menu-selected-index updates the struct slot."
@@ -284,26 +290,20 @@
 
 (test overlay-shown-at-returns-zero-initially
   "overlay-shown-at returns 0 when no transient overlay has been shown."
-  (let ((*overlay-shown-at* 0))
+  (with-clean-overlay
     (is (= 0 (overlay-shown-at))
         "overlay-shown-at must return 0 in the initial state")))
 
 (test overlay-shown-at-returns-timestamp-after-show-transient
   "overlay-shown-at returns the timestamp passed to show-transient-overlay."
-  (let ((*overlay* nil)
-        (*overlay-shown-at* 0)
-        (*overlay-scroll-offset* 0)
-        (*display-panes-active* nil))
+  (with-clean-overlay
     (show-transient-overlay "msg" :timestamp 77)
     (is (= 77 (overlay-shown-at))
         "overlay-shown-at must return the timestamp set by show-transient-overlay")))
 
 (test overlay-shown-at-updated-by-show-display-panes-overlay
   "overlay-shown-at returns the timestamp set by show-display-panes-overlay."
-  (let ((*overlay* nil)
-        (*overlay-shown-at* 0)
-        (*overlay-scroll-offset* 0)
-        (*display-panes-active* nil))
+  (with-clean-overlay
     (show-display-panes-overlay "nums" :timestamp 55)
     (is (= 55 (overlay-shown-at))
         "overlay-shown-at must return the timestamp set by show-display-panes-overlay")))
@@ -317,10 +317,7 @@
 (test show-transient-overlay-activates-and-stamps-timestamp
   "show-transient-overlay activates an overlay and records the supplied timestamp
    accessible via overlay-shown-at; *display-panes-active* remains NIL."
-  (let ((*overlay* nil)
-        (*overlay-shown-at* 0)
-        (*overlay-scroll-offset* 0)
-        (*display-panes-active* nil))
+  (with-clean-overlay
     (show-transient-overlay "transient msg" :timestamp 42)
     (assert-overlay-active "show-transient-overlay must activate the overlay")
     (is (= 42 (overlay-shown-at))
@@ -330,21 +327,16 @@
 
 (test show-transient-overlay-resets-scroll-offset
   "show-transient-overlay resets *overlay-scroll-offset* to 0."
-  (let ((*overlay* nil)
-        (*overlay-shown-at* 0)
-        (*overlay-scroll-offset* 7)
-        (*display-panes-active* nil))
-    (show-transient-overlay "msg" :timestamp 1)
-    (is (= 0 *overlay-scroll-offset*)
-        "show-transient-overlay must reset scroll offset to 0")))
+  (with-clean-overlay
+    (let ((*overlay-scroll-offset* 7))
+      (show-transient-overlay "msg" :timestamp 1)
+      (is (= 0 *overlay-scroll-offset*)
+          "show-transient-overlay must reset scroll offset to 0"))))
 
 (test show-transient-overlay-default-timestamp-is-current-time
   "show-transient-overlay with no :timestamp argument uses (get-universal-time).
    The recorded timestamp accessible via overlay-shown-at must be >= the time before the call."
-  (let ((*overlay* nil)
-        (*overlay-shown-at* 0)
-        (*overlay-scroll-offset* 0)
-        (*display-panes-active* nil))
+  (with-clean-overlay
     (let ((before (get-universal-time)))
       (show-transient-overlay "auto-ts")
       (is (>= (overlay-shown-at) before)
@@ -358,10 +350,7 @@
 (test show-display-panes-overlay-activates-and-sets-display-panes
   "show-display-panes-overlay activates an overlay, sets *display-panes-active* T,
    and records the supplied timestamp accessible via overlay-shown-at."
-  (let ((*overlay* nil)
-        (*overlay-shown-at* 0)
-        (*overlay-scroll-offset* 0)
-        (*display-panes-active* nil))
+  (with-clean-overlay
     (show-display-panes-overlay "pane-nums" :timestamp 99)
     (assert-overlay-active "show-display-panes-overlay must activate the overlay")
     (is (eq t *display-panes-active*)
@@ -372,10 +361,7 @@
 (test show-overlay-clears-display-panes
   "show-overlay (the non-transient variant) always sets *display-panes-active* to NIL,
    even when display-panes was previously active."
-  (let ((*overlay* nil)
-        (*overlay-shown-at* 0)
-        (*overlay-scroll-offset* 0)
-        (*display-panes-active* nil))
+  (with-clean-overlay
     (show-display-panes-overlay "pane-nums" :timestamp 1)
     (is (eq t *display-panes-active*) "precondition: display-panes active")
     (show-overlay "plain overlay")
@@ -384,10 +370,7 @@
 
 (test clear-overlay-clears-display-panes
   "clear-overlay resets *display-panes-active* to NIL."
-  (let ((*overlay* nil)
-        (*overlay-shown-at* 0)
-        (*overlay-scroll-offset* 0)
-        (*display-panes-active* nil))
+  (with-clean-overlay
     (show-display-panes-overlay "nums" :timestamp 1)
     (is (eq t *display-panes-active*) "precondition: display-panes active")
     (clear-overlay)
@@ -397,10 +380,7 @@
 (test show-transient-overlay-replaces-display-panes-overlay
   "show-transient-overlay (display-panes=NIL) after show-display-panes-overlay
    clears *display-panes-active*."
-  (let ((*overlay* nil)
-        (*overlay-shown-at* 0)
-        (*overlay-scroll-offset* 0)
-        (*display-panes-active* nil))
+  (with-clean-overlay
     (show-display-panes-overlay "nums" :timestamp 1)
     (is (eq t *display-panes-active*) "precondition")
     (show-transient-overlay "msg" :timestamp 2)

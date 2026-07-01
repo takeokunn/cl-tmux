@@ -14,6 +14,12 @@
   "A function of one argument (text string) called when OSC 52 clipboard data
    is received.  Install cl-tmux/buffer:add-paste-buffer here at startup.")
 
+(defparameter +base64-alphabet+
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  "The standard (RFC 4648 §4) Base64 alphabet, shared by %base64-decode and
+   %base64-encode so both stay in sync should a variant (e.g. URL-safe
+   Base64) ever be needed.")
+
 (defun %alphabet-index (alphabet char)
   "Return the zero-based index of CHAR in ALPHABET, or NIL if absent."
   (position char alphabet :test #'char=))
@@ -47,7 +53,7 @@
    Processes input in groups of 4 Base64 characters; each group produces
    up to 3 bytes.  Returns NIL when the input contains non-Base64 characters."
   (handler-case
-      (let* ((alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+      (let* ((alphabet +base64-alphabet+)
              (input-length (length encoded-string))
              (output (make-array 0 :element-type '(unsigned-byte 8)
                                    :fill-pointer 0 :adjustable t)))
@@ -64,7 +70,7 @@
 (defun %base64-encode (bytes)
   "Encode a sequence of (unsigned-byte 8) BYTES to a padded Base64 string.
    Inverse of %base64-decode; used to build outbound OSC 52 clipboard sequences."
-  (let ((alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+  (let ((alphabet +base64-alphabet+)
         (n (length bytes)))
     (with-output-to-string (out)
       (loop for i from 0 below n by 3

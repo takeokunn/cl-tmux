@@ -81,11 +81,6 @@
   (let ((entry (assoc name *paste-buffers* :test #'string=)))
     (and entry (cdr entry))))
 
-(defun get-buffer-by-name (name)
-  "Return the TEXT of the buffer named NAME, or NIL when there is no such buffer.
-   Alias for get-named-buffer; kept for backwards compatibility."
-  (get-named-buffer name))
-
 (defun buffer-names ()
   "Return the list of buffer names, most recent first."
   (mapcar #'car *paste-buffers*))

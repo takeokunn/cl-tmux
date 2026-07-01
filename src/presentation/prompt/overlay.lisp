@@ -103,8 +103,6 @@
 
 (defstruct popup
   "A floating overlay window with its own PTY and screen."
-  (x 0 :type fixnum)
-  (y 0 :type fixnum)
   (width  +default-popup-width+  :type fixnum)
   (height +default-popup-height+ :type fixnum)
   (screen nil)             ; screen struct for the popup (or NIL for text-only)

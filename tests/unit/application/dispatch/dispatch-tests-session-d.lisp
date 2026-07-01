@@ -263,7 +263,7 @@
         (feed (pane-screen active) "active text")
         (feed (pane-screen target) "target text")
         (cl-tmux::%cmd-capture-pane-arg s '("-t" "%2" "-b" "cap"))
-        (let ((buf (or (cl-tmux/buffer:get-buffer-by-name "cap") "")))
+        (let ((buf (or (cl-tmux/buffer:get-named-buffer "cap") "")))
           (is (search "target text" buf) "-t %2 captures pane 2")
           (is (null (search "active text" buf))
               "-t %2 must not fall back to the active pane"))))))

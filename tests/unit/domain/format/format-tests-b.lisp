@@ -34,16 +34,6 @@
       (is (string= expected (fmt spec key val))
           "~A" desc))))
 
-(test string-replace-all-unit
-  "%string-replace-all replaces all occurrences; case-insensitive on request;
-   empty pattern returns the input unchanged."
-  (dolist (c '(("axbxc" "x" "-" nil "a-b-c" "basic replacement")
-               ("aAa"   "a" "X" t   "XXX"   "case-insensitive replaces all three a/A")
-               ("aAa"   "a" "X" nil "XAX"   "case-sensitive replaces only the two lowercase a")
-               ("abc"   ""  "Z" nil "abc"    "empty pattern returns the input unchanged")))
-    (destructuring-bind (str pat rep ic expected desc) c
-      (is (string= expected (cl-tmux/format::%string-replace-all str pat rep ic)) "~A" desc))))
-
 (test format-modifier-substitute-regex
   "#{s/PAT/REP/:var} treats PAT as an extended regular expression (tmux regsub),
    supporting character classes, anchors, quantifiers and \\N backreferences."

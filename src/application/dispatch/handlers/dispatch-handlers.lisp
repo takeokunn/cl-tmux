@@ -81,15 +81,6 @@
       ((:quit :detach) outcome)
       (otherwise (setf *dirty* t) nil))))
 
-;;; -- Buffer preview constant -----------------------------------------------
-;;;
-;;; Buffer listing and preview truncate content to this many characters.
-;;; Previously the literal 40 appeared three times across handlers; a single
-;;; named constant makes intent explicit and keeps all three in sync.
-
-(defconstant +buffer-preview-length+ 40
-  "Maximum characters shown in a paste-buffer preview listing.")
-
 ;;; ── Copy-mode dispatch table helper ─────────────────────────────────────────
 ;;;
 ;;; 45 copy-mode handlers follow one uniform contract:

@@ -331,17 +331,99 @@
     (is (eq :session (cl-tmux/options:option-scope-from-name name))
         "~A should be :session scope" name)))
 
-(test array-option-indexed-name-p-indexed-entries
-  "array-option-indexed-name-p returns T for BASE[N] option names."
-  (dolist (name '("command-alias[0]" "command-alias[1]"
-                  "terminal-features[0]" "terminal-overrides[0]"
-                  "status-format[0]"))
-    (is (cl-tmux/options:array-option-indexed-name-p name)
-        "~A should be an indexed array entry" name)))
+;;; ── option-present-for-scope-p (options-scope.lisp) ───────────────────────
 
-(test array-option-indexed-name-p-non-indexed
-  "array-option-indexed-name-p returns NIL for plain option names."
-  (dolist (name '("status" "history-limit" "command-alias"
-                  "terminal-features" "" "foo[]" "foo[bar]"))
-    (is (null (cl-tmux/options:array-option-indexed-name-p name))
-        "~A should not be an indexed array entry" name)))
+(test option-present-for-scope-p-table
+  "option-present-for-scope-p returns T for @-user options, registered specs,
+   present runtime keys, and array entries whose base is registered; NIL for
+   an unregistered/absent plain name."
+  (with-fresh-global-options
+    (dolist (row `(("@my-user-opt"    nil t   "unset @ user option is always present")
+                   ("status"          nil t   "registered spec name is present")
+                   ("status-format[3]" nil t  "array entry of a registered base is present")
+                   ("totally-unknown" nil nil "unregistered unset plain name is absent")))
+      (destructuring-bind (name scope expected desc) row
+        (is (eq expected (and (cl-tmux/options:option-present-for-scope-p name scope) t))
+            "~A" desc)))
+    (setf (gethash "runtime-only-opt" cl-tmux/options:*global-options*) "x")
+    (is-true (cl-tmux/options:option-present-for-scope-p "runtime-only-opt")
+             "a key present in the runtime table (even if unregistered) counts as present")))
+
+(test option-present-for-scope-p-server-scope
+  "option-present-for-scope-p consults the server registry/table when SCOPE
+   is :server."
+  (with-fresh-server-options
+    (is-true (cl-tmux/options:option-present-for-scope-p "escape-time" :server)
+             "escape-time is a registered server option")
+    (is-false (cl-tmux/options:option-present-for-scope-p "no-such-server-opt" :server)
+               "an unregistered, unset server option is absent")))
+
+;;; ── option-present-for-display-p (options-scope.lisp) ─────────────────────
+
+(test option-present-for-display-p-user-option-requires-presence
+  "option-present-for-display-p requires an @-user option to actually be SET
+   in the runtime table (unlike option-present-for-scope-p, which always
+   treats @-names as present)."
+  (with-fresh-global-options
+    (is-false (cl-tmux/options:option-present-for-display-p "@unset-user-opt")
+               "an unset @ user option must NOT be displayable")
+    (setf (gethash "@set-user-opt" cl-tmux/options:*global-options*) "v")
+    (is-true (cl-tmux/options:option-present-for-display-p "@set-user-opt")
+             "a set @ user option must be displayable")))
+
+(test option-present-for-display-p-delegates-for-plain-names
+  "option-present-for-display-p delegates to option-present-for-scope-p for
+   non-@ names."
+  (with-fresh-global-options
+    (is-true (cl-tmux/options:option-present-for-display-p "status")
+             "a registered plain option must be displayable")
+    (is-false (cl-tmux/options:option-present-for-display-p "totally-unknown")
+               "an unregistered unset plain option must not be displayable")))
+
+;;; ── window-option-present-for-display-p (options-display.lisp) ────────────
+
+(test window-option-present-for-display-p-registered-spec
+  "A registered window-scoped option is always displayable, even with no
+   local override and GLOBAL-P/INHERITED-P both NIL."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "w")))
+    (is-true (cl-tmux/options:window-option-present-for-display-p
+              "synchronize-panes" win)
+             "a registered option name is displayable regardless of local state")))
+
+(test window-option-present-for-display-p-local-override
+  "An unregistered @ option becomes displayable once it has a window-local
+   override, without GLOBAL-P or INHERITED-P."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "w")))
+    (is-false (cl-tmux/options:window-option-present-for-display-p "@foo" win)
+               "an unregistered, unset user option is not displayable")
+    (cl-tmux/options:set-option-for-window "@foo" "bar" win)
+    (is-true (cl-tmux/options:window-option-present-for-display-p "@foo" win)
+             "a window-local override makes the user option displayable")))
+
+(test window-option-present-for-display-p-global-flag
+  "With GLOBAL-P T, an unregistered @ option is displayable only when it
+   exists in *global-options*, regardless of any window-local state."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "w"))
+        (cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (setf (gethash "@global-only" ht) "v")
+           ht)))
+    (is-true (cl-tmux/options:window-option-present-for-display-p
+              "@global-only" win :global-p t)
+             "GLOBAL-P T must see the global-only user option")
+    (is-false (cl-tmux/options:window-option-present-for-display-p
+               "@not-global" win :global-p t)
+               "GLOBAL-P T must not see a name absent from *global-options*")))
+
+(test window-option-present-for-display-p-inherited-flag
+  "With INHERITED-P T, an unregistered @ option is displayable when it exists
+   globally, even without any window-local override."
+  (let ((win (cl-tmux/model:make-window :id 1 :name "w"))
+        (cl-tmux/options:*global-options*
+         (let ((ht (make-hash-table :test #'equal)))
+           (setf (gethash "@inherited-opt" ht) "v")
+           ht)))
+    (is-true (cl-tmux/options:window-option-present-for-display-p
+              "@inherited-opt" win :inherited-p t)
+             "INHERITED-P T must see the globally-set user option")))
+

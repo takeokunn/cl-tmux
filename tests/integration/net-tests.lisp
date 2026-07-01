@@ -210,6 +210,13 @@
   (is (plusp cl-tmux/net::+socket-stream-timeout-seconds+)
       "+socket-stream-timeout-seconds+ must be positive"))
 
+(test connect-timeout-constant-is-positive-integer
+  :description "+connect-timeout-seconds+ must be a positive integer for sb-ext:with-timeout."
+  (is (integerp cl-tmux/net::+connect-timeout-seconds+)
+      "+connect-timeout-seconds+ must be an integer")
+  (is (plusp cl-tmux/net::+connect-timeout-seconds+)
+      "+connect-timeout-seconds+ must be positive"))
+
 ;;; ── Socket stream element type ───────────────────────────────────────────────
 
 (test socket-stream-has-binary-element-type

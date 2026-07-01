@@ -256,12 +256,6 @@
   (:g0 screen-g0-charset)
   (:g1 screen-g1-charset))
 
-(defun set-charset (screen charset)
-  "Set the effective character set of SCREEN to CHARSET (:ascii or :dec-graphics).
-   Low-level helper retained for tests; the parser uses DESIGNATE-CHARSET /
-   INVOKE-CHARSET to model the full VT100 G0/G1 + SO/SI behaviour."
-  (setf (screen-charset screen) charset))
-
 (defun screen-invoked-charset (screen g)
   "Return the charset currently designated to G (:g0 or :g1) on SCREEN."
   (%charset-slot-ref screen g))

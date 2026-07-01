@@ -480,3 +480,189 @@
         (is (= 7 (aref buffer 3)) "byte 3 must hold first read byte (7)")
         (is (= 8 (aref buffer 4)) "byte 4 must hold second read byte (8)")
         (is (= 9 (aref buffer 5)) "byte 5 must hold third read byte (9)")))))
+
+;;; ── %validate-outgoing-frame direct coverage ────────────────────────────────
+;;;
+;;; %validate-outgoing-frame is already exercised indirectly via send-frame, but
+;;; testing it directly pins its three validation clauses independently of I/O:
+;;;   1. Frame must be a vector of at least +header-size+ bytes.
+;;;   2. Declared payload length must not exceed +max-frame-payload-bytes+.
+;;;   3. Total frame length must equal +header-size+ + declared payload length.
+
+(test validate-outgoing-frame-accepts-well-formed-frames
+  "%validate-outgoing-frame must not signal for well-formed frames produced by
+   the msg-* constructors."
+  (finishes (cl-tmux/transport::%validate-outgoing-frame (msg-detach))
+            "%validate-outgoing-frame must not signal for a valid empty frame")
+  (finishes (cl-tmux/transport::%validate-outgoing-frame (msg-key #(1 2 3)))
+            "%validate-outgoing-frame must not signal for a valid key frame")
+  (finishes (cl-tmux/transport::%validate-outgoing-frame (msg-resize 24 80))
+            "%validate-outgoing-frame must not signal for a valid resize frame"))
+
+(test validate-outgoing-frame-rejects-too-short-vector
+  "%validate-outgoing-frame signals an error when the frame vector has fewer
+   than +header-size+ bytes (not a valid frame at all)."
+  (signals error
+    (cl-tmux/transport::%validate-outgoing-frame
+     (make-array 0 :element-type '(unsigned-byte 8)))
+    "empty vector must signal")
+  (signals error
+    (cl-tmux/transport::%validate-outgoing-frame
+     (make-array (1- +header-size+) :element-type '(unsigned-byte 8)))
+    "vector shorter than header must signal"))
+
+(test validate-outgoing-frame-rejects-oversized-declared-length
+  "%validate-outgoing-frame signals an error when the declared payload length
+   in the frame header exceeds +max-frame-payload-bytes+."
+  (signals error
+    (cl-tmux/transport::%validate-outgoing-frame
+     (%make-frame-with-declared-length
+      (1+ cl-tmux/transport::+max-frame-payload-bytes+) 0))
+    "declared length = max+1 must signal"))
+
+(test validate-outgoing-frame-rejects-self-inconsistent-length
+  "%validate-outgoing-frame signals an error when total frame length does not
+   equal +header-size+ + declared payload length (self-inconsistent frame)."
+  (signals error
+    (cl-tmux/transport::%validate-outgoing-frame
+     (%make-frame-with-declared-length 5 0))
+    "declared=5 actual=0 must signal (header claims more bytes than present)")
+  (signals error
+    (cl-tmux/transport::%validate-outgoing-frame
+     (%make-frame-with-declared-length 0 3))
+    "declared=0 actual=3 must signal (header claims fewer bytes than present)"))
+
+;;; ── %read-header-k direct coverage ──────────────────────────────────────────
+;;;
+;;; %read-header-k reads the 5-byte frame header and, on success, calls its
+;;; continuation with (buffer payload-length).  Testing it directly pins the
+;;; CPS phase-1 contract independently of the full read-frame pipeline:
+;;;   • A complete 5-byte header calls the continuation with the right payload-length.
+;;;   • A stream that ends before 5 bytes (EOF/short-read) returns NIL without
+;;;     calling the continuation.
+;;;   • A header whose declared payload length exceeds +max-frame-payload-bytes+
+;;;     returns NIL (security guard fires before the continuation is called).
+
+(test read-header-k-calls-continuation-with-payload-length
+  "%read-header-k invokes the continuation with the payload-length from the
+   frame header when the stream contains a complete 5-byte header."
+  (let ((frame (msg-key #(1 2 3))))   ; 5-byte header + 3-byte payload
+    (with-temp-octet-file (path)
+      (with-open-file (out path :direction :output :if-exists :supersede
+                                :element-type '(unsigned-byte 8))
+        ;; Write only the 5-byte header (first +header-size+ bytes of frame).
+        (write-sequence frame out :end +header-size+))
+      (with-open-file (in path :element-type '(unsigned-byte 8))
+        (let ((captured-length nil))
+          (cl-tmux/transport::%read-header-k
+           in
+           (lambda (buffer payload-length)
+             (declare (ignore buffer))
+             (setf captured-length payload-length)))
+          (is (= 3 captured-length)
+              "%read-header-k must pass payload-length=3 to the continuation"))))))
+
+(test read-header-k-returns-nil-at-eof
+  "%read-header-k returns NIL (without calling the continuation) when the
+   stream contains fewer than +header-size+ bytes."
+  (with-temp-octet-file (path)
+    ;; Write only 3 bytes — not a complete header.
+    (with-open-file (out path :direction :output :if-exists :supersede
+                              :element-type '(unsigned-byte 8))
+      (write-sequence #(1 2 3) out))
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      (let ((called nil))
+        (let ((result
+               (cl-tmux/transport::%read-header-k
+                in
+                (lambda (buffer payload-length)
+                  (declare (ignore buffer payload-length))
+                  (setf called t)
+                  :called))))
+          (is (null result)
+              "%read-header-k must return NIL at EOF before a full header")
+          (is (null called)
+              "%read-header-k must not call the continuation at EOF"))))))
+
+(test read-header-k-returns-nil-for-oversized-declared-payload
+  "%read-header-k returns NIL when the decoded payload length exceeds
+   +max-frame-payload-bytes+, enforcing the security guard before the
+   continuation is reached."
+  (with-temp-octet-file (path)
+    ;; Craft a 5-byte header whose length field = max+1.
+    (with-open-file (out path :direction :output :if-exists :supersede
+                              :element-type '(unsigned-byte 8))
+      (let* ((oversized (1+ cl-tmux/transport::+max-frame-payload-bytes+))
+             (header    (make-array +header-size+ :element-type '(unsigned-byte 8)
+                                                  :initial-element 0)))
+        (setf (aref header 0) +msg-frame+)
+        (replace header (cl-tmux/protocol:u32-octets oversized) :start1 1)
+        (write-sequence header out)))
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      (let ((called nil))
+        (let ((result
+               (cl-tmux/transport::%read-header-k
+                in
+                (lambda (buffer payload-length)
+                  (declare (ignore buffer payload-length))
+                  (setf called t)
+                  :called))))
+          (is (null result)
+              "%read-header-k must return NIL when declared payload exceeds max")
+          (is (null called)
+              "%read-header-k must not call the continuation for oversized payload"))))))
+
+;;; ── %read-payload-k direct coverage ─────────────────────────────────────────
+;;;
+;;; %read-payload-k grows an adjustable header buffer and reads the payload
+;;; bytes from the stream directly into the tail, then calls its continuation.
+;;; Testing it directly pins the CPS phase-2 contract independently of
+;;; %read-header-k: the continuation must receive a complete frame buffer whose
+;;; payload bytes match what was written, or NIL when the stream is short.
+
+(test read-payload-k-calls-continuation-with-complete-buffer
+  "%read-payload-k reads PAYLOAD-LENGTH bytes and calls the continuation with
+   a buffer whose tail contains those bytes verbatim."
+  (with-temp-octet-file (path)
+    ;; Write 4 payload bytes to the file.
+    (with-open-file (out path :direction :output :if-exists :supersede
+                              :element-type '(unsigned-byte 8))
+      (write-sequence #(10 20 30 40) out))
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      ;; Construct a 5-element adjustable header buffer (simulating what
+      ;; %read-header-k would produce after reading the header).
+      (let* ((header-buf (make-array +header-size+ :element-type '(unsigned-byte 8)
+                                                   :adjustable t
+                                                   :fill-pointer +header-size+))
+             (captured nil))
+        (cl-tmux/transport::%read-payload-k
+         header-buf 4 in
+         (lambda (complete-buffer)
+           (setf captured (subseq complete-buffer +header-size+))))
+        (is (equalp #(10 20 30 40) captured)
+            "%read-payload-k must place payload bytes in the tail of the buffer")))))
+
+(test read-payload-k-returns-nil-at-eof
+  "%read-payload-k returns NIL (without calling the continuation) when the
+   stream ends before all declared payload bytes have arrived."
+  (with-temp-octet-file (path)
+    ;; Write only 2 bytes but declare 4.
+    (with-open-file (out path :direction :output :if-exists :supersede
+                              :element-type '(unsigned-byte 8))
+      (write-sequence #(1 2) out))
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      (let* ((header-buf (make-array +header-size+ :element-type '(unsigned-byte 8)
+                                                   :adjustable t
+                                                   :fill-pointer +header-size+))
+             (called nil))
+        (let ((result
+               (cl-tmux/transport::%read-payload-k
+                header-buf 4 in
+                (lambda (complete-buffer)
+                  (declare (ignore complete-buffer))
+                  (setf called t)
+                  :called))))
+          (is (null result)
+              "%read-payload-k must return NIL when stream ends before payload is complete")
+          (is (null called)
+              "%read-payload-k must not call the continuation when payload is short"))))))

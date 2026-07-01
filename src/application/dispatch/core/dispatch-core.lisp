@@ -70,8 +70,8 @@
   (cdr (assoc char flags)))
 
 (defun %flag-present-p (flags char)
-  "Return true when FLAGS contains CHAR."
-  (not (null (%flag-value flags char))))
+  "Return true when FLAGS contains an entry for CHAR, even if its value is NIL."
+  (not (null (assoc char flags))))
 
 (defun %resolve-target-window-pane (session target-str current-window current-pane)
   "Resolve TARGET-STR to a window/pane pair.

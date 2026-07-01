@@ -12,7 +12,7 @@
   (with-empty-buffers
     (with-fake-session (s)
       (cl-tmux::%cmd-set-buffer-arg s '("-b" "mybuf" "hello" "world"))
-      (is (string= "hello world" (cl-tmux/buffer:get-buffer-by-name "mybuf"))
+      (is (string= "hello world" (cl-tmux/buffer:get-named-buffer "mybuf"))
           "set-buffer -b stores the joined data under the name"))))
 
 (test cmd-set-buffer-n-renames-latest-buffer
@@ -23,9 +23,9 @@
       (cl-tmux::%cmd-set-buffer-arg s '("-n" "renamed" "ignored"))
       (is (equal '("renamed") (cl-tmux/buffer:buffer-names))
           "the buffer name changes to the requested new name")
-      (is (string= "hello" (cl-tmux/buffer:get-buffer-by-name "renamed"))
+      (is (string= "hello" (cl-tmux/buffer:get-named-buffer "renamed"))
           "rename preserves the source text")
-      (is (null (cl-tmux/buffer:get-buffer-by-name "buffer0"))
+      (is (null (cl-tmux/buffer:get-named-buffer "buffer0"))
           "the old automatic name is gone"))))
 
 (test cmd-set-buffer-b-n-renames-named-buffer
@@ -37,9 +37,9 @@
       (cl-tmux::%cmd-set-buffer-arg s '("-b" "old" "-n" "new" "ignored"))
       (is (equal '("new" "buffer0") (cl-tmux/buffer:buffer-names))
           "the selected named buffer is renamed in place")
-      (is (string= "named text" (cl-tmux/buffer:get-buffer-by-name "new"))
+      (is (string= "named text" (cl-tmux/buffer:get-named-buffer "new"))
           "rename keeps the original text")
-      (is (null (cl-tmux/buffer:get-buffer-by-name "old"))
+      (is (null (cl-tmux/buffer:get-named-buffer "old"))
           "the old name is removed"))))
 
 (test cmd-set-buffer-accepts-target-client-flag
@@ -72,7 +72,7 @@
     (with-fake-session (s)
       (cl-tmux::%cmd-set-buffer-arg s '("-b" "b" "foo"))
       (cl-tmux::%cmd-set-buffer-arg s '("-a" "-b" "b" "bar"))
-      (is (string= "foobar" (cl-tmux/buffer:get-buffer-by-name "b"))
+      (is (string= "foobar" (cl-tmux/buffer:get-named-buffer "b"))
           "-a appends to the named buffer"))))
 
 (test run-command-line-set-buffer-b-stores-named
@@ -80,7 +80,7 @@
   (with-empty-buffers
     (with-fake-session (s)
       (cl-tmux::%run-command-line s "set-buffer -b mybuf hello world")
-      (is (string= "hello world" (cl-tmux/buffer:get-buffer-by-name "mybuf"))
+      (is (string= "hello world" (cl-tmux/buffer:get-named-buffer "mybuf"))
           "set-buffer -b must work through %run-command-line"))))
 
 (test cmd-set-buffer-w-stores-and-accepts
@@ -106,7 +106,7 @@
                                     *overlay* args)
           (is (null (cl-tmux/buffer:get-paste-buffer 0))
               "~S must not store a paste buffer after rejection" args)
-          (is (null (cl-tmux/buffer:get-buffer-by-name "ignored"))
+          (is (null (cl-tmux/buffer:get-named-buffer "ignored"))
               "~S must not store a named buffer after rejection" args))))))
 
 (test cmd-show-buffer-b-shows-named
@@ -126,7 +126,7 @@
     (with-fake-session (s)
       (cl-tmux/buffer:set-named-buffer "b" "x")
       (cl-tmux::%cmd-delete-buffer-arg s '("-b" "b"))
-      (is (null (cl-tmux/buffer:get-buffer-by-name "b"))
+      (is (null (cl-tmux/buffer:get-named-buffer "b"))
           "the named buffer is gone after delete-buffer -b"))))
 
 (test cmd-save-buffer-b-writes-named-buffer
@@ -214,7 +214,7 @@
                                              (list "load-buffer"
                                                    "-b" "loaded"
                                                    path))
-               (is (string= "from file" (cl-tmux/buffer:get-buffer-by-name "loaded"))
+               (is (string= "from file" (cl-tmux/buffer:get-named-buffer "loaded"))
                    "loaded file into named buffer"))
           (ignore-errors (delete-file path)))))))
 
@@ -278,7 +278,7 @@
     (with-fake-session (s)
       (cl-tmux/buffer:set-named-buffer "b" "data")
       (cl-tmux::%cmd-paste-buffer-arg s '("-d" "-b" "b"))
-      (is (null (cl-tmux/buffer:get-buffer-by-name "b"))
+      (is (null (cl-tmux/buffer:get-named-buffer "b"))
           "-d removes the named buffer after pasting"))))
 
 (test cmd-paste-buffer-rejects-unsupported-arguments
@@ -293,7 +293,7 @@
               "~S is rejected" args)
           (assert-overlay-contains "paste-buffer: unsupported argument"
                                     *overlay* args)
-          (is (string= "data" (cl-tmux/buffer:get-buffer-by-name "b"))
+          (is (string= "data" (cl-tmux/buffer:get-named-buffer "b"))
               "~S must not delete the source buffer after rejection" args))))))
 
 (test cmd-delete-and-show-buffer-reject-unsupported-arguments
@@ -318,7 +318,7 @@
             (is (null (funcall fn s args))
                 "~S rejects ~S" fn args)
             (assert-overlay-contains message *overlay* fn)
-            (is (string= "shown-content" (cl-tmux/buffer:get-buffer-by-name "b"))
+            (is (string= "shown-content" (cl-tmux/buffer:get-named-buffer "b"))
                 "~S must not mutate buffers after rejection" fn)))))))
 
 (test cmd-copy-mode-rejects-unsupported-arguments
@@ -342,7 +342,7 @@
     (with-fake-session (s)
       (feed (active-screen s) "captured text")
       (cl-tmux::%cmd-capture-pane-arg s '("-b" "cap"))
-      (is (search "captured text" (or (cl-tmux/buffer:get-buffer-by-name "cap") ""))
+      (is (search "captured text" (or (cl-tmux/buffer:get-named-buffer "cap") ""))
           "capture-pane -b stores the capture under the given name"))))
 
 (test config-bind-accepts-paste-buffer-b-flag

@@ -35,11 +35,6 @@
 ;;; as run-client does.  The macro is in cl-tmux/transport and is used by both
 ;;; server (serve-client) and client (run-client).
 
-(defun %client-test-socket-path ()
-  "Unique throwaway socket path for client dispatch tests."
-  (let ((dir (string-right-trim "/" (or (sb-ext:posix-getenv "TMPDIR") "/tmp"))))
-    (format nil "~A/cl-tmux-client-dispatch-test-~D.sock" dir (get-universal-time))))
-
 (defmacro with-client-test-socket-pair ((writer-stream reader-stream) &body body)
   "Create a Unix-domain socket pair: listener→accept→connect.
    WRITER-STREAM and READER-STREAM are bidirectional binary streams.
@@ -49,7 +44,7 @@
         (lstnr   (gensym "LSTNR"))
         (wsock   (gensym "WSOCK"))
         (rsock   (gensym "RSOCK")))
-    `(let ((,path (%client-test-socket-path)))
+    `(let ((,path (%test-socket-path "client-dispatch-test")))
        (let ((,lstnr (make-listener ,path)))
          (unwind-protect
               (let* ((,rsock (connect-to ,path))
@@ -102,7 +97,7 @@
        (unless (unix-socket-available-p)
          (skip "Unix-domain socket unavailable (sandbox)"))
        (sb-ext:with-timeout 10
-         (let* ((,path   (%client-test-socket-path))
+         (let* ((,path   (%test-socket-path "client-dispatch-test"))
                 (,lstnr  (make-listener ,path)))
            (unwind-protect
                 (let* ((,client-sock  (connect-to ,path))

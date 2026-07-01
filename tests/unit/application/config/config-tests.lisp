@@ -19,6 +19,7 @@
   (import '(cl-tmux/config:lookup-key-binding
              cl-tmux/config:describe-key-bindings
              cl-tmux/config:+prefix-key-code+
+            cl-tmux/config:+ctrl-mask+
             cl-tmux/config:+max-scrollback-lines+
             cl-tmux/config:+poll-timeout-us+
             cl-tmux/config:+accept-timeout-us+
@@ -33,6 +34,13 @@
   "+prefix-key-code+ is 2 (ASCII STX / C-b)."
   (is (= 2 +prefix-key-code+)
       "+prefix-key-code+ should be 2, got ~A" +prefix-key-code+))
+
+(test ctrl-mask-constant
+  "+ctrl-mask+ is #x1f, the bitmask mapping an ASCII letter to its control byte."
+  (is (= #x1f +ctrl-mask+)
+      "+ctrl-mask+ should be #x1f, got ~A" +ctrl-mask+)
+  (is (= 2 (logand (char-code #\B) +ctrl-mask+))
+      "C-b (#\\B masked) should be byte 2, matching +prefix-key-code+"))
 
 ;;; ── Known default bindings ────────────────────────────────────────────────
 
@@ -449,7 +457,7 @@
   (dolist (row '(("root"   #\a "root table binding")
                  ("prefix" #\c "prefix table binding")))
     (destructuring-bind (table-name key desc) row
-      (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+      (with-isolated-key-tables
         (cl-tmux/config:key-table-bind table-name key :new-window)
         (let ((entry (cl-tmux/config:key-table-lookup table-name key)))
           (is (not (null entry)) "~A: binding must be found" desc)
@@ -462,7 +470,7 @@
   (dolist (row '((#\r :resize-left t   t   ":repeatable T must be repeatable")
                  (#\c :new-window  nil nil "no :repeatable flag must not be repeatable")))
     (destructuring-bind (key cmd rep expected desc) row
-      (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+      (with-isolated-key-tables
         (cl-tmux/config:key-table-bind "prefix" key cmd :repeatable rep)
         (let ((entry (cl-tmux/config:key-table-lookup "prefix" key)))
           (is (not (null entry)) "binding must be found: ~A" desc)
@@ -486,7 +494,7 @@
 
 (test key-table-command-nil-safe
   "key-table-command is the car of the entry; key-table-repeatable-p is nil-safe."
-  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+  (with-isolated-key-tables
     ;; Absent key returns NIL; nil-safe guard means no error.
     (let ((absent (cl-tmux/config:key-table-lookup "prefix" #\@)))
       (is (null absent) "absent key must return NIL")
@@ -507,7 +515,7 @@
 
 (test ensure-key-table-creates-new-table
   "ensure-key-table creates a fresh hash-table for a previously unknown name."
-  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+  (with-isolated-key-tables
     (let ((tbl (cl-tmux/config:ensure-key-table "my-table")))
       (is (hash-table-p tbl)
           "ensure-key-table must return a hash-table")
@@ -516,7 +524,7 @@
 
 (test ensure-key-table-returns-existing-table
   "ensure-key-table returns the same table on repeated calls."
-  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+  (with-isolated-key-tables
     (let* ((tbl1 (cl-tmux/config:ensure-key-table "my-table"))
            (tbl2 (cl-tmux/config:ensure-key-table "my-table")))
       (is (eq tbl1 tbl2)
@@ -551,7 +559,7 @@
 
 (test initialize-default-key-tables-idempotent
   "Calling initialize-default-key-tables twice does not duplicate bindings."
-  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
+  (with-isolated-key-tables
     (cl-tmux/config::initialize-default-key-tables)
     (let* ((tbl-after-first  (cl-tmux/config:ensure-key-table "prefix"))
            (count-after-first (hash-table-count tbl-after-first)))
@@ -592,3 +600,23 @@
       "*status-height* must be an integer")
   (is (plusp cl-tmux/config:*status-height*)
       "*status-height* must be positive"))
+
+;;; ── init-default-shell ────────────────────────────────────────────────────
+
+(test init-default-shell-reads-shell-env-var
+  "init-default-shell sets *default-shell* from $SHELL when it is set and
+   non-empty."
+  (with-isolated-config
+    (with-temporary-posix-environment-variable ("SHELL" "/bin/my-test-shell")
+      (cl-tmux/config:init-default-shell)
+      (is (string= "/bin/my-test-shell" cl-tmux/config:*default-shell*)
+          "*default-shell* must be set from $SHELL"))))
+
+(test init-default-shell-ignores-unset-shell-env-var
+  "init-default-shell leaves *default-shell* unchanged when $SHELL is unset."
+  (with-isolated-config
+    (with-temporary-posix-environment-variable ("SHELL" nil)
+      (let ((before cl-tmux/config:*default-shell*))
+        (cl-tmux/config:init-default-shell)
+        (is (string= before cl-tmux/config:*default-shell*)
+            "*default-shell* must be unchanged when $SHELL is unset")))))

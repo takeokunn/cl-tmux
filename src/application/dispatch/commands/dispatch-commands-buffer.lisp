@@ -18,7 +18,7 @@
   "Return NAME's paste buffer when NAME is non-NIL, otherwise the most recent
    paste buffer."
   (if name
-      (cl-tmux/buffer:get-buffer-by-name name)
+      (cl-tmux/buffer:get-named-buffer name)
       (cl-tmux/buffer:get-paste-buffer 0)))
 
 (defmacro define-flag-accessors (&rest specs)

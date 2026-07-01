@@ -321,10 +321,10 @@
   (is (= 0 (cl-tmux/model::layout-min-extent nil :v))
       "nil node returns 0 extent for :v"))
 
-;;; ── Layout persistence: layout->string / string->layout ─────────────────────
+;;; ── Layout persistence: layout->string ────────────────────────────────────
 ;;;
-;;; These tests cover the encode/decode round-trip, the checksum computation,
-;;; the %skip-checksum helper, and the %build-flat-tree constructor.
+;;; These tests cover the checksum computation and the %build-flat-tree
+;;; constructor.
 
 (test layout-to-string-single-leaf
   "layout->string on a single-pane window returns a checksum,WxH,X,Y,pane-id string."
@@ -356,36 +356,6 @@
         (is (find open  (coerce s 'list)) "~A: must use ~C" label open)
         (is (find close (coerce s 'list)) "~A: must use ~C" label close)))))
 
-(test string-to-layout-round-trips-single-leaf
-  "string->layout decodes a layout->string-encoded string back to an equivalent tree."
-  (let* ((p   (tl-pane 3 40 20))
-         (win (tl-window (make-layout-leaf p) 20 40 :active p)))
-    (let* ((s    (layout->string win))
-           (tree (string->layout s (list p))))
-      (is (not (null tree)) "string->layout must return a non-NIL tree")
-      (is (cl-tmux/model::layout-leaf-p tree) "decoded single-leaf must be a layout-leaf")
-      (is (eq p (layout-leaf-pane tree))
-          "decoded leaf must reference the same pane object"))))
-
-(test string-to-layout-round-trips-h-split
-  "string->layout decodes an H-split tree encoded by layout->string."
-  (let* ((l0  (tl-leaf 1 1 1))
-         (l1  (tl-leaf 2 1 1))
-         (win (tl-window (make-layout-split :h l0 l1) 24 81))
-         (p0  (layout-leaf-pane l0))
-         (p1  (layout-leaf-pane l1)))
-    (let* ((s    (layout->string win))
-           (tree (string->layout s (list p0 p1))))
-      (is (not (null tree)) "decoded tree must be non-NIL")
-      (is (cl-tmux/model::layout-split-p tree) "decoded node must be a layout-split")
-      (is (eq :h (cl-tmux/model::layout-split-orientation tree))
-          "decoded split must have :h orientation"))))
-
-(test string-to-layout-nil-on-garbage
-  "string->layout returns NIL for a garbage string."
-  (is (null (string->layout "not-a-layout" nil))
-      "string->layout must return NIL for unrecognizable input"))
-
 (test layout-checksum-is-reproducible
   "%layout-checksum returns the same 4-char hex string for the same input."
   (let ((s "%layout-checksum determinism check"))
@@ -401,16 +371,6 @@
     (is (= 4 (length cs)) "empty string checksum must be 4 chars")
     (is (every (lambda (c) (digit-char-p c 16)) cs)
         "checksum must consist of hex digits")))
-
-(test skip-checksum-table
-  "%skip-checksum strips a 4-hex+comma prefix, or passes the string through unchanged."
-  (dolist (c '(("ABCD,rest"    "rest"         "valid hex checksum stripped")
-               ("0000,rest"    "rest"         "all-zero checksum stripped")
-               ("no-checksum"  "no-checksum"  "no prefix — pass through")
-               ("ABCDE"        "ABCDE"        "5-char without comma — pass through")))
-    (destructuring-bind (input expected desc) c
-      (is (string= expected (cl-tmux/model::%skip-checksum input))
-          "~A: ~S → ~S" desc input expected))))
 
 (test build-flat-tree-single-pane
   "%build-flat-tree with one pane returns a bare layout-leaf."

@@ -210,3 +210,90 @@
     (is (char= #\┘ br) "unknown style br falls back to ┘")
     (is (char= #\─ h)  "unknown style h falls back to ─")
     (is (char= #\│ v)  "unknown style v falls back to │")))
+
+;;; ── %border-charset-for / %popup-border-charset (option-driven lookup) ──────
+
+(test border-charset-for-reads-named-option
+  "%border-charset-for reads OPTION-NAME and dispatches on its value."
+  (with-isolated-options ("popup-border-lines" "double")
+    (multiple-value-bind (tl tr bl br h v)
+        (cl-tmux/renderer::%border-charset-for "popup-border-lines")
+      (is (char= #\╔ tl) "double popup-border-lines tl must be ╔")
+      (is (char= #\╗ tr) "double popup-border-lines tr must be ╗")
+      (is (char= #\╚ bl) "double popup-border-lines bl must be ╚")
+      (is (char= #\╝ br) "double popup-border-lines br must be ╝")
+      (is (char= #\═ h)  "double popup-border-lines h must be ═")
+      (is (char= #\║ v)  "double popup-border-lines v must be ║"))))
+
+(test border-charset-for-defaults-to-single-when-unset
+  "%border-charset-for falls back to single-line glyphs when the option is unset."
+  (with-isolated-config
+    (multiple-value-bind (tl tr bl br h v)
+        (cl-tmux/renderer::%border-charset-for "menu-border-lines")
+      (is (char= #\┌ tl) "unset menu-border-lines tl must be ┌")
+      (is (char= #\┐ tr) "unset menu-border-lines tr must be ┐")
+      (is (char= #\└ bl) "unset menu-border-lines bl must be └")
+      (is (char= #\┘ br) "unset menu-border-lines br must be ┘")
+      (is (char= #\─ h)  "unset menu-border-lines h must be ─")
+      (is (char= #\│ v)  "unset menu-border-lines v must be │"))))
+
+(test popup-border-charset-delegates-to-popup-border-lines-option
+  "%popup-border-charset returns the charset for the popup-border-lines option
+   specifically (not menu-border-lines or any other *-border-lines option)."
+  (with-isolated-options ("popup-border-lines" "heavy")
+    (multiple-value-bind (tl tr bl br h v)
+        (cl-tmux/renderer::%popup-border-charset)
+      (is (char= #\┏ tl) "heavy popup-border-lines tl must be ┏")
+      (is (char= #\┓ tr) "heavy popup-border-lines tr must be ┓")
+      (is (char= #\┗ bl) "heavy popup-border-lines bl must be ┗")
+      (is (char= #\┛ br) "heavy popup-border-lines br must be ┛")
+      (is (char= #\━ h)  "heavy popup-border-lines h must be ━")
+      (is (char= #\┃ v)  "heavy popup-border-lines v must be ┃"))))
+
+;;; ── %center-coord (box/clock centring) ───────────────────────────────────────
+
+(test center-coord-table
+  "%center-coord returns floor((total-size)/2), clamped to 0 when size >= total."
+  (dolist (c '((80 20 30 "80 wide, size 20 -> offset 30")
+               (10 10  0 "size equals total -> offset 0")
+               (10 20  0 "size larger than total -> clamped to 0")
+               (81 40 20 "odd total centres via floor")))
+    (destructuring-bind (total size expected desc) c
+      (is (= expected (cl-tmux/renderer::%center-coord total size)) "~A" desc))))
+
+;;; ── %emit-sgr (raw SGR code emission) ────────────────────────────────────────
+
+(test emit-sgr-writes-escape-sequence-for-code
+  "%emit-sgr writes ESC[CODEm for an integer or string code."
+  (is (string= (format nil "~C[44m" #\Escape)
+               (with-output-to-string (s) (cl-tmux/renderer::%emit-sgr s 44)))
+      "integer code 44 must emit ESC[44m")
+  (is (string= (format nil "~C[44;97m" #\Escape)
+               (with-output-to-string (s) (cl-tmux/renderer::%emit-sgr s "44;97")))
+      "compound string code must emit verbatim inside ESC[...m"))
+
+(test emit-sgr-nil-code-is-a-no-op
+  "%emit-sgr with a NIL code writes nothing to the stream."
+  (is (string= "" (with-output-to-string (s) (cl-tmux/renderer::%emit-sgr s nil)))
+      "NIL code must emit no output"))
+
+;;; ── %classify-color-name (colour-name classification) ────────────────────────
+
+(test classify-color-name-table
+  "%classify-color-name returns (values KIND PAYLOAD) for colourN, default, named,
+   and unrecognised colour names."
+  (dolist (c '(("colour200" :colour-n 200 "colourN → :colour-n with parsed integer")
+               ("default"   :default  nil "\"default\" → :default nil")
+               ("red"       :named    31  "named colour → :named with fg SGR code")
+               ("bogus"     nil       nil "unrecognised name → nil nil")))
+    (destructuring-bind (name expected-kind expected-payload desc) c
+      (multiple-value-bind (kind payload) (cl-tmux/renderer::%classify-color-name name)
+        (is (eql expected-kind kind) "~A: kind" desc)
+        (is (eql expected-payload payload) "~A: payload" desc)))))
+
+(test classify-color-name-colour-n-unparseable-suffix
+  "%classify-color-name with a non-numeric colourN suffix returns :colour-n with a
+   NIL payload (junk-allowed parse failure)."
+  (multiple-value-bind (kind payload) (cl-tmux/renderer::%classify-color-name "colourxyz")
+    (is (eql :colour-n kind) "colourxyz kind must be :colour-n")
+    (is (null payload) "colourxyz payload must be NIL (unparseable)")))

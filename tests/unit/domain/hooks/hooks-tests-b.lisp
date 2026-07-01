@@ -214,6 +214,42 @@
         (is (eq (second (session-windows s)) (session-active-window s))
             "after-kill-pane command hook (:next-window) must advance the active window")))))
 
+;;; ── *command-hook-runner* and run-command-hooks-via-runner ───────────────────
+
+(test command-hook-runner-nil-is-noop
+  "run-command-hooks-via-runner is a safe no-op when *command-hook-runner* is NIL."
+  (with-isolated-hooks
+    (let ((cl-tmux/hooks:*command-hook-runner* nil))
+      (finishes
+        (cl-tmux/hooks:run-command-hooks-via-runner "after-new-window" nil)
+        "run-command-hooks-via-runner with nil runner must not signal"))))
+
+(test command-hook-runner-installed-is-called
+  "run-command-hooks-via-runner calls *command-hook-runner* with event-name and session
+   when a runner is installed."
+  (with-isolated-hooks
+    (let ((received-event nil)
+          (received-session nil))
+      (let ((cl-tmux/hooks:*command-hook-runner*
+             (lambda (event session)
+               (setf received-event event
+                     received-session session))))
+        (cl-tmux/hooks:run-command-hooks-via-runner "after-new-window" :fake-session)
+        (is (string= "after-new-window" received-event)
+            "runner must receive the event-name argument")
+        (is (eq :fake-session received-session)
+            "runner must receive the session argument")))))
+
+(test command-hook-runner-nil-does-not-suppress-lisp-hooks
+  "Setting *command-hook-runner* to NIL still allows lisp-function hooks to run
+   normally; only the command-hook dispatch is skipped."
+  (with-isolated-hooks
+    (let ((cl-tmux/hooks:*command-hook-runner* nil)
+          (called nil))
+      (cl-tmux/hooks:add-hook "after-new-window" (lambda () (setf called t)))
+      (cl-tmux/hooks:run-hooks "after-new-window")
+      (is-true called "lisp-function hook must fire regardless of *command-hook-runner*"))))
+
 ;;; ── show-hooks (inspect registered command hooks) ─────────────────────────────
 
 (test describe-command-hooks-empty-message

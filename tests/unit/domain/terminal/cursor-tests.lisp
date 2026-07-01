@@ -22,6 +22,20 @@
            (cl-tmux/terminal/types::screen-cursor-y      ,screen-var) ,cy)
      ,@body))
 
+;;; ── Shared fixture: with-cursor-at ──────────────────────────────────────────
+;;;
+;;; Several tests position the cursor column (and, optionally, row) before
+;;; calling an action function.  This macro captures the repeated
+;;; (setf screen-cursor-x ...) / (setf screen-cursor-y ...) inline setup.
+
+(defmacro with-cursor-at ((screen-var w h x &optional (y 0)) &body body)
+  "Bind SCREEN-VAR to a W×H screen with the cursor initially at column X,
+   row Y (defaulting to row 0)."
+  `(with-screen (,screen-var ,w ,h)
+     (setf (cl-tmux/terminal/types:screen-cursor-x ,screen-var) ,x
+           (cl-tmux/terminal/types:screen-cursor-y ,screen-var) ,y)
+     ,@body))
+
 ;;; ── SUITE: scroll-region cursor clamping ────────────────────────────────────
 ;;;
 ;;; cl-tmux/terminal/actions::cursor-up/down clamp to the SCROLL REGION
@@ -62,8 +76,7 @@
   (dolist (row (list (list 5 #'cl-tmux/terminal/actions::cursor-left  0 "cursor-left  clamps to 0")
                      (list 2 #'cl-tmux/terminal/actions::cursor-right 9 "cursor-right clamps to 9")))
     (destructuring-bind (init-x fn expected desc) row
-      (with-screen (s 10 10)
-        (setf (cl-tmux/terminal/types:screen-cursor-x s) init-x)
+      (with-cursor-at (s 10 10 init-x)
         (funcall fn s 100)
         (is (= expected (screen-cursor-x s)) "~A (got ~D)" desc (screen-cursor-x s))))))
 
@@ -174,8 +187,7 @@
                  ( 5 99  0 "large n clamps at col 0")
                  (16  0  8 "n=0 treated as 1: 16→8")))
     (destructuring-bind (start-col n expected desc) row
-      (with-screen (s 40 5)
-        (setf (cl-tmux/terminal/types:screen-cursor-x s) start-col)
+      (with-cursor-at (s 40 5 start-col)
         (cl-tmux/terminal/actions:cursor-cbt s n)
         (is (= expected (screen-cursor-x s)) "~A: got ~D" desc (screen-cursor-x s))))))
 
@@ -183,8 +195,7 @@
 
 (test hts-set-tab-stop-makes-cursor-ht-land-on-custom-stop
   :description "set-tab-stop (HTS) adds a stop at the cursor column; cursor-ht lands on it."
-  (with-screen (s 40 5)
-    (setf (cl-tmux/terminal/types:screen-cursor-x s) 3)
+  (with-cursor-at (s 40 5 3)
     (cl-tmux/terminal/actions:set-tab-stop s)        ; HTS at col 3
     (setf (cl-tmux/terminal/types:screen-cursor-x s) 0)
     (cl-tmux/terminal/actions:cursor-ht s)           ; HT from col 0
@@ -193,17 +204,15 @@
 
 (test tbc-3-clears-all-stops-so-ht-goes-to-last-column
   :description "clear-tab-stops 3 (TBC 3) removes every stop; HT then goes to width-1."
-  (with-screen (s 40 5)
+  (with-cursor-at (s 40 5 0)
     (cl-tmux/terminal/actions:clear-tab-stops s 3)   ; TBC 3 — clear all
-    (setf (cl-tmux/terminal/types:screen-cursor-x s) 0)
     (cl-tmux/terminal/actions:cursor-ht s)
     (is (= 39 (screen-cursor-x s))
         "with no tab stops, HT must advance to the last column (width-1)")))
 
 (test tbc-0-clears-stop-at-cursor-column
   :description "clear-tab-stops 0 (TBC 0) removes the default stop at the cursor column."
-  (with-screen (s 40 5)
-    (setf (cl-tmux/terminal/types:screen-cursor-x s) 8)
+  (with-cursor-at (s 40 5 8)
     (cl-tmux/terminal/actions:clear-tab-stops s 0)   ; TBC 0 at col 8
     (setf (cl-tmux/terminal/types:screen-cursor-x s) 0)
     (cl-tmux/terminal/actions:cursor-ht s)
@@ -228,4 +237,3 @@
     (feed s (string (code-char 9)))  ; HT → last column
     (is (= 39 (screen-cursor-x s))
         "after CSI 3 g, HT must advance to the last column")))
-

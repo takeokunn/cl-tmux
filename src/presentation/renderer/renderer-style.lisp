@@ -165,23 +165,35 @@ Never rebound at runtime — use DEFVAR so image restarts do not reset the bindi
         "44;97")
   "Default status-bar SGR string: blue background (44) + bright white text (97).")
 
+(defun %classify-color-name (lname)
+  "Classify a lowercased tmux colour name LNAME into (values KIND PAYLOAD):
+     :colour-n  N        — \"colourN\" prefix, PAYLOAD is the parsed integer N (or NIL if unparseable)
+     :default   NIL       — the literal \"default\" (leave the terminal/cell default in place)
+     :named     SGR-CODE  — a name found in *%color-name-table*, PAYLOAD is its fg SGR code integer
+     NIL        NIL       — unrecognised name
+   Shared by %color-name-to-sgr-number and %color-name-to-cell-color, whose only
+   difference is how each KIND is encoded into their respective output formats."
+  (cond
+    ((and (>= (length lname) 7) (string= (subseq lname 0 6) "colour"))
+     (values :colour-n (parse-integer lname :start 6 :junk-allowed t)))
+    ((string= lname "default") (values :default nil))
+    (t (let ((entry (assoc lname *%color-name-table* :test #'string=)))
+         (if entry
+             (values :named (parse-integer (cdr entry)))
+             (values nil nil))))))
+
 (defun %color-name-to-sgr-number (name is-bg)
   "Convert a color name string NAME to an SGR sequence fragment.
    IS-BG: T for background, NIL for foreground.
    Returns a string like \"31\" or \"41\" or \"38;5;N\" for colourN."
-  (let ((lname (string-downcase name)))
-    (cond
-      ((and (>= (length lname) 7) (string= (subseq lname 0 6) "colour"))
-       (let ((n (parse-integer lname :start 6 :junk-allowed t)))
-         (if n
-             (format nil "~D;5;~D" (if is-bg 48 38) n)
-             (if is-bg "49" "39"))))
-      ((string= lname "default") (if is-bg "49" "39"))
-      (t (let ((entry (assoc lname *%color-name-table* :test #'string=)))
-           (if entry
-               (let ((base (parse-integer (cdr entry))))
-                 (format nil "~D" (if is-bg (+ base 10) base)))
-               (if is-bg "49" "39")))))))
+  (multiple-value-bind (kind payload) (%classify-color-name (string-downcase name))
+    (ecase kind
+      (:colour-n (if payload
+                     (format nil "~D;5;~D" (if is-bg 48 38) payload)
+                     (if is-bg "49" "39")))
+      (:default  (if is-bg "49" "39"))
+      (:named    (format nil "~D" (if is-bg (+ payload 10) payload)))
+      ((nil)     (if is-bg "49" "39")))))
 
 (defun %color-name-to-cell-color (name)
   "Convert a tmux colour NAME to the cell fg/bg numeric encoding used by the
@@ -191,20 +203,19 @@ Never rebound at runtime — use DEFVAR so image restarts do not reset the bindi
    bright, 16-255 extended, #x1000000+ true-colour)."
   (let ((lname (and name (string-downcase (string-trim " " name)))))
     (cond
-      ((or (null lname) (string= lname "") (string= lname "default")) nil)
-      ((and (> (length lname) 6) (string= (subseq lname 0 6) "colour"))
-       (let ((n (parse-integer lname :start 6 :junk-allowed t)))
-         (and n (<= 0 n 255) n)))
+      ((or (null lname) (string= lname "")) nil)
       ((and (= (length lname) 7) (char= (char lname 0) #\#))
        (let ((rgb (parse-integer lname :start 1 :radix 16 :junk-allowed t)))
          (and rgb (logior #x1000000 rgb))))   ; bit 24 marks true-colour
-      (t (let ((entry (assoc lname *%color-name-table* :test #'string=)))
-           (when entry
+      (t (multiple-value-bind (kind payload) (%classify-color-name lname)
+           (ecase kind
+             (:colour-n (and payload (<= 0 payload 255) payload))
+             (:default  nil)
              ;; Table values are fg SGR codes: 30-37 → 0-7, 90-97 → 8-15.
-             (let ((sgr (parse-integer (cdr entry))))
-               (cond ((<= 30 sgr 37) (- sgr 30))
-                     ((<= 90 sgr 97) (+ 8 (- sgr 90)))
-                     (t nil)))))))))
+             (:named    (cond ((<= 30 payload 37) (- payload 30))
+                              ((<= 90 payload 97) (+ 8 (- payload 90)))
+                              (t nil)))
+             ((nil)     nil)))))))
 
 (defun %window-style-default-colors (style-string)
   "Parse a window-style / window-active-style STYLE-STRING into the pane's default

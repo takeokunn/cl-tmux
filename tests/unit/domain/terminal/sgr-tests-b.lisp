@@ -25,6 +25,11 @@
     (cl-tmux/terminal/sgr:apply-sgr s '(0))
     (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-fg s))
         "apply-sgr 0 must reset cur-fg to the default sentinel")
+    ;; Empty params = implicit reset
+    (cl-tmux/terminal/sgr:apply-sgr s '(42))      ; bg green
+    (cl-tmux/terminal/sgr:apply-sgr s nil)         ; empty = reset
+    (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-bg s))
+        "apply-sgr nil (empty) must reset cur-bg to the default sentinel")))
 
 (test apply-sgr-39-sets-default-sentinel
   "SGR 39 sets cur-fg to the +default-color+ sentinel (not palette 7)."
@@ -43,11 +48,6 @@
     (is (= cl-tmux/terminal/types:+default-color+
            (cl-tmux/terminal/types:screen-cur-bg s))
         "SGR 49 must set cur-bg to the default sentinel")))
-    ;; Empty params = implicit reset
-    (cl-tmux/terminal/sgr:apply-sgr s '(42))      ; bg green
-    (cl-tmux/terminal/sgr:apply-sgr s nil)         ; empty = reset
-    (is (= cl-tmux/terminal/types:+default-color+ (cl-tmux/terminal/types:screen-cur-bg s))
-        "apply-sgr nil (empty) must reset cur-bg to the default sentinel")))
 
 (test sgr-reset-sgr-pen-helper
   "reset-sgr-pen sets fg=7, bg=0, attrs=0 directly."

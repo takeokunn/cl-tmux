@@ -103,6 +103,34 @@
   (%wire-option-callbacks)
   (ignore-errors (load-config-file nil)))
 
+(defun %enable-negotiated-terminal-features ()
+  "Enable mouse reporting, extended (CSI-u) key reporting, and focus-event
+   reporting on the outer terminal, each gated by its own session option.
+   The render pipeline re-emits these sequences on every repaint; this call
+   only covers the very first frame, before the first render fires.
+   Extracted from run-standalone so the terminal-feature negotiation is a
+   single named step in the startup sequence."
+  ;; Enable mouse reporting on the outer terminal when the "mouse" session
+  ;; option is true.
+  (when (cl-tmux/options:get-option "mouse")
+    (cl-tmux/renderer:enable-mouse-reporting))
+  ;; Enable extended (CSI-u) key reporting on the outer terminal when the
+  ;; "extended-keys" option is "on"/"always", so modified keys arrive as
+  ;; ESC [ <codepoint> ; <mod> u for %handle-escape-csi-u to decode.
+  (cl-tmux/renderer:enable-extended-keys
+   (cl-tmux/options:get-option "extended-keys"))
+  ;; Request focus in/out reporting from the outer terminal when the
+  ;; focus-events option is on, so %notify-pane-focus can forward focus to
+  ;; the active pane's application.
+  (when (cl-tmux/options:get-option "focus-events")
+    (cl-tmux/renderer:enable-focus-reporting)))
+
+(defun %die-with-message (format-string &rest format-args)
+  "Print FORMAT-STRING/FORMAT-ARGS to *error-output* and exit with code 1.
+   Shared tail call for run-standalone's fatal top-level error handlers."
+  (apply #'format *error-output* format-string format-args)
+  (sb-ext:exit :code 1))
+
 (defun run-standalone ()
   "Standalone in-process multiplexer: own a session and run the event loop on
    the local terminal (no socket).  This is the default mode."
@@ -144,33 +172,14 @@
       (handler-case
           (with-raw-mode
             (clear-display)
-            ;; Enable mouse reporting on the outer terminal when the "mouse"
-            ;; session option is true.  The render pipeline re-emits these
-            ;; sequences on every repaint; this call covers the very first frame
-            ;; before the first render fires.
-            (when (cl-tmux/options:get-option "mouse")
-              (cl-tmux/renderer:enable-mouse-reporting))
-            ;; Enable extended (CSI-u) key reporting on the outer terminal when the
-            ;; "extended-keys" option is "on"/"always", so modified keys arrive as
-            ;; ESC [ <codepoint> ; <mod> u for %handle-escape-csi-u to decode.
-            (cl-tmux/renderer:enable-extended-keys
-             (cl-tmux/options:get-option "extended-keys"))
-            ;; Request focus in/out reporting from the outer terminal when the
-            ;; focus-events option is on, so %notify-pane-focus can forward focus
-            ;; to the active pane's application.
-            (when (cl-tmux/options:get-option "focus-events")
-              (cl-tmux/renderer:enable-focus-reporting))
+            (%enable-negotiated-terminal-features)
             (setf *running* t *dirty* t *resize-pending* nil)
             (event-loop session))
         (sb-posix:syscall-error (c)
           ;; Most likely: stdin is not a TTY.
-          (format *error-output*
-                  "~&cl-tmux: ~A~%  (is stdin a terminal?)~%" c)
-          (sb-ext:exit :code 1))
+          (%die-with-message "~&cl-tmux: ~A~%  (is stdin a terminal?)~%" c))
         (error (c)
-          (format *error-output*
-                  "~&cl-tmux: unhandled error: ~A~%" c)
-          (sb-ext:exit :code 1)))
+          (%die-with-message "~&cl-tmux: unhandled error: ~A~%" c)))
 
       (%cleanup-after-session session reader-threads))))
 
@@ -202,10 +211,12 @@
   (declare (ignore args))
   (require :sb-posix)
   (%initialize-session-environment)
-  ;; A control client may have no controlling tty; fall back to 24 rows x 80 cols
-  ;; (terminal-size returns rows then cols, matching the runtime defaults).
+  ;; A control client may have no controlling tty; fall back to the shared
+  ;; default terminal size (terminal-size returns rows then cols, matching
+  ;; the runtime defaults).
   (multiple-value-bind (rows cols) (ignore-errors (terminal-size))
-    (setf *term-rows* (or rows 24) *term-cols* (or cols 80)))
+    (setf *term-rows* (or rows cl-tmux/pty:+default-term-rows+)
+          *term-cols* (or cols cl-tmux/pty:+default-term-cols+)))
   (let* ((session (create-initial-session *term-rows* *term-cols*))
          (readers (progn (server-add-session session)
                          (mapcar #'start-reader-thread (all-panes session)))))

@@ -95,14 +95,6 @@
              table)
     foundp))
 
-(defun array-option-indexed-name-p (name &optional scope)
-  "Return true when NAME is an indexed array option entry (e.g. \"foo[0]\").
-   The indexed form is determined structurally by the BASE[N] suffix; SCOPE is
-   accepted for API symmetry but the structural check is sufficient.
-   Used by %scope-unset to decide whether to blank the entry (indexed) or remove it."
-  (declare (ignore scope))
-  (not (null (%array-entry-base-name name))))
-
 (defun %array-option-p (name scope)
   "Return true when NAME is a tmux array-option base (not an indexed entry) in SCOPE.
    Checks registered specs and the runtime options table."
@@ -164,13 +156,3 @@
   (if (%user-option-name-p name)
       (nth-value 1 (gethash name (%scope-options scope)))
       (option-present-for-scope-p name scope)))
-
-(defun option-settable-for-scope-p (name &optional scope)
-  "Return true when NAME is a valid option that may be SET at SCOPE.
-   :server scope accepts server-registry options only; nil/session scope
-   accepts session/window registry options.  User options (@name) are
-   always accepted in any scope."
-  (or (%user-option-name-p name)
-      (not (null (%option-spec-for-name name
-                                        (%scope-registry scope)
-                                        (%scope-known-registry scope))))))

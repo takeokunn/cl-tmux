@@ -123,7 +123,7 @@
 
 (test render-popup-empty-draws-borders
   "render-popup with no live pane draws top border with corners and title, plus bottom border."
-  (let* ((popup (make-popup :title "Test" :x 0 :y 0 :width 20 :height 6
+  (let* ((popup (make-popup :title "Test" :width 20 :height 6
                             :pane nil :screen nil :close-on-exit nil))
          (out   (render-popup-output popup 24 80)))
     (is (find (code-char #x250C) out)
@@ -139,7 +139,7 @@
 
 (test render-popup-style-colours-empty-body
   "popup-style colours the empty popup interior; with it unset the body has no SGR."
-  (let ((popup (make-popup :title "T" :x 0 :y 0 :width 20 :height 6
+  (let ((popup (make-popup :title "T" :width 20 :height 6
                            :pane nil :screen nil :close-on-exit nil)))
     (with-isolated-options ("popup-style" "bg=blue")
       (is (search (format nil "~C[44m" #\Escape) (render-popup-output popup 24 80))
@@ -152,7 +152,7 @@
   "render-popup draws the box with the popup-border-lines characters (the whole
    box: corners and vertical sides), and not the single-line glyphs."
   (with-isolated-options ("popup-border-lines" "double")
-    (let* ((popup (make-popup :title "T" :x 0 :y 0 :width 20 :height 6
+    (let* ((popup (make-popup :title "T" :width 20 :height 6
                               :pane nil :screen nil :close-on-exit nil))
            (out   (render-popup-output popup 24 80)))
       (is (find #\╔ out) "double border draws ╔ top-left")
@@ -167,7 +167,7 @@
   (with-isolated-options ("popup-border-style" "fg=red")
     (let* ((expected (cl-tmux/renderer:style-to-sgr
                       (cl-tmux/renderer:parse-style-string "fg=red")))
-           (popup (make-popup :title "T" :x 0 :y 0 :width 20 :height 6
+           (popup (make-popup :title "T" :width 20 :height 6
                               :pane nil :screen nil :close-on-exit nil))
            (out   (render-popup-output popup 24 80)))
       (is (search (format nil "~C[~Am" #\Escape expected) out)
@@ -176,7 +176,7 @@
 
 (test render-popup-empty-draws-side-bars
   "render-popup with no live pane fills interior rows with │ side bars."
-  (let* ((popup (make-popup :title "T" :x 0 :y 0 :width 10 :height 4
+  (let* ((popup (make-popup :title "T" :width 10 :height 4
                             :pane nil :screen nil :close-on-exit nil))
          (out   (render-popup-output popup 24 80)))
     (is (find (code-char #x2502) out)
@@ -186,7 +186,7 @@
   "render-popup with a live pane renders the screen cells inside the box."
   (let* ((sc    (make-screen 8 2))
          (pane  (make-pane :id 1 :x 0 :y 0 :width 8 :height 2 :fd -1 :screen sc))
-         (popup (make-popup :title "P" :x 0 :y 0 :width 10 :height 4
+         (popup (make-popup :title "P" :width 10 :height 4
                             :pane pane :screen sc :close-on-exit nil)))
     (feed sc "hi")
     (let ((out (render-popup-output popup 24 80)))

@@ -104,6 +104,31 @@
                                        "status" "off"
                                        :context "plain set")))
 
+;;; set mouse — *mouse-reporting-hook* side effect
+
+(test set-mouse-invokes-mouse-reporting-hook
+  "'set -g mouse on'/'off' invokes *mouse-reporting-hook* with T/NIL so the
+   renderer layer can enable/disable mouse reporting without config depending
+   on it directly."
+  (with-isolated-config
+    (let ((calls nil))
+      (let ((cl-tmux/config:*mouse-reporting-hook*
+              (lambda (on-p) (push on-p calls))))
+        (assert-config-directive-applied '("set" "-g" "mouse" "on")
+                                         "set -g mouse on")
+        (assert-config-directive-applied '("set" "-g" "mouse" "off")
+                                         "set -g mouse off")
+        (is (equal '(nil t) calls)
+            "the hook must be called with T then NIL, got ~A" calls)))))
+
+(test set-mouse-with-no-hook-does-not-signal
+  "'set -g mouse on' is safe when *mouse-reporting-hook* is unset (NIL)."
+  (with-isolated-config
+    (let ((cl-tmux/config:*mouse-reporting-hook* nil))
+      (finishes
+        (assert-config-directive-applied '("set" "-g" "mouse" "on")
+                                         "set -g mouse on with no hook")))))
+
 ;;; bind key to a command LINE (arg-taking key bindings)
 
 (test bind-key-to-command-line-stores-token-list

@@ -497,11 +497,58 @@
 
 (test constants-table
   "Table-driven check: all exported named constants have the expected numeric values."
-  (check-table (list (list cl-tmux/terminal/types:+true-color-flag+       #x1000000 "+true-color-flag+ = #x1000000")
-                     (list cl-tmux/terminal/types:+default-color+         256        "+default-color+ = 256")
-                     (list cl-tmux/terminal/types:+title-stack-max-depth+ 8          "+title-stack-max-depth+ = 8")
-                     (list cl-tmux/terminal/types:+osc-default-fg+        #xFFFFFF   "+osc-default-fg+ = #xFFFFFF")
-                     (list cl-tmux/terminal/types:+osc-default-bg+        #x000000   "+osc-default-bg+ = #x000000")
-                     (list cl-tmux/terminal/types:+default-screen-width+  80         "+default-screen-width+ = 80")
-                     (list cl-tmux/terminal/types:+default-screen-height+ 24         "+default-screen-height+ = 24"))
+  (check-table (list (list cl-tmux/terminal/types:+true-color-flag+          #x1000000 "+true-color-flag+ = #x1000000")
+                     (list cl-tmux/terminal/types:+default-color+            256        "+default-color+ = 256")
+                     (list cl-tmux/terminal/types:+title-stack-max-depth+    8          "+title-stack-max-depth+ = 8")
+                     (list cl-tmux/terminal/types:+osc-default-fg+           #xFFFFFF   "+osc-default-fg+ = #xFFFFFF")
+                     (list cl-tmux/terminal/types:+osc-default-bg+           #x000000   "+osc-default-bg+ = #x000000")
+                     (list cl-tmux/terminal/types:+default-screen-width+     80         "+default-screen-width+ = 80")
+                     (list cl-tmux/terminal/types:+default-screen-height+    24         "+default-screen-height+ = 24")
+                     (list cl-tmux/terminal/types:+unicode-replacement-char+ #xFFFD     "+unicode-replacement-char+ = #xFFFD"))
                :test #'equal))
+
+(test unicode-replacement-char-constant-is-fffd
+  "+unicode-replacement-char+ must equal #xFFFD (U+FFFD REPLACEMENT CHARACTER)."
+  (is (= #xFFFD cl-tmux/terminal/types:+unicode-replacement-char+)
+      "+unicode-replacement-char+ must be #xFFFD"))
+
+(test safe-code-char-uses-replacement-char-for-invalid
+  "safe-code-char falls back to the +unicode-replacement-char+ code point for invalid inputs."
+  (let ((result (cl-tmux/terminal/types:safe-code-char (+ char-code-limit 999))))
+    (is (= cl-tmux/terminal/types:+unicode-replacement-char+ (char-code result))
+        "safe-code-char must return the character at +unicode-replacement-char+ for an out-of-range input")))
+
+;;; ── SUITE: cell-hyperlink slot ───────────────────────────────────────────────
+
+(def-suite cell-hyperlink-suite
+  :description "cell-hyperlink slot: default NIL and keyword constructor"
+  :in terminal-suite)
+(in-suite cell-hyperlink-suite)
+
+(test make-cell-hyperlink-defaults-nil
+  "make-cell with no :hyperlink argument leaves the slot NIL."
+  (let ((c (cl-tmux/terminal/types:make-cell)))
+    (is (null (cl-tmux/terminal/types:cell-hyperlink c))
+        "default cell-hyperlink must be NIL")))
+
+(test make-cell-hyperlink-can-be-set
+  "make-cell :hyperlink stores the URI string in the hyperlink slot."
+  (let ((c (cl-tmux/terminal/types:make-cell
+            :char #\A :hyperlink "https://example.com")))
+    (is (string= "https://example.com"
+                 (cl-tmux/terminal/types:cell-hyperlink c))
+        "cell-hyperlink must hold the supplied URI string")))
+
+(test make-cell-hyperlink-empty-string
+  "make-cell :hyperlink \"\" stores an empty string (distinct from NIL)."
+  (let ((c (cl-tmux/terminal/types:make-cell :hyperlink "")))
+    (is (stringp (cl-tmux/terminal/types:cell-hyperlink c))
+        "cell-hyperlink must be a string when set to \"\"")
+    (is (string= "" (cl-tmux/terminal/types:cell-hyperlink c))
+        "cell-hyperlink must equal the empty string")))
+
+(test blank-cell-hyperlink-is-nil
+  "blank-cell returns a cell whose hyperlink slot is NIL."
+  (let ((c (cl-tmux/terminal/types:blank-cell)))
+    (is (null (cl-tmux/terminal/types:cell-hyperlink c))
+        "blank-cell hyperlink must be NIL")))

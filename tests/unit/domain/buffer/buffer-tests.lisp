@@ -277,12 +277,12 @@
 ;;; ── Named buffers (set-buffer -b / paste-buffer -b) ──────────────────────────
 
 (test named-buffer-set-and-get-by-name
-  "set-named-buffer stores under a name; get-buffer-by-name retrieves it."
+  "set-named-buffer stores under a name; get-named-buffer retrieves it."
   (with-empty-buffers
     (cl-tmux/buffer:set-named-buffer "foo" "hello")
-    (is (string= "hello" (cl-tmux/buffer:get-buffer-by-name "foo"))
+    (is (string= "hello" (cl-tmux/buffer:get-named-buffer "foo"))
         "named buffer is retrievable by name")
-    (is (null (cl-tmux/buffer:get-buffer-by-name "bar"))
+    (is (null (cl-tmux/buffer:get-named-buffer "bar"))
         "an unknown name returns NIL")))
 
 (test named-buffer-same-name-replaces-in-place
@@ -290,7 +290,7 @@
   (with-empty-buffers
     (cl-tmux/buffer:set-named-buffer "foo" "first")
     (cl-tmux/buffer:set-named-buffer "foo" "second")
-    (is (string= "second" (cl-tmux/buffer:get-buffer-by-name "foo"))
+    (is (string= "second" (cl-tmux/buffer:get-named-buffer "foo"))
         "same name replaces the content")
     (is (= 1 (length (cl-tmux/buffer:list-paste-buffers)))
         "no duplicate entry is created")))
@@ -300,7 +300,7 @@
   (with-empty-buffers
     (cl-tmux/buffer:set-named-buffer "foo" "x")
     (is (cl-tmux/buffer:delete-buffer-by-name "foo") "delete returns T when present")
-    (is (null (cl-tmux/buffer:get-buffer-by-name "foo")) "gone after delete")
+    (is (null (cl-tmux/buffer:get-named-buffer "foo")) "gone after delete")
     (is (null (cl-tmux/buffer:delete-buffer-by-name "foo"))
         "deleting an absent name returns NIL")))
 
@@ -331,9 +331,9 @@
     (let ((result (cl-tmux/buffer:rename-paste-buffer "old" "new")))
       (is (string= "content" result)
           "rename must return the preserved text")
-      (is (null (cl-tmux/buffer:get-buffer-by-name "old"))
+      (is (null (cl-tmux/buffer:get-named-buffer "old"))
           "old name must be absent after rename")
-      (is (string= "content" (cl-tmux/buffer:get-buffer-by-name "new"))
+      (is (string= "content" (cl-tmux/buffer:get-named-buffer "new"))
           "text must be accessible under the new name"))))
 
 (test rename-paste-buffer-nil-source-renames-most-recent
@@ -344,7 +344,7 @@
     (let ((result (cl-tmux/buffer:rename-paste-buffer nil "myname")))
       (is (string= "newest" result)
           "must return the text of the most recent buffer")
-      (is (string= "newest" (cl-tmux/buffer:get-buffer-by-name "myname"))
+      (is (string= "newest" (cl-tmux/buffer:get-named-buffer "myname"))
           "most recent buffer must now be accessible as 'myname'")
       (is (string= "older" (cl-tmux/buffer:get-paste-buffer
                              (1- (length (cl-tmux/buffer:list-paste-buffers)))))
@@ -357,7 +357,7 @@
     (let ((result (cl-tmux/buffer:rename-paste-buffer "foo" "foo")))
       (is (string= "value" result)
           "same-name rename must return the text")
-      (is (string= "value" (cl-tmux/buffer:get-buffer-by-name "foo"))
+      (is (string= "value" (cl-tmux/buffer:get-named-buffer "foo"))
           "buffer must still exist under the same name")
       (is (= 1 (length (cl-tmux/buffer:list-paste-buffers)))
           "must not create a duplicate entry"))))
@@ -369,5 +369,5 @@
     (let ((result (cl-tmux/buffer:rename-paste-buffer "nonexistent" "newname")))
       (is (null result)
           "absent source must return NIL")
-      (is (null (cl-tmux/buffer:get-buffer-by-name "newname"))
+      (is (null (cl-tmux/buffer:get-named-buffer "newname"))
           "target name must not appear when source was absent"))))

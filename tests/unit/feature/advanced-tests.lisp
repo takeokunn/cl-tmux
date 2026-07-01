@@ -107,24 +107,6 @@
     (is (null (cl-tmux/model:layout->string win))
         "layout->string must return NIL for a window with NIL tree")))
 
-(test layout-to-string-round-trip
-  "layout->string encodes the layout; string->layout decodes it back to a
-   structurally equivalent tree with the same pane geometry."
-  (multiple-value-bind (_sess win p0 p1) (%two-pane-session)
-    (declare (ignore _sess))
-    (let* ((str  (cl-tmux/model:layout->string win))
-           (tree (cl-tmux/model:string->layout str (list p0 p1))))
-      (is-true tree
-               "string->layout must return a non-NIL tree")
-      ;; The decoded tree should have both panes.
-      (let ((leaves (cl-tmux/model:layout-leaves tree)))
-        (is (= 2 (length leaves))
-            "decoded tree must have exactly 2 panes")
-        (is (member p0 leaves)
-            "decoded tree must contain p0")
-        (is (member p1 leaves)
-            "decoded tree must contain p1")))))
-
 (test layout-checksum-4-hex-chars
   "layout->string result starts with a 4-character hex checksum."
   (multiple-value-bind (_sess win p0 p1) (%two-pane-session)

@@ -498,3 +498,186 @@
         "%make-format-condition-evaluator must return a function")
     (is (stringp (funcall evaluator "1"))
         "format condition evaluator must return a string")))
+
+;;; ── %enable-negotiated-terminal-features ──────────────────────────────────────
+
+(test enable-negotiated-terminal-features-is-fbound
+  "%enable-negotiated-terminal-features is defined as a function (extracted from
+   run-standalone's raw-mode setup)."
+  (is (fboundp 'cl-tmux::%enable-negotiated-terminal-features)
+      "%enable-negotiated-terminal-features must be fbound"))
+
+(test enable-negotiated-terminal-features-honors-option-gating
+  "%enable-negotiated-terminal-features only emits mouse/focus escape sequences
+   when the corresponding session option is on; with mouse, extended-keys, and
+   focus-events all off, calling it produces no escape-sequence output."
+  (with-isolated-options ("mouse" nil "extended-keys" "off" "focus-events" nil)
+    (let ((output (with-output-to-string (*standard-output*)
+                    (cl-tmux::%enable-negotiated-terminal-features))))
+      (is (zerop (length output))
+          "no escape sequences must be emitted when all three options are off"))))
+
+(test enable-negotiated-terminal-features-emits-mouse-sequence-when-on
+  "%enable-negotiated-terminal-features emits an escape sequence when the mouse
+   option is on."
+  (with-isolated-options ("mouse" t "extended-keys" "off" "focus-events" nil)
+    (let ((output (with-output-to-string (*standard-output*)
+                    (cl-tmux::%enable-negotiated-terminal-features))))
+      (is (plusp (length output))
+          "some escape-sequence output must be emitted when mouse is on")
+      (is (find #\Escape output) "output must contain an ESC byte"))))
+
+;;; ── %die-with-message ─────────────────────────────────────────────────────────
+
+(test die-with-message-formats-and-exits-with-code-1
+  "%die-with-message writes the formatted message to *error-output* and exits
+   with code 1."
+  (let (exit-code (output (make-string-output-stream)))
+    (let ((*error-output* output))
+      (with-stubbed-exit exit-code
+        (cl-tmux::%die-with-message "boom: ~A~%" "reason")))
+    (is (eql 1 exit-code) "%die-with-message must exit with code 1")
+    (is (search "boom: reason" (get-output-stream-string output))
+        "%die-with-message must format its message to *error-output*")))
+
+;;; ── %wire-option-callbacks ────────────────────────────────────────────────────
+
+(test wire-option-callbacks-sets-history-limit-function
+  "%wire-option-callbacks wires cl-tmux/terminal:*history-limit-function*."
+  (let ((old cl-tmux/terminal:*history-limit-function*))
+    (unwind-protect
+         (progn
+           (cl-tmux::%wire-option-callbacks)
+           (is (functionp cl-tmux/terminal:*history-limit-function*)
+               "*history-limit-function* must be a function after %wire-option-callbacks"))
+      (setf cl-tmux/terminal:*history-limit-function* old))))
+
+(test wire-option-callbacks-sets-alternate-screen-function
+  "%wire-option-callbacks wires cl-tmux/terminal:*alternate-screen-enabled-function*."
+  (let ((old cl-tmux/terminal:*alternate-screen-enabled-function*))
+    (unwind-protect
+         (progn
+           (cl-tmux::%wire-option-callbacks)
+           (is (functionp cl-tmux/terminal:*alternate-screen-enabled-function*)
+               "*alternate-screen-enabled-function* must be a function after %wire-option-callbacks"))
+      (setf cl-tmux/terminal:*alternate-screen-enabled-function* old))))
+
+(test wire-option-callbacks-sets-scroll-on-clear-function
+  "%wire-option-callbacks wires cl-tmux/terminal:*scroll-on-clear-function*."
+  (let ((old cl-tmux/terminal:*scroll-on-clear-function*))
+    (unwind-protect
+         (progn
+           (cl-tmux::%wire-option-callbacks)
+           (is (functionp cl-tmux/terminal:*scroll-on-clear-function*)
+               "*scroll-on-clear-function* must be a function after %wire-option-callbacks"))
+      (setf cl-tmux/terminal:*scroll-on-clear-function* old))))
+
+;;; ── %socket-file-session-name ─────────────────────────────────────────────────
+
+(test socket-file-session-name-extracts-from-valid-path
+  "%socket-file-session-name extracts the session name from a cl-tmux socket path."
+  (dolist (row '(("/tmp/cl-tmux-0.sock"    "0"    "default session name")
+                 ("/tmp/cl-tmux-work.sock"  "work"  "named session")
+                 ("/tmp/cl-tmux-my-s.sock"  "my-s"  "hyphenated name")))
+    (destructuring-bind (path expected desc) row
+      (is (string= expected (cl-tmux::%socket-file-session-name path))
+          "~A: ~S → ~S" desc path expected))))
+
+(test socket-file-session-name-returns-nil-for-non-cl-tmux-path
+  "%socket-file-session-name returns NIL for paths without the cl-tmux- prefix."
+  (is (null (cl-tmux::%socket-file-session-name "/tmp/other-program.sock"))
+      "non-cl-tmux socket must yield NIL")
+  (is (null (cl-tmux::%socket-file-session-name nil))
+      "NIL input must yield NIL"))
+
+(test socket-file-session-name-returns-nil-for-empty-name
+  "%socket-file-session-name returns NIL when the file has no name component."
+  ;; A path with no file name part (edge case)
+  (is (null (cl-tmux::%socket-file-session-name ""))
+      "empty path string must yield NIL"))
+
+;;; ── %list-commands-arguments ──────────────────────────────────────────────────
+
+(test list-commands-arguments-parses-format-flag
+  "%list-commands-arguments extracts the -F format argument."
+  (multiple-value-bind (fmt name)
+      (cl-tmux::%list-commands-arguments '("-F" "#{command_list_name}"))
+    (is (string= "#{command_list_name}" fmt)
+        "-F argument must be captured as format")
+    (is (null name) "no positional name must be NIL")))
+
+(test list-commands-arguments-parses-positional-name
+  "%list-commands-arguments captures a positional name argument."
+  (multiple-value-bind (fmt name)
+      (cl-tmux::%list-commands-arguments '("new-session"))
+    (is (null fmt)  "no -F flag must leave format NIL")
+    (is (string= "new-session" name)
+        "positional arg must be captured as name")))
+
+(test list-commands-arguments-parses-both-flags
+  "%list-commands-arguments parses both -F and a positional name."
+  (multiple-value-bind (fmt name)
+      (cl-tmux::%list-commands-arguments '("-F" "#{name}" "kill-server"))
+    (is (string= "#{name}" fmt)   "format must be captured")
+    (is (string= "kill-server" name) "positional name must be captured")))
+
+(test list-commands-arguments-returns-nil-nil-for-empty-list
+  "%list-commands-arguments returns (values NIL NIL) for an empty argument list."
+  (multiple-value-bind (fmt name)
+      (cl-tmux::%list-commands-arguments '())
+    (is (null fmt)  "empty args: format must be NIL")
+    (is (null name) "empty args: name must be NIL")))
+
+;;; ── define-forwarding-commands macro ─────────────────────────────────────────
+
+(test define-forwarding-commands-generates-defun
+  "define-forwarding-commands expands to a PROGN containing DEFUN forms."
+  (let* ((expansion (macroexpand-1
+                     '(cl-tmux::define-forwarding-commands
+                        (run-test-cmd "test-cmd" "test docstring"))))
+         (text (prin1-to-string expansion)))
+    (is-true (search "DEFUN" text)
+             "define-forwarding-commands must expand to DEFUN forms")
+    (is-true (search "PROGN" text)
+             "define-forwarding-commands must wrap in PROGN")))
+
+;;; ── run-list-commands fbound check ───────────────────────────────────────────
+
+(test run-list-commands-is-fbound
+  "run-list-commands is defined as a function."
+  (is (fboundp 'cl-tmux::run-list-commands)
+      "run-list-commands must be fbound"))
+
+;;; ── parse-new-session-flags ───────────────────────────────────────────────────
+
+(test parse-new-session-flags-parses-name-flag
+  "%parse-new-session-flags extracts the -s session name."
+  (multiple-value-bind (name _win _detach _dir)
+      (cl-tmux::%parse-new-session-flags '("-s" "mywork"))
+    (declare (ignore _win _detach _dir))
+    (is (string= "mywork" name)
+        "-s flag must set the session name")))
+
+(test parse-new-session-flags-parses-detach-flag
+  "%parse-new-session-flags sets detach=T for the -d flag."
+  (multiple-value-bind (_name _win detach _dir)
+      (cl-tmux::%parse-new-session-flags '("-d"))
+    (declare (ignore _name _win _dir))
+    (is-true detach "-d flag must set detach to T")))
+
+(test parse-new-session-flags-parses-start-dir
+  "%parse-new-session-flags extracts -c start-dir."
+  (multiple-value-bind (_name _win _detach dir)
+      (cl-tmux::%parse-new-session-flags '("-c" "/tmp/work"))
+    (declare (ignore _name _win _detach))
+    (is (string= "/tmp/work" dir)
+        "-c flag must set the start directory")))
+
+(test parse-new-session-flags-returns-nils-for-empty-args
+  "%parse-new-session-flags returns all-NIL defaults for an empty list."
+  (multiple-value-bind (name win detach dir)
+      (cl-tmux::%parse-new-session-flags '())
+    (is (null name)   "empty args: name must be NIL")
+    (is (null win)    "empty args: win-name must be NIL")
+    (is (null detach) "empty args: detach must be NIL")
+    (is (null dir)    "empty args: start-dir must be NIL")))

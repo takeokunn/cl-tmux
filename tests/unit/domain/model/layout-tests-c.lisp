@@ -1,7 +1,7 @@
 (in-package #:cl-tmux/test)
 
 ;;;; layout tests — part C: layout persistence internals (split-bounding-box,
-;;;; node-to-string, read-digits, parse-layout-string, round-trips).
+;;;; node-to-string) and layout-find-parent deep-tree traversal.
 
 (in-suite layout-tree-suite)
 
@@ -35,78 +35,6 @@
       (is (search "7" s) "fragment must contain the pane id")))
   (is (string= "" (cl-tmux/model::%node->string nil))
       "%node->string on NIL must return empty string"))
-
-(test read-digits-table
-  "%read-digits parses decimal integers at given positions, stopping at end-of-string."
-  (dolist (row '(("abc123xyz" 3  123 6 "offset into middle")
-                 ("42rest"    0   42 2 "offset at beginning")
-                 ("100"       0  100 3 "digits up to end of string")))
-    (destructuring-bind (input pos expected-val expected-end desc) row
-      (multiple-value-bind (val end)
-          (cl-tmux/model::%read-digits input pos)
-        (is (= expected-val val) "~A: value" desc)
-        (is (= expected-end end) "~A: end pos" desc)))))
-
-(test string-to-layout-round-trips-v-split
-  "string->layout decodes a :v split tree encoded by layout->string."
-  (let* ((l0  (tl-leaf 1 1 1))
-         (l1  (tl-leaf 2 1 1))
-         (win (tl-window (make-layout-split :v l0 l1) 21 80))
-         (p0  (layout-leaf-pane l0))
-         (p1  (layout-leaf-pane l1)))
-    (let* ((s    (layout->string win))
-           (tree (string->layout s (list p0 p1))))
-      (is (not (null tree)) "decoded tree must be non-NIL")
-      (is (cl-tmux/model::layout-split-p tree) "decoded node must be a layout-split")
-      (is (eq :v (cl-tmux/model::layout-split-orientation tree))
-          "decoded split must have :v orientation"))))
-
-(test string-to-layout-round-trips-nested-tree
-  "string->layout correctly decodes a nested (top / (bl | br)) tree."
-  (let* ((top (tl-leaf 1 1 1))
-         (bl  (tl-leaf 2 1 1))
-         (br  (tl-leaf 3 1 1))
-         (win (tl-window (make-layout-split :v top (make-layout-split :h bl br)) 25 80))
-         (ptop (layout-leaf-pane top))
-         (pbl  (layout-leaf-pane bl))
-         (pbr  (layout-leaf-pane br)))
-    (let* ((s    (layout->string win))
-           (tree (string->layout s (list ptop pbl pbr))))
-      (is (not (null tree)) "decoded nested tree must be non-NIL")
-      (is (cl-tmux/model::layout-split-p tree)
-          "root of decoded nested tree must be a split")
-      (is (eq :v (cl-tmux/model::layout-split-orientation tree))
-          "root split must be :v (top-level vertical)")
-      ;; The second child must be an :h split (bl|br).
-      (is (cl-tmux/model::layout-split-p
-           (cl-tmux/model::layout-split-second tree))
-          "second child of root must also be a split (the h-split)")
-      (is (eq :h (cl-tmux/model::layout-split-orientation
-                  (cl-tmux/model::layout-split-second tree)))
-          "inner split must be :h"))))
-
-(test string-to-layout-empty-panes-returns-nil
-  "string->layout returns NIL when no pane matches the encoded pane id."
-  (let* ((p   (tl-pane 42 20 10))
-         (win (tl-window (make-layout-leaf p) 10 20 :active p))
-         (s   (layout->string win)))
-    ;; Pass an empty panes list — no match possible.
-    (is (null (string->layout s nil))
-        "string->layout with empty panes list must return NIL")))
-
-(test string-to-layout-without-checksum-decodes-correctly
-  "string->layout decodes a bare layout string (no checksum prefix)."
-  (let* ((p   (tl-pane 5 30 12))
-         (win (tl-window (make-layout-leaf p) 12 30 :active p))
-         (full-str (layout->string win))
-         ;; Strip the checksum+comma prefix manually.
-         (bare-str (subseq full-str 5)))
-    (let ((tree (string->layout bare-str (list p))))
-      (is (not (null tree)) "decoded tree from bare string must be non-NIL")
-      (is (cl-tmux/model::layout-leaf-p tree)
-          "decoded bare-string leaf must be a layout-leaf")
-      (is (eq p (layout-leaf-pane tree))
-          "decoded leaf must reference the correct pane"))))
 
 ;;; ── layout-find-parent deep tree ─────────────────────────────────────────────
 

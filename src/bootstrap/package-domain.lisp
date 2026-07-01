@@ -68,7 +68,7 @@
    ;; Popup overlay
    #:+default-popup-width+ #:+default-popup-height+
    #:popup #:make-popup #:popup-p
-   #:popup-x #:popup-y #:popup-width #:popup-height
+   #:popup-width #:popup-height
    #:popup-screen #:popup-pane #:popup-title #:popup-close-on-exit
    #:*active-popup*
    #:show-popup #:close-popup #:popup-active-p
@@ -141,7 +141,7 @@
    #:split-child-geometry #:next-pane-id
    #:pane-neighbor
    ;; Layout persistence
-   #:layout->string #:string->layout
+   #:layout->string
    ;; Zoom
    #:window-zoom-p
    #:window-zoom-tree
@@ -220,7 +220,7 @@
   (:export #:+default-buffer-limit+
            #:*paste-buffers* #:*buffer-auto-index*
            #:add-paste-buffer #:rename-paste-buffer #:get-paste-buffer #:set-named-buffer
-           #:get-named-buffer #:get-buffer-by-name #:buffer-names
+           #:get-named-buffer #:buffer-names
            #:initialize-osc52-handler
            #:list-paste-buffers #:list-paste-buffers-with-names
            #:delete-paste-buffer #:delete-buffer-by-name #:clear-paste-buffers))
@@ -317,12 +317,10 @@
            #:get-option-for-pane   #:set-option-for-pane
            #:get-option-for-context
            ;; Scope/presence predicates (options-scope.lisp)
-           #:array-option-indexed-name-p
            #:option-present-for-scope-p
            #:option-present-for-display-p
-           #:option-settable-for-scope-p
            ;; Display helpers (options-display.lisp)
-           #:show-options #:show-option #:show-option-values
+           #:show-options #:show-option
            #:show-window-options #:show-window-option
            #:window-option-present-for-display-p
            ))

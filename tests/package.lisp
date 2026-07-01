@@ -110,7 +110,6 @@
                 #:window-layout-cycle-index
                 ;; Layout persistence
                 #:layout->string
-                #:string->layout
                 ;; update-environment
                 #:*update-environment*
                 #:get-update-environment-vars
@@ -204,13 +203,14 @@
                 #:overlay-scroll
                 #:+default-popup-width+ #:+default-popup-height+
                 #:popup #:make-popup #:popup-p
-                #:popup-x #:popup-y #:popup-width #:popup-height
+                #:popup-width #:popup-height
                 #:popup-screen #:popup-pane #:popup-title #:popup-close-on-exit
                 #:*active-popup*
                 #:show-popup #:close-popup #:popup-active-p
                 #:show-menu #:close-menu #:menu-active-p
                 #:menu #:make-menu #:menu-p
                 #:menu-title #:menu-items #:menu-selected-index
+                #:menu-x #:menu-y
                 #:*active-menu*
                 #:prompt-label
                 #:prompt-buffer

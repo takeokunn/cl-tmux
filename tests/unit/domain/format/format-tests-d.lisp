@@ -333,6 +333,15 @@
     (is (string= "3" (cl-tmux/format:expand-format "#{session_windows}" ctx))
         "session has 3 windows")))
 
+(test format-context-session-count-is-numeric
+  "#{session_count} expands to a non-empty numeric string (server session total,
+   minimum 1 in the single-process model)."
+  (with-format-context (sess win pane ctx) ()
+    (let ((count (cl-tmux/format:expand-format "#{session_count}" ctx)))
+      (is (plusp (length count)) "#{session_count} must be non-empty")
+      (is (every #'digit-char-p count) "#{session_count} must be all digits, got ~S" count)
+      (is (>= (parse-integer count) 1) "#{session_count} must be at least 1, got ~S" count))))
+
 ;;; ── Format modifiers: #{=N:var} #{=-N:var} #{b:var} #{d:var} ─────────────────
 
 (test format-modifier-truncate-table

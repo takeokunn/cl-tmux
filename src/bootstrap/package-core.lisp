@@ -64,6 +64,8 @@
    #:select-fds            ; (fds timeout-us) → ready-fd-list
    ;; Terminal geometry
    #:terminal-size         ; () → (values rows cols)
+   #:+default-term-rows+   ; fallback terminal rows when ioctl fails/is unavailable
+   #:+default-term-cols+   ; fallback terminal columns when ioctl fails/is unavailable
    ;; Port adapter (installs cl-tmux/ports vars at server startup)
    #:install-pty-port))
 

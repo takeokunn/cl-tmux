@@ -7,6 +7,14 @@
 ;;;; remaining helpers here are the small support functions that the main
 ;;;; command table and prompt-driven siblings share.
 
+;;; -- Buffer preview constant -----------------------------------------------
+;;;
+;;; Buffer listing and preview truncate content to this many characters.
+;;; A single named constant keeps every truncation site in sync.
+
+(defconstant +buffer-preview-length+ 40
+  "Maximum characters shown in a paste-buffer preview listing.")
+
 (defun %confirm-prompt (msg ok-fn)
   "Show MSG as a y/n prompt; call OK-FN (no args) when the user types y/Y."
   (prompt-start msg ""
@@ -59,11 +67,11 @@
     (pty-write (pane-fd pane) (%byte-vector byte))
     t))
 
-(defun %buffer-preview (text &key (preview-length 40))
+(defun %buffer-preview (text &key (preview-length +buffer-preview-length+))
   "Return the leading PREVIEW-LENGTH characters of TEXT."
   (subseq text 0 (min preview-length (length text))))
 
-(defun %paste-buffer-listing-string (buffers &key (preview-length 40))
+(defun %paste-buffer-listing-string (buffers &key (preview-length +buffer-preview-length+))
   "Return a numbered paste-buffer preview listing for BUFFERS."
   (with-output-to-string (stream)
     (if buffers
@@ -74,7 +82,7 @@
                                           :preview-length preview-length)))
         (format stream "(no paste buffers)~%"))))
 
-(defun %named-paste-buffer-listing-string (buffers &key (preview-length 40))
+(defun %named-paste-buffer-listing-string (buffers &key (preview-length +buffer-preview-length+))
   "Return a named paste-buffer listing for BUFFERS."
   (with-output-to-string (stream)
     (if buffers

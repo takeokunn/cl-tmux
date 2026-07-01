@@ -194,6 +194,25 @@
         (is (= w0-before (pane-width p0))
             ":h split must ignore a :up resize (wrong axis)")))))
 
+;;; ── %grow-first-p direct tests (pure, no PTY) ────────────────────────────────
+
+(test grow-first-p-table
+  "%grow-first-p returns T when the given SIDE should grow for DIRECTION.
+   :first grows on :right/:down; :second grows on :left/:up.
+   Each row: (side direction expected description)."
+  (dolist (row '((:first  :right t   ":first grows on :right")
+                 (:first  :down  t   ":first grows on :down")
+                 (:first  :left  nil ":first does not grow on :left")
+                 (:first  :up    nil ":first does not grow on :up")
+                 (:second :left  t   ":second grows on :left")
+                 (:second :up    t   ":second grows on :up")
+                 (:second :right nil ":second does not grow on :right")
+                 (:second :down  nil ":second does not grow on :down")))
+    (destructuring-bind (side direction expected desc) row
+      (if expected
+          (is-true  (cl-tmux/model::%grow-first-p side direction) desc)
+          (is-false (cl-tmux/model::%grow-first-p side direction) desc)))))
+
 ;;; ── split-child-geometry direct tests (pure, no PTY) ─────────────────────
 
 (test split-child-geometry-table

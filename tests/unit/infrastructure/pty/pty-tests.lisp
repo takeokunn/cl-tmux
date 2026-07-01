@@ -119,3 +119,63 @@
   "set-pty-size is exported from cl-tmux/pty and callable."
   (is (fboundp 'cl-tmux/pty:set-pty-size)
       "set-pty-size must be fbound"))
+
+;;; ── %target-program-and-args ─────────────────────────────────────────────────
+
+(test target-program-and-args-with-default-command-uses-sh-c
+  "%target-program-and-args routes a non-empty DEFAULT-COMMAND through /bin/sh -c
+   and does not request a PATH search."
+  (multiple-value-bind (program args search-p)
+      (cl-tmux/pty::%target-program-and-args "echo hi")
+    (is (string= "/bin/sh" program) "program must be /bin/sh")
+    (is (equal '("-c" "echo hi") args) "args must be (-c DEFAULT-COMMAND)")
+    (is-false search-p "sh -c invocation must not request a PATH search")))
+
+(test target-program-and-args-nil-command-uses-default-shell
+  "%target-program-and-args with a NIL/empty DEFAULT-COMMAND returns the
+   configured default shell directly, with no extra args."
+  (let ((cl-tmux/config:*default-shell* "/bin/zsh"))
+    (multiple-value-bind (program args search-p)
+        (cl-tmux/pty::%target-program-and-args nil)
+      (is (string= "/bin/zsh" program) "program must be the configured default shell")
+      (is (null args) "no extra args when running the shell directly")
+      (is-false search-p "an absolute shell path must not request a PATH search"))))
+
+(test target-program-and-args-relative-shell-requests-path-search
+  "%target-program-and-args requests a PATH search (SEARCH-P = T) when the
+   configured default shell is not an absolute path."
+  (let ((cl-tmux/config:*default-shell* "zsh"))
+    (multiple-value-bind (program args search-p)
+        (cl-tmux/pty::%target-program-and-args "")
+      (declare (ignore args))
+      (is (string= "zsh" program) "program must be the relative shell name")
+      (is-true search-p "a relative shell name must request a PATH search"))))
+
+;;; ── install-pty-port ─────────────────────────────────────────────────────────
+
+(test install-pty-port-wires-all-four-ports
+  "install-pty-port sets *spawn-pty*, *write-pty*, *resize-pty*, and *close-pty*
+   to the corresponding cl-tmux/pty functions."
+  (let ((cl-tmux/ports:*spawn-pty*  nil)
+        (cl-tmux/ports:*write-pty*  nil)
+        (cl-tmux/ports:*resize-pty* nil)
+        (cl-tmux/ports:*close-pty*  nil))
+    (cl-tmux/pty:install-pty-port)
+    (is (eq #'cl-tmux/pty:forkpty-with-shell cl-tmux/ports:*spawn-pty*)
+        "*spawn-pty* must be wired to forkpty-with-shell")
+    (is (eq #'cl-tmux/pty:pty-write cl-tmux/ports:*write-pty*)
+        "*write-pty* must be wired to pty-write")
+    (is (eq #'cl-tmux/pty:set-pty-size cl-tmux/ports:*resize-pty*)
+        "*resize-pty* must be wired to set-pty-size")
+    (is (eq #'cl-tmux/pty:pty-close cl-tmux/ports:*close-pty*)
+        "*close-pty* must be wired to pty-close")))
+
+;;; ── terminal-size fallback constants ─────────────────────────────────────────
+
+(test default-term-rows-cols-are-positive-fixnums
+  "+default-term-rows+ and +default-term-cols+ are the shared terminal-size
+   fallback constants (24x80), matching *term-rows*/*term-cols* defvar defaults."
+  (is (= 24 cl-tmux/pty:+default-term-rows+)
+      "+default-term-rows+ must be 24")
+  (is (= 80 cl-tmux/pty:+default-term-cols+)
+      "+default-term-cols+ must be 80"))

@@ -87,11 +87,13 @@
 ;;; TYPE-ERROR when its bit is set.  Unsigned access stores the raw bit pattern.
 
 (defun fd-zero! (ptr)
+  "Clear every bit in the fd_set at foreign pointer PTR (the FD_ZERO macro)."
   (declare (type cffi:foreign-pointer ptr))
   (dotimes (i +fd-set-words+)
     (setf (cffi:mem-aref ptr :uint32 i) 0)))
 
 (defun fd-set! (fd ptr)
+  "Set the bit for FD in the fd_set at foreign pointer PTR (the FD_SET macro)."
   (declare (type fixnum fd)
            (type cffi:foreign-pointer ptr))
   (let ((word (floor fd 32))
@@ -100,6 +102,8 @@
           (logior (cffi:mem-aref ptr :uint32 word) (ash 1 bit)))))
 
 (defun fd-isset-p (fd ptr)
+  "Return T when FD's bit is set in the fd_set at foreign pointer PTR
+   (the FD_ISSET macro)."
   (declare (type fixnum fd)
            (type cffi:foreign-pointer ptr))
   (let ((word (floor fd 32))

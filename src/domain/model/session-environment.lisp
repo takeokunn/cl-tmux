@@ -131,16 +131,6 @@
 
 ;;; ── Session overlay access ───────────────────────────────────────────────────
 
-(defun %env-name-matches-visibility-p (session name hidden)
-  "Return T when NAME in SESSION's overlay matches the HIDDEN visibility filter.
-   HIDDEN T selects names that are in the hidden set; NIL selects visible names.
-   Used by session-environment-names to partition names."
-  (declare (ignore hidden))
-  ;; Currently all names exposed via the overlay are treated equally visible.
-  ;; This hook exists for future per-name visibility tracking.
-  (declare (ignore session name))
-  t)
-
 (defun session-environment-value (session name)
   "Return SESSION's effective value for NAME.
    Returns two values: (value source-keyword) where source-keyword is one of:

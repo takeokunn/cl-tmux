@@ -174,6 +174,17 @@
     (is (equal (list w1 w0) (session-windows sess))
         "w0 must land at index 1 (clamped from 99)")))
 
+(test move-window-clamps-negative-index-to-zero
+  "session-move-window clamps a negative target index to 0 (the first position)."
+  (let* ((w0 (make-window :id 1 :name "0"))
+         (w1 (make-window :id 2 :name "1"))
+         (w2 (make-window :id 3 :name "2"))
+         (sess (make-session :id 1 :name "s" :windows (list w0 w1 w2))))
+    ;; Move w2 (currently index 2) to a negative target — clamps to 0.
+    (session-move-window sess w2 -5)
+    (is (equal (list w2 w0 w1) (session-windows sess))
+        "w2 must land at index 0 (clamped from -5)")))
+
 ;;; ── swap-window-exchanges ────────────────────────────────────────────────────
 
 (test swap-window-exchanges

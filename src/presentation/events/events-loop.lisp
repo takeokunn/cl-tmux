@@ -1,218 +1,7 @@
 (in-package #:cl-tmux)
 
-;;;; Key bindings, synchronize-panes, event loop.
-
-;;; ── Additional key bindings ─────────────────────────────────────────────────
-;;;
-;;; These extend config.lisp's prefix defaults.  They live in a FUNCTION (not
-;;; top-level side effects) so test isolation (with-isolated-config) can reinstall
-;;; them onto a fresh *key-tables*, keeping the isolated table consistent with the
-;;; live image (e.g. C-b z = zoom-toggle, C-b L = last-session).
-
-(defparameter *extended-prefix-bindings*
-  `(;;; ── Session / client navigation ────────────────────────────────────────
-    (#\s :choose-session)
-    (#\( :switch-client-prev)
-    (#\) :switch-client-next)
-    (#\L :last-session)
-    (#\D :choose-client)
-    ;;; ── Window navigation ───────────────────────────────────────────────────
-    (#\w :choose-window)
-    (#\l :last-window)
-    (#\f :find-window)
-    (#\. :move-window-prompt)
-    (#\' :select-window-prompt)
-    ;;; ── Layout ──────────────────────────────────────────────────────────────
-    (#\E :select-layout-spread)
-    (,(code-char 32) :next-layout)              ; Space
-    ("M-1" '("select-layout" "even-horizontal"))
-    ("M-2" '("select-layout" "even-vertical"))
-    ("M-3" '("select-layout" "main-horizontal"))
-    ("M-4" '("select-layout" "main-vertical"))
-    ("M-5" '("select-layout" "tiled"))
-    ("M-n" '("next-window" "-a"))
-    ("M-p" '("previous-window" "-a"))
-    ("M-o" '("rotate-window" "-D"))
-    ;;; ── Pane operations ─────────────────────────────────────────────────────
-    (#\! :break-pane)
-    (#\{ :swap-pane-backward)
-    (#\} :swap-pane-forward)
-    (#\; :last-pane)
-    (#\q :display-panes)
-    (#\z :zoom-toggle)
-    (#\m :mark-pane)
-    (,(code-char 77) :clear-mark)               ; M
-    ;;; ── Prompt / command ────────────────────────────────────────────────────
-    ("PageUp" '("copy-mode-enter" "-u"))
-    (,(code-char 2) :send-prefix)               ; C-b (literal prefix forward)
-    (,(code-char 35) :list-buffers)             ; #
-    (,(code-char 61) :choose-buffer)            ; =
-    (,(code-char 45) :delete-buffer)            ; -
-    (#\: :command-prompt)
-    (#\C '("customize-mode"))
-    (#\r :refresh-client)
-    (#\t :clock-mode)
-    (#\i :display-info)
-    (,(code-char 126) :show-messages)           ; ~
-    (,(code-char 15) :rotate-window)            ; C-o
-    (,(code-char 26) :suspend-client))          ; C-z
-  "Prefix bindings that extend config.lisp's defaults.")
-
-(defun install-extended-key-bindings ()
-  "Install the prefix bindings that extend config.lisp's defaults.  Idempotent.
-   Called once at load time, and again by with-isolated-config under test."
-  (mapc (lambda (binding)
-          (destructuring-bind (key command) binding
-            (key-table-bind +table-prefix+ key command)))
-        *extended-prefix-bindings*)
-  (values))
-
-;; Install once at load time so the running image has the full default set.
-(install-extended-key-bindings)
-
-;;; *prefix-active* is set to T while waiting for the command key after the
-;;; prefix key (C-b).  The format engine reads it for #{client_prefix}.
-;;; Updated by process-byte; written on the event-loop thread only.
-(defvar *prefix-active* nil
-  "T when the input state machine is in %after-prefix-input-state (prefix pressed,
-   waiting for command key).  Exposed as #{client_prefix} in format strings.")
-
-(defstruct input-state
-  "Opaque CPS keystroke-processing state. Holds the current continuation.
-   REPEAT-ENTERED-AT is set (via GET-INTERNAL-REAL-TIME) when the state
-   transitions to a repeatable binding so that repeat-time can be honoured.
-   ESC-ENTERED-AT is set when we begin accumulating an escape sequence; used by
-   %flush-esc-if-timed-out to implement the tmux escape-time disambiguation window."
-  (continuation #'%ground-input-state :type function)
-  (repeat-entered-at nil)
-  ;; How many repeatable keys have been pressed in the current repeat sequence;
-  ;; 1 for the first, so the first repeat window can honour initial-repeat-time.
-  (repeat-key-count 0 :type (integer 0))
-  (esc-entered-at nil))
-
-(defun %repeat-window-ms (repeat-key-count)
-  "Return the repeat-timeout window in milliseconds for the REPEAT-KEY-COUNT-th
-   repeatable key.  The first key of a repeat sequence (count 1) honours a
-   non-zero initial-repeat-time; every other key (and a zero initial-repeat-time)
-   uses repeat-time.  Mirrors tmux 3.5+'s server_client_repeat_time."
-  (let ((repeat-ms  (or (cl-tmux/options:get-option "repeat-time") 500))
-        (initial-ms (or (cl-tmux/options:get-option "initial-repeat-time") 0)))
-    (if (and (= repeat-key-count 1) (plusp initial-ms))
-        initial-ms
-        repeat-ms)))
-
-(defun %reset-repeat-if-expired (state)
-  "If STATE is in a repeatable prefix position and the repeat window has elapsed
-   since REPEAT-ENTERED-AT, reset to ground state.  Otherwise a no-op.  The first
-   key of a sequence uses initial-repeat-time (when set), the rest repeat-time.
-   Called once per event-loop iteration before processing any new byte."
-  (when (input-state-repeat-entered-at state)
-    (let* ((window-ms  (%repeat-window-ms (input-state-repeat-key-count state)))
-           (elapsed-ms (/ (- (get-internal-real-time)
-                              (input-state-repeat-entered-at state))
-                           (/ internal-time-units-per-second 1000))))
-      (when (>= elapsed-ms window-ms)
-        (setf (input-state-continuation state) #'%ground-input-state
-              (input-state-repeat-entered-at state) nil
-              (input-state-repeat-key-count state) 0)))))
-
-(defun process-byte (session byte state)
-  "Feed BYTE to SESSION through the CPS keystroke pipeline STATE.
-   Returns :QUIT, :DETACH, or NIL. Mutates STATE's continuation in place."
-  (multiple-value-bind (outcome next)
-      (funcall (input-state-continuation state) session byte)
-    (let ((new-cont (or next #'%ground-input-state)))
-      (setf (input-state-continuation state) new-cont)
-      ;; Track entry into repeat mode: a :repeatable outcome means the binding
-      ;; had the -r flag; stamp the timestamp so %reset-repeat-if-expired works.
-      (when (eq outcome :repeatable)
-        (setf (input-state-repeat-entered-at state) (get-internal-real-time))
-        (incf (input-state-repeat-key-count state)))
-      ;; Leaving repeat mode: clear the timestamp and reset the key count.
-      ;; Repeat mode is armed for BOTH the prefix path (%after-prefix-input-state)
-      ;; and root -n -r bindings (%after-root-repeat-input-state); staying in either
-      ;; continuation keeps the repeat window open.
-      (unless (or (eq new-cont #'%after-prefix-input-state)
-                  (eq new-cont #'%after-root-repeat-input-state))
-        (setf (input-state-repeat-entered-at state) nil
-              (input-state-repeat-key-count state) 0))
-      ;; Track prefix state for #{client_prefix} format variable.
-      (setf *prefix-active* (eq new-cont #'%after-prefix-input-state))
-      ;; Track ESC accumulation: stamp esc-entered-at when we receive a lone ESC
-      ;; byte (byte 27) and transition OUT of ground state (entering escape-input-k).
-      ;; Clear it when we return to ground (sequence completed or aborted).
-      (cond
-        ((and (= byte +byte-esc+)
-              (not (eq new-cont #'%ground-input-state))
-              (not (eq new-cont #'%after-prefix-input-state)))
-         (setf (input-state-esc-entered-at state) (get-internal-real-time)))
-        ((eq new-cont #'%ground-input-state)
-         ;; Sequence completed or aborted: stop the escape-time timer and drop the
-         ;; replay buffer so a later flush can't resend a stale partial sequence.
-         (setf (input-state-esc-entered-at state) nil
-               *esc-accum-buffer* nil))))
-    outcome))
-
-(defun %flush-esc-if-timed-out (state session)
-  "If escape-time ms have elapsed since we started accumulating an ESC sequence
-   with no follow-up byte, forward a lone ESC to the active pane and reset to ground.
-   Implements the tmux 'escape-time' server option (default 500ms).
-   Critical for vim/neovim: lone ESC in insert mode must reach the program promptly."
-  (when (input-state-esc-entered-at state)
-    (let* ((esc-ms   (or (cl-tmux/options:get-server-option "escape-time") 500))
-           (elapsed  (/ (- (get-internal-real-time)
-                            (input-state-esc-entered-at state))
-                         (/ internal-time-units-per-second 1000))))
-      (when (>= elapsed esc-ms)
-        (if (prompt-active-p)
-            ;; Prompt-local ESC is a cancel key, not pane input.  The state
-            ;; machine defers it briefly to distinguish lone ESC from arrows.
-            (handle-prompt-key +byte-esc+)
-            ;; Forward the full accumulated partial sequence to the active pane.
-            ;; In the common vim case nothing has accumulated past the ESC, so
-            ;; this is a lone ESC — identical to the historical behaviour.  When
-            ;; a multi-byte partial is pending (e.g. a held Alt+O = ESC O),
-            ;; replaying the whole buffer keeps every byte.
-            (let* ((win   (session-active-window session))
-                   (pane  (and win (window-active-pane win)))
-                   (accum *esc-accum-buffer*)
-                   (bytes (if (and accum (plusp (fill-pointer accum)))
-                              (subseq accum 0 (fill-pointer accum))
-                              (make-array 1 :element-type '(unsigned-byte 8)
-                                            :initial-element +byte-esc+))))
-              (when (and pane (cl-tmux/model:pane-live-p pane) (not *client-read-only*))
-                (pty-write (pane-fd pane) bytes))))
-        (setf (input-state-continuation state) #'%ground-input-state
-              (input-state-esc-entered-at state) nil
-              *esc-accum-buffer* nil)
-        (setf *dirty* t)))))
-
-;;; ── Synchronize-panes broadcast ─────────────────────────────────────────────
-;;;
-;;; When the "synchronize-panes" window option is T, keystrokes sent to the
-;;; active pane are also broadcast to every other pane in the same window.
-
-(defun %forward-octets-synchronized (session octets)
-  "Forward OCTETS to the active pane.  If synchronize-panes is enabled on
-   the active window, also write to all other panes in the window.
-   Panes with pane-input-disabled set (select-pane -d) receive no input.
-   No-op when *client-read-only* is set (attach-session -r)."
-  (unless *client-read-only*
-    (let* ((window      (session-active-window session))
-           (active-pane (and window (window-active-pane window))))
-      (when (and active-pane
-                 ;; select-pane -d: input disabled for this pane — swallow keystrokes.
-                 (not (pane-input-disabled active-pane)))
-        (pty-write (pane-fd active-pane) octets)
-        ;; Broadcast when synchronize-panes is enabled, skipping disabled panes.
-        ;; Read the window-local override (falls back to global then default).
-        (when (cl-tmux/options:get-option-for-context "synchronize-panes" :window window)
-          (dolist (pane (window-panes window))
-            (unless (or (eq pane active-pane)
-                        (pane-input-disabled pane))
-              (ignore-errors (pty-write (pane-fd pane) octets)))))))))
-
-;;; -- Main event loop --------------------------------------------------------
+;;;; Main event loop: resize/dirty handling, automatic window renaming, and the
+;;;; top-level read/dispatch/repaint cycle.
 
 (defun %handle-resize (session)
   "Re-read terminal geometry and relayout the active window after SIGWINCH."
@@ -224,18 +13,39 @@
   ;; client-resized hook: the client terminal changed size (SIGWINCH).
   (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-client-resized+))
 
+;;; ── Automatic window renaming ────────────────────────────────────────────────
+;;;
+;;; %maybe-rename-window-from-title is called once per dirty repaint and drives
+;;; a small fallback chain, each layer reading a different struct depending on
+;;; what information is available for the active pane:
+;;;
+;;;   %maybe-rename-window-from-title (session)
+;;;     reads the SESSION's active window/pane and the automatic-rename option;
+;;;     the entry point, called from %handle-dirty.
+;;;   %auto-rename-name (session window pane screen)
+;;;     reads the PANE's pid to decide whether a real process is running.
+;;;   %rename-from-format-string (session window pane screen)
+;;;     reads WINDOW/PANE via a FORMAT-CONTEXT to expand automatic-rename-format.
+;;;   %rename-from-osc-title (screen)
+;;;     reads only the SCREEN's OSC 0/2 title string — the final fallback when
+;;;     no process is running or the format expansion is empty.
+;;;
+;;; Precedence: automatic-rename-format (real process) → OSC 0/2 title (no
+;;; process, or empty format) → no rename (empty title too).
+
 (defun %rename-from-osc-title (screen allow-title)
-  "Return the OSC 0/2 screen title when ALLOW-TITLE is non-NIL and the title
-   is non-empty, otherwise return the empty string.
-   Used by %auto-rename-name as a fallback when no real process is running or
-   when the automatic-rename-format expansion yields an empty result."
+  "Return the OSC 0/2 title recorded on SCREEN when ALLOW-TITLE is non-NIL and
+   the title is non-empty, otherwise return the empty string.
+   Final fallback of the rename chain: used by %auto-rename-name when no real
+   process is running, and by %rename-from-format-string when the
+   automatic-rename-format expansion yields an empty result."
   (if allow-title
       (let ((title (screen-title screen)))
         (if (plusp (length title)) title ""))
       ""))
 
 (defun %rename-from-format-string (session window pane screen allow-title)
-  "Expand automatic-rename-format for a real-PTY pane and return the result.
+  "Expand automatic-rename-format for a real-PTY PANE and return the result.
    Falls back to (%rename-from-osc-title screen allow-title) when the format
    expansion yields an empty string."
   (let* ((format-string (or (cl-tmux/options:get-option "automatic-rename-format")
@@ -247,8 +57,8 @@
         (%rename-from-osc-title screen allow-title))))
 
 (defun %auto-rename-name (session window pane screen &key (allow-title t))
-  "Compute the new automatic window name using automatic-rename-format option.
-   For panes with no real process (pid <= 0), prefer the OSC 0/2 screen title
+  "Compute the new automatic window name for WINDOW using automatic-rename-format.
+   For a PANE with no real process (pid <= 0), prefer the OSC 0/2 SCREEN title
    directly; the format-string result would just be the shell basename fallback.
    Falls back to the OSC 0/2 screen title when the format yields an empty string.
    ALLOW-TITLE NIL (allow-rename off) suppresses the OSC-title fallback, so
@@ -260,9 +70,9 @@
         (%rename-from-osc-title screen allow-title))))
 
 (defun %maybe-rename-window-from-title (session)
-  "If automatic-rename is enabled for the active window, update its name using
-   automatic-rename-format (default: #{pane_current_command}).  Falls back to
-   the OSC 0/2 screen title.  Routed through RENAME-WINDOW for hooks."
+  "If automatic-rename is enabled for SESSION's active window, update its name
+   using automatic-rename-format (default: #{pane_current_command}).  Falls
+   back to the OSC 0/2 screen title.  Routed through RENAME-WINDOW for hooks."
   (let* ((active-pane   (session-active-pane session))
          (screen        (when active-pane (pane-screen active-pane)))
          (active-window (session-active-window session)))

@@ -4,11 +4,6 @@
 
 ;;; ── show-options helpers ──────────────────────────────────────────────────
 
-(defun %scope-ht (scope)
-  "Return the options hash-table for SCOPE: *server-options* when SCOPE is :server,
-   *global-options* otherwise."
-  (if (eq scope :server) *server-options* *global-options*))
-
 (defun %array-option-pairs (base scope)
   "Return sorted (NAME . VALUE) pairs for BASE[N] entries in SCOPE.
    Runtime values override registered defaults at the same index."
@@ -23,7 +18,7 @@
       (maphash (lambda (name spec)
                  (add-entry name (option-spec-default spec)))
                (%scope-registry scope))
-      (maphash #'add-entry (%scope-ht scope)))
+      (maphash #'add-entry (%scope-options scope)))
     (let ((indexed '()))
       (maphash (lambda (index pair)
                  (push (cons index pair) indexed))
@@ -70,7 +65,7 @@
    Output matches real tmux format: 'option-name value' (no Lisp quoting)."
   (with-output-to-string (s)
     (let ((pairs '()))
-      (maphash (lambda (k v) (push (cons k v) pairs)) (%scope-ht scope))
+      (maphash (lambda (k v) (push (cons k v) pairs)) (%scope-options scope))
       (dolist (pair (sort pairs #'string< :key #'car))
         (format s "~A ~A~%" (car pair) (%option-value-display-string (cdr pair)))))))
 
@@ -82,7 +77,7 @@
     ((not (option-present-for-display-p name scope))
      (format nil "invalid option: ~A~%" name))
     (t
-     (let ((val (gethash name (%scope-ht scope) :not-found)))
+     (let ((val (gethash name (%scope-options scope) :not-found)))
        (cond
          ((not (eq val :not-found))
           (format nil "~A ~A~%" name (%option-value-display-string val)))
@@ -92,22 +87,6 @@
               (format s "~A ~A~%" (car pair) (%option-value-display-string (cdr pair))))))
          (t
           (format nil "~A: (not set)~%" name)))))))
-
-(defun show-option-values (name &optional scope)
-  "Return NAME's raw value-only show-options -v output, or NIL when unset."
-  (let ((val (gethash name (%scope-ht scope) :not-found)))
-    (cond
-      ((not (eq val :not-found))
-       (%option-value-string val))
-      ((%array-option-p name scope)
-       (with-output-to-string (s)
-         (loop for pair in (%array-option-pairs name scope)
-               for first-p = t then nil
-               do (progn
-                    (unless first-p
-                      (terpri s))
-                    (write-string (%option-value-string (cdr pair)) s)))))
-      (t nil))))
 
 (defun %hash-present-p (key table)
   "Return true when KEY is present in TABLE, regardless of the stored value."

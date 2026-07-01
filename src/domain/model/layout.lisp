@@ -192,7 +192,6 @@
                          (make-layout-leaf (first panes))
                          (%build-flat-tree (rest panes) orientation))))
 
-;;; Layout persistence (serialization/deserialization) lives in layout-persistence.lisp,
+;;; Layout persistence (serialization) lives in layout-persistence.lisp,
 ;;; which is loaded immediately after this file.  That file defines:
-;;;   %layout-checksum, %split-bounding-box, %node->string, layout->string,
-;;;   %skip-checksum, %read-digits, %parse-split-body, %parse-node, string->layout.
+;;;   %layout-checksum, %split-bounding-box, %node->string, layout->string.

@@ -107,6 +107,53 @@
       (is (eq cb (prompt-on-submit *prompt*))
           "prompt-on-submit must return the exact function passed to prompt-start"))))
 
+(test prompt-on-change-and-on-cancel-accessors
+  "prompt-on-change and prompt-on-cancel return the exact callbacks passed to
+   prompt-start via :on-change and :on-cancel."
+  (with-clean-prompt
+    (let ((change-cb (lambda (s) (declare (ignore s)) nil))
+          (cancel-cb (lambda () nil)))
+      (prompt-start "p" "text" (make-noop-submit)
+                    :on-change change-cb :on-cancel cancel-cb)
+      (is (eq change-cb (prompt-on-change *prompt*))
+          "prompt-on-change must return the exact function passed to prompt-start")
+      (is (eq cancel-cb (prompt-on-cancel *prompt*))
+          "prompt-on-cancel must return the exact function passed to prompt-start"))))
+
+(test prompt-single-key-accessor
+  "prompt-single-key reflects the :single-key argument passed to prompt-start."
+  (with-clean-prompt
+    (prompt-start "p" "" (make-noop-submit) :single-key t)
+    (is-true (prompt-single-key *prompt*)
+             "prompt-single-key must be T when prompt-start is given :single-key t"))
+  (with-clean-prompt
+    (prompt-start "p" "" (make-noop-submit))
+    (is (null (prompt-single-key *prompt*))
+        "prompt-single-key must default to NIL when :single-key is not supplied")))
+
+(test prompt-vi-normal-p-accessor-defaults-and-setf
+  "prompt-vi-normal-p defaults to NIL on a fresh prompt and can be set with setf
+   (the events layer flips it when entering/leaving vi normal mode)."
+  (with-clean-prompt
+    (prompt-start "p" "" (make-noop-submit))
+    (is (null (prompt-vi-normal-p *prompt*))
+        "prompt-vi-normal-p must default to NIL")
+    (setf (prompt-vi-normal-p *prompt*) t)
+    (is-true (prompt-vi-normal-p *prompt*)
+             "setf on prompt-vi-normal-p must update the slot")))
+
+(test with-active-prompt-runs-body-only-when-active
+  "with-active-prompt binds its variable to *prompt* and runs BODY only when a
+   prompt is active; it is a no-op (returns NIL) when *prompt* is NIL."
+  (with-clean-prompt
+    (is (null (with-active-prompt (p) p :ran))
+        "with-active-prompt must not run BODY when *prompt* is NIL")
+    (prompt-start "p" "hi" (make-noop-submit))
+    (is (eq :ran (with-active-prompt (p) p :ran))
+        "with-active-prompt must run BODY and return its value when active")
+    (is (eq *prompt* (with-active-prompt (p) p))
+        "with-active-prompt must bind its variable to the current *prompt*")))
+
 (test prompt-history-prev-next-restores-in-progress-input
   "History navigation walks newest-first entries and Down restores current input."
   (with-clean-prompt
