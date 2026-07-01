@@ -12,16 +12,24 @@
    Prevents indefinite blocking on a hung or slow peer.
    This budget is shared across both the header and payload read phases.")
 
+(defconstant +send-frame-timeout-seconds+ 30
+  "Maximum seconds to wait for write-sequence and finish-output to complete
+   before aborting.  Mirrors +read-frame-timeout-seconds+ so send-frame is
+   self-contained: it does not rely solely on the caller's stream having been
+   constructed with its own timeout (e.g. cl-tmux/net:socket-stream).")
+
 (defconstant +max-frame-payload-bytes+ (* 64 1024 1024)
   "Maximum payload size (64 MiB) accepted by read-frame before rejecting.
    Prevents a malicious or buggy peer from triggering unbounded heap allocation.")
 
 (defun send-frame (stream frame)
   "Write FRAME (an octet vector produced by the cl-tmux/protocol msg-* helpers)
-   to binary STREAM and flush it."
+   to binary STREAM and flush it, within +send-frame-timeout-seconds+.
+   Signals SB-EXT:TIMEOUT when the peer is too slow to accept the write."
   (%validate-outgoing-frame frame)
-  (write-sequence frame stream)
-  (finish-output stream))
+  (sb-ext:with-timeout +send-frame-timeout-seconds+
+    (write-sequence frame stream)
+    (finish-output stream)))
 
 (defun %read-exact (buffer stream start end)
   "Fill BUFFER[START..END) from STREAM; return the actual number of bytes read.

@@ -13,28 +13,19 @@
    with recorders that push onto *main-calls*, run BODY with a fresh
    *main-calls*, then restore.  %ensure-server-running is stubbed to a no-op so
    tests do not probe or spawn real sockets."
-  `(let ((orig-server     (fdefinition 'cl-tmux::run-server))
-         (orig-client     (fdefinition 'cl-tmux::run-client))
-         (orig-standalone (fdefinition 'cl-tmux::run-standalone))
-         (orig-ensure     (fdefinition 'cl-tmux::%ensure-server-running))
-         (*main-calls* nil))
-     (unwind-protect
-          (progn
-            (setf (fdefinition 'cl-tmux::run-server)
-                  (lambda (&rest a) (push (cons :server a) *main-calls*)))
-            (setf (fdefinition 'cl-tmux::run-client)
-                  (lambda (&rest a) (push (cons :client a) *main-calls*)))
-            (setf (fdefinition 'cl-tmux::run-standalone)
-                  (lambda (&rest a) (push (cons :standalone a) *main-calls*)))
-            ;; Stub out the socket-probe / server-spawn so tests stay fast and
-            ;; sandboxed.  run-client is still called; attach tests check that.
-            (setf (fdefinition 'cl-tmux::%ensure-server-running)
-                  (lambda (&rest _) (declare (ignore _)) nil))
-            ,@body)
-       (setf (fdefinition 'cl-tmux::run-server)              orig-server)
-       (setf (fdefinition 'cl-tmux::run-client)              orig-client)
-	     (setf (fdefinition 'cl-tmux::run-standalone)          orig-standalone)
-	     (setf (fdefinition 'cl-tmux::%ensure-server-running)  orig-ensure))))
+  `(let ((*main-calls* nil))
+     (with-stubbed-fdefinition
+         ((cl-tmux::run-server
+           (lambda (&rest a) (push (cons :server a) *main-calls*)))
+          (cl-tmux::run-client
+           (lambda (&rest a) (push (cons :client a) *main-calls*)))
+          (cl-tmux::run-standalone
+           (lambda (&rest a) (push (cons :standalone a) *main-calls*)))
+          ;; Stub out the socket-probe / server-spawn so tests stay fast and
+          ;; sandboxed.  run-client is still called; attach tests check that.
+          (cl-tmux::%ensure-server-running
+           (lambda (&rest _) (declare (ignore _)) nil)))
+       ,@body)))
 
 (test application-argv-strips-sbcl-wrapper-options
   "%application-argv drops SBCL saved-core wrapper options before dispatch."
@@ -63,21 +54,19 @@
 
 (test dispatch-main-from-sbcl-wrapper-argv
   "main routes argv correctly when the saved core is launched through SBCL options."
-  (let ((orig-list-commands (fdefinition 'cl-tmux::run-list-commands)))
-    (unwind-protect
-         (let ((*main-calls* nil))
-           (setf (fdefinition 'cl-tmux::run-list-commands)
-                 (lambda (&rest a) (push (cons :list-commands a) *main-calls*)))
-           (let ((sb-ext:*posix-argv*
-                   (list "sbcl" "--noinform" "--core" "/nix/store/core"
-                         "--no-sysinit" "--no-userinit"
-                         "list-commands" "-F" "#{command_list_name}")))
-             (cl-tmux::main))
-           (is (= 1 (length *main-calls*)))
-           (is (eq :list-commands (car (first *main-calls*))))
-           (is (equal '(("-F" "#{command_list_name}"))
-                      (cdr (first *main-calls*)))))
-      (setf (fdefinition 'cl-tmux::run-list-commands) orig-list-commands))))
+  (let ((*main-calls* nil))
+    (with-stubbed-fdefinition
+        ((cl-tmux::run-list-commands
+          (lambda (&rest a) (push (cons :list-commands a) *main-calls*))))
+      (let ((sb-ext:*posix-argv*
+              (list "sbcl" "--noinform" "--core" "/nix/store/core"
+                    "--no-sysinit" "--no-userinit"
+                    "list-commands" "-F" "#{command_list_name}")))
+        (cl-tmux::main))
+      (is (= 1 (length *main-calls*)))
+      (is (eq :list-commands (car (first *main-calls*))))
+      (is (equal '(("-F" "#{command_list_name}"))
+                 (cdr (first *main-calls*)))))))
 
 ;;; ── attach-session dispatch ──────────────────────────────────────────────────
 
@@ -264,16 +253,13 @@
 
 (test dispatch-control-mode-flag
   "argv (cl-tmux -C) routes to run-control-mode."
-  (let ((orig   (fdefinition 'cl-tmux::run-control-mode))
-        (called nil))
-    (unwind-protect
-         (progn
-           (setf (fdefinition 'cl-tmux::run-control-mode)
-                 (lambda (&rest a) (declare (ignore a)) (setf called t)))
-           (let ((sb-ext:*posix-argv* (list "cl-tmux" "-C")))
-             (cl-tmux::main))
-           (is-true called "main with -C must call run-control-mode"))
-      (setf (fdefinition 'cl-tmux::run-control-mode) orig))))
+  (let ((called nil))
+    (with-stubbed-fdefinition
+        ((cl-tmux::run-control-mode
+          (lambda (&rest a) (declare (ignore a)) (setf called t))))
+      (let ((sb-ext:*posix-argv* (list "cl-tmux" "-C")))
+        (cl-tmux::main))
+      (is-true called "main with -C must call run-control-mode"))))
 
 ;;; ── Coverage: stub handler functions ─────────────────────────────────────────
 ;;;
@@ -302,21 +288,14 @@
 (defmacro with-stubbed-server (server-name (forwarded-var exit-code-var) &body body)
   "Stub %running-server-name → SERVER-NAME, run-command-client → captures FORWARDED-VAR.
    FORWARDED-VAR and EXIT-CODE-VAR are fresh bindings visible in BODY."
-  (let ((orig-running (gensym "ORIG-RUNNING"))
-        (orig-command (gensym "ORIG-COMMAND")))
-    `(let ((,orig-running (fdefinition 'cl-tmux::%running-server-name))
-           (,orig-command (fdefinition 'cl-tmux::run-command-client))
-           (,forwarded-var nil)
-           ,exit-code-var)
-       (unwind-protect
-            (progn
-              (setf (fdefinition 'cl-tmux::%running-server-name)
-                    (lambda (&optional preferred) (declare (ignore preferred)) ,server-name))
-              (setf (fdefinition 'cl-tmux::run-command-client)
-                    (lambda (name args) (setf ,forwarded-var (list name args))))
-              ,@body)
-         (setf (fdefinition 'cl-tmux::%running-server-name) ,orig-running)
-         (setf (fdefinition 'cl-tmux::run-command-client) ,orig-command)))))
+  `(let ((,forwarded-var nil)
+         ,exit-code-var)
+     (with-stubbed-fdefinition
+         ((cl-tmux::%running-server-name
+           (lambda (&optional preferred) (declare (ignore preferred)) ,server-name))
+          (cl-tmux::run-command-client
+           (lambda (name args) (setf ,forwarded-var (list name args)))))
+       ,@body)))
 
 (test run-commands-exit-when-no-server
   "Without a server, all client commands exit with code 1."
@@ -358,64 +337,44 @@
 
 (test run-new-session-forwards-full-argv-when-server-exists
   "run-new-session preserves tmux flags by forwarding the full argv to the server."
-  (let ((orig-running (fdefinition 'cl-tmux::%running-server-name))
-        (orig-command (fdefinition 'cl-tmux::run-command-client))
-        (orig-client  (fdefinition 'cl-tmux::run-client))
-        (forwarded nil)
+  (let ((forwarded nil)
         (attached nil))
-    (unwind-protect
-         (progn
-           (setf (fdefinition 'cl-tmux::%running-server-name)
-                 (lambda (&optional preferred)
-                   (declare (ignore preferred))
-                   "0"))
-           (setf (fdefinition 'cl-tmux::run-command-client)
-                 (lambda (name args)
-                   (setf forwarded (list name args))))
-           (setf (fdefinition 'cl-tmux::run-client)
-                 (lambda (&rest args)
-                   (setf attached args)))
-           (cl-tmux::run-new-session '("-s" "work" "-n" "shell" "-c" "/tmp" "-d"))
-           (is (equal '("0" ("new-session" "-s" "work" "-n" "shell" "-c" "/tmp" "-d"))
-                      forwarded)
-               "new-session must forward all original flags")
-           (is (null attached)
-               "-d must not attach after forwarding"))
-      (setf (fdefinition 'cl-tmux::%running-server-name) orig-running)
-      (setf (fdefinition 'cl-tmux::run-command-client) orig-command)
-      (setf (fdefinition 'cl-tmux::run-client) orig-client))))
+    (with-stubbed-fdefinition
+        ((cl-tmux::%running-server-name
+          (lambda (&optional preferred) (declare (ignore preferred)) "0"))
+         (cl-tmux::run-command-client
+          (lambda (name args) (setf forwarded (list name args))))
+         (cl-tmux::run-client
+          (lambda (&rest args) (setf attached args))))
+      (cl-tmux::run-new-session '("-s" "work" "-n" "shell" "-c" "/tmp" "-d"))
+      (is (equal '("0" ("new-session" "-s" "work" "-n" "shell" "-c" "/tmp" "-d"))
+                 forwarded)
+          "new-session must forward all original flags")
+      (is (null attached)
+          "-d must not attach after forwarding"))))
 
 (test run-new-session-discovers-existing-server-before-session-name
   "run-new-session -s NAME creates a session in the existing server, not a new NAME socket."
-  (let ((orig-running (fdefinition 'cl-tmux::%running-server-name))
-        (orig-command (fdefinition 'cl-tmux::run-command-client))
-        (orig-ensure (fdefinition 'cl-tmux::%ensure-server-running))
-        (forwarded nil)
+  (let ((forwarded nil)
         (ensured nil)
         (probes '()))
-    (unwind-protect
-         (progn
-           (setf (fdefinition 'cl-tmux::%running-server-name)
-                 (lambda (&optional preferred)
-                   (push preferred probes)
-                   (and (null preferred) "alpha")))
-           (setf (fdefinition 'cl-tmux::run-command-client)
-                 (lambda (name args)
-                   (setf forwarded (list name args))))
-           (setf (fdefinition 'cl-tmux::%ensure-server-running)
-                 (lambda (name)
-                   (setf ensured name)))
-           (cl-tmux::run-new-session '("-d" "-s" "beta" "-n" "two"))
-           (is (equal '("alpha" ("new-session" "-d" "-s" "beta" "-n" "two"))
-                      forwarded)
-               "new-session must forward to the already-running server")
-           (is (null ensured)
-               "new-session must not start a second server named after -s")
-           (is (equal '(nil) (reverse probes))
-               "new-session should discover any running server before treating -s as a socket name"))
-      (setf (fdefinition 'cl-tmux::%running-server-name) orig-running)
-      (setf (fdefinition 'cl-tmux::run-command-client) orig-command)
-      (setf (fdefinition 'cl-tmux::%ensure-server-running) orig-ensure))))
+    (with-stubbed-fdefinition
+        ((cl-tmux::%running-server-name
+          (lambda (&optional preferred)
+            (push preferred probes)
+            (and (null preferred) "alpha")))
+         (cl-tmux::run-command-client
+          (lambda (name args) (setf forwarded (list name args))))
+         (cl-tmux::%ensure-server-running
+          (lambda (name) (setf ensured name))))
+      (cl-tmux::run-new-session '("-d" "-s" "beta" "-n" "two"))
+      (is (equal '("alpha" ("new-session" "-d" "-s" "beta" "-n" "two"))
+                 forwarded)
+          "new-session must forward to the already-running server")
+      (is (null ensured)
+          "new-session must not start a second server named after -s")
+      (is (equal '(nil) (reverse probes))
+          "new-session should discover any running server before treating -s as a socket name"))))
 
 (test run-source-file-nonexistent-path-exits-cleanly
   "run-source-file with a nonexistent path exits cleanly (code 0)."
@@ -572,28 +531,25 @@
    editor-derived mode-keys, wires the terminal option callbacks, and calls
    load-config-file."
   (with-isolated-options ()
-    (let ((orig-load        (fdefinition 'cl-tmux::load-config-file))
-          (load-called      nil)
-          (old-evaluator    cl-tmux/config:*config-condition-evaluator*)
-          (old-history-fn   cl-tmux/terminal:*history-limit-function*)
-          (old-altscreen-fn cl-tmux/terminal:*alternate-screen-enabled-function*)
-          (old-scroll-fn    cl-tmux/terminal:*scroll-on-clear-function*))
-      (unwind-protect
-           (progn
-             (setf (fdefinition 'cl-tmux::load-config-file)
-                   (lambda (&rest args) (declare (ignore args)) (setf load-called t) 0))
-             (cl-tmux::%initialize-session-environment)
-             (is-true load-called
-                      "%initialize-session-environment must call load-config-file")
-             (is (functionp cl-tmux/config:*config-condition-evaluator*)
-                 "*config-condition-evaluator* must be wired to a function")
-             (is (functionp cl-tmux/terminal:*history-limit-function*)
-                 "*history-limit-function* must be wired to a function"))
-        (setf (fdefinition 'cl-tmux::load-config-file) orig-load)
-        (setf cl-tmux/config:*config-condition-evaluator* old-evaluator)
-        (setf cl-tmux/terminal:*history-limit-function* old-history-fn)
-        (setf cl-tmux/terminal:*alternate-screen-enabled-function* old-altscreen-fn)
-        (setf cl-tmux/terminal:*scroll-on-clear-function* old-scroll-fn)))))
+    (let ((load-called nil)
+          (cl-tmux/config:*config-condition-evaluator*
+            cl-tmux/config:*config-condition-evaluator*)
+          (cl-tmux/terminal:*history-limit-function*
+            cl-tmux/terminal:*history-limit-function*)
+          (cl-tmux/terminal:*alternate-screen-enabled-function*
+            cl-tmux/terminal:*alternate-screen-enabled-function*)
+          (cl-tmux/terminal:*scroll-on-clear-function*
+            cl-tmux/terminal:*scroll-on-clear-function*))
+      (with-stubbed-fdefinition
+          ((cl-tmux::load-config-file
+            (lambda (&rest args) (declare (ignore args)) (setf load-called t) 0)))
+        (cl-tmux::%initialize-session-environment)
+        (is-true load-called
+                 "%initialize-session-environment must call load-config-file")
+        (is (functionp cl-tmux/config:*config-condition-evaluator*)
+            "*config-condition-evaluator* must be wired to a function")
+        (is (functionp cl-tmux/terminal:*history-limit-function*)
+            "*history-limit-function* must be wired to a function")))))
 
 ;;; ── %apply-editor-mode-keys ────────────────────────────────────────────────────
 
@@ -601,31 +557,25 @@
   "%apply-editor-mode-keys sets status-keys/mode-keys to \"vi\" when $VISUAL
    names a vi-like editor."
   (with-isolated-options ()
-    (let ((orig-getenv (fdefinition 'cl-tmux::%safe-getenv)))
-      (unwind-protect
-           (progn
-             (setf (fdefinition 'cl-tmux::%safe-getenv)
-                   (lambda (name) (if (string= name "VISUAL") "/usr/bin/vim" "")))
-             (cl-tmux::%apply-editor-mode-keys)
-             (is (string= "vi" (cl-tmux/options:get-option "status-keys"))
-                 "status-keys must be set to \"vi\"")
-             (is (string= "vi" (cl-tmux/options:get-option "mode-keys"))
-                 "mode-keys must be set to \"vi\""))
-        (setf (fdefinition 'cl-tmux::%safe-getenv) orig-getenv)))))
+    (with-stubbed-fdefinition
+        ((cl-tmux::%safe-getenv
+          (lambda (name) (if (string= name "VISUAL") "/usr/bin/vim" ""))))
+      (cl-tmux::%apply-editor-mode-keys)
+      (is (string= "vi" (cl-tmux/options:get-option "status-keys"))
+          "status-keys must be set to \"vi\"")
+      (is (string= "vi" (cl-tmux/options:get-option "mode-keys"))
+          "mode-keys must be set to \"vi\""))))
 
 (test apply-editor-mode-keys-no-op-when-no-editor-env
   "%apply-editor-mode-keys leaves the registry defaults untouched when neither
    $VISUAL nor $EDITOR is set."
   (with-isolated-options ()
-    (let ((orig-getenv (fdefinition 'cl-tmux::%safe-getenv))
-          (before (cl-tmux/options:get-option "mode-keys")))
-      (unwind-protect
-           (progn
-             (setf (fdefinition 'cl-tmux::%safe-getenv) (lambda (name) (declare (ignore name)) ""))
-             (cl-tmux::%apply-editor-mode-keys)
-             (is (equal before (cl-tmux/options:get-option "mode-keys"))
-                 "mode-keys must be unchanged when no editor env var is set"))
-        (setf (fdefinition 'cl-tmux::%safe-getenv) orig-getenv)))))
+    (let ((before (cl-tmux/options:get-option "mode-keys")))
+      (with-stubbed-fdefinition
+          ((cl-tmux::%safe-getenv (lambda (name) (declare (ignore name)) "")))
+        (cl-tmux::%apply-editor-mode-keys)
+        (is (equal before (cl-tmux/options:get-option "mode-keys"))
+            "mode-keys must be unchanged when no editor env var is set")))))
 
 ;;; ── %die-with-message ─────────────────────────────────────────────────────────
 

@@ -86,6 +86,10 @@
    extended colour, rather than dropping everything after the leading value.")
 (defconstant +csi-dec-marker+  #x3F "DEC private-mode marker '?'.")
 (defconstant +csi-sec-da+      #x3E "Secondary DA marker '>'.")
+(defconstant +csi-xtpoptitle-marker+ #x3C
+  "ECMA-48 private-parameter marker '<' (e.g. CSI < Ps t, XTPOPTITLE).")
+(defconstant +csi-tertiary-da-marker+ #x3D
+  "ECMA-48 private-parameter marker '=' (e.g. CSI = c, tertiary DA / DA3).")
 (defconstant +csi-intermed-low+  #x20 "Lowest CSI intermediate byte (SPACE).")
 (defconstant +csi-intermed-high+ #x2F "Highest CSI intermediate byte.")
 (defconstant +csi-final-low+   #x40 "Lowest valid CSI final byte '@'.")
@@ -94,9 +98,13 @@
 (declaim (inline csi-final-byte-before-p csi-final-byte-p))
 
 (defun csi-final-byte-before-p (byte)
+  "Return T when BYTE precedes the CSI final-byte range (i.e. still a
+   parameter, intermediate, or marker byte — the sequence is incomplete)."
   (< byte +csi-final-low+))
 
 (defun csi-final-byte-p (byte)
+  "Return T when BYTE falls within the CSI final-byte range
+   (+csi-final-low+ to +csi-final-high+), i.e. it terminates the sequence."
   (<= +csi-final-low+ byte +csi-final-high+))
 
 ;;; ── Parameterized state constructors ───────────────────────────────────────
@@ -109,6 +117,17 @@
   (if subparams
       (nreverse (cons (or param-accumulator 0) subparams))
       (or param-accumulator 0)))
+
+(defun %csi-dispatch-final-byte (screen byte intermed private params param-accumulator subparams)
+  "Flush the trailing parameter (if any), reverse the collected PARAMS into
+   final CSI dispatch order, and call EXECUTE-CSI with the assembled sequence.
+   Called by make-csi-k's continuation once a final byte (0x40-0x7E) closes
+   the sequence.  Always returns #'GROUND-STATE."
+  (let ((all-params (nreverse (if (or param-accumulator subparams)
+                                   (cons (%finish-param param-accumulator subparams) params)
+                                   params))))
+    (execute-csi screen (code-char byte) intermed private all-params))
+  #'ground-state)
 
 (defun make-csi-k (&optional (params '()) (param-accumulator nil) (intermed nil)
                              (private nil) (subparams nil))
@@ -160,9 +179,9 @@
       ;; e.g. CSI < Ps t (XTPOPTITLE), CSI = c (tertiary DA / DA3).  Recorded in
       ;; PRIVATE like ? and >.  Without these, the byte hit the catch-all and
       ;; ABORTED the sequence, leaving the final byte to print as a stray char.
-      ((= byte #x3C)
+      ((= byte +csi-xtpoptitle-marker+)
        (make-csi-k params param-accumulator intermed #\< subparams))
-      ((= byte #x3D)
+      ((= byte +csi-tertiary-da-marker+)
        (make-csi-k params param-accumulator intermed #\= subparams))
       ;; Intermediate bytes (SPACE through 0x2F): record as intermed.
       ;; SPACE (#x20) is the most common (used by DECSCUSR "CSI N SP q");
@@ -171,30 +190,26 @@
        (make-csi-k params param-accumulator (code-char byte) private subparams))
       ;; Final byte (0x40-0x7E): flush accumulator, reverse collected params, dispatch.
       ((csi-final-byte-p byte)
-       (let ((all-params (nreverse (if (or param-accumulator subparams)
-                                       (cons (%finish-param param-accumulator subparams)
-                                             params)
-                                       params))))
-         (execute-csi screen (code-char byte) intermed private all-params))
-       #'ground-state)
+       (%csi-dispatch-final-byte screen byte intermed private params
+                                  param-accumulator subparams))
       ;; Anything else: abort CSI (e.g. C0 controls inside a sequence).
       (t #'ground-state))))
 
-(defun make-utf8-k (utf8-acc continuation-bytes-remaining)
+(defun make-utf8-k (code-point-accumulator continuation-bytes-remaining)
   "Return a continuation that collects UTF-8 continuation bytes.
-   UTF8-ACC is the accumulator built from the lead byte.
+   CODE-POINT-ACCUMULATOR is the accumulator built from the lead byte.
    CONTINUATION-BYTES-REMAINING is the count of continuation bytes still needed.
    On the final continuation byte the assembled code point is written to screen."
-  (declare (type fixnum utf8-acc continuation-bytes-remaining))
+  (declare (type fixnum code-point-accumulator continuation-bytes-remaining))
   (lambda (screen byte)
     (declare (type screen screen) (type (unsigned-byte 8) byte))
     (if (utf8-continuation-p byte)
-        (let ((new-acc      (logior (ash utf8-acc 6) (logand byte #x3F)))
-              (bytes-left   (1- continuation-bytes-remaining)))
+        (let ((updated-accumulator (logior (ash code-point-accumulator 6) (logand byte #x3F)))
+              (bytes-left          (1- continuation-bytes-remaining)))
           (if (zerop bytes-left)
-              (progn (write-codepoint screen new-acc)
+              (progn (write-codepoint screen updated-accumulator)
                      #'ground-state)
-              (make-utf8-k new-acc bytes-left)))
+              (make-utf8-k updated-accumulator bytes-left)))
         ;; Malformed: emit U+FFFD, re-process this byte in ground state
         (progn
           (write-codepoint screen #xFFFD)
@@ -226,8 +241,9 @@
    #'ground-state)
   ;; ── Multi-byte UTF-8 ────────────────────────────────────────────────────
   (utf8-lead-p
-   (multiple-value-bind (utf8-acc continuation-bytes-remaining) (utf8-lead-decode byte)
-     (make-utf8-k utf8-acc continuation-bytes-remaining)))
+   (multiple-value-bind (code-point-accumulator continuation-bytes-remaining)
+       (utf8-lead-decode byte)
+     (make-utf8-k code-point-accumulator continuation-bytes-remaining)))
   ;; ── Invalid / stray continuation byte ───────────────────────────────────
   ((>= byte #x80)
    (write-codepoint screen #xFFFD)
@@ -275,12 +291,12 @@
   ;; Bare BEL and bare ESC with empty payload are handled as no-ops.
   (#x07  #'ground-state)                           ; bare BEL with empty payload
   (#x1B  #'osc-st-state)                           ; possible ST = ESC \ with empty payload
-  (t     (let ((buf (make-array 64
-                                :element-type '(unsigned-byte 8)
-                                :fill-pointer 0
-                                :adjustable t)))
-           (vector-push-extend byte buf)
-           (make-osc-k buf))))
+  (t     (let ((payload-buffer (make-array 64
+                                           :element-type '(unsigned-byte 8)
+                                           :fill-pointer 0
+                                           :adjustable t)))
+           (vector-push-extend byte payload-buffer)
+           (make-osc-k payload-buffer))))
 
 ;;; osc-st-state is an internal state used to await the backslash of ESC \
 ;;; (String Terminator) with an empty OSC payload.  It is not exported because

@@ -11,6 +11,37 @@
 (def-suite server-multi-suite :description "Multi-client select-multiplexed server")
 (in-suite server-multi-suite)
 
+;;; ── %client-fds / %client-size-reduce: pure registry helpers ─────────────────
+
+(test client-fds-returns-fd-of-every-attached-client
+  "%client-fds returns the socket fd of every entry in *clients*, in order."
+  (let ((cl-tmux::*clients*
+          (list (cl-tmux::%make-client-conn :fd 11)
+                (cl-tmux::%make-client-conn :fd 22)
+                (cl-tmux::%make-client-conn :fd 33))))
+    (is (equal '(11 22 33) (cl-tmux::%client-fds))
+        "%client-fds must list the fds in *clients* order")))
+
+(test client-fds-empty-when-no-clients
+  "%client-fds returns NIL when no clients are attached."
+  (let ((cl-tmux::*clients* nil))
+    (is (null (cl-tmux::%client-fds))
+        "%client-fds on an empty registry must return NIL")))
+
+(test client-size-reduce-applies-fn-across-rows-and-cols
+  "%client-size-reduce applies the given reducing FN independently across every
+   attached client's rows and cols."
+  (let ((cl-tmux::*clients*
+          (list (cl-tmux::%make-client-conn :rows 50 :cols 80)
+                (cl-tmux::%make-client-conn :rows 24 :cols 200)
+                (cl-tmux::%make-client-conn :rows 40 :cols 120))))
+    (multiple-value-bind (min-rows min-cols) (cl-tmux::%client-size-reduce #'min)
+      (check-table (list (list min-rows 24  "min reduce → smallest rows")
+                         (list min-cols 80  "min reduce → smallest cols"))))
+    (multiple-value-bind (max-rows max-cols) (cl-tmux::%client-size-reduce #'max)
+      (check-table (list (list max-rows 50  "max reduce → largest rows")
+                         (list max-cols 200 "max reduce → largest cols"))))))
+
 ;;; ── %effective-client-size: smallest attached client ─────────────────────────
 
 (test multi-effective-size-is-smallest-client
@@ -265,6 +296,68 @@
       (is-false cl-tmux::*running*
                 "kill-server command implementation clears *running*"))))
 
+;;; ── %server-split-window-input-command-p / %forwarded-command-tokens ─────────
+;;;
+;;; Pure helpers behind %dispatch-forwarded-command — table-driven since each
+;;; case differs only in input/expected output, no live socket required.
+
+(test server-split-window-input-command-p-table
+  "%server-split-window-input-command-p is true only for :split-window/:splitw
+   carrying a flag token that contains the character I."
+  (dolist (row `((:split-window ("-I")   t   "split-window -I")
+                 (:splitw       ("-I")   t   "splitw alias -I")
+                 (:split-window ("-Iv")  t   "-Iv combined flag contains I")
+                 (:split-window ("-v")   nil "split-window without -I")
+                 (:split-window ()       nil "split-window no flags")
+                 (:new-window   ("-I")   nil "different command with -I")))
+    (destructuring-bind (cmd args expected description) row
+      (let ((got (if (cl-tmux::%server-split-window-input-command-p cmd args) t nil)))
+        (is (eq expected got)
+            "~A: expected ~S got ~S" description expected got)))))
+
+(test forwarded-command-tokens-with-target-and-args
+  "%forwarded-command-tokens reconstructs <name> -t <target> args... exactly as
+   the interactive command-prompt would have typed it."
+  (is (equal '("select-window" "-t" "beta" "-a" "-b")
+             (cl-tmux::%forwarded-command-tokens :select-window "beta" '("-a" "-b")))
+      "cmd/target/args must reconstruct in name, -t target, args order"))
+
+(test forwarded-command-tokens-without-target
+  "%forwarded-command-tokens omits the -t clause entirely when TARGET is NIL."
+  (is (equal '("next-window")
+             (cl-tmux::%forwarded-command-tokens :next-window nil nil))
+      "a NIL target must produce no -t tokens, only the command name"))
+
+;;; ── %reply-with-command-output: no-op without a live socket ──────────────────
+
+(test reply-with-command-output-noop-for-socketless-conn
+  "%reply-with-command-output is a safe no-op for a CLIENT-CONN with no live
+   stream (the socket-less test conn) — it must not signal."
+  (let ((conn (%make-test-conn)))
+    (finishes (cl-tmux::%reply-with-command-output conn))))
+
+(test reply-with-command-output-sends-overlay-text
+  "%reply-with-command-output sends the current cl-tmux/prompt:*overlay* text as
+   a +msg-reply+ frame on CONN's live stream."
+  (with-test-listener (listener path (%test-socket-path "reply-helper") :backlog 4)
+    (let* ((client      (cl-tmux/net:connect-to path))
+           (server-sock (cl-tmux/net:accept-connection listener)))
+      (when server-sock
+        (let ((conn (cl-tmux::%make-client-conn :socket server-sock
+                                                 :stream (cl-tmux/net:socket-stream server-sock)
+                                                 :fd     (cl-tmux/net:socket-fd server-sock))))
+          (let ((cl-tmux/prompt:*overlay* "reply-text"))
+            (cl-tmux::%reply-with-command-output conn))
+          (let ((ready (cl-tmux/pty:select-fds
+                        (list (cl-tmux/net:socket-fd client)) 1000000)))
+            (is-true ready "a reply frame must arrive")
+            (when ready
+              (multiple-value-bind (type payload)
+                  (cl-tmux::read-frame (cl-tmux/net:socket-stream client))
+                (is (eql cl-tmux::+msg-reply+ type) "the frame must be +msg-reply+")
+                (is (string= "reply-text" (cl-tmux::decode-text payload))
+                    "the reply payload must carry the overlay text")))))))))
+
 ;;; ── %drop-client: registry removal ───────────────────────────────────────────
 
 (test multi-drop-client-removes-from-registry
@@ -278,6 +371,68 @@
       ;; Idempotent: dropping again is a no-op.
       (cl-tmux::%drop-client a)
       (is (equal (list b) cl-tmux::*clients*) "double-drop is a safe no-op"))))
+
+;;; ── %accept-pending-connection: listener-fd accept helper ───────────────────
+
+(test accept-pending-connection-registers-client-when-listener-ready
+  "%accept-pending-connection accepts and registers a new client when the
+   listener fd appears in READY."
+  (with-isolated-hooks
+    (with-test-listener (listener path (%test-socket-path "accept-helper") :backlog 4)
+      (let* ((listener-fd (cl-tmux/net:socket-fd listener))
+             (cl-tmux::*clients* nil)
+             (peer (cl-tmux/net:connect-to path)))
+        (unwind-protect
+             (progn
+               ;; Give the connection a moment to become acceptable.
+               (cl-tmux/pty:select-fds (list listener-fd) 1000000)
+               (cl-tmux::%accept-pending-connection listener listener-fd (list listener-fd))
+               (is (= 1 (length cl-tmux::*clients*))
+                   "a ready listener fd must register exactly one new client"))
+          (ignore-errors (cl-tmux/net:close-socket peer)))))))
+
+(test accept-pending-connection-noop-when-listener-not-ready
+  "%accept-pending-connection does nothing when the listener fd is absent from
+   READY — no client is registered."
+  (with-isolated-hooks
+    (with-test-listener (listener path (%test-socket-path "accept-helper-noop") :backlog 4)
+      (let ((listener-fd (cl-tmux/net:socket-fd listener))
+            (cl-tmux::*clients* nil))
+        (cl-tmux::%accept-pending-connection listener listener-fd nil)
+        (is (null cl-tmux::*clients*)
+            "an unready listener fd must not register any client")))))
+
+;;; ── %dispatch-ready-clients: per-iteration client dispatch ───────────────────
+
+(test dispatch-ready-clients-skips-clients-not-in-ready-set
+  "%dispatch-ready-clients does not touch a client whose fd is absent from READY."
+  (with-fake-session (s)
+    (let* ((conn (%make-test-conn))
+           (cl-tmux::*clients* (list conn)))
+      (setf (cl-tmux::client-conn-fd conn) 4242)
+      (is (null (cl-tmux::%dispatch-ready-clients s nil))
+          "no ready fds → NIL, no client is dispatched")
+      (is (equal (list conn) cl-tmux::*clients*)
+          "an unready client must remain untouched in the registry"))))
+
+(test dispatch-ready-clients-drops-client-on-eof
+  "%dispatch-ready-clients drops a client whose stream yields EOF (a real closed
+   socket), removing it from *clients*."
+  (with-isolated-hooks
+    (with-fake-session (s)
+      (with-test-listener (listener path (%test-socket-path "dispatch-helper") :backlog 4)
+        (let* ((client      (cl-tmux/net:connect-to path))
+               (server-sock (cl-tmux/net:accept-connection listener))
+               (cl-tmux::*clients* nil))
+          (when server-sock
+            (let ((conn (cl-tmux::%add-client server-sock)))
+              ;; Client half-closes: server-side read now sees EOF.
+              (cl-tmux/net:close-socket client)
+              (let ((ready (list (cl-tmux::client-conn-fd conn))))
+                (is (null (cl-tmux::%dispatch-ready-clients s ready))
+                    "an EOF dispatch keeps serving (returns NIL, not :quit)")
+                (is (null cl-tmux::*clients*)
+                    "the EOF'd client must be dropped from the registry")))))))))
 
 ;;; ── Command client: forwards a command to the server ────────────────────────
 

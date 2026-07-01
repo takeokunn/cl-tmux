@@ -59,19 +59,7 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
   (+hook-window-unlinked+        "window-unlinked"        "Fired when a window is unlinked from a session")
   (+hook-session-closed+         "session-closed"         "Fired when a session is destroyed (kill-session)")
   (+hook-pane-output+            "pane-output"            "Fired when a pane receives PTY output (args: pane bytes)")
-  (+hook-pane-died+              "pane-died"              "Fired when a pane's program exits and remain-on-exit keeps the pane visible")
-  (+hook-window-layout-changed+  "window-layout-changed"  "Fired when a window's layout changes")
-  (+hook-client-session-changed+ "client-session-changed"  "Fired when a client's attached session changes")
-  (+hook-pane-mode-changed+      "pane-mode-changed"      "Fired when a pane enters or leaves a mode (e.g. copy-mode)")
-  (+hook-client-focus-in+        "client-focus-in"        "Fired when the client terminal gains focus")
-  (+hook-client-focus-out+       "client-focus-out"       "Fired when the client terminal loses focus")
-  (+hook-command-error+          "command-error"          "Fired when a command fails with an error"))
-
-(defvar *hooks-error-handler* nil
-  "When non-NIL, a function (event-name condition) called whenever a hook
-   signals an error.  The error is still suppressed after the handler returns
-   so that remaining hooks for the same event continue to run.
-   When NIL (the default) hook errors are silently discarded.")
+  (+hook-pane-died+              "pane-died"              "Fired when a pane's program exits and remain-on-exit keeps the pane visible"))
 
 (defvar *hook-registry* (make-hash-table :test #'equal)
   "Maps event-name (string) to a list of callback functions.
@@ -93,14 +81,9 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
 (defun run-hooks (event-name &rest args)
   "Call each registered hook for EVENT-NAME with ARGS.
    Errors signalled by individual hooks are always suppressed so that a broken
-   hook never prevents the rest from running.  When *hooks-error-handler* is
-   non-NIL, it is called as (funcall *hooks-error-handler* event-name condition)
-   before suppression, allowing callers to log or surface errors at debug time."
+   hook never prevents the rest from running."
   (dolist (cb (gethash event-name *hook-registry*))
-    (handler-case (apply cb args)
-      (error (condition)
-        (when *hooks-error-handler*
-          (ignore-errors (funcall *hooks-error-handler* event-name condition))))))
+    (ignore-errors (apply cb args)))
   ;; Also fire .tmux.conf set-hook command hooks for this event, against the
   ;; session derived from the hook TARGET (the first arg — a session/window/pane).
   ;; This unifies the two hook registries so every event supports `set-hook`, not

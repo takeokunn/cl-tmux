@@ -507,8 +507,8 @@
     (cl-tmux::handle-prompt-key #xAC)
     (is (string= "€" (prompt-buffer *prompt*))
         "3-byte UTF-8 sequence must decode and insert € into prompt")
-    (is (zerop cl-tmux::*prompt-utf8-left*)
-        "UTF-8 continuation counter must reset to 0 once the sequence completes")))
+    (is (null cl-tmux::*prompt-utf8-continuation*)
+        "UTF-8 decode continuation must return to ground state (NIL) once the sequence completes")))
 
 (test handle-prompt-key-utf8-four-byte-sequence-inserts-char
   "A 4-byte UTF-8 sequence (U+1F600, grinning face) fed byte-by-byte into
@@ -545,8 +545,8 @@
         (cl-tmux::handle-prompt-key #xBF)))
     (is (string= "" (prompt-buffer *prompt*))
         "an undecodable code point must not be inserted into the prompt buffer")
-    (is (zerop cl-tmux::*prompt-utf8-left*)
-        "UTF-8 continuation counter must still reset to 0 after an invalid codepoint")))
+    (is (null cl-tmux::*prompt-utf8-continuation*)
+        "UTF-8 decode continuation must still return to ground state (NIL) after an invalid codepoint")))
 
 ;;; ── Event-loop per-iteration cycle ────────────────────────────────────────────
 ;;;

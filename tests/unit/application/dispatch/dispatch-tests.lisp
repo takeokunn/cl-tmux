@@ -1,6 +1,9 @@
 (in-package #:cl-tmux/test)
 
 ;;;; Command dispatch tests (src/application/dispatch/core/dispatch-core.lisp,
+;;;;                         src/application/dispatch/core/dispatch-core-targets.lisp,
+;;;;                         src/application/dispatch/core/dispatch-core-hooks.lisp,
+;;;;                         src/application/dispatch/core/dispatch-core-window-cmds.lisp,
 ;;;;                         src/application/dispatch/commands/dispatch-commands.lisp,
 ;;;;                         src/application/dispatch/commands/dispatch-commands-pane.lisp,
 ;;;;                         src/application/dispatch/commands/dispatch-commands-list.lisp,

@@ -158,6 +158,8 @@
    #:screen-resize
    ;; Bell consumption (logic layer — consume and clear bell-pending atomically)
    #:screen-consume-bell
+   ;; Queue draining (logic layer — atomically read and clear a queue slot)
+   #:screen-drain-queue
    ;; SGR pen reset (canonical, data layer; shared by actions and sgr layers)
    #:reset-sgr-pen))
 
@@ -271,7 +273,12 @@
    #:osc-state
    #:make-charset-designator-k
    #:*osc52-handler*
-   #:osc52-clipboard-sequence))
+   #:osc52-clipboard-sequence
+   ;; CSI final-byte-range predicates (ECMA-48 §5.4) — shared with the
+   ;; keystroke-escape decoder, which needs to recognise an in-progress vs.
+   ;; complete CSI sequence while accumulating raw input bytes.
+   #:csi-final-byte-before-p
+   #:csi-final-byte-p))
 
 (defpackage #:cl-tmux/terminal/emulator
   (:use #:cl
@@ -371,6 +378,8 @@
    #:screen-bell-pending
    ;; Bell consumption (logic layer)
    #:screen-consume-bell
+   ;; Queue draining (logic layer)
+   #:screen-drain-queue
    ;; Copy-mode search term
    #:screen-copy-search-term
    #:screen-copy-search-direction

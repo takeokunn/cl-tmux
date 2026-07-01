@@ -260,6 +260,32 @@
       (is (equal '("clip-a" "clip-b") items)
           "clipboard-queue must drain in push order"))))
 
+(test screen-drain-queue-reads-and-clears-atomically
+  "screen-drain-queue returns queued items in push order and clears the slot,
+   without the caller ever calling SETF on the queue slot directly."
+  (with-screen (s 10 5)
+    (push "pt-a" (cl-tmux/terminal/types:screen-passthrough-queue s))
+    (push "pt-b" (cl-tmux/terminal/types:screen-passthrough-queue s))
+    (let ((items (cl-tmux/terminal/types:screen-drain-queue
+                  s
+                  #'cl-tmux/terminal/types:screen-passthrough-queue
+                  (lambda (screen value)
+                    (setf (cl-tmux/terminal/types:screen-passthrough-queue screen) value)))))
+      (is (equal '("pt-a" "pt-b") items)
+          "screen-drain-queue must return items in push order")
+      (is (null (cl-tmux/terminal/types:screen-passthrough-queue s))
+          "screen-drain-queue must clear the queue slot as a side-effect"))))
+
+(test screen-drain-queue-empty-queue-returns-nil
+  "screen-drain-queue on an empty queue returns NIL without error."
+  (with-screen (s 10 5)
+    (is (null (cl-tmux/terminal/types:screen-drain-queue
+               s
+               #'cl-tmux/terminal/types:screen-clipboard-queue
+               (lambda (screen value)
+                 (setf (cl-tmux/terminal/types:screen-clipboard-queue screen) value))))
+        "draining an empty queue must return NIL")))
+
 ;;; ── SUITE: screen-palette-overrides direct slot ──────────────────────────────
 
 (def-suite palette-overrides-slot-suite

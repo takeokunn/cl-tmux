@@ -116,14 +116,14 @@
   (and (>= length 4)
        (= (aref buffer 1) +byte-csi-bracket+)
        (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)
-       (cl-tmux/terminal/parser::csi-final-byte-before-p
+       (cl-tmux/terminal/parser:csi-final-byte-before-p
         (aref buffer (1- length)))))
 
 (defun %escape-digit-leading-csi-complete-p (buffer length)
   (and (>= length 4)
        (= (aref buffer 1) +byte-csi-bracket+)
        (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)
-       (cl-tmux/terminal/parser::csi-final-byte-p
+       (cl-tmux/terminal/parser:csi-final-byte-p
         (aref buffer (1- length)))))
 
 (defun %escape-4byte-accumulating-p (buffer length)

@@ -18,7 +18,8 @@
      (:module "application/config"
       :serial t
       :components
-      ((:file "config")
+      ((:file "config-key-table-store") ; key-table storage primitives (bind/unbind/lookup)
+       (:file "config")
        (:file "config-tokenizer")    ; config tokenizer + key/command parse tables
        (:file "config-directives-macro")   ; generic directive-dispatch macro infra + posix/tilde/flag helpers
        (:file "config-bind-parsing")        ; bind/unbind-specific parsing + key-table dispatch
@@ -50,7 +51,7 @@
       :components
       ((:file "cell")         ; immutable cell type, char-width table
        (:file "screen")       ; screen struct (DATA layer): defstruct, grid helpers, resize
-       (:file "screen-logic") ; screen mutation helpers (LOGIC layer): screen-clear-dirty, screen-consume-bell, reset-sgr-pen
+       (:file "screen-logic") ; screen mutation helpers (LOGIC layer): screen-clear-dirty, screen-consume-bell, screen-drain-queue, reset-sgr-pen
        (:file "scroll")    ; row helpers + scroll-up/down + decstbm (loads before cursor/erase/edit)
        (:file "erase")     ; erase-region, erase-display, erase-line rule tables
        (:file "edit")      ; delete/insert chars+lines (uses %copy-row, %clear-row from scroll)
@@ -90,6 +91,7 @@
        (:file "format-iteration")  ; W:/S:/P: window/session/pane iteration expanders
        (:file "format-engine")     ; core %expand-brace, bracket/paren expanders, CPS processor, expand-format
        (:file "format-context-os-probe") ; OS probes (pgrep/ps/lsof/proc) for pane_current_command/pane_current_path
+       (:file "format-context-screen") ; pane-geometry/screen/client section builders (mechanical getter tables)
        (:file "format-context")))  ; context builder: model objects → expand-format plist
      (:module "domain/repository"
       :serial t
@@ -191,6 +193,9 @@
       :serial t
       :components
       ((:file "dispatch-core")            ; dispatch macros + core dispatch infrastructure
+       (:file "dispatch-core-targets")    ; target-string resolution helpers
+       (:file "dispatch-core-hooks")      ; command-hook dispatch helpers
+       (:file "dispatch-core-window-cmds") ; window/pane/split command factories
        (:file "dispatch-core-focus")      ; focus event delivery helpers
        (:file "dispatch-core-commands"))) ; copy-mode table, format helpers, new-session, named-command table (loads dispatch-command-specs* fragments)
      (:module "application/dispatch/handlers"
@@ -458,7 +463,8 @@
         :components
         ((:file "protocol-tests")  ; octets/frame-header/round-trips/msg-command — part I
          (:file "protocol-tests-b")  ; read-u32, split-on-nul, encode/decode-command-payload, target-field-p — part II
-         (:file "transport-tests")))
+         (:file "transport-tests")  ; round-trips, with-incoming-frame, %read-exact — part I
+         (:file "transport-tests-b")))  ; validation, security boundaries, CPS-phase direct coverage — part II
        (:module "bootstrap"
         :serial t
         :components

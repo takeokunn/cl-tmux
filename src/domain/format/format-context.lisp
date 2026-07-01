@@ -12,6 +12,11 @@
 ;;;; OS introspection (pgrep/ps for pane_current_command, lsof/proc for cwd)
 ;;;; lives in format-context-os-probe.lisp, a distinct I/O-probing concern from
 ;;;; the pure plist-building logic in this file.
+;;;;
+;;;; The context plist is assembled from six section builders.  The three
+;;;; model-facing builders (session / window / pane-structural) live in this
+;;;; file; the three more mechanical getter-table builders (pane-geometry /
+;;;; screen / client) live in format-context-screen.lisp.
 
 ;;; ── Context builder helpers ─────────────────────────────────────────────────
 
@@ -39,16 +44,6 @@
       ;; Z = zoomed
       (when (cl-tmux/model:window-zoom-p window)
         (write-char #\Z s)))))
-
-(defun %current-time-string ()
-  "Return HH:MM string from the system clock."
-  (multiple-value-bind (sec min hour) (get-decoded-time)
-    (declare (ignore sec))
-    (format nil "~2,'0D:~2,'0D" hour min)))
-
-(defun %short-hostname (h)
-  "Return the hostname up to the first dot, or the full string if no dot."
-  (subseq h 0 (or (position #\. h) (length h))))
 
 ;;; ── Context plist helpers ───────────────────────────────────────────────────
 ;;;
@@ -80,7 +75,9 @@
 ;;; ── Context plist section builders ──────────────────────────────────────────
 ;;;
 ;;; Each of these builds one logically-grouped slice of the full context
-;;; plist. format-context-from-session appends the six slices together.
+;;; plist. format-context-from-session appends the six slices together (three
+;;; model-facing builders here; the more mechanical pane-geometry / screen /
+;;; client getter-table builders live in format-context-screen.lisp).
 
 (defun %session-context-plist (session window-count)
   "Build the session-scoped slice of the format-context plist for SESSION.
@@ -152,99 +149,10 @@
         :pane-dead            (if (and pane (<= (cl-tmux/model:pane-fd pane) 0)) "1" "0")
         :pane-pipe            (if (and pane (cl-tmux/model:pane-pipe-active-p pane)) "1" "0")))
 
-(defun %pane-geometry-context-plist (pane window)
-  "Build the pane-geometry slice of the format-context plist for PANE within WINDOW."
-  (list :pane-width           (if pane (cl-tmux/model:pane-width  pane) 0)
-        :pane-height          (if pane (cl-tmux/model:pane-height pane) 0)
-        :pane-pid             (if pane (cl-tmux/model:pane-pid    pane) 0)
-        :pane-left            (if pane (cl-tmux/model:pane-x      pane) 0)
-        :pane-top             (if pane (cl-tmux/model:pane-y      pane) 0)
-        :pane-right           (if pane (+ (cl-tmux/model:pane-x pane)
-                                          (cl-tmux/model:pane-width pane) -1) 0)
-        :pane-bottom          (if pane (+ (cl-tmux/model:pane-y pane)
-                                          (cl-tmux/model:pane-height pane) -1) 0)
-        :pane-at-top          (if (and pane (= (cl-tmux/model:pane-y pane) 0)) "1" "0")
-        :pane-at-left         (if (and pane (= (cl-tmux/model:pane-x pane) 0)) "1" "0")
-        :pane-at-bottom       (if (and pane window
-                                       (= (+ (cl-tmux/model:pane-y    pane)
-                                             (cl-tmux/model:pane-height pane))
-                                          (cl-tmux/model:window-height window)))
-                                  "1" "0")
-        :pane-at-right        (if (and pane window
-                                       (= (+ (cl-tmux/model:pane-x   pane)
-                                             (cl-tmux/model:pane-width pane))
-                                          (cl-tmux/model:window-width window)))
-                                  "1" "0")))
-
-(defun %screen-context-plist (pane-scr cursor-x cursor-y)
-  "Build the screen/copy-mode slice of the format-context plist for PANE-SCR.
-   PANE-SCR is the pane's screen object (or NIL); CURSOR-X and CURSOR-Y are
-   its pre-computed cursor coordinates."
-  (list :cursor-x             cursor-x
-        :cursor-y             cursor-y
-        :cursor-character
-        (if (and pane-scr
-                 (< -1 cursor-x (cl-tmux/terminal:screen-width  pane-scr))
-                 (< -1 cursor-y (cl-tmux/terminal:screen-height pane-scr)))
-            (string (cl-tmux/terminal:cell-char
-                     (cl-tmux/terminal:screen-cell pane-scr cursor-x cursor-y)))
-            "")
-        :pane-in-mode         (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr)) "1" "0")
-        :pane-mode            (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr)) "copy-mode" "")
-        :scroll-position      (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                  (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr))
-                                  "")
-        :copy-position        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                  (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr))
-                                  "")
-        :copy-position-limit  (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                  (format nil "~D" (length (cl-tmux/terminal:screen-scrollback pane-scr)))
-                                  "")
-        :selection-active     (if (and pane-scr
-                                       (cl-tmux/terminal:screen-copy-mode-p pane-scr)
-                                       (cl-tmux/terminal:screen-copy-selecting pane-scr))
-                                  "1" "0")
-        :selection-present    (if (and pane-scr
-                                       (cl-tmux/terminal:screen-copy-mode-p pane-scr)
-                                       (cl-tmux/terminal:screen-copy-selecting pane-scr))
-                                  "1" "0")
-        :copy-cursor-x        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                  (format nil "~D" (cdr (cl-tmux/terminal:screen-copy-cursor pane-scr)))
-                                  "")
-        :copy-cursor-y        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                  (format nil "~D" (car (cl-tmux/terminal:screen-copy-cursor pane-scr)))
-                                  "")
-        :history-size         (format nil "~D"
-                                      (if pane-scr
-                                          (length (cl-tmux/terminal:screen-scrollback pane-scr))
-                                          0))))
-
-(defun %client-context-plist (client-width client-height client-tty hostname pid-str)
-  "Build the client/server/host/environment slice of the format-context plist.
-   CLIENT-WIDTH, CLIENT-HEIGHT, and CLIENT-TTY describe the attached client;
-   HOSTNAME and PID-STR are pre-computed by the caller."
-  (list :client-width         client-width
-        :client-height        client-height
-        :client-tty           client-tty
-        :client-name          client-tty
-        :client-termname      (or (ignore-errors (sb-ext:posix-getenv "TERM")) "")
-        :client-pid           pid-str
-        :client-prefix        (if (ignore-errors
-                                    (symbol-value (find-symbol "*PREFIX-ACTIVE*" "CL-TMUX")))
-                                  "1" "0")
-        :client-last-session  ""
-        :server-pid           pid-str
-        :version              (cl-tmux/version:version-string)
-        :hostname             hostname
-        :host                 hostname
-        :host-short           (%short-hostname hostname)
-        :time                 (%current-time-string)
-        :term-program         (or (ignore-errors (sb-ext:posix-getenv "TERM_PROGRAM")) "")
-        :colorterm            (or (ignore-errors (sb-ext:posix-getenv "COLORTERM")) "")
-        :history-limit        (format nil "~D"
-                                      (or (cl-tmux/options:get-option "history-limit") 2000))))
-
 ;;; ── Context builder ─────────────────────────────────────────────────────────
+;;;
+;;; %pane-geometry-context-plist, %screen-context-plist, and
+;;; %client-context-plist live in format-context-screen.lisp.
 
 (defun format-context-from-session (session window pane
                                     &key (client-width 0) (client-height 0)

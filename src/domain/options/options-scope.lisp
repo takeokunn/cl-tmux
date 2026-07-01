@@ -7,6 +7,20 @@
 ;;;; spec-lookup logic.  It is loaded before options-api.lisp, which depends
 ;;;; on the helpers defined here.
 
+;;; ── Cross-package integer parsing helper ─────────────────────────────────
+;;;
+;;; %parse-integer-or-nil lives in the CL-TMUX package (domain/model/target.lisp),
+;;; which this options package cannot depend on directly (options loads before
+;;; the top-level cl-tmux package's own consumers, and a compile-time :use would
+;;; invert the intended layering).  %options-parse-integer-or-nil centralizes the
+;;; cl-tmux:: package-qualified reference in one place for every file here.
+
+(defun %options-parse-integer-or-nil (string &rest args)
+  "Parse STRING as an integer, returning NIL on failure.  Thin alias for
+   cl-tmux::%parse-integer-or-nil, kept local to avoid repeating the
+   package-qualified reference across every options-package call site."
+  (apply #'cl-tmux::%parse-integer-or-nil string args))
+
 ;;; ── User-option predicate ─────────────────────────────────────────────────
 
 (defun %user-option-name-p (name)
@@ -57,9 +71,9 @@
                         :start2 0 :end2 prefix-len)
                (char= (char name (1- name-len)) #\])
                (%decimal-digits-p name prefix-len (1- name-len)))
-      (cl-tmux::%parse-integer-or-nil name
-                                      :start prefix-len
-                                      :end (1- name-len)))))
+      (%options-parse-integer-or-nil name
+                                     :start prefix-len
+                                     :end (1- name-len)))))
 
 (defun %array-entry-base-name (name)
   "Return BASE when NAME is BASE[N], otherwise NIL."

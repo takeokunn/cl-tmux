@@ -11,6 +11,19 @@
 (declaim (special cl-tmux/options:*global-options*
                   cl-tmux/options:*server-options*))
 
+;;; ── Cross-package integer parsing helper ─────────────────────────────────
+;;;
+;;; %parse-integer-or-nil lives in the CL-TMUX package (domain/model/target.lisp),
+;;; which loads after this config package, so it cannot be referenced unqualified
+;;; at compile time.  %config-parse-integer-or-nil centralizes the cl-tmux::
+;;; package-qualified reference in one place for every file in this package.
+
+(defun %config-parse-integer-or-nil (string &rest args)
+  "Parse STRING as an integer, returning NIL on failure.  Thin alias for
+   cl-tmux::%parse-integer-or-nil, kept local to avoid repeating the
+   package-qualified reference across every config-package call site."
+  (apply #'cl-tmux::%parse-integer-or-nil string args))
+
 ;;; ── Simple directive definitions ─────────────────────────────────────────
 ;;;
 ;;; The six set-option variants (set, set-option, setw, set-window-option,
@@ -31,7 +44,7 @@
     (setf *default-shell* path)
     t)
   ("set-status-height" 1 (n)
-    (let ((height (cl-tmux::%parse-integer-or-nil n :junk-allowed t)))
+    (let ((height (%config-parse-integer-or-nil n :junk-allowed t)))
       (when (and height (plusp height))
         (setf *status-height* height)
         t)))

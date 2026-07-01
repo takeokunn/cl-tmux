@@ -1083,3 +1083,27 @@
          (,name-var ,env-name))
      (with-temporary-posix-environment-variable (,name-var ,env-value)
        ,@body)))
+
+;;; ── Generic fdefinition-swap fixture ────────────────────────────────────────
+;;;
+;;; Many CLI-dispatch tests (main-tests.lisp) replace one or more function
+;;; cells with a recording stub for the duration of a test, then restore the
+;;; originals via unwind-protect.  with-stubbed-fdefinition generalizes that
+;;; save/swap/restore scaffold to an arbitrary number of (symbol stub-form)
+;;; pairs, so call sites no longer hand-roll the let/unwind-protect/setf dance.
+
+(defmacro with-stubbed-fdefinition ((&rest bindings) &body body)
+  "Replace the function cell of each SYMBOL in BINDINGS with its STUB-FORM for
+   the extent of BODY, restoring every original definition afterwards even if
+   BODY signals.  Each element of BINDINGS is (symbol stub-form)."
+  (let ((saved (loop for (symbol) in bindings
+                     collect (list symbol (gensym (format nil "ORIG-~A" symbol))))))
+    `(let ,(loop for (symbol orig-var) in saved
+                collect `(,orig-var (fdefinition ',symbol)))
+       (unwind-protect
+            (progn
+              ,@(loop for (symbol stub-form) in bindings
+                     collect `(setf (fdefinition ',symbol) ,stub-form))
+              ,@body)
+         ,@(loop for (symbol orig-var) in saved
+                collect `(setf (fdefinition ',symbol) ,orig-var))))))

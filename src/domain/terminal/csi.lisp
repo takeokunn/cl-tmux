@@ -192,10 +192,10 @@
    ;; Count comes from the RAW param: an explicit 0 (CSI 0 b) repeats 0 times
    ;; (a no-op), while an ABSENT param (CSI b) defaults to 1.  p1* = (max 1 p1)
    ;; cannot tell these apart because p1 is 0 in both cases.
-   (let ((ch    (screen-last-char screen))
-         (count (if params (first params) 1)))
-     (when ch
-       (dotimes (_ count) (write-char-at-cursor screen ch)))))
+   (let ((preceding-char (screen-last-char screen))
+         (count          (if params (first params) 1)))
+     (when preceding-char
+       (dotimes (_ count) (write-char-at-cursor screen preceding-char)))))
 
   ;; VPA – Vertical Position Absolute (1-based row)
   ((and (null intermed) (char= final #\d))

@@ -271,14 +271,6 @@
    #:+hook-session-closed+
    #:+hook-pane-output+
    #:+hook-pane-died+
-   #:+hook-window-layout-changed+
-   #:+hook-client-session-changed+
-   #:+hook-pane-mode-changed+
-   #:+hook-client-focus-in+
-   #:+hook-client-focus-out+
-   #:+hook-command-error+
-   ;; Error handler (optional, called with (event-name condition) on hook error)
-   #:*hooks-error-handler*
    ;; Registry and dispatch
    #:*hook-registry*
    #:add-hook

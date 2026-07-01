@@ -27,8 +27,13 @@
   (and (< start1 (+ start2 len2))
        (< start2 (+ start1 len1))))
 
-(defun %pane-center-x (pane) (+ (pane-x pane) (ash (pane-width  pane) -1)))
-(defun %pane-center-y (pane) (+ (pane-y pane) (ash (pane-height pane) -1)))
+(defun %pane-center-x (pane)
+  "Horizontal center column of PANE (pane-x plus half its width)."
+  (+ (pane-x pane) (ash (pane-width pane) -1)))
+
+(defun %pane-center-y (pane)
+  "Vertical center row of PANE (pane-y plus half its height)."
+  (+ (pane-y pane) (ash (pane-height pane) -1)))
 
 ;;; ── Neighbor filter table (data layer) ──────────────────────────────────────
 ;;;

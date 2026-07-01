@@ -39,7 +39,7 @@
    ;; option presence via get-option before calling set-option.
    (cond
      ((stringp value)
-      (or (cl-tmux::%parse-integer-or-nil value :junk-allowed t) 0))
+      (or (%options-parse-integer-or-nil value :junk-allowed t) 0))
      ((numberp value)
       (truncate value))
      (t 0)))

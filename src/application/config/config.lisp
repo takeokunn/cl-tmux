@@ -132,55 +132,11 @@
   "Select timeout in microseconds for per-pane PTY reader threads (50 ms).
    Allows the reader loop to observe *running* even when the shell is silent.")
 
-;;; ── Key-table system ──────────────────────────────────────────────────────
-;;;
-;;; *key-tables* maps table-name (string) → hash-table of chord → (keyword . flags).
-;;; Flags is a plist; :repeatable T means the prefix stays active after dispatch.
-;;; Standard table names: +table-prefix+, +table-root+,
-;;; +table-copy-mode+, +table-copy-mode-vi+.
-;;;
-;;; The prefix table is the main dispatch path; callers should mutate it
-;;; through key-table-bind / key-table-unbind directly.
-
-(defparameter *key-tables*
-  (make-hash-table :test #'equal)
-  "Hash-table mapping table-name string → inner hash-table of chord → (keyword . flags).")
-
-(defun ensure-key-table (name)
-  "Return the inner hash-table for key-table NAME, creating it if absent.
-   Idempotent: repeated calls with the same NAME return the same object."
-  (or (gethash name *key-tables*)
-      (setf (gethash name *key-tables*)
-            (make-hash-table :test #'equal))))
-
-(defun key-table-bind (table key command &key repeatable note)
-  "Add a binding for KEY → COMMAND in TABLE (a table-name string).
-   :REPEATABLE T marks the binding so the prefix table stays active after dispatch.
-   :NOTE is an optional description string (from `bind -N`) shown by list-keys."
-  (let ((inner (ensure-key-table table)))
-    (setf (gethash key inner)
-          (cons command (list :repeatable repeatable :note note)))))
-
-(defun key-table-lookup (table key)
-  "Return the (command . flags) cons for KEY in TABLE, or NIL."
-  (let ((inner (gethash table *key-tables*)))
-    (when inner (gethash key inner))))
-
-(defun key-table-command (entry)
-  "Extract the command keyword from a key-table entry (car)."
-  (car entry))
-
-(defun key-table-repeatable-p (entry)
-  "Return T if the key-table entry is marked repeatable.
-   Safe to call with NIL (returns NIL without signaling)."
-  (and entry (getf (cdr entry) :repeatable)))
-
-(defun key-table-note (entry)
-  "Return the -N description string for a key-table ENTRY, or NIL.
-   Safe to call with NIL (returns NIL without signaling)."
-  (and entry (getf (cdr entry) :note)))
-
 ;;; ── Initial key-binding data (declarative) ────────────────────────────────
+;;;
+;;; The key-table storage primitives (*key-tables*, ensure-key-table,
+;;; key-table-bind/unbind/lookup, key-table-command/repeatable-p/note) live in
+;;; config-key-table-store.lisp, loaded before this file.
 ;;;
 ;;; define-initial-key-bindings registers key-table bindings at load time.
 ;;; After load, callers mutate the prefix table directly — no sync step needed.
@@ -259,15 +215,6 @@
                   *load-pathname*
                   *compile-file-pathname*)))
     (load (merge-pathnames #P"src/application/config/config-listing.lisp" root))))
-
-;;; ── Prefix-table helpers ─────────────────────────────────────────────────
-
-(defun key-table-unbind (table key)
-  "Remove any binding for KEY from TABLE and return T when TABLE existed."
-  (let ((tbl (gethash table *key-tables*)))
-    (when tbl
-      (remhash key tbl)
-      t)))
 
 ;;; ── Copy-mode binding helpers ────────────────────────────────────────────
 ;;;

@@ -135,7 +135,7 @@
   "Clamp RED, GREEN, and BLUE to 0-255 and encode them as #x1RRGGBB (bit 24 is
    the true-colour flag).  Shared by every SGR true-colour arm (semicolon and
    colon syntax alike) so the encoding arithmetic is written exactly once."
-  (logior #x1000000
+  (logior +true-color-flag+
           (ash (clamp (or red   0) 0 255) 16)
           (ash (clamp (or green 0) 0 255) 8)
           (clamp (or blue 0) 0 255)))
@@ -253,7 +253,7 @@
    38;5;N / 48;5;N; +true-color-flag+ set -> 38;2;R;G;B / 48;2;R;G;B."
   (cond
     ((= color +default-color+) (format out ";~D" (if background-p 49 39)))
-    ((logtest color #x1000000)
+    ((logtest color +true-color-flag+)
      (format out ";~D;2;~D;~D;~D" (if background-p 48 38)
              (ldb (byte 8 16) color) (ldb (byte 8 8) color) (ldb (byte 8 0) color)))
     ((<= 0 color 7)    (format out ";~D" (+ (if background-p 40 30) color)))

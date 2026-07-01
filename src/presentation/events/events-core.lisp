@@ -9,10 +9,38 @@
 ;;; the codebase (define-command-handlers, define-csi-rules, define-state).
 
 ;;; UTF-8 accumulation state for the prompt (module-level; main-thread-only).
-(defvar *prompt-utf8-accumulator* 0
-  "Accumulated code-point bits from UTF-8 lead byte processing.")
-(defvar *prompt-utf8-left* 0
-  "Number of UTF-8 continuation bytes still expected (0 when idle).")
+;;;
+;;; Mirrors terminal/parser.lisp's MAKE-UTF8-K: rather than mutating a raw
+;;; accumulator/count pair across calls, a lead byte closes over its decode
+;;; state and returns a continuation function.  *PROMPT-UTF8-CONTINUATION*
+;;; holds that continuation (or NIL at ground state, i.e. no sequence in
+;;; progress) — the same CPS data-flow style %COPY-MODE-ACCUMULATE-DIGIT's
+;;; docstring calls for, applied here to eliminate the two former defvars.
+
+(defvar *prompt-utf8-continuation* nil
+  "NIL at ground state, or a (LAMBDA (BYTE) ...) continuation returned by
+   MAKE-PROMPT-UTF8-K that folds the next UTF-8 continuation byte into the
+   in-progress code point.")
+
+(defun make-prompt-utf8-k (accumulator continuation-bytes-remaining)
+  "Return a continuation that collects UTF-8 continuation bytes for the prompt.
+   ACCUMULATOR is the code-point bits collected so far (from the lead byte).
+   CONTINUATION-BYTES-REMAINING is the count of continuation bytes still needed.
+   On the final continuation byte, the assembled code point is inserted into
+   the prompt (silently dropped if it does not name a valid character) and
+   the returned continuation is NIL (ground state)."
+  (lambda (byte)
+    (if (= (logand byte +byte-utf8-continuation-tag-mask+) +byte-utf8-continuation-tag+)
+        (let ((new-accumulator (logior (ash accumulator 6)
+                                        (logand byte +byte-utf8-continuation-data-mask+)))
+              (bytes-left      (1- continuation-bytes-remaining)))
+          (if (zerop bytes-left)
+              (let ((character (ignore-errors (code-char new-accumulator))))
+                (when character (prompt-input character))
+                nil)
+              (make-prompt-utf8-k new-accumulator bytes-left)))
+        ;; Malformed: not a continuation byte — drop the in-progress sequence.
+        nil)))
 
 (defmacro define-prompt-key-rules (&rest rules)
   "Build HANDLE-PROMPT-KEY from a byte-dispatch table.
@@ -23,8 +51,9 @@
    Always marks *dirty* after dispatching."
   `(defun handle-prompt-key (byte)
      "Route one input BYTE to the active prompt.
-      UTF-8 multi-byte sequences are decoded via *prompt-utf8-accumulator* /
-      *prompt-utf8-left* before the dispatch table is consulted."
+      UTF-8 multi-byte sequences are decoded via the CPS continuation held in
+      *PROMPT-UTF8-CONTINUATION* (see MAKE-PROMPT-UTF8-K) before the dispatch
+      table is consulted."
      (cond
        ,@(mapcar
           (lambda (rule)
@@ -102,13 +131,13 @@
 
 (define-prompt-key-rules
   (#.+byte-enter+                           ; Enter — submit and dismiss
-   (setf *prompt-utf8-accumulator* 0 *prompt-utf8-left* 0)
+   (setf *prompt-utf8-continuation* nil)
    (let ((active-prompt *prompt*))
      (when (and active-prompt (prompt-on-submit active-prompt))
        (funcall (prompt-on-submit active-prompt) (prompt-buffer active-prompt)))
      (prompt-clear)))
   (#.+byte-esc+                             ; Esc
-   (setf *prompt-utf8-accumulator* 0 *prompt-utf8-left* 0)
+   (setf *prompt-utf8-continuation* nil)
    (let ((p *prompt*))
      (cond
        ;; vi mode: ESC enters normal mode (does NOT cancel the prompt).
@@ -117,7 +146,7 @@
         (setf (prompt-vi-normal-p p) t))
        ;; emacs mode or already in vi-normal: cancel.
        (t (prompt-clear)))))
-  (#.+byte-ctrl-c+ (setf *prompt-utf8-accumulator* 0 *prompt-utf8-left* 0)
+  (#.+byte-ctrl-c+ (setf *prompt-utf8-continuation* nil)
    (prompt-clear))                          ; C-c — cancel
   (#.+byte-ctrl-a+ (prompt-cursor-bol))      ; C-a — beginning of line
   (#.+byte-ctrl-e+ (prompt-cursor-eol))      ; C-e — end of line
@@ -133,7 +162,7 @@
   ;; Control keys (Esc, C-c) are < 32 and fall through to their cancel handlers.
   ((and *prompt* (prompt-single-key *prompt*)
         (>= byte #.+byte-space+) (< byte #.+byte-del+))
-   (setf *prompt-utf8-accumulator* 0 *prompt-utf8-left* 0)
+   (setf *prompt-utf8-continuation* nil)
    (let ((active-prompt *prompt*)
          (character     (code-char byte)))
      (when (prompt-on-submit active-prompt)
@@ -143,19 +172,12 @@
   ((%handle-vi-normal-key byte) nil)        ; consumed by vi-normal — already handled
   ((and (>= byte #.+byte-space+) (< byte #.+byte-del+))
    (prompt-input (code-char byte)))         ; printable ASCII — insert
-  ;; UTF-8 continuation byte: fold into accumulator
+  ;; UTF-8 continuation byte: fold into the in-progress CPS continuation, if any.
   ((= (logand byte +byte-utf8-continuation-tag-mask+) +byte-utf8-continuation-tag+)
-   (when (plusp *prompt-utf8-left*)
-     (setf *prompt-utf8-accumulator*
-           (logior (ash *prompt-utf8-accumulator* 6)
-                   (logand byte +byte-utf8-continuation-data-mask+)))
-     (decf *prompt-utf8-left*)
-     (when (zerop *prompt-utf8-left*)
-       (let ((code-point *prompt-utf8-accumulator*))
-         (setf *prompt-utf8-accumulator* 0)
-         (let ((character (ignore-errors (code-char code-point))))
-           (when character (prompt-input character)))))))
-  ;; UTF-8 lead byte: begin multi-byte decode
+   (when *prompt-utf8-continuation*
+     (setf *prompt-utf8-continuation*
+           (funcall *prompt-utf8-continuation* byte))))
+  ;; UTF-8 lead byte: begin multi-byte decode by arming a fresh continuation.
   ((and (>= byte +byte-utf8-lead-min+) (/= byte +byte-utf8-lead-invalid+))
    (multiple-value-bind (accumulator bytes-left)
        (cond ((< byte +byte-utf8-2byte-lead-max+)
@@ -164,8 +186,7 @@
               (values (logand byte +byte-utf8-3byte-lead-data-mask+) 2))
              (t
               (values (logand byte +byte-utf8-4byte-lead-data-mask+) 3)))
-     (setf *prompt-utf8-accumulator* accumulator
-           *prompt-utf8-left*        bytes-left)))
+     (setf *prompt-utf8-continuation* (make-prompt-utf8-k accumulator bytes-left))))
   (t nil))                                  ; other control bytes — ignore
 
 ;;; (byte constants live in events-constants.lisp, loaded before this file)
@@ -237,9 +258,10 @@
           rules))))
 
 (defun %arrow-final-to-ss3-bytes (final-byte)
-  "Given a CSI arrow-key final byte (65=A/66=B/67=C/68=D), return the
-   corresponding SS3 sequence bytes (ESC O A/B/C/D) as an octet vector,
-   or NIL if the final byte is not an arrow key."
-  (when (member final-byte '(65 66 67 68))
+  "Given a CSI arrow-key final byte (+byte-arrow-up+/-down+/-right+/-left+),
+   return the corresponding SS3 sequence bytes (ESC O A/B/C/D) as an octet
+   vector, or NIL if FINAL-BYTE is not an arrow key."
+  (when (member final-byte (list +byte-arrow-up+ +byte-arrow-down+
+                                  +byte-arrow-right+ +byte-arrow-left+))
     (make-array 3 :element-type '(unsigned-byte 8)
-                  :initial-contents (list 27 79 final-byte)))) ; ESC O <final>
+                  :initial-contents (list +byte-esc+ +byte-ss3-o+ final-byte))))

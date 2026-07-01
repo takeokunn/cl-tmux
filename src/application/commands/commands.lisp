@@ -52,17 +52,17 @@
      :up    — spatially adjacent pane above (via pane-neighbor)
      :down  — spatially adjacent pane below (via pane-neighbor)
    Swaps both list order and screen geometry (via swap-two-panes)."
-  (let* ((panes (window-panes window))
-         (ap    (window-active-pane window))
-         (idx   (position ap panes))
-         (n     (length panes)))
+  (let* ((panes        (window-panes window))
+         (ap           (window-active-pane window))
+         (active-index (position ap panes))
+         (n            (length panes)))
     (when (> n 1)
       (let ((other
              (ecase direction
                ((:right :forward)
-                (nth (mod (1+ idx) n) panes))
+                (nth (mod (1+ active-index) n) panes))
                ((:left :backward)
-                (nth (mod (1- idx) n) panes))
+                (nth (mod (1- active-index) n) panes))
                (:up   (pane-neighbor window ap :up))
                (:down (pane-neighbor window ap :down)))))
         (when other
@@ -83,6 +83,12 @@
   (find id (session-windows session) :key #'window-id))
 
 (defun %break-shuffle-window-ids-up (session dst)
+  "Free up window id DST in SESSION for an incoming window by shifting ids up.
+   Scans upward from DST to find the first unoccupied id (FREE), then shifts
+   every window currently occupying an id in [DST, FREE) up by one.  The shift
+   walks windows in DESCENDING id order so each window is moved into the slot
+   just vacated by the window above it, never colliding with a not-yet-moved
+   window.  Finally re-sorts SESSION's window list back into ascending id order."
   (let ((free dst))
     (loop while (%break-window-id-occupied-p session free) do (incf free))
     (dolist (win (sort (copy-list (session-windows session)) #'> :key #'window-id))

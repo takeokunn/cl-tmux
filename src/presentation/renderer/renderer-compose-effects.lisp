@@ -52,15 +52,17 @@
 (defun %drain-screen-queue (buffer panes queue-reader queue-writer option default allowed)
   "Drain queue contents for each pane into BUFFER when OPTION permits emission.
    QUEUE-READER reads the current queue from a screen object.
-   QUEUE-WRITER clears the queue on a screen object after draining it."
+   QUEUE-WRITER clears the queue on a screen object after draining it.
+   The actual read-and-clear is delegated to the terminal LOGIC layer via
+   cl-tmux/terminal:screen-drain-queue so this presentation-layer code never
+   mutates a screen slot directly."
   (let* ((mode (or (cl-tmux/options:get-option option default) default))
          (emit (member mode allowed :test #'string=)))
     (dolist (pane panes)
       (let ((screen (pane-screen pane)))
         (when screen
           (with-lock-held ((screen-lock screen))
-            (let ((queued (nreverse (funcall queue-reader screen))))
-              (funcall queue-writer screen nil)
+            (let ((queued (screen-drain-queue screen queue-reader queue-writer)))
               (when emit
                 (dolist (seq queued)
                   (write-string seq buffer))))))))))

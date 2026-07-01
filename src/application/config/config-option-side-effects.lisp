@@ -91,7 +91,7 @@
    (if unset-p
        (setf *status-height* 1)
        (let* ((off-p (member value '("off" "false" "0") :test #'equal))
-              (n     (cl-tmux::%parse-integer-or-nil value :junk-allowed t)))
+              (n     (%config-parse-integer-or-nil value :junk-allowed t)))
          (setf *status-height*
                (cond (off-p 0)
                      ((and n (> n 0)) (min n +max-status-lines+))

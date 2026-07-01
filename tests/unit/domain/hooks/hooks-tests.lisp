@@ -40,13 +40,7 @@
 (test new-hook-event-constants
   "The newly added tmux hook event constants have the expected string values."
   (%assert-hook-constant-table
-   `(("pane-died"              ,cl-tmux/hooks:+hook-pane-died+)
-     ("window-layout-changed"  ,cl-tmux/hooks:+hook-window-layout-changed+)
-     ("client-session-changed" ,cl-tmux/hooks:+hook-client-session-changed+)
-     ("pane-mode-changed"      ,cl-tmux/hooks:+hook-pane-mode-changed+)
-     ("client-focus-in"        ,cl-tmux/hooks:+hook-client-focus-in+)
-     ("client-focus-out"       ,cl-tmux/hooks:+hook-client-focus-out+)
-     ("command-error"          ,cl-tmux/hooks:+hook-command-error+))))
+   `(("pane-died" ,cl-tmux/hooks:+hook-pane-died+))))
 
 (test remaining-hook-event-constants
   "The remaining hook event constants not covered by hook-event-constants or
@@ -210,38 +204,6 @@
           (cl-tmux/hooks:add-hook hook (lambda () (setf good-ran t)))
           (finishes (cl-tmux/hooks:run-hooks hook))
           (is-true good-ran "~A: non-error hook must still run" desc))))))
-
-(test hooks-error-handler-receives-event-and-condition
-  "*hooks-error-handler*, when installed, is called with the event-name and the
-   condition when a hook signals; errors are still suppressed so other hooks run."
-  (with-isolated-hooks
-    (let ((captured-event nil)
-          (captured-condition nil)
-          (good-ran nil))
-      (let ((cl-tmux/hooks:*hooks-error-handler*
-             (lambda (event condition)
-               (setf captured-event event
-                     captured-condition condition))))
-        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-new-window+
-                                 (lambda () (error "handler test error")))
-        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-new-window+
-                                 (lambda () (setf good-ran t)))
-        (finishes (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+))
-        (is (string= cl-tmux/hooks:+hook-after-new-window+ captured-event)
-            "handler must receive the event name")
-        (is (typep captured-condition 'error)
-            "handler must receive the condition object")
-        (is-true good-ran "non-error hook must still run after error-handler fires")))))
-
-(test hooks-error-handler-nil-means-silent-suppression
-  "When *hooks-error-handler* is NIL, hook errors are silently suppressed (original
-   behaviour preserved)."
-  (with-isolated-hooks
-    (let ((cl-tmux/hooks:*hooks-error-handler* nil))
-      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-new-window+
-                               (lambda () (error "silent error")))
-      (finishes (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+)
-                "nil handler must not re-signal the hook error"))))
 
 ;;; ── run-hooks argument passing ───────────────────────────────────────────────
 

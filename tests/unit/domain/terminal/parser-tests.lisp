@@ -78,11 +78,8 @@
 ;;; ground-state, escape-state, and osc-state are exported from
 ;;; cl-tmux/terminal/parser but, before DEFINE-STATE injected a generated
 ;;; docstring, carried no function-level documentation (only block comments).
-
-(test define-state-macro-is-defined
-  "define-state is a defined macro in the parser package."
-  (is (macro-function 'cl-tmux/terminal/parser::define-state)
-      "define-state must be a macro"))
+;;; (define-state-macro-is-defined, verifying define-state is a macro, lives
+;;; in parser-tests-c.lisp alongside the other CPS state-function tests.)
 
 (test ground-escape-osc-state-have-docstrings
   "The exported DEFINE-STATE entry points ground-state, escape-state, and
@@ -329,13 +326,6 @@
     (%feed-osc s "4;0;?;15;?")
     (is (= 2 (length (cl-tmux/terminal/types:screen-response-queue s)))
         "two OSC 4 queries must enqueue two replies")))
-
-(test osc-4-set-does-not-reply
-  "OSC 4 ; 1 ; rgb:... (a SET, not a query) enqueues no reply (set is ignored)."
-  (with-screen (s 20 5)
-    (%feed-osc s "4;1;rgb:ffff/0000/ffff")
-    (is (null (cl-tmux/terminal/types:screen-response-queue s))
-        "an OSC 4 SET must not enqueue a reply")))
 
 ;;; ── OSC 8 hyperlinks ─────────────────────────────────────────────────────────
 

@@ -35,6 +35,19 @@
     (setf (screen-bell-pending screen) nil)
     t))
 
+;;; ── Queue draining ───────────────────────────────────────────────────────────
+
+(defun screen-drain-queue (screen queue-reader queue-writer)
+  "Atomically read and clear a push-accumulated queue slot on SCREEN, returning
+   the queued items in push order (oldest first).
+   QUEUE-READER reads the current (reverse-chronological) list from SCREEN.
+   QUEUE-WRITER is called with SCREEN and NIL to clear the slot.
+   Used by the renderer to drain the passthrough-queue and clipboard-queue
+   without mutating SCREEN's slots directly from the presentation layer."
+  (let ((queued (nreverse (funcall queue-reader screen))))
+    (funcall queue-writer screen nil)
+    queued))
+
 ;;; ── SGR pen reset ──────────────────────────────────────────────────────────
 ;;;
 ;;; Both cl-tmux/terminal/sgr (DISPATCH layer) and cl-tmux/terminal/actions

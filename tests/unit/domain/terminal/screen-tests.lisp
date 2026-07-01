@@ -285,6 +285,28 @@
     (is (char= #\B (char-at s 1 0)) "cell (1,0) must be B after shrink")
     (is (char= #\C (char-at s 2 0)) "cell (2,0) must be C after shrink")))
 
+(test copy-overlapping-cells-copies-top-left-rectangle
+  :description "%copy-overlapping-cells copies only the requested top-left
+   COPY-COLS x COPY-ROWS rectangle from OLD-CELLS into SCREEN's current grid,
+   leaving cells outside that rectangle untouched."
+  (with-screen (s 4 4)
+    (let ((old-width 3)
+          (old-cells (cl-tmux/terminal/types:%make-blank-cells 9)))
+      ;; Old grid (3x3, row-major): "ABC" / "DEF" / "GHI"
+      (loop for i from 0
+            for ch across "ABCDEFGHI"
+            do (setf (aref old-cells i)
+                     (cl-tmux/terminal/types:make-cell :char ch)))
+      (cl-tmux/terminal/types::%copy-overlapping-cells s old-cells old-width 2 2)
+      (is (char= #\A (char-at s 0 0)) "copied cell (0,0) must be A")
+      (is (char= #\B (char-at s 1 0)) "copied cell (1,0) must be B")
+      (is (char= #\D (char-at s 0 1)) "copied cell (0,1) must be D")
+      (is (char= #\E (char-at s 1 1)) "copied cell (1,1) must be E")
+      (is (char= #\Space (char-at s 2 0))
+          "cell (2,0) outside the 2x2 copy rectangle must remain blank")
+      (is (char= #\Space (char-at s 0 2))
+          "cell (0,2) outside the 2x2 copy rectangle must remain blank"))))
+
 (test resize-with-active-alt-cells-leaves-primary-intact
   :description "Resizing while alt-cells is active resizes the primary grid only.
    Alt-cells remain at their previous geometry; the caller is responsible for

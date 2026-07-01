@@ -4,13 +4,20 @@
 ;;;;
 ;;;; This file contains:
 ;;;;   - Cyclic navigator macro (next-cyclic, prev-cyclic)
+;;;;   - Overlay-rendering helpers (show-built-overlay, %overlayf, etc.)
+;;;;   - with-target-session / with-target-context target-binding macros
 ;;;;   - Active-pane/window guard macros (with-active-pane, with-active-window)
-;;;;   - Private command helper functions (%cmd-new-window, %cmd-cycle-window, etc.)
-;;;;   - Copy-mode key override macro + table
-;;;;   - Session/window/menu format helpers
-;;;;   - New-session factory
-;;;;   - Named-command table macro + table
-;;;;   - dispatch-prefix-command entry point
+;;;;   - Focus-transition macro (%with-window-focus-transition)
+;;;;   - Directional pane/window/copy-mode helpers used by dispatch-handlers.lisp
+;;;;
+;;;; Target-string resolution helpers (%resolve-target-window-pane and friends)
+;;;; live in dispatch-core-targets.lisp.
+;;;;
+;;;; Hook-dispatch helpers (%derive-hook-session, run-command-hooks, etc.)
+;;;; live in dispatch-core-hooks.lisp.
+;;;;
+;;;; Window/pane/split command factories (%cmd-new-window, %cmd-split, etc.)
+;;;; live in dispatch-core-window-cmds.lisp.
 ;;;;
 ;;;; Focus event delivery helpers live in dispatch-core-focus.lisp.
 ;;;;
@@ -72,45 +79,6 @@
 (defun %flag-present-p (flags char)
   "Return true when FLAGS contains an entry for CHAR, even if its value is NIL."
   (not (null (assoc char flags))))
-
-(defun %resolve-target-window-pane (session target-str current-window current-pane)
-  "Resolve TARGET-STR to a window/pane pair.
-   When TARGET-STR is absent, return CURRENT-WINDOW and CURRENT-PANE.
-   When TARGET-STR names a window but not a pane, return that window's active pane."
-  (if target-str
-      (multiple-value-bind (target-session target-window target-pane)
-          (resolve-target *server-sessions* target-str
-                          :current-session session
-                          :current-window current-window
-                          :current-pane current-pane)
-        (declare (ignore target-session))
-        (when target-window
-          (values target-window
-                  (or (and target-pane
-                           (member target-pane (window-panes target-window))
-                           target-pane)
-                      (window-active-pane target-window)))))
-      (values current-window current-pane)))
-
-(defun %resolve-target-session-window (session target-str current-window current-pane)
-  "Resolve TARGET-STR to a session/window pair.
-   When TARGET-STR is absent, return SESSION and CURRENT-WINDOW.
-   When TARGET-STR names a pane, return its window."
-  (if target-str
-      (multiple-value-bind (target-session target-window target-pane)
-          (resolve-target *server-sessions* target-str
-                          :current-session session
-                          :current-window current-window
-                          :current-pane current-pane)
-        (declare (ignore target-pane))
-        (when target-window
-          (values target-session target-window)))
-      (values session current-window)))
-
-(defun %resolve-window-target-or-active (session target-str)
-  "Return TARGET-STR's window or SESSION's active window when TARGET-STR is absent."
-  (or (and target-str (%resolve-window-target session target-str))
-      (session-active-window session)))
 
 (defmacro with-target-session ((target-session target-str session
                                &key message (on-missing :skip))
@@ -228,128 +196,6 @@
   (resize-pane (session-active-window session) direction))
 
 ;;; -- Private command helpers ------------------------------------------------
-
-(defun %derive-hook-session (target)
-  "Resolve a hook TARGET — a session, window, or pane — to its owning session, so
-   command hooks (which run against a session) can fire from any run-hooks call
-   regardless of what object the firing point had.  NIL when unresolvable."
-  (cond
-    ((null target) nil)
-    ((cl-tmux/model::session-p target) target)
-    ((cl-tmux/model::window-p  target) (%session-of-window target))
-    ((cl-tmux/model::pane-p    target) (%session-of-pane   target))
-    (t nil)))
-
-(defun %dispatch-hook-entry (session entry)
-  "Dispatch a single hook ENTRY against SESSION.
-   STRING entries are run as command lines via %run-command-line; errors are
-   reported as an overlay instead of being silently swallowed.
-   KEYWORD entries dispatch directly via dispatch-command."
-  (cond
-    ((stringp entry)
-     (handler-case (%run-command-line session entry)
-       (error (condition)
-         (%overlayf "hook error: ~A" condition))))
-    ((keywordp entry)
-     (dispatch-command session entry 0))))
-
-(defun run-command-hooks (event-name target)
-  "Dispatch every command registered for hook EVENT-NAME against the session
-   derived from TARGET (a session/window/pane).  String hooks (from set-hook
-   in .tmux.conf) run via %run-command-line for format expansion; keyword
-   hooks (programmatic set-command-hook calls) dispatch directly."
-  (let ((session (%derive-hook-session target)))
-    (when session
-      (dolist (entry (cl-tmux/hooks:command-hooks event-name))
-        (%dispatch-hook-entry session entry)))))
-
-;; Install run-command-hooks as the command-hook runner so lower layers
-;; (cl-tmux/commands kill-pane / kill-window) can fire command hooks too.
-(setf cl-tmux/hooks:*command-hook-runner* #'run-command-hooks)
-
-(defun %compute-window-base-index (prev-win &key at-index after-current before-current)
-  "Return the base window-id to use when inserting a new window.
-   AT-INDEX overrides everything when it is an integer.
-   AFTER-CURRENT inserts after PREV-WIN's id (adds 1).
-   BEFORE-CURRENT inserts at PREV-WIN's id (pushes existing windows right).
-   Otherwise uses the configured base-index option, defaulting to 0."
-  (cond
-    ((and at-index (integerp at-index)) at-index)
-    ((and after-current prev-win) (1+ (window-id prev-win)))
-    ((and before-current prev-win) (window-id prev-win))
-    (t (or (cl-tmux/options:get-option "base-index") 0))))
-
-(defun %cmd-new-window (session &key name start-dir detach at-index after-current
-                                     before-current)
-  "Create a new window in SESSION and start a reader thread for it.
-   NAME: window name (defaults to shell basename).
-   START-DIR: start directory for the new pane's shell.
-   DETACH: when T, do not make the new window active.
-   AT-INDEX: when an integer, try to assign that specific window id.
-   AFTER-CURRENT: when T, insert after the current window's id.
-   BEFORE-CURRENT: when T, insert at (before) the current window's id.
-   Returns the new window."
-  (let* ((rows     (- *term-rows* *status-height*))
-         (cols     *term-cols*)
-         (win-name (or name (cl-tmux/model::%shell-basename)))
-         (prev-win (session-active-window session))
-         (base     (%compute-window-base-index prev-win
-                                               :at-index      at-index
-                                               :after-current  after-current
-                                               :before-current before-current))
-         (win      (session-new-window session win-name rows cols base start-dir)))
-    (start-reader-thread (window-active-pane win))
-    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-window+ win)
-    (when (and detach prev-win)
-      (session-select-window session prev-win))
-    win))
-
-(defun %cmd-cycle-window (session cycler)
-  "Switch the active window using CYCLER (next-cyclic or prev-cyclic)."
-  (let ((w (funcall cycler
-                    (session-windows session)
-                    (session-active-window session))))
-    (when w
-      (%with-window-focus-transition (session)
-        (session-select-window session w)))))
-
-(defun %cmd-cycle-pane (session cycler)
-  "Switch the active pane within the active window using CYCLER."
-  (let* ((win   (session-active-window session))
-         (panes (window-panes win))
-         (next  (funcall cycler panes (window-active-pane win))))
-    (when next (%select-pane-with-focus win next))))
-
-(defun %cmd-cycle-session (session cycler)
-  "Switch to the adjacent session using CYCLER (next-cyclic or prev-cyclic).
-   No-op when SESSION is the only session or the cycler wraps back to it."
-  (let* ((sessions (mapcar #'cdr *server-sessions*))
-         (target   (and sessions (funcall cycler sessions session))))
-    (when (and target (not (eq target session)))
-      (%switch-to-session target))))
-
-(defun %cmd-split (session orient
-                   &key no-focus size start-dir before full input-only input-bytes)
-  "Split the active pane of SESSION's active window in tree ORIENT (:h left/right,
-   :v top/bottom).  Returns NIL when the pane is too small and no shell is forked.
-   NO-FOCUS T skips focus change.  SIZE hints the new pane's extent.
-   BEFORE T inserts the new pane before the active pane (split-window -b).
-   FULL T spans the whole window (split-window -f).
-   INPUT-ONLY T creates a no-PTY pane and feeds INPUT-BYTES into its screen.
-   START-DIR: when non-NIL, the new pane's shell starts in that directory."
-  (let* ((win (session-active-window session))
-         (new (window-split session win orient :no-focus no-focus :size size
-                                           :start-dir start-dir :before before
-                                           :full full :input-only input-only
-                                           :input-bytes input-bytes)))
-    (when new
-      (when (> (pane-fd new) 0)
-        (start-reader-thread new))
-      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-split-window+ new)
-      ;; A split creates a new pane — fire after-new-pane too (was defined but
-      ;; never fired).
-      (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-new-pane+ new))
-    new))
 
 (defun %active-screen (session)
   "Return SESSION's active-pane screen, or NIL when there is no active pane."
