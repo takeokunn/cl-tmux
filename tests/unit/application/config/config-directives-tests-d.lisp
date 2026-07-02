@@ -534,7 +534,17 @@ bind-key -T copy-mode-vi v send-keys -X begin-selection")))
     "set -g @multi 1; set -g @multi2 2"
     "%if #{==:never,ever}"
     "set -g @never 1"
-    "%endif")
+    "%endif"
+    ""
+    "# ── wave 2: terminal-overrides / env / rebind / hooks / continuation ─"
+    "set -ga terminal-overrides \",xterm-256color:Tc\""
+    "setenv -g CLTMUX_FIXTURE_ENV fixture-value"
+    "bind x kill-pane"
+    "unbind x"
+    "bind r source-file -q /nonexistent-reload.conf \\; display-message \"reloaded\""
+    "set-hook -g after-new-window \"set -g @hooked yes\""
+    "set -g @continued \\"
+    "joined")
   "Line list for the real-world config fixture (kept as data for readability).")
 
 (test real-world-tmux-conf-loads-with-effects
@@ -543,6 +553,7 @@ bind-key -T copy-mode-vi v send-keys -X begin-selection")))
    Binds the production format-based %if condition evaluator (main.lisp installs
    the same shape at startup; the test default of NIL treats every %if as true)."
   (with-isolated-config
+   (with-isolated-hooks
     (let ((cl-tmux/config:*config-condition-evaluator*
             (lambda (cond-str) (cl-tmux/format:expand-format cond-str nil)))
           (path (merge-pathnames
@@ -592,5 +603,22 @@ bind-key -T copy-mode-vi v send-keys -X begin-selection")))
              (is-true (cl-tmux/config:key-table-lookup "copy-mode-vi" #\v)
                       "copy-mode-vi v must bind")
              (is-true (cl-tmux/config:key-table-lookup "copy-mode-vi" #\y)
-                      "copy-mode-vi y must bind"))
-        (ignore-errors (delete-file path))))))
+                      "copy-mode-vi y must bind")
+             ;; Wave 2: terminal-overrides append (present in virtually every
+             ;; real config), env, unbind, reload binding, set-hook, and
+             ;; backslash line continuation.
+             (is (search "xterm-256color:Tc"
+                         (or (cl-tmux/options:get-option "terminal-overrides" nil) ""))
+                 "set -ga terminal-overrides must be accepted and stored")
+             (is (string= "fixture-value"
+                          (or (sb-ext:posix-getenv "CLTMUX_FIXTURE_ENV") ""))
+                 "setenv -g must reach the process environment")
+             (is (null (cl-tmux/config:key-table-lookup "prefix" #\x))
+                 "unbind x must remove the earlier bind x")
+             (is-true (cl-tmux/config:key-table-lookup "prefix" #\r)
+                      "the classic reload binding (source \\; display) must bind")
+             (is-true (gethash "after-new-window" cl-tmux/hooks::*command-hooks*)
+                      "set-hook -g after-new-window must register a command hook")
+             (is (string= "joined" (cl-tmux/options:get-option "@continued"))
+                 "backslash line continuation must join the next line"))
+        (ignore-errors (delete-file path)))))))

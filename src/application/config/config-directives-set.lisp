@@ -101,8 +101,14 @@
           :test #'string=))
 
 (defparameter +unsupported-set-option-names+
-  '("terminal-overrides" "terminal-features")
-  "Options whose tmux syntax implies behavior cl-tmux does not implement.")
+  '()
+  "Options whose tmux syntax implies behavior cl-tmux does not implement.
+   Empty since terminal-overrides/terminal-features were un-rejected: real tmux
+   ACCEPTS and stores them (they appear in virtually every real .tmux.conf, e.g.
+   `set -ga terminal-overrides \",xterm-256color:Tc\"`), so rejecting them broke
+   config transparency even though cl-tmux applies no terminal-matching
+   behavior.  Kept as a named list so a future genuinely-unrepresentable option
+   has a documented home.")
 
 (defun %unsupported-set-option-p (name)
   "Return T when NAME is a set-option target cl-tmux must reject."

@@ -18,8 +18,8 @@
   (when tokens
     (let ((cmd  (first tokens))
           (args (rest tokens)))
-      (if (string= cmd "set-environment")
-          (%apply-set-environment-directive cmd args)
+      (if (member cmd '("set-environment" "setenv") :test #'string=)
+          (%apply-set-environment-directive "set-environment" args)
           (or (%apply-key-directive cmd args)
               (%apply-if-shell-directive cmd args)
               (%apply-set-directive cmd args)

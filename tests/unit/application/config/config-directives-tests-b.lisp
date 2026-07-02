@@ -120,17 +120,18 @@
     (is (null (cl-tmux/options:get-option "exit-empty" nil))
         "exit-empty must NOT appear in global-options (it is server-only)")))
 
-(test apply-set-directive-rejects-unsupported-terminal-options
-  "terminal-overrides/features are terminal matching directives cl-tmux does not implement."
+(test apply-set-directive-accepts-terminal-matching-options
+  "terminal-overrides/features are ACCEPTED and stored like real tmux (they
+   appear in virtually every real .tmux.conf); cl-tmux applies no
+   terminal-matching behavior but must not break config transparency."
   (dolist (form '(("set" "-g" "terminal-overrides" "xterm*:RGB")
                   ("set-option" "-g" "terminal-features" "xterm*:RGB")))
     (with-fresh-global-options
       (destructuring-bind (verb flag name value) form
         (declare (ignore verb flag))
-        (assert-config-directive-rejected form (format nil "~S" form))
-        (is (not (equal value (cl-tmux/options:get-option name nil)))
-            "~A must not be stored when the terminal-matching behavior is unsupported"
-            name)))))
+        (assert-config-directive-applied form (format nil "~S" form))
+        (is (equal value (cl-tmux/options:get-option name nil))
+            "~A must be stored like any other option" name)))))
 
 ;;; ── source-file directive ──────────────────────────────────────────────────
 

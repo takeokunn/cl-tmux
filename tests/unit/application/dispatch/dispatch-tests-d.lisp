@@ -206,8 +206,10 @@
       (is (eq t (cl-tmux/options:get-option-for-window "synchronize-panes" win))
           "get-option-for-window must fall back to the global value T"))))
 
-(test cmd-set-option-rejects-unsupported-terminal-options
-  "Runtime set-option rejects terminal matching directives instead of storing no-op state."
+(test cmd-set-option-accepts-terminal-matching-options
+  "Runtime set-option ACCEPTS terminal-overrides/terminal-features like real
+   tmux (they appear in virtually every real .tmux.conf); cl-tmux stores them
+   even though it applies no terminal-matching behavior."
   (dolist (args '(("-g" "terminal-overrides" "xterm*:RGB")
                   ("-g" "terminal-features" "xterm*:RGB")))
     (with-option-session (s)
@@ -215,10 +217,10 @@
         (destructuring-bind (_ name value) args
           (declare (ignore _))
           (cl-tmux::%cmd-set-option s args)
-          (is (search "unsupported option" *overlay*)
-              "~A must produce an unsupported-option overlay" name)
-          (is (not (equal value (cl-tmux/options:get-option name nil)))
-              "~A must not be stored when terminal matching is unsupported" name))))))
+          (is (null (and *overlay* (search "unsupported option" *overlay*)))
+              "~A must not be rejected" name)
+          (is (equal value (cl-tmux/options:get-option name nil))
+              "~A must be stored like any other option" name))))))
 
 (test cmd-set-option-o-flag-variants
   "set -o only sets the option when no value exists: skips if already set,
