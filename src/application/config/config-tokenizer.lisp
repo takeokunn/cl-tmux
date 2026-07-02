@@ -94,6 +94,16 @@
               ((char= ch #\')
                (setf i (%tokenize-single-quoted line i len #'push-char)
                      in-token t))
+              ((char= ch #\;)
+               ;; tmux cmd-parse: an unquoted, unescaped `;` is a command
+               ;; separator even with no surrounding whitespace
+               ;; (`set -g @a 1; set -g @b 2`), so it always lexes as its own
+               ;; ";" token.  A literal `;` must be escaped (\;) or quoted —
+               ;; both of those take the branches above and stay in-token.
+               (finish-token)
+               (push-char #\;)
+               (finish-token)
+               (incf i))
               ((%whitespace-p ch)
                (finish-token)
                (incf i))
