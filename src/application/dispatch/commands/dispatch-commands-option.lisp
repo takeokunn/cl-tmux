@@ -181,20 +181,25 @@
          (let ((value (%expand-F-flag flags session raw-value)))
            (%with-option-scope session flags target-str name
              (lambda (scope target)
-               (cond
-                 (unset-p
-                  (%scope-unset name scope target))
-                 (append-p
-                  (%scope-append name value scope target))
-                 ((and only-if-unset-p
-                       (%scope-present-p name scope target))
-                  nil)
-                 (t
-                  (%scope-set name value scope target)))
-               ;; Side-effects for special options (prefix/status/escape-time etc.)
-               ;; always run after the operation, even when -o skips the write.
-               ;; Passes RAW value — side-effect parsers expect strings, not coerced types.
-               (cl-tmux/config:apply-option-side-effects name value unset-p)))))))))
+               (if (and only-if-unset-p
+                        (not unset-p)
+                        (%scope-present-p name scope target))
+                   ;; tmux: `set -o` on an already-set option is an error —
+                   ;; "already set: NAME" unless -q — and nothing else runs.
+                   (unless quiet-p
+                     (%overlayf "already set: ~A" name))
+                   (progn
+                     (cond
+                       (unset-p
+                        (%scope-unset name scope target))
+                       (append-p
+                        (%scope-append name value scope target))
+                       (t
+                        (%scope-set name value scope target)))
+                     ;; Side-effects for special options (prefix/status/escape-time
+                     ;; etc.) run after the operation.  Passes RAW value —
+                     ;; side-effect parsers expect strings, not coerced types.
+                     (cl-tmux/config:apply-option-side-effects name value unset-p)))))))))))
 
 (defun %cmd-set-window-option (session args)
   "set-window-option: like set-option but defaults to WINDOW scope.  Prepends

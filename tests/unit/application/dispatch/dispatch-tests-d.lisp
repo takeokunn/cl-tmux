@@ -235,6 +235,24 @@
         (is (string= expected (cl-tmux/options:get-option "@plugin-opt"))
             desc)))))
 
+(test cmd-set-option-o-already-set-reports-tmux-error
+  "set -o on an already-set option reports tmux's 'already set: NAME' error;
+   -q suppresses it.  Each row: (args expect-error-p description)."
+  (dolist (row '((("-o" "@plugin-opt" "v2")      t   "-o must report already set")
+                 (("-o" "-q" "@plugin-opt" "v2") nil "-o -q must stay silent")))
+    (destructuring-bind (args expect-error-p desc) row
+      (with-option-session (s)
+        (let ((*overlay* nil))
+          (cl-tmux/options:set-option "@plugin-opt" "v1")
+          (cl-tmux::%cmd-set-option s args)
+          (is (string= "v1" (cl-tmux/options:get-option "@plugin-opt"))
+              "~A: existing value must stay untouched" desc)
+          (if expect-error-p
+              (is (search "already set: @plugin-opt" *overlay*) desc)
+              (is (null (and *overlay*
+                             (search "already set" *overlay*)))
+                  desc)))))))
+
 (test run-command-line-bind-with-args-binds-key
   "Runtime 'bind <key> <command>' (with args) binds via the config directive path,
    not the interactive prompt — so command-prompt / control-mode bind works."
