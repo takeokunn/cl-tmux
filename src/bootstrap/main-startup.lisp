@@ -63,15 +63,37 @@
 (defconstant +server-socket-poll-max-iterations+ 30
   "Maximum number of socket-existence probes (30 x 0.1 s = 3 s total wait).")
 
+(defun %stale-socket-p (socket-path)
+  "True when SOCKET-PATH exists but no server accepts connections on it.
+   tmux treats such leftover socket files (e.g. after a crash) as stale:
+   it unlinks them and starts a fresh server instead of failing to attach."
+  (and (probe-file socket-path)
+       (not (handler-case
+                (let ((sock (cl-tmux/net:connect-to socket-path)))
+                  (cl-tmux/net:close-socket sock)
+                  t)
+              (error () nil)))))
+
+(defun %global-socket-flag-args ()
+  "The global -L/-S flags to re-inject into a spawned server child's argv so it
+   binds the same socket the parent resolved."
+  (append (when *socket-path-override* (list "-S" *socket-path-override*))
+          (when *socket-name-override* (list "-L" *socket-name-override*))))
+
 (defun %ensure-server-running (session-name)
-  "Start a background server for SESSION-NAME if no socket exists.
+  "Start a background server for SESSION-NAME if no live socket exists.
+   A stale socket file (present but refusing connections) is unlinked first,
+   matching tmux's crash-recovery behaviour.
    Uses sb-ext:run-program with *posix-argv* to spawn a separate process.
    Only enters the polling loop when run-program succeeded.
    Polls every +server-socket-poll-interval-seconds+ for up to
    +server-socket-poll-max-iterations+ iterations for the socket to appear."
   (let* ((socket-path (socket-path session-name))
          (exe         (first sb-ext:*posix-argv*))
-         (args        (list "server" session-name)))
+         (args        (append (%global-socket-flag-args)
+                              (list "server" session-name))))
+    (when (%stale-socket-p socket-path)
+      (ignore-errors (delete-file socket-path)))
     (unless (probe-file socket-path)
       ;; Guard: run-program may fail in test environments or when the
       ;; binary is not yet on PATH.  Only poll if the spawn succeeded.
@@ -146,12 +168,9 @@
      preferred-name)
     ((probe-file (socket-path "0")) "0")
     (t
-     (let* ((env-tmpdir (sb-ext:posix-getenv "TMPDIR"))
-            (tmpdir (if (and env-tmpdir (plusp (length env-tmpdir)))
-                        (string-right-trim "/" env-tmpdir)
-                        "/tmp"))
-            (pattern (merge-pathnames "cl-tmux-*.sock"
-                                      (parse-namestring (format nil "~A/" tmpdir)))))
+     (let ((pattern (merge-pathnames
+                     "cl-tmux-*.sock"
+                     (parse-namestring (format nil "~A/" (%socket-directory))))))
        (%socket-file-session-name (first (ignore-errors (directory pattern))))))))
 
 (defmacro %try-or-nil (&body body)
@@ -294,13 +313,38 @@
         (format *error-output* "source-file: ~A~%" c)
         (sb-ext:exit :code 1)))))
 
+(defun %consume-global-socket-flags (argv)
+  "Consume tmux's global socket flags from the front of ARGV, before the
+   command word: -L <socket-name> and -S <socket-path>, in both the separated
+   (-L name) and attached (-Lname) getopt forms.  Sets *socket-name-override* /
+   *socket-path-override* and returns the remaining argv."
+  (loop
+    (let ((head (first argv)))
+      (cond
+        ((null head) (return argv))
+        ((string= head "-L")
+         (pop argv)
+         (when argv (setf *socket-name-override* (pop argv))))
+        ((string= head "-S")
+         (pop argv)
+         (when argv (setf *socket-path-override* (pop argv))))
+        ((and (> (length head) 2) (string= "-L" head :end2 2))
+         (setf *socket-name-override* (subseq head 2))
+         (pop argv))
+        ((and (> (length head) 2) (string= "-S" head :end2 2))
+         (setf *socket-path-override* (subseq head 2))
+         (pop argv))
+        (t (return argv))))))
+
 (defun main ()
   "Binary entry point - dispatches on the first argv item via *startup-modes*.
+   tmux's global socket flags (-L socket-name / -S socket-path) are consumed
+   from the front of argv before mode dispatch.
    Each entry in *startup-modes* is a plist (handler-symbol &key :raw-args-p).
    :raw-args-p T modes receive the full argv tail; all others receive a single
    session name (defaulting to \"0\").
    Unrecognized or absent modes fall through to run-standalone."
-  (let* ((argv    (%application-argv))
+  (let* ((argv    (%consume-global-socket-flags (%application-argv)))
          (mode    (first argv))
          (rest    (rest argv))
          (entry   (cdr (assoc mode *startup-modes* :test #'equal))))

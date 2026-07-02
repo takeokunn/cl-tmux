@@ -16,11 +16,48 @@
 ;;;; with-incoming-frame is defined in cl-tmux/transport so both server and
 ;;;; client can use it without creating a circular dependency.
 
+(defvar *socket-path-override* nil
+  "Full socket path from the global -S flag (tmux -S); when set, socket-path
+   returns it verbatim for every server name.")
+
+(defvar *socket-name-override* nil
+  "Socket name from the global -L flag (tmux -L); when set, it replaces the
+   server-name-derived socket file name inside the per-UID socket directory.")
+
+(defun %socket-tmp-base ()
+  "The socket base directory: $TMUX_TMPDIR, else $TMPDIR, else /tmp — the same
+   precedence real tmux uses."
+  (let ((tmux-tmpdir (sb-ext:posix-getenv "TMUX_TMPDIR"))
+        (tmpdir      (sb-ext:posix-getenv "TMPDIR")))
+    (string-right-trim
+     "/"
+     (cond ((and tmux-tmpdir (plusp (length tmux-tmpdir))) tmux-tmpdir)
+           ((and tmpdir (plusp (length tmpdir))) tmpdir)
+           (t "/tmp")))))
+
+(defun %socket-directory ()
+  "Per-UID socket directory <base>/cl-tmux-<uid> (tmux's /tmp/tmux-UID/),
+   created mode 0700 when possible.  Returns the directory string without a
+   trailing slash.  Creation/chmod failures are ignored — socket binding will
+   surface a real permission problem with a better error."
+  (require :sb-posix)
+  (let* ((uid (handler-case (sb-posix:getuid) (error () 0)))
+         (dir (format nil "~A/cl-tmux-~D" (%socket-tmp-base) uid)))
+    (ignore-errors
+      (ensure-directories-exist (format nil "~A/" dir))
+      (sb-posix:chmod dir #o700))
+    dir))
+
 (defun socket-path (name)
-  "Filesystem path of the Unix socket for the server session named NAME."
-  (format nil "~A/cl-tmux-~A.sock"
-          (string-right-trim "/" (or (sb-ext:posix-getenv "TMPDIR") "/tmp"))
-          name))
+  "Filesystem path of the Unix socket for the server named NAME.
+   tmux layout: sockets live in a private per-UID directory under $TMUX_TMPDIR
+   (or $TMPDIR, or /tmp).  The global -S flag (*socket-path-override*) supplies
+   a verbatim path; -L (*socket-name-override*) picks a different socket name
+   in the per-UID directory."
+  (or *socket-path-override*
+      (format nil "~A/cl-tmux-~A.sock"
+              (%socket-directory)
+              (or *socket-name-override* name))))
 
 (defun apply-client-size (session payload)
   "Apply a client size PAYLOAD (rows,cols) to SESSION and relayout.

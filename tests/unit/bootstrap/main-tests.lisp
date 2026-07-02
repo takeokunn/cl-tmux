@@ -721,3 +721,33 @@
     (is (null win)    "empty args: win-name must be NIL")
     (is (null detach) "empty args: detach must be NIL")
     (is (null dir)    "empty args: start-dir must be NIL")))
+
+;;; ── Global socket flags (-L / -S) ─────────────────────────────────────────────
+
+(test consume-global-socket-flags-parses-L-and-S
+  "tmux's global -L/-S flags (separated and attached getopt forms) are consumed
+   from the front of argv before the command word and set the socket overrides."
+  (let ((cl-tmux::*socket-name-override* nil)
+        (cl-tmux::*socket-path-override* nil))
+    (is (equal '("new-session" "-s" "x")
+               (cl-tmux::%consume-global-socket-flags
+                '("-L" "lbl" "-S" "/tmp/p.sock" "new-session" "-s" "x")))
+        "both flags must be consumed, leaving the command tail")
+    (is (string= "lbl" cl-tmux::*socket-name-override*)
+        "-L value must land in *socket-name-override*")
+    (is (string= "/tmp/p.sock" cl-tmux::*socket-path-override*)
+        "-S value must land in *socket-path-override*"))
+  (let ((cl-tmux::*socket-name-override* nil)
+        (cl-tmux::*socket-path-override* nil))
+    (is (equal '("attach")
+               (cl-tmux::%consume-global-socket-flags '("-Lfoo" "attach")))
+        "attached -Lfoo form must be consumed")
+    (is (string= "foo" cl-tmux::*socket-name-override*)
+        "attached -Lfoo must set the socket name"))
+  (let ((cl-tmux::*socket-name-override* nil)
+        (cl-tmux::*socket-path-override* nil))
+    (is (equal '("kill-server")
+               (cl-tmux::%consume-global-socket-flags '("kill-server")))
+        "argv without global flags must pass through unchanged")
+    (is (null cl-tmux::*socket-name-override*)
+        "no -L means no socket-name override")))

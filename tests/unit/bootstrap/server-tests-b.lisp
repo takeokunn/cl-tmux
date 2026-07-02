@@ -433,6 +433,65 @@ effects for the :quit disposition."
       (is (search "/tmp" path)
           "socket-path must fall back to /tmp when $TMPDIR is unset, got ~S" path))))
 
+(test socket-path-tmux-tmpdir-beats-tmpdir
+  :description "socket-path prefers $TMUX_TMPDIR over $TMPDIR (tmux precedence)."
+  (with-temporary-posix-environment-variable ("TMUX_TMPDIR" "/tmp/tmux-tmpdir-test")
+    (let ((path (cl-tmux::socket-path "envtest2")))
+      (is (search "/tmp/tmux-tmpdir-test" path)
+          "socket-path must use $TMUX_TMPDIR when set, got ~S" path))))
+
+(test socket-path-uses-per-uid-directory
+  :description "Sockets live in a per-UID directory (tmux's /tmp/tmux-UID/ layout)."
+  (with-temporary-posix-environment-variable ("TMUX_TMPDIR" nil)
+    (let ((path (cl-tmux::socket-path "uidtest")))
+      (is (search (format nil "cl-tmux-~D/" (sb-posix:getuid)) path)
+          "socket-path must place sockets in the per-UID directory, got ~S" path))))
+
+(test socket-path-honors-global-flag-overrides
+  :description "The global -S flag returns its path verbatim; -L replaces the
+   socket name inside the per-UID directory.  Each row: (name-override
+   path-override name expected-check description)."
+  (let ((cl-tmux::*socket-path-override* "/tmp/custom-cl-tmux.sock")
+        (cl-tmux::*socket-name-override* nil))
+    (is (string= "/tmp/custom-cl-tmux.sock" (cl-tmux::socket-path "whatever"))
+        "-S must override the whole socket path verbatim"))
+  (let ((cl-tmux::*socket-path-override* nil)
+        (cl-tmux::*socket-name-override* "mylabel"))
+    (let ((path (cl-tmux::socket-path "ignored-name")))
+      (is (search "cl-tmux-mylabel.sock" path)
+          "-L must select the socket name, got ~S" path)
+      (is (null (search "ignored-name" path))
+          "-L must replace the server-derived name, got ~S" path))))
+
+(test stale-socket-p-detects-dead-socket-file
+  :description "%stale-socket-p: NIL for a missing path; T for an existing file
+   nothing is listening on (tmux unlinks these and restarts the server)."
+  (is (null (cl-tmux::%stale-socket-p "/nonexistent/cl-tmux-stale-probe.sock"))
+      "a missing socket path is not stale — there is nothing to clean up")
+  (let ((path (format nil "~A/cl-tmux-stale-test-~D.sock"
+                      (string-right-trim "/" (or (sb-ext:posix-getenv "TMPDIR") "/tmp"))
+                      (random 1000000))))
+    (unwind-protect
+         (progn
+           ;; A plain file at the socket path: exists, but connect must fail.
+           (with-open-file (s path :direction :output :if-does-not-exist :create)
+             (declare (ignore s)))
+           (is (eq t (and (cl-tmux::%stale-socket-p path) t))
+               "an existing path refusing connections must be stale"))
+      (ignore-errors (delete-file path)))))
+
+(test stale-socket-p-live-listener-is-not-stale
+  :description "%stale-socket-p returns NIL when a live listener accepts on the path."
+  (let ((path (cl-tmux/net::%make-probe-socket-path)))
+    (if (cl-tmux/net:unix-socket-available-p)
+        (let ((listener (cl-tmux/net:make-listener path)))
+          (unwind-protect
+               (is (null (cl-tmux::%stale-socket-p path))
+                   "a live listening socket must not be reported stale")
+            (cl-tmux/net:close-socket listener)
+            (ignore-errors (delete-file path))))
+        (is-true t "unix sockets unavailable in this sandbox — skipping"))))
+
 ;;; ── apply-client-size relayout path ──────────────────────────────────────────
 
 (test apply-client-size-resizes-active-window
