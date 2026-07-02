@@ -459,3 +459,32 @@
 
 ;;; ── :lock-session / :unlock-session (already tested) ─────────────────────────
 ;;; Covered by dispatch-lock-unlock-session above.
+
+;;; ── Pane-navigation zoom pop (tmux window_pop_zoom) ──────────────────────────
+
+(test pane-navigation-unzooms-unless-Z-table
+  "Pane-navigation commands on a zoomed window unzoom it unless -Z is given;
+   the pane-configuring select-pane forms leave zoom untouched.
+   Each row: (command-line expect-zoomed-after description)."
+  (dolist (row '(("select-pane -t %2"    nil "select-pane must pop zoom")
+                 ("select-pane -Z -t %2" t   "select-pane -Z must keep zoom")
+                 ("select-pane -m"       t   "select-pane -m (configure) must keep zoom")
+                 ("swap-pane -U"         nil "swap-pane must pop zoom")
+                 ("swap-pane -UZ"        t   "swap-pane -Z must keep zoom")
+                 ("rotate-window"        nil "rotate-window must pop zoom")
+                 ("rotate-window -Z"     t   "rotate-window -Z must keep zoom")
+                 ("last-pane"            nil "last-pane must pop zoom")
+                 ("last-pane -Z"         t   "last-pane -Z must keep zoom")))
+    (destructuring-bind (command expect-zoomed desc) row
+      (with-two-pane-h-session (s win p0 p1)
+        (with-command-test-state (s :overlay t)
+          ;; Arm last-pane's target and zoom the window.
+          (cl-tmux/model:window-select-pane win p1)
+          (cl-tmux/model:window-select-pane win p0)
+          (cl-tmux/model:window-zoom-toggle win)
+          (is-true (cl-tmux/model:window-zoom-p win)
+                   "precondition: window must be zoomed (~A)" desc)
+          (cl-tmux::%run-command-line s command)
+          (is (eq expect-zoomed
+                  (and (cl-tmux/model:window-zoom-p win) t))
+              "~A" desc))))))
