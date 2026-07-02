@@ -569,3 +569,22 @@
     (let ((stack (cl-tmux/config::%update-config-cond-stack :if "%if 1" '(:seeking))))
       (is (equal '(:dead :seeking) stack)
           "nested %if inside :seeking must push :dead; got ~S" stack))))
+
+;;; ── set -o (only-if-unset) on the config-load path ───────────────────────────
+
+(test config-set-o-only-if-unset-enforced
+  "Config-time `set -og` skips an already-present option and writes an absent
+   one (tmux cmd-set-option -o semantics on the load path)."
+  (with-fresh-global-options
+    (is (eq t (apply-config-directive '("set" "-og" "@cfg-o" "first")))
+        "first set -og on an unset user option must apply")
+    (is (string= "first" (cl-tmux/options:get-option "@cfg-o"))
+        "the first value must be stored")
+    (is (eq t (apply-config-directive '("set" "-og" "@cfg-o" "second")))
+        "second set -og is handled (tmux reports already-set and skips)")
+    (is (string= "first" (cl-tmux/options:get-option "@cfg-o"))
+        "the existing value must be left untouched")
+    (is (eq t (apply-config-directive '("set" "-g" "@cfg-o" "third")))
+        "a plain set without -o must still overwrite")
+    (is (string= "third" (cl-tmux/options:get-option "@cfg-o"))
+        "plain set must overwrite the value")))

@@ -488,3 +488,30 @@
           (is (eq expect-zoomed
                   (and (cl-tmux/model:window-zoom-p win) t))
               "~A" desc))))))
+
+(test keyboard-pane-navigation-pops-zoom-table
+  "The interactive pane-navigation keyword handlers unzoom a zoomed window
+   (tmux window_pop_zoom; the default bindings carry no -Z) and then actually
+   move — previously a zoomed window's single-leaf tree made them no-ops.
+   Each row: (command expect-focus-moved description)."
+  (dolist (row '((:select-pane-right t "prefix-arrow must unzoom and move")
+                 (:next-pane         t "prefix-o must unzoom and cycle")
+                 (:last-pane         t ":last-pane must unzoom and jump")
+                 (:swap-pane-forward nil "swap keeps the same active pane")))
+    (destructuring-bind (command expect-moved desc) row
+      (with-two-pane-h-session (s win p0 p1)
+        (with-command-test-state (s :overlay t)
+          ;; Arm last-pane's target, focus p0, then zoom.
+          (cl-tmux/model:window-select-pane win p1)
+          (cl-tmux/model:window-select-pane win p0)
+          (cl-tmux/model:window-zoom-toggle win)
+          (is-true (cl-tmux/model:window-zoom-p win)
+                   "precondition: window must be zoomed (~A)" desc)
+          (cl-tmux::dispatch-command s command nil)
+          (is-false (cl-tmux/model:window-zoom-p win)
+                    "~A: the window must be unzoomed" desc)
+          (if expect-moved
+              (is (eq p1 (cl-tmux/model:window-active-pane win))
+                  "~A: focus must move to the other pane" desc)
+              (is (eq p0 (cl-tmux/model:window-active-pane win))
+                  "~A" desc)))))))

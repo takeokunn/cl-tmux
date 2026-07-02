@@ -240,6 +240,35 @@
                                 :screen screen)))
         (finishes (cl-tmux::%paste-to-pane pane text) desc)))))
 
+(test paste-to-pane-bracket-p-controls-wrapping
+  "%paste-to-pane wraps in ESC[200~/ESC[201~ only when the application enabled
+   bracketed paste AND bracket-p (tmux paste-buffer -p) is true.
+   Each row: (app-bracketed bracket-p expect-wrapped description)."
+  (dolist (row '((t   t   t   "-p with app bracketing must wrap")
+                 (t   nil nil "no -p must NOT wrap even when the app enabled it")
+                 (nil t   nil "-p without app bracketing must not wrap")))
+    (destructuring-bind (app-bracketed bracket-p expect-wrapped desc) row
+      (let* ((screen (make-screen 20 5))
+             (pane   (make-pane :id 1 :fd 9999 :pid -1 :x 0 :y 0 :width 20 :height 5
+                                :screen screen))
+             (written nil)
+             (real-pty-write (fdefinition 'cl-tmux/pty:pty-write)))
+        (setf (cl-tmux/terminal/types:screen-bracketed-paste screen) app-bracketed)
+        (unwind-protect
+             (progn
+               (setf (fdefinition 'cl-tmux/pty:pty-write)
+                     (lambda (fd octets)
+                       (declare (ignore fd))
+                       (push (babel:octets-to-string octets :encoding :utf-8)
+                             written)))
+               (cl-tmux::%paste-to-pane pane "hi" bracket-p))
+          (setf (fdefinition 'cl-tmux/pty:pty-write) real-pty-write))
+        (let ((all (apply #'concatenate 'string (nreverse written))))
+          (is (search "hi" all) "the text must be written (~A)" desc)
+          (if expect-wrapped
+              (is (search "[200~" all) "~A" desc)
+              (is (null (search "[200~" all)) "~A" desc)))))))
+
 ;;; ── %format-tree-entry helper ────────────────────────────────────────────────
 
 (test format-tree-entry-current-and-non-current-prefix

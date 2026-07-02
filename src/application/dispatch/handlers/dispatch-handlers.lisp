@@ -265,10 +265,13 @@
 
   ;; ── Pane management ────────────────────────────────────────────────────────
   (:last-pane
-   ;; Jump to the previously active pane.
+   ;; Jump to the previously active pane, popping zoom first (tmux
+   ;; window_pop_zoom; the interactive binding carries no -Z).
    (let* ((win  (session-active-window session))
           (last (and win (window-last-active win))))
-     (when last (%select-pane-with-focus win last))))
+     (when last
+       (%pane-navigation-unzoom win nil)
+       (%select-pane-with-focus win last))))
   (:display-panes
    ;; Show big per-pane numbers (drawn by the renderer while *display-panes-active*),
    ;; matching real tmux.  An (empty) transient overlay is the timing vehicle: it

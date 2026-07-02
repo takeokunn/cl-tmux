@@ -53,11 +53,15 @@
         (session-select-window session w)))))
 
 (defun %cmd-cycle-pane (session cycler)
-  "Switch the active pane within the active window using CYCLER."
-  (let* ((win   (session-active-window session))
-         (panes (window-panes win))
-         (next  (funcall cycler panes (window-active-pane win))))
-    (when next (%select-pane-with-focus win next))))
+  "Switch the active pane within the active window using CYCLER.
+   Pops zoom first (tmux window_pop_zoom): a zoomed window's derived pane
+   list is the single zoomed leaf, so cycling would otherwise be a no-op."
+  (let ((win (session-active-window session)))
+    (when win
+      (%pane-navigation-unzoom win nil)
+      (let* ((panes (window-panes win))
+             (next  (funcall cycler panes (window-active-pane win))))
+        (when next (%select-pane-with-focus win next))))))
 
 (defun %cmd-cycle-session (session cycler)
   "Switch to the adjacent session using CYCLER (next-cyclic or prev-cyclic).

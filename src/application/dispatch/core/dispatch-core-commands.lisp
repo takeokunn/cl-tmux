@@ -184,11 +184,16 @@
       (format nil "~C[201~~" #\Escape))
   "Bracketed-paste end escape sequence: ESC [ 2 0 1 ~")
 
-(defun %paste-to-pane (pane text)
-  "Write TEXT to PANE's PTY, wrapping in bracketed-paste sequences when enabled."
+(defun %paste-to-pane (pane text &optional (bracket-p t))
+  "Write TEXT to PANE's PTY, wrapping in bracketed-paste sequences when the
+   application enabled them (DECSET 2004) AND BRACKET-P is true.  BRACKET-P
+   mirrors tmux's paste-buffer -p: the scriptable paste-buffer only brackets
+   with -p, while the default interactive bindings (prefix ], mouse paste,
+   buffer mode) all pass -p — hence BRACKET-P defaults to true for the
+   interactive keyword-handler callers."
   (when (and text (cl-tmux/model:pane-live-p pane))
     (let* ((screen    (pane-screen pane))
-           (bracketed (screen-bracketed-paste screen)))
+           (bracketed (and bracket-p (screen-bracketed-paste screen))))
       (when bracketed
         (pty-write (pane-fd pane)
                    (babel:string-to-octets +bracketed-paste-begin+ :encoding :utf-8)))

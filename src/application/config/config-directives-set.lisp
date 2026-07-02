@@ -123,16 +123,18 @@
      UNSET-P        – T when -u appeared (remove the option)
      FORMAT-P       – T when -F appeared (expand value as format string)
    Recognised but currently treated as global: -g (global), -w (window),
-   -p (pane), -o (only-if-unset — accepted, not enforced).  These scope
-   flags cannot be applied to per-object instances at config-load time
-   because no window or pane context exists yet; options fall through to
-   the global store so they take effect at the nearest practical scope.
-   POSITIONALS is the remaining non-flag tokens (name and optional value)."
+   -p (pane).  These scope flags cannot be applied to per-object instances at
+   config-load time because no window or pane context exists yet; options fall
+   through to the global store so they take effect at the nearest practical
+   scope.  -q is accepted silently.
+   POSITIONALS is the remaining non-flag tokens (name and optional value);
+   ONLY-IF-UNSET-P (trailing value) is T when -o appeared."
   (let ((flag-present-p nil)
         (append-p       nil)
         (server-p       nil)
         (unset-p        nil)
         (format-p       nil)
+        (only-if-unset-p nil)
         (remaining      args))
     (loop while (and remaining
                      (let ((token (first remaining)))
@@ -140,13 +142,15 @@
           do (let ((token (pop remaining)))
                (setf flag-present-p t)
                ;; Declarative flag table: each (FLAG-CHAR VARIABLE) arm.
-               ;; -g, -w, -p, -o, -q are accepted silently (not listed here).
+               ;; -g, -w, -p, -q are accepted silently (not listed here).
                (define-flag-mapping token
                  (#\a append-p)
                  (#\s server-p)
                  (#\u unset-p)
-                 (#\F format-p))))
-    (values flag-present-p append-p server-p unset-p format-p remaining)))
+                 (#\F format-p)
+                 (#\o only-if-unset-p))))
+    (values flag-present-p append-p server-p unset-p format-p remaining
+            only-if-unset-p)))
 
 (defun %coerce-set-value (raw-value format-p hostname)
   "Coerce RAW-VALUE for storage.  When FORMAT-P is T, expand it as a format
@@ -196,18 +200,28 @@
    Routes -s writes to *server-options*; handles -a (append) and -u (unset).
    Returns T when applied; NIL when CMD is not a set verb or carries no flags."
   (when (%set-directive-p cmd)
-    (multiple-value-bind (flag-present-p append-p server-p unset-p format-p positionals)
+    (multiple-value-bind (flag-present-p append-p server-p unset-p format-p positionals
+                          only-if-unset-p)
         (%strip-set-flags args)
       (when (and flag-present-p (first positionals))
         (let ((name      (first positionals))
               (raw-value (%join-config-tokens (rest positionals))))
           (unless (%unsupported-set-option-p name)
-            ;; Hoist (machine-instance) here so %coerce-set-value stays pure.
-            ;; The hostname is only needed when format-p is T; compute it lazily.
-            (let* ((hostname (when format-p (ignore-errors (machine-instance))))
-                   (value    (%coerce-set-value raw-value format-p hostname)))
-              (%route-set-value name value server-p append-p unset-p)
-              ;; Side-effect: intercept special options that need runtime state updates
-              ;; (see config-option-side-effects.lisp for apply-option-side-effects).
-              (apply-option-side-effects name value unset-p)
-              t)))))))
+            (if (and only-if-unset-p
+                     (not unset-p)
+                     (multiple-value-bind (getter setter table)
+                         (%option-scope-triple server-p)
+                       (declare (ignore getter setter))
+                       (nth-value 1 (gethash name table))))
+                ;; tmux `set -o`: an already-set option is skipped ("already
+                ;; set" at config load); the directive itself is handled.
+                t
+                ;; Hoist (machine-instance) here so %coerce-set-value stays pure.
+                ;; The hostname is only needed when format-p is T; compute it lazily.
+                (let* ((hostname (when format-p (ignore-errors (machine-instance))))
+                       (value    (%coerce-set-value raw-value format-p hostname)))
+                  (%route-set-value name value server-p append-p unset-p)
+                  ;; Side-effect: intercept special options that need runtime state
+                  ;; updates (see config-option-side-effects.lisp).
+                  (apply-option-side-effects name value unset-p)
+                  t))))))))

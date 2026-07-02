@@ -159,8 +159,8 @@
    carriage returns (CR) so pasted lines act as Enter in a shell; -r disables that
    replacement.  -s sep replaces line endings (LF) with SEP instead of the default
    CR (e.g. `paste-buffer -s ' '` joins lines with spaces); -r still wins, pasting
-   raw.  Bracketed paste is applied automatically by %paste-to-pane when the
-   application has enabled it.  -p is accepted but not specially handled."
+   raw.  -p: wrap the paste in bracketed-paste sequences when the application
+   has enabled them (tmux only brackets with -p on the scriptable command)."
   (with-command-input (flags positionals args "bst"
                                 :allowed-flags '(#\d #\p #\r #\b #\s #\t)
                                 :max-positionals 0
@@ -177,7 +177,7 @@
       (with-target-context (target-session target-window target-pane session target-str)
         (declare (ignore target-session target-window))
         (when text
-          (%paste-to-pane target-pane text)
+          (%paste-to-pane target-pane text (%flag-present-p flags #\p))
           (when delete-p
             (if name
                 (cl-tmux/buffer:delete-buffer-by-name name)
