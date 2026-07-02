@@ -121,11 +121,14 @@
    #:screen-origin-mode
    ;; Focus event reporting (?1004h / ?1004l)
    #:screen-focus-events
-   ;; Active character set (:ascii / :dec-graphics) + VT100 G0/G1 + SO/SI state
+   ;; Active character set (:ascii / :dec-graphics) + VT100 G0..G3 + shift state
    #:screen-charset
    #:screen-g0-charset
    #:screen-g1-charset
+   #:screen-g2-charset
+   #:screen-g3-charset
    #:screen-active-g
+   #:screen-single-shift
    #:screen-tab-stops
    ;; Response queue for DA1/DA2 and similar replies
    #:screen-response-queue

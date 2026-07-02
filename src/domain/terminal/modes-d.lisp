@@ -58,6 +58,9 @@
   (setf (screen-origin-mode  screen) nil
         (screen-g0-charset   screen) :ascii
         (screen-g1-charset   screen) :ascii
+        (screen-g2-charset   screen) :ascii
+        (screen-g3-charset   screen) :ascii
+        (screen-single-shift screen) nil
         (screen-active-g     screen) :g0
         (screen-charset      screen) :ascii))
 
@@ -98,6 +101,9 @@
         (screen-charset        screen) :ascii
         (screen-g0-charset     screen) :ascii
         (screen-g1-charset     screen) :ascii
+        (screen-g2-charset     screen) :ascii
+        (screen-g3-charset     screen) :ascii
+        (screen-single-shift   screen) nil
         (screen-active-g       screen) :g0
         (screen-tab-stops      screen) :default
         (screen-origin-mode    screen) nil
@@ -254,7 +260,9 @@
 
 (define-charset-slot-rules
   (:g0 screen-g0-charset)
-  (:g1 screen-g1-charset))
+  (:g1 screen-g1-charset)
+  (:g2 screen-g2-charset)
+  (:g3 screen-g3-charset))
 
 (defun screen-invoked-charset (screen g)
   "Return the charset currently designated to G (:g0 or :g1) on SCREEN."

@@ -263,11 +263,16 @@
   (#x44  (cursor-lf  screen)     #'ground-state)  ; ESC D → IND (index: down, no CR)
   (#x45  (cursor-nel screen)     #'ground-state)  ; ESC E → NEL (next line: CR+LF)
   (#x48  (set-tab-stop screen)   #'ground-state)  ; ESC H → HTS (set tab stop)
-  ;; ── Charset designators: ESC ( designates G0, ESC ) designates G1 ──────────
+  ;; ── Charset designators: ESC ( / ) / * / + designate G0..G3 ────────────────
   (#x28  (make-charset-designator-k :g0))          ; ESC ( → designate G0
   (#x29  (make-charset-designator-k :g1))          ; ESC ) → designate G1
-  (#x2A  (make-ignore-final-byte-k))               ; ESC * → designate G2 (not modeled)
-  (#x2B  (make-ignore-final-byte-k))               ; ESC + → designate G3 (not modeled)
+  (#x2A  (make-charset-designator-k :g2))          ; ESC * → designate G2
+  (#x2B  (make-charset-designator-k :g3))          ; ESC + → designate G3
+  ;; ── Locking shifts LS2/LS3 and single shifts SS2/SS3 ───────────────────────
+  (#x6E  (invoke-charset screen :g2) #'ground-state)             ; ESC n → LS2
+  (#x6F  (invoke-charset screen :g3) #'ground-state)             ; ESC o → LS3
+  (#x4E  (setf (screen-single-shift screen) :g2) #'ground-state) ; ESC N → SS2
+  (#x4F  (setf (screen-single-shift screen) :g3) #'ground-state) ; ESC O → SS3
   (#x20  (make-ignore-final-byte-k))               ; ESC SP <f> → S7C1T/S8C1T/ANSI level
   (#x25  (make-ignore-final-byte-k))               ; ESC % <f> → charset selection (UTF-8)
   ;; ESC # — DEC line-size / alignment: the next byte selects (8 = DECALN fill,

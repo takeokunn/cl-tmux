@@ -132,7 +132,14 @@
   ;; the invoked set on reset.  CHARSET above mirrors the active set's designation.
   (g0-charset :ascii :type (member :ascii :dec-graphics))
   (g1-charset :ascii :type (member :ascii :dec-graphics))
-  (active-g :g0 :type (member :g0 :g1))
+  ;; G2/G3 (ESC * X / ESC + X), invoked via LS2/LS3 (ESC n / ESC o) locking
+  ;; shifts or SS2/SS3 (ESC N / ESC O) single shifts.
+  (g2-charset :ascii :type (member :ascii :dec-graphics))
+  (g3-charset :ascii :type (member :ascii :dec-graphics))
+  (active-g :g0 :type (member :g0 :g1 :g2 :g3))
+  ;; Pending single shift: the NEXT printable character only is mapped through
+  ;; this G set (SS2 → :g2, SS3 → :g3), then the shift clears.
+  (single-shift nil :type (member nil :g2 :g3))
   ;; Horizontal tab stops.  The :DEFAULT sentinel means "the standard fixed
   ;; every-8-columns stops" (so the common path needs no per-screen list and is
   ;; resize-proof); HTS (ESC H) / TBC (CSI g) materialize it into an explicit

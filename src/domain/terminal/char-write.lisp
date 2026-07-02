@@ -137,11 +137,20 @@
     (%mark-dirty screen)))
 
 (defun %remap-charset-char (screen ch)
-  "When SCREEN's charset is :dec-graphics, remap CH through the DEC special
-   graphics table; otherwise return CH unchanged."
-  (if (eq (screen-charset screen) :dec-graphics)
-      (%dec-graphics-char ch)
-      ch))
+  "Remap CH through the DEC special graphics table when the effective charset
+   calls for it.  A pending single shift (SS2/SS3) takes precedence: it maps
+   THIS character through the shifted G set's designation and then clears —
+   otherwise the locking-shift effective charset (screen-charset) applies."
+  (let ((shift (screen-single-shift screen)))
+    (cond
+      (shift
+       (setf (screen-single-shift screen) nil)
+       (if (eq (screen-invoked-charset screen shift) :dec-graphics)
+           (%dec-graphics-char ch)
+           ch))
+      ((eq (screen-charset screen) :dec-graphics)
+       (%dec-graphics-char ch))
+      (t ch))))
 
 (defun %write-wide-cell (screen ch)
   "Write double-width character CH at the cursor.

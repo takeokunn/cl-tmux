@@ -399,3 +399,55 @@
         "non-backslash after ESC inside DCS must return a continuation, not ground-state")))
 
 ;;; ── make-osc-k / make-osc-st-k direct tests ──────────────────────────────────
+
+;;; ── G2/G3 designation + LS2/LS3 locking shifts + SS2/SS3 single shifts ───────
+
+(test g2-g3-designation-and-locking-shifts
+  "ESC * 0 designates G2 (without invoking it); ESC n (LS2) locks G2 in so
+   line-drawing applies; ESC o (LS3, G3 still ASCII) switches back to plain."
+  (with-screen (s 20 5)
+    ;; Designate G2 = DEC graphics: nothing is invoked yet.
+    (feed s (format nil "~C*0" #\Escape))
+    (is (eq :dec-graphics (cl-tmux/terminal/types:screen-g2-charset s))
+        "ESC * 0 must designate G2 to DEC graphics")
+    (is (eq :ascii (cl-tmux/terminal/types:screen-charset s))
+        "designating G2 must not change the effective charset")
+    (feed s "q")
+    (is (char= #\q (char-at s 0 0))
+        "before LS2, 'q' must print as plain ASCII")
+    ;; LS2: lock G2 in — line drawing now applies.
+    (feed s (format nil "~Cn" #\Escape))
+    (is (eq :dec-graphics (cl-tmux/terminal/types:screen-charset s))
+        "LS2 must make G2's designation effective")
+    (feed s "q")
+    (is (char= #\─ (char-at s 1 0))
+        "after LS2, 'q' must map to the box-drawing dash")
+    ;; LS3: G3 is still ASCII, so plain text resumes.
+    (feed s (format nil "~Co" #\Escape))
+    (feed s "q")
+    (is (char= #\q (char-at s 2 0))
+        "after LS3 (G3=ascii), 'q' must be plain again")))
+
+(test ss2-single-shift-maps-one-character
+  "ESC N (SS2) maps exactly ONE character through G2's designation, then the
+   locking charset resumes."
+  (with-screen (s 20 5)
+    (feed s (format nil "~C*0" #\Escape))     ; G2 = DEC graphics
+    (feed s (format nil "~CNq" #\Escape))     ; SS2 + q
+    (feed s "q")                              ; plain q afterwards
+    (is (char= #\─ (char-at s 0 0))
+        "the SS2-shifted character must map through G2 (line drawing)")
+    (is (char= #\q (char-at s 1 0))
+        "the character AFTER the single shift must be plain ASCII")))
+
+(test ris-resets-g2-g3-and-single-shift
+  "RIS (ESC c) resets G2/G3 designations and any pending single shift."
+  (with-screen (s 20 5)
+    (feed s (format nil "~C*0~C+0~CN" #\Escape #\Escape #\Escape))
+    (feed s (format nil "~Cc" #\Escape))
+    (is (eq :ascii (cl-tmux/terminal/types:screen-g2-charset s))
+        "RIS must reset G2 to ASCII")
+    (is (eq :ascii (cl-tmux/terminal/types:screen-g3-charset s))
+        "RIS must reset G3 to ASCII")
+    (is (null (cl-tmux/terminal/types:screen-single-shift s))
+        "RIS must clear a pending single shift")))
