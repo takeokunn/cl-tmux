@@ -382,6 +382,25 @@
     (is (eql 1 exit-code)
         "run-has-session without socket must exit 1")))
 
+(test run-has-session-stale-socket-exits-1
+  "run-has-session with a socket FILE nothing listens on exits 1 — a stale
+   socket left by a crashed server is not a live session."
+  (let ((cl-tmux::*socket-path-override*
+          (format nil "~A/cl-tmux-has-session-stale-~D.sock"
+                  (string-right-trim "/" (or (sb-ext:posix-getenv "TMPDIR") "/tmp"))
+                  (random 1000000)))
+        exit-code)
+    (unwind-protect
+         (progn
+           (with-open-file (s cl-tmux::*socket-path-override*
+                              :direction :output :if-does-not-exist :create)
+             (declare (ignore s)))
+           (with-stubbed-exit exit-code
+             (cl-tmux::run-has-session '("-t" "whatever")))
+           (is (eql 1 exit-code)
+               "a stale socket file must not count as a live session"))
+      (ignore-errors (delete-file cl-tmux::*socket-path-override*)))))
+
 (test run-commands-are-fbound
   "CLI helper handlers are all fbound."
   (dolist (sym '(cl-tmux::run-kill-server

@@ -253,12 +253,14 @@
 
 (defun run-has-session (raw-args)
   "Exit 0 when a session named by -t exists, exit 1 otherwise.
-   Checks for the server socket file (no live connection required)."
+   The socket file must exist AND accept connections — a stale socket left by
+   a crashed server does not count as a live session (tmux would unlink it)."
   (let* ((target (loop for (flag value) on raw-args by #'cddr
                        when (string= flag "-t") return value))
          (name   (or target "0"))
          (socket (socket-path name)))
-    (if (probe-file socket)
+    (if (and (probe-file socket)
+             (not (%stale-socket-p socket)))
         (sb-ext:exit :code 0)
         (progn
           (format *error-output*
