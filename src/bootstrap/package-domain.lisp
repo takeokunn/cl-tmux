@@ -181,6 +181,9 @@
    #:session-select-window
    #:session-insert-window
    #:session-new-window
+   ;; Session-group window-set sharing (policy hook + notifier)
+   #:*session-windows-sync-function*
+   #:session-windows-changed
    #:session-active-pane
    #:session-last-active
    #:session-clients

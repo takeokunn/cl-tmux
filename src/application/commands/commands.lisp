@@ -95,7 +95,8 @@
       (when (<= dst (window-id win) (1- free))
         (incf (window-id win)))))
   (setf (session-windows session)
-        (sort (copy-list (session-windows session)) #'< :key #'window-id)))
+        (sort (copy-list (session-windows session)) #'< :key #'window-id))
+  (session-windows-changed session))
 
 (defun %break-pane-target-id (target-window-id insert-after)
   (and target-window-id
@@ -165,6 +166,7 @@
   (when (null (window-panes src-window))
     (let ((remaining (remove src-window (session-windows session))))
       (setf (session-windows session) remaining)
+      (session-windows-changed session)
       (when (eq (session-active-window session) src-window)
         (session-select-window session (first remaining))))))
 

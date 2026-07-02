@@ -159,3 +159,27 @@
     (%sync-active-window new-session existing-session)
     (%register-in-group-alist existing-session group-id)
     (%register-in-group-alist new-session group-id)))
+
+(defun %sync-group-session-windows (session)
+  "Mirror SESSION's window list to every other live session in its group.
+   tmux session groups share ONE window set: creating, killing, moving, or
+   renumbering a window in any grouped session must be reflected in all of them.
+   The mirror is a plain slot copy (no session-windows-changed re-entry, so no
+   recursion).  A peer whose active window vanished from the shared set falls
+   back to the first remaining window — a pure focus repair, deliberately not
+   session-select-window (no timestamp/flag side effects on a passive peer)."
+  (let* ((group-id (cl-tmux/model:session-group session))
+         (entry    (and group-id (assoc group-id *session-groups*))))
+    (when entry
+      (dolist (peer (cdr entry))
+        (unless (eq peer session)
+          (setf (session-windows peer) (session-windows session))
+          (unless (member (cl-tmux/model:session-active peer)
+                          (session-windows peer))
+            (setf (cl-tmux/model:session-active peer)
+                  (first (session-windows peer)))))))))
+
+;;; Install the group fan-out as the model layer's window-sync policy.  Unit
+;;; tests that build sessions directly are unaffected: sessions without a group
+;;; (or absent from *session-groups*) make the sync a no-op.
+(setf cl-tmux/model:*session-windows-sync-function* #'%sync-group-session-windows)

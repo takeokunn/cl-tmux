@@ -197,6 +197,61 @@
       (is (eq (session-windows s1) (session-windows s2))
           "both sessions must share the exact same windows list"))))
 
+(defun %make-group-test-window (id)
+  "Build a minimal no-PTY window for session-group propagation tests."
+  (let ((pane (make-no-pty-pane (+ 10 id) 0 0 80 24)))
+    (let ((win (make-window :id id :name (format nil "w~D" id)
+                            :width 80 :height 24
+                            :panes (list pane) :tree (make-layout-leaf pane))))
+      (setf (cl-tmux/model:pane-window pane) win)
+      (window-select-pane win pane)
+      win)))
+
+(defmacro with-grouped-sessions ((s1 s2 win) &body body)
+  "Bind S1/S2 to two grouped sessions sharing window WIN (group registry isolated)."
+  `(let* ((,win (%make-group-test-window 1))
+          (,s1  (make-session :id 1 :name "a" :windows (list ,win)))
+          (,s2  (make-session :id 2 :name "b"))
+          (cl-tmux::*session-groups* nil))
+     (session-select-window ,s1 ,win)
+     (cl-tmux::server-new-session-in-group ,s2 ,s1)
+     ,@body))
+
+(test session-group-new-window-propagates-to-peers
+  "Inserting a window into one grouped session makes it visible in the others
+   (tmux session groups share ONE window set, not just the initial list value)."
+  (with-grouped-sessions (s1 s2 win)
+    (let ((new-win (%make-group-test-window 2)))
+      (session-insert-window s1 new-win)
+      (is (member new-win (session-windows s2))
+          "a window created in s1 must appear in grouped peer s2")
+      (is (member win (session-windows s2))
+          "the original shared window must remain in s2"))))
+
+(test session-group-kill-window-propagates-to-peers
+  "kill-window in one grouped session removes the window from all peers, and a
+   peer whose active window vanished falls back to a surviving window."
+  (with-grouped-sessions (s1 s2 win)
+    (let ((new-win (%make-group-test-window 2)))
+      (session-insert-window s1 new-win)
+      ;; Peer views the window that is about to be killed.
+      (setf (cl-tmux/model:session-active s2) new-win)
+      (cl-tmux/commands:kill-window s1 new-win)
+      (is (null (member new-win (session-windows s2)))
+          "a window killed in s1 must disappear from grouped peer s2")
+      (is (eq win (session-active-window s2))
+          "peer's focus must repair to a surviving window"))))
+
+(test session-group-sync-ignores-ungrouped-sessions
+  "session-windows-changed on a session without a group is a no-op."
+  (let* ((win (%make-group-test-window 1))
+         (s   (make-session :id 3 :name "solo" :windows (list win)))
+         (cl-tmux::*session-groups* nil))
+    (finishes (cl-tmux/model:session-windows-changed s)
+              "ungrouped session must not error in the sync path")
+    (is (equal (list win) (session-windows s))
+        "window list must be unchanged")))
+
 ;;; ── choose-session overlay ───────────────────────────────────────────────────
 
 (test choose-session-shows-overlay

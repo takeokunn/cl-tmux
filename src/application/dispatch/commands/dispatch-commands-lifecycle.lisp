@@ -100,6 +100,7 @@
        ;; Linked elsewhere — safe to drop from this session only.
        (let ((was-active (eq (session-active-window session) win)))
          (setf (session-windows session) (remove win (session-windows session)))
+         (session-windows-changed session)
          ;; Reselect a remaining window if we just removed the active one.
          (when (and was-active (session-windows session))
            (session-select-window session (first (session-windows session)))))
@@ -164,6 +165,7 @@
     (rotatef (window-id win-a) (window-id win-b))
     (setf (session-windows session)
           (sort (copy-list (session-windows session)) #'< :key #'window-id))
+    (session-windows-changed session)
     t))
 
 (define-command-input-handler %cmd-swap-window (session args)
@@ -245,7 +247,8 @@
          (loop for win in sorted
                for i from base
                do (setf (window-id win) i))
-         (setf (session-windows session) sorted)))
+         (setf (session-windows session) sorted)
+         (session-windows-changed session)))
       ;; -t n (with optional -s src / -a): move the window to index n.  -a
       ;; inserts AFTER index n (n+1); the default/-b inserts AT n.  When the
       ;; target index is occupied by ANOTHER window, the windows at and above it
@@ -264,6 +267,7 @@
          (setf (window-id src-win) target
                (session-windows session)
                (sort (copy-list (session-windows session)) #'< :key #'window-id))
+         (session-windows-changed session)
          ;; Without -d the moved window becomes the current window (tmux selects
          ;; the moved window in the destination session unless -d is given).
          (unless (%flag-present-p flags #\d)

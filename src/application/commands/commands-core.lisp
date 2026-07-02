@@ -106,6 +106,7 @@
     ;; hook runner can still find this window under its session.
     (run-hooks +hook-after-kill-window+ target)
     (setf (session-windows session) remaining)
+    (session-windows-changed session)
     (if remaining
         (progn
           (when (eq (session-active-window session) target)

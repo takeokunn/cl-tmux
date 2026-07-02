@@ -69,13 +69,33 @@
     (loop for i from base-index
           unless (member i used) return i)))
 
+;;; Session-group window sharing (tmux session groups share ONE window set):
+;;; structural changes to a session's window list must be mirrored to every
+;;; other session in its group.  The registry that knows group membership lives
+;;; in the bootstrap layer, so the fan-out is injected as a policy callback
+;;; (same pattern as *history-limit-function* in the terminal layer).
+
+(defvar *session-windows-sync-function* nil
+  "When non-NIL, a function of one argument (SESSION) called after a structural
+   change to SESSION's window list, so grouped sessions can mirror the new
+   membership.  Installed by the bootstrap session registry; NIL in unit tests
+   that construct sessions directly.")
+
+(defun session-windows-changed (session)
+  "Notify the group-sync policy (when installed) that SESSION's window list
+   changed structurally.  Call after every setf of SESSION-WINDOWS that adds,
+   removes, or reorders windows."
+  (when (and session *session-windows-sync-function*)
+    (funcall *session-windows-sync-function* session))
+  (session-windows session))
+
 (defun session-insert-window (session window)
   "Insert WINDOW into SESSION's window list, keeping the list sorted by window-id.
    Does NOT update the active window — callers manage focus separately.
    Returns the updated window list (pure list management)."
   (setf (session-windows session)
         (sort (cons window (session-windows session)) #'< :key #'window-id))
-  (session-windows session))
+  (session-windows-changed session))
 
 (defun session-new-window (session name rows cols &optional (base-index 0)
                                                             start-dir)
@@ -148,7 +168,7 @@
              (before  (subseq without 0 dst))
              (after   (subseq without dst)))
         (setf (session-windows session) (append before (list window) after)))))
-  (session-windows session))
+  (session-windows-changed session))
 
 (defun session-swap-windows (session index-a index-b)
   "Exchange the windows at INDEX-A and INDEX-B in SESSION's window list.
@@ -161,7 +181,7 @@
       (let ((new-wins (copy-list wins)))
         (rotatef (nth index-a new-wins) (nth index-b new-wins))
         (setf (session-windows session) new-wins))))
-  (session-windows session))
+  (session-windows-changed session))
 
 (defun session-last-window (session)
   "Return the window with the second-highest last-active-time (i.e. the
