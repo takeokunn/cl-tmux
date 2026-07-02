@@ -35,9 +35,10 @@
   (setf (session-active session) window)
   (when window
     (setf (window-last-active-time window) (get-universal-time))
-    ;; Clear activity and silence flags when the window gains focus.
+    ;; Clear activity, silence, and bell flags when the window gains focus.
     (setf (window-activity-flag window) nil
-          (window-silence-flag  window) nil)))
+          (window-silence-flag  window) nil
+          (window-bell-flag     window) nil)))
 
 (defun session-active-pane (session)
   "Return the active pane of SESSION's active window, or NIL when there is no window."

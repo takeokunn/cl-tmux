@@ -225,7 +225,7 @@
            (win  (cl-tmux/model:session-active-window sess))
            (before (get-universal-time)))
       (setf (cl-tmux/model:window-last-output-time win) 0)
-      (cl-tmux::%update-window-on-pane-output win)
+      (cl-tmux::%update-window-on-pane-output win (first (cl-tmux/model:window-panes win)))
       (is (>= (cl-tmux/model:window-last-output-time win) before)
           "last-output-time must be stamped with current time"))))
 
@@ -235,13 +235,13 @@
     (let* ((sess (make-fake-session :nwindows 1))
            (win  (cl-tmux/model:session-active-window sess)))
       (setf (cl-tmux/model:window-silence-flag win) t)
-      (cl-tmux::%update-window-on-pane-output win)
+      (cl-tmux::%update-window-on-pane-output win (first (cl-tmux/model:window-panes win)))
       (is-false (cl-tmux/model:window-silence-flag win)
                 "silence flag must be cleared by new pane output"))))
 
 (test update-window-on-pane-output-nil-window-is-noop
   "%update-window-on-pane-output is a no-op when window is NIL."
-  (finishes (cl-tmux::%update-window-on-pane-output nil)
+  (finishes (cl-tmux::%update-window-on-pane-output nil nil)
             "%update-window-on-pane-output must not error on NIL window"))
 
 (test fire-silence-alert-sets-flag-and-fires-hook

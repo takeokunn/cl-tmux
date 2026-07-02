@@ -159,6 +159,8 @@
    #:window-automatic-rename-p
    ;; Activity flag for monitor-activity / #{window_activity_flag}
    #:window-activity-flag
+   ;; Sticky bell flag for monitor-bell / #{window_bell_flag}
+   #:window-bell-flag
    ;; Silence tracking for monitor-silence
    #:window-last-output-time
    #:window-silence-flag

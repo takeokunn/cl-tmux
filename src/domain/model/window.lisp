@@ -24,6 +24,11 @@
   ;; set T when a non-active window receives PTY output and monitor-activity is on.
   ;; Cleared when the window is selected.
   (activity-flag nil :type boolean)
+  ;; Bell tracking for monitor-bell / #{window_bell_flag} (tmux WINLINK_BELL):
+  ;; set T when a non-current window's pane rings BEL and monitor-bell is on.
+  ;; Sticky until the window is selected (unlike the transient per-screen
+  ;; bell-pending flag, which only drives the audible relay).
+  (bell-flag nil :type boolean)
   ;; Silence tracking for monitor-silence: universal-time of last PTY output.
   ;; Updated by the reader thread; checked by the timer to detect long silences.
   (last-output-time 0 :type integer)

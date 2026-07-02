@@ -55,12 +55,10 @@
   (if active-pane (format nil " #~D" (pane-id active-pane)) ""))
 
 (defun %window-has-bell-p (window)
-  "T when any pane in WINDOW has a pending (unconsumed) BEL.
-   Mirrors the #{window_bell_flag} computation in format.lisp."
-  (some (lambda (p)
-          (let ((scr (pane-screen p)))
-            (and scr (screen-bell-pending scr))))
-        (window-panes window)))
+  "T when WINDOW's sticky bell flag is set and monitor-bell is on for it.
+   Mirrors the #{window_bell_flag} computation in format-context.lisp."
+  (and (cl-tmux/options:get-option-for-context "monitor-bell" :window window)
+       (window-bell-flag window)))
 
 (defun %window-option (window name)
   "Read NAME from WINDOW's option context."

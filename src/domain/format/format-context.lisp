@@ -51,13 +51,13 @@
 ;;; keep that function readable.  Each is a focused unit covering one domain.
 
 (defun %window-has-pending-bell-p (window)
-  "True when WINDOW has monitor-bell on and at least one pane has a pending bell."
+  "True when WINDOW has monitor-bell on and its sticky bell flag is set.
+   The flag (tmux WINLINK_BELL) is set by the PTY reader when a non-current
+   window rings BEL and cleared when the window is selected — so the status
+   `!' persists until the window is viewed, matching tmux."
   (and window
        (cl-tmux/options:get-option-for-context "monitor-bell" :window window)
-       (some (lambda (p)
-               (let ((scr (cl-tmux/model:pane-screen p)))
-                 (and scr (cl-tmux/terminal:screen-bell-pending scr))))
-             (cl-tmux/model:window-panes window))))
+       (cl-tmux/model:window-bell-flag window)))
 
 (defun %process-pid-string ()
   "Current process PID as a decimal string, or \"0\" when unavailable.

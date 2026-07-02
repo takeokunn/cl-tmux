@@ -9,12 +9,12 @@
 ;;; ── Full-session render effects ─────────────────────────────────────────────
 
 (defun %emit-bell (buffer visual-bell)
-  "Write one BEL event to BUFFER: reverse-video flash when VISUAL-BELL is set,
-   otherwise the BEL character (ASCII 7).  Fires the alert-bell hook in both cases."
-  (if visual-bell
-      (format buffer "~C[7m~C[0m" +esc+ +esc+)
-      (write-char (code-char 7) buffer))
-  (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-bell+))
+  "Write the audible BEL character to BUFFER unless VISUAL-BELL is \"on\"
+   (visual-only — tmux writes the bell for \"off\" and \"both\").  The visual
+   message overlay and the alert-bell hook are handled by the reader-thread
+   alert path (%mark-window-bell), decoupled from this relay decision."
+  (unless (and (stringp visual-bell) (string-equal visual-bell "on"))
+    (write-char (code-char 7) buffer)))
 
 (defun %render-bell-and-cursor (buffer active-pane)
   "Emit a pending BEL from ACTIVE-PANE (if any) and restore cursor visibility.
@@ -41,13 +41,15 @@
   (let* ((bell-action  (or (cl-tmux/options:get-option "bell-action") "any"))
          (visual-bell  (cl-tmux/options:get-option "visual-bell"))
          (relay-p      (member bell-action '("any" "other") :test #'string=)))
-    (when relay-p
-      (dolist (win (session-windows session))
-        (unless (eq win active-window)
-          (dolist (pane (window-panes win))
-            (when (and (pane-screen pane)
-                       (screen-consume-bell (pane-screen pane)))
-              (%emit-bell buffer visual-bell))))))))
+    ;; Always consume pending bells (a bell suppressed by bell-action must not
+    ;; ring later when its window becomes active); relay only when permitted.
+    (dolist (win (session-windows session))
+      (unless (eq win active-window)
+        (dolist (pane (window-panes win))
+          (when (and (pane-screen pane)
+                     (screen-consume-bell (pane-screen pane))
+                     relay-p)
+            (%emit-bell buffer visual-bell)))))))
 
 (defun %drain-screen-queue (buffer panes queue-reader queue-writer option default allowed)
   "Drain queue contents for each pane into BUFFER when OPTION permits emission.

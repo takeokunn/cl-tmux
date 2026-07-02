@@ -151,16 +151,15 @@
 ;;; ── Alert-state window-tab styles (bell / activity / last) ───────────────────
 
 (test status-window-list-bell-style-applied-to-window-with-pending-bell
-  "A non-active window with a pane holding a pending BEL renders its tab with
+  "A non-active window with its sticky bell flag set renders its tab with
    window-status-bell-style (fg=red → SGR 31), overriding the (empty) normal style."
   (with-isolated-config
     (cl-tmux/options:set-option "window-status-style" "")        ; normal: unstyled
     (cl-tmux/options:set-option "window-status-bell-style" "fg=red")
     (let* ((sess (make-fake-session :nwindows 2))
-           (win2 (second (cl-tmux/model:session-windows sess)))
-           (pane (first (cl-tmux/model:window-panes win2))))
-      ;; Mark a pane in the inactive window 2 as having a pending bell.
-      (setf (cl-tmux/terminal/types:screen-bell-pending (cl-tmux/model:pane-screen pane)) t)
+           (win2 (second (cl-tmux/model:session-windows sess))))
+      ;; Mark the inactive window 2 as having an unseen bell.
+      (setf (cl-tmux/model:window-bell-flag win2) t)
       (let ((out (cl-tmux/renderer::%status-window-list-styled
                   sess (cl-tmux/model:session-active-window sess))))
         (is (search "31" out)
@@ -198,17 +197,16 @@
             "last window must use window-status-last-style (SGR 35): ~S" out)))))
 
 (test status-window-list-bell-style-beats-activity-style
-  "Alert-style precedence: a non-active window with BOTH a pending bell and the
+  "Alert-style precedence: a non-active window with BOTH an unseen bell and the
    activity flag uses bell-style (fg=red, 31), not activity-style (fg=blue, 34)."
   (with-isolated-config
     (cl-tmux/options:set-option "window-status-style" "")
     (cl-tmux/options:set-option "window-status-bell-style" "fg=red")
     (cl-tmux/options:set-option "window-status-activity-style" "fg=blue")
     (let* ((sess (make-fake-session :nwindows 2))
-           (win2 (second (cl-tmux/model:session-windows sess)))
-           (pane (first (cl-tmux/model:window-panes win2))))
+           (win2 (second (cl-tmux/model:session-windows sess))))
       (setf (cl-tmux/model:window-activity-flag win2) t)
-      (setf (cl-tmux/terminal/types:screen-bell-pending (cl-tmux/model:pane-screen pane)) t)
+      (setf (cl-tmux/model:window-bell-flag win2) t)
       (let ((out (cl-tmux/renderer::%status-window-list-styled
                   sess (cl-tmux/model:session-active-window sess))))
         (is (search "31" out)

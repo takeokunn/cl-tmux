@@ -64,9 +64,11 @@
   ("automatic-rename"         :boolean t)
   ("automatic-rename-format"  :string  "#{pane_current_command}")
   ("bell-action"              :string  "any")
-  ("visual-bell"              :boolean nil)
-  ("visual-activity"          :boolean nil)
-  ("visual-silence"           :boolean nil)
+  ;; visual-* are tmux off/on/both enums: "on"/"both" show the message overlay,
+  ;; "off"/"both" keep the audible bell (visual-bell only).
+  ("visual-bell"              :string  "off")
+  ("visual-activity"          :string  "off")
+  ("visual-silence"           :string  "off")
   ("monitor-activity"         :boolean nil)
   ;; monitor-silence is an INTEGER (seconds of PTY silence before a window
   ;; alerts); 0 = off.  The %check-monitor-silence path (runtime.lisp) — set

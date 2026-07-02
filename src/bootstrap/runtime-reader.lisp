@@ -96,6 +96,14 @@
                (eq win (cl-tmux/model:session-active-window (cdr entry))))
              *server-sessions*)))
 
+(defun %visual-alert-message-p (option-name)
+  "True when OPTION-NAME (visual-bell / visual-activity / visual-silence — tmux
+   off/on/both enums) requests the transient message overlay: on or both."
+  (let ((value (cl-tmux/options:get-option option-name)))
+    (and (stringp value)
+         (member value '("on" "both") :test #'string-equal)
+         t)))
+
 (defun %mark-window-activity (win)
   "Mark WIN as having activity for monitor-activity: set the activity flag, fire
    the alert-activity hook, and show a visual-activity overlay when that option is
@@ -112,18 +120,45 @@
     (setf (cl-tmux/model:window-activity-flag win) t)
     ;; Fire the alert-activity hook (matches real tmux).
     (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-activity+ win)
-    ;; visual-activity on: show a transient message overlay so the user knows
-    ;; which background window has activity (matches real tmux).
-    (when (cl-tmux/options:get-option "visual-activity")
+    ;; visual-activity on/both: show a transient message overlay so the user
+    ;; knows which background window has activity (matches real tmux).
+    (when (%visual-alert-message-p "visual-activity")
       (show-transient-overlay
        (format nil "Activity in window ~A (~A)"
                (cl-tmux/model:window-id win)
                (cl-tmux/model:window-name win))))))
 
-(defun %update-window-on-pane-output (win)
-  "Update window-level state when new bytes arrive on a pane's PTY.
+(defun %mark-window-bell (win pane)
+  "Bell alert logic for a BEL left pending on PANE's screen (tmux alerts.c):
+   entirely gated on monitor-bell.  Sets WIN's sticky bell flag (the status `!',
+   cleared when the window is selected), fires the alert-bell hook, and shows the
+   visual-bell message overlay (visual-bell on/both).  Like tmux's WINLINK_BELL,
+   the alert only applies to a window that is not currently viewed; the audible
+   relay for the viewed window is handled by the renderer.  The flag-transition
+   guard keeps the hook/overlay firing once per alert, not once per PTY chunk."
+  (let ((screen (and pane (cl-tmux/model:pane-screen pane))))
+    (when (and win screen
+               (cl-tmux/terminal:screen-bell-pending screen)
+               (cl-tmux/options:get-option-for-context "monitor-bell" :window win)
+               (not (cl-tmux/model:window-bell-flag win))
+               (not (%window-is-current-p win)))
+      (setf (cl-tmux/model:window-bell-flag win) t)
+      ;; bell-action gates the alert itself (hook + visual message) for this
+      ;; non-current window: any/other fire, none/current do not.
+      (when (%alert-action-fires-p
+             (or (cl-tmux/options:get-option "bell-action") "any")
+             nil)
+        (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-bell+ win)
+        (when (%visual-alert-message-p "visual-bell")
+          (show-transient-overlay
+           (format nil "Bell in window ~A (~A)"
+                   (cl-tmux/model:window-id win)
+                   (cl-tmux/model:window-name win))))))))
+
+(defun %update-window-on-pane-output (win pane)
+  "Update window-level state when new bytes arrive on PANE's PTY.
    Stamps last-output-time, clears the silence flag (new output resets the
-   silence timer), and fires the activity alert logic.
+   silence timer), and fires the activity and bell alert logic.
    Extracted from reader-reading-state to keep the CPS state function focused
    on I/O dispatch."
   (when win
@@ -132,7 +167,9 @@
     ;; Clear silence flag: new output resets the silence state.
     (setf (cl-tmux/model:window-silence-flag win) nil)
     ;; Activity flag + alert-activity hook + visual overlay.
-    (%mark-window-activity win)))
+    (%mark-window-activity win)
+    ;; Sticky bell flag + alert-bell hook + visual-bell overlay.
+    (%mark-window-bell win pane)))
 
 (defun reader-reading-state (pane)
   "Read one PTY chunk and feed it to PANE; transition to eof if EOF."
@@ -144,7 +181,7 @@
             (pipe-pane-write pane bytes))
           (pane-feed pane bytes)
           (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-pane-output+ pane bytes)
-          (%update-window-on-pane-output (cl-tmux/model:pane-window pane))
+          (%update-window-on-pane-output (cl-tmux/model:pane-window pane) pane)
           (setf *dirty* t)
           #'reader-idle-state))))
 

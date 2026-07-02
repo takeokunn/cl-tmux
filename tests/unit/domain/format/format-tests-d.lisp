@@ -290,13 +290,12 @@
 
 (test window-bell-flag-respects-monitor-bell
   "#{window_bell_flag} shows ! only when monitor-bell is on (default); monitor-bell
-   off suppresses the bell alert even with a pending bell."
+   off suppresses the bell alert even with the sticky window bell flag set."
   (with-fresh-options
     (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
            (win  (first (cl-tmux/model:session-windows sess)))
            (pane (first (cl-tmux/model:window-panes win))))
-      (setf (cl-tmux/terminal/types:screen-bell-pending
-             (cl-tmux/model:pane-screen pane)) t)
+      (setf (cl-tmux/model:window-bell-flag win) t)
       (cl-tmux/options:set-option "monitor-bell" t)
       (is (string= "!" (cl-tmux/format:expand-format
                         "#{window_bell_flag}"

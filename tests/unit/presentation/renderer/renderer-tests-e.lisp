@@ -243,4 +243,23 @@
           (let ((out (cl-tmux/renderer::render-session-to-string sess 5 20)))
             (if expected-bell-p
                 (is (find (code-char 7) out)      "~A" desc)
-                (is (null (find (code-char 7) out)) "~A" desc))))))))
+                (is (null (find (code-char 7) out)) "~A" desc))
+            ;; The pending bell is consumed either way — a bell swallowed by
+            ;; bell-action must not ring later when its window becomes active.
+            (is (null (cl-tmux/terminal/types:screen-bell-pending
+                       (cl-tmux/model:pane-screen pane2)))
+                "background bell must be consumed under bell-action ~A"
+                bell-action)))))))
+
+(test emit-bell-visual-bell-tri-state-table
+  "visual-bell off/both relay the audible BEL; on is visual-only (no BEL byte).
+   A legacy NIL value behaves as off."
+  (dolist (row '(("off" t) ("both" t) ("on" nil) (nil t)))
+    (destructuring-bind (visual expect-bel-p) row
+      (let ((out (with-output-to-string (s)
+                   (cl-tmux/renderer::%emit-bell s visual))))
+        (if expect-bel-p
+            (is (find (code-char 7) out)
+                "visual-bell ~S must relay the audible BEL" visual)
+            (is (null (find (code-char 7) out))
+                "visual-bell ~S must suppress the audible BEL" visual))))))

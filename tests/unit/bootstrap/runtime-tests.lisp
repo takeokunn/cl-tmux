@@ -180,6 +180,94 @@
       (is-true (cl-tmux/model:window-activity-flag win) "activity flag must be set")
       (is-true fired "the alert-activity hook must fire"))))
 
+(test mark-window-bell-sets-sticky-flag-and-fires-hook
+  :description "%mark-window-bell on a non-current window with a pending BEL sets
+   the sticky window bell flag (tmux WINLINK_BELL) and fires the alert-bell hook
+   with the window argument."
+  (with-isolated-state
+    (let* ((sess     (make-fake-session :nwindows 1))
+           (win      (cl-tmux/model:session-active-window sess))
+           (pane     (first (cl-tmux/model:window-panes win)))
+           (hook-win :unset))
+      (setf (cl-tmux/terminal/types:screen-bell-pending
+             (cl-tmux/model:pane-screen pane)) t)
+      (cl-tmux/hooks:add-hook "alert-bell"
+                              (lambda (&rest args) (setf hook-win (first args))))
+      (cl-tmux::%mark-window-bell win pane)
+      (is-true (cl-tmux/model:window-bell-flag win)
+               "the sticky bell flag must be set")
+      (is (eq win hook-win)
+          "the alert-bell hook must fire with the window argument"))))
+
+(test mark-window-bell-gating-table
+  :description "%mark-window-bell gating: monitor-bell off disables everything;
+   bell-action none sets the flag but suppresses the alert hook; no pending BEL
+   is a no-op.  Each row: (monitor-bell bell-action pending expect-flag
+   expect-hook description)."
+  (dolist (row '((nil "any"  t   nil nil "monitor-bell off must disable the bell alert")
+                 (t   "none" t   t   nil "bell-action none must set the flag but not fire the hook")
+                 (t   "current" t t  nil "bell-action current must not alert a non-current window")
+                 (t   "any"  nil nil nil "no pending BEL must be a no-op")))
+    (destructuring-bind (monitor action pending expect-flag expect-hook desc) row
+      (with-isolated-state
+        (let* ((sess  (make-fake-session :nwindows 1))
+               (win   (cl-tmux/model:session-active-window sess))
+               (pane  (first (cl-tmux/model:window-panes win)))
+               (fired nil))
+          (cl-tmux/options:set-option "monitor-bell" monitor)
+          (cl-tmux/options:set-option "bell-action" action)
+          (setf (cl-tmux/terminal/types:screen-bell-pending
+                 (cl-tmux/model:pane-screen pane)) pending)
+          (cl-tmux/hooks:add-hook "alert-bell"
+                                  (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+          (cl-tmux::%mark-window-bell win pane)
+          (is (eq expect-flag (cl-tmux/model:window-bell-flag win)) "~A (flag)" desc)
+          (is (eq expect-hook fired) "~A (hook)" desc))))))
+
+(test mark-window-bell-current-window-is-noop
+  :description "%mark-window-bell does not flag the currently-viewed window
+   (tmux sets WINLINK_BELL only for non-current winlinks)."
+  (with-isolated-state
+    (let* ((sess (make-fake-session :nwindows 1))
+           (win  (cl-tmux/model:session-active-window sess))
+           (pane (first (cl-tmux/model:window-panes win)))
+           (cl-tmux::*server-sessions* (list (cons 1 sess))))
+      (setf (cl-tmux/terminal/types:screen-bell-pending
+             (cl-tmux/model:pane-screen pane)) t)
+      (cl-tmux::%mark-window-bell win pane)
+      (is-false (cl-tmux/model:window-bell-flag win)
+                "the current window must not get the sticky bell flag"))))
+
+(test mark-window-bell-visual-bell-shows-overlay
+  :description "visual-bell on/both shows tmux's 'Bell in window N' transient
+   overlay from the bell alert path."
+  (dolist (row '(("on" t) ("both" t) ("off" nil)))
+    (destructuring-bind (visual expect-overlay) row
+      (with-isolated-state
+        (let* ((sess (make-fake-session :nwindows 1))
+               (win  (cl-tmux/model:session-active-window sess))
+               (pane (first (cl-tmux/model:window-panes win)))
+               (cl-tmux/prompt:*overlay* nil))
+          (cl-tmux/options:set-option "visual-bell" visual)
+          (setf (cl-tmux/terminal/types:screen-bell-pending
+                 (cl-tmux/model:pane-screen pane)) t)
+          (cl-tmux::%mark-window-bell win pane)
+          (if expect-overlay
+              (is (search "Bell in window" (or cl-tmux/prompt:*overlay* ""))
+                  "visual-bell ~A must show the bell message overlay" visual)
+              (is (null cl-tmux/prompt:*overlay*)
+                  "visual-bell off must not show an overlay")))))))
+
+(test session-select-window-clears-bell-flag
+  :description "Selecting a window clears its sticky bell flag (tmux clears
+   WINLINK_BELL when the window is viewed)."
+  (let* ((sess (make-fake-session :nwindows 2))
+         (win  (second (cl-tmux/model:session-windows sess))))
+    (setf (cl-tmux/model:window-bell-flag win) t)
+    (cl-tmux/model:session-select-window sess win)
+    (is-false (cl-tmux/model:window-bell-flag win)
+              "session-select-window must clear the bell flag")))
+
 (test monitor-silence-fires-alert-silence-hook
   :description "%check-monitor-silence fires the alert-silence hook when a window
    crosses the silence threshold (tmux alert hook, previously never fired)."
@@ -223,7 +311,7 @@
            (cl-tmux/prompt:*overlay* nil))
       (cl-tmux/options:set-option "monitor-silence" 5)
       (cl-tmux/options:set-option "silence-action" "any")  ; fire for the current window
-      (cl-tmux/options:set-option "visual-silence" t)
+      (cl-tmux/options:set-option "visual-silence" "on")
       (setf (cl-tmux/model:window-last-output-time win) (- (get-universal-time) 100)
             (cl-tmux/model:window-silence-flag win) nil)
       (cl-tmux::%check-monitor-silence (list (cons 1 sess)) (lambda () nil))
