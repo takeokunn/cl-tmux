@@ -406,6 +406,18 @@
       (sleep 0.05)
       (is-true received "wait-for -S must unblock the waiting thread"))))
 
+(test cmd-wait-for-arg-option-terminator-after-flags
+  "wait-for -S -- channel treats -- as an option terminator and signals channel."
+  (with-fake-session (s)
+    (let ((received nil))
+      (bt:make-thread
+       (lambda () (setf received (cl-tmux::wait-for-channel "test-ch-dd-signal")))
+       :name "waiter-with-double-dash")
+      (sleep 0.05)
+      (cl-tmux::%cmd-wait-for-arg s '("-S" "--" "test-ch-dd-signal"))
+      (sleep 0.05)
+      (is-true received "wait-for -S -- channel must unblock the waiting thread"))))
+
 (test cmd-wait-for-arg-lock-suppresses-signal
   "wait-for -L channel locks the channel; subsequent -S does not notify waiters."
   (with-fake-session (s)
@@ -441,15 +453,26 @@
           "wait-for (bare) must unblock after the channel is signaled"))))
 
 (test cmd-wait-for-unsupported-arguments-are-rejected-before-channel-state
-  "wait-for rejects unknown flags and extra channel names before touching channels."
+  "wait-for rejects invalid arguments with tmux-compatible diagnostics."
   (with-fake-session (s)
     (let ((cl-tmux::*wait-channels* (make-hash-table :test #'equal)))
-      (dolist (args '(("-Z" "test-ch-unsupported")
-                      ("-L" "test-ch-unsupported" "extra")))
-        (let (cl-tmux::*overlay*)
-          (cl-tmux::%cmd-wait-for-arg s args)
-          (assert-overlay-contains "unsupported argument"
-                                    cl-tmux::*overlay*
-                                    "wait-for")
-          (is-false (gethash "test-ch-unsupported" cl-tmux::*wait-channels*)
-                    "wait-for must not create or mutate a channel after rejecting arguments"))))))
+      (dolist (case '((("-Z" "test-ch-unsupported")
+                       "command wait-for: unknown flag -Z")
+                      (("-SZ" "test-ch-unsupported")
+                       "command wait-for: unknown flag -Z")
+                      (("-S")
+                       "command wait-for: too few arguments (need at least 1)")
+                      (("--")
+                       "command wait-for: too few arguments (need at least 1)")
+                      (("-L" "test-ch-unsupported" "extra")
+                       "command wait-for: too many arguments (need at most 1)")
+                      (("test-ch-unsupported" "-S")
+                       "command wait-for: too many arguments (need at most 1)")))
+        (destructuring-bind (args expected) case
+          (let (cl-tmux::*overlay*)
+            (cl-tmux::%cmd-wait-for-arg s args)
+            (assert-overlay-contains expected
+                                      cl-tmux::*overlay*
+                                      "wait-for")
+            (is-false (gethash "test-ch-unsupported" cl-tmux::*wait-channels*)
+                      "wait-for must not create or mutate a channel after rejecting arguments")))))))

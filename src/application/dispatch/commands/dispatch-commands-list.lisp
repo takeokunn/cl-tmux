@@ -273,6 +273,82 @@
      (when ,display-p
        ,@body)))
 
+(defun %list-command-value-flag-p (flag value-flags)
+  "Return true when FLAG takes a value in VALUE-FLAGS."
+  (and value-flags
+       (not (null (position flag value-flags :test #'char=)))))
+
+(defun %list-command-too-many-message (command-name max-positionals)
+  "Return tmux-compatible too-many-arguments text for COMMAND-NAME."
+  (format nil "command ~A: too many arguments (need at most ~D)"
+          command-name max-positionals))
+
+(defun %list-command-unknown-flag-message (command-name flag)
+  "Return tmux-compatible unknown short flag text for COMMAND-NAME."
+  (format nil "command ~A: unknown flag -~C" command-name flag))
+
+(defun %list-command-invalid-long-flag-message (command-name)
+  "Return tmux-compatible invalid long flag text for COMMAND-NAME."
+  (format nil "command ~A: invalid flag --" command-name))
+
+(defun %list-command-missing-flag-argument-message (command-name flag)
+  "Return tmux-compatible missing flag argument text for COMMAND-NAME."
+  (format nil "command ~A: -~C expects an argument" command-name flag))
+
+(defun %parse-list-command-input (command-name args value-flags allowed-flags
+                                  max-positionals)
+  "Parse list-* command ARGS with tmux 3.6a option/error ordering."
+  (loop with flags = nil
+        with positionals = nil
+        with parsing-options-p = t
+        with remaining = args
+        while remaining
+        for token = (pop remaining)
+        do (cond
+             ((and parsing-options-p (string= token "--"))
+              (setf parsing-options-p nil))
+             ((and parsing-options-p
+                   (>= (length token) 2)
+                   (char= (char token 0) #\-)
+                   (char= (char token 1) #\-))
+              (return-from %parse-list-command-input
+                (values nil nil
+                        (%list-command-invalid-long-flag-message
+                         command-name))))
+             ((and parsing-options-p
+                   (>= (length token) 2)
+                   (char= (char token 0) #\-))
+              (loop for i from 1 below (length token)
+                    for flag = (char token i)
+                    do (unless (find flag allowed-flags :test #'char=)
+                         (return-from %parse-list-command-input
+                           (values nil nil
+                                   (%list-command-unknown-flag-message
+                                    command-name flag))))
+                       (if (%list-command-value-flag-p flag value-flags)
+                           (let ((value (if (< (1+ i) (length token))
+                                            (subseq token (1+ i))
+                                            (pop remaining))))
+                             (unless value
+                               (return-from %parse-list-command-input
+                                 (values nil nil
+                                         (%list-command-missing-flag-argument-message
+                                          command-name flag))))
+                             (push (cons flag value) flags)
+                             (loop-finish))
+                           (push (cons flag t) flags))))
+             (t
+              (push token positionals)
+              (setf parsing-options-p nil)
+              (when (> (length positionals) max-positionals)
+                (return-from %parse-list-command-input
+                  (values flags
+                          (nreverse positionals)
+                          (%list-command-too-many-message
+                           command-name max-positionals))))))
+        finally
+           (return (values flags (nreverse positionals) nil))))
+
 (defmacro define-list-overlay-handler (name (session args) docstring parser-spec
                                        let-bindings rows-form &body body)
   "Define a list command handler with shared parsing and overlay display."
@@ -281,19 +357,27 @@
          (value-flags-form (third parser-spec))
          (options (cdddr parser-spec))
          (raw-text-p (getf options :raw-text))
-         (clean-options (loop for (key val) on options by #'cddr
-                              unless (eq key :raw-text)
-                                append (list key val))))
-    `(define-command-input-handler ,name (,session ,args) ,docstring
-         (,flags-form ,positionals-form ,value-flags-form ,@clean-options)
-       (let* ,let-bindings
-         ,(if raw-text-p
-              `(with-list-overlay-rows/raw (rows raw-text display-p)
-                   ,rows-form
-                 ,@body)
-              `(with-list-overlay-rows (rows display-p)
-                   ,rows-form
-                 ,@body))))))
+         (command-name (getf options :command))
+         (allowed-flags (getf options :allowed-flags))
+         (max-positionals (getf options :max-positionals)))
+    `(defun ,name (,session ,args)
+       ,docstring
+       (multiple-value-bind (,flags-form ,positionals-form parse-error)
+           (%parse-list-command-input ,command-name ,args ,value-flags-form
+                                      ',allowed-flags ,max-positionals)
+         (declare (ignorable ,session ,flags-form ,positionals-form))
+         (if parse-error
+             (progn
+               (show-overlay parse-error)
+               nil)
+             (let* ,let-bindings
+               ,(if raw-text-p
+                    `(with-list-overlay-rows/raw (rows raw-text display-p)
+                         ,rows-form
+                       ,@body)
+                    `(with-list-overlay-rows (rows display-p)
+                         ,rows-form
+                       ,@body))))))))
 
 (define-list-overlay-handler %cmd-list-sessions-arg (session args)
   "list-sessions [-F format] [-f filter]: list sessions.
@@ -301,7 +385,7 @@
    -f filter keeps expanded rows containing FILTER, case-insensitively.
   Shows overlay in standalone mode."
   (flags positionals "Ff" :allowed-flags (#\F #\f) :max-positionals 0
-         :message "list-sessions: unsupported argument" :raw-text t)
+         :command "list-sessions" :raw-text t)
   ((fmt    (%flag-value flags #\F))
    (filter (%flag-value flags #\f)))
   (%list-session-overlay-lines session fmt)
@@ -320,7 +404,7 @@
    -t selects the session used for format expansion rather than filtering a
    per-client session list."
   (flags positionals "Fft" :allowed-flags (#\F #\f #\t) :max-positionals 0
-         :message "list-clients: unsupported argument")
+         :command "list-clients")
   ((fmt        (or (%flag-value flags #\F)
                     "#{client_name}: #{client_session} [#{client_width}x#{client_height}]"))
    (filter     (%flag-value flags #\f))
@@ -338,7 +422,7 @@
    -a: list windows in all sessions.
    -t target-session: list windows in the target session."
   (flags positionals "Fft" :allowed-flags (#\F #\f #\t #\a) :max-positionals 0
-         :message "list-windows: unsupported argument")
+         :command "list-windows")
   ((fmt        (%flag-value flags #\F))
    (filter     (%flag-value flags #\f))
    (target-str (%flag-value flags #\t))
@@ -354,7 +438,7 @@
    -s: list panes in all windows of the target/current session."
   (flags positionals "Fft" :allowed-flags (#\F #\f #\t #\a #\s)
          :max-positionals 0
-         :message "list-panes: unsupported argument")
+         :command "list-panes")
   ((fmt        (%flag-value flags #\F))
    (filter     (%flag-value flags #\f))
    (target-str (%flag-value flags #\t))
@@ -414,18 +498,58 @@
                (write-string (%lc-render-command name format-string) s)
                (terpri s))))))))
 
-(define-command-input-handler %cmd-wait-for-arg (session args)
+(defun %parse-wait-for-args (args)
+  "Parse wait-for arguments using tmux 3.6a option ordering."
+  (loop with flags = nil
+        with positionals = nil
+        with parsing-options-p = t
+        for token in args
+        do (cond
+             ((and parsing-options-p (string= token "--"))
+              (setf parsing-options-p nil))
+             ((and parsing-options-p
+                   (>= (length token) 2)
+                   (char= (char token 0) #\-)
+                   (char/= (char token 1) #\-))
+              (loop for i from 1 below (length token)
+                    for flag = (char token i)
+                    do (unless (member flag '(#\L #\S #\U) :test #'char=)
+                         (return-from %parse-wait-for-args
+                           (values nil nil
+                                   (format nil "command wait-for: unknown flag -~C"
+                                           flag))))
+                       (push (cons flag t) flags)))
+             (t
+              (push token positionals)
+              (setf parsing-options-p nil)))
+        finally
+           (let ((parsed-positionals (nreverse positionals)))
+             (cond
+               ((< (length parsed-positionals) 1)
+                (return (values (nreverse flags)
+                                parsed-positionals
+                                "command wait-for: too few arguments (need at least 1)")))
+               ((> (length parsed-positionals) 1)
+                (return (values (nreverse flags)
+                                parsed-positionals
+                                "command wait-for: too many arguments (need at most 1)")))
+               (t
+                (return (values (nreverse flags) parsed-positionals nil)))))))
+
+(defun %cmd-wait-for-arg (session args)
   "wait-for [-SLU] channel: channel synchronization.
    Bare: block the calling thread until CHANNEL is signaled (or timeout elapses).
    -S: signal (unblock) all threads waiting on CHANNEL.
    -L: lock CHANNEL so subsequent signal calls are suppressed.
   -U: unlock CHANNEL, re-enabling signal-channel."
-  (flags positionals "" :allowed-flags (#\L #\S #\U) :min-positionals 1
-         :max-positionals 1 :message "wait-for: unsupported argument")
-  (let ((channel (first positionals)))
-    (when (and channel (plusp (length channel)))
-      (cond
-        ((%flag-present-p flags #\S) (signal-channel channel))
-        ((%flag-present-p flags #\L) (lock-channel   channel))
-        ((%flag-present-p flags #\U) (unlock-channel channel))
-        (t                 (wait-for-channel channel))))))
+  (declare (ignore session))
+  (multiple-value-bind (flags positionals error-message)
+      (%parse-wait-for-args args)
+    (if error-message
+        (show-overlay error-message)
+        (let ((channel (first positionals)))
+          (cond
+            ((%flag-present-p flags #\S) (signal-channel channel))
+            ((%flag-present-p flags #\L) (lock-channel channel))
+            ((%flag-present-p flags #\U) (unlock-channel channel))
+            (t (wait-for-channel channel)))))))

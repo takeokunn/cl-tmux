@@ -314,17 +314,58 @@
   (with-fake-session (s :nwindows 2 :npanes 2)
     (with-session-and-window-names (s "alpha" "home" "work")
       (let ((cl-tmux::*clients* nil)
-            (cases '(("list-sessions extra" "list-sessions: unsupported argument" " windows")
-                     ("list-sessions -Z" "list-sessions: unsupported argument" " windows")
-                     ("list-clients extra" "list-clients: unsupported argument" "local")
-                     ("list-clients -Z" "list-clients: unsupported argument" "local")
-                     ("list-windows extra" "list-windows: unsupported argument" "home")
-                     ("list-windows -Z" "list-windows: unsupported argument" "home")
-                     ("list-panes extra" "list-panes: unsupported argument" " (active)")
-                     ("list-panes -Z" "list-panes: unsupported argument" " (active)"))))
+            (cases '(("list-sessions extra" "command list-sessions: too many arguments (need at most 0)" " windows")
+                     ("list-sessions -Z" "command list-sessions: unknown flag -Z" " windows")
+                     ("list-sessions -F" "command list-sessions: -F expects an argument" " windows")
+                     ("list-sessions --foo" "command list-sessions: invalid flag --" " windows")
+                     ("list-sessions -- extra" "command list-sessions: too many arguments (need at most 0)" " windows")
+                     ("list-clients extra" "command list-clients: too many arguments (need at most 0)" "local")
+                     ("list-clients -Z" "command list-clients: unknown flag -Z" "local")
+                     ("list-clients -F" "command list-clients: -F expects an argument" "local")
+                     ("list-clients --foo" "command list-clients: invalid flag --" "local")
+                     ("list-clients -- extra" "command list-clients: too many arguments (need at most 0)" "local")
+                     ("list-windows extra" "command list-windows: too many arguments (need at most 0)" "home")
+                     ("list-windows -Z" "command list-windows: unknown flag -Z" "home")
+                     ("list-windows -F" "command list-windows: -F expects an argument" "home")
+                     ("list-windows --foo" "command list-windows: invalid flag --" "home")
+                     ("list-windows -- extra" "command list-windows: too many arguments (need at most 0)" "home")
+                     ("list-panes extra" "command list-panes: too many arguments (need at most 0)" " (active)")
+                     ("list-panes -Z" "command list-panes: unknown flag -Z" " (active)")
+                     ("list-panes -F" "command list-panes: -F expects an argument" " (active)")
+                     ("list-panes --foo" "command list-panes: invalid flag --" " (active)")
+                     ("list-panes -- extra" "command list-panes: too many arguments (need at most 0)" " (active)"))))
         (with-command-line-rejection-cases (line message row-token cases)
           (cl-tmux::%run-command-line s line)
           (assert-overlay-rejects-before-row *overlay* message row-token line))))))
+
+(test run-command-line-list-commands-accept-option-terminator
+  "list-* arg commands treat a standalone -- as an option terminator."
+  (with-fake-session (s :nwindows 2 :npanes 2)
+    (with-session-and-window-names (s "alpha" "home" "work")
+      (let ((cl-tmux::*clients* nil)
+            (cases '(("list-sessions --" "0:")
+                     ("list-clients --" "local")
+                     ("list-windows --" "home")
+                     ("list-panes --" " (active)"))))
+        (dolist (entry cases)
+          (destructuring-bind (line row-token) entry
+            (with-run-command-line-overlay (s line)
+              (assert-overlay-contains row-token *overlay* line)
+              (assert-overlay-not-contains "command " *overlay* line))))))))
+
+(test run-command-line-list-commands-consume-option-terminator-as-format-value
+  "list-* -F consumes -- as the flag value, matching tmux option parsing."
+  (with-fake-session (s :nwindows 2 :npanes 2)
+    (with-session-and-window-names (s "alpha" "home" "work")
+      (let ((cl-tmux::*clients* nil)
+            (cases '("list-sessions -F --"
+                     "list-clients -F --"
+                     "list-windows -F --"
+                     "list-panes -F --")))
+        (dolist (line cases)
+          (with-run-command-line-overlay (s line)
+            (assert-overlay-contains "--" *overlay* line)
+            (assert-overlay-not-contains "command " *overlay* line)))))))
 
 (test filtered-overlay-lines-string-keeps-matching-rows-in-order
   "%filtered-overlay-lines-string returns only matching rows, in order."
