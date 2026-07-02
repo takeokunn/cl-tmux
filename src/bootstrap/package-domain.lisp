@@ -211,6 +211,9 @@
    #:session-environment-names
    #:session-set-environment
    #:session-unset-environment
+   ;; Hidden environment variables (set-environment -h / ENVIRON_HIDDEN)
+   #:session-environment-hidden
+   #:*global-hidden-environment-names*
    #:session-child-environment
    #:*suppress-update-environment*
    ;; update-environment

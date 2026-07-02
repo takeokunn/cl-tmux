@@ -560,3 +560,69 @@
                        (cl-tmux/model:session-active-window s))
          :count-context "split-window -d must add a pane"
          :focus-context "split-window -d must not change the active pane")))
+
+;;; ── set-environment -h / show-environment -h (hidden variables) ──────────────
+
+(test set-environment-h-hides-variable
+  "set-environment -h marks a session variable hidden: excluded from the child
+   environment and the plain show-environment listing, listed only by -h, and
+   unhidden again by a later plain set (tmux ENVIRON_HIDDEN)."
+  (with-fake-session (s)
+    (cl-tmux::%cmd-set-environment-prompt s '("CLTMUX_VIS" "v1"))
+    (cl-tmux::%cmd-set-environment-prompt s '("-h" "CLTMUX_HID" "secret"))
+    ;; Child environment: hidden var excluded, visible var included.
+    (let ((child (cl-tmux/model:session-child-environment s)))
+      (is (notany (lambda (e) (eql 0 (search "CLTMUX_HID=" e))) child)
+          "hidden variable must not reach the child environment")
+      (is (some (lambda (e) (eql 0 (search "CLTMUX_VIS=" e))) child)
+          "visible variable must reach the child environment"))
+    ;; Plain listing excludes hidden; -h lists only hidden.
+    (let ((*overlay* nil))
+      (cl-tmux::%cmd-show-environment-arg s '())
+      (is (null (search "CLTMUX_HID" *overlay*))
+          "plain show-environment must exclude the hidden variable")
+      (is (search "CLTMUX_VIS" *overlay*)
+          "plain show-environment must include the visible variable"))
+    (let ((*overlay* nil))
+      (cl-tmux::%cmd-show-environment-arg s '("-h"))
+      (is (search "CLTMUX_HID" *overlay*)
+          "show-environment -h must list the hidden variable")
+      (is (null (search "CLTMUX_VIS" *overlay*))
+          "show-environment -h must list ONLY hidden variables"))
+    ;; A later plain set unhides.
+    (cl-tmux::%cmd-set-environment-prompt s '("CLTMUX_HID" "public-now"))
+    (is (some (lambda (e) (eql 0 (search "CLTMUX_HID=" e)))
+              (cl-tmux/model:session-child-environment s))
+        "a plain set must clear the hidden mark")))
+
+(test set-environment-hg-hides-global-variable
+  "set-environment -hg marks a GLOBAL variable hidden: stripped from child
+   environments even though it lives in the real process environment."
+  (with-fake-session (s)
+    (let ((cl-tmux/model:*global-hidden-environment-names* nil))
+      (unwind-protect
+           (progn
+             (cl-tmux::%cmd-set-environment-prompt
+              s '("-h" "-g" "CLTMUX_GHID" "gsecret"))
+             (is (string= "gsecret" (sb-ext:posix-getenv "CLTMUX_GHID"))
+                 "the global variable itself must be set in the process env")
+             (is (notany (lambda (e) (eql 0 (search "CLTMUX_GHID=" e)))
+                         (cl-tmux/model:session-child-environment s))
+                 "hidden global must be stripped from child environments"))
+        (cl-tmux/model:process-unset-environment "CLTMUX_GHID")))))
+
+;;; ── refresh-client -C (client size) ──────────────────────────────────────────
+
+(test refresh-client-C-sets-client-size
+  "refresh-client -C WxH updates the client size and relayouts; a malformed or
+   absent size leaves the dimensions untouched."
+  (with-fake-session (s)
+    (let ((cl-tmux::*term-rows* 24)
+          (cl-tmux::*term-cols* 80))
+      (cl-tmux::%cmd-refresh-client-arg s '("-C" "100x40"))
+      (is (= 40 cl-tmux::*term-rows*) "-C 100x40 must set rows to 40")
+      (is (= 100 cl-tmux::*term-cols*) "-C 100x40 must set cols to 100")
+      (cl-tmux::%cmd-refresh-client-arg s '("-C" "garbage"))
+      (is (= 40 cl-tmux::*term-rows*) "malformed -C must not change rows")
+      (cl-tmux::%cmd-refresh-client-arg s '("-S"))
+      (is (= 100 cl-tmux::*term-cols*) "-S alone must not change the size"))))

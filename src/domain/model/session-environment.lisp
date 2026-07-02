@@ -168,22 +168,37 @@
       (pushnew name names :test #'string=))
     (sort names #'string<)))
 
-(defun session-set-environment (session name value)
+(defun session-set-environment (session name value &key hidden)
   "Store NAME=VALUE in SESSION's environment overlay.
    Removes NAME from the unset list if it was explicitly unset before.
+   HIDDEN marks the variable hidden (tmux set-environment -h: excluded from
+   plain show-environment and from child environments); a plain set clears an
+   existing hidden mark, matching tmux's environ_set with no flags.
    Returns SESSION."
   (setf (session-environment-unsets session)
         (delete name (session-environment-unsets session) :test #'string=))
+  (if hidden
+      (pushnew name (session-environment-hidden session) :test #'string=)
+      (setf (session-environment-hidden session)
+            (delete name (session-environment-hidden session) :test #'string=)))
   (setf (gethash name (session-environment session)) value)
   session)
 
 (defun session-unset-environment (session name)
   "Record NAME as explicitly unset in SESSION's environment overlay.
-   Removes NAME from the set table and adds it to the unset list.
-   Returns SESSION."
+   Removes NAME from the set table (and the hidden list) and adds it to the
+   unset list.  Returns SESSION."
   (remhash name (session-environment session))
+  (setf (session-environment-hidden session)
+        (delete name (session-environment-hidden session) :test #'string=))
   (pushnew name (session-environment-unsets session) :test #'string=)
   session)
+
+(defvar *global-hidden-environment-names* nil
+  "Names marked hidden via set-environment -hg (tmux ENVIRON_HIDDEN on the
+   global environment).  cl-tmux maps the global environment onto the real
+   process environment, so hidden globals are tracked here and stripped from
+   child-process environments and plain show-environment listings.")
 
 ;;; ── Child environment snapshot ───────────────────────────────────────────────
 ;;;
@@ -199,13 +214,16 @@
 
 (defun %apply-session-overlay (session table)
   "Merge SESSION's environment overlay into TABLE (mutates TABLE in place).
-   Applies the set table first, then removes explicitly unset names.
+   Applies the set table first, then removes explicitly unset names and any
+   hidden names (tmux: hidden variables are not passed to new processes).
    When SESSION is NIL this is a no-op (bootstrap / geometry-only callers)."
   (when session
     (maphash (lambda (name value)
                (setf (gethash name table) value))
              (session-environment session))
     (dolist (name (session-environment-unsets session))
+      (remhash name table))
+    (dolist (name (session-environment-hidden session))
       (remhash name table))))
 
 (defun %apply-extra-env (extra-env table)
@@ -234,6 +252,10 @@
     (unless *suppress-update-environment*
       (dolist (pair (get-update-environment-vars))
         (setf (gethash (car pair) table) (cdr pair))))
+    ;; Hidden globals (set-environment -hg) never reach child processes; they
+    ;; live in the real process environment (step 1) so strip them here.
+    (dolist (name *global-hidden-environment-names*)
+      (remhash name table))
     ;; Step 3: session overlay.
     (%apply-session-overlay session table)
     ;; Step 4: TERM override.

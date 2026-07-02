@@ -169,19 +169,36 @@
      -f / -F       set client flags — accepted; cl-tmux has no per-client flags.
      -l            request the host clipboard via OSC 52 — accepted; there is no
                    outer xterm client to query in the standalone model.
-     -C            set the client size (no-op: the size follows the terminal).
+     -C WxH        set the client size: updates *term-rows*/*term-cols* and
+                   relayouts the active window (tmux control-mode clients use
+                   this to drive the session size independent of the tty).
      -A / -B       passthrough / subscription control (accepted, no-op).
      -t            target client (single-client model).
    Unknown flags are still rejected so invalid config surfaces an error."
-  (declare (ignore session))
   (with-command-input (flags positionals args "ABCfFlt"
                              :allowed-flags '(#\A #\B #\C #\D #\L #\R #\S #\U
                                               #\c #\f #\F #\l #\t)
                              :max-positionals 0
                              :message "refresh-client: unsupported argument")
-    (declare (ignore flags positionals))
+    (declare (ignore positionals))
+    (multiple-value-bind (cols rows) (%parse-client-size (%flag-value flags #\C))
+      (when (and cols rows)
+        (setf *term-cols* cols *term-rows* rows)
+        (let ((win (session-active-window session)))
+          (when win
+            (window-relayout win (- rows *status-height*) cols)))))
     (setf *dirty* t)
     t))
+
+(defun %parse-client-size (spec)
+  "Parse a refresh-client -C size SPEC (\"WIDTHxHEIGHT\", e.g. \"80x24\").
+   Returns (values COLS ROWS), or NIL when SPEC is missing or malformed."
+  (let ((x (and spec (position #\x spec))))
+    (when x
+      (let ((cols (%parse-integer-or-nil (subseq spec 0 x)))
+            (rows (%parse-integer-or-nil (subseq spec (1+ x)))))
+        (when (and cols rows (plusp cols) (plusp rows))
+          (values cols rows))))))
 
 (defun %cmd-lock-client-arg (session args)
   "lock-client: lock the active session."

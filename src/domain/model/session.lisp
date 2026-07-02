@@ -19,7 +19,10 @@
   (group       nil)                 ; NIL or group-id (string/integer); sessions in same group share windows
   (start-directory nil)             ; NIL or string: session working dir (new-session/attach-session -c)
   (environment (make-hash-table :test #'equal))
-  (environment-unsets nil :type list))
+  (environment-unsets nil :type list)
+  ;; Names marked hidden via set-environment -h (tmux ENVIRON_HIDDEN):
+  ;; excluded from plain show-environment and from child-process environments.
+  (environment-hidden nil :type list))
 
 (defun session-active-window (session)
   "Return SESSION's active window, falling back to the first window when active is NIL."
