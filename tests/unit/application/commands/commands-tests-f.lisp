@@ -119,9 +119,46 @@
   (let ((out (cl-tmux/commands:run-shell "true")))
     (is (stringp out) "return value must be a string even for a no-op command")))
 
+(test run-shell-combine-stderr-captures-stderr
+  "run-shell :combine-stderr T returns stdout and stderr in one output string."
+  (let ((out (cl-tmux/commands:run-shell "printf out; printf err >&2"
+                                         :combine-stderr t)))
+    (is (stringp out) "return value must be a string")
+    (is (search "out" out) "output must contain stdout")
+    (is (search "err" out) "output must contain stderr")))
+
+(test run-shell-start-directory-controls-working-directory
+  "run-shell :start-directory runs the shell subprocess from that directory."
+  (let ((dir (merge-pathnames
+              (format nil "cl-tmux-run-shell-cwd-~D/" (random 1000000))
+              (uiop:temporary-directory))))
+    (unwind-protect
+         (let* ((created (ensure-directories-exist dir))
+                (expected (string-right-trim '(#\/)
+                                             (namestring (truename created))))
+                (out (cl-tmux/commands:run-shell
+                      "pwd"
+                      :start-directory (namestring created)))
+                (actual (string-right-trim '(#\/ #\Newline #\Return #\Space #\Tab)
+                                           out)))
+           (is (stringp out) "return value must be a string")
+           (is (string= expected actual)
+               "pwd must report the requested start directory"))
+      (ignore-errors (uiop:delete-directory-tree dir :validate t)))))
+
+(test run-shell-delay-waits-before-running-command
+  "run-shell :delay waits before launching the shell subprocess."
+  (let* ((start (get-internal-real-time))
+         (out (cl-tmux/commands:run-shell "printf delayed" :delay 1/20))
+         (elapsed (/ (- (get-internal-real-time) start)
+                     internal-time-units-per-second)))
+    (is (stringp out) "return value must be a string")
+    (is (search "delayed" out) "output must contain the command output")
+    (is (>= elapsed 1/20) "run-shell must wait before launching the command")))
+
 (test run-command-line-run-shell-accepts-tmux-parity-flags
   "%run-command-line run-shell accepts the tmux parity flags -c/-d/-t (their
-   arguments are consumed) and runs the remaining command (tmux args bCc:d:t:)."
+   arguments are consumed) and runs the remaining command (tmux args bCEc:d:t:)."
   (with-fake-session (s)
     (let ((*overlay* nil))
       (cl-tmux::%run-command-line s "run-shell -d 0 -t %1 echo ok")
@@ -131,6 +168,73 @@
           "run-shell must run the command after consuming the flag arguments")
       (is (null (search "%1" *overlay*))
           "the -t value must be consumed, not run as part of the command"))))
+
+(test run-command-line-run-shell-t-targets-output-pane-context
+  "%run-command-line run-shell -t shows shell output from the target pane context
+   and restores the previously active pane."
+  (with-two-pane-h-session (s win p0 p1)
+    (with-command-test-state (s :overlay t)
+      (let ((seen-pane nil)
+            (real-show-overlay (symbol-function 'show-overlay)))
+        (unwind-protect
+             (progn
+               (setf (symbol-function 'show-overlay)
+                     (lambda (text)
+                       (setf seen-pane (window-active-pane win))
+                       (funcall real-show-overlay text)))
+               (cl-tmux::%run-command-line
+                s "run-shell -t %2 printf targeted"))
+          (setf (symbol-function 'show-overlay) real-show-overlay))
+        (is (search "targeted" *overlay*)
+            "overlay must contain the shell command output")
+        (is (eq p1 seen-pane)
+            "run-shell -t must show output while the target pane is active")
+        (is (eq p0 (window-active-pane win))
+            "run-shell -t must restore the previously active pane")))))
+
+(test run-command-line-run-shell-d-delays-before-running-command
+  "%run-command-line run-shell -d waits before launching the shell command."
+  (with-fake-session (s)
+    (let ((*overlay* nil)
+          (start (get-internal-real-time)))
+      (cl-tmux::%run-command-line s "run-shell -d 1 echo delayed")
+      (let ((elapsed (/ (- (get-internal-real-time) start)
+                        internal-time-units-per-second)))
+        (is (search "delayed" *overlay*)
+            "overlay must contain the delayed command output")
+        (is (>= elapsed 1)
+            "dispatch run-shell -d must wait before launching the command")))))
+
+(test run-command-line-run-shell-c-controls-working-directory
+  "%run-command-line run-shell -c runs the shell command from the supplied directory."
+  (let ((dir (merge-pathnames
+              (format nil "cl-tmux-run-shell-dispatch-cwd-~D/" (random 1000000))
+              (uiop:temporary-directory))))
+    (unwind-protect
+         (let* ((created (ensure-directories-exist dir))
+                (expected (string-right-trim '(#\/)
+                                             (namestring (truename created)))))
+           (with-fake-session (s)
+             (let ((*overlay* nil))
+               (cl-tmux::%run-command-line
+                s
+                (format nil "run-shell -c ~A pwd" (namestring created)))
+               (is (null (search "unsupported argument" *overlay*))
+                   "run-shell -c must be accepted, not rejected")
+               (is (search expected *overlay*)
+                   "overlay must contain the command working directory"))))
+      (ignore-errors (uiop:delete-directory-tree dir :validate t)))))
+
+(test run-command-line-run-shell-E-captures-stderr
+  "%run-command-line run-shell -E includes stderr in the displayed output."
+  (with-fake-session (s)
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line s
+                                  "run-shell -E 'printf out; printf err >&2'")
+      (is (null (search "unsupported argument" *overlay*))
+          "run-shell -E must be accepted, not rejected")
+      (is (search "out" *overlay*) "overlay must contain stdout")
+      (is (search "err" *overlay*) "overlay must contain stderr"))))
 
 (test run-command-line-run-shell-C-runs-tmux-command
   "%run-command-line run-shell -C executes the argument as a tmux command."

@@ -67,7 +67,7 @@
     ("respawn-pane"         . "[-k] [-c start-directory] [-e environment] [-t target-pane] [shell-command [argument ...]]")
     ("respawn-window"       . "[-k] [-c start-directory] [-e environment] [-t target-window] [shell-command [argument ...]]")
     ("rotate-window"        . "[-DUZ] [-t target-window]")
-    ("run-shell"            . "[-bC] [-c shell-command] [-d delay] [-t target-pane]")
+    ("run-shell"            . "[-bCE] [-c start-directory] [-d delay] [-t target-pane] [shell-command [argument ...]]")
     ("save-buffer"          . "[-a] [-b buffer-name] path")
     ("select-layout"        . "[-Enop] [-t target-window] [layout-name]")
     ("select-pane"          . "[-DdegGlLlMmRUZ] [-T title] [-t target-pane]")

@@ -279,14 +279,20 @@
    Usage: tmux source-file <path>
    Applies config directives from PATH against the global defaults.
    Useful for pre-loading a config before the multiplexer starts."
-  (let ((path (or (first raw-args) (cl-tmux/config:config-file-path))))
-    (when (and path (probe-file path))
-      (handler-case
-          (cl-tmux/config:load-config-file path)
-        (error (c)
-          (format *error-output* "source-file: ~A~%" c)
-          (sb-ext:exit :code 1))))
-    (sb-ext:exit :code 0)))
+  (let* ((args (or raw-args
+                   (let ((path (cl-tmux/config:config-file-path)))
+                     (when (and path (probe-file path))
+                       (list path)))))
+         (previous-log *message-log*))
+    (handler-case
+        (let ((ok (cl-tmux/config:source-files args)))
+          (unless ok
+            (dolist (entry (reverse (ldiff *message-log* previous-log)))
+              (format *error-output* "~A~%" (cdr entry))))
+          (sb-ext:exit :code (if ok 0 1)))
+      (error (c)
+        (format *error-output* "source-file: ~A~%" c)
+        (sb-ext:exit :code 1)))))
 
 (defun main ()
   "Binary entry point - dispatches on the first argv item via *startup-modes*.

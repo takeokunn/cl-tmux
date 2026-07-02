@@ -143,11 +143,18 @@
       (is (eq :next-window (lookup-key-binding #\z))
           "#\\z must be bound after source-file"))))
 
-(test source-file-missing-returns-t-silently
-  "source-file on a nonexistent file returns T (errors are ignored)."
+(test source-file-missing-returns-nil-and-logs
+  "source-file on a nonexistent file returns NIL and logs tmux's diagnostic."
   (with-isolated-config
-    (assert-config-directive-applied '("source-file" "/nonexistent-cl-tmux-config-abc.conf")
-                                     "source-file missing path")))
+    (let ((cl-tmux::*message-log* nil))
+      (is (null (apply-config-directive
+                 '("source-file" "/nonexistent-cl-tmux-config-abc.conf")))
+          "source-file missing path must fail")
+      (is (= 1 (length cl-tmux::*message-log*))
+          "missing path must log exactly one diagnostic")
+      (is (search "No such file or directory"
+                  (cdr (first cl-tmux::*message-log*)))
+          "diagnostic must mention the OS error"))))
 
 (test source-file-n-parse-only-does-not-execute
   "source-file -n parses the file but executes NOTHING (tmux CMD_PARSE_PARSEONLY).
@@ -230,7 +237,7 @@
     (destructuring-bind (cmd args desc) c
       (assert-config-directive-applied (cons cmd args) desc))))
 
-;;; ── run-shell flag tolerance (-b / -t / -d / -C) ───────────────────────────
+;;; ── run-shell flag handling (-b / -C / -E / -c / -t / -d) ─────────────────
 ;;;
 ;;; %apply-run-shell-directive strips leading flags so the common
 ;;; `run-shell -b 'cmd'` form — which the fixed-arity table silently dropped —
@@ -246,8 +253,12 @@
                (nil "bind"      ("x" "next-window")           "bind (non-run command)")
                (t   "run-shell" ("-b")                        "run-shell -b only (flag-only no-op)")
                (t   "run-shell" ("-C" "new-window")           "run-shell -C <cmd> (tmux-cmd no-op)")
-               (t   "run-shell" ("-d" "5" "true")             "run-shell -d 5 true (delay flag)")
-               (t   "run-shell" ("-x" "true")                 "run-shell -x true (unknown flag skipped)")
+               (t   "run-shell" ("-E" "true")                 "run-shell -E true (combine stderr)")
+               (t   "run-shell" ("-c" "/tmp" "true")          "run-shell -c /tmp true (start-directory)")
+               (t   "run-shell" ("-bCE" "true")               "run-shell clustered no-arg flags")
+               (t   "run-shell" ("-d" "0" "true")             "run-shell -d 0 true (delay flag)")
+               (nil "run-shell" ("-x" "true")                 "run-shell -x true (unknown flag rejected)")
+               (t   "run"       ("true")                      "run alias true")
                (t   "run-shell" ()                            "run-shell no args (empty no-op)")
                (t   "run-shell" ("-b" "echo" "hello" "world") "run-shell -b echo hello world (multi-word)")))
     (destructuring-bind (expected cmd args desc) c
@@ -256,6 +267,30 @@
           (if expected
               (is (eq t result) "~A must return T (got ~S)" desc result)
               (is (null result) "~A must return NIL (got ~S)" desc result)))))))
+
+(test run-shell-c-start-directory-controls-shell-cwd
+  "run-shell -c runs the shell command from the requested start-directory."
+  (let* ((tmp-dir (merge-pathnames "cl-tmux-run-shell-c/"
+                                   (uiop:temporary-directory)))
+         (out-file (merge-pathnames "pwd.txt" tmp-dir)))
+    (ensure-directories-exist tmp-dir)
+    (unwind-protect
+         (progn
+           (let ((handled (cl-tmux/config::%apply-run-shell-directive
+                           "run-shell"
+                           (list "-c" (namestring tmp-dir)
+                                 (format nil "pwd > ~A" (namestring out-file))))))
+             (is (eq t handled) "run-shell -c must be handled"))
+           (let ((expected-dir (string-right-trim
+                                '(#\/)
+                                (namestring (truename tmp-dir))))
+                 (actual-dir (string-right-trim
+                              '(#\Newline #\Return)
+                              (uiop:read-file-string out-file))))
+             (is (string= actual-dir expected-dir)
+                 "pwd output must match the -c start-directory")))
+      (ignore-errors
+        (uiop:delete-directory-tree tmp-dir :validate t :if-does-not-exist :ignore)))))
 
 ;;; ── %expand-leading-tilde ──────────────────────────────────────────────────
 

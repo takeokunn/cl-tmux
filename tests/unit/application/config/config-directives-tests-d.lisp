@@ -235,7 +235,7 @@ bind-key -T copy-mode-vi v send-keys -X begin-selection")))
   (is (null (cl-tmux/config::%glob-expand "/nonexistent-cl-tmux-xyz-dir/*.conf"))))
 
 (test source-files-skips-flags-and-tolerates-missing
-  "source-files skips -q/-n/-v flags and ignores missing files (returns T, no error)."
+  "source-files skips -q/-n/-v flags and ignores missing files under -q."
   (is (eq t (cl-tmux/config:source-files '("-q" "/no/such/cl-tmux-file.conf")))))
 
 (test source-files-glob-expands-and-loads-matching-files
@@ -261,7 +261,7 @@ bind-key -T copy-mode-vi v send-keys -X begin-selection")))
 
 (test source-files-missing-path-logs-message-table
   "source-file on a missing path or unmatched glob (no -q) logs
-   'No such file or directory: PATH' and returns T.
+   'No such file or directory: PATH' and returns NIL.
    Each row: (path description)."
   (dolist (row '(("/no/such/cl-tmux-srcfile-abc.conf"
                   "plain missing path logs No such file or directory")
@@ -269,7 +269,7 @@ bind-key -T copy-mode-vi v send-keys -X begin-selection")))
                   "unmatched glob logs No such file or directory")))
     (destructuring-bind (path desc) row
       (let ((cl-tmux::*message-log* nil))
-        (is (eq t (cl-tmux/config:source-files (list path))) desc)
+        (is (null (cl-tmux/config:source-files (list path))) desc)
         (is (= 1 (length cl-tmux::*message-log*))
             "exactly one diagnostic was logged")
         (is (search "No such file or directory" (cdr (first cl-tmux::*message-log*)))

@@ -37,16 +37,28 @@
          ,@body))
      ,timeout))
 
-(defun %run-shell-program (shell command &key output timeout)
-  "Run COMMAND through SHELL with an explicit subprocess TIMEOUT."
+(defun %run-shell-program (shell command &key output error-output timeout directory)
+  "Run COMMAND through SHELL with an explicit subprocess TIMEOUT and DIRECTORY."
   (uiop:run-program (list shell "-c" command)
                     :output output
+                    :error-output error-output
                     :ignore-error-status t
-                    :timeout timeout))
+                    :timeout timeout
+                    :directory directory))
 
-(defun run-shell (command &key background (timeout +shell-command-timeout+))
+(defun %run-shell-delay (delay)
+  "Wait DELAY seconds before launching a run-shell subprocess."
+  (when (and delay (plusp delay))
+    (sleep delay)))
+
+(defun run-shell (command &key background combine-stderr
+                            start-directory delay
+                            (timeout +shell-command-timeout+))
   "Run COMMAND in a subshell.  Returns the output string (stdout) when BACKGROUND
    is nil, or T immediately when BACKGROUND is T.
+   When COMBINE-STDERR is true, stderr is redirected into stdout.
+   START-DIRECTORY, when non-NIL, is used as the subprocess working directory.
+   DELAY, when positive, waits that many seconds before launching the subprocess.
    Uses *default-shell* for the shell binary.
    TIMEOUT (seconds, default +shell-command-timeout+) limits how long the
    subprocess may run; when the synchronous limit is exceeded NIL is returned."
@@ -56,15 +68,21 @@
           (lambda ()
             (let ((shell (or *default-shell* "/bin/sh")))
               (ignore-errors
+                (%run-shell-delay delay)
                 (%run-shell-program shell command
                                     :output nil
-                                    :timeout timeout))))
+                                    :error-output nil
+                                    :timeout timeout
+                                    :directory start-directory))))
           :name "shell-bg")
         t)
       (with-shell-timeout (shell timeout)
+        (%run-shell-delay delay)
         (%run-shell-program shell command
                             :output :string
-                            :timeout timeout))))
+                            :error-output (when combine-stderr :output)
+                            :timeout timeout
+                            :directory start-directory))))
 
 (defun if-shell (command then-fn &key else-fn (timeout +shell-command-timeout+))
   "Run COMMAND; call THEN-FN if exit code is 0, ELSE-FN otherwise.

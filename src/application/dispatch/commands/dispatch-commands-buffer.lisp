@@ -330,7 +330,6 @@
            (menu-x (%parse-flag-int flags #\x))
            (menu-y (%parse-flag-int flags #\y))
            ;; Build items from consecutive (label key command) triples.
-           ;; Silently skip incomplete triples (real tmux shows an error).
            (items (loop for (label key cmd) on positionals by #'cdddr
                         when (and label key cmd)
                         collect (cons (if (and (plusp (length label))
@@ -338,10 +337,13 @@
                                           (format nil "~A [~A]" label key)
                                           label)
                                       cmd))))
-      (when items
-        (show-menu (make-menu :title title :items items :selected-index 0
-                              :x menu-x :y menu-y))
-        (show-overlay (%format-menu *active-menu*))))))
+      (cond
+        ((null positionals)
+         (%overlayf "command display-menu: too few arguments (need at least 1)"))
+        (items
+         (show-menu (make-menu :title title :items items :selected-index 0
+                               :x menu-x :y menu-y))
+         (show-overlay (%format-menu *active-menu*)))))))
 
 (defun %cmd-confirm-before-arg (session args)
   "confirm-before [-y] [-p prompt] [-c confirm-key] [-t target] command:

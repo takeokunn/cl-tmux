@@ -385,6 +385,19 @@
       (is (null (cl-tmux/prompt:menu-y cl-tmux::*active-menu*))
           "menu-y defaults to NIL (centred)"))))
 
+(test run-command-line-display-menu-empty-args-reports-too-few
+  "%run-command-line display-menu with no item args reports tmux-compatible syntax error."
+  (with-fake-session (s)
+    (let ((*overlay* nil)
+          (cl-tmux::*active-menu* nil))
+      (is (null (cl-tmux::%run-command-line s "display-menu"))
+          "display-menu empty args returns no dispatch keyword")
+      (is (null cl-tmux::*active-menu*)
+          "display-menu empty args must not open the internal default menu")
+      (assert-overlay-contains "command display-menu: too few arguments (need at least 1)"
+                               (overlay-lines)
+                               "display-menu empty args"))))
+
 (test dispatch-menu-next-prev-table
   ":menu-next from 0 advances to 1; :menu-prev from 0 wraps to last index (1)."
   (dolist (cmd '(:menu-next :menu-prev))

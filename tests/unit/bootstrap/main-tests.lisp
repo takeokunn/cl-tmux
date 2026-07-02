@@ -359,13 +359,20 @@
       (is (equal '(nil) (reverse probes))
           "new-session should discover any running server before treating -s as a socket name"))))
 
-(test run-source-file-nonexistent-path-exits-cleanly
-  "run-source-file with a nonexistent path exits cleanly (code 0)."
-  (let (exit-code)
-    (with-stubbed-exit exit-code
-      (cl-tmux::run-source-file (list "/nonexistent/no-such-file.conf")))
-    (is (eql 0 exit-code)
-        "run-source-file with nonexistent path must exit cleanly")))
+(test run-source-file-nonexistent-path-exits-1-with-diagnostic
+  "run-source-file with a nonexistent path exits 1 and writes tmux's diagnostic."
+  (let (exit-code
+        (output (make-string-output-stream)))
+    (let ((*error-output* output)
+          (cl-tmux::*message-log* nil))
+      (with-stubbed-exit exit-code
+        (cl-tmux::run-source-file (list "/nonexistent/no-such-file.conf"))))
+    (is (eql 1 exit-code)
+        "run-source-file with nonexistent path must fail")
+    (let ((text (get-output-stream-string output)))
+      (is (search "No such file or directory: /nonexistent/no-such-file.conf"
+                  text)
+          "run-source-file must write the missing-file diagnostic to stderr"))))
 
 (test run-has-session-no-socket-exits-1
   "run-has-session with a nonexistent socket path exits with code 1."

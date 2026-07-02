@@ -16,20 +16,29 @@
 (defconstant +config-shell-command-timeout+ 30
   "Seconds to allow config-time shell directives to run.")
 
-(defun %run-config-shell-command (command)
+(defun %run-config-shell-command (command &key combine-stderr directory)
   "Run COMMAND through /bin/sh while loading config, with a bounded lifetime."
   (uiop:run-program (list "/bin/sh" "-c" command)
+                    :output :string
+                    :error-output (when combine-stderr :output)
                     :ignore-error-status t
-                    :timeout +config-shell-command-timeout+))
+                    :timeout +config-shell-command-timeout+
+                    :directory directory))
 
-(defun %run-config-shell-command-safe (command)
+(defun %run-config-shell-command-safe (command &key combine-stderr directory delay)
   "Run COMMAND via %run-config-shell-command, treating any timeout/error signal
    (SERIOUS-CONDITION, wider than ERROR so it also covers UIOP timeout signals
    such as uiop:subprocess-error) as an abandoned, falsy result instead of
    letting it propagate — so config loading cannot hang or abort indefinitely.
    Returns the same (values stdout stderr exit-code) as %run-config-shell-command
    on success, or NIL on a signalled condition."
-  (handler-case (%run-config-shell-command command)
+  (handler-case
+      (progn
+        (when (and delay (plusp delay))
+          (sleep delay))
+        (%run-config-shell-command command
+                                   :combine-stderr combine-stderr
+                                   :directory directory))
     (serious-condition () nil)))
 
 (defun %parse-set-environment-flags (args)
@@ -167,28 +176,116 @@
 ;;; (with leading flags) silently failed.  This handler strips leading flags
 ;;; before the fixed-arity table and runs whatever shell command remains.
 
+(defun %parse-run-shell-delay (value)
+  "Parse run-shell -d VALUE using the same integer-only shape as runtime dispatch."
+  (and value
+       (max 0 (or (%config-parse-integer-or-nil value :junk-allowed t) 0))))
+
+(defun %run-shell-flag-cluster-p (token)
+  "True when TOKEN is a cluster containing only no-argument run-shell flags."
+  (and (> (length token) 2)
+       (char= (char token 0) #\-)
+       (loop for index from 1 below (length token)
+             always (member (char token index) '(#\b #\C #\E) :test #'char=))))
+
+(defun %apply-run-shell-flag-character (flag)
+  "Return the parser state assignment represented by no-argument FLAG."
+  (case flag
+    (#\b :background)
+    (#\C :tmux-command)
+    (#\E :combine-stderr)
+    (otherwise nil)))
+
+(defun %parse-run-shell-directive-args (args)
+  "Parse config-time run-shell ARGS.
+Returns (values remaining background-p tmux-command-p combine-stderr-p
+start-directory delay invalid-p)."
+  (let ((remaining args)
+        (background-p nil)
+        (tmux-command-p nil)
+        (combine-stderr-p nil)
+        (start-directory nil)
+        (delay nil)
+        (invalid-p nil))
+    (labels ((apply-state (state)
+               (case state
+                 (:background (setf background-p t))
+                 (:tmux-command (setf tmux-command-p t))
+                 (:combine-stderr (setf combine-stderr-p t)))))
+      (loop while (and remaining (%leading-flag-token-p (first remaining)))
+            for token = (pop remaining)
+            do (cond
+                 ((%run-shell-flag-cluster-p token)
+                  (loop for index from 1 below (length token)
+                        do (apply-state
+                            (%apply-run-shell-flag-character
+                             (char token index)))))
+                 ((string= token "-b") (setf background-p t))
+                 ((string= token "-C") (setf tmux-command-p t))
+                 ((string= token "-E") (setf combine-stderr-p t))
+                 ((string= token "-c")
+                  (if remaining
+                      (setf start-directory (pop remaining))
+                      (setf invalid-p t)))
+                 ((string= token "-d")
+                  (if remaining
+                      (setf delay (%parse-run-shell-delay (pop remaining)))
+                      (setf invalid-p t)))
+                 ((string= token "-t")
+                  (if remaining
+                      (pop remaining)
+                      (setf invalid-p t)))
+                 (t
+                  (setf invalid-p t)))
+            when invalid-p
+              do (return)))
+    (values remaining background-p tmux-command-p combine-stderr-p
+            start-directory delay invalid-p)))
+
+(defun %run-config-shell-command-background (command &key combine-stderr directory delay)
+  "Run config COMMAND asynchronously and report the directive as handled."
+  (bt:make-thread
+   (lambda ()
+     (%run-config-shell-command-safe command
+                                     :combine-stderr combine-stderr
+                                     :directory directory
+                                     :delay delay))
+   :name "cl-tmux config run-shell")
+  t)
+
+(defun %apply-run-shell-tmux-command (command &key background delay)
+  "Apply a run-shell -C COMMAND, optionally in the background after DELAY."
+  (flet ((apply-command ()
+           (when (and delay (plusp delay))
+             (sleep delay))
+           (ignore-errors (apply-config-directive (%config-tokens command)))))
+    (if background
+        (progn
+          (bt:make-thread #'apply-command
+                          :name "cl-tmux config run-shell -C")
+          t)
+        (progn
+          (apply-command)
+          t))))
+
 (defun %apply-run-shell-directive (cmd args)
-  "Handle 'run-shell [-b] [-C] [-t target] [-d delay] shell-command' directives
+  "Handle 'run-shell [-bCE] [-c start-directory] [-d delay] [-t target] shell-command' directives
    Consumes leading flags:
-     -b           run in background (boolean; we run synchronously regardless)
+     -b           run in background
      -C           run a tmux command instead of a shell command (boolean)
+     -E           combine stderr with stdout
+     -c <path>    run shell command in start-directory
      -t <target>  target pane (takes the next token as its value)
      -d <delay>   delay (takes the next token as its value)
-   Unknown leading -X flags: a single bare flag token is skipped to stay
-   tolerant.  Stops at the first non-flag token; that token plus any remaining
-   tokens (joined by spaces) form the shell command.
-   Returns T when CMD is run-shell (handled), NIL otherwise."
-  (when (string= cmd "run-shell")
-    (let ((tmux-command-p nil)
-          (remaining      args))
-      ;; Consume leading flag tokens.
-      (setf remaining
-            (%consuming-flags (remaining tok rest)
-              ((string= tok "-C") (setf tmux-command-p t))
-              ((string= tok "-b"))
-              ((member tok '("-t" "-d") :test #'string=)
-               (when rest (setf rest (cdr rest))))
-              (t nil)))
+   Stops at the first non-flag token; that token plus any remaining tokens
+   (joined by spaces) form the shell command.
+   Returns T when CMD is run-shell/run and the form is handled, NIL otherwise."
+  (when (member cmd '("run-shell" "run") :test #'string=)
+    (multiple-value-bind (remaining background-p tmux-command-p combine-stderr-p
+                          start-directory delay invalid-p)
+        (%parse-run-shell-directive-args args)
+      (when invalid-p
+        (return-from %apply-run-shell-directive nil))
       ;; Remaining tokens (joined) form the shell command.
       (let ((command (%join-config-tokens remaining)))
         (cond
@@ -198,14 +295,28 @@
           ;; through the config dispatcher (same path if-shell uses for its
           ;; then/else commands).  e.g. `run-shell -C 'display-message hi'`.
           (tmux-command-p
-           (ignore-errors (apply-config-directive (%config-tokens command)))
-           t)
+           (%apply-run-shell-tmux-command command
+                                          :background background-p
+                                          :delay delay))
           ;; Shell command: run it the same way the fixed-arity entries do.
           (t
            ;; A timeout signal (UIOP:SUBPROCESS-ERROR or similar) is abandoned via
            ;; %run-config-shell-command-safe rather than silently treated as a
            ;; non-zero exit, and loading continues.
-           (%run-config-shell-command-safe (%expand-leading-tilde command))
+           (let ((expanded-command (%expand-leading-tilde command))
+                 (expanded-directory (and start-directory
+                                          (%expand-leading-tilde start-directory))))
+             (if background-p
+                 (%run-config-shell-command-background
+                  expanded-command
+                  :combine-stderr combine-stderr-p
+                  :directory expanded-directory
+                  :delay delay)
+                 (%run-config-shell-command-safe
+                  expanded-command
+                  :combine-stderr combine-stderr-p
+                  :directory expanded-directory
+                  :delay delay)))
            t))))))
 
 (defun %glob-expand (path)
@@ -298,29 +409,39 @@
    when PARSE-ONLY, otherwise load and execute it via load-config-file.  A load
    that finds no file (load-config-file returns NIL) reports tmux's 'No such file
    or directory' diagnostic unless QUIET."
-  (if parse-only
-      (%parse-config-file-only file)
-      (let ((applied (ignore-errors (load-config-file file))))
-        (when (and (null applied) (not quiet))
-          (%source-file-report-missing file)))))
+  (if (probe-file file)
+      (progn
+        (if parse-only
+            (%parse-config-file-only file)
+            (ignore-errors (load-config-file file)))
+        t)
+      (progn
+        (unless quiet
+          (%source-file-report-missing file))
+        nil)))
 
 (defun source-files (args)
   "Implement `source-file [-Fnqv] [-t target-pane] path...`: for each non-flag PATH, optionally
    expand it as a format string (-F), then expand a leading ~ and shell globs
    (* ? []), and load every matching config file.  With -n (parse-only), each file
    is read and tokenised but NO command runs (tmux's CMD_PARSE_PARSEONLY syntax
-   check).  Errors (missing file, parse failure) are always swallowed, so cl-tmux is
-   effectively -q whether or not -q is given; -v is accepted (no client sink to echo
-   to).  Returns T."
+   check).  Missing files and unmatched globs report tmux's diagnostic and make the
+   command fail unless -q is given; -v is accepted (no client sink to echo to)."
   (multiple-value-bind (parse-only quiet verbose format-p positionals)
       (%parse-source-file-flags args)
     (declare (ignore verbose))
-    (dolist (raw positionals)
-      (let ((path (%resolve-source-file-path raw format-p)))
-        (when (plusp (length path))
-          (dolist (file (%source-file-glob-matches path quiet))
-            (%load-or-parse-source-file file parse-only quiet))))))
-  t)
+    (let ((ok t))
+      (dolist (raw positionals ok)
+        (let ((path (%resolve-source-file-path raw format-p)))
+          (when (plusp (length path))
+            (let ((matches (%source-file-glob-matches path quiet)))
+              (if matches
+                  (dolist (file matches)
+                    (unless (or (%load-or-parse-source-file file parse-only quiet)
+                                quiet)
+                      (setf ok nil)))
+                  (unless quiet
+                    (setf ok nil))))))))))
 
 (defun %apply-source-file-directive (cmd args)
   "Intercept source-file: -q/-n/-v flags, glob patterns, and multiple paths
