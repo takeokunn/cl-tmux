@@ -273,6 +273,8 @@
     ("monitor-bell"                  t)
     ("activity-action"               "other")
     ("silence-action"                "other")
+    ("message-line"                  0)
+    ("assume-paste-time"             1)
     ("buffer-limit"                  50)
     ("focus-events"                  nil)
     ("copy-command"                  "")

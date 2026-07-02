@@ -137,14 +137,45 @@
 ;;; When the "synchronize-panes" window option is T, keystrokes sent to the
 ;;; active pane are also broadcast to every other pane in the same window.
 
+(defun %backspace-option-byte ()
+  "The byte the `backspace' server option maps the client's DEL (0x7f) key to.
+   tmux key syntax: C-? is 127 (the default — identity), C-x is a control code,
+   a single character is its own code.  NIL for unset/unrecognised values."
+  (let ((value (cl-tmux/options:get-server-option "backspace")))
+    (when (stringp value)
+      (cond
+        ((string= value "C-?") 127)
+        ((and (= (length value) 3)
+              (string= "C-" value :end2 2)
+              (char<= #\A (char-upcase (char value 2)) #\Z))
+         (- (char-code (char-upcase (char value 2))) 64))
+        ((= (length value) 1)
+         (char-code (char value 0)))))))
+
+(defun %translate-backspace-octets (octets)
+  "Rewrite DEL (0x7f) bytes in OCTETS per the `backspace' server option — tmux
+   translates the client's Backspace key to the configured byte before it
+   reaches the pane.  Returns OCTETS unchanged for the default C-? (identity),
+   an unrecognised option value, or input containing no DEL byte."
+  (let ((target (%backspace-option-byte)))
+    (if (or (null target)
+            (= target 127)
+            (notany (lambda (b) (= b 127)) octets))
+        octets
+        (map '(vector (unsigned-byte 8))
+             (lambda (b) (if (= b 127) target b))
+             octets))))
+
 (defun %forward-octets-synchronized (session octets)
   "Forward OCTETS to the active pane.  If synchronize-panes is enabled on
    the active window, also write to all other panes in the window.
+   The `backspace' server option translates DEL bytes first (tmux bspace key).
    Panes with pane-input-disabled set (select-pane -d) receive no input.
    No-op when *client-read-only* is set (attach-session -r)."
   (unless *client-read-only*
     (let* ((window      (session-active-window session))
-           (active-pane (and window (window-active-pane window))))
+           (active-pane (and window (window-active-pane window)))
+           (octets      (%translate-backspace-octets octets)))
       (when (and active-pane
                  ;; select-pane -d: input disabled for this pane — swallow keystrokes.
                  (not (pane-input-disabled active-pane)))

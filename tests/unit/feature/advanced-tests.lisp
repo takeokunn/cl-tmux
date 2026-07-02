@@ -242,6 +242,31 @@
       (is (eq win (session-active-window s2))
           "peer's focus must repair to a surviving window"))))
 
+(test session-group-unlink-window-tears-down-orphaned-ptys
+  "unlink-window on a grouped session propagates the removal to every peer;
+   a window left in NO session gets its pane PTYs closed (tmux destroys a
+   fully-unreferenced window — previously the shells leaked until kill-server)."
+  (with-grouped-sessions (s1 s2 win)
+    (let* ((win2 (%make-group-test-window 2))
+           (closed 0)
+           (real-pty-close (fdefinition 'cl-tmux/pty:pty-close)))
+      (session-insert-window s1 win2)
+      (session-select-window s1 win2)   ; unlink targets the active window
+      (let ((cl-tmux::*server-sessions* (list (cons "a" s1) (cons "b" s2)))
+            (cl-tmux/prompt:*overlay* nil))
+        (unwind-protect
+             (progn
+               (setf (fdefinition 'cl-tmux/pty:pty-close)
+                     (lambda (&rest args) (declare (ignore args)) (incf closed)))
+               (cl-tmux::%cmd-unlink-window s1 nil))
+          (setf (fdefinition 'cl-tmux/pty:pty-close) real-pty-close))
+        (is (null (member win2 (session-windows s1)))
+            "the window must be unlinked from s1")
+        (is (null (member win2 (session-windows s2)))
+            "the removal must propagate to grouped peer s2")
+        (is (= 1 closed)
+            "the orphaned window's pane PTY must be closed exactly once")))))
+
 (test session-group-sync-ignores-ungrouped-sessions
   "session-windows-changed on a session without a group is a no-op."
   (let* ((win (%make-group-test-window 1))

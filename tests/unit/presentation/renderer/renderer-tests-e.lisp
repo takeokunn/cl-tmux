@@ -251,6 +251,30 @@
                 "background bell must be consumed under bell-action ~A"
                 bell-action)))))))
 
+(test render-session-current-window-bell-fires-alert-bell-hook
+  "A BEL in the ACTIVE window fires the alert-bell hook with the window when
+   bell-action applies to the current window (any/current); other/none do not."
+  (dolist (row '(("any" t) ("current" t) ("other" nil) ("none" nil)))
+    (destructuring-bind (bell-action expect-fired) row
+      (with-isolated-options ("bell-action" bell-action "status" "off")
+        (with-isolated-hooks
+          (let* ((sess     (make-fake-session :nwindows 1))
+                 (win      (cl-tmux/model:session-active-window sess))
+                 (pane     (cl-tmux/model:window-active-pane win))
+                 (hook-win nil))
+            (setf (cl-tmux/terminal/types:screen-bell-pending
+                   (cl-tmux/model:pane-screen pane)) t)
+            (cl-tmux/hooks:add-hook "alert-bell"
+                                    (lambda (&rest args) (setf hook-win (first args))))
+            (cl-tmux/renderer::render-session-to-string sess 5 20)
+            (if expect-fired
+                (is (eq win hook-win)
+                    "bell-action ~A must fire alert-bell with the current window"
+                    bell-action)
+                (is (null hook-win)
+                    "bell-action ~A must not fire alert-bell for the current window"
+                    bell-action))))))))
+
 (test emit-bell-visual-bell-tri-state-table
   "visual-bell off/both relay the audible BEL; on is visual-only (no BEL byte).
    A legacy NIL value behaves as off."

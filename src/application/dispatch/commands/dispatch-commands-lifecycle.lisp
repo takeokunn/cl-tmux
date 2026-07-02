@@ -104,6 +104,13 @@
          ;; Reselect a remaining window if we just removed the active one.
          (when (and was-active (session-windows session))
            (session-select-window session (first (session-windows session)))))
+       ;; In a session group the removal propagates to every peer, so the
+       ;; window may now be referenced by NO session at all — tear down its
+       ;; PTYs like tmux destroys a fully-unreferenced window (otherwise the
+       ;; shells would leak until kill-server).
+       (when (zerop (%window-session-count win))
+         (dolist (pane (window-panes win))
+           (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))
        (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-unlinked+ win)
        (show-overlay "unlink-window: unlinked"))
       (kill-p

@@ -19,14 +19,22 @@
 (defun %render-bell-and-cursor (buffer active-pane)
   "Emit a pending BEL from ACTIVE-PANE (if any) and restore cursor visibility.
    bell-action 'none' swallows all BELs; 'other' skips the active pane (handled
-   by %render-background-bells instead); 'any'/'current' relay the active pane bell."
+   by %render-background-bells instead); 'any'/'current' relay the active pane bell.
+   The alert-bell hook for the CURRENT window fires here — the consume gives
+   once-per-bell semantics; non-current windows fire from the reader-thread
+   alert path on the sticky-flag transition instead."
   (when active-pane
     (let* ((bell-pending (screen-consume-bell (pane-screen active-pane)))
            (bell-action  (or (cl-tmux/options:get-option "bell-action") "any"))
            (visual-bell  (cl-tmux/options:get-option "visual-bell"))
            (relay-bell   (and bell-pending
                               (not (member bell-action '("none" "other") :test #'string=)))))
-      (when relay-bell (%emit-bell buffer visual-bell))))
+      (when relay-bell
+        (%emit-bell buffer visual-bell)
+        ;; tmux notifies alert-bell for the current window when bell-action
+        ;; applies to it (any/current) — the same condition as the relay.
+        (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-alert-bell+
+                                 (pane-window active-pane)))))
   (when (or (null active-pane)
             (screen-cursor-visible (pane-screen active-pane)))
     (cursor-visible buffer)

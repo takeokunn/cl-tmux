@@ -344,3 +344,30 @@
     (is (string= "osc-title"
                  (cl-tmux::%auto-rename-name sess win pane screen :allow-title t))
         "%auto-rename-name must use OSC title for process-less pane")))
+
+;;; ── backspace server option (DEL translation) ────────────────────────────────
+
+(test backspace-option-byte-table
+  "%backspace-option-byte parses tmux key syntax.
+   Each row: (option-value expected description)."
+  (dolist (row '(("C-?" 127 "C-? is DEL (the identity default)")
+                 ("C-h" 8   "C-h is BS")
+                 ("C-H" 8   "C-H (uppercase) is BS")
+                 ("x"   120 "a single character is its own code")
+                 ("bogus-value" nil "unrecognised values yield NIL")))
+    (destructuring-bind (value expected desc) row
+      (with-isolated-config
+        (cl-tmux/options:set-server-option "backspace" value)
+        (is (eql expected (cl-tmux::%backspace-option-byte)) "~A" desc)))))
+
+(test translate-backspace-octets-rewrites-del
+  "%translate-backspace-octets rewrites DEL per the backspace option and is the
+   identity for the default C-?."
+  (with-isolated-config
+    (let ((octets (coerce #(97 127 98) '(vector (unsigned-byte 8)))))
+      (cl-tmux/options:set-server-option "backspace" "C-h")
+      (is (equalp #(97 8 98) (cl-tmux::%translate-backspace-octets octets))
+          "backspace C-h must rewrite DEL (127) to BS (8)")
+      (cl-tmux/options:set-server-option "backspace" "C-?")
+      (is (eq octets (cl-tmux::%translate-backspace-octets octets))
+          "the default C-? must return the input unchanged (identity)"))))

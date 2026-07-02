@@ -93,6 +93,15 @@
   ;; Max messages kept in the message log, and max command-prompt history entries.
   ("message-limit"            :integer 1000)
   ("prompt-history-limit"     :integer 100)
+  ;; Which status line row messages/prompts appear on (tmux 0..4; 4 = last).
+  ;; cl-tmux renders messages as a top overlay, so this is registered for
+  ;; set/show-options fidelity; the overlay position does not move yet.
+  ("message-line"             :integer 0)
+  ;; Milliseconds within which consecutive keys are assumed to be a paste and
+  ;; root-table key bindings are skipped (tmux default 1).  cl-tmux relies on
+  ;; bracketed paste (DECSET 2004, supported) for paste detection; registered
+  ;; for set/show-options fidelity.
+  ("assume-paste-time"        :integer 1)
   ("message-style"            :string  "")
   ("update-environment"       :string  "DISPLAY SSH_ASKPASS SSH_AUTH_SOCK SSH_CONNECTION WINDOWID XAUTHORITY")
   ;; Display options
@@ -199,4 +208,12 @@
   ("terminal-features"    :string  "")
   ("terminal-overrides"   :string  "")
   ("default-terminal"     :string  "screen")
-  ("buffer-limit"         :integer 50))
+  ("buffer-limit"         :integer 50)
+  ;; The byte the client's Backspace key (DEL, 0x7f) is translated to before it
+  ;; reaches the pane PTY — tmux key syntax (C-? default = identity, C-h = 8).
+  ;; Honoured in %forward-octets-synchronized (events-loop-timers.lisp).
+  ("backspace"            :string  "C-?")
+  ;; Editor used for edit-buffer-style commands.  tmux resolves $EDITOR at
+  ;; runtime with vi as the fallback; cl-tmux has no buffer-editing subsystem
+  ;; yet, so this is registered for set/show-options fidelity only.
+  ("editor"               :string  "vi"))
