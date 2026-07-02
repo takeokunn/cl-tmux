@@ -147,6 +147,14 @@
         :pane-marked          (if (and pane (cl-tmux/model:pane-marked pane)) "1" "0")
         :pane-input-off       (if (and pane (cl-tmux/model:pane-input-disabled pane)) "1" "0")
         :pane-dead            (if (and pane (<= (cl-tmux/model:pane-fd pane) 0)) "1" "0")
+        ;; Death record (remain-on-exit): empty strings when the pane is alive
+        ;; or the exit information is unknown, matching tmux's empty defaults.
+        :pane-dead-status     (let ((v (and pane (cl-tmux/model:pane-dead-status pane))))
+                                (if v (format nil "~D" v) ""))
+        :pane-dead-signal     (let ((v (and pane (cl-tmux/model:pane-dead-signal pane))))
+                                (if v (format nil "~D" v) ""))
+        :pane-dead-time       (let ((v (and pane (cl-tmux/model:pane-dead-time pane))))
+                                (if v (format nil "~D" v) ""))
         :pane-pipe            (if (and pane (cl-tmux/model:pane-pipe-active-p pane)) "1" "0")))
 
 ;;; ── Context builder ─────────────────────────────────────────────────────────

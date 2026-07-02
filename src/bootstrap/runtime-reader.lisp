@@ -25,17 +25,29 @@
   "Fallback reverse-video banner written to the pane screen when remain-on-exit is
    set but remain-on-exit-format is empty or fails to expand.")
 
+(defun %pane-death-context (pane)
+  "A minimal format context carrying PANE's death record, so
+   remain-on-exit-format can reference #{pane_dead_status} /
+   #{pane_dead_signal} / #{pane_dead_time} (a full session context is
+   intentionally not built on the reader thread)."
+  (flet ((num-or-empty (v) (if v (format nil "~D" v) "")))
+    (list :pane-dead        "1"
+          :pane-dead-status (num-or-empty (cl-tmux/model:pane-dead-status pane))
+          :pane-dead-signal (num-or-empty (cl-tmux/model:pane-dead-signal pane))
+          :pane-dead-time   (num-or-empty (cl-tmux/model:pane-dead-time pane)))))
+
 (defun %remain-on-exit-banner (pane)
   "The reverse-video banner for a pane kept open by remain-on-exit: the
    remain-on-exit-format option expanded as a format string and wrapped in reverse
    video.  Falls back to +remain-on-exit-message+ on any error or an empty result.
-   Expanded against a NIL context (literal text and global-scoped formats resolve;
-   a pane-thread context is intentionally not built here)."
+   Expanded against the pane's death-record context so the tmux default's
+   #{pane_dead_status}/#{pane_dead_signal}/#{pane_dead_time} references resolve."
   (let* ((fmt  (ignore-errors
                  (cl-tmux/options:get-option-for-context "remain-on-exit-format"
                                                          :pane pane)))
          (text (and fmt (plusp (length fmt))
-                    (ignore-errors (cl-tmux/format:expand-format fmt nil)))))
+                    (ignore-errors (cl-tmux/format:expand-format
+                                    fmt (%pane-death-context pane))))))
     (if (and text (plusp (length text)))
         (format nil "~C[7m~A~C[m" #\Escape text #\Escape)
         +remain-on-exit-message+)))
@@ -216,6 +228,16 @@
   ;; (possibly OS-reused) pid; respawn-pane re-establishes both slots.  pty-close
   ;; guards non-positive fd/pid, so no-PTY panes (fd -1) are an untouched no-op.
   (when (> (pane-fd pane) 0)
+    ;; Record the death BEFORE pty-close (which forgets the child process):
+    ;; exit code / signal / time drive #{pane_dead_status}/#{pane_dead_signal}/
+    ;; #{pane_dead_time} and the remain-on-exit banner.
+    (multiple-value-bind (code kind)
+        (ignore-errors (cl-tmux/pty:pty-child-exit-status (pane-fd pane)))
+      (when code
+        (ecase kind
+          (:exited   (setf (cl-tmux/model:pane-dead-status pane) code))
+          (:signaled (setf (cl-tmux/model:pane-dead-signal pane) code)))))
+    (setf (cl-tmux/model:pane-dead-time pane) (get-universal-time))
     (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))
     (setf (pane-fd pane) -1
           (pane-pid pane) -1))

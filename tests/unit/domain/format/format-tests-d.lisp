@@ -424,3 +424,24 @@
   (is (string= "c"   (fmt "#{?on,a:b,c}" :on "0"))
       "false branch still selected when condition is false"))
 
+
+(test pane-dead-status-format-vars-table
+  "#{pane_dead_status}/#{pane_dead_signal}/#{pane_dead_time} expand from the
+   pane's death record and are empty for a live pane (tmux empty defaults)."
+  (let* ((sess (make-fake-session :nwindows 1 :npanes 1))
+         (win  (first (cl-tmux/model:session-windows sess)))
+         (pane (first (cl-tmux/model:window-panes win))))
+    (flet ((expand (spec)
+             (cl-tmux/format:expand-format
+              spec (cl-tmux/format:format-context-from-session sess win pane))))
+      (dolist (spec '("#{pane_dead_status}" "#{pane_dead_signal}" "#{pane_dead_time}"))
+        (is (string= "" (expand spec))
+            "~A must be empty while the pane is alive" spec))
+      (setf (cl-tmux/model:pane-dead-status pane) 1
+            (cl-tmux/model:pane-dead-time pane) 3927584461)
+      (is (string= "1" (expand "#{pane_dead_status}"))
+          "pane_dead_status must expand to the recorded exit code")
+      (is (string= "3927584461" (expand "#{pane_dead_time}"))
+          "pane_dead_time must expand to the recorded universal-time")
+      (is (string= "" (expand "#{pane_dead_signal}"))
+          "pane_dead_signal must stay empty for a normally-exited pane"))))

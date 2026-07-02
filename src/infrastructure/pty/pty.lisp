@@ -81,6 +81,24 @@
     (remhash master-fd *pty-processes*)
     process))
 
+(defun pty-child-exit-status (master-fd)
+  "Exit information for MASTER-FD's child process, called at PTY EOF (the child
+   has closed the slave, so the wait does not block for a live shell).
+   Returns (values CODE KIND) where KIND is :exited (CODE = exit code) or
+   :signaled (CODE = signal number), or NIL when the child is unknown (foreign
+   fd, synthetic test pane) or the wait fails."
+  (let ((process (gethash master-fd *pty-processes*)))
+    (when process
+      (handler-case
+          (progn
+            (sb-ext:process-wait process)
+            (let ((code (sb-ext:process-exit-code process)))
+              (when code
+                (if (eq (sb-ext:process-status process) :signaled)
+                    (values code :signaled)
+                    (values code :exited)))))
+        (error () nil)))))
+
 (defun forkpty-with-shell (rows cols &key start-dir default-command environment)
   "Spawn a child shell process on a fresh PTY of size ROWS×COLS.
    START-DIR: when valid, run the child from this directory.

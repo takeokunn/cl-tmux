@@ -348,3 +348,32 @@
   "+ms-per-second+ is 1000.0."
   (is (= 1000.0 cl-tmux::+ms-per-second+)
       "+ms-per-second+ must equal 1000.0"))
+
+;;; ── Pane death record (remain-on-exit #{pane_dead_status} family) ────────────
+
+(test remain-on-exit-banner-expands-death-record
+  "%remain-on-exit-banner resolves #{pane_dead_status}/#{pane_dead_time} from
+   the pane's death record via %pane-death-context."
+  (let ((pane (make-pane :id 1 :fd -1 :pid -1 :screen (make-screen 20 3))))
+    (setf (cl-tmux/model:pane-dead-status pane) 42
+          (cl-tmux/model:pane-dead-time pane) 123)
+    (with-isolated-options ("remain-on-exit-format"
+                            "dead status=#{pane_dead_status} t=#{pane_dead_time}")
+      (let ((banner (cl-tmux::%remain-on-exit-banner pane)))
+        (is (search "status=42" banner)
+            "the banner must contain the recorded exit status")
+        (is (search "t=123" banner)
+            "the banner must contain the recorded death time")))))
+
+(test reader-eof-state-stamps-dead-time
+  "reader-eof-state records the death time on a pane whose fd hits EOF (the
+   synthetic fd has no known child, so status/signal stay NIL)."
+  (with-isolated-state
+    (let ((pane (make-pane :id 1 :fd 9999 :pid -1 :screen (make-screen 20 3))))
+      (cl-tmux::reader-eof-state pane)
+      (is (integerp (cl-tmux/model:pane-dead-time pane))
+          "pane-dead-time must be stamped at EOF")
+      (is (null (cl-tmux/model:pane-dead-status pane))
+          "unknown child: dead-status must stay NIL")
+      (is (= -1 (cl-tmux/model:pane-fd pane))
+          "the pane fd must be reset to -1"))))

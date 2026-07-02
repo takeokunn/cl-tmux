@@ -27,6 +27,10 @@
   ;; ── Identity strings ──────────────────────────────────────────────────────
   (title    "" :type string)          ; pane title set via OSC 0/2 (#{pane_title})
   (tty      "" :type string)          ; slave PTY device path, e.g. /dev/pts/3 (#{pane_tty})
+  ;; ── Death record (remain-on-exit / #{pane_dead_status} family) ───────────
+  (dead-status nil)                   ; NIL or exit code of the dead child
+  (dead-signal nil)                   ; NIL or terminating signal number
+  (dead-time   nil)                   ; NIL or universal-time when the pane died
   ;; ── Per-pane option overrides ─────────────────────────────────────────────
   (local-options (make-hash-table :test #'equal) :type hash-table))
 
@@ -179,7 +183,12 @@
                                :extra-env extra-env)
       (setf (pane-fd pane) new-fd
             (pane-pid pane) new-pid
-            (pane-tty pane) (or slave-path "")))
+            (pane-tty pane) (or slave-path "")
+            ;; The pane is alive again — clear the death record so
+            ;; #{pane_dead_status} and friends read empty.
+            (pane-dead-status pane) nil
+            (pane-dead-signal pane) nil
+            (pane-dead-time pane) nil))
     pane))
 
 ;;; ── pane-reposition ──────────────────────────────────────────────────────────

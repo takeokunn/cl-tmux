@@ -107,6 +107,10 @@
    #:pane-marked
    #:pane-title
    #:pane-tty
+   ;; Death record for remain-on-exit / #{pane_dead_status} family
+   #:pane-dead-status
+   #:pane-dead-signal
+   #:pane-dead-time
    #:pane-input-disabled
    #:pane-local-options
    #:respawn-pane

@@ -56,6 +56,7 @@
    #:pty-write             ; (fd data)   — write octets/string to PTY
    #:pty-read-blocking     ; (fd size)   → octet-vector or nil on EOF
    #:pty-close             ; (fd pid)
+   #:pty-child-exit-status ; (fd) → (values code :exited|:signaled) or NIL
    #:set-pty-size          ; (fd rows cols)
    ;; Terminal raw mode
    #:enable-raw-mode!      ; (fd)
