@@ -928,6 +928,10 @@
   `(let ((cl-tmux::*dirty* nil)
          (cl-tmux::*last-mouse-click* nil)
          (cl-tmux::*key-table* nil)
+         ;; Tests feed key bytes microseconds apart — a rate no real terminal
+         ;; produces for typed keys — which would trip the assume-paste-time
+         ;; heuristic on every second key; start each test with no key history.
+         (cl-tmux::*last-ground-key-time* nil)
          (cl-tmux::*server-marked-pane* nil)
          (cl-tmux::*client-read-only* nil)
          (cl-tmux/prompt:*prompt* nil)

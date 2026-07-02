@@ -13,6 +13,38 @@
   "Accumulated numeric prefix for copy-mode repeat counts.
    Set to 0 between commands.  Updated exclusively on the event-loop thread.")
 
+;;; ── assume-paste-time (tmux server_client_assume_paste) ─────────────────────
+;;;
+;;; When two ground-state keys arrive within assume-paste-time milliseconds,
+;;; tmux assumes a paste is in progress and bypasses key-binding interpretation
+;;; (root-table -n bindings and the prefix key), forwarding the bytes to the
+;;; pane instead — so pasted text containing bound characters does not trigger
+;;; commands.  Bracketed paste (DECSET 2004) is the primary mechanism; this is
+;;; the fallback for terminals pasting without it.
+
+(defvar *last-ground-key-time* nil
+  "internal-real-time of the previous PANE-FORWARDED ground-state key byte, or
+   NIL before any.  Only forwarded (content) bytes stamp it: a paste burst is a
+   stream of pane content, so \"the previous key was content, moments ago\" is
+   the paste signal — binding/prefix keys do not count as paste context.
+   Updated exclusively on the event-loop thread.")
+
+(defun %stamp-ground-key-time ()
+  "Record the arrival time of a pane-forwarded ground-state key byte."
+  (setf *last-ground-key-time* (get-internal-real-time)))
+
+(defun %assume-paste-byte-p ()
+  "True when this key arrives within assume-paste-time milliseconds of the
+   previous pane-forwarded key.  assume-paste-time 0 (or a non-integer value)
+   disables the heuristic."
+  (let ((prev *last-ground-key-time*)
+        (ms   (let ((value (cl-tmux/options:get-option "assume-paste-time")))
+                (if (integerp value) value 0))))
+    (and prev
+         (plusp ms)
+         (< (- (get-internal-real-time) prev)
+            (* ms (floor internal-time-units-per-second 1000))))))
+
 ;;; ── Overlay pager key dispatch helper ────────────────────────────────────────
 ;;;
 ;;; Extracted from %ground-input-state's overlay-active-p clause to keep the
@@ -233,6 +265,19 @@
   ;; zero prefix goes to line-start instead (vi convention: 0 = BOL when no count).
   ((and (%copy-mode-active-p session) (/= byte +byte-esc+))
    (%dispatch-copy-mode-ground-byte session byte))
+  ;; ── assume-paste-time: rapid consecutive keys are a paste ──────────────────
+  ;; tmux (server_client_assume_paste): keys arriving within assume-paste-time
+  ;; milliseconds of the previous key bypass ALL binding interpretation (root
+  ;; -n bindings and the prefix key below) and go straight to the pane, so
+  ;; pasted text containing bound characters cannot trigger commands.  Placed
+  ;; after the modal clauses (menu/overlay/prompt/copy-mode) — those consume
+  ;; keys regardless, matching tmux's ordering.
+  ((%assume-paste-byte-p)
+   (%stamp-ground-key-time)
+   (%forward-octets-synchronized session
+                                  (make-array 1 :element-type '(unsigned-byte 8)
+                                                :initial-element byte))
+   (values nil #'%ground-input-state))
   ;; ── Root key-table: check for bindings that fire without any prefix ────────
   ;; Looked up before the prefix-key check so that -n bindings can intercept
   ;; keys that would otherwise be forwarded to the pane.
@@ -257,6 +302,7 @@
    (values nil (make-escape-input-k session (%make-escape-buffer byte))))
   ;; ── Default: forward raw byte to active pane (+ synchronize-panes broadcast) ─
   (t
+   (%stamp-ground-key-time)
    (%forward-octets-synchronized session
                                   (make-array 1 :element-type '(unsigned-byte 8)
                                                :initial-element byte))

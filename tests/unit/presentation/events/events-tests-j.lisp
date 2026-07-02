@@ -371,3 +371,43 @@
       (cl-tmux/options:set-server-option "backspace" "C-?")
       (is (eq octets (cl-tmux::%translate-backspace-octets octets))
           "the default C-? must return the input unchanged (identity)"))))
+
+;;; ── assume-paste-time (tmux server_client_assume_paste) ──────────────────────
+
+(test assume-paste-byte-p-table
+  "%assume-paste-byte-p: NIL with no key history; T within the window after a
+   forwarded key; NIL when assume-paste-time is 0."
+  (with-isolated-config
+    (let ((cl-tmux::*last-ground-key-time* nil))
+      (is (null (cl-tmux::%assume-paste-byte-p))
+          "no previous key must never assume a paste")
+      (cl-tmux/options:set-option "assume-paste-time" 1000) ; generous 1s window
+      (cl-tmux::%stamp-ground-key-time)
+      (is (eq t (and (cl-tmux::%assume-paste-byte-p) t))
+          "a key right after a forwarded key must be assumed pasted")
+      (cl-tmux/options:set-option "assume-paste-time" 0)
+      (is (null (cl-tmux::%assume-paste-byte-p))
+          "assume-paste-time 0 must disable the heuristic"))))
+
+(test assume-paste-time-bypasses-root-binding-during-burst
+  "A root -n bound key arriving within assume-paste-time of pane content is
+   forwarded to the pane instead of running the binding (tmux paste protection);
+   with assume-paste-time 0 the binding runs."
+  (dolist (row '((1000 nil "fast key during a burst must NOT run the binding")
+                 (0    t   "assume-paste-time 0 must run the binding")))
+    (destructuring-bind (paste-ms expect-switch desc) row
+      (with-isolated-config
+        (with-fake-session (s :nwindows 2)
+          (cl-tmux/options:set-option "assume-paste-time" paste-ms)
+          (cl-tmux/config:key-table-bind "root" #\x :next-window)
+          (let ((first-win (cl-tmux/model:session-active-window s))
+                (state (cl-tmux::make-input-state)))
+            ;; Plain content byte: forwarded, stamps the burst clock.
+            (cl-tmux::process-byte s (char-code #\a) state)
+            ;; Bound key arrives "immediately" (microseconds later).
+            (cl-tmux::process-byte s (char-code #\x) state)
+            (if expect-switch
+                (is (not (eq first-win (cl-tmux/model:session-active-window s)))
+                    "~A" desc)
+                (is (eq first-win (cl-tmux/model:session-active-window s))
+                    "~A" desc))))))))
