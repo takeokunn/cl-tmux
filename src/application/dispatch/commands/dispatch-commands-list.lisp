@@ -1,8 +1,14 @@
 (in-package #:cl-tmux)
 
-;;; -- List and command-registry helpers -------------------------------------
+;;; -- List overlay formatting/handlers ---------------------------------------
 ;;;
-;;; list-sessions/windows/panes/clients/commands plus wait-for argument checks.
+;;; list-sessions/windows/panes/clients formatting helpers, the tmux-compatible
+;;; list-* argument parser (%parse-list-command-input and its
+;;; %parse-short-flag-bundle helper), and the define-list-overlay-handler
+;;; macro plus its four %cmd-list-*-arg handlers.
+;;; list-commands and wait-for (their own handlers, plus wait-for's argument
+;;; parser) live in dispatch-commands-list-commands.lisp; wait-for's parser
+;;; reuses %parse-short-flag-bundle from here.
 ;;; The helpers here are shared with main.lisp and the dispatch tests, but the
 ;;; handlers themselves stay in the arg-command layer.
 
@@ -254,13 +260,6 @@
                                    target-session win pane fmt))))
      (not (null targets)))))
 
-(defun %list-command-overlay-lines (fmt name)
-  "Return list-commands overlay lines and a display flag."
-  (values (mapcar (lambda (cmd-name)
-                    (%format-list-command-entry fmt cmd-name))
-                  (%list-command-public-names name))
-          t))
-
 (defmacro with-list-overlay-rows ((rows display-p) rows-form &body body)
   "Bind ROWS and DISPLAY-P from ROWS-FORM and run BODY when display is needed."
   `(multiple-value-bind (,rows ,display-p) ,rows-form
@@ -295,6 +294,34 @@
   "Return tmux-compatible missing flag argument text for COMMAND-NAME."
   (format nil "command ~A: -~C expects an argument" command-name flag))
 
+(defun %parse-short-flag-bundle (token allowed-flags value-flags remaining)
+  "Walk clustered short flags in TOKEN (e.g. \"-Ff\"), consuming REMAINING for
+   value-flag arguments as needed.
+   Returns (values new-flags new-remaining unknown-flag missing-value-flag),
+   where NEW-FLAGS is an alist of (char . value-or-t) prepended in walk order,
+   and at most one of UNKNOWN-FLAG / MISSING-VALUE-FLAG is non-nil on error.
+   Shared by %parse-list-command-input here and %parse-wait-for-args in
+   dispatch-commands-list-commands.lisp."
+  (loop with flags = nil
+        for i from 1 below (length token)
+        for flag = (char token i)
+        do (cond
+             ((not (find flag allowed-flags :test #'char=))
+              (return-from %parse-short-flag-bundle
+                (values nil remaining flag nil)))
+             ((%list-command-value-flag-p flag value-flags)
+              (let ((value (if (< (1+ i) (length token))
+                               (subseq token (1+ i))
+                               (pop remaining))))
+                (unless value
+                  (return-from %parse-short-flag-bundle
+                    (values nil remaining nil flag)))
+                (push (cons flag value) flags)
+                (loop-finish)))
+             (t
+              (push (cons flag t) flags)))
+        finally (return (values flags remaining nil nil))))
+
 (defun %parse-list-command-input (command-name args value-flags allowed-flags
                                   max-positionals)
   "Parse list-* command ARGS with tmux 3.6a option/error ordering."
@@ -318,25 +345,22 @@
              ((and parsing-options-p
                    (>= (length token) 2)
                    (char= (char token 0) #\-))
-              (loop for i from 1 below (length token)
-                    for flag = (char token i)
-                    do (unless (find flag allowed-flags :test #'char=)
-                         (return-from %parse-list-command-input
-                           (values nil nil
-                                   (%list-command-unknown-flag-message
-                                    command-name flag))))
-                       (if (%list-command-value-flag-p flag value-flags)
-                           (let ((value (if (< (1+ i) (length token))
-                                            (subseq token (1+ i))
-                                            (pop remaining))))
-                             (unless value
-                               (return-from %parse-list-command-input
-                                 (values nil nil
-                                         (%list-command-missing-flag-argument-message
-                                          command-name flag))))
-                             (push (cons flag value) flags)
-                             (loop-finish))
-                           (push (cons flag t) flags))))
+              (multiple-value-bind (bundle-flags new-remaining unknown-flag missing-flag)
+                  (%parse-short-flag-bundle token allowed-flags value-flags remaining)
+                (setf remaining new-remaining)
+                (cond
+                  (unknown-flag
+                   (return-from %parse-list-command-input
+                     (values nil nil
+                             (%list-command-unknown-flag-message
+                              command-name unknown-flag))))
+                  (missing-flag
+                   (return-from %parse-list-command-input
+                     (values nil nil
+                             (%list-command-missing-flag-argument-message
+                              command-name missing-flag))))
+                  (t
+                   (setf flags (append bundle-flags flags))))))
              (t
               (push token positionals)
               (setf parsing-options-p nil)
@@ -447,109 +471,5 @@
   (%list-pane-overlay-lines session fmt target-str all-p session-p)
   (%show-list-overlay-rows rows filter))
 
-(defun %cmd-list-commands-arg (session args)
-  "list-commands [-F format] [command]: list tmux command signatures.
-   With no argument, lists all commands one per line.
-   With a command name/prefix, shows that command with prefix resolution.
-   -F format expands #{command_list_name}, #{command_list_alias},
-   #{command_list_usage} fields."
-  (declare (ignore session))
-  ;; Manual flag parse to produce tmux-compatible per-error messages.
-  (let ((format-string nil)
-        (positionals nil)
-        (error-message nil))
-    (loop with toks = args
-          while (and toks (not error-message))
-          for tok = (pop toks)
-          do (cond
-               ((string= tok "-F")
-                (if toks
-                    (setf format-string (pop toks))
-                    (setf error-message
-                          "command list-commands: -F expects an argument")))
-               ((and (>= (length tok) 2)
-                     (char= (char tok 0) #\-)
-                     (char/= (char tok 1) #\-))
-                (setf error-message
-                      (format nil "command list-commands: unknown flag ~A" tok)))
-               (t
-                (push tok positionals))))
-    (when error-message
-      (show-overlay error-message)
-      (return-from %cmd-list-commands-arg nil))
-    (setf positionals (nreverse positionals))
-    (when (> (length positionals) 1)
-      (show-overlay "command list-commands: too many arguments (need at most 1)")
-      (return-from %cmd-list-commands-arg nil))
-    (let ((name-input (first positionals)))
-      (if name-input
-          ;; Single command lookup with prefix/alias resolution.
-          (multiple-value-bind (kind result) (%lc-resolve-name name-input)
-            (ecase kind
-              (:exact     (show-overlay (%lc-render-command result format-string)))
-              (:prefix    (show-overlay (%lc-render-command result format-string)))
-              (:ambiguous (show-overlay result))
-              (:unknown   (show-overlay
-                           (format nil "unknown command: ~A" name-input)))))
-          ;; All commands: one line each.
-          (show-overlay
-           (with-output-to-string (s)
-             (dolist (name (%lc-all-names))
-               (write-string (%lc-render-command name format-string) s)
-               (terpri s))))))))
-
-(defun %parse-wait-for-args (args)
-  "Parse wait-for arguments using tmux 3.6a option ordering."
-  (loop with flags = nil
-        with positionals = nil
-        with parsing-options-p = t
-        for token in args
-        do (cond
-             ((and parsing-options-p (string= token "--"))
-              (setf parsing-options-p nil))
-             ((and parsing-options-p
-                   (>= (length token) 2)
-                   (char= (char token 0) #\-)
-                   (char/= (char token 1) #\-))
-              (loop for i from 1 below (length token)
-                    for flag = (char token i)
-                    do (unless (member flag '(#\L #\S #\U) :test #'char=)
-                         (return-from %parse-wait-for-args
-                           (values nil nil
-                                   (format nil "command wait-for: unknown flag -~C"
-                                           flag))))
-                       (push (cons flag t) flags)))
-             (t
-              (push token positionals)
-              (setf parsing-options-p nil)))
-        finally
-           (let ((parsed-positionals (nreverse positionals)))
-             (cond
-               ((< (length parsed-positionals) 1)
-                (return (values (nreverse flags)
-                                parsed-positionals
-                                "command wait-for: too few arguments (need at least 1)")))
-               ((> (length parsed-positionals) 1)
-                (return (values (nreverse flags)
-                                parsed-positionals
-                                "command wait-for: too many arguments (need at most 1)")))
-               (t
-                (return (values (nreverse flags) parsed-positionals nil)))))))
-
-(defun %cmd-wait-for-arg (session args)
-  "wait-for [-SLU] channel: channel synchronization.
-   Bare: block the calling thread until CHANNEL is signaled (or timeout elapses).
-   -S: signal (unblock) all threads waiting on CHANNEL.
-   -L: lock CHANNEL so subsequent signal calls are suppressed.
-  -U: unlock CHANNEL, re-enabling signal-channel."
-  (declare (ignore session))
-  (multiple-value-bind (flags positionals error-message)
-      (%parse-wait-for-args args)
-    (if error-message
-        (show-overlay error-message)
-        (let ((channel (first positionals)))
-          (cond
-            ((%flag-present-p flags #\S) (signal-channel channel))
-            ((%flag-present-p flags #\L) (lock-channel channel))
-            ((%flag-present-p flags #\U) (unlock-channel channel))
-            (t (wait-for-channel channel)))))))
+;;; %cmd-list-commands-arg, %parse-wait-for-args, and %cmd-wait-for-arg live
+;;; in dispatch-commands-list-commands.lisp.

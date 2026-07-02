@@ -154,16 +154,20 @@
                                       (parse-namestring (format nil "~A/" tmpdir)))))
        (%socket-file-session-name (first (ignore-errors (directory pattern))))))))
 
+(defmacro %try-or-nil (&body body)
+  "Run BODY, returning its value, or NIL if it signals an ERROR.
+   Used for risky I/O (e.g. socket connections) where any failure should
+   collapse to a boolean/NIL result rather than propagate."
+  `(handler-case (progn ,@body) (error () nil)))
+
 (defun %forward-startup-command (server-name command raw-args)
   "Forward COMMAND and RAW-ARGS to SERVER-NAME, returning T on success.
    Stale socket files are common after crashes; connection failures must not make
    startup/list/kill CLI commands crash before they can print a useful result."
   (when server-name
-    (handler-case
-        (progn
-          (run-command-client server-name (cons command raw-args))
-          t)
-      (error () nil))))
+    (%try-or-nil
+      (run-command-client server-name (cons command raw-args))
+      t)))
 
 (defun %forward-or-die (command raw-args)
   "Forward COMMAND + RAW-ARGS to a running server, or exit 1 on failure.
@@ -296,7 +300,7 @@
          (entry   (cdr (assoc mode *startup-modes* :test #'equal))))
     (if entry
         (let ((handler    (first entry))
-              (raw-args-p (getf (rest entry) :raw-args-p)))
+              (raw-args-p (%startup-mode-raw-args-p mode)))
           ;; Dispatch: :raw-args-p modes receive the full tail; name-only modes
           ;; receive a single session name so their signature stays (name).
           (if raw-args-p

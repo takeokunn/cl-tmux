@@ -9,29 +9,30 @@
 
 (test byte-constants-have-correct-values
   "VT100 and CSI byte constants must equal their documented ASCII/VT values."
-  (is (= 27  cl-tmux::+byte-esc+)          "ESC must be 27")
-  (is (= 91  cl-tmux::+byte-csi-bracket+)  "CSI [ must be 91")
-  (is (= 65  cl-tmux::+byte-arrow-up+)     "CUU A must be 65")
-  (is (= 66  cl-tmux::+byte-arrow-down+)   "CUD B must be 66")
-  (is (= 68  cl-tmux::+byte-arrow-left+)   "CUB D must be 68")
-  (is (= 67  cl-tmux::+byte-arrow-right+)  "CUF C must be 67")
-  (is (= 113 cl-tmux::+byte-q+)            "q must be 113")
-  (is (= 106 cl-tmux::+byte-j+)            "j must be 106")
-  (is (= 107 cl-tmux::+byte-k+)            "k must be 107")
-  (is (= 49  cl-tmux::+byte-csi-param-1+)  "CSI param 1 must be 49")
-  (is (= 59  cl-tmux::+byte-csi-semi+)     "CSI semi must be 59")
-  (is (= 53  cl-tmux::+byte-csi-mod-ctrl+) "CSI ctrl modifier must be 53")
-  (is (= 51  cl-tmux::+byte-csi-mod-meta+) "CSI meta modifier must be 51")
-  (is (= 126 cl-tmux::+byte-tilde+)        "tilde must be 126")
-  (is (= 60  cl-tmux::+byte-sgr-lt+)       "SGR < must be 60")
-  (is (= 48  cl-tmux::+byte-digit-0+)      "digit 0 must be 48")
-  (is (= 57  cl-tmux::+byte-digit-9+)      "digit 9 must be 57")
-  (is (= 53  cl-tmux::+byte-page-up-param+)   "PageUp param must be 53")
-  (is (= 54  cl-tmux::+byte-page-down-param+) "PageDown param must be 54")
-  (is (= 77  cl-tmux::+byte-ascii-m+)      "ASCII M must be 77")
-  ;; +byte-sgr-press+ was merged into +byte-ascii-m+ (same value 77); verify the
-  ;; surviving constant still has the correct value.
-  (is (= 109 cl-tmux::+byte-sgr-release+)  "SGR release final must be 109"))
+  ;; +byte-sgr-press+ was merged into +byte-ascii-m+ (same value 77); the
+  ;; surviving constant's value is verified below via "ASCII M".
+  (check-table
+   (list (list cl-tmux::+byte-esc+              27  "ESC must be 27")
+         (list cl-tmux::+byte-csi-bracket+       91  "CSI [ must be 91")
+         (list cl-tmux::+byte-arrow-up+          65  "CUU A must be 65")
+         (list cl-tmux::+byte-arrow-down+        66  "CUD B must be 66")
+         (list cl-tmux::+byte-arrow-left+        68  "CUB D must be 68")
+         (list cl-tmux::+byte-arrow-right+       67  "CUF C must be 67")
+         (list cl-tmux::+byte-q+                 113 "q must be 113")
+         (list cl-tmux::+byte-j+                 106 "j must be 106")
+         (list cl-tmux::+byte-k+                 107 "k must be 107")
+         (list cl-tmux::+byte-csi-param-1+       49  "CSI param 1 must be 49")
+         (list cl-tmux::+byte-csi-semi+          59  "CSI semi must be 59")
+         (list cl-tmux::+byte-csi-mod-ctrl+      53  "CSI ctrl modifier must be 53")
+         (list cl-tmux::+byte-csi-mod-meta+      51  "CSI meta modifier must be 51")
+         (list cl-tmux::+byte-tilde+             126 "tilde must be 126")
+         (list cl-tmux::+byte-sgr-lt+            60  "SGR < must be 60")
+         (list cl-tmux::+byte-digit-0+           48  "digit 0 must be 48")
+         (list cl-tmux::+byte-digit-9+           57  "digit 9 must be 57")
+         (list cl-tmux::+byte-page-up-param+     53  "PageUp param must be 53")
+         (list cl-tmux::+byte-page-down-param+   54  "PageDown param must be 54")
+         (list cl-tmux::+byte-ascii-m+           77  "ASCII M must be 77")
+         (list cl-tmux::+byte-sgr-release+       109 "SGR release final must be 109"))))
 
 ;;; ── make-input-state and input-state-continuation ────────────────────────────
 

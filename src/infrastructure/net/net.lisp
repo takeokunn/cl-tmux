@@ -20,6 +20,16 @@
    Bounds the duration of individual read-sequence / write-sequence calls on a
    socket stream so a hung or slow peer does not block the server indefinitely.")
 
+(defmacro %swallow-to-nil ((&rest condition-classes) &body body)
+  "Run BODY; if it signals any of CONDITION-CLASSES, return NIL instead.
+   Local to this file: both accept-connection (sb-ext:timeout on a bounded
+   accept) and unix-socket-available-p (any error probing a throwaway bind)
+   need 'reduce a blocking/failing syscall to a boolean-ish NIL', so this
+   collapses the shared handler-case shape to one call site per use."
+  `(handler-case (progn ,@body)
+     ,@(mapcar (lambda (condition-class) `(,condition-class () nil))
+               condition-classes)))
+
 (defun make-listener (path &key (backlog 1))
   "Bind a Unix-domain stream socket at PATH and start listening (BACKLOG deep)."
   (let ((socket (make-instance 'sb-bsd-sockets:local-socket :type :stream)))
@@ -32,10 +42,9 @@
    Returns the connected socket, or NIL when the accept times out.
    Prevents the server accept loop from blocking forever on a client that
    connects at the TCP level but never sends a handshake."
-  (handler-case
-      (sb-ext:with-timeout +accept-timeout-seconds+
-        (sb-bsd-sockets:socket-accept listener))
-    (sb-ext:timeout () nil)))
+  (%swallow-to-nil (sb-ext:timeout)
+    (sb-ext:with-timeout +accept-timeout-seconds+
+      (sb-bsd-sockets:socket-accept listener))))
 
 (defconstant +connect-timeout-seconds+ 5
   "Maximum seconds to block in connect-to before signalling a timeout error.
@@ -79,9 +88,8 @@
    Probes by binding then removing a throwaway socket path; returns NIL when
    the environment forbids it (e.g. a restricted sandbox)."
   (let ((path (%make-probe-socket-path)))
-    (handler-case
-        (let ((socket (make-listener path)))
-          (close-socket socket)
-          (ignore-errors (delete-file path))
-          t)
-      (error () nil))))
+    (%swallow-to-nil (error)
+      (let ((socket (make-listener path)))
+        (close-socket socket)
+        (ignore-errors (delete-file path))
+        t))))

@@ -37,20 +37,38 @@
                (cl-tmux::%application-argv)))))
 
 (test dispatch-main-table
-  "main routes argv to the correct entry point with the correct session name."
-  (dolist (c '((("server" "foo") :server    ("foo") "server with name")
-               (("attach" "foo") :client    ("foo") "attach with name")
-               (()               :standalone nil    "no args → standalone")
-	               (("server")       :server    ("0")   "server default name")
-	               (("attach")       :client    ("0")   "attach default name")
-	               (("bogus" "foo")  :standalone nil    "unknown mode → standalone")))
-    (destructuring-bind (argv-tail expected-key expected-args desc) c
+  "main routes argv to the correct entry point with the correct session name
+   (the first positional entry-function argument).  attach-session forwards
+   extra keyword args (e.g. :detach-others) after the name, so only the
+   leading session-name argument is compared here; the detach-flag case is
+   covered separately below."
+  (dolist (c '((("server" "foo")                :server     "foo" "server with name")
+               (("attach" "foo")                :client     "foo" "attach with name")
+               (()                              :standalone nil   "no args → standalone")
+               (("server")                      :server     "0"   "server default name")
+               (("attach")                      :client     "0"   "attach default name")
+               (("bogus" "foo")                 :standalone nil   "unknown mode → standalone")
+               (("attach-session" "-t" "myname") :client     "myname" "attach-session with -t name")
+               (("attach-session")              :client     "0"   "attach-session default name")))
+    (destructuring-bind (argv-tail expected-key expected-name desc) c
       (with-stubbed-entries
         (let ((sb-ext:*posix-argv* (cons "cl-tmux" argv-tail)))
           (cl-tmux::main))
         (is (= 1 (length *main-calls*)) "~A: exactly one call" desc)
         (is (eq expected-key (car (first *main-calls*))) "~A: entry key" desc)
-	(is (equal expected-args (cdr (first *main-calls*))) "~A: args" desc)))))
+        (is (equal expected-name (first (cdr (first *main-calls*)))) "~A: name arg" desc)))))
+
+(test dispatch-attach-session-detach-flag
+  "argv (cl-tmux attach-session -d) passes :detach-others T to run-client."
+  (with-stubbed-entries
+    (let ((sb-ext:*posix-argv* (list "cl-tmux" "attach-session" "-d")))
+      (cl-tmux::main))
+    ;; run-client was called; check that :detach-others T was passed.
+    (is (= 1 (length *main-calls*)))
+    (is (eq :client (car (first *main-calls*))))
+    (let ((call-args (cdr (first *main-calls*))))
+      (is (getf (rest call-args) :detach-others)
+          ":detach-others T must be passed when -d flag is present"))))
 
 (test dispatch-main-from-sbcl-wrapper-argv
   "main routes argv correctly when the saved core is launched through SBCL options."
@@ -67,41 +85,6 @@
       (is (eq :list-commands (car (first *main-calls*))))
       (is (equal '(("-F" "#{command_list_name}"))
                  (cdr (first *main-calls*)))))))
-
-;;; ── attach-session dispatch ──────────────────────────────────────────────────
-
-(test dispatch-attach-session-routes-to-run-client
-  "argv (cl-tmux attach-session -t myname) routes through *startup-modes* to
-   run-attach-with-flags, which parses -t and calls run-client with the session name."
-  (with-stubbed-entries
-    (let ((sb-ext:*posix-argv* (list "cl-tmux" "attach-session" "-t" "myname")))
-      (cl-tmux::main))
-    (is (= 1 (length *main-calls*)))
-    (is (eq :client (car (first *main-calls*))))
-    (is (equal "myname" (first (cdr (first *main-calls*))))
-        "run-client must be called with the -t session name")))
-
-(test dispatch-attach-session-default-name
-  "argv (cl-tmux attach-session) with no -t defaults to session name \"0\"."
-  (with-stubbed-entries
-    (let ((sb-ext:*posix-argv* (list "cl-tmux" "attach-session")))
-      (cl-tmux::main))
-    (is (= 1 (length *main-calls*)))
-    (is (eq :client (car (first *main-calls*))))
-    (is (equal "0" (first (cdr (first *main-calls*))))
-        "default session name must be \"0\"")))
-
-(test dispatch-attach-session-detach-flag
-  "argv (cl-tmux attach-session -d) passes :detach-others T to run-client."
-  (with-stubbed-entries
-    (let ((sb-ext:*posix-argv* (list "cl-tmux" "attach-session" "-d")))
-      (cl-tmux::main))
-    ;; run-client was called; check that :detach-others T was passed.
-    (is (= 1 (length *main-calls*)))
-    (is (eq :client (car (first *main-calls*))))
-    (let ((call-args (cdr (first *main-calls*))))
-      (is (getf (rest call-args) :detach-others)
-          ":detach-others T must be passed when -d flag is present"))))
 
 ;;; ── *startup-modes* data table ───────────────────────────────────────────────
 

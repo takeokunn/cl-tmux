@@ -147,8 +147,7 @@
   "Render the single-template status bar path for STATUS-FMT0."
   (%render-status-line stream status-row sgr-code
                        (%compose-aligned-line
-                        (handler-case (cl-tmux/format:expand-format status-fmt0 context)
-                          (error () status-fmt0))
+                        (cl-tmux/format:expand-format-safe status-fmt0 context)
                         sgr-code terminal-cols)))
 
 (defun %status-bar-default-segments (session context sgr-code)
@@ -232,8 +231,7 @@
          ;; centre] work in the extra rows too.  An empty format composes to a
          ;; blank styled row.
          (expanded (if (and (stringp fmt) (plusp (length fmt)))
-                       (handler-case (cl-tmux/format:expand-format fmt context)
-                         (error () fmt))
+                       (cl-tmux/format:expand-format-safe fmt context)
                        ""))
          (line     (%compose-aligned-line expanded sgr-code terminal-cols)))
     (%render-status-line stream row sgr-code line)))

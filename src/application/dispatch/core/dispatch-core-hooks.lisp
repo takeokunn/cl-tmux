@@ -24,9 +24,7 @@
    KEYWORD entries dispatch directly via dispatch-command."
   (cond
     ((stringp entry)
-     (handler-case (%run-command-line session entry)
-       (error (condition)
-         (%overlayf "hook error: ~A" condition))))
+     (with-overlay-on-error ("hook") (%run-command-line session entry)))
     ((keywordp entry)
      (dispatch-command session entry 0))))
 

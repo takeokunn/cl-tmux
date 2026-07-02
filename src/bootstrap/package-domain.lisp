@@ -39,6 +39,8 @@
    ;; Active repository instance
    #:*session-repo*))
 
+;; cl-tmux/prompt package: command-line prompt state, dismissible overlays,
+;; popups and menus (all presentation-layer, PTY-independent).
 (defpackage #:cl-tmux/prompt
   (:use #:cl)
   (:export
@@ -211,10 +213,15 @@
    #:*update-environment*
    #:get-update-environment-vars))
 
+;; cl-tmux/format package: #{...} format-string expansion for status lines,
+;; window/pane titles, and command output.
 (defpackage #:cl-tmux/format
   (:use #:cl #:cl-tmux/model)
-  (:export #:expand-format #:format-context-from-session #:format-context-from-window))
+  (:export #:expand-format #:expand-format-safe
+           #:format-context-from-session #:format-context-from-window))
 
+;; cl-tmux/buffer package: paste-buffer storage (tmux copy-mode "buffers"),
+;; including OSC 52 clipboard integration.
 (defpackage #:cl-tmux/buffer
   (:use #:cl)
   (:export #:+default-buffer-limit+
@@ -239,6 +246,8 @@
            #:control-window-pane-changed #:control-session-window-changed
            #:control-client-session-changed #:control-exit))
 
+;; cl-tmux/hooks package: named-event registry (set-hook / hooks option) plus
+;; the tmux command-hook dispatch used by define-msg-dispatch et al.
 (defpackage #:cl-tmux/hooks
   (:use #:cl)
   (:export
@@ -288,6 +297,8 @@
    #:*command-hook-runner*
    #:run-command-hooks-via-runner))
 
+;; cl-tmux/options package: server/session/window/pane option tables (set-option
+;; / show-options), including scoped accessors and display formatting.
 (defpackage #:cl-tmux/options
   (:use #:cl)
   (:export #:*global-options* #:*option-registry*
@@ -317,6 +328,8 @@
            #:window-option-present-for-display-p
            ))
 
+;; cl-tmux/renderer package: composes model + terminal + prompt state into a
+;; single output frame (mouse/focus/extended-keys reporting, style/SGR helpers).
 (defpackage #:cl-tmux/renderer
   (:use #:cl #:bordeaux-threads
         #:cl-tmux/model #:cl-tmux/terminal #:cl-tmux/prompt)
@@ -335,6 +348,8 @@
    #:style-to-sgr              ; (parsed-style) → escape-sequence string
    #:%popup-border-charset))   ; () → (values tl tr bl br h v) for popup-border-lines
 
+;; cl-tmux/input package: raw-mode terminal control and non-blocking byte
+;; reads from the outer terminal (client-side keystroke ingestion).
 (defpackage #:cl-tmux/input
   (:use #:cl #:cffi
         #:cl-tmux/config #:cl-tmux/pty)

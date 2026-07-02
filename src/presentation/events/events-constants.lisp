@@ -85,9 +85,8 @@
 (defconstant +mouse-btn-scroll-down+  65  "Scroll-wheel down (X10 btn 65).")
 
 ;;; ── SGR mouse final-byte constants ──────────────────────────────────────────
-;;; ASCII 'M' (77) is used as both the X10 mouse-sequence intro final byte and the
-;;; SGR press final byte.  A single constant covers both roles; the old duplicate
-;;; +byte-sgr-press+ has been removed.
+;;; ASCII 'M' (77) serves both roles: the X10 mouse-sequence intro final byte and
+;;; the SGR press final byte.
 (defconstant +byte-ascii-m+     77  "ASCII 'M' (0x4D) — X10 mouse intro and SGR press final.")
 (defconstant +byte-sgr-release+ 109 "ASCII 'm' (0x6D) — SGR mouse release final byte.")
 (defconstant +byte-ascii-u+    117 "ASCII 'u' (0x75) — CSI-u (fixterms extended-keys) final byte.")

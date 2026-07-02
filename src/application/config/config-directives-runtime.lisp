@@ -22,6 +22,16 @@
                     :ignore-error-status t
                     :timeout +config-shell-command-timeout+))
 
+(defun %run-config-shell-command-safe (command)
+  "Run COMMAND via %run-config-shell-command, treating any timeout/error signal
+   (SERIOUS-CONDITION, wider than ERROR so it also covers UIOP timeout signals
+   such as uiop:subprocess-error) as an abandoned, falsy result instead of
+   letting it propagate — so config loading cannot hang or abort indefinitely.
+   Returns the same (values stdout stderr exit-code) as %run-config-shell-command
+   on success, or NIL on a signalled condition."
+  (handler-case (%run-config-shell-command command)
+    (serious-condition () nil)))
+
 (defun %parse-set-environment-flags (args)
   "Parse the [-g] [-u|-r] [-t target] flags of a set-environment directive.
    Returns (values remaining-tokens remove-p global-p target-p target-name)."
@@ -137,12 +147,8 @@
                               ;; Run the condition shell command; treat any condition
                               ;; (including a timeout signal from UIOP) as non-zero
                               ;; (falsy), so config loading cannot hang indefinitely.
-                              ;; SERIOUS-CONDITION is wider than ERROR and covers
-                              ;; UIOP timeout signals (e.g. uiop:subprocess-error).
-                              (handler-case
-                                  (eql 0 (nth-value 2
-                                           (%run-config-shell-command condition)))
-                                (serious-condition () nil)))))
+                              (eql 0 (nth-value 2
+                                       (%run-config-shell-command-safe condition))))))
           ;; THEN/ELSE bodies are each either a brace block { ... } (tmux 3.x) or a
           ;; single quoted command token.  %take-brace-or-command consumes one unit
           ;; and returns its command(s) as ready-to-apply token-lists.
@@ -196,14 +202,10 @@
            t)
           ;; Shell command: run it the same way the fixed-arity entries do.
           (t
-           (let ((expanded (%expand-leading-tilde command)))
-             ;; handler-case makes a timeout signal (UIOP:SUBPROCESS-ERROR or similar)
-             ;; explicit: the command is abandoned and loading continues rather than
-             ;; silently treating the timeout as a non-zero exit.
-             ;; SERIOUS-CONDITION is wider than ERROR and covers UIOP timeout signals.
-             (handler-case
-                 (%run-config-shell-command expanded)
-               (serious-condition () nil)))
+           ;; A timeout signal (UIOP:SUBPROCESS-ERROR or similar) is abandoned via
+           ;; %run-config-shell-command-safe rather than silently treated as a
+           ;; non-zero exit, and loading continues.
+           (%run-config-shell-command-safe (%expand-leading-tilde command))
            t))))))
 
 (defun %glob-expand (path)
@@ -271,6 +273,37 @@
               while line
               do (%config-tokens (%strip-config-comment line)))))))
 
+(defun %resolve-source-file-path (raw format-p)
+  "Resolve one source-file positional RAW to its on-disk path: when FORMAT-P
+   (-F flag), expand RAW as a format string first (falling back to RAW itself on
+   expansion failure), then expand a leading ~ into $HOME.  Returns the resolved
+   path string."
+  (%expand-leading-tilde
+   (if format-p
+       (or (ignore-errors (cl-tmux/format:expand-format raw nil)) raw)
+       raw)))
+
+(defun %source-file-glob-matches (expanded quiet)
+  "Expand EXPANDED (a resolved source-file path, possibly a glob) to its matching
+   files via %glob-expand.  When EXPANDED is a glob pattern that matched nothing,
+   report tmux's GLOB_NOMATCH diagnostic unless QUIET.  Returns the list of
+   matching file namestrings (possibly empty)."
+  (let ((matches (%glob-expand expanded)))
+    (when (and (%glob-pattern-p expanded) (null matches) (not quiet))
+      (%source-file-report-missing expanded))
+    matches))
+
+(defun %load-or-parse-source-file (file parse-only quiet)
+  "Apply one matched source-file FILE: tokenise-only (tmux's CMD_PARSE_PARSEONLY)
+   when PARSE-ONLY, otherwise load and execute it via load-config-file.  A load
+   that finds no file (load-config-file returns NIL) reports tmux's 'No such file
+   or directory' diagnostic unless QUIET."
+  (if parse-only
+      (%parse-config-file-only file)
+      (let ((applied (ignore-errors (load-config-file file))))
+        (when (and (null applied) (not quiet))
+          (%source-file-report-missing file)))))
+
 (defun source-files (args)
   "Implement `source-file [-Fnqv] [-t target-pane] path...`: for each non-flag PATH, optionally
    expand it as a format string (-F), then expand a leading ~ and shell globs
@@ -283,27 +316,10 @@
       (%parse-source-file-flags args)
     (declare (ignore verbose))
     (dolist (raw positionals)
-      (let ((path (if format-p
-                      (or (ignore-errors (cl-tmux/format:expand-format raw nil)) raw)
-                      raw)))
+      (let ((path (%resolve-source-file-path raw format-p)))
         (when (plusp (length path))
-          (let* ((expanded (%expand-leading-tilde path))
-                 (matches  (%glob-expand expanded)))
-            (cond
-              ;; Glob pattern that matched nothing: tmux's GLOB_NOMATCH error,
-              ;; suppressed only under -q.
-              ((and (%glob-pattern-p expanded) (null matches))
-               (unless quiet (%source-file-report-missing expanded)))
-              (t
-               (dolist (file matches)
-                 (if parse-only
-                     (%parse-config-file-only file)
-                     ;; load-config-file returns the directive count, or NIL when
-                     ;; the (plain) path did not exist.  Surface tmux's "No such
-                     ;; file or directory" for the missing case unless -q.
-                     (let ((applied (ignore-errors (load-config-file file))))
-                       (when (and (null applied) (not quiet))
-                         (%source-file-report-missing file))))))))))))
+          (dolist (file (%source-file-glob-matches path quiet))
+            (%load-or-parse-source-file file parse-only quiet))))))
   t)
 
 (defun %apply-source-file-directive (cmd args)

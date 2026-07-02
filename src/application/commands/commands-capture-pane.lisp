@@ -213,6 +213,18 @@
 (defconstant +pipe-pane-open-timeout+ 1
   "Seconds to wait for launching the pipe-pane subprocess.")
 
+(defmacro %with-timeout-cleanup ((timeout-seconds cleanup-thunk) &body body)
+  "Run BODY under a TIMEOUT-SECONDS bt:with-timeout.  On success, return BODY's
+   value.  On a bt:timeout or any other error, funcall CLEANUP-THUNK (a
+   zero-argument function) and return NIL.  Consolidates the 'run with a
+   deadline, clean up identically on either failure kind, else fall through to
+   NIL' shape shared by the pipe-pane launch/wait sites."
+  `(handler-case
+       (bt:with-timeout (,timeout-seconds) ,@body)
+     ((or bt:timeout error) ()
+       (funcall ,cleanup-thunk)
+       nil)))
+
 (defun %pipe-pane-copy-output (pane output-stream)
   "Copy OUTPUT-STREAM from the command back into PANE's PTY."
   (unwind-protect
@@ -223,8 +235,7 @@
               while (plusp count) do
                 (ignore-errors
                   (pty-write (pane-fd pane) (subseq buffer 0 count)))))
-        (end-of-file () nil)
-        (error () nil))
+        ((or end-of-file error) () nil))
     (ignore-errors (close output-stream))))
 
 (defun %pipe-pane-start-output-thread (pane output-stream)
@@ -253,54 +264,42 @@
         (input-stream nil)
         (output-stream nil)
         (output-thread nil))
-    (handler-case
-        (bt:with-timeout (+pipe-pane-open-timeout+)
-          (let* ((shell (or cl-tmux/config:*default-shell* "/bin/sh"))
-                 (new-proc
-                   (uiop:launch-program (list shell "-c" command)
-                                       :input (if pane-output-to-command-p :stream nil)
-                                       :output (if command-output-to-pane-p :stream nil)
-                                       :error-output nil))
-                 (new-input (and pane-output-to-command-p
-                                 (uiop:process-info-input new-proc)))
-                 (new-output (and command-output-to-pane-p
-                                  (uiop:process-info-output new-proc))))
-            (setf proc new-proc
-                  input-stream new-input
-                  output-stream new-output
-                  (pane-pipe-fd pane) input-stream
-                  (pane-pipe-output-stream pane) output-stream
-                  (pane-pipe-process pane) proc)
-            (when output-stream
-              (setf output-thread
-                    (%pipe-pane-start-output-thread pane output-stream)
-                    (pane-pipe-output-thread pane) output-thread))
-            (or input-stream output-stream proc t)))
-      (bt:timeout ()
-        (%pipe-pane-cleanup pane
-                            :input-stream input-stream
-                            :output-stream output-stream
-                            :output-thread output-thread
-                            :process proc)
-        nil)
-      (error ()
-        (%pipe-pane-cleanup pane
-                            :input-stream input-stream
-                            :output-stream output-stream
-                            :output-thread output-thread
-                            :process proc)
-        nil))))
+    (%with-timeout-cleanup
+        (+pipe-pane-open-timeout+
+         (lambda ()
+           (%pipe-pane-cleanup pane
+                               :input-stream input-stream
+                               :output-stream output-stream
+                               :output-thread output-thread
+                               :process proc)))
+      (let* ((shell (or cl-tmux/config:*default-shell* "/bin/sh"))
+             (new-proc
+               (uiop:launch-program (list shell "-c" command)
+                                   :input (if pane-output-to-command-p :stream nil)
+                                   :output (if command-output-to-pane-p :stream nil)
+                                   :error-output nil))
+             (new-input (and pane-output-to-command-p
+                             (uiop:process-info-input new-proc)))
+             (new-output (and command-output-to-pane-p
+                              (uiop:process-info-output new-proc))))
+        (setf proc new-proc
+              input-stream new-input
+              output-stream new-output
+              (pane-pipe-fd pane) input-stream
+              (pane-pipe-output-stream pane) output-stream
+              (pane-pipe-process pane) proc)
+        (when output-stream
+          (setf output-thread
+                (%pipe-pane-start-output-thread pane output-stream)
+                (pane-pipe-output-thread pane) output-thread))
+        (or input-stream output-stream proc t)))))
 
 (defun %wait-pipe-process (process)
   "Return true when PROCESS exits before the pipe-pane close timeout."
   (when process
-    (handler-case
-        (progn
-          (bt:with-timeout (+pipe-pane-close-timeout+)
-            (uiop:wait-process process))
-          t)
-      (bt:timeout () nil)
-      (error () nil))))
+    (%with-timeout-cleanup (+pipe-pane-close-timeout+ (constantly nil))
+      (uiop:wait-process process)
+      t)))
 
 (defun %terminate-pipe-process (process)
   "Reap a pipe-pane subprocess, terminating it only if it ignores stdin EOF."

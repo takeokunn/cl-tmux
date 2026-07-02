@@ -72,26 +72,6 @@
          (declare (ignorable ,session ,flags ,positionals))
          ,@body))))
 
-(defmacro %flag-case (flags &body clauses)
-  "COND over FLAGS where each clause key is either T or one or more flag chars."
-  (let ((flags-var (gensym "FLAGS")))
-    `(let ((,flags-var ,flags))
-       (cond
-         ,@(mapcar (lambda (clause)
-                     (destructuring-bind (keys &body body) clause
-                       (cond
-                         ((eq keys t)
-                          `(t ,@body))
-                         ((listp keys)
-                          `((or ,@(mapcar (lambda (key)
-                                            `(%flag-present-p ,flags-var ,key))
-                                          keys))
-                            ,@body))
-                         (t
-                          `((%flag-present-p ,flags-var ,keys)
-                            ,@body)))))
-                   clauses)))))
-
 (defun %parse-flag-token (token value-flags remaining-tokens)
   "Parse one flag TOKEN into flag entries, supporting clustered boolean flags:
    -ga = -g -a, -gF = -g -F.  Returns (values FLAG-ENTRIES NEW-REMAINING)."

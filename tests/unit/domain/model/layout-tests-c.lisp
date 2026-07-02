@@ -23,6 +23,35 @@
           (is (= exp-w width)  "~A: bounding-box width" desc)
           (is (= exp-h height) "~A: bounding-box height" desc))))))
 
+(test split-bounding-box-aggregates-nested-subtree-not-top-level-assign
+  "%split-bounding-box on an inner split must aggregate the min/max of ITS OWN
+   leaves, not merely echo back the outer layout-assign() rectangle passed at
+   the root. Tree: (outer :h (l0) (inner :v (l1) (l2))), assigned at 0,0,81,21.
+   l0 occupies the left 40 cols; inner (l1 over l2) occupies the right 40 cols
+   starting at x=41 — so inner's own bounding box (x=41, w=40) genuinely differs
+   from the outer rectangle (x=0, w=81) that was passed to layout-assign."
+  (let* ((l0    (tl-leaf 1 1 1))
+         (l1    (tl-leaf 2 1 1))
+         (l2    (tl-leaf 3 1 1))
+         (inner (make-layout-split :v l1 l2))
+         (outer (make-layout-split :h l0 inner)))
+    (cl-tmux/model::layout-assign outer 0 0 81 21)
+    ;; Sanity: outer's own bounding box does equal the top-level assign rectangle.
+    (multiple-value-bind (ox oy ow oh) (cl-tmux/model::%split-bounding-box outer)
+      (is (= 0  ox) "outer bounding-box x matches root assign")
+      (is (= 0  oy) "outer bounding-box y matches root assign")
+      (is (= 81 ow) "outer bounding-box width matches root assign")
+      (is (= 21 oh) "outer bounding-box height matches root assign"))
+    ;; The real assertion: inner's bounding box is computed from its own two
+    ;; leaves (l1, l2), which occupy only the right half of the outer rectangle —
+    ;; a bug in min/max aggregation across children would not shrink this to
+    ;; match l1/l2's actual x/width and would instead leak the outer values.
+    (multiple-value-bind (ix iy iw ih) (cl-tmux/model::%split-bounding-box inner)
+      (is (= 41 ix) "inner bounding-box x is l1/l2's own x (41), not outer's (0)")
+      (is (= 0  iy) "inner bounding-box y")
+      (is (= 40 iw) "inner bounding-box width is l1/l2's own span (40), not outer's (81)")
+      (is (= 21 ih) "inner bounding-box height spans both l1 and l2 rows (21)"))))
+
 (test node-to-string-leaf-and-nil
   "%node->string formats a leaf's WxH,X,Y,id fragment and returns empty string for NIL."
   (let* ((p    (tl-pane 7 20 10))

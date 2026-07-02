@@ -157,30 +157,40 @@
     (unless (zerop delta)
       (resize-pane win direction delta))))
 
-(defparameter +resize-pane-absolute-specs+
-  '((#\x cl-tmux/model:pane-width :right)
-    (#\y cl-tmux/model:pane-height :down)))
+;;; define-flag-dispatch expands a declarative (FLAG-CHAR HANDLER-FORM) table into
+;;; direct when-forms at compile time, in the style of config-directives-set.lisp's
+;;; define-flag-mapping — but for arms that run an arbitrary handler form (rather
+;;; than a fixed setf) whenever FLAGS-VAR carries FLAG-CHAR.
 
-(defparameter +resize-pane-direction-specs+
-  '((#\L :left)
-    (#\R :right)
-    (#\U :up)
-    (#\D :down)))
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun %expand-flag-dispatch-arm (arm flags-var)
+    "Expand one (FLAG-CHAR HANDLER-FORM) ARM into a when-form guarded by FLAG-CHAR."
+    (destructuring-bind (flag-char handler-form) arm
+      `(when (%flag-present-p ,flags-var ,flag-char)
+         ,handler-form))))
+
+(defmacro define-flag-dispatch ((flags-var) &rest arms)
+  "Expand ARMS — each (FLAG-CHAR HANDLER-FORM) — into a sequence of when-forms
+   testing FLAG-CHAR's presence in FLAGS-VAR before running HANDLER-FORM."
+  `(progn ,@(mapcar (lambda (arm) (%expand-flag-dispatch-arm arm flags-var)) arms)))
 
 (defun %resize-pane-apply-absolute-dimensions (win pane flags)
-  (dolist (spec +resize-pane-absolute-specs+)
-    (destructuring-bind (flag size-fn direction) spec
-      (let ((target-size (%parse-flag-int flags flag)))
-        (when target-size
-          (%resize-pane-to-absolute-dimension win pane target-size size-fn
-                                              direction))))))
+  (define-flag-dispatch (flags)
+    (#\x (let ((target-size (%parse-flag-int flags #\x)))
+           (when target-size
+             (%resize-pane-to-absolute-dimension win pane target-size
+                                                 #'cl-tmux/model:pane-width :right))))
+    (#\y (let ((target-size (%parse-flag-int flags #\y)))
+           (when target-size
+             (%resize-pane-to-absolute-dimension win pane target-size
+                                                 #'cl-tmux/model:pane-height :down))))))
 
 (defun %resize-pane-apply-relative-directions (flags win amount)
-  (dolist (spec +resize-pane-direction-specs+)
-    (destructuring-bind (flag direction) spec
-      (when (%flag-present-p flags flag)
-        (when win
-          (resize-pane win direction amount))))))
+  (define-flag-dispatch (flags)
+    (#\L (when win (resize-pane win :left amount)))
+    (#\R (when win (resize-pane win :right amount)))
+    (#\U (when win (resize-pane win :up amount)))
+    (#\D (when win (resize-pane win :down amount)))))
 
 (defun %cmd-resize-pane-arg (session args)
   "resize-pane [-t target] [-L|-R|-U|-D|-Z] [-x width] [-y height] [amount]: resize a pane.
@@ -207,8 +217,8 @@
           ((or x-val y-val)
            (when (and win pane)
              (%resize-pane-apply-absolute-dimensions win pane flags)))
-          ((some (lambda (spec) (%flag-present-p flags (first spec)))
-                 +resize-pane-direction-specs+)
+          ((some (lambda (flag-char) (%flag-present-p flags flag-char))
+                 '(#\L #\R #\U #\D))
            (%resize-pane-apply-relative-directions flags win amount)))))))
 
 (defun %cmd-join-pane-arg (session args)

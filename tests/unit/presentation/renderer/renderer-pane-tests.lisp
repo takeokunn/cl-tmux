@@ -102,14 +102,15 @@
 (test color-name-to-cell-color-maps-names-palette-and-truecolor
   "%color-name-to-cell-color converts to the cell colour encoding; default/empty
    yields NIL (no override)."
-  (is (= 1   (cl-tmux/renderer::%color-name-to-cell-color "red")))
-  (is (= 9   (cl-tmux/renderer::%color-name-to-cell-color "brightred")))
-  (is (= 235 (cl-tmux/renderer::%color-name-to-cell-color "colour235")))
+  (dolist (c '(("red" 1) ("brightred" 9) ("colour235" 235)
+               ("default" nil) ("" nil) (nil nil)))
+    (destructuring-bind (name expected) c
+      (is (eql expected (cl-tmux/renderer::%color-name-to-cell-color name))
+          "~S should map to ~S (got ~S)" name expected
+          (cl-tmux/renderer::%color-name-to-cell-color name))))
   (is (= (logior #x1000000 #xff8800)
-         (cl-tmux/renderer::%color-name-to-cell-color "#ff8800")))
-  (is (null (cl-tmux/renderer::%color-name-to-cell-color "default")))
-  (is (null (cl-tmux/renderer::%color-name-to-cell-color "")))
-  (is (null (cl-tmux/renderer::%color-name-to-cell-color nil))))
+         (cl-tmux/renderer::%color-name-to-cell-color "#ff8800"))
+      "truecolor hex names should map to the 0x1000000-tagged RGB encoding"))
 
 (test window-style-default-colors-extracts-fg-bg
   "%window-style-default-colors returns the fg/bg cell numbers a style sets, NIL
@@ -243,16 +244,16 @@
    fall back to single."
   (with-isolated-config
     (flet ((chars () (multiple-value-list (cl-tmux/renderer::%pane-border-chars))))
-      (cl-tmux/options:set-option "pane-border-lines" "single")
-      (is (equal '(#\│ #\─) (chars)))
-      (cl-tmux/options:set-option "pane-border-lines" "double")
-      (is (equal '(#\║ #\═) (chars)))
-      (cl-tmux/options:set-option "pane-border-lines" "heavy")
-      (is (equal '(#\┃ #\━) (chars)))
-      (cl-tmux/options:set-option "pane-border-lines" "simple")
-      (is (equal '(#\| #\-) (chars)))
-      (cl-tmux/options:set-option "pane-border-lines" "number")
-      (is (equal '(#\│ #\─) (chars)) "number/unknown falls back to single"))))
+      (dolist (c '(("single" (#\│ #\─))
+                   ("double" (#\║ #\═))
+                   ("heavy"  (#\┃ #\━))
+                   ("simple" (#\| #\-))
+                   ("number" (#\│ #\─))))
+        (destructuring-bind (style expected) c
+          (cl-tmux/options:set-option "pane-border-lines" style)
+          (is (equal expected (chars))
+              "pane-border-lines ~S should select chars ~S (got ~S)"
+              style expected (chars)))))))
 
 (test render-tree-borders-honours-pane-border-lines-double
   "With pane-border-lines double, the vertical separator uses ║ not │."

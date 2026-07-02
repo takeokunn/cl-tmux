@@ -93,34 +93,43 @@
 ;;; These are real tmux window-copy commands (window-copy.c) that scroll/move and
 ;;; then exit copy mode when the live bottom (offset 0) is reached.
 
+(defun %copy-mode-with-cancel-at-bottom (screen action &optional extra-guard)
+  "Run ACTION (a thunk of no arguments) while SCREEN is in copy mode, then exit
+   copy mode once the viewport has reached the live bottom (scroll-offset 0).
+   EXTRA-GUARD, when supplied, is a thunk of no arguments called AFTER ACTION
+   runs whose result is ANDed into the exit decision — used by callers that
+   must also confirm ACTION left some other state (e.g. the cursor) unchanged.
+   This is the shared skeleton behind the tmux send-keys -X *-and-cancel family
+   (window-copy.c): perform a scroll/move, then auto-exit at the live bottom."
+  (when (screen-copy-mode-p screen)
+    (funcall action)
+    (when (and (zerop (screen-copy-offset screen))
+               (or (null extra-guard) (funcall extra-guard)))
+      (copy-mode-exit screen))))
+
 (defun copy-mode-scroll-down-and-cancel (screen)
   "send-keys -X scroll-down-and-cancel: scroll the viewport down one line, then
    exit copy mode when the live bottom (scroll-offset 0) is reached."
-  (when (screen-copy-mode-p screen)
-    (copy-mode-scroll screen -1)
-    (when (zerop (screen-copy-offset screen))
-      (copy-mode-exit screen))))
+  (%copy-mode-with-cancel-at-bottom
+   screen (lambda () (copy-mode-scroll screen -1))))
 
 (defun copy-mode-page-down-and-cancel (screen)
   "send-keys -X page-down-and-cancel: scroll one full page down, then exit copy
    mode when the live bottom is reached."
-  (when (screen-copy-mode-p screen)
-    (copy-mode-scroll screen (- (screen-height screen)))
-    (when (zerop (screen-copy-offset screen))
-      (copy-mode-exit screen))))
+  (%copy-mode-with-cancel-at-bottom
+   screen (lambda () (copy-mode-scroll screen (- (screen-height screen))))))
 
 (defun copy-mode-cursor-down-and-cancel (screen)
   "send-keys -X cursor-down-and-cancel: move the cursor down; exit copy mode when
    the cursor is already at the bottom of the history (it cannot move and the
    viewport is at the live bottom)."
-  (when (screen-copy-mode-p screen)
-    (let ((before     (copy-tree (screen-copy-cursor screen)))
-          (before-off (screen-copy-offset screen)))
-      (copy-mode-move-cursor screen :down)
-      (when (and (equal before (screen-copy-cursor screen))
-                 (zerop (screen-copy-offset screen))
-                 (zerop before-off))
-        (copy-mode-exit screen)))))
+  (let ((before     (copy-tree (screen-copy-cursor screen)))
+        (before-off (screen-copy-offset screen)))
+    (%copy-mode-with-cancel-at-bottom
+     screen
+     (lambda () (copy-mode-move-cursor screen :down))
+     (lambda () (and (equal before (screen-copy-cursor screen))
+                      (zerop before-off))))))
 
 (defun copy-mode-selection-mode (screen mode)
   "send-keys -X selection-mode <char|word|line>: set the selection granularity.

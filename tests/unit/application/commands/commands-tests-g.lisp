@@ -16,6 +16,18 @@
 
 ;;; ── send-keys key-name translation ───────────────────────────────────────────
 
+(test escape-sequence-prepends-single-esc
+  "%escape-sequence prepends exactly one ESC char to the concatenation of its
+   TAIL string arguments, regardless of how many TAIL arguments are given."
+  (is (string= (string (code-char 27)) (cl-tmux/commands::%escape-sequence))
+      "zero TAIL args → bare ESC")
+  (is (string= (concatenate 'string (string (code-char 27)) "[A")
+               (cl-tmux/commands::%escape-sequence "[A"))
+      "one TAIL arg → ESC followed by that arg")
+  (is (string= (concatenate 'string (string (code-char 27)) "[" "1" ";" "5" "A")
+               (cl-tmux/commands::%escape-sequence "[" "1" ";" "5" "A"))
+      "multiple TAIL args → ESC followed by all args concatenated in order"))
+
 (test key-name-to-bytes-table
   "%key-name-to-bytes maps named, control, meta, and CSI-modified keys to their byte sequences."
   (dolist (row '(("Enter"    (13)                    "Enter → CR")
@@ -39,7 +51,9 @@
                  ("S-Home"   (27 91 49 59 50 72)     "S-Home → ESC[1;2H")
                  ("C-F5"     (27 91 49 53 59 53 126) "C-F5 → ESC[15;5~")
                  ("C-PageUp" (27 91 53 59 53 126)    "C-PageUp → ESC[5;5~")
-                 ("S-Delete" (27 91 51 59 50 126)    "S-Delete → ESC[3;2~")))
+                 ("S-Delete" (27 91 51 59 50 126)    "S-Delete → ESC[3;2~")
+                 ("C-F2"     (27 91 49 59 53 81)     "C-F2 → ESC[1;5Q")
+                 ("S-End"    (27 91 49 59 50 70)     "S-End → ESC[1;2F")))
     (destructuring-bind (name expected desc) row
       (is (equal expected (key-name-bytes name)) "~A" desc))))
 

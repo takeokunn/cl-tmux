@@ -214,48 +214,74 @@
       (is (search "bind-key -T prefix -r C-Right resize-pane -R 1" text)
           "list-keys must show repeatable C-Right resize binding"))))
 
+(test default-prefix-char-and-digit-bindings
+  "Every char/digit entry from config-prefix-defaults.lisp's
+   define-initial-key-bindings form is bound in the prefix table to its
+   documented command (audit: test-abstraction/high)."
+  (with-isolated-config
+    (check-copy-mode-bindings "prefix"
+      (#\c :new-window            "c opens a new window")
+      (#\n :next-window           "n selects the next window")
+      (#\p :prev-window           "p selects the previous window")
+      (#\" :split-horizontal      "\" splits the pane horizontally")
+      (#\% :split-vertical        "% splits the pane vertically")
+      (#\o :next-pane             "o selects the next pane")
+      (#\d :detach                "d detaches the client")
+      (#\? :list-keys             "? lists key bindings")
+      (#\[ :copy-mode-enter       "[ enters copy-mode")
+      (#\] :paste-buffer          "] pastes the buffer")
+      (#\x :kill-pane-confirm     "x confirms killing the pane")
+      (#\& :kill-window-confirm   "& confirms killing the window")
+      (#\, :rename-window         ", renames the window")
+      (#\H :resize-left           "H resizes the pane left")
+      (#\J :resize-down           "J resizes the pane down")
+      (#\K :resize-up             "K resizes the pane up")
+      (#\L :last-session          "L selects the last session (extended binding overrides bootstrap resize-right default)")
+      (#\Z :zoom-toggle           "Z toggles zoom (uppercase alias)")
+      (#\$ :rename-session        "$ renames the session")
+      (#\! :break-pane            "! breaks the pane (extended binding overrides bootstrap if-shell default)")
+      (#\0 :select-window         "digit 0 selects window 0")
+      (#\9 :select-window         "digit 9 selects window 9"))))
+
 (test default-copy-mode-vi-bindings-are-listed
   "Default copy-mode-vi keys are present in the key table and list-keys output."
   (with-isolated-config
-    (dolist (row '(("Escape"  :copy-mode-clear-selection              "Escape clears selection")
-                   (#\q       :copy-mode-exit                         "q exits copy-mode")
-                   (#\i       :copy-mode-exit                         "i exits copy-mode")
-                   (#\j       :copy-mode-cursor-down                  "j moves down")
-                   (#\h       :copy-mode-cursor-left                  "h moves left")
-                   (#\%       :copy-mode-next-matching-bracket        "% jumps to matching bracket")
-                   (#\#       :copy-mode-search-backward-word         "# searches backward for word")
-                   (#\*       :copy-mode-search-forward-word          "* searches forward for word")
-                   (#\,       :copy-mode-jump-reverse                 ", reverses last jump")
-                   (#\;       :copy-mode-jump-again                   "; repeats last jump")
-                   (#\A       :copy-mode-append-selection-and-cancel  "A appends selection and cancels")
-                   (#\D       :copy-mode-copy-pipe-end-of-line-and-cancel "D copies to end of line")
-                   (#\J       :copy-mode-scroll-down-line             "J scrolls down one line")
-                   (#\K       :copy-mode-scroll-up-line               "K scrolls up one line")
-                   (#\P       :copy-mode-other-end                    "P toggles position")
-                   (#\R       :copy-mode-rectangle-toggle             "R toggles rectangle selection")
-                   (#\X       :copy-mode-set-mark                     "X sets mark")
-                   (#\o       :copy-mode-other-end                    "o moves to other selection end")
-                   (#\z       :copy-mode-scroll-middle                "z centres the cursor")
-                   (#\r       :copy-mode-refresh-from-pane            "r refreshes from pane")
-                   (#\f       :copy-mode-jump-forward                 "f jumps forward to char")
-                   (#\F       :copy-mode-jump-backward                "F jumps backward to char")
-                   (#\t       :copy-mode-jump-to                      "t jumps to before char")
-                   (#\T       :copy-mode-jump-to-backward             "T jumps backward to before char")
-                   (#\:       :copy-mode-goto-line                    ": opens goto-line prompt")
-                   (#\{       :copy-mode-prev-paragraph               "{ moves to prev paragraph")
-                   (#\}       :copy-mode-next-paragraph               "} moves to next paragraph")
-                   ("M-x"     :copy-mode-jump-to-mark                  "M-x jumps to mark")
-                   ("C-b"     :copy-mode-page-up                       "C-b pages up")
-                   ("C-v"     :copy-mode-rectangle-toggle              "C-v toggles rectangle selection")
-                   ("C-Up"    :copy-mode-scroll-up-line                "C-Up scrolls up one line")
-                   ("C-Down"  :copy-mode-scroll-down-line              "C-Down scrolls down one line")
-                   ("Enter"   :copy-mode-copy-pipe-and-cancel          "Enter copy-pipe-and-cancel")
-                   ("BSpace"  :copy-mode-cursor-left                   "BSpace moves left")
-                   ("PageUp"  :copy-mode-page-up                       "PageUp pages up")))
-      (destructuring-bind (key expected msg) row
-        (let ((entry (cl-tmux/config:key-table-lookup "copy-mode-vi" key)))
-          (is (eq expected (cl-tmux/config:key-table-command entry))
-              (format nil "copy-mode-vi ~A: ~A" key msg)))))
+    (check-copy-mode-bindings "copy-mode-vi"
+      ("Escape"  :copy-mode-clear-selection              "Escape clears selection")
+      (#\q       :copy-mode-exit                         "q exits copy-mode")
+      (#\i       :copy-mode-exit                         "i exits copy-mode")
+      (#\j       :copy-mode-cursor-down                  "j moves down")
+      (#\h       :copy-mode-cursor-left                  "h moves left")
+      (#\%       :copy-mode-next-matching-bracket        "% jumps to matching bracket")
+      (#\#       :copy-mode-search-backward-word         "# searches backward for word")
+      (#\*       :copy-mode-search-forward-word          "* searches forward for word")
+      (#\,       :copy-mode-jump-reverse                 ", reverses last jump")
+      (#\;       :copy-mode-jump-again                   "; repeats last jump")
+      (#\A       :copy-mode-append-selection-and-cancel  "A appends selection and cancels")
+      (#\D       :copy-mode-copy-pipe-end-of-line-and-cancel "D copies to end of line")
+      (#\J       :copy-mode-scroll-down-line             "J scrolls down one line")
+      (#\K       :copy-mode-scroll-up-line               "K scrolls up one line")
+      (#\P       :copy-mode-other-end                    "P toggles position")
+      (#\R       :copy-mode-rectangle-toggle             "R toggles rectangle selection")
+      (#\X       :copy-mode-set-mark                     "X sets mark")
+      (#\o       :copy-mode-other-end                    "o moves to other selection end")
+      (#\z       :copy-mode-scroll-middle                "z centres the cursor")
+      (#\r       :copy-mode-refresh-from-pane            "r refreshes from pane")
+      (#\f       :copy-mode-jump-forward                 "f jumps forward to char")
+      (#\F       :copy-mode-jump-backward                "F jumps backward to char")
+      (#\t       :copy-mode-jump-to                      "t jumps to before char")
+      (#\T       :copy-mode-jump-to-backward             "T jumps backward to before char")
+      (#\:       :copy-mode-goto-line                    ": opens goto-line prompt")
+      (#\{       :copy-mode-prev-paragraph               "{ moves to prev paragraph")
+      (#\}       :copy-mode-next-paragraph               "} moves to next paragraph")
+      ("M-x"     :copy-mode-jump-to-mark                  "M-x jumps to mark")
+      ("C-b"     :copy-mode-page-up                       "C-b pages up")
+      ("C-v"     :copy-mode-rectangle-toggle              "C-v toggles rectangle selection")
+      ("C-Up"    :copy-mode-scroll-up-line                "C-Up scrolls up one line")
+      ("C-Down"  :copy-mode-scroll-down-line              "C-Down scrolls down one line")
+      ("Enter"   :copy-mode-copy-pipe-and-cancel          "Enter copy-pipe-and-cancel")
+      ("BSpace"  :copy-mode-cursor-left                   "BSpace moves left")
+      ("PageUp"  :copy-mode-page-up                       "PageUp pages up"))
     (let ((text (cl-tmux/config:describe-key-bindings-for-table "copy-mode-vi")))
       (dolist (fragment '("bind-key -T copy-mode-vi j copy-mode-cursor-down"
                           "bind-key -T copy-mode-vi Escape copy-mode-clear-selection"
@@ -282,62 +308,56 @@
 (test default-copy-mode-emacs-control-bindings
   "Default copy-mode emacs control keys match tmux movement, selection and search defaults."
   (with-isolated-config
-    (dolist (row '(("C-Space" :copy-mode-begin-selection "C-Space begins selection")
-                   ("C-a" :copy-mode-line-start "C-a moves to line start")
-                   ("C-c" :copy-mode-exit "C-c exits copy-mode")
-                   ("C-e" :copy-mode-line-end "C-e moves to line end")
-                   ("C-f" :copy-mode-cursor-right "C-f moves right")
-                   ("C-b" :copy-mode-cursor-left "C-b moves left")
-                   ("C-g" :copy-mode-clear-selection "C-g clears selection")
-                   ("C-l" :copy-mode-cursor-centre-vertical
-                    "C-l centres the cursor vertically")
-                   ("C-k" :copy-mode-copy-pipe-end-of-line-and-cancel
-                    "C-k copy-pipes to end of line and cancels")
-                   ("C-n" :copy-mode-cursor-down "C-n moves down")
-                   ("C-p" :copy-mode-cursor-up "C-p moves up")
-                   ("C-r" :copy-mode-search-backward-incremental
-                    "C-r starts backward incremental search")
-                   ("C-s" :copy-mode-search-forward-incremental
-                    "C-s starts forward incremental search")
-                   ("C-v" :copy-mode-page-down "C-v pages down")
-                   ("C-w" :copy-mode-copy-pipe-and-cancel
-                    "C-w copy-pipes and cancels")))
-      (destructuring-bind (key expected message) row
-        (let ((entry (cl-tmux/config:key-table-lookup "copy-mode" key)))
-          (is (eq expected (cl-tmux/config:key-table-command entry))
-              "copy-mode ~A" message))))))
+    (check-copy-mode-bindings "copy-mode"
+      ("C-Space" :copy-mode-begin-selection "C-Space begins selection")
+      ("C-a" :copy-mode-line-start "C-a moves to line start")
+      ("C-c" :copy-mode-exit "C-c exits copy-mode")
+      ("C-e" :copy-mode-line-end "C-e moves to line end")
+      ("C-f" :copy-mode-cursor-right "C-f moves right")
+      ("C-b" :copy-mode-cursor-left "C-b moves left")
+      ("C-g" :copy-mode-clear-selection "C-g clears selection")
+      ("C-l" :copy-mode-cursor-centre-vertical
+       "C-l centres the cursor vertically")
+      ("C-k" :copy-mode-copy-pipe-end-of-line-and-cancel
+       "C-k copy-pipes to end of line and cancels")
+      ("C-n" :copy-mode-cursor-down "C-n moves down")
+      ("C-p" :copy-mode-cursor-up "C-p moves up")
+      ("C-r" :copy-mode-search-backward-incremental
+       "C-r starts backward incremental search")
+      ("C-s" :copy-mode-search-forward-incremental
+       "C-s starts forward incremental search")
+      ("C-v" :copy-mode-page-down "C-v pages down")
+      ("C-w" :copy-mode-copy-pipe-and-cancel
+       "C-w copy-pipes and cancels"))))
 
 (test default-copy-mode-emacs-printable-and-meta-bindings
   "Default copy-mode emacs printable and meta keys expose tmux navigation defaults."
   (with-isolated-config
+    (check-copy-mode-bindings "copy-mode"
+      (#\Space :copy-mode-page-down "Space pages down")
+      (#\, :copy-mode-jump-reverse ", reverses the last jump")
+      (#\; :copy-mode-jump-again "; repeats the last jump")
+      (#\N :copy-mode-search-prev "N repeats search backward")
+      (#\P :copy-mode-other-end "P toggles position")
+      (#\R :copy-mode-rectangle-toggle "R toggles rectangle")
+      (#\X :copy-mode-set-mark "X sets mark")
+      (#\n :copy-mode-search-next "n repeats search forward")
+      (#\r :copy-mode-refresh-from-pane "r refreshes from pane")
+      (#\f :copy-mode-jump-forward "f jumps forward")
+      (#\F :copy-mode-jump-backward "F jumps backward")
+      (#\t :copy-mode-jump-to "t jumps to a character")
+      (#\T :copy-mode-jump-to-backward
+       "T jumps backward to a character")
+      (#\g :copy-mode-goto-line "g opens the goto-line prompt")
+      ("M-f" :copy-mode-word-end "M-f moves to next word end")
+      ("M-l" :copy-mode-cursor-centre-horizontal
+       "M-l centres the cursor horizontally")
+      ("M-x" :copy-mode-jump-to-mark "M-x jumps to mark")
+      ("M-{" :copy-mode-prev-paragraph
+       "M-{ moves to the previous paragraph")
+      ("M-}" :copy-mode-next-paragraph
+       "M-} moves to the next paragraph"))
     (let ((text (cl-tmux/config:describe-key-bindings-for-table "copy-mode")))
-      (dolist (row `((#\Space :copy-mode-page-down "Space pages down")
-                     (#\, :copy-mode-jump-reverse ", reverses the last jump")
-                     (#\; :copy-mode-jump-again "; repeats the last jump")
-                     (#\N :copy-mode-search-prev "N repeats search backward")
-                     (#\P :copy-mode-other-end "P toggles position")
-                     (#\R :copy-mode-rectangle-toggle "R toggles rectangle")
-                     (#\X :copy-mode-set-mark "X sets mark")
-                     (#\n :copy-mode-search-next "n repeats search forward")
-                     (#\r :copy-mode-refresh-from-pane "r refreshes from pane")
-                     (#\f :copy-mode-jump-forward "f jumps forward")
-                     (#\F :copy-mode-jump-backward "F jumps backward")
-                     (#\t :copy-mode-jump-to "t jumps to a character")
-                     (#\T :copy-mode-jump-to-backward
-                      "T jumps backward to a character")
-                     (#\g :copy-mode-goto-line "g opens the goto-line prompt")
-                     ("M-f" :copy-mode-word-end "M-f moves to next word end")
-                     ("M-l" :copy-mode-cursor-centre-horizontal
-                      "M-l centres the cursor horizontally")
-                     ("M-x" :copy-mode-jump-to-mark "M-x jumps to mark")
-                     ("M-{" :copy-mode-prev-paragraph
-                      "M-{ moves to the previous paragraph")
-                     ("M-}" :copy-mode-next-paragraph
-                      "M-} moves to the next paragraph")))
-        (destructuring-bind (key expected message) row
-          (let ((entry (cl-tmux/config:key-table-lookup "copy-mode" key)))
-            (is (eq expected (cl-tmux/config:key-table-command entry))
-                "copy-mode ~A" message))))
       (is (search "bind-key -T copy-mode C-Space copy-mode-begin-selection" text)
           "list-keys must show copy-mode C-Space")
       (is (search "bind-key -T copy-mode C-l copy-mode-cursor-centre-vertical" text)
@@ -420,6 +440,24 @@
           "list-keys must show copy-mode C-Up")
       (is (search "bind-key -T copy-mode M-Down copy-mode-half-page-down" text)
           "list-keys must show copy-mode M-Down"))))
+
+(test default-copy-mode-named-navigation-bindings
+  "Every named-key entry in +default-copy-mode-named-navigation-bindings+ is
+   bound in the base copy-mode table to its documented command (audit:
+   test-abstraction/medium — PageDown/Home/End/Left/Right/Down/PageUp were
+   previously unchecked by name)."
+  (with-isolated-config
+    (check-copy-mode-bindings "copy-mode"
+      ("Up"       :copy-mode-cursor-up   "Up moves the cursor up")
+      ("Down"     :copy-mode-cursor-down "Down moves the cursor down")
+      ("Left"     :copy-mode-cursor-left "Left moves the cursor left")
+      ("Right"    :copy-mode-cursor-right "Right moves the cursor right")
+      ("C-Up"     :copy-mode-scroll-up-line "C-Up scrolls up one line")
+      ("C-Down"   :copy-mode-scroll-down-line "C-Down scrolls down one line")
+      ("PageUp"   :copy-mode-page-up "PageUp pages up")
+      ("PageDown" :copy-mode-page-down "PageDown pages down")
+      ("Home"     :copy-mode-line-start "Home moves to the line start")
+      ("End"      :copy-mode-line-end "End moves to the line end"))))
 
 (test describe-key-bindings-for-key-filters-by-key-label
   "describe-key-bindings-for-key returns only bindings whose key label matches."
@@ -578,12 +616,11 @@
 
 (test table-name-constants
   "Standard key-table constants have their expected string values."
-  (dolist (c `(("prefix"       ,cl-tmux/config:+table-prefix+)
-               ("root"         ,cl-tmux/config:+table-root+)
-               ("copy-mode"    ,cl-tmux/config:+table-copy-mode+)
-               ("copy-mode-vi" ,cl-tmux/config:+table-copy-mode-vi+)))
-    (destructuring-bind (expected actual) c
-      (is (string= expected actual) "constant must equal ~S" expected))))
+  (check-table `((,cl-tmux/config:+table-prefix+       "prefix"       "+table-prefix+")
+                 (,cl-tmux/config:+table-root+         "root"         "+table-root+")
+                 (,cl-tmux/config:+table-copy-mode+    "copy-mode"    "+table-copy-mode+")
+                 (,cl-tmux/config:+table-copy-mode-vi+ "copy-mode-vi" "+table-copy-mode-vi+"))
+              :test #'string=))
 
 ;;; ── *default-shell* and *status-height* initial values ───────────────────
 

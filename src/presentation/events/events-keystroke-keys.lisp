@@ -265,6 +265,109 @@
        (= (aref buffer 2) +byte-csi-param-1+)
        (= (aref buffer 3) +byte-csi-semi+)))
 
+;;; ── %make-prefix-csi-k branch predicates ────────────────────────────────────
+;;;
+;;; Each predicate below recognises one shape of the accumulating ESC [ / ESC O
+;;; buffer; the matching %handle-* function performs that shape's dispatch and
+;;; returns the CPS (values OUTCOME NEXT-STATE) pair.  %make-prefix-csi-k itself
+;;; stays a thin cond that pairs each predicate with its handler.
+
+(defun %prefix-ss3-introducer-p (buffer length)
+  "T for the 2-byte SS3 introducer ESC O, still awaiting its final byte."
+  (and (= length 2) (= (aref buffer 1) +byte-ss3-o+)))
+
+(defun %prefix-ss3-final-p (buffer length)
+  "T for a complete 3-byte SS3 sequence ESC O <final>."
+  (and (= length 3) (= (aref buffer 1) +byte-ss3-o+)))
+
+(defun %prefix-tilde-key-p (buffer length)
+  "T for a complete function/navigation key ESC [ <digits> ~ (F5, PageUp, ...)."
+  (and (>= length 4) (= (aref buffer 1) +byte-csi-bracket+)
+       (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)
+       (= (aref buffer (1- length)) +byte-tilde+)))
+
+(defun %prefix-3byte-csi-p (buffer length)
+  "T for a complete 3-byte CSI sequence ESC [ FINAL (arrow key or digit start)."
+  (and (= length 3) (= (aref buffer 1) +byte-csi-bracket+)))
+
+(defun %prefix-modifier-in-progress-p (buffer length)
+  "T while accumulating ESC [ 1 ; [MOD] toward a 6-byte modifier sequence."
+  (and (<= 4 length 5) (%csi-1-semi-prefix-p buffer)))
+
+(defun %prefix-6byte-modifier-p (buffer length)
+  "T for a complete 6-byte modifier CSI sequence ESC [ 1 ; MOD FINAL."
+  (and (= length 6) (%csi-1-semi-prefix-p buffer)))
+
+(defun %prefix-2byte-meta-p (buffer length)
+  "T for a 2-byte non-CSI sequence ESC <key> — a prefix meta chord."
+  (and (= length 2) (/= (aref buffer 1) +byte-csi-bracket+)))
+
+;;; ── %make-prefix-csi-k branch handlers ──────────────────────────────────────
+
+(defun %handle-ss3-introducer-after-prefix (session buffer)
+  "Defer one more byte for the SS3 introducer ESC O so ESC O P/Q/R/S/H/F (F1-F4,
+   Home/End) resolve as a unit before the 2-byte meta branch would claim ESC O."
+  (values nil (%make-prefix-csi-k session buffer)))
+
+(defun %handle-ss3-after-prefix (session buffer)
+  "Resolve a complete SS3 sequence ESC O <final> against the prefix table."
+  (let ((key (%ss3-key-name (aref buffer 2))))
+    (%prefix-string-entry-result
+     (and key (%run-bound-string-key session +table-prefix+ key)))))
+
+(defun %handle-tilde-key-after-prefix (session buffer length)
+  "Resolve a complete ESC [ <digits> ~ function/navigation key against the
+   prefix table — F5 ESC[15~ ... F12, PageUp ESC[5~, Home ESC[1~, Delete
+   ESC[3~ — so `bind F5 <cmd>` / `bind PPage <cmd>` work after the prefix."
+  (let ((key (%csi-tilde-key buffer length)))
+    (%prefix-string-entry-result
+     (and key (%run-bound-string-key session +table-prefix+ key)))))
+
+(defun %handle-3byte-csi-after-prefix (session buffer)
+  "Resolve a complete 3-byte CSI sequence ESC [ FINAL: either defer (digit final
+   begins a parameterised ESC [ 1 ; MOD FINAL or ESC [ N ~ sequence — was
+   limited to '1', which dropped the '~' of ESC [ 5 ~ etc.) or dispatch the
+   arrow key, letting a user `bind -T prefix Up <cmd>` override the built-in
+   select-pane default."
+  (let ((final-byte (aref buffer 2)))
+    (if (<= +byte-digit-0+ final-byte +byte-digit-9+)
+        (values nil (%make-prefix-csi-k session buffer))
+        (let* ((name    (%arrow-final-name final-byte))
+               (command (%prefix-csi-arrow-cmd final-byte))
+               (entry   (%run-bound-string-key session +table-prefix+ name)))
+          (unless entry
+            ;; dispatch-command always returns NIL; the when's value is discarded.
+            (when command (dispatch-command session command nil)))
+          (%prefix-string-entry-result entry)))))
+
+(defun %handle-modifier-in-progress-after-prefix (session buffer)
+  "Keep accumulating ESC [ 1 ; [MOD] toward the final modifier letter."
+  (values nil (%make-prefix-csi-k session buffer)))
+
+(defun %handle-6byte-modifier-after-prefix (session buffer)
+  "Resolve a complete 6-byte modifier CSI sequence ESC [ 1 ; MOD FINAL —
+   C-arrow / M-arrow resize, or a user `bind -T prefix C-Up <cmd>` override."
+  (let ((entry (%dispatch-modifier-arrow session (aref buffer 4) (aref buffer 5))))
+    (setf *dirty* t)
+    (%prefix-string-entry-result entry)))
+
+(defun %handle-2byte-meta-after-prefix (session buffer)
+  "Resolve a 2-byte non-CSI prefix meta chord (C-b then Alt+key → ESC <key>)
+   against `bind M-<key>` in the prefix table; unbound chords are discarded
+   (no passthrough after the prefix)."
+  (%prefix-string-entry-result
+   (%run-bound-string-key session +table-prefix+
+                          (%meta-key-name (aref buffer 1)))))
+
+(defun %handle-overflow-after-prefix ()
+  "Buffer at capacity (>= 6 bytes) but unrecognised — discard and return to
+   ground to avoid permanent stuck-state on malformed CSI sequences."
+  (values nil #'%ground-input-state))
+
+(defun %handle-still-accumulating-after-prefix (session buffer)
+  "1-5 bytes accumulated so far and no shape matched yet — keep waiting."
+  (values nil (%make-prefix-csi-k session buffer)))
+
 (defun %make-prefix-csi-k (session buffer)
   "CPS continuation: accumulate ESC [ FINAL for post-prefix arrow key sequences.
    Dispatches :select-pane-up/down/left/right on ESC [ A/B/D/C (3-byte CSI).
@@ -281,69 +384,23 @@
     (setf *esc-accum-buffer* buffer)
     (let ((length (fill-pointer buffer)))
       (cond
-        ;; ── SS3 introducer after prefix: ESC O — defer one byte ──────────
-        ;; ESC O P/Q/R/S (F1-F4) / ESC O H/F (Home/End) so `bind F1 <cmd>`
-        ;; works.  Deferred before the 2-byte meta branch below claims it.
-        ((and (= length 2) (= (aref buffer 1) +byte-ss3-o+))
-         (values nil (%make-prefix-csi-k session buffer)))
-        ;; ── SS3 function key after prefix: ESC O <final> ─────────────────
-        ((and (= length 3) (= (aref buffer 1) +byte-ss3-o+))
-         (let ((key (%ss3-key-name (aref buffer 2))))
-           (%prefix-string-entry-result
-            (and key (%run-bound-string-key session +table-prefix+ key)))))
-        ;; ── Function / navigation key after prefix: ESC [ <digits> ~ ─────
-        ;; F5 ESC[15~ … F12, PageUp ESC[5~, Home ESC[1~, Delete ESC[3~, so
-        ;; `bind F5 <cmd>` / `bind PPage <cmd>` resolve in the prefix table.
-        ;; The tilde terminator keeps this disjoint from the ESC[1;MOD arrow
-        ;; branches below (those end in a letter).
-        ((and (>= length 4) (= (aref buffer 1) +byte-csi-bracket+)
-              (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)
-              (= (aref buffer (1- length)) +byte-tilde+))
-         (let ((key (%csi-tilde-key buffer length)))
-           (%prefix-string-entry-result
-            (and key (%run-bound-string-key session +table-prefix+ key)))))
-        ;; Complete 3-byte CSI sequence: ESC [ FINAL
-        ((and (= length 3) (= (aref buffer 1) +byte-csi-bracket+))
-         (let ((final-byte (aref buffer 2)))
-           (cond
-             ;; A digit final begins a parameterised sequence — ESC [ 1 ; MOD
-             ;; FINAL (modifier-arrow) or ESC [ N ~ (function key).  Keep
-             ;; accumulating; the tilde / modifier branches resolve it.  (Was
-             ;; limited to '1', which dropped the '~' of ESC [ 5 ~ etc.)
-             ((<= +byte-digit-0+ final-byte +byte-digit-9+)
-              (values nil (%make-prefix-csi-k session buffer)))
-             (t
-              ;; A user binding (`bind -T prefix Up <cmd>`) overrides the built-in
-              ;; select-pane default; fall back only when the key is unbound.
-              (let ((name    (%arrow-final-name final-byte))
-                    (command (%prefix-csi-arrow-cmd final-byte))
-                    (entry   nil))
-                (setf entry (%run-bound-string-key session +table-prefix+ name))
-                (unless entry
-                  ;; dispatch-command always returns NIL; the when's value is discarded.
-                  (when command (dispatch-command session command nil)))
-                (%prefix-string-entry-result entry))))))
-        ;; 4-5 byte: ESC [ 1 ; [MOD] — keep accumulating for the final letter
-        ((and (<= 4 length 5) (%csi-1-semi-prefix-p buffer))
-         (values nil (%make-prefix-csi-k session buffer)))
-        ;; Complete 6-byte modifier CSI: ESC [ 1 ; MOD FINAL
-        ((and (= length 6) (%csi-1-semi-prefix-p buffer))
-         (let ((entry (%dispatch-modifier-arrow session (aref buffer 4) (aref buffer 5))))
-           (setf *dirty* t)
-           (%prefix-string-entry-result entry)))
-        ;; 2-byte non-CSI: a prefix meta chord (C-b then Alt+key → ESC <key>).
-        ;; Look up `bind M-<key>` in the prefix table; if unbound, discard as
-        ;; before (no passthrough after the prefix).
-        ((and (= length 2) (/= (aref buffer 1) +byte-csi-bracket+))
-         (%prefix-string-entry-result
-          (%run-bound-string-key session +table-prefix+
-                                 (%meta-key-name (aref buffer 1)))))
-        ;; Buffer at capacity (>= 6 bytes but unrecognised) — discard and return
-        ;; to ground to avoid permanent stuck-state on malformed CSI sequences.
+        ((%prefix-ss3-introducer-p buffer length)
+         (%handle-ss3-introducer-after-prefix session buffer))
+        ((%prefix-ss3-final-p buffer length)
+         (%handle-ss3-after-prefix session buffer))
+        ((%prefix-tilde-key-p buffer length)
+         (%handle-tilde-key-after-prefix session buffer length))
+        ((%prefix-3byte-csi-p buffer length)
+         (%handle-3byte-csi-after-prefix session buffer))
+        ((%prefix-modifier-in-progress-p buffer length)
+         (%handle-modifier-in-progress-after-prefix session buffer))
+        ((%prefix-6byte-modifier-p buffer length)
+         (%handle-6byte-modifier-after-prefix session buffer))
+        ((%prefix-2byte-meta-p buffer length)
+         (%handle-2byte-meta-after-prefix session buffer))
         ((>= length 6)
-         (values nil #'%ground-input-state))
-        ;; Still accumulating (1-5 bytes so far)
-        (t (values nil (%make-prefix-csi-k session buffer)))))))
+         (%handle-overflow-after-prefix))
+        (t (%handle-still-accumulating-after-prefix session buffer))))))
 
 (define-cps-state %after-prefix-input-state (session byte)
   ;; ESC introduces a multi-byte prefix sequence (C-b arrow/modifier key sequences).

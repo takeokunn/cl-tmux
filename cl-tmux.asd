@@ -57,7 +57,8 @@
        (:file "edit")      ; delete/insert chars+lines (uses %copy-row, %clear-row from scroll)
        (:file "cursor")    ; cursor movement (uses scroll-up-one)
        (:file "char-write") ; combining chars, DEC graphics, wide/normal cell writes (uses cursor-down/scroll, insert-chars)
-       (:file "modes")     ; DEC modes — alt-screen + DEC PM rule table (parts I-II)
+       (:file "modes-alt-screen") ; DEC modes — alt-screen enter/exit helpers (part I)
+       (:file "modes-dec-pm")     ; DEC modes — DEC PM rule-table macro + dispatch table (part II)
        (:file "modes-d")   ; DEC modes — focus, DECSC, reset, ANSI SM/RM, charset (parts III-IV)
        (:file "sgr")
        (:file "csi-replies")   ; CSI reply-queue helpers (DSR/DA/CPR/DECRQM/XTWINOPS); loads before csi
@@ -107,7 +108,8 @@
      (:module "domain/options"
       :serial t
       :components
-      ((:file "options")        ; global option registry: hash tables + define-tmux/server-options data
+      ((:file "options")             ; global option registry: hash-tables + define-option-table macros
+       (:file "options-registry-data") ; define-tmux-options/define-server-options DATA tables
        (:file "options-scope")  ; scope dispatch + array-name parsing + spec lookup + presence predicates
        (:file "options-api")    ; type coercions, define-option-accessor, public get/set API, scoped overrides
        (:file "options-display"))) ; option display/rendering helpers (show-options, show-option-values)
@@ -130,7 +132,8 @@
        (:file "overlay")))              ; overlay, popup, menu state (used by dispatch/events/renderer)
      ;; commands context: general pane/window ops + the cohesive copy-mode
      ;; cluster (its own sub-area). commands-core loads first, then copy-mode,
-     ;; then commands/commands-keys (split back to root via :pathname).
+     ;; then commands/commands-keys-data/commands-tokenizer/commands-keys/
+     ;; commands-shell (split back to root via :pathname).
      (:module "application/commands"
       :serial t
       :components
@@ -155,12 +158,16 @@
       :serial t
       :components
       ((:file "commands")               ; loads commands-capture-pane fragment
-       (:file "commands-keys")))          ; send-keys translation, tokenizer, shell helpers
+       (:file "commands-keys-data")      ; send-keys key-name data tables
+       (:file "commands-tokenizer")      ; shell-style command-string tokeniser
+       (:file "commands-keys")           ; send-keys key-name translation logic
+       (:file "commands-shell")))        ; run-shell / if-shell subprocess execution
      (:module "presentation/renderer"
       :serial t
       :components
       ((:file "renderer-format")     ; ANSI primitives
-       (:file "renderer-style")     ; style-string parsing + SGR dispatch tables
+       (:file "renderer-style-data") ; declarative style/SGR/border-charset dispatch tables
+       (:file "renderer-style")     ; style-string parsing + SGR emission logic
        (:file "renderer-pane-selection") ; selection bounds helpers
        (:file "renderer-pane-clock")     ; big digits + display-panes clock overlay
        (:file "renderer-pane-search")    ; pane content search match ranges
@@ -215,7 +222,8 @@
        (:file "dispatch-commands-pane-x") ; copy-mode -X command name table (send-keys -X dispatch)
        (:file "dispatch-commands-shell")   ; shell/pane-ops %cmd-* (run-shell, if-shell, capture, resize, join, break, clear, rotate)
        (:file "dispatch-commands-list-data") ; *command-usage-table* pure data (canonical-name → usage-flags)
-       (:file "dispatch-commands-list")    ; list-sessions/windows/panes/clients/commands + wait-for arg checks
+       (:file "dispatch-commands-list")    ; list-sessions/windows/panes/clients arg parsing + overlay handlers
+       (:file "dispatch-commands-list-commands") ; list-commands + wait-for arg parsing/handlers
        (:file "dispatch-commands-auto")   ; window-nav/session-mgmt %cmd-* (find-window, refresh/lock, hooks, bind)
        (:file "dispatch-commands-auto-env") ; show-environment/set-environment helpers + %cmd-* handlers
        (:file "dispatch-commands-auto-pane") ; pane input/prefix runtime commands %cmd-* (send-keys, send-prefix)

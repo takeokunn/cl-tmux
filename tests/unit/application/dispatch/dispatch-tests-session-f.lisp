@@ -202,6 +202,41 @@
       (is (string= "" (get-output-stream-string out))
           "no notification after the callbacks are removed"))))
 
+(test control-notifications-removed-stop-emitting-every-hook-type
+  "%remove-control-notifications unregisters ALL of the hook types installed by
+   %install-control-notifications, not just +hook-after-new-window+ — fire every
+   one of the 9 hooks it wires and confirm none produce output once removed."
+  (with-isolated-hooks
+    (let* ((out      (make-string-output-stream))
+           (handlers (cl-tmux::%install-control-notifications out))
+           (win      (make-fake-window 8 "y" :npanes 2))
+           (pane     (first (cl-tmux/model:window-panes win)))
+           (sess     (make-fake-session :nwindows 2)))
+      (cl-tmux::%remove-control-notifications handlers)
+      (dolist (fire (list
+                     (lambda () (cl-tmux/hooks:run-hooks
+                                 cl-tmux/hooks:+hook-after-new-window+ win))
+                     (lambda () (cl-tmux/hooks:run-hooks
+                                 cl-tmux/hooks:+hook-after-kill-window+ win))
+                     (lambda () (cl-tmux/hooks:run-hooks
+                                 cl-tmux/hooks:+hook-window-renamed+ win))
+                     (lambda () (cl-tmux/hooks:run-hooks
+                                 cl-tmux/hooks:+hook-session-renamed+ sess))
+                     (lambda () (cl-tmux/hooks:run-hooks
+                                 cl-tmux/hooks:+hook-window-pane-changed+ win))
+                     (lambda () (cl-tmux/hooks:run-hooks
+                                 cl-tmux/hooks:+hook-session-window-changed+ sess))
+                     (lambda () (cl-tmux/hooks:run-hooks
+                                 cl-tmux/hooks:+hook-after-resize-pane+ win))
+                     (lambda () (cl-tmux/hooks:run-hooks
+                                 cl-tmux/hooks:+hook-after-split-window+ pane))
+                     (lambda () (cl-tmux/hooks:run-hooks
+                                 cl-tmux/hooks:+hook-pane-output+ pane
+                                 (coerce '(104 105) '(vector (unsigned-byte 8)))))))
+        (funcall fire))
+      (is (string= "" (get-output-stream-string out))
+          "none of the 9 installed hook types emit after removal"))))
+
 (test control-run-command-unknown-is-error
   "An unknown command closes the control-mode reply with %error, not %end."
   (with-fake-session (s)
@@ -221,6 +256,40 @@
              (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-resize-pane+ win)
              (is (search "%layout-change @3" (get-output-stream-string out))
                  "%layout-change emitted on resize"))
+        (cl-tmux::%remove-control-notifications handlers)))))
+
+(test control-notifications-layout-change-on-split-window-with-pane
+  "after-split-window fires with a PANE (not a window) — %control-window-of must
+   resolve it to its owning window, and %layout-change must carry that window's id."
+  (with-isolated-hooks
+    (let* ((out      (make-string-output-stream))
+           (handlers (cl-tmux::%install-control-notifications out)))
+      (unwind-protect
+           (let* ((win  (make-fake-window 4 "w" :npanes 2))
+                  (pane (first (cl-tmux/model:window-panes win))))
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-split-window+ pane)
+             (is (search "%layout-change @4" (get-output-stream-string out))
+                 "%layout-change carries the pane's owning window id, not the pane id"))
+        (cl-tmux::%remove-control-notifications handlers)))))
+
+(test control-notifications-layout-change-zoom-flag
+  "%layout-change's raw-flags field is Z when the window is zoomed, * otherwise."
+  (with-isolated-hooks
+    (let* ((out      (make-string-output-stream))
+           (handlers (cl-tmux::%install-control-notifications out)))
+      (unwind-protect
+           (let ((win (make-fake-window 6 "w")))
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-resize-pane+ win)
+             (is (search "@6" (get-output-stream-string out))
+                 "sanity: not-zoomed window still emits a layout-change")
+             (setf (cl-tmux/model:window-zoom-p win) t)
+             (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-after-resize-pane+ win)
+             (let ((line (get-output-stream-string out)))
+               (is (search (format nil "%layout-change @6 ~A ~A Z"
+                                   (cl-tmux/model:layout->string win)
+                                   (cl-tmux/model:layout->string win))
+                           line)
+                   "zoomed window's %layout-change ends with the Z flag")))
         (cl-tmux::%remove-control-notifications handlers)))))
 
 ;;; ── Server-lifecycle command-name reachability ───────────────────────────────

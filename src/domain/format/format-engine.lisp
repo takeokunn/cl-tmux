@@ -15,6 +15,55 @@
                         :timeout +format-shell-command-timeout+)
     (error () "")))
 
+(defun %prefixed-mod-p (mod letter)
+  "T when MOD is exactly LETTER or LETTER followed by '/flags' — the shared
+   shape of the m[/r][/i]: and C[/r][/i]: modifier tokens."
+  (and (plusp (length mod))
+       (char= (char mod 0) letter)
+       (or (= (length mod) 1) (char= (char mod 1) #\/))))
+
+(defun %expand-timestamp-modifier (rest context out)
+  "#{t:...} — strftime modifier or #{t:session_last_attached}-style timestamp.
+   When REST resolves to a positive integer (CL universal-time) format that
+   timestamp; otherwise treat REST as a strftime format string for the current time."
+  (let* ((looked-up (%lookup context (%variable-to-keyword rest)))
+         (ts        (and (stringp looked-up) (plusp (length looked-up))
+                         (cl-tmux::%parse-integer-or-nil looked-up :junk-allowed t))))
+    (if (and ts (plusp ts))
+        (write-string (%strftime-format-at "" ts) out)
+        (write-string (%strftime-format rest) out))))
+
+(defun %expand-match-modifier (mod rest context out)
+  "#{m:pat,str} / #{m/r:..} / #{m/ri:..} — glob or regex match → \"1\" or \"0\"."
+  (let* ((comma    (%top-level-comma rest 0))
+         (pat-str  (expand-format (if comma (subseq rest 0 comma)      rest) context))
+         (test-str (expand-format (if comma (subseq rest (1+ comma)) "") context))
+         (regex-p  (and (> (length mod) 1) (find #\r mod :start 1)))
+         (ci-p     (and (> (length mod) 1) (find #\i mod :start 1))))
+    (write-string (if (if regex-p
+                          (%regex-match-p pat-str test-str ci-p)
+                          (%glob-match-p pat-str test-str))
+                      "1" "0")
+                  out)))
+
+(defun %expand-charcode-modifier (rest context out)
+  "#{a:N} — character whose code is N (bare literal or nested #{...} operand)."
+  (let* ((n-str (if (search "#{" rest) (expand-format rest context) rest))
+         (code  (cl-tmux::%parse-integer-or-nil n-str :junk-allowed t))
+         (ch    (and code (<= 0 code (1- char-code-limit))
+                     (ignore-errors (code-char code)))))
+    (when ch (write-string (string ch) out))))
+
+(defun %expand-value-modifier (mod rest content context out)
+  "Fallback arm: value modifier (b, d, U, L, n, =N, pN, s///) or plain context lookup.
+   CONTENT is the full brace content (MOD + ':' + REST), used to attempt a plain
+   context lookup when MOD is unrecognised."
+  (let* ((value    (%resolve-format-value rest context))
+         (modified (%apply-format-modifier mod value)))
+    (write-string
+     (or modified (%lookup context (%variable-to-keyword content)))
+     out)))
+
 (defun %expand-brace-modifier (mod rest content context out)
   "Dispatch #{MOD:REST} — the 9-way modifier/operator expansion.
    CONTENT is the full brace content (MOD + ':' + REST), used by the value-modifier
@@ -23,12 +72,12 @@
      comparison ops → %apply-comparison  (==, !=, <, >, <=, >=)
      logical ops    → %apply-logical     (||, &&)
      W / S / P      → window / session / pane iteration
-     t              → strftime / stored-timestamp lookup
-     m[/r][/i]:    → glob or regex match → \"1\" or \"0\"
-     a:             → code-char(N)
-     C[/r][/i]:    → pane content search → line-number string
+     t              → %expand-timestamp-modifier
+     m[/r][/i]:    → %expand-match-modifier    → \"1\" or \"0\"
+     a:             → %expand-charcode-modifier
+     C[/r][/i]:    → %format-content-search    → line-number string
      l              → literal: emit REST unexpanded (#{l:#{x}} → \"#{x}\")
-     fallback       → value modifier (b, d, U, L, n, =N, pN, s///) or plain lookup"
+     fallback       → %expand-value-modifier   (b, d, U, L, n, =N, pN, s///) or plain lookup"
   (cond
     ;; comparison operators: #{==:a,b} #{!=:a,b} #{<:a,b} #{>:..} #{<=:..} #{>=:..}
     ((%comparison-op-p mod)
@@ -45,41 +94,17 @@
     ;; #{P:active,inactive} — pane list (no auto-separator)
     ((string= mod "P")
      (write-string (%expand-pane-iteration rest context) out))
-    ;; #{t:...} — strftime modifier or #{t:session_last_attached}-style timestamp.
-    ;; When REST resolves to a positive integer (CL universal-time) format that
-    ;; timestamp; otherwise treat REST as a strftime format string for the current time.
+    ;; #{t:...} — strftime modifier or stored-timestamp lookup
     ((string= mod "t")
-     (let* ((looked-up (%lookup context (%variable-to-keyword rest)))
-            (ts        (and (stringp looked-up) (plusp (length looked-up))
-                            (cl-tmux::%parse-integer-or-nil looked-up :junk-allowed t))))
-       (if (and ts (plusp ts))
-           (write-string (%strftime-format-at "" ts) out)
-           (write-string (%strftime-format rest) out))))
+     (%expand-timestamp-modifier rest context out))
     ;; #{m:pat,str} / #{m/r:..} / #{m/ri:..} — glob or regex match → "1" / "0"
-    ((and (plusp (length mod))
-          (char= (char mod 0) #\m)
-          (or (= (length mod) 1) (char= (char mod 1) #\/)))
-     (let* ((comma    (%top-level-comma rest 0))
-            (pat-str  (expand-format (if comma (subseq rest 0 comma)      rest) context))
-            (test-str (expand-format (if comma (subseq rest (1+ comma)) "") context))
-            (regex-p  (and (> (length mod) 1) (find #\r mod :start 1)))
-            (ci-p     (and (> (length mod) 1) (find #\i mod :start 1))))
-       (write-string (if (if regex-p
-                             (%regex-match-p pat-str test-str ci-p)
-                             (%glob-match-p pat-str test-str))
-                         "1" "0")
-                     out)))
+    ((%prefixed-mod-p mod #\m)
+     (%expand-match-modifier mod rest context out))
     ;; #{a:N} — character whose code is N (bare literal or nested #{...} operand)
     ((string= mod "a")
-     (let* ((n-str (if (search "#{" rest) (expand-format rest context) rest))
-            (code  (cl-tmux::%parse-integer-or-nil n-str :junk-allowed t))
-            (ch    (and code (<= 0 code (1- char-code-limit))
-                        (ignore-errors (code-char code)))))
-       (when ch (write-string (string ch) out))))
+     (%expand-charcode-modifier rest context out))
     ;; #{C:term} / #{C/r:..} / #{C/ri:..} — pane content search → line number
-    ((and (plusp (length mod))
-          (char= (char mod 0) #\C)
-          (or (= (length mod) 1) (char= (char mod 1) #\/)))
+    ((%prefixed-mod-p mod #\C)
      (write-string (%format-content-search mod rest context) out))
     ;; #{l:rest} — literal: emit REST exactly, WITHOUT resolving/expanding it.
     ;; tmux's FORMAT_LITERAL modifier, e.g. #{l:#{pane_in_mode}} → "#{pane_in_mode}".
@@ -88,11 +113,58 @@
      (write-string rest out))
     ;; Fallback: value modifier (b, d, U, L, n, =N, pN, s///) or plain context lookup.
     (t
-     (let* ((value    (%resolve-format-value rest context))
-            (modified (%apply-format-modifier mod value)))
-       (write-string
-        (or modified (%lookup context (%variable-to-keyword content)))
-        out)))))
+     (%expand-value-modifier mod rest content context out))))
+
+(defun %arithmetic-brace-fields (content pipe2)
+  "Return (values ARGS FLAGS) — the top-level '|'-separated fields of CONTENT
+   after the OP field (which ends at PIPE2).  The LAST field is ARGS (the A,B
+   operands); every earlier field is a flag (f and/or a precision digit-string)."
+  (let ((fields '()) (i (1+ pipe2)))
+    (loop for p = (%top-level-pipe content i)
+          do (if p
+                 (progn (push (subseq content i p) fields) (setf i (1+ p)))
+                 (progn (push (subseq content i) fields) (return))))
+    (setf fields (nreverse fields))
+    (values (car (last fields)) (butlast fields))))
+
+(defun %arithmetic-brace-precision (flags use-fp)
+  "Explicit digit-string flag wins; else 2 when F flag is present, else 0."
+  (let ((prec-s (find-if (lambda (f)
+                           (and (plusp (length f)) (every #'digit-char-p f)))
+                         flags)))
+    (cond (prec-s (parse-integer prec-s))
+          (use-fp 2)
+          (t 0))))
+
+(defun %arithmetic-brace-operand (str use-fp)
+  "Coerce STR (already format-expanded) into a double-float operand, truncating
+   to an integer value first unless USE-FP requests fractional precision."
+  (if use-fp
+      (%parse-double str)
+      (coerce (truncate (%parse-double str)) 'double-float)))
+
+(defun %expand-arithmetic-brace (content context out)
+  "Expand #{e|OP|[f|][PREC|]A,B} — arithmetic and comparison — into OUT.
+   OP        : + - * / % m  (m alias for %), or == != < > <= >=.
+   f flag    : optional second field; operands parsed as doubles.
+   PREC      : optional precision field (digits); default 0 integer,
+               2 when f is present.  Last field is the A,B operands.
+   CONTENT is the full brace content (already known to start with \"e|\")."
+  (let* ((pipe2 (%top-level-pipe content 2))
+         (op    (and pipe2 (subseq content 2 pipe2))))
+    (when (and op (plusp (length op)))
+      (multiple-value-bind (args flags) (%arithmetic-brace-fields content pipe2)
+        (let* ((use-fp (member "f" flags :test #'string=))
+               (prec   (%arithmetic-brace-precision flags use-fp))
+               (comma  (%top-level-comma args 0))
+               (a-str  (expand-format (if comma (subseq args 0 comma) args) context))
+               (b-str  (expand-format (if comma (subseq args (1+ comma)) "0") context))
+               (a      (%arithmetic-brace-operand a-str use-fp))
+               (b      (%arithmetic-brace-operand b-str use-fp))
+               (result (%dispatch-arithmetic-op op a b (and use-fp t))))
+          (when result
+            (write-string (if (stringp result) result (%format-arith-result result prec))
+                          out)))))))
 
 (defun %matching-close-brace (template start)
   "Index of the } that closes the #{ whose content begins at START, accounting
@@ -119,52 +191,13 @@
         (progn (write-char #\# out) (1- start))   ; no close: treat # literally
         (let ((content (subseq template start close)))
           (cond
-            ;; #{e|OP|[f|][PREC|]A,B} — arithmetic and comparison.
-            ;;   OP        : + - * / % m  (m alias for %), or == != < > <= >=.
-            ;;   f flag    : optional second field; operands parsed as doubles.
-            ;;   PREC      : optional precision field (digits); default 0 integer,
-            ;;               2 when f is present.  Last field is the A,B operands.
-            ;; Checked before the colon branch (no colon in the e|..| syntax).
+            ;; #{e|OP|[f|][PREC|]A,B} — arithmetic and comparison; delegate to
+            ;; %expand-arithmetic-brace.  Checked before the colon branch
+            ;; (no colon in the e|..| syntax).
             ((and (>= (length content) 3)
                   (char= (char content 0) #\e)
                   (char= (char content 1) #\|))
-             (let* ((pipe2  (%top-level-pipe content 2))
-                    (op     (and pipe2 (subseq content 2 pipe2))))
-               (when (and op (plusp (length op)))
-                 ;; Collect remaining top-level '|'-separated fields after OP.
-                 ;; The LAST field is the operands; earlier fields are f/PREC flags.
-                 (let* ((fields '())
-                        (i      (1+ pipe2)))
-                   (loop for p = (%top-level-pipe content i)
-                         do (if p
-                                (progn (push (subseq content i p) fields) (setf i (1+ p)))
-                                (progn (push (subseq content i) fields) (return))))
-                   (setf fields (nreverse fields))
-                   (let* ((args   (car (last fields)))
-                          (flags  (butlast fields))
-                          (use-fp (member "f" flags :test #'string=))
-                          (prec-s (find-if (lambda (f)
-                                             (and (plusp (length f))
-                                                  (every #'digit-char-p f)))
-                                           flags))
-                          (prec   (cond (prec-s (parse-integer prec-s))
-                                        (use-fp 2)
-                                        (t 0)))
-                          (comma  (%top-level-comma args 0))
-                          (a-str  (expand-format (if comma (subseq args 0 comma) args) context))
-                          (b-str  (expand-format (if comma (subseq args (1+ comma)) "0") context))
-                          (a      (if use-fp
-                                      (%parse-double a-str)
-                                      (coerce (truncate (%parse-double a-str)) 'double-float)))
-                          (b      (if use-fp
-                                      (%parse-double b-str)
-                                      (coerce (truncate (%parse-double b-str)) 'double-float)))
-                          (result (%dispatch-arithmetic-op op a b (and use-fp t))))
-                     (when result
-                       (write-string (if (stringp result)
-                                         result
-                                         (%format-arith-result result prec))
-                                     out)))))))
+             (%expand-arithmetic-brace content context out))
             ;; #{?cond,true,false} — conditional.
             ;; cond-str is looked up in context first; a context hit uses the looked-up
             ;; value so #{?window_active,YES,NO} works alongside #{?1,yes,no}.
@@ -280,3 +313,11 @@
   (with-output-to-string (out)
     (loop for i = 0 then (%expand-step template i context out)
           while (< i (length template)))))
+
+(defun expand-format-safe (template context &optional (fallback template))
+  "Like EXPAND-FORMAT, but returns FALLBACK (default: TEMPLATE unexpanded)
+   instead of signalling when expansion errors.  Consolidates the
+   handler-case-around-expand-format shape duplicated across the renderer
+   and dispatch layers."
+  (handler-case (expand-format template context)
+    (error () fallback)))

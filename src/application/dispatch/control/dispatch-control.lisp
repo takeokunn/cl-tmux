@@ -52,6 +52,25 @@
                         (window-id win) layout layout
                         (if (cl-tmux/model:window-zoom-p win) "Z" "*")))))))
 
+(defmacro %define-hook-emitters (&body rows)
+  "Expand ROWS — each (HOOK ARGS-LAMBDA-LIST . BODY) — into a list of
+   (hook . callback) conses.  ARGS-LAMBDA-LIST destructures the hook's &rest
+   argument list; BODY closes over the enclosing lexical environment (e.g. an
+   OUTPUT stream).  Used by %install-control-notifications to build its
+   hook-pairs table declaratively instead of hand-rolling each
+   `(cons hook (lambda ...))`."
+  `(list
+    ,@(mapcar (lambda (row)
+                (destructuring-bind (hook args-lambda-list &body body) row
+                  `(cons ,hook
+                         (lambda (&rest %hook-args)
+                           (destructuring-bind (&optional ,@args-lambda-list
+                                                 &rest %hook-rest)
+                               %hook-args
+                             (declare (ignorable %hook-rest))
+                             ,@body)))))
+              rows)))
+
 (defun %install-control-notifications (output)
   "Register hook callbacks that write control-mode (-C) %-notifications to OUTPUT as
    windows/sessions change (the asynchronous half of control mode).  Returns the
@@ -59,63 +78,49 @@
    them when the client detaches.  Each callback is variadic so it tolerates the
    hook's argument list; the changed object is the first argument."
   (let ((hook-pairs
-          (list
-           (cons cl-tmux/hooks:+hook-after-new-window+
-                 (lambda (&rest a)
-                   (%control-emit output
-                                  (cl-tmux/control:control-window-add
-                                   (window-id (first a))))))
-           (cons cl-tmux/hooks:+hook-after-kill-window+
-                 (lambda (&rest a)
-                   (%control-emit output
-                                  (cl-tmux/control:control-window-close
-                                   (window-id (first a))))))
-           (cons cl-tmux/hooks:+hook-window-renamed+
-                 (lambda (&rest a)
-                   (%control-emit output
-                                  (cl-tmux/control:control-window-renamed
-                                   (window-id (first a)) (window-name (first a))))))
-           (cons cl-tmux/hooks:+hook-session-renamed+
-                 (lambda (&rest a)
-                   (%control-emit output
-                                  (cl-tmux/control:control-session-renamed
-                                   (session-id (first a)) (session-name (first a))))))
-           ;; Active-pane changed within a window (%window-pane-changed) and a
-           ;; session's active window changed (%session-window-changed).  Guard the
-           ;; NIL active-pane / active-window case so a partially-torn-down object
-           ;; can't emit a malformed "@N %NIL" line.
-           (cons cl-tmux/hooks:+hook-window-pane-changed+
-                 (lambda (&rest a)
-                   (let* ((win (first a))
-                          (ap (and win (window-active-pane win))))
-                     (when ap
-                       (%control-emit output
-                                      (cl-tmux/control:control-window-pane-changed
-                                       (window-id win) (pane-id ap)))))))
-           (cons cl-tmux/hooks:+hook-session-window-changed+
-                 (lambda (&rest a)
-                   (let* ((sess (first a))
-                          (win (and sess (session-active-window sess))))
-                     (when win
-                       (%control-emit output
-                                      (cl-tmux/control:control-session-window-changed
-                                       (session-id sess) (window-id win)))))))
-           ;; Layout changes: resize fires with the window, split with the pane.
-           (cons cl-tmux/hooks:+hook-after-resize-pane+
-                 (lambda (&rest a) (%control-emit-layout output (first a))))
-           (cons cl-tmux/hooks:+hook-after-split-window+
-                 (lambda (&rest a) (%control-emit-layout output (first a))))
-           ;; Pane PTY output: emit %output %<pane-id> <escaped-bytes>.
-           (cons cl-tmux/hooks:+hook-pane-output+
-                 (lambda (&rest a)
-                   (let* ((pane (first a))
-                          (raw (second a))
-                          (data (if (stringp raw) raw
-                                    (map 'string #'code-char raw))))
-                     (when (and pane (plusp (length data)))
-                       (%control-emit output
-                                      (cl-tmux/control:control-output
-                                       (cl-tmux/model:pane-id pane) data)))))))))
+          (%define-hook-emitters
+            (cl-tmux/hooks:+hook-after-new-window+ (win)
+              (%control-emit output
+                             (cl-tmux/control:control-window-add (window-id win))))
+            (cl-tmux/hooks:+hook-after-kill-window+ (win)
+              (%control-emit output
+                             (cl-tmux/control:control-window-close (window-id win))))
+            (cl-tmux/hooks:+hook-window-renamed+ (win)
+              (%control-emit output
+                             (cl-tmux/control:control-window-renamed
+                              (window-id win) (window-name win))))
+            (cl-tmux/hooks:+hook-session-renamed+ (sess)
+              (%control-emit output
+                             (cl-tmux/control:control-session-renamed
+                              (session-id sess) (session-name sess))))
+            ;; Active-pane changed within a window (%window-pane-changed) and a
+            ;; session's active window changed (%session-window-changed).  Guard the
+            ;; NIL active-pane / active-window case so a partially-torn-down object
+            ;; can't emit a malformed "@N %NIL" line.
+            (cl-tmux/hooks:+hook-window-pane-changed+ (win)
+              (let ((ap (and win (window-active-pane win))))
+                (when ap
+                  (%control-emit output
+                                 (cl-tmux/control:control-window-pane-changed
+                                  (window-id win) (pane-id ap))))))
+            (cl-tmux/hooks:+hook-session-window-changed+ (sess)
+              (let ((win (and sess (session-active-window sess))))
+                (when win
+                  (%control-emit output
+                                 (cl-tmux/control:control-session-window-changed
+                                  (session-id sess) (window-id win))))))
+            ;; Layout changes: resize fires with the window, split with the pane.
+            (cl-tmux/hooks:+hook-after-resize-pane+ (obj)
+              (%control-emit-layout output obj))
+            (cl-tmux/hooks:+hook-after-split-window+ (obj)
+              (%control-emit-layout output obj))
+            ;; Pane PTY output: emit %output %<pane-id> <escaped-bytes>.
+            (cl-tmux/hooks:+hook-pane-output+ (pane raw)
+              (let ((data (if (stringp raw) raw (map 'string #'code-char raw))))
+                (when (and pane (plusp (length data)))
+                  (%control-emit output
+                                 (cl-tmux/control:control-output
+                                  (cl-tmux/model:pane-id pane) data))))))))
     (mapc (lambda (pair) (cl-tmux/hooks:add-hook (car pair) (cdr pair)))
           hook-pairs)
     hook-pairs))

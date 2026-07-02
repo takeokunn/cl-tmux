@@ -9,7 +9,8 @@
 ;;;; File layout (all in the cl-tmux/renderer package):
 ;;;;
 ;;;;   renderer-format.lisp   — ANSI escape-code primitives (move-to, SGR, cursor)
-;;;;   renderer-style.lisp    — Style-string parsing and SGR dispatch tables
+;;;;   renderer-style-data.lisp — Declarative style/SGR/border-charset dispatch tables
+;;;;   renderer-style.lisp    — Style-string parsing and SGR emission logic
 ;;;;   renderer-pane.lisp     — Pane and split-tree border rendering
 ;;;;   renderer-overlay.lisp  — Popup and menu box-drawing
 ;;;;   renderer-statusbar.lisp — Status bar composition (pure, no session knowledge)

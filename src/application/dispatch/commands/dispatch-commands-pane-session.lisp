@@ -156,6 +156,16 @@
         (setf *dirty* t))
       existing)))
 
+(defun %new-session-attach-existing (name detach-p print-p print-fmt)
+  "new-session -A: if a session named NAME already exists, attach to (return) it
+   instead of creating a new one, printing its info first when -P was given.
+   Returns the existing session, or NIL when NAME is not yet in use (the caller
+   then falls through to ordinary session creation)."
+  (let ((existing (%new-session-return-existing name detach-p)))
+    (when (and existing print-p)
+      (%show-session-info-overlay existing print-fmt))
+    existing))
+
 (defun %new-session-resolve-name (name attach-if-exists flags)
   "Return the final session name, or NIL when an explicit duplicate is refused."
   (if (and (not attach-if-exists)
@@ -252,10 +262,8 @@
       (multiple-value-bind (cols rows)
           (%new-session-dimensions-from-flags flags detach-p)
         (when attach-if-exists
-          (let ((existing (%new-session-return-existing name detach-p)))
-            (when (and existing print-p)
-              (%show-session-info-overlay existing print-fmt))
-            (return-from %cmd-new-session-arg existing)))
+          (return-from %cmd-new-session-arg
+            (%new-session-attach-existing name detach-p print-p print-fmt)))
         (setf name (%new-session-resolve-name name attach-if-exists flags))
         (when (null name)
           (return-from %cmd-new-session-arg nil))

@@ -45,6 +45,16 @@
   "List of CLIENT-CONN structs currently attached to the multi-client server.
    Mutated only by the single server event loop, so it needs no locking.")
 
+(defmacro with-loop-safe-error ((&optional condition-var &key on-error) &body body)
+  "Run BODY, catching any ERROR so one bad client/command can never wedge the
+   multi-client event loop.  On success, returns BODY's value; on an ERROR,
+   evaluates and returns ON-ERROR instead — optionally with the condition bound
+   to CONDITION-VAR so ON-ERROR can log it.  This is the single shape behind
+   this file's 'never let one client take down the server loop' invariant."
+  `(handler-case (progn ,@body)
+     (error ,(if condition-var (list condition-var) '())
+       ,on-error)))
+
 (defun %client-fds ()
   "The socket fds of every attached client (for the select read-set)."
   (mapcar #'client-conn-fd *clients*))
@@ -132,8 +142,8 @@
    A client whose send raises an error is silently dropped so one dead peer
    cannot wedge the broadcast loop."
   (dolist (conn (copy-list *clients*))
-    (handler-case (send-frame (client-conn-stream conn) frame)
-      (error () (%drop-client conn)))))
+    (with-loop-safe-error (nil :on-error (%drop-client conn))
+      (send-frame (client-conn-stream conn) frame))))
 
 (defun %broadcast-frame (session)
   "When *dirty* and at least one client is attached, render ONE frame via
@@ -166,15 +176,15 @@
   "Run TOKENS server-side via %run-command-tokens, binding *defer-split-window-input*
    per INPUT-COMMAND-P.  Catches and reports any error so a bad forwarded command
    cannot take down the multi-client event loop; returns NIL on error."
-  (handler-case
-      (let ((*defer-split-window-input* input-command-p))
-        (%run-command-tokens session tokens))
-    (error (condition)
-      (format *error-output*
-              "~&cl-tmux: command failed: ~{~A~^ ~}: ~A~%"
-              tokens condition)
-      (force-output *error-output*)
-      nil)))
+  (with-loop-safe-error (condition
+                          :on-error (progn
+                                      (format *error-output*
+                                              "~&cl-tmux: command failed: ~{~A~^ ~}: ~A~%"
+                                              tokens condition)
+                                      (force-output *error-output*)
+                                      nil))
+    (let ((*defer-split-window-input* input-command-p))
+      (%run-command-tokens session tokens))))
 
 (defun %reply-with-command-output (conn)
   "Send CONN the captured overlay text (display-message, list-*, ...) as a
@@ -306,10 +316,9 @@
   "Read one frame from CONN and dispatch it via %handle-multi-client-message.
    A read/decode error is treated as a disconnect (:drop) so one malformed or
    dropped client cannot take down the multi-client event loop."
-  (handler-case
-      (multiple-value-bind (type payload) (read-frame (client-conn-stream conn))
-        (%handle-multi-client-message type payload session conn))
-    (error () :drop)))
+  (with-loop-safe-error (nil :on-error :drop)
+    (multiple-value-bind (type payload) (read-frame (client-conn-stream conn))
+      (%handle-multi-client-message type payload session conn))))
 
 (defun %apply-client-disposition (disposition conn)
   "Act on DISPOSITION (the result of dispatching CONN's message): drop CONN on

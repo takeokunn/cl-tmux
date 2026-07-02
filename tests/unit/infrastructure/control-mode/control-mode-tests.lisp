@@ -55,16 +55,26 @@
 
 (test control-session-and-window-notifications
   "Session/window notifications use the $ and @ id sigils."
-  (is (string= "%session-changed $1 main"
-               (cl-tmux/control:control-session-changed 1 "main")))
-  (is (string= "%session-renamed $2 work"
-               (cl-tmux/control:control-session-renamed 2 "work")))
-  (is (string= "%window-add @4"   (cl-tmux/control:control-window-add 4)))
-  (is (string= "%window-close @4" (cl-tmux/control:control-window-close 4)))
-  (is (string= "%window-renamed @4 editor"
-               (cl-tmux/control:control-window-renamed 4 "editor")))
-  (is (string= "%unlinked-window-add @9"
-               (cl-tmux/control:control-unlinked-window-add 9))))
+  (dolist (c `(("%session-changed $1 main"
+                ,(cl-tmux/control:control-session-changed 1 "main")
+                "session-changed uses $ sigil")
+               ("%session-renamed $2 work"
+                ,(cl-tmux/control:control-session-renamed 2 "work")
+                "session-renamed uses $ sigil")
+               ("%window-add @4"
+                ,(cl-tmux/control:control-window-add 4)
+                "window-add uses @ sigil")
+               ("%window-close @4"
+                ,(cl-tmux/control:control-window-close 4)
+                "window-close uses @ sigil")
+               ("%window-renamed @4 editor"
+                ,(cl-tmux/control:control-window-renamed 4 "editor")
+                "window-renamed uses @ sigil")
+               ("%unlinked-window-add @9"
+                ,(cl-tmux/control:control-unlinked-window-add 9)
+                "unlinked-window-add uses @ sigil")))
+    (destructuring-bind (expected actual desc) c
+      (is (string= expected actual) "~A" desc))))
 
 (test control-active-change-notifications
   "%window-pane-changed and %session-window-changed use the @ / % / $ id sigils
@@ -76,11 +86,18 @@
 
 (test control-layout-and-client-and-exit
   "layout-change, client-session-changed, and exit notifications."
-  (is (string= "%layout-change @1 abcd,80x24,0,0 abcd,80x24,0,0 *"
-               (cl-tmux/control:control-layout-change 1 "abcd,80x24,0,0"
-                                                      "abcd,80x24,0,0" "*")))
-  (is (string= "%client-session-changed client-1 $0 main"
-               (cl-tmux/control:control-client-session-changed "client-1" 0 "main")))
-  (is (string= "%exit" (cl-tmux/control:control-exit)))
-  (is (string= "%exit server exited"
-               (cl-tmux/control:control-exit "server exited"))))
+  (dolist (c `(("%layout-change @1 abcd,80x24,0,0 abcd,80x24,0,0 *"
+                ,(cl-tmux/control:control-layout-change 1 "abcd,80x24,0,0"
+                                                          "abcd,80x24,0,0" "*")
+                "layout-change lists window id then old and new layouts")
+               ("%client-session-changed client-1 $0 main"
+                ,(cl-tmux/control:control-client-session-changed "client-1" 0 "main")
+                "client-session-changed uses $ sigil for the session id")
+               ("%exit"
+                ,(cl-tmux/control:control-exit)
+                "bare exit has no reason")
+               ("%exit server exited"
+                ,(cl-tmux/control:control-exit "server exited")
+                "exit with reason appends it after the sigil")))
+    (destructuring-bind (expected actual desc) c
+      (is (string= expected actual) "~A" desc))))

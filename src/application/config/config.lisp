@@ -140,6 +140,9 @@
 ;;;
 ;;; define-initial-key-bindings registers key-table bindings at load time.
 ;;; After load, callers mutate the prefix table directly — no sync step needed.
+;;; The macro's DATA invocation (the char/digit -> command pairs) lives in
+;;; config-prefix-defaults.lisp, loaded below, alongside the other prefix and
+;;; copy-mode binding data tables.
 
 (defmacro define-initial-key-bindings (&rest pairs)
   "Define INSTALL-DEFAULT-PREFIX-BINDINGS, a function that populates the prefix
@@ -163,49 +166,29 @@
         pairs)
      (values)))
 
-(define-initial-key-bindings
-  (#\c :new-window)
-  (#\n :next-window)
-  (#\p :prev-window)
-  (#\" :split-horizontal)
-  (#\% :split-vertical)
-  (#\o :next-pane)
-  (#\d :detach)
-  (#\? :list-keys)
-  (#\[ :copy-mode-enter)
-  (#\] :paste-buffer)
-  (#\x :kill-pane-confirm)
-  (#\& :kill-window-confirm)
-  (#\, :rename-window)
-  (#\H :resize-left)
-  (#\J :resize-down)
-  (#\K :resize-up)
-  ;; These are the bootstrap defaults. events-loop.lisp installs the live
-  ;; bindings after startup (#\L -> last-session, #\! -> break-pane).
-  (#\L :resize-right)
-  (#\Z :zoom-toggle)        ; uppercase alias; events-loop.lisp adds lowercase z
-  (#\$ :rename-session)
-  (#\! :if-shell)
-  (:digits :select-window))
+(defun %install-key-bindings (table-name bindings &key repeatable)
+  "Bind each (KEY COMMAND) pair in BINDINGS into TABLE-NAME.
+   When REPEATABLE is non-NIL, each binding is registered with :repeatable t
+   (tmux's repeat-time behaviour for e.g. resize-pane arrow keys)."
+  (dolist (binding bindings)
+    (destructuring-bind (key command) binding
+      (key-table-bind table-name key command :repeatable repeatable)))
+  (values))
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  ;; Load prefix-table binding data: the define-initial-key-bindings
+  ;; invocation, +default-prefix-arrow-bindings+, +default-prefix-resize-bindings+,
+  ;; +default-copy-mode-named-navigation-bindings+.
+  (let ((root (or (ignore-errors (asdf:system-source-directory :cl-tmux))
+                  *load-pathname*
+                  *compile-file-pathname*)))
+    (load (merge-pathnames #P"src/application/config/config-prefix-defaults.lisp" root))))
 
 (defun install-default-prefix-string-bindings ()
   "Bind standard multi-byte prefix keys into the prefix key-table."
-  (dolist (binding '(("Up"    :select-pane-up)
-                     ("Down"  :select-pane-down)
-                     ("Left"  :select-pane-left)
-                     ("Right" :select-pane-right)))
-    (destructuring-bind (key command) binding
-      (key-table-bind +table-prefix+ key command)))
-  (dolist (binding '(("C-Up"    ("resize-pane" "-U" "1"))
-                     ("C-Down"  ("resize-pane" "-D" "1"))
-                     ("C-Left"  ("resize-pane" "-L" "1"))
-                     ("C-Right" ("resize-pane" "-R" "1"))
-                     ("M-Up"    ("resize-pane" "-U" "5"))
-                     ("M-Down"  ("resize-pane" "-D" "5"))
-                     ("M-Left"  ("resize-pane" "-L" "5"))
-                     ("M-Right" ("resize-pane" "-R" "5"))))
-    (destructuring-bind (key command) binding
-      (key-table-bind +table-prefix+ key command :repeatable t)))
+  (%install-key-bindings +table-prefix+ +default-prefix-arrow-bindings+)
+  (%install-key-bindings +table-prefix+ +default-prefix-resize-bindings+
+                          :repeatable t)
   (values))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
@@ -218,33 +201,15 @@
 
 ;;; ── Copy-mode binding helpers ────────────────────────────────────────────
 ;;;
-;;; %bind-copy-mode-named-navigation and %bind-copy-mode-bindings are helper
-;;; functions; the binding DATA tables (+default-copy-mode-bindings+,
-;;; +default-copy-mode-vi-bindings+) and the install-* functions that use them
-;;; live in config-copy-mode-defaults.lisp, loaded below.
+;;; %bind-copy-mode-named-navigation is a thin wrapper around the shared
+;;; %install-key-bindings helper (defined above); the binding DATA tables
+;;; (+default-copy-mode-bindings+, +default-copy-mode-vi-bindings+) and the
+;;; install-* functions that use them live in config-copy-mode-defaults.lisp,
+;;; loaded below.
 
 (defun %bind-copy-mode-named-navigation (table-name)
   "Install common named-key copy-mode navigation bindings into TABLE-NAME."
-  (dolist (binding '(("Up"       :copy-mode-cursor-up)
-                     ("Down"     :copy-mode-cursor-down)
-                     ("Left"     :copy-mode-cursor-left)
-                     ("Right"    :copy-mode-cursor-right)
-                     ("C-Up"     :copy-mode-scroll-up-line)
-                     ("C-Down"   :copy-mode-scroll-down-line)
-                     ("PageUp"   :copy-mode-page-up)
-                     ("PageDown" :copy-mode-page-down)
-                     ("Home"     :copy-mode-line-start)
-                     ("End"      :copy-mode-line-end)))
-    (destructuring-bind (key command) binding
-      (key-table-bind table-name key command)))
-  (values))
-
-(defun %bind-copy-mode-bindings (table-name bindings)
-  "Bind each (KEY COMMAND) pair in BINDINGS into TABLE-NAME."
-  (dolist (binding bindings)
-    (destructuring-bind (key command) binding
-      (key-table-bind table-name key command)))
-  (values))
+  (%install-key-bindings table-name +default-copy-mode-named-navigation-bindings+))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   ;; Load copy-mode binding data: +default-copy-mode-bindings+,

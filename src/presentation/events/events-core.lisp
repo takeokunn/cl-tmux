@@ -22,6 +22,18 @@
    MAKE-PROMPT-UTF8-K that folds the next UTF-8 continuation byte into the
    in-progress code point.")
 
+(defun %prompt-utf8-lead-decode (byte)
+  "Return (values initial-accumulator continuation-bytes-remaining) for a UTF-8
+   LEAD BYTE (caller must already know BYTE is a valid lead byte).  Mirrors
+   terminal/parser.lisp's UTF8-LEAD-DECODE, expressed with this file's own
+   named +BYTE-UTF8-*+ constants rather than raw hex."
+  (cond ((< byte +byte-utf8-2byte-lead-max+)
+         (values (logand byte +byte-utf8-2byte-lead-data-mask+) 1))
+        ((< byte +byte-utf8-3byte-lead-max+)
+         (values (logand byte +byte-utf8-3byte-lead-data-mask+) 2))
+        (t
+         (values (logand byte +byte-utf8-4byte-lead-data-mask+) 3))))
+
 (defun make-prompt-utf8-k (accumulator continuation-bytes-remaining)
   "Return a continuation that collects UTF-8 continuation bytes for the prompt.
    ACCUMULATOR is the code-point bits collected so far (from the lead byte).
@@ -179,13 +191,7 @@
            (funcall *prompt-utf8-continuation* byte))))
   ;; UTF-8 lead byte: begin multi-byte decode by arming a fresh continuation.
   ((and (>= byte +byte-utf8-lead-min+) (/= byte +byte-utf8-lead-invalid+))
-   (multiple-value-bind (accumulator bytes-left)
-       (cond ((< byte +byte-utf8-2byte-lead-max+)
-              (values (logand byte +byte-utf8-2byte-lead-data-mask+) 1))
-             ((< byte +byte-utf8-3byte-lead-max+)
-              (values (logand byte +byte-utf8-3byte-lead-data-mask+) 2))
-             (t
-              (values (logand byte +byte-utf8-4byte-lead-data-mask+) 3)))
+   (multiple-value-bind (accumulator bytes-left) (%prompt-utf8-lead-decode byte)
      (setf *prompt-utf8-continuation* (make-prompt-utf8-k accumulator bytes-left))))
   (t nil))                                  ; other control bytes — ignore
 

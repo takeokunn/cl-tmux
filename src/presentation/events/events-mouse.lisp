@@ -340,6 +340,19 @@
                (zerop (screen-copy-offset active-screen)))
       (copy-mode-exit active-screen))))
 
+(defun %mouse-handle-pane-click (target-pane screen col row count)
+  "Handle a (possibly multi-) click on TARGET-PANE: focus it, enter copy mode if
+   needed, position the cursor at (COL, ROW), and start a selection appropriate
+   to COUNT (word on double-click, line on triple-click, character otherwise)."
+  (%mouse-enter-copy-mode-if-needed screen)
+  (multiple-value-bind (pane-col pane-row)
+      (%pane-local-coordinates target-pane col row)
+    (copy-mode-set-cursor screen pane-row pane-col)
+    (cond
+      ((= count 2)  (copy-mode-select-word screen))
+      ((>= count 3) (copy-mode-begin-line-selection screen))
+      (t            (copy-mode-begin-selection screen)))))
+
 (defun %mouse-handle-left-press (active-window col row now count border-split border-orient)
   "Handle a left-button press in pane space."
   (setf *last-mouse-click*
@@ -351,15 +364,7 @@
           (when target-pane
             ;; Clicking a pane should behave like a keyboard focus change.
             (%select-pane-with-focus active-window target-pane)
-            (let ((screen (pane-screen target-pane)))
-              (%mouse-enter-copy-mode-if-needed screen)
-              (multiple-value-bind (pane-col pane-row)
-                  (%pane-local-coordinates target-pane col row)
-                (copy-mode-set-cursor screen pane-row pane-col)
-                (cond
-                  ((= count 2)  (copy-mode-select-word screen))
-                  ((>= count 3) (copy-mode-begin-line-selection screen))
-                  (t            (copy-mode-begin-selection screen))))))))))
+            (%mouse-handle-pane-click target-pane (pane-screen target-pane) col row count))))))
 
 (defun %mouse-handle-left-release (active-window active-pane)
   "End a border drag or yank a selection if one is active."

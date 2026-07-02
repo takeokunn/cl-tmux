@@ -61,13 +61,11 @@
   ;; (wired into apply-config-directive before this fixed-arity table), which
   ;; covers the bare 1-arg form as well as the flag-bearing forms.  No fixed-
   ;; arity entries are needed here.
-  ;; set-environment 2-arg form: VAR VALUE (no flags).
-  ;; The %apply-set-environment-directive handler in apply-config-directive
-  ;; owns this command family; these entries are retained for the fixed-arity
-  ;; inner dispatcher but are not reached through apply-config-directive.
-  ("set-environment" 2 (var-name var-value)
-    (%config-setenv var-name var-value)
-    t))
+  ;; NOTE: set-environment is handled entirely by %apply-set-environment-
+  ;; directive (config-directives-runtime.lisp), which apply-config-directive
+  ;; routes to unconditionally before reaching this fixed-arity table.  No
+  ;; entry is needed here.
+  )
 
 ;;; ── set-option flag handling (set -g / -a / -s / ...) ──────────────────────
 ;;;

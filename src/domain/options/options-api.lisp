@@ -121,36 +121,38 @@
 ;;; and SERVER options via the global / server stores, so the only inference
 ;;; that changes routing is WINDOW scope.
 
-(defun %build-window-scoped-option-table ()
-  "Return a hash-table of window-scoped tmux option names → T.
-   Classifies the options whose scope is WINDOW (or window|pane) per tmux's
-   options_scope_from_name; used to route a flagless set-option call to the
-   active window's local store rather than the global session store.  Extracted
-   into a named function so the initialization logic is separately testable and
-   the defparameter form stays free of embedded mutation code."
+(defparameter +window-scoped-option-name-list+
+  '("aggressive-resize"
+    "automatic-rename" "automatic-rename-format"
+    "main-pane-height" "main-pane-width"
+    "mode-keys"
+    "mode-style"
+    "monitor-activity" "monitor-bell"
+    "other-pane-height" "other-pane-width"
+    "pane-active-border-style" "pane-base-index"
+    "pane-border-format" "pane-border-indicators"
+    "pane-border-lines" "pane-border-status" "pane-border-style"
+    "remain-on-exit" "remain-on-exit-format"
+    "synchronize-panes" "window-active-style" "window-size"
+    "window-status-activity-style" "window-status-bell-style"
+    "window-status-current-format" "window-status-current-style"
+    "window-status-format" "window-status-last-style"
+    "window-status-separator" "window-status-style"
+    "window-style" "wrap-search")
+  "Names of tmux options whose scope is WINDOW (or window|pane) per tmux's
+   options_scope_from_name.  Used to build *window-scoped-option-names*, which
+   routes a flagless set-option call to the active window's local store
+   rather than the global session store.")
+
+(defun %string-list->presence-table (names)
+  "Return a hash-table mapping each string in NAMES to T, :test #'equal.
+   Generic converter for name-set membership tables in this file."
   (let ((ht (make-hash-table :test #'equal)))
-    (dolist (name '("aggressive-resize"
-                    "automatic-rename" "automatic-rename-format"
-                    "main-pane-height" "main-pane-width"
-                    "mode-keys"
-                    "mode-style"
-                    "monitor-activity" "monitor-bell"
-                    "other-pane-height" "other-pane-width"
-                    "pane-active-border-style" "pane-base-index"
-                    "pane-border-format" "pane-border-indicators"
-                    "pane-border-lines" "pane-border-status" "pane-border-style"
-                    "remain-on-exit" "remain-on-exit-format"
-                    "synchronize-panes" "window-active-style" "window-size"
-                    "window-status-activity-style" "window-status-bell-style"
-                    "window-status-current-format" "window-status-current-style"
-                    "window-status-format" "window-status-last-style"
-                    "window-status-separator" "window-status-style"
-                    "window-style" "wrap-search"))
-      (setf (gethash name ht) t))
-    ht))
+    (dolist (name names ht)
+      (setf (gethash name ht) t))))
 
 (defparameter *window-scoped-option-names*
-  (%build-window-scoped-option-table)
+  (%string-list->presence-table +window-scoped-option-name-list+)
   "Names of WINDOW-scoped (and window|pane) tmux options, used by
    option-scope-from-name to route a flagless set-option to the active window.")
 

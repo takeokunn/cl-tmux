@@ -72,6 +72,15 @@
   "Render a formatted one-line overlay from CONTROL and ARGS."
   (show-overlay (apply #'format nil control args)))
 
+(defmacro with-overlay-on-error ((op-label) &body body)
+  "Run BODY, reporting any ERROR as an overlay tagged with OP-LABEL.
+   Standardises the 'run body, surface exceptions via an overlay message
+   naming the failing operation' pattern shared by buffer file I/O and
+   hook-command dispatch, instead of each call site re-deriving its own
+   handler-case/%overlayf wrapper."
+  `(handler-case (progn ,@body)
+     (error (e) (%overlayf "~A error: ~A" ,op-label e))))
+
 (defun %flag-value (flags char)
   "Return the value associated with CHAR in FLAGS, or NIL when absent."
   (cdr (assoc char flags)))

@@ -191,6 +191,29 @@
     (is (string= "" (cl-tmux/format::%strftime-format-at "%Y" ts))
         "must return empty for ~S" ts)))
 
+(test days-in-month-table
+  "%days-in-month returns the correct day count for fixed-length months and
+   handles the Feb leap-year boundary (divisible-by-4, century, and
+   divisible-by-400 rules)."
+  (dolist (c '((1  2023 31 "January is always 31")
+               (3  2023 31 "March is always 31")
+               (5  2023 31 "May is always 31")
+               (7  2023 31 "July is always 31")
+               (8  2023 31 "August is always 31")
+               (10 2023 31 "October is always 31")
+               (12 2023 31 "December is always 31")
+               (4  2023 30 "April is always 30")
+               (6  2023 30 "June is always 30")
+               (9  2023 30 "September is always 30")
+               (11 2023 30 "November is always 30")
+               (2  2023 28 "2023 is not a leap year (not divisible by 4)")
+               (2  2024 29 "2024 is a leap year (divisible by 4, not 100)")
+               (2  1900 28 "1900 is divisible by 100 but not 400 → not a leap year")
+               (2  2000 29 "2000 is divisible by 400 → a leap year")))
+    (destructuring-bind (month year expected desc) c
+      (is (= expected (cl-tmux/format::%days-in-month month year))
+          "~A: (%days-in-month ~D ~D) → ~D" desc month year expected))))
+
 (test format-t-modifier-formats-timestamp-variable
   "#{t:VAR} (bare variable, no %) formats VAR's value as a timestamp via the
    default format — tmux semantics, e.g. #{t:session_last_attached}."

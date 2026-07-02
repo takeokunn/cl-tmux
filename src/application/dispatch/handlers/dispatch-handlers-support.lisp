@@ -15,6 +15,30 @@
 (defconstant +buffer-preview-length+ 40
   "Maximum characters shown in a paste-buffer preview listing.")
 
+(defmacro define-prompt-filter (name (input-var) &body filter-body)
+  "Define a prompt-starting function NAME of (label callback &key history
+   single-key initial) that opens a prompt labelled LABEL seeded with INITIAL
+   and calls CALLBACK only when FILTER-BODY, evaluated with INPUT-VAR bound to
+   the raw prompt input, returns non-NIL.  When FILTER-BODY's result differs
+   from the raw input (e.g. a parsed integer), CALLBACK receives that result
+   instead of the raw string.
+   Factors out the repeated 'validate input, then invoke the continuation'
+   CPS skeleton shared by prompt-nonempty, prompt-history-nonempty, and
+   prompt-integer."
+  (let ((docstring (when (and (stringp (first filter-body)) (rest filter-body))
+                      (first filter-body)))
+        (body      (if (and (stringp (first filter-body)) (rest filter-body))
+                        (rest filter-body)
+                        filter-body)))
+    `(defun ,name (label callback &key history single-key initial)
+       ,@(when docstring (list docstring))
+       (prompt-start label (or initial "")
+                     (lambda (,input-var)
+                       (let ((result (progn ,@body)))
+                         (when result (funcall callback result))))
+                     :history history
+                     :single-key single-key))))
+
 (defun %confirm-prompt (msg ok-fn)
   "Show MSG as a y/n prompt; call OK-FN (no args) when the user types y/Y."
   (prompt-start msg ""
@@ -23,31 +47,20 @@
                     (funcall ok-fn)))
                 :single-key t))
 
-(defun prompt-nonempty (label callback &key history)
+(define-prompt-filter prompt-nonempty (input)
   "Start a prompt labelled LABEL; call CALLBACK with the input only when non-empty."
-  (prompt-start label ""
-                (lambda (input)
-                  (unless (string= input "")
-                    (funcall callback input)))
-                :history history))
+  (unless (string= input "") input))
 
-(defun prompt-history-nonempty (label callback &key history single-key initial)
+(define-prompt-filter prompt-history-nonempty (input)
   "Start a prompt labelled LABEL; ignore empty input, record history, then call CALLBACK."
-  (prompt-start label (or initial "")
-                (lambda (input)
-                  (unless (string= input "")
-                    (add-prompt-history input)
-                    (funcall callback input)))
-                :history history
-                :single-key single-key))
+  (unless (string= input "")
+    (add-prompt-history input)
+    input))
 
-(defun prompt-integer (label callback)
+(define-prompt-filter prompt-integer (input)
   "Start a prompt labelled LABEL; call CALLBACK with the parsed integer when the
    input parses as a valid integer.  Silently ignores non-numeric input."
-  (prompt-start label ""
-                (lambda (input)
-                  (let ((n (%parse-integer-or-nil input)))
-                    (when n (funcall callback n))))))
+  (%parse-integer-or-nil input))
 
 (defun %prompt-or-run-name (label initial name run-fn)
   "Run RUN-FN with NAME when NAME is non-empty; otherwise start a prompt.

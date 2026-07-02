@@ -360,9 +360,7 @@
              (ctx           (cl-tmux/format:format-context-from-session
                              session window pane))
              (prompt-text   (if custom-prompt
-                                (handler-case
-                                    (cl-tmux/format:expand-format custom-prompt ctx)
-                                  (error () custom-prompt))
+                                (cl-tmux/format:expand-format-safe custom-prompt ctx)
                                 (format nil "~A? (y/n)" cmd-line))))
         (when (plusp (length cmd-line))
           (if assume-yes
@@ -401,6 +399,16 @@
                         (format nil "(no bindings in table ~A)"
                                 (or table-name "all")))))))
 
+(defun %resolve-copy-mode-screen (session target-str)
+  "Return the screen copy-mode should act on: the screen of the pane named by
+   TARGET-STR (tmux's -t target-pane convention) when non-NIL, otherwise
+   SESSION's active screen."
+  (if target-str
+      (with-target-context (tsession twin tpane session target-str)
+        (declare (ignore tsession twin))
+        (and tpane (pane-screen tpane)))
+      (%active-screen session)))
+
 (defun %cmd-copy-mode-arg (session args)
   "copy-mode [-eHMqu] [-s src-pane] [-t target-pane]: enter (or with -q, leave)
    copy mode on the target pane.
@@ -417,13 +425,7 @@
                              :allowed-flags '(#\u #\e #\q #\t #\s #\M #\H #\d #\S)
                              :max-positionals 0
                              :message "copy-mode: unsupported argument")
-    (let ((target-str (%flag-value flags #\t))
-          (screen nil))
-      (if target-str
-          (with-target-context (tsession twin tpane session target-str)
-            (declare (ignore tsession twin))
-            (setf screen (and tpane (pane-screen tpane))))
-          (setf screen (%active-screen session)))
+    (let ((screen (%resolve-copy-mode-screen session (%flag-value flags #\t))))
       (when screen
         (if (%flag-present-p flags #\q)
             ;; -q cancels copy mode on the target pane (no-op when not active).

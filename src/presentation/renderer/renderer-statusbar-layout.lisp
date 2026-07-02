@@ -208,6 +208,31 @@
           ((plusp (length at)) (push at rest)))))
     (values align (when rest (format nil "~{~A~^,~}" (nreverse rest))))))
 
+(defun %status-align-block-step (raw i buckets current)
+  "Process one #[…] block starting at RAW[I] (RAW[I] is #\#, RAW[I+1] is #\[).
+   Returns (values NEXT-I NEXT-CURRENT).  An align=… attr switches NEXT-CURRENT
+   and swallows the marker; any other block (or an unterminated '#[') is copied
+   verbatim into the CURRENT bucket."
+  (let ((close (position #\] raw :start (+ i 2))))
+    (if close
+        (multiple-value-bind (align rest) (%split-align-attr (subseq raw (+ i 2) close))
+          (if align
+              (progn (when rest (format (getf buckets align) "#[~A]" rest))
+                     (values (1+ close) align))
+              (progn (write-string (subseq raw i (1+ close)) (getf buckets current))
+                     (values (1+ close) current))))
+        (progn (write-char (char raw i) (getf buckets current))
+               (values (1+ i) current)))))
+
+(defun %status-align-step (raw i buckets current)
+  "Process RAW[I] and return (values NEXT-I NEXT-CURRENT).  Dispatches to
+   %status-align-block-step on a #[…] marker; otherwise copies the character
+   into the CURRENT bucket unchanged."
+  (if (and (char= (char raw i) #\#) (< (1+ i) (length raw)) (char= (char raw (1+ i)) #\[))
+      (%status-align-block-step raw i buckets current)
+      (progn (write-char (char raw i) (getf buckets current))
+             (values (1+ i) current))))
+
 (defun %status-align-buckets (raw)
   "Split RAW (a status format) into (values LEFT CENTRE RIGHT) raw substrings by
    its #[align=…] markers.  Text before any marker is LEFT; a combined block's
@@ -216,21 +241,8 @@
                        :centre (make-string-output-stream)
                        :right  (make-string-output-stream)))
         (current :left) (i 0) (len (length raw)))
-    (loop while (< i len) do
-      (if (and (char= (char raw i) #\#) (< (1+ i) len) (char= (char raw (1+ i)) #\[))
-          (let ((close (position #\] raw :start (+ i 2))))
-            (if close
-                (multiple-value-bind (align rest) (%split-align-attr (subseq raw (+ i 2) close))
-                  (cond
-                    (align (setf current align)
-                           (when rest (format (getf buckets current) "#[~A]" rest)))
-                    (t (write-string (subseq raw i (1+ close))
-                                     (getf buckets current))))
-                  (setf i (1+ close)))
-                (progn (write-char (char raw i) (getf buckets current))
-                       (incf i))))
-          (progn (write-char (char raw i) (getf buckets current))
-                 (incf i))))
+    (loop while (< i len)
+          do (multiple-value-setq (i current) (%status-align-step raw i buckets current)))
     (values (get-output-stream-string (getf buckets :left))
             (get-output-stream-string (getf buckets :centre))
             (get-output-stream-string (getf buckets :right)))))

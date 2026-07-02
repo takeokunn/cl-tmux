@@ -575,6 +575,26 @@
     (declare (ignore type))
     (funcall check-fn payload)))
 
+(defun assert-decoded-frame-type (frame expected-type)
+  "Assert that FRAME decodes in-memory (via decode-frame, no file I/O) to
+   EXPECTED-TYPE and that the whole frame was consumed. Shared by
+   protocol-tests.lisp for pure codec-level round-trip assertions, as
+   distinct from assert-round-tripped-frame-type's send-frame/read-frame
+   transport-level check."
+  (multiple-value-bind (type payload next) (cl-tmux/protocol:decode-frame frame)
+    (declare (ignore payload))
+    (is (= expected-type type)
+        "decode type mismatch: expected ~D got ~S" expected-type type)
+    (is (= (length frame) next) "consumed the whole frame")))
+
+(defun assert-decoded-frame-payload (frame check-fn)
+  "Decode FRAME in-memory (via decode-frame, no file I/O) and pass its payload
+   to CHECK-FN. Shared by protocol-tests.lisp; the transport-level counterpart
+   is assert-round-tripped-frame-payload."
+  (multiple-value-bind (type payload) (cl-tmux/protocol:decode-frame frame)
+    (declare (ignore type))
+    (funcall check-fn payload)))
+
 (defun write-partial-frame-to-file (path frame byte-count)
   "Write only the first BYTE-COUNT bytes of FRAME to PATH (creating a truncated frame).
    Used by truncation tests to simulate mid-frame EOF conditions without duplicating

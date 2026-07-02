@@ -174,38 +174,58 @@
       (%split-axis-fits-p (%window-axis-extent window direction) direction)
       (%split-fits-p active direction)))
 
-(defun %new-split-pane (session window direction active input-only start-dir)
-  "Construct the new pane created by a split of ACTIVE along DIRECTION.
-   Returns the new pane, either PTY-backed (via %fork-pane) or, when INPUT-ONLY
-   is T, a screen-only pane with a blank screen (later fed via pane-feed)."
-  (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
-    (if input-only
-        (%make-input-pane (next-pane-id window) px py pw ph)
-        (%fork-pane session (next-pane-id window) px py pw ph :start-dir start-dir))))
+(defstruct (%split-spec (:constructor %make-split-spec))
+  "The configuration of a single window-split call, gathered into one value so
+   %compute-new-pane-split and %splice-split-into-tree take one argument
+   instead of threading five-plus keywords by hand.
+   NO-FOCUS: keep the current active pane selected instead of focusing the new one.
+   SIZE: integer (cells) or real (fraction 0..1) sizing the new pane, or NIL for 1/2.
+   START-DIR: non-NIL working directory for the new pane's shell.
+   BEFORE: T inserts the new pane before (left of / above) the active pane.
+   FULL: T spans the split across the whole window (split-window -f), splitting
+   the tree root instead of just the active pane's leaf.
+   INPUT-ONLY: T creates a screen-only pane (no PTY) fed via INPUT-BYTES."
+  (no-focus    nil)
+  (size        nil)
+  (start-dir   nil)
+  (before      nil)
+  (full        nil)
+  (input-only  nil)
+  (input-bytes nil))
 
-(defun %split-ratio (window active direction full size)
+(defun %new-split-pane (session window direction active spec)
+  "Construct the new pane created by a split of ACTIVE along DIRECTION.
+   Returns the new pane, either PTY-backed (via %fork-pane) or, when SPEC's
+   INPUT-ONLY is T, a screen-only pane with a blank screen (later fed via
+   pane-feed)."
+  (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
+    (if (%split-spec-input-only spec)
+        (%make-input-pane (next-pane-id window) px py pw ph)
+        (%fork-pane session (next-pane-id window) px py pw ph
+                    :start-dir (%split-spec-start-dir spec)))))
+
+(defun %split-ratio (window active direction spec)
   "Return the split ratio for the new (second) child of a split along DIRECTION.
    AVAIL is the whole window extent for a full split, else the active pane's
-   extent; SIZE is the caller's size hint (or NIL for an even 1/2 split)."
-  (let ((avail (1- (if full
+   extent; SPEC's SIZE is the caller's size hint (or NIL for an even 1/2 split)."
+  (let ((avail (1- (if (%split-spec-full spec)
                        (%window-axis-extent window direction)
-                       (%orient-pane-extent active direction)))))
+                       (%orient-pane-extent active direction))))
+        (size  (%split-spec-size spec)))
     (if size
         (%ratio-from-size-hint size avail direction)
         1/2)))
 
-(defun %compute-new-pane-split (session window direction leaf active
-                                &key size start-dir before full input-only input-bytes)
-  "Build the new pane and its layout-split node for a window-split.
+(defun %compute-new-pane-split (session window direction leaf active spec)
+  "Build the new pane and its layout-split node for a window-split per SPEC.
    ANCHOR is the existing node that becomes the new pane's sibling: the whole
-   tree for a full split, else just the active pane's LEAF.  BEFORE T inserts
-   the new pane as the first child, existing as second; otherwise the reverse.
-   Returns (values new-pane split-node)."
-  (let* ((new-pane  (%new-split-pane session window direction active
-                                     input-only start-dir))
-         (new-ratio (%split-ratio window active direction full size))
-         (anchor    (if full (window-tree window) leaf))
-         (split     (if before
+   tree for a full split, else just the active pane's LEAF.  SPEC's BEFORE T
+   inserts the new pane as the first child, existing as second; otherwise the
+   reverse.  Returns (values new-pane split-node)."
+  (let* ((new-pane  (%new-split-pane session window direction active spec))
+         (new-ratio (%split-ratio window active direction spec))
+         (anchor    (if (%split-spec-full spec) (window-tree window) leaf))
+         (split     (if (%split-spec-before spec)
                         (make-layout-split direction
                                            (make-layout-leaf new-pane)
                                            anchor
@@ -213,14 +233,14 @@
                         (make-layout-split direction anchor
                                            (make-layout-leaf new-pane)
                                            (- 1 new-ratio)))))
-    (when input-bytes
-      (pane-feed new-pane input-bytes))
+    (when (%split-spec-input-bytes spec)
+      (pane-feed new-pane (%split-spec-input-bytes spec)))
     (values new-pane split)))
 
-(defun %splice-split-into-tree (window leaf split full)
+(defun %splice-split-into-tree (window leaf split spec)
   "Splice SPLIT into WINDOW's tree, replacing LEAF (normal split) or becoming
-   the new tree root (FULL split)."
-  (if full
+   the new tree root (SPEC's FULL split)."
+  (if (%split-spec-full spec)
       (setf (window-tree window) split)
       (%replace-in-tree window leaf split)))
 
@@ -239,16 +259,16 @@
    INPUT-ONLY T creates a pane without a PTY and feeds INPUT-BYTES into its screen.
    START-DIR: when non-NIL, the new pane's shell starts in that directory."
   (let ((active (window-active-pane window))
-        (tree   (window-tree window)))
+        (tree   (window-tree window))
+        (spec   (%make-split-spec :no-focus no-focus :size size :start-dir start-dir
+                                  :before before :full full :input-only input-only
+                                  :input-bytes input-bytes)))
     (when (and active tree)
       (let ((leaf (layout-find-leaf tree active)))
         (when (and leaf (%split-fit-p window active direction full))
           (multiple-value-bind (new-pane split)
-              (%compute-new-pane-split session window direction leaf active
-                                       :size size :start-dir start-dir :before before
-                                       :full full :input-only input-only
-                                       :input-bytes input-bytes)
-            (%splice-split-into-tree window leaf split full)
+              (%compute-new-pane-split session window direction leaf active spec)
+            (%splice-split-into-tree window leaf split spec)
             (setf (pane-window new-pane) window)
             (window-relayout-current window)
             (unless no-focus

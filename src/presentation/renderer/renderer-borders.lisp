@@ -125,8 +125,8 @@
     (unless (member status '("off" "") :test #'string=)
       (let* ((fmt  (cl-tmux/options:get-option "pane-border-format" " #{pane_index} "))
              (ctx  (cl-tmux/format:format-context-from-session session win pane))
-             (text (handler-case (cl-tmux/format:expand-format fmt ctx)
-                     (error () (format nil " ~D " (pane-id pane)))))
+             (text (cl-tmux/format:expand-format-safe
+                    fmt ctx (format nil " ~D " (pane-id pane))))
              ;; Truncate to pane width
              (maxw (pane-width pane))
              (disp (if (> (length text) maxw) (subseq text 0 maxw) text))

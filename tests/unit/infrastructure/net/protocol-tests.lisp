@@ -72,12 +72,13 @@
 (test attach-roundtrip
   "msg-attach carries rows,cols, decodable via decode-size."
   (let ((frame (msg-attach 24 80)))
-    (multiple-value-bind (type payload next) (decode-frame frame)
-      (is (= +msg-attach+ type))
-      (is (= (length frame) next) "consumed the whole frame")
-      (multiple-value-bind (rows cols) (decode-size payload)
-        (is (= 24 rows))
-        (is (= 80 cols))))))
+    (assert-decoded-frame-type frame +msg-attach+)
+    (assert-decoded-frame-payload
+     frame
+     (lambda (payload)
+       (multiple-value-bind (rows cols) (decode-size payload)
+         (is (= 24 rows))
+         (is (= 80 cols)))))))
 
 (test attach-readonly-flag-roundtrip
   "msg-attach with readonly-p sets the trailing flags byte; decode-attach-flags
@@ -102,17 +103,22 @@
 
 (test resize-roundtrip
   "msg-resize round-trips rows,cols including large values."
-  (multiple-value-bind (type payload) (decode-frame (msg-resize 300 1000))
-    (is (= +msg-resize+ type))
-    (multiple-value-bind (rows cols) (decode-size payload)
-      (is (= 300 rows))
-      (is (= 1000 cols)))))
+  (let ((frame (msg-resize 300 1000)))
+    (assert-decoded-frame-type frame +msg-resize+)
+    (assert-decoded-frame-payload
+     frame
+     (lambda (payload)
+       (multiple-value-bind (rows cols) (decode-size payload)
+         (is (= 300 rows))
+         (is (= 1000 cols)))))))
 
 (test key-roundtrip
   "msg-key carries raw input bytes verbatim."
-  (multiple-value-bind (type payload) (decode-frame (msg-key #(27 91 65)))
-    (is (= +msg-key+ type))
-    (is (equalp #(27 91 65) payload))))
+  (let ((frame (msg-key #(27 91 65))))
+    (assert-decoded-frame-type frame +msg-key+)
+    (assert-decoded-frame-payload
+     frame
+     (lambda (payload) (is (equalp #(27 91 65) payload))))))
 
 (test detach-and-bye-are-empty
   "msg-detach and msg-bye carry no payload."
@@ -120,24 +126,28 @@
     (is (= +msg-detach+ type))
     (is (= 0 (length payload)))
     (is (= +header-size+ next) "empty payload ⇒ next is just past the header"))
-  (multiple-value-bind (type payload) (decode-frame (msg-bye))
-    (is (= +msg-bye+ type))
-    (is (= 0 (length payload)))))
+  (assert-decoded-frame-type (msg-bye) +msg-bye+)
+  (assert-decoded-frame-payload (msg-bye) (lambda (payload) (is (= 0 (length payload))))))
 
 (test frame-text-roundtrip
   "msg-frame carries a UTF-8 string, including multibyte CJK."
-  (let ((text "hello あ 中 │"))
-    (multiple-value-bind (type payload) (decode-frame (msg-frame text))
-      (is (= +msg-frame+ type))
-      (is (string= text (decode-text payload))))))
+  (let* ((text "hello あ 中 │")
+         (frame (msg-frame text)))
+    (assert-decoded-frame-type frame +msg-frame+)
+    (assert-decoded-frame-payload
+     frame
+     (lambda (payload) (is (string= text (decode-text payload)))))))
 
 (test reply-text-roundtrip
   "msg-reply carries a forwarded command's UTF-8 output text (the display-message
    -p / CLI command-output channel)."
-  (let ((text "session: 0  windows: 2"))
-    (multiple-value-bind (type payload) (decode-frame (msg-reply text))
-      (is (= +msg-reply+ type) "frame type is +msg-reply+")
-      (is (string= text (decode-text payload)) "payload round-trips the output text"))))
+  (let* ((text "session: 0  windows: 2")
+         (frame (msg-reply text)))
+    (assert-decoded-frame-type frame +msg-reply+)
+    (assert-decoded-frame-payload
+     frame
+     (lambda (payload)
+       (is (string= text (decode-text payload)) "payload round-trips the output text")))))
 
 ;;; ── Streaming: partial buffers ──────────────────────────────────────────────
 
@@ -245,20 +255,15 @@
 
 (test msg-constructors-produce-correct-frames
   "All eight typed message constructors produce frames that decode to the expected type."
-  ;; Verify each constructor actually produces a decodable frame with the right tag.
-  (flet ((frame-type (frame)
-           (multiple-value-bind (type payload next)
-               (decode-frame frame)
-             (declare (ignore payload next))
-             type)))
-    (is (= +msg-attach+  (frame-type (msg-attach 24 80)))             "msg-attach produces +msg-attach+")
-    (is (= +msg-key+     (frame-type (msg-key #(65))))                "msg-key produces +msg-key+")
-    (is (= +msg-resize+  (frame-type (msg-resize 24 80)))             "msg-resize produces +msg-resize+")
-    (is (= +msg-detach+  (frame-type (msg-detach)))                   "msg-detach produces +msg-detach+")
-    (is (= +msg-frame+   (frame-type (msg-frame "hi")))               "msg-frame produces +msg-frame+")
-    (is (= +msg-bye+     (frame-type (msg-bye)))                      "msg-bye produces +msg-bye+")
-    (is (= +msg-reply+   (frame-type (msg-reply "output")))           "msg-reply produces +msg-reply+")
-    (is (= +msg-command+ (frame-type (msg-command :new-window nil nil))) "msg-command produces +msg-command+")))
+  (dolist (c (list (cons (msg-attach 24 80)                 +msg-attach+)
+                    (cons (msg-key #(65))                   +msg-key+)
+                    (cons (msg-resize 24 80)                +msg-resize+)
+                    (cons (msg-detach)                      +msg-detach+)
+                    (cons (msg-frame "hi")                  +msg-frame+)
+                    (cons (msg-bye)                         +msg-bye+)
+                    (cons (msg-reply "output")              +msg-reply+)
+                    (cons (msg-command :new-window nil nil) +msg-command+)))
+    (assert-decoded-frame-type (car c) (cdr c))))
 
 ;;; ── msg-command constructor ──────────────────────────────────────────────────
 

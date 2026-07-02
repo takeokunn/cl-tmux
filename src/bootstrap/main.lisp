@@ -131,6 +131,51 @@
   (apply #'format *error-output* format-string format-args)
   (sb-ext:exit :code 1))
 
+(defun %start-session-and-readers ()
+  "Discover the terminal size, create and register the initial session, start
+   one reader thread per pane, install SIGWINCH, and start the status timer.
+   Returns (values session reader-threads).  Extracted from run-standalone so
+   session/reader-thread/timer startup is a single named step."
+  ;; Discover terminal dimensions before the initial pane is created.
+  (multiple-value-setq (*term-rows* *term-cols*)
+    (terminal-size))
+  (let ((session (create-initial-session *term-rows* *term-cols*)))
+    ;; Register the initial session so it appears in *server-sessions* alongside
+    ;; any later new-session — the event loop's %current-session resolver and the
+    ;; session-switch commands (switch-client, choose-tree) can then move to and
+    ;; FROM it; otherwise it would be orphaned once another session is created.
+    (server-add-session session)
+    ;; We collect the thread objects so stop-reader-threads can join them on exit.
+    (let ((reader-threads
+           (mapcar #'start-reader-thread (all-panes session))))
+      (install-sigwinch-handler)
+      ;; Initialise last-activity-time so lock-after-time doesn't fire immediately.
+      (setf *last-activity-time* (get-universal-time))
+      ;; Start the status-interval timer: status bar refresh, overlay dismiss,
+      ;; lock-after-time idle detection, and monitor-silence tracking.
+      (setf *status-timer*
+            (start-status-timer
+             (lambda () (setf *dirty* t))
+             :session session
+             :server-sessions-fn (lambda () *server-sessions*)))
+      (values session reader-threads))))
+
+(defun %run-event-loop-with-handlers (session)
+  "Run SESSION's event loop in raw mode, catching stdin-not-a-tty and any other
+   top-level error and reporting them via %die-with-message.  Extracted from
+   run-standalone so the handler-case wrapping is a single named step."
+  (handler-case
+      (with-raw-mode
+        (clear-display)
+        (%enable-negotiated-terminal-features)
+        (setf *running* t *dirty* t *resize-pending* nil)
+        (event-loop session))
+    (sb-posix:syscall-error (c)
+      ;; Most likely: stdin is not a TTY.
+      (%die-with-message "~&cl-tmux: ~A~%  (is stdin a terminal?)~%" c))
+    (error (c)
+      (%die-with-message "~&cl-tmux: unhandled error: ~A~%" c))))
+
 (defun run-standalone ()
   "Standalone in-process multiplexer: own a session and run the event loop on
    the local terminal (no socket).  This is the default mode."
@@ -141,47 +186,9 @@
   ;; config has set the option.
   (ignore-errors (load-prompt-history))
 
-  ;; Discover terminal dimensions before the initial pane is created.
-  (multiple-value-setq (*term-rows* *term-cols*)
-    (terminal-size))
-
-  ;; Create the initial session before reader threads start.
-  (let ((session (create-initial-session *term-rows* *term-cols*)))
-    ;; Register the initial session so it appears in *server-sessions* alongside
-    ;; any later new-session — the event loop's %current-session resolver and the
-    ;; session-switch commands (switch-client, choose-tree) can then move to and
-    ;; FROM it; otherwise it would be orphaned once another session is created.
-    (server-add-session session)
-
-    ;; We collect the thread objects so stop-reader-threads can join them on exit.
-    (let ((reader-threads
-           (mapcar #'start-reader-thread (all-panes session))))
-
-      (install-sigwinch-handler)
-
-      ;; Initialise last-activity-time so lock-after-time doesn't fire immediately.
-      (setf *last-activity-time* (get-universal-time))
-      ;; Start the status-interval timer: status bar refresh, overlay dismiss,
-      ;; lock-after-time idle detection, and monitor-silence tracking.
-      (setf *status-timer*
-            (start-status-timer
-             (lambda () (setf *dirty* t))
-             :session session
-             :server-sessions-fn (lambda () *server-sessions*)))
-
-      (handler-case
-          (with-raw-mode
-            (clear-display)
-            (%enable-negotiated-terminal-features)
-            (setf *running* t *dirty* t *resize-pending* nil)
-            (event-loop session))
-        (sb-posix:syscall-error (c)
-          ;; Most likely: stdin is not a TTY.
-          (%die-with-message "~&cl-tmux: ~A~%  (is stdin a terminal?)~%" c))
-        (error (c)
-          (%die-with-message "~&cl-tmux: unhandled error: ~A~%" c)))
-
-      (%cleanup-after-session session reader-threads))))
+  (multiple-value-bind (session reader-threads) (%start-session-and-readers)
+    (%run-event-loop-with-handlers session)
+    (%cleanup-after-session session reader-threads)))
 
 (defun %close-all-pane-ptys (session)
   "Close the PTY fd of every pane in SESSION, ignoring errors on already-closed fds."

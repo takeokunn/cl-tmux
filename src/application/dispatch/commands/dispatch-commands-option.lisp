@@ -14,7 +14,8 @@
 ;;;   3. Operation dispatch (-u unset / -a append / -o guard / normal set).
 ;;;
 ;;; %with-option-scope resolves the scope ONCE and passes (scope target) to a
-;;; continuation K.  The three %scope-* functions are pure scope→effect transforms
+;;; continuation K.  %scope-getter/%scope-setter/%scope-remover (built by
+;;; define-scope-accessor-table below) are pure scope→effect dispatch functions
 ;;; with ecase — exhaustive, so the compiler warns on any missing scope kind.
 
 (defun %expand-F-flag (flags session raw-value)
@@ -63,39 +64,62 @@
       (t
        (funcall k :global nil)))))
 
-(defun %scope-option-accessors (scope target)
-  "Return getter, setter, and remover closures for SCOPE / TARGET."
-  (ecase scope
-    (:pane
-     (values (lambda (name &optional default)
-               (declare (ignore default))
-               (cl-tmux/options:get-option-for-pane name target))
-             (lambda (name value)
-               (cl-tmux/options:set-option-for-pane name value target))
-             (lambda (name)
-               (remhash name (cl-tmux/model:pane-local-options target)))))
-    (:window
-     (values (lambda (name &optional default)
-               (declare (ignore default))
-               (cl-tmux/options:get-option-for-window name target))
-             (lambda (name value)
-               (cl-tmux/options:set-option-for-window name value target))
-             (lambda (name)
-               (remhash name (cl-tmux/model:window-local-options target)))))
-    (:global
-     (values (lambda (name &optional default)
-               (cl-tmux/options:get-option name default))
-             (lambda (name value)
-               (cl-tmux/options:set-option name value))
-             (lambda (name)
-               (remhash name cl-tmux/options:*global-options*))))
-    (:server
-     (values (lambda (name &optional default)
-               (cl-tmux/options:get-server-option name default))
-             (lambda (name value)
-               (cl-tmux/options:set-server-option name value))
-             (lambda (name)
-               (remhash name cl-tmux/options:*server-options*))))))
+;;; define-scope-accessor-table builds three single-purpose dispatch functions
+;;; (%scope-getter, %scope-setter, %scope-remover) from a declarative table of
+;;; (SCOPE GETTER-FORM SETTER-FORM REMOVER-FORM) rules — NAME, VALUE, DEFAULT,
+;;; and TARGET are bound in the forms.  This replaces a hand-written
+;;; closures-in-ecase table (%scope-option-accessors) whose callers had to
+;;; multiple-value-bind all three accessors and (declare (ignore ...)) the two
+;;; they didn't need.
+
+(defmacro define-scope-accessor-table (&rest rules)
+  "Build %SCOPE-GETTER, %SCOPE-SETTER, and %SCOPE-REMOVER from RULES, each of
+   the form (SCOPE GETTER-FORM SETTER-FORM REMOVER-FORM).  NAME/DEFAULT are
+   bound for getter forms, NAME/VALUE for setter forms, and NAME for remover
+   forms; TARGET is bound in all three."
+  `(progn
+     (defun %scope-getter (scope name target &optional default)
+       (declare (ignorable target default))
+       (ecase scope
+         ,@(mapcar (lambda (rule)
+                     (destructuring-bind (scope getter-form setter-form remover-form) rule
+                       (declare (ignore setter-form remover-form))
+                       `(,scope ,getter-form)))
+                   rules)))
+     (defun %scope-setter (scope name value target)
+       (declare (ignorable target))
+       (ecase scope
+         ,@(mapcar (lambda (rule)
+                     (destructuring-bind (scope getter-form setter-form remover-form) rule
+                       (declare (ignore getter-form remover-form))
+                       `(,scope ,setter-form)))
+                   rules)))
+     (defun %scope-remover (scope name target)
+       (declare (ignorable target))
+       (ecase scope
+         ,@(mapcar (lambda (rule)
+                     (destructuring-bind (scope getter-form setter-form remover-form) rule
+                       (declare (ignore getter-form setter-form))
+                       `(,scope ,remover-form)))
+                   rules)))))
+
+(define-scope-accessor-table
+  (:pane
+   (cl-tmux/options:get-option-for-pane name target)
+   (cl-tmux/options:set-option-for-pane name value target)
+   (remhash name (cl-tmux/model:pane-local-options target)))
+  (:window
+   (cl-tmux/options:get-option-for-window name target)
+   (cl-tmux/options:set-option-for-window name value target)
+   (remhash name (cl-tmux/model:window-local-options target)))
+  (:global
+   (cl-tmux/options:get-option name default)
+   (cl-tmux/options:set-option name value)
+   (remhash name cl-tmux/options:*global-options*))
+  (:server
+   (cl-tmux/options:get-server-option name default)
+   (cl-tmux/options:set-server-option name value)
+   (remhash name cl-tmux/options:*server-options*)))
 
 (defun %scope-present-p (name scope target)
   "Return true when option NAME is explicitly present in SCOPE / TARGET's OWN
@@ -114,26 +138,18 @@
 (defun %scope-append (name value scope target)
   "Append VALUE to option NAME in the store identified by SCOPE / TARGET.
    Style options (e.g. status-style) join with ',' via append-option-value."
-  (multiple-value-bind (getter setter remover)
-      (%scope-option-accessors scope target)
-    (declare (ignore remover))
-    (funcall setter
-             name
-             (cl-tmux/options:append-option-value name (funcall getter name nil) value))))
+  (%scope-setter scope name
+                 (cl-tmux/options:append-option-value
+                  name (%scope-getter scope name target nil) value)
+                 target))
 
 (defun %scope-set (name value scope target)
   "Store VALUE for option NAME in the store identified by SCOPE / TARGET."
-  (multiple-value-bind (getter setter remover)
-      (%scope-option-accessors scope target)
-    (declare (ignore getter remover))
-    (funcall setter name value)))
+  (%scope-setter scope name value target))
 
 (defun %scope-unset (name scope target)
   "Remove NAME from the option store identified by SCOPE / TARGET."
-  (multiple-value-bind (getter setter remover)
-      (%scope-option-accessors scope target)
-    (declare (ignore getter setter))
-    (funcall remover name)))
+  (%scope-remover scope name target))
 
 (defun %cmd-set-option (session args)
   "set-option [-aFgopqsuUw] [-t target] <name> <value...>: set an option.

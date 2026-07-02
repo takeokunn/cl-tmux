@@ -87,22 +87,6 @@
                        (session-active-window session))))
       (when win (%cycle-layout session win :prev)))))
 
-(defun %cmd-list-panes (session args)
-  "list-panes: list all panes in the active window (mirrors display-panes)."
-  (declare (ignore args))
-  (with-active-window (win session)
-    (let ((panes (window-panes win)))
-      (show-overlay
-       (if panes
-           (with-output-to-string (stream)
-             (dolist (p panes)
-               (format stream "~D: ~Dx~D at (~D,~D)~A~%"
-                       (pane-id p)
-                       (pane-width p) (pane-height p)
-                       (pane-x p) (pane-y p)
-                       (if (eq p (window-active-pane win)) " [active]" ""))))
-           "(no panes)")))))
-
 (defun %cmd-display-panes-arg (session args)
   "display-panes [-b] [-N] [-d duration] [-t target-client] [template]: show pane
    ids.  tmux args \"bNd:t:\".
@@ -243,6 +227,40 @@
 (defparameter *defer-split-window-input* nil
   "When true, split-window -I creates an input pane without reading local stdin.")
 
+(defun %split-window-resolve-target (session target-str)
+  "Handle split-window's -t target-str: temporarily make the target pane
+   active so %cmd-split operates on it.  Returns (values prev-win prev-pane),
+   the window/pane that were active before the swap, for the caller to
+   restore afterwards when -d (detach) is given."
+  (multiple-value-bind (prev-win prev-pane) (%active-window-pane session)
+    (when target-str
+      (multiple-value-bind (target-win target-pane)
+          (%resolve-target-window-pane session target-str prev-win prev-pane)
+        (when (and target-win target-pane)
+          ;; Switch active window and pane to the target for the split.
+          (session-select-window session target-win)
+          (window-select-pane target-win target-pane))))
+    (values prev-win prev-pane)))
+
+(defun %split-window-post-actions (session result flags detach-p target-str prev-win prev-pane)
+  "Perform split-window's post-split housekeeping: restore the original focus
+   when -d (detach) is given, print the new pane's details for -P, and zoom
+   the window for -Z (tmux SPAWN_ZOOM).  Returns RESULT unchanged."
+  ;; Restore original focus when -d (detach).
+  (when (and detach-p target-str prev-win)
+    (session-select-window session prev-win)
+    (when prev-pane (window-select-pane prev-win prev-pane)))
+  ;; -P: print the new pane's details.
+  (when (and result (%flag-present-p flags #\P))
+    (%show-pane-info-overlay session (pane-window result) result
+                             (%flag-value flags #\F)))
+  ;; -Z: zoom the window after the split (tmux SPAWN_ZOOM).
+  (when (and result (%flag-present-p flags #\Z))
+    (let ((rwin (pane-window result)))
+      (when (and rwin (not (cl-tmux/model:window-zoom-p rwin)))
+        (cl-tmux/model:window-zoom-toggle rwin))))
+  result)
+
 (defun %cmd-split-window (session args)
   "split-window [-h|-v] [-b] [-f] [-d] [-I] [-t target] [-l size|-p pct] [-c start-dir] [-e VAR=val].
    -h: horizontal split (new pane to the right; side-by-side).
@@ -284,16 +302,9 @@
                               (%read-standard-input-octets))))
       ;; -t target: temporarily make the target pane active so %cmd-split
       ;; operates on it.  Restore the previous active pane afterwards if -d.
-      (multiple-value-bind (prev-win prev-pane) (%active-window-pane session)
-        (when target-str
-          (multiple-value-bind (target-win target-pane)
-              (%resolve-target-window-pane session target-str prev-win prev-pane)
-            (when (and target-win target-pane)
-              ;; Switch active window and pane to the target for the split.
-              (session-select-window session target-win)
-              (window-select-pane target-win target-pane))))
-        (let* ((print-p (%flag-present-p flags #\P))
-               ;; Inject -e VAR=val pairs only for PTY-backed splits; -I does
+      (multiple-value-bind (prev-win prev-pane)
+          (%split-window-resolve-target session target-str)
+        (let* (;; Inject -e VAR=val pairs only for PTY-backed splits; -I does
                ;; not spawn a process and must not leak env to a later pane.
                (*pane-extra-env* (and (not input-p) extra-env))
                (result  (%cmd-split session (if horizontal-p :h :v)
@@ -302,20 +313,8 @@
                                     :full (and full-p t)
                                     :input-only (and input-p t)
                                     :input-bytes input-bytes)))
-          ;; Restore original focus when -d (detach).
-          (when (and detach-p target-str prev-win)
-            (session-select-window session prev-win)
-            (when prev-pane (window-select-pane prev-win prev-pane)))
-          ;; -P: print the new pane's details.
-          (when (and print-p result)
-            (%show-pane-info-overlay session (pane-window result) result
-                                     (%flag-value flags #\F)))
-          ;; -Z: zoom the window after the split (tmux SPAWN_ZOOM).
-          (when (and result (%flag-present-p flags #\Z))
-            (let ((rwin (pane-window result)))
-              (when (and rwin (not (cl-tmux/model:window-zoom-p rwin)))
-                (cl-tmux/model:window-zoom-toggle rwin))))
-          result)))))
+          (%split-window-post-actions session result flags detach-p
+                                      target-str prev-win prev-pane))))))
 
 (defvar *key-table* nil
   "The client's active custom key table (a table-name string), or NIL for the

@@ -11,7 +11,7 @@
 ;;;; copy-mode defaults easy to audit against tmux source without noise.
 ;;;;
 ;;;; Loaded by config.lisp via a fragment-loader eval-when block, after
-;;;; %bind-copy-mode-bindings and %bind-copy-mode-named-navigation are defined.
+;;;; %install-key-bindings and %bind-copy-mode-named-navigation are defined.
 
 ;;; ── Default emacs copy-mode bindings ─────────────────────────────────────
 
@@ -146,10 +146,10 @@
   "Populate the 'copy-mode' (emacs) key table with tmux 3.x default bindings.
    Meta bindings use names like \"M-f\" so they match what %meta-key-name produces
    when ESC+key arrives in the input stream.  Idempotent."
-  (%bind-copy-mode-bindings +table-copy-mode+ +default-copy-mode-bindings+)
+  (%install-key-bindings +table-copy-mode+ +default-copy-mode-bindings+)
   (%bind-copy-mode-named-navigation +table-copy-mode+))
 
 (defun install-default-copy-mode-vi-bindings ()
   "Populate the 'copy-mode-vi' key table with tmux 3.x default bindings."
-  (%bind-copy-mode-bindings +table-copy-mode-vi+ +default-copy-mode-vi-bindings+)
+  (%install-key-bindings +table-copy-mode-vi+ +default-copy-mode-vi-bindings+)
   (%bind-copy-mode-named-navigation +table-copy-mode-vi+))
