@@ -86,9 +86,10 @@
   ("set-titles"               :boolean nil)
   ("set-titles-string"        :string  "#S:#I:#W")
   ("remain-on-exit"           :boolean nil)
-  ;; Text shown (reverse-video) in a pane kept open by remain-on-exit.  tmux's
-  ;; default references #{pane_dead_status/signal/time}, which cl-tmux does not
-  ;; track, so the default is simplified to a plain "Pane is dead".
+  ;; Text shown (reverse-video) in a pane kept open by remain-on-exit.
+  ;; #{pane_dead_status/signal/time} ARE tracked (pane death record) and
+  ;; resolve in this format; the registered default is kept simple while
+  ;; users may set tmux's richer conditional default verbatim.
   ("remain-on-exit-format"    :string  "Pane is dead")
   ("renumber-windows"         :boolean nil)
   ;; Max messages kept in the message log, and max command-prompt history entries.

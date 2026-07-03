@@ -198,7 +198,6 @@
 (defun make-ignore-final-byte-k ()
   "Return a CPS state that consumes one trailing byte and returns to ground with
    no effect — for two-byte ESC sequences cl-tmux accepts but does not model:
-     ESC *  / ESC +   designate G2 / G3 (only G0/G1 are tracked, via SO/SI)
      ESC SP <final>   S7C1T / S8C1T (7/8-bit C1) and ANSI conformance levels
      ESC %  <final>   charset selection (ESC % G = UTF-8, which cl-tmux already is)
    Consuming the trailing byte avoids it printing as a stray char (the bug when
