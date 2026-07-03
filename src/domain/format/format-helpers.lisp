@@ -11,9 +11,13 @@
 (defun %lookup (context key)
   "Retrieve KEY from the plist CONTEXT.
    When not found in CONTEXT, falls back to *global-options* so that user-defined
-   options (#{@my-var}) and any registered tmux option (#{word_separators}) work.
-   The fallback uses the hyphenated option name that %variable-to-keyword produces
-   (underscores in the template map to hyphens in the keyword and option registry).
+   options (#{@my-var}) and any registered tmux option (#{word_separators}) work,
+   then to the process environment — tmux's format_find checks the environment
+   for unresolved names, which is what makes config variable assignments
+   (NAME=value lines) usable as #{NAME}.
+   The option fallback uses the hyphenated name %variable-to-keyword produces;
+   the environment fallback restores the underscores (env names are
+   conventionally UPPER_SNAKE, matching the upcased keyword symbol-name).
    Returns an empty string when absent everywhere."
   (let ((val (getf context key)))
     (if val
@@ -23,7 +27,11 @@
         ;; Lowercasing it gives the option-registry key directly.
         (let* ((opt-name (string-downcase (symbol-name key)))
                (opt-val  (cl-tmux/options:get-option opt-name nil)))
-          (if opt-val (princ-to-string opt-val) "")))))
+          (cond
+            (opt-val (princ-to-string opt-val))
+            (t (or (sb-ext:posix-getenv
+                    (substitute #\_ #\- (symbol-name key)))
+                   "")))))))
 
 (defun %variable-to-keyword (name)
   "Convert a variable name string to a context keyword.

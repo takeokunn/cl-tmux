@@ -9,24 +9,60 @@
 ;;; config-file path resolution and top-level file loading live in
 ;;; config-paths.lisp.
 
+(defun %config-variable-assignment-token-p (token)
+  "True when TOKEN has the NAME=VALUE shape of a tmux 3.2 config variable
+   assignment: NAME is a non-empty run of alphanumerics/underscores before '='."
+  (let ((eq (position #\= token)))
+    (and eq (plusp eq)
+         (loop for i below eq
+               always (let ((ch (char token i)))
+                        (or (alphanumericp ch) (char= ch #\_)))))))
+
+(defun %apply-config-variable-assignment (tokens)
+  "Handle tmux 3.2+ config variable assignment lines: `NAME=value` sets NAME in
+   the global environment (resolvable as #{NAME} via the format engine's
+   environment fallback); `%hidden NAME=value` additionally marks it hidden so
+   it is not passed to child processes.  Returns T when TOKENS is such an
+   assignment, NIL otherwise (multi-token lines are not assignments)."
+  (let* ((hidden-p  (and (first tokens) (string= (first tokens) "%hidden")))
+         (rest-toks (if hidden-p (rest tokens) tokens))
+         (token     (first rest-toks)))
+    (when (and token
+               (null (rest rest-toks))
+               (%config-variable-assignment-token-p token))
+      (let* ((eq    (position #\= token))
+             (name  (subseq token 0 eq))
+             (value (subseq token (1+ eq))))
+        (%config-setenv name value)
+        (if hidden-p
+            (pushnew name cl-tmux/model:*global-hidden-environment-names*
+                     :test #'string=)
+            (setf cl-tmux/model:*global-hidden-environment-names*
+                  (delete name cl-tmux/model:*global-hidden-environment-names*
+                          :test #'string=)))
+        t))))
+
 (defun apply-config-directive (tokens)
   "Apply one parsed config directive (list of string TOKENS) to live state.
    Returns T when applied, NIL for an unknown/invalid directive.
-   Handles bind/unbind, set-hook, set[-g|-a|-s|-u|...], set-environment [-u|-r],
-   if-shell, run-shell [-b|-C|-t|-d], source-file, and the fixed-arity
-   directive table."
+   Handles NAME=value variable assignments (incl. %hidden), bind/unbind,
+   set-hook, set[-g|-a|-s|-u|...], set-environment [-u|-r], if-shell,
+   run-shell [-b|-C|-t|-d], source-file, and the fixed-arity directive table."
   (when tokens
     (let ((cmd  (first tokens))
           (args (rest tokens)))
-      (if (member cmd '("set-environment" "setenv") :test #'string=)
-          (%apply-set-environment-directive "set-environment" args)
-          (or (%apply-key-directive cmd args)
-              (%apply-if-shell-directive cmd args)
-              (%apply-set-directive cmd args)
-              (%apply-set-hook-directive cmd args)
-              (%apply-run-shell-directive cmd args)
-              (%apply-source-file-directive cmd args)
-              (%apply-config-directive-inner tokens))))))
+      (cond
+        ((%apply-config-variable-assignment tokens) t)
+        ((member cmd '("set-environment" "setenv") :test #'string=)
+         (%apply-set-environment-directive "set-environment" args))
+        (t
+         (or (%apply-key-directive cmd args)
+             (%apply-if-shell-directive cmd args)
+             (%apply-set-directive cmd args)
+             (%apply-set-hook-directive cmd args)
+             (%apply-run-shell-directive cmd args)
+             (%apply-source-file-directive cmd args)
+             (%apply-config-directive-inner tokens)))))))
 
 (defun %at-comment-start-p (line i len)
   "Return T when position I in LINE is a '#' that begins a comment.

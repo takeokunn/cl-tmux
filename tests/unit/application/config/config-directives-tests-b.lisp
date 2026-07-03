@@ -588,3 +588,33 @@
         "a plain set without -o must still overwrite")
     (is (string= "third" (cl-tmux/options:get-option "@cfg-o"))
         "plain set must overwrite the value")))
+
+;;; ── tmux 3.2 config variable assignment lines ────────────────────────────────
+
+(test config-variable-assignment-lines
+  "`NAME=value` config lines set a global environment variable resolvable as
+   #{NAME}; `%hidden NAME=value` additionally hides it from child processes."
+  (with-isolated-config
+    (let ((cl-tmux/model:*global-hidden-environment-names* nil))
+      (unwind-protect
+           (progn
+             ;; Plain assignment: env set + format-resolvable.
+             (is (eq t (apply-config-directive '("CLTMUX_CFGVAR=vidal")))
+                 "a NAME=value line must be handled")
+             (is (string= "vidal" (sb-ext:posix-getenv "CLTMUX_CFGVAR"))
+                 "the assignment must reach the global environment")
+             (is (string= "prefix-vidal"
+                          (cl-tmux/format:expand-format "prefix-#{CLTMUX_CFGVAR}" '()))
+                 "#{NAME} must resolve via the format environment fallback")
+             ;; %hidden assignment: set + hidden from child envs.
+             (is (eq t (apply-config-directive '("%hidden" "CLTMUX_CFGHID=shh")))
+                 "a %hidden NAME=value line must be handled")
+             (is (member "CLTMUX_CFGHID"
+                         cl-tmux/model:*global-hidden-environment-names*
+                         :test #'string=)
+                 "%hidden must mark the variable hidden")
+             ;; Multi-token lines are NOT assignments.
+             (is (null (apply-config-directive '("FOO=bar" "extra")))
+                 "a multi-token line must not be treated as an assignment"))
+        (cl-tmux/model:process-unset-environment "CLTMUX_CFGVAR")
+        (cl-tmux/model:process-unset-environment "CLTMUX_CFGHID")))))
