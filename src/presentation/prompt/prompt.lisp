@@ -32,6 +32,8 @@
   ;; Single-key mode (confirm-before, command-prompt -1): the first printable key
   ;; IS the answer — submitted immediately, with no Enter required.
   (single-key  nil :type boolean)
+  ;; Numeric-only mode (command-prompt -N): only digit keys are inserted.
+  (numeric-only nil :type boolean)
   ;; Optional command history, newest first.  HISTORY-INDEX is NIL until the user
   ;; starts navigating with Up/Down; HISTORY-ORIGINAL preserves the in-progress
   ;; input so Down can return to it after walking older entries.
@@ -91,8 +93,11 @@
 
 (defun prompt-input (ch)
   "Insert character CH at the cursor position in the active prompt's buffer.
-   Advances the cursor by one.  No-op when the prompt is inactive."
+   Advances the cursor by one.  No-op when the prompt is inactive, or when a
+   numeric-only prompt (command-prompt -N) receives a non-digit character."
   (with-active-prompt (p)
+    (when (and (prompt-numeric-only p) (not (digit-char-p ch)))
+      (return-from prompt-input))
     (let* ((buffer (prompt-buffer p))
            (index  (prompt-cursor-index p))
            (new    (concatenate 'string

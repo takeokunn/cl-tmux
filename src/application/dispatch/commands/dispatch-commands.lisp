@@ -304,8 +304,11 @@
    -1: single-key prompt — each prompt accepts ONE keypress (no Enter).
    -k: key prompt — like -1, the prompt accepts a single keypress.
    -T type / -t target-client: accepted (their arguments are consumed so they do
-       not leak into the template); -N/-F/-b/-e/-l are accepted as no-ops in the
+       not leak into the template); -b/-e/-l are accepted as no-ops in the
        standalone prompt model.  tmux args \"1beFiklI:Np:t:T:\".
+   -N: the prompt accepts numeric key presses only.
+   -F: the substituted command line is expanded as a format string before it
+       runs.
    -i: incremental — the template runs on EVERY prompt edit with %1/%% bound to
        the current input (tmux PROMPT_INCREMENTAL, used for live-search
        bindings), in addition to the final run on Enter."
@@ -324,8 +327,19 @@
       (flet ((run-input (input)
                (%run-command-line session input))
              (run-template (input)
-               (%run-command-line session
-                                  (%substitute-prompt-response template input))))
+               (let ((cmd (%substitute-prompt-response template input)))
+                 ;; -F: the substituted command line is expanded as a format
+                 ;; string before running (tmux command-prompt -F).
+                 (when (%flag-present-p flags #\F)
+                   (setf cmd (or (ignore-errors
+                                   (cl-tmux/format:expand-format
+                                    cmd
+                                    (cl-tmux/format:format-context-from-session
+                                     session
+                                     (session-active-window session)
+                                     (session-active-pane session))))
+                                 cmd)))
+                 (%run-command-line session cmd))))
         (cond
           ;; -p with template: multi-prompt with %%N substitution
           ((and prompt-list has-template)
@@ -361,7 +375,12 @@
                    has-template
                    cl-tmux/prompt:*prompt*)
           (setf (cl-tmux/prompt:prompt-on-change cl-tmux/prompt:*prompt*)
-                #'run-template))))))
+                #'run-template))
+        ;; -N: the prompt accepts numeric key presses only.
+        (when (and (%flag-present-p flags #\N)
+                   cl-tmux/prompt:*prompt*)
+          (setf (cl-tmux/prompt:prompt-numeric-only cl-tmux/prompt:*prompt*)
+                t))))))
 
 (defun %substitute-prompt-response (template input)
   "Expand a single-prompt command-prompt TEMPLATE: tmux replaces both %% and %1

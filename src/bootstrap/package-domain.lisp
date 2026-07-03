@@ -46,7 +46,7 @@
   (:export
    #:prompt #:make-prompt #:prompt-p
    #:prompt-label #:prompt-buffer #:prompt-cursor-index #:prompt-on-submit
-   #:prompt-on-change #:prompt-on-cancel
+   #:prompt-on-change #:prompt-on-cancel #:prompt-numeric-only
    #:prompt-vi-normal-p #:prompt-single-key
    #:with-active-prompt
    #:*prompt* #:prompt-active-p #:prompt-start

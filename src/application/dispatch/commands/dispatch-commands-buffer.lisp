@@ -441,13 +441,18 @@
        and a selection begins (the default MouseDrag1Pane binding shape).
    -t target-pane: act on a specific pane (default: the active pane), the
        universal tmux target convention (e.g. `copy-mode -t %3`).
-   -s src-pane / -H: accepted for tmux compatibility but currently no-ops
-       (-s back-history source pane, -H hide the position indicator)."
+   -s src-pane: view SRC-PANE's history — copy mode is entered on the source
+       pane's screen (cl-tmux's per-screen copy mode shows the content there
+       rather than mirroring it into the target pane).
+   -H: accepted for tmux compatibility but currently a no-op (hide the
+       position indicator)."
   (with-command-input (flags positionals args "ts"
                              :allowed-flags '(#\u #\e #\q #\t #\s #\M #\H #\d #\S)
                              :max-positionals 0
                              :message "copy-mode: unsupported argument")
-    (let ((screen (%resolve-copy-mode-screen session (%flag-value flags #\t))))
+    (let ((screen (%resolve-copy-mode-screen session
+                                             (or (%flag-value flags #\s)
+                                                 (%flag-value flags #\t)))))
       (when screen
         (if (%flag-present-p flags #\q)
             ;; -q cancels copy mode on the target pane (no-op when not active).
