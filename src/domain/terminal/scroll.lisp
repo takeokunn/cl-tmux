@@ -57,7 +57,10 @@
   (let ((cap (%effective-history-limit)))
     (when (> (length (screen-scrollback screen)) cap)
       (let ((tail (nthcdr (1- cap) (screen-scrollback screen))))
-        (when tail (setf (cdr tail) nil))))))
+        (when tail (setf (cdr tail) nil)))
+      ;; Truncate the parallel wrap-flag list in lockstep.
+      (let ((wtail (nthcdr (1- cap) (screen-scrollback-wrapped screen))))
+        (when wtail (setf (cdr wtail) nil))))))
 
 ;;; scroll-on-clear: when the whole screen is cleared (ED 2 / the `clear` command),
 ;;; tmux (option on by default) first scrolls the visible content into history so it
@@ -81,6 +84,8 @@
          (saved (make-array w)))
     (dotimes (col w) (setf (aref saved col) (screen-cell screen col row)))
     (push saved (screen-scrollback screen))
+    ;; Keep the wrap flag with the row it belongs to (capture-pane -J).
+    (push (%line-wrapped-p screen row) (screen-scrollback-wrapped screen))
     (trim-scroll-history screen)))
 
 (defun scroll-screen-to-history (screen)
@@ -119,7 +124,8 @@
 (defun clear-scrollback (screen)
   "Clear SCREEN's scrollback history; the visible grid is left intact.
    Backs the clear-history command (tmux: C-b : clear-history)."
-  (setf (screen-scrollback screen) nil))
+  (setf (screen-scrollback screen) nil
+        (screen-scrollback-wrapped screen) nil))
 
 (defun trim-below-cursor (screen)
   "resize-pane -T: drop the rows below the cursor and pull rows out of the
@@ -140,7 +146,8 @@
         ;; Refill rows NEED-1..0 upward from the newest-first scrollback; rows
         ;; beyond the available history are cleared to blanks.
         (loop for y from (1- need) downto 0
-              do (let ((saved (pop (screen-scrollback screen))))
+              do (pop (screen-scrollback-wrapped screen))
+                 (let ((saved (pop (screen-scrollback screen))))
                    (if saved
                        (dotimes (col w)
                          (setf (screen-cell screen col y)

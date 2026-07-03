@@ -130,9 +130,11 @@
 
 (defstruct (capture-pane-snapshot
             (:constructor %make-capture-pane-snapshot
-                (&key scrollback-rows visible-rows wrapped-flags)))
+                (&key scrollback-rows scrollback-wrapped visible-rows
+                      wrapped-flags)))
   "Pure snapshot data captured from a screen under lock and rendered later."
   scrollback-rows
+  scrollback-wrapped
   visible-rows
   wrapped-flags)
 
@@ -154,6 +156,8 @@
     (%make-capture-pane-snapshot
      :scrollback-rows (when include-scrollback
                         (reverse (screen-scrollback screen)))
+     :scrollback-wrapped (when (and include-scrollback join)
+                           (reverse (screen-scrollback-wrapped screen)))
      :visible-rows (loop for row from 0 below (screen-height screen)
                          collect (%capture-pane-row-string screen row escapes trim))
      :wrapped-flags (when join
@@ -163,9 +167,15 @@
 (defun %emit-capture-pane-snapshot (snapshot join escapes trim)
   "Render a SNAPSHOT to a string outside the screen lock."
   (with-output-to-string (out)
-    (dolist (row-cells (capture-pane-snapshot-scrollback-rows snapshot))
-      (write-string (%capture-pane-scrollback-row-string row-cells escapes trim) out)
-      (terpri out))
+    ;; -J joins wrapped SCROLLBACK rows too (the flag travels with the row
+    ;; when it scrolls into history); the last history row may continue into
+    ;; the first visible row.  Screens whose scrollback was built without
+    ;; flags (tests) fall back to un-joined emission via the NIL default.
+    (let ((wflags (capture-pane-snapshot-scrollback-wrapped snapshot)))
+      (dolist (row-cells (capture-pane-snapshot-scrollback-rows snapshot))
+        (write-string (%capture-pane-scrollback-row-string row-cells escapes trim) out)
+        (unless (and join (pop wflags))
+          (terpri out))))
     (if join
         ;; -J: suppress the newline between a wrapped row and its continuation.
         (loop for rows on (capture-pane-snapshot-visible-rows snapshot)

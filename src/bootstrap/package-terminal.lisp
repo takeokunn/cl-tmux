@@ -78,6 +78,7 @@
    #:screen-copy-hide-position
    #:screen-copy-offset
    #:screen-scrollback
+   #:screen-scrollback-wrapped
    ;; Copy-mode selection state
    #:screen-copy-mark
    #:screen-copy-mark-offset
@@ -351,6 +352,7 @@
    #:screen-copy-hide-position
    #:screen-copy-offset
    #:screen-scrollback
+   #:screen-scrollback-wrapped
    ;; Copy-mode selection state
    #:screen-copy-mark
    #:screen-copy-mark-offset

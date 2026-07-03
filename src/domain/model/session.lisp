@@ -15,6 +15,7 @@
   (active      nil)
   (last-active 0   :type integer)   ; universal-time of last access; updated on touch
   (created (get-universal-time) :type integer) ; universal-time at construction (#{session_created})
+  (window-stack nil :type list)     ; windows in MRU order, current first (#{window_stack_index})
   (clients     nil :type list)      ; list of connected client descriptors
   (locked-p    nil :type boolean)   ; T when lock-session has been called
   (group       nil)                 ; NIL or group-id (string/integer); sessions in same group share windows
@@ -38,6 +39,9 @@
    Clears the activity flag so #{window_activity_flag} resets on focus."
   (setf (session-active session) window)
   (when window
+    ;; MRU stack for #{window_stack_index}: current window moves to the front.
+    (setf (session-window-stack session)
+          (cons window (delete window (session-window-stack session))))
     (setf (window-last-active-time window) (get-universal-time))
     ;; Clear activity, silence, and bell flags when the window gains focus.
     (setf (window-activity-flag window) nil

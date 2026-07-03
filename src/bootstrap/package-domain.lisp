@@ -197,6 +197,7 @@
    #:session-active-pane
    #:session-last-active
    #:session-created
+   #:session-window-stack
    #:session-clients
    #:session-locked-p
    #:session-group

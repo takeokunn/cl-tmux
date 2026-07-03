@@ -20,6 +20,10 @@
   "The socket path this server actually bound (#{socket_path}); NIL in
    standalone mode where no socket exists.")
 
+(defvar *client-flags* nil
+  "The single client's flag list (refresh-client -f, #{client_flags}):
+   a list of flag-name strings, e.g. (\"no-output\" \"read-only\").")
+
 (defvar *socket-path-override* nil
   "Full socket path from the global -S flag (tmux -S); when set, socket-path
    returns it verbatim for every server name.")

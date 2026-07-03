@@ -170,7 +170,18 @@
         :window-activity       (if window
                                    (format nil "~D"
                                            (cl-tmux/model:window-last-output-time window))
-                                   "")))
+                                   "")
+        ;; #{window_stack_index}: position in the session's MRU stack
+        ;; (0 = current); windows never yet selected report empty.
+        :window-stack-index    (let* ((stack (and session
+                                                  (remove-if-not
+                                                   (lambda (w)
+                                                     (member w session-windows))
+                                                   (cl-tmux/model:session-window-stack
+                                                    session))))
+                                      (pos (and window stack
+                                                (position window stack))))
+                                 (if pos (format nil "~D" pos) ""))))
 
 (defun %pane-structural-context-plist (pane window pane-title pane-current-path pane-synchronized)
   "Build the pane-structural slice of the format-context plist for PANE.

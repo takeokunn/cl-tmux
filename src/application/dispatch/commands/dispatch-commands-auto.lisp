@@ -166,7 +166,9 @@
      -L/-R/-U/-D   pan the visible window — accepted; the full-screen single
                    client is never larger than the terminal, so it is a no-op.
      -c            reset panning to cursor tracking (no-op, see above).
-     -f / -F       set client flags — accepted; cl-tmux has no per-client flags.
+     -f / -F       set client flags: a comma-separated list; a '!' prefix
+                   removes a flag.  Stored in *client-flags* (single-client
+                   model) and shown by #{client_flags}.
      -l            request the host clipboard via OSC 52 — accepted; there is no
                    outer xterm client to query in the standalone model.
      -C WxH        set the client size: updates *term-rows*/*term-cols* and
@@ -181,6 +183,17 @@
                              :max-positionals 0
                              :message "refresh-client: unsupported argument")
     (declare (ignore positionals))
+    ;; -f/-F: apply the comma-separated client flag list ('!' removes).
+    (let ((spec (or (%flag-value flags #\f) (%flag-value flags #\F))))
+      (when spec
+        (dolist (flag (uiop:split-string spec :separator ","))
+          (let ((name (string-trim " " flag)))
+            (cond
+              ((zerop (length name)))
+              ((char= (char name 0) #\!)
+               (setf *client-flags*
+                     (delete (subseq name 1) *client-flags* :test #'string=)))
+              (t (pushnew name *client-flags* :test #'string=)))))))
     (multiple-value-bind (cols rows) (%parse-client-size (%flag-value flags #\C))
       (when (and cols rows)
         (setf *term-cols* cols *term-rows* rows)

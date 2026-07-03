@@ -64,6 +64,9 @@
   (copy-offset  0    :type fixnum)          ; lines scrolled back (0 = live view)
   (scrollback   nil  :type list)            ; list of row-vectors, newest first
   ;; Copy-mode selection state (nil when no selection is active)
+  ;; Wrap flags for scrollback rows (newest-first, parallel to scrollback):
+  ;; T when that history row wrapped into the row below it (capture-pane -J).
+  (scrollback-wrapped nil :type list)
   (copy-mark    nil  :type list)            ; (row . col) mark position, NIL = no selection
   (copy-mark-offset 0 :type fixnum)         ; copy-offset in effect when copy-mark was set
   (copy-cursor  nil  :type list)            ; (row . col) cursor position in copy mode, NIL = not in copy mode

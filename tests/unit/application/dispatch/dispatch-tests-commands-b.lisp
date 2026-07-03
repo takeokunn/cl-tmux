@@ -766,3 +766,64 @@
         (let ((cl-tmux::*bound-socket-path* "/tmp/cl-tmux-1/x.sock"))
           (is (string= "/tmp/cl-tmux-1/x.sock" (expand "#{socket_path}"))
               "socket_path must reflect the bound socket"))))))
+
+(test capture-pane-J-joins-wrapped-scrollback-rows
+  "capture-pane -J joins a scrollback row that wrapped into the next row —
+   the wrap flag travels with the row when it scrolls into history."
+  (with-fake-session (s)
+    (let* ((pane   (cl-tmux/model:session-active-pane s))
+           (screen (cl-tmux/model:pane-screen pane))
+           (w      (cl-tmux/terminal/types:screen-width screen)))
+      ;; Row 0 content 'AB', marked wrapped; scroll it into history.
+      (setf (cl-tmux/terminal/types:cell-char
+             (cl-tmux/terminal/types:screen-cell screen 0 0)) #\A
+            (cl-tmux/terminal/types:cell-char
+             (cl-tmux/terminal/types:screen-cell screen 1 0)) #\B)
+      (cl-tmux/terminal/types:%mark-line-wrapped screen 0)
+      (cl-tmux/terminal/actions:scroll-up-one screen)
+      ;; The visible top row now continues the wrapped line: 'CD'.
+      (setf (cl-tmux/terminal/types:cell-char
+             (cl-tmux/terminal/types:screen-cell screen 0 0)) #\C
+            (cl-tmux/terminal/types:cell-char
+             (cl-tmux/terminal/types:screen-cell screen 1 0)) #\D)
+      (is (eq t (first (cl-tmux/terminal/types:screen-scrollback-wrapped screen)))
+          "the wrap flag must travel into the scrollback")
+      (let ((joined (cl-tmux/commands:capture-pane pane
+                                                   :include-scrollback t
+                                                   :join t))
+            (plain  (cl-tmux/commands:capture-pane pane
+                                                   :include-scrollback t)))
+        (declare (ignorable w))
+        ;; -J preserves trailing spaces, so assert AB and CD land on the SAME
+        ;; line rather than being adjacent characters.
+        (flet ((line-with-ab (text)
+                 (find-if (lambda (l) (search "AB" l))
+                          (uiop:split-string text :separator '(#\Newline)))))
+          (is (search "CD" (or (line-with-ab joined) ""))
+              "-J must join the wrapped history row with the visible row")
+          (is (null (search "CD" (or (line-with-ab plain) "")))
+              "without -J the rows must stay separate"))))))
+
+(test window-stack-index-and-client-flags-vars
+  "#{window_stack_index} reflects the session MRU stack; refresh-client -f
+   sets #{client_flags} ('!' removes)."
+  (with-fake-session (s :nwindows 2)
+    (let* ((wins (cl-tmux/model:session-windows s))
+           (w0 (first wins)) (w1 (second wins)))
+      (cl-tmux/model:session-select-window s w0)
+      (cl-tmux/model:session-select-window s w1)
+      (flet ((expand (spec win)
+               (cl-tmux/format:expand-format
+                spec (cl-tmux/format:format-context-from-session s win nil))))
+        (is (string= "0" (expand "#{window_stack_index}" w1))
+            "the current window must be stack index 0")
+        (is (string= "1" (expand "#{window_stack_index}" w0))
+            "the previously-current window must be stack index 1")
+        (let ((cl-tmux::*client-flags* nil))
+          (cl-tmux::%cmd-refresh-client-arg s '("-f" "no-output,read-only"))
+          (is (string= "no-output,read-only"
+                       (expand "#{client_flags}" w1))
+              "refresh-client -f must set client_flags (sorted)")
+          (cl-tmux::%cmd-refresh-client-arg s '("-f" "!read-only"))
+          (is (string= "no-output" (expand "#{client_flags}" w1))
+              "'!flag' must remove a flag"))))))
