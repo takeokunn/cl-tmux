@@ -138,7 +138,9 @@
   (selected-index 0 :type fixnum)
   ;; Position (display-menu -x/-y): NIL = centre on screen, integer = fixed column/row.
   (x nil)
-  (y nil))
+  (y nil)
+  ;; display-menu -O: the menu stays open after a selection runs its command.
+  (keep-open nil :type boolean))
 
 (defvar *active-menu* nil
   "The currently displayed MENU overlay, or NIL.

@@ -79,6 +79,22 @@
 ;;; model-facing builders here; the more mechanical pane-geometry / screen /
 ;;; client getter-table builders live in format-context-screen.lisp).
 
+(defun %session-group-peers (session)
+  "The sessions in SESSION's group, from the runtime group registry (resolved
+   by name so the format layer stays free of the umbrella package), or NIL."
+  (let* ((group (and session (cl-tmux/model:session-group session)))
+         (sym   (and group (find-symbol "*SESSION-GROUPS*" "CL-TMUX")))
+         (alist (and sym (boundp sym) (symbol-value sym))))
+    (cdr (assoc group alist))))
+
+(defun %current-mouse-event-coordinate (key)
+  "The :COL/:ROW coordinate of the in-flight mouse event (runtime special
+   resolved by name), as a string — or \"\" outside a mouse dispatch."
+  (let* ((sym   (find-symbol "*CURRENT-MOUSE-EVENT*" "CL-TMUX"))
+         (event (and sym (boundp sym) (symbol-value sym)))
+         (value (and event (getf event key))))
+    (if value (format nil "~D" value) "")))
+
 (defun %session-context-plist (session window-count)
   "Build the session-scoped slice of the format-context plist for SESSION.
    WINDOW-COUNT is the pre-computed number of windows in SESSION."
@@ -98,6 +114,21 @@
         :session-activity      (if session
                                    (format nil "~D" (cl-tmux/model:session-last-active session))
                                    "")
+        :session-grouped       (if (and session (cl-tmux/model:session-group session))
+                                   "1" "0")
+        :session-group-size    (let ((peers (%session-group-peers session)))
+                                 (if peers (format nil "~D" (length peers)) ""))
+        :session-group-list    (format nil "~{~A~^,~}"
+                                       (mapcar #'cl-tmux/model:session-name
+                                               (%session-group-peers session)))
+        :session-group-attached (let ((peers (%session-group-peers session)))
+                                  (if peers
+                                      (format nil "~D"
+                                              (count-if #'cl-tmux/model:session-clients
+                                                        peers))
+                                      ""))
+        :mouse-x               (%current-mouse-event-coordinate :col)
+        :mouse-y               (%current-mouse-event-coordinate :row)
         :session-count         (%server-session-count-string)
         :session-path          (ignore-errors (sb-posix:getcwd))
         :client-session        (if session (cl-tmux/model:session-name session) "")))

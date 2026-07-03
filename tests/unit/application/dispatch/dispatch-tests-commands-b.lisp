@@ -634,3 +634,46 @@
                      cl-tmux::+send-keys-x-explicit-arg-specs+
                      :key #'first :test #'string=)
                "jump-to-forward must be in the arg specs"))))
+
+(test display-menu-O-keeps-menu-open-after-selection
+  "display-menu -O keeps the menu open after a selection runs its command;
+   without -O the menu closes (tmux -O)."
+  (dolist (row '((t "display-menu -O -T t lbl k \"set -g @menu-ran 1\"" "with -O")
+                 (nil "display-menu -T t lbl k \"set -g @menu-ran 1\"" "without -O")))
+    (destructuring-bind (expect-open command desc) row
+      (with-fake-session (s)
+        (let ((*overlay* nil)
+              (cl-tmux/prompt:*active-menu* nil))
+          (cl-tmux::%run-command-line s command)
+          (is-true cl-tmux/prompt:*active-menu* "menu must open (~A)" desc)
+          (cl-tmux::dispatch-command s :menu-select 13)
+          (is (string= "1" (cl-tmux/options:get-option "@menu-ran" nil))
+              "the selected command must run (~A)" desc)
+          (if expect-open
+              (is-true cl-tmux/prompt:*active-menu*
+                       "-O must keep the menu open")
+              (is (null cl-tmux/prompt:*active-menu*)
+                  "without -O the menu must close")))))))
+
+(test session-group-format-vars
+  "#{session_grouped}/#{session_group_size}/#{session_group_list} expand from
+   the group registry; ungrouped sessions report 0/empty."
+  (let ((cl-tmux::*session-groups* nil))
+    (with-fake-session (s1)
+      (with-fake-session (s2)
+        (setf (cl-tmux/model:session-name s1) "ga"
+              (cl-tmux/model:session-name s2) "gb")
+        (flet ((expand (spec sess)
+                 (cl-tmux/format:expand-format
+                  spec (cl-tmux/format:format-context-from-session
+                        sess (cl-tmux/model:session-active-window sess) nil))))
+          (is (string= "0" (expand "#{session_grouped}" s1))
+              "ungrouped session must report 0")
+          (cl-tmux::server-new-session-in-group s2 s1)
+          (is (string= "1" (expand "#{session_grouped}" s1))
+              "grouped session must report 1")
+          (is (string= "2" (expand "#{session_group_size}" s1))
+              "the group must have two members")
+          (let ((names (expand "#{session_group_list}" s1)))
+            (is (and (search "ga" names) (search "gb" names))
+                "the group list must name both sessions (got ~S)" names)))))))

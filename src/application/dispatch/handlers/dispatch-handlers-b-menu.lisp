@@ -55,9 +55,12 @@
   (:menu-select
    (when *active-menu*
      (let* ((idx  (menu-selected-index *active-menu*))
-            (cmd  (cdr (nth idx (menu-items *active-menu*)))))
-       (close-menu)
-       (clear-overlay)
+            (cmd  (cdr (nth idx (menu-items *active-menu*))))
+            ;; display-menu -O: keep the menu open after the selection runs.
+            (keep (cl-tmux/prompt:menu-keep-open *active-menu*)))
+       (unless keep
+         (close-menu)
+         (clear-overlay))
        (when cmd (%execute-menu-cmd session byte cmd)))))
   (:menu-dismiss
    (close-menu)

@@ -79,6 +79,7 @@
    #:menu #:make-menu #:menu-p
    #:menu-title #:menu-items #:menu-selected-index
    #:menu-x #:menu-y
+   #:menu-keep-open
    #:*active-menu*
    #:show-menu #:close-menu #:menu-active-p))
 

@@ -321,7 +321,8 @@
    Item triples: label key command.  Empty label '' creates a visual separator.
    When selected, command is run via %run-command-line.
    Preconfigured commands as keyword tokens run directly.
-   -O/-C: keep-open / close-existing control flags (accepted).  -b/-c/-s/-S/-t
+   -O: the menu stays open after a selection runs its command (tmux -O).
+   -C: close-existing control flag (accepted).  -b/-c/-s/-S/-t
    take arguments (border-lines/client/style/border-style/target) and are consumed
    so they do not leak into the item triples."
   (declare (ignore session))  ; session used via closure in item command
@@ -342,7 +343,8 @@
          (%overlayf "command display-menu: too few arguments (need at least 1)"))
         (items
          (show-menu (make-menu :title title :items items :selected-index 0
-                               :x menu-x :y menu-y))
+                               :x menu-x :y menu-y
+                               :keep-open (%flag-present-p flags #\O)))
          (show-overlay (%format-menu *active-menu*)))))))
 
 (defun %cmd-confirm-before-arg (session args)
