@@ -75,6 +75,7 @@
    #:screen-cursor-visible
    ;; Copy / scrollback mode
    #:screen-copy-mode-p
+   #:screen-copy-hide-position
    #:screen-copy-offset
    #:screen-scrollback
    ;; Copy-mode selection state
@@ -197,6 +198,7 @@
    #:scroll-screen-to-history
    #:trim-scroll-history
    #:clear-scrollback
+   #:trim-below-cursor
    #:*history-limit-function*
    #:*alternate-screen-enabled-function*
    #:*scroll-on-clear-function*
@@ -342,6 +344,7 @@
    #:screen-display-cell
    ;; Copy / scrollback mode (used by renderer status bar + commands)
    #:screen-copy-mode-p
+   #:screen-copy-hide-position
    #:screen-copy-offset
    #:screen-scrollback
    ;; Copy-mode selection state

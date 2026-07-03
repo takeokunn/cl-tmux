@@ -121,6 +121,38 @@
    Backs the clear-history command (tmux: C-b : clear-history)."
   (setf (screen-scrollback screen) nil))
 
+(defun trim-below-cursor (screen)
+  "resize-pane -T: drop the rows below the cursor and pull rows out of the
+   scrollback to refill the screen from the top — the surviving content shifts
+   down so the cursor row becomes the bottom row (tmux's 'trims all lines below
+   the cursor position and moves lines out of the history to replace them').
+   No-op when the cursor is already on the bottom row or on the alt screen
+   (which has no history)."
+  (unless (screen-alt-cells screen)
+    (let* ((h    (screen-height screen))
+           (w    (screen-width screen))
+           (cy   (screen-cursor-y screen))
+           (need (- h (1+ cy))))
+      (when (plusp need)
+        ;; Shift the surviving rows 0..cy down by NEED (bottom-up copy).
+        (loop for y from cy downto 0
+              do (%copy-row screen (+ y need) y))
+        ;; Refill rows NEED-1..0 upward from the newest-first scrollback; rows
+        ;; beyond the available history are cleared to blanks.
+        (loop for y from (1- need) downto 0
+              do (let ((saved (pop (screen-scrollback screen))))
+                   (if saved
+                       (dotimes (col w)
+                         (setf (screen-cell screen col y)
+                               (if (< col (length saved))
+                                   (aref saved col)
+                                   (blank-cell))))
+                       (%clear-row screen y))))
+        ;; Wrap flags no longer line up with the shifted content.
+        (%clear-all-line-wrapped screen)
+        (setf (screen-cursor-y screen) (1- h)
+              (screen-dirty-p screen) t)))))
+
 (defun scroll-down-one (screen)
   "Scroll the scroll region down one line; the new top line is cleared to blanks."
   (let ((top    (screen-scroll-top    screen))

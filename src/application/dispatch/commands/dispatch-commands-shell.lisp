@@ -243,7 +243,11 @@
    -x N / -y N: resize to an ABSOLUTE width/height of N cells (computed as a delta
    from the pane's current size and applied via the :right/:down border move; both
    may be given together).
-   -Z: zoom-toggle the target pane."
+   -Z: zoom-toggle the target pane.
+   -T: trim the rows below the cursor and pull rows out of the history to
+       replace them (the cursor row becomes the bottom row).
+   -M: begin a mouse resize — with an in-flight mouse event on a pane border,
+       arms the same drag state the MouseDrag1Border path uses."
   (with-command-flags+pos (flags positionals args "txy")
     (let* ((amount-str (first positionals))
            (amount (or (and amount-str (%parse-integer-or-nil amount-str :junk-allowed t))
@@ -257,6 +261,20 @@
         (cond
           ((%flag-present-p flags #\Z)
            (when win (window-zoom-toggle win)))
+          ;; -T: history-trim below the cursor on the target pane's screen.
+          ((%flag-present-p flags #\T)
+           (when pane
+             (cl-tmux/terminal/actions:trim-below-cursor (pane-screen pane))
+             (setf *dirty* t)))
+          ;; -M: arm the border-drag state from the in-flight mouse event.
+          ((%flag-present-p flags #\M)
+           (when (and win *current-mouse-event*)
+             (multiple-value-bind (split orient)
+                 (%border-at-position win
+                                      (getf *current-mouse-event* :col)
+                                      (getf *current-mouse-event* :row))
+               (when split
+                 (setf *mouse-drag-state* (list split orient))))))
           ;; -x/-y: absolute resize. Move the relevant border by (target - current).
           ((or x-val y-val)
            (when (and win pane)

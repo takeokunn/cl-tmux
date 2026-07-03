@@ -59,6 +59,8 @@
   (saved-cursor nil :type list)
   ;; Copy / scroll-back mode
   (copy-mode-p  nil  :type boolean)
+  ;; copy-mode -H: suppress the position indicator overlay for this entry.
+  (copy-hide-position nil :type boolean)
   (copy-offset  0    :type fixnum)          ; lines scrolled back (0 = live view)
   (scrollback   nil  :type list)            ; list of row-vectors, newest first
   ;; Copy-mode selection state (nil when no selection is active)

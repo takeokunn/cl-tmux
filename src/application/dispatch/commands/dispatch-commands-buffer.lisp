@@ -444,8 +444,7 @@
    -s src-pane: view SRC-PANE's history — copy mode is entered on the source
        pane's screen (cl-tmux's per-screen copy mode shows the content there
        rather than mirroring it into the target pane).
-   -H: accepted for tmux compatibility but currently a no-op (hide the
-       position indicator)."
+   -H: hide the position indicator overlay for this copy-mode entry."
   (with-command-input (flags positionals args "ts"
                              :allowed-flags '(#\u #\e #\q #\t #\s #\M #\H #\d #\S)
                              :max-positionals 0
@@ -463,6 +462,10 @@
               (copy-mode-enter screen
                                :scroll-to-top (%copy-mode-scroll-to-top-p flags)
                                :exit-on-bottom (%copy-mode-exit-on-bottom-p flags))
+              ;; -H: suppress the position indicator for this entry; a later
+              ;; plain entry shows it again.
+              (setf (cl-tmux/terminal/types:screen-copy-hide-position screen)
+                    (and (%flag-present-p flags #\H) t))
               (%copy-mode-mouse-entry session screen flags)
               (setf *dirty* t)))))))
 
