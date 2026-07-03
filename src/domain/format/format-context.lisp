@@ -92,6 +92,12 @@
                                    "0")
         :session-group         (if (and session (cl-tmux/model:session-group session))
                                    (format nil "~A" (cl-tmux/model:session-group session)) "")
+        :session-created       (if session
+                                   (format nil "~D" (cl-tmux/model:session-created session))
+                                   "")
+        :session-activity      (if session
+                                   (format nil "~D" (cl-tmux/model:session-last-active session))
+                                   "")
         :session-count         (%server-session-count-string)
         :session-path          (ignore-errors (sb-posix:getcwd))
         :client-session        (if session (cl-tmux/model:session-name session) "")))
@@ -126,7 +132,14 @@
                                         (eq window (first (last session-windows)))) "1" "0")
         :window-last-flag      (if (and window session
                                         (eq window (cl-tmux/model:session-last-window session)))
-                                   "1" "0")))
+                                   "1" "0")
+        :window-marked-flag    (if (and window
+                                        (some #'cl-tmux/model:pane-marked window-panes))
+                                   "1" "0")
+        :window-activity       (if window
+                                   (format nil "~D"
+                                           (cl-tmux/model:window-last-output-time window))
+                                   "")))
 
 (defun %pane-structural-context-plist (pane window pane-title pane-current-path pane-synchronized)
   "Build the pane-structural slice of the format-context plist for PANE.
@@ -145,6 +158,9 @@
                                   "1" "0")
         :pane-synchronized    pane-synchronized
         :pane-marked          (if (and pane (cl-tmux/model:pane-marked pane)) "1" "0")
+        :pane-last            (if (and pane window
+                                       (eq pane (cl-tmux/model:window-last-active window)))
+                                  "1" "0")
         :pane-input-off       (if (and pane (cl-tmux/model:pane-input-disabled pane)) "1" "0")
         :pane-dead            (if (and pane (<= (cl-tmux/model:pane-fd pane) 0)) "1" "0")
         ;; Death record (remain-on-exit): empty strings when the pane is alive

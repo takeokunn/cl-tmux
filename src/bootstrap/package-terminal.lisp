@@ -319,6 +319,10 @@
    #:screen-cursor-shape
    ;; IRM insert/replace mode
    #:screen-insert-mode
+   #:screen-origin-mode
+   #:screen-alt-cells
+   #:screen-scroll-top
+   #:screen-scroll-bottom
    #:screen-newline-mode
    #:screen-reverse-screen
    ;; Bracketed paste mode

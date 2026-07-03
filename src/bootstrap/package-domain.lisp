@@ -191,6 +191,7 @@
    #:session-windows-changed
    #:session-active-pane
    #:session-last-active
+   #:session-created
    #:session-clients
    #:session-locked-p
    #:session-group

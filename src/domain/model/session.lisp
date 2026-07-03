@@ -14,6 +14,7 @@
   (windows     nil :type list)
   (active      nil)
   (last-active 0   :type integer)   ; universal-time of last access; updated on touch
+  (created (get-universal-time) :type integer) ; universal-time at construction (#{session_created})
   (clients     nil :type list)      ; list of connected client descriptors
   (locked-p    nil :type boolean)   ; T when lock-session has been called
   (group       nil)                 ; NIL or group-id (string/integer); sessions in same group share windows

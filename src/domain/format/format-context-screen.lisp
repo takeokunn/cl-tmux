@@ -46,6 +46,19 @@
                                           (cl-tmux/model:window-width window)))
                                   "1" "0")))
 
+(defun %synthesized-client-key-table (pane-scr)
+  "The name of the client's current key table (tmux client_key_table),
+   synthesized: prefix > copy-mode > custom *key-table* > root."
+  (flet ((runtime-value (name)
+           (let ((sym (find-symbol name "CL-TMUX")))
+             (and sym (boundp sym) (symbol-value sym)))))
+    (cond
+      ((runtime-value "*PREFIX-ACTIVE*") "prefix")
+      ((and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr)) "copy-mode")
+      ((let ((table (runtime-value "*KEY-TABLE*")))
+         (and (stringp table) (string/= table "root") table)))
+      (t "root"))))
+
 (defun %screen-context-plist (pane-scr cursor-x cursor-y)
   "Build the screen/copy-mode slice of the format-context plist for PANE-SCR.
    PANE-SCR is the pane's screen object (or NIL); CURSOR-X and CURSOR-Y are
@@ -60,6 +73,12 @@
                      (cl-tmux/terminal:screen-cell pane-scr cursor-x cursor-y)))
             "")
         :pane-in-mode         (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr)) "1" "0")
+        ;; tmux #{client_key_table}: synthesized from the live key state —
+        ;; "prefix" while awaiting the command key, "copy-mode" while the
+        ;; active pane is in copy mode, else the custom *key-table* or "root".
+        ;; Runtime specials live in CL-TMUX; resolved by name so the format
+        ;; layer keeps no dependency on the umbrella package.
+        :client-key-table     (%synthesized-client-key-table pane-scr)
         :pane-mode            (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr)) "copy-mode" "")
         :scroll-position      (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
                                   (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr))
@@ -87,7 +106,41 @@
         :history-size         (format nil "~D"
                                       (if pane-scr
                                           (length (cl-tmux/terminal:screen-scrollback pane-scr))
-                                          0))))
+                                          0))
+        ;; Terminal-state flags (tmux exposes the pane's mode bits directly).
+        :cursor-flag          (if (and pane-scr (cl-tmux/terminal:screen-cursor-visible pane-scr)) "1" "0")
+        :insert-flag          (if (and pane-scr (cl-tmux/terminal:screen-insert-mode pane-scr)) "1" "0")
+        :wrap-flag            (if (and pane-scr (cl-tmux/terminal:screen-autowrap pane-scr)) "1" "0")
+        :origin-flag          (if (and pane-scr (cl-tmux/terminal:screen-origin-mode pane-scr)) "1" "0")
+        :keypad-cursor-flag   (if (and pane-scr (cl-tmux/terminal:screen-app-cursor-keys pane-scr)) "1" "0")
+        :alternate-on         (if (and pane-scr (cl-tmux/terminal:screen-alt-cells pane-scr)) "1" "0")
+        :scroll-region-upper  (if pane-scr
+                                  (format nil "~D" (cl-tmux/terminal:screen-scroll-top pane-scr))
+                                  "")
+        :scroll-region-lower  (if pane-scr
+                                  (format nil "~D" (cl-tmux/terminal:screen-scroll-bottom pane-scr))
+                                  "")
+        ;; Mouse reporting flags (screen-mouse-mode: 0 off, 1/2/3 = ?1000/?1002/?1003).
+        :mouse-any-flag       (if (and pane-scr (plusp (cl-tmux/terminal:screen-mouse-mode pane-scr))) "1" "0")
+        :mouse-standard-flag  (if (and pane-scr (= 1 (cl-tmux/terminal:screen-mouse-mode pane-scr))) "1" "0")
+        :mouse-button-flag    (if (and pane-scr (= 2 (cl-tmux/terminal:screen-mouse-mode pane-scr))) "1" "0")
+        :mouse-all-flag       (if (and pane-scr (= 3 (cl-tmux/terminal:screen-mouse-mode pane-scr))) "1" "0")
+        :mouse-sgr-flag       (if (and pane-scr (cl-tmux/terminal:screen-mouse-sgr-mode pane-scr)) "1" "0")
+        ;; Copy-mode search / selection details.
+        :pane-search-string   (or (and pane-scr (cl-tmux/terminal:screen-copy-search-term pane-scr)) "")
+        :rectangle-toggle     (if (and pane-scr (cl-tmux/terminal:screen-copy-rect-select-p pane-scr)) "1" "0")
+        :selection-start-x    (let ((m (and pane-scr (cl-tmux/terminal:screen-copy-mark pane-scr))))
+                                (if m (format nil "~D" (cdr m)) ""))
+        :selection-start-y    (let ((m (and pane-scr (cl-tmux/terminal:screen-copy-mark pane-scr))))
+                                (if m (format nil "~D" (car m)) ""))
+        :selection-end-x      (let ((c (and pane-scr
+                                            (cl-tmux/terminal:screen-copy-selecting pane-scr)
+                                            (cl-tmux/terminal:screen-copy-cursor pane-scr))))
+                                (if c (format nil "~D" (cdr c)) ""))
+        :selection-end-y      (let ((c (and pane-scr
+                                            (cl-tmux/terminal:screen-copy-selecting pane-scr)
+                                            (cl-tmux/terminal:screen-copy-cursor pane-scr))))
+                                (if c (format nil "~D" (car c)) ""))))
 
 (defun %client-context-plist (client-width client-height client-tty hostname pid-str)
   "Build the client/server/host/environment slice of the format-context plist.
