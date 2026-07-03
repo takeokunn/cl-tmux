@@ -174,6 +174,7 @@
    #:*pane-extra-env*
    ;; Layout cycle index (for C-b Space next-layout)
    #:window-layout-cycle-index
+   #:window-last-layout-tree
    ;; Rotate-window
    #:window-rotate
    ;; Session

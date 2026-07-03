@@ -693,3 +693,40 @@
         (cl-tmux::%cmd-capture-pane-arg s '("-a" "-p"))
         (is (null (and *overlay* (search "no alternate screen" *overlay*)))
             "capture-pane -a with an active alt screen must capture")))))
+
+(test list-keys-N-lists-only-noted-bindings
+  "list-keys -N lists bindings carrying bind -N notes (with the note text);
+   -a additionally includes un-noted bindings."
+  (with-isolated-config
+   (with-fake-session (s)
+    (let ((*overlay* nil))
+      (cl-tmux::%run-command-line
+       s "bind -N \"Split the pane\" Y split-window")
+      (cl-tmux::%run-command-line s "bind Z kill-pane")
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "list-keys -N -T prefix")
+        (is (search "Split the pane" *overlay*)
+            "-N must show the note text")
+        (is (null (search "Z " *overlay*))
+            "-N must exclude un-noted bindings"))
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "list-keys -N -a -T prefix")
+        (is (search "Split the pane" *overlay*) "-Na keeps noted bindings")
+        (is (search "Z" *overlay*) "-Na includes un-noted bindings"))))))
+
+(test select-layout-o-undoes-last-layout-change
+  "select-layout -o restores the layout tree saved before the last layout
+   application; a second -o redoes (swap semantics)."
+  (with-two-pane-h-session (s win p0 p1)
+    (with-command-test-state (s :overlay t)
+      (let ((before-tree (cl-tmux/model:window-tree win)))
+        (cl-tmux::%run-command-line s "select-layout even-vertical")
+        (let ((after-tree (cl-tmux/model:window-tree win)))
+          (is (not (eq before-tree after-tree))
+              "applying a named layout must install a new tree")
+          (cl-tmux::%run-command-line s "select-layout -o")
+          (is (eq before-tree (cl-tmux/model:window-tree win))
+              "-o must restore the pre-change tree")
+          (cl-tmux::%run-command-line s "select-layout -o")
+          (is (eq after-tree (cl-tmux/model:window-tree win))
+              "a second -o must redo (swap semantics)"))))))

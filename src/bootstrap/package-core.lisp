@@ -24,6 +24,7 @@
    #:*key-tables*
    #:ensure-key-table
    #:key-table-bind
+   #:describe-key-binding-notes
    #:key-table-unbind
    #:key-table-lookup
    #:key-table-command

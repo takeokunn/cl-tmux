@@ -382,16 +382,21 @@
    Without -T: show all tables.  KEY filters the output to matching bindings.
    -1 keeps only the first line of output.
    -P prefix: a string to print before each key (consumed; accepted).
-   -N: list only key notes; -a: include keys without notes — accepted (cl-tmux
-       does not track per-binding notes, so the full listing is shown).
+   -N: list key NOTES (bind -N descriptions) only; with -a, bindings without a
+       note are included with their command as the description (tmux).
    The parser accepts -T/-P and an optional key filter."
   (declare (ignore session))
   (with-command-flags+pos (flags positionals args "T1P")
     (let* ((table-name (%list-keys-table-name-from-flags flags))
            (key        (first positionals))
-           (output     (if key
-                           (cl-tmux/config:describe-key-bindings-for-key table-name key)
-                           (cl-tmux/config:describe-key-bindings-for-table table-name)))
+           (output     (cond
+                         ((%flag-present-p flags #\N)
+                          (cl-tmux/config:describe-key-binding-notes
+                           table-name (%flag-present-p flags #\a)))
+                         (key
+                          (cl-tmux/config:describe-key-bindings-for-key table-name key))
+                         (t
+                          (cl-tmux/config:describe-key-bindings-for-table table-name))))
            (output     (if (%flag-present-p flags #\1)
                            (let ((newline (position #\Newline output)))
                              (if newline

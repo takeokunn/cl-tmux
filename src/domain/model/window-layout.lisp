@@ -54,6 +54,9 @@
       override them when set and fitting.  The option values are read by the
       cl-tmux-layer caller and passed in as plain integers, since this model-layer
       code loads before options.  Rebuilds the window tree and calls layout-assign."
+     ;; select-layout -o: remember the pre-change tree so the last layout
+     ;; change can be undone (trees share the same pane structs).
+     (setf (window-last-layout-tree window) (window-tree window))
      (let* ((panes  (window-panes window))
             (n      (length panes))
             (width  (window-width  window))

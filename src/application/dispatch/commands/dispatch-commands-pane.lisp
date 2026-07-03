@@ -38,8 +38,9 @@
      main-horizontal (main-h), main-vertical (main-v), tiled.
    -n: next preset layout; -p: previous preset layout.
    -E: spread the panes out evenly (mapped to even-vertical).
-   -o: undo the last layout change (accepted; cl-tmux keeps no layout-undo
-       history, so it is a no-op).
+   -o: undo the last layout change — restores the layout tree saved before
+       the previous select-layout/next-layout application (swapping, so a
+       second -o redoes).
    -t target-window: the window to lay out (default: the active window)."
   (with-command-input (flags positionals args "t"
                              :allowed-flags '(#\n #\p #\o #\E #\t)
@@ -52,6 +53,16 @@
            (name   (first positionals)))
       (when win
         (cond
+          ;; -o: swap the current tree with the one saved before the last
+          ;; layout change and relayout.
+          ((%flag-present-p flags #\o)
+           (let ((prev (cl-tmux/model:window-last-layout-tree win)))
+             (when prev
+               (setf (cl-tmux/model:window-last-layout-tree win)
+                     (cl-tmux/model:window-tree win)
+                     (cl-tmux/model:window-tree win) prev)
+               (window-relayout win (window-height win) (window-width win))
+               (setf *dirty* t))))
           ((%flag-present-p flags #\n) (%cycle-layout session win :next))
           ((%flag-present-p flags #\p) (%cycle-layout session win :prev))
           ((%flag-present-p flags #\E) (%apply-named-layout-to-session session :even-vertical))
