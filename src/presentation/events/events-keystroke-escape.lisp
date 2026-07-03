@@ -139,8 +139,14 @@
   (> length 32))
 
 (defun %handle-escape-focus-change (session buffer)
-  (%notify-pane-focus (session-active-pane session)
-                      (= (aref buffer 2) +byte-focus-in+))
+  (let ((focus-in-p (= (aref buffer 2) +byte-focus-in+)))
+    ;; command-prompt -e: the prompt closes when the client loses focus.
+    (when (and (not focus-in-p)
+               (prompt-active-p)
+               (cl-tmux/prompt:prompt-close-on-focus-out cl-tmux/prompt:*prompt*))
+      (cl-tmux/prompt:prompt-clear)
+      (setf *dirty* t))
+    (%notify-pane-focus (session-active-pane session) focus-in-p))
   (%ground-values))
 
 (defun %handle-escape-modifier-arrow (session buffer length)

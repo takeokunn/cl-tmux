@@ -118,34 +118,43 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
    set-hook config directive and the set-hook runtime command.
    String hooks support #{format} variable expansion at fire time.")
 
-(defun %make-hook-entry (command session-name)
+(defparameter +scoped-hook-kinds+ '(:scoped-session :scoped-window :scoped-pane)
+  "The scope tags a stored hook entry may carry (tmux per-target hooks):
+   set-hook -t SESSION, set-hook -w -t WINDOW, set-hook -p -t PANE.")
+
+(defun %make-hook-entry (command scope-value scope-kind)
   "The stored form of a hook COMMAND: the raw command when global, or a
-   (:scoped-session NAME COMMAND) record when SESSION-NAME scopes it (tmux
-   set-hook -t: the hook belongs to that session and fires only for it)."
-  (if session-name
-      (list :scoped-session session-name command)
+   (SCOPE-KIND SCOPE-VALUE COMMAND) record when SCOPE-VALUE scopes it —
+   a session name (:scoped-session) or a window/pane id (:scoped-window /
+   :scoped-pane)."
+  (if scope-value
+      (list scope-kind scope-value command)
       command))
 
 (defun scoped-hook-entry-p (entry)
-  "True when ENTRY is a session-scoped hook record."
-  (and (consp entry) (eq (first entry) :scoped-session)))
+  "True when ENTRY is a scoped hook record (session, window, or pane scope)."
+  (and (consp entry) (member (first entry) +scoped-hook-kinds+)))
 
-(defun set-command-hook (event-name command &optional session-name)
+(defun set-command-hook (event-name command
+                         &optional scope-value (scope-kind :scoped-session))
   "Set EVENT-NAME's command-hook list to the single COMMAND, REPLACING any hooks
    already registered for that event.  This matches tmux's `set-hook` (without
    -a), which overwrites the hook rather than accumulating.  Use
    append-command-hook for the `-a` form that preserves prior hooks.
-   SESSION-NAME (set-hook -t) scopes the hook to that session."
+   SCOPE-VALUE with SCOPE-KIND (set-hook -t / -w -t / -p -t) scopes the hook to
+   that session name or window/pane id."
   (setf (gethash event-name *command-hooks*)
-        (list (%make-hook-entry command session-name))))
+        (list (%make-hook-entry command scope-value scope-kind))))
 
-(defun append-command-hook (event-name command &optional session-name)
+(defun append-command-hook (event-name command
+                            &optional scope-value (scope-kind :scoped-session))
   "Append COMMAND (a raw command-line string) to EVENT-NAME's dispatch list,
    preserving declaration order across calls.  This is tmux's `set-hook -a`.
-   SESSION-NAME (set-hook -t) scopes the hook to that session."
+   SCOPE-VALUE with SCOPE-KIND (set-hook -t / -w -t / -p -t) scopes the hook to
+   that session name or window/pane id."
   (setf (gethash event-name *command-hooks*)
         (append (gethash event-name *command-hooks*)
-                (list (%make-hook-entry command session-name)))))
+                (list (%make-hook-entry command scope-value scope-kind)))))
 
 (defun command-hooks (event-name)
   "Return the ordered list of commands registered for EVENT-NAME."

@@ -47,6 +47,7 @@
    #:prompt #:make-prompt #:prompt-p
    #:prompt-label #:prompt-buffer #:prompt-cursor-index #:prompt-on-submit
    #:prompt-on-change #:prompt-on-cancel #:prompt-numeric-only
+   #:prompt-close-on-focus-out #:prompt-clear
    #:prompt-vi-normal-p #:prompt-single-key
    #:with-active-prompt
    #:*prompt* #:prompt-active-p #:prompt-start

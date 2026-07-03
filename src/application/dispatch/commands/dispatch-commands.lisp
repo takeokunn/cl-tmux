@@ -304,20 +304,28 @@
    -1: single-key prompt — each prompt accepts ONE keypress (no Enter).
    -k: key prompt — like -1, the prompt accepts a single keypress.
    -T type / -t target-client: accepted (their arguments are consumed so they do
-       not leak into the template); -b/-e/-l are accepted as no-ops in the
-       standalone prompt model.  tmux args \"1beFiklI:Np:t:T:\".
+       not leak into the template).  tmux args \"1beFiklI:Np:t:T:\".
    -N: the prompt accepts numeric key presses only.
    -F: the substituted command line is expanded as a format string before it
        runs.
+   -b: the prompt runs in the background without blocking — cl-tmux prompts
+       are ALWAYS non-blocking overlays, so this is the native behaviour.
+   -e: the prompt closes automatically when the client loses focus (wired to
+       the ?1004 focus-out report).
+   -l: like -1, the first key press is the answer; cl-tmux's -1 already
+       submits the untranslated character, which is exactly -l's semantics.
    -i: incremental — the template runs on EVERY prompt edit with %1/%% bound to
        the current input (tmux PROMPT_INCREMENTAL, used for live-search
        bindings), in addition to the final run on Enter."
   (with-command-flags+pos (flags positionals args "IptT")
     (let* ((prompts-str (%flag-value flags #\p))
            (initial     (or (%flag-value flags #\I) ""))
-           ;; -1 and -k both request a one-keypress prompt.
+           ;; -1, -k, and -l all request a one-keypress prompt (-k translates
+           ;; to a key name in tmux; -l is explicitly untranslated — cl-tmux
+           ;; submits the raw character for all three).
            (single-key  (and (or (%flag-present-p flags #\1)
-                                 (%flag-present-p flags #\k)) t))
+                                 (%flag-present-p flags #\k)
+                                 (%flag-present-p flags #\l)) t))
            (template    (format nil "~{~A~^ ~}" positionals))
            (has-template (plusp (length template)))
            (prompt-list (when prompts-str
@@ -380,6 +388,12 @@
         (when (and (%flag-present-p flags #\N)
                    cl-tmux/prompt:*prompt*)
           (setf (cl-tmux/prompt:prompt-numeric-only cl-tmux/prompt:*prompt*)
+                t))
+        ;; -e: close the prompt when the client loses focus (?1004 focus-out).
+        (when (and (%flag-present-p flags #\e)
+                   cl-tmux/prompt:*prompt*)
+          (setf (cl-tmux/prompt:prompt-close-on-focus-out
+                 cl-tmux/prompt:*prompt*)
                 t))))))
 
 (defun %substitute-prompt-response (template input)

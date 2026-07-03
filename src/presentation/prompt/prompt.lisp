@@ -34,6 +34,8 @@
   (single-key  nil :type boolean)
   ;; Numeric-only mode (command-prompt -N): only digit keys are inserted.
   (numeric-only nil :type boolean)
+  ;; command-prompt -e: the prompt closes when the client loses focus.
+  (close-on-focus-out nil :type boolean)
   ;; Optional command history, newest first.  HISTORY-INDEX is NIL until the user
   ;; starts navigating with Up/Down; HISTORY-ORIGINAL preserves the in-progress
   ;; input so Down can return to it after walking older entries.

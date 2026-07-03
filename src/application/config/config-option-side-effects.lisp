@@ -124,19 +124,26 @@
    are expanded at hook-fire time via %run-command-line.
    Returns T when handled, NIL otherwise."
   (when (string= cmd "set-hook")
-    ;; Consume ALL leading -X flags (not just -r/-u): -g/-a/-R/-w/-p are accepted
-    ;; and skipped so `set-hook -g <event> <cmd>` registers EVENT, not "-g".
-    ;; -t names a target SESSION: the hook is scoped to it and fires only for
-    ;; that session (tmux per-target hooks).  -w/-p (window/pane scope) have no
-    ;; object context at config-load time and remain effectively global.
+    ;; Consume ALL leading -X flags (not just -r/-u): -g/-R are accepted and
+    ;; skipped so `set-hook -g <event> <cmd>` registers EVENT, not "-g".
+    ;; -t names the target the hook is scoped to (tmux per-target hooks): a
+    ;; session name by default, a window id with -w, a pane id with -p.  The
+    ;; scoped hook fires only when the firing target matches.  -w/-p WITHOUT
+    ;; -t have no object context at config-load time and register globally.
     (let* ((remove-p nil)
            (append-p nil)
+           (window-p nil)
+           (pane-p   nil)
            (target   nil)
            (rest     (%consuming-flags (args tok rest)
                        ((member tok '("-r" "-u") :test #'string=)
                         (setf remove-p t))
                        ((string= tok "-a")
                         (setf append-p t))
+                       ((string= tok "-w")
+                        (setf window-p t))
+                       ((string= tok "-p")
+                        (setf pane-p t))
                        ;; -t takes a target argument: capture it.
                        ((string= tok "-t")
                         (setf target (first rest)
@@ -144,7 +151,14 @@
            (event    (first rest))
            ;; The command may be a single quoted token or split across tokens;
            ;; join all remaining tokens as a single command line string.
-           (cmd-str  (%join-config-tokens (rest rest))))
+           (cmd-str  (%join-config-tokens (rest rest)))
+           (scope-kind (cond (pane-p   :scoped-pane)
+                             (window-p :scoped-window)
+                             (t        :scoped-session)))
+           (scope-value (cond
+                          ((null target) nil)
+                          ((eq scope-kind :scoped-session) target)
+                          (t (%parse-hook-object-id target)))))
       (when event
         (if remove-p
             (progn (cl-tmux/hooks:clear-command-hooks event) t)
@@ -153,6 +167,16 @@
               ;; Without -a, set-hook REPLACES the event's hook (tmux semantics);
               ;; with -a it appends, preserving any prior hooks.
               (if append-p
-                  (cl-tmux/hooks:append-command-hook event cmd-str target)
-                  (cl-tmux/hooks:set-command-hook event cmd-str target))
+                  (cl-tmux/hooks:append-command-hook event cmd-str
+                                                     scope-value scope-kind)
+                  (cl-tmux/hooks:set-command-hook event cmd-str
+                                                  scope-value scope-kind))
               t))))))
+
+(defun %parse-hook-object-id (target)
+  "Parse a set-hook -w/-p -t TARGET into the window/pane id integer, tolerating
+   the tmux id sigils (@2, %3) and a leading ':'.  NIL when unparsable (the
+   hook then registers globally, the tolerant config behaviour)."
+  (let ((trimmed (string-left-trim "@%:" target)))
+    (when (plusp (length trimmed))
+      (parse-integer trimmed :junk-allowed t))))

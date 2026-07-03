@@ -656,3 +656,39 @@
           (cl-tmux::run-command-hooks "my-global-event" beta)
           (is (string= "fired" (cl-tmux/options:get-option "@global"))
               "a global hook must fire for any session")))))))
+
+(test set-hook-w-and-p-scope-to-object-ids
+  "set-hook -w -t / -p -t scope hooks to a window/pane id: the hook fires only
+   when the event's fire-time target is that object (tmux per-target hooks)."
+  (with-isolated-config
+   (with-isolated-hooks
+    (with-fake-session (s :nwindows 2)
+      (let* ((wins (cl-tmux/model:session-windows s))
+             (w0   (first wins))
+             (w1   (second wins))
+             (p0   (first (cl-tmux/model:window-panes w0))))
+        ;; %derive-hook-session resolves window/pane targets via the registry.
+        (let ((*overlay* nil)
+              (cl-tmux::*server-sessions* (list (cons "s" s))))
+          ;; Window scope: fires for that window (or a pane inside it) only.
+          (apply-config-directive
+           (list "set-hook" "-w" "-t"
+                 (format nil "@~D" (cl-tmux/model:window-id w0))
+                 "win-scoped-event" "set -g @wscope fired"))
+          (cl-tmux::run-command-hooks "win-scoped-event" w1)
+          (is (null (cl-tmux/options:get-option "@wscope" nil))
+              "a window-scoped hook must not fire for another window")
+          (cl-tmux::run-command-hooks "win-scoped-event" p0)
+          (is (string= "fired" (cl-tmux/options:get-option "@wscope"))
+              "a window-scoped hook must fire for a pane inside its window")
+          ;; Pane scope: fires for that pane only.
+          (apply-config-directive
+           (list "set-hook" "-p" "-t"
+                 (format nil "%~D" (cl-tmux/model:pane-id p0))
+                 "pane-scoped-event" "set -g @pscope fired"))
+          (cl-tmux::run-command-hooks "pane-scoped-event" w0)
+          (is (null (cl-tmux/options:get-option "@pscope" nil))
+              "a pane-scoped hook must not fire for a window target")
+          (cl-tmux::run-command-hooks "pane-scoped-event" p0)
+          (is (string= "fired" (cl-tmux/options:get-option "@pscope"))
+              "a pane-scoped hook must fire for its pane")))))))

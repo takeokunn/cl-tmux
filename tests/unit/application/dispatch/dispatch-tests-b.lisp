@@ -495,3 +495,38 @@
       (is (null (cl-tmux/terminal/types:screen-copy-mode-p
                  (cl-tmux/model:pane-screen p0)))
           "the active pane's screen must not enter copy mode"))))
+
+(test command-prompt-l-is-single-key
+  "command-prompt -l requests a one-keypress prompt (like -1; cl-tmux's -1
+   already submits the untranslated character, which is -l's semantics)."
+  (with-fake-session (s)
+    (let ((*prompt* nil))
+      (cl-tmux::%run-command-line s "command-prompt -l \"send-keys %1\"")
+      (is (prompt-active-p) "the prompt must open")
+      (is-true (cl-tmux/prompt:prompt-single-key *prompt*)
+               "-l must request a single-key prompt"))))
+
+(test command-prompt-e-closes-on-focus-out
+  "command-prompt -e closes the prompt when the client loses focus (?1004
+   focus-out report); a focus-in leaves it open."
+  (with-fake-session (s)
+    (let ((*prompt* nil)
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%run-command-line s "command-prompt -e")
+      (is (prompt-active-p) "the prompt must open")
+      ;; Focus-in: prompt stays.
+      (cl-tmux::%handle-escape-focus-change s (vector 27 91 73)) ; ESC [ I
+      (is (prompt-active-p) "focus-in must leave the -e prompt open")
+      ;; Focus-out: prompt closes.
+      (cl-tmux::%handle-escape-focus-change s (vector 27 91 79)) ; ESC [ O
+      (is (not (prompt-active-p)) "focus-out must close the -e prompt"))))
+
+(test command-prompt-without-e-survives-focus-out
+  "A prompt without -e is unaffected by focus changes."
+  (with-fake-session (s)
+    (let ((*prompt* nil)
+          (cl-tmux::*dirty* nil))
+      (cl-tmux::%run-command-line s "command-prompt")
+      (cl-tmux::%handle-escape-focus-change s (vector 27 91 79))
+      (is (prompt-active-p)
+          "focus-out must not close a prompt opened without -e"))))
