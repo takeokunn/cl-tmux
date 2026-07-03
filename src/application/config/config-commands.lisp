@@ -123,6 +123,20 @@
     ("start"     . "start-server")     ("suspendc"  . "suspend-client")
     ("swapp"     . "swap-pane")        ("swapw"     . "swap-window")
     ("switchc"   . "switch-client")    ("bind-key"  . "bind")
+    ;; Standard tmux short aliases verified against the upstream cmd_table
+    ;; (deepwiki diff 2026-07-03) — real configs use these freely.  The
+    ;; earlier confirmb/renames/unlink spellings are kept as tolerant extras.
+    ("confirm"   . "confirm-before")   ("kills"     . "kill-session")
+    ("next"      . "next-window")      ("prev"      . "previous-window")
+    ("nextl"     . "next-layout")      ("prevl"     . "previous-layout")
+    ("pipe"      . "pipe-pane")        ("pipep"     . "pipe-pane")
+    ("refresh"   . "refresh-client")   ("rename"    . "rename-session")
+    ("rotatew"   . "rotate-window")    ("selectl"   . "select-layout")
+    ("showenv"   . "show-environment") ("showmsgs"  . "show-messages")
+    ("unlinkw"   . "unlink-window")
+    ;; new-pane (newp): recent tmux addition — a pane-creating command whose
+    ;; behaviour maps onto split-window in this model.
+    ("new-pane"  . "split-window")     ("newp"      . "split-window")
     ("unbind-key" . "unbind")          ("unlink"    . "unlink-window"))
   "tmux command-name aliases (the cmd_entry .alias field) mapped to the canonical
    name cl-tmux registers.  Consulted by %canonical-command-name so a .tmux.conf

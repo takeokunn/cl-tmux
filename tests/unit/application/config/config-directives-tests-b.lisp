@@ -618,3 +618,20 @@
                  "a multi-token line must not be treated as an assignment"))
         (cl-tmux/model:process-unset-environment "CLTMUX_CFGVAR")
         (cl-tmux/model:process-unset-environment "CLTMUX_CFGHID")))))
+
+(test tmux-standard-short-aliases-resolve
+  "The standard tmux cmd_table short aliases resolve to their canonical
+   commands (verified against the upstream inventory).
+   Each row: (alias canonical)."
+  (dolist (row '(("confirm" "confirm-before") ("kills" "kill-session")
+                 ("next" "next-window")       ("prev" "previous-window")
+                 ("nextl" "next-layout")      ("prevl" "previous-layout")
+                 ("pipe" "pipe-pane")         ("pipep" "pipe-pane")
+                 ("refresh" "refresh-client") ("rename" "rename-session")
+                 ("rotatew" "rotate-window")  ("selectl" "select-layout")
+                 ("showenv" "show-environment")
+                 ("showmsgs" "show-messages") ("unlinkw" "unlink-window")
+                 ("newp" "split-window")))
+    (destructuring-bind (alias canonical) row
+      (is (string= canonical (cl-tmux/config::%canonical-command-name alias))
+          "~A must resolve to ~A" alias canonical))))
