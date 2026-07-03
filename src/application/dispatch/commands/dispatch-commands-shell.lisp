@@ -138,8 +138,42 @@
         :escapes (%flag-present-p flags #\e)
         :join (%flag-present-p flags #\J)
         :preserve (%flag-present-p flags #\N)
+        :start (%capture-pane-parse-range-value (%flag-value flags #\S))
+        :end   (%capture-pane-parse-range-value (%flag-value flags #\E))
         :target-str (%flag-value flags #\t)
         :buffer-name (%flag-value flags #\b)))
+
+(defun %capture-pane-parse-range-value (raw)
+  "Parse a capture-pane -S/-E value: NIL when absent, :edge for \"-\" (start of
+   history / end of visible), or an integer line number (negative reaches into
+   the scrollback)."
+  (cond ((null raw) nil)
+        ((string= raw "-") :edge)
+        (t (%parse-integer-or-nil raw))))
+
+(defun %capture-pane-slice-range (content height start end)
+  "Slice CONTENT (captured text, one row per line, scrollback rows first) to
+   the tmux -S/-E line range.  Line 0 is the first VISIBLE row; negative lines
+   reach into the scrollback; :edge start = the beginning of history; :edge or
+   absent end = the visible bottom."
+  (if (and (null start) (null end))
+      content
+      (let* ((lines (uiop:split-string content :separator '(#\Newline)))
+             ;; The final row terpri leaves one trailing empty pseudo-line.
+             (lines (if (and lines (string= (first (last lines)) ""))
+                        (butlast lines)
+                        lines))
+             (total (length lines))
+             (vis0  (max 0 (- total height)))
+             (from  (cond ((eq start :edge) 0)
+                          ((integerp start) (max 0 (+ vis0 start)))
+                          (t vis0)))
+             (to    (cond ((or (null end) (eq end :edge)) total)
+                          ((integerp end) (min total (+ vis0 end 1)))
+                          (t total))))
+        (if (< from to)
+            (format nil "~{~A~%~}" (subseq lines from to))
+            ""))))
 
 (defun %capture-pane-deliver-content (content print-p buffer-name)
   "Send captured CONTENT to the overlay or a paste buffer."
@@ -156,9 +190,9 @@
      paste-buffer) — tmux's default behaviour, and the canonical capture→paste
      workflow.  Silent (no overlay).
    -p: print to stdout (shown as an overlay in standalone mode) instead of saving.
-   -S start: include scrollback.  A line number or '-' (start of history) both
-     include the full scrollback above the visible region.
-   -E end: accepted (end line); the visible bottom is the end here.
+   -S start / -E end: the captured line range.  Line 0 is the first visible
+     row; negative numbers reach into the scrollback; '-' means the start of
+     history (-S) — the end defaults to the visible bottom (-E omitted/'-').
    -b name: store the capture in the buffer named NAME (retrievable with
      paste-buffer -b NAME); without -b an automatic name is assigned.
    -e: include SGR escape sequences so captured colours/attributes are preserved.
@@ -193,6 +227,16 @@
                                                :join (and join t)
                                                :preserve-trailing (and preserve t)))))
           (when content
+            ;; -S/-E line range: slice the assembled capture (scrollback rows
+            ;; precede the visible region; line 0 = first visible row).
+            (let ((start (getf options :start))
+                  (end   (getf options :end)))
+              (when (or start end)
+                (setf content
+                      (%capture-pane-slice-range
+                       content
+                       (cl-tmux/terminal/types:screen-height (pane-screen pane))
+                       start end))))
             (%capture-pane-deliver-content content print-p
                                            (getf options :buffer-name))))))))
 

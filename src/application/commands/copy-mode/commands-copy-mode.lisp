@@ -119,6 +119,21 @@
   (%copy-mode-with-cancel-at-bottom
    screen (lambda () (copy-mode-scroll screen (- (screen-height screen))))))
 
+(defun copy-mode-half-page-down-and-cancel (screen)
+  "send-keys -X halfpage-down-and-cancel: scroll half a page down, then exit
+   copy mode when the live bottom is reached."
+  (%copy-mode-with-cancel-at-bottom
+   screen (lambda () (copy-mode-half-page-down screen))))
+
+(defun copy-mode-stop-selection (screen)
+  "send-keys -X stop-selection: stop EXTENDING the selection but keep the mark
+   in place, unlike clear-selection which drops it (tmux stop-selection).  In
+   this model further motion no longer extends because the selecting flag is
+   cleared; the mark survives for a later begin-selection/other-end."
+  (when (and (screen-copy-mode-p screen) (screen-copy-selecting screen))
+    (setf (screen-copy-selecting screen) nil
+          (screen-dirty-p screen) t)))
+
 (defun copy-mode-cursor-down-and-cancel (screen)
   "send-keys -X cursor-down-and-cancel: move the cursor down; exit copy mode when
    the cursor is already at the bottom of the history (it cannot move and the

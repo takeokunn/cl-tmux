@@ -605,3 +605,32 @@
         (cl-tmux::%cmd-resize-pane-arg s '("-M"))
         (is (null cl-tmux::*mouse-drag-state*)
             "-M without a mouse event must not arm the drag state")))))
+
+(test copy-mode-x-new-command-names-resolve
+  "The newly-added send-keys -X names resolve through the X dispatch tables:
+   stop-selection keeps the mark but stops extending; halfpage-down-and-cancel
+   and copy-pipe-end-of-line / jump-to-forward are registered."
+  (with-fake-session (s)
+    (let* ((pane   (cl-tmux/model:session-active-pane s))
+           (screen (cl-tmux/model:pane-screen pane)))
+      (cl-tmux/commands:copy-mode-enter screen)
+      (cl-tmux/commands:copy-mode-begin-selection screen)
+      (is-true (cl-tmux/terminal/types:screen-copy-selecting screen)
+               "precondition: selecting")
+      (cl-tmux::%run-command-line s "send-keys -X stop-selection")
+      (is (null (cl-tmux/terminal/types:screen-copy-selecting screen))
+          "stop-selection must stop extending")
+      (is-true (cl-tmux/terminal/types:screen-copy-mark screen)
+               "stop-selection must KEEP the mark (unlike clear-selection)")
+      ;; Registration checks for the other names.
+      (is-true (assoc "halfpage-down-and-cancel"
+                      cl-tmux::*copy-mode-x-commands* :test #'string=)
+               "halfpage-down-and-cancel must be in the X table")
+      (is-true (find "copy-pipe-end-of-line"
+                     cl-tmux::+send-keys-x-explicit-arg-specs+
+                     :key #'first :test #'string=)
+               "bare copy-pipe-end-of-line must be in the arg specs")
+      (is-true (find "jump-to-forward"
+                     cl-tmux::+send-keys-x-explicit-arg-specs+
+                     :key #'first :test #'string=)
+               "jump-to-forward must be in the arg specs"))))

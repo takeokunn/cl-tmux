@@ -471,6 +471,9 @@
    #:copy-mode-toggle-rectangle
    ;; Mark management
    #:copy-mode-set-mark
+   #:copy-mode-stop-selection
+   #:copy-mode-half-page-down-and-cancel
+   #:copy-mode-copy-pipe-end-of-line-no-cancel
    ;; Append selection
    #:copy-mode-append-selection
    #:copy-mode-append-selection-and-cancel

@@ -39,6 +39,8 @@
   ("page-down"                    :copy-mode-page-down)
   ("halfpage-up"                  :copy-mode-half-page-up)
   ("halfpage-down"                :copy-mode-half-page-down)
+  ("halfpage-down-and-cancel"     :copy-mode-half-page-down-and-cancel)
+  ("stop-selection"               :copy-mode-stop-selection)
   ("search-again"                 :copy-mode-search-next)
   ("search-reverse"               :copy-mode-search-prev)
   ("search-forward"               :copy-mode-search-forward-prompt)
@@ -118,6 +120,8 @@
   '(("jump-forward"                  :char copy-mode-jump-forward)
     ("jump-backward"                 :char copy-mode-jump-backward)
     ("jump-to"                       :char copy-mode-jump-to)
+    ;; tmux spells vi 't' as jump-to-forward; jump-to is kept as an alias.
+    ("jump-to-forward"               :char copy-mode-jump-to)
     ("jump-to-backward"              :char copy-mode-jump-to-backward)
     ("goto-line"                     :line copy-mode-goto-line)
     ("search-forward-text"           :text copy-mode-search-forward)
@@ -126,6 +130,7 @@
     ("copy-pipe-and-cancel"          :text copy-mode-copy-pipe)
     ("copy-pipe-end-of-line-and-cancel"
      :text copy-mode-copy-pipe-end-of-line)
+    ("copy-pipe-end-of-line"         :text copy-mode-copy-pipe-end-of-line-no-cancel)
     ("copy-pipe-no-clear"            :text copy-mode-copy-pipe-no-clear)
     ("copy-pipe-line"                :text copy-mode-copy-pipe-line)
     ("copy-pipe-line-and-cancel"     :text copy-mode-copy-pipe-line-and-cancel)

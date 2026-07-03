@@ -261,6 +261,11 @@
    "Copy from the cursor to the end of the current line, pipe it, then exit copy
     mode.  If CMD is empty or NIL the global \"copy-command\" option is used.")
 
+  (copy-mode-copy-pipe-end-of-line-no-cancel
+   %copy-pipe-end-of-line-text t :dirty
+   "Copy from the cursor to the end of the current line, pipe it, and STAY in
+    copy mode (tmux's bare `copy-pipe-end-of-line`).")
+
   (copy-mode-copy-pipe-no-clear
    %copy-pipe-selection-text t :dirty
    "Copy the selection to the paste buffer AND pipe it, WITHOUT clearing the

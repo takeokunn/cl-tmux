@@ -47,8 +47,9 @@
   (is (eq :copy-mode-clear-selection
           (copy-mode-x-command-value "clear-selection"))
       "clear-selection must be a known send -X command")
-  (is-false (copy-mode-x-command-value "stop-selection")
-            "stop-selection is no longer a supported send -X command")
+  (is (eq :copy-mode-stop-selection
+          (copy-mode-x-command-value "stop-selection"))
+      "stop-selection is a supported send -X command (tmux window-copy)")
   ;; copy-selection-and-cancel IS now supported (audit #21) — copies then exits.
   (is (eq :copy-mode-yank
           (copy-mode-x-command-value "copy-selection-and-cancel"))
