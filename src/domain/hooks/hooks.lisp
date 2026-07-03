@@ -118,18 +118,34 @@ Uses the safe SBCL idiom to avoid string-constant redefinition errors."
    set-hook config directive and the set-hook runtime command.
    String hooks support #{format} variable expansion at fire time.")
 
-(defun set-command-hook (event-name command)
+(defun %make-hook-entry (command session-name)
+  "The stored form of a hook COMMAND: the raw command when global, or a
+   (:scoped-session NAME COMMAND) record when SESSION-NAME scopes it (tmux
+   set-hook -t: the hook belongs to that session and fires only for it)."
+  (if session-name
+      (list :scoped-session session-name command)
+      command))
+
+(defun scoped-hook-entry-p (entry)
+  "True when ENTRY is a session-scoped hook record."
+  (and (consp entry) (eq (first entry) :scoped-session)))
+
+(defun set-command-hook (event-name command &optional session-name)
   "Set EVENT-NAME's command-hook list to the single COMMAND, REPLACING any hooks
    already registered for that event.  This matches tmux's `set-hook` (without
    -a), which overwrites the hook rather than accumulating.  Use
-   append-command-hook for the `-a` form that preserves prior hooks."
-  (setf (gethash event-name *command-hooks*) (list command)))
-
-(defun append-command-hook (event-name command)
-  "Append COMMAND (a raw command-line string) to EVENT-NAME's dispatch list,
-   preserving declaration order across calls.  This is tmux's `set-hook -a`."
+   append-command-hook for the `-a` form that preserves prior hooks.
+   SESSION-NAME (set-hook -t) scopes the hook to that session."
   (setf (gethash event-name *command-hooks*)
-        (append (gethash event-name *command-hooks*) (list command))))
+        (list (%make-hook-entry command session-name))))
+
+(defun append-command-hook (event-name command &optional session-name)
+  "Append COMMAND (a raw command-line string) to EVENT-NAME's dispatch list,
+   preserving declaration order across calls.  This is tmux's `set-hook -a`.
+   SESSION-NAME (set-hook -t) scopes the hook to that session."
+  (setf (gethash event-name *command-hooks*)
+        (append (gethash event-name *command-hooks*)
+                (list (%make-hook-entry command session-name)))))
 
 (defun command-hooks (event-name)
   "Return the ordered list of commands registered for EVENT-NAME."

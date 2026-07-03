@@ -21,8 +21,15 @@
   "Dispatch a single hook ENTRY against SESSION.
    STRING entries are run as command lines via %run-command-line; errors are
    reported as an overlay instead of being silently swallowed.
-   KEYWORD entries dispatch directly via dispatch-command."
+   KEYWORD entries dispatch directly via dispatch-command.
+   Session-scoped entries (set-hook -t) fire only when SESSION is the named
+   session — tmux stores hooks per target and fires them for that scope only."
   (cond
+    ((cl-tmux/hooks:scoped-hook-entry-p entry)
+     (destructuring-bind (tag name command) entry
+       (declare (ignore tag))
+       (when (string= name (session-name session))
+         (%dispatch-hook-entry session command))))
     ((stringp entry)
      (with-overlay-on-error ("hook") (%run-command-line session entry)))
     ((keywordp entry)

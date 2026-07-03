@@ -626,3 +626,33 @@
       (is (= 40 cl-tmux::*term-rows*) "malformed -C must not change rows")
       (cl-tmux::%cmd-refresh-client-arg s '("-S"))
       (is (= 100 cl-tmux::*term-cols*) "-S alone must not change the size"))))
+
+;;; ── set-hook -t (session-scoped hooks) ───────────────────────────────────────
+
+(test set-hook-t-scopes-hook-to-named-session
+  "set-hook -t SESSION scopes the hook: it fires only when the event's derived
+   session is the named one (tmux per-target hooks; previously -t was consumed
+   and the hook fired globally)."
+  (with-isolated-config
+   (with-isolated-hooks
+    (with-fake-session (alpha)
+      (with-fake-session (beta)
+        (setf (cl-tmux/model:session-name alpha) "alpha"
+              (cl-tmux/model:session-name beta)  "beta")
+        (let ((*overlay* nil))
+          (apply-config-directive
+           '("set-hook" "-t" "alpha" "my-scoped-event" "set -g @scoped fired"))
+          ;; Firing for the OTHER session must not run the hook.
+          (cl-tmux::run-command-hooks "my-scoped-event" beta)
+          (is (null (cl-tmux/options:get-option "@scoped" nil))
+              "the scoped hook must not fire for a different session")
+          ;; Firing for the named session runs it.
+          (cl-tmux::run-command-hooks "my-scoped-event" alpha)
+          (is (string= "fired" (cl-tmux/options:get-option "@scoped"))
+              "the scoped hook must fire for its named session")
+          ;; A global hook (no -t) still fires for any session.
+          (apply-config-directive
+           '("set-hook" "my-global-event" "set -g @global fired"))
+          (cl-tmux::run-command-hooks "my-global-event" beta)
+          (is (string= "fired" (cl-tmux/options:get-option "@global"))
+              "a global hook must fire for any session")))))))

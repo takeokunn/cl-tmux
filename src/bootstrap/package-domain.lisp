@@ -301,6 +301,7 @@
    #:list-hooks
    #:*command-hooks*
    #:set-command-hook
+   #:scoped-hook-entry-p
    #:append-command-hook
    #:command-hooks
    #:clear-command-hooks

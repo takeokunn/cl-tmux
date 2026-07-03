@@ -125,19 +125,22 @@
    Returns T when handled, NIL otherwise."
   (when (string= cmd "set-hook")
     ;; Consume ALL leading -X flags (not just -r/-u): -g/-a/-R/-w/-p are accepted
-    ;; and skipped so `set-hook -g <event> <cmd>` registers EVENT, not "-g"; -t
-    ;; takes a target argument that is consumed too (cl-tmux's hook model is
-    ;; global, so window/pane/target scope is accepted but not differentiated).
+    ;; and skipped so `set-hook -g <event> <cmd>` registers EVENT, not "-g".
+    ;; -t names a target SESSION: the hook is scoped to it and fires only for
+    ;; that session (tmux per-target hooks).  -w/-p (window/pane scope) have no
+    ;; object context at config-load time and remain effectively global.
     (let* ((remove-p nil)
            (append-p nil)
+           (target   nil)
            (rest     (%consuming-flags (args tok rest)
                        ((member tok '("-r" "-u") :test #'string=)
                         (setf remove-p t))
                        ((string= tok "-a")
                         (setf append-p t))
-                       ;; -t takes a target argument: drop it too.
+                       ;; -t takes a target argument: capture it.
                        ((string= tok "-t")
-                        (setf rest (rest rest)))))
+                        (setf target (first rest)
+                              rest (rest rest)))))
            (event    (first rest))
            ;; The command may be a single quoted token or split across tokens;
            ;; join all remaining tokens as a single command line string.
@@ -150,6 +153,6 @@
               ;; Without -a, set-hook REPLACES the event's hook (tmux semantics);
               ;; with -a it appends, preserving any prior hooks.
               (if append-p
-                  (cl-tmux/hooks:append-command-hook event cmd-str)
-                  (cl-tmux/hooks:set-command-hook event cmd-str))
+                  (cl-tmux/hooks:append-command-hook event cmd-str target)
+                  (cl-tmux/hooks:set-command-hook event cmd-str target))
               t))))))
