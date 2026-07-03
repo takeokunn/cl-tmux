@@ -854,3 +854,32 @@
       (cl-tmux/commands:copy-mode-next-prompt screen)
       (is (= 2 (car (cl-tmux/terminal/types:screen-copy-cursor screen)))
           "next-prompt must return to the newer prompt"))))
+
+(test decdwl-line-size-recorded-and-rendered
+  "ESC # 6 (DECDWL) records the row's line size; the renderer re-emits
+   ESC # 6 for that row (and ESC # 5 for unflagged rows) so the outer terminal
+   draws double-width lines; ESC # 5 clears; RIS resets."
+  (with-fake-session (s)
+    (let* ((pane   (cl-tmux/model:session-active-pane s))
+           (screen (cl-tmux/model:pane-screen pane)))
+      (cl-tmux/terminal/emulator:screen-process-bytes
+       screen (babel:string-to-octets (format nil "~C#6WIDE" #\Escape)
+                                      :encoding :utf-8))
+      (is (eql #\6 (gethash 0 (cl-tmux/terminal/types:screen-line-sizes screen)))
+          "ESC # 6 must record double-width for the cursor row")
+      (let ((out (cl-tmux/renderer::render-session-to-string s 5 20)))
+        (is (search (format nil "~C#6" #\Escape) out)
+            "the renderer must re-emit ESC # 6 for the flagged row")
+        (is (search (format nil "~C#5" #\Escape) out)
+            "unflagged rows must emit ESC # 5 while any flag is active"))
+      (cl-tmux/terminal/emulator:screen-process-bytes
+       screen (babel:string-to-octets (format nil "~C#5" #\Escape)
+                                      :encoding :utf-8))
+      (is (null (gethash 0 (cl-tmux/terminal/types:screen-line-sizes screen)))
+          "ESC # 5 must clear the row's size flag")
+      (cl-tmux/terminal/emulator:screen-process-bytes
+       screen (babel:string-to-octets (format nil "~C#6~Cc" #\Escape #\Escape)
+                                      :encoding :utf-8))
+      (is (zerop (hash-table-count
+                  (cl-tmux/terminal/types:screen-line-sizes screen)))
+          "RIS must reset all line sizes"))))

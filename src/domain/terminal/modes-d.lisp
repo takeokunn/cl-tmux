@@ -111,7 +111,8 @@
         (screen-insert-mode    screen) nil
         (screen-newline-mode   screen) nil
         (screen-reverse-screen screen) nil
-        (screen-pending-wrap   screen) nil))
+        (screen-pending-wrap   screen) nil)
+  (clrhash (screen-line-sizes screen)))
 
 (defun ris-action (screen)
   "RIS — ESC c: hard terminal reset.

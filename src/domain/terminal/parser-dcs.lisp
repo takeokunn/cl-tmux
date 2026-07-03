@@ -210,13 +210,20 @@
   "Return a CPS state for ESC # — the next byte is a DEC line-size / alignment
    selector:
      #x38 '8' → DECALN: fill the screen with 'E' (the alignment test pattern).
-     '3'/'4'  → DECDHL (double-height line top/bottom) — accepted and ignored.
-     '5'      → DECSWL (single-width line) — accepted (the default).
-     '6'      → DECDWL (double-width line) — accepted and ignored.
-   cl-tmux does not model per-line double width/height; the selector is CONSUMED
-   either way so it is not printed as a stray char.  Returns to ground."
+     '3'/'4'  → DECDHL (double-height line top/bottom): recorded per row.
+     '5'      → DECSWL (single-width line): clears the row's size flag.
+     '6'      → DECDWL (double-width line): recorded per row.
+   The renderer re-emits ESC # <char> for flagged rows so the outer terminal
+   draws double-size lines.  Returns to ground."
   (lambda (screen byte)
     (declare (type screen screen) (type (unsigned-byte 8) byte))
-    (when (= byte #x38)                ; '8' → DECALN
-      (decaln-action screen))
+    (case byte
+      (#x38 (decaln-action screen))    ; '8' → DECALN
+      ((#x33 #x34 #x36)                ; '3'/'4'/'6' → record the row size
+       (setf (gethash (screen-cursor-y screen) (screen-line-sizes screen))
+             (code-char byte))
+       (setf (screen-dirty-p screen) t))
+      (#x35                            ; '5' → back to single width
+       (remhash (screen-cursor-y screen) (screen-line-sizes screen))
+       (setf (screen-dirty-p screen) t)))
     #'ground-state))

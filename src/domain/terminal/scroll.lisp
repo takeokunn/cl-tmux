@@ -126,6 +126,15 @@
     (%clear-row screen bottom)
     ;; Shift the capture-pane -J wrap flags in lockstep with the content.
     (%shift-line-wrapped-up screen top bottom)
+    ;; Shift the DECDHL/DECDWL row sizes with their lines.
+    (let ((sizes (screen-line-sizes screen)))
+      (when (plusp (hash-table-count sizes))
+        (loop for row from top below bottom
+              do (let ((below (gethash (1+ row) sizes)))
+                   (if below
+                       (setf (gethash row sizes) below)
+                       (remhash row sizes))))
+        (remhash bottom sizes)))
     (setf (screen-dirty-p screen) t)))
 
 (defun clear-scrollback (screen)

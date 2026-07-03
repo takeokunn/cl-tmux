@@ -73,6 +73,10 @@
   ;; absolute = history-trimmed + scrollback position.
   (prompt-marks nil :type list)
   (history-trimmed 0 :type integer)
+  ;; DECDHL/DECDWL per-row line sizes: row -> #\3 (double-height top),
+  ;; #\4 (double-height bottom), #\6 (double-width); absent = single (#\5).
+  ;; The renderer re-emits ESC # <char> so the OUTER terminal draws the size.
+  (line-sizes (make-hash-table) :type hash-table)
   (copy-mark    nil  :type list)            ; (row . col) mark position, NIL = no selection
   (copy-mark-offset 0 :type fixnum)         ; copy-offset in effect when copy-mark was set
   (copy-cursor  nil  :type list)            ; (row . col) cursor position in copy mode, NIL = not in copy mode

@@ -116,6 +116,13 @@
    colours.
    MARK-STYLE-FG / MARK-STYLE-BG (or NIL) are the copy-mode mark-row colours.
   Returns nothing; mutates SGR-REG as a side-effect."
+  ;; DECDHL/DECDWL: re-emit the row's line-size attribute so the OUTER
+  ;; terminal draws double-width/height lines.  Only active when any row
+  ;; carries a size flag; unflagged rows then emit single-width (ESC # 5)
+  ;; to reset a previously-flagged terminal line.
+  (let ((sizes (cl-tmux/terminal/types:screen-line-sizes screen)))
+    (when (plusp (hash-table-count sizes))
+      (format stream "~C#~C" #\Escape (or (gethash row sizes) #\5))))
   (loop with rev-screen = (and (screen-reverse-screen screen)
                                cl-tmux/terminal/types:+attr-reverse+)
         for col below pane-col-count
