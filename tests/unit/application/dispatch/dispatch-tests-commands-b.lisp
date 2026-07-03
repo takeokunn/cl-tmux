@@ -515,3 +515,32 @@
                   "~A: focus must move to the other pane" desc)
               (is (eq p0 (cl-tmux/model:window-active-pane win))
                   "~A" desc)))))))
+
+(test copy-mode-M-enters-at-mouse-position-with-selection
+  "copy-mode -M places the copy cursor at the in-flight mouse position and
+   begins a selection (the MouseDrag1Pane entry); without a mouse event -M
+   enters copy mode normally."
+  (with-fake-session (s)
+    (let* ((win  (cl-tmux/model:session-active-window s))
+           (pane (cl-tmux/model:window-active-pane win))
+           (screen (cl-tmux/model:pane-screen pane)))
+      ;; With a mouse event over the pane: cursor jumps + selection begins.
+      (let ((cl-tmux::*current-mouse-event*
+              (list :btn 32 :col 5 :row 2 :release-p nil)))
+        (cl-tmux::%cmd-copy-mode-arg s '("-M"))
+        (is-true (cl-tmux/terminal/types:screen-copy-mode-p screen)
+                 "-M must enter copy mode")
+        (is (equal (cons (- 2 (cl-tmux/model:pane-y pane))
+                         (- 5 (cl-tmux/model:pane-x pane)))
+                   (cl-tmux/terminal/types:screen-copy-cursor screen))
+            "-M must place the copy cursor at the mouse position")
+        (is-true (cl-tmux/terminal/types:screen-copy-selecting screen)
+                 "-M must begin a selection")
+        (cl-tmux/commands:copy-mode-exit screen))
+      ;; Without a mouse event: plain entry, no selection.
+      (let ((cl-tmux::*current-mouse-event* nil))
+        (cl-tmux::%cmd-copy-mode-arg s '("-M"))
+        (is-true (cl-tmux/terminal/types:screen-copy-mode-p screen)
+                 "-M without a mouse event must still enter copy mode")
+        (is (null (cl-tmux/terminal/types:screen-copy-selecting screen))
+            "-M without a mouse event must not begin a selection")))))

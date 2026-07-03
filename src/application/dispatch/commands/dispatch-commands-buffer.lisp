@@ -411,6 +411,25 @@
         (and tpane (pane-screen tpane)))
       (%active-screen session)))
 
+(defun %copy-mode-mouse-entry (session screen flags)
+  "copy-mode -M: place the copy cursor at the current mouse position and begin
+   a selection — tmux's MouseDrag1Pane entry (window_copy start-of-drag).
+   No-op without -M, without an in-flight mouse event, or when the event is
+   not over the pane owning SCREEN."
+  (when (and (%flag-present-p flags #\M) *current-mouse-event*)
+    (let* ((event *current-mouse-event*)
+           (col   (getf event :col))
+           (row   (getf event :row))
+           (win   (session-active-window session))
+           (pane  (and win col row (pane-at-position win col row))))
+      (when (and pane (eq (pane-screen pane) screen))
+        (setf (screen-copy-cursor screen)
+              (cons (min (max 0 (- row (pane-y pane)))
+                         (1- (screen-height screen)))
+                    (min (max 0 (- col (pane-x pane)))
+                         (1- (screen-width screen)))))
+        (copy-mode-begin-selection screen)))))
+
 (defun %cmd-copy-mode-arg (session args)
   "copy-mode [-eHMqu] [-s src-pane] [-t target-pane]: enter (or with -q, leave)
    copy mode on the target pane.
@@ -418,11 +437,12 @@
    -e: exit copy mode automatically when the viewport is scrolled back down to
        the live bottom (offset 0).  `bind -n WheelUpPane copy-mode -e`.
    -q: cancel copy mode on the target pane instead of entering it.
+   -M: mouse-drag entry — the copy cursor jumps to the in-flight mouse position
+       and a selection begins (the default MouseDrag1Pane binding shape).
    -t target-pane: act on a specific pane (default: the active pane), the
        universal tmux target convention (e.g. `copy-mode -t %3`).
-   -s src-pane / -M / -H: accepted for tmux compatibility but currently no-ops
-       (-s back-history source pane, -M mouse-drag entry, -H hide the position
-       indicator)."
+   -s src-pane / -H: accepted for tmux compatibility but currently no-ops
+       (-s back-history source pane, -H hide the position indicator)."
   (with-command-input (flags positionals args "ts"
                              :allowed-flags '(#\u #\e #\q #\t #\s #\M #\H #\d #\S)
                              :max-positionals 0
@@ -438,6 +458,7 @@
               (copy-mode-enter screen
                                :scroll-to-top (%copy-mode-scroll-to-top-p flags)
                                :exit-on-bottom (%copy-mode-exit-on-bottom-p flags))
+              (%copy-mode-mouse-entry session screen flags)
               (setf *dirty* t)))))))
 
 ;;; *set-option-command-names* removed — inlined into *arg-command-table* below.
