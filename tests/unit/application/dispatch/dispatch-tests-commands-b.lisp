@@ -677,3 +677,19 @@
           (let ((names (expand "#{session_group_list}" s1)))
             (is (and (search "ga" names) (search "gb" names))
                 "the group list must name both sessions (got ~S)" names)))))))
+
+(test capture-pane-a-requires-alternate-screen
+  "capture-pane -a errors with tmux's 'no alternate screen' unless the pane's
+   alternate screen is in use; while active, -a captures the (live) alternate."
+  (with-fake-session (s)
+    (let ((screen (cl-tmux/model:pane-screen (cl-tmux/model:session-active-pane s))))
+      (let ((*overlay* nil))
+        (cl-tmux::%cmd-capture-pane-arg s '("-a" "-p"))
+        (assert-overlay-contains "no alternate screen" (overlay-lines)
+                                 "capture-pane -a without an alt screen"))
+      ;; Enter the alternate screen: -a now captures.
+      (cl-tmux/terminal/actions:enter-alt-screen screen)
+      (let ((*overlay* nil))
+        (cl-tmux::%cmd-capture-pane-arg s '("-a" "-p"))
+        (is (null (and *overlay* (search "no alternate screen" *overlay*)))
+            "capture-pane -a with an active alt screen must capture")))))

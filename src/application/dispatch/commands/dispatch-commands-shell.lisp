@@ -202,8 +202,10 @@
      applies to the visible region (scrollback rows are not joined).
   -N: preserve trailing spaces WITHOUT joining wrapped lines (the difference from -J).
   -t target: target pane by id (for example %2) or session:window.pane.
-   -a: capture the alternate screen instead of the visible one (accepted; cl-tmux
-     captures the current screen when no alternate is active).
+   -a: capture the alternate screen.  In this model the alternate IS the live
+     grid while a full-screen app has it active (the saved cells hold the
+     primary), so -a captures normally then; when no alternate screen is in
+     use it reports tmux's \"no alternate screen\" error.
    -C: escape non-printable characters as octal \\nnn (accepted).
    -M/-P/-q/-T: hyperlink/pending/quiet/trailing-cell control flags (accepted;
      tmux args \"ab:CeE:JMNpPqS:Tt:\")."
@@ -221,6 +223,15 @@
            (target-str (getf options :target-str)))
       (with-target-context (target-session target-window pane session target-str)
         (declare (ignore target-session target-window))
+        ;; -a: valid only while the pane's alternate screen is in use (the
+        ;; alternate is then the live grid, so the normal capture reads it).
+        ;; tmux -q suppresses the error and falls back to the normal screen.
+        (when (and (%flag-present-p flags #\a)
+                   (not (%flag-present-p flags #\q))
+                   pane
+                   (null (cl-tmux/terminal:screen-alt-cells (pane-screen pane))))
+          (show-overlay "capture-pane: no alternate screen")
+          (return-from %cmd-capture-pane-arg nil))
         (let ((content (and pane (capture-pane pane
                                                :include-scrollback (and include-scrollback t)
                                                :escapes (and escapes t)
