@@ -7,8 +7,28 @@
 
 ;;; ── Overlay (list-keys help) ────────────────────────────────────────────────
 
-(defun render-overlay (stream cols)
-  "Draw the active overlay's lines over the top rows of the screen.
+(defun %message-line-row (rows)
+  "The terminal row a single-line message occupies.  tmux draws messages over
+   the status area — the bottom rows by default, the top rows when
+   status-position is top — with message-line (0..4) selecting the line within
+   a multi-line status bar (clamped to the status height)."
+  (let* ((height (max 1 cl-tmux/config:*status-height*))
+         (raw    (cl-tmux/options:get-option "message-line" 0))
+         (line   (if (integerp raw) (min (max raw 0) (1- height)) 0))
+         (top-p  (string-equal
+                  (cl-tmux/options:get-option "status-position" "bottom")
+                  "top")))
+    (if top-p
+        line
+        (max 0 (+ (- rows height) line)))))
+
+(defun render-overlay (stream cols &optional rows)
+  "Draw the active overlay.
+   A SINGLE-line overlay is a message: when ROWS is supplied it is drawn over
+   the status area on the message-line row (tmux message placement), padded to
+   the full width.  Multi-line overlays are pagers (list-keys, show-options
+   output) and draw over the top rows as before.  ROWS omitted (legacy
+   callers/tests) keeps the top-anchored behaviour for both.
    Applies the message-style option (or message-command-style when a prompt is
    active) so overlays respect the user's colour scheme."
   (let* ((style-opt (if (prompt-active-p)
@@ -19,10 +39,19 @@
     (if sgr-code
         (%emit-sgr stream sgr-code)
         (reset-attrs stream)))
-  (loop for line in (overlay-lines)
-        for row from 0
-        do (move-to stream row 0)
-           (write-string (subseq line 0 (min (length line) cols)) stream)))
+  (let ((lines (overlay-lines)))
+    (if (and rows (= (length lines) 1))
+        ;; Message: one line over the status area, padded to clear the row.
+        (let* ((line (first lines))
+               (shown (subseq line 0 (min (length line) cols))))
+          (move-to stream (%message-line-row rows) 0)
+          (write-string shown stream)
+          (loop repeat (- cols (length shown)) do (write-char #\Space stream)))
+        ;; Pager: draw over the top rows.
+        (loop for line in lines
+              for row from 0
+              do (move-to stream row 0)
+                 (write-string (subseq line 0 (min (length line) cols)) stream)))))
 
 ;;; ── Overlay layer selection ────────────────────────────────────────────────
 
@@ -34,7 +63,7 @@
     (*active-menu*
      (render-menu buffer *active-menu* terminal-rows terminal-cols))
     ((overlay-active-p)
-     (render-overlay buffer terminal-cols))
+     (render-overlay buffer terminal-cols terminal-rows))
     (t
      (when active-pane
        (let ((screen (pane-screen active-pane)))

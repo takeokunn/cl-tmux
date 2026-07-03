@@ -407,3 +407,37 @@
     (let ((out (render-session-to-string sess 6 20)))
       (is (search (format nil "~C[?25h" #\Escape) out)
           "?25h must be emitted when active pane is nil"))))
+
+;;; ── Message placement (message-line / status-position) ───────────────────────
+
+(test single-line-message-drawn-on-status-row
+  "A single-line overlay is a MESSAGE: with terminal rows supplied it is drawn
+   over the status area (bottom by default; message-line picks the row within a
+   multi-line status bar; status-position top moves it to the top).  Multi-line
+   overlays are pagers and stay top-anchored."
+  ;; Each row: (status-height message-line status-position expected-row desc)
+  ;; expected-row is 0-based; move-to emits 1-based ESC[row+1;1H.
+  (dolist (row '((1 0 "bottom" 9 "default: last row of a 10-row terminal")
+                 (2 0 "bottom" 8 "2-line status: message-line 0 = first status row")
+                 (2 1 "bottom" 9 "2-line status: message-line 1 = second status row")
+                 (1 0 "top"    0 "status-position top: message at row 0")))
+    (destructuring-bind (height line position expected desc) row
+      (with-isolated-config
+        (let ((cl-tmux/config:*status-height* height)
+              (cl-tmux/prompt:*overlay* "hello"))
+          (cl-tmux/options:set-option "message-line" line)
+          (cl-tmux/options:set-option "status-position" position)
+          (let ((out (with-output-to-string (buf)
+                       (cl-tmux/renderer::render-overlay buf 20 10))))
+            (is (search (format nil "[~D;1H" (1+ expected)) out)
+                "~A (expect row ~D): ~S" desc expected out)
+            (is (search "hello" out) "the message text must be drawn")))))))
+
+(test multi-line-overlay-stays-top-anchored
+  "A multi-line overlay (pager) draws from row 0 even when rows are supplied."
+  (with-isolated-config
+    (let ((cl-tmux/prompt:*overlay* (format nil "line1~%line2~%line3")))
+      (let ((out (with-output-to-string (buf)
+                   (cl-tmux/renderer::render-overlay buf 20 10))))
+        (is (search "[1;1H" out) "the pager must start at the top row")
+        (is (search "line3" out) "all pager lines must be drawn")))))
