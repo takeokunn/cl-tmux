@@ -28,6 +28,16 @@
         (when (and decoded-text *osc52-handler*)
           (funcall *osc52-handler* decoded-text))))))
 
+(defun %handle-osc-133 (screen body)
+  "OSC 133 (shell integration / semantic prompts): record 'A' prompt-start
+   marks as absolute row indexes so copy-mode next-prompt/previous-prompt can
+   jump between shell prompts."
+  (when (and (plusp (length body)) (char-equal (char body 0) #\A))
+    (let ((absolute (+ (screen-history-trimmed screen)
+                       (length (screen-scrollback screen))
+                       (screen-cursor-y screen))))
+      (pushnew absolute (screen-prompt-marks screen)))))
+
 (define-osc-rules
   ((0 1 2)
    (set-screen-title screen body))
@@ -52,7 +62,9 @@
   (104
    (%handle-osc-104 screen body))
   (52
-   (%handle-osc-52 body)))
+   (%handle-osc-52 body))
+  (133
+   (%handle-osc-133 screen body)))
 
 (defun %dispatch-osc (screen payload-buffer)
   "Parse accumulated OSC payload PAYLOAD-BUFFER and apply side effects to SCREEN.

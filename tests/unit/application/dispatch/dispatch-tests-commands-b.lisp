@@ -827,3 +827,30 @@
           (cl-tmux::%cmd-refresh-client-arg s '("-f" "!read-only"))
           (is (string= "no-output" (expand "#{client_flags}" w1))
               "'!flag' must remove a flag"))))))
+
+(test osc-133-prompt-marks-and-copy-mode-prompt-jumps
+  "OSC 133;A records prompt marks; copy-mode previous-prompt/next-prompt jump
+   between them (shell-integration prompt jumping)."
+  (with-fake-session (s)
+    (let* ((pane   (cl-tmux/model:session-active-pane s))
+           (screen (cl-tmux/model:pane-screen pane)))
+      ;; Two prompts: one at row 0, output, one at row 2.
+      (cl-tmux/terminal/emulator:screen-process-bytes
+       screen (babel:string-to-octets
+               (format nil "~C]133;A~Cprompt-1~%output~%~C]133;A~Cprompt-2"
+                       #\Escape (code-char 7) #\Escape (code-char 7))
+               :encoding :utf-8))
+      (is (= 2 (length (cl-tmux/terminal/types:screen-prompt-marks screen)))
+          "two 133;A marks must be recorded")
+      (cl-tmux/commands:copy-mode-enter screen)
+      ;; Cursor starts at the bottom; previous-prompt goes to the second
+      ;; prompt (row 2), a second one to the first (row 0).
+      (cl-tmux/commands:copy-mode-previous-prompt screen)
+      (is (= 2 (car (cl-tmux/terminal/types:screen-copy-cursor screen)))
+          "previous-prompt must land on the newest prompt row")
+      (cl-tmux/commands:copy-mode-previous-prompt screen)
+      (is (= 0 (car (cl-tmux/terminal/types:screen-copy-cursor screen)))
+          "a second previous-prompt must reach the older prompt")
+      (cl-tmux/commands:copy-mode-next-prompt screen)
+      (is (= 2 (car (cl-tmux/terminal/types:screen-copy-cursor screen)))
+          "next-prompt must return to the newer prompt"))))

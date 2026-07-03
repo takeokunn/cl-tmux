@@ -54,13 +54,20 @@
    The limit is obtained from *history-limit-function* (injected at startup)
    rather than discovered via find-package at call time.
    Called after every scroll-up to honour runtime configuration changes."
-  (let ((cap (%effective-history-limit)))
-    (when (> (length (screen-scrollback screen)) cap)
+  (let* ((cap (%effective-history-limit))
+         (len (length (screen-scrollback screen))))
+    (when (> len cap)
       (let ((tail (nthcdr (1- cap) (screen-scrollback screen))))
         (when tail (setf (cdr tail) nil)))
       ;; Truncate the parallel wrap-flag list in lockstep.
       (let ((wtail (nthcdr (1- cap) (screen-scrollback-wrapped screen))))
-        (when wtail (setf (cdr wtail) nil))))))
+        (when wtail (setf (cdr wtail) nil)))
+      ;; Rows dropped forever shift the absolute-index base; prune OSC 133
+      ;; prompt marks that now point below the retained history.
+      (incf (screen-history-trimmed screen) (- len cap))
+      (setf (screen-prompt-marks screen)
+            (delete-if (lambda (m) (< m (screen-history-trimmed screen)))
+                       (screen-prompt-marks screen))))))
 
 ;;; scroll-on-clear: when the whole screen is cleared (ED 2 / the `clear` command),
 ;;; tmux (option on by default) first scrolls the visible content into history so it
@@ -124,8 +131,12 @@
 (defun clear-scrollback (screen)
   "Clear SCREEN's scrollback history; the visible grid is left intact.
    Backs the clear-history command (tmux: C-b : clear-history)."
+  (incf (screen-history-trimmed screen) (length (screen-scrollback screen)))
   (setf (screen-scrollback screen) nil
-        (screen-scrollback-wrapped screen) nil))
+        (screen-scrollback-wrapped screen) nil
+        (screen-prompt-marks screen)
+        (delete-if (lambda (m) (< m (screen-history-trimmed screen)))
+                   (screen-prompt-marks screen))))
 
 (defun trim-below-cursor (screen)
   "resize-pane -T: drop the rows below the cursor and pull rows out of the

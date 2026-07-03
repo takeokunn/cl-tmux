@@ -67,6 +67,12 @@
   ;; Wrap flags for scrollback rows (newest-first, parallel to scrollback):
   ;; T when that history row wrapped into the row below it (capture-pane -J).
   (scrollback-wrapped nil :type list)
+  ;; OSC 133 shell-integration prompt marks: absolute row indexes (counted
+  ;; from the start of the output stream) where a prompt began ('133;A').
+  ;; history-trimmed counts rows dropped from the scrollback forever, so
+  ;; absolute = history-trimmed + scrollback position.
+  (prompt-marks nil :type list)
+  (history-trimmed 0 :type integer)
   (copy-mark    nil  :type list)            ; (row . col) mark position, NIL = no selection
   (copy-mark-offset 0 :type fixnum)         ; copy-offset in effect when copy-mark was set
   (copy-cursor  nil  :type list)            ; (row . col) cursor position in copy mode, NIL = not in copy mode

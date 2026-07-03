@@ -79,6 +79,8 @@
    #:screen-copy-offset
    #:screen-scrollback
    #:screen-scrollback-wrapped
+   #:screen-prompt-marks
+   #:screen-history-trimmed
    ;; Copy-mode selection state
    #:screen-copy-mark
    #:screen-copy-mark-offset
@@ -353,6 +355,8 @@
    #:screen-copy-offset
    #:screen-scrollback
    #:screen-scrollback-wrapped
+   #:screen-prompt-marks
+   #:screen-history-trimmed
    ;; Copy-mode selection state
    #:screen-copy-mark
    #:screen-copy-mark-offset

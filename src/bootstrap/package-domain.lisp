@@ -480,6 +480,8 @@
    #:copy-mode-set-mark
    #:copy-mode-stop-selection
    #:copy-mode-toggle-position
+   #:copy-mode-previous-prompt
+   #:copy-mode-next-prompt
    #:copy-mode-half-page-down-and-cancel
    #:copy-mode-copy-pipe-end-of-line-no-cancel
    ;; Append selection

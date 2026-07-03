@@ -125,6 +125,47 @@
   (%copy-mode-with-cancel-at-bottom
    screen (lambda () (copy-mode-half-page-down screen))))
 
+(defun %copy-mode-cursor-absolute (screen)
+  "The copy cursor's absolute row index (stream position): history base +
+   scrollback length - scroll offset + viewport cursor row."
+  (+ (screen-history-trimmed screen)
+     (- (length (screen-scrollback screen)) (screen-copy-offset screen))
+     (car (screen-copy-cursor screen))))
+
+(defun %copy-mode-jump-to-absolute (screen absolute)
+  "Scroll/position copy mode so ABSOLUTE (a stream row index) is the cursor
+   row: rows still in the visible region keep offset 0; history rows scroll
+   the viewport so the target is the top row."
+  (let* ((sb-len (length (screen-scrollback screen)))
+         (rel    (- absolute (screen-history-trimmed screen) sb-len)))
+    (if (>= rel 0)
+        (setf (screen-copy-offset screen) 0
+              (screen-copy-cursor screen)
+              (cons (min rel (1- (screen-height screen))) 0))
+        (setf (screen-copy-offset screen) (min (- rel) sb-len)
+              (screen-copy-cursor screen) (cons 0 0)))
+    (setf (screen-dirty-p screen) t)))
+
+(defun copy-mode-previous-prompt (screen)
+  "send-keys -X previous-prompt: jump to the nearest OSC 133 prompt mark above
+   the copy cursor (shell-integration prompt jumping)."
+  (when (screen-copy-mode-p screen)
+    (let* ((here (%copy-mode-cursor-absolute screen))
+           (mark (reduce (lambda (best m)
+                           (if (and (< m here) (or (null best) (> m best))) m best))
+                         (screen-prompt-marks screen) :initial-value nil)))
+      (when mark (%copy-mode-jump-to-absolute screen mark)))))
+
+(defun copy-mode-next-prompt (screen)
+  "send-keys -X next-prompt: jump to the nearest OSC 133 prompt mark below
+   the copy cursor."
+  (when (screen-copy-mode-p screen)
+    (let* ((here (%copy-mode-cursor-absolute screen))
+           (mark (reduce (lambda (best m)
+                           (if (and (> m here) (or (null best) (< m best))) m best))
+                         (screen-prompt-marks screen) :initial-value nil)))
+      (when mark (%copy-mode-jump-to-absolute screen mark)))))
+
 (defun copy-mode-toggle-position (screen)
   "send-keys -X toggle-position: toggle the position-indicator overlay
    visibility for this copy-mode session (the -H hide flag flipped)."
