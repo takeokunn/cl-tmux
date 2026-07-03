@@ -411,3 +411,44 @@
                                        (cl-tmux/model:window-local-options win))))
             "set-window-option -x must not mutate the window-local option")
         (assert-overlay-active "set-window-option -x must show an error overlay")))))
+
+;;; ── command-prompt: template without -p, and -i incremental ──────────────────
+
+(test substitute-prompt-response-table
+  "%substitute-prompt-response replaces both %% and %1 with the response.
+   Each row: (template input expected description)."
+  (dolist (row '(("rename-window '%%'" "shell" "rename-window 'shell'" "%% form")
+                 ("select-window -t %1" "3"    "select-window -t 3"    "%1 form")
+                 ("echo %% and %1"      "x"    "echo x and x"          "both forms mix")
+                 ("no placeholders"     "y"    "no placeholders"       "no-op template")))
+    (destructuring-bind (template input expected desc) row
+      (is (string= expected (cl-tmux::%substitute-prompt-response template input))
+          "~A" desc))))
+
+(test command-prompt-template-without-p-substitutes-response
+  "command-prompt TEMPLATE (no -p) runs the template with the prompt response
+   replacing %% — the classic rename-window binding shape (previously the
+   template was silently ignored and raw input ran)."
+  (with-fake-session (s)
+    (let ((*prompt* nil))
+      (cl-tmux::%run-command-line s "command-prompt \"set -g @cp 'X-%%'\"")
+      (is (prompt-active-p) "the prompt must open")
+      (funcall (prompt-on-submit *prompt*) "foo")
+      (is (string= "X-foo" (cl-tmux/options:get-option "@cp"))
+          "the response must replace %% in the template"))))
+
+(test command-prompt-i-runs-template-on-each-edit
+  "command-prompt -i wires the template to the prompt's on-change hook so it
+   runs with the in-progress input on every edit (tmux incremental mode)."
+  (with-fake-session (s)
+    (let ((*prompt* nil))
+      (cl-tmux::%run-command-line s "command-prompt -i \"set -g @inc '%1'\"")
+      (is (prompt-active-p) "the prompt must open")
+      (is-true (prompt-on-change *prompt*)
+               "-i must install an on-change hook")
+      (funcall (prompt-on-change *prompt*) "ab")
+      (is (string= "ab" (cl-tmux/options:get-option "@inc"))
+          "each edit must run the template with the current input")
+      (funcall (prompt-on-change *prompt*) "abc")
+      (is (string= "abc" (cl-tmux/options:get-option "@inc"))
+          "later edits must re-run the template with the newer input"))))

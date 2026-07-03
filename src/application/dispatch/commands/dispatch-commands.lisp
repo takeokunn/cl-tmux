@@ -304,24 +304,31 @@
    -1: single-key prompt — each prompt accepts ONE keypress (no Enter).
    -k: key prompt — like -1, the prompt accepts a single keypress.
    -T type / -t target-client: accepted (their arguments are consumed so they do
-       not leak into the template); -i/-N/-F/-b/-e/-l are accepted as no-ops in
-       the standalone prompt model.  tmux args \"1beFiklI:Np:t:T:\"."
+       not leak into the template); -N/-F/-b/-e/-l are accepted as no-ops in the
+       standalone prompt model.  tmux args \"1beFiklI:Np:t:T:\".
+   -i: incremental — the template runs on EVERY prompt edit with %1/%% bound to
+       the current input (tmux PROMPT_INCREMENTAL, used for live-search
+       bindings), in addition to the final run on Enter."
   (with-command-flags+pos (flags positionals args "IptT")
-    (flet ((run-input (input)
-             (%run-command-line session input)))
-      (let* ((prompts-str (%flag-value flags #\p))
-             (initial     (or (%flag-value flags #\I) ""))
-             ;; -1 and -k both request a one-keypress prompt.
-             (single-key  (and (or (%flag-present-p flags #\1)
-                                   (%flag-present-p flags #\k)) t))
-             (template    (format nil "~{~A~^ ~}" positionals))
-             (prompt-list (when prompts-str
-                            (mapcar (lambda (s) (string-trim " " s))
-                                    (uiop:split-string prompts-str :separator ","))))
-             (num-prompts (length prompt-list)))
+    (let* ((prompts-str (%flag-value flags #\p))
+           (initial     (or (%flag-value flags #\I) ""))
+           ;; -1 and -k both request a one-keypress prompt.
+           (single-key  (and (or (%flag-present-p flags #\1)
+                                 (%flag-present-p flags #\k)) t))
+           (template    (format nil "~{~A~^ ~}" positionals))
+           (has-template (plusp (length template)))
+           (prompt-list (when prompts-str
+                          (mapcar (lambda (s) (string-trim " " s))
+                                  (uiop:split-string prompts-str :separator ","))))
+           (num-prompts (length prompt-list)))
+      (flet ((run-input (input)
+               (%run-command-line session input))
+             (run-template (input)
+               (%run-command-line session
+                                  (%substitute-prompt-response template input))))
         (cond
           ;; -p with template: multi-prompt with %%N substitution
-          ((and prompt-list (plusp (length template)))
+          ((and prompt-list has-template)
            (let ((answers (make-array num-prompts :initial-element "")))
              (%command-prompt-ask-next session template prompt-list answers 0
                                        num-prompts single-key initial)))
@@ -333,13 +340,43 @@
                                       :single-key single-key
                                       :history *prompt-history*
                                       :initial initial)))
-          ;; No -p: standard C-b : interactive prompt
+          ;; Template without -p: the response replaces %% / %1 in the template
+          ;; (the classic `bind , command-prompt -I \"#W\" \"rename-window '%%'\"`
+          ;; shape; previously the template was ignored and raw input ran).
+          (has-template
+           (prompt-history-nonempty ": "
+                                    #'run-template
+                                    :single-key single-key
+                                    :history *prompt-history*
+                                    :initial initial))
+          ;; No -p, no template: standard C-b : interactive prompt
           (t
            (prompt-history-nonempty ": "
                                     #'run-input
                                     :single-key single-key
                                     :history *prompt-history*
-                                    :initial initial)))))))
+                                    :initial initial)))
+        ;; -i: run the template against the in-progress input on every edit.
+        (when (and (%flag-present-p flags #\i)
+                   has-template
+                   cl-tmux/prompt:*prompt*)
+          (setf (cl-tmux/prompt:prompt-on-change cl-tmux/prompt:*prompt*)
+                #'run-template))))))
+
+(defun %substitute-prompt-response (template input)
+  "Expand a single-prompt command-prompt TEMPLATE: tmux replaces both %% and %1
+   with the prompt response for a single prompt.  Rewrites each %% pair to %1
+   left-to-right, then delegates to %substitute-percent with INPUT as arg 1."
+  (let ((rewritten (with-output-to-string (out)
+                     (let ((n (length template)) (i 0))
+                       (loop while (< i n)
+                             do (if (and (char= (char template i) #\%)
+                                         (< (1+ i) n)
+                                         (char= (char template (1+ i)) #\%))
+                                    (progn (write-string "%1" out) (incf i 2))
+                                    (progn (write-char (char template i) out)
+                                           (incf i))))))))
+    (%substitute-percent rewritten (list input))))
 
 (defun %substitute-percent (template args)
   "Expand a command-prompt template: %1..%9 are replaced by the 1st..9th element
