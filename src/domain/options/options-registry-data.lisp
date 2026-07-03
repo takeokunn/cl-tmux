@@ -94,9 +94,9 @@
   ;; Max messages kept in the message log, and max command-prompt history entries.
   ("message-limit"            :integer 1000)
   ("prompt-history-limit"     :integer 100)
-  ;; Which status line row messages/prompts appear on (tmux 0..4; 4 = last).
-  ;; cl-tmux renders messages as a top overlay, so this is registered for
-  ;; set/show-options fidelity; the overlay position does not move yet.
+  ;; Which status line row messages appear on (tmux 0..4, clamped to the
+  ;; status height).  Honoured by render-overlay's message path: single-line
+  ;; messages draw over the status area; multi-line pagers stay top-anchored.
   ("message-line"             :integer 0)
   ;; Milliseconds within which consecutive keys are assumed to be a paste and
   ;; root-table key bindings are skipped (tmux default 1).  cl-tmux relies on
