@@ -132,7 +132,7 @@
   "Return (SESSION . WINDOW) targets for every window in TARGET-SESSION."
   (mapcar (lambda (win)
             (cons target-session win))
-          (session-windows target-session)))
+          (cl-tmux/model:session-windows-in-index-order target-session)))
 
 (defun %list-pane-targets (session target-str all-p session-p)
   "Return the target windows for list-panes based on flags and target input."
@@ -243,7 +243,7 @@
     (if sessions
         (values
          (loop for sess in sessions
-               append (loop for win in (session-windows sess)
+               append (loop for win in (cl-tmux/model:session-windows-in-index-order sess)
                             collect (%format-list-window-entry sess win fmt)))
          t)
         (values nil nil))))

@@ -96,7 +96,7 @@
   (let ((separator (cl-tmux/options:get-option "window-status-separator" " ")))
     (with-output-to-string (window-stream)
       (let ((first-p t))
-        (dolist (window (session-windows session))
+        (dolist (window (cl-tmux/model:session-windows-in-index-order session))
           (unless first-p (write-string separator window-stream))
           (setf first-p nil)
           (let* ((context  (cl-tmux/format:format-context-from-window session window))

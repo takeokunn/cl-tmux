@@ -917,3 +917,20 @@
         (cl-tmux/model:session-windows-changed b)
         (is (zerop (hash-table-count (cl-tmux/model:session-window-index-map b)))
             "removing the window must prune its winlink override")))))
+
+(test status-window-order-follows-winlink-indexes
+  "Window display order (status bar / list-windows) follows the per-session
+   winlink indexes: a window linked at a high index sorts after lower ones,
+   while sessions without overrides keep id order."
+  (with-fake-session (s :nwindows 2)
+    (let* ((wins (cl-tmux/model:session-windows s))
+           (w0 (first wins))
+           (w1 (second wins)))
+      (is (equal (list w0 w1)
+                 (cl-tmux/model:session-windows-in-index-order s))
+          "without overrides the index order equals id order")
+      ;; Give the FIRST window a high per-session index: it must sort last.
+      (cl-tmux/model:set-session-window-index s w0 99)
+      (is (equal (list w1 w0)
+                 (cl-tmux/model:session-windows-in-index-order s))
+          "an override index must reorder the display list"))))

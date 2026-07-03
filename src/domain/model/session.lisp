@@ -110,6 +110,13 @@
       (setf (gethash window (session-window-index-map session)) index))
   index)
 
+(defun session-windows-in-index-order (session)
+  "SESSION's windows sorted by their per-session winlink index — the order
+   tmux displays winlinks (status bar, list-windows).  Identical to the plain
+   list when no window carries an index override."
+  (sort (copy-list (session-windows session)) #'<
+        :key (lambda (w) (session-window-index session w))))
+
 (defun %prune-window-index-map (session)
   "Drop winlink index overrides for windows no longer in SESSION, so a later
    re-link starts from default addressing."

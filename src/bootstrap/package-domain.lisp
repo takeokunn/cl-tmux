@@ -202,6 +202,7 @@
    #:session-window-index
    #:set-session-window-index
    #:session-window-index-map
+   #:session-windows-in-index-order
    #:session-clients
    #:session-locked-p
    #:session-group
