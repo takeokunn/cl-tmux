@@ -198,6 +198,10 @@
    #:session-last-active
    #:session-created
    #:session-window-stack
+   ;; Per-session winlink indexes (link-window into a different slot)
+   #:session-window-index
+   #:set-session-window-index
+   #:session-window-index-map
    #:session-clients
    #:session-locked-p
    #:session-group

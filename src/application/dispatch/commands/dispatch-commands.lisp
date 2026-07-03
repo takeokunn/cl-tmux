@@ -168,7 +168,10 @@
       (t
        (let ((n (%parse-integer-or-nil target-str)))
          (if n
-             (find n wins :key #'window-id)
+             ;; Match the PER-SESSION winlink index (an override when
+             ;; link-window placed the window at a different slot here).
+             (find n wins :key (lambda (w)
+                                 (cl-tmux/model:session-window-index session w)))
              (find target-str wins :key #'window-name :test #'string-equal)))))))
 
 ;;; -- Arg-aware command-line handlers -----------------------------------------

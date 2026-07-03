@@ -883,3 +883,37 @@
       (is (zerop (hash-table-count
                   (cl-tmux/terminal/types:screen-line-sizes screen)))
           "RIS must reset all line sizes"))))
+
+(test link-window-per-session-winlink-index
+  "link-window -t sess:N links a window at index N in the destination while
+   the source session keeps the window's own index; target resolution and
+   #{window_index} follow the per-session winlink index."
+  (with-fake-session (a)
+    (with-fake-session (b)
+      (setf (cl-tmux/model:session-name a) "wla"
+            (cl-tmux/model:session-name b) "wlb")
+      (let ((win (cl-tmux/model:session-active-window a))
+            (cl-tmux::*server-sessions* nil))
+        (push (cons "wla" a) cl-tmux::*server-sessions*)
+        (push (cons "wlb" b) cl-tmux::*server-sessions*)
+        (let ((*overlay* nil))
+          (cl-tmux::%cmd-link-window a '("-t" "wlb:7")))
+        (is (member win (cl-tmux/model:session-windows b))
+            "the window must be linked into the destination")
+        (is (= 7 (cl-tmux/model:session-window-index b win))
+            "the destination must address it at winlink index 7")
+        (is (= (cl-tmux/model:window-id win)
+               (cl-tmux/model:session-window-index a win))
+            "the source session must keep the window's own index")
+        (is (eq win (cl-tmux::%resolve-window-target b "7"))
+            "select-window -t 7 in the destination must resolve the link")
+        (is (string= "7" (cl-tmux/format:expand-format
+                          "#{window_index}"
+                          (cl-tmux/format:format-context-from-session b win nil)))
+            "#{window_index} must show the per-session index")
+        ;; Unlinking prunes the override so a later re-link starts clean.
+        (setf (cl-tmux/model:session-windows b)
+              (remove win (cl-tmux/model:session-windows b)))
+        (cl-tmux/model:session-windows-changed b)
+        (is (zerop (hash-table-count (cl-tmux/model:session-window-index-map b)))
+            "removing the window must prune its winlink override")))))

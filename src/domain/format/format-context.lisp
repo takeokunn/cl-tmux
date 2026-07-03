@@ -140,7 +140,9 @@
    SESSION-ACTIVE-WINDOW, SESSION-WINDOWS, WINDOW-COUNT, WINDOW-PANES,
    WINDOW-FLAGS, WINDOW-RAW-FLAGS, and WINDOW-LAYOUT are pre-computed by the
    caller so they need not be recomputed here."
-  (list :window-index          (if window (cl-tmux/model:window-id window) 0)
+  (list :window-index          (if window
+                                   (cl-tmux/model:session-window-index session window)
+                                   0)
         :window-id             (if window (cl-tmux/model:window-id window) 0)
         :window-name           (if window (cl-tmux/model:window-name window) "")
         :window-count          window-count

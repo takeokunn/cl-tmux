@@ -35,17 +35,22 @@
    -k: kill any window already occupying the destination index first.
    -d: do not make the linked window the active window of the destination session
    (default: the newly linked window becomes current, matching tmux).
-   -a / -b: insert after / before the destination window — accepted; cl-tmux
-   stores the index in the window struct and linked windows SHARE it, so relative
-   reindexing is constrained and the window keeps its own index.
-   The window object is SHARED — it appears in both sessions at the same index
-   (cl-tmux stores the index in the window struct, so linked windows share it)."
+   -a / -b: insert after / before the destination index.
+   The window OBJECT is shared; its index in the destination session is a
+   per-session winlink index — '-t sess:N' links it at N there (with -a: N+1)
+   while the source session keeps its own index, like tmux winlinks."
   (flags positionals "st"
          :allowed-flags '(#\s #\t #\k #\d #\a #\b)
          :max-positionals 0
          :message "link-window: unsupported argument")
   (let* ((src-str (%flag-value flags #\s))
-         (dst-str (%flag-value flags #\t))
+         (dst-raw (%flag-value flags #\t))
+         ;; -t may be "session" or "session:INDEX" — the index becomes the
+         ;; window's per-session winlink index in the destination.
+         (dst-colon (and dst-raw (position #\: dst-raw)))
+         (dst-str (if dst-colon (subseq dst-raw 0 dst-colon) dst-raw))
+         (dst-index (and dst-colon
+                         (%parse-integer-or-nil (subseq dst-raw (1+ dst-colon)))))
          (kill-p  (%flag-present-p flags #\k))
          ;; Resolve source window (default: active window of current session).
          (src-win (if src-str
@@ -64,13 +69,22 @@
       ((member src-win (session-windows dst-sess))
        (show-overlay "link-window: window already linked in destination"))
       (t
-       (let ((collision (find (window-id src-win) (session-windows dst-sess)
-                              :key #'window-id)))
+       (let* ((desired (cond ((and dst-index (%flag-present-p flags #\a))
+                              (1+ dst-index))
+                             (dst-index dst-index)
+                             (t (window-id src-win))))
+              (collision (find desired (session-windows dst-sess)
+                               :key (lambda (w)
+                                      (cl-tmux/model:session-window-index
+                                       dst-sess w)))))
          (if (and collision (not kill-p))
              (show-overlay "link-window: target index in use (add -k to replace)")
              (progn
                (when collision (kill-window dst-sess collision))
                (session-insert-window dst-sess src-win)
+               ;; Record the destination session's winlink index when it
+               ;; differs from the window's own id.
+               (cl-tmux/model:set-session-window-index dst-sess src-win desired)
                (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-linked+ src-win)
                ;; Without -d the newly linked window becomes current in the
                ;; destination session (tmux selects it unless -d is given).

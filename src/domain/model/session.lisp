@@ -16,6 +16,11 @@
   (last-active 0   :type integer)   ; universal-time of last access; updated on touch
   (created (get-universal-time) :type integer) ; universal-time at construction (#{session_created})
   (window-stack nil :type list)     ; windows in MRU order, current first (#{window_stack_index})
+  ;; Per-session winlink index overrides: window -> index in THIS session.
+  ;; tmux winlinks let one window carry different indexes in different
+  ;; sessions; the override applies only where link-window placed it at a
+  ;; non-default slot (absent = the window's own id).
+  (window-index-map (make-hash-table :test #'eq) :type hash-table)
   (clients     nil :type list)      ; list of connected client descriptors
   (locked-p    nil :type boolean)   ; T when lock-session has been called
   (group       nil)                 ; NIL or group-id (string/integer); sessions in same group share windows
@@ -89,12 +94,41 @@
    membership.  Installed by the bootstrap session registry; NIL in unit tests
    that construct sessions directly.")
 
+(defun session-window-index (session window)
+  "WINDOW's index within SESSION (tmux winlink index): the per-session
+   override when link-window placed it at a different slot here, else the
+   window's own id."
+  (or (and session
+           (gethash window (session-window-index-map session)))
+      (window-id window)))
+
+(defun set-session-window-index (session window index)
+  "Give WINDOW the per-session INDEX in SESSION.  An index equal to the
+   window's own id clears the override (the default addressing)."
+  (if (eql index (window-id window))
+      (remhash window (session-window-index-map session))
+      (setf (gethash window (session-window-index-map session)) index))
+  index)
+
+(defun %prune-window-index-map (session)
+  "Drop winlink index overrides for windows no longer in SESSION, so a later
+   re-link starts from default addressing."
+  (let ((map (session-window-index-map session)))
+    (when (plusp (hash-table-count map))
+      (maphash (lambda (window index)
+                 (declare (ignore index))
+                 (unless (member window (session-windows session))
+                   (remhash window map)))
+               map))))
+
 (defun session-windows-changed (session)
   "Notify the group-sync policy (when installed) that SESSION's window list
    changed structurally.  Call after every setf of SESSION-WINDOWS that adds,
-   removes, or reorders windows."
-  (when (and session *session-windows-sync-function*)
-    (funcall *session-windows-sync-function* session))
+   removes, or reorders windows.  Also prunes stale winlink index overrides."
+  (when session
+    (%prune-window-index-map session)
+    (when *session-windows-sync-function*
+      (funcall *session-windows-sync-function* session)))
   (session-windows session))
 
 (defun session-insert-window (session window)
