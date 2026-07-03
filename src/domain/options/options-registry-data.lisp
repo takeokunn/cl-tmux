@@ -52,12 +52,13 @@
   ("exit-unattached"          :boolean nil)
   ("pane-border-style"        :string  "")
   ("pane-active-border-style" :string  "fg=green")
-  ;; pane-border-indicators: how the active pane's border is indicated — "colour"
-  ;; (default), "both", and "arrows" colour it (cl-tmux does not draw the arrow
-  ;; glyphs, so "arrows" degrades to colour); "off" disables the highlight.
+  ;; pane-border-indicators: how the active pane's border is indicated —
+  ;; "colour" (default) colours it, "arrows" draws arrow glyphs pointing at the
+  ;; active pane, "both" does both, "off" disables all indicators (tmux).
   ("pane-border-indicators"   :string  "colour")
   ;; Border line glyphs: single (default light box-drawing), double, heavy,
-  ;; simple (ASCII).  number/padded fall back to single (glyph-only support).
+  ;; simple (ASCII), padded (blank).  "number" uses single glyphs and writes
+  ;; the adjacent pane's number into the border.
   ("pane-border-lines"        :string  "single")
   ("synchronize-panes"        :boolean nil)
   ("word-separators"          :string  " -_@")

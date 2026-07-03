@@ -59,7 +59,9 @@
 (define-pane-border-chars-table
   ("double" #\║ #\═)
   ("heavy"  #\┃ #\━)
-  ("simple" #\| #\-))
+  ("simple" #\| #\-)
+  ;; tmux PANE_LINES_PADDED: the border area is left blank.
+  ("padded" #\Space #\Space))
 
 ;;; ── Separator renderers (data layer — what each orientation draws) ──────────
 
@@ -70,11 +72,31 @@
   (%dispatch-pane-border-chars
    (cl-tmux/options:get-option "pane-border-lines" "single")))
 
+(defun %border-indicators-value ()
+  "The pane-border-indicators option value (off / colour / arrows / both)."
+  (cl-tmux/options:get-option "pane-border-indicators" "colour"))
+
 (defun %border-indicators-colour-p ()
-  "T unless pane-border-indicators is \"off\".  cl-tmux colours the active pane's
-   border for \"colour\" (the default), \"both\", and \"arrows\" (the arrow glyphs
-   are not drawn, so \"arrows\" degrades to colour); \"off\" disables the highlight."
-  (string/= (cl-tmux/options:get-option "pane-border-indicators" "colour") "off"))
+  "T when the active pane's border is coloured: pane-border-indicators
+   \"colour\" (the default) or \"both\".  \"arrows\" draws arrow glyphs only
+   and \"off\" disables all indicators, matching tmux."
+  (member (%border-indicators-value) '("colour" "both") :test #'string-equal))
+
+(defun %border-indicators-arrows-p ()
+  "T when arrow glyphs pointing at the active pane are drawn on its borders:
+   pane-border-indicators \"arrows\" or \"both\"."
+  (member (%border-indicators-value) '("arrows" "both") :test #'string-equal))
+
+(defun %border-number-pane-id (subtree)
+  "The pane number drawn into a \"number\" border: the id of SUBTREE's first
+   leaf pane, as a string."
+  (let ((pane (first (layout-leaves subtree))))
+    (when pane (format nil "~D" (pane-id pane)))))
+
+(defun %pane-border-number-lines-p ()
+  "T when pane-border-lines is \"number\" (pane numbers drawn into borders)."
+  (string-equal (cl-tmux/options:get-option "pane-border-lines" "single")
+                "number"))
 
 (defun %render-h-separator (stream node active-pane terminal-cols)
   "Draw the vertical column between the left and right children of an :h split.
@@ -93,16 +115,39 @@
                          (cl-tmux/options:get-option "pane-border-style" "default"))))
     (when (< border-col terminal-cols)
       (%apply-border-style stream style)
-      (let ((v-char (%pane-border-chars)))
-        (loop for row from (getf rect :y) below (+ (getf rect :y) (getf rect :h))
+      (let ((v-char (%pane-border-chars))
+            (top    (getf rect :y))
+            (height (getf rect :h)))
+        (loop for row from top below (+ top height)
               do (move-to stream row border-col)
-                 (write-char v-char stream)))
+                 (write-char v-char stream))
+        ;; pane-border-lines "number": write the adjacent pane's number into
+        ;; the bar (vertically, one digit per row from mid-height).
+        (when (%pane-border-number-lines-p)
+          (let ((id-str (%border-number-pane-id a)))
+            (when id-str
+              (loop for ch across id-str
+                    for row from (+ top (floor height 2))
+                    while (< row (+ top height))
+                    do (move-to stream row border-col)
+                       (write-char ch stream)))))
+        ;; pane-border-indicators arrows/both: an arrow glyph at mid-height
+        ;; pointing AT the active pane (tmux's arrow markers).
+        (when (and (%border-indicators-arrows-p)
+                   (or (subtree-contains-p a active-pane)
+                       (subtree-contains-p b active-pane)))
+          (move-to stream (+ top (floor height 2)) border-col)
+          (write-char (if (subtree-contains-p a active-pane) #\← #\→) stream)))
       (reset-attrs stream))))
 
-(defun %render-v-separator (stream node terminal-cols)
+(defun %render-v-separator (stream node active-pane terminal-cols)
   "Draw the horizontal row between the top and bottom children of a :v split.
-   Glyph follows pane-border-lines."
-  (let* ((rect       (layout-subtree-rect (layout-split-first node)))
+   Glyph follows pane-border-lines; \"number\" writes the adjacent pane's
+   number into the bar; pane-border-indicators arrows/both add an arrow glyph
+   pointing at the active pane."
+  (let* ((a          (layout-split-first  node))
+         (b          (layout-split-second node))
+         (rect       (layout-subtree-rect a))
          (border-row (+ (getf rect :y) (getf rect :h)))
          (x          (getf rect :x))
          (w          (min (getf rect :w) (- terminal-cols x))))
@@ -110,7 +155,20 @@
     (move-to stream border-row x)
     (multiple-value-bind (v-char h-char) (%pane-border-chars)
       (declare (ignore v-char))
-      (loop repeat (max 0 w) do (write-char h-char stream)))))
+      (loop repeat (max 0 w) do (write-char h-char stream)))
+    ;; pane-border-lines "number": the adjacent pane's number at mid-width.
+    (when (%pane-border-number-lines-p)
+      (let ((id-str (%border-number-pane-id a)))
+        (when id-str
+          (move-to stream border-row (+ x (floor w 2)))
+          (write-string (subseq id-str 0 (min (length id-str) (max 0 w)))
+                        stream))))
+    ;; pane-border-indicators arrows/both: arrow pointing at the active pane.
+    (when (and (%border-indicators-arrows-p)
+               (or (subtree-contains-p a active-pane)
+                   (subtree-contains-p b active-pane)))
+      (move-to stream border-row (+ x (floor w 2)))
+      (write-char (if (subtree-contains-p a active-pane) #\↑ #\↓) stream))))
 
 ;;; ── Pane border status line ──────────────────────────────────────────────────
 ;;;
@@ -151,6 +209,6 @@
   (when (layout-split-p node)
     (ecase (layout-split-orientation node)
       (:h (%render-h-separator stream node active-pane terminal-cols))
-      (:v (%render-v-separator stream node terminal-cols)))
+      (:v (%render-v-separator stream node active-pane terminal-cols)))
     (render-tree-borders stream (layout-split-first  node) active-pane terminal-cols)
     (render-tree-borders stream (layout-split-second node) active-pane terminal-cols)))

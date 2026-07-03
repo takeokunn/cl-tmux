@@ -209,16 +209,62 @@
       (is (find #\│ out) "vertical bar character must be present"))))
 
 (test border-indicators-colour-p-honours-option
-  "%border-indicators-colour-p is true unless pane-border-indicators is \"off\"."
+  "%border-indicators-colour-p follows tmux: colour for colour/both; arrows is
+   arrows-only (no colour); off disables everything."
   (with-isolated-options ("pane-border-indicators" "off")
-    (is (not (cl-tmux/renderer::%border-indicators-colour-p)) "off → no colour"))
+    (is (not (cl-tmux/renderer::%border-indicators-colour-p)) "off → no colour")
+    (is (not (cl-tmux/renderer::%border-indicators-arrows-p)) "off → no arrows"))
   (with-isolated-options ("pane-border-indicators" "colour")
-    (is-true (cl-tmux/renderer::%border-indicators-colour-p) "colour → colour"))
+    (is-true (cl-tmux/renderer::%border-indicators-colour-p) "colour → colour")
+    (is (not (cl-tmux/renderer::%border-indicators-arrows-p)) "colour → no arrows"))
   (with-isolated-options ("pane-border-indicators" "both")
-    (is-true (cl-tmux/renderer::%border-indicators-colour-p) "both → colour"))
+    (is-true (cl-tmux/renderer::%border-indicators-colour-p) "both → colour")
+    (is-true (cl-tmux/renderer::%border-indicators-arrows-p) "both → arrows"))
   (with-isolated-options ("pane-border-indicators" "arrows")
-    (is-true (cl-tmux/renderer::%border-indicators-colour-p)
-             "arrows → colour (glyphs not drawn, degrades to colour)")))
+    (is (not (cl-tmux/renderer::%border-indicators-colour-p))
+        "arrows → arrows only, no colour (tmux)")
+    (is-true (cl-tmux/renderer::%border-indicators-arrows-p) "arrows → arrows")))
+
+(test border-arrows-drawn-pointing-at-active-pane
+  "pane-border-indicators arrows/both draw an arrow glyph on the separator
+   pointing at the active pane; colour-only does not."
+  (let* ((l0   (tl-leaf 1 1 1))
+         (l1   (tl-leaf 2 1 1))
+         (tree (make-layout-split :h l0 l1)))
+    (cl-tmux/model::layout-assign tree 0 0 81 24)
+    (let ((ap (layout-leaf-pane l0)))
+      (with-isolated-options ("pane-border-indicators" "arrows")
+        (is (find #\← (render-tree-borders-output tree ap 81))
+            "active pane on the LEFT must draw a left-pointing arrow"))
+      (with-isolated-options ("pane-border-indicators" "both")
+        (is (find #\← (render-tree-borders-output tree ap 81))
+            "both must also draw the arrow"))
+      (with-isolated-options ("pane-border-indicators" "colour")
+        (is (not (find #\← (render-tree-borders-output tree ap 81)))
+            "colour-only must not draw arrows"))
+      (let ((ap2 (layout-leaf-pane l1)))
+        (with-isolated-options ("pane-border-indicators" "arrows")
+          (is (find #\→ (render-tree-borders-output tree ap2 81))
+              "active pane on the RIGHT must draw a right-pointing arrow"))))))
+
+(test border-lines-padded-and-number
+  "pane-border-lines padded draws blank borders; number writes the adjacent
+   pane's number into the border."
+  (let* ((l0   (tl-leaf 1 1 1))
+         (l1   (tl-leaf 2 1 1))
+         (tree (make-layout-split :h l0 l1)))
+    (cl-tmux/model::layout-assign tree 0 0 81 24)
+    (let ((ap (layout-leaf-pane l0)))
+      (with-isolated-options ("pane-border-lines" "padded")
+        (is (not (find #\│ (render-tree-borders-output tree ap 81)))
+            "padded borders must not contain line glyphs"))
+      (with-isolated-options ("pane-border-lines" "number")
+        (let ((out (render-tree-borders-output tree ap 81)))
+          (is (find (char (format nil "~D" (cl-tmux/model:pane-id
+                                            (layout-leaf-pane l0)))
+                          0)
+                    out)
+              "number borders must contain the adjacent pane's number"))))))
 
 (test pane-border-indicators-off-suppresses-active-colour
   "pane-border-indicators \"off\" suppresses the active-pane border colour; the

@@ -32,7 +32,7 @@
          (tree (make-layout-split :v l0 l1)))
     (cl-tmux/model::layout-assign tree 0 0 80 21)
     (let ((buf (make-string-output-stream)))
-      (cl-tmux/renderer::%render-v-separator buf tree 80)
+      (cl-tmux/renderer::%render-v-separator buf tree nil 80)
       (let ((out (get-output-stream-string buf)))
         (is (plusp (length out)) "%render-v-separator must produce output")
         (is (find #\─ out)
