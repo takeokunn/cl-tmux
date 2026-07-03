@@ -109,6 +109,9 @@
    #:pane-marked
    #:pane-title
    #:pane-tty
+   ;; Spawn record for #{pane_start_command} / #{pane_start_path}
+   #:pane-start-command
+   #:pane-start-path
    ;; Death record for remain-on-exit / #{pane_dead_status} family
    #:pane-dead-status
    #:pane-dead-signal
@@ -475,6 +478,7 @@
    ;; Mark management
    #:copy-mode-set-mark
    #:copy-mode-stop-selection
+   #:copy-mode-toggle-position
    #:copy-mode-half-page-down-and-cancel
    #:copy-mode-copy-pipe-end-of-line-no-cancel
    ;; Append selection

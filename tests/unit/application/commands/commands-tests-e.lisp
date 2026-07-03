@@ -54,8 +54,9 @@
   (is (eq :copy-mode-yank
           (copy-mode-x-command-value "copy-selection-and-cancel"))
       "copy-selection-and-cancel copies the selection and exits copy mode")
-  (is-false (copy-mode-x-command-value "toggle-position")
-            "toggle-position is no longer a supported send -X command")
+  (is (eq :copy-mode-toggle-position
+          (copy-mode-x-command-value "toggle-position"))
+      "toggle-position is a supported send -X command (tmux window-copy)")
   (is-false (copy-mode-x-command-value "scroll-mouse")
             "scroll-mouse is no longer a supported send -X command"))
 

@@ -146,7 +146,11 @@
   "Build the client/server/host/environment slice of the format-context plist.
    CLIENT-WIDTH, CLIENT-HEIGHT, and CLIENT-TTY describe the attached client;
    HOSTNAME and PID-STR are pre-computed by the caller."
-  (list :client-width         client-width
+  (list :socket-path
+        (let* ((sym (find-symbol "*BOUND-SOCKET-PATH*" "CL-TMUX"))
+               (val (and sym (boundp sym) (symbol-value sym))))
+          (or val ""))
+        :client-width         client-width
         :client-height        client-height
         :client-tty           client-tty
         :client-name          client-tty

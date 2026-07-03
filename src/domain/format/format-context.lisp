@@ -192,6 +192,8 @@
         :pane-last            (if (and pane window
                                        (eq pane (cl-tmux/model:window-last-active window)))
                                   "1" "0")
+        :pane-start-command   (if pane (cl-tmux/model:pane-start-command pane) "")
+        :pane-start-path      (if pane (cl-tmux/model:pane-start-path pane) "")
         :pane-input-off       (if (and pane (cl-tmux/model:pane-input-disabled pane)) "1" "0")
         :pane-dead            (if (and pane (<= (cl-tmux/model:pane-fd pane) 0)) "1" "0")
         ;; Death record (remain-on-exit): empty strings when the pane is alive

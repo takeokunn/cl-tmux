@@ -730,3 +730,39 @@
           (cl-tmux::%run-command-line s "select-layout -o")
           (is (eq after-tree (cl-tmux/model:window-tree win))
               "a second -o must redo (swap semantics)"))))))
+
+(test copy-mode-toggle-position-flips-indicator-visibility
+  "send-keys -X toggle-position flips the position-indicator visibility flag."
+  (with-fake-session (s)
+    (let ((screen (cl-tmux/model:pane-screen (cl-tmux/model:session-active-pane s))))
+      (cl-tmux::%cmd-copy-mode-arg s '())
+      (is (null (cl-tmux/terminal/types:screen-copy-hide-position screen))
+          "the indicator is visible on a plain entry")
+      (cl-tmux::%run-command-line s "send-keys -X toggle-position")
+      (is-true (cl-tmux/terminal/types:screen-copy-hide-position screen)
+               "toggle-position must hide the indicator")
+      (cl-tmux::%run-command-line s "send-keys -X toggle-position")
+      (is (null (cl-tmux/terminal/types:screen-copy-hide-position screen))
+          "a second toggle must show it again"))))
+
+(test pane-start-and-socket-format-vars
+  "#{pane_start_command}/#{pane_start_path} expand from the pane spawn record;
+   #{socket_path} is empty in standalone mode and reflects the bound socket."
+  (with-fake-session (s)
+    (let* ((win  (cl-tmux/model:session-active-window s))
+           (pane (cl-tmux/model:window-active-pane win)))
+      (setf (cl-tmux/model:pane-start-command pane) "htop"
+            (cl-tmux/model:pane-start-path pane) "/tmp/start-here")
+      (flet ((expand (spec)
+               (cl-tmux/format:expand-format
+                spec (cl-tmux/format:format-context-from-session s win pane))))
+        (is (string= "htop" (expand "#{pane_start_command}"))
+            "pane_start_command must expand from the spawn record")
+        (is (string= "/tmp/start-here" (expand "#{pane_start_path}"))
+            "pane_start_path must expand from the spawn record")
+        (let ((cl-tmux::*bound-socket-path* nil))
+          (is (string= "" (expand "#{socket_path}"))
+              "socket_path must be empty without a bound socket"))
+        (let ((cl-tmux::*bound-socket-path* "/tmp/cl-tmux-1/x.sock"))
+          (is (string= "/tmp/cl-tmux-1/x.sock" (expand "#{socket_path}"))
+              "socket_path must reflect the bound socket"))))))

@@ -16,6 +16,10 @@
 ;;;; with-incoming-frame is defined in cl-tmux/transport so both server and
 ;;;; client can use it without creating a circular dependency.
 
+(defvar *bound-socket-path* nil
+  "The socket path this server actually bound (#{socket_path}); NIL in
+   standalone mode where no socket exists.")
+
 (defvar *socket-path-override* nil
   "Full socket path from the global -S flag (tmux -S); when set, socket-path
    returns it verbatim for every server name.")
@@ -199,6 +203,7 @@
   (let* ((session (create-initial-session *term-rows* *term-cols*))
          (path    (socket-path name)))
     (server-add-session session)
+    (setf *bound-socket-path* path)
     (ignore-errors (delete-file path))
     (let ((listener (make-listener path)))
       (dolist (pane (all-panes session))

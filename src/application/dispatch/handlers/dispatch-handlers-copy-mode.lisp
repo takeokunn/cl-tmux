@@ -45,6 +45,7 @@
   (:copy-mode-half-page-down              copy-mode-half-page-down)
   (:copy-mode-half-page-down-and-cancel   copy-mode-half-page-down-and-cancel)
   (:copy-mode-stop-selection              copy-mode-stop-selection)
+  (:copy-mode-toggle-position             copy-mode-toggle-position)
   (:copy-mode-scroll-up-line              copy-mode-scroll-up-line)
   (:copy-mode-scroll-down-line            copy-mode-scroll-down-line)
   (:copy-mode-scroll-middle               copy-mode-scroll-middle)

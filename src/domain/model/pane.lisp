@@ -27,6 +27,9 @@
   ;; ── Identity strings ──────────────────────────────────────────────────────
   (title    "" :type string)          ; pane title set via OSC 0/2 (#{pane_title})
   (tty      "" :type string)          ; slave PTY device path, e.g. /dev/pts/3 (#{pane_tty})
+  ;; ── Spawn record (#{pane_start_command} / #{pane_start_path}) ────────────
+  (start-command "" :type string)     ; resolved command the pane started with
+  (start-path    "" :type string)     ; initial working directory
   ;; ── Death record (remain-on-exit / #{pane_dead_status} family) ───────────
   (dead-status nil)                   ; NIL or exit code of the dead child
   (dead-signal nil)                   ; NIL or terminating signal number
@@ -151,10 +154,15 @@
    variable (alist of (NAME . VALUE)), which is consumed once and reset.
    Returns the new pane.  The PTY file descriptor and child PID are embedded
    in the pane struct; callers should call close-pty on them at teardown."
-  (multiple-value-bind (fd pid slave-path)
+  (multiple-value-bind (fd pid slave-path term command)
       (%spawn-shell-for-pane session rows cols :start-dir start-dir)
+    (declare (ignore term))
     (make-pane :id id :x x :y y :width cols :height rows
                :fd fd :pid pid :tty (or slave-path "")
+               :start-command (or command "")
+               :start-path (or start-dir
+                               (ignore-errors (sb-posix:getcwd))
+                               "")
                :screen (make-screen cols rows))))
 
 (defun %make-input-pane (id x y w h)
@@ -184,6 +192,10 @@
       (setf (pane-fd pane) new-fd
             (pane-pid pane) new-pid
             (pane-tty pane) (or slave-path "")
+            (pane-start-command pane) (or default-command "")
+            (pane-start-path pane) (or start-dir
+                                       (ignore-errors (sb-posix:getcwd))
+                                       "")
             ;; The pane is alive again — clear the death record so
             ;; #{pane_dead_status} and friends read empty.
             (pane-dead-status pane) nil

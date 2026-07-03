@@ -125,6 +125,14 @@
   (%copy-mode-with-cancel-at-bottom
    screen (lambda () (copy-mode-half-page-down screen))))
 
+(defun copy-mode-toggle-position (screen)
+  "send-keys -X toggle-position: toggle the position-indicator overlay
+   visibility for this copy-mode session (the -H hide flag flipped)."
+  (when (screen-copy-mode-p screen)
+    (setf (screen-copy-hide-position screen)
+          (not (screen-copy-hide-position screen))
+          (screen-dirty-p screen) t)))
+
 (defun copy-mode-stop-selection (screen)
   "send-keys -X stop-selection: stop EXTENDING the selection but keep the mark
    in place, unlike clear-selection which drops it (tmux stop-selection).  In

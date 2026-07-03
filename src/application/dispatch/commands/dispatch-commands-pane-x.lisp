@@ -41,6 +41,7 @@
   ("halfpage-down"                :copy-mode-half-page-down)
   ("halfpage-down-and-cancel"     :copy-mode-half-page-down-and-cancel)
   ("stop-selection"               :copy-mode-stop-selection)
+  ("toggle-position"              :copy-mode-toggle-position)
   ("search-again"                 :copy-mode-search-next)
   ("search-reverse"               :copy-mode-search-prev)
   ("search-forward"               :copy-mode-search-forward-prompt)
