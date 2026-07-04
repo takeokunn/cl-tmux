@@ -146,7 +146,8 @@
           (:file "renderer-pane-tests-b") ; %clock-digit-rows, %render-v-separator, border/pane edge cases - part II
           (:file "renderer-pane-tests-c") ; %apply-border-style branches, draw-clock, render-pane-clock-mode, draw-pane-number, in-sel-branch - part III
           (:file "renderer-tests") ; renderer - part I (status-bar, render-session, clear-display, status-indicators, window-list)
-          (:file "renderer-tests-d") ; renderer - part IV (per-window options, alert-tab-styles, status-bar-line, overlay, DECTCEM)
+          (:file "renderer-tests-d") ; renderer - part IV (per-window options, alert-tab-styles, status-bar-line)
+          (:file "renderer-overlay-cursor-tests") ; renderer overlay, cursor visibility, message placement
           (:file "renderer-tests-b") ; renderer - part II (status-bar, status-position, BEL rendering, status-left-expanded)
           (:file "renderer-tests-f") ; renderer - part VI (parse-style-string, style-to-sgr, status-length, window-status-format, render-popup/menu)
           (:file "renderer-tests-c") ; renderer - part III (mouse/focus/keys, lock-screen, justify, cursor-shape, zoom-suppression)
