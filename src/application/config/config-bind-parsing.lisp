@@ -191,7 +191,7 @@
        (t nil))))
 
 (define-key-directive-handlers
-  (("bind" "bind-key")
+  (("bind")
    (multiple-value-bind (table key command repeatable note)
        (%parse-bind-key-args args)
      (when command
@@ -199,7 +199,7 @@
        ;; NOTE is the optional -N description, surfaced by list-keys.
        (key-table-bind table key command :repeatable repeatable :note note)
        t)))
-  (("unbind" "unbind-key")
+  (("unbind")
    (multiple-value-bind (table key all-p)
        (%parse-unbind-key-args args)
      (cond

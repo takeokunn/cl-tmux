@@ -4,38 +4,29 @@
 
 (in-suite config-directives-suite)
 
-;;; %normalize-key-alias / *key-name-aliases* (navigation-key spellings)
+;;; Navigation-key spellings
 ;;;
-;;; PPage/PgUp/NPage/PgDn/IC/DC are alternate spellings tmux accepts for the
-;;; canonical navigation-key names the event loop emits (see %csi-tilde-key-name).
-;;; %parse-key-token consults these via %normalize-key-alias so `bind -n PPage`
-;;; resolves to the same binding as `bind -n PageUp`.
+;;; cl-tmux config parsing is canonical-only.  PPage/PgUp/NPage/PgDn/IC/DC are
+;;; not compatibility aliases for PageUp/PageDown/Insert/Delete; they remain
+;;; distinct string key names if a user binds them explicitly.
 
-(test normalize-key-alias-table
-  "%normalize-key-alias maps tmux's alternate navigation-key spellings to the
-   canonical name the event loop emits, case-insensitively; unknown tokens
-   return NIL so the caller falls through to the verbatim token."
-  (dolist (row '(("PPage"  "PageUp"   "PPage aliases PageUp")
-                 ("PgUp"   "PageUp"   "PgUp aliases PageUp")
-                 ("NPage"  "PageDown" "NPage aliases PageDown")
-                 ("PgDn"   "PageDown" "PgDn aliases PageDown")
-                 ("IC"     "Insert"   "IC aliases Insert")
-                 ("DC"     "Delete"   "DC aliases Delete")
-                 ("ppage"  "PageUp"   "alias lookup is case-insensitive")
-                 ("PageUp" nil        "the canonical name itself is not an alias")
-                 ("Up"     nil        "an unrelated key name returns NIL")))
-    (destructuring-bind (input expected desc) row
-      (is (equal expected (cl-tmux/config::%normalize-key-alias input)) "~A" desc))))
+(test parse-key-token-keeps-navigation-aliases-verbatim
+  "%parse-key-token keeps navigation alias spellings distinct instead of
+   normalizing them into canonical key names."
+  (dolist (token '("PPage" "PgUp" "NPage" "PgDn" "IC" "DC" "PageUp" "PageDown"))
+    (is (string= token (cl-tmux/config::%parse-key-token token))
+        "~A remains a distinct key name" token)))
 
-(test bind-navigation-key-alias-resolves-canonical-binding
-  "bind -n PPage <cmd> and bind -n PageUp <cmd> store under the SAME canonical
-   key, so either spelling in a .tmux.conf reaches the binding the event loop
-   looks up."
+(test bind-navigation-key-alias-stays-distinct-from-canonical-binding
+  "bind -n PPage <cmd> stores under PPage only; it must not create the canonical
+   PageUp binding as a compatibility side effect."
   (with-isolated-config
     (cl-tmux/config:apply-config-directive '("bind" "-n" "PPage" "next-window"))
-    (let ((entry (cl-tmux/config:key-table-lookup "root" "PageUp")))
+    (let ((entry (cl-tmux/config:key-table-lookup "root" "PPage")))
       (is (eq :next-window (cl-tmux/config:key-table-command entry))
-          "PPage must bind under the canonical \"PageUp\" key"))))
+          "PPage must bind under the literal \"PPage\" key"))
+    (is (null (cl-tmux/config:key-table-lookup "root" "PageUp"))
+        "PPage must not create a PageUp binding")))
 
 ;;; %parse-control-char (config-tokenizer.lisp)
 ;;;

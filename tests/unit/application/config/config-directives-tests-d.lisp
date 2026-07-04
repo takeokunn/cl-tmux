@@ -1,6 +1,6 @@
 (in-package #:cl-tmux/test)
 
-;;;; set-g-status-off, bind-key-n, load-config patterns, bare-arg-cmds, %elif, line-continuation, if-shell — part IV
+;;;; set-g-status-off, bind-n, load-config patterns, bare-arg-cmds, %elif, line-continuation, if-shell — part IV
 
 (in-suite config-directives-suite)
 
@@ -21,7 +21,7 @@
 
 ;;; ── bind -n with argument-bearing command ────────────────────────────────────
 
-(test bind-key-n-split-window-with-c-flag
+(test bind-n-split-window-with-c-flag
   "'bind -n C-\\ split-window -c /tmp' binds the control character ^\\ (byte 28)
    and stores the full command token list.  C-<key> tokens now resolve to the
    control CHARACTER the event loop sees (the old string-key form could never
@@ -73,13 +73,13 @@ set -g history-limit 50000
 set -g renumber-windows on
 set -g mode-keys vi
 bind r source-file /dev/null \; display-message \"Reloaded\"
-bind-key -T copy-mode-vi v send-keys -X begin-selection
-bind-key -T copy-mode-vi y send-keys -X copy-selection
+bind -T copy-mode-vi v send-keys -X begin-selection
+bind -T copy-mode-vi y send-keys -X copy-selection
 bind '\"' split-window -c #{pane_current_path}
 bind % split-window -h -c #{pane_current_path}
 bind c new-window -c #{pane_current_path}
 unbind-all
-bind-key r source-file /dev/null"))
+bind r source-file /dev/null"))
       (is (zerop (multiple-value-bind (result)
                      (ignore-errors (cl-tmux/config:load-config-from-string common-config))
                    (declare (ignore result))
@@ -87,12 +87,12 @@ bind-key r source-file /dev/null"))
           "common .tmux.conf patterns must load without signaling conditions"))))
 
 (test load-config-bind-T-copy-mode-vi-stores-correctly
-  "bind-key -T copy-mode-vi v send-keys -X begin-selection stores in the
+  "bind -T copy-mode-vi v send-keys -X begin-selection stores in the
    copy-mode-vi table.  The multi-token command is stored as a deferred token
    list; key-press dispatch sends -X begin-selection to the pane's copy mode."
   (with-isolated-config
     (cl-tmux/config:load-config-from-string
-     "bind-key -T copy-mode-vi v send-keys -X begin-selection")
+     "bind -T copy-mode-vi v send-keys -X begin-selection")
     (let ((entry (cl-tmux/config:key-table-lookup "copy-mode-vi" #\v)))
       (is (not (null entry)) "copy-mode-vi must have 'v' binding after load")
       (let ((cmd (cl-tmux/config:key-table-command entry)))
@@ -152,24 +152,24 @@ set -u status")
 
 (test load-realistic-tmux-conf-with-canonical-commands
   "A realistic .tmux.conf written with canonical command names loads:
-   set/setw/bind-key all apply, and command bodies are stored for dispatch."
+   set/setw/bind all apply, and command bodies are stored for dispatch."
   (with-isolated-config
     (let ((applied (cl-tmux/config:load-config-from-string
                     "set -g status on
 setw -g mode-keys vi
-bind-key c new-window
+bind c new-window
 bind | split-window -h
-bind-key -T copy-mode-vi v send-keys -X begin-selection")))
+bind -T copy-mode-vi v send-keys -X begin-selection")))
       (is (= 5 applied)
           "all five canonical config lines apply (none rejected)")
       (is (string= "on" (cl-tmux/options:get-option "status"))
           "set -g status on took effect")
       (is (equal '("new-window") (lookup-key-binding #\c))
-          "bind-key c new-window stored")
+          "bind c new-window stored")
       (is (equal '("split-window" "-h") (lookup-key-binding #\|))
           "bind | split-window -h stored")
       (is (not (null (cl-tmux/config:key-table-lookup "copy-mode-vi" #\v)))
-          "bind-key -T copy-mode-vi created the copy-mode-vi binding"))))
+          "bind -T copy-mode-vi created the copy-mode-vi binding"))))
 
 ;;; ── %elif chains (4-state cond stack) ────────────────────────────────────────
 ;;;

@@ -114,10 +114,10 @@
           finally (return line))))
 
 (defparameter *config-semicolon-owning-verbs*
-  '("bind" "bind-key" "if-shell")
+  '("bind" "if-shell")
   "Config verbs that own their internal \";\" tokens: they receive the full
    token list including bare \";\" command separators because they split the
-   sequence themselves (bind/bind-key multi-command sequences, if-shell
+   sequence themselves (bind multi-command sequences, if-shell
    then/else command blocks).  apply-config-line must NOT pre-split a line on
    a top-level \";\" for these verbs — tmux's cmd-parse.y treats them the same
    way.")

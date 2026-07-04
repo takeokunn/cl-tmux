@@ -130,21 +130,6 @@
          (t nil))))
     (t nil)))
 
-(defparameter *key-name-aliases*
-  '(("PPage" . "PageUp")   ("PgUp" . "PageUp")
-    ("NPage" . "PageDown") ("PgDn" . "PageDown")
-    ("IC"    . "Insert")
-    ("DC"    . "Delete"))
-  "tmux navigation-key spellings that denote the same key as a canonical name.
-   Both spellings must collapse to one string so the bind-side key and the
-   event-loop's emitted key (see %csi-tilde-key-name) match in the key table.")
-
-(defun %normalize-key-alias (token)
-  "Return the canonical key name for TOKEN when it is a known alias (case-
-   insensitively), else NIL.  Lets `bind -n PPage` and `bind -n PageUp` resolve
-   to the same binding."
-  (cdr (assoc token *key-name-aliases* :test #'string-equal)))
-
 (defun %canonicalize-multi-modifier-key (token)
   "When TOKEN is a chain of TWO OR MORE C-/M-/S- modifier prefixes (in any order
    or case) over a base key, return it with the modifiers re-emitted in canonical
@@ -190,11 +175,6 @@
      ;; "C-<key>": convert to the control char when single-key; otherwise (e.g.
      ;; "C-Left") fall back to the string for the deferred modifier-key path.
      (or (%parse-control-char (subseq token 2)) token))
-    ;; Navigation-key aliases → the canonical name the event loop emits for the
-    ;; corresponding ESC [ N ~ sequence (see %csi-tilde-key-name).  Without this
-    ;; `bind -n PPage <cmd>` would store "PPage" while the keypress resolves to
-    ;; "PageUp", and the binding would never fire.
-    ((%normalize-key-alias token))
     (t token)))
 
 ;;; ── Command-name registry ────────────────────────────────────────────────
