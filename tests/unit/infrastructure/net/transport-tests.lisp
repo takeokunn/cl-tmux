@@ -8,7 +8,7 @@
 ;;;; end-of-stream handling.  A binary file stream behaves like a socket stream
 ;;;; for these purposes (blocking read-sequence).
 ;;;;
-;;;; with-temp-octet-file and write-frames-to-file are defined in tests/helpers-b.lisp
+;;;; with-temp-octet-file and write-frames-to-file are defined in tests/helpers-net-protocol.lisp
 ;;;; and shared with net-tests.lisp to avoid duplicating the temp-file idiom.
 ;;;;
 ;;;; Validation, security-boundary, and CPS-phase-direct coverage lives in

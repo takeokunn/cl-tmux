@@ -4,7 +4,7 @@
 ;;;;
 ;;;; Isolation helpers (with-fresh-options, with-fresh-global-options,
 ;;;; with-single-option, with-single-server-option) are defined in
-;;;; tests/helpers-b.lisp so that config-directives-tests can reuse them.
+;;;; tests/helpers-options.lisp so that config-directives-tests can reuse them.
 
 (def-suite options-suite :description "Global option registry")
 (in-suite options-suite)
@@ -543,4 +543,3 @@
     (let ((out (cl-tmux/options:show-options)))
       (is (search "status-left ''" out)
           "show-options must render an empty value as '' (got ~S)" out))))
-

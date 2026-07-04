@@ -7,7 +7,7 @@
 ;;;; These were split out of prompt-tests.lisp to match the source split
 ;;;; between prompt.lisp and overlay.lisp.
 ;;;;
-;;;; All overlay tests use with-clean-overlay (from helpers-b.lisp) to
+;;;; All overlay tests use with-clean-overlay (from helpers-input-fixtures.lisp) to
 ;;;; guarantee no leaked *overlay* / *overlay-scroll-offset* /
 ;;;; *overlay-shown-at* / *display-panes-active* state between tests,
 ;;;; mirroring the with-clean-prompt convention in prompt-tests.lisp.

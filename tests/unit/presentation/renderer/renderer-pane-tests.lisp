@@ -12,7 +12,7 @@
 
 ;;; -- Local fixture ----------------------------------------------------------
 ;;;
-;;; make-renderer-test-session (defined in tests/helpers-b.lisp) is the canonical
+;;; make-renderer-test-session (defined in tests/helpers-renderer-fixtures.lisp) is the canonical
 ;;; shared fixture.  The old local %make-pane-test-session has been removed in
 ;;; favour of the shared version.
 

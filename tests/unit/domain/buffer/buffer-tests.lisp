@@ -2,7 +2,7 @@
 
 ;;;; Tests for cl-tmux/buffer: paste-buffer ring operations.
 ;;;;
-;;;; Uses with-empty-buffers from tests/helpers-b.lisp (shared DSL) to isolate
+;;;; Uses with-empty-buffers from tests/helpers-session-fixtures.lisp (shared DSL) to isolate
 ;;;; *paste-buffers* state between tests.
 
 (def-suite buffer-suite :description "Paste buffer ring")

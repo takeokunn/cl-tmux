@@ -296,9 +296,11 @@
      (:file "helpers-options")
      (:file "helpers-process-fixtures")
      (:file "helpers-screen-assertions")
+     (:file "helpers-loop-fixtures")
      (:file "helpers-mouse-fixtures")
      (:file "helpers-layout-fixtures")
-     (:file "helpers-b")
+     (:file "helpers-renderer-fixtures")
+     (:file "helpers-session-fixtures")
      (:file "helpers-input-fixtures")
      (:file "helpers-pipe-fixtures")
      (:module "unit"

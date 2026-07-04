@@ -63,7 +63,7 @@
 ;;;
 ;;; We use a POSIX pipe pair (sb-posix:pipe) so we can inject a known byte into
 ;;; the read end without needing stdin to be a TTY.
-;;; with-pipe-fds is defined in tests/helpers-b.lisp.
+;;; with-pipe-fds is defined in tests/helpers-pipe-fixtures.lisp.
 
 (test read-byte-nonblock-returns-byte-when-data-available
   "read-byte-nonblock's select+read pipeline returns a byte when data is ready.

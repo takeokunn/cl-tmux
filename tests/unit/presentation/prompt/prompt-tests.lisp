@@ -4,7 +4,7 @@
 ;;;;
 ;;;; Overlay, popup, and menu tests live in overlay-tests.lisp. Event-loop
 ;;;; wiring and status-bar coverage live in prompt-tests-wiring.lisp.
-;;;; All prompt tests use with-clean-prompt (from helpers-b.lisp) to guarantee
+;;;; All prompt tests use with-clean-prompt (from helpers-input-fixtures.lisp) to guarantee
 ;;;; that *prompt* and cl-tmux::*dirty* are reset; the raw let form is never used.
 
 (def-suite prompt-suite :description "Interactive input prompt")

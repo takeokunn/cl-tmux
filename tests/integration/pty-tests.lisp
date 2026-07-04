@@ -216,7 +216,7 @@
 (test pty-read-blocking-returns-nil-on-closed-fd
   "pty-read-blocking returns NIL when read(2) returns 0 (EOF) or negative."
   ;; A pipe whose write end is closed immediately delivers EOF on the read end.
-  ;; with-pipe-fds is defined in tests/helpers-b.lisp.
+  ;; with-pipe-fds is defined in tests/helpers-pipe-fixtures.lisp.
   (with-pipe-fds (rfd wfd)
     ;; Close the write end so the read end gets EOF.
     (sb-posix:close wfd)

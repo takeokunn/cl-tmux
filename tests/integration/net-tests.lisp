@@ -10,7 +10,7 @@
 ;;;; (mirroring the PTY tests).
 ;;;;
 ;;;; with-temp-socket-path, with-connected-sockets, and write-frames-to-file
-;;;; are defined in tests/helpers-b.lisp and shared with transport-tests.lisp.
+;;;; are defined in tests/helpers-net-protocol.lisp and shared with transport-tests.lisp.
 
 (def-suite net-suite :description "Unix-domain socket transport (sb-bsd-sockets)")
 (in-suite net-suite)

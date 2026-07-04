@@ -6,7 +6,7 @@
 
 ;;; ── Test fixtures ───────────────────────────────────────────────────────────
 ;;;
-;;; make-renderer-test-session and make-test-session are defined in tests/helpers-b.lisp
+;;; make-renderer-test-session and make-test-session are defined in tests/helpers-renderer-fixtures.lisp
 ;;; and shared across renderer-tests.lisp, renderer-pane-tests.lisp, and prompt-tests.lisp.
 
 (defun make-split-session (w h orient)
