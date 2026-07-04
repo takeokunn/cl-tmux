@@ -58,10 +58,10 @@
         (cl-tmux/renderer::render-status-bar s sess rows cols :status-row status-row)
         (cl-tmux/renderer::render-status-bar s sess rows cols))))
 
-(defun render-overlay-output (width)
+(defun render-overlay-output (width height)
   "Render the current overlay to a string using the production renderer."
   (with-output-to-string (buf)
-    (cl-tmux/renderer::render-overlay buf width)))
+    (cl-tmux/renderer::render-overlay buf width height)))
 
 (defun render-popup-output (popup rows cols)
   "Render POPUP to a string using the production renderer."

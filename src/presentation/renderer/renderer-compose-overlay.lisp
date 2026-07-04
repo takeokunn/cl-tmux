@@ -22,13 +22,12 @@
         line
         (max 0 (+ (- rows height) line)))))
 
-(defun render-overlay (stream cols &optional rows)
+(defun render-overlay (stream cols rows)
   "Draw the active overlay.
-   A SINGLE-line overlay is a message: when ROWS is supplied it is drawn over
+   A SINGLE-line overlay is a message: it is drawn over
    the status area on the message-line row (tmux message placement), padded to
    the full width.  Multi-line overlays are pagers (list-keys, show-options
-   output) and draw over the top rows as before.  ROWS omitted (legacy
-   callers/tests) keeps the top-anchored behaviour for both.
+   output) and draw over the top rows.
    Applies the message-style option (or message-command-style when a prompt is
    active) so overlays respect the user's colour scheme."
   (let* ((style-opt (if (prompt-active-p)
@@ -40,7 +39,7 @@
         (%emit-sgr stream sgr-code)
         (reset-attrs stream)))
   (let ((lines (overlay-lines)))
-    (if (and rows (= (length lines) 1))
+    (if (= (length lines) 1)
         ;; Message: one line over the status area, padded to clear the row.
         (let* ((line (first lines))
                (shown (subseq line 0 (min (length line) cols))))

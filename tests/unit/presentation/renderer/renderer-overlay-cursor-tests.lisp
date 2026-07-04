@@ -23,7 +23,7 @@
     (show-overlay (format nil "line one~%line two"))
     (unwind-protect
          (let ((buf (make-string-output-stream)))
-           (cl-tmux/renderer::render-overlay buf 20)
+           (cl-tmux/renderer::render-overlay buf 20 10)
            (let ((out (get-output-stream-string buf)))
              (is (search "line" out) "overlay text must appear in output")))
       (clear-overlay))))
@@ -43,13 +43,13 @@
                     (let ((*overlay* nil))
                       (show-overlay "hello")
                       (unwind-protect
-                           (render-overlay-output 20)
+                           (render-overlay-output 20 10)
                         (clear-overlay)))))
         (unstyled (with-isolated-options ("message-style" "")
                     (let ((*overlay* nil))
                       (show-overlay "hello")
                       (unwind-protect
-                           (render-overlay-output 20)
+                           (render-overlay-output 20 10)
                         (clear-overlay))))))
     (is (not (string= styled unstyled))
         "message-style bg=red must change the overlay's rendered SGR (styled=~S unstyled=~S)"

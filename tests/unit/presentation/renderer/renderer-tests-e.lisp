@@ -76,7 +76,7 @@
     (show-overlay (format nil "line-A~%line-B~%line-C"))
     (unwind-protect
          (let ((buf (make-string-output-stream)))
-           (cl-tmux/renderer::render-overlay buf 30)
+           (cl-tmux/renderer::render-overlay buf 30 10)
            (let ((out (get-output-stream-string buf)))
              (is (search "line-A" out) "render-overlay must show first line")))
       (clear-overlay))))
