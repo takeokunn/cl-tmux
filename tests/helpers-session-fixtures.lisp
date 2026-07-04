@@ -138,10 +138,26 @@
 
 (defmacro with-copy-mode-vi-state ((session-var screen-var state-var) &body body)
   "Run BODY in an isolated vi copy-mode key-table configuration."
+  `(with-copy-mode-keys-state (,session-var ,screen-var ,state-var "vi")
+     ,@body))
+
+(defmacro with-copy-mode-emacs-state ((session-var screen-var state-var) &body body)
+  "Run BODY in an isolated emacs copy-mode key-table configuration."
+  `(with-copy-mode-keys-state (,session-var ,screen-var ,state-var "emacs")
+     ,@body))
+
+(defmacro with-copy-mode-keys-state ((session-var screen-var state-var mode-keys)
+                                     &body body)
+  "Run BODY with MODE-KEYS selected and copy mode already active."
   `(with-isolated-config
-     (cl-tmux/options:set-option "mode-keys" "vi")
+     (cl-tmux/options:set-option "mode-keys" ,mode-keys)
      (with-copy-mode-state (,session-var ,screen-var ,state-var)
        ,@body)))
+
+(defun send-copy-mode-bytes (session state bytes)
+  "Feed BYTES through PROCESS-BYTE for copy-mode dispatch tests."
+  (dolist (byte bytes)
+    (cl-tmux::process-byte session byte state)))
 
 (defmacro with-option-session ((var &rest make-args) &body body)
   "Bind VAR to a fresh fake session and run BODY inside WITH-ISOLATED-CONFIG.
