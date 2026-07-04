@@ -27,6 +27,19 @@
        (is (search needle text)
            "~A must report ~S (got ~S)" ,context needle text))))
 
+(defmacro assert-command-args-rejected-without-redraw (form args
+                                                       &key
+                                                       (message "unsupported argument")
+                                                       (context "command"))
+  "Assert that FORM rejects ARGS without scheduling a redraw."
+  `(progn
+     (is (null ,form)
+         "~A must reject unsupported args: ~S" ,context ,args)
+     (is-false cl-tmux::*dirty*
+               "~A must not redraw after rejecting: ~S" ,context ,args)
+     (assert-overlay-contains ,message cl-tmux::*overlay*
+                              (format nil "~A rejection for ~S" ,context ,args))))
+
 (defmacro with-temporary-posix-environment-variable ((name value) &body body)
   "Bind NAME to VALUE in the real process environment for BODY and restore it."
   (let ((old-value (gensym "OLD")))

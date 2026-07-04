@@ -4,6 +4,20 @@
 
 (in-suite dispatch-suite)
 
+(defparameter *refresh-client-rejected-argument-cases*
+  '(("-A" "pane:on")
+    ("-B" "name:what:format")
+    ("-D")
+    ("-F" "read-only")
+    ("-L")
+    ("-R")
+    ("-U")
+    ("-c")
+    ("-l" "client-0")
+    ("-t" "client-0")
+    ("-Z")
+    ("adjustment")))
+
 ;;; ── Coverage: previously untested handlers ─────────────────────────────────
 
 (test dispatch-attach-session-opens-prompt
@@ -164,40 +178,16 @@
       (is (null cl-tmux::*overlay*)
           "accepted refresh-client args must not raise an overlay: ~S" args))))
 
-(test run-command-line-refresh-client-rejects-compatibility-flags
-  "refresh-client rejects tmux compatibility forms without local state."
+(test run-command-line-refresh-client-rejects-unsupported-arguments
+  "refresh-client rejects unsupported compatibility forms and unknown flags."
   (with-fake-session (s)
-    (dolist (args '(("-A" "pane:on")
-                    ("-B" "name:what:format")
-                    ("-D")
-                    ("-F" "read-only")
-                    ("-L")
-                    ("-R")
-                    ("-U")
-                    ("-c")
-                    ("-l" "client-0")
-                    ("-t" "client-0")
-                    ("adjustment")))
+    (dolist (args *refresh-client-rejected-argument-cases*)
       (setf cl-tmux::*dirty* nil
             cl-tmux::*overlay* nil)
-      (is (null (cl-tmux::%cmd-refresh-client-arg s args))
-          "refresh-client must reject compatibility args: ~S" args)
-      (is-false cl-tmux::*dirty*
-                "a rejected refresh-client must not redraw: ~S" args)
-      (is (search "unsupported argument" cl-tmux::*overlay*)
-          "a rejected refresh-client must explain the rejection: ~S" args))))
-
-(test run-command-line-refresh-client-rejects-unknown-flags
-  "refresh-client rejects flags outside the local command surface."
-  (with-fake-session (s)
-    (setf cl-tmux::*dirty* nil
-          cl-tmux::*overlay* nil)
-    (is (null (cl-tmux::%cmd-refresh-client-arg s '("-Z")))
-        "refresh-client must reject an unknown flag")
-    (is-false cl-tmux::*dirty*
-              "a rejected refresh-client must not redraw")
-    (is (search "unsupported argument" cl-tmux::*overlay*)
-        "a rejected refresh-client must explain the rejection")))
+      (assert-command-args-rejected-without-redraw
+          (cl-tmux::%cmd-refresh-client-arg s args)
+          args
+        :context "refresh-client"))))
 
 
 (test run-command-line-lock-client-rejects-target-client
