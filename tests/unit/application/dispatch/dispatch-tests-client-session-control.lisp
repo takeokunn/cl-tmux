@@ -158,16 +158,12 @@
       (cl-tmux::dispatch-command s :refresh-client nil)
       (is-true cl-tmux::*dirty* ":refresh-client must set *dirty*"))))
 
-(test run-command-line-refresh-client-accepts-tmux-flags
-  "refresh-client accepts its tmux flag set (-S status redraw, -L/R/U/D pan,
-   -c, -f/-F client flags, -l clipboard, -t target) and forces a redraw."
+(test run-command-line-refresh-client-accepts-local-flags
+  "refresh-client accepts only the local redraw and client-state flags."
   (with-fake-session (s)
     (dolist (args '(("-S")
-                    ("-L") ("-R") ("-U") ("-D")
-                    ("-c")
-                    ("-f" "read-only")
-                    ("-l" "client-0")
-                    ("-t" "client-0")))
+                    ("-C" "120x40")
+                    ("-f" "read-only")))
       (setf cl-tmux::*dirty* nil
             cl-tmux::*overlay* nil)
       (is-true (cl-tmux::%cmd-refresh-client-arg s args)
@@ -177,8 +173,31 @@
       (is (null cl-tmux::*overlay*)
           "accepted refresh-client args must not raise an overlay: ~S" args))))
 
+(test run-command-line-refresh-client-rejects-compatibility-flags
+  "refresh-client rejects tmux compatibility forms without local state."
+  (with-fake-session (s)
+    (dolist (args '(("-A" "pane:on")
+                    ("-B" "name:what:format")
+                    ("-D")
+                    ("-F" "read-only")
+                    ("-L")
+                    ("-R")
+                    ("-U")
+                    ("-c")
+                    ("-l" "client-0")
+                    ("-t" "client-0")
+                    ("adjustment")))
+      (setf cl-tmux::*dirty* nil
+            cl-tmux::*overlay* nil)
+      (is (null (cl-tmux::%cmd-refresh-client-arg s args))
+          "refresh-client must reject compatibility args: ~S" args)
+      (is-false cl-tmux::*dirty*
+                "a rejected refresh-client must not redraw: ~S" args)
+      (is (search "unsupported argument" cl-tmux::*overlay*)
+          "a rejected refresh-client must explain the rejection: ~S" args))))
+
 (test run-command-line-refresh-client-rejects-unknown-flags
-  "refresh-client still rejects flags outside the tmux args set."
+  "refresh-client rejects flags outside the local command surface."
   (with-fake-session (s)
     (setf cl-tmux::*dirty* nil
           cl-tmux::*overlay* nil)

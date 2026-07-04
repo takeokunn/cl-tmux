@@ -59,7 +59,7 @@
     ("pipe-pane"            . "[-IOo] [-t target-pane] [shell-command]")
     ("previous-layout"      . "[-t target-window]")
     ("previous-window"      . "[-a] [-t target-session]")
-    ("refresh-client"       . "[-cDlLRSU] [-A pane:state] [-B name:what:format] [-C size] [-f flags] [-l target] [-t target-client] [adjustment]")
+    ("refresh-client"       . "[-S] [-C size] [-f flags]")
     ("rename-session"       . "[-t target-session] new-name")
     ("rename-window"        . "[-t target-window] new-name")
     ("resize-pane"          . "[-DLMRUZ] [-t target-pane] [-x width] [-y height] [adjustment]")
