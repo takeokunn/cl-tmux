@@ -179,8 +179,8 @@
 
 ;;; ── Command-name registry ────────────────────────────────────────────────
 ;;;
-;;; *bindable-commands*, *tmux-command-aliases*, *known-command-names*,
-;;; %canonical-command-name, %known-command-name-p, and %command-keyword
+;;; *bindable-commands*, *known-command-names*, %known-command-name-p, and
+;;; %command-keyword
 ;;; have been extracted to config-commands.lisp to keep this tokenizer file
 ;;; focused on lexical analysis.  That file is loaded below after the key-
 ;;; parsing utilities it depends on are defined.

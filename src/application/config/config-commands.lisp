@@ -89,14 +89,6 @@
 ;;; cl-tmux accepts canonical command names only.  tmux short aliases such as
 ;;; neww/splitw/killp are deliberately not kept as a compatibility layer.
 
-(defparameter *tmux-command-aliases*
-  '()
-  "Canonical-only command registry: no tmux short aliases are accepted.")
-
-(defun %canonical-command-name (name)
-  "Return NAME unchanged.  cl-tmux accepts canonical command names only."
-  name)
-
 ;;; ── Known canonical command names ────────────────────────────────────────
 ;;;
 ;;; This list covers all primary command names from tmux's cmd_table that

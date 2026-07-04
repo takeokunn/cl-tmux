@@ -52,19 +52,7 @@
     (destructuring-bind (input expected desc) row
       (is (equal expected (cl-tmux/config::%parse-control-char input)) "~A" desc))))
 
-;;; %canonical-command-name / %known-command-name-p (config-commands.lisp)
-
-(test canonical-command-name-table
-  "%canonical-command-name is identity: command aliases are not a compatibility
-   layer, so canonical names and shorthand spellings pass through unchanged."
-  (dolist (row '(("neww"        "neww"           "neww stays unresolved")
-                 ("splitw"      "splitw"         "splitw stays unresolved")
-                 ("NEWW"        "NEWW"           "case is not alias-normalized")
-                 ("killp"       "killp"          "killp stays unresolved")
-                 ("new-window"  "new-window"      "a canonical name passes through unchanged")
-                 ("bogus-xyz"   "bogus-xyz"       "an unrecognised name passes through unchanged")))
-    (destructuring-bind (input expected desc) row
-      (is (string= expected (cl-tmux/config::%canonical-command-name input)) "~A" desc))))
+;;; %known-command-name-p (config-commands.lisp)
 
 (test known-command-name-p-table
   "%known-command-name-p accepts bindable keywords and known canonical names; it

@@ -315,19 +315,9 @@
 
 (test tmux-standard-short-aliases-stay-unresolved
   "The standard tmux cmd_table short aliases are not accepted as cl-tmux command
-   names.  Each row: (alias canonical)."
-  (dolist (row '(("confirm" "confirm-before") ("kills" "kill-session")
-                 ("next" "next-window")       ("prev" "previous-window")
-                 ("nextl" "next-layout")      ("prevl" "previous-layout")
-                 ("pipe" "pipe-pane")         ("pipep" "pipe-pane")
-                 ("refresh" "refresh-client") ("rename" "rename-session")
-                 ("rotatew" "rotate-window")  ("selectl" "select-layout")
-                 ("showenv" "show-environment")
-                 ("showmsgs" "show-messages") ("unlinkw" "unlink-window")
-                 ("newp" "split-window")))
-    (destructuring-bind (alias canonical) row
-      (declare (ignore canonical))
-      (is (string= alias (cl-tmux/config::%canonical-command-name alias))
-          "~A must stay unresolved" alias)
-      (is (null (cl-tmux/config::%known-command-name-p alias))
-          "~A must not be known" alias))))
+   names."
+  (dolist (alias '("confirm" "kills" "next" "prev" "nextl" "prevl"
+                   "pipe" "pipep" "refresh" "rename" "rotatew" "selectl"
+                   "showenv" "showmsgs" "unlinkw" "newp"))
+    (is (null (cl-tmux/config::%known-command-name-p alias))
+        "~A must not be known" alias)))
