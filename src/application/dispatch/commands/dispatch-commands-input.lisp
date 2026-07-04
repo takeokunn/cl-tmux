@@ -5,6 +5,7 @@
 (defmacro with-command-flags+pos ((flags pos args &optional (value-flags "")) &body body)
   "Bind FLAGS and POS to the parsed flag alist and positional tokens from ARGS."
   `(multiple-value-bind (,flags ,pos) (%parse-command-flags ,args ,value-flags)
+     (declare (ignorable ,flags ,pos))
      ,@body))
 
 (defmacro with-command-input ((flags positionals args &optional (value-flags "") &rest options)
@@ -59,6 +60,7 @@
          (message (getf options :message "unsupported argument")))
     `(defun ,name (,session ,args)
        ,docstring
+       (declare (ignorable ,session))
        (with-command-input (,flags ,positionals ,args ,value-flags
                             :allowed-flags ,(%maybe-quote-form allowed-flags)
                             ,@(when min-positionals-p
@@ -66,7 +68,6 @@
                             ,@(when max-positionals-p
                                 `(:max-positionals ,max-positionals))
                             :message ,message)
-         (declare (ignorable ,session ,flags ,positionals))
          ,@body))))
 
 (defun %parse-flag-token (token value-flags remaining-tokens)

@@ -97,4 +97,4 @@
     ("unbind-key"           . "[-anq] [-T key-table] key")
     ("unlink-window"        . "[-k] [-t target-window]")
     ("wait-for"             . "[-SLU] channel"))
-  "Maps canonical command name to tmux usage flags string.")
+  "Maps canonical command name to cl-tmux's supported usage string.")
