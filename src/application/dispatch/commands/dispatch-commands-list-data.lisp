@@ -27,7 +27,7 @@
     ("display-message"      . "[-aINpv] [-c target-client] [-d delay] [-F format] [-l message] [-t target-pane] [message]")
     ("display-panes"        . "[-bN] [-d duration] [-F format] [-t target-client] [template]")
     ("display-popup"        . "[-BCE] [-b border-lines] [-c target-client] [-d start-directory] [-e environment] [-h height] [-s style] [-S border-style] [-t target-pane] [-T title] [-w width] [-x position] [-y position] [shell-command [argument ...]]")
-    ("find-window"          . "[-CimnNrTZ] [-F format] [-t target-pane] match-string")
+    ("find-window"          . "[-CimnNrT] [-F format] [-t target-pane] match-string")
     ("has-session"          . "[-t target-session]")
     ("if-shell"             . "[-bF] [-t target-pane] shell-command command [command]")
     ("join-pane"            . "[-bdfhv] [-l size] [-s src-pane] [-t dst-pane]")

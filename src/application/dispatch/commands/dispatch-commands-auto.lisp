@@ -51,12 +51,11 @@
    interactive :find-window binding (which lists matches in an overlay) is
    unchanged."
   (with-command-input (flags positionals args "t"
-                             :allowed-flags '(#\C #\N #\T #\Z #\i #\r #\t)
+                             :allowed-flags '(#\C #\N #\T #\i #\r #\t)
                              :max-positionals 1
                              :message "find-window: unsupported argument")
     (let* ((target-str   (%flag-value flags #\t))
            (pattern      (first positionals))
-           (zoom-p       (%flag-present-p flags #\Z))
            (name-only    (%flag-present-p flags #\N))
            (title-only   (%flag-present-p flags #\T))
            (content-only (%flag-present-p flags #\C))
@@ -82,9 +81,6 @@
                                (session-windows session-to-search))))
           (when match
             (session-select-window session-to-search match)
-            ;; -Z: zoom the matched window's active pane (tmux find-window -Z).
-            (when (and zoom-p (not (cl-tmux/model:window-zoom-p match)))
-              (cl-tmux/model:window-zoom-toggle match))
             (setf *dirty* t)
             t))))))
 

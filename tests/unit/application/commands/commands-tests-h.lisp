@@ -399,13 +399,7 @@
       (session-select-window sess wa)
       (cl-tmux::%cmd-find-window-arg sess '("-C" "content needle"))
       (is (eq wb (session-active-window sess))
-          "-C must restrict matching to visible content")
-      (session-select-window sess wa)
-      (cl-tmux::%cmd-find-window-arg sess '("-Z" "beta"))
-      (is (eq wb (session-active-window sess))
-          "-Z must select the matched window")
-      (is-true (cl-tmux/model:window-zoom-p wb)
-               "-Z must zoom the matched window's active pane"))))
+          "-C must restrict matching to visible content"))))
 
 (test cmd-find-window-targets-another-session
   "find-window -t scopes the search to the targeted session."
@@ -445,6 +439,22 @@
           "rejected args must not change the active window")
       (assert-overlay-active
        "rejected args must show an error overlay"))))
+
+(test cmd-find-window-rejects-zoom-flag
+  "find-window rejects the removed -Z zoom flag."
+  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+    (declare (ignore wg))
+    (session-select-window sess wa)
+    (with-command-rejection-state (sess
+                                   (cl-tmux::%cmd-find-window-arg sess '("-Z" "beta"))
+                                   "find-window: unsupported argument"
+                                   "find-window -Z")
+      (is (eq wa (session-active-window sess))
+          "rejected -Z must not change the active window")
+      (is-false (cl-tmux/model:window-zoom-p wb)
+                "rejected -Z must not zoom the matching window")
+      (assert-overlay-active
+       "rejected -Z must show an error overlay"))))
 
 (test window-matches-pattern-p-name
   "%window-matches-pattern-p matches the window name case-insensitively."
