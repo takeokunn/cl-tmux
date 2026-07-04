@@ -232,7 +232,11 @@
        (:file "dispatch-commands-capture-pane") ; capture-pane %cmd-* handler
        (:file "dispatch-commands-pane-ops") ; resize/join/break/clear/rotate %cmd-* handlers
        (:file "dispatch-commands-list-data") ; *command-usage-table* pure data (canonical-name → usage-flags)
-       (:file "dispatch-commands-list")    ; list-sessions/windows/panes/clients arg parsing + overlay handlers
+       (:file "dispatch-commands-list-registry") ; list-commands registry projection
+       (:file "dispatch-commands-list-overlay") ; list overlay presentation helpers
+       (:file "dispatch-commands-list-query") ; list read-model queries and formatters
+       (:file "dispatch-commands-list-parser") ; list-* tmux-compatible arg parser
+       (:file "dispatch-commands-list")    ; list-sessions/windows/panes/clients %cmd-* handlers
        (:file "dispatch-commands-list-commands") ; list-commands + wait-for arg parsing/handlers
        (:file "dispatch-commands-auto")   ; window-nav/session-mgmt %cmd-* (find-window, refresh/lock, hooks, bind)
        (:file "dispatch-commands-auto-env") ; show-environment/set-environment helpers + %cmd-* handlers
