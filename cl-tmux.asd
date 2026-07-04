@@ -540,7 +540,10 @@
         ((:file "runtime-tests")  ; globals, pane-reader-loop, monitor-activity/silence, prompt-history, alert-action — part I
          (:file "runtime-tests-c")  ; stop-reader-threads, add-message-log, add-prompt-history, wait-for-channel — part III
          (:file "runtime-tests-b")  ; add-message-log table-driven, add-prompt-history, wait-for-channel — part II
-         (:file "main-tests")))
+       (:file "main-tests")
+       (:file "main-entry-tests")
+       (:file "main-environment-tests")
+       (:file "main-command-argument-tests")))
        (:module "feature"
         :serial t
         :components
