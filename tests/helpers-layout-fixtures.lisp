@@ -4,7 +4,7 @@
 
 ;;; ── Shared layout-tree builders ─────────────────────────────────────────────
 ;;;
-;;; tl-pane, tl-leaf, and tl-window are defined here (not in layout-tests.lisp)
+;;; tl-pane, tl-leaf, and tl-window are defined here (not in the layout-tree test files)
 ;;; so that layout-geometry-tests.lisp, window-tests.lisp, and any future test
 ;;; file can use them without a fragile cross-file dependency.
 

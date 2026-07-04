@@ -3,12 +3,12 @@
 ;;; ── Window resize, rotate, and zoom operations ───────────────────────────────
 ;;;
 ;;; This file holds the window-resize-active, window-rotate, and window-zoom-toggle
-;;; operations split from window.lisp.  All functions depend on:
-;;;   - window struct accessors (window.lisp)
+;;; operations split from window-core.lisp/window-tree.lisp.  All functions depend on:
+;;;   - window struct accessors (window-core.lisp)
 ;;;   - layout helpers: layout-find-leaf, layout-find-parent, layout-split-*,
 ;;;     resize-find-split, resize-direction-orientation, layout-leaves (layout.lisp)
-;;;   - %axis-floor, +pane-separator-width+ (window.lisp)
-;;;   - pane-reposition (pane.lisp)
+;;;   - %axis-floor, +pane-separator-width+ (window-core.lisp)
+;;;   - pane-reposition (pane-geometry.lisp)
 ;;;
 ;;; Data/logic separation:
 ;;;   %zoom-in-geometry / %zoom-out-geometry — pure tree-slot mutations (no I/O)

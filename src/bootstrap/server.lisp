@@ -120,8 +120,9 @@
 ;;;
 ;;; define-message-dispatch-fn is the shared COND-expansion engine used by both
 ;;; define-msg-dispatch (single-client server) and define-multi-msg-dispatch
-;;; (multi-client server, server-multi.lisp).  Both wrappers delegate to it so
-;;; the two event loops can never diverge in their macro structure.
+;;; (multi-client server, server-multi.lisp + server-multi-loop.lisp).  Both
+;;; wrappers delegate to it so the two event loops can never diverge in their
+;;; macro structure.
 
 (defmacro define-message-dispatch-fn (fn-name lambda-list docstring &rest rules)
   "Build a named message-dispatch function from a declarative rule table.
@@ -129,7 +130,7 @@
    DOCSTRING is its documentation string.  Each RULE is (condition &rest body).
    The generated function dispatches via COND and returns whatever the matching
    arm returns.  Shared infrastructure for define-msg-dispatch (server.lisp) and
-   define-multi-msg-dispatch (server-multi.lisp).
+   define-multi-msg-dispatch (server-multi.lisp + server-multi-loop.lisp).
 
    Prolog analogy:
      fn(nil, ...) :- rule1-body.
@@ -147,7 +148,7 @@
   "Build %handle-client-message from a declarative message-type rule table.
    Each RULE is (condition &rest body).  TYPE, PAYLOAD, SESSION, and STATE are
    bound in every rule body.  Delegates to define-message-dispatch-fn so this
-   macro and define-multi-msg-dispatch (server-multi.lisp) share the same
+   macro and define-multi-msg-dispatch (server-multi.lisp + server-multi-loop.lisp) share the same
    COND-expansion engine and cannot diverge in structure.
 
    Prolog analogy:
@@ -215,9 +216,9 @@
       (setf *status-timer* (start-status-timer (lambda () (setf *dirty* t))))
       (install-sigwinch-handler)
       (unwind-protect
-           ;; Multi-client event loop: a single select(2) over the listener fd +
-           ;; every attached client fd, serving them all concurrently
-           ;; (%run-multi-server-loop, server-multi.lisp).
+   ;; Multi-client event loop: a single select(2) over the listener fd +
+   ;; every attached client fd, serving them all concurrently
+   ;; (%run-multi-server-loop, server-multi-loop.lisp).
            (%run-multi-server-loop listener session)
         (close-socket listener)
         (ignore-errors (delete-file path))

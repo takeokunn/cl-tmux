@@ -26,7 +26,7 @@
   "Walk NODE, updating every leaf's pane geometry to fit the X,Y,WIDTH,HEIGHT rectangle.
    Reserves one row/column for the separator at each internal split node.
    This is an ORCHESTRATE-layer function: it calls %update-pane-geometry (a DATA
-   slot mutation in pane.lisp) on every leaf, so callers such as window-relayout
+   slot mutation in pane-geometry.lisp) on every leaf, so callers such as window-relayout
    can drive the PTY/screen resize as a separate step after the full tree has been
    repositioned.  It is NOT a pure transform — it mutates pane slots in place."
   (etypecase node
@@ -37,7 +37,7 @@
 ;;;
 ;;; pane-neighbor, pane-at-position, and their helpers (%ranges-overlap-p,
 ;;; %pane-center-x/y) live in window-neighbor.lisp because they access WINDOW
-;;; struct slots (window-panes), which are defined in window.lisp.
+;;; struct slots (window-panes), which are defined in window-core.lisp.
 ;;; Defining them here would forward-reference the WINDOW struct (loaded later).
 
 ;;; ── Resize helpers ─────────────────────────────────────────────────────────

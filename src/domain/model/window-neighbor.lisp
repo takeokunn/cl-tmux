@@ -3,8 +3,8 @@
 ;;;; Directional pane navigation — find the pane adjacent to a given pane.
 ;;;;
 ;;;; Lives in its own file (not layout-geometry.lisp) because it accesses
-;;;; WINDOW struct slots (window-panes), which are defined in window.lisp.
-;;;; Loads after window.lisp in the system definition.
+;;;; WINDOW struct slots (window-panes), which are defined in window-core.lisp.
+;;;; Loads after window-core.lisp in the system definition.
 
 ;;; ── Pane neighbor lookup ─────────────────────────────────────────────────────
 ;;;
@@ -113,7 +113,7 @@
 ;;; ── Pane hit testing ────────────────────────────────────────────────────────
 ;;;
 ;;; pane-at-position lives here (not layout-geometry.lisp) because it accesses
-;;; WINDOW struct slots (window-panes), which are defined in window.lisp.
+;;; WINDOW struct slots (window-panes), which are defined in window-core.lisp.
 ;;; The layout-geometry.lisp file's own architecture comment reserves this file
 ;;; for all neighbor/hit-testing functions that access window-panes.
 

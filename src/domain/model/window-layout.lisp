@@ -4,7 +4,7 @@
 ;;;;
 ;;;; Lives here (not layout.lisp) because apply-named-layout accesses WINDOW
 ;;;; struct slots.  %build-flat-tree (pure tree construction) lives in layout.lisp
-;;;; and is called from here.  Loads after window.lisp in the system definition.
+;;;; and is called from here.  Loads after window-core.lisp in the system definition.
 
 ;;; ── Named layouts ───────────────────────────────────────────────────────────
 ;;;

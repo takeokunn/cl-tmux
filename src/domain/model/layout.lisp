@@ -137,7 +137,7 @@
 ;;; ── orient-case: concise :h/:v dispatch ────────────────────────────────────
 ;;;
 ;;; Defined here (layout.lisp, the earliest-loading layout file) so that every
-;;; later file — layout-geometry.lisp, window.lisp, window-layout.lisp —
+;;; later file — layout-geometry.lisp, window-core.lisp, window-tree.lisp, window-layout.lisp —
 ;;; can use it without forward-reference issues.
 ;;;
 ;;; Pattern (Prolog analogy):
@@ -179,7 +179,7 @@
 ;;;
 ;;; %build-flat-tree is a pure tree-construction helper that only needs
 ;;; layout types (make-layout-leaf, make-layout-split), so it belongs here.
-;;; apply-named-layout uses WINDOW struct accessors so it lives in window.lisp
+;;; apply-named-layout uses WINDOW struct accessors so it lives in window-core.lisp
 ;;; (which loads after layout.lisp, avoiding a forward reference).
 
 (defun %build-flat-tree (panes orientation)

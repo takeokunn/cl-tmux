@@ -240,4 +240,6 @@
                        :key #'window-last-active-time)))
     (second sorted)))
 
-;;; Environment management has been split into session-environment.lisp.
+;;; Environment management has been split into
+;;; session-environment-process.lisp, session-environment-overlay.lisp, and
+;;; session-environment-child.lisp.

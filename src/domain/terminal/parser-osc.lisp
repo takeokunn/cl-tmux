@@ -2,88 +2,9 @@
 
 ;;;; OSC accumulator and dispatcher.
 ;;;;
-;;;; Helper definitions live in parser-osc-helpers.lisp.
-
-;;; ── OSC payload utilities ────────────────────────────────────────────────────
-
-(defun %parse-osc-command (payload semicolon-position)
-  "Parse the OSC command integer from PAYLOAD up to SEMICOLON-POSITION.
-   Returns the integer, or NIL if the command field is not a valid integer."
-  (handler-case
-      (parse-integer (subseq payload 0 semicolon-position))
-    (error () nil)))
-
-(defun %handle-osc-52 (text)
-  "Handle OSC 52 clipboard write: decode Base64 payload and call *osc52-handler*.
-   Format: Pc ; Pd  where Pc is the clipboard target and Pd is Base64-encoded data
-   or '?' for a read request (read requests are silently ignored)."
-  (let* ((inner-semi   (position #\; text))
-         (payload-data (and inner-semi (subseq text (1+ inner-semi)))))
-    (when (and payload-data (string/= payload-data "?"))
-      (let* ((decoded-bytes (and payload-data (%base64-decode payload-data)))
-             (decoded-text  (and decoded-bytes
-                                 (handler-case
-                                     (babel:octets-to-string decoded-bytes :encoding :utf-8)
-                                   (error () nil)))))
-        (when (and decoded-text *osc52-handler*)
-          (funcall *osc52-handler* decoded-text))))))
-
-(defun %handle-osc-133 (screen body)
-  "OSC 133 (shell integration / semantic prompts): record 'A' prompt-start
-   marks as absolute row indexes so copy-mode next-prompt/previous-prompt can
-   jump between shell prompts."
-  (when (and (plusp (length body)) (char-equal (char body 0) #\A))
-    (let ((absolute (+ (screen-history-trimmed screen)
-                       (length (screen-scrollback screen))
-                       (screen-cursor-y screen))))
-      (pushnew absolute (screen-prompt-marks screen)))))
-
-(define-osc-rules
-  ((0 1 2)
-   (set-screen-title screen body))
-  (8
-   (%handle-osc-8 screen body))
-  (7
-   (set-screen-cwd screen (%osc7-path body)))
-  (10
-   (%osc-color-command screen 10 body (screen-osc-default-fg screen)
-                       #'(lambda (rgb)
-                           (setf (screen-osc-default-fg screen) rgb))))
-  (110
-   (reset-osc-default-fg screen))
-  (11
-   (%osc-color-command screen 11 body (screen-osc-default-bg screen)
-                       #'(lambda (rgb)
-                           (setf (screen-osc-default-bg screen) rgb))))
-  (111
-   (reset-osc-default-bg screen))
-  (4
-   (%handle-osc-4 screen body))
-  (104
-   (%handle-osc-104 screen body))
-  (52
-   (%handle-osc-52 body))
-  (133
-   (%handle-osc-133 screen body)))
-
-(defun %dispatch-osc (screen payload-buffer)
-  "Parse accumulated OSC payload PAYLOAD-BUFFER and apply side effects to SCREEN.
-   Handles:
-     OSC 0/1/2        — set the window title
-     OSC 7            — report current working directory
-     OSC 10/11        — query/set default foreground/background colour
-     OSC 110/111      — reset default foreground/background colour
-     OSC 4            — query/set palette colours (custom overrides)
-     OSC 104          — reset palette colour overrides
-     OSC 52           — write clipboard data (Base64-encoded)
-   The command field is the integer before the first ';'; a payload with NO ';'
-   (e.g. OSC 110) is a parameterless command with an empty body."
-  (let* ((payload  (babel:octets-to-string payload-buffer :encoding :utf-8 :errorp nil))
-         (semi-pos (position #\; payload))
-         (command  (%parse-osc-command payload (or semi-pos (length payload))))
-         (body     (if semi-pos (subseq payload (1+ semi-pos)) "")))
-    (when command
-      (%dispatch-osc-command screen command body))))
+;;;; Command parsing and OSC handlers live in parser-osc-dispatch.lisp.
+;;;; Shared helpers are split across parser-osc-clipboard.lisp,
+;;;; parser-osc-uri.lisp and parser-osc-color.lisp.
 
 ;;; ── CPS OSC accumulator continuations ──────────────────────────────────────
 ;;;

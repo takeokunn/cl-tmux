@@ -1,0 +1,68 @@
+(in-package #:cl-tmux/test)
+
+;;;; parser tests - OSC bridge continuations.
+
+(def-suite direct-osc-continuations
+  :description "Direct calls to make-osc-k and make-osc-st-k"
+  :in terminal-suite)
+(in-suite direct-osc-continuations)
+
+;;; Helper: build an adjustable byte vector pre-filled with STRING.
+;;; Eliminates the repeated 3-line buffer-construction pattern.
+(defun make-osc-payload-buf (string)
+  "Return a fresh adjustable (unsigned-byte 8) buffer pre-filled with the
+   bytes of STRING (one byte per character, Latin-1 encoded)."
+  (let ((buf (make-array (length string)
+                         :element-type '(unsigned-byte 8)
+                         :fill-pointer 0
+                         :adjustable   t)))
+    (loop for ch across string
+          do (vector-push-extend (char-code ch) buf))
+    buf))
+
+(test make-osc-k-accumulates-and-dispatches-on-bel
+  "make-osc-k accumulates payload bytes and dispatches to %dispatch-osc on BEL."
+  (with-screen (s 20 5)
+    ;; Simulate: OSC 0 ; title (bytes for "0;hello")
+    (let ((buf (make-osc-payload-buf "0;hello"))
+          (k   nil))
+      (setf k (cl-tmux/terminal/parser::make-osc-k buf))
+      ;; Feed BEL to terminate
+      (let ((result (funcall k s #x07)))
+        (is (eq #'cl-tmux/terminal/parser:ground-state result)
+            "make-osc-k must return ground-state after BEL")
+        (is (string= "hello" (cl-tmux/terminal/types:screen-title s))
+            "make-osc-k BEL must dispatch OSC 0 and set screen-title")))))
+
+(test make-osc-k-esc-transitions-to-st-state
+  "make-osc-k on ESC (#x1B) returns a continuation waiting for backslash."
+  (with-screen (s 10 5)
+    (let* ((buf (make-osc-payload-buf ""))
+           (k   (cl-tmux/terminal/parser::make-osc-k buf))
+           (k2  (funcall k s #x1B)))
+      (is (functionp k2)
+          "make-osc-k on ESC must return a function (bridge continuation)"))))
+
+(test make-osc-st-k-backslash-dispatches-and-grounds
+  "make-osc-st-k on backslash dispatches and returns ground-state."
+  (with-screen (s 20 5)
+    ;; Payload: "2;xterm-st-title"
+    (let* ((buf    (make-osc-payload-buf "2;xterm-st-title"))
+           (k      (cl-tmux/terminal/parser::make-osc-st-k buf))
+           (result (funcall k s #x5C)))      ; backslash = ST confirmed
+      (is (eq #'cl-tmux/terminal/parser:ground-state result)
+          "make-osc-st-k on backslash must return ground-state")
+      (is (string= "xterm-st-title" (cl-tmux/terminal/types:screen-title s))
+          "make-osc-st-k must dispatch OSC 2 and set screen-title"))))
+
+(test make-osc-st-k-non-backslash-returns-ground
+  "make-osc-st-k on a non-backslash byte returns ground-state without dispatching."
+  (with-screen (s 20 5)
+    (let* ((buf    (make-osc-payload-buf "0;title"))
+           (k      (cl-tmux/terminal/parser::make-osc-st-k buf))
+           (result (funcall k s (char-code #\X)))) ; not a backslash
+      (is (eq #'cl-tmux/terminal/parser:ground-state result)
+          "make-osc-st-k on non-backslash must still return ground-state")
+      ;; Title must NOT have been set (malformed ST discarded)
+      (is (not (string= "title" (cl-tmux/terminal/types:screen-title s)))
+          "make-osc-st-k non-backslash must not dispatch the OSC"))))

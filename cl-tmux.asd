@@ -1,4 +1,6 @@
-(load (merge-pathnames "system/asdf-test-components.lisp" *load-truename*))
+#.(progn
+    (load (merge-pathnames "system/asdf-test-components.lisp" *load-truename*))
+    nil)
 
 (defsystem "cl-tmux"
   :description "A tmux-compatible terminal multiplexer in Common Lisp"
@@ -23,9 +25,11 @@
       ((:file "config-key-table-store") ; key-table storage primitives (bind/unbind/lookup)
        (:file "config")
        (:file "config-tokenizer")    ; config tokenizer + key/command parse tables
-       (:file "config-directives-macro")   ; generic directive-dispatch macro infra + posix/tilde/flag helpers
-       (:file "config-bind-parsing")        ; bind/unbind-specific parsing + key-table dispatch
-       (:file "config-directives-set")     ; fixed-arity table + set-option flag handling/routing
+         (:file "config-directives-macro")   ; generic directive-dispatch macro infra + posix/tilde/flag helpers
+         (:file "config-directives-bind-sequences") ; brace/semicolon splitting for bind payloads
+         (:file "config-directives-bind-parse") ; bind-key argument parsing + command resolution
+         (:file "config-directives-bind-dispatch") ; bind/unbind directive dispatch
+         (:file "config-directives-set")     ; fixed-arity table + set-option flag handling/routing
        (:file "config-option-side-effects") ; option runtime side effects + set-hook directive
        (:file "config-directives-runtime-services") ; shared shell execution services
        (:file "config-directives-environment") ; set-environment handler
@@ -71,22 +75,30 @@
        (:file "csi")
        (:file "parser-dcs")    ; DCS passthrough/XTGETTCAP/DECRQSS helpers (loads before parser)
        (:file "parser")
-       (:file "parser-osc-helpers") ; OSC helper layer: Base64, hex, OSC 7/52
-       (:file "parser-osc")    ; OSC accumulator + dispatcher state machine
+       (:file "parser-osc-clipboard") ; OSC 52 Base64 helpers + clipboard callback
+       (:file "parser-osc-uri")       ; OSC 7/8 URI decoding helpers
+       (:file "parser-osc-color")      ; OSC color and palette helpers
+       (:file "parser-osc-dispatch")   ; OSC command parsing + dispatch rules
+       (:file "parser-osc")            ; OSC accumulator + dispatcher state machine
        (:file "emulator")))
      (:module "domain/model"
       :serial t
       :components
-      ((:file "pane")             ; leaf PTY data and wiring (loaded first: layout needs pane-reposition)
-       (:file "layout")             ; tree structure + traversal (uses pane-reposition)
+      ((:file "pane-core")         ; leaf PTY data and feed helpers
+       (:file "pane-geometry")     ; geometry update + PTY/screen resize helpers
+       (:file "layout")            ; tree structure + traversal (uses pane-reposition)
        (:file "layout-persistence") ; layout string serialization
        (:file "layout-geometry")    ; rectangle assignment + resize helpers (uses pane-id, pane-x/y/w/h)
-       (:file "window")             ; window struct + core ops (split/relayout/constants)
+       (:file "window-core")        ; window struct + core ops (split/constants)
+       (:file "window-tree")        ; tree mutation + relayout/remove helpers
        (:file "window-operations")  ; window resize/rotate/zoom (uses window + layout helpers)
        (:file "window-neighbor") ; directional pane navigation (uses window-panes)
        (:file "window-layout")   ; named layouts (apply-named-layout, uses window accessors)
        (:file "session")             ; session lifecycle: struct + windows + touch + all-panes
-       (:file "session-environment"))) ; environment management: update-env/overlay/child-env
+       (:file "session-environment-process")   ; update-env defaults + process env helpers
+       (:file "session-environment-overlay")    ; session overlay tables and env access
+       (:file "session-environment-child")      ; child env snapshot assembly
+       (:file "pane-spawn")))                   ; PTY-backed pane factory + respawn
      (:module "domain/format"
       :serial t
       :components
@@ -301,7 +313,8 @@
       :components
       ((:file "session-registry")  ; session registry + group management
        (:file "server")
-       (:file "server-multi")  ; multi-client select-multiplexed serve loop
+       (:file "server-multi")  ; multi-client client registry + dispatch helpers
+       (:file "server-multi-loop") ; multi-client select-multiplexed serve loop
        (:file "client")
        (:file "main")
        (:file "main-startup"))))))
@@ -314,7 +327,7 @@
 (defsystem "cl-tmux/test"
   :description "Test suite for cl-tmux"
   :depends-on (:cl-tmux :fiveam)
-  :components #.*cl-tmux-test-components*
+  :components #.(symbol-value (find-symbol "*CL-TMUX-TEST-COMPONENTS*" :cl-user))
   ;; Run with: (asdf:test-system :cl-tmux)
   :perform (test-op (op c)
              (symbol-call :cl-tmux/test :run-tests)))

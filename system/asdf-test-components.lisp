@@ -59,29 +59,49 @@
           (:file "csi-tests-d") ; REP/da-response/DECRQM/XTWINOPS/CPR/DA-table/REP-count-zero - part IV
           (:file "csi-tests-b") ; ECH/DSR/ich-dch/decstbm/execute-csi-direct/%csi-decstbm-params - part II
           (:file "csi-tests-c") ; csi-unknown-sequences/DECOM/cup-row/enqueue/XTPUSHTITLE/DEC-rect - part III
-          (:file "parser-tests") ; utf8/special/OSC/ESC-hash/private/dec-pm - part I
+          (:file "parser-utf8-tests") ; utf8
+          (:file "parser-osc-tests") ; special / OSC
+          (:file "parser-escape-tests") ; special / ESC / CSI
           (:file "parser-tests-b") ; combining-chars/ACS/dcs-parsing/xtgettcap/decrqss - part II
           (:file "parser-control-state-tests") ; ground-state/escape-state/direct-dcs/G2-G3 shifts
-          (:file "parser-tests-d") ; osc-dispatch-edge-cases/osc52/osc7/parser-suite/base64/csi-colon - part IV
-          (:file "parser-tests-c") ; basic-text, inline-predicates, CPS state functions, define-state - part III
+          (:file "parser-osc-continuations-tests") ; direct OSC continuation bridge tests
+          (:file "parser-osc-dispatch-tests") ; OSC payload edge cases
+          (:file "parser-osc52-tests") ; OSC 52 clipboard coverage
+          (:file "parser-osc7-tests") ; OSC 7 cwd parsing, percent decode, macro coverage
+          (:file "parser-dcs-tests") ; direct DCS bridge and tmux passthrough
+          (:file "parser-parser-utils-tests") ; helpers, parser-suite, base64, parse-osc-command, csi-colon
+          (:file "parser-basic-text-tests") ; printable characters, CR/LF, wrap, BS, TAB - part IIIa
+          (:file "parser-inline-predicate-tests") ; inline predicate helpers - part IIIb
+          (:file "parser-state-cps-tests") ; direct CPS parser state functions + define-state - part IIIc
           (:file "emulator-tests")))
         (:module "domain/model"
          :serial t
          :components
-         ((:file "layout-tests") ; layout-tree core: leaves/split/resize/collapse/persistence - part I
-          (:file "layout-tests-b") ; named-layout helpers, apply-named-layout - part II
-          (:file "layout-tests-c") ; layout persistence internals: split-bounding-box, node-to-string, read-digits, round-trips - part III
-          (:file "layout-tests-d") ; main-pane-extent table, layout-split defaults, checksum constants, zoomed pane-neighbor guard - part IV
+         ((:file "layout-tests-geometry") ; layout-tree geometry: leaves/split/resize/remove/min-extent - part I
+          (:file "layout-tests-macros") ; layout-tree helpers and macros - part II
+          (:file "layout-tests-persistence") ; layout-tree persistence and string/flat-tree round-trips - part III
+          (:file "layout-tests-b") ; named-layout helpers, apply-named-layout - part IV
+          (:file "layout-tests-c") ; layout persistence internals: split-bounding-box, node-to-string, read-digits, round-trips - part V
+          (:file "layout-tests-d") ; main-pane-extent table, layout-split defaults, checksum constants, zoomed pane-neighbor guard - part VI
           (:file "layout-geometry-tests") ; orientation helpers, layout-assign, resize-find-split, pane-at-position, split-child - part I
           (:file "layout-geometry-tests-b") ; %ranges-overlap-p, pane-center, closest-to-center, define-axis-rules, nested min-extent - part II
-          (:file "pane-tests")
-          (:file "window-tests") ; window-relayout/split/resize/private tree helpers - part I
+          (:file "pane-tests-geometry") ; pane feed/reposition, next-id, split-window
+          (:file "pane-tests-ops") ; swap/capture/last/display/respawn
+          (:file "pane-tests-accessors") ; pane defaults, accessors, feed dirty/empty
+          (:file "pane-tests-predicates") ; hit-testing, live, pipe, border-status
+          (:file "window-tests-relayout")
+          (:file "window-tests-pane-ops")
+          (:file "window-tests-split-math")
+          (:file "window-tests-tree-ops")
           (:file "window-neighbor-tests") ; pane-neighbor directional lookup
           (:file "window-zoom-tests") ; even-layout, zoom toggle, lock slot
           (:file "window-tests-b") ; apply-named-layout (5 layouts), last-window/move/swap/rotate - part II
           (:file "window-tests-c") ; find-window-by-name, list-windows-format, auto-rename-from-osc - part III
-          (:file "session-tests")
-          (:file "session-tests-b"))) ; start-directory, suppress-update-environment, environment helpers, all-panes ordering
+          (:file "session-state-core")
+          (:file "session-state-structural")
+          (:file "session-lifecycle-tests")
+          (:file "session-window-tests") ; start-directory, all-panes ordering, window flags
+          (:file "session-environment-tests"))) ; environment overlay, process helpers, child env merge
         (:module "domain/format"
          :serial t
          :components
@@ -102,7 +122,10 @@
         (:module "domain/buffer"
          :serial t
          :components
-         ((:file "buffer-tests")))
+         ((:file "buffer-tests-support")
+          (:file "buffer-tests-ring")
+          (:file "buffer-tests-clipboard")
+          (:file "buffer-tests-named")))
         (:module "infrastructure/control-mode"
          :serial t
          :components
@@ -162,7 +185,8 @@
           (:file "dispatch-tests-copy-mode-send-keys") ; copy-mode and send-keys -X dispatch
           (:file "dispatch-tests-detach-kill-prefix") ; detach, kill, and prefix routing
           (:file "dispatch-tests-core-screen-helpers") ; %active-screen, active window/pane, session/window helpers, overlay
-          (:file "dispatch-tests-core-command-runtime") ; run-command-hooks, command table, handlers, target-context, window cycling helpers
+          (:file "dispatch-tests-core-command-runtime-dispatch") ; run-command-hooks, command table, handlers, window cycling helpers
+          (:file "dispatch-tests-core-command-runtime-targets") ; target resolution and target-context helpers
           (:file "dispatch-tests-c") ; core dispatch - part V (focus events window-switch, list-keys, select-pane, zoom, list-windows/sessions)
           (:file "dispatch-tests-pane-window-prefix") ; pane/window/prefix dispatch: swap, confirm, send-prefix, paste-buffer
           (:file "dispatch-tests-command-prompt-runtime") ; command-prompt basic flow and display-message command-line runtime
@@ -171,9 +195,14 @@
           (:file "dispatch-tests-option-scope-runtime") ; set-option scope routing and runtime side effects
           (:file "dispatch-tests-runtime-rename-respawn") ; runtime bind/unbind, rename, and respawn
           (:file "dispatch-tests-hooks-command-listing") ; set-hook dispatch and list-commands rendering
-          (:file "dispatch-tests-commands-targeting") ; flag parsing, select/kill/link/swap/move target commands, source-file
+          (:file "dispatch-tests-commands-targeting-flags") ; %parse-command-flags flag parsing
+          (:file "dispatch-tests-commands-targeting-window") ; select-window target resolution and rejection
+          (:file "dispatch-tests-commands-targeting-pane") ; select-pane target resolution and rejection
+          (:file "dispatch-tests-commands-targeting-window-ops") ; link/unlink, swap, source-file, move-window
           (:file "dispatch-tests-commands-shell-messages") ; if-shell -F, named dispatch helper, show-messages
-          (:file "dispatch-tests-commands-f") ; display-message-logs, clock-mode, capture-pane, send-keys, choose-tree, confirm-before, paste-to-pane, format-tree-entry - part VI
+          (:file "dispatch-tests-commands-f-prompts") ; display-message-logs, clock-mode, capture-pane, send-keys, choose-tree, set-window/session-option
+          (:file "dispatch-tests-commands-f-input") ; confirm-before, command-prompt, set-option-from-prompt, paste-to-pane
+          (:file "dispatch-tests-commands-f-listing-layout") ; format-tree-entry, choose-session/list-sessions, resize, rotate/split no-focus
           (:file "dispatch-tests-state-option-navigation") ; state toggles, show-options, last-window/last-pane, respawn/pipe-pane
           (:file "dispatch-tests-list-format-helpers") ; window/session list formatting, copy-mode-call, kill-result helper
           (:file "dispatch-tests-popup-menu-runtime") ; popup overlay, display-popup, display-menu runtime
@@ -196,9 +225,11 @@
           (:file "dispatch-tests-environment-set") ; set-environment dispatch
           (:file "dispatch-tests-environment-show-overlays") ; show-environment and overlay dispatch
           (:file "dispatch-tests-session-flag-targets") ; flag parsers, target resolvers, new-window/split-window/new-session command cases
-          (:file "dispatch-tests-session-b-tail") ; layout names, target resolvers, display-message, new-session size parsing - part IIb
           (:file "dispatch-tests-session-c") ; options, move-window, new-session -s/-A/-t, control-mode REPL - part III
-          (:file "dispatch-tests-session-f") ; new-session duplicate, grouped sessions, control-mode notifications, server-lifecycle, %output relay - part VI
+          (:file "dispatch-tests-session-new-session") ; new-session duplicate, grouped sessions, new-window -S
+          (:file "dispatch-tests-session-control-mode-repl") ; control-mode REPL framing and unknown-command handling
+          (:file "dispatch-tests-session-control-mode-notifications") ; control-mode notifications, active-change, %output relay
+          (:file "dispatch-tests-session-server-lifecycle") ; named command reachability for server lifecycle
           (:file "dispatch-tests-session-d") ; display-popup, send-keys -N/-H, capture-pane - part IV
           (:file "dispatch-tests-session-d-tail") ; named paste-buffer and join-pane marked-pane - part IVb
           (:file "dispatch-tests-wait-for"))) ; wait-for command channel state and argument validation
@@ -306,9 +337,16 @@
        :serial t
        :components
        ((:file "net-tests")
-        (:file "server-multi-tests")
+        (:file "server-multi-tests-support")
+        (:file "server-multi-tests-size")
+        (:file "server-multi-tests-message-dispatch")
+        (:file "server-multi-tests-forwarding")
+        (:file "server-multi-tests-loop")
         (:file "server-multi-command-client-tests")
         (:file "pty-tests")
-        (:file "client-tests")
+        (:file "client-tests-support")
+        (:file "client-tests-frame-dispatch")
+        (:file "client-tests-startup-modes")
+        (:file "client-tests-command-client")
         (:file "client-receive-tests")))
       (:file "suite")))))
