@@ -405,7 +405,9 @@
          (:file "config-key-table-runtime-tests")
          (:file "config-directives-tests")  ; directive parsing — part I (bindable-cmds, apply-directive, set flags, bind/unbind, load-config-from-stream)
          (:file "config-directives-tests-c")  ; directive parsing — part III (load-config-file, command-keyword, parse-bind-args, key-table edge cases)
-         (:file "config-directives-tests-b")  ; directive parsing — part II (%parse-bind-args, tokenizer, source-file, run-shell, %expand-tilde, if/elif, unbind-all)
+                    (:file "config-directives-tests-b")  ; directive parsing — part II (%parse-bind-args, tokenizer, set aliases, server flag, terminal option routing)
+                    (:file "config-source-run-tests")  ; directive parsing — source-file, run-shell, path expansion
+                    (:file "config-preprocessor-environment-tests")  ; directive parsing — preprocessor, environment, key-table side effects
          (:file "config-directives-tests-d")  ; directive parsing — part IV (set-g-status-off, bind-key-n, load-config, %elif, line-continuation, source-file-glob, if-shell)
          (:file "config-directives-tests-e")))  ; directive parsing — part V (macro registry, env-set-p, key-table edge cases, remaining bind/set directives)
        (:module "presentation/renderer"
