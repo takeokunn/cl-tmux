@@ -423,19 +423,18 @@
         (is (string= "resize" cl-tmux::*key-table*)
             "-T still arms the key table when -t is also given")))))
 
-(test cmd-switch-client-accepts-client-targeting-and-control-flags
-  "switch-client accepts the tmux client-targeting/control flags -c/-E/-Z
-   (standalone single-client semantics) and still performs the -t switch."
+(test cmd-switch-client-rejects-compatibility-flags
+  "switch-client rejects standalone/tmux compatibility flags before switching sessions."
   (with-loop-state
     (with-empty-registry
       (multiple-value-bind (s0 s1 s2) (%make-three-session-registry)
-        (declare (ignore s0))
+        (declare (ignore s0 s2))
         (dolist (args '(("-c" "client-0" "-t" "2")
                         ("-E" "-t" "2")
                         ("-Z" "-t" "2")
-                        ("-F" "#{session_name}" "-t" "2")))
-          (%assert-switch-client-selection s1 args s2
-            (format nil "~S must be accepted and switch to session 2" args)))))))
+                        ("-F" "#{session_name}" "-t" "2")
+                        ("-f" "flags" "-t" "2")))
+          (%assert-switch-client-rejection s1 args))))))
 
 (test cmd-switch-client-r-refreshes-without-session-switch
   "switch-client -r is accepted as a redraw request without changing sessions."

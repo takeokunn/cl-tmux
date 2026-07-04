@@ -67,18 +67,12 @@
      -n / -p     switch to the next / previous session (cyclic over the registry).
      -l          switch to the last (most-recently-active-but-one) session.
      -r          refresh the client display when no session switch is requested.
-     -Z          keep the window zoomed when -t targets a pane (cl-tmux never
-                 unzooms on switch, so this is the default behaviour).
-     -E          do not apply update-environment on switch (cl-tmux never applies
-                 it on switch, so -E is already the effective default).
-     -c <client> target client (single-client standalone model: accepted/ignored).
-     -F <format> client format (accepted/ignored in the standalone model).
    -T is independent of the session flags, so `switch-client -t foo -T copy-mode`
    both moves the client and arms a key table.  Mirrors the keybinding handlers
    :switch-client / :switch-client-next/-prev / :last-session, reusing the same
    session-touch primitive."
-  (with-command-input (flags positionals args "TtcF"
-                             :allowed-flags '(#\T #\t #\n #\p #\l #\r #\Z #\E #\c #\F)
+  (with-command-input (flags positionals args "Tt"
+                             :allowed-flags '(#\T #\t #\n #\p #\l #\r)
                              :max-positionals 0
                              :message "switch-client: unsupported argument")
     (declare (ignore positionals))

@@ -93,7 +93,7 @@
     ("suspend-client"       . "[-t target-client]")
     ("swap-pane"            . "[-DU] [-s src-pane] [-t dst-pane]")
     ("swap-window"          . "[-d] [-s src-window] [-t dst-window]")
-    ("switch-client"        . "[-ElnprZ] [-c target-client] [-f flags] [-t target-session] [-T key-table]")
+    ("switch-client"        . "[-lnpr] [-t target-session] [-T key-table]")
     ("unbind-key"           . "[-anq] [-T key-table] key")
     ("unlink-window"        . "[-k] [-t target-window]")
     ("wait-for"             . "[-SLU] channel"))
