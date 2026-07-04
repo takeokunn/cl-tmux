@@ -93,7 +93,7 @@
 
 (test attach-no-flag-decodes-zero
   "A 2-arg msg-attach omits the flags byte; decode-attach-flags returns 0 so
-   read-only defaults off (backward-compatible with older clients)."
+   read-only defaults off when the frame omits CLIENT_READONLY."
   (multiple-value-bind (type payload) (decode-frame (msg-attach 24 80))
     (declare (ignore type))
     (is (= 4 (length payload)) "no readonly-p means a 4-byte rows,cols payload")

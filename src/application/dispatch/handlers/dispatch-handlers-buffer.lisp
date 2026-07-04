@@ -60,8 +60,8 @@
 ;;; -- %cmd-choose-client / %cmd-choose-tree / %cmd-choose-window --------------
 ;;;
 ;;; Scriptable forms delegate to the interactive local chooser bindings and keep
-;;; a strict cl-tmux command surface: no tmux chooser-format/filter/sort/template
-;;; compatibility arguments are accepted.
+;;; a strict cl-tmux command surface: chooser-format/filter/sort/template
+;;; arguments are rejected.
 
 (defun %cmd-choose-client (session &optional args)
   "choose-client: show local client information."

@@ -1,6 +1,7 @@
 (in-package #:cl-tmux/test)
 
-;;;; bind args, tokenizer, set aliases, server flag, terminal-option routing — part II
+;;;; bind args, tokenizer, canonical set directives, server flag,
+;;;; terminal-option routing - part II
 
 (in-suite config-directives-suite)
 

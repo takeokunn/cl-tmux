@@ -86,9 +86,8 @@
          ,(or set-docstring
               (format nil "Coerce VALUE to the registered type for NAME and store it in ~A.~%~
                            Returns the coerced value.  Unregistered options are stored~%~
-                           as-is (no coercion), preserving backward-compatible behaviour~%~
-                           for special-option side-effect handlers (prefix, default-shell)~%~
-                           and user options (@ prefix)."
+                           as-is (no coercion) for special-option side-effect handlers~%~
+                           (prefix, default-shell) and user options (@ prefix)."
                       storage-var))
          (let* ((spec (%option-spec-for-name name
                                              ,registry-var
