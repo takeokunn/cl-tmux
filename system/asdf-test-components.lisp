@@ -207,6 +207,7 @@
           (:file "events-runtime-tests") ; prompt UTF-8, event-loop cycle, automatic rename
           (:file "events-mouse-tests") ; mouse dispatch, X10, middle-click paste, defaults
           (:file "events-tests-f") ; keystroke pipeline - part VI (PageUp/Down, prefix-arrow, send-prefix, modifier+arrow, meta/alt)
+          (:file "events-switch-client-tests") ; custom key tables, switch-client, default meta/layout bindings
           (:file "events-tests-b") ; locked-session, drag/modifier, copy-mode cursor, vi nav - part II
           (:file "events-tests-h") ; byte-constants, make-input-state, forward-octets, maybe-rename-window - part VIII
           (:file "events-tests-c") ; app-cursor-keys, prompt-key, copy-mode nav, SGR, border-check - part III
