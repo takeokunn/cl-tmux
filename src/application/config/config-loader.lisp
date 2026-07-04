@@ -47,7 +47,7 @@
    Returns T when applied, NIL for an unknown/invalid directive.
    Handles NAME=value variable assignments (incl. %hidden), bind/unbind,
    set-hook, set[-g|-a|-s|-u|...], set-environment [-u|-r], if-shell,
-   run-shell [-b|-C|-t|-d], source-file, and the fixed-arity directive table."
+   run-shell [-b|-C], source-file, and the fixed-arity directive table."
   (when tokens
     (let ((cmd  (first tokens))
           (args (rest tokens)))

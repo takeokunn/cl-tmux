@@ -10,48 +10,18 @@
   (or (and output (plusp (length output)) output)
       "(run-shell: no output)"))
 
-(defun %with-temporary-pane-focus (session target-window target-pane thunk)
-  "Call THUNK with TARGET-PANE active, then restore the original focus."
-  (if (and target-window target-pane)
-      (let ((prev-win (session-active-window session))
-            (prev-pane (window-active-pane target-window)))
-        (unwind-protect
-             (progn
-               (setf (session-active session) target-window
-                     (window-active target-window) target-pane)
-               (funcall thunk))
-          (setf (window-active target-window) prev-pane
-                (session-active session) prev-win)))
-      (funcall thunk)))
-
-(defun %show-run-shell-output (session target-str output)
-  "Show RUN-SHELL OUTPUT using TARGET-STR's pane context when supplied."
-  (let ((text (%run-shell-overlay-text output)))
-    (if target-str
-        (with-target-context (target-session target-window target-pane
-                              session target-str)
-          (declare (ignore target-session))
-          (%with-temporary-pane-focus
-           session target-window target-pane
-           (lambda () (show-overlay text))))
-        (show-overlay text))))
-
 (defun %cmd-run-shell-arg (session args)
-  "run-shell [-bCE] [-c start-dir] [-d delay] [-t target-pane] command:
-   run COMMAND in a shell and show the output.  tmux args \"bCEc:d:t:\".
+  "run-shell [-bCE] [-c start-dir] command:
+   run COMMAND in a shell and show the output.
    -b: run in background (fire-and-forget, no output shown).
    -C executes COMMAND as a tmux command instead of a shell command.
    -E redirects stderr to stdout for displayed shell output.
-   -c start-dir: run COMMAND with start-dir as the subprocess directory.
-   -d delay: wait delay seconds before launching COMMAND.
-   -t target-pane: show non-background shell output from the target pane context."
-  (with-command-input (flags positionals args "cdt"
-                             :allowed-flags '(#\b #\C #\E #\c #\d #\t)
+   -c start-dir: run COMMAND with start-dir as the subprocess directory."
+  (with-command-input (flags positionals args "c"
+                             :allowed-flags '(#\b #\C #\E #\c)
                              :message "run-shell: unsupported argument")
     (let* ((command (format nil "~{~A~^ ~}" positionals))
-           (start-directory (%expand-start-dir session (%flag-value flags #\c)))
-           (delay (%parse-flag-int flags #\d))
-           (target-str (%flag-value flags #\t)))
+           (start-directory (%expand-start-dir session (%flag-value flags #\c))))
       (when (plusp (length command))
         (cond
           ((%run-shell-tmux-command-p flags)
@@ -59,15 +29,13 @@
           ((%run-shell-background-p flags)
            (run-shell command :background t
                               :combine-stderr (%run-shell-combine-stderr-p flags)
-                              :start-directory start-directory
-                              :delay delay))
+                              :start-directory start-directory))
           (t
            (let ((output (run-shell command
                                     :combine-stderr
                                     (%run-shell-combine-stderr-p flags)
-                                    :start-directory start-directory
-                                    :delay delay)))
-             (%show-run-shell-output session target-str output))))))))
+                                    :start-directory start-directory)))
+             (show-overlay (%run-shell-overlay-text output)))))))))
 
 (defun %if-shell-run-branch (session then-str else-str truthy-p)
   "Run the THEN-STR or ELSE-STR command line for IF-SHELL depending on TRUTHY-P."

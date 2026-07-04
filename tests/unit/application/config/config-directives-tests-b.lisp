@@ -238,7 +238,7 @@
     (destructuring-bind (cmd args desc) c
       (assert-config-directive-applied (cons cmd args) desc))))
 
-;;; ── run-shell flag handling (-b / -C / -E / -c / -t / -d) ─────────────────
+;;; ── run-shell flag handling (-b / -C / -E / -c) ───────────────────────────
 ;;;
 ;;; %apply-run-shell-directive strips leading flags so the common
 ;;; `run-shell -b 'cmd'` form — which the fixed-arity table silently dropped —
@@ -250,14 +250,14 @@
   "%apply-run-shell-directive returns T for handled forms and NIL for non-run commands.
    Each row is (expected cmd args description)."
   (dolist (c '((t   "run-shell" ("-b" "true")                 "run-shell -b true (background flag)")
-               (t   "run-shell" ("-t" "0" "-b" "true")      "run-shell -t 0 -b true (target+bg)")
                (nil "bind"      ("x" "next-window")           "bind (non-run command)")
                (t   "run-shell" ("-b")                        "run-shell -b only (flag-only no-op)")
                (t   "run-shell" ("-C" "new-window")           "run-shell -C <cmd> (tmux-cmd no-op)")
                (t   "run-shell" ("-E" "true")                 "run-shell -E true (combine stderr)")
                (t   "run-shell" ("-c" "/tmp" "true")          "run-shell -c /tmp true (start-directory)")
                (t   "run-shell" ("-bCE" "true")               "run-shell clustered no-arg flags")
-               (t   "run-shell" ("-d" "0" "true")             "run-shell -d 0 true (delay flag)")
+               (nil "run-shell" ("-d" "0" "true")             "run-shell -d 0 true (delay flag removed)")
+               (nil "run-shell" ("-t" "0" "-b" "true")        "run-shell -t 0 -b true (target flag removed)")
                (nil "run-shell" ("-x" "true")                 "run-shell -x true (unknown flag rejected)")
                (t   "run"       ("true")                      "run alias true")
                (t   "run-shell" ()                            "run-shell no args (empty no-op)")

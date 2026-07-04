@@ -169,17 +169,12 @@
                 (apply-config-directive line))))))
       t)))
 
-;;; ── run-shell / run flag handling (run-shell -b/-t/-d/-C 'cmd') ──────────────
+;;; ── run-shell / run flag handling (run-shell -b/-C 'cmd') ───────────────────
 ;;;
 ;;; The fixed-arity table only matches the bare 1-arg form `run-shell 'cmd'`, so
 ;;; the common real-world `run-shell -b 'cmd'` / `run -b '~/.tmux/...'` forms
 ;;; (with leading flags) silently failed.  This handler strips leading flags
 ;;; before the fixed-arity table and runs whatever shell command remains.
-
-(defun %parse-run-shell-delay (value)
-  "Parse run-shell -d VALUE using the same integer-only shape as runtime dispatch."
-  (and value
-       (max 0 (or (%config-parse-integer-or-nil value :junk-allowed t) 0))))
 
 (defun %run-shell-flag-cluster-p (token)
   "True when TOKEN is a cluster containing only no-argument run-shell flags."
@@ -199,13 +194,12 @@
 (defun %parse-run-shell-directive-args (args)
   "Parse config-time run-shell ARGS.
 Returns (values remaining background-p tmux-command-p combine-stderr-p
-start-directory delay invalid-p)."
+start-directory invalid-p)."
   (let ((remaining args)
         (background-p nil)
         (tmux-command-p nil)
         (combine-stderr-p nil)
         (start-directory nil)
-        (delay nil)
         (invalid-p nil))
     (labels ((apply-state (state)
                (case state
@@ -227,37 +221,26 @@ start-directory delay invalid-p)."
                   (if remaining
                       (setf start-directory (pop remaining))
                       (setf invalid-p t)))
-                 ((string= token "-d")
-                  (if remaining
-                      (setf delay (%parse-run-shell-delay (pop remaining)))
-                      (setf invalid-p t)))
-                 ((string= token "-t")
-                  (if remaining
-                      (pop remaining)
-                      (setf invalid-p t)))
                  (t
                   (setf invalid-p t)))
             when invalid-p
               do (return)))
     (values remaining background-p tmux-command-p combine-stderr-p
-            start-directory delay invalid-p)))
+            start-directory invalid-p)))
 
-(defun %run-config-shell-command-background (command &key combine-stderr directory delay)
+(defun %run-config-shell-command-background (command &key combine-stderr directory)
   "Run config COMMAND asynchronously and report the directive as handled."
   (bt:make-thread
    (lambda ()
      (%run-config-shell-command-safe command
                                      :combine-stderr combine-stderr
-                                     :directory directory
-                                     :delay delay))
+                                     :directory directory))
    :name "cl-tmux config run-shell")
   t)
 
-(defun %apply-run-shell-tmux-command (command &key background delay)
-  "Apply a run-shell -C COMMAND, optionally in the background after DELAY."
+(defun %apply-run-shell-tmux-command (command &key background)
+  "Apply a run-shell -C COMMAND, optionally in the background."
   (flet ((apply-command ()
-           (when (and delay (plusp delay))
-             (sleep delay))
            (ignore-errors (apply-config-directive (%config-tokens command)))))
     (if background
         (progn
@@ -269,20 +252,18 @@ start-directory delay invalid-p)."
           t))))
 
 (defun %apply-run-shell-directive (cmd args)
-  "Handle 'run-shell [-bCE] [-c start-directory] [-d delay] [-t target] shell-command' directives
+  "Handle 'run-shell [-bCE] [-c start-directory] shell-command' directives
    Consumes leading flags:
      -b           run in background
      -C           run a tmux command instead of a shell command (boolean)
      -E           combine stderr with stdout
      -c <path>    run shell command in start-directory
-     -t <target>  target pane (takes the next token as its value)
-     -d <delay>   delay (takes the next token as its value)
    Stops at the first non-flag token; that token plus any remaining tokens
    (joined by spaces) form the shell command.
    Returns T when CMD is run-shell/run and the form is handled, NIL otherwise."
   (when (member cmd '("run-shell" "run") :test #'string=)
     (multiple-value-bind (remaining background-p tmux-command-p combine-stderr-p
-                          start-directory delay invalid-p)
+                          start-directory invalid-p)
         (%parse-run-shell-directive-args args)
       (when invalid-p
         (return-from %apply-run-shell-directive nil))
@@ -296,8 +277,7 @@ start-directory delay invalid-p)."
           ;; then/else commands).  e.g. `run-shell -C 'display-message hi'`.
           (tmux-command-p
            (%apply-run-shell-tmux-command command
-                                          :background background-p
-                                          :delay delay))
+                                          :background background-p))
           ;; Shell command: run it the same way the fixed-arity entries do.
           (t
            ;; A timeout signal (UIOP:SUBPROCESS-ERROR or similar) is abandoned via
@@ -310,13 +290,11 @@ start-directory delay invalid-p)."
                  (%run-config-shell-command-background
                   expanded-command
                   :combine-stderr combine-stderr-p
-                  :directory expanded-directory
-                  :delay delay)
+                  :directory expanded-directory)
                  (%run-config-shell-command-safe
                   expanded-command
                   :combine-stderr combine-stderr-p
-                  :directory expanded-directory
-                  :delay delay)))
+                  :directory expanded-directory)))
            t))))))
 
 (defun %glob-expand (path)

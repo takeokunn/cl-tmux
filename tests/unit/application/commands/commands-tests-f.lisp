@@ -156,54 +156,17 @@
     (is (search "delayed" out) "output must contain the command output")
     (is (>= elapsed 1/20) "run-shell must wait before launching the command")))
 
-(test run-command-line-run-shell-accepts-tmux-parity-flags
-  "%run-command-line run-shell accepts the tmux parity flags -c/-d/-t (their
-   arguments are consumed) and runs the remaining command (tmux args bCEc:d:t:)."
-  (with-fake-session (s)
-    (let ((*overlay* nil))
-      (cl-tmux::%run-command-line s "run-shell -d 0 -t %1 echo ok")
-      (is (null (search "unsupported argument" *overlay*))
-          "run-shell -d/-t must be accepted, not rejected")
-      (is (search "ok" *overlay*)
-          "run-shell must run the command after consuming the flag arguments")
-      (is (null (search "%1" *overlay*))
-          "the -t value must be consumed, not run as part of the command"))))
-
-(test run-command-line-run-shell-t-targets-output-pane-context
-  "%run-command-line run-shell -t shows shell output from the target pane context
-   and restores the previously active pane."
-  (with-two-pane-h-session (s win p0 p1)
-    (with-command-test-state (s :overlay t)
-      (let ((seen-pane nil)
-            (real-show-overlay (symbol-function 'show-overlay)))
-        (unwind-protect
-             (progn
-               (setf (symbol-function 'show-overlay)
-                     (lambda (text)
-                       (setf seen-pane (window-active-pane win))
-                       (funcall real-show-overlay text)))
-               (cl-tmux::%run-command-line
-                s "run-shell -t %2 printf targeted"))
-          (setf (symbol-function 'show-overlay) real-show-overlay))
-        (is (search "targeted" *overlay*)
-            "overlay must contain the shell command output")
-        (is (eq p1 seen-pane)
-            "run-shell -t must show output while the target pane is active")
-        (is (eq p0 (window-active-pane win))
-            "run-shell -t must restore the previously active pane")))))
-
-(test run-command-line-run-shell-d-delays-before-running-command
-  "%run-command-line run-shell -d waits before launching the shell command."
-  (with-fake-session (s)
-    (let ((*overlay* nil)
-          (start (get-internal-real-time)))
-      (cl-tmux::%run-command-line s "run-shell -d 1 echo delayed")
-      (let ((elapsed (/ (- (get-internal-real-time) start)
-                        internal-time-units-per-second)))
-        (is (search "delayed" *overlay*)
-            "overlay must contain the delayed command output")
-        (is (>= elapsed 1)
-            "dispatch run-shell -d must wait before launching the command")))))
+(test run-command-line-run-shell-rejects-removed-delay-and-target-flags
+  "%run-command-line run-shell rejects the removed tmux compatibility flags -d and -t."
+  (dolist (command '("run-shell -d 0 echo rejected"
+                     "run-shell -t %1 echo rejected"))
+    (with-fake-session (s)
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s command)
+        (is (search "run-shell: unsupported argument" *overlay*)
+            "removed run-shell flag must be rejected")
+        (is (null (search "rejected" *overlay*))
+            "command body must not run after a removed flag is rejected")))))
 
 (test run-command-line-run-shell-c-controls-working-directory
   "%run-command-line run-shell -c runs the shell command from the supplied directory."
