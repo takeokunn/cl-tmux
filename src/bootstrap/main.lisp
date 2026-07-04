@@ -247,16 +247,15 @@
 ;;; The macro generates a loop over the args vector and produces a multi-value
 ;;; return of all variables in declaration order.
 ;;;
-;;; The generated cond has a final (t (incf index)) fallback arm that silently
-;;; consumes any argument not matching a known flag.  This is intentional:
-;;; flag parsers must tolerate extra arguments (e.g., positional args following
-;;; flags) without signalling an error.  Unknown flags are thus silently skipped.
+;;; The generated cond has a final error arm.  Startup flag parsers are strict:
+;;; each argument must be declared in FLAG-SPECS, and typo/legacy flags are
+;;; rejected instead of being silently treated as positional input.
 
 (defmacro define-flag-parser (parser-name (&rest defaults) &rest flag-specs)
   "Define PARSER-NAME as a function (ARGS) → (values ...) that parses FLAGS.
    DEFAULTS is a list of (variable-name default-value) bindings.
    FLAG-SPECS are (:bool FLAG VAR) or (:value FLAG VAR) declarations.
-   Unknown flags are silently consumed (see the generated fallback arm)."
+   Unknown flags signal an error; callers must declare every accepted flag."
   (let ((args-sym   (gensym "ARGS"))
         (index-sym  (gensym "INDEX"))
         (arg-sym    (gensym "ARG"))
@@ -287,9 +286,7 @@
                              (setf ,variable (nth ,index-sym ,args-sym))
                              (incf ,index-sym)))))))
                   flag-specs)
-               ;; Unknown flags are silently consumed.  This is intentional:
-               ;; parsers must tolerate extra/positional arguments without error.
-               (t (incf ,index-sym)))))
+               (t (error "Unknown flag ~A for ~A" ,arg-sym ',parser-name)))))
          (values ,@var-names)))))
 
 (define-flag-parser %parse-attach-flags

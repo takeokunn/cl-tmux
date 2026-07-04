@@ -171,16 +171,24 @@
 
 (test define-flag-parser-bool-flag-does-not-advance-past-flag
   "A :bool flag parser consumes only the flag token itself, not the next argument."
-  ;; After -d, the next element is not a flag → it is an unknown flag, silently consumed.
   (multiple-value-bind (_n detach _r)
-      (cl-tmux::%parse-attach-flags '("-d" "extra"))
+      (cl-tmux::%parse-attach-flags '("-d"))
     (declare (ignore _n _r))
     (is-true detach ":bool flag must set the variable to T")))
 
-(test define-flag-parser-unknown-flag-at-end-does-not-error
-  "An unknown flag appearing as the last argument is silently ignored."
-  (finishes (cl-tmux::%parse-attach-flags '("-z"))
-            "unknown last flag must not error"))
+(defmacro define-flag-parser-error-cases (test-name parser-name &body cases)
+  `(test ,test-name
+     "Generated flag parsers reject unknown tokens instead of preserving compatibility fallbacks."
+     (dolist (case ',cases)
+       (destructuring-bind (args description) case
+         (signals error
+           (,parser-name args)
+           "~A: unknown token must signal an error" description)))))
+
+(define-flag-parser-error-cases define-flag-parser-rejects-unknown-tokens
+    cl-tmux::%parse-attach-flags
+  (("-z") "unknown flag at end")
+  (("-d" "extra") "extra token after bool flag"))
 
 ;;; ── *startup-modes* table structure tests ────────────────────────────────────
 
