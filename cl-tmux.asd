@@ -486,7 +486,8 @@
          (:file "events-tests-b")  ; locked-session, drag/modifier, copy-mode cursor, vi nav — part II
          (:file "events-tests-h")  ; byte-constants, make-input-state, forward-octets, maybe-rename-window — part VIII
          (:file "events-tests-c")  ; app-cursor-keys, prompt-key, copy-mode nav, SGR, border-check — part III
-         (:file "events-tests-e")  ; status-col, SGR-nil, copy-nav, flush-esc, reset-repeat, CSI-u — part IV
+         (:file "events-tests-e")  ; status-col, SGR-nil, copy-nav, flush-esc, reset-repeat, mouse/key-table — part IV
+         (:file "events-csi-u-tests")  ; CSI-u extended key parsing and dispatch
          (:file "events-tests-d")  ; app-cursor-keys (ss3), new bindings, :mark-pane, root table, fn-keys — part V
          (:file "events-tests-g")  ; select-layout-spread, new key bindings, choose-window, mouse-reporting, tmux defaults — part VII
          (:file "events-tests-i")  ; copy-mode v-select, middle-cursor-jump, mouse X10, CSI-tilde outside mode, CSI-3byte — part IX
