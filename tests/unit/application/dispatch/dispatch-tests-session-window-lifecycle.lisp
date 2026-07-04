@@ -170,13 +170,13 @@
       "*prefix-key-code* must equal +prefix-key-code+ initially"))
 
 (test apply-config-directive-set-prefix-updates-runtime-var
-  "'set -g prefix C-a' updates *prefix-key-code* to 1 (C-a)."
+  "'set-option -g prefix C-a' updates *prefix-key-code* to 1 (C-a)."
   (let ((cl-tmux/config:*prefix-key-code* cl-tmux/config:+prefix-key-code+)
         (cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
     (cl-tmux/config::initialize-default-key-tables)
-    (cl-tmux/config:apply-config-directive '("set" "-g" "prefix" "C-a"))
+    (cl-tmux/config:apply-config-directive '("set-option" "-g" "prefix" "C-a"))
     (is (= 1 cl-tmux/config:*prefix-key-code*)
-        "'set -g prefix C-a' must set *prefix-key-code* to 1")))
+        "'set-option -g prefix C-a' must set *prefix-key-code* to 1")))
 
 ;;; ── new-window -d (detached) ─────────────────────────────────────────────────
 

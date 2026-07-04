@@ -95,39 +95,39 @@
           "global remain-on-exit must remain intact"))))
 
 (test cmd-set-option-status-applies-side-effect-at-runtime
-  "Runtime `set -g status off/on` runs the option side-effect, updating
-   *status-height* — not only the .tmux.conf path (e.g. `bind b set -g status`)."
+  "Runtime `set-option -g status off/on` runs the option side-effect, updating
+   *status-height* — not only the .tmux.conf path."
   (with-option-session (s)
       (cl-tmux::%cmd-set-option s '("-g" "status" "off"))
       (is (= 0 cl-tmux/config:*status-height*)
-          "set -g status off must hide the status bar at runtime")
+          "set-option -g status off must hide the status bar at runtime")
       (cl-tmux::%cmd-set-option s '("-g" "status" "on"))
       (is (= 1 cl-tmux/config:*status-height*)
-          "set -g status on must restore the status bar at runtime")))
+          "set-option -g status on must restore the status bar at runtime")))
 
 (test cmd-set-option-default-shell-applies-side-effect-at-runtime
-  "Runtime `set -g default-shell` updates *default-shell* via the side-effect."
+  "Runtime `set-option -g default-shell` updates *default-shell* via the side-effect."
   (with-option-session (s)
       (cl-tmux::%cmd-set-option s '("-g" "default-shell" "/bin/zsh"))
       (is (string= "/bin/zsh" cl-tmux/config:*default-shell*)
-          "runtime set -g default-shell must update *default-shell*")))
+          "runtime set-option -g default-shell must update *default-shell*")))
 
 (test cmd-set-option-prefix-applies-side-effect-at-runtime
-  "Runtime `set -g prefix C-a` rebinds the prefix key code via the side-effect."
+  "Runtime `set-option -g prefix C-a` rebinds the prefix key code via the side-effect."
   (with-option-session (s)
       (cl-tmux::%cmd-set-option s '("-g" "prefix" "C-a"))
       (is (= 1 cl-tmux/config:*prefix-key-code*)
-          "set -g prefix C-a must set *prefix-key-code* to ^A (1) at runtime")))
+          "set-option -g prefix C-a must set *prefix-key-code* to ^A (1) at runtime")))
 
 (test cmd-set-option-escape-time-syncs-to-server-store
   "escape-time is read from the server store by the ESC-flush, but is commonly
-   set via `set -g escape-time 0` (global).  The side-effect syncs it across, so
+   set via `set-option -g escape-time 0` (global).  The side-effect syncs it across, so
    the common form takes effect."
   (with-option-session (s)
       ;; -g writes the global store; the side-effect mirrors it into the server store.
       (cl-tmux::%cmd-set-option s '("-g" "escape-time" "0"))
       (is (= 0 (cl-tmux/options:get-server-option "escape-time"))
-          "set -g escape-time 0 must reach the server store the flush reads")
+          "set-option -g escape-time 0 must reach the server store the flush reads")
       ;; bare set (no scope) also syncs.
       (cl-tmux::%cmd-set-option s '("escape-time" "10"))
       (is (= 10 (cl-tmux/options:get-server-option "escape-time"))
@@ -253,4 +253,3 @@
               (is (null (and *overlay*
                              (search "already set" *overlay*)))
                   desc)))))))
-

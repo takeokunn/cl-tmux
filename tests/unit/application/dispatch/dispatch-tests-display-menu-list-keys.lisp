@@ -7,8 +7,8 @@
 (test display-menu-O-keeps-menu-open-after-selection
   "display-menu -O keeps the menu open after a selection runs its command;
    without -O the menu closes (tmux -O)."
-  (dolist (row '((t "display-menu -O -T t lbl k \"set -g @menu-ran 1\"" "with -O")
-                 (nil "display-menu -T t lbl k \"set -g @menu-ran 1\"" "without -O")))
+  (dolist (row '((t "display-menu -O -T t lbl k \"set-option -g @menu-ran 1\"" "with -O")
+                 (nil "display-menu -T t lbl k \"set-option -g @menu-ran 1\"" "without -O")))
     (destructuring-bind (expect-open command desc) row
       (with-fake-session (s)
         (let ((*overlay* nil)

@@ -201,18 +201,18 @@
 
 (test cmd-source-file-loads-config-file
   "source-file <path> loads the file and applies its directives (end-to-end with
-   the set -g fix)."
+   the set-option -g fix)."
   (with-isolated-config
     (let ((path (format nil "/tmp/cl-tmux-srcfile-~D.conf" (get-universal-time))))
       (unwind-protect
            (progn
              (with-open-file (out path :direction :output :if-exists :supersede
                                        :if-does-not-exist :create)
-               (write-line "set -g status off" out))
+               (write-line "set-option -g status off" out))
              (cl-tmux::%run-command-line (make-fake-session)
                                          (format nil "source-file ~A" path))
              (is (string= "off" (cl-tmux/options:get-option "status"))
-                 "source-file must apply 'set -g status off' from the file"))
+                 "source-file must apply 'set-option -g status off' from the file"))
         (ignore-errors (delete-file path))))))
 
 (test cmd-source-file-missing-path-no-crash

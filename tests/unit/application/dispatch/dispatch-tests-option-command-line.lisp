@@ -72,6 +72,26 @@
       (is (string= "AB" (cl-tmux/options:get-option "status-left"))
           "set-option -a must append B to the existing 'A'"))))
 
+(test run-command-line-set-option-short-aliases-are-rejected
+  "Runtime dispatch accepts canonical option commands only."
+  (with-fake-session (s)
+    (with-isolated-options ("status-left" "ORIG")
+      (let ((*overlay* nil))
+        (is (null (cl-tmux::%run-command-line s "set -g status-left YES"))
+            "set must be rejected")
+        (is (string= "ORIG" (cl-tmux/options:get-option "status-left"))
+            "set must not mutate the global option")
+        (assert-overlay-active "set must show an error overlay"))))
+  (with-fake-session (s :nwindows 1)
+    (let ((*overlay* nil))
+      (let ((win (session-active-window s)))
+        (is (null (cl-tmux::%run-command-line s "setw mode-keys vi"))
+            "setw must be rejected")
+        (is (not (nth-value 1 (gethash "mode-keys"
+                                       (cl-tmux/model:window-local-options win))))
+            "setw must not mutate the window-local option")
+        (assert-overlay-active "setw must show an error overlay")))))
+
 (test run-command-line-set-option-rejects-unsupported-flags
   "set-option and set-window-option reject unknown flags before mutating option stores."
   (with-fake-session (s)

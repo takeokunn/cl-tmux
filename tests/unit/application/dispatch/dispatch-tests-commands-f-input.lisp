@@ -55,7 +55,7 @@
     (with-fake-session (s)
       (let ((cl-tmux/prompt:*prompt* nil))
         (cl-tmux/options:set-option "status-left" "ORIG")
-        (cl-tmux::%cmd-confirm-before-arg s '("set" "-g" "status-left" "YES"))
+        (cl-tmux::%cmd-confirm-before-arg s '("set-option" "-g" "status-left" "YES"))
         (cl-tmux::handle-prompt-key (char-code #\n))   ; 'n' cancels
         (is (null (prompt-active-p)) "prompt must dismiss on a non-y key")
         (is (string= "ORIG" (cl-tmux/options:get-option "status-left"))

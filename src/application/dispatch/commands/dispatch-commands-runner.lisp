@@ -50,10 +50,15 @@
     (when cmd
       ;; 1. Arg-taking commands, even when no explicit args were supplied.
       (let ((entry (%arg-command-handler cmd)))
-        (if entry
-            (funcall (symbol-function entry) session rest)
-            ;; 2. No-arg named commands (includes arg-cmds invoked with no args).
-            (%dispatch-named-command session cmd))))))
+        (cond
+          (entry
+           (funcall (symbol-function entry) session rest))
+          ((null rest)
+           ;; 2. No-arg named commands (includes arg-cmds invoked with no args).
+           (%dispatch-named-command session cmd))
+          (t
+           (%overlayf "unknown command: ~A" cmd)
+           nil))))))
 
 (defun %run-command-line (session input)
   "Tokenise INPUT (one command line, shell-style) and run it.

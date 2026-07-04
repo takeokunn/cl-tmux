@@ -23,7 +23,7 @@
    template was silently ignored and raw input ran)."
   (with-fake-session (s)
     (let ((*prompt* nil))
-      (cl-tmux::%run-command-line s "command-prompt \"set -g @cp 'X-%%'\"")
+      (cl-tmux::%run-command-line s "command-prompt \"set-option -g @cp 'X-%%'\"")
       (is (prompt-active-p) "the prompt must open")
       (funcall (prompt-on-submit *prompt*) "foo")
       (is (string= "X-foo" (cl-tmux/options:get-option "@cp"))
@@ -34,7 +34,7 @@
    runs with the in-progress input on every edit (tmux incremental mode)."
   (with-fake-session (s)
     (let ((*prompt* nil))
-      (cl-tmux::%run-command-line s "command-prompt -i \"set -g @inc '%1'\"")
+      (cl-tmux::%run-command-line s "command-prompt -i \"set-option -g @inc '%1'\"")
       (is (prompt-active-p) "the prompt must open")
       (is-true (prompt-on-change *prompt*)
                "-i must install an on-change hook")
@@ -65,7 +65,7 @@
   (with-fake-session (s)
     (let ((*prompt* nil))
       (cl-tmux::%run-command-line
-       s "command-prompt -F \"set -g @fmt '#{session_name}-%1'\"")
+       s "command-prompt -F \"set-option -g @fmt '#{session_name}-%1'\"")
       (is (prompt-active-p) "the prompt must open")
       (funcall (prompt-on-submit *prompt*) "tail")
       (let ((value (cl-tmux/options:get-option "@fmt")))

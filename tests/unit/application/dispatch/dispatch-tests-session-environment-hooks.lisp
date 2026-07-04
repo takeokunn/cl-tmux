@@ -84,7 +84,7 @@
               (cl-tmux/model:session-name beta)  "beta")
         (let ((*overlay* nil))
           (apply-config-directive
-           '("set-hook" "-t" "alpha" "my-scoped-event" "set -g @scoped fired"))
+           '("set-hook" "-t" "alpha" "my-scoped-event" "set-option -g @scoped fired"))
           ;; Firing for the OTHER session must not run the hook.
           (cl-tmux::run-command-hooks "my-scoped-event" beta)
           (is (null (cl-tmux/options:get-option "@scoped" nil))
@@ -95,7 +95,7 @@
               "the scoped hook must fire for its named session")
           ;; A global hook (no -t) still fires for any session.
           (apply-config-directive
-           '("set-hook" "my-global-event" "set -g @global fired"))
+           '("set-hook" "my-global-event" "set-option -g @global fired"))
           (cl-tmux::run-command-hooks "my-global-event" beta)
           (is (string= "fired" (cl-tmux/options:get-option "@global"))
               "a global hook must fire for any session")))))))
@@ -117,7 +117,7 @@
           (apply-config-directive
            (list "set-hook" "-w" "-t"
                  (format nil "@~D" (cl-tmux/model:window-id w0))
-                 "win-scoped-event" "set -g @wscope fired"))
+                 "win-scoped-event" "set-option -g @wscope fired"))
           (cl-tmux::run-command-hooks "win-scoped-event" w1)
           (is (null (cl-tmux/options:get-option "@wscope" nil))
               "a window-scoped hook must not fire for another window")
@@ -128,7 +128,7 @@
           (apply-config-directive
            (list "set-hook" "-p" "-t"
                  (format nil "%~D" (cl-tmux/model:pane-id p0))
-                 "pane-scoped-event" "set -g @pscope fired"))
+                 "pane-scoped-event" "set-option -g @pscope fired"))
           (cl-tmux::run-command-hooks "pane-scoped-event" w0)
           (is (null (cl-tmux/options:get-option "@pscope" nil))
               "a pane-scoped hook must not fire for a window target")
