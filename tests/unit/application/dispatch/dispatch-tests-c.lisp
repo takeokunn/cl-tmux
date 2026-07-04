@@ -308,12 +308,12 @@
                  "-d duration must be restored after arming the overlay"))
         (cl-tmux/options:set-option "display-panes-time" saved)))))
 
-(test run-command-line-display-panes-accepts-tmux-args
-  "display-panes accepts the tmux flags -b/-N, -t target-client and a [template]
-   positional (tmux args bNd:t:) without raising an unsupported-argument overlay."
+(test run-command-line-display-panes-rejects-non-domain-args
+  "display-panes rejects arguments that do not affect the local pane-number overlay."
   (with-fake-session (sess :nwindows 1 :npanes 1)
-    (dolist (args '(("-b") ("-N") ("-t" "client0") ("template")))
+    (dolist (args '(("-b") ("-N") ("-F" "#{pane_id}") ("-t" "client0") ("template")))
       (let ((*overlay* nil))
         (cl-tmux::%cmd-display-panes-arg sess args)
-        (is (null (and *overlay* (search "unsupported argument" *overlay*)))
-            "~S must be accepted, not rejected" args)))))
+        (assert-overlay-contains "display-panes: unsupported argument"
+                                 *overlay*
+                                 (format nil "~S must be rejected" args))))))

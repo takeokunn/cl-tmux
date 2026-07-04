@@ -99,16 +99,14 @@
       (when win (%cycle-layout session win :prev)))))
 
 (defun %cmd-display-panes-arg (session args)
-  "display-panes [-b] [-N] [-d duration] [-t target-client] [template]: show pane
-   ids.  tmux args \"bNd:t:\".
+  "display-panes [-d duration]: show pane ids.
    -d duration: how long to show the overlay (ms).
-   -b: do not block (accepted); -N: ignore key presses / stay until -d elapses
-   (accepted); -t target-client and [template] are accepted.
    The renderer owns the actual pane-number overlay."
-  (with-command-input (flags positionals args "dt"
-                             :allowed-flags '(#\b #\N #\d #\t)
-                             :max-positionals 1
+  (with-command-input (flags positionals args "d"
+                             :allowed-flags '(#\d)
+                             :max-positionals 0
                              :message "display-panes: unsupported argument")
+    (declare (ignore positionals))
     (let* ((duration (%display-panes-duration-from-flags flags))
            (saved (cl-tmux/options:get-option "display-panes-time" 1000)))
       (unwind-protect

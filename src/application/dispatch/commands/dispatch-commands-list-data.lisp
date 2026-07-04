@@ -25,7 +25,7 @@
     ("detach-client"        . "")
     ("display-menu"         . "[-O] [-b border-lines] [-c target-client] [-C menu-cursor] [-H selected-style] [-s style] [-S separator-style] [-t target-pane] [-T title] [-x position] [-y position] name key command ...")
     ("display-message"      . "[-l] [-d delay] [-F format] [-t target-pane] [message]")
-    ("display-panes"        . "[-bN] [-d duration] [-F format] [-t target-client] [template]")
+    ("display-panes"        . "[-d duration]")
     ("display-popup"        . "[-BCE] [-b border-lines] [-c target-client] [-d start-directory] [-e environment] [-h height] [-s style] [-S border-style] [-t target-pane] [-T title] [-w width] [-x position] [-y position] [shell-command [argument ...]]")
     ("find-window"          . "[-CimnNrT] [-F format] [-t target-pane] match-string")
     ("has-session"          . "[-t target-session]")
