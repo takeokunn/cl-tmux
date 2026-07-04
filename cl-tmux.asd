@@ -316,7 +316,8 @@
        (:module "domain/terminal"
         :serial t
         :components
-        ((:file "cell-tests")  ; declares terminal-suite parent; double-width sub-suite
+        ((:file "cell-tests")  ; declares terminal-suite parent; cell data, width, combining
+         (:file "cell-display-tests")  ; DEC graphics, BCE, constants, hyperlink
          (:file "screen-tests")  ; construction/p/cell-access/cursor/resize/dirty/sgr-pen/bell — part I
          (:file "screen-tests-b")  ; copy-mode slots, alt-screen, mouse-sgr, response-queue, origin-mode, tab-stops, lock, cells/parser — part II
          (:file "screen-tests-c")  ; screen-clear-dirty, reset-sgr-pen, bell-pending, screen-consume-bell, slots, copy-mode extra slots — part III
