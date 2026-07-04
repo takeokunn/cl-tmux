@@ -123,18 +123,19 @@
 (test key-directive-aliases-are-rejected
   "Config parsing accepts only canonical bind/unbind directive names."
   (with-isolated-key-tables
-    (is (null (apply-config-directive '("bind-key" "z" "new-window")))
-        "bind-key must be rejected as a config directive")
-    (is (null (lookup-key-binding #\z))
-        "rejected bind-key must not create a prefix binding")
-    (is (apply-config-directive '("bind" "z" "new-window"))
-        "canonical bind must be accepted as a config directive")
-    (is (not (null (lookup-key-binding #\z)))
-        "bind z new-window must create a prefix binding")
-    (is (null (apply-config-directive '("unbind-key" "z")))
-        "unbind-key must be rejected as a config directive")
-    (is (not (null (lookup-key-binding #\z)))
-        "rejected unbind-key must not remove the binding")))
+    (let ((key #\@))
+      (assert-config-directive-rejected `("bind-key" ,(string key) "new-window")
+                                        "bind-key alias")
+      (is (null (lookup-key-binding key))
+          "rejected bind-key must not create a prefix binding")
+      (assert-config-directive-applied `("bind" ,(string key) "new-window")
+                                       "canonical bind")
+      (is (eq :new-window (lookup-key-binding key))
+          "canonical bind must create the prefix binding")
+      (assert-config-directive-rejected `("unbind-key" ,(string key))
+                                        "unbind-key alias")
+      (is (eq :new-window (lookup-key-binding key))
+          "rejected unbind-key must not remove the binding"))))
 
 ;;; unbind with -T flag
 

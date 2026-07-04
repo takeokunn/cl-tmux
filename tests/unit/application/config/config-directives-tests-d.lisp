@@ -152,7 +152,7 @@ set -u status")
 
 (test load-realistic-tmux-conf-with-canonical-commands
   "A realistic .tmux.conf written with canonical command names loads:
-   set/setw/bind all apply, and command bodies are stored for dispatch."
+   set/setw/bind all apply, and command bodies are normalized for dispatch."
   (with-isolated-config
     (let ((applied (cl-tmux/config:load-config-from-string
                     "set -g status on
@@ -164,8 +164,8 @@ bind -T copy-mode-vi v send-keys -X begin-selection")))
           "all five canonical config lines apply (none rejected)")
       (is (string= "on" (cl-tmux/options:get-option "status"))
           "set -g status on took effect")
-      (is (equal '("new-window") (lookup-key-binding #\c))
-          "bind c new-window stored")
+      (is (eq :new-window (lookup-key-binding #\c))
+          "bind c new-window stored as direct command")
       (is (equal '("split-window" "-h") (lookup-key-binding #\|))
           "bind | split-window -h stored")
       (is (not (null (cl-tmux/config:key-table-lookup "copy-mode-vi" #\v)))

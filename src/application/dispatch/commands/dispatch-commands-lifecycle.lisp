@@ -52,6 +52,7 @@
          (dst-index (and dst-colon
                          (%parse-integer-or-nil (subseq dst-raw (1+ dst-colon)))))
          (kill-p  (%flag-present-p flags #\k))
+         (detach-p (%flag-present-p flags #\d))
          ;; Resolve source window (default: active window of current session).
          (src-win (if src-str
                       (nth-value 1 (%resolve-target-session-window session src-str
@@ -76,7 +77,8 @@
               (collision (find desired (session-windows dst-sess)
                                :key (lambda (w)
                                       (cl-tmux/model:session-window-index
-                                       dst-sess w)))))
+                                       dst-sess w))))
+              (dst-active (session-active-window dst-sess)))
          (if (and collision (not kill-p))
              (show-overlay "link-window: target index in use (add -k to replace)")
              (progn
@@ -86,10 +88,11 @@
                ;; differs from the window's own id.
                (cl-tmux/model:set-session-window-index dst-sess src-win desired)
                (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-linked+ src-win)
-               ;; Without -d the newly linked window becomes current in the
-               ;; destination session (tmux selects it unless -d is given).
-               (unless (%flag-present-p flags #\d)
-                 (session-select-window dst-sess src-win))
+               ;; -k may select a replacement while removing the collision;
+               ;; -d means link without changing the destination current window.
+               (if detach-p
+                   (session-select-window dst-sess dst-active)
+                   (session-select-window dst-sess src-win))
                (show-overlay (if collision
                                  "link-window: linked (replaced existing)"
                                  "link-window: linked")))))))))

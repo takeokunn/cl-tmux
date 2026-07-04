@@ -5,7 +5,7 @@
     (:split-horizontal '%cmd-split-window ("split-window"))
     (:list-keys '%cmd-list-keys-arg ("list-keys"))
     (:list-panes '%cmd-list-panes-arg-full ("list-panes"))
-    (:copy-mode-enter '%cmd-copy-mode-arg ("copy-mode-enter"))
+    (:copy-mode-enter '%cmd-copy-mode-arg ("copy-mode-enter" "copy-mode"))
     (:paste-buffer '%cmd-paste-buffer ("paste-buffer"))
     (:list-buffers '%cmd-list-buffers ("list-buffers"))
     (:show-buffer '%cmd-show-buffer ("show-buffer"))

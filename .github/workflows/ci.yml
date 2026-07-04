@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Everything runs through Nix: `nix flake check` builds cl-tmux and runs
+  # the FiveAM suite (checks.default in flake.nix).
+  nix:
+    name: nix flake check
+    runs-on: ubuntu-latest
+    # Hoisted to job level so the step-level `if` below can read it. Secrets
+    # cannot be referenced directly in an `if`, and a step cannot read its own
+    # `env`, so this indirection is required.
+    env:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      # Only configure the binary cache when the auth token is available
+      # (it is not exposed to pull requests from forks).
+      - uses: cachix/cachix-action@v17
+        if: ${{ env.CACHIX_AUTH_TOKEN != '' }}
+        with:
+          name: takeokunn-cl-tmux
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - run: nix flake check --print-build-logs
+      - run: nix build --print-build-logs
