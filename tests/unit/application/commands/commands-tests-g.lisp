@@ -243,31 +243,49 @@
 
 ;;; ── %copy-mode-find-forward / %copy-mode-find-backward ──────────────────────
 
-(test copy-mode-find-locates-term
-  "%copy-mode-find-forward and %copy-mode-find-backward both find TERM in 'abc def abc'."
-  (dolist (c '((cl-tmux/commands::%copy-mode-find-forward  0 1  0 8 "forward from col 1 finds second 'abc' at col 8")
-               (cl-tmux/commands::%copy-mode-find-backward 0 11 0 8 "backward from col 11 finds 'abc' at col 8")))
-    (destructuring-bind (fn srow scol erow ecol desc) c
-      (let ((s (make-screen 30 5)))
-        (feed s "abc def abc")
-        (cl-tmux/commands::copy-mode-enter s)
-        (multiple-value-bind (row col)
-            (funcall fn s "abc" srow scol)
-          (is (= erow row) "~A: row (got ~S)" desc row)
-          (is (= ecol col) "~A: col (got ~S)" desc col))))))
+(defun %copy-mode-find-result (fn width height text term row col)
+  (let ((s (make-screen width height)))
+    (feed s text)
+    (cl-tmux/commands::copy-mode-enter s)
+    (funcall fn s term row col)))
 
-(test copy-mode-find-no-match-returns-nil-nil
-  "%copy-mode-find-forward and %copy-mode-find-backward both return (values nil nil) when no match exists."
-  (dolist (c '((cl-tmux/commands::%copy-mode-find-forward  0 0 "forward: no match")
-               (cl-tmux/commands::%copy-mode-find-backward 0 5 "backward: no match")))
-    (destructuring-bind (fn srow scol desc) c
-      (let ((s (make-screen 20 5)))
-        (feed s "hello world")
-        (cl-tmux/commands::copy-mode-enter s)
-        (multiple-value-bind (row col)
-            (funcall fn s "zzz" srow scol)
-          (is (null row) "~A: row must be NIL" desc)
-          (is (null col) "~A: col must be NIL" desc))))))
+(defun %check-copy-mode-find-case (width height text term case)
+  (destructuring-bind (fn srow scol expected-row expected-col desc) case
+    (multiple-value-bind (row col)
+        (%copy-mode-find-result fn width height text term srow scol)
+      (check-table
+       (list (list row expected-row
+                   (format nil "~A: row (got ~S)" desc row))
+             (list col expected-col
+                   (format nil "~A: col (got ~S)" desc col)))
+       :test #'equal))))
+
+(defmacro define-copy-mode-find-cases (&body cases)
+  `(progn
+     ,@(loop for (name doc width height text term rows) in cases
+             collect
+             `(test ,name
+                ,doc
+                (dolist (case ',rows)
+                  (%check-copy-mode-find-case ,width ,height ,text ,term case))))))
+
+(define-copy-mode-find-cases
+  (copy-mode-find-locates-term
+   "%copy-mode-find-forward and %copy-mode-find-backward both find TERM in 'abc def abc'."
+   30
+   5
+   "abc def abc"
+   "abc"
+   ((cl-tmux/commands::%copy-mode-find-forward  0 1  0 8 "forward from col 1 finds second 'abc' at col 8")
+    (cl-tmux/commands::%copy-mode-find-backward 0 11 0 8 "backward from col 11 finds 'abc' at col 8")))
+  (copy-mode-find-no-match-returns-nil-nil
+   "%copy-mode-find-forward and %copy-mode-find-backward both return (values nil nil) when no match exists."
+   20
+   5
+   "hello world"
+   "zzz"
+   ((cl-tmux/commands::%copy-mode-find-forward  0 0 nil nil "forward: no match")
+    (cl-tmux/commands::%copy-mode-find-backward 0 5 nil nil "backward: no match"))))
 
 ;;; ── join-pane ────────────────────────────────────────────────────────────────
 
