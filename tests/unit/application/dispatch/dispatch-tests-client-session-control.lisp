@@ -120,31 +120,22 @@
     (is-true cl-tmux::*running*
              "detach returns a detach disposition; the caller owns loop shutdown")))
 
-(test run-command-line-detach-accepts-single-client-flags
-  "detach-client -a/-P/-s/-t (single-client standalone forms) are accepted and
-   collapse onto detaching the active client."
+(test run-command-line-detach-rejects-compatibility-flags
+  "detach rejects tmux client targeting and single-client compatibility flags."
   (with-fake-session (s)
     (dolist (args '(("-a")
                     ("-P")
+                    ("-E" "echo detached")
                     ("-s" "work")
                     ("-t" "client-0")))
-      (setf cl-tmux::*overlay* nil)
-      (is (eq :detach (cl-tmux::%cmd-detach-arg s args))
-          "detach ~S must return a detach disposition" args)
-      (is (null cl-tmux::*overlay*)
-          "accepted detach args must not raise an overlay: ~S" args))))
-
-(test run-command-line-detach-rejects-unimplemented-args
-  "detach rejects -E (run a command on detach), which cl-tmux cannot implement."
-  (with-fake-session (s)
-    (setf cl-tmux::*running* t
-          cl-tmux::*overlay* nil)
-    (is (null (cl-tmux::%cmd-detach-arg s '("-E" "echo detached")))
-        "detach -E must be rejected")
-    (is-true cl-tmux::*running*
-             "a rejected detach must not stop the event loop")
-    (assert-overlay-active
-        "a rejected detach must explain the failure")))
+      (setf cl-tmux::*running* t
+            cl-tmux::*overlay* nil)
+      (is (null (cl-tmux::%cmd-detach-arg s args))
+          "detach ~S must be rejected" args)
+      (is-true cl-tmux::*running*
+               "a rejected detach must not stop the event loop: ~S" args)
+      (assert-overlay-active
+          "a rejected detach must explain the failure"))))
 
 (test dispatch-move-pane-opens-prompt
   ":move-pane opens a prompt for the destination window index."

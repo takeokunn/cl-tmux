@@ -22,7 +22,7 @@
     ("copy-mode"            . "[-eHMuq] [-s src-pane] [-t target-pane]")
     ("customize-mode"       . "[-NZ] [-F format] [-f filter] [-t target-pane]")
     ("delete-buffer"        . "[-b buffer-name]")
-    ("detach-client"        . "[-aP] [-E shell-command] [-s target-session] [-t target-client]")
+    ("detach-client"        . "")
     ("display-menu"         . "[-O] [-b border-lines] [-c target-client] [-C menu-cursor] [-H selected-style] [-s style] [-S separator-style] [-t target-pane] [-T title] [-x position] [-y position] name key command ...")
     ("display-message"      . "[-aINpv] [-c target-client] [-d delay] [-F format] [-l message] [-t target-pane] [message]")
     ("display-panes"        . "[-bN] [-d duration] [-F format] [-t target-client] [template]")

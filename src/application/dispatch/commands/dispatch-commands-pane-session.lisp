@@ -426,15 +426,9 @@
              (window-relayout win rows cols))))))))
 
 (defun %cmd-detach-arg (session args)
-  "detach-client / detach [-a] [-P] [-s target-session] [-t target-client]:
-   detach the active client.
-   -a: detach all clients other than the current one — the standalone model has a
-       single client, so the remaining client (the current one) is detached.
-   -P: send SIGHUP to the detaching client's parent (no-op: single-client model).
-   -s/-t: target session / client (accepted; the standalone model has one client).
-   All flag forms collapse onto detaching the one active client."
-  (with-command-input (flags positionals args "st"
-                             :allowed-flags '(#\a #\P #\s #\t)
+  "detach-client / detach: detach the active client."
+  (with-command-input (flags positionals args ""
+                             :allowed-flags '()
                              :max-positionals 0
                              :message "detach: unsupported argument")
     (declare (ignore flags positionals))
