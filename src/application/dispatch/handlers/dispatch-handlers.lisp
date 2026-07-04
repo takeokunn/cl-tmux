@@ -265,12 +265,11 @@
 
   ;; ── Pane management ────────────────────────────────────────────────────────
   (:last-pane
-   ;; Jump to the previously active pane, popping zoom first (tmux
-   ;; window_pop_zoom; the interactive binding carries no -Z).
+   ;; Jump to the previously active pane, popping zoom first.
    (let* ((win  (session-active-window session))
           (last (and win (window-last-active win))))
      (when last
-       (%pane-navigation-unzoom win nil)
+       (%pane-navigation-unzoom win)
        (%select-pane-with-focus win last))))
   (:display-panes
    ;; Show big per-pane numbers (drawn by the renderer while *display-panes-active*),

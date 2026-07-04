@@ -192,10 +192,9 @@
 
 (defun %swap-active-pane (session direction)
   "Swap the active pane of SESSION in DIRECTION (:left or :right).
-   Pops zoom first (tmux window_pop_zoom; the interactive swap bindings
-   carry no -Z)."
+   Pops zoom first."
   (with-active-window (win session)
-    (%pane-navigation-unzoom win nil)
+    (%pane-navigation-unzoom win)
     (swap-pane win direction)))
 
 ;;; -- Resize-active-window-pane helper ------------------------------------------
@@ -233,12 +232,11 @@
 
 (defun %select-pane-in-direction (session direction)
   "Select the pane adjacent to the active pane in DIRECTION.
-   Pops zoom first (tmux window_pop_zoom): the interactive select-pane
-   bindings carry no -Z, and a zoomed window's single-leaf tree would
-   otherwise have no neighbours at all."
+   Pops zoom first; a zoomed window's single-leaf tree would otherwise have no
+   neighbours at all."
   (multiple-value-bind (win ap) (%active-window-pane session)
     (when (and win ap)
-      (%pane-navigation-unzoom win nil)
+      (%pane-navigation-unzoom win)
       (let ((nb (pane-neighbor win ap direction)))
         (when nb (%select-pane-with-focus win nb))))))
 

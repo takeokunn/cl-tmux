@@ -202,6 +202,7 @@
 (test cmd-last-pane-rejects-unsupported-arguments
   "last-pane rejects stale flags and positional tokens before changing active pane."
   (dolist (command '("last-pane extra"
+                     "last-pane -Z"
                      "last-pane -x"))
     (with-fake-two-pane-session (s)
       (let* ((win (session-active-window s))

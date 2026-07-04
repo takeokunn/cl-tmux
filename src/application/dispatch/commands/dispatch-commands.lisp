@@ -270,15 +270,13 @@
    Unless -d is given, swap-pane makes the -t (destination) pane active, matching
    tmux (window_set_active_pane on dst_wp for a same-window swap).  In the
    directional/default paths the destination is the already-active pane, so it
-   stays active either way and -d is a no-op there.
-   -Z: keep the window zoomed if it was zoomed; without -Z, swapping in a
-       zoomed window unzooms it first (tmux window_pop_zoom)."
+   stays active either way and -d is a no-op there."
   (with-command-input (flags positionals args "st"
-                             :allowed-flags '(#\d #\U #\D #\L #\R #\s #\t #\Z)
+                             :allowed-flags '(#\d #\U #\D #\L #\R #\s #\t)
                              :max-positionals 0
                              :message "swap-pane: unsupported argument")
     (with-active-window (win session)
-      (%pane-navigation-unzoom win flags)
+      (%pane-navigation-unzoom win)
       (cond
         ((%flag-present-p flags #\U) (swap-pane win :up))
         ((%flag-present-p flags #\D) (swap-pane win :down))
@@ -441,15 +439,12 @@
     (get-output-stream-string out)))
 
 (defun %cmd-last-pane-arg (session args)
-  "last-pane [-deZ] [-t target-window]: jump to the previously active pane.
-   tmux args \"det:Z\".
+  "last-pane [-de] [-t target-window]: jump to the previously active pane.
    -d: disable keyboard input to the pane jumped to (PANE_INPUTOFF).
    -e: re-enable keyboard input to the pane jumped to.
-   -Z: keep the window zoomed if it was zoomed; without -Z, jumping to the
-       last pane in a zoomed window unzooms it first (tmux window_pop_zoom).
    -t target-window: the window whose last pane to select (default: active)."
   (with-command-input (flags positionals args "t"
-                             :allowed-flags '(#\d #\e #\Z #\t)
+                             :allowed-flags '(#\d #\e #\t)
                              :max-positionals 0
                              :message "last-pane: unsupported argument")
     (let* ((target (%flag-value flags #\t))
@@ -458,7 +453,7 @@
                        (session-active-window session)))
            (last   (and win (window-last-active win))))
       (when (and win last)
-        (%pane-navigation-unzoom win flags)
+        (%pane-navigation-unzoom win)
         (%select-pane-with-focus win last)
         ;; -d/-e: toggle input to the pane we just selected.
         (cond

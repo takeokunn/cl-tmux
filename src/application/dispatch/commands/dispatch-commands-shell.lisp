@@ -462,12 +462,10 @@
    -U (the default) rotates forward (the first pane moves to the end); -D rotates
    backward.
    -t target-window: the window to rotate (default: the active window).
-   -Z: keep the window zoomed if it was zoomed; without -Z, rotating a zoomed
-       window unzooms it first (tmux window_pop_zoom).
    This is the scriptable form; the interactive :rotate-window /
    :rotate-window-reverse bindings are unchanged."
   (with-command-input (flags positionals args "t"
-                               :allowed-flags '(#\D #\U #\Z #\t)
+                               :allowed-flags '(#\D #\U #\t)
                                :max-positionals 0
                                :message "rotate-window: unsupported argument")
     (declare (ignore positionals))
@@ -476,7 +474,7 @@
       (with-target-context (target-session win pane session target-str)
         (declare (ignore target-session pane))
         (when win
-          (%pane-navigation-unzoom win flags)
+          (%pane-navigation-unzoom win)
           (window-rotate win dir)
           (setf *dirty* t)
           t)))))

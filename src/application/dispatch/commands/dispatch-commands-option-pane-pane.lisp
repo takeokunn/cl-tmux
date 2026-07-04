@@ -73,13 +73,10 @@
     ;; Default: select the target pane (no-op when it is already active).
     (t (%select-pane-select-target window target-pane))))
 
-(defun %pane-navigation-unzoom (window flags)
-  "tmux window_push/pop_zoom: pane-navigation commands (select-pane, swap-pane,
-   rotate-window, last-pane) unzoom a zoomed WINDOW unless -Z (keep zoomed) is
-   given.  No-op for an unzoomed window."
-  (when (and window
-             (window-zoom-p window)
-             (not (%flag-present-p flags #\Z)))
+(defun %pane-navigation-unzoom (window)
+  "Pane-navigation commands unzoom a zoomed WINDOW before changing pane focus/order.
+   No-op for an unzoomed window."
+  (when (and window (window-zoom-p window))
     (window-zoom-toggle window)))
 
 (defun %select-pane-selection-form-p (flags)
@@ -101,20 +98,18 @@
    -m: mark the TARGET pane; -M: clear the marked pane (unmark all).
    -t target: pane-id within the active window (default: the active pane).  The
      pane-configuring forms (-d/-e/-T/-m) and plain selection all act on -t's pane,
-     not unconditionally the active one.
-   -Z: keep the window zoomed if it was zoomed (tmux window_push_zoom); without
-     -Z, selecting a pane in a zoomed window unzooms it first (window_pop_zoom)."
+     not unconditionally the active one."
   (with-command-input (flags positionals args "tT"
-                             :allowed-flags '(#\L #\R #\U #\D #\l #\d #\e #\m #\M #\t #\T #\Z)
+                             :allowed-flags '(#\L #\R #\U #\D #\l #\d #\e #\m #\M #\t #\T)
                              :max-positionals 0
                              :message "select-pane: unsupported argument")
     (let* ((win    (session-active-window session))
            ;; Resolve -t to a pane-id within the active window; default = active pane.
            (target-pane (%resolve-pane-in-window win (%flag-value flags #\t))))
-      ;; tmux pops zoom before a focus-moving selection unless -Z; the
+      ;; Focus-moving selection pops zoom; the
       ;; pane-configuring forms (-d/-e/-T/-m/-M) leave zoom untouched.
       (when (%select-pane-selection-form-p flags)
-        (%pane-navigation-unzoom win flags))
+        (%pane-navigation-unzoom win))
       (cond
         ((or (%flag-present-p flags #\L)
              (%flag-present-p flags #\R)

@@ -58,7 +58,7 @@
    list is the single zoomed leaf, so cycling would otherwise be a no-op."
   (let ((win (session-active-window session)))
     (when win
-      (%pane-navigation-unzoom win nil)
+      (%pane-navigation-unzoom win)
       (let* ((panes (window-panes win))
              (next  (funcall cycler panes (window-active-pane win))))
         (when next (%select-pane-with-focus win next))))))
