@@ -24,10 +24,11 @@
     (is (eq :zoom-toggle (lookup-key-binding #\z))
         "C-b z must be bound to :zoom-toggle (standard tmux default)")))
 
-(test key-binding-Z-uppercase-is-still-zoom-toggle
-  "C-b Z (uppercase, char code 90) remains bound to :zoom-toggle."
-  (is (eq :zoom-toggle (lookup-key-binding #\Z))
-      "C-b Z must also be bound to :zoom-toggle"))
+(test key-binding-Z-uppercase-is-unbound
+  "C-b Z is not a zoom alias; lowercase z is the canonical binding."
+  (with-isolated-config
+    (is (null (lookup-key-binding #\Z))
+        "C-b Z must stay unbound so zoom has one canonical key")))
 
 (test key-binding-quote-is-select-window-prompt
   "C-b ' (char code 39) is bound to :select-window-prompt."

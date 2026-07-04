@@ -76,7 +76,6 @@
       (#\J :resize-down           "J resizes the pane down")
       (#\K :resize-up             "K resizes the pane up")
       (#\L :last-session          "L selects the last session (extended binding overrides bootstrap resize-right default)")
-      (#\Z :zoom-toggle           "Z toggles zoom (uppercase alias)")
       (#\$ :rename-session        "$ renames the session")
       (#\! :break-pane            "! breaks the pane (extended binding overrides bootstrap if-shell default)")
       (#\0 :select-window         "digit 0 selects window 0")

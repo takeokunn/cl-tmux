@@ -35,7 +35,6 @@
   ;; These are the bootstrap defaults. events-loop.lisp installs the live
   ;; bindings after startup (#\L -> last-session, #\! -> break-pane).
   (#\L :resize-right)
-  (#\Z :zoom-toggle)        ; uppercase alias; events-loop.lisp adds lowercase z
   (#\$ :rename-session)
   (#\! :if-shell)
   (:digits :select-window))

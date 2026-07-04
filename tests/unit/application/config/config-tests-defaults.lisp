@@ -38,7 +38,6 @@
                   ;; events-loop.lisp (loaded after config.lisp): L = last-session
                   ;; (switch-client -l), ! = break-pane.
                   (#\L :last-session)
-                  (#\Z :zoom-toggle)
                   (#\$ :rename-session)
                   (#\! :break-pane)))
     (let ((key (first pair))
@@ -47,7 +46,9 @@
           "key ~C must be bound to ~A (got ~A)"
           key expected (lookup-key-binding key))))
   (is (null (lookup-key-binding #\@))
-      "#\\@ (unbound) must return NIL"))
+      "#\\@ (unbound) must return NIL")
+  (is (null (lookup-key-binding #\Z))
+      "#\\Z is intentionally unbound; lowercase #\\z is the canonical zoom binding"))
 
 (test describe-key-bindings-has-header
   "describe-key-bindings output uses bind-key -T table format (real tmux list-keys format)."
