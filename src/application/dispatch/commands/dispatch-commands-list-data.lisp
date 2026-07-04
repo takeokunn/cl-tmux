@@ -2,18 +2,18 @@
 
 ;;;; list-commands usage string table — pure data, no logic.
 ;;;;
-;;;; Maps canonical command name → tmux usage-flags string matching the real
-;;;; tmux cmd_entry.args field so `list-commands -F #{command_list_usage}`
-;;;; output is script-compatible.
+;;;; Maps canonical command name → cl-tmux's supported usage-flags string.
+;;;; An empty string means the local scriptable command accepts no arguments.
 
 (defparameter *command-usage-table*
   '(("attach-session"       . "[-dErx] [-c working-directory] [-f flags] [-t target-session]")
     ("bind-key"             . "[-nrN] [-T key-table] [-X] key [note] command [argument ...]")
     ("break-pane"           . "[-abdP] [-F format] [-n window-name] [-s src-pane] [-t dst-window]")
     ("capture-pane"         . "[-aCeJNpPqS] [-b buffer-name] [-E end-line] [-s src-pane] [-S start-line] [-t target-pane]")
-    ("choose-buffer"        . "[-GNrZ] [-F format] [-f filter] [-O sort-order] [-t target-pane] [template]")
-    ("choose-client"        . "[-GNrZ] [-F format] [-f filter] [-O sort-order] [-t target-pane] [template]")
-    ("choose-tree"          . "[-GNrsw] [-F format] [-f filter] [-O sort-order] [-t target-pane] [template]")
+    ("choose-buffer"        . "")
+    ("choose-client"        . "")
+    ("choose-tree"          . "")
+    ("choose-window"        . "")
     ("clear-history"        . "[-H] [-t target-pane]")
     ("clear-prompt-history" . "[-T prompt-type]")
     ("clock-mode"           . "[-t target-pane]")
@@ -38,7 +38,7 @@
     ("last-pane"            . "[-de] [-t target-window]")
     ("last-window"          . "[-t target-session]")
     ("link-window"          . "[-adbk] [-s src-window] [-t dst-window]")
-    ("list-buffers"         . "[-F format] [-f filter]")
+    ("list-buffers"         . "")
     ("list-clients"         . "[-F format] [-f filter] [-t target-session]")
     ("list-commands"        . "[-F format] [command]")
     ("list-keys"            . "[-1aN] [-P prefix-string] [-T key-table] [key]")

@@ -1,27 +1,34 @@
 (in-package #:cl-tmux)
 
-;;;; Paste-buffer command handler helpers.
+;;;; Buffer and local chooser command handler helpers.
 ;;;;
 ;;;; These functions implement the :list-buffers, :show-buffer, :choose-buffer,
-;;;; :delete-buffer, :save-buffer, and :load-buffer command handlers that are
-;;;; registered in dispatch-handlers.lisp via define-command-handlers.
+;;;; :delete-buffer, :save-buffer, :load-buffer, and local chooser scriptable
+;;;; command handlers.
 ;;;;
 ;;;; Keeping them in a dedicated file reduces the size of dispatch-handlers.lisp
 ;;;; while keeping the handler table in a single define-command-handlers call.
 
+;;; -- Local chooser command input ---------------------------------------------
+
+(defun %reject-local-chooser-args-p (command-name args)
+  (when args
+    (%overlayf "~A: unsupported argument" command-name)
+    t))
+
 ;;; -- %cmd-list-buffers -------------------------------------------------------
 
 (defun %cmd-list-buffers (&optional session args)
-  "list-buffers [-F format] [-f filter]: show an overlay listing all paste
+  "list-buffers: show an overlay listing all paste
    buffers with name, length, and preview.  Lines read `name: NN bytes: preview`,
-   matching tmux's named-buffer listing.  -F/-f (format/filter) are accepted and
-   their arguments consumed.  SESSION/ARGS are optional so both the bare named
-   form and the arg-table form (which always passes session+args) work."
-  (declare (ignore session args))
-  (show-overlay
-   (%named-paste-buffer-listing-string
-    (cl-tmux/buffer:list-paste-buffers-with-names)
-    :preview-length +buffer-preview-length+)))
+   matching cl-tmux's named-buffer listing.  SESSION/ARGS are optional so both
+   the bare named form and the arg-table form work."
+  (declare (ignore session))
+  (unless (%reject-local-chooser-args-p "list-buffers" args)
+    (show-overlay
+     (%named-paste-buffer-listing-string
+      (cl-tmux/buffer:list-paste-buffers-with-names)
+      :preview-length +buffer-preview-length+))))
 
 ;;; -- %cmd-show-buffer --------------------------------------------------------
 
@@ -33,46 +40,43 @@
 ;;; -- %cmd-choose-buffer ------------------------------------------------------
 
 (defun %cmd-choose-buffer (session &optional args)
-  "choose-buffer [-F format] [-f filter] [-O order] [-r] [-N] [-Z] [template]:
-   show a numbered list of paste buffers; prompt for an index and paste it.
-   The chooser-customisation flags are accepted and their arguments consumed
-   (cl-tmux renders a simple numbered listing).  ARGS is optional so both the
-   bare named form and the arg-table form work."
-  (declare (ignore args))
-  (let ((buffers (cl-tmux/buffer:list-paste-buffers)))
-    (if buffers
-        (let ((listing (%paste-buffer-listing-string buffers
-                                                     :preview-length +buffer-preview-length+)))
-          (show-overlay listing)
-          (prompt-integer "choose buffer (index)"
-                          (lambda (idx)
-                            (let* ((text (cl-tmux/buffer:get-paste-buffer idx))
-                                   (win  (session-active-window session))
-                                   (ap   (and win (window-active-pane win))))
-                              (%paste-to-pane ap text)))))
-        (show-overlay "(no paste buffers)"))))
+  "choose-buffer: show a numbered list of paste buffers, prompt for an index,
+   and paste it.  ARGS is optional so both the bare named form and the arg-table
+   form work."
+  (unless (%reject-local-chooser-args-p "choose-buffer" args)
+    (let ((buffers (cl-tmux/buffer:list-paste-buffers)))
+      (if buffers
+          (let ((listing (%paste-buffer-listing-string buffers
+                                                       :preview-length +buffer-preview-length+)))
+            (show-overlay listing)
+            (prompt-integer "choose buffer (index)"
+                            (lambda (idx)
+                              (let* ((text (cl-tmux/buffer:get-paste-buffer idx))
+                                     (win  (session-active-window session))
+                                     (ap   (and win (window-active-pane win))))
+                                (%paste-to-pane ap text)))))
+          (show-overlay "(no paste buffers)")))))
 
-;;; -- %cmd-choose-tree / %cmd-choose-window -----------------------------------
+;;; -- %cmd-choose-client / %cmd-choose-tree / %cmd-choose-window --------------
 ;;;
-;;; Scriptable forms.  These were referenced in the dispatch spec table but never
-;;; defined, so `choose-tree`/`choose-window` (which route through the arg-table,
-;;; whose dispatch always funcalls the handler with (session args)) errored with
-;;; an undefined function.  They accept the chooser-customisation flags and
-;;; delegate to the interactive :choose-tree / :choose-window bindings.
+;;; Scriptable forms delegate to the interactive local chooser bindings and keep
+;;; a strict cl-tmux command surface: no tmux chooser-format/filter/sort/template
+;;; compatibility arguments are accepted.
+
+(defun %cmd-choose-client (session &optional args)
+  "choose-client: show local client information."
+  (unless (%reject-local-chooser-args-p "choose-client" args)
+    (dispatch-command session :choose-client nil)))
 
 (defun %cmd-choose-tree (session &optional args)
-  "choose-tree [-GNrswZ] [-F format] [-f filter] [-O order] [-t target] [template]:
-   open the session/window tree chooser overlay.  Flags are accepted; cl-tmux
-   renders the interactive overlay.  Scriptable form of the :choose-tree binding."
-  (declare (ignore args))
-  (dispatch-command session :choose-tree nil))
+  "choose-tree: open the session/window tree chooser overlay."
+  (unless (%reject-local-chooser-args-p "choose-tree" args)
+    (dispatch-command session :choose-tree nil)))
 
 (defun %cmd-choose-window (session &optional args)
-  "choose-window [-GNrwZ] [-F format] [-f filter] [-O order] [-t target] [template]:
-   open the window chooser overlay.  Flags are accepted; cl-tmux renders the
-   interactive overlay.  Scriptable form of the :choose-window binding."
-  (declare (ignore args))
-  (dispatch-command session :choose-window nil))
+  "choose-window: open the window chooser overlay."
+  (unless (%reject-local-chooser-args-p "choose-window" args)
+    (dispatch-command session :choose-window nil)))
 
 ;;; -- %cmd-delete-buffer ------------------------------------------------------
 
