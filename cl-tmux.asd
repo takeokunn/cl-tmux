@@ -479,7 +479,8 @@
        (:module "presentation/events"
         :serial t
         :components
-        ((:file "events-tests")  ; keystroke pipeline — part I (escape, process-byte, mouse, key-table, copy-mode vi-nav)
+        ((:file "events-tests")  ; keystroke pipeline — part I (suite, escape, process-byte, prompt, copy-mode vi-nav)
+         (:file "events-mouse-tests")  ; mouse dispatch, X10, middle-click paste, defaults
          (:file "events-tests-f")  ; keystroke pipeline — part VI (PageUp/Down, prefix-arrow, send-prefix, modifier+arrow, meta/alt)
          (:file "events-tests-b")  ; locked-session, drag/modifier, copy-mode cursor, vi nav — part II
          (:file "events-tests-h")  ; byte-constants, make-input-state, forward-octets, maybe-rename-window — part VIII
