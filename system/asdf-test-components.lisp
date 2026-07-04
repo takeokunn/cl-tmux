@@ -198,7 +198,8 @@
           (:file "dispatch-tests-session-c") ; options, move-window, new-session -s/-A/-t, control-mode REPL - part III
           (:file "dispatch-tests-session-f") ; new-session duplicate, grouped sessions, control-mode notifications, server-lifecycle, %output relay - part VI
           (:file "dispatch-tests-session-d") ; display-popup, send-keys -N/-H, capture-pane - part IV
-          (:file "dispatch-tests-session-d-tail"))) ; named paste-buffer, join-pane, wait-for-arg - part IVb
+          (:file "dispatch-tests-session-d-tail") ; named paste-buffer and join-pane marked-pane - part IVb
+          (:file "dispatch-tests-wait-for"))) ; wait-for command channel state and argument validation
         (:module "presentation/events"
          :serial t
          :components
