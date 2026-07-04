@@ -27,7 +27,11 @@
        (:file "config-bind-parsing")        ; bind/unbind-specific parsing + key-table dispatch
        (:file "config-directives-set")     ; fixed-arity table + set-option flag handling/routing
        (:file "config-option-side-effects") ; option runtime side effects + set-hook directive
-       (:file "config-directives-runtime") ; set-environment, if-shell, run-shell, source-file
+       (:file "config-directives-runtime-services") ; shared shell execution services
+       (:file "config-directives-environment") ; set-environment handler
+       (:file "config-directives-if-shell") ; if-shell handler
+       (:file "config-directives-run-shell") ; run-shell handler
+       (:file "config-directives-source-file") ; source-file handler
        (:file "config-loader")        ; directive dispatch + comment stripping + apply-config-line
        (:file "config-preprocessor")  ; %if/%elif/%else/%endif state machine + brace/continuation joining
        (:file "config-paths")))       ; config-file path resolution + load-config-file
