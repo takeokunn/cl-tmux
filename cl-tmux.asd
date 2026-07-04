@@ -414,6 +414,7 @@
          (:file "config-source-file-tests")  ; directive parsing — source-file flags, glob expansion, missing diagnostics
          (:file "config-preprocessor-environment-tests")  ; directive parsing — preprocessor, environment, key-table side effects
          (:file "config-directives-tests-d")  ; directive parsing — part IV (set-g-status-off, bind-key-n, load-config, %elif, line-continuation, if-shell)
+         (:file "config-directives-real-world-tests")  ; directive parsing — real-world config fixture
          (:file "config-directives-tests-e")))  ; directive parsing — part V (macro registry, env-set-p, key-table edge cases, remaining bind/set directives)
        (:module "presentation/renderer"
         :serial t
