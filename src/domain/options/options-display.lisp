@@ -26,7 +26,7 @@
       (mapcar #'cdr (sort indexed #'< :key #'car)))))
 
 (defun %option-value-string (value)
-  "Format VALUE for show-options output in tmux-compatible format.
+  "Format VALUE for canonical show-options output.
    Strings: printed as-is (no quotes).  Booleans: 'on'/'off'.
    Integers: decimal.  NIL: 'off'.  Anything else: princ-to-string."
   (cond

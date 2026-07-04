@@ -86,7 +86,7 @@
 ;;; ── Persistence: checksum constants ────────────────────────────────────────────
 
 (test checksum-constants-values
-  "Layout persistence constants have the correct tmux-compatible values."
+  "Layout persistence constants have the canonical checksum values."
   (is (= 61    cl-tmux/model::+checksum-multiplier+)
       "+checksum-multiplier+ must be 61 (from tmux layout.c)")
   (is (= #xFFFF cl-tmux/model::+checksum-mask+)

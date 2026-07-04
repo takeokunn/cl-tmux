@@ -7,11 +7,11 @@
 ;;; Navigation-key spellings
 ;;;
 ;;; cl-tmux config parsing is canonical-only.  PPage/PgUp/NPage/PgDn/IC/DC are
-;;; not compatibility aliases for PageUp/PageDown/Insert/Delete; they remain
+;;; not folded into PageUp/PageDown/Insert/Delete; they remain
 ;;; distinct string key names if a user binds them explicitly.
 
-(test parse-key-token-keeps-navigation-aliases-verbatim
-  "%parse-key-token keeps navigation alias spellings distinct instead of
+(test parse-key-token-keeps-navigation-spellings-verbatim
+  "%parse-key-token keeps navigation spellings distinct instead of
    normalizing them into canonical key names."
   (check-table
    (loop for token in '("PPage" "PgUp" "NPage" "PgDn" "IC" "DC" "PageUp" "PageDown")
@@ -20,9 +20,9 @@
                        (format nil "~A remains a distinct key name" token)))
    :test #'string=))
 
-(test bind-navigation-key-alias-stays-distinct-from-canonical-binding
+(test bind-navigation-key-spelling-stays-distinct-from-canonical-binding
   "bind -n PPage <cmd> stores under PPage only; it must not create the canonical
-   PageUp binding as a compatibility side effect."
+   PageUp binding as an implicit side effect."
   (with-isolated-config
     (cl-tmux/config:apply-config-directive '("bind" "-n" "PPage" "next-window"))
     (let ((entry (cl-tmux/config:key-table-lookup "root" "PPage")))

@@ -8,7 +8,7 @@
 ;;; ── Local fixtures (no PTY: fd -1, pid -1) ──────────────────────────────────
 ;;;
 ;;; Tree-based split windows: assembled with make-layout-leaf / make-layout-split
-;;; to avoid legacy flat-layout paths.  tl-leaf / tl-window helpers are defined
+;;; to use the tree-layout path.  tl-leaf / tl-window helpers are defined
 ;;; in layout-tree-tests.lisp and share the same cl-tmux/test package.
 
 (defun %vsplit-window (&optional (each 20))

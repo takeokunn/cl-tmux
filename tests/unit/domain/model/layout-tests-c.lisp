@@ -113,7 +113,7 @@
 ;;; ── Table-driven: %layout-checksum known-value tests ─────────────────────────
 
 (test layout-checksum-known-values-match-expected
-  "%layout-checksum produces the correct tmux-compatible 4-hex checksum."
+  "%layout-checksum produces the canonical 4-hex layout checksum."
   (dolist (c (list (list ""           "0000" "empty string checksum must be 0000")
                    (list "a"         "0061" "single-char 'a' (97 decimal = 0x61)")
                    (let ((s "1x1,0,0,1"))

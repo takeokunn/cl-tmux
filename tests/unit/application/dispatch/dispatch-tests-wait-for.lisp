@@ -64,7 +64,7 @@
           "wait-for (bare) must unblock after the channel is signaled"))))
 
 (test cmd-wait-for-unsupported-arguments-are-rejected-before-channel-state
-  "wait-for rejects invalid arguments with tmux-compatible diagnostics."
+  "wait-for rejects invalid arguments with canonical diagnostics."
   (with-fake-session (s)
     (let ((cl-tmux::*wait-channels* (make-hash-table :test #'equal)))
       (dolist (case '((("-Z" "test-ch-unsupported")

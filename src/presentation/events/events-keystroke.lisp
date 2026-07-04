@@ -170,7 +170,7 @@
   "Resolve BYTE against the active copy-mode key table and either run the
    matching user binding or fall through to %DISPATCH-COPY-MODE-BYTE.
    First checks the active copy-mode key table for user-defined overrides
-   (`bind -T copy-mode-vi ...` / `bind -T copy-mode ...`); legacy Ctrl bytes
+   (`bind -T copy-mode-vi ...` / `bind -T copy-mode ...`); control bytes
    and single-byte special keys are probed by their canonical tmux name
    (\"C-b\", \"Enter\", \"BSpace\", ...), matching keys stored by the
    key-binding table.  Returns the CPS continuation to resume with (a

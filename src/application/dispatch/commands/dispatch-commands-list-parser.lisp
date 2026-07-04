@@ -8,20 +8,20 @@
        (not (null (position flag value-flags :test #'char=)))))
 
 (defun %list-command-too-many-message (command-name max-positionals)
-  "Return tmux-compatible too-many-arguments text for COMMAND-NAME."
+  "Return canonical too-many-arguments text for COMMAND-NAME."
   (format nil "command ~A: too many arguments (need at most ~D)"
           command-name max-positionals))
 
 (defun %list-command-unknown-flag-message (command-name flag)
-  "Return tmux-compatible unknown short flag text for COMMAND-NAME."
+  "Return canonical unknown short flag text for COMMAND-NAME."
   (format nil "command ~A: unknown flag -~C" command-name flag))
 
 (defun %list-command-invalid-long-flag-message (command-name)
-  "Return tmux-compatible invalid long flag text for COMMAND-NAME."
+  "Return canonical invalid long flag text for COMMAND-NAME."
   (format nil "command ~A: invalid flag --" command-name))
 
 (defun %list-command-missing-flag-argument-message (command-name flag)
-  "Return tmux-compatible missing flag argument text for COMMAND-NAME."
+  "Return canonical missing flag argument text for COMMAND-NAME."
   (format nil "command ~A: -~C expects an argument" command-name flag))
 
 (defun %parse-short-flag-bundle (token allowed-flags value-flags remaining)

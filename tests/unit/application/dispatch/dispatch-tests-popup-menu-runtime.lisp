@@ -90,7 +90,7 @@
           "menu-y defaults to NIL (centred)"))))
 
 (test run-command-line-display-menu-empty-args-reports-too-few
-  "%run-command-line display-menu with no item args reports tmux-compatible syntax error."
+  "%run-command-line display-menu with no item args reports canonical syntax error."
   (with-fake-session (s)
     (let ((*overlay* nil)
           (cl-tmux::*active-menu* nil))

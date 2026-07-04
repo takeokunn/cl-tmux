@@ -248,7 +248,7 @@
 ;;; return of all variables in declaration order.
 ;;;
 ;;; The generated cond has a final error arm.  Startup flag parsers are strict:
-;;; each argument must be declared in FLAG-SPECS, and typo/legacy flags are
+;;; each argument must be declared in FLAG-SPECS, and unknown flags are
 ;;; rejected instead of being silently treated as positional input.
 
 (defmacro define-flag-parser (parser-name (&rest defaults) &rest flag-specs)

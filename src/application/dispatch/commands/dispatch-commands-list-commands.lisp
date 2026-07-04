@@ -8,7 +8,7 @@
 ;;; clustered-short-flag machinery). wait-for is an unrelated
 ;;; channel-synchronization command whose parser reuses
 ;;; %parse-short-flag-bundle from dispatch-commands-list.lisp to walk its
-;;; clustered -L/-S/-U flags, while producing its own tmux-compatible
+;;; clustered -L/-S/-U flags, while producing its own command-specific
 ;;; per-flag error messages.
 
 (defun %cmd-list-commands-arg (session args)
@@ -18,7 +18,7 @@
    -F format expands #{command_list_name}, #{command_list_alias},
    #{command_list_usage} fields."
   (declare (ignore session))
-  ;; Manual flag parse to produce tmux-compatible per-error messages.
+  ;; Manual flag parse to produce list-commands-specific per-error messages.
   (let ((format-string nil)
         (positionals nil)
         (error-message nil))

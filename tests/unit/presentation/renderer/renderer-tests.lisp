@@ -99,7 +99,7 @@
             "inactive status bar must NOT show the prompt text (got ~S)" out)))))
 
 (test render-status-bar-copy-mode-has-no-indicator
-  "The status bar no longer shows a legacy COPY/offset indicator when a pane is in copy mode."
+  "The status bar does not show a COPY/offset indicator when a pane is in copy mode."
   (with-minimal-status-bar-options
     (let* ((sess   (make-renderer-test-session 60 10 :content ""))
            (ap     (session-active-pane sess))

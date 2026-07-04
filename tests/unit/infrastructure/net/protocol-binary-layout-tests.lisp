@@ -109,8 +109,8 @@
 
 (test attach-flag-read-only-constant-value-is-bit-zero
   "+attach-flag-read-only+ must equal 1 (bit 0 of the flags byte).  This pins
-   the bit position so that encode/decode of the read-only flag remain
-   compatible with the tmux CLIENT_READONLY wire convention."
+   the bit position so that encode/decode of the read-only flag follow
+   the tmux CLIENT_READONLY wire convention."
   (is (= 1 cl-tmux/protocol:+attach-flag-read-only+)
       "+attach-flag-read-only+ must equal 1 (bit 0)")
   (is (= 1 (logcount cl-tmux/protocol:+attach-flag-read-only+))
@@ -184,4 +184,3 @@
                                   size-bytes #(42))))
     (is (= 42 (decode-attach-flags payload))
         "5-byte payload must return the fifth byte as the flags value")))
-

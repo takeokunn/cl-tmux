@@ -124,8 +124,8 @@
         (is (string= "resize" cl-tmux::*key-table*)
             "-T still arms the key table when -t is also given")))))
 
-(test cmd-switch-client-rejects-compatibility-flags
-  "switch-client rejects standalone/tmux compatibility flags before switching sessions."
+(test cmd-switch-client-rejects-unsupported-flags
+  "switch-client rejects unsupported flags before switching sessions."
   (with-loop-state
     (with-empty-registry
       (multiple-value-bind (s0 s1 s2) (%make-three-session-registry)

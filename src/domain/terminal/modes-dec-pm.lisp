@@ -146,7 +146,7 @@
   ;; Mode 2048 — Kitty extended keyboard protocol (?2048h / ?2048l).
   ;; We accept and silently ignore — no extended key reporting is implemented
   ;; (we pass the standard CSI sequences through).  Kitty-aware apps work in
-  ;; degraded mode (fall back to legacy encoding) which is correct behaviour.
+  ;; degraded mode (fall back to standard CSI encoding) which is correct behaviour.
   (2048
    ((values))  ; no-op set
    ((values))) ; no-op reset
