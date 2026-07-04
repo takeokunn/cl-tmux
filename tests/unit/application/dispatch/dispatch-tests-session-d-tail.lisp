@@ -7,22 +7,43 @@
 
 (defmacro with-command-rejection-cases
     ((sess case cases command-form overlay-message description
-      &key before-command empty-buffers session-options)
+      &key before-command empty-buffers session-options bindings)
      &body body)
-  (let ((session-form
-          `(with-fake-session (,sess ,@session-options)
-             ,@(when before-command
-                 (list before-command))
-             (with-command-rejection-state (,sess
-                                            ,command-form
-                                            ,overlay-message
-                                            ,description)
-               ,@body))))
+  (let* ((session-form
+           `(with-fake-session (,sess ,@session-options)
+              ,@(when before-command
+                  (list before-command))
+              (with-command-rejection-state (,sess
+                                             ,command-form
+                                             ,overlay-message
+                                             ,description)
+                ,@body)))
+         (bound-session-form
+           (if bindings
+               `(let ,bindings
+                  ,session-form)
+               session-form)))
     `(dolist (,case ,cases)
        ,(if empty-buffers
             `(with-empty-buffers
-               ,session-form)
-            session-form))))
+               ,bound-session-form)
+            bound-session-form))))
+
+(defmacro with-temporary-text-file ((path prefix contents) &body body)
+  `(let* ((label (format nil "~A-~D-~D.txt"
+                         ,prefix
+                         (get-universal-time)
+                         (random 1000000)))
+          (,path (namestring (merge-pathnames label (uiop:temporary-directory)))))
+     (unwind-protect
+          (progn
+            (with-open-file (out ,path
+                                 :direction :output
+                                 :if-exists :supersede
+                                 :if-does-not-exist :create)
+              (write-string ,contents out))
+            ,@body)
+       (ignore-errors (delete-file ,path)))))
 
 ;;; ── Named paste-buffer commands (-b name) ────────────────────────────────────
 
@@ -150,121 +171,71 @@
   "save-buffer -b name path writes the named buffer to a file."
   (with-empty-buffers
     (with-fake-session (s)
-      (let* ((label (format nil "cl-tmux-save-buffer-~D-~D.txt"
-                            (get-universal-time)
-                            (random 1000000)))
-             (path (namestring (merge-pathnames label (uiop:temporary-directory)))))
-        (unwind-protect
-             (progn
-               (cl-tmux/buffer:set-named-buffer "saved" "named text")
-               (cl-tmux::%run-command-tokens s (list "save-buffer" "-b" "saved" path))
-               (is (string= "named text" (uiop:read-file-string path))
-                   "wrote selected named buffer"))
-          (ignore-errors (delete-file path)))))))
+      (with-temporary-text-file (path "cl-tmux-save-buffer" "")
+        (cl-tmux/buffer:set-named-buffer "saved" "named text")
+        (cl-tmux::%run-command-tokens s (list "save-buffer" "-b" "saved" path))
+        (is (string= "named text" (uiop:read-file-string path))
+            "wrote selected named buffer")))))
 
 (test cmd-save-buffer-a-appends
   "save-buffer -a appends the selected buffer to an existing file."
   (with-empty-buffers
     (with-fake-session (s)
-      (let* ((label (format nil "cl-tmux-save-buffer-append-~D-~D.txt"
-                            (get-universal-time)
-                            (random 1000000)))
-             (path (namestring (merge-pathnames label (uiop:temporary-directory)))))
-        (unwind-protect
-             (progn
-               (with-open-file (out path
-                                    :direction :output
-                                    :if-exists :supersede
-                                    :if-does-not-exist :create)
-                 (write-string "pre:" out))
-               (cl-tmux/buffer:add-paste-buffer "post")
-               (cl-tmux::%run-command-tokens s (list "save-buffer" "-a" path))
-               (is (string= "pre:post" (uiop:read-file-string path))
-                   "appended most recent buffer"))
-          (ignore-errors (delete-file path)))))))
+      (with-temporary-text-file (path "cl-tmux-save-buffer-append" "pre:")
+        (cl-tmux/buffer:add-paste-buffer "post")
+        (cl-tmux::%run-command-tokens s (list "save-buffer" "-a" path))
+        (is (string= "pre:post" (uiop:read-file-string path))
+            "appended most recent buffer")))))
 
 (test cmd-save-buffer-rejects-unsupported-arguments
   "save-buffer rejects unknown flags and stray positionals before writing."
   (dolist (case '(:extra-arg :unknown-flag))
     (with-empty-buffers
       (with-fake-session (s)
-        (let* ((label (format nil "cl-tmux-save-buffer-reject-~D-~D.txt"
-                              (get-universal-time)
-                              (random 1000000)))
-               (path (namestring (merge-pathnames label (uiop:temporary-directory))))
-               (args (ecase case
-                       (:extra-arg (list "-b" "saved" path "extra"))
-                       (:unknown-flag (list "-Z" path)))))
-          (unwind-protect
-               (progn
-                (with-open-file (out path
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :if-does-not-exist :create)
-                   (write-string "pre:" out))
-                 (cl-tmux/buffer:set-named-buffer "saved" "named text")
-                 (with-command-rejection-state
-                     (s
-                      (cl-tmux::%run-command-tokens s (cons "save-buffer" args))
-                      "save-buffer: unsupported argument"
-                      (format nil "save-buffer rejects ~S" args))
-                   (is (string= "pre:" (uiop:read-file-string path))
-                       "~S must not overwrite the file after rejection" args)))
-            (ignore-errors (delete-file path))))))))
+        (with-temporary-text-file (path "cl-tmux-save-buffer-reject" "pre:")
+          (let ((args (ecase case
+                        (:extra-arg (list "-b" "saved" path "extra"))
+                        (:unknown-flag (list "-Z" path)))))
+            (cl-tmux/buffer:set-named-buffer "saved" "named text")
+            (with-command-rejection-state
+                (s
+                 (cl-tmux::%run-command-tokens s (cons "save-buffer" args))
+                 "save-buffer: unsupported argument"
+                 (format nil "save-buffer rejects ~S" args))
+              (is (string= "pre:" (uiop:read-file-string path))
+                  "~S must not overwrite the file after rejection" args))))))))
 
 (test cmd-load-buffer-b-loads-named-buffer
   "load-buffer -b name path loads file contents."
   (with-empty-buffers
     (with-fake-session (s)
-      (let* ((label (format nil "cl-tmux-load-buffer-~D-~D.txt"
-                            (get-universal-time)
-                            (random 1000000)))
-             (path (namestring (merge-pathnames label (uiop:temporary-directory)))))
-        (unwind-protect
-             (progn
-               (with-open-file (out path
-                                    :direction :output
-                                    :if-exists :supersede
-                                    :if-does-not-exist :create)
-                 (write-string "from file" out))
-               (cl-tmux::%run-command-tokens s
-                                             (list "load-buffer"
-                                                   "-b" "loaded"
-                                                   path))
-               (is (string= "from file" (cl-tmux/buffer:get-named-buffer "loaded"))
-                   "loaded file into named buffer"))
-          (ignore-errors (delete-file path)))))))
+      (with-temporary-text-file (path "cl-tmux-load-buffer" "from file")
+        (cl-tmux::%run-command-tokens s
+                                      (list "load-buffer"
+                                            "-b" "loaded"
+                                            path))
+        (is (string= "from file" (cl-tmux/buffer:get-named-buffer "loaded"))
+            "loaded file into named buffer")))))
 
 (test cmd-load-buffer-rejects-unsupported-arguments
   "load-buffer rejects unknown flags and extra positionals before loading."
   (dolist (case '(:extra-arg :unknown-flag :former-window-flag :former-target-flag))
     (with-empty-buffers
       (with-fake-session (s)
-        (let* ((label (format nil "cl-tmux-load-buffer-reject-~D-~D.txt"
-                              (get-universal-time)
-                              (random 1000000)))
-               (path (namestring (merge-pathnames label (uiop:temporary-directory))))
-               (args (ecase case
-                       (:extra-arg (list path "extra"))
-                       (:unknown-flag (list "-Z" path))
-                       (:former-window-flag (list "-w" path))
-                       (:former-target-flag (list "-t" "client" path)))))
-          (unwind-protect
-               (progn
-                (with-open-file (out path
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :if-does-not-exist :create)
-                   (write-string "from file" out))
-                 (cl-tmux/buffer:add-paste-buffer "existing")
-                 (with-command-rejection-state
-                     (s
-                      (cl-tmux::%run-command-tokens s (cons "load-buffer" args))
-                      "load-buffer: unsupported argument"
-                      (format nil "load-buffer rejects ~S" args))
-                   (is (string= "existing" (cl-tmux/buffer:get-paste-buffer 0))
-                       "~S must not mutate existing buffers after rejection" args)))
-            (ignore-errors (delete-file path))))))))
+        (with-temporary-text-file (path "cl-tmux-load-buffer-reject" "from file")
+          (let ((args (ecase case
+                        (:extra-arg (list path "extra"))
+                        (:unknown-flag (list "-Z" path))
+                        (:former-window-flag (list "-w" path))
+                        (:former-target-flag (list "-t" "client" path)))))
+            (cl-tmux/buffer:add-paste-buffer "existing")
+            (with-command-rejection-state
+                (s
+                 (cl-tmux::%run-command-tokens s (cons "load-buffer" args))
+                 "load-buffer: unsupported argument"
+                 (format nil "load-buffer rejects ~S" args))
+              (is (string= "existing" (cl-tmux/buffer:get-paste-buffer 0))
+                  "~S must not mutate existing buffers after rejection" args))))))))
 
 (test cmd-paste-buffer-d-deletes-named-after-paste
   "paste-buffer -d -b name deletes the named buffer after pasting it."
@@ -317,9 +288,12 @@
       (s args '(("extra") ("-Z") ("-d") ("-S"))
        (cl-tmux::%cmd-copy-mode-arg s args)
        "copy-mode: unsupported argument"
-       (format nil "copy-mode rejects ~S" args))
+       (format nil "copy-mode rejects ~S" args)
+       :bindings ((cl-tmux::*dirty* nil)))
     (is-false (screen-copy-mode-p (active-screen s))
-              "~S must not enter copy-mode after rejection" args)))
+              "~S must not enter copy-mode after rejection" args)
+    (is-false cl-tmux::*dirty*
+              "~S must not mark the UI dirty after rejection" args)))
 
 (test cmd-capture-pane-b-stores-named
   "capture-pane -b name stores the captured content under that name."
