@@ -38,10 +38,12 @@
   (with-empty-buffers
     (cl-tmux/buffer:add-paste-buffer "first")
     (cl-tmux/buffer:add-paste-buffer "second")
-    (is (string= "second" (cl-tmux/buffer:get-paste-buffer 0))
-        "index 0 must be most recently added")
-    (is (string= "first"  (cl-tmux/buffer:get-paste-buffer 1))
-        "index 1 must be previous buffer")))
+    (check-table
+     (list (list (cl-tmux/buffer:get-paste-buffer 0) "second"
+                 "index 0 must be most recently added")
+           (list (cl-tmux/buffer:get-paste-buffer 1) "first"
+                 "index 1 must be previous buffer"))
+     :test #'string=)))
 
 (test buffer-get-nil-when-empty
   "get-paste-buffer returns NIL when *paste-buffers* is empty."
@@ -107,10 +109,15 @@
              (cl-tmux/buffer:add-paste-buffer "d")  ; should evict "a"
              (is (= 3 (length (cl-tmux/buffer:list-paste-buffers)))
                  "ring must not grow beyond buffer-limit")
-             (dolist (c '((0 "d") (1 "c") (2 "b")))
-               (destructuring-bind (idx expected) c
-                 (is (string= expected (cl-tmux/buffer:get-paste-buffer idx))
-                     "index ~D must be ~S" idx expected)))
+             (check-table
+              (loop for (idx expected desc)
+                      in '((0 "d" "index 0 must be \"d\"")
+                           (1 "c" "index 1 must be \"c\"")
+                           (2 "b" "index 2 must be \"b\""))
+                    collect (list (cl-tmux/buffer:get-paste-buffer idx)
+                                  expected
+                                  desc))
+              :test #'string=)
              (is (null (cl-tmux/buffer:get-paste-buffer 3))
                  "oldest buffer must have been evicted"))
         (cl-tmux/options:set-option "buffer-limit" saved)))))
@@ -131,9 +138,16 @@
     (cl-tmux/buffer:add-paste-buffer "b")
     (cl-tmux/buffer:add-paste-buffer "c")  ; c=0, b=1, a=2
     (cl-tmux/buffer:delete-paste-buffer 1)  ; remove b
-    (is (= 2 (length (cl-tmux/buffer:list-paste-buffers))))
-    (is (string= "c" (cl-tmux/buffer:get-paste-buffer 0)))
-    (is (string= "a" (cl-tmux/buffer:get-paste-buffer 1)))))
+    (check-table
+     (list (list (length (cl-tmux/buffer:list-paste-buffers)) 2
+                 "ring length after deleting middle entry"))
+     :test #'=)
+    (check-table
+     (list (list (cl-tmux/buffer:get-paste-buffer 0) "c"
+                 "newest entry remains at index 0")
+           (list (cl-tmux/buffer:get-paste-buffer 1) "a"
+                 "oldest entry shifts to index 1"))
+     :test #'string=)))
 
 (test buffer-add-returns-text
   "add-paste-buffer returns the inserted text."
@@ -188,9 +202,13 @@
     (cl-tmux/buffer:add-paste-buffer "second")
     (cl-tmux/buffer:add-paste-buffer "third")
     (let ((lst (cl-tmux/buffer:list-paste-buffers)))
-      (dolist (c '((0 "third" "most recent first") (1 "second" "second most recent") (2 "first" "oldest last")))
-        (destructuring-bind (idx expected desc) c
-          (is (string= expected (nth idx lst)) "~A" desc))))))
+      (check-table
+       (loop for (idx expected desc)
+               in '((0 "third" "most recent first")
+                    (1 "second" "second most recent")
+                    (2 "first" "oldest last"))
+             collect (list (nth idx lst) expected desc))
+       :test #'string=))))
 
 ;;; ── delete-paste-buffer on non-empty then empty ──────────────────────────────
 
