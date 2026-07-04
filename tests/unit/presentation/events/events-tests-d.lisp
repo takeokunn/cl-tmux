@@ -222,21 +222,11 @@
       (is (equal expected (cl-tmux::%csi-tilde-key-name param))
           "param ~D → ~S" param expected))))
 
-(test normalize-key-alias-collapses-navigation-spellings
-  "%normalize-key-alias maps tmux's aliases to the canonical input-side names;
-   matching is case-insensitive; a non-alias token returns NIL."
-  (dolist (c '(("PPage" "PageUp")   ("NPage" "PageDown")
-               ("IC"    "Insert")   ("DC"    "Delete")
-               ("pgup"  "PageUp")   ("F5"    nil)))
-    (destructuring-bind (input expected) c
-      (is (equal expected (cl-tmux/config::%normalize-key-alias input))
-          "~A → ~S" input expected))))
-
-(test parse-key-token-normalizes-aliases-to-canonical
-  "%parse-key-token collapses PPage→PageUp so bind-side and input-side keys match;
-   a canonical/non-alias name passes through unchanged."
-  (dolist (c '(("PPage" "PageUp") ("NPage" "PageDown")
-               ("IC"    "Insert") ("F5"    "F5")))
+(test parse-key-token-keeps-navigation-spellings-literal
+  "%parse-key-token is canonical-only: PPage/NPage/IC remain literal key names,
+   not input-side aliases for PageUp/PageDown/Insert."
+  (dolist (c '(("PPage" "PPage") ("NPage" "NPage")
+               ("IC"    "IC")    ("F5"    "F5")))
     (destructuring-bind (input expected) c
       (is (string= expected (cl-tmux/config::%parse-key-token input))
           "~A → ~S" input expected))))
@@ -259,9 +249,9 @@
         (let ((tbl (gethash "root" *key-tables*)))
           (when tbl (remhash "F5" tbl)))))))
 
-(test page-up-alias-root-binding-fires-from-byte-stream
-  "bind -n PPage (alias of PageUp) fires when ESC [ 5 ~ is fed: the alias
-   normalisation and the input-side key name meet at the canonical \"PageUp\"."
+(test page-up-literal-binding-does-not-fire-from-page-up-byte-stream
+  "bind -n PPage stores a literal key name.  ESC [ 5 ~ resolves to PageUp, so it
+   must not fire a PPage binding."
   (with-fake-session (s :nwindows 2)
     (let ((state (cl-tmux::make-input-state))
           (key   (cl-tmux/config::%parse-key-token "PPage")))
@@ -271,8 +261,8 @@
              ;; ESC [ 5 ~  byte by byte.
              (dolist (byte '(27 91 53 126))
                (cl-tmux::process-byte s byte state))
-             (is (eq (second (session-windows s)) (session-active-window s))
-                 "ESC [ 5 ~ must resolve to PageUp and fire the PPage binding"))
+             (is (eq (first (session-windows s)) (session-active-window s))
+                 "ESC [ 5 ~ must resolve to PageUp and leave the literal PPage binding untouched"))
         (let ((tbl (gethash "root" *key-tables*)))
           (when tbl (remhash key tbl)))))))
 
