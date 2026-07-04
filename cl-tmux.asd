@@ -276,7 +276,12 @@
        (:file "events-core")
        (:file "events-loop-bindings") ; extended prefix key-binding table installation
        (:file "events-mouse-status") ; status bar mouse handling
-       (:file "events-mouse")   ; mouse event dispatch
+       (:file "events-mouse-state") ; mouse dispatch dynamic state and pure counters
+       (:file "events-mouse-layout") ; pane-border hit testing and drag resize
+       (:file "events-mouse-bindings") ; mouse key names, actions, and context
+       (:file "events-mouse-passthrough") ; pane X10/SGR mouse passthrough
+       (:file "events-mouse-actions") ; built-in mouse actions
+       (:file "events-mouse-dispatch") ; mouse event dispatch coordinator
        (:file "events-overlay-pager") ; overlay pager escape handler
        (:file "events-key-names") ; arrow/key-name fact tables and CSI-u parsing
        (:file "events-key-bindings") ; key-table lookup and binding execution
