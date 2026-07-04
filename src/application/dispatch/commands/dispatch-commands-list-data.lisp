@@ -91,7 +91,7 @@
     ("split-window"         . "[-bdfhIvPZ] [-c start-directory] [-e environment] [-F format] [-l size] [-t target-pane] [shell-command [argument ...]]")
     ("start-server"         . "")
     ("suspend-client"       . "[-t target-client]")
-    ("swap-pane"            . "[-dDU] [-s src-pane] [-t dst-pane]")
+    ("swap-pane"            . "[-DU] [-s src-pane] [-t dst-pane]")
     ("swap-window"          . "[-d] [-s src-window] [-t dst-window]")
     ("switch-client"        . "[-ElnprZ] [-c target-client] [-f flags] [-t target-session] [-T key-table]")
     ("unbind-key"           . "[-anq] [-T key-table] key")
