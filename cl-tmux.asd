@@ -290,6 +290,8 @@
     :components
     ((:file "package")
      (:file "helpers")
+     (:file "helpers-pty-runtime")
+     (:file "helpers-network-listener")
      (:file "helpers-b")
      (:module "unit"
       :serial t

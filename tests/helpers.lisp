@@ -519,97 +519,12 @@
                          collect `(cons ,session-name ,session-var)))))
      ,@body))
 
-;;; ── PTY availability probe (test-only) ─────────────────────────────────────
-;;;
-;;; pty-available-p is a testing artifact: it spawns a real shell and immediately
-;;; kills it purely to check PTY access.  It lives here (test helpers) rather
-;;; than in production source so the production pty.lisp has no test-only code.
-
-(defun pty-available-p ()
-  "Return T if a PTY-backed shell can be spawned on this system, NIL otherwise.
-   Used as a skip guard in integration tests that require /dev/ptmx."
-  (handler-case
-      (multiple-value-bind (fd pid) (forkpty-with-shell 8 20)
-        (cl-tmux/pty:pty-close fd pid)
-        t)
-    (error () nil)))
-
-(defmacro with-pty-available (&body body)
-  "Run BODY only when PTY-backed shells are available."
-  `(when (pty-available-p)
-     ,@body))
-
-(defmacro with-pty-session (session-spec &body body)
-  "Run BODY in a fake session only when PTY-backed shells are available."
-  (let ((session-var (if (consp session-spec) (first session-spec) session-spec))
-        (session-args (if (consp session-spec) (rest session-spec) nil)))
-    `(with-pty-available
-       (with-fake-session (,session-var ,@session-args)
-         ,@body))))
-
-(defmacro with-pty-run-command-line-overlay ((session-spec command &key context)
-                                             &body body)
-  "Run %RUN-COMMAND-LINE for COMMAND in a fake session only when PTYs exist."
-  (let ((session-var (if (consp session-spec) (first session-spec) session-spec))
-        (session-args (if (consp session-spec) (rest session-spec) nil)))
-    `(with-pty-session (,session-var ,@session-args)
-       (with-run-command-line-overlay (,session-var ,command :context ,context)
-         ,@body))))
-
 (defmacro with-command-line-rejection-cases ((line-var message-var row-token-var cases)
                                              &body body)
   "Iterate over rejection cases as data, keeping the assertions in BODY."
   `(dolist (case ,cases)
      (destructuring-bind (,line-var ,message-var ,row-token-var) case
        ,@body)))
-
-(defmacro with-pty-command-preserving-focus ((session-spec command &key count-form active-form
-                                                           count-context focus-context)
-                                              &body body)
-  "Run COMMAND in a PTY-backed fake session and assert it changes COUNT-FORM
-   while leaving ACTIVE-FORM unchanged."
-  (let ((session-var (if (consp session-spec) (first session-spec) session-spec))
-        (session-args (if (consp session-spec) (rest session-spec) nil)))
-    `(with-pty-session (,session-var ,@session-args)
-       (let ((before-count ,count-form)
-             (before-active ,active-form))
-         (cl-tmux::%run-command-line ,session-var ,command)
-         (let ((after-count ,count-form))
-           (is (> after-count before-count)
-               ,count-context))
-         (is (eq before-active ,active-form)
-             ,focus-context)
-         ,@body))))
-
-(defmacro with-pty-command-increasing-count ((session-spec command &key count-form count-context)
-                                             &body body)
-  "Run COMMAND in a PTY-backed fake session and assert it increases COUNT-FORM."
-  (let ((session-var (if (consp session-spec) (first session-spec) session-spec))
-        (session-args (if (consp session-spec) (rest session-spec) nil)))
-    `(with-pty-session (,session-var ,@session-args)
-       (let ((before-count ,count-form))
-         (cl-tmux::%run-command-line ,session-var ,command)
-         (is (> ,count-form before-count)
-             ,count-context)
-         ,@body))))
-
-(defmacro with-pty-shell ((fd-var pid-var &key (rows 24) (cols 80)) &body body)
-  "Spawn a shell on a fresh PTY of ROWS×COLS; bind FD-VAR and PID-VAR.
-   Closes the PTY via unwind-protect on exit, even if BODY signals."
-  `(multiple-value-bind (,fd-var ,pid-var) (forkpty-with-shell ,rows ,cols)
-     (unwind-protect
-          (progn ,@body)
-       (pty-close ,fd-var ,pid-var))))
-
-;;; ── PTY port initialization ─────────────────────────────────────────────────
-;;;
-;;; Any test that creates a real pane (create-initial-session, session-new-window,
-;;; respawn-pane) goes through cl-tmux/ports:spawn-pty.  Install the CFFI adapter
-;;; now so the port vars are non-NIL for the duration of the test run.
-;;; Tests that need a mock port can rebind *spawn-pty* / *write-pty* / etc.
-;;; around individual test bodies.
-
-(cl-tmux/pty:install-pty-port)
 
 ;;; ── No-PTY pane builder ─────────────────────────────────────────────────────
 
@@ -618,33 +533,3 @@
   (make-pane :id id :x x :y y :width w :height h
              :fd -1 :pid -1
              :screen (make-screen w h)))
-
-;;; ── Throwaway test-socket paths ─────────────────────────────────────────────
-;;;
-;;; %test-socket-path is the single source of the "unique per-test Unix socket
-;;; path under $TMPDIR (or /tmp)" pattern that used to be re-derived inline in
-;;; client-tests.lisp and server-multi-tests.lisp.
-
-(defun %test-socket-path (label)
-  "Unique throwaway socket path for LABEL (a descriptive tag embedded in the
-   filename), under $TMPDIR (or /tmp when unset)."
-  (let ((dir (string-right-trim "/" (or (sb-ext:posix-getenv "TMPDIR") "/tmp"))))
-    (format nil "~A/cl-tmux-~A-~D.sock" dir label (get-universal-time))))
-
-(defmacro with-test-listener ((listener-var path-var path-form &key backlog) &body body)
-  "Bind PATH-VAR to PATH-FORM (e.g. (%test-socket-path \"label\") or an
-   explicit (socket-path name)) and LISTENER-VAR to a listener on it for the
-   extent of BODY, tearing both down afterwards.  Skips BODY (via FiveAM
-   `skip`) when Unix-domain sockets are unavailable — factors out the
-   make-listener/unwind-protect/close-socket/delete-file boilerplate shared by
-   every multi-client socket-lifecycle test."
-  `(if (cl-tmux/net:unix-socket-available-p)
-       (let* ((,path-var     ,path-form)
-              (,listener-var ,(if backlog
-                                   `(cl-tmux/net:make-listener ,path-var :backlog ,backlog)
-                                   `(cl-tmux/net:make-listener ,path-var))))
-         (unwind-protect
-              (progn ,@body)
-           (cl-tmux/net:close-socket ,listener-var)
-           (ignore-errors (delete-file ,path-var))))
-       (skip "Unix-domain socket unavailable (sandbox)")))
