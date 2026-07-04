@@ -77,3 +77,47 @@
   "Render TREE borders for ACTIVE-PANE to a string using the production renderer."
   (with-output-to-string (s)
     (cl-tmux/renderer::render-tree-borders s tree active-pane width)))
+
+(defmacro check-status-segment-clamp-cases (cases)
+  "Assert %clamp-status-segment rows shaped (TEXT MAX EXPECTED DESC)."
+  `(check-table
+    (mapcar (lambda (row)
+              (destructuring-bind (text max expected desc) row
+                (list (cl-tmux/renderer::%clamp-status-segment text max)
+                      expected
+                      desc)))
+            ,cases)
+    :test #'string=))
+
+(defmacro check-visible-truncate-cases (cases)
+  "Assert %visible-truncate rows shaped (INPUT MAX EXPECTED DESC)."
+  `(check-table
+    (mapcar (lambda (row)
+              (destructuring-bind (input max expected desc) row
+                (list (cl-tmux/renderer::%visible-truncate input max)
+                      expected
+                      desc)))
+            ,cases)
+    :test #'string=))
+
+(defmacro check-status-style-reset-cases (base-sgr bodies)
+  "Assert %status-style-block-sgr reset cases against BASE-SGR."
+  `(let ((base-sgr ,base-sgr))
+     (check-table
+      (mapcar (lambda (body)
+                (list (cl-tmux/renderer::%status-style-block-sgr body base-sgr)
+                      (format nil "~C[0;~Am" #\Escape base-sgr)
+                      (format nil "~S must reset to base SGR" body)))
+              ,bodies)
+      :test #'string=)))
+
+(defmacro check-status-expand-unchanged-cases (base-sgr inputs)
+  "Assert %status-expand-style-blocks returns block-free INPUTS unchanged."
+  `(let ((base-sgr ,base-sgr))
+     (check-table
+      (mapcar (lambda (input)
+                (list (cl-tmux/renderer::%status-expand-style-blocks input base-sgr)
+                      input
+                      (format nil "~S has no inline style block" input)))
+              ,inputs)
+      :test #'string=)))

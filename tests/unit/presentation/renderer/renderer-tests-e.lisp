@@ -11,13 +11,11 @@
 
 (test clamp-status-segment-table
   "%clamp-status-segment returns text unchanged when it fits (≤ max) and truncates when it exceeds max."
-  (dolist (row '(("hello" 10 "hello" "shorter than max → unchanged")
-                 ("hello"  5 "hello" "exactly max length → unchanged")
-                 ("hello"  3 "hel"   "exceeds max → truncated to 3 chars")
-                 (""      10 ""      "empty string → always unchanged")))
-    (destructuring-bind (text max expected desc) row
-      (is (string= expected (cl-tmux/renderer::%clamp-status-segment text max))
-          "~A" desc))))
+  (check-status-segment-clamp-cases
+   '(("hello" 10 "hello" "shorter than max -> unchanged")
+     ("hello"  5 "hello" "exactly max length -> unchanged")
+     ("hello"  3 "hel"   "exceeds max -> truncated to 3 chars")
+     (""      10 ""      "empty string -> always unchanged"))))
 
 ;;; ── set-cursor-shape in rendered output ──────────────────────────────────────
 
@@ -139,12 +137,11 @@
 
 (test visible-truncate-escape-free-equals-subseq
   "%visible-truncate equals SUBSEQ for escape-free strings."
-  (dolist (c '(("hello" 3  "hel"   "truncate to 3")
-               ("hello" 5  "hello" "truncate at exact length")
-               ("hello" 99 "hello" "truncate past length -> unchanged")
-               ("hello" 0  ""      "truncate to 0 -> empty string")))
-    (destructuring-bind (input n expected desc) c
-      (is (string= expected (cl-tmux/renderer::%visible-truncate input n)) "~A" desc))))
+  (check-visible-truncate-cases
+   '(("hello" 3  "hel"   "truncate to 3")
+     ("hello" 5  "hello" "truncate at exact length")
+     ("hello" 99 "hello" "truncate past length -> unchanged")
+     ("hello" 0  ""      "truncate to 0 -> empty string"))))
 
 (test visible-truncate-passes-sgr-through
   "%visible-truncate copies SGR escapes through without counting them toward N."
@@ -165,18 +162,11 @@
 
 (test status-style-block-default-resets-to-base
   "%status-style-block-sgr default/none/empty resets to the base status SGR."
-  (let ((esc #\Escape))
-    (dolist (body '("default" "none" "" "  "))
-      (is (string= (format nil "~C[0;44;97m" esc)
-                   (cl-tmux/renderer::%status-style-block-sgr body "44;97"))
-          "~S must reset to ESC[0;44;97m" body))))
+  (check-status-style-reset-cases "44;97" '("default" "none" "" "  ")))
 
 (test status-expand-style-blocks-no-block-unchanged
   "%status-expand-style-blocks returns escape-free / block-free text unchanged."
-  (is (string= "plain text"
-               (cl-tmux/renderer::%status-expand-style-blocks "plain text" "44;97")))
-  (is (string= " 0 1:1* "
-               (cl-tmux/renderer::%status-expand-style-blocks " 0 1:1* " "44;97"))))
+  (check-status-expand-unchanged-cases "44;97" '("plain text" " 0 1:1* ")))
 
 (test status-expand-style-blocks-converts-blocks
   "%status-expand-style-blocks turns #[fg=green]X#[default] into SGR around X."
