@@ -28,7 +28,7 @@
               "~A" desc))))))
 
 (test pane-navigation-rejects-z-table
-  "Pane-navigation commands reject the removed -Z compatibility flag before
+  "Pane-navigation commands reject the removed -Z flag before
    mutating pane focus/order or zoom state.
    Each row: (command-line description)."
   (dolist (row '(("select-pane -Z -t %2" "select-pane -Z")

@@ -12,7 +12,7 @@
   '(("attach-session -d -t work" "detach other clients")
     ("attach-session work" "positional target")))
 
-(defparameter *detach-rejected-compatibility-argument-cases*
+(defparameter *detach-unsupported-argument-cases*
   '(("-a")
     ("-P")
     ("-E" "echo detached")
@@ -157,10 +157,10 @@
     (is-true cl-tmux::*running*
              "detach returns a detach disposition; the caller owns loop shutdown")))
 
-(test run-command-line-detach-rejects-compatibility-flags
-  "detach rejects tmux client targeting and single-client compatibility flags."
+(test run-command-line-detach-rejects-unsupported-arguments
+  "detach rejects unsupported client targeting and single-client flags."
   (with-fake-session (s)
-    (dolist (args *detach-rejected-compatibility-argument-cases*)
+    (dolist (args *detach-unsupported-argument-cases*)
       (setf cl-tmux::*running* t
             cl-tmux::*dirty* nil
             cl-tmux::*overlay* nil)
@@ -197,7 +197,7 @@
           "accepted refresh-client args must not raise an overlay: ~S" args))))
 
 (test run-command-line-refresh-client-rejects-unsupported-arguments
-  "refresh-client rejects unsupported compatibility forms and unknown flags."
+  "refresh-client rejects unsupported forms and unknown flags."
   (with-fake-session (s)
     (dolist (args *refresh-client-rejected-argument-cases*)
       (setf cl-tmux::*dirty* nil
@@ -209,7 +209,7 @@
 
 
 (test run-command-line-lock-client-rejects-target-client
-  "lock-client rejects tmux-compatible target arguments."
+  "lock-client rejects unsupported target-client arguments."
   (with-fake-session (s)
     (let ((cl-tmux::*dirty* nil)
           (cl-tmux::*overlay* nil))

@@ -180,7 +180,7 @@
   (with-copy-mode-active-screen (s screen :feed "hello world")
     (setf (screen-copy-cursor screen) (cons 0 0))
     (is-false (cl-tmux::%dispatch-send-keys-X s "jump-to" nil nil '("l"))
-              "jump-to must not dispatch as a compatibility alias")
+              "jump-to must not dispatch as an unsupported alias")
     (is (equal (cons 0 0) (screen-copy-cursor screen))
         "unknown commands must leave the copy cursor unchanged")))
 

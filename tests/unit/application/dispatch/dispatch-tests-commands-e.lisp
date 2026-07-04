@@ -160,7 +160,7 @@
       (assert-overlay-contains (session-name s) (overlay-lines)
                                 ":choose-client"))))
 
-(test command-line-local-chooser-commands-reject-compatibility-args
+(test command-line-local-chooser-commands-reject-unsupported-args
   "Scriptable local chooser commands reject removed tmux customization inputs."
   (with-command-line-rejection-cases (line expected-message buffer-state
                                       '(("choose-client -F name" "choose-client: unsupported argument" nil)
@@ -177,11 +177,11 @@
         (cl-tmux::%run-command-line s line)
         (assert-overlay-contains expected-message *overlay* line)))))
 
-(test command-usage-table-removes-local-chooser-compatibility-args
+(test command-usage-table-omits-local-chooser-unsupported-args
   "list-commands metadata exposes the strict local chooser/list-buffer surface."
   (dolist (name '("choose-buffer" "choose-client" "choose-tree" "choose-window" "list-buffers"))
     (is (string= "" (cdr (assoc name cl-tmux::*command-usage-table* :test #'string=)))
-        "~A must not advertise removed chooser/list-buffer compatibility args"
+        "~A must not advertise unsupported chooser/list-buffer args"
         name)))
 
 ;;; ── :display-info dispatch ────────────────────────────────────────────────────

@@ -287,15 +287,15 @@
                        :test #'string=
                        :context "new-session positionals")))
 
-(test new-session-rejects-compatibility-only-flags
-  "new-session rejects client-detach/flags compatibility inputs before any fork."
+(test new-session-rejects-client-only-flags
+  "new-session rejects unsupported client-detach flags before any fork."
   (with-fake-session (s)
     (dolist (args '(("-X")
                     ("-D")
                     ("-f" "flags")))
       (let ((cl-tmux::*overlay* nil))
         (is (null (cl-tmux::%cmd-new-session-arg s args))
-            "new-session rejects compatibility args ~S" args)
+            "new-session rejects unsupported args ~S" args)
         (assert-overlay-contains "new-session: unsupported argument"
                                  cl-tmux::*overlay*
                                  args)))))

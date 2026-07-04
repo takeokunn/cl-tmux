@@ -83,7 +83,7 @@
           "the old name is removed"))))
 
 (test cmd-set-buffer-rejects-target-client-flag
-  "set-buffer rejects target-client compatibility input before mutating buffers."
+  "set-buffer rejects unsupported target-client input before mutating buffers."
   (with-empty-buffers
     (with-fake-session (s)
       (with-command-rejection-state (s

@@ -178,7 +178,7 @@
 
 (defmacro define-flag-parser-error-cases (test-name parser-name &body cases)
   `(test ,test-name
-     "Generated flag parsers reject unknown tokens instead of preserving compatibility fallbacks."
+     "Generated flag parsers reject unknown tokens instead of accepting fallback paths."
      (dolist (case ',cases)
        (destructuring-bind (args description) case
          (signals error

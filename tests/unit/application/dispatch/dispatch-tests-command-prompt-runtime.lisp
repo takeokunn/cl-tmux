@@ -104,8 +104,8 @@
       (assert-overlay-not-contains "0" *overlay*
                                    "display-message -l"))))
 
-(test display-message-rejects-compatibility-flags
-  "display-message rejects the old client/stdout/verbose compatibility flags."
+(test display-message-rejects-unsupported-client-output-flags
+  "display-message rejects unsupported client/stdout/verbose flags."
   (with-fake-session (s)
     (dolist (command '("display-message -c someclient #{session_name}"
                        "display-message -a #{session_name}"

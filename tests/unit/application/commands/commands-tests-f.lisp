@@ -178,7 +178,7 @@
     (is (>= elapsed 1/20) "run-shell must wait before launching the command")))
 
 (test run-command-line-run-shell-rejects-removed-delay-and-target-flags
-  "%run-command-line run-shell rejects the removed tmux compatibility flags -d and -t."
+  "%run-command-line run-shell rejects the removed -d and -t flags."
   (with-run-shell-removed-flag-case (command)
     (with-fake-session (s)
       (with-run-command-line-overlay (s command :context command)

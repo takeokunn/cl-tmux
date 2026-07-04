@@ -126,14 +126,14 @@
                      "send-keys -M writes the encoded mouse event to the pane")))
           (setf (fdefinition 'cl-tmux/pty:pty-write) orig))))))
 
-(test send-keys-rejects-client-key-table-compatibility-flags
-  "send-keys rejects client/key-table compatibility flags before writing to a pane."
+(test send-keys-rejects-unsupported-client-key-table-flags
+  "send-keys rejects unsupported client/key-table flags before writing to a pane."
   (with-fake-session (s :nwindows 1 :npanes 1)
     (dolist (args '(("-c" "client-0" "Enter")
                     ("-K" "Enter")))
       (let ((cl-tmux::*overlay* nil))
         (is (null (cl-tmux::%cmd-send-keys-arg s args))
-            "send-keys rejects compatibility flags ~S" args)
+            "send-keys rejects unsupported flags ~S" args)
         (assert-overlay-contains "send-keys: unsupported argument"
                                  cl-tmux::*overlay*
                                  args)))))
