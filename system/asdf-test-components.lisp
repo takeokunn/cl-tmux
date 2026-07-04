@@ -236,7 +236,8 @@
           (:file "commands-tests-j") ; join-pane helpers, resize-pane up, noop guards, search, scroll, extract-chars, row-string - part X
           (:file "commands-tests-d") ; rename/select hooks, server-access, customize-mode, begin-line-selection multi-row - part VIII
           (:file "commands-tests-l") ; copy-mode copy-line/copy-end-of-line, with-shell-timeout, kill hooks, toggle-rect, append-sel, copy-pipe, renumber-windows - part XII
-          (:file "commands-tests-i") ; rectangle-sel, run-copy-cmd, set-cursor, send-keys-l, jump-to-char, goto-line, search-incr - part IX
+          (:file "commands-tests-i") ; rectangle-sel, run-copy-cmd, set-cursor, send-keys-l - part IX
+          (:file "commands-copy-navigation-tests") ; jump-to-char, goto-line, search-incr, bracket navigation
           (:file "commands-tests-p"))) ; copy-selection-no-cancel/no-clear, pipe family, copy-pipe-no-clear/line/-and-cancel, rectangle-on/off, cursor-down-and-cancel, scroll-to-mouse, copy-*-and-cancel, last-jump - part XVII
         (:module "presentation/prompt"
          :serial t
