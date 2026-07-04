@@ -349,6 +349,87 @@
        (let ((cl-tmux::*dirty* nil))
          ,@body))))
 
+(defparameter *cmd-join-pane-before-cases*
+  '((:h "-b on a horizontal split" pane-x pane-height window-height)
+    (:v "-b on a vertical split"   pane-y pane-width  window-width)))
+
+(defparameter *cmd-join-pane-full-window-cases*
+  '((:h "-f on a horizontal split" pane-height window-height)
+    (:v "-f on a vertical split"   pane-width  window-width)))
+
+(defparameter *cmd-join-pane-size-hint-cases*
+  '((:h "-l 8 on a horizontal split" pane-width 9 8)
+    (:v "-l 8 on a vertical split"   pane-height 5 8)))
+
+(defun %join-command-direction-flag (direction)
+  (ecase direction
+    (:h "-h")
+    (:v "-v")))
+
+(defun %check-cmd-join-pane-before-case (case)
+  (destructuring-bind (direction desc pos-access cross-access window-cross-access) case
+    (with-join-command-fixture (sess src-win src-pane dst-win dst-pane)
+      (declare (ignore src-win))
+      (let ((result (cl-tmux::%cmd-join-pane-arg
+                     sess
+                     (%join-command-args "-b" (%join-command-direction-flag direction)))))
+        (check-table
+         (list (list (not (null result)) t
+                     (format nil "~A must accept the -b layout flag" desc))
+               (list (= 0 (funcall pos-access src-pane)) t
+                     (format nil "~A must place the moved pane first" desc))
+               (list (> (funcall pos-access dst-pane)
+                        (funcall pos-access src-pane))
+                     t
+                     (format nil "~A must place the destination pane after the moved pane" desc))
+               (list (= (funcall window-cross-access dst-win)
+                        (funcall cross-access src-pane)
+                        (funcall cross-access dst-pane))
+                     t
+                     (format nil "~A must keep the split full on the cross axis" desc))
+               (list cl-tmux::*dirty* t
+                     (format nil "~A must mark the model dirty" desc)))
+         :test #'eq)))))
+
+(defun %check-cmd-join-pane-full-window-case (case)
+  (destructuring-bind (direction desc pane-access window-access) case
+    (with-join-command-fixture (sess src-win src-pane dst-win dst-pane)
+      (declare (ignore src-win))
+      (let ((result (cl-tmux::%cmd-join-pane-arg
+                     sess
+                     (%join-command-args "-f" (%join-command-direction-flag direction)))))
+        (check-table
+         (list (list (not (null result)) t
+                     (format nil "~A must accept the -f layout flag" desc))
+               (list (= (funcall window-access dst-win)
+                        (funcall pane-access src-pane)
+                        (funcall pane-access dst-pane))
+                     t
+                     (format nil "~A must span the full window on the split axis" desc))
+               (list cl-tmux::*dirty* t
+                     (format nil "~A must mark the model dirty" desc)))
+         :test #'eq)))))
+
+(defun %check-cmd-join-pane-size-hint-case (case)
+  (destructuring-bind (direction desc pane-access other-size expected-size) case
+    (with-join-command-fixture (sess src-win src-pane dst-win dst-pane)
+      (declare (ignore src-win))
+      (let ((result (cl-tmux::%cmd-join-pane-arg
+                     sess
+                     (%join-command-args "-l" "8" (%join-command-direction-flag direction)))))
+        (check-table
+         (list (list (not (null result)) t
+                     (format nil "~A must accept the -l layout flag" desc))
+               (list (equal (sort (list (funcall pane-access src-pane)
+                                        (funcall pane-access dst-pane))
+                                  #'<)
+                            (sort (list expected-size other-size) #'<))
+                     t
+                     (format nil "~A must honor the requested size hint" desc))
+               (list cl-tmux::*dirty* t
+                     (format nil "~A must mark the model dirty" desc)))
+         :test #'eq)))))
+
 (test cmd-join-pane-moves-source-into-destination
   "join-pane -s SRC -t DST moves SRC's active pane into DST's window and, without
    -d, makes the joined pane active.  The emptied source window is removed."
@@ -378,77 +459,18 @@
 
 (test cmd-join-pane-b-splits-before-the-active-pane
   "join-pane -b inserts the moved pane before the destination pane."
-  (dolist (case '((:h "-b on a horizontal split" pane-x pane-height window-height pane-width)
-                  (:v "-b on a vertical split"   pane-y pane-width  window-width pane-height)))
-    (destructuring-bind (direction desc pos-access cross-access window-cross-access window-pos-access) case
-      (declare (ignore window-pos-access))
-      (with-join-command-fixture (sess src-win src-pane dst-win dst-pane)
-        (declare (ignore src-win))
-        (let ((result (cl-tmux::%cmd-join-pane-arg
-                       sess
-                       (%join-command-args "-b" (if (eq direction :h) "-h" "-v")))))
-          (check-table
-           (list (list (not (null result)) t
-                       (format nil "~A must accept the -b layout flag" desc))
-                 (list (= 0 (funcall pos-access src-pane)) t
-                       (format nil "~A must place the moved pane first" desc))
-                 (list (> (funcall pos-access dst-pane)
-                          (funcall pos-access src-pane))
-                       t
-                       (format nil "~A must place the destination pane after the moved pane" desc))
-                 (list (= (funcall window-cross-access dst-win)
-                          (funcall cross-access src-pane)
-                          (funcall cross-access dst-pane))
-                       t
-                       (format nil "~A must keep the split full on the cross axis" desc))
-                 (list cl-tmux::*dirty* t
-                       (format nil "~A must mark the model dirty" desc)))
-           :test #'eq))))))
+  (dolist (case *cmd-join-pane-before-cases*)
+    (%check-cmd-join-pane-before-case case)))
 
 (test cmd-join-pane-f-spans-the-full-window
   "join-pane -f makes the split span the full window on the split axis."
-  (dolist (case '((:h "-f on a horizontal split" pane-height window-height)
-                  (:v "-f on a vertical split"   pane-width  window-width)))
-    (destructuring-bind (direction desc pane-access window-access) case
-      (with-join-command-fixture (sess src-win src-pane dst-win dst-pane)
-        (declare (ignore src-win))
-        (let ((result (cl-tmux::%cmd-join-pane-arg
-                       sess
-                       (%join-command-args "-f" (if (eq direction :h) "-h" "-v")))))
-          (check-table
-           (list (list (not (null result)) t
-                       (format nil "~A must accept the -f layout flag" desc))
-                 (list (= (funcall window-access dst-win)
-                          (funcall pane-access src-pane)
-                          (funcall pane-access dst-pane))
-                       t
-                       (format nil "~A must span the full window on the split axis" desc))
-                 (list cl-tmux::*dirty* t
-                       (format nil "~A must mark the model dirty" desc)))
-           :test #'eq))))))
+  (dolist (case *cmd-join-pane-full-window-cases*)
+    (%check-cmd-join-pane-full-window-case case)))
 
 (test cmd-join-pane-l-honors-size-hint
   "join-pane -l applies the requested size hint on the split axis."
-  (dolist (case '((:h "-l 8 on a horizontal split" pane-width 9 8)
-                  (:v "-l 8 on a vertical split"   pane-height 5 8)))
-    (destructuring-bind (direction desc pane-access other-size expected-size) case
-      (with-join-command-fixture (sess src-win src-pane dst-win dst-pane)
-        (declare (ignore src-win))
-        (let ((result (cl-tmux::%cmd-join-pane-arg
-                       sess
-                       (%join-command-args "-l" "8" (if (eq direction :h) "-h" "-v")))))
-          (check-table
-           (list (list (not (null result)) t
-                       (format nil "~A must accept the -l layout flag" desc))
-                 (list (equal (sort (list (funcall pane-access src-pane)
-                                          (funcall pane-access dst-pane))
-                                    #'<)
-                              (sort (list expected-size other-size) #'<))
-                       t
-                       (format nil "~A must honor the requested size hint" desc))
-                 (list cl-tmux::*dirty* t
-                       (format nil "~A must mark the model dirty" desc)))
-           :test #'eq))))))
+  (dolist (case *cmd-join-pane-size-hint-cases*)
+    (%check-cmd-join-pane-size-hint-case case)))
 
 (test cmd-join-pane-same-window-is-noop
   "join-pane with src and dst the same window is a no-op (guarded, no crash)."
