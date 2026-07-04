@@ -208,20 +208,16 @@
         "(no messages)")))
 
 (defun %cmd-display-message (session args)
-  "display-message [-aClINpv] [-c client] [-d ms] [-F fmt] [-t target] <fmt...>:
+  "display-message [-l] [-d ms] [-F fmt] [-t target] <fmt...>:
    expand the space-joined ARGS (or -F fmt) as a format string against the target
    (or active) session/window/pane, then log and show the result.
-   tmux args \"aCc:d:lINpt:F:v\".
    -l: literal — show ARGS verbatim WITHOUT expanding #{...} format variables.
    -d ms: display duration in milliseconds (overrides display-time option).
    -F fmt: use FMT as the format template instead of the positional ARGS.
    -t target: build the format context from the target's session/window/pane.
-   -c client: target client (single-client standalone model: accepted).
-   -a: list format variables; -C/-I/-N/-p/-v: client/print/verbose control flags —
-       accepted; the standalone model shows the message in the overlay.
    Uses show-transient-overlay so it auto-dismisses after the configured duration."
-  (with-command-input (flags positionals args "dtcF"
-                             :allowed-flags '(#\a #\C #\c #\d #\l #\I #\N #\p #\t #\F #\v)
+  (with-command-input (flags positionals args "dtF"
+                             :allowed-flags '(#\d #\l #\t #\F)
                              :message "display-message: unsupported argument")
     (let* ((delay-ms   (%parse-flag-int flags #\d))
            (target-str (%flag-value flags #\t)))

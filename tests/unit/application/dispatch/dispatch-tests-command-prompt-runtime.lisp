@@ -104,20 +104,24 @@
       (assert-overlay-not-contains "0" *overlay*
                                    "display-message -l"))))
 
-(test display-message-accepts-tmux-flags
-  "display-message accepts the tmux client/stdout/verbose flags (tmux args
-   aCc:d:lINpt:F:v); the standalone model shows the expanded message in the
-   overlay rather than erroring."
+(test display-message-rejects-compatibility-flags
+  "display-message rejects the old client/stdout/verbose compatibility flags."
   (with-fake-session (s)
     (dolist (command '("display-message -c someclient #{session_name}"
+                       "display-message -a #{session_name}"
+                       "display-message -C #{session_name}"
+                       "display-message -I #{session_name}"
+                       "display-message -N #{session_name}"
                        "display-message -p #{session_name}"
                        "display-message -v #{session_name}"))
       (let ((*overlay* nil)
             (cl-tmux::*message-log* nil))
         (cl-tmux::%run-command-line s command)
-        (assert-overlay-not-contains "unsupported argument" *overlay* command)
-        (is (not (null cl-tmux::*message-log*))
-            "~A must add the expanded message to the log" command)))))
+        (assert-overlay-contains "display-message: unsupported argument"
+                                 *overlay*
+                                 command)
+        (is (null cl-tmux::*message-log*)
+            "~A must not add a message to the log" command)))))
 
 (test display-message-F-uses-format-flag
   "display-message -F fmt uses FMT as the template instead of the positional args."
