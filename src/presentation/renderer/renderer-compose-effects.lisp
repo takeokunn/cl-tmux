@@ -8,12 +8,24 @@
 
 ;;; ── Full-session render effects ─────────────────────────────────────────────
 
+(defparameter +visual-bell-audible-values+ '("off" "both")
+  "Canonical visual-bell values that still relay the audible BEL byte.")
+
+(defun %visual-bell-audible-p (visual-bell)
+  "Return whether VISUAL-BELL relays BEL, rejecting non-canonical values."
+  (unless (stringp visual-bell)
+    (error "Unsupported visual-bell value: ~S" visual-bell))
+  (cond
+    ((string-equal visual-bell "on") nil)
+    ((member visual-bell +visual-bell-audible-values+ :test #'string-equal) t)
+    (t (error "Unsupported visual-bell value: ~S" visual-bell))))
+
 (defun %emit-bell (buffer visual-bell)
-  "Write the audible BEL character to BUFFER unless VISUAL-BELL is \"on\"
-   (visual-only — tmux writes the bell for \"off\" and \"both\").  The visual
-   message overlay and the alert-bell hook are handled by the reader-thread
-   alert path (%mark-window-bell), decoupled from this relay decision."
-  (unless (and (stringp visual-bell) (string-equal visual-bell "on"))
+  "Write the audible BEL character to BUFFER for canonical audible values.
+   The visual message overlay and the alert-bell hook are handled by the
+   reader-thread alert path (%mark-window-bell), decoupled from this relay
+   decision."
+  (when (%visual-bell-audible-p visual-bell)
     (write-char (code-char 7) buffer)))
 
 (defun %render-bell-and-cursor (buffer active-pane)

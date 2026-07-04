@@ -224,7 +224,7 @@
                  ("current" nil "bell-action 'current': background BEL must be swallowed")
                  ("none"    nil "bell-action 'none': all BELs must be swallowed")))
     (destructuring-bind (bell-action expected-bell-p desc) row
-      (with-isolated-options ("bell-action" bell-action "visual-bell" nil "status" "off")
+      (with-isolated-options ("bell-action" bell-action "visual-bell" "off" "status" "off")
         (let* ((sess  (make-fake-session :nwindows 2))
                (win2  (second (cl-tmux/model:session-windows sess)))
                (pane2 (first (cl-tmux/model:window-panes win2))))
@@ -266,9 +266,8 @@
                     bell-action))))))))
 
 (test emit-bell-visual-bell-tri-state-table
-  "visual-bell off/both relay the audible BEL; on is visual-only (no BEL byte).
-   A legacy NIL value behaves as off."
-  (dolist (row '(("off" t) ("both" t) ("on" nil) (nil t)))
+  "visual-bell off/both relay the audible BEL; on is visual-only."
+  (dolist (row '(("off" t) ("both" t) ("on" nil)))
     (destructuring-bind (visual expect-bel-p) row
       (let ((out (with-output-to-string (s)
                    (cl-tmux/renderer::%emit-bell s visual))))
@@ -277,3 +276,10 @@
                 "visual-bell ~S must relay the audible BEL" visual)
             (is (null (find (code-char 7) out))
                 "visual-bell ~S must suppress the audible BEL" visual))))))
+
+(test emit-bell-rejects-non-canonical-visual-bell
+  "%emit-bell rejects non-canonical visual-bell values instead of treating them as off."
+  (dolist (visual '(nil "" "disabled"))
+    (signals error
+      (with-output-to-string (s)
+        (cl-tmux/renderer::%emit-bell s visual)))))
