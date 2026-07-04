@@ -379,7 +379,7 @@
 
 ;;; ── pane-neighbor (directional navigation) ───────────────────────────────────
 ;;;
-;;; Uses make-two-pane-h-window from tests/helpers-b.lisp.
+;;; Uses make-two-pane-h-window from tests/helpers-layout-fixtures.lisp.
 ;;; %two-pane-h-window was removed to eliminate the 81×24 two-pane fixture
 ;;; defined in two places with identical construction logic.
 

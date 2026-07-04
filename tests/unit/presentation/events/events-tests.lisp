@@ -226,7 +226,7 @@
 
 ;;; ── Mouse event dispatch tests ───────────────────────────────────────────────
 ;;;
-;;; The with-two-pane-mouse-session macro (defined in tests/helpers-b.lisp) builds
+;;; The with-two-pane-mouse-session macro (defined in tests/helpers-mouse-fixtures.lisp) builds
 ;;; the 2-pane h-split session, enables the 'mouse' option, and wraps the body
 ;;; in with-loop-state with appropriate *term-rows*/*term-cols* bindings.
 

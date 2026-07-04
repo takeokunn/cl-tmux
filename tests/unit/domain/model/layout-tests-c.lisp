@@ -132,7 +132,7 @@
 ;;; pane is sized to exactly that many cells along the outer axis; the rest share
 ;;; the remainder.
 
-;;; %three-pane-window is defined in tests/helpers-b.lisp.
+;;; %three-pane-window is defined in tests/helpers-layout-fixtures.lisp.
 
 (test main-layout-honours-main-pane-size
   "apply-named-layout :main-vertical sizes the main pane to main-pane-width;

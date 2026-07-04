@@ -97,7 +97,7 @@
 
 ;;; ── pane-neighbor tests ──────────────────────────────────────────────────────
 ;;;
-;;; Shared fixture: with-h-split-window and with-v-split-window from helpers-b.lisp
+;;; Shared fixture: with-h-split-window and with-v-split-window from helpers-layout-fixtures.lisp
 ;;; replace the previously triplicated inline 81x24 two-pane window construction.
 
 (test pane-neighbor-h-split

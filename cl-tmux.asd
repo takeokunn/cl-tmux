@@ -296,6 +296,8 @@
      (:file "helpers-options")
      (:file "helpers-process-fixtures")
      (:file "helpers-screen-assertions")
+     (:file "helpers-mouse-fixtures")
+     (:file "helpers-layout-fixtures")
      (:file "helpers-b")
      (:file "helpers-input-fixtures")
      (:file "helpers-pipe-fixtures")

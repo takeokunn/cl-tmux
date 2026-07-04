@@ -10,7 +10,7 @@
 (in-suite layout-tree-suite)
 
 ;;; ── Helpers ──────────────────────────────────────────────────────────────
-;;; tl-pane, tl-leaf, tl-window are defined in tests/helpers-b.lisp and available
+;;; tl-pane, tl-leaf, tl-window are defined in tests/helpers-layout-fixtures.lisp and available
 ;;; to all test files in the suite — no local redefinitions needed here.
 
 ;;; ── layout-leaves / find helpers ─────────────────────────────────────────

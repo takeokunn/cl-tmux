@@ -178,7 +178,7 @@
 ;;; make-fake-window builds panes/windows at 20x5 (each fake pane shares
 ;;; x=0 y=0 w=20 h=5, matching the window), so a single-pane fake window has
 ;;; the pane filling the whole window — every edge flag is "1".  For a real
-;;; split we use make-two-pane-h-window from helpers-b.lisp, which lays out:
+;;; split we use make-two-pane-h-window from helpers-layout-fixtures.lisp, which lays out:
 ;;;   window 81x24; p0 x=0 y=0 w=40 h=24; p1 x=41 y=0 w=40 h=24.
 ;;; So p0 touches top/bottom/left but NOT right (0+40=40 ≠ 81); p1 touches
 ;;; top/bottom/right (41+40=81) but NOT left (x=41 ≠ 0).
@@ -232,7 +232,7 @@
           "~S must be 1 for a single-pane window" spec))))
 
 (test format-pane-at-edges-horizontal-split
-  "For a laid-out horizontal split (make-two-pane-h-window from helpers-b.lisp: 81x24, p0 x=0 w=40,
+  "For a laid-out horizontal split (make-two-pane-h-window from helpers-layout-fixtures.lisp: 81x24, p0 x=0 w=40,
    p1 x=41 w=40), the left pane is NOT at the right edge and the right pane is
    NOT at the left edge, while both span the full height (at top and bottom)."
   (multiple-value-bind (win p0 p1) (make-two-pane-h-window)
@@ -253,7 +253,7 @@
 
 ;;; ── pane_at_top/bottom "0" branches + NIL-safe defaults ──────────────────────
 ;;;
-;;; with-v-split-window (helpers-b.lisp) lays out: window 80x21;
+;;; with-v-split-window (helpers-layout-fixtures.lisp) lays out: window 80x21;
 ;;;   p0 x=0 y=0  w=80 h=10 (top pane), p1 x=0 y=11 w=80 h=10 (bottom pane).
 ;;; Both span the full width (x=0, w=80=window width → at left and right).
 ;;; p0 is at top (y=0) but NOT at bottom (0+10=10 ≠ 21); p1 is NOT at top

@@ -113,7 +113,7 @@
 
 ;;; ── select-pane-left/right/up/down dispatch ─────────────────────────────────
 ;;;
-;;; These tests use the shared fixture macros from helpers-b.lisp instead of
+;;; These tests use the shared fixture macros from helpers-layout-fixtures.lisp instead of
 ;;; duplicating the setup inline.  with-two-pane-h-session and
 ;;; with-two-pane-v-session already encode the exact same geometry.
 
