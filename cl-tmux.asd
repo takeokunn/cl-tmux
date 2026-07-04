@@ -503,7 +503,8 @@
          (:file "commands-tests-b")  ; copy-mode line-start/end, high/middle/low, scroll noop guards, word motions, top/bottom — part IV
          (:file "commands-tests-k")  ; begin-line-selection, copy-end-of-line (D), copy-line (Y), search-forward/backward, wrap-search — part XI
          (:file "commands-tests-g")  ; send-keys, key-name, tokenize, kill-window-mru, join-pane — part V
-         (:file "commands-tests-h")  ; copy-mode-exit, break-pane, clear-history, rotate, find, next/prev-win — part VI
+         (:file "commands-tests-h")  ; copy-mode-exit, break-pane, clear-history, rotate — part VI
+         (:file "commands-window-navigation-tests")  ; find-window and next/previous/last-window command behavior
          (:file "commands-tests-c")  ; pipe-pane, virtual-row, timeout, scroll helpers, word/paragraph nav — part VII
          (:file "commands-tests-o")  ; selection-bounds scrollback, word/paragraph nav, scroll-middle — part XV
          (:file "commands-tests-j")  ; join-pane helpers, resize-pane up, noop guards, search, scroll, extract-chars, row-string — part X
