@@ -260,7 +260,9 @@
          :serial t
          :components
          ((:file "protocol-tests") ; octets/frame-header/round-trips/msg-command - part I
-          (:file "protocol-tests-b") ; read-u32, split-on-nul, encode/decode-command-payload, target-field-p - part II
+          (:file "protocol-tests-b") ; field/text codecs and basic command payload round-trips - part II
+          (:file "protocol-binary-layout-tests") ; integer encoders, frame layout, attach payload boundaries
+          (:file "protocol-command-payload-tests") ; target detection and encode-command-payload ordering
           (:file "transport-tests") ; round-trips, with-incoming-frame, %read-exact - part I
           (:file "transport-tests-b"))) ; validation, security boundaries, CPS-phase direct coverage - part II
         (:module "bootstrap"
