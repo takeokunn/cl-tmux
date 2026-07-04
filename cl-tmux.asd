@@ -295,7 +295,10 @@
      (:file "helpers-net-protocol")
      (:file "helpers-options")
      (:file "helpers-process-fixtures")
+     (:file "helpers-screen-assertions")
      (:file "helpers-b")
+     (:file "helpers-input-fixtures")
+     (:file "helpers-pipe-fixtures")
      (:module "unit"
       :serial t
       :components
