@@ -6,6 +6,8 @@
 
 (def-suite cl-tmux-suite :description "All cl-tmux tests")
 
+(def-suite server-suite :description "Server registry and bootstrap behavior")
+
 (defparameter *all-suites*
   '(terminal-suite layout-tree-suite layout-geometry-suite model-suite
     format-suite target-suite buffer-suite control-suite options-suite

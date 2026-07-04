@@ -92,3 +92,12 @@
         (is-true t ":respawn-window signalled at PTY level (expected in sandbox)")))))
 
 (test dispatch-select-layout-main-h-and-v-do-not-error
+  ":select-layout-main-h and :select-layout-main-v dispatch without error."
+  (with-two-pane-h-session (sess win p0 p1)
+    (is (and win p0 p1) "h fixture created")
+    (finishes (cl-tmux::dispatch-command sess :select-layout-main-h nil)
+              ":select-layout-main-h must not signal an error"))
+  (with-two-pane-v-session (sess win p0 p1)
+    (is (and win p0 p1) "v fixture created")
+    (finishes (cl-tmux::dispatch-command sess :select-layout-main-v nil)
+              ":select-layout-main-v must not signal an error")))

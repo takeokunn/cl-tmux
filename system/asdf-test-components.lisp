@@ -4,8 +4,9 @@
   '((:module "tests"
      :serial t
      :components
-     ((:file "package")
-      (:file "helpers-isolation")
+      ((:file "package")
+       (:file "suite")
+       (:file "helpers-isolation")
       (:file "helpers-terminal-builders")
       (:file "helpers-render-output")
       (:file "helpers-key-bindings")
@@ -247,7 +248,10 @@
           (:file "events-tests-c") ; app-cursor-keys, prompt-key, copy-mode nav, SGR, border-check - part III
           (:file "events-tests-e") ; status-col, SGR-nil, copy-nav, flush-esc, reset-repeat, mouse/key-table - part IV
           (:file "events-csi-u-tests") ; CSI-u extended key parsing and dispatch
-          (:file "events-tests-d") ; app-cursor-keys (ss3), new bindings, :mark-pane, root table, fn-keys - part V
+          (:file "events-tests-d-defaults") ; app-cursor, defaults, :mark-pane, root table - part V.a
+          (:file "events-tests-d-repeat") ; root repeat mode - part V.b
+          (:file "events-tests-d-csi-function") ; CSI function/navigation keys - part V.c
+          (:file "events-tests-d-ss3-prefix") ; SS3, prefix function keys, modified root keys - part V.d
           (:file "events-tests-g") ; select-layout-spread, new key bindings, choose-window, mouse-reporting, tmux defaults - part VII
           (:file "events-tests-i") ; copy-mode v-select, middle-cursor-jump, mouse X10, CSI-tilde outside mode, CSI-3byte - part IX
           (:file "events-tests-j") ; vi-normal-key dispatch, %dispatch-menu-key, %rename-from-osc-title - part X
@@ -336,17 +340,16 @@
       (:module "integration"
        :serial t
        :components
-       ((:file "net-tests")
-        (:file "server-multi-tests-support")
-        (:file "server-multi-tests-size")
-        (:file "server-multi-tests-message-dispatch")
-        (:file "server-multi-tests-forwarding")
-        (:file "server-multi-tests-loop")
+        ((:file "net-tests")
+         (:file "server-multi-tests-support")
+         (:file "server-multi-tests-size")
+         (:file "server-multi-tests-message-dispatch")
+         (:file "server-multi-tests-forwarding")
+         (:file "server-multi-tests-loop")
         (:file "server-multi-command-client-tests")
         (:file "pty-tests")
-        (:file "client-tests-support")
-        (:file "client-tests-frame-dispatch")
-        (:file "client-tests-startup-modes")
-        (:file "client-tests-command-client")
-        (:file "client-receive-tests")))
-      (:file "suite")))))
+         (:file "client-tests-support")
+         (:file "client-tests-frame-dispatch")
+         (:file "client-tests-startup-modes")
+         (:file "client-tests-command-client")
+         (:file "client-receive-tests")))))))

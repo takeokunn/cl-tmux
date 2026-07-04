@@ -37,20 +37,22 @@
                  ("last-pane -Z"         "last-pane -Z")))
     (destructuring-bind (command desc) row
       (with-two-pane-h-session (s win p0 p1)
-        (declare (ignore p1))
-        (let ((before-panes (copy-list (cl-tmux/model:window-panes win))))
+        (is (not (null p1)) "fixture creates a second pane")
+        (let (before-panes)
           (with-command-rejection-state (s
-                                         (progn
-                                           (cl-tmux/model:window-zoom-toggle win)
-                                           (cl-tmux::%run-command-line s command))
-                                         "unsupported argument"
-                                         desc)
+                                          (progn
+                                            (cl-tmux/model:window-zoom-toggle win)
+                                            (setf before-panes
+                                                  (copy-list (cl-tmux/model:window-panes win)))
+                                            (cl-tmux::%run-command-line s command))
+                                          "unsupported argument"
+                                          desc)
             (is (eq p0 (cl-tmux/model:window-active-pane win))
                 "~A must not change the active pane" desc)
             (is (equal before-panes (cl-tmux/model:window-panes win))
                 "~A must not reorder panes" desc)
             (is-true (cl-tmux/model:window-zoom-p win)
-                     "~A must leave zoom unchanged after rejection" desc))))))))
+                     "~A must leave zoom unchanged after rejection" desc)))))))
 
 (test keyboard-pane-navigation-pops-zoom-table
   "The interactive pane-navigation keyword handlers unzoom a zoomed window before

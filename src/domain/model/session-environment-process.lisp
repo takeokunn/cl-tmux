@@ -20,6 +20,26 @@
 
 ;;; ── Process-level POSIX environment helpers ──────────────────────────────────
 
+(defun process-environment-value (name)
+  "Return NAME's value from the live process environment, or NIL when unset."
+  (%assert-environment-variable-name name)
+  (ignore-errors (sb-ext:posix-getenv name)))
+
+(defun %process-environment-entry-name (entry)
+  "Return the NAME portion of a process environment ENTRY string."
+  (let ((eq-pos (position #\= entry)))
+    (when eq-pos
+      (subseq entry 0 eq-pos))))
+
+(defun process-environment-names ()
+  "Return sorted names from the live process environment."
+  (let (names)
+    (dolist (entry (ignore-errors (sb-ext:posix-environ)))
+      (let ((name (%process-environment-entry-name entry)))
+        (when name
+          (pushnew name names :test #'string=))))
+    (sort names #'string<)))
+
 (defun get-update-environment-vars ()
   "Return an alist of (name . value) for each variable in the update-environment
    option that is set in the current process environment.  Unset vars are omitted."

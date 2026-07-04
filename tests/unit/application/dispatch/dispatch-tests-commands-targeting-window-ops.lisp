@@ -83,7 +83,7 @@
           (is (equal src-before (session-windows src))
               "~A must not mutate the source window list" cmd)
           (is (equal dst-before (session-windows dst))
-              "~A must not mutate the destination window list" cmd)))))
+              "~A must not mutate the destination window list" cmd))))))
 
 (test run-command-line-link-window-selects-linked-window-by-default
   "'link-window -s 0 -t dst -k' (no -d) makes the linked window current in dst."

@@ -123,7 +123,7 @@
     (%feed-osc s "4;1;?")
     (is (string= (format nil "~C]4;1;rgb:ffff/0000/ffff~C\\" #\Escape #\Escape)
                  (first (cl-tmux/terminal/types:screen-response-queue s)))
-        "OSC 4 query must report the custom override, not palette index 1"))))
+        "OSC 4 query must report the custom override, not palette index 1")))
 
 (test osc-4-set-and-query-in-one-sequence
   "OSC 4 ; 1 ; rgb:... ; 1 ; ? both sets and then queries in one payload."
