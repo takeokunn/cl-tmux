@@ -218,34 +218,9 @@
                    "loaded file into named buffer"))
           (ignore-errors (delete-file path)))))))
 
-(test cmd-load-buffer-accepts-former-compat-flags
-  "load-buffer accepts tmux -t and -w compatibility flags."
-  (dolist (args '(("-w" "path")
-                  ("-t" "client" "-w" "path")))
-    (with-empty-buffers
-      (with-fake-session (s)
-        (let* ((label (format nil "cl-tmux-load-buffer-compat-~D-~D.txt"
-                              (get-universal-time)
-                              (random 1000000)))
-               (path (namestring (merge-pathnames label (uiop:temporary-directory))))
-               (args (append (butlast args) (list path))))
-          (unwind-protect
-               (progn
-                 (with-open-file (out path
-                                      :direction :output
-                                      :if-exists :supersede
-                                      :if-does-not-exist :create)
-                   (write-string "from file" out))
-                 (let ((*overlay* nil))
-                   (is (cl-tmux::%run-command-tokens s (cons "load-buffer" args))
-                       "~S is accepted" args)
-                   (is (string= "from file" (cl-tmux/buffer:get-paste-buffer 0))
-                       "~S loads the file into the paste buffer" args)))
-            (ignore-errors (delete-file path))))))))
-
 (test cmd-load-buffer-rejects-unsupported-arguments
   "load-buffer rejects unknown flags and extra positionals before loading."
-  (dolist (case '(:extra-arg :unknown-flag))
+  (dolist (case '(:extra-arg :unknown-flag :former-window-flag :former-target-flag))
     (with-empty-buffers
       (with-fake-session (s)
         (let* ((label (format nil "cl-tmux-load-buffer-reject-~D-~D.txt"
@@ -254,7 +229,9 @@
                (path (namestring (merge-pathnames label (uiop:temporary-directory))))
                (args (ecase case
                        (:extra-arg (list path "extra"))
-                       (:unknown-flag (list "-Z" path)))))
+                       (:unknown-flag (list "-Z" path))
+                       (:former-window-flag (list "-w" path))
+                       (:former-target-flag (list "-t" "client" path)))))
           (unwind-protect
                (progn
                 (with-open-file (out path

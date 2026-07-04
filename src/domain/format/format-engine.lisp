@@ -23,15 +23,13 @@
        (or (= (length mod) 1) (char= (char mod 1) #\/))))
 
 (defun %expand-timestamp-modifier (rest context out)
-  "#{t:...} — strftime modifier or #{t:session_last_attached}-style timestamp.
-   When REST resolves to a positive integer (CL universal-time) format that
-   timestamp; otherwise treat REST as a strftime format string for the current time."
+  "#{t:VARIABLE} formats a positive integer CL universal-time from VARIABLE.
+   Missing, empty, or non-timestamp values expand to the empty string."
   (let* ((looked-up (%lookup context (%variable-to-keyword rest)))
          (ts        (and (stringp looked-up) (plusp (length looked-up))
                          (cl-tmux::%parse-integer-or-nil looked-up :junk-allowed t))))
-    (if (and ts (plusp ts))
-        (write-string (%strftime-format-at "" ts) out)
-        (write-string (%strftime-format rest) out))))
+    (when (and ts (plusp ts))
+      (write-string (%strftime-format-at "" ts) out))))
 
 (defun %expand-match-modifier (mod rest context out)
   "#{m:pat,str} / #{m/r:..} / #{m/ri:..} — glob or regex match → \"1\" or \"0\"."
@@ -94,7 +92,7 @@
     ;; #{P:active,inactive} — pane list (no auto-separator)
     ((string= mod "P")
      (write-string (%expand-pane-iteration rest context) out))
-    ;; #{t:...} — strftime modifier or stored-timestamp lookup
+    ;; #{t:...} - stored-timestamp lookup
     ((string= mod "t")
      (%expand-timestamp-modifier rest context out))
     ;; #{m:pat,str} / #{m/r:..} / #{m/ri:..} — glob or regex match → "1" / "0"
@@ -305,7 +303,7 @@
    each call returns the next index, making the loop a pure iteration over steps.
 
    Supported specifiers:  #S #I #W #P #H ##  #{var}  #{?c,t,f}  #[sgr]  #(cmd)
-                          #{t:fmt} (strftime)  #{=N:var} #{=-N:var} (truncate)
+                          #{t:var} (timestamp)  #{=N:var} #{=-N:var} (truncate)
                           #{pN:var} #{p-N:var} (pad)  #{b:var} #{d:var} (path)
                           #{U:var} #{L:var} (case)  #{n:var} (length)
                           #{l:var} (literal — emit operand unexpanded)

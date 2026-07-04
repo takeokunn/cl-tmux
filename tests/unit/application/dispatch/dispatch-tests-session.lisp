@@ -1,7 +1,7 @@
 (in-package #:cl-tmux/test)
 
 ;;;; Copy-mode paging dispatch tests.
-;;;;  Continued in dispatch-tests-session-b.lisp (coverage: previously untested
+;;;;  Continued in dispatch-tests-client-session-control.lisp and related responsibility files (coverage: previously untested
 ;;;;  handlers, send-keys, capture-pane, paste-buffer) and
 ;;;;  dispatch-tests-session-c.lisp (options, session management, control mode).
 ;;;;  (dispatch-core.lisp, dispatch-commands-pane.lisp, commands-copy-mode.lisp)

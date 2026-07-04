@@ -1108,6 +1108,19 @@
      (with-temporary-posix-environment-variable (,name-var ,env-value)
        ,@body)))
 
+;;; ── Process env-var fixture macro ────────────────────────────────────────────
+;;;
+;;; The process-environment tests also repeat the same outer shape.  Keep the
+;;; per-test body focused on the assertion by hiding the temporary POSIX env
+;;; setup behind a tiny helper.
+
+(defmacro with-process-env-var ((name-var env-name env-value) &body body)
+  "Bind NAME-VAR to ENV-NAME and set ENV-NAME to ENV-VALUE for BODY.
+   Restores the original process environment entry after BODY exits."
+  `(let ((,name-var ,env-name))
+     (with-temporary-posix-environment-variable (,name-var ,env-value)
+       ,@body)))
+
 ;;; ── Generic fdefinition-swap fixture ────────────────────────────────────────
 ;;;
 ;;; Many CLI-dispatch tests (main-tests.lisp) replace one or more function

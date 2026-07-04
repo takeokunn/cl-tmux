@@ -160,23 +160,14 @@
   (let ((ctx (cl-tmux/format:format-context-from-session nil nil nil)))
     (is (string= "" (cl-tmux/format:expand-format "#{pane_current_path}" ctx)))))
 
-;;; ── New modifiers: #{t:strftime}, #{pN:var}, #{U:var}, #{L:var}, #{n:var}, #{l:var} ──
+;;; ── New modifiers: #{t:timestamp-var}, #{pN:var}, #{U:var}, #{L:var}, #{n:var}, #{l:var} ──
 
-(test format-modifier-strftime-table
-  "#{t:FORMAT} expands to the current time using the given strftime format."
-  (dolist (row '(("#{t:%H:%M}"     5  #\: 2 "HH:MM - 5 chars, colon at pos 2")
-                 ("#{t:%Y-%m-%d}"  10 #\- 4 "YYYY-MM-DD - 10 chars, dash at pos 4")))
-    (destructuring-bind (fmt-str expected-len sep-char sep-pos desc) row
-      (let ((result (fmt fmt-str)))
-        (is (= expected-len (length result))          "~A: length"    desc)
-        (is (char= sep-char (char result sep-pos))    "~A: separator" desc)))))
-
-(test format-modifier-strftime-default-empty-format
-  "#{t:} with empty format string uses the default strftime format."
-  (let ((result (fmt "#{t:}")))
-    ;; Default format is "%a %b %e %H:%M:%S %Z %Y" — reasonably long
-    (is (plusp (length result))
-        "#{t:} default format must produce a non-empty string, got ~S" result)))
+(test format-t-modifier-rejects-current-time-strftime
+  "#{t:...} is a timestamp-variable modifier only. Strftime syntax must not
+   route through the public format expander."
+  (dolist (spec '("#{t:%H:%M}" "#{t:%Y-%m-%d}" "#{t:}"))
+    (is (string= "" (fmt spec))
+        "~S must expand to the empty string" spec)))
 
 (test strftime-format-at-formats-given-timestamp
   "%strftime-format-at decodes a CL universal-time and formats it (round-trips
@@ -216,39 +207,22 @@
 
 (test format-t-modifier-formats-timestamp-variable
   "#{t:VAR} (bare variable, no %) formats VAR's value as a timestamp via the
-   default format — tmux semantics, e.g. #{t:session_last_attached}."
+   default format - tmux semantics, e.g. #{t:session_last_attached}."
   (let* ((ts       (encode-universal-time 0 0 12 1 1 2020))
          (expected (cl-tmux/format::%strftime-format-at "" ts)))
     (is (plusp (length expected)) "sanity: default format produces output")
     (is (string= expected (fmt "#{t:my_time}" :my-time (princ-to-string ts)))
         "#{t:my_time} formats the timestamp held by the variable")))
 
-(test format-t-modifier-legacy-percent-uses-current-time
-  "#{t:%Y} (operand contains %) still formats the CURRENT time, not a variable."
-  (let ((r (fmt "#{t:%Y}")))
-    (is (= 4 (length r)) "current year is 4 digits, got ~S" r)
-    (is (every #'digit-char-p r) "all digits, got ~S" r)))
-
-(test format-t-modifier-non-timestamp-falls-back-to-strftime
-  "#{t:VAR} where VAR does not resolve to an integer timestamp falls back to the
-   legacy strftime path (REST treated as a format string), preserving literal
-   pass-through."
-  (is (string= "window_name" (fmt "#{t:window_name}" :window-name "bash"))
-      "a non-timestamp variable operand passes through as literal strftime text")
-  (is (string= "missing_var" (fmt "#{t:missing_var}"))
-      "an unknown operand passes through literally (legacy strftime)"))
-
-(test format-modifier-strftime-literals-pass-through
-  "Non-% characters in the strftime format are passed through unchanged."
-  (let ((result (fmt "#{t:TIME:}")))
-    (is (string= "TIME:" result)
-        "Literal text with no %codes passes through, got ~S" result)))
-
-(test format-modifier-strftime-percent-escape
-  "%% in the strftime format produces a literal percent."
-  (let ((result (fmt "#{t:100%%}")))
-    (is (string= "100%" result)
-        "#{t:100%%} must produce '100%%', got ~S" result)))
+(test format-t-modifier-non-timestamp-is-empty
+  "#{t:VAR} only formats positive integer timestamps. Missing, empty, or
+   non-timestamp operands expand to the empty string."
+  (is (string= "" (fmt "#{t:window_name}" :window-name "bash"))
+      "a non-timestamp variable must not fall back to literal strftime text")
+  (is (string= "" (fmt "#{t:missing_var}"))
+      "an unknown operand must expand to empty")
+  (is (string= "" (fmt "#{t:%Y}"))
+      "strftime syntax must not be accepted through the timestamp modifier"))
 
 (test format-modifier-pad-table
   "#{p5:var} pads right; #{p-5:var} pads left; at-width values are unchanged; longer pass through."

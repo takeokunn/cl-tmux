@@ -45,7 +45,7 @@
     ("list-panes"           . "[-as] [-F format] [-f filter] [-t target]")
     ("list-sessions"        . "[-F format] [-f filter]")
     ("list-windows"         . "[-a] [-F format] [-f filter] [-t target-session]")
-    ("load-buffer"          . "[-b buffer-name] [-t target-client] path")
+    ("load-buffer"          . "[-b buffer-name] path")
     ("lock-client"          . "[-t target-client]")
     ("lock-server"          . "")
     ("lock-session"         . "[-at] [-t target-session]")

@@ -225,11 +225,10 @@
 (defun %cmd-load-buffer-arg (session args)
   "load-buffer [-b name] path: load PATH into a paste buffer.
    -b name stores the data under NAME; otherwise an automatic buffer name is
-   used. tmux also accepts -t target and -w for compatibility, so we parse
-   them even though the loader only persists the file contents here."
+   used."
   (declare (ignore session))
-  (with-command-input (flags positionals args "bt"
-                             :allowed-flags '(#\b #\t #\w)
+  (with-command-input (flags positionals args "b"
+                             :allowed-flags '(#\b)
                              :max-positionals 1
                              :message "load-buffer: unsupported argument")
     (let ((name (%buffer-name-from-flags flags))

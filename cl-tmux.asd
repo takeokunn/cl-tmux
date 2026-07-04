@@ -404,19 +404,46 @@
        (:module "application/dispatch"
         :serial t
         :components
-        ((:file "dispatch-tests")  ; core dispatch — part I (cyclic helpers, window/pane select, copy-mode, detach, prefix)
-         (:file "dispatch-tests-c")  ; core dispatch — part III (focus events window-switch, list-keys, select-pane, zoom, list-windows/sessions)
-         (:file "dispatch-tests-b")  ; core dispatch — part II (swap-pane, kill-pane-confirm, command-prompt, run-command-line, set-option)
-         (:file "dispatch-tests-d")  ; core dispatch — part IV (%cmd-set-option scope, side-effects, bind/unbind/rename, set-hook)
-         (:file "dispatch-tests-commands")  ; flag-parse, select-window/pane, kill, swap-window, source-file, move-window, if-shell-F, dispatch-named-command, show-messages — part I
+        ((:file "dispatch-suite-support")  ; dispatch-suite definition and shared support macros
+         (:file "dispatch-tests-core-navigation") ; core dispatch navigation helpers and window/pane select
+         (:file "dispatch-tests-window-rename-prompt")  ; rename-window prompt dispatch
+         (:file "dispatch-tests-copy-mode-send-keys")  ; copy-mode and send-keys -X dispatch
+         (:file "dispatch-tests-detach-kill-prefix")  ; detach, kill, and prefix routing
+         (:file "dispatch-tests-core-screen-helpers")  ; %active-screen, active window/pane, session/window helpers, overlay
+         (:file "dispatch-tests-core-command-runtime")  ; run-command-hooks, command table, handlers, target-context, window cycling helpers
+         (:file "dispatch-tests-c")  ; core dispatch — part V (focus events window-switch, list-keys, select-pane, zoom, list-windows/sessions)
+         (:file "dispatch-tests-pane-window-prefix")  ; pane/window/prefix dispatch: swap, confirm, send-prefix, paste-buffer
+         (:file "dispatch-tests-command-prompt-runtime")  ; command-prompt basic flow and display-message command-line runtime
+         (:file "dispatch-tests-option-command-line")  ; set-option command-line parsing and mutation
+         (:file "dispatch-tests-command-prompt-templates")  ; command-prompt templates, copy-mode source pane, focus behavior
+         (:file "dispatch-tests-option-scope-runtime")  ; set-option scope routing and runtime side effects
+         (:file "dispatch-tests-runtime-rename-respawn")  ; runtime bind/unbind, rename, and respawn
+         (:file "dispatch-tests-hooks-command-listing")  ; set-hook dispatch and list-commands rendering
+         (:file "dispatch-tests-commands-targeting")  ; flag parsing, select/kill/link/swap/move target commands, source-file
+         (:file "dispatch-tests-commands-shell-messages")  ; if-shell -F, named dispatch helper, show-messages
          (:file "dispatch-tests-commands-f")  ; display-message-logs, clock-mode, capture-pane, send-keys, choose-tree, confirm-before, paste-to-pane, format-tree-entry — part VI
-         (:file "dispatch-tests-commands-b")  ; synchronize, lock, last-window, show-options, respawn, pipe-pane, last-pane, format helpers, popup/menu — part II
+         (:file "dispatch-tests-state-option-navigation")  ; state toggles, show-options, last-window/last-pane, respawn/pipe-pane
+         (:file "dispatch-tests-list-format-helpers")  ; window/session list formatting, copy-mode-call, kill-result helper
+         (:file "dispatch-tests-popup-menu-runtime")  ; popup overlay, display-popup, display-menu runtime
+         (:file "dispatch-tests-session-presence")  ; has-session prompt and argument validation
+         (:file "dispatch-tests-pane-zoom-resize")  ; pane zoom, navigation, and resize dispatch cases
+         (:file "dispatch-tests-copy-mode-mouse-x")  ; copy-mode mouse entry, indicator, and -X prompt cases
+         (:file "dispatch-tests-display-menu-list-keys")  ; display-menu selection and list-keys notes
+         (:file "dispatch-tests-format-vars")  ; session/pane/window/client format variables
+         (:file "dispatch-tests-capture-terminal-rendering")  ; capture-pane and terminal line-size rendering
+         (:file "dispatch-tests-layout-winlink-order")  ; select-layout undo and per-session winlink ordering
          (:file "dispatch-tests-commands-e")  ; switch-client, last-session, new-session, kill-session, mark-pane, next-layout, bind/unbind-key, list/choose-buffer, wait-for — part V
          (:file "dispatch-tests-commands-c")  ; helper tests, on-submit paths, cyclic nav, break/join/run/if — part III
          (:file "dispatch-tests-commands-d")  ; has-session, find-window/select-window-prompt, move/swap-window, bind/unbind-key, kill-pane, split, new-window — part IV
          (:file "dispatch-tests-session")  ; copy-mode paging, with-active-pane, format-menu, named-layout, kill-result, command-dispatch-outcome — part I
-         (:file "dispatch-tests-session-e")  ; named-command table, select-layout, set-option -u, split-window, new-window, server-management, prefix, aliases — part V
-         (:file "dispatch-tests-session-b")  ; coverage: untested handlers, parse-flag-token, rename/new-window/split-window flags — part II
+         (:file "dispatch-tests-session-listing")  ; named-command table, select-layout, list clients/sessions/panes/windows, list-commands
+         (:file "dispatch-tests-session-window-lifecycle")  ; split-window, new-window, server commands, prefix, detached variants
+         (:file "dispatch-tests-session-environment-hooks")  ; hidden environment variables, client size, scoped hooks
+         (:file "dispatch-tests-client-session-control")  ; attach, detach, refresh, lock, and move-pane dispatch
+         (:file "dispatch-tests-window-resize-lifecycle")  ; resize-window, respawn-window, and select-layout dispatch
+         (:file "dispatch-tests-environment-set")  ; set-environment dispatch
+         (:file "dispatch-tests-environment-show-overlays")  ; show-environment and overlay dispatch
+         (:file "dispatch-tests-session-flag-targets")  ; flag parsers, target resolvers, new-window/split-window/new-session command cases
          (:file "dispatch-tests-session-b-tail")  ; layout names, target resolvers, display-message, new-session size parsing — part IIb
          (:file "dispatch-tests-session-c")  ; options, move-window, new-session -s/-A/-t, control-mode REPL — part III
          (:file "dispatch-tests-session-f")  ; new-session duplicate, grouped sessions, control-mode notifications, server-lifecycle, %output relay — part VI

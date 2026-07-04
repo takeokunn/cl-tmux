@@ -203,7 +203,7 @@
 (test process-environment-value-reads-live-process-environment
   "process-environment-value returns the value of a variable set in the real
    process environment, and NIL for one that has never been set."
-  (with-temporary-posix-environment-variable ("CLTMUX_TEST_PROC_ENV_VAL" "hello")
+  (with-process-env-var (name "CLTMUX_TEST_PROC_ENV_VAL" "hello")
     (is (string= "hello" (cl-tmux/model:process-environment-value "CLTMUX_TEST_PROC_ENV_VAL"))
         "must read back the value just set in the process environment"))
   (is (null (cl-tmux/model:process-environment-value "__CL_TMUX_DEFINITELY_UNSET_VAR__"))
@@ -212,7 +212,7 @@
 (test process-environment-names-includes-known-set-variable
   "process-environment-names returns a sorted list of names that includes a
    variable known to be set in the current process environment."
-  (with-temporary-posix-environment-variable ("CLTMUX_TEST_PROC_ENV_NAMES" "x")
+  (with-process-env-var (name "CLTMUX_TEST_PROC_ENV_NAMES" "x")
     (let ((names (cl-tmux/model:process-environment-names)))
       (is (listp names) "must return a list")
       (is-true (member "CLTMUX_TEST_PROC_ENV_NAMES" names :test #'string=)
@@ -225,7 +225,7 @@
 (test process-set-environment-writes-and-returns-value
   "process-set-environment writes NAME=VALUE into the real process environment
    (readable back via process-environment-value) and returns VALUE."
-  (with-temporary-posix-environment-variable ("CLTMUX_TEST_PROC_SET_ENV" nil)
+  (with-process-env-var (name "CLTMUX_TEST_PROC_SET_ENV" nil)
     (let ((result (cl-tmux/model:process-set-environment
                    "CLTMUX_TEST_PROC_SET_ENV" "written-value")))
       (is (string= "written-value" result)
@@ -237,7 +237,7 @@
 (test process-unset-environment-removes-value-and-returns-name
   "process-unset-environment removes a previously-set variable from the real
    process environment and returns NAME."
-  (with-temporary-posix-environment-variable ("CLTMUX_TEST_PROC_UNSET_ENV" "present")
+  (with-process-env-var (name "CLTMUX_TEST_PROC_UNSET_ENV" "present")
     (let ((result (cl-tmux/model:process-unset-environment "CLTMUX_TEST_PROC_UNSET_ENV")))
       (is (string= "CLTMUX_TEST_PROC_UNSET_ENV" result)
           "process-unset-environment must return NAME")

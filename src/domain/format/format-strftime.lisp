@@ -1,6 +1,6 @@
 (in-package #:cl-tmux/format)
 
-;;; -- Strftime support (#{t:format}) -----------------------------------------
+;;; -- Strftime support --------------------------------------------------------
 ;;;
 ;;; %strftime-letter-p and the strftime formatting engine.  Loaded before
 ;;; format.lisp so %expand-step can call %strftime-letter-p and %strftime-format
@@ -14,13 +14,13 @@
                 :test #'char=)))
 
 
-;;; ── Strftime support (#{t:format}) ──────────────────────────────────────────
+;;; Strftime support
 ;;;
-;;; #{t:fmt} formats the CURRENT local time using strftime-style codes in FMT.
+;;; %strftime-format formats the CURRENT local time using strftime-style codes in FMT.
 ;;; Common codes: %Y (year) %m (month) %d (day) %H (hour) %M (min) %S (sec)
 ;;;               %T (HH:MM:SS) %R (HH:MM) %F (YYYY-MM-DD) %% (literal %)
-;;; FMT is the REST part of the #{t:...} expression (after the first colon),
-;;; so #{t:%H:%M} gives the current time as "15:30" without a variable lookup.
+;;; Public #{t:...} expansion is timestamp-variable-only; it no longer falls
+;;; back to this current-time formatter.
 
 (defconstant +weekday-names+
     (if (boundp '+weekday-names+)
@@ -152,4 +152,3 @@
         (declare (ignore dst tz))
         (%strftime-format-decoded fmt sec min hour day month year weekday))
       ""))
-
