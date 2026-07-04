@@ -293,6 +293,8 @@
      (:file "helpers-pty-runtime")
      (:file "helpers-network-listener")
      (:file "helpers-net-protocol")
+     (:file "helpers-options")
+     (:file "helpers-process-fixtures")
      (:file "helpers-b")
      (:module "unit"
       :serial t

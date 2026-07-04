@@ -1,7 +1,7 @@
 (in-package #:cl-tmux/test)
 
-;;;; Test helpers — part B: higher-level assertion DSL, layout-tree builders,
-;;;; 2-pane fixtures, session fixtures, options isolation, renderer/transport helpers.
+;;;; Test helpers - part B: higher-level assertion DSL, layout-tree builders,
+;;;; 2-pane fixtures, session fixtures, renderer helpers, and loop fixtures.
 
 ;;; ── Higher-level screen assertion DSL ──────────────────────────────────────
 ;;;
@@ -388,87 +388,6 @@
        (with-loop-state
          (let ((cl-tmux::*term-rows* 25) (cl-tmux::*term-cols* 40))
            ,@body)))))
-
-;;; ---- Options fixture macros --------------------------------------------------
-;;;
-;;; These macros are defined here (not in options-tests.lisp) so that
-;;; config-directives-tests and any future test file can reuse them without
-;;; a fragile cross-file dependency.
-
-(defmacro with-fresh-options (&body body)
-  "Run BODY with empty, isolated option hash tables (no registered specs).
-   Neither *global-options* nor *option-registry* carry state from load time."
-  `(let ((cl-tmux/options:*global-options*   (make-hash-table :test #'equal))
-         (cl-tmux/options:*option-registry*  (make-hash-table :test #'equal)))
-     ,@body))
-
-(defmacro with-fresh-global-options (&body body)
-  "Run BODY with a copy of *global-options* so mutations do not leak.
-   *option-registry* is shared so type coercion continues to work."
-  `(let ((cl-tmux/options:*global-options*
-          (let ((ht (make-hash-table :test #'equal)))
-            (maphash (lambda (k v) (setf (gethash k ht) v))
-                     cl-tmux/options:*global-options*)
-            ht)))
-     ,@body))
-
-(defmacro with-single-option ((name value) &body body)
-  "Run BODY with *global-options* bound to a hash-table containing only NAME → VALUE."
-  `(let ((cl-tmux/options:*global-options*
-          (let ((ht (make-hash-table :test #'equal)))
-            (setf (gethash ,name ht) ,value)
-            ht)))
-     ,@body))
-
-(defmacro with-fresh-server-options (&body body)
-  "Run BODY with an empty, isolated *server-options* hash-table.
-   Changes do not leak back to the real *server-options* table."
-  `(let ((cl-tmux/options:*server-options* (make-hash-table :test #'equal))
-         (cl-tmux/options:*server-option-registry* cl-tmux/options:*server-option-registry*))
-     ,@body))
-
-(defmacro with-single-server-option ((name value) &body body)
-  "Run BODY with *server-options* bound to a hash-table containing only NAME → VALUE."
-  `(let ((cl-tmux/options:*server-options*
-          (let ((ht (make-hash-table :test #'equal)))
-            (setf (gethash ,name ht) ,value)
-            ht)))
-     ,@body))
-
-;;; ---- Options isolation --------------------------------------------------------
-
-(defmacro with-isolated-options ((&rest overrides) &body body)
-  "Run BODY with a fresh copy of *global-options*, applying OVERRIDES.
-   OVERRIDES is a flat list of alternating option-name and value pairs.
-   Changes do not leak back to the real *global-options* table."
-  (let ((ht-sym (gensym "HT")))
-    `(let ((cl-tmux/options:*global-options*
-            (let ((,ht-sym (make-hash-table :test #'equal)))
-              (maphash (lambda (k v) (setf (gethash k ,ht-sym) v))
-                       cl-tmux/options:*global-options*)
-              ,@(loop for (k v) on overrides by #'cddr
-                      collect `(setf (gethash ,k ,ht-sym) ,v))
-              ,ht-sym)))
-       ,@body)))
-
-(defmacro assert-set-directive-option-state (form option expected
-                                             &key (context "set directive")
-                                                  server-p
-                                                  (present-p t))
-  "Apply FORM and assert that OPTION is present or absent in the selected scope."
-  (let ((actual-sym (gensym "ACTUAL")))
-    `(progn
-       (assert-config-directive-applied ,form ,context)
-       (let ((,actual-sym ,(if server-p
-                               `(cl-tmux/options:get-server-option ,option nil)
-                               `(cl-tmux/options:get-option ,option nil))))
-         ,(if present-p
-              `(is (equal ,expected ,actual-sym)
-                   "~A must store ~S in ~A options, got ~S"
-                   ,context ,expected ,(if server-p "server" "global") ,actual-sym)
-              `(is (null ,actual-sym)
-                   "~A must remove ~S from ~A options, got ~S"
-                   ,context ,option ,(if server-p "server" "global") ,actual-sym))))))
 
 ;;; ── Renderer pane fixture helpers ────────────────────────────────────────────
 ;;;
@@ -976,58 +895,3 @@
     (window-select-pane win pane)
     (session-select-window sess win)
     (values sess win pane)))
-
-;;; ── Session + env-var fixture macro ──────────────────────────────────────────
-;;;
-;;; Three session-environment-value tests share the same outer shape:
-;;;   (let ((sess ...) (name ...))
-;;;     (with-temporary-posix-environment-variable (name "from-process")
-;;;       <body using sess and name>))
-;;; with-session-and-env-var encodes that pattern once.
-
-(defmacro with-session-and-env-var ((sess-var name-var env-name env-value) &body body)
-  "Bind SESS-VAR to a fresh empty session and NAME-VAR to ENV-NAME.
-   Sets ENV-NAME to ENV-VALUE in the real process environment for the duration
-   of BODY, then restores the old value (or unsets it if it was absent).
-   Uses with-temporary-posix-environment-variable for POSIX isolation."
-  `(let ((,sess-var (make-session :id 1 :name "s"))
-         (,name-var ,env-name))
-     (with-temporary-posix-environment-variable (,name-var ,env-value)
-       ,@body)))
-
-;;; ── Process env-var fixture macro ────────────────────────────────────────────
-;;;
-;;; The process-environment tests also repeat the same outer shape.  Keep the
-;;; per-test body focused on the assertion by hiding the temporary POSIX env
-;;; setup behind a tiny helper.
-
-(defmacro with-process-env-var ((name-var env-name env-value) &body body)
-  "Bind NAME-VAR to ENV-NAME and set ENV-NAME to ENV-VALUE for BODY.
-   Restores the original process environment entry after BODY exits."
-  `(let ((,name-var ,env-name))
-     (with-temporary-posix-environment-variable (,name-var ,env-value)
-       ,@body)))
-
-;;; ── Generic fdefinition-swap fixture ────────────────────────────────────────
-;;;
-;;; Many CLI-dispatch tests (main-tests.lisp) replace one or more function
-;;; cells with a recording stub for the duration of a test, then restore the
-;;; originals via unwind-protect.  with-stubbed-fdefinition generalizes that
-;;; save/swap/restore scaffold to an arbitrary number of (symbol stub-form)
-;;; pairs, so call sites no longer hand-roll the let/unwind-protect/setf dance.
-
-(defmacro with-stubbed-fdefinition ((&rest bindings) &body body)
-  "Replace the function cell of each SYMBOL in BINDINGS with its STUB-FORM for
-   the extent of BODY, restoring every original definition afterwards even if
-   BODY signals.  Each element of BINDINGS is (symbol stub-form)."
-  (let ((saved (loop for (symbol) in bindings
-                     collect (list symbol (gensym (format nil "ORIG-~A" symbol))))))
-    `(let ,(loop for (symbol orig-var) in saved
-                collect `(,orig-var (fdefinition ',symbol)))
-       (unwind-protect
-            (progn
-              ,@(loop for (symbol stub-form) in bindings
-                     collect `(setf (fdefinition ',symbol) ,stub-form))
-              ,@body)
-         ,@(loop for (symbol orig-var) in saved
-                collect `(setf (fdefinition ',symbol) ,orig-var))))))
