@@ -171,60 +171,75 @@
 ;;; (session_last), else the previous window by index, wrapping to the highest id
 ;;; (session_previous).  Verified against tmux source (session.c) via deepwiki.
 
-(test window-after-kill-prefers-mru
-  "The last-used (MRU) window — strictly greatest positive last-active-time — is
-   selected first, regardless of id distance (tmux session_last)."
-  (let ((w0 (make-window :id 0 :name "a" :width 20 :height 5 :panes nil
-                         :last-active-time 100))
-        (w3 (make-window :id 3 :name "b" :width 20 :height 5 :panes nil
-                         :last-active-time 300))
-        (w7 (make-window :id 7 :name "c" :width 20 :height 5 :panes nil
-                         :last-active-time 200)))
-    (is (eq w3 (cl-tmux/commands::%window-after-kill (list w0 w3 w7) 5))
-        "MRU window (w3, latest last-active-time) wins over id distance")))
+(defun %make-window-after-kill-window (spec)
+  (destructuring-bind (id &optional (last-active-time 0)) spec
+    (make-window :id id
+                 :name (format nil "w~D" id)
+                 :width 20
+                 :height 5
+                 :panes nil
+                 :last-active-time last-active-time)))
 
-(test window-after-kill-previous-by-index-without-mru
-  "With no focus history (all timestamps 0), falls back to the previous window by
-   index: the greatest id strictly less than the killed id (tmux session_previous)."
-  (let ((w1 (make-window :id 1 :name "a" :width 20 :height 5 :panes nil))
-        (w3 (make-window :id 3 :name "b" :width 20 :height 5 :panes nil))
-        (w8 (make-window :id 8 :name "c" :width 20 :height 5 :panes nil)))
-    (is (eq w3 (cl-tmux/commands::%window-after-kill (list w1 w3 w8) 5))
-        "picks w3 (greatest id < 5)")))
+(defun %window-after-kill-case-values (window-specs killed-id expected-id)
+  (let* ((windows (mapcar #'%make-window-after-kill-window window-specs))
+         (expected (find expected-id windows :key #'window-id)))
+    (values (cl-tmux/commands::%window-after-kill windows killed-id)
+            expected)))
 
-(test window-after-kill-differs-from-old-nearest
-  "Regression: the OLD numerically-nearest rule broke ties toward the HIGHER id.
-   killed-id=2, remaining {1,3}, no MRU: tmux picks the PREVIOUS (w1); the old
-   %nearest-window wrongly picked w3 (equidistant tie → higher id)."
-  (let ((w1 (make-window :id 1 :name "a" :width 20 :height 5 :panes nil))
-        (w3 (make-window :id 3 :name "b" :width 20 :height 5 :panes nil)))
-    (is (eq w1 (cl-tmux/commands::%window-after-kill (list w1 w3) 2))
-        "previous-by-index picks w1; old %nearest-window picked w3")))
+(defmacro define-window-after-kill-cases (&body cases)
+  `(progn
+     ,@(loop for (name doc window-specs killed-id expected-id desc) in cases
+             collect
+             `(test ,name
+                ,doc
+                (multiple-value-bind (actual expected)
+                    (%window-after-kill-case-values ',window-specs
+                                                    ,killed-id
+                                                    ,expected-id)
+                  (is (eq expected actual) ,desc))))))
 
-(test window-after-kill-previous-wraps-to-highest
-  "When no window has a lower id than the killed one, previous-by-index wraps to
-   the HIGHEST id (tmux session_previous wrap)."
-  (let ((w2 (make-window :id 2 :name "a" :width 20 :height 5 :panes nil))
-        (w5 (make-window :id 5 :name "b" :width 20 :height 5 :panes nil))
-        (w8 (make-window :id 8 :name "c" :width 20 :height 5 :panes nil)))
-    (is (eq w8 (cl-tmux/commands::%window-after-kill (list w2 w5 w8) 0))
-        "wraps to the highest-id window (w8) when killed was the lowest")))
-
-(test window-after-kill-mru-tie-falls-back-to-index
-  "A TIE at the greatest last-active-time is no unambiguous last-used window (like
-   tmux's empty lastw) → fall back to previous-by-index."
-  (let ((w1 (make-window :id 1 :name "a" :width 20 :height 5 :panes nil
-                         :last-active-time 50))
-        (w4 (make-window :id 4 :name "b" :width 20 :height 5 :panes nil
-                         :last-active-time 50)))
-    (is (eq w1 (cl-tmux/commands::%window-after-kill (list w1 w4) 3))
-        "tie at max time → previous-by-index picks w1 (greatest id < 3)")))
-
-(test window-after-kill-single-window
-  "A single remaining window is always selected."
-  (let ((w2 (make-window :id 2 :name "a" :width 20 :height 5 :panes nil)))
-    (is (eq w2 (cl-tmux/commands::%window-after-kill (list w2) 99))
-        "the sole remaining window is selected regardless of killed id")))
+(define-window-after-kill-cases
+  (window-after-kill-prefers-mru
+   "The last-used (MRU) window -- strictly greatest positive last-active-time --
+    is selected first, regardless of id distance (tmux session_last)."
+   ((0 100) (3 300) (7 200))
+   5
+   3
+   "MRU window (w3, latest last-active-time) wins over id distance")
+  (window-after-kill-previous-by-index-without-mru
+   "With no focus history (all timestamps 0), falls back to the previous window
+    by index: the greatest id strictly less than the killed id."
+   ((1) (3) (8))
+   5
+   3
+   "picks w3 (greatest id < 5)")
+  (window-after-kill-differs-from-old-nearest
+   "Regression: killed-id=2, remaining {1,3}, no MRU: tmux picks the PREVIOUS
+    (w1), not the old numerically-nearest higher-id tie."
+   ((1) (3))
+   2
+   1
+   "previous-by-index picks w1; old %nearest-window picked w3")
+  (window-after-kill-previous-wraps-to-highest
+   "When no window has a lower id than the killed one, previous-by-index wraps
+    to the HIGHEST id (tmux session_previous wrap)."
+   ((2) (5) (8))
+   0
+   8
+   "wraps to the highest-id window (w8) when killed was the lowest")
+  (window-after-kill-mru-tie-falls-back-to-index
+   "A TIE at the greatest last-active-time is no unambiguous last-used window,
+    so the selection falls back to previous-by-index."
+   ((1 50) (4 50))
+   3
+   1
+   "tie at max time -> previous-by-index picks w1 (greatest id < 3)")
+  (window-after-kill-single-window
+   "A single remaining window is always selected."
+   ((2))
+   99
+   2
+   "the sole remaining window is selected regardless of killed id"))
 
 ;;; ── %copy-mode-find-forward / %copy-mode-find-backward ──────────────────────
 
