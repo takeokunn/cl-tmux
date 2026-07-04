@@ -278,13 +278,16 @@
        (:file "events-mouse-status") ; status bar mouse handling
        (:file "events-mouse")   ; mouse event dispatch
        (:file "events-overlay-pager") ; overlay pager escape handler
+       (:file "events-key-names") ; arrow/key-name fact tables and CSI-u parsing
+       (:file "events-key-bindings") ; key-table lookup and binding execution
        (:file "events-keystroke-escape")  ; escape decoder coordinator + CSI-u helpers
        (:file "events-keystroke-escape-mouse") ; X10/SGR mouse escape parsing
        (:file "events-keystroke-escape-prompt") ; prompt-local ESC sequences
        (:file "events-keystroke-escape-keys") ; SS3 / CSI-tilde key-name resolution
        (:file "events-keystroke")          ; CPS state functions: ground-state, after-prefix-state
        (:file "events-copy-mode-dispatch") ; define-copy-mode-vi-rules macro + %dispatch-copy-mode-byte
-       (:file "events-keystroke-keys")    ; arrow-key table, modifier/CSI-u helpers, %make-prefix-csi-k
+       (:file "events-prefix-csi-continuation") ; post-prefix CSI/SS3 CPS continuation
+       (:file "events-keystroke-repeat-states") ; prefix/root repeat CPS states
        (:file "events-loop-timers") ; CPS process-byte + escape/repeat timer plumbing + synchronize-panes
        (:file "events-loop")))
      (:module "bootstrap-server"
