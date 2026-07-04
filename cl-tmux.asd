@@ -568,6 +568,7 @@
       :components
       ((:file "net-tests")
        (:file "server-multi-tests")
+       (:file "server-multi-command-client-tests")
        (:file "pty-tests")
        (:file "client-tests")))
      (:file "suite"))))
