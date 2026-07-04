@@ -60,7 +60,8 @@
           (:file "csi-tests-b") ; ECH/DSR/ich-dch/decstbm/execute-csi-direct/%csi-decstbm-params - part II
           (:file "csi-tests-c") ; csi-unknown-sequences/DECOM/cup-row/enqueue/XTPUSHTITLE/DEC-rect - part III
           (:file "parser-tests") ; utf8/special/OSC/ESC-hash/private/dec-pm - part I
-          (:file "parser-tests-b") ; combining-chars/ACS/dcs-parsing/xtgettcap/decrqss/ground-state/direct-dcs/direct-osc - part II
+          (:file "parser-tests-b") ; combining-chars/ACS/dcs-parsing/xtgettcap/decrqss - part II
+          (:file "parser-control-state-tests") ; ground-state/escape-state/direct-dcs/G2-G3 shifts
           (:file "parser-tests-d") ; osc-dispatch-edge-cases/osc52/osc7/parser-suite/base64/csi-colon - part IV
           (:file "parser-tests-c") ; basic-text, inline-predicates, CPS state functions, define-state - part III
           (:file "emulator-tests")))
