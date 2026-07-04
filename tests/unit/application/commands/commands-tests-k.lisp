@@ -82,173 +82,153 @@
 
 ;;; ── copy-mode-search-forward / search-backward ──────────────────────────────
 
-(test copy-mode-search-forward-finds-term
-  "copy-mode-search-forward moves cursor to the first match after current position."
-  (let ((s (make-screen 30 5)))
-    (feed s "abc def abc")
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
-    (cl-tmux/commands::copy-mode-search-forward s "abc")
-    ;; First search from col 1 onward should find "abc" at col 8
-    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "search-forward must find second 'abc' at col 8 (got ~D)"
-        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
+(defun %check-copy-mode-search-expectations (screen expectations)
+  (dolist (expectation expectations)
+    (destructuring-bind (kind expected desc) expectation
+      (ecase kind
+        (:cursor
+         (is (equal expected (cl-tmux/terminal/types:screen-copy-cursor screen))
+             "~A" desc))
+        (:cursor-col
+         (is (= expected (cdr (cl-tmux/terminal/types:screen-copy-cursor screen)))
+             "~A (got ~D)"
+             desc
+             (cdr (cl-tmux/terminal/types:screen-copy-cursor screen))))
+        (:offset
+         (is (= expected (cl-tmux/terminal/types:screen-copy-offset screen))
+             "~A (got ~D)"
+             desc
+             (cl-tmux/terminal/types:screen-copy-offset screen)))
+        (:search-term
+         (is (string= expected (cl-tmux/terminal/types:screen-copy-search-term screen))
+             "~A" desc))))))
 
-(test copy-mode-search-forward-saves-term
-  "copy-mode-search-forward saves the search term for n/N repeats."
-  (let ((s (make-screen 30 5)))
-    (feed s "foo bar foo")
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
-    (cl-tmux/commands::copy-mode-search-forward s "foo")
-    (is (string= "foo" (cl-tmux/terminal/types:screen-copy-search-term s))
-        "search term must be saved after search-forward")))
+(defmacro define-copy-mode-search-cases (&body cases)
+  `(progn
+     ,@(loop for case in cases
+             for name = (first case)
+             for doc = (second case)
+             for options = (cddr case)
+             for width = (or (getf options :width) 30)
+             for height = (or (getf options :height) 5)
+             for fixture = (getf options :fixture)
+             for cursor = (getf options :cursor)
+             for action = (getf options :action)
+             for expectations = (getf options :expectations)
+             for wrap-search = (getf options :wrap-search)
+             for body = `(let ((s (make-screen ,width ,height)))
+                           ,fixture
+                           (cl-tmux/commands::copy-mode-enter s)
+                           ,@(when cursor
+                               `((setf (cl-tmux/terminal/types:screen-copy-cursor s)
+                                       ,cursor)))
+                           ,action
+                           (%check-copy-mode-search-expectations s ',expectations))
+             collect
+             `(test ,name
+                ,doc
+                ,(if (eq wrap-search :off)
+                     `(with-isolated-options ("wrap-search" nil)
+                        ,body)
+                     body)))))
 
-(test copy-mode-search-backward-finds-term
-  "copy-mode-search-backward moves cursor to the nearest match before current position."
-  (let ((s (make-screen 30 5)))
-    (feed s "abc def abc")
-    (cl-tmux/commands::copy-mode-enter s)
-    ;; Start cursor at col 11 (past the end of second "abc" at cols 8-10).
-    ;; The backward scan uses end-col=11 for row 0, so positions 0..10 are
-    ;; eligible.  The rightmost match before col 11 is the second "abc" at col 8.
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 11))
-    (cl-tmux/commands::copy-mode-search-backward s "abc")
-    ;; Search backward should find second "abc" at col 8 (nearest match before col 11)
-    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "search-backward must find 'abc' at col 8 (nearest before col 11) (got ~D)"
-        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
-
-(test copy-mode-search-forward-regex-dot
-  "search-forward treats the term as a regex: 'a.c' matches 'abc'."
-  (let ((s (make-screen 30 5)))
-    (feed s "xy abc z")
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
-    (cl-tmux/commands::copy-mode-search-forward s "a.c")
-    (is (= 3 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "regex a.c must match 'abc' at col 3 (got ~D)"
-        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
-
-(test copy-mode-search-forward-regex-char-class
-  "search-forward regex character class '[0-9]+' finds the first digit run."
-  (let ((s (make-screen 30 5)))
-    (feed s "abc 123 def")
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
-    (cl-tmux/commands::copy-mode-search-forward s "[0-9]+")
-    (is (= 4 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "regex [0-9]+ must match '123' starting at col 4 (got ~D)"
-        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
-
-(test copy-mode-search-invalid-regex-falls-back-to-literal
-  "An invalid regex (unbalanced paren) falls back to a literal substring search,
-   so search terms with regex metacharacters still work."
-  (let ((s (make-screen 30 5)))
-    (feed s "a (b) c")
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
-    (cl-tmux/commands::copy-mode-search-forward s "(")
-    (is (= 2 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "literal '(' must be found at col 2 (got ~D)"
-        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
-
-(test copy-mode-search-forward-word-searches-literal-word
-  "copy-mode-search-forward-word searches for the literal word under the cursor."
-  (let ((s (make-screen 30 5)))
-    (feed s "xx a.b aXb a.b")
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 3))
-    (cl-tmux/commands::copy-mode-search-forward-word s)
-    (is (= 11 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "forward word search must skip regex-like text and land on the next literal match")
-    (is (string= "a\\.b" (cl-tmux/terminal/types:screen-copy-search-term s))
-        "forward word search must save the escaped literal term")))
-
-(test copy-mode-search-backward-word-searches-literal-word
-  "copy-mode-search-backward-word searches for the literal word under the cursor."
-  (let ((s (make-screen 30 5)))
-    (feed s "xx a.b aXb a.b")
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 12))
-    (cl-tmux/commands::copy-mode-search-backward-word s)
-    (is (= 11 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "backward word search must land on the nearest literal match before the cursor")
-    (is (string= "a\\.b" (cl-tmux/terminal/types:screen-copy-search-term s))
-        "backward word search must save the escaped literal term")))
+(define-copy-mode-search-cases
+  (copy-mode-search-forward-finds-term
+   "copy-mode-search-forward moves cursor to the first match after current position."
+   :fixture (feed s "abc def abc")
+   :cursor (cons 0 0)
+   :action (cl-tmux/commands::copy-mode-search-forward s "abc")
+   :expectations ((:cursor-col 8 "search-forward must find second 'abc' at col 8")))
+  (copy-mode-search-forward-saves-term
+   "copy-mode-search-forward saves the search term for n/N repeats."
+   :fixture (feed s "foo bar foo")
+   :cursor (cons 0 0)
+   :action (cl-tmux/commands::copy-mode-search-forward s "foo")
+   :expectations ((:search-term "foo" "search term must be saved after search-forward")))
+  (copy-mode-search-backward-finds-term
+   "copy-mode-search-backward moves cursor to the nearest match before current position."
+   :fixture (feed s "abc def abc")
+   :cursor (cons 0 11)
+   :action (cl-tmux/commands::copy-mode-search-backward s "abc")
+   :expectations ((:cursor-col 8 "search-backward must find 'abc' at col 8")))
+  (copy-mode-search-forward-regex-dot
+   "search-forward treats the term as a regex: 'a.c' matches 'abc'."
+   :fixture (feed s "xy abc z")
+   :cursor (cons 0 0)
+   :action (cl-tmux/commands::copy-mode-search-forward s "a.c")
+   :expectations ((:cursor-col 3 "regex a.c must match 'abc' at col 3")))
+  (copy-mode-search-forward-regex-char-class
+   "search-forward regex character class '[0-9]+' finds the first digit run."
+   :fixture (feed s "abc 123 def")
+   :cursor (cons 0 0)
+   :action (cl-tmux/commands::copy-mode-search-forward s "[0-9]+")
+   :expectations ((:cursor-col 4 "regex [0-9]+ must match '123' starting at col 4")))
+  (copy-mode-search-invalid-regex-falls-back-to-literal
+   "An invalid regex falls back to a literal substring search."
+   :fixture (feed s "a (b) c")
+   :cursor (cons 0 0)
+   :action (cl-tmux/commands::copy-mode-search-forward s "(")
+   :expectations ((:cursor-col 2 "literal '(' must be found at col 2")))
+  (copy-mode-search-forward-word-searches-literal-word
+   "copy-mode-search-forward-word searches for the literal word under the cursor."
+   :fixture (feed s "xx a.b aXb a.b")
+   :cursor (cons 0 3)
+   :action (cl-tmux/commands::copy-mode-search-forward-word s)
+   :expectations ((:cursor-col 11 "forward word search must land on the next literal match")
+                  (:search-term "a\\.b" "forward word search must save the escaped literal term")))
+  (copy-mode-search-backward-word-searches-literal-word
+   "copy-mode-search-backward-word searches for the literal word under the cursor."
+   :fixture (feed s "xx a.b aXb a.b")
+   :cursor (cons 0 12)
+   :action (cl-tmux/commands::copy-mode-search-backward-word s)
+   :expectations ((:cursor-col 11 "backward word search must land on the nearest literal match")
+                  (:search-term "a\\.b" "backward word search must save the escaped literal term"))))
 
 ;;; ── wrap-search: search wraps around the buffer ends (default on) ────────────
 
-(test copy-mode-search-forward-wraps-to-top
-  "With wrap-search on (default), a forward search that finds nothing below the
-   cursor wraps to the top and lands on the first match in the buffer."
-  (let ((s (make-screen 30 5)))
-    (feed s "abc")                              ; only row 0 contains the term
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 0)) ; below the match
-    (cl-tmux/commands::copy-mode-search-forward s "abc")
-    (is (equal (cons 0 0) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "no match below → wrap to the match at row 0 col 0")))
-
-(test copy-mode-search-forward-no-wrap-when-off
-  "With wrap-search off, a forward search with no match below leaves the cursor
-   where it is (no wrap-around)."
-  (with-isolated-options ("wrap-search" nil)
-    (let ((s (make-screen 30 5)))
-      (feed s "abc")
-      (cl-tmux/commands::copy-mode-enter s)
-      (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 2 0))
-      (cl-tmux/commands::copy-mode-search-forward s "abc")
-      (is (equal (cons 2 0) (cl-tmux/terminal/types:screen-copy-cursor s))
-          "wrap-search off → cursor stays put when nothing is found below"))))
-
-(test copy-mode-search-backward-wraps-to-bottom
-  "With wrap-search on, a backward search that finds nothing above the cursor
-   wraps to the bottom and lands on the last match in the buffer."
-  (let ((s (make-screen 30 5)))
-    (feed-lines s "" "" "" "" "abc")            ; only row 4 contains the term
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0)) ; above the match
-    (cl-tmux/commands::copy-mode-search-backward s "abc")
-    (is (equal (cons 4 0) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "no match above → wrap to the match at row 4 col 0")))
-
-(test copy-mode-search-backward-regex
-  "search-backward matches a regex and finds the nearest match before the cursor."
-  (let ((s (make-screen 30 5)))
-    (feed s "a1b a2b a3b")
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 11))
-    (cl-tmux/commands::copy-mode-search-backward s "a.b")
-    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "regex a.b backward must find the last 'aNb' at col 8 before col 11 (got ~D)"
-        (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))))
-
-(test copy-mode-search-next-repeats-forward
-  "copy-mode-search-next uses the saved term to repeat forward search; with
-   wrap-search on (default) it wraps to the first match when none lies below."
-  (let ((s (make-screen 30 5)))
-    (feed s "abc def abc")
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 0))
-    ;; Save a term and jump to the second "abc" at col 8.
-    (cl-tmux/commands::copy-mode-search-forward s "abc")
-    (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s))))
-    ;; search-next from col 8: nothing further below on row 0, so it wraps around
-    ;; to the first "abc" at col 0 (tmux's wrapping n).
-    (cl-tmux/commands::copy-mode-search-next s)
-    (is (= 0 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "search-next wraps to the first match (col 0) when none lies below")))
-
-(test copy-mode-search-prev-noop-without-term
-  "copy-mode-search-prev does nothing when no search term is saved."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s)
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 5)
-          (cl-tmux/terminal/types:screen-copy-search-term s) nil)
-    (cl-tmux/commands::copy-mode-search-prev s)
-    (is (= 5 (cdr (cl-tmux/terminal/types:screen-copy-cursor s)))
-        "search-prev must not move cursor when no term is saved")))
+(define-copy-mode-search-cases
+  (copy-mode-search-forward-wraps-to-top
+   "With wrap-search on, forward search wraps to the first match in the buffer."
+   :fixture (feed s "abc")
+   :cursor (cons 2 0)
+   :action (cl-tmux/commands::copy-mode-search-forward s "abc")
+   :expectations ((:cursor (0 . 0) "no match below -> wrap to row 0 col 0")))
+  (copy-mode-search-forward-no-wrap-when-off
+   "With wrap-search off, forward search with no lower match leaves the cursor."
+   :wrap-search :off
+   :fixture (feed s "abc")
+   :cursor (cons 2 0)
+   :action (cl-tmux/commands::copy-mode-search-forward s "abc")
+   :expectations ((:cursor (2 . 0) "wrap-search off -> cursor stays put")))
+  (copy-mode-search-backward-wraps-to-bottom
+   "With wrap-search on, backward search wraps to the last match in the buffer."
+   :fixture (feed-lines s "" "" "" "" "abc")
+   :cursor (cons 0 0)
+   :action (cl-tmux/commands::copy-mode-search-backward s "abc")
+   :expectations ((:cursor (4 . 0) "no match above -> wrap to row 4 col 0")))
+  (copy-mode-search-backward-regex
+   "search-backward matches a regex and finds the nearest match before the cursor."
+   :fixture (feed s "a1b a2b a3b")
+   :cursor (cons 0 11)
+   :action (cl-tmux/commands::copy-mode-search-backward s "a.b")
+   :expectations ((:cursor-col 8 "regex a.b backward must find the last match before col 11")))
+  (copy-mode-search-next-repeats-forward
+   "copy-mode-search-next repeats forward search and wraps when needed."
+   :fixture (feed s "abc def abc")
+   :cursor (cons 0 0)
+   :action (progn
+             (cl-tmux/commands::copy-mode-search-forward s "abc")
+             (is (= 8 (cdr (cl-tmux/terminal/types:screen-copy-cursor s))))
+             (cl-tmux/commands::copy-mode-search-next s))
+   :expectations ((:cursor-col 0 "search-next wraps to the first match")))
+  (copy-mode-search-prev-noop-without-term
+   "copy-mode-search-prev does nothing when no search term is saved."
+   :width 20
+   :cursor (cons 0 5)
+   :action (progn
+             (setf (cl-tmux/terminal/types:screen-copy-search-term s) nil)
+             (cl-tmux/commands::copy-mode-search-prev s))
+   :expectations ((:cursor-col 5 "search-prev must not move cursor when no term is saved"))))
 
 ;;; ── copy-mode search across scrollback boundary ─────────────────────────────
 
