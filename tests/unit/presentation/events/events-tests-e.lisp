@@ -203,49 +203,59 @@
 
 ;;; ── %try-mouse-passthrough mode tests ────────────────────────────────────────
 
-(test try-mouse-passthrough-mode1-blocks-release
-  "Mode 1 (X10/normal): release events are NOT forwarded."
+(defun make-mouse-passthrough-fixture (fd)
   (let* ((screen (make-screen 20 5))
-         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0
+         (pane   (make-pane :id 1 :fd fd :pid -1 :x 0 :y 0
                             :width 20 :height 5 :screen screen))
          (win    (make-window :id 1 :name "w" :width 20 :height 5
                               :panes (list pane)
                               :tree (make-layout-leaf pane))))
-    (setf (screen-mouse-mode screen) 1)
-    ;; Release event (release-p=T): mode 1 must NOT forward.
-    (let ((result (cl-tmux::%try-mouse-passthrough win pane 0 0 0 t)))
-      (is (null result)
-          "mode 1 must not forward release events (fd=-1 means encode returns nil)"))))
+    (values screen pane win)))
 
-(test try-mouse-passthrough-mode2-forwards-release
-  "Mode 2 (button-event): release events are forwarded."
-  (with-pipe-fds (rfd wfd)
-    (let* ((screen (make-screen 20 5))
-           (pane   (make-pane :id 1 :fd wfd :pid -1 :x 0 :y 0
-                              :width 20 :height 5 :screen screen))
-           (win    (make-window :id 1 :name "w" :width 20 :height 5
-                                :panes (list pane)
-                                :tree (make-layout-leaf pane))))
-      (setf (screen-mouse-mode screen) 2)
-      ;; Button 0 release (left-click release, not motion): should be forwarded.
-      (let ((result (cl-tmux::%try-mouse-passthrough win pane 0 0 0 t)))
-        (is (eq result t)
-            "mode-2 must forward non-motion button releases"))
-      (is-true (cl-tmux/pty:select-fds (list rfd) 20000)
-               "forwarded release must reach the pane PTY"))))
+(defmacro define-mouse-passthrough-cases (&body cases)
+  "Define %try-mouse-passthrough mode tests from declarative rows."
+  `(progn
+     ,@(loop for (name doc options mode event . assertions) in cases
+             for pipe-p = (getf options :pipe-p)
+             for fd-form = (if pipe-p 'wfd (getf options :fd -1))
+             for body = `(multiple-value-bind (screen pane win)
+                             (make-mouse-passthrough-fixture ,fd-form)
+                           (setf (screen-mouse-mode screen) ,mode)
+                           (destructuring-bind (button column row release-p) ',event
+                             (let ((result (cl-tmux::%try-mouse-passthrough
+                                            win pane button column row release-p)))
+                               ,@assertions)))
+             collect `(test ,name
+                        ,doc
+                        ,(if pipe-p
+                             `(with-pipe-fds (rfd wfd)
+                                ,body)
+                             body)))))
 
-(test try-mouse-passthrough-mode0-returns-nil
-  "When the pane has mouse mode 0 (disabled), %try-mouse-passthrough returns NIL."
-  (let* ((screen (make-screen 20 5))
-         (pane   (make-pane :id 1 :fd -1 :pid -1 :x 0 :y 0
-                            :width 20 :height 5 :screen screen))
-         (win    (make-window :id 1 :name "w" :width 20 :height 5
-                              :panes (list pane)
-                              :tree (make-layout-leaf pane))))
-    ;; mouse-mode = 0 means no tracking enabled; (plusp 0) = NIL.
-    (setf (screen-mouse-mode screen) 0)
-    (is (null (cl-tmux::%try-mouse-passthrough win pane 0 0 0 nil))
-        "mouse mode 0 → passthrough must be nil")))
+(define-mouse-passthrough-cases
+  (try-mouse-passthrough-mode1-blocks-release
+   "Mode 1 (X10/normal): release events are NOT forwarded."
+   (:fd -1)
+   1
+   (0 0 0 t)
+   (is (null result)
+       "mode 1 must not forward release events (fd=-1 means encode returns nil)"))
+  (try-mouse-passthrough-mode2-forwards-release
+   "Mode 2 (button-event): release events are forwarded."
+   (:pipe-p t)
+   2
+   (0 0 0 t)
+   (is (eq result t)
+       "mode-2 must forward non-motion button releases")
+   (is-true (cl-tmux/pty:select-fds (list rfd) 20000)
+            "forwarded release must reach the pane PTY"))
+  (try-mouse-passthrough-mode0-returns-nil
+   "When the pane has mouse mode 0 (disabled), %try-mouse-passthrough returns NIL."
+   (:fd -1)
+   0
+   (0 0 0 nil)
+   (is (null result)
+       "mouse mode 0 → passthrough must be nil")))
 
 ;;; ── drag-state is set on border press ───────────────────────────────────────
 
@@ -284,14 +294,26 @@
             "copy-mode-vi table must have 'v' binding")
         (cl-tmux/commands:copy-mode-exit screen)))))
 
-(test copy-mode-key-table-selection-follows-mode-keys-vi
-  "In vi mode, copy-mode input uses the copy-mode-vi table."
-  (with-copy-mode-vi-state (s screen state)
-    (cl-tmux/config:key-table-bind "copy-mode-vi" #\v :copy-mode-exit)
-    (cl-tmux/config:key-table-bind "copy-mode" #\v :copy-mode-begin-selection)
-    (cl-tmux::process-byte s (char-code #\v) state)
-    (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
-              "vi mode must dispatch the copy-mode-vi binding")))
+(defmacro define-copy-mode-table-selection-cases (&body cases)
+  "Define copy-mode table-priority tests from declarative rows."
+  `(progn
+     ,@(loop for (name doc fixture setup input . assertions) in cases
+             collect `(test ,name
+                        ,doc
+                        (,fixture (s screen state)
+                          ,@setup
+                          ,input
+                          ,@assertions)))))
+
+(define-copy-mode-table-selection-cases
+  (copy-mode-key-table-selection-follows-mode-keys-vi
+   "In vi mode, copy-mode input uses the copy-mode-vi table."
+   with-copy-mode-vi-state
+   ((cl-tmux/config:key-table-bind "copy-mode-vi" #\v :copy-mode-exit)
+    (cl-tmux/config:key-table-bind "copy-mode" #\v :copy-mode-begin-selection))
+   (cl-tmux::process-byte s (char-code #\v) state)
+   (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
+             "vi mode must dispatch the copy-mode-vi binding")))
 
 (test copy-mode-vi-default-hjkl-move-cursor
   "The default copy-mode-vi table provides hjkl cursor movement."
@@ -364,36 +386,35 @@
            (screen-copy-offset screen))
         "C-b must dispatch copy-mode-vi page-up, not the prefix key")))
 
-(test copy-mode-pagedown-uses-emacs-copy-mode-key-table
-  "In emacs mode, CSI PageDown uses the copy-mode table."
-  (with-copy-mode-emacs-state (s screen state)
-    (cl-tmux/config:key-table-bind "copy-mode-vi" "PageDown" :copy-mode-page-up)
-    (cl-tmux/config:key-table-bind "copy-mode" "PageDown" :copy-mode-exit)
-    (send-copy-mode-bytes s state '(27 91 54 126))
-    (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
-              "copy-mode PageDown binding must fire")))
-
-(test copy-mode-key-table-selection-follows-mode-keys-emacs
-  "In emacs mode, copy-mode input uses the copy-mode table."
-  (with-copy-mode-emacs-state (s screen state)
-    (cl-tmux/config:key-table-bind "copy-mode-vi" #\v :copy-mode-exit)
-    (cl-tmux/config:key-table-bind "copy-mode" #\v :copy-mode-begin-selection)
-    (cl-tmux::process-byte s (char-code #\v) state)
-    (is (cl-tmux/terminal:screen-copy-mode-p screen)
-        "emacs mode must not dispatch the copy-mode-vi binding")
-    (is (cl-tmux/terminal:screen-copy-selecting screen)
-        "emacs mode must dispatch the copy-mode binding")))
-
-(test copy-mode-meta-key-table-selection-follows-mode-keys-emacs
-  "In emacs mode, ESC-prefixed Meta keys use the copy-mode table."
-  (with-copy-mode-emacs-state (s screen state)
-    (cl-tmux/config:key-table-bind "copy-mode-vi" "M-f" :copy-mode-exit)
-    (cl-tmux/config:key-table-bind "copy-mode" "M-f" :copy-mode-begin-selection)
-    (send-copy-mode-bytes s state (list 27 (char-code #\f)))
-    (is (cl-tmux/terminal:screen-copy-mode-p screen)
-        "emacs mode must not dispatch the copy-mode-vi Meta binding")
-    (is (cl-tmux/terminal:screen-copy-selecting screen)
-        "emacs mode must dispatch the copy-mode Meta binding")))
+(define-copy-mode-table-selection-cases
+  (copy-mode-pagedown-uses-emacs-copy-mode-key-table
+   "In emacs mode, CSI PageDown uses the copy-mode table."
+   with-copy-mode-emacs-state
+   ((cl-tmux/config:key-table-bind "copy-mode-vi" "PageDown" :copy-mode-page-up)
+    (cl-tmux/config:key-table-bind "copy-mode" "PageDown" :copy-mode-exit))
+   (send-copy-mode-bytes s state '(27 91 54 126))
+   (is-false (cl-tmux/terminal:screen-copy-mode-p screen)
+             "copy-mode PageDown binding must fire"))
+  (copy-mode-key-table-selection-follows-mode-keys-emacs
+   "In emacs mode, copy-mode input uses the copy-mode table."
+   with-copy-mode-emacs-state
+   ((cl-tmux/config:key-table-bind "copy-mode-vi" #\v :copy-mode-exit)
+    (cl-tmux/config:key-table-bind "copy-mode" #\v :copy-mode-begin-selection))
+   (cl-tmux::process-byte s (char-code #\v) state)
+   (is (cl-tmux/terminal:screen-copy-mode-p screen)
+       "emacs mode must not dispatch the copy-mode-vi binding")
+   (is (cl-tmux/terminal:screen-copy-selecting screen)
+       "emacs mode must dispatch the copy-mode binding"))
+  (copy-mode-meta-key-table-selection-follows-mode-keys-emacs
+   "In emacs mode, ESC-prefixed Meta keys use the copy-mode table."
+   with-copy-mode-emacs-state
+   ((cl-tmux/config:key-table-bind "copy-mode-vi" "M-f" :copy-mode-exit)
+    (cl-tmux/config:key-table-bind "copy-mode" "M-f" :copy-mode-begin-selection))
+   (send-copy-mode-bytes s state (list 27 (char-code #\f)))
+   (is (cl-tmux/terminal:screen-copy-mode-p screen)
+       "emacs mode must not dispatch the copy-mode-vi Meta binding")
+   (is (cl-tmux/terminal:screen-copy-selecting screen)
+       "emacs mode must dispatch the copy-mode Meta binding")))
 
 (test copy-mode-escape-control-key-does-not-fall-back-to-copy-mode-table
   "In emacs mode, ESC-prefixed Ctrl bytes do not fall back to copy-mode key names."
