@@ -271,7 +271,7 @@
   result)
 
 (defun %cmd-split-window (session args)
-  "split-window [-h|-v] [-b] [-f] [-d] [-I] [-t target] [-l size|-p pct] [-c start-dir] [-e VAR=val].
+  "split-window [-h|-v] [-b] [-f] [-d] [-I] [-t target] [-l size] [-c start-dir] [-e VAR=val].
    -h: horizontal split (new pane to the right; side-by-side).
    -v: vertical split (new pane below — default).
    -b: insert before the active pane (left of / above) instead of after.
@@ -282,16 +282,15 @@
    -t target: split the target pane instead of the active pane.
    -l N: size in lines/columns (absolute integer), or -l N% as a percentage
      of the parent pane.
-   -p N: shorthand for -l N% (tmux compatibility).
    -c dir: start directory for the new pane's shell (format strings expanded).
    -e VAR=val: set environment variable in the new pane (repeatable).
    -P: print the new pane's details to overlay.
    -F format: with -P, the format string for the printed info (instead of the
      default session:window.pane [WxH]) — e.g. `split-window -dP -F '#{pane_id}'`.
    -Z: zoom the window after splitting (tmux SPAWN_ZOOM)."
-  (with-command-input (flags positionals args "lpcetF"
+  (with-command-input (flags positionals args "lcetF"
                              :allowed-flags '(#\h #\v #\b #\f #\d #\I #\t
-                                              #\l #\p #\c #\e #\P #\F #\Z))
+                                              #\l #\c #\e #\P #\F #\Z))
     (declare (ignore positionals))
     (let* ((extra-env    (%collect-env-flags flags))
            (horizontal-p (%flag-present-p flags #\h))
@@ -300,8 +299,7 @@
            (detach-p     (%flag-present-p flags #\d))
            (input-p      (%flag-present-p flags #\I))
            (target-str   (%flag-value flags #\t))
-           (lines-str    (or (%flag-value flags #\l)
-                             (%flag-value flags #\p)))
+           (lines-str    (%flag-value flags #\l))
            (raw-dir      (%flag-value flags #\c))
            (start-dir    (%expand-start-dir session raw-dir))
            ;; -l N → N cells; -l N% → fraction.

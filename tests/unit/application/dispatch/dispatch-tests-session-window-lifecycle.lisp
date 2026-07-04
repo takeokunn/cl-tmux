@@ -25,17 +25,29 @@
       "an absolute value must stay an integer (cells)"))
 
 (test run-command-line-split-window-variants-add-pane
-  "split-window with no flags, -h, or -p each adds one pane to the active window.
+  "split-window with no flags, -h, or -l N% each adds one pane to the active window.
    Each row: (command message)."
-  (dolist (row '(("split-window"       "split-window must add a pane to the active window")
-                 ("split-window -h"    "split-window -h must add a pane to the active window")
-                 ("split-window -p 30" "split-window -p 30 must add a pane to the active window")))
+  (dolist (row '(("split-window"        "split-window must add a pane to the active window")
+                 ("split-window -h"     "split-window -h must add a pane to the active window")
+                 ("split-window -l 30%" "split-window -l 30% must add a pane to the active window")))
     (destructuring-bind (cmd msg) row
       (with-pty-command-increasing-count
           (s cmd
              :count-form (length (cl-tmux/model:window-panes
                                   (cl-tmux/model:session-active-window s)))
              :count-context msg)))))
+
+(test run-command-line-split-window-rejects-percent-shorthand
+  "split-window rejects the removed -p percentage shorthand before adding panes."
+  (with-fake-session (s :nwindows 1 :npanes 1)
+    (let* ((win (cl-tmux/model:session-active-window s))
+           (before-panes (copy-list (cl-tmux/model:window-panes win))))
+      (with-command-rejection-state (s
+                                     (cl-tmux::%run-command-line s "split-window -p 30")
+                                     "unsupported argument"
+                                     "split-window -p 30")
+        (is (equal before-panes (cl-tmux/model:window-panes win))
+            "split-window -p 30 must not add or reorder panes after rejection")))))
 
 (test run-command-line-split-window-I-feeds-stdin-without-pty
   "split-window -I creates a no-PTY pane and writes stdin into its screen."
@@ -189,4 +201,3 @@
                        (cl-tmux/model:session-active-window s))
          :count-context "split-window -d must add a pane"
          :focus-context "split-window -d must not change the active pane")))
-
