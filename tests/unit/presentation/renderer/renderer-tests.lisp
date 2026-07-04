@@ -34,19 +34,11 @@
     (session-select-window sess win)
     sess))
 
-;;; ── Test helper macros ───────────────────────────────────────────────────────
-;;;
-(defmacro with-minimal-status-bar-options (&body body)
-  "Run BODY with status-left and status-right cleared (the 'no decorations'
-   baseline used by ~10 status-bar tests)."
-  `(with-isolated-options ("status-left" nil "status-right" nil)
-     ,@body))
-
 ;;; ── render-status-bar ───────────────────────────────────────────────────────
 
 (test render-status-bar-shows-names
   "render-status-bar shows the session name and the active window's index:name."
-  (with-isolated-options ("status-left" nil "status-right" nil)
+  (with-minimal-status-bar-options
     (let* ((sess (make-test-session 40 10 :content ""))
            (out  (render-status-bar-output sess 10 40)))
       (is (search "0" out) "status bar should contain the session name 0 (got ~S)" out)
@@ -96,7 +88,7 @@
 (test status-bar-no-prompt-when-inactive
   "With *prompt* explicitly inactive, the status bar shows the normal status
    (window 1) and never the prompt text — pinning the active/inactive exclusion."
-  (with-isolated-options ("status-left" nil "status-right" nil)
+  (with-minimal-status-bar-options
     (let ((cl-tmux/prompt:*prompt* nil))
       (let* ((sess (make-test-session 40 10 :content ""))
              (out  (render-status-bar-output sess 10 40)))
@@ -108,7 +100,7 @@
 
 (test render-status-bar-copy-mode-has-no-indicator
   "The status bar no longer shows a legacy COPY/offset indicator when a pane is in copy mode."
-  (with-isolated-options ("status-left" nil "status-right" nil)
+  (with-minimal-status-bar-options
     (let* ((sess   (make-test-session 60 10 :content ""))
            (ap     (session-active-pane sess))
            (screen (pane-screen ap)))
@@ -133,7 +125,7 @@
   ;; The bar is: move-to, ESC[44;97m, <status content>, ESC[0m.  The visible
   ;; status content sits between the colour SGR and the trailing reset, and the
   ;; renderer guarantees it is no longer than the terminal width.
-  (with-isolated-options ("status-left" nil "status-right" nil)
+  (with-minimal-status-bar-options
     (let* ((width  8)
            (sess   (make-test-session width 10 :content ""))
            (out    (render-status-bar-output sess 10 width))
@@ -177,7 +169,7 @@
 
 (test render-session-to-string-full-frame
   "render-session-to-string emits pane content plus cursor-hide/show sequences and the status bar."
-  (with-isolated-options ("status-left" nil "status-right" nil)
+  (with-minimal-status-bar-options
     (let* ((sess (make-test-session 20 5 :content "hi"))
            (out  (render-session-to-string sess 6 20)))
       (is (find #\h out) "frame should contain h from content (got ~S)" out)

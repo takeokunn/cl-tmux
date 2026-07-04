@@ -56,6 +56,16 @@
               ,ht-sym)))
        ,@body)))
 
+(defmacro with-empty-status-bar-options ((&rest overrides) &body body)
+  "Run BODY with status-left/status-right cleared plus OVERRIDES."
+  `(with-isolated-options ("status-left" nil "status-right" nil ,@overrides)
+     ,@body))
+
+(defmacro with-minimal-status-bar-options (&body body)
+  "Run BODY with status-left and status-right cleared."
+  `(with-empty-status-bar-options ()
+     ,@body))
+
 (defmacro assert-set-directive-option-state (form option expected
                                              &key (context "set directive")
                                                   server-p

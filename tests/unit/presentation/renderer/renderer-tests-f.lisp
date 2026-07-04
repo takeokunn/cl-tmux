@@ -91,9 +91,8 @@
 
 (test window-status-format-custom
   "window-status-format option is used when rendering inactive windows."
-  (with-isolated-options ("status-left" nil "status-right" nil
-                          "window-status-format" "WIN:#{window_name}"
-                          "window-status-current-format" "[#{window_name}]")
+  (with-empty-status-bar-options ("window-status-format" "WIN:#{window_name}"
+                                  "window-status-current-format" "[#{window_name}]")
     ;; make-two-window-session creates windows named "alpha" (active) and "beta".
     (multiple-value-bind (sess win0 _p0 _w1 _p1)
         (make-two-window-session 80 5)
@@ -109,8 +108,7 @@
 
 (test window-status-separator-used-between-windows
   "window-status-separator is placed between window entries."
-  (with-isolated-options ("status-left" nil "status-right" nil
-                          "window-status-separator" "|SEP|")
+  (with-empty-status-bar-options ("window-status-separator" "|SEP|")
     (multiple-value-bind (sess win0 _p0 _w1 _p1)
         (make-two-window-session 80 5)
       (declare (ignore _p0 _w1 _p1))

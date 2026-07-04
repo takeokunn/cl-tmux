@@ -178,7 +178,7 @@
 
 (test status-bar-default-segments-returns-three-values
   "%status-bar-default-segments returns exactly three values: left, right, justify."
-  (with-isolated-options ("status-left" nil "status-right" nil "status-justify" "left")
+  (with-empty-status-bar-options ("status-justify" "left")
     (let* ((sess (make-test-session 80 6))
            (ctx  (cl-tmux/format:format-context-from-session
                   sess
@@ -192,7 +192,7 @@
 
 (test status-bar-default-segments-justify-option-propagated
   "%status-bar-default-segments returns the status-justify option as the third value."
-  (with-isolated-options ("status-justify" "centre" "status-left" nil "status-right" nil)
+  (with-empty-status-bar-options ("status-justify" "centre")
     (let* ((sess (make-test-session 80 6))
            (ctx  (cl-tmux/format:format-context-from-session
                   sess

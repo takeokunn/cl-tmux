@@ -33,7 +33,7 @@
 
 (test status-position-bottom-default
   "With status-position = bottom (default), the status bar appears at the last row."
-  (with-isolated-options ("status-position" "bottom" "status-left" nil "status-right" nil)
+  (with-empty-status-bar-options ("status-position" "bottom")
     (let* ((sess (make-test-session 20 5))
            (rows 6)
            (out  (render-status-bar-output sess rows 20)))
@@ -44,7 +44,7 @@
 
 (test status-position-top
   "With status-position = top, the status bar appears at row 0 (ESC[1;1H)."
-  (with-isolated-options ("status-position" "top" "status-left" nil "status-right" nil)
+  (with-empty-status-bar-options ("status-position" "top")
     (let* ((sess (make-test-session 20 5))
            (out  (render-status-bar-output sess 6 20 :status-row 0)))
       ;; ESC[1;1H is row=0, col=0 (1-based = row 1, col 1)
@@ -107,8 +107,8 @@
   (dolist (row '((nil "status=nil: blue background absent")
                  (t   "status=t:   blue background present")))
     (destructuring-bind (status-val desc) row
-      (with-isolated-options ("status" status-val
-                              "status-left" nil "status-right" nil "status-style" "")
+      (with-empty-status-bar-options ("status" status-val
+                                      "status-style" "")
         (let* ((sess (make-test-session 20 5))
                (out  (render-session-to-string sess 6 20))
                (hit  (search (format nil "~C[44;97m" #\Escape) out)))
@@ -136,13 +136,15 @@
   "With status=2 and status-format[1] set, render-session-to-string renders the
    extra status line's content; with status=1 it does not."
   (let ((sess (make-test-session 20 5)))
-    (with-isolated-options ("status" "2" "status-format[1]" "EXTRALINE"
-                            "status-left" nil "status-right" nil "status-style" "")
+    (with-empty-status-bar-options ("status" "2"
+                                    "status-format[1]" "EXTRALINE"
+                                    "status-style" "")
       (let ((out (render-session-to-string sess 8 20)))
         (is (search "EXTRALINE" out)
             "status=2 must render status-format[1] content (got ~S)" out)))
-    (with-isolated-options ("status" "1" "status-format[1]" "EXTRALINE"
-                            "status-left" nil "status-right" nil "status-style" "")
+    (with-empty-status-bar-options ("status" "1"
+                                    "status-format[1]" "EXTRALINE"
+                                    "status-style" "")
       (let ((out (render-session-to-string sess 8 20)))
         (is (null (search "EXTRALINE" out))
             "status=1 must NOT render the extra status line (got ~S)" out)))))
