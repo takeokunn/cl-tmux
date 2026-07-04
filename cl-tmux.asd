@@ -395,10 +395,12 @@
         :components
         ((:file "hooks-tests")  ; hook-event-constants, hook-registry, add/run/remove/clear/list-hooks — part I
          (:file "hooks-tests-b")))  ; command hooks (set-hook), set-hook -u, list-command-hooks, runtime set-hook, show-hooks — part II
-       (:module "application/config"
-        :serial t
-        :components
-        ((:file "config-tests")
+      (:module "application/config"
+       :serial t
+       :components
+       ((:file "config-tests")
+         (:file "config-key-description-tests")
+         (:file "config-key-table-runtime-tests")
          (:file "config-directives-tests")  ; directive parsing — part I (bindable-cmds, apply-directive, set flags, bind/unbind, load-config-from-stream)
          (:file "config-directives-tests-c")  ; directive parsing — part III (load-config-file, command-keyword, parse-bind-args, key-table edge cases)
          (:file "config-directives-tests-b")  ; directive parsing — part II (%parse-bind-args, tokenizer, source-file, run-shell, %expand-tilde, if/elif, unbind-all)
@@ -540,10 +542,10 @@
         ((:file "runtime-tests")  ; globals, pane-reader-loop, monitor-activity/silence, prompt-history, alert-action — part I
          (:file "runtime-tests-c")  ; stop-reader-threads, add-message-log, add-prompt-history, wait-for-channel — part III
          (:file "runtime-tests-b")  ; add-message-log table-driven, add-prompt-history, wait-for-channel — part II
-       (:file "main-tests")
-       (:file "main-entry-tests")
-       (:file "main-environment-tests")
-       (:file "main-command-argument-tests")))
+         (:file "main-tests")
+         (:file "main-entry-tests")
+         (:file "main-environment-tests")
+         (:file "main-command-argument-tests")))
        (:module "feature"
         :serial t
         :components
