@@ -84,19 +84,6 @@
     (is (= p0-w (pane-width  p1)) "former neighbour width must be original active width")
     (is (= p0-h (pane-height p1)) "former neighbour height must be original active height")))
 
-(test swap-pane-forward-backward-aliases-match-right-left
-  "swap-pane :forward and :backward are aliases for :right and :left."
-  (dolist (row '((:forward :right "forward is an alias for right")
-                 (:backward :left  "backward is an alias for left")))
-    (destructuring-bind (alias canonical desc) row
-      (let* ((win-a (%vsplit-window 20))
-             (win-b (%vsplit-window 20)))
-        (swap-pane win-a alias)
-        (swap-pane win-b canonical)
-        (is (equal (mapcar #'pane-id (window-panes win-a))
-                   (mapcar #'pane-id (window-panes win-b)))
-            "~A: pane order after alias must match canonical direction" desc)))))
-
 (test swap-pane-down-swaps-spatially-adjacent-pane-below
   "swap-pane :down on a horizontal (top/bottom) split swaps the active (top)
    pane with its spatial neighbour below, exchanging geometry and list order."

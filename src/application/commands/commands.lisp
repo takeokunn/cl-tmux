@@ -47,8 +47,8 @@
 (defun swap-pane (window direction)
   "Swap the active pane with an adjacent pane in WINDOW.
    DIRECTION:
-     :right / :forward  — next in panes list (wraps around)
-     :left  / :backward — previous in panes list (wraps around)
+     :right — next in panes list (wraps around)
+     :left  — previous in panes list (wraps around)
      :up    — spatially adjacent pane above (via pane-neighbor)
      :down  — spatially adjacent pane below (via pane-neighbor)
    Swaps both list order and screen geometry (via swap-two-panes)."
@@ -59,9 +59,9 @@
     (when (> n 1)
       (let ((other
              (ecase direction
-               ((:right :forward)
+               (:right
                 (nth (mod (1+ active-index) n) panes))
-               ((:left :backward)
+               (:left
                 (nth (mod (1- active-index) n) panes))
                (:up   (pane-neighbor window ap :up))
                (:down (pane-neighbor window ap :down)))))
