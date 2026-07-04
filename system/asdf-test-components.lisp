@@ -257,7 +257,9 @@
           (:file "events-tests-d-ss3-prefix") ; SS3, prefix function keys, modified root keys - part V.d
           (:file "events-tests-g") ; select-layout-spread, new key bindings, choose-window, mouse-reporting, tmux defaults - part VII
           (:file "events-tests-i") ; copy-mode v-select, middle-cursor-jump, mouse X10, CSI-tilde outside mode, CSI-3byte - part IX
-          (:file "events-tests-j") ; vi-normal-key dispatch, %dispatch-menu-key, %rename-from-osc-title - part X
+          (:file "events-tests-j") ; vi-normal-key dispatch
+          (:file "events-menu-tests") ; %dispatch-menu-key routing
+          (:file "events-input-policy-tests") ; rename, backspace, assume-paste policy
           (:file "mouse-tests")))
         (:module "application/commands"
          :serial t
