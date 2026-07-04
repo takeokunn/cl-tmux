@@ -301,7 +301,7 @@
   "%status-format-or-default returns the expanded custom option when set."
   (with-isolated-options ()
     (cl-tmux/options:set-option "status-left" "custom-left")
-    (let* ((sess (make-test-session 40 10))
+    (let* ((sess (make-renderer-test-session 40 10))
            (win  (session-active-window sess))
            (ap   (session-active-pane  sess))
            (ctx  (cl-tmux/format:format-context-from-session sess win ap))
@@ -312,7 +312,7 @@
 
 (test status-format-or-default-falls-back-to-default-fn
   "%status-format-or-default calls default-fn when option equals the registered default."
-  (let* ((sess (make-test-session 40 10))
+  (let* ((sess (make-renderer-test-session 40 10))
          (win  (session-active-window sess))
          (ap   (session-active-pane  sess))
          (ctx  (cl-tmux/format:format-context-from-session sess win ap))

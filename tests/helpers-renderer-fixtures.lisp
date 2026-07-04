@@ -41,10 +41,6 @@
     (unless (string= content "") (feed screen content))
     sess))
 
-(defun make-test-session (w h &key (content ""))
-  "Convenience alias for make-renderer-test-session; available to all test files."
-  (make-renderer-test-session w h :content content))
-
 (defun make-two-window-session (w h &key (w0-content "") (w1-content ""))
   "Build a 2-window session.  Each window has one pane of W x H with no PTY.
    W0-CONTENT / W1-CONTENT are fed into the respective pane screens.

@@ -12,7 +12,7 @@
    session name rather than the literal variable syntax."
   (with-isolated-options ()
     (cl-tmux/options:set-option "status-left" "sess:#{session_name}")
-    (let* ((sess (make-test-session 60 10 :content ""))
+    (let* ((sess (make-renderer-test-session 60 10 :content ""))
            (out  (render-status-bar-output sess 10 60)))
       (is (search "sess:0" out)
           "status-left #{session_name} must expand to the session name '0' (got ~S)" out)
@@ -24,7 +24,7 @@
    active window name instead of the default HH:MM clock."
   (with-isolated-options ()
     (cl-tmux/options:set-option "status-right" "win:#{window_name}")
-    (let* ((sess (make-test-session 60 10 :content ""))
+    (let* ((sess (make-renderer-test-session 60 10 :content ""))
            (out  (render-status-bar-output sess 10 60)))
       (is (search "win:1" out)
           "status-right #{window_name} must expand to the window name '1' (got ~S)" out))))
@@ -34,7 +34,7 @@
 (test status-position-bottom-default
   "With status-position = bottom (default), the status bar appears at the last row."
   (with-empty-status-bar-options ("status-position" "bottom")
-    (let* ((sess (make-test-session 20 5))
+    (let* ((sess (make-renderer-test-session 20 5))
            (rows 6)
            (out  (render-status-bar-output sess rows 20)))
       ;; The status bar emits ESC[row;colH where row is 1-based.
@@ -45,7 +45,7 @@
 (test status-position-top
   "With status-position = top, the status bar appears at row 0 (ESC[1;1H)."
   (with-empty-status-bar-options ("status-position" "top")
-    (let* ((sess (make-test-session 20 5))
+    (let* ((sess (make-renderer-test-session 20 5))
            (out  (render-status-bar-output sess 6 20 :status-row 0)))
       ;; ESC[1;1H is row=0, col=0 (1-based = row 1, col 1)
       (is (search (format nil "~C[1;1H" #\Escape) out)
@@ -97,7 +97,7 @@
   (with-isolated-options ("status-left" "L" "status-right" nil "status-style" ""
                           "status-left-style" "fg=red")
     (let* ((expected (cl-tmux/renderer::%status-sgr-from-style "fg=red"))
-           (sess     (make-test-session 20 5))
+           (sess     (make-renderer-test-session 20 5))
            (out      (render-status-bar-output sess 6 20)))
       (is (search (format nil "~C[~Am" #\Escape expected) out)
           "the rendered bar must include the status-left-style SGR (got ~S)" out))))
@@ -109,7 +109,7 @@
     (destructuring-bind (status-val desc) row
       (with-empty-status-bar-options ("status" status-val
                                       "status-style" "")
-        (let* ((sess (make-test-session 20 5))
+        (let* ((sess (make-renderer-test-session 20 5))
                (out  (render-session-to-string sess 6 20))
                (hit  (search (format nil "~C[44;97m" #\Escape) out)))
           (is (if status-val hit (null hit)) "~A (got ~S)" desc out))))))
@@ -135,7 +135,7 @@
 (test render-session-multiline-status-shows-extra-line
   "With status=2 and status-format[1] set, render-session-to-string renders the
    extra status line's content; with status=1 it does not."
-  (let ((sess (make-test-session 20 5)))
+  (let ((sess (make-renderer-test-session 20 5)))
     (with-empty-status-bar-options ("status" "2"
                                     "status-format[1]" "EXTRALINE"
                                     "status-style" "")
@@ -152,7 +152,7 @@
 (test render-extra-status-line-blank-when-unset
   "An extra status line with no status-format[N] set renders a blank styled row
    (no crash, returns cleanly)."
-  (let ((sess (make-test-session 20 5)))
+  (let ((sess (make-renderer-test-session 20 5)))
     (with-isolated-options ("status" "3" "status-style" "")
       (let ((out (render-session-to-string sess 8 20)))
         ;; status=3 reserves three rows; rendering must succeed and produce output.
@@ -163,7 +163,7 @@
   "An extra status row (status-format[N]) honours #[align=right] via the shared
    align composer — consistent with status-format[0]."
   (with-isolated-options ("status-format[1]" "L1#[align=right]R1")
-    (let* ((sess (make-test-session 30 10 :content ""))
+    (let* ((sess (make-renderer-test-session 30 10 :content ""))
            (out  (with-output-to-string (s)
                    (cl-tmux/renderer::render-extra-status-line s sess 30 8 1)))
            (vis  (cl-ppcre:regex-replace-all
@@ -181,7 +181,7 @@
   (dolist (row '((t   "bell-pending T: BEL emitted and flag cleared")
                  (nil "bell-pending NIL: BEL absent")))
     (destructuring-bind (initial-pending desc) row
-      (let* ((sess  (make-test-session 20 5))
+      (let* ((sess  (make-renderer-test-session 20 5))
              (ap    (session-active-pane sess))
              (sc    (pane-screen ap)))
         (setf (cl-tmux/terminal/types:screen-bell-pending sc) initial-pending)
@@ -200,7 +200,7 @@
   "status-left #{session_name} expands to the actual session name."
   (with-isolated-options ()
     (cl-tmux/options:set-option "status-left" "#{session_name}")
-    (let* ((sess (make-test-session 40 10))
+    (let* ((sess (make-renderer-test-session 40 10))
            (out  (render-status-bar-output sess 11 40)))
       (is (search "0" out)
           "status-left #{session_name} must expand to session name '0' (got ~S)" out)

@@ -68,7 +68,7 @@
 
 (test status-bar-shows-prompt
   "render-status-bar shows the prompt text while a prompt is active."
-  (let ((sess (make-test-session 40 10 :content "")))
+  (let ((sess (make-renderer-test-session 40 10 :content "")))
     (with-clean-prompt
       (prompt-start "rename-window" "foo" (make-noop-submit))
       (let ((out (render-status-bar-output sess 10 40)))

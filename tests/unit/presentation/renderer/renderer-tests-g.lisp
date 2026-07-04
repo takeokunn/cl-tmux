@@ -179,7 +179,7 @@
 (test status-bar-default-segments-returns-three-values
   "%status-bar-default-segments returns exactly three values: left, right, justify."
   (with-empty-status-bar-options ("status-justify" "left")
-    (let* ((sess (make-test-session 80 6))
+    (let* ((sess (make-renderer-test-session 80 6))
            (ctx  (cl-tmux/format:format-context-from-session
                   sess
                   (cl-tmux/model:session-active-window sess)
@@ -193,7 +193,7 @@
 (test status-bar-default-segments-justify-option-propagated
   "%status-bar-default-segments returns the status-justify option as the third value."
   (with-empty-status-bar-options ("status-justify" "centre")
-    (let* ((sess (make-test-session 80 6))
+    (let* ((sess (make-renderer-test-session 80 6))
            (ctx  (cl-tmux/format:format-context-from-session
                   sess
                   (cl-tmux/model:session-active-window sess)
@@ -207,7 +207,7 @@
 (test status-bar-default-segments-custom-right-appears
   "%status-bar-default-segments reflects a custom status-right option in RIGHT."
   (with-isolated-options ("status-right" "MY-RIGHT" "status-left" nil)
-    (let* ((sess (make-test-session 80 6))
+    (let* ((sess (make-renderer-test-session 80 6))
            (ctx  (cl-tmux/format:format-context-from-session
                   sess
                   (cl-tmux/model:session-active-window sess)

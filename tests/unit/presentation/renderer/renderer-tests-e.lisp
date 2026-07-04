@@ -21,7 +21,7 @@
 
 (test render-session-emits-cursor-shape
   "render-session-to-string emits the DECSCUSR sequence for the pane cursor shape."
-  (let* ((sess  (make-test-session 20 5))
+  (let* ((sess  (make-renderer-test-session 20 5))
          (ap    (session-active-pane sess))
          (sc    (pane-screen ap)))
     ;; Set a non-default cursor shape (2 = steady block)
@@ -104,7 +104,7 @@
 (test render-session-status-on-default-includes-time
   "With status=T and default options, the frame includes the HH:MM time pattern."
   (with-isolated-options ("status" t "status-left" nil)
-    (let* ((sess (make-test-session 40 5))
+    (let* ((sess (make-renderer-test-session 40 5))
            (out  (render-session-to-string sess 6 40)))
       ;; The default right status is HH:MM — 5 chars with a colon at position 2.
       ;; We just check a colon is present in a 5-char time substring.
@@ -206,7 +206,7 @@
   (with-isolated-options ("status-left"  "#[fg=green]G#[default]"
                           "status-right" nil
                           "status-style" "")
-    (let* ((sess (make-test-session 40 6))
+    (let* ((sess (make-renderer-test-session 40 6))
            (out  (render-status-bar-output sess 10 40)))
       (is (search (format nil "~C[32m" #\Escape) out)
           "inline #[fg=green] must emit SGR 32 (got ~S)" out)

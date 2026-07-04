@@ -12,7 +12,7 @@
     (show-overlay "OVERLAY-HELP-LINE")
     (unwind-protect
          (let ((out (render-session-to-string
-                     (make-test-session 30 6 :content "hi") 7 30)))
+                     (make-renderer-test-session 30 6 :content "hi") 7 30)))
            (is (search "OVERLAY-HELP-LINE" out)
                "overlay text should be composited into the frame"))
       (clear-overlay))))
@@ -59,7 +59,7 @@
 
 (test render-session-hides-cursor-when-dectcem-off
   "When the active pane has screen-cursor-visible=NIL, ?25h must NOT appear in the frame."
-  (let* ((sess (make-test-session 30 5))
+  (let* ((sess (make-renderer-test-session 30 5))
          (ap   (session-active-pane sess))
          (screen (pane-screen ap)))
     (setf (cl-tmux/terminal/types:screen-cursor-visible screen) nil)
@@ -71,7 +71,7 @@
 
 (test render-session-shows-cursor-when-dectcem-on
   "When screen-cursor-visible=T (default), ?25h appears in the frame."
-  (let* ((sess (make-test-session 30 5))
+  (let* ((sess (make-renderer-test-session 30 5))
          (ap   (session-active-pane sess))
          (screen (pane-screen ap)))
     (setf (cl-tmux/terminal/types:screen-cursor-visible screen) t)

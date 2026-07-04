@@ -87,7 +87,7 @@
 
 (test render-session-locked-shows-lock-overlay
   "When session-locked-p is T, render-session-to-string emits the lock overlay."
-  (let* ((sess (make-test-session 40 10)))
+  (let* ((sess (make-renderer-test-session 40 10)))
     (setf (session-locked-p sess) t)
     (unwind-protect
          (let ((out (render-session-to-string sess 11 40)))
