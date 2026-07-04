@@ -23,17 +23,19 @@
 
 (test socket-path-uses-tmpdir-env-var
   :description "socket-path embeds $TMPDIR in the result when it is set, overriding /tmp."
-  (with-temporary-posix-environment-variable ("TMPDIR" "/var/folders/test")
-    (let ((path (cl-tmux::socket-path "envtest")))
-      (is (search "/var/folders/test" path)
-          "socket-path must use $TMPDIR when set, got ~S" path))))
+  (with-temporary-posix-environment-variable ("TMUX_TMPDIR" nil)
+    (with-temporary-posix-environment-variable ("TMPDIR" "/var/folders/test")
+      (let ((path (cl-tmux::socket-path "envtest")))
+        (is (search "/var/folders/test" path)
+            "socket-path must use $TMPDIR when set, got ~S" path)))))
 
 (test socket-path-falls-back-to-tmp-when-no-tmpdir
   :description "socket-path uses /tmp as the socket directory when $TMPDIR is unset."
-  (with-temporary-posix-environment-variable ("TMPDIR" nil)
-    (let ((path (cl-tmux::socket-path "tmptestfb")))
-      (is (search "/tmp" path)
-          "socket-path must fall back to /tmp when $TMPDIR is unset, got ~S" path))))
+  (with-temporary-posix-environment-variable ("TMUX_TMPDIR" nil)
+    (with-temporary-posix-environment-variable ("TMPDIR" nil)
+      (let ((path (cl-tmux::socket-path "tmptestfb")))
+        (is (search "/tmp" path)
+            "socket-path must fall back to /tmp when $TMPDIR is unset, got ~S" path)))))
 
 (test socket-path-tmux-tmpdir-beats-tmpdir
   :description "socket-path prefers $TMUX_TMPDIR over $TMPDIR (tmux precedence)."

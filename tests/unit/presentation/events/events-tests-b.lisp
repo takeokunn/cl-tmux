@@ -321,31 +321,25 @@
 
 (test copy-mode-ctrl-n-scrolls-down
   "C-n (byte 14) moves the cursor down by 1 in copy mode (same as j)."
-  (with-fake-session (s)
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        (seed-scrollback screen 10)
-        (cl-tmux/commands::copy-mode-scroll screen 5)
-        (setf (cl-tmux/terminal/types:screen-copy-cursor screen)
-              (cons (1- (screen-height screen)) 0))
-        (let ((offset-before (screen-copy-offset screen)))
-          (cl-tmux::process-byte s 14 state)   ; C-n
-          (is (= (1- offset-before) (screen-copy-offset screen))
-              "C-n at bottom row must scroll viewport down by 1")))))
+  (with-copy-mode-emacs-state (s screen state)
+    (seed-scrollback screen 10)
+    (cl-tmux/commands::copy-mode-scroll screen 5)
+    (setf (cl-tmux/terminal/types:screen-copy-cursor screen)
+          (cons (1- (screen-height screen)) 0))
+    (let ((offset-before (screen-copy-offset screen)))
+      (cl-tmux::process-byte s 14 state)   ; C-n
+      (is (= (1- offset-before) (screen-copy-offset screen))
+          "C-n at bottom row must scroll viewport down by 1"))))
 
 (test copy-mode-ctrl-p-scrolls-up
   "C-p (byte 16) moves the cursor up by 1 in copy mode (same as k)."
-  (with-fake-session (s)
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        (seed-scrollback screen 10)
-        ;; Cursor at top row → C-p scrolls viewport.
-        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
-        (cl-tmux::process-byte s 16 state)   ; C-p
-        (is (= 1 (screen-copy-offset screen))
-            "C-p at top row must scroll viewport up by 1"))))
+  (with-copy-mode-emacs-state (s screen state)
+    (seed-scrollback screen 10)
+    ;; Cursor at top row -> C-p scrolls viewport.
+    (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
+    (cl-tmux::process-byte s 16 state)   ; C-p
+    (is (= 1 (screen-copy-offset screen))
+        "C-p at top row must scroll viewport up by 1")))
 
 (test copy-mode-H-L-cursor-table
   "H (byte 72) moves cursor to row 0 (top); L (byte 76) moves cursor to last row (height-1)."

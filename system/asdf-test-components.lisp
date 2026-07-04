@@ -45,7 +45,10 @@
           (:file "cursor-tests-c") ; cursor-ri, cursor-nel, write-char-at-cursor wide, %advance-cursor no-wrap, movement behavioral - part III
           (:file "cursor-tests-d") ; cursor-lf direct, cursor-nl newline-mode, %materialize-tab-stops, BCE background, boundary table - part IV
           (:file "cursor-tests-e") ; custom multi-stop %next-tab-stop/%prev-tab-stop via HTS/TBC, table-driven regression - part V
-          (:file "scroll-tests") ; scroll-ops/erase/scroll-region/delete-insert-chars - part I
+          (:file "scroll-tests") ; scroll-ops - part I
+          (:file "scroll-erase-tests") ; ED/EL parser-path and direct erase coverage
+          (:file "scroll-region-tests") ; DECSTBM, RI, IL/DL parser-path scroll-region coverage
+          (:file "scroll-line-edit-tests") ; DCH/ICH parser-path line-edit coverage
           (:file "scroll-tests-b") ; direct-row-primitives, direct-action-erase, constrained-scroll, history-limit - part II
           (:file "scroll-tests-c") ; direct-line-edit (il/dl), scroll-screen-to-history, DEC-rect (DECERA/DECFRA/DECCRA) - part III
           (:file "scroll-tests-d") ; clear-scrollback, BCE background via %erase-cell, *scroll-on-clear-function* edge cases - part IV
