@@ -226,7 +226,11 @@
        (:file "dispatch-commands-option-pane") ; rename/select %cmd-* handlers (loads option-pane-window/pane fragments)
        (:file "dispatch-commands-lifecycle") ; kill/link/unlink/swap/move/source-file %cmd-*
        (:file "dispatch-commands-pane")   ; layout/window/pane helpers + *key-table*
-       (:file "dispatch-commands-pane-session") ; session/client lifecycle %cmd-*
+       (:file "dispatch-commands-session-service") ; session switching/destruction services
+       (:file "dispatch-commands-client-session") ; switch/attach/detach %cmd-* handlers
+       (:file "dispatch-commands-session-create") ; new-session %cmd-* handler
+       (:file "dispatch-commands-session-destroy") ; kill-session %cmd-* handler
+       (:file "dispatch-commands-window-resize") ; resize-window %cmd-* handler
        (:file "dispatch-commands-pane-x") ; copy-mode -X command name table (send-keys -X dispatch)
        (:file "dispatch-commands-shell")   ; run-shell and if-shell %cmd-* handlers
        (:file "dispatch-commands-capture-pane") ; capture-pane %cmd-* handler
