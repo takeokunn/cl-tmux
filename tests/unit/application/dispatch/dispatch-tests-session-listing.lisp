@@ -37,11 +37,12 @@
                         (cl-tmux/model:session-active-window s))))
             desc)))))
 
-(test run-command-line-select-layout-unknown-is-noop
-  "%run-command-line select-layout with an unknown name is a no-op (no error)."
-  (with-fake-two-pane-session (s)
-    (is (null (cl-tmux::%run-command-line s "select-layout bogus-layout"))
-        "unknown layout name must not raise an error")))
+(test run-command-line-select-layout-noncanonical-names-are-noop
+  "%run-command-line select-layout with non-canonical names is a no-op."
+  (dolist (layout '("bogus-layout" "even-h" "even-v" "main-h" "main-v"))
+    (with-fake-two-pane-session (s)
+      (is (null (cl-tmux::%run-command-line s (format nil "select-layout ~A" layout)))
+          "non-canonical layout name ~S must not raise an error" layout))))
 
 ;;; ── set-option -u (unset) ────────────────────────────────────────────────────
 
@@ -372,4 +373,3 @@
                 '("home" "work" "workbench")
                 "work"))
       "filtered overlay rows must preserve ordering and exclude non-matches"))
-

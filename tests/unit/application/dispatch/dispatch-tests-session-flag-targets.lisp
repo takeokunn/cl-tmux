@@ -7,22 +7,27 @@
 ;;; ── %resolve-layout-name helper (from define-layout-name-table) ─────────────
 
 (test resolve-layout-name-returns-correct-keywords
-  "%resolve-layout-name maps layout name strings to layout keywords."
-  (dolist (case '(("even-horizontal" . :even-horizontal)
-                  ("even-h" . :even-horizontal)
-                  ("even-vertical" . :even-vertical)
-                  ("even-v" . :even-vertical)
-                  ("main-horizontal" . :main-horizontal)
-                  ("main-h" . :main-horizontal)
-                  ("main-vertical" . :main-vertical)
-                  ("main-v" . :main-vertical)
-                  ("tiled" . :tiled)))
-    (let ((name (car case))
-          (kw (cdr case)))
-      (is (eq kw (cl-tmux::%resolve-layout-name name))
-          "%resolve-layout-name ~S must return ~S" name kw)))
-  (is (null (cl-tmux::%resolve-layout-name "bogus"))
-      "%resolve-layout-name must return NIL for unknown layout names"))
+  "%resolve-layout-name maps canonical layout names to layout keywords."
+  (check-table
+   (list (list (cl-tmux::%resolve-layout-name "even-horizontal")
+               :even-horizontal
+               "canonical even-horizontal")
+         (list (cl-tmux::%resolve-layout-name "even-vertical")
+               :even-vertical
+               "canonical even-vertical")
+         (list (cl-tmux::%resolve-layout-name "main-horizontal")
+               :main-horizontal
+               "canonical main-horizontal")
+         (list (cl-tmux::%resolve-layout-name "main-vertical")
+               :main-vertical
+               "canonical main-vertical")
+         (list (cl-tmux::%resolve-layout-name "tiled")
+               :tiled
+               "canonical tiled"))
+   :test #'eq)
+  (dolist (name '("even-h" "even-v" "main-h" "main-v" "bogus"))
+    (is (null (cl-tmux::%resolve-layout-name name))
+        "%resolve-layout-name must reject non-canonical layout name ~S" name)))
 
 (test define-layout-name-table-macro-is-defined
   "define-layout-name-table is a defined macro."

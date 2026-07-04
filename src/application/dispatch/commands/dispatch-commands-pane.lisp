@@ -8,34 +8,33 @@
 
 ;;; -- Layout name → keyword dispatch macro ------------------------------------
 ;;;
-;;; Each row is (aliases... keyword), Prolog-style: one fact per layout name.
-;;; The macro generates a flat cond of (member name aliases :test #'string-equal)
-;;; checks so adding a new layout requires appending one line here.
+;;; Each row is one canonical layout fact.  The macro generates a flat cond so
+;;; adding a new accepted layout requires appending one explicit fact here.
 
 (defmacro define-layout-name-table (&rest rows)
-  "Build %RESOLVE-LAYOUT-NAME from a declarative aliases→keyword table.
-   Each ROW is (keyword alias-string...).  Generates a function that maps a
+  "Build %RESOLVE-LAYOUT-NAME from a declarative canonical-name table.
+   Each ROW is (keyword canonical-name).  Generates a function that maps a
    layout name string to the corresponding keyword, or NIL for unknown names."
   `(defun %resolve-layout-name (name)
      "Map NAME (a string) to a layout keyword, or NIL when unrecognised."
      (cond
        ,@(mapcar (lambda (row)
-                   (destructuring-bind (kw &rest aliases) row
-                     `((member name ',aliases :test #'string-equal) ,kw)))
+                   (destructuring-bind (kw canonical-name) row
+                     `((string-equal name ,canonical-name) ,kw)))
                  rows)
        (t nil))))
 
 (define-layout-name-table
-  (:even-horizontal "even-horizontal" "even-h")
-  (:even-vertical   "even-vertical"   "even-v")
-  (:main-horizontal "main-horizontal" "main-h")
-  (:main-vertical   "main-vertical"   "main-v")
+  (:even-horizontal "even-horizontal")
+  (:even-vertical   "even-vertical")
+  (:main-horizontal "main-horizontal")
+  (:main-vertical   "main-vertical")
   (:tiled           "tiled"))
 
 (defun %cmd-select-layout (session args)
   "select-layout [-npoE] [-t target-window] [layout-name]: apply or cycle layouts.
-   layout-name: even-horizontal (even-h), even-vertical (even-v),
-     main-horizontal (main-h), main-vertical (main-v), tiled.
+   layout-name: even-horizontal, even-vertical, main-horizontal,
+     main-vertical, tiled.
    -n: next preset layout; -p: previous preset layout.
    -E: spread the panes out evenly (mapped to even-vertical).
    -o: undo the last layout change — restores the layout tree saved before
