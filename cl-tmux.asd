@@ -218,7 +218,10 @@
        (:file "dispatch-commands-target")   ; shared target resolution helpers
        (:file "dispatch-commands-prompt")   ; command-prompt substitution/CPS helpers
        (:file "dispatch-commands")          ; display/prompt/pane %cmd-* handlers
-       (:file "dispatch-commands-buffer")   ; paste-buffer + overlay popup/menu %cmd-* handlers
+       (:file "dispatch-commands-flag-accessors") ; generated command flag accessors
+       (:file "dispatch-commands-buffer")   ; paste-buffer %cmd-* handlers
+       (:file "dispatch-commands-buffer-ui") ; popup/menu/confirm/list-keys %cmd-* handlers
+       (:file "dispatch-commands-copy-mode-entry") ; copy-mode entry %cmd-* handler
        (:file "dispatch-commands-option")   ; set-option (CPS) + show-options %cmd-*
        (:file "dispatch-commands-option-pane") ; rename/select %cmd-* handlers (loads option-pane-window/pane fragments)
        (:file "dispatch-commands-lifecycle") ; kill/link/unlink/swap/move/source-file %cmd-*
