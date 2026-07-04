@@ -220,8 +220,7 @@
   "Event-dispatch macros used by the CPS state machine are all defined."
   (dolist (sym '(cl-tmux::define-copy-mode-escape-table
                  cl-tmux::define-cps-state
-                 cl-tmux::define-prompt-key-rules
-                 cl-tmux::define-copy-mode-vi-rules))
+                 cl-tmux::define-prompt-key-rules))
     (is (macro-function sym) "~S must be a defined macro" sym)))
 
 (test process-byte-focus-hook-table
@@ -285,7 +284,7 @@
 
 (test copy-mode-j-scrolls-down
   "Plain 'j' (byte 106) scrolls down 1 line in copy mode."
-  (with-copy-mode-state (s screen input-state)
+  (with-copy-mode-vi-state (s screen input-state)
     (seed-scrollback screen 10)
     ;; Scroll up 5 first so there's room to scroll back down.
     (cl-tmux/commands::copy-mode-scroll screen 5)
@@ -297,7 +296,7 @@
 (test copy-mode-k-scrolls-up
   "Plain 'k' moves the cursor up; when the cursor is already at row 0, it scrolls
    the viewport back toward older content by 1 line."
-  (with-copy-mode-state (s screen input-state)
+  (with-copy-mode-vi-state (s screen input-state)
     (seed-scrollback screen 10)
     ;; Force cursor to the top row so the next k scrolls the viewport.
     (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
@@ -308,7 +307,7 @@
 
 (test copy-mode-g-jumps-to-top
   "Plain 'g' (byte 103) jumps to top of scrollback in copy mode."
-  (with-copy-mode-state (s screen input-state)
+  (with-copy-mode-vi-state (s screen input-state)
     (seed-scrollback screen 10)
     (cl-tmux::process-byte s (char-code #\g) input-state)
     (is (= 10 (screen-copy-offset screen))
@@ -316,7 +315,7 @@
 
 (test copy-mode-G-jumps-to-bottom
   "Plain 'G' (byte 71) jumps to bottom (live view) in copy mode."
-  (with-copy-mode-state (s screen input-state)
+  (with-copy-mode-vi-state (s screen input-state)
     (seed-scrollback screen 10)
     ;; Scroll up first
     (cl-tmux/commands::copy-mode-scroll screen 8)

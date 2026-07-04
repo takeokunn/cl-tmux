@@ -136,6 +136,13 @@
            (cl-tmux::dispatch-command ,session-var :copy-mode-enter nil)
            ,@forms)))))
 
+(defmacro with-copy-mode-vi-state ((session-var screen-var state-var) &body body)
+  "Run BODY in an isolated vi copy-mode key-table configuration."
+  `(with-isolated-config
+     (cl-tmux/options:set-option "mode-keys" "vi")
+     (with-copy-mode-state (,session-var ,screen-var ,state-var)
+       ,@body)))
+
 (defmacro with-option-session ((var &rest make-args) &body body)
   "Bind VAR to a fresh fake session and run BODY inside WITH-ISOLATED-CONFIG.
    Use this when the test exercises option/config mutations (set-option, prefix,

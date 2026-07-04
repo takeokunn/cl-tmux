@@ -8,7 +8,7 @@
 
 (test copy-mode-v-begins-selection
   "Plain 'v' (byte 118) also begins selection in copy mode."
-  (with-copy-mode-state (s screen state)
+  (with-copy-mode-vi-state (s screen state)
     (finishes (cl-tmux::process-byte s 118 state))
     (is (screen-copy-selecting screen)
         "v must activate copy selection")))
@@ -17,7 +17,7 @@
 
 (test copy-mode-M-moves-cursor-to-middle
   "Plain 'M' (byte 77) moves the copy-mode cursor to the middle row of the screen."
-  (with-copy-mode-state (s screen state)
+  (with-copy-mode-vi-state (s screen state)
     ;; Place cursor at row 0.
     (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
     (cl-tmux::process-byte s (char-code #\M) state)
@@ -252,4 +252,3 @@
         "pushed byte must appear at index 1")))
 
 ;;; ── %status-col-to-window: multi-window traversal coverage ──────────────────
-

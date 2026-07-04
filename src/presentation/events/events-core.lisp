@@ -85,7 +85,6 @@
 ;;; Returns T when the byte was consumed by vi-normal dispatch.
 ;;;
 ;;; define-prompt-vi-key-rules follows the same Prolog-like rule style as
-;;; define-copy-mode-vi-rules (events-copy-mode-dispatch.lisp) and
 ;;; define-prompt-key-rules (above).  It generates %HANDLE-VI-NORMAL-KEY from
 ;;; a declarative dispatch table of (pattern &rest body) rules.
 

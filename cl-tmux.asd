@@ -302,7 +302,6 @@
        (:file "events-keystroke-escape-prompt") ; prompt-local ESC sequences
        (:file "events-keystroke-escape-keys") ; SS3 / CSI-tilde key-name resolution
        (:file "events-keystroke")          ; CPS state functions: ground-state, after-prefix-state
-       (:file "events-copy-mode-dispatch") ; define-copy-mode-vi-rules macro + %dispatch-copy-mode-byte
        (:file "events-prefix-csi-continuation") ; post-prefix CSI/SS3 CPS continuation
        (:file "events-keystroke-repeat-states") ; prefix/root repeat CPS states
        (:file "events-loop-timers") ; CPS process-byte + escape/repeat timer plumbing + synchronize-panes

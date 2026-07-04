@@ -154,43 +154,37 @@
 (test copy-mode-j-at-interior-row-moves-cursor-not-scrolls
   "Plain 'j' when cursor is at an interior row (not bottom) moves cursor down without
    scrolling the viewport.  The offset must remain unchanged."
-  (with-fake-session (s)
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        (seed-scrollback screen 10)
-        ;; Scroll viewport up so there is room both above and below cursor.
-        (cl-tmux/commands::copy-mode-scroll screen 5)
-        (let ((initial-offset (screen-copy-offset screen)))
-          ;; Place cursor at an interior row (not the bottom).
-          (setf (cl-tmux/terminal/types:screen-copy-cursor screen)
-                (cons 0 0))
-          ;; 'j' should move cursor down without touching the offset.
-          (cl-tmux::process-byte s (char-code #\j) state)
-          (is (= initial-offset (screen-copy-offset screen))
-              "j at interior row must not change copy-offset")
-          (let ((new-row (car (screen-copy-cursor screen))))
-            (is (= 1 new-row) "j must move cursor down by 1 row"))))))
+  (with-copy-mode-vi-state (s screen state)
+    (seed-scrollback screen 10)
+    ;; Scroll viewport up so there is room both above and below cursor.
+    (cl-tmux/commands::copy-mode-scroll screen 5)
+    (let ((initial-offset (screen-copy-offset screen)))
+      ;; Place cursor at an interior row (not the bottom).
+      (setf (cl-tmux/terminal/types:screen-copy-cursor screen)
+            (cons 0 0))
+      ;; 'j' should move cursor down without touching the offset.
+      (cl-tmux::process-byte s (char-code #\j) state)
+      (is (= initial-offset (screen-copy-offset screen))
+          "j at interior row must not change copy-offset")
+      (let ((new-row (car (screen-copy-cursor screen))))
+        (is (= 1 new-row) "j must move cursor down by 1 row")))))
 
 (test copy-mode-k-at-interior-row-moves-cursor-not-scrolls
   "Plain 'k' when cursor is at an interior row (not top) moves cursor up without
    scrolling the viewport.  The offset must remain unchanged."
-  (with-fake-session (s)
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        (seed-scrollback screen 10)
-        ;; Scroll viewport up and place cursor at an interior row.
-        (cl-tmux/commands::copy-mode-scroll screen 5)
-        (let ((initial-offset (screen-copy-offset screen)))
-          (setf (cl-tmux/terminal/types:screen-copy-cursor screen)
-                (cons 5 0))  ; row 5 — not at top (row 0)
-          ;; 'k' should move cursor up without touching the offset.
-          (cl-tmux::process-byte s (char-code #\k) state)
-          (is (= initial-offset (screen-copy-offset screen))
-              "k at interior row must not change copy-offset")
-          (let ((new-row (car (screen-copy-cursor screen))))
-            (is (= 4 new-row) "k must move cursor up by 1 row"))))))
+  (with-copy-mode-vi-state (s screen state)
+    (seed-scrollback screen 10)
+    ;; Scroll viewport up and place cursor at an interior row.
+    (cl-tmux/commands::copy-mode-scroll screen 5)
+    (let ((initial-offset (screen-copy-offset screen)))
+      (setf (cl-tmux/terminal/types:screen-copy-cursor screen)
+            (cons 5 0))
+      ;; 'k' should move cursor up without touching the offset.
+      (cl-tmux::process-byte s (char-code #\k) state)
+      (is (= initial-offset (screen-copy-offset screen))
+          "k at interior row must not change copy-offset")
+      (let ((new-row (car (screen-copy-cursor screen))))
+        (is (= 4 new-row) "k must move cursor up by 1 row")))))
 
 ;;; ── %prefix-csi-arrow-cmd direct tests ──────────────────────────────────────
 
@@ -292,50 +286,38 @@
   (dolist (c '((104 3 2 "h: col 3→2 (left)")
                (108 0 1 "l: col 0→1 (right)")))
     (destructuring-bind (byte init-col expected-col desc) c
-      (with-fake-session (s)
-        (let ((screen (active-screen s))
-              (state  (cl-tmux::make-input-state)))
-          (cl-tmux::dispatch-command s :copy-mode-enter nil)
-          (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 init-col))
-          (cl-tmux::process-byte s byte state)
-          (is (= expected-col (cdr (screen-copy-cursor screen))) "~A" desc))))))
+      (with-copy-mode-vi-state (s screen state)
+        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 init-col))
+        (cl-tmux::process-byte s byte state)
+        (is (= expected-col (cdr (screen-copy-cursor screen))) "~A" desc)))))
 
 (test copy-mode-i-exits-copy-mode
   "Plain 'i' (byte 105) exits copy mode without needing the C-b prefix."
-  (with-fake-session (s)
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        (is (screen-copy-mode-p screen) "copy mode entered")
-        (cl-tmux::process-byte s 105 state)   ; i
-        (is-false (screen-copy-mode-p screen)
-            "i must exit copy mode"))))
+  (with-copy-mode-vi-state (s screen state)
+    (is (screen-copy-mode-p screen) "copy mode entered")
+    (cl-tmux::process-byte s 105 state)
+    (is-false (screen-copy-mode-p screen)
+        "i must exit copy mode")))
 
 (test copy-mode-zero-moves-to-line-start
   "Plain '0' (byte 48) moves the cursor to the start of the current line."
-  (with-fake-session (s)
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        ;; Place cursor somewhere in the middle.
-        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 2 5))
-        (cl-tmux::process-byte s 48 state)   ; 0
-        (let ((col (cdr (screen-copy-cursor screen))))
-          (is (= 0 col) "0 must move cursor column to 0")))))
+  (with-copy-mode-vi-state (s screen state)
+    ;; Place cursor somewhere in the middle.
+    (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 2 5))
+    (cl-tmux::process-byte s 48 state)
+    (let ((col (cdr (screen-copy-cursor screen))))
+      (is (= 0 col) "0 must move cursor column to 0"))))
 
 (test copy-mode-dollar-moves-to-line-end
   "Plain '$' (byte 36) moves the cursor to the end of the line CONTENT (tmux
    cursor-end-of-line), landing on the last non-blank character."
-  (with-fake-session (s)
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (feed screen "abc")
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        ;; Start at col 0.
-        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
-        (cl-tmux::process-byte s 36 state)   ; $
-        (is (= 2 (cdr (screen-copy-cursor screen)))
-            "$ must move the cursor to the last content column (col 2 for \"abc\")"))))
+  (with-copy-mode-vi-state (s screen state)
+    (feed screen "abc")
+    ;; Start at col 0.
+    (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons 0 0))
+    (cl-tmux::process-byte s 36 state)
+    (is (= 2 (cdr (screen-copy-cursor screen)))
+        "$ must move the cursor to the last content column (col 2 for \"abc\")")))
 
 (test copy-mode-ctrl-n-scrolls-down
   "C-n (byte 14) moves the cursor down by 1 in copy mode (same as j)."
@@ -370,36 +352,27 @@
   (dolist (c '((72 3  0  "H: row → 0 (top)")
                (76 0 nil  "L: row → height-1 (bottom)")))
     (destructuring-bind (byte init-row fixed-or-nil desc) c
-      (with-fake-session (s)
-        (let ((screen (active-screen s))
-              (state  (cl-tmux::make-input-state)))
-          (cl-tmux::dispatch-command s :copy-mode-enter nil)
-          (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons init-row 0))
-          (cl-tmux::process-byte s byte state)
-          (let* ((row    (car (screen-copy-cursor screen)))
-                 (target (if (null fixed-or-nil)
-                             (1- (screen-height screen))
-                             fixed-or-nil)))
-            (is (= target row) "~A" desc)))))))
+      (with-copy-mode-vi-state (s screen state)
+        (setf (cl-tmux/terminal/types:screen-copy-cursor screen) (cons init-row 0))
+        (cl-tmux::process-byte s byte state)
+        (let* ((row    (car (screen-copy-cursor screen)))
+               (target (if (null fixed-or-nil)
+                           (1- (screen-height screen))
+                           fixed-or-nil)))
+          (is (= target row) "~A" desc))))))
 
 (test copy-mode-V-begins-line-selection
   "Plain 'V' (byte 86) starts line-selection mode in copy mode without signaling."
-  (with-fake-session (s)
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        (finishes (cl-tmux::process-byte s 86 state))
-        ;; V activates either regular selection or line-selection — check both.
-        (is (or (screen-copy-selecting screen)
-                (screen-copy-line-selection-p screen))
-            "V must activate some form of selection in copy mode"))))
+  (with-copy-mode-vi-state (s screen state)
+    (finishes (cl-tmux::process-byte s 86 state))
+    ;; V activates either regular selection or line-selection — check both.
+    (is (or (screen-copy-selecting screen)
+            (screen-copy-line-selection-p screen))
+        "V must activate some form of selection in copy mode")))
 
 (test copy-mode-space-begins-selection
   "Plain Space (byte 32) starts selection in copy mode."
-  (with-fake-session (s)
-      (let ((screen (active-screen s))
-            (state  (cl-tmux::make-input-state)))
-        (cl-tmux::dispatch-command s :copy-mode-enter nil)
-        (finishes (cl-tmux::process-byte s 32 state))
-        (is (screen-copy-selecting screen)
-            "Space must activate copy selection"))))
+  (with-copy-mode-vi-state (s screen state)
+    (finishes (cl-tmux::process-byte s 32 state))
+    (is (screen-copy-selecting screen)
+        "Space must activate copy selection")))

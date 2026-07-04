@@ -250,15 +250,17 @@
 
 (test copy-mode-ctrl-f-page-down
   "C-f (byte 6) in copy mode scrolls down one full page."
-  (with-copy-mode-state (s screen state)
-    (seed-scrollback screen 30)
-    (cl-tmux/commands::copy-mode-scroll screen 20)
-    (let ((offset-before (screen-copy-offset screen))
-          (h             (screen-height screen)))
-      (cl-tmux::process-byte s 6 state)   ; C-f → page down
-      (let ((expected (max 0 (- offset-before h))))
-        (is (= expected (screen-copy-offset screen))
-            "C-f must scroll copy-offset down by screen-height")))))
+  (with-isolated-config
+    (cl-tmux/options:set-option "mode-keys" "vi")
+    (with-copy-mode-state (s screen state)
+      (seed-scrollback screen 30)
+      (cl-tmux/commands::copy-mode-scroll screen 20)
+      (let ((offset-before (screen-copy-offset screen))
+            (h             (screen-height screen)))
+        (cl-tmux::process-byte s 6 state)   ; C-f -> page down
+        (let ((expected (max 0 (- offset-before h))))
+          (is (= expected (screen-copy-offset screen))
+              "C-f must scroll copy-offset down by screen-height"))))))
 
 (test copy-mode-page-up-command-scrolls-full-page
   "copy-mode-page-up scrolls the viewport up by one full screen-height."

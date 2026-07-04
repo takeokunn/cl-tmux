@@ -68,6 +68,31 @@
   "Default tmux copy-mode bindings for the emacs-style table.
    Matches tmux 3.x key_bindings.c copy-mode emacs defaults.")
 
+(defparameter +copy-mode-repeatable-commands+
+  '(:copy-mode-cursor-left
+    :copy-mode-cursor-right
+    :copy-mode-cursor-down
+    :copy-mode-cursor-up
+    :copy-mode-scroll-down-line
+    :copy-mode-scroll-up-line
+    :copy-mode-page-down
+    :copy-mode-page-up
+    :copy-mode-half-page-up
+    :copy-mode-half-page-down
+    :copy-mode-word-forward
+    :copy-mode-word-backward
+    :copy-mode-word-end
+    :copy-mode-space-forward
+    :copy-mode-space-backward
+    :copy-mode-space-end
+    :copy-mode-prev-paragraph
+    :copy-mode-next-paragraph
+    :copy-mode-next-matching-bracket
+    :copy-mode-previous-matching-bracket
+    :copy-mode-jump-again
+    :copy-mode-jump-reverse)
+  "Copy-mode commands that consume numeric prefixes as repeat counts.")
+
 ;;; ── Default vi copy-mode bindings ────────────────────────────────────────
 
 (defparameter +default-copy-mode-vi-bindings+
@@ -142,14 +167,22 @@
 
 ;;; ── Install functions ─────────────────────────────────────────────────────
 
+(defun %install-copy-mode-bindings (table-name bindings)
+  "Populate TABLE-NAME with copy-mode BINDINGS and per-command repeatability."
+  (dolist (binding bindings)
+    (destructuring-bind (key command) binding
+      (key-table-bind table-name key command
+                      :repeatable (not (null (member command
+                                                     +copy-mode-repeatable-commands+)))))))
+
 (defun install-default-copy-mode-bindings ()
   "Populate the 'copy-mode' (emacs) key table with tmux 3.x default bindings.
    Meta bindings use names like \"M-f\" so they match what %meta-key-name produces
    when ESC+key arrives in the input stream.  Idempotent."
-  (%install-key-bindings +table-copy-mode+ +default-copy-mode-bindings+)
+  (%install-copy-mode-bindings +table-copy-mode+ +default-copy-mode-bindings+)
   (%bind-copy-mode-named-navigation +table-copy-mode+))
 
 (defun install-default-copy-mode-vi-bindings ()
   "Populate the 'copy-mode-vi' key table with tmux 3.x default bindings."
-  (%install-key-bindings +table-copy-mode-vi+ +default-copy-mode-vi-bindings+)
+  (%install-copy-mode-bindings +table-copy-mode-vi+ +default-copy-mode-vi-bindings+)
   (%bind-copy-mode-named-navigation +table-copy-mode-vi+))
