@@ -75,7 +75,7 @@
     ("send-keys"            . "[-FHlMRX] [-N repeat-count] [-t target-pane] key ...")
     ("send-prefix"          . "[-2] [-t target-pane]")
     ("server-access"        . "[-adlrw] [user]")
-    ("set-buffer"           . "[-aw] [-b buffer-name] [-n new-buffer-name] [-t target-client] data")
+    ("set-buffer"           . "[-aw] [-b buffer-name] [-n new-buffer-name] data")
     ("set-environment"      . "[-Fhgru] [-t target-session] name [value]")
     ("set-hook"             . "[-agpRuw] [-t target-pane] hook-name [command]")
     ("set-option"           . "[-aFgopqsuUw] [-t target-pane] option [value]")

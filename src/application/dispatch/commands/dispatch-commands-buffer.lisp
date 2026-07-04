@@ -105,15 +105,13 @@
                 (screen-clipboard-queue screen)))))))
 
 (defun %cmd-set-buffer-arg (session args)
-  "set-buffer [-aw] [-b name] [-n new-name] [-t target-client] data...:
+  "set-buffer [-aw] [-b name] [-n new-name] data...:
    set a paste buffer's contents.  -b name stores DATA under NAME; without -b
    an automatic name (bufferN) is assigned.  -n new-name renames the selected
-   buffer (or the most recent one) to NEW-NAME and ignores DATA.  -w also sends
-   the buffer to the host clipboard via OSC 52 (honouring set-clipboard); -t
-   names the target client for that clipboard write (accepted; the standalone
-   model has a single client so it routes to the active pane)."
-  (with-command-input (flags positionals args "bnt"
-                             :allowed-flags '(#\a #\b #\n #\w #\t)
+   buffer (or the most recent one) to NEW-NAME and ignores DATA.  -w sends the
+   buffer to the host clipboard via OSC 52 (honouring set-clipboard)."
+  (with-command-input (flags positionals args "bn"
+                             :allowed-flags '(#\a #\b #\n #\w)
                              :message "set-buffer: unsupported argument")
     (let* ((name     (%buffer-name-from-flags flags))
            (new-name (%flag-value flags #\n))

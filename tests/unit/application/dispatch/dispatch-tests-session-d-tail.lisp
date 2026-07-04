@@ -42,17 +42,17 @@
       (is (null (cl-tmux/buffer:get-named-buffer "old"))
           "the old name is removed"))))
 
-(test cmd-set-buffer-accepts-target-client-flag
-  "set-buffer -t target-client (tmux args ab:t:n:w) consumes the client argument
-   and stores the remaining data as a paste buffer, with no error overlay."
+(test cmd-set-buffer-rejects-target-client-flag
+  "set-buffer rejects target-client compatibility input before mutating buffers."
   (with-empty-buffers
     (with-fake-session (s)
       (let ((*overlay* nil))
-        (cl-tmux::%cmd-set-buffer-arg s '("-t" "client" "hello"))
-        (is (null *overlay*)
-            "set-buffer -t must not raise an unsupported-argument overlay")
-        (is (string= "hello" (cl-tmux/buffer:get-paste-buffer 0))
-            "set-buffer -t stores the data after consuming the client arg")))))
+        (is (null (cl-tmux::%cmd-set-buffer-arg s '("-t" "client" "hello")))
+            "set-buffer -t is rejected")
+        (assert-overlay-contains "set-buffer: unsupported argument"
+                                  *overlay* "set-buffer -t")
+        (is (null (cl-tmux/buffer:get-paste-buffer 0))
+            "set-buffer -t must not store a paste buffer after rejection")))))
 
 (test cmd-set-buffer-n-reports-no-buffer-when-empty
   "set-buffer -n new-name on an empty ring reports that no source buffer exists."
@@ -95,7 +95,7 @@
             "set-buffer -w stores the data as well as sending to the clipboard")))))
 
 (test cmd-set-buffer-rejects-unsupported-arguments
-  "set-buffer rejects flags that are not in the tmux args set (ab:t:n:w)."
+  "set-buffer rejects flags outside the canonical local args set (ab:n:w)."
   (dolist (args '(("-Z" "hello")))
     (with-empty-buffers
       (with-fake-session (s)
