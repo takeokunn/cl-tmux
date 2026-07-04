@@ -220,7 +220,7 @@
       (cl-tmux/model:session-set-environment sess (car pair) (cdr pair)))))
 
 (defun %cmd-new-session-arg (session args)
-  "new-session [-AdEPX] [-s name] [-n window-name] [-c start-dir] [-e VAR=val]
+  "new-session [-AdEP] [-s name] [-n window-name] [-c start-dir] [-e VAR=val]
    [-F format] [-x width] [-y height]: create a new session.
    -A: if a session named NAME already exists, attach to it instead of creating a new one.
   -d: create detached (do not switch to the new session).
@@ -232,14 +232,15 @@
   -P: print information about the new session after creation.
   -F format: with -P, the format string for the printed info (default
      #{session_name}:).
-  -X: with -A, behave like attach-session -x (detach the other client); the
-     standalone single-client model has no other client, so it is a no-op.
    -x width: initial columns (default: terminal width, or default-size when -d).
    -y height: initial rows (default: terminal height minus status bar, or
      default-size when -d).
   A DETACHED session (-d) has no client to size it, so — like tmux — it uses the
    default-size option (\"WxH\", default 80x24) when -x/-y are not given."
-  (with-command-flags+pos (flags positionals args "sncxyteF")
+  (with-command-input (flags positionals args "sncxyteF"
+                             :allowed-flags '(#\A #\d #\E #\P #\s #\n #\c
+                                              #\x #\y #\t #\e #\F)
+                             :message "new-session: unsupported argument")
     (declare (ignore positionals))
     (let* ((name            (%new-session-name-from-flags flags))
            (attach-if-exists (%flag-present-p flags #\A))

@@ -34,13 +34,9 @@
    -M: forward the current mouse event to the target pane.
    -R: reset the target pane's terminal state (RIS) before sending any keys.
    -F: expand #{...} format variables in each key argument before sending.
-   -c target-client: target client (single-client standalone model: accepted).
-   -K: send keys to the client's key table (accepted; routed to the pane in the
-       standalone model).  tmux args \"c:FHKlMN:Rt:X\".
    Without -X: each positional is a key name or literal string typed into the pane."
-  (with-command-input (flags positionals args "tNc"
-                             :allowed-flags '(#\l #\H #\M #\R #\X #\N #\t
-                                              #\c #\F #\K)
+  (with-command-input (flags positionals args "tN"
+                             :allowed-flags '(#\l #\H #\M #\R #\X #\N #\t #\F)
                              :message "send-keys: unsupported argument")
     (let* ((target-str (%flag-value flags #\t))
            (literal-p  (%flag-present-p flags #\l))

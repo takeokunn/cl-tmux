@@ -251,20 +251,20 @@
 ;;; live new-session forks a real PTY (forkpty-with-shell), which the unit suite
 ;;; avoids — but the FLAG PARSING that derives cols/rows is fork-free and runs in
 ;;; %cmd-new-session-arg BEFORE the fork: it calls
-;;;   (%parse-command-flags args "sncxy")
+;;;   (%parse-command-flags args "sncxyteF")
 ;;; and then resolves the -x/-y values into cols/rows.  We test that fork-free
-;;; contract directly: x and y must be VALUE flags (in the "sncxy" spec), and
+;;; contract directly: x and y must be VALUE flags (in the "sncxyteF" spec), and
 ;;; the resulting detached-session dimensions must come from the parsed size
-;;; string.  This guards against a regression where "sncxy" reverts to "snc" —
+;;; string.  This guards against a regression where "sncxyteF" reverts to "snc" —
 ;;; then -x/-y would parse as boolean flags and "100"/"40" would leak into the
 ;;; positionals, which the assertions below would catch.
 
 (test new-session-x-y-flags-are-value-flags
-  "%parse-command-flags with the new-session 'sncxy' spec treats -x and -y as
+  "%parse-command-flags with the new-session 'sncxyteF' spec treats -x and -y as
    VALUE flags, consuming '100' and '40' as their values rather than positionals.
    This is the fork-free guard for new-session -x/-y dimension parsing."
   (multiple-value-bind (flags positionals)
-      (cl-tmux::%parse-command-flags '("-x" "100" "-y" "40" "rest") "sncxy")
+      (cl-tmux::%parse-command-flags '("-x" "100" "-y" "40" "rest") "sncxyteF")
     (is (string= "100" (alist-value #\x flags))
         "-x must consume '100' as its value (got ~S)" (alist-value #\x flags))
     (is (string= "40" (alist-value #\y flags))
@@ -281,3 +281,16 @@
     (assert-not-member "40" positionals
                        :test #'string=
                        :context "new-session positionals")))
+
+(test new-session-rejects-compatibility-only-flags
+  "new-session rejects client-detach/flags compatibility inputs before any fork."
+  (with-fake-session (s)
+    (dolist (args '(("-X")
+                    ("-D")
+                    ("-f" "flags")))
+      (let ((cl-tmux::*overlay* nil))
+        (is (null (cl-tmux::%cmd-new-session-arg s args))
+            "new-session rejects compatibility args ~S" args)
+        (assert-overlay-contains "new-session: unsupported argument"
+                                 cl-tmux::*overlay*
+                                 args)))))
