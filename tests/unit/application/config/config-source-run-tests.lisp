@@ -33,7 +33,7 @@
    Asserts via an OPTION the file would set (a key like z has a DEFAULT binding, so
    'unbound' is not a reliable 'not executed' signal)."
   (with-isolated-config
-    (with-temp-config-file (p "set -g status-left PARSEONLY")
+    (with-temp-config-file (p "set-option -g status-left PARSEONLY")
       (assert-config-directive-applied (list "source-file" "-n" (namestring p))
                                        "source-file -n parse only")
       (is (not (string= "PARSEONLY" (cl-tmux/options:get-option "status-left")))
@@ -43,7 +43,7 @@
   "Control: WITHOUT -n the same file DOES set the option — isolating that -n is what
    suppresses execution."
   (with-isolated-config
-    (with-temp-config-file (p "set -g status-left EXECUTED")
+    (with-temp-config-file (p "set-option -g status-left EXECUTED")
       (apply-config-directive (list "source-file" (namestring p)))
       (is (string= "EXECUTED" (cl-tmux/options:get-option "status-left"))
           "without -n the option is set"))))
@@ -51,7 +51,7 @@
 (test source-file-clustered-qn-does-not-execute
   "Clustered -qn is also parse-only (q tolerated, n suppresses execution)."
   (with-isolated-config
-    (with-temp-config-file (p "set -g status-left QNFLAG")
+    (with-temp-config-file (p "set-option -g status-left QNFLAG")
       (apply-config-directive (list "source-file" "-qn" (namestring p)))
       (is (not (string= "QNFLAG" (cl-tmux/options:get-option "status-left")))
           "-qn must not execute"))))
@@ -91,7 +91,7 @@
    Uses a known literal path (no #{...} variables) to confirm that -F does
    not break plain paths (the expanded form equals the original string)."
   (with-isolated-config
-    (with-temp-config-file (p "set -g status-left FFORMAT")
+    (with-temp-config-file (p "set-option -g status-left FFORMAT")
       ;; A plain path contains no #{} variables; expand-format returns it unchanged.
       ;; This test confirms the -F code path does not corrupt literal paths.
       (let ((result (cl-tmux/config:apply-config-directive

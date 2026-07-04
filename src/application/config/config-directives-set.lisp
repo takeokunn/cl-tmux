@@ -13,18 +13,17 @@
 
 ;;; ── Simple directive definitions ─────────────────────────────────────────
 ;;;
-;;; The six set-option variants (set, set-option, setw, set-window-option,
-;;; sets, set-session-option) all forward to cl-tmux/options:set-option at
-;;; config-file load time, because no session/window/pane context is available
-;;; during config parsing.
+;;; The set-option canonical commands all forward to cl-tmux/options:set-option
+;;; at config-file load time, because no session/window/pane context is
+;;; available during config parsing.
 ;;;
 ;;; Runtime commands that carry a window or pane context should call
 ;;; cl-tmux/options:set-option-for-window / set-option-for-pane directly to
 ;;; store in the per-struct local-options hash.
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (defparameter +set-directive-aliases+
-    '("set" "set-option" "setw" "set-window-option" "sets" "set-session-option")))
+  (defparameter +set-directive-commands+
+    '("set-option" "set-window-option" "set-session-option")))
 
 (define-config-directives
   ("set-shell" 1 (path)
@@ -35,7 +34,7 @@
       (when (and height (plusp height))
         (setf *status-height* height)
         t)))
-  (:aliases +set-directive-aliases+
+  (:aliases +set-directive-commands+
     2 (option-name option-value)
     (cl-tmux/options:set-option option-name option-value)
     t)
@@ -54,16 +53,15 @@
   ;; entry is needed here.
   )
 
-;;; ── set-option flag handling (set -g / -a / -s / ...) ──────────────────────
+;;; ── set-option flag handling (-g / -a / -s / ...) ──────────────────────────
 ;;;
-;;; The fixed-arity directive table cannot match `set -g status off` (3 tokens vs
-;;; arity 2), so the canonical .tmux.conf form silently failed.  %apply-set-
-;;; directive consumes leading scope flags:
+;;; The fixed-arity directive table cannot match `set-option -g status off`
+;;; (3 tokens vs arity 2), so %apply-set-directive consumes leading scope flags:
 ;;;   -g global (default)  -s server  -w window  -o only-if-unset
 ;;;   -a append  -u unset
 ;;; -s routes the write to *server-options* instead of *global-options*.
 ;;;
-;;; The set-verb list is shared via +set-directive-aliases+ rather than
+;;; The set-verb list is shared via +set-directive-commands+ rather than
 ;;; duplicated in the directive table and predicate.
 
 ;;; define-flag-mapping generates a block of (when FLAG-CHAR-P (setf VAR t)) forms
@@ -83,8 +81,8 @@
   `(progn ,@(mapcar (lambda (r) (%expand-flag-mapping-rule r tok-sym)) rules)))
 
 (defun %set-directive-p (cmd)
-  "Return T when CMD is one of the standard set-option directive verbs."
-  (member cmd +set-directive-aliases+
+  "Return T when CMD is one of the canonical set-option directive verbs."
+  (member cmd +set-directive-commands+
           :test #'string=))
 
 (defparameter +unsupported-set-option-names+
@@ -92,7 +90,7 @@
   "Options whose tmux syntax implies behavior cl-tmux does not implement.
    Empty since terminal-overrides/terminal-features were un-rejected: real tmux
    ACCEPTS and stores them (they appear in virtually every real .tmux.conf, e.g.
-   `set -ga terminal-overrides \",xterm-256color:Tc\"`), so rejecting them broke
+   `set-option -ga terminal-overrides \",xterm-256color:Tc\"`), so rejecting them broke
    config transparency even though cl-tmux applies no terminal-matching
    behavior.  Kept as a named list so a future genuinely-unrepresentable option
    has a documented home.")
@@ -182,8 +180,8 @@
        (funcall setter name value)))))
 
 (defun %apply-set-directive (cmd args)
-  "Apply a flag-bearing set-family directive (e.g. `set -g status off`,
-   `set -s escape-time 0`, `set -ag word-separators x`).
+  "Apply a flag-bearing set-family directive (e.g. `set-option -g status off`,
+   `set-option -s escape-time 0`, `set-option -ag word-separators x`).
    Routes -s writes to *server-options*; handles -a (append) and -u (unset).
    Returns T when applied; NIL when CMD is not a set verb or carries no flags."
   (when (%set-directive-p cmd)
@@ -200,7 +198,7 @@
                          (%option-scope-triple server-p)
                        (declare (ignore getter setter))
                        (nth-value 1 (gethash name table))))
-                ;; tmux `set -o`: an already-set option is skipped ("already
+                ;; tmux `set-option -o`: an already-set option is skipped ("already
                 ;; set" at config load); the directive itself is handled.
                 t
                 ;; Hoist (machine-instance) here so %coerce-set-value stays pure.

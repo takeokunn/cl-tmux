@@ -144,7 +144,7 @@
           "~A" desc))))
 
 (test bind-prefix-key-none-disables
-  "`set -g prefix2 None` disables the secondary prefix (NIL); `set -g prefix None`
+  "`set-option -g prefix2 None` disables the secondary prefix (NIL); `set-option -g prefix None`
    resets the primary prefix to the default +prefix-key-code+."
   (let ((cl-tmux/config:*prefix-key-code*  1)
         (cl-tmux/config:*prefix2-key-code* 7))

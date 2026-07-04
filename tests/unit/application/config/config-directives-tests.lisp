@@ -65,62 +65,62 @@
 ;;; set [-g|-a|...] name value  — flag handling (the canonical .tmux.conf form)
 
 (test apply-set-directive-global-flag
-  "'set -g status off' applies (3 tokens) — previously the fixed-arity table
+  "'set-option -g status off' applies (3 tokens) — previously the fixed-arity table
    silently dropped it.  Sets 'status', not an option named '-g'."
   (with-isolated-options ()
-    (assert-set-directive-option-state '("set" "-g" "status" "off")
+    (assert-set-directive-option-state '("set-option" "-g" "status" "off")
                                        "status" "off"
-                                       :context "set -g status off")
+                                       :context "set-option -g status off")
     (is (null (cl-tmux/options:get-option "-g"))
         "must NOT create an option literally named '-g'")))
 
 (test apply-set-directive-append-flag
-  "'set -ag <name> <value>' appends to the option's current value."
+  "'set-option -ag <name> <value>' appends to the option's current value."
   (with-isolated-options ("status-left" "A")
-    (assert-set-directive-option-state '("set" "-ag" "status-left" "B")
+    (assert-set-directive-option-state '("set-option" "-ag" "status-left" "B")
                                        "status-left" "AB"
-                                       :context "set -ag")))
+                                       :context "set-option -ag")))
 
 (test apply-set-directive-unset-flag
-  "'set -u <name>' removes the option from the current scope."
+  "'set-option -u <name>' removes the option from the current scope."
   (with-isolated-options ("status-left" "keep-me")
-    (assert-set-directive-option-state '("set" "-u" "status-left")
+    (assert-set-directive-option-state '("set-option" "-u" "status-left")
                                        "status-left" nil
-                                       :context "set -u"
+                                       :context "set-option -u"
                                        :present-p nil)))
 
 (test apply-set-directive-plain-unaffected
   "Plain 'set name value' (no flags) still flows through the normal directive
    table and applies unchanged."
   (with-isolated-options ()
-    (assert-set-directive-option-state '("set" "status" "off")
+    (assert-set-directive-option-state '("set-option" "status" "off")
                                        "status" "off"
                                        :context "plain set")))
 
 ;;; set mouse — *mouse-reporting-hook* side effect
 
 (test set-mouse-invokes-mouse-reporting-hook
-  "'set -g mouse on'/'off' invokes *mouse-reporting-hook* with T/NIL so the
+  "'set-option -g mouse on'/'off' invokes *mouse-reporting-hook* with T/NIL so the
    renderer layer can enable/disable mouse reporting without config depending
    on it directly."
   (with-isolated-config
     (let ((calls nil))
       (let ((cl-tmux/config:*mouse-reporting-hook*
               (lambda (on-p) (push on-p calls))))
-        (assert-config-directive-applied '("set" "-g" "mouse" "on")
-                                         "set -g mouse on")
-        (assert-config-directive-applied '("set" "-g" "mouse" "off")
-                                         "set -g mouse off")
+        (assert-config-directive-applied '("set-option" "-g" "mouse" "on")
+                                         "set-option -g mouse on")
+        (assert-config-directive-applied '("set-option" "-g" "mouse" "off")
+                                         "set-option -g mouse off")
         (is (equal '(nil t) calls)
             "the hook must be called with T then NIL, got ~A" calls)))))
 
 (test set-mouse-with-no-hook-does-not-signal
-  "'set -g mouse on' is safe when *mouse-reporting-hook* is unset (NIL)."
+  "'set-option -g mouse on' is safe when *mouse-reporting-hook* is unset (NIL)."
   (with-isolated-config
     (let ((cl-tmux/config:*mouse-reporting-hook* nil))
       (finishes
-        (assert-config-directive-applied '("set" "-g" "mouse" "on")
-                                         "set -g mouse on with no hook")))))
+        (assert-config-directive-applied '("set-option" "-g" "mouse" "on")
+                                         "set-option -g mouse on with no hook")))))
 
 ;;; set-shell / set-status-height directives
 

@@ -141,17 +141,17 @@
 
 ;;; ── %apply-option-side-effects: prefix branch ────────────────────────────
 ;;;
-;;; Tests that "set -g prefix C-a" updates *prefix-key-code* and registers
+;;; Tests that "set-option -g prefix C-a" updates *prefix-key-code* and registers
 ;;; the new key in the prefix table (the prefix2 branch has no separate
 ;;; integration path into tests, so we cover the scalar + key-table path here).
 
 (test apply-set-directive-prefix-side-effect
-  "'set -g prefix C-a' updates *prefix-key-code* to 1 and binds the new key."
+  "'set-option -g prefix C-a' updates *prefix-key-code* to 1 and binds the new key."
   (with-isolated-key-tables
     (let ((cl-tmux/config:*prefix-key-code* cl-tmux/config:+prefix-key-code+))
-      (apply-config-directive '("set" "-g" "prefix" "C-a"))
+      (apply-config-directive '("set-option" "-g" "prefix" "C-a"))
       (is (= 1 cl-tmux/config:*prefix-key-code*)
-          "*prefix-key-code* must be 1 (C-a) after 'set -g prefix C-a'")
+          "*prefix-key-code* must be 1 (C-a) after 'set-option -g prefix C-a'")
       (let ((entry (cl-tmux/config:key-table-lookup "prefix" (code-char 1))))
         (is (not (null entry))
             "C-a (code-char 1) must be bound in the prefix table after prefix change")
@@ -264,21 +264,21 @@
       (is (equal '(:dead :seeking) stack)
           "nested %if inside :seeking must push :dead; got ~S" stack))))
 
-;;; ── set -o (only-if-unset) on the config-load path ───────────────────────────
+;;; ── set-option -o (only-if-unset) on the config-load path ───────────────────────────
 
 (test config-set-o-only-if-unset-enforced
-  "Config-time `set -og` skips an already-present option and writes an absent
+  "Config-time `set-option -og` skips an already-present option and writes an absent
    one (tmux cmd-set-option -o semantics on the load path)."
   (with-fresh-global-options
-    (is (eq t (apply-config-directive '("set" "-og" "@cfg-o" "first")))
-        "first set -og on an unset user option must apply")
+    (is (eq t (apply-config-directive '("set-option" "-og" "@cfg-o" "first")))
+        "first set-option -og on an unset user option must apply")
     (is (string= "first" (cl-tmux/options:get-option "@cfg-o"))
         "the first value must be stored")
-    (is (eq t (apply-config-directive '("set" "-og" "@cfg-o" "second")))
-        "second set -og is handled (tmux reports already-set and skips)")
+    (is (eq t (apply-config-directive '("set-option" "-og" "@cfg-o" "second")))
+        "second set-option -og is handled (tmux reports already-set and skips)")
     (is (string= "first" (cl-tmux/options:get-option "@cfg-o"))
         "the existing value must be left untouched")
-    (is (eq t (apply-config-directive '("set" "-g" "@cfg-o" "third")))
+    (is (eq t (apply-config-directive '("set-option" "-g" "@cfg-o" "third")))
         "a plain set without -o must still overwrite")
     (is (string= "third" (cl-tmux/options:get-option "@cfg-o"))
         "plain set must overwrite the value")))

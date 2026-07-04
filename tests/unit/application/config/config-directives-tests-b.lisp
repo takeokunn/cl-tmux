@@ -87,15 +87,15 @@
   "apply-config-directive with NIL (empty token list) returns NIL."
   (assert-config-directive-rejected nil "NIL token list"))
 
-;;; ── set option directives: shared alias source ───────────────────────────
+;;; ── set option directives: canonical command source ──────────────────────
 ;;;
-;;; The directive table in src/config-directives-set.lisp owns the shared alias
-;;; list; this test iterates that source directly so the definition and
+;;; The directive table in src/config-directives-set.lisp owns the canonical
+;;; command list; this test iterates that source directly so the definition and
 ;;; verification stay aligned.
 
-(test set-option-directive-aliases-table-driven
-  "Each set-option directive alias stores a value in the global options table."
-  (dolist (verb cl-tmux/config::+set-directive-aliases+)
+(test set-option-directive-commands-table-driven
+  "Each canonical set-option directive command stores a value in the global options table."
+  (dolist (verb cl-tmux/config::+set-directive-commands+)
     (with-fresh-global-options
       (let ((result (apply-config-directive (list verb "status-interval" "7"))))
         (is (eq t result)
@@ -104,16 +104,26 @@
             "~A must store status-interval = 7 in global options, got ~S"
             verb (cl-tmux/options:get-option "status-interval"))))))
 
-;;; ── set -s server option routing ──────────────────────────────────────────
+(test set-option-short-aliases-are-rejected
+  "Short tmux aliases are not accepted; config directives use canonical commands only."
+  (dolist (verb '("set" "setw" "sets"))
+    (with-fresh-global-options
+      (let ((option-name "@short-alias-probe"))
+        (assert-config-directive-rejected (list verb option-name "7") verb)
+        (assert-config-directive-rejected (list verb "-g" option-name "7") verb)
+        (is (null (cl-tmux/options:get-option option-name nil))
+            "~A must not store ~A" verb option-name)))))
+
+;;; ── set-option -s server option routing ──────────────────────────────────────────
 
 (test apply-set-directive-server-flag
-  "'set -s exit-empty off' routes to server-options; exit-empty is server-only."
+  "'set-option -s exit-empty off' routes to server-options; exit-empty is server-only."
   ;; exit-empty is in *server-option-registry* but NOT in *option-registry* /
   ;; *global-options*, so the assertion 'not in global-options' is clean.
   (let ((cl-tmux/options:*server-options* (make-hash-table :test #'equal)))
-    (assert-set-directive-option-state '("set" "-s" "exit-empty" "off")
+    (assert-set-directive-option-state '("set-option" "-s" "exit-empty" "off")
                                        "exit-empty" nil
-                                       :context "set -s exit-empty off"
+                                       :context "set-option -s exit-empty off"
                                        :server-p t)
     (is (null (cl-tmux/options:get-server-option "exit-empty"))
         "exit-empty must be NIL ('off') in server-options")
@@ -124,7 +134,7 @@
   "terminal-overrides/features are ACCEPTED and stored like real tmux (they
    appear in virtually every real .tmux.conf); cl-tmux applies no
    terminal-matching behavior but must not break config transparency."
-  (dolist (form '(("set" "-g" "terminal-overrides" "xterm*:RGB")
+  (dolist (form '(("set-option" "-g" "terminal-overrides" "xterm*:RGB")
                   ("set-option" "-g" "terminal-features" "xterm*:RGB")))
     (with-fresh-global-options
       (destructuring-bind (verb flag name value) form

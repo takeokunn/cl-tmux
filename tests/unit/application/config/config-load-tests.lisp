@@ -34,14 +34,14 @@
             (load-config-from-string
              (format nil "~
 # realistic config~%~
-set -g status-position top~%~
-set -g status-left-style fg=red~%~
-set -gw monitor-bell off~%~
-set -g alternate-screen off~%~
-set -ga @x a~%~
-set -ga @x b~%~
+set-option -g status-position top~%~
+set-option -g status-left-style fg=red~%~
+set-option -gw monitor-bell off~%~
+set-option -g alternate-screen off~%~
+set-option -ga @x a~%~
+set-option -ga @x b~%~
 bind -n F1 next-window~%~
-set -g prefix C-a~%"))))
+set-option -g prefix C-a~%"))))
       (is (= 8 applied) "all 8 directives applied (comment/blank skipped), got ~A" applied)
       (is (string= "top" (cl-tmux/options:get-option "status-position"))
           "status-position took effect")
@@ -58,7 +58,7 @@ set -g prefix C-a~%"))))
                (cl-tmux/config:key-table-lookup "root" "F1")))
           "bind -n F1 bound F1 in the root table")
       (is (= 1 cl-tmux/config:*prefix-key-code*)
-          "set -g prefix C-a changed the prefix to C-a (byte 1)"))))
+          "set-option -g prefix C-a changed the prefix to C-a (byte 1)"))))
 
 (test load-from-string-multichar-and-quote-key
   "A single-char quote key parses as the character."

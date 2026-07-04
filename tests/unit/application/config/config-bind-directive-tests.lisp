@@ -221,12 +221,12 @@
    sequences and applies each segment in order (tmux command-sequence parity)."
   (with-isolated-options ("status" "on" "status-style" "")
     (is (eq t (cl-tmux/config::apply-config-line
-               "set -g status off ; set -g status-style bg=red"))
+               "set-option -g status off ; set-option -g status-style bg=red"))
         "a multi-segment line returns T when at least one segment applied")
     (is (string= "off" (cl-tmux/options:get-option "status"))
-        "the first segment (set -g status off) must be applied")
+        "the first segment (set-option -g status off) must be applied")
     (is (string= "bg=red" (cl-tmux/options:get-option "status-style"))
-        "the second segment (set -g status-style bg=red) must be applied")))
+        "the second segment (set-option -g status-style bg=red) must be applied")))
 
 (test apply-config-line-ignores-empty-semicolon-segments
   "apply-config-line discards empty segments produced by doubled/trailing `;'.
@@ -234,7 +234,7 @@
    token the tokenizer does not split -- a known limitation)."
   (with-isolated-options ("status" "on" "status-style" "")
     (is (eq t (cl-tmux/config::apply-config-line
-               "set -g status off ; ; set -g status-style bg=red ;"))
+               "set-option -g status off ; ; set-option -g status-style bg=red ;"))
         "doubled and trailing `;' produce empty segments that are skipped")
     (is (string= "off" (cl-tmux/options:get-option "status")))
     (is (string= "bg=red" (cl-tmux/options:get-option "status-style")))))

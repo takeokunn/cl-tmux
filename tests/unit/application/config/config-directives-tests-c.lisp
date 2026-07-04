@@ -179,7 +179,7 @@
 ;;; status option: off / on / line-count parsing → *status-height*
 
 (test set-status-directive-table
-  "`set -g status` maps string values to the expected status height."
+  "`set-option -g status` maps string values to the expected status height."
   (dolist (case '(("off" 0 "status off → height 0")
                   ("0" 0 "status 0 → height 0")
                   ("on" 1 "status on → height 1")
@@ -188,7 +188,7 @@
                   ("9" 5 "status 9 → clamped to 5 rows")))
     (destructuring-bind (value expected desc) case
       (with-isolated-config
-        (cl-tmux/config:apply-config-directive (list "set" "-g" "status" value))
+        (cl-tmux/config:apply-config-directive (list "set-option" "-g" "status" value))
         (is (= expected cl-tmux/config:*status-height*) "~A" desc)))))
 
 ;;; apply-config-line

@@ -97,7 +97,7 @@
               ((char= ch #\;)
                ;; tmux cmd-parse: an unquoted, unescaped `;` is a command
                ;; separator even with no surrounding whitespace
-               ;; (`set -g @a 1; set -g @b 2`), so it always lexes as its own
+               ;; (`set-option -g @a 1; set-option -g @b 2`), so it always lexes as its own
                ;; ";" token.  A literal `;` must be escaped (\;) or quoted —
                ;; both of those take the branches above and stay in-token.
                (finish-token)

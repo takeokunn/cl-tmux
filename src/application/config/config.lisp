@@ -14,15 +14,15 @@
 ;;; ── Runtime-modifiable prefix key ────────────────────────────────────────
 ;;;
 ;;; *prefix-key-code* shadows +prefix-key-code+ for the event loop so that
-;;; "set -g prefix C-a" (or any other .tmux.conf directive) can remap the
+;;; "set-option -g prefix C-a" (or any other .tmux.conf directive) can remap the
 ;;; prefix at runtime without recompiling.  The constant is preserved for
 ;;; compile-time uses (e.g., test expectations about the default value).
 
 (defparameter *prefix-key-code* +prefix-key-code+
-  "Runtime prefix key byte.  Default 2 (C-b).  Change via 'set -g prefix C-a'.")
+  "Runtime prefix key byte.  Default 2 (C-b).  Change via 'set-option -g prefix C-a'.")
 
 (defparameter *prefix2-key-code* nil
-  "Second prefix key byte, or NIL when not set.  Changed via 'set -g prefix2 C-a'.
+  "Second prefix key byte, or NIL when not set.  Changed via 'set-option -g prefix2 C-a'.
    When set, pressing this key also arms the prefix key-table (same as the primary prefix).")
 
 (defun %prefix-control-byte (rest)
@@ -113,7 +113,7 @@
   "Number of rows reserved for the status bar at the bottom.")
 
 (defconstant +max-status-lines+ 5
-  "tmux's maximum status-line count; `set -g status N` clamps N to this cap.")
+  "tmux's maximum status-line count; `set-option -g status N` clamps N to this cap.")
 
 (defconstant +pty-buf-size+ 4096
   "Byte buffer size for PTY reads.")
