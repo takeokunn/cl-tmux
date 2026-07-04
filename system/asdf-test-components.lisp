@@ -85,7 +85,9 @@
          :serial t
          :components
          ((:file "format-tests") ; format expansion - part I (shorthands, brace/conditional, context, window_flags, helpers)
-          (:file "format-tests-d") ; format expansion - part IV (shorthand-table, %expand-brace, %truthy-p, pane/client vars, structural, modifiers)
+          (:file "format-tests-d") ; format expansion - part IV (shorthand-table, %expand-brace, %truthy-p, pane/client vars)
+          (:file "format-structural-tests") ; structural pane/session/window/terminal format variables
+          (:file "format-modifier-tests") ; truncation/logical/quote/char/path modifiers
           (:file "format-tests-b") ; format expansion - part II (path/substitute/nested/strftime/context/glob/regex)
           (:file "format-tests-c") ; format expansion - part III (arithmetic/vars/geometry/pane_at_edges/pane-synchronized)
           (:file "format-tests-e") ; format expansion - part V (content-search, glob-match-p, pane-visible-lines, apply-pad-modifier, window-raw-flags)
