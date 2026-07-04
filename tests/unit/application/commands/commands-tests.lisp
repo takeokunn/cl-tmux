@@ -47,6 +47,45 @@
     (session-select-window sess win)
     sess))
 
+(defparameter *swap-two-panes-noop-cases*
+  '((:same-pane
+     "same pane -> no-op, returns NIL"
+     "panes list must be unchanged after same-pane no-op")
+    (:nil-first
+     "NIL first argument -> no-op, returns NIL"
+     "panes list must be unchanged after NIL first argument")
+    (:nil-second
+     "NIL second argument -> no-op, returns NIL"
+     "panes list must be unchanged after NIL second argument")
+    (:missing-pane
+     "pane not in window -> no-op, returns NIL"
+     "panes list must be unchanged after missing-pane no-op")))
+
+(defun %swap-two-panes-noop-args (case p0 outsider)
+  (ecase case
+    (:same-pane (values p0 p0))
+    (:nil-first (values nil p0))
+    (:nil-second (values p0 nil))
+    (:missing-pane (values p0 outsider))))
+
+(defun %swap-two-panes-noop-checks (win p0 pane-a pane-b return-message unchanged-message)
+  (list (list (null (swap-two-panes win pane-a pane-b)) t return-message)
+        (list (eq p0 (first (window-panes win))) t unchanged-message)))
+
+(defmacro with-swap-two-panes-noop-case ((case return-message unchanged-message) &body body)
+  `(dolist (row *swap-two-panes-noop-cases*)
+     (destructuring-bind (,case ,return-message ,unchanged-message) row
+       ,@body)))
+
+(defmacro with-joined-pane-in-window ((win src) &body body)
+  `(let* ((,win (%vsplit-window 20))
+          (dst-pane (first (window-panes ,win)))
+          (,src (make-pane :id 99 :x 0 :y 0 :width 10 :height 5
+                           :fd -1 :pid -1 :screen (make-screen 10 5))))
+     (window-select-pane ,win dst-pane)
+     (cl-tmux/commands::%join-pane-insert-into-dst ,src ,win :h)
+     ,@body))
+
 ;;; ── resize-pane: vertical split ─────────────────────────────────────────────
 
 (test resize-vertical-right-grows-active-shrinks-neighbour
@@ -339,27 +378,15 @@
 
 ;;; ── %join-pane-insert-into-dst direct unit tests ─────────────────────────────
 
-(test join-pane-insert-into-dst-adds-pane-to-window
-  "%join-pane-insert-into-dst appends src-pane to the destination window's pane list."
-  (let* ((win (%vsplit-window 20))
-         (p0  (first  (window-panes win)))
-         (src (make-pane :id 99 :x 0 :y 0 :width 10 :height 5
-                         :fd -1 :pid -1 :screen (make-screen 10 5))))
-    (window-select-pane win p0)
-    (cl-tmux/commands::%join-pane-insert-into-dst src win :h)
-    (is (member src (window-panes win))
-        "inserted pane must appear in window-panes after %join-pane-insert-into-dst")))
-
-(test join-pane-insert-into-dst-sets-pane-window
-  "%join-pane-insert-into-dst wires pane-window to the destination window."
-  (let* ((win (%vsplit-window 20))
-         (p0  (first  (window-panes win)))
-         (src (make-pane :id 99 :x 0 :y 0 :width 10 :height 5
-                         :fd -1 :pid -1 :screen (make-screen 10 5))))
-    (window-select-pane win p0)
-    (cl-tmux/commands::%join-pane-insert-into-dst src win :h)
-    (is (eq win (pane-window src))
-        "pane-window must be updated to dst-window after insertion")))
+(test join-pane-insert-into-dst-state-table
+  "%join-pane-insert-into-dst appends src-pane and wires pane-window."
+  (with-joined-pane-in-window (win src)
+    (check-table
+     (list (list (not (null (member src (window-panes win)))) t
+                 "inserted pane must appear in window-panes after insertion")
+           (list (eq win (pane-window src)) t
+                 "pane-window must be updated to dst-window after insertion"))
+     :test #'eq)))
 
 ;;; ── swap-two-panes direct unit tests ─────────────────────────────────────────
 ;;;
@@ -367,34 +394,18 @@
 ;;; exercised indirectly through swap-pane direction dispatch.  The tests below
 ;;; cover the no-op paths (same pane, missing pane) and the index-exchange path.
 
-(test swap-two-panes-same-pane-is-noop
-  "swap-two-panes returns NIL when both arguments are the same pane object."
-  (let* ((win (%vsplit-window 20))
-         (p0  (first (window-panes win))))
-    (is (null (swap-two-panes win p0 p0))
-        "same pane → no-op, returns NIL")
-    (is (eq p0 (first (window-panes win)))
-        "panes list must be unchanged after same-pane no-op")))
-
-(test swap-two-panes-nil-pane-is-noop
-  "swap-two-panes returns NIL when either argument is NIL."
-  (let* ((win (%vsplit-window 20))
-         (p0  (first (window-panes win))))
-    (is (null (swap-two-panes win nil p0))
-        "NIL first argument → no-op, returns NIL")
-    (is (null (swap-two-panes win p0 nil))
-        "NIL second argument → no-op, returns NIL")))
-
-(test swap-two-panes-missing-pane-is-noop
-  "swap-two-panes returns NIL when a pane is not in the window."
-  (let* ((win (%vsplit-window 20))
-         (p0  (first (window-panes win)))
-         (outsider (make-pane :id 99 :x 0 :y 0 :width 5 :height 5
-                              :fd -1 :pid -1 :screen (make-screen 5 5))))
-    (is (null (swap-two-panes win p0 outsider))
-        "pane not in window → no-op, returns NIL")
-    (is (eq p0 (first (window-panes win)))
-        "panes list must be unchanged")))
+(test swap-two-panes-noop-table
+  "swap-two-panes returns NIL and preserves pane order for invalid inputs."
+  (with-swap-two-panes-noop-case (case return-message unchanged-message)
+    (let* ((win (%vsplit-window 20))
+           (p0  (first (window-panes win)))
+           (outsider (make-pane :id 99 :x 0 :y 0 :width 5 :height 5
+                                :fd -1 :pid -1 :screen (make-screen 5 5))))
+      (multiple-value-bind (pane-a pane-b)
+          (%swap-two-panes-noop-args case p0 outsider)
+        (check-table
+         (%swap-two-panes-noop-checks win p0 pane-a pane-b return-message unchanged-message)
+         :test #'eq)))))
 
 (test swap-two-panes-exchanges-list-order-and-geometry
   "swap-two-panes exchanges both the pane list positions and screen geometry."
