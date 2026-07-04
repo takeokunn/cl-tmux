@@ -550,7 +550,9 @@
         :pathname "bootstrap"
         :serial t
         :components
-        ((:file "runtime-tests")  ; globals, pane-reader-loop, monitor-activity/silence, prompt-history, alert-action — part I
+        ((:file "runtime-tests")  ; globals, pane-reader-loop, monitor-activity/silence, alert-action — part I
+         (:file "runtime-prompt-history-io-tests")
+         (:file "runtime-message-log-core-tests")
          (:file "runtime-tests-c")  ; stop-reader-threads, add-message-log, add-prompt-history, wait-for-channel — part III
          (:file "runtime-tests-b")  ; add-message-log table-driven, add-prompt-history, wait-for-channel — part II
          (:file "main-tests")
