@@ -1,7 +1,7 @@
 (in-package #:cl-tmux/config)
 
-;;;; Config command-name registry: bindable keyword set, tmux short aliases,
-;;;; known canonical command names, and the resolution helpers.
+;;;; Config command-name registry: bindable keyword set, known canonical command
+;;;; names, and the resolution helpers.
 ;;;;
 ;;;; Splitting these ~160 lines out of config-tokenizer.lisp keeps the tokenizer
 ;;;; focused on lexical analysis (character scanning, token splitting, key-name
@@ -84,76 +84,25 @@
    excluded from the public command list.
    Updated whenever a new dispatchable command is added to dispatch-handlers.")
 
-;;; ── tmux short-alias table ───────────────────────────────────────────────
+;;; ── Command alias policy ─────────────────────────────────────────────────
 ;;;
-;;; tmux's cmd_table carries a .alias field for most commands (e.g. neww =
-;;; new-window, splitw = split-window).  This table maps those aliases to the
-;;; canonical command names cl-tmux registers.  Users who copy standard
-;;; .tmux.conf files that use the short forms will have them transparently
-;;; resolved rather than rejected.
+;;; cl-tmux accepts canonical command names only.  tmux short aliases such as
+;;; neww/splitw/killp are deliberately not kept as a compatibility layer.
 
 (defparameter *tmux-command-aliases*
-  '(;; tmux cmd_table short aliases (cmd_entry.alias) → cl-tmux's canonical name.
-    ("attach"    . "attach-session")   ("breakp"    . "break-pane")
-    ("capturep"  . "capture-pane")     ("clearhist" . "clear-history")
-    ("commandp"  . "command-prompt")   ("confirmb"  . "confirm-before")
-    ("copy"      . "copy-mode-enter")  ("copy-mode" . "copy-mode-enter")
-    ("deleteb"   . "delete-buffer")    ("display"   . "display-message")
-    ("displayp"  . "display-panes")    ("findw"     . "find-window")
-    ("has"       . "has-session")      ("if"        . "if-shell")
-    ("joinp"     . "join-pane")        ("killp"     . "kill-pane")
-    ("killw"     . "kill-window")      ("loadb"     . "load-buffer")
-    ("lockc"     . "lock-client")      ("locks"     . "lock-session")
-    ("ls"        . "list-sessions")    ("lsb"       . "list-buffers")
-    ("lsc"       . "list-clients")     ("lscm"      . "list-commands")
-    ("lsk"       . "list-keys")        ("lsp"       . "list-panes")
-    ("lsw"       . "list-windows")     ("menu"      . "display-menu")
-    ("movep"     . "move-pane")        ("movew"     . "move-window")
-    ("new"       . "new-session")      ("neww"      . "new-window")
-    ("pasteb"    . "paste-buffer")     ("popup"     . "display-popup")
-    ("renames"   . "rename-session")   ("renamew"   . "rename-window")
-    ("resizep"   . "resize-pane")      ("resizew"   . "resize-window")
-    ("respawnp"  . "respawn-pane")     ("respawnw"  . "respawn-window")
-    ("saveb"     . "save-buffer")      ("selectp"   . "select-pane")
-    ("selectw"   . "select-window")    ("send"      . "send-keys")
-    ("set"       . "set-option")       ("sets"      . "set-session-option")
-    ("setw"      . "set-window-option")("show"      . "show-options")
-    ("showb"     . "show-buffer")      ("showw"     . "show-window-options")
-    ("source"    . "source-file")      ("splitw"    . "split-window")
-    ("start"     . "start-server")     ("suspendc"  . "suspend-client")
-    ("swapp"     . "swap-pane")        ("swapw"     . "swap-window")
-    ("switchc"   . "switch-client")    ("bind-key"  . "bind")
-    ;; Standard tmux short aliases verified against the upstream cmd_table
-    ;; (deepwiki diff 2026-07-03) — real configs use these freely.  The
-    ;; earlier confirmb/renames/unlink spellings are kept as tolerant extras.
-    ("confirm"   . "confirm-before")   ("kills"     . "kill-session")
-    ("next"      . "next-window")      ("prev"      . "previous-window")
-    ("nextl"     . "next-layout")      ("prevl"     . "previous-layout")
-    ("pipe"      . "pipe-pane")        ("pipep"     . "pipe-pane")
-    ("refresh"   . "refresh-client")   ("rename"    . "rename-session")
-    ("rotatew"   . "rotate-window")    ("selectl"   . "select-layout")
-    ("showenv"   . "show-environment") ("showmsgs"  . "show-messages")
-    ("unlinkw"   . "unlink-window")
-    ;; new-pane (newp): recent tmux addition — a pane-creating command whose
-    ;; behaviour maps onto split-window in this model.
-    ("new-pane"  . "split-window")     ("newp"      . "split-window")
-    ("unbind-key" . "unbind")          ("unlink"    . "unlink-window"))
-  "tmux command-name aliases (the cmd_entry .alias field) mapped to the canonical
-   name cl-tmux registers.  Consulted by %canonical-command-name so a .tmux.conf
-   using the short forms (neww, splitw, killp, …) resolves transparently.")
+  '()
+  "Canonical-only command registry: no tmux short aliases are accepted.")
 
 (defun %canonical-command-name (name)
-  "Return the canonical cl-tmux command name for NAME, resolving tmux short
-   aliases (case-insensitive).  Returns NAME unchanged when it is not an alias."
-  (or (cdr (assoc name *tmux-command-aliases* :test #'string-equal))
-      name))
+  "Return NAME unchanged.  cl-tmux accepts canonical command names only."
+  name)
 
 ;;; ── Known canonical command names ────────────────────────────────────────
 ;;;
 ;;; This list covers all primary command names from tmux's cmd_table that
 ;;; cl-tmux either implements or accepts as valid bind targets.  Combined with
-;;; *tmux-command-aliases* and *bindable-commands*, it allows %known-command-name-p
-;;; to accept any real command (canonical or alias) while rejecting genuine typos.
+;;; *bindable-commands*, it allows %known-command-name-p to accept canonical
+;;; commands while rejecting aliases and genuine typos.
 
 (defparameter *known-command-names*
   '(;; tmux cmd_table primary names (transparently bindable / dispatchable).
@@ -183,24 +132,20 @@
     "server-info" "display-info" "mark-pane" "clear-mark" "zoom-toggle"
     "synchronize-panes")
   "Canonical tmux/cl-tmux command names accepted as bind targets.  Combined with
-   *tmux-command-aliases* and *bindable-commands*, this lets %known-command-name-p
-   accept any real command (canonical or alias) while still rejecting typos.")
+   *bindable-commands*, this lets %known-command-name-p accept canonical command
+   names while rejecting aliases and typos.")
 
 (defun %known-command-name-p (name)
-  "True when NAME is a recognised command — a bindable keyword, a known canonical
-   command name, or a tmux short alias for one.  Used to accept real commands
-   (canonical or abbreviated) in a binding while rejecting genuine typos."
-  (let ((canon (%canonical-command-name name)))
-    (or (%command-keyword canon)
-        (member canon *known-command-names* :test #'string-equal))))
+  "True when NAME is a recognised canonical command or bindable keyword name.
+   tmux short aliases are rejected at load time."
+  (or (%command-keyword name)
+      (member name *known-command-names* :test #'string-equal)))
 
 (defun %command-keyword (name)
   "Return the bindable command keyword named by NAME (case-insensitive), or NIL
    if NAME is not a directly-bindable command keyword.  Canonical command names
    are resolved via FIND-SYMBOL so unknown names are never interned into the
-   keyword package.  Names that are not bindable keywords (tmux short aliases
-   like neww, or arg-only commands like previous-window) return NIL; the bind
-   parser then stores them as a deferred command token-list resolved through the
-   alias-aware command dispatch at key-press time."
+   keyword package.  Canonical arg-only commands like previous-window return NIL;
+   the bind parser stores them as deferred command token lists."
   (let ((keyword (find-symbol (string-upcase name) :keyword)))
     (and keyword (member keyword *bindable-commands*) keyword)))

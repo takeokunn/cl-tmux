@@ -14,24 +14,24 @@
 (defun %resolve-single-command-binding (table key-token tokens repeatable note)
   "Resolve a single-command token list TOKENS into the command form stored in the
    key table.  For a single-word token list, tries to map to a directly-bindable
-   keyword first; falls back to the alias-aware token list for known command names;
-   rejects typos at load time (returning NIL), matching tmux's parse-time validation.
-   For a multi-word token list the whole list is stored.
+   keyword first; falls back to a canonical command token list for known command
+   names; rejects aliases and typos at load time (returning NIL).
+   For a multi-word token list, the first token must be a known canonical command.
    Returns (values table key-token command repeatable note) or NIL."
   (if (= (length tokens) 1)
-      ;; Single word: try keyword dispatch, then alias-aware token list, then reject.
+      ;; Single word: try keyword dispatch, then canonical token list, then reject.
       (let ((keyword (%command-keyword (first tokens))))
         (cond
           (keyword
            (values table key-token keyword repeatable note))
-          ;; A recognised command (canonical or tmux alias): store the single-token
-          ;; command list, resolved by the alias-aware dispatch at key-press.
+          ;; A recognised canonical command: store the single-token command list.
           ((%known-command-name-p (first tokens))
            (values table key-token tokens repeatable note))
-          ;; Genuine typo: reject at load time, matching tmux.
+          ;; Alias or typo: reject at load time.
           (t nil)))
-      ;; Multi-token: store as token list.
-      (values table key-token tokens repeatable note)))
+      ;; Multi-token: store only when the command name is canonical.
+      (when (%known-command-name-p (first tokens))
+        (values table key-token tokens repeatable note))))
 
 (defun %parse-bind-key-flags (args)
   "Consume the leading -n/-r/-T/-N bind-directive flags from ARGS.

@@ -26,17 +26,14 @@
     ("attach-session" . (run-attach-with-flags :raw-args-p t))
     ;; new-session: create a new session (optionally named) and attach to it.
     ("new-session"    . (run-new-session :raw-args-p t))
-    ("new"            . (run-new-session :raw-args-p t))
     ;; has-session: exit 0 if session exists, 1 otherwise (useful in scripts).
     ("has-session"    . (run-has-session :raw-args-p t))
     ;; kill-server: terminate the server process.
     ("kill-server"    . (run-kill-server :raw-args-p t))
     ;; list-sessions: print sessions to stdout.
     ("list-sessions"  . (run-list-sessions :raw-args-p t))
-    ("ls"             . (run-list-sessions :raw-args-p t))
     ;; list-windows: print windows via the running server.
     ("list-windows"   . (run-list-windows :raw-args-p t))
-    ("lsw"            . (run-list-windows :raw-args-p t))
     ;; list-commands: print known commands to stdout without requiring a TTY.
     ("list-commands"  . (run-list-commands :raw-args-p t))
     ;; display-message: command-client path; real tmux requires a running server.

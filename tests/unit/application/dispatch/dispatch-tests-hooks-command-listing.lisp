@@ -66,11 +66,9 @@
    ambiguous candidate list."
   (with-fake-session (s)
     (dolist (case '(("list-commands new-w"
-                     "new-window (neww) [-abdkPS] [-c start-directory] [-e environment] [-F format] [-n window-name] [-t target-window] [shell-command [argument ...]]")
+                     "new-window [-abdkPS] [-c start-directory] [-e environment] [-F format] [-n window-name] [-t target-window] [shell-command [argument ...]]")
                     ("list-commands list-s"
-                     "list-sessions (ls) [-F format] [-f filter]")
-                    ("list-commands lscm"
-                     "list-commands (lscm) [-F format] [command]")
+                     "list-sessions [-F format] [-f filter]")
                     ("list-commands list"
                      "ambiguous command: list, could be: list-buffers, list-clients, list-commands, list-keys, list-panes, list-sessions, list-windows")))
       (destructuring-bind (line expected) case
@@ -82,9 +80,9 @@
   "tmux 3.6a expands command_list_* fields for list-commands format output."
   (with-fake-session (s)
     (dolist (case '(("list-commands -F '#{command_list_name}|#{command_list_alias}|#{command_list_usage}' list-sessions"
-                     "list-sessions|ls|[-F format] [-f filter]")
+                     "list-sessions||[-F format] [-f filter]")
                     ("list-commands -F '#{command_list_name}|#{command_list_alias}|#{command_list_usage}' list-commands"
-                     "list-commands|lscm|[-F format] [command]")))
+                     "list-commands||[-F format] [command]")))
       (destructuring-bind (line expected) case
         (let ((*overlay* nil))
           (cl-tmux::%run-command-line s line)

@@ -17,9 +17,9 @@
 ;;; (*command-usage-table* lives in dispatch-commands-list-data.lisp, loaded before this file)
 
 (defun %lc-alias (canonical-name)
-  "Return the tmux short alias for CANONICAL-NAME, or NIL when none exists."
-  (loop for (alias . canon) in cl-tmux/config::*tmux-command-aliases*
-        when (string= canon canonical-name) return alias))
+  "Return NIL: cl-tmux exposes no tmux short command aliases."
+  (declare (ignore canonical-name))
+  nil)
 
 (defun %lc-usage (canonical-name)
   "Return the usage flags string for CANONICAL-NAME, or empty string when unknown."
@@ -32,19 +32,15 @@
 
 (defun %lc-resolve-name (input)
   "Resolve INPUT for list-commands.
-   Returns (values :exact canonical-name) on exact match (name or alias).
-   Returns (values :prefix canonical-name) on unique prefix match.
+   Returns (values :exact canonical-name) on exact canonical match.
+   Returns (values :prefix canonical-name) on unique canonical prefix match.
    Returns (values :ambiguous message-string) on ambiguous prefix.
    Returns (values :unknown nil) when no match found."
-  (let* ((all (%lc-all-names))
-         (alias-canon (cl-tmux/config::%canonical-command-name input)))
+  (let ((all (%lc-all-names)))
     (cond
       ;; Exact canonical match
       ((find input all :test #'string=)
        (values :exact input))
-      ;; Exact alias match (alias-canon differs from input = known alias)
-      ((not (string= alias-canon input))
-       (values :exact alias-canon))
       (t
        ;; Prefix search among canonical names
        (let ((matches (remove-if-not
@@ -64,7 +60,7 @@
   (cl-ppcre:regex-replace-all (cl-ppcre:quote-meta-chars pat) string replacement))
 
 (defun %lc-render-command (canonical-name format-string)
-  "Render one command entry using FORMAT-STRING or default usage output."
+  "Render one canonical command entry using FORMAT-STRING or default usage output."
   (let* ((alias (%lc-alias canonical-name))
          (usage (%lc-usage canonical-name)))
     (if format-string
@@ -73,7 +69,7 @@
           (setf line (%lc-subst-all line "#{command_list_alias}" (or alias "")))
           (setf line (%lc-subst-all line "#{command_list_usage}" usage))
           line)
-        ;; Default: "name (alias) usage" or "name usage" when no alias.
+        ;; Default: canonical "name usage"; aliases are not exposed.
         (if alias
             (format nil "~A (~A) ~A" canonical-name alias usage)
             (format nil "~A ~A" canonical-name usage)))))

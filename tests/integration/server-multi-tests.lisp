@@ -302,10 +302,10 @@
 ;;; case differs only in input/expected output, no live socket required.
 
 (test server-split-window-input-command-p-table
-  "%server-split-window-input-command-p is true only for :split-window/:splitw
+  "%server-split-window-input-command-p is true only for :split-window
    carrying a flag token that contains the character I."
   (dolist (row `((:split-window ("-I")   t   "split-window -I")
-                 (:splitw       ("-I")   t   "splitw alias -I")
+                 (:splitw       ("-I")   nil "splitw alias rejected")
                  (:split-window ("-Iv")  t   "-Iv combined flag contains I")
                  (:split-window ("-v")   nil "split-window without -I")
                  (:split-window ()       nil "split-window no flags")

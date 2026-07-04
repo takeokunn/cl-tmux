@@ -89,8 +89,7 @@ bind-key r source-file /dev/null"))
 (test load-config-bind-T-copy-mode-vi-stores-correctly
   "bind-key -T copy-mode-vi v send-keys -X begin-selection stores in the
    copy-mode-vi table.  The multi-token command is stored as a deferred token
-   list (run through the alias-aware dispatch at key-press, which sends -X
-   begin-selection to the pane's copy mode)."
+   list; key-press dispatch sends -X begin-selection to the pane's copy mode."
   (with-isolated-config
     (cl-tmux/config:load-config-from-string
      "bind-key -T copy-mode-vi v send-keys -X begin-selection")
@@ -129,20 +128,20 @@ set -u status")
 ;;; `bind X <shorthand>` (single token) goes through %command-keyword, and the
 ;;; named-buffer family uses canonical command names only.
 
-(test config-bind-accepts-named-buffer-shorthand-single-tokens
-  "Real tmux named-buffer aliases (deleteb/loadb/pasteb/saveb/showb) bind as
-   deferred token lists; a non-alias like setb is still rejected."
+(test config-bind-rejects-named-buffer-shorthand-single-tokens
+  "Real tmux named-buffer aliases (deleteb/loadb/pasteb/saveb/showb) are still
+   rejected because cl-tmux accepts canonical command names only."
   (dolist (abbrev '("deleteb" "loadb" "pasteb" "saveb" "showb"))
     (with-isolated-config
-      (is (= 1 (cl-tmux/config:load-config-from-string
+      (is (= 0 (cl-tmux/config:load-config-from-string
                 (format nil "bind X ~A" abbrev)))
-          "bind X ~A must be accepted (1 applied) — it is a real tmux alias"
+          "bind X ~A must be rejected (0 applied)"
           abbrev)
-      (is (equal (list abbrev) (lookup-key-binding #\X))
-          "~A stores a deferred token list" abbrev)))
+      (is (null (lookup-key-binding #\X))
+          "~A must not create a binding" abbrev)))
   (with-isolated-config
     (is (= 0 (cl-tmux/config:load-config-from-string "bind X setb"))
-        "setb is not a real tmux alias and must be rejected")))
+        "setb must be rejected as a non-canonical command name")))
 
 (test config-bind-rejects-unknown-single-token-still
   "The abbreviation aliases do not weaken typo rejection: an unknown single-token
@@ -151,24 +150,24 @@ set -u status")
     (is (= 0 (cl-tmux/config:load-config-from-string "bind X totally-bogus-cmd"))
         "an unknown bare command must still be rejected (0 applied)")))
 
-(test load-realistic-tmux-conf-with-aliases
-  "A realistic .tmux.conf written with tmux short aliases loads transparently:
-   set/setw/bind-key all apply, and alias command bodies are stored for dispatch."
+(test load-realistic-tmux-conf-with-canonical-commands
+  "A realistic .tmux.conf written with canonical command names loads:
+   set/setw/bind-key all apply, and command bodies are stored for dispatch."
   (with-isolated-config
     (let ((applied (cl-tmux/config:load-config-from-string
                     "set -g status on
 setw -g mode-keys vi
-bind-key c neww
-bind | splitw -h
+bind-key c new-window
+bind | split-window -h
 bind-key -T copy-mode-vi v send-keys -X begin-selection")))
       (is (= 5 applied)
-          "all five alias-using config lines apply (none rejected)")
+          "all five canonical config lines apply (none rejected)")
       (is (string= "on" (cl-tmux/options:get-option "status"))
           "set -g status on took effect")
-      (is (equal '("neww") (lookup-key-binding #\c))
-          "bind-key c neww stored (resolved to new-window at key-press)")
-      (is (equal '("splitw" "-h") (lookup-key-binding #\|))
-          "bind | splitw -h stored (resolved to split-window -h at key-press)")
+      (is (equal '("new-window") (lookup-key-binding #\c))
+          "bind-key c new-window stored")
+      (is (equal '("split-window" "-h") (lookup-key-binding #\|))
+          "bind | split-window -h stored")
       (is (not (null (cl-tmux/config:key-table-lookup "copy-mode-vi" #\v)))
           "bind-key -T copy-mode-vi created the copy-mode-vi binding"))))
 
@@ -488,7 +487,7 @@ bind-key -T copy-mode-vi v send-keys -X begin-selection")))
 ;;; ── Real-world .tmux.conf end-to-end ─────────────────────────────────────────
 ;;;
 ;;; A representative config exercising the constructs real configs
-;;; (oh-my-tmux/gpakosz, common tutorials) actually use: short aliases,
+;;; (oh-my-tmux/gpakosz, common tutorials) actually use: canonical commands,
 ;;; -g/-s/-r/-n/-T flags, user options, style strings, format strings,
 ;;; top-level `;` sequences, if-shell, run-shell -b, source -q, and the
 ;;; %if preprocessor.  Loaded whole-file so the preprocessor runs too.
@@ -515,17 +514,17 @@ bind-key -T copy-mode-vi v send-keys -X begin-selection")))
     "set -g visual-activity off"
     "set -g @plugin \"tmux-plugins/tmux-sensible\""
     ""
-    "# ── navigation (short aliases + repeat/root flags) ──"
-    "bind - splitw -v"
-    "bind _ splitw -h"
+    "# ── navigation (canonical commands + repeat/root flags) ──"
+    "bind - split-window -v"
+    "bind _ split-window -h"
     "bind -r h select-pane -L"
     "bind -r l select-pane -R"
     "bind Tab last-window"
     ""
     "# ── copy mode vi ─────────────────────"
     "setw -g mode-keys vi"
-    "bind -T copy-mode-vi v send -X begin-selection"
-    "bind -T copy-mode-vi y send -X copy-selection-and-cancel"
+    "bind -T copy-mode-vi v send-keys -X begin-selection"
+    "bind -T copy-mode-vi y send-keys -X copy-selection-and-cancel"
     ""
     "# ── conditionals / shell / sequences ─"
     "if \"true\" \"set -g @cond-ok yes\""
@@ -594,10 +593,10 @@ bind-key -T copy-mode-vi v send-keys -X begin-selection")))
              ;; %if false branch must NOT have run.
              (is (null (cl-tmux/options:get-option "@never" nil))
                  "%if false branch must be suppressed")
-             ;; Bindings: prefix table (alias splitw), repeat flag path,
+             ;; Bindings: prefix table, repeat flag path,
              ;; and the copy-mode-vi table.
              (is-true (cl-tmux/config:key-table-lookup "prefix" #\-)
-                      "bind - splitw -v must bind in the prefix table")
+                      "bind - split-window -v must bind in the prefix table")
              (is-true (cl-tmux/config:key-table-lookup "prefix" #\h)
                       "bind -r h select-pane -L must bind")
              (is-true (cl-tmux/config:key-table-lookup "copy-mode-vi" #\v)

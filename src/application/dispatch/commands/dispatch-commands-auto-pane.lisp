@@ -26,11 +26,11 @@
        scroll-up, etc.) dispatched to the target pane's copy mode.  -X is a
        BOOLEAN flag — the command is a positional, not -X's value.
    -N count: repeat count.  With -X, the copy-mode command runs COUNT times
-       (e.g. `send -X -N 5 scroll-up`); with regular keys, the whole key sequence
+       (e.g. `send-keys -X -N 5 scroll-up`); with regular keys, the whole key sequence
        is sent COUNT times.  Default 1.
    -t: target a specific pane by pane-id or 'session:window.pane' syntax.
    -l: send each positional literally (no key-name translation).
-   -H: each positional is a hexadecimal character code (e.g. `send -H 1b 5b 41`).
+   -H: each positional is a hexadecimal character code (e.g. `send-keys -H 1b 5b 41`).
    -M: forward the current mouse event to the target pane.
    -R: reset the target pane's terminal state (RIS) before sending any keys.
    -F: expand #{...} format variables in each key argument before sending.

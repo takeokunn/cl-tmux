@@ -619,10 +619,9 @@
         (cl-tmux/model:process-unset-environment "CLTMUX_CFGVAR")
         (cl-tmux/model:process-unset-environment "CLTMUX_CFGHID")))))
 
-(test tmux-standard-short-aliases-resolve
-  "The standard tmux cmd_table short aliases resolve to their canonical
-   commands (verified against the upstream inventory).
-   Each row: (alias canonical)."
+(test tmux-standard-short-aliases-stay-unresolved
+  "The standard tmux cmd_table short aliases are not accepted as cl-tmux command
+   names.  Each row: (alias canonical)."
   (dolist (row '(("confirm" "confirm-before") ("kills" "kill-session")
                  ("next" "next-window")       ("prev" "previous-window")
                  ("nextl" "next-layout")      ("prevl" "previous-layout")
@@ -633,5 +632,8 @@
                  ("showmsgs" "show-messages") ("unlinkw" "unlink-window")
                  ("newp" "split-window")))
     (destructuring-bind (alias canonical) row
-      (is (string= canonical (cl-tmux/config::%canonical-command-name alias))
-          "~A must resolve to ~A" alias canonical))))
+      (declare (ignore canonical))
+      (is (string= alias (cl-tmux/config::%canonical-command-name alias))
+          "~A must stay unresolved" alias)
+      (is (null (cl-tmux/config::%known-command-name-p alias))
+          "~A must not be known" alias))))

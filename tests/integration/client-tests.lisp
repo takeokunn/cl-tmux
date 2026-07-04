@@ -286,12 +286,12 @@ is empty — no complete frame header can be read."
 ;;;
 ;;; Table-driven coverage of the split-window/-I detection predicate.  Each row
 ;;; is (args expected-bool description).  The predicate must be true only for
-;;; split-window or splitw with a flag token that contains the character I.
+;;; canonical split-window with a flag token that contains the character I.
 
 (test command-client-split-window-input-p-table
   :description "%command-client-split-window-input-p is true only for split-window/-I."
   (dolist (row '((("split-window" "-I")                t   "split-window -I")
-                 (("splitw" "-I")                      t   "splitw -I alias")
+                 (("splitw" "-I")                      nil "splitw alias rejected")
                  (("split-window" "-Iv")               t   "-Iv combined flag contains I")
                  (("split-window" "-v")                nil "split-window without -I")
                  (("split-window")                     nil "split-window no flags")

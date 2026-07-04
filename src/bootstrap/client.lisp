@@ -57,11 +57,10 @@
 ;;; ── run-command-client ───────────────────────────────────────────────────────
 
 (defun %command-client-split-window-input-p (args)
-  "True when ARGS names split-window (or its alias splitw) with the -I flag,
+  "True when ARGS names canonical split-window with the -I flag,
    indicating that the client must also forward its stdin to the new pane."
   (and args
-       (member (string-downcase (first args)) '("split-window" "splitw")
-               :test #'string=)
+       (string= "split-window" (string-downcase (first args)))
        (some (lambda (arg)
                (and (> (length arg) 1)
                     (char= (char arg 0) #\-)

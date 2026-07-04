@@ -53,15 +53,13 @@
     (is (null (cl-tmux/config::%command-keyword name))
         "~A must be rejected" name)))
 
-(test bind-shorthand-and-canonical-names-store-deferred-token-lists
-  "bind accepts tmux short aliases (breakp) and arg-only canonical names
-   (previous-window) as single-token commands, storing them as a deferred token
-   list resolved through the alias-aware dispatch at key-press — matching tmux's
-   acceptance of any command name in a binding."
+(test bind-rejects-shorthand-and-stores-canonical-deferred-token-lists
+  "bind rejects tmux short aliases and stores arg-only canonical names as
+   deferred token lists for key-press dispatch."
   (with-isolated-config
-    (is (= 1 (load-config-from-string "bind b breakp")))
-    (is (equal '("breakp") (lookup-key-binding #\b))
-        "breakp binds as a deferred token list (break-pane on key-press)")
+    (is (= 0 (load-config-from-string "bind b breakp")))
+    (is (null (lookup-key-binding #\b))
+        "breakp is rejected as a shorthand alias")
     (is (= 1 (load-config-from-string "bind @ previous-window")))
     (is (equal '("previous-window") (lookup-key-binding #\@))
         "previous-window binds as a deferred token list")

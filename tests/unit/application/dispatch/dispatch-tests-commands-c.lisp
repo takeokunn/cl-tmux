@@ -145,20 +145,20 @@
 ;;; ── %make-dispatch-named-table helper ────────────────────────────────────────
 
 (test make-dispatch-named-table-builds-lookup-table
-  "%make-dispatch-named-table returns a hash table mapping command names to keywords."
-  (let* ((specs (list (list :named-keyword :detach :named-names (list "detach" "d"))
-                      (list :named-keyword :new-window :named-names (list "new-window" "neww"))))
+  "%make-dispatch-named-table returns a hash table mapping canonical command names to keywords."
+  (let* ((specs (list (list :named-keyword :detach :named-names (list "detach"))
+                      (list :named-keyword :new-window :named-names (list "new-window"))))
          (table (cl-tmux::%make-dispatch-named-table specs)))
     (is (hash-table-p table)
         "%make-dispatch-named-table must return a hash table")
     (is (eq :detach (gethash "detach" table))
         "canonical name 'detach' must map to :detach")
-    (is (eq :detach (gethash "d" table))
-        "alias 'd' must also map to :detach")
+    (is (null (gethash "d" table))
+        "shorthand 'd' must not map to :detach")
     (is (eq :new-window (gethash "new-window" table))
         "canonical name 'new-window' must map to :new-window")
-    (is (eq :new-window (gethash "neww" table))
-        "alias 'neww' must map to :new-window")))
+    (is (null (gethash "neww" table))
+        "shorthand 'neww' must not map to :new-window")))
 
 (test make-dispatch-named-table-skips-specs-without-keyword
   "%make-dispatch-named-table ignores specs that lack a :named-keyword."

@@ -592,25 +592,24 @@ set -g prefix C-a~%"))))
 ;;; ── %canonical-command-name / %known-command-name-p (config-commands.lisp) ──
 
 (test canonical-command-name-table
-  "%canonical-command-name resolves a tmux short alias (case-insensitively) to
-   its canonical cl-tmux command name; a non-alias name passes through unchanged."
-  (dolist (row '(("neww"        "new-window"     "neww -> new-window")
-                 ("splitw"      "split-window"    "splitw -> split-window")
-                 ("NEWW"        "new-window"      "alias lookup is case-insensitive")
-                 ("killp"       "kill-pane"       "killp -> kill-pane")
+  "%canonical-command-name is identity: command aliases are not a compatibility
+   layer, so canonical names and shorthand spellings pass through unchanged."
+  (dolist (row '(("neww"        "neww"           "neww stays unresolved")
+                 ("splitw"      "splitw"         "splitw stays unresolved")
+                 ("NEWW"        "NEWW"           "case is not alias-normalized")
+                 ("killp"       "killp"          "killp stays unresolved")
                  ("new-window"  "new-window"      "a canonical name passes through unchanged")
                  ("bogus-xyz"   "bogus-xyz"       "an unrecognised name passes through unchanged")))
     (destructuring-bind (input expected desc) row
       (is (string= expected (cl-tmux/config::%canonical-command-name input)) "~A" desc))))
 
 (test known-command-name-p-table
-  "%known-command-name-p accepts bindable keywords, known canonical names, and
-   tmux short aliases (resolved via %canonical-command-name); it rejects
-   genuine typos."
+  "%known-command-name-p accepts bindable keywords and known canonical names; it
+   rejects tmux short aliases and genuine typos."
   (dolist (row '(("new-window"        t   "a bindable keyword name is known")
-                 ("neww"              t   "a tmux short alias resolves to known")
+                 ("neww"              nil "a tmux short alias is rejected")
                  ("previous-window"   t   "an arg-only canonical name is known")
-                 ("breakp"            t   "break-pane's alias is known")
+                 ("breakp"            nil "break-pane's alias is rejected")
                  ("totally-bogus-xyz" nil "a genuine typo is not known")
                  (""                  nil "the empty string is not known")))
     (destructuring-bind (input expected desc) row

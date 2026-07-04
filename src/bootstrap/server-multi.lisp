@@ -157,8 +157,8 @@
 ;;; ── Per-client message dispatch ─────────────────────────────────────────────
 
 (defun %server-split-window-input-command-p (cmd args)
-  "True when decoded command payload requests split-window -I."
-  (and (member cmd '(:split-window :splitw) :test #'eq)
+  "True when decoded command payload requests canonical split-window -I."
+  (and (eq cmd :split-window)
        (some (lambda (arg)
                (and (> (length arg) 1)
                     (char= (char arg 0) #\-)

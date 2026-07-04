@@ -44,9 +44,8 @@
    2. no-arg named commands via %dispatch-named-command
    Taking pre-split tokens lets arg-bearing key bindings run without lossy
    re-tokenisation.  Returns the handler's return value.
-   The command name is resolved through %canonical-command-name first, so tmux
-   short aliases (neww, splitw, killp, lsw, …) dispatch transparently."
-  (let ((cmd  (cl-tmux/config::%canonical-command-name (first tokens)))
+   Command names must already be canonical; tmux short aliases are not accepted."
+  (let ((cmd  (first tokens))
         (rest (rest tokens)))
     (when cmd
       ;; 1. Arg-taking commands, even when no explicit args were supplied.
