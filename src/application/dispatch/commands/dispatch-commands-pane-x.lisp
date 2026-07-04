@@ -122,8 +122,7 @@
 (defparameter +send-keys-x-explicit-arg-specs+
   '(("jump-forward"                  :char copy-mode-jump-forward)
     ("jump-backward"                 :char copy-mode-jump-backward)
-    ("jump-to"                       :char copy-mode-jump-to)
-    ;; tmux spells vi 't' as jump-to-forward; jump-to is kept as an alias.
+    ;; tmux spells vi 't' as jump-to-forward.
     ("jump-to-forward"               :char copy-mode-jump-to)
     ("jump-to-backward"              :char copy-mode-jump-to-backward)
     ("goto-line"                     :line copy-mode-goto-line)

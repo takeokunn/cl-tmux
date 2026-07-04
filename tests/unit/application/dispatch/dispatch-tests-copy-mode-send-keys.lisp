@@ -151,8 +151,8 @@
                     "copy-pipe-end-of-line-and-cancel must exit copy mode"))))))
 
 (test send-keys-x-explicit-jump-commands
-  "send -X jump-forward / jump-backward / jump-to / jump-to-backward must pass
-   explicit character arguments through to the copy-mode jump helpers."
+  "send -X canonical jump commands must pass explicit character arguments
+   through to the copy-mode jump helpers."
   (with-copy-mode-active-screen (s screen :feed "hello world")
     (labels ((invoke (command start args)
                (setf (screen-copy-cursor screen) start)
@@ -167,13 +167,22 @@
         (list (invoke "jump-backward" (cons 0 5) '("l"))
               (cons 0 3)
               "jump-backward must land on the previous matching character")
-        (list (invoke "jump-to" (cons 0 0) '("l"))
+        (list (invoke "jump-to-forward" (cons 0 0) '("l"))
               (cons 0 1)
-              "jump-to must land just before the next matching character")
+              "jump-to-forward must land just before the next matching character")
         (list (invoke "jump-to-backward" (cons 0 5) '("l"))
               (cons 0 4)
               "jump-to-backward must land just after the previous matching character"))
        :test #'equal))))
+
+(test send-keys-x-rejects-removed-jump-to-alias
+  "send -X jump-to was an alias for jump-to-forward; aliases are not accepted."
+  (with-copy-mode-active-screen (s screen :feed "hello world")
+    (setf (screen-copy-cursor screen) (cons 0 0))
+    (is-false (cl-tmux::%dispatch-send-keys-X s "jump-to" nil nil '("l"))
+              "jump-to must not dispatch as a compatibility alias")
+    (is (equal (cons 0 0) (screen-copy-cursor screen))
+        "unknown commands must leave the copy cursor unchanged")))
 
 (test send-keys-x-explicit-text-commands
   "send -X search-forward-text / search-backward-text must accept explicit
