@@ -199,6 +199,8 @@
          :serial t
          :components
          ((:file "events-tests") ; keystroke pipeline - part I (suite, escape, process-byte, prompt, copy-mode vi-nav)
+          (:file "events-copy-mode-repeat-tests") ; copy-mode numeric-prefix repeat counts
+          (:file "events-runtime-tests") ; prompt UTF-8, event-loop cycle, automatic rename
           (:file "events-mouse-tests") ; mouse dispatch, X10, middle-click paste, defaults
           (:file "events-tests-f") ; keystroke pipeline - part VI (PageUp/Down, prefix-arrow, send-prefix, modifier+arrow, meta/alt)
           (:file "events-tests-b") ; locked-session, drag/modifier, copy-mode cursor, vi nav - part II
