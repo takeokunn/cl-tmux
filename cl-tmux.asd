@@ -222,7 +222,9 @@
        (:file "dispatch-commands-pane")   ; layout/window/pane helpers + *key-table*
        (:file "dispatch-commands-pane-session") ; session/client lifecycle %cmd-*
        (:file "dispatch-commands-pane-x") ; copy-mode -X command name table (send-keys -X dispatch)
-       (:file "dispatch-commands-shell")   ; shell/pane-ops %cmd-* (run-shell, if-shell, capture, resize, join, break, clear, rotate)
+       (:file "dispatch-commands-shell")   ; run-shell and if-shell %cmd-* handlers
+       (:file "dispatch-commands-capture-pane") ; capture-pane %cmd-* handler
+       (:file "dispatch-commands-pane-ops") ; resize/join/break/clear/rotate %cmd-* handlers
        (:file "dispatch-commands-list-data") ; *command-usage-table* pure data (canonical-name → usage-flags)
        (:file "dispatch-commands-list")    ; list-sessions/windows/panes/clients arg parsing + overlay handlers
        (:file "dispatch-commands-list-commands") ; list-commands + wait-for arg parsing/handlers
