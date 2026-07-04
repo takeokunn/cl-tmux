@@ -26,7 +26,7 @@
   (namestring (cl-tmux/config::%config-path-from override xdg home)))
 
 ;;; NOTE: with-isolated-key-tables and with-temp-config-file are defined in
-;;; tests/helpers.lisp so all test suites can reuse them.
+;;; tests/helpers-overlay-assertions.lisp so all test suites can reuse them.
 
 ;;; *bindable-commands* invariant
 

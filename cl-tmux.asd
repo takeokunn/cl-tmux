@@ -289,7 +289,13 @@
     :serial t
     :components
     ((:file "package")
-     (:file "helpers")
+     (:file "helpers-isolation")
+     (:file "helpers-terminal-builders")
+     (:file "helpers-render-output")
+     (:file "helpers-key-bindings")
+     (:file "helpers-overlay-assertions")
+     (:file "helpers-session-naming")
+     (:file "helpers-pane-fixtures")
      (:file "helpers-pty-runtime")
      (:file "helpers-network-listener")
      (:file "helpers-net-protocol")

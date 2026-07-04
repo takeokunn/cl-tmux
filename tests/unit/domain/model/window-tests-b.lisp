@@ -12,7 +12,7 @@
 ;;; :main-horizontal, :main-vertical, and :tiled all contain substantively
 ;;; different geometry logic (floor-halving, secondary-pane subdivision,
 ;;; sqrt-based grid).  The tests below exercise each of these branches
-;;; using make-no-pty-pane from helpers.lisp and make-fake-window from helpers-session-fixtures.lisp.
+;;; using make-no-pty-pane from helpers-pane-fixtures.lisp and make-fake-window from helpers-session-fixtures.lisp.
 
 (test apply-named-layout-main-horizontal-two-panes
   ":main-horizontal with 2 panes: the main pane spans the top main-pane-height
