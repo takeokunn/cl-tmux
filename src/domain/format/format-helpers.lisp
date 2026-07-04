@@ -210,7 +210,6 @@
   ("*"  (* a b))
   ("/"  (if (zerop b) 0 (if use-fp (/ a b) (truncate a b))))
   ("%"  (if (zerop b) 0 (if use-fp (rem a b) (truncate (rem a b)))))
-  ("m"  (if (zerop b) 0 (if use-fp (rem a b) (truncate (rem a b)))))
   ("==" (if (< (abs (- a b)) 1d-9) "1" "0"))
   ("!=" (if (> (abs (- a b)) 1d-9) "1" "0"))
   ("<"  (if (< a b) "1" "0"))
@@ -227,4 +226,3 @@
   (if (<= prec 0)
       (format nil "~D" (truncate result))
       (format nil "~,vF" prec (coerce result 'double-float))))
-

@@ -143,7 +143,7 @@
 
 (defun %expand-arithmetic-brace (content context out)
   "Expand #{e|OP|[f|][PREC|]A,B} — arithmetic and comparison — into OUT.
-   OP        : + - * / % m  (m alias for %), or == != < > <= >=.
+   OP        : + - * / %, or == != < > <= >=.
    f flag    : optional second field; operands parsed as doubles.
    PREC      : optional precision field (digits); default 0 integer,
                2 when f is present.  Last field is the A,B operands.

@@ -25,11 +25,11 @@
   "#{e|/|5,0} returns 0 (no error)."
   (is (string= "0" (fmt "#{e|/|5,0}"))))
 
-(test format-arithmetic-modulo-m-alias
-  "#{e|m|A,B} is an alias for modulo, like #{e|%|A,B}."
-  (is (string= "1" (fmt "#{e|m|10,3}")))
-  (is (string= "0" (fmt "#{e|m|9,3}")))
-  (is (string= "0" (fmt "#{e|m|5,0}"))))
+(test format-arithmetic-rejects-modulo-m-alias
+  "#{e|m|A,B} is not a cl-tmux arithmetic operator."
+  (is (string= "" (fmt "#{e|m|10,3}")))
+  (is (string= "" (fmt "#{e|m|9,3}")))
+  (is (string= "" (fmt "#{e|m|5,0}"))))
 
 (test format-arithmetic-comparison-operators
   "#{e|OP|A,B} supports comparison operators returning tmux's 1/0 strings."
