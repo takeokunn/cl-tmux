@@ -8,7 +8,7 @@
 ;;; A representative config exercising the constructs real configs
 ;;; (oh-my-tmux/gpakosz, common tutorials) actually use: canonical commands,
 ;;; -g/-s/-r/-n/-T flags, user options, style strings, format strings,
-;;; top-level `;` sequences, if-shell, run-shell -b, source -q, and the
+;;; top-level `;` sequences, if-shell, run-shell -b, source-file -q, and the
 ;;; %if preprocessor.  Loaded whole-file so the preprocessor runs too.
 
 (defparameter +real-world-tmux-conf-lines+
@@ -47,8 +47,8 @@
     ""
     "# ── conditionals / shell / sequences ─"
     "if \"true\" \"set-option -g @cond-ok yes\""
-    "run -b \"true\""
-    "source -q /nonexistent-cl-tmux-local.conf"
+    "run-shell -b \"true\""
+    "source-file -q /nonexistent-cl-tmux-local.conf"
     "set-option -g @multi 1; set-option -g @multi2 2"
     "%if #{==:never,ever}"
     "set-option -g @never 1"
@@ -56,7 +56,7 @@
     ""
     "# ── wave 2: terminal-overrides / env / rebind / hooks / continuation ─"
     "set-option -ga terminal-overrides \",xterm-256color:Tc\""
-    "setenv -g CLTMUX_FIXTURE_ENV fixture-value"
+    "set-environment -g CLTMUX_FIXTURE_ENV fixture-value"
     "bind x kill-pane"
     "unbind x"
     "bind r source-file -q /nonexistent-reload.conf \\; display-message \"reloaded\""
@@ -130,7 +130,7 @@
                  "set-option -ga terminal-overrides must be accepted and stored")
              (is (string= "fixture-value"
                           (or (sb-ext:posix-getenv "CLTMUX_FIXTURE_ENV") ""))
-                 "setenv -g must reach the process environment")
+                 "set-environment -g must reach the process environment")
              (is (null (cl-tmux/config:key-table-lookup "prefix" #\x))
                  "unbind x must remove the earlier bind x")
              (is-true (cl-tmux/config:key-table-lookup "prefix" #\r)

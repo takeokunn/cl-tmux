@@ -98,5 +98,5 @@
 
 (defun %apply-source-file-directive (cmd args)
   "Intercept source-file flags, glob patterns, and multiple paths."
-  (when (member cmd '("source-file" "source") :test #'string=)
+  (when (string= cmd "source-file")
     (source-files args)))

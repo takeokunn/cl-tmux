@@ -15,6 +15,15 @@
       (is (eq :next-window (lookup-key-binding #\z))
           "#\\z must be bound after source-file"))))
 
+(test source-file-short-alias-is-rejected
+  "The config loader accepts only the canonical source-file command name."
+  (with-isolated-config
+    (with-temp-config-file (p "set-option -g status-left SOURCEALIAS")
+      (assert-config-directive-rejected (list "source" (namestring p))
+                                        "source alias")
+      (is (not (string= "SOURCEALIAS" (cl-tmux/options:get-option "status-left")))
+          "source alias must not execute the file"))))
+
 (test source-file-missing-returns-nil-and-logs
   "source-file on a nonexistent file returns NIL and logs tmux's diagnostic."
   (with-isolated-config
@@ -130,7 +139,7 @@
                (nil "run-shell" ("-d" "0" "true")             "run-shell -d 0 true (delay flag removed)")
                (nil "run-shell" ("-t" "0" "-b" "true")        "run-shell -t 0 -b true (target flag removed)")
                (nil "run-shell" ("-x" "true")                 "run-shell -x true (unknown flag rejected)")
-               (t   "run"       ("true")                      "run alias true")
+               (nil "run"       ("true")                      "run alias rejected")
                (t   "run-shell" ()                            "run-shell no args (empty no-op)")
                (t   "run-shell" ("-b" "echo" "hello" "world") "run-shell -b echo hello world (multi-word)")))
     (destructuring-bind (expected cmd args desc) c

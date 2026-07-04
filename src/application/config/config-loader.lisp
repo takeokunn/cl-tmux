@@ -53,7 +53,7 @@
           (args (rest tokens)))
       (cond
         ((%apply-config-variable-assignment tokens) t)
-        ((member cmd '("set-environment" "setenv") :test #'string=)
+        ((string= cmd "set-environment")
          (%apply-set-environment-directive "set-environment" args))
         (t
          (or (%apply-key-directive cmd args)

@@ -67,7 +67,7 @@
 
 (defun %apply-run-shell-directive (cmd args)
   "Handle run-shell [-bCE] [-c start-directory] shell-command."
-  (when (member cmd '("run-shell" "run") :test #'string=)
+  (when (string= cmd "run-shell")
     (multiple-value-bind (remaining background-p tmux-command-p combine-stderr-p
                           start-directory invalid-p)
         (%parse-run-shell-directive-args args)

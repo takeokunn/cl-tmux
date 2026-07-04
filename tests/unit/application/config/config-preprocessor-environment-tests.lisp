@@ -313,6 +313,18 @@
         (cl-tmux/model:process-unset-environment "CLTMUX_CFGVAR")
         (cl-tmux/model:process-unset-environment "CLTMUX_CFGHID")))))
 
+(test set-environment-short-alias-is-rejected
+  "The config loader accepts only the canonical set-environment command name."
+  (with-isolated-config
+    (unwind-protect
+         (progn
+           (assert-config-directive-rejected
+            '("setenv" "CLTMUX_CFG_ALIAS_PROBE" "forbidden")
+            "setenv alias")
+           (is (null (sb-ext:posix-getenv "CLTMUX_CFG_ALIAS_PROBE"))
+               "setenv alias must not mutate the process environment"))
+      (cl-tmux/model:process-unset-environment "CLTMUX_CFG_ALIAS_PROBE"))))
+
 (test tmux-standard-short-aliases-stay-unresolved
   "The standard tmux cmd_table short aliases are not accepted as cl-tmux command
    names."
