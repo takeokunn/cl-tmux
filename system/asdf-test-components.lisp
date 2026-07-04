@@ -243,6 +243,8 @@
          :serial t
          :components
          ((:file "overlay-tests")
+          (:file "overlay-popup-menu-tests")
+          (:file "overlay-transient-tests")
           (:file "prompt-tests")
           (:file "prompt-editing-tests")
           (:file "prompt-tests-wiring")))
