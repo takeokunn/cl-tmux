@@ -302,32 +302,46 @@
     (window-select-pane dst-win dst-pane)
     (values sess src-win src-pane dst-win dst-pane)))
 
+(defun %join-command-args (&rest flags)
+  (list* "-s" ":src" "-t" ":dst" flags))
+
+(defun %pane-in-window-p (pane window)
+  (not (null (member pane (window-panes window)))))
+
+(defmacro with-join-command-fixture ((sess src-win src-pane dst-win dst-pane)
+                                     &body body)
+  `(multiple-value-bind (,sess ,src-win ,src-pane ,dst-win ,dst-pane)
+       (%join-arg-fixture)
+     (with-registered-sessions (("0" ,sess))
+       (let ((cl-tmux::*dirty* nil))
+         ,@body))))
+
 (test cmd-join-pane-moves-source-into-destination
   "join-pane -s SRC -t DST moves SRC's active pane into DST's window and, without
    -d, makes the joined pane active.  The emptied source window is removed."
-  (multiple-value-bind (sess src-win src-pane dst-win dst-pane) (%join-arg-fixture)
+  (with-join-command-fixture (sess src-win src-pane dst-win dst-pane)
     (declare (ignore dst-pane))
-    (with-registered-sessions (("0" sess))
-      (let ((cl-tmux::*dirty* nil))
-        (cl-tmux::%cmd-join-pane-arg sess '("-s" ":src" "-t" ":dst" "-v"))
-        (is (member src-pane (window-panes dst-win))
-            "src-pane must now be in dst-window")
-        (is-false (member src-win (session-windows sess))
-            "emptied src-window must be removed from the session")
-        (is (eq src-pane (window-active-pane dst-win))
-            "the joined pane becomes active (no -d)")))))
+    (cl-tmux::%cmd-join-pane-arg sess (%join-command-args "-v"))
+    (check-table
+     (list (list (%pane-in-window-p src-pane dst-win) t
+                 "src-pane must now be in dst-window")
+           (list (null (member src-win (session-windows sess))) t
+                 "emptied src-window must be removed from the session")
+           (list (eq src-pane (window-active-pane dst-win)) t
+                 "the joined pane becomes active (no -d)"))
+     :test #'eq)))
 
 (test cmd-join-pane-d-keeps-destination-active
   "join-pane -d moves the pane but leaves the destination's original pane active."
-  (multiple-value-bind (sess src-win src-pane dst-win dst-pane) (%join-arg-fixture)
+  (with-join-command-fixture (sess src-win src-pane dst-win dst-pane)
     (declare (ignore src-win))
-    (with-registered-sessions (("0" sess))
-      (let ((cl-tmux::*dirty* nil))
-        (cl-tmux::%cmd-join-pane-arg sess '("-s" ":src" "-t" ":dst" "-d"))
-        (is (member src-pane (window-panes dst-win))
-            "src-pane is still moved into dst-window with -d")
-        (is (eq dst-pane (window-active-pane dst-win))
-            "-d keeps the destination's original pane active")))))
+    (cl-tmux::%cmd-join-pane-arg sess (%join-command-args "-d"))
+    (check-table
+     (list (list (%pane-in-window-p src-pane dst-win) t
+                 "src-pane is still moved into dst-window with -d")
+           (list (eq dst-pane (window-active-pane dst-win)) t
+                 "-d keeps the destination's original pane active"))
+     :test #'eq)))
 
 (test cmd-join-pane-b-splits-before-the-active-pane
   "join-pane -b inserts the moved pane before the destination pane."
@@ -335,77 +349,82 @@
                   (:v "-b on a vertical split"   pane-y pane-width  window-width pane-height)))
     (destructuring-bind (direction desc pos-access cross-access window-cross-access window-pos-access) case
       (declare (ignore window-pos-access))
-      (multiple-value-bind (sess src-win src-pane dst-win dst-pane)
-          (%join-arg-fixture)
+      (with-join-command-fixture (sess src-win src-pane dst-win dst-pane)
         (declare (ignore src-win))
-        (with-registered-sessions (("0" sess))
-          (let ((cl-tmux::*dirty* nil))
-            (is (cl-tmux::%cmd-join-pane-arg
-                 sess (list "-s" ":src" "-t" ":dst" "-b"
-                            (if (eq direction :h) "-h" "-v")))
-                "~A must accept the -b layout flag" desc)
-            (is (= 0 (funcall pos-access src-pane))
-                "~A must place the moved pane first" desc)
-            (is (> (funcall pos-access dst-pane)
-                   (funcall pos-access src-pane))
-                "~A must place the destination pane after the moved pane" desc)
-            (is (= (funcall window-cross-access dst-win)
-                   (funcall cross-access src-pane)
-                   (funcall cross-access dst-pane))
-                "~A must keep the split full on the cross axis" desc)
-            (is-true cl-tmux::*dirty*
-                     "~A must mark the model dirty" desc)))))))
+        (let ((result (cl-tmux::%cmd-join-pane-arg
+                       sess
+                       (%join-command-args "-b" (if (eq direction :h) "-h" "-v")))))
+          (check-table
+           (list (list (not (null result)) t
+                       (format nil "~A must accept the -b layout flag" desc))
+                 (list (= 0 (funcall pos-access src-pane)) t
+                       (format nil "~A must place the moved pane first" desc))
+                 (list (> (funcall pos-access dst-pane)
+                          (funcall pos-access src-pane))
+                       t
+                       (format nil "~A must place the destination pane after the moved pane" desc))
+                 (list (= (funcall window-cross-access dst-win)
+                          (funcall cross-access src-pane)
+                          (funcall cross-access dst-pane))
+                       t
+                       (format nil "~A must keep the split full on the cross axis" desc))
+                 (list cl-tmux::*dirty* t
+                       (format nil "~A must mark the model dirty" desc)))
+           :test #'eq))))))
 
 (test cmd-join-pane-f-spans-the-full-window
   "join-pane -f makes the split span the full window on the split axis."
   (dolist (case '((:h "-f on a horizontal split" pane-height window-height)
                   (:v "-f on a vertical split"   pane-width  window-width)))
     (destructuring-bind (direction desc pane-access window-access) case
-      (multiple-value-bind (sess src-win src-pane dst-win dst-pane)
-          (%join-arg-fixture)
+      (with-join-command-fixture (sess src-win src-pane dst-win dst-pane)
         (declare (ignore src-win))
-        (with-registered-sessions (("0" sess))
-          (let ((cl-tmux::*dirty* nil))
-            (is (cl-tmux::%cmd-join-pane-arg
-                 sess (list "-s" ":src" "-t" ":dst" "-f"
-                            (if (eq direction :h) "-h" "-v")))
-                "~A must accept the -f layout flag" desc)
-            (is (= (funcall window-access dst-win)
-                   (funcall pane-access src-pane)
-                   (funcall pane-access dst-pane))
-                "~A must span the full window on the split axis" desc)
-            (is-true cl-tmux::*dirty*
-                     "~A must mark the model dirty" desc)))))))
+        (let ((result (cl-tmux::%cmd-join-pane-arg
+                       sess
+                       (%join-command-args "-f" (if (eq direction :h) "-h" "-v")))))
+          (check-table
+           (list (list (not (null result)) t
+                       (format nil "~A must accept the -f layout flag" desc))
+                 (list (= (funcall window-access dst-win)
+                          (funcall pane-access src-pane)
+                          (funcall pane-access dst-pane))
+                       t
+                       (format nil "~A must span the full window on the split axis" desc))
+                 (list cl-tmux::*dirty* t
+                       (format nil "~A must mark the model dirty" desc)))
+           :test #'eq))))))
 
 (test cmd-join-pane-l-honors-size-hint
   "join-pane -l applies the requested size hint on the split axis."
   (dolist (case '((:h "-l 8 on a horizontal split" pane-width 9 8)
                   (:v "-l 8 on a vertical split"   pane-height 5 8)))
     (destructuring-bind (direction desc pane-access other-size expected-size) case
-      (multiple-value-bind (sess src-win src-pane dst-win dst-pane)
-          (%join-arg-fixture)
+      (with-join-command-fixture (sess src-win src-pane dst-win dst-pane)
         (declare (ignore src-win))
-        (with-registered-sessions (("0" sess))
-          (let ((cl-tmux::*dirty* nil))
-            (is (cl-tmux::%cmd-join-pane-arg
-                 sess (list "-s" ":src" "-t" ":dst" "-l" "8"
-                            (if (eq direction :h) "-h" "-v")))
-                "~A must accept the -l layout flag" desc)
-            (is (equal (sort (list (funcall pane-access src-pane)
-                                   (funcall pane-access dst-pane))
-                             #'<)
-                       (sort (list expected-size other-size) #'<))
-                "~A must honor the requested size hint" desc)
-            (is-true cl-tmux::*dirty*
-                     "~A must mark the model dirty" desc)))))))
+        (let ((result (cl-tmux::%cmd-join-pane-arg
+                       sess
+                       (%join-command-args "-l" "8" (if (eq direction :h) "-h" "-v")))))
+          (check-table
+           (list (list (not (null result)) t
+                       (format nil "~A must accept the -l layout flag" desc))
+                 (list (equal (sort (list (funcall pane-access src-pane)
+                                          (funcall pane-access dst-pane))
+                                    #'<)
+                              (sort (list expected-size other-size) #'<))
+                       t
+                       (format nil "~A must honor the requested size hint" desc))
+                 (list cl-tmux::*dirty* t
+                       (format nil "~A must mark the model dirty" desc)))
+           :test #'eq))))))
 
 (test cmd-join-pane-same-window-is-noop
   "join-pane with src and dst the same window is a no-op (guarded, no crash)."
-  (multiple-value-bind (sess src-win src-pane dst-win dst-pane) (%join-arg-fixture)
+  (with-join-command-fixture (sess src-win src-pane dst-win dst-pane)
     (declare (ignore src-pane dst-win dst-pane))
-    (with-registered-sessions (("0" sess))
-      (cl-tmux::%cmd-join-pane-arg sess '("-s" ":src" "-t" ":src"))
-      (is (= 1 (length (window-panes src-win)))
-          "same-window join leaves the source pane in place")
-      (is (member src-win (session-windows sess))
-          "the source window is not removed by a same-window no-op"))))
+    (cl-tmux::%cmd-join-pane-arg sess '("-s" ":src" "-t" ":src"))
+    (check-table
+     (list (list (= 1 (length (window-panes src-win))) t
+                 "same-window join leaves the source pane in place")
+           (list (not (null (member src-win (session-windows sess)))) t
+                 "the source window is not removed by a same-window no-op"))
+     :test #'eq)))
