@@ -47,7 +47,7 @@
       (return-from %cmd-list-commands-arg nil))
     (let ((name-input (first positionals)))
       (if name-input
-          ;; Single command lookup with prefix/alias resolution.
+          ;; Single command lookup with exact canonical or unique-prefix resolution.
           (multiple-value-bind (kind result) (%lc-resolve-name name-input)
             (ecase kind
               (:exact     (show-overlay (%lc-render-command result format-string)))

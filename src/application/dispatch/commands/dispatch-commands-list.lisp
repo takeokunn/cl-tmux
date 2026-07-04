@@ -16,11 +16,6 @@
 
 ;;; (*command-usage-table* lives in dispatch-commands-list-data.lisp, loaded before this file)
 
-(defun %lc-alias (canonical-name)
-  "Return NIL: cl-tmux exposes no tmux short command aliases."
-  (declare (ignore canonical-name))
-  nil)
-
 (defun %lc-usage (canonical-name)
   "Return the usage flags string for CANONICAL-NAME, or empty string when unknown."
   (or (cdr (assoc canonical-name *command-usage-table* :test #'string=))
@@ -61,18 +56,14 @@
 
 (defun %lc-render-command (canonical-name format-string)
   "Render one canonical command entry using FORMAT-STRING or default usage output."
-  (let* ((alias (%lc-alias canonical-name))
-         (usage (%lc-usage canonical-name)))
+  (let ((usage (%lc-usage canonical-name)))
     (if format-string
         (let ((line format-string))
           (setf line (%lc-subst-all line "#{command_list_name}" canonical-name))
-          (setf line (%lc-subst-all line "#{command_list_alias}" (or alias "")))
+          (setf line (%lc-subst-all line "#{command_list_alias}" ""))
           (setf line (%lc-subst-all line "#{command_list_usage}" usage))
           line)
-        ;; Default: canonical "name usage"; aliases are not exposed.
-        (if alias
-            (format nil "~A (~A) ~A" canonical-name alias usage)
-            (format nil "~A ~A" canonical-name usage)))))
+        (format nil "~A ~A" canonical-name usage))))
 
 (defun %list-command-public-names (&optional name)
   "Return sorted tmux public command names, optionally filtered by NAME."
