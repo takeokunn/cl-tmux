@@ -300,7 +300,7 @@
 
 (test cmd-copy-mode-rejects-unsupported-arguments
   "copy-mode rejects unknown flags and positionals before entering copy-mode."
-  (dolist (args '(("extra") ("-Z")))
+  (dolist (args '(("extra") ("-Z") ("-d") ("-S")))
     (with-fake-session (s)
       (let ((*overlay* nil)
             (cl-tmux::*dirty* nil))
