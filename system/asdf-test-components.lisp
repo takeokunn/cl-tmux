@@ -106,6 +106,7 @@
          :serial t
          :components
          ((:file "options-tests") ; option registry, coercions, boolean defaults, make-option-spec - part I
+          (:file "options-display-tests") ; scope/display presence, array names, value display quoting
           (:file "options-tests-b") ; define-option-accessor, type-coercions, scoped overrides, show-options - part II
           (:file "options-tests-c"))) ; type-coercion dispatch, option-table macro, spec accessors, server options, show-option sorting - part III
         (:module "domain/hooks"
