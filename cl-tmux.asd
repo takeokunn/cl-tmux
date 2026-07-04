@@ -214,7 +214,10 @@
      (:module "application/dispatch/commands"
       :serial t
       :components
-      ((:file "dispatch-commands")          ; flag-parser utils + display/prompt/pane %cmd-* handlers
+      ((:file "dispatch-commands-input")    ; shared flag parser and command-input macros
+       (:file "dispatch-commands-target")   ; shared target resolution helpers
+       (:file "dispatch-commands-prompt")   ; command-prompt substitution/CPS helpers
+       (:file "dispatch-commands")          ; display/prompt/pane %cmd-* handlers
        (:file "dispatch-commands-buffer")   ; paste-buffer + overlay popup/menu %cmd-* handlers
        (:file "dispatch-commands-option")   ; set-option (CPS) + show-options %cmd-*
        (:file "dispatch-commands-option-pane") ; rename/select %cmd-* handlers (loads option-pane-window/pane fragments)
