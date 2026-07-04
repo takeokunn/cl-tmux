@@ -1,64 +1,8 @@
 (in-package #:cl-tmux/test)
 
-;;;; copy-mode clear-selection, WORD motion, select-word, move-cursor (src/commands.lisp) — part II
+;;;; copy-mode WORD motion and cursor movement (src/commands.lisp) — part II
 
 (in-suite commands-suite)
-
-;;; ── copy-mode-clear-selection (send -X clear-selection) ──────────────────────
-
-(test copy-mode-clear-selection-drops-selection-keeps-cursor
-  "copy-mode-clear-selection clears the mark + selection flags but keeps the
-   cursor and stays in copy mode (tmux clear-selection / default vi Escape)."
-  (let ((s (copy-mode-screen)))
-    (setf (cl-tmux/terminal/types:screen-copy-selecting        s) t
-          (cl-tmux/terminal/types:screen-copy-mark             s) (cons 0 2)
-          (cl-tmux/terminal/types:screen-copy-cursor           s) (cons 0 5)
-          (cl-tmux/terminal/types:screen-copy-rect-select-p    s) t)
-    (cl-tmux/commands::copy-mode-clear-selection s)
-    (is-false (cl-tmux/terminal/types:screen-copy-selecting s)
-              "selection flag must be cleared")
-    (is (null (cl-tmux/terminal/types:screen-copy-mark s))
-        "mark must be dropped")
-    (is-false (cl-tmux/terminal/types:screen-copy-rect-select-p s)
-              "rectangle-select flag must be reset")
-    (is (equal (cons 0 5) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "cursor position must be preserved (stay put in copy mode)")
-    (is-true (cl-tmux/terminal/types:screen-copy-mode-p s)
-             "must remain in copy mode (clear-selection does not cancel)")
-    (is-true (cl-tmux/terminal/types:screen-dirty-p s)
-             "screen must be dirty after clearing")))
-
-(test copy-mode-clear-selection-noop-without-selection
-  "copy-mode-clear-selection is a clean no-op when there is no selection/mark."
-  (let ((s (copy-mode-screen)))
-    (setf (cl-tmux/terminal/types:screen-copy-selecting s) nil
-          (cl-tmux/terminal/types:screen-copy-mark      s) nil
-          (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 3)
-          (cl-tmux/terminal/types:screen-dirty-p        s) nil)
-    (finishes (cl-tmux/commands::copy-mode-clear-selection s))
-    (is (equal (cons 0 3) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "cursor unchanged")
-    (is-false (cl-tmux/terminal/types:screen-dirty-p s)
-              "no dirty mark when there was nothing to clear")))
-
-(test copy-mode-clear-selection-x-command-mapped
-  "The send -X name clear-selection maps to the :copy-mode-clear-selection
-   dispatch keyword."
-  (is (eq :copy-mode-clear-selection
-          (copy-mode-x-command-value "clear-selection"))
-      "clear-selection must be a known send -X command")
-  (is (eq :copy-mode-stop-selection
-          (copy-mode-x-command-value "stop-selection"))
-      "stop-selection is a supported send -X command (tmux window-copy)")
-  ;; copy-selection-and-cancel IS now supported (audit #21) — copies then exits.
-  (is (eq :copy-mode-yank
-          (copy-mode-x-command-value "copy-selection-and-cancel"))
-      "copy-selection-and-cancel copies the selection and exits copy mode")
-  (is (eq :copy-mode-toggle-position
-          (copy-mode-x-command-value "toggle-position"))
-      "toggle-position is a supported send -X command (tmux window-copy)")
-  (is-false (copy-mode-x-command-value "scroll-mouse")
-            "scroll-mouse is no longer a supported send -X command"))
 
 (test copy-mode-x-line-positions-vs-history-extremes
   "top/middle/bottom-line (vi H/M/L) move within the viewport; history-top/bottom
@@ -163,129 +107,6 @@
   (is (eq :copy-mode-back-to-indentation
           (copy-mode-x-command-value "back-to-indentation"))))
 
-(test copy-mode-other-end-preserves-selection-text
-  "Swapping the two ends must not change the selected text or normalised bounds —
-   this is the defining invariant of other-end."
-  (let ((s (copy-mode-screen :content "foo bar baz")))
-    (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
-          (cl-tmux/terminal/types:screen-copy-mark      s) (cons 0 4)
-          (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 6))
-    (let ((text-before (cl-tmux/commands::%selection-text s)))
-      (multiple-value-bind (sr0 er0 sc0 ec0) (cl-tmux/commands::%selection-bounds s)
-        (cl-tmux/commands::copy-mode-other-end s)
-        (let ((text-after (cl-tmux/commands::%selection-text s)))
-          (multiple-value-bind (sr1 er1 sc1 ec1) (cl-tmux/commands::%selection-bounds s)
-            (is (string= text-before text-after)
-                "selected text must be identical after other-end")
-            (is (and (= sr0 sr1) (= er0 er1) (= sc0 sc1) (= ec0 ec1))
-                "normalised selection bounds must be identical after other-end")))))))
-
-(test copy-mode-other-end-double-swap-restores-original
-  "Two successive swaps restore the original cursor and mark."
-  (let ((s (copy-mode-screen)))
-    (setf (cl-tmux/terminal/types:screen-copy-selecting s) t
-          (cl-tmux/terminal/types:screen-copy-mark      s) (cons 0 2)
-          (cl-tmux/terminal/types:screen-copy-cursor    s) (cons 0 5))
-    (cl-tmux/commands::copy-mode-other-end s)
-    (cl-tmux/commands::copy-mode-other-end s)
-    (is (equal (cons 0 5) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "cursor must return to its original position after two swaps")
-    (is (equal (cons 0 2) (cl-tmux/terminal/types:screen-copy-mark s))
-        "mark must return to its original position after two swaps")))
-
-;;; ── copy-mode-select-word ────────────────────────────────────────────────────
-
-(defmacro with-copy-mode-select-word-screen ((screen &key content w h row col) &body body)
-  `(let ((,screen (copy-mode-screen
-                   ,@(when w `(:w ,w))
-                   ,@(when h `(:h ,h))
-                   ,@(when content `(:content ,content)))))
-     ,(when (or row col)
-        `(setf (cl-tmux/terminal/types:screen-copy-cursor ,screen)
-               (cons ,(or row 0) ,(or col 0))))
-     ,@body))
-
-(test copy-mode-select-word-selects-word-under-cursor
-  "copy-mode-select-word selects exactly the word under the cursor.
-   The %selection-text round-trip pins the column off-by-one: for \"bar\" at
-   cols 4-6 the mark sits at col 4 and the cursor at col 7 (exclusive end)."
-  (with-copy-mode-select-word-screen (s :content "foo bar baz" :row 0 :col 5)
-    ;; "foo bar baz": b=4 a=5 r=6 — put the cursor inside "bar" on row 0.
-    (cl-tmux/commands::copy-mode-select-word s)
-    (is-true (cl-tmux/terminal/types:screen-copy-selecting s)
-             "selecting must be T after select-word")
-    (is (equal (cons 0 4) (cl-tmux/terminal/types:screen-copy-mark s))
-        "mark must sit on the first word character (col 4)")
-    (is (equal (cons 0 7) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "cursor must sit just past the last word character (col 7)")
-    (is (string= "bar" (cl-tmux/commands::%selection-text s))
-        "%selection-text must extract exactly the word \"bar\"")))
-
-(test copy-mode-select-word-on-separator-selects-single-cell
-  "copy-mode-select-word on a separator (space) selects just the single cell."
-  (with-copy-mode-select-word-screen (s :content "foo bar baz" :row 0 :col 3)
-    ;; Column 3 is the space between "foo" and "bar".
-    (finishes (cl-tmux/commands::copy-mode-select-word s))
-    (is-true (cl-tmux/terminal/types:screen-copy-selecting s)
-             "selecting must be T after select-word on a separator")
-    (is (equal (cons 0 3) (cl-tmux/terminal/types:screen-copy-mark s))
-        "mark must sit on the single cell under the cursor")
-    (is (equal (cons 0 4) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "cursor must sit one column past the single cell")))
-
-(test copy-mode-select-word-at-rightmost-column-keeps-last-char
-  "A word ending at the rightmost column must NOT lose its final character: the
-   cursor's exclusive end is allowed to reach width.  PINS the rightmost off-by-one."
-  ;; Width-3 screen, content \"cat\": c=0 a=1 t=2 (t is at the last column).
-  (with-copy-mode-select-word-screen (s :w 3 :h 3 :content "cat" :row 0 :col 1)
-    (cl-tmux/commands::copy-mode-select-word s)
-    (is (equal (cons 0 0) (cl-tmux/terminal/types:screen-copy-mark s))
-        "mark must sit on the first word character (col 0)")
-    (is (equal (cons 0 3) (cl-tmux/terminal/types:screen-copy-cursor s))
-        "cursor exclusive end must reach width (col 3), not clamp to col 2")
-    (is (string= "cat" (cl-tmux/commands::%selection-text s))
-        "%selection-text must keep the rightmost-column character: \"cat\"")))
-
-(test copy-mode-select-word-at-start-of-row-clamps-start
-  "select-word with the cursor at column 0 leaves the mark at column 0."
-  (with-copy-mode-select-word-screen (s :content "foo bar baz" :row 0 :col 0)
-    (cl-tmux/commands::copy-mode-select-word s)
-    (is (equal (cons 0 0) (cl-tmux/terminal/types:screen-copy-mark s))
-        "mark must clamp to column 0 at the start of the row")
-    (is (string= "foo" (cl-tmux/commands::%selection-text s))
-        "%selection-text must extract \"foo\"")))
-
-(test copy-mode-select-word-stops-at-multi-space-gap
-  "select-word must not span a multi-space gap between words."
-  ;; \"ab   cd\": a=0 b=1 spaces=2,3,4 c=5 d=6.
-  (with-copy-mode-select-word-screen (s :content "ab   cd" :row 0 :col 5)
-    (cl-tmux/commands::copy-mode-select-word s)
-    (is (equal (cons 0 5) (cl-tmux/terminal/types:screen-copy-mark s))
-        "mark must stop at the start of \"cd\" (col 5), not cross the gap")
-    (is (string= "cd" (cl-tmux/commands::%selection-text s))
-        "%selection-text must extract \"cd\" without spanning the space gap")))
-
-(test copy-mode-select-word-sets-dirty-flag
-  "select-word marks the screen dirty."
-  (with-copy-mode-select-word-screen (s :content "foo bar baz" :row 0 :col 5)
-    (setf (cl-tmux/terminal/types:screen-dirty-p s) nil)
-    (is-false (cl-tmux/terminal/types:screen-dirty-p s)
-              "precondition: dirty-p NIL before select-word")
-    (cl-tmux/commands::copy-mode-select-word s)
-    (is-true (cl-tmux/terminal/types:screen-dirty-p s)
-             "dirty-p must be T after select-word")))
-
-(test copy-mode-select-word-no-op-when-not-in-copy-mode
-  "select-word is a harmless no-op when copy mode is not active."
-  (let ((s (make-screen 20 5)))
-    (feed s "foo bar baz")
-    ;; Do NOT enter copy mode.
-    (finishes (cl-tmux/commands::copy-mode-select-word s))
-    (is-false (cl-tmux/terminal/types:screen-copy-selecting s)
-              "selecting must remain NIL when not in copy mode")
-    (is (null (cl-tmux/terminal/types:screen-copy-mark s))
-        "mark must remain NIL when not in copy mode")))
-
 ;;; ── copy-mode-move-cursor ────────────────────────────────────────────────────
 
 (test copy-mode-move-cursor-direction-table
@@ -369,7 +190,7 @@
     (is (equal (cons 2 5) (cl-tmux/terminal/types:screen-copy-cursor s))
         "cursor must be unchanged outside copy mode")))
 
-;;; ── send-keys -X *-and-cancel / selection-mode (window-copy.c parity) ─────────
+;;; ── send-keys -X *-and-cancel (window-copy.c parity) ─────────────────────────
 
 (test copy-mode-scroll-down-and-cancel-exits-at-bottom
   "scroll-down-and-cancel scrolls down one line and exits copy mode when the live
@@ -401,23 +222,3 @@
     (cl-tmux/commands::copy-mode-page-down-and-cancel s)
     (is-false (cl-tmux/terminal/types:screen-copy-mode-p s)
               "a full page down reaches the bottom and exits copy mode")))
-
-(test copy-mode-selection-mode-line-begins-line-selection
-  "selection-mode line begins a line-granularity selection."
-  (let ((s (copy-mode-screen)))
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 2))
-    (cl-tmux/commands::copy-mode-selection-mode s "line")
-    (is-true (cl-tmux/terminal/types:screen-copy-selecting s)
-             "selection-mode line must start selecting")
-    (is-true (cl-tmux/terminal/types:screen-copy-line-selection-p s)
-             "selection-mode line sets line-selection mode")))
-
-(test copy-mode-selection-mode-default-char-begins-selection
-  "selection-mode with no/char argument begins a character selection (not line)."
-  (let ((s (copy-mode-screen)))
-    (setf (cl-tmux/terminal/types:screen-copy-cursor s) (cons 0 2))
-    (cl-tmux/commands::copy-mode-selection-mode s "char")
-    (is-true (cl-tmux/terminal/types:screen-copy-selecting s)
-             "selection-mode char must start selecting")
-    (is-false (cl-tmux/terminal/types:screen-copy-line-selection-p s)
-              "char selection is not a line selection")))

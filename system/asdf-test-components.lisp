@@ -259,8 +259,10 @@
         (:module "application/commands"
          :serial t
          :components
-         ((:file "commands-tests") ; resize-pane, scroll, kill-pane, select/rename, begin-sel/yank/other-end - part I
-          (:file "commands-tests-e") ; copy-mode-clear-sel, WORD-motion, select-word, move-cursor - part II
+         ((:file "commands-tests") ; resize-pane, scroll, select/rename - part I
+          (:file "commands-pane-lifecycle-tests") ; kill-pane, join-pane insert, swap-two-panes
+          (:file "commands-tests-e") ; copy-mode WORD-motion and cursor movement - part II
+          (:file "commands-copy-selection-tests") ; copy-mode selection state commands
           (:file "commands-tests-f") ; rename-window, kill-window, run/if-shell, selection-text, swap-pane - part III
           (:file "commands-tests-m") ; swap-pane (cont), capture-pane, shift-line-wrapped, copy-mode scroll, resize-pane, split-window - part XIII
           (:file "commands-tests-n") ; copy-mode-begin-selection multi-row, yank, other-end - part XIV
