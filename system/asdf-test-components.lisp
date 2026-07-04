@@ -74,7 +74,9 @@
           (:file "layout-geometry-tests") ; orientation helpers, layout-assign, resize-find-split, pane-at-position, split-child - part I
           (:file "layout-geometry-tests-b") ; %ranges-overlap-p, pane-center, closest-to-center, define-axis-rules, nested min-extent - part II
           (:file "pane-tests")
-          (:file "window-tests") ; window-relayout/split/resize/zoom/lock/pane-neighbor - part I
+          (:file "window-tests") ; window-relayout/split/resize/private tree helpers - part I
+          (:file "window-neighbor-tests") ; pane-neighbor directional lookup
+          (:file "window-zoom-tests") ; even-layout, zoom toggle, lock slot
           (:file "window-tests-b") ; apply-named-layout (5 layouts), last-window/move/swap/rotate - part II
           (:file "window-tests-c") ; find-window-by-name, list-windows-format, auto-rename-from-osc - part III
           (:file "session-tests")
