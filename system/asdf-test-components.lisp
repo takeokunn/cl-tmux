@@ -261,7 +261,8 @@
          :serial t
          :components
          ((:file "server-tests")
-          (:file "server-tests-b"))) ; list-sessions, rename-session, switch-client, last-session - part II
+          (:file "server-tests-b") ; list-sessions, rename-session, switch-client, session groups
+          (:file "server-socket-cps-tests"))) ; socket paths, client key CPS, runtime registry
         (:module "infrastructure/pty"
          :serial t
          :components
