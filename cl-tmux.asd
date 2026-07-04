@@ -518,6 +518,7 @@
         :components
         ((:file "overlay-tests")
          (:file "prompt-tests")
+         (:file "prompt-editing-tests")
          (:file "prompt-tests-wiring")))
        (:module "application/config-2"
         :pathname "application/config"
