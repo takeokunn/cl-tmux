@@ -313,15 +313,14 @@
    -b inserts the moved pane before/above the destination pane.
    -f makes the split span the full window dimension along the split axis.
    -l size sets the new pane size (cells or percentage, tmux split-window syntax).
-   -p percentage: shorthand for -l percentage% (size as a percent of the parent).
    -s source pane (default: the active pane); -t destination pane, whose WINDOW
      receives the split (default: the active window).
    -d keeps the current pane active (no switch to the joined pane).
    No-op when source and destination resolve to the same window (nothing to move).
    This is the scriptable form; the interactive :join-pane / :move-pane keybindings
     (which prompt for a window index) are unchanged."
-  (with-command-input (flags positionals args "stlp"
-                               :allowed-flags '(#\b #\d #\f #\h #\l #\p #\s #\t #\v)
+  (with-command-input (flags positionals args "stl"
+                               :allowed-flags '(#\b #\d #\f #\h #\l #\s #\t #\v)
                                :max-positionals 0
                                :message "join-pane: unsupported argument")
     (declare (ignore positionals))
@@ -331,10 +330,7 @@
              (dir (if (%flag-present-p flags #\h) :h :v))
              (before (%flag-present-p flags #\b))
              (full (%flag-present-p flags #\f))
-             ;; -l size, or -p N treated as N% (a fraction of the parent).
-             (pct-str  (%flag-value flags #\p))
-             (size-str (or (%flag-value flags #\l)
-                           (and pct-str (concatenate 'string pct-str "%"))))
+             (size-str (%flag-value flags #\l))
              (size (and size-str (%parse-split-size size-str)))
              (src-win (if *server-marked-pane*
                           (pane-window *server-marked-pane*)
@@ -362,6 +358,10 @@
             (window-select-pane dst-win src-pane))
           (setf *dirty* t)
           t)))))
+
+(defun %cmd-move-pane (session args)
+  "move-pane uses the same scriptable argument surface as join-pane."
+  (%cmd-join-pane-arg session args))
 
 (defun %parse-break-pane-window-index (target)
   (when (and target (> (length target) 0))

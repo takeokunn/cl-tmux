@@ -330,6 +330,30 @@
 
 ;;; ── Coverage gap #19: join/move-pane default source = marked pane ───────────
 
+(test run-command-line-join-and-move-pane-reject-percent-shorthand
+  "join-pane and move-pane reject the removed -p percentage shorthand before moving panes."
+  (dolist (command '("join-pane" "move-pane"))
+    (with-fake-session (s :nwindows 2 :npanes 1)
+      (let* ((wins (cl-tmux/model:session-windows s))
+             (dst-win (first wins))
+             (src-win (second wins))
+             (dst-panes (copy-list (cl-tmux/model:window-panes dst-win)))
+             (src-panes (copy-list (cl-tmux/model:window-panes src-win)))
+             (command-line (format nil "~A -s @~D -p 30"
+                                   command
+                                   (cl-tmux/model:window-id src-win))))
+        (cl-tmux/model:session-select-window s dst-win)
+        (with-command-rejection-state (s
+                                       (cl-tmux::%run-command-line s command-line)
+                                       "unsupported argument"
+                                       command-line)
+          (is (equal dst-panes (cl-tmux/model:window-panes dst-win))
+              "~A -p 30 must not add or reorder destination panes after rejection"
+              command)
+          (is (equal src-panes (cl-tmux/model:window-panes src-win))
+              "~A -p 30 must not remove panes from the source window after rejection"
+              command))))))
+
 (test cmd-join-pane-uses-marked-pane-as-default-source
   "join-pane without -s uses *server-marked-pane* as source when it is set."
   (with-fake-session (s :nwindows 2)
