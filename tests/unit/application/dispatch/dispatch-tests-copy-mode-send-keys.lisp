@@ -194,6 +194,19 @@
        (is (null kind) "~A must not expose an explicit-arg kind" command)
        (is (null handler) "~A must not expose an explicit-arg handler" command))))
 
+(test send-keys-x-explicit-arg-lookup-reads-fact-table
+  "The explicit-arg lookup reads facts from the supplied table."
+  (multiple-value-bind (kind handler)
+      (cl-tmux::%lookup-send-keys-x-explicit-arg-spec
+       "demo" '(("demo" :text demo-handler)))
+    (is (eq :text kind) "lookup must return the fact kind")
+    (is (eq 'demo-handler handler) "lookup must return the fact handler"))
+  (multiple-value-bind (kind handler)
+      (cl-tmux::%lookup-send-keys-x-explicit-arg-spec
+       "missing" '(("demo" :text demo-handler)))
+    (is (null kind) "missing facts must have no kind")
+    (is (null handler) "missing facts must have no handler")))
+
 (test send-keys-x-explicit-arg-facts-are-canonical
   "The explicit-arg fact table exposes canonical command names only."
   (check-send-keys-x-explicit-arg-specs

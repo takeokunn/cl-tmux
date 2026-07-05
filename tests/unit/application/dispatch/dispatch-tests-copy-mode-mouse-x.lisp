@@ -67,11 +67,11 @@
                       cl-tmux::*copy-mode-x-commands* :test #'string=)
                "halfpage-down-and-cancel must be in the X table")
       (is-true (find "copy-pipe-end-of-line"
-                     cl-tmux::+send-keys-x-explicit-arg-specs+
+                     cl-tmux::*send-keys-x-explicit-arg-specs*
                      :key #'first :test #'string=)
                "bare copy-pipe-end-of-line must be in the arg specs")
       (is-true (find "jump-to-forward"
-                     cl-tmux::+send-keys-x-explicit-arg-specs+
+                     cl-tmux::*send-keys-x-explicit-arg-specs*
                      :key #'first :test #'string=)
                "jump-to-forward must be in the arg specs"))))
 

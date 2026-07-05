@@ -118,20 +118,24 @@
   ("previous-matching-bracket"    :copy-mode-previous-matching-bracket))
 
 (defmacro define-send-keys-x-explicit-arg-specs (&rest specs)
-  "Define canonical send-keys -X explicit-argument facts and lookup logic."
+  "Define canonical send-keys -X explicit-argument facts."
   `(progn
-     (defparameter +send-keys-x-explicit-arg-specs+
+     (defparameter *send-keys-x-explicit-arg-specs*
        ',specs
        "Canonical send-keys -X explicit-argument facts: (name kind handler).")
      (defun %send-keys-x-explicit-arg-spec (command-name)
        "Return KIND and HANDLER for canonical COMMAND-NAME."
-       (cond
-         ,@(mapcar (lambda (spec)
-                     (destructuring-bind (name kind handler) spec
-                       `((string-equal command-name ,name)
-                         (values ,kind ',handler))))
-                   specs)
-         (t (values nil nil))))))
+       (%lookup-send-keys-x-explicit-arg-spec
+        command-name *send-keys-x-explicit-arg-specs*))))
+
+(defun %lookup-send-keys-x-explicit-arg-spec (command-name specs)
+  "Return KIND and HANDLER for COMMAND-NAME from SPECS."
+  (let ((spec (find command-name specs :key #'first :test #'string-equal)))
+    (if spec
+        (destructuring-bind (name kind handler) spec
+          (declare (ignore name))
+          (values kind handler))
+        (values nil nil))))
 
 (define-send-keys-x-explicit-arg-specs
   ("jump-forward"                  :char copy-mode-jump-forward)
