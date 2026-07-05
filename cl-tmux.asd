@@ -179,7 +179,9 @@
       :pathname "application/commands"
       :serial t
       :components
-      ((:file "commands")               ; loads commands-capture-pane fragment
+      ((:file "commands")               ; shared command execution helpers
+       (:file "commands-capture-pane")  ; capture-pane snapshot/rendering
+       (:file "commands-pipe-pane")     ; pipe-pane process I/O lifecycle
        (:file "commands-keys-data")      ; send-keys key-name data tables
        (:file "commands-tokenizer")      ; shell-style command-string tokeniser
        (:file "commands-keys")           ; send-keys key-name translation logic

@@ -1,13 +1,5 @@
 (in-package #:cl-tmux/commands)
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (let* ((root (or (ignore-errors (asdf:system-source-directory :cl-tmux))
-                   *load-pathname*
-                   *compile-file-pathname*
-                   *default-pathname-defaults*))
-         (src (merge-pathnames #P"src/" root)))
-    (load (merge-pathnames #P"application/commands/commands-capture-pane.lisp" src))))
-
 ;;; ── Pane operations ────────────────────────────────────────────────────────
 ;;;
 ;;; swap_pane(Window, Dir)   :- active(Window, AP), neighbor(AP, Dir, Other),
