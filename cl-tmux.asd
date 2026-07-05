@@ -162,7 +162,8 @@
      (:module "application/commands/copy-mode"
       :serial t
       :components
-      ((:file "commands-copy-mode")      ; copy-mode core: enter/exit, scroll, cursor, selection
+      ((:file "commands-copy-mode")      ; copy-mode core: enter/exit, scroll, prompts, selection state
+       (:file "commands-copy-mode-cursor") ; cursor movement and viewport edge scrolling
        (:file "commands-copy-mode-selection") ; selection bounds and text extraction helpers
        (:file "commands-copy-mode-word") ; word/WORD motion helpers shared by navigation/search
        (:file "commands-copy-mode-nav-line") ; line-start/end, cursor-jump macros, scroll wrappers
