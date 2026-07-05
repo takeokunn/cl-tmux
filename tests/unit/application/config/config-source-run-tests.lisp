@@ -173,6 +173,18 @@
       (ignore-errors
         (uiop:delete-directory-tree tmp-dir :validate t :if-does-not-exist :ignore)))))
 
+(test run-shell-C-table
+  "run-shell -C executes the tmux command and reports handled."
+  (dolist (c '(("run-shell" "status-left"  "FOO" "run-shell -C")
+               ("run-shell" "status-right" "BAR" "run-shell -C")))
+    (destructuring-bind (verb option value desc) c
+      (with-isolated-config
+        (let ((handled (cl-tmux/config::%apply-run-shell-directive
+                        verb (list "-C" (format nil "set-option -g ~A ~A" option value)))))
+          (is (eq t handled) "~A: must report handled" desc)
+          (is (string= value (cl-tmux/options:get-option option))
+              "~A: must set option" desc))))))
+
 ;;; ── %expand-leading-tilde ──────────────────────────────────────────────────
 
 (test expand-leading-tilde-table
