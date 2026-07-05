@@ -173,6 +173,7 @@
           (:file "renderer-pane-tests-b") ; %clock-digit-rows, %render-v-separator, border/pane edge cases - part II
           (:file "renderer-pane-tests-c") ; %apply-border-style branches, draw-clock, render-pane-clock-mode, draw-pane-number, in-sel-branch - part III
           (:file "renderer-tests") ; renderer - part I (status-bar, render-session, clear-display, status-indicators, window-list)
+          (:file "renderer-window-list-tests") ; renderer status window-list styles and format expansion
           (:file "renderer-tests-d") ; renderer - part IV (per-window options, alert-tab-styles, status-bar-line)
           (:file "renderer-overlay-cursor-tests") ; renderer overlay, cursor visibility, message placement
           (:file "renderer-tests-b") ; renderer - part II (status-bar, status-position, BEL rendering, status-left-expanded)
