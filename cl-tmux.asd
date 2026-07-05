@@ -260,7 +260,8 @@
        (:file "dispatch-commands-session-create") ; new-session %cmd-* handler
        (:file "dispatch-commands-session-destroy") ; kill-session %cmd-* handler
        (:file "dispatch-commands-window-resize") ; resize-window %cmd-* handler
-       (:file "dispatch-commands-pane-x") ; copy-mode -X command name table (send-keys -X dispatch)
+       (:file "dispatch-commands-pane-x-facts") ; copy-mode -X canonical fact tables
+       (:file "dispatch-commands-pane-x") ; send-keys -X dispatch logic
        (:file "dispatch-commands-shell")   ; run-shell and if-shell %cmd-* handlers
        (:file "dispatch-commands-capture-pane") ; capture-pane %cmd-* handler
        (:file "dispatch-commands-pane-ops") ; resize/join/break/clear/rotate %cmd-* handlers
