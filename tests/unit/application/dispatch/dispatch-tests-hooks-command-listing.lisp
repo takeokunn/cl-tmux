@@ -76,20 +76,27 @@
           (cl-tmux::%run-command-line s line)
           (assert-overlay-contains expected *overlay* line))))))
 
-(test cmd-list-commands-format-command-list-name
-  "tmux 3.6a expands command_list_* fields for list-commands format output."
+(test cmd-list-commands-format-canonical-fields
+  "list-commands expands only the canonical local command_list fields."
   (with-fake-session (s)
-    (dolist (case '(("list-commands -F '#{command_list_name}|#{command_list_alias}|#{command_list_usage}' list-sessions"
-                     "list-sessions||[-F format] [-f filter]")
-                    ("list-commands -F '#{command_list_name}|#{command_list_alias}|#{command_list_usage}' list-commands"
-                     "list-commands||[-F format] [command]")))
+    (dolist (case '(("list-commands -F '#{command_list_name}|#{command_list_usage}' list-sessions"
+                     "list-sessions|[-F format] [-f filter]")
+                    ("list-commands -F '#{command_list_name}|#{command_list_usage}' list-commands"
+                     "list-commands|[-F format] [command]")))
       (destructuring-bind (line expected) case
         (let ((*overlay* nil))
           (cl-tmux::%run-command-line s line)
           (assert-overlay-contains expected *overlay* line)
           (assert-overlay-not-contains "#{command_list_name}" *overlay* line)
-          (assert-overlay-not-contains "#{command_list_alias}" *overlay* line)
           (assert-overlay-not-contains "#{command_list_usage}" *overlay* line))))))
+
+(test cmd-list-commands-does-not-expand-removed-alias-field
+  "Removed compatibility-only command_list_alias remains literal."
+  (with-fake-session (s)
+    (let ((*overlay* nil)
+          (line "list-commands -F '#{command_list_name}|#{command_list_alias}' list-commands"))
+      (cl-tmux::%run-command-line s line)
+      (assert-overlay-contains "list-commands|#{command_list_alias}" *overlay* line))))
 
 (test cmd-list-commands-unsupported-arguments-are-rejected-before-output
   "tmux 3.6a rejects invalid list-commands flags and excess arguments before

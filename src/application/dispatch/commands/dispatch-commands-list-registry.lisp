@@ -40,7 +40,6 @@
     (if format-string
         (let ((line format-string))
           (setf line (%lc-subst-all line "#{command_list_name}" canonical-name))
-          (setf line (%lc-subst-all line "#{command_list_alias}" ""))
           (setf line (%lc-subst-all line "#{command_list_usage}" usage))
           line)
         (format nil "~A ~A" canonical-name usage))))

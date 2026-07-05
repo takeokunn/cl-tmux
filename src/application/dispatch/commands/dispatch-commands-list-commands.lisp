@@ -15,8 +15,7 @@
   "list-commands [-F format] [command]: list tmux command signatures.
    With no argument, lists all commands one per line.
    With a command name/prefix, shows that command with prefix resolution.
-   -F format expands #{command_list_name}, #{command_list_alias},
-   #{command_list_usage} fields."
+   -F format expands #{command_list_name} and #{command_list_usage} fields."
   (declare (ignore session))
   ;; Manual flag parse to produce list-commands-specific per-error messages.
   (let ((format-string nil)
