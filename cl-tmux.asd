@@ -251,6 +251,7 @@
        (:file "dispatch-commands-buffer")   ; paste-buffer %cmd-* handlers
        (:file "dispatch-commands-buffer-ui") ; popup/menu/confirm/list-keys %cmd-* handlers
        (:file "dispatch-commands-copy-mode-entry") ; copy-mode entry %cmd-* handler
+       (:file "dispatch-commands-option-scope-facts") ; set-option scope accessor facts
        (:file "dispatch-commands-option")   ; set-option (CPS) + show-options %cmd-*
        (:file "dispatch-commands-option-pane") ; rename/select %cmd-* handlers (loads option-pane-window/pane fragments)
        (:file "dispatch-commands-lifecycle") ; kill/link/unlink/swap/move/source-file %cmd-*

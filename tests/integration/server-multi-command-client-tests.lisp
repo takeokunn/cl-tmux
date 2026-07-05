@@ -40,7 +40,8 @@
   "run-command-client forwards a command to the server as a decodable
    +msg-command+ frame (the `cl-tmux <command>` CLI path).  A -t target rides
    along in the args for the server to parse."
-  (let ((name (format nil "cmdtest-~D" (get-universal-time))))
+  (let ((name (format nil "cmdtest-~D" (get-universal-time)))
+        (cl-tmux::*socket-path-override* (%test-socket-path "cmdtest")))
     (with-test-listener (listener path (cl-tmux::socket-path name) :backlog 4)
       (cl-tmux::run-command-client name '("next-window" "-t" "2"))
       (let ((server-sock (cl-tmux/net:accept-connection listener)))
@@ -62,7 +63,8 @@
 
 (test command-client-split-window-I-forwards-stdin-frame
   "run-command-client sends stdin after the split-window -I command frame."
-  (let ((name (format nil "cmdinput-~D" (get-universal-time))))
+  (let ((name (format nil "cmdinput-~D" (get-universal-time)))
+        (cl-tmux::*socket-path-override* (%test-socket-path "cmdinput")))
     (with-test-listener (listener path (cl-tmux::socket-path name) :backlog 4)
       (with-input-from-string (*standard-input* "client stdin")
         (cl-tmux::run-command-client name '("split-window" "-I")))

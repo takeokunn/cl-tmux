@@ -6,10 +6,20 @@
 ;;; path under $TMPDIR (or /tmp)" pattern that used to be re-derived inline in
 ;;; client-tests.lisp and server-multi-tests.lisp.
 
+(defun %test-socket-directory ()
+  (let ((tmpdir (sb-ext:posix-getenv "TMPDIR")))
+    (string-right-trim
+     "/"
+     (if (and tmpdir
+              (plusp (length tmpdir))
+              (uiop:directory-exists-p tmpdir))
+         tmpdir
+         "/tmp"))))
+
 (defun %test-socket-path (label)
   "Unique throwaway socket path for LABEL (a descriptive tag embedded in the
-   filename), under $TMPDIR (or /tmp when unset)."
-  (let ((dir (string-right-trim "/" (or (sb-ext:posix-getenv "TMPDIR") "/tmp"))))
+   filename), under an existing $TMPDIR (or /tmp when unset or invalid)."
+  (let ((dir (%test-socket-directory)))
     (format nil "~A/cl-tmux-~A-~D.sock" dir label (get-universal-time))))
 
 (defmacro with-test-listener ((listener-var path-var path-form &key backlog) &body body)
@@ -21,9 +31,11 @@
    every multi-client socket-lifecycle test."
   `(if (cl-tmux/net:unix-socket-available-p)
        (let* ((,path-var     ,path-form)
+              (_             (ensure-directories-exist ,path-var))
               (,listener-var ,(if backlog
                                    `(cl-tmux/net:make-listener ,path-var :backlog ,backlog)
                                    `(cl-tmux/net:make-listener ,path-var))))
+         (declare (ignore _))
          (unwind-protect
               (progn ,@body)
            (cl-tmux/net:close-socket ,listener-var)
