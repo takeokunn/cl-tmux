@@ -106,7 +106,7 @@
   ;; refresh-from-pane: copy mode always reads from pane live in this implementation.
   ("refresh-from-pane"            :copy-mode-refresh-from-pane)
   ;; jump-to-char: vi f/F/t/T repeat/reverse (;/,)
-  ;; The char-argument variants (jump-forward, jump-backward, jump-to,
+  ;; The char-argument variants (jump-forward, jump-backward, jump-to-forward,
   ;; jump-to-backward) need a char arg and are handled specially in
   ;; %dispatch-send-keys-X; the argless ;/, repeat commands map to keywords.
   ("jump-again"                   :copy-mode-jump-again)
@@ -117,38 +117,42 @@
   ("next-matching-bracket"        :copy-mode-next-matching-bracket)
   ("previous-matching-bracket"    :copy-mode-previous-matching-bracket))
 
-;;; Flat records keep explicit-arg lookup and coercion separate:
-;;;   (command-name kind handler)
-(defparameter +send-keys-x-explicit-arg-specs+
-  '(("jump-forward"                  :char copy-mode-jump-forward)
-    ("jump-backward"                 :char copy-mode-jump-backward)
-    ;; tmux spells vi 't' as jump-to-forward.
-    ("jump-to-forward"               :char copy-mode-jump-to)
-    ("jump-to-backward"              :char copy-mode-jump-to-backward)
-    ("goto-line"                     :line copy-mode-goto-line)
-    ("search-forward-text"           :text copy-mode-search-forward)
-    ("search-backward-text"          :text copy-mode-search-backward)
-    ("copy-pipe"                     :text copy-mode-copy-pipe-no-cancel)
-    ("copy-pipe-and-cancel"          :text copy-mode-copy-pipe)
-    ("copy-pipe-end-of-line-and-cancel"
-     :text copy-mode-copy-pipe-end-of-line)
-    ("copy-pipe-end-of-line"         :text copy-mode-copy-pipe-end-of-line-no-cancel)
-    ("copy-pipe-no-clear"            :text copy-mode-copy-pipe-no-clear)
-    ("copy-pipe-line"                :text copy-mode-copy-pipe-line)
-    ("copy-pipe-line-and-cancel"     :text copy-mode-copy-pipe-line-and-cancel)
-    ;; pipe family: run the command WITHOUT copying to a buffer.
-    ("pipe"                          :text copy-mode-pipe-no-cancel)
-    ("pipe-no-clear"                 :text copy-mode-pipe-no-clear)
-    ("pipe-and-cancel"               :text copy-mode-pipe-and-cancel)
-    ;; selection-mode <char|word|line>: set the selection granularity.
-    ("selection-mode"                :text copy-mode-selection-mode)))
+(defmacro define-send-keys-x-explicit-arg-specs (&rest specs)
+  "Define canonical send-keys -X explicit-argument facts and lookup logic."
+  `(progn
+     (defparameter +send-keys-x-explicit-arg-specs+
+       ',specs
+       "Canonical send-keys -X explicit-argument facts: (name kind handler).")
+     (defun %send-keys-x-explicit-arg-spec (command-name)
+       "Return KIND and HANDLER for canonical COMMAND-NAME."
+       (cond
+         ,@(mapcar (lambda (spec)
+                     (destructuring-bind (name kind handler) spec
+                       `((string-equal command-name ,name)
+                         (values ,kind ',handler))))
+                   specs)
+         (t (values nil nil))))))
 
-(defun %send-keys-x-explicit-arg-spec (command-name)
-  "Return the explicit-argument spec for COMMAND-NAME."
-  (dolist (spec +send-keys-x-explicit-arg-specs+)
-    (destructuring-bind (name kind handler) spec
-      (when (string-equal command-name name)
-        (return (values kind handler))))))
+(define-send-keys-x-explicit-arg-specs
+  ("jump-forward"                  :char copy-mode-jump-forward)
+  ("jump-backward"                 :char copy-mode-jump-backward)
+  ("jump-to-forward"               :char copy-mode-jump-to)
+  ("jump-to-backward"              :char copy-mode-jump-to-backward)
+  ("goto-line"                     :line copy-mode-goto-line)
+  ("search-forward-text"           :text copy-mode-search-forward)
+  ("search-backward-text"          :text copy-mode-search-backward)
+  ("copy-pipe"                     :text copy-mode-copy-pipe-no-cancel)
+  ("copy-pipe-and-cancel"          :text copy-mode-copy-pipe)
+  ("copy-pipe-end-of-line-and-cancel"
+   :text copy-mode-copy-pipe-end-of-line)
+  ("copy-pipe-end-of-line"         :text copy-mode-copy-pipe-end-of-line-no-cancel)
+  ("copy-pipe-no-clear"            :text copy-mode-copy-pipe-no-clear)
+  ("copy-pipe-line"                :text copy-mode-copy-pipe-line)
+  ("copy-pipe-line-and-cancel"     :text copy-mode-copy-pipe-line-and-cancel)
+  ("pipe"                          :text copy-mode-pipe-no-cancel)
+  ("pipe-no-clear"                 :text copy-mode-pipe-no-clear)
+  ("pipe-and-cancel"               :text copy-mode-pipe-and-cancel)
+  ("selection-mode"                :text copy-mode-selection-mode))
 
 (defun %send-keys-x-explicit-arg-string (kind extra-args)
   "Return the explicit argument string for KIND from EXTRA-ARGS."

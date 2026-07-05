@@ -45,15 +45,17 @@
   "List of CLIENT-CONN structs currently attached to the multi-client server.
    Mutated only by the single server event loop, so it needs no locking.")
 
-(defmacro with-loop-safe-error ((&optional condition-var &key on-error) &body body)
+(defmacro with-loop-safe-error (binding &body body)
   "Run BODY, catching any ERROR so one bad client/command can never wedge the
    multi-client event loop.  On success, returns BODY's value; on an ERROR,
    evaluates and returns ON-ERROR instead — optionally with the condition bound
    to CONDITION-VAR so ON-ERROR can log it.  This is the single shape behind
    this file's 'never let one client take down the server loop' invariant."
-  `(handler-case (progn ,@body)
-     (error ,(if condition-var (list condition-var) '())
-       ,on-error)))
+  (let ((condition-var (first binding))
+        (on-error (getf (rest binding) :on-error)))
+    `(handler-case (progn ,@body)
+       (error ,(if condition-var (list condition-var) '())
+         ,on-error))))
 
 (defun %client-fds ()
   "The socket fds of every attached client (for the select read-set)."

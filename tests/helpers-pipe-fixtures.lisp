@@ -19,7 +19,6 @@
     `(let* ((,pair-sym (multiple-value-list (sb-posix:pipe)))
             (,read-fd  (first  ,pair-sym))
             (,write-fd (second ,pair-sym)))
-       (declare (ignore ,pair-sym))
        (unwind-protect
             (locally ,@body)
          (ignore-errors (sb-posix:close ,read-fd))

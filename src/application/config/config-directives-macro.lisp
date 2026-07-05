@@ -90,56 +90,29 @@
       (cond ,@cond-clauses)
       (values ,rest t))))
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (defun %resolve-config-directive-names (names)
-    "Return the directive NAMES list, allowing a named list symbol."
-    (cond
-      ((symbolp names)
-       (let ((value (symbol-value names)))
-         (unless (listp value)
-           (error "Directive alias symbol ~S does not name a list." names))
-         value))
-      ((listp names) names)
-      (t
-       (error "Directive alias list must be a list or symbol, got ~S." names)))))
-
 (defun %expand-config-directive-rule (rule)
-  "Expand one directive RULE into a list of COND clauses."
-  (if (eq (first rule) :aliases)
-      ;; (:aliases (name...) arity arglist body...)
-      (destructuring-bind (names arity arglist &body body) (rest rule)
-        (let ((names (%resolve-config-directive-names names)))
-          (mapcar (lambda (name)
-                    `((and (string= cmd ,name) (= (length args) ,arity))
-                      (destructuring-bind ,arglist args
-                        (declare (ignorable ,@arglist))
-                        ,@body)))
-                  names)))
-      ;; (name arity arglist body...)
-      (destructuring-bind (name arity arglist &body body) rule
-        (list `((and (string= cmd ,name) (= (length args) ,arity))
-                (destructuring-bind ,arglist args
-                  (declare (ignorable ,@arglist))
-                  ,@body))))))
+  "Expand one canonical directive RULE into a COND clause."
+  (destructuring-bind (name arity arglist &body body) rule
+    (list `((and (string= cmd ,name) (= (length args) ,arity))
+            (destructuring-bind ,arglist args
+              (declare (ignorable ,@arglist))
+              ,@body)))))
 
 ;;; ── Declarative directive dispatch macro ──────────────────────────────────
 
 (defmacro define-config-directives (&rest rules)
-  "Build %APPLY-CONFIG-DIRECTIVE-INNER from a declarative table of directive RULES.
+  "Build %APPLY-CONFIG-DIRECTIVE-INNER from canonical directive RULES.
 
-   Each RULE has one of two forms:
+   Each RULE has the form:
      (NAME ARITY (ARG...) &body BODY)
-       NAME   – the directive keyword as a string (e.g. \"set-shell\")
-       ARITY  – the exact number of arguments the directive takes
-       (ARG…) – symbols bound to those arguments inside BODY
-       BODY   – forms run when NAME matches with the right ARITY; their value is
-                returned (non-NIL ⇒ the directive was applied).
+       NAME   - the canonical directive keyword as a string (e.g. \"set-shell\")
+       ARITY  - the exact number of arguments the directive takes
+       (ARG...) - symbols bound to those arguments inside BODY
+       BODY   - forms run when NAME matches with the right ARITY; their value is
+                returned (non-NIL means the directive was applied).
 
-     (:aliases (NAME...) ARITY (ARG...) &body BODY)
-       Identical to the single-name form except CMD matches any string in (NAME...).
-       Eliminates alias repetition when several spellings intentionally map to
-       the same directive implementation.
-
+   The macro intentionally accepts one name per rule. Config parsing is
+   canonical-only; shorthand aliases must be rejected at the parser boundary.
    The outer APPLY-CONFIG-DIRECTIVE function wraps this inner dispatcher and
    handles 'bind' with variable-arity flags separately."
   `(defun %apply-config-directive-inner (tokens)

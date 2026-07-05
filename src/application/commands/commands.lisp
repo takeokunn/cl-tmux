@@ -205,6 +205,7 @@
   "Insert SRC-PANE into DST-WINDOW as a DIRECTION split.
    Returns SRC-PANE on success, NIL when the destination has no active leaf."
   (multiple-value-bind (active tree active-leaf) (%join-pane-active-leaf dst-window)
+    (declare (ignore tree))
     (when (and active-leaf (%join-pane-fits-p dst-window active direction full))
       ;; Refresh the destination layout before deriving the split size.  Test
       ;; fixtures can carry stale pane dimensions even when the window/tree size

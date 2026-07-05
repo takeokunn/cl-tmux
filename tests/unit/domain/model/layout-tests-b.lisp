@@ -24,8 +24,10 @@
                                 :panes (list pane)
                                 :tree  (make-layout-leaf pane))))
         (funcall layout-fn win (window-panes win) 80 24)
-        (check-table (list (list (pane-width  pane) 80 "single pane must span the full width")
-                           (list (pane-height pane) 24 "single pane must span the full height"))
+        (check-table (list (list (pane-width  pane) 80
+                                 (format nil "~A single pane must span the full width" desc))
+                           (list (pane-height pane) 24
+                                 (format nil "~A single pane must span the full height" desc)))
                      :test #'equal)))))
 
 (test layout-even-h-two-panes-equal-columns

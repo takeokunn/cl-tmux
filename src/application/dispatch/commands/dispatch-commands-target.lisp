@@ -1,5 +1,7 @@
 (in-package #:cl-tmux)
 
+(declaim (special *clients*))
+
 ;;; Target resolution shared by arg-aware command handlers.
 
 (defun %resolve-pane-in-window (win target-str)

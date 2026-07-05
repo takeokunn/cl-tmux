@@ -23,35 +23,42 @@
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defparameter +set-directive-commands+
-    '("set-option" "set-window-option" "set-session-option")))
+    '("set-option" "set-window-option" "set-session-option"))
 
-(define-config-directives
-  ("set-shell" 1 (path)
-    (setf *default-shell* path)
-    t)
-  ("set-status-height" 1 (n)
-    (let ((height (cl-tmux::%parse-integer-or-nil n :junk-allowed t)))
-      (when (and height (plusp height))
-        (setf *status-height* height)
-        t)))
-  (:aliases +set-directive-commands+
-    2 (option-name option-value)
-    (cl-tmux/options:set-option option-name option-value)
-    t)
-  ;; NOTE: set-hook is handled entirely by %apply-set-hook-directive (stores raw
-  ;; command strings for format expansion at fire time); no entry needed here.
-  ;; NOTE: source-file is handled entirely by %apply-source-file-directive
-  ;; (wired into apply-config-directive before this table) to support -q/-n/-v
-  ;; flags, glob patterns, and multiple paths.
-  ;; NOTE: run-shell is handled entirely by %apply-run-shell-directive
-  ;; (wired into apply-config-directive before this fixed-arity table), which
-  ;; covers the bare 1-arg form as well as the flag-bearing forms.  No fixed-
-  ;; arity entries are needed here.
-  ;; NOTE: set-environment is handled entirely by %apply-set-environment-
-  ;; directive (config-directives-runtime.lisp), which apply-config-directive
-  ;; routes to unconditionally before reaching this fixed-arity table.  No
-  ;; entry is needed here.
-  )
+  (defun %set-directive-config-rule (command-name)
+    "Return the canonical fixed-arity config rule for one set-family command."
+    `(,command-name 2 (option-name option-value)
+      (cl-tmux/options:set-option option-name option-value)
+      t)))
+
+(defmacro define-core-config-directives ()
+  "Define fixed-arity config directives from canonical directive facts."
+  `(define-config-directives
+     ("set-shell" 1 (path)
+       (setf *default-shell* path)
+       t)
+     ("set-status-height" 1 (n)
+       (let ((height (cl-tmux::%parse-integer-or-nil n :junk-allowed t)))
+         (when (and height (plusp height))
+           (setf *status-height* height)
+           t)))
+     ,@(mapcar #'%set-directive-config-rule +set-directive-commands+)
+     ;; NOTE: set-hook is handled entirely by %apply-set-hook-directive (stores raw
+     ;; command strings for format expansion at fire time); no entry needed here.
+     ;; NOTE: source-file is handled entirely by %apply-source-file-directive
+     ;; (wired into apply-config-directive before this table) to support -q/-n/-v
+     ;; flags, glob patterns, and multiple paths.
+     ;; NOTE: run-shell is handled entirely by %apply-run-shell-directive
+     ;; (wired into apply-config-directive before this fixed-arity table), which
+     ;; covers the bare 1-arg form as well as the flag-bearing forms.  No fixed-
+     ;; arity entries are needed here.
+     ;; NOTE: set-environment is handled entirely by %apply-set-environment-
+     ;; directive (config-directives-runtime.lisp), which apply-config-directive
+     ;; routes to unconditionally before reaching this fixed-arity table.  No
+     ;; entry is needed here.
+     ))
+
+(define-core-config-directives)
 
 ;;; ── set-option flag handling (-g / -a / -s / ...) ──────────────────────────
 ;;;

@@ -21,3 +21,16 @@
       (load (merge-pathnames #P"bootstrap/package-presentation.lisp" base))
       (load (merge-pathnames #P"bootstrap/package-application.lisp" base)))
     (setf *package-fragments-loaded* t)))
+
+(declaim (notinline cl-tmux::client-conn-stream
+                    (setf cl-tmux::client-conn-stream)
+                    cl-tmux::client-conn-rows
+                    (setf cl-tmux::client-conn-rows)
+                    cl-tmux::client-conn-cols
+                    (setf cl-tmux::client-conn-cols)
+                    cl-tmux::client-conn-message-log
+                    (setf cl-tmux::client-conn-message-log)
+                    cl-tmux/model:window-tree
+                    (setf cl-tmux/model:window-tree)
+                    cl-tmux/model:window-last-layout-tree
+                    (setf cl-tmux/model:window-last-layout-tree)))

@@ -138,6 +138,7 @@
      default-size when -d).
   A DETACHED session (-d) has no client to size it, so -- like tmux -- it uses the
    default-size option (\"WxH\", default 80x24) when -x/-y are not given."
+  (declare (ignore session))
   (with-command-input (flags positionals args "sncxyteF"
                              :allowed-flags '(#\A #\d #\E #\P #\s #\n #\c
                                               #\x #\y #\t #\e #\F)

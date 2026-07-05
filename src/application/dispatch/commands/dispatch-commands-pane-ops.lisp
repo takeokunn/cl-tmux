@@ -1,5 +1,7 @@
 (in-package #:cl-tmux)
 
+(declaim (special *current-mouse-event* *mouse-drag-state*))
+
 ;;; -- Pane operation commands -------------------------------------------------
 ;;;
 ;;; resize-pane, join-pane, move-pane, break-pane, clear-history, rotate-window.

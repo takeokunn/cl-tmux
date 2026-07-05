@@ -10,7 +10,8 @@
 ;;; handler; it lives here because it shares no code with the fixed-arity
 ;;; set-option table in config-directives-set.lisp.
 
-(declaim (special cl-tmux/model:*update-environment*))
+(declaim (special cl-tmux/model:*update-environment*
+                  cl-tmux/model:+default-update-environment+))
 
 ;;; ── Option side-effect helpers ───────────────────────────────────────────────
 

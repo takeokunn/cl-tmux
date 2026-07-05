@@ -1,5 +1,7 @@
 (in-package #:cl-tmux)
 
+(declaim (special *current-mouse-event*))
+
 ;;; -- Copy-mode entry %cmd-* handler ------------------------------------------
 
 (defun %resolve-copy-mode-screen (session target-str)

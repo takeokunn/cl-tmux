@@ -129,7 +129,7 @@ set-option -u status")
 ;;; named-buffer family uses canonical command names only.
 
 (test config-bind-rejects-named-buffer-shorthand-single-tokens
-  "Real tmux named-buffer aliases (deleteb/loadb/pasteb/saveb/showb) are still
+  "Named-buffer shorthand spellings (deleteb/loadb/pasteb/saveb/showb) are
    rejected because cl-tmux accepts canonical command names only."
   (dolist (abbrev '("deleteb" "loadb" "pasteb" "saveb" "showb"))
     (with-isolated-config
@@ -144,8 +144,8 @@ set-option -u status")
         "setb must be rejected as a non-canonical command name")))
 
 (test config-bind-rejects-unknown-single-token-still
-  "The abbreviation aliases do not weaken typo rejection: an unknown single-token
-   command is still refused."
+  "Rejected shorthand spellings do not weaken typo rejection: an unknown
+   single-token command is still refused."
   (with-isolated-config
     (is (= 0 (cl-tmux/config:load-config-from-string "bind X totally-bogus-cmd"))
         "an unknown bare command must still be rejected (0 applied)")))

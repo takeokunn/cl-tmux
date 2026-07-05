@@ -310,6 +310,7 @@
        flags
        positionals
        (lambda (name inherited-p)
+         (declare (ignore inherited-p))
          (cl-tmux/options:show-window-option name win :value-only-p t))
        (lambda (name inherited-p)
          (cl-tmux/options:show-window-option name win :inherited-p inherited-p))

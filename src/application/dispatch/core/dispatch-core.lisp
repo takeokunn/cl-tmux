@@ -222,6 +222,7 @@
 (defun %copy-mode-active-p (session)
   "Return T when the active pane's screen is in copy mode."
   (multiple-value-bind (_win ap) (%active-window-pane session)
+    (declare (ignore _win))
     (and ap
          (screen-copy-mode-p (pane-screen ap)))))
 

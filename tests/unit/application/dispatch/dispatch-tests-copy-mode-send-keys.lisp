@@ -175,6 +175,51 @@
               "jump-to-backward must land just after the previous matching character"))
        :test #'equal))))
 
+(defmacro check-send-keys-x-explicit-arg-specs (&rest cases)
+  "Assert canonical explicit-argument facts for send-keys -X."
+  `(dolist (case ',cases)
+     (destructuring-bind (command expected-kind expected-handler) case
+       (multiple-value-bind (kind handler)
+           (cl-tmux::%send-keys-x-explicit-arg-spec command)
+         (is (eq kind expected-kind)
+             "~A must expose explicit-arg kind ~S" command expected-kind)
+         (is (eq handler expected-handler)
+             "~A must expose explicit-arg handler ~S" command expected-handler)))))
+
+(defmacro check-send-keys-x-removed-explicit-arg-aliases (&rest commands)
+  "Assert removed send-keys -X aliases never expose explicit-argument facts."
+  `(dolist (command ',commands)
+     (multiple-value-bind (kind handler)
+         (cl-tmux::%send-keys-x-explicit-arg-spec command)
+       (is (null kind) "~A must not expose an explicit-arg kind" command)
+       (is (null handler) "~A must not expose an explicit-arg handler" command))))
+
+(test send-keys-x-explicit-arg-facts-are-canonical
+  "The explicit-arg fact table exposes canonical command names only."
+  (check-send-keys-x-explicit-arg-specs
+   ("jump-forward"                  :char cl-tmux/commands:copy-mode-jump-forward)
+   ("jump-backward"                 :char cl-tmux/commands:copy-mode-jump-backward)
+   ("jump-to-forward"               :char cl-tmux/commands:copy-mode-jump-to)
+   ("jump-to-backward"              :char cl-tmux/commands:copy-mode-jump-to-backward)
+   ("goto-line"                     :line cl-tmux/commands:copy-mode-goto-line)
+   ("search-forward-text"           :text cl-tmux/commands:copy-mode-search-forward)
+   ("search-backward-text"          :text cl-tmux/commands:copy-mode-search-backward)
+   ("copy-pipe"                     :text cl-tmux/commands:copy-mode-copy-pipe-no-cancel)
+   ("copy-pipe-and-cancel"          :text cl-tmux/commands:copy-mode-copy-pipe)
+   ("copy-pipe-end-of-line-and-cancel"
+    :text cl-tmux/commands:copy-mode-copy-pipe-end-of-line)
+   ("copy-pipe-end-of-line"
+    :text cl-tmux/commands:copy-mode-copy-pipe-end-of-line-no-cancel)
+   ("copy-pipe-no-clear"            :text cl-tmux/commands:copy-mode-copy-pipe-no-clear)
+   ("copy-pipe-line"                :text cl-tmux/commands:copy-mode-copy-pipe-line)
+   ("copy-pipe-line-and-cancel"
+    :text cl-tmux/commands:copy-mode-copy-pipe-line-and-cancel)
+   ("pipe"                          :text cl-tmux/commands:copy-mode-pipe-no-cancel)
+   ("pipe-no-clear"                 :text cl-tmux/commands:copy-mode-pipe-no-clear)
+   ("pipe-and-cancel"               :text cl-tmux/commands:copy-mode-pipe-and-cancel)
+   ("selection-mode"                :text cl-tmux/commands:copy-mode-selection-mode))
+  (check-send-keys-x-removed-explicit-arg-aliases "jump-to"))
+
 (test send-keys-x-rejects-removed-jump-to-alias
   "send -X jump-to was an alias for jump-to-forward; aliases are not accepted."
   (with-copy-mode-active-screen (s screen :feed "hello world")

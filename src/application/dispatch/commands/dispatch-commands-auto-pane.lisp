@@ -1,5 +1,7 @@
 (in-package #:cl-tmux)
 
+(declaim (special *current-mouse-event*))
+
 ;;; -- Pane input and prefix commands ----------------------------------------
 ;;;
 

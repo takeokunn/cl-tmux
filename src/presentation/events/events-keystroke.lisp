@@ -183,9 +183,8 @@
   "Return a CPS continuation that applies HANDLER to the next input byte."
   (lambda (_ignored-session byte2)
     (declare (ignore _ignored-session))
-    (dotimes (i count)
-      (declare (ignore i))
-      (funcall handler screen (code-char byte2)))
+    (loop repeat count
+          do (funcall handler screen (code-char byte2)))
     (setf *dirty* t)
     (%ground-values)))
 
@@ -206,9 +205,8 @@
               (%copy-mode-char-argument-continuation (%active-screen session)
                                                      char-handler
                                                      count))
-            (dotimes (i (if (key-table-repeatable-p entry) count 1))
-              (declare (ignore i))
-              (%run-key-table-binding session entry byte))))))
+            (loop repeat (if (key-table-repeatable-p entry) count 1)
+                  do (%run-key-table-binding session entry byte))))))
   nil)
 
 (defun %dispatch-copy-mode-ground-byte (session byte)

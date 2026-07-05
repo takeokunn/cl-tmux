@@ -85,6 +85,7 @@
 (test render-pane-clock-mode-overlay
   "When *clock-mode-pane-id* matches the pane id, render-pane draws the clock overlay."
   (with-copy-mode-render-fixture (sess pane screen 20 6)
+    (declare (ignore screen))
     (let ((cl-tmux::*clock-mode-pane-id* (pane-id pane)))
       (let ((out (render-pane-output sess pane)))
         (is (find #\█ out)
@@ -93,6 +94,7 @@
 (test render-pane-no-clock-when-id-mismatch
   "When *clock-mode-pane-id* does not match the pane id, the clock overlay is suppressed."
   (with-copy-mode-render-fixture (sess pane screen 20 6)
+    (declare (ignore screen))
     (let ((cl-tmux::*clock-mode-pane-id* 99))
       (let ((out (render-pane-output sess pane)))
         (is (null (find #\█ out))

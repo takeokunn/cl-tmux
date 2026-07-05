@@ -30,10 +30,11 @@
           (destructuring-bind (name docstring shift-loop blank-loop) spec
             `(defun ,name (screen n)
                ,docstring
+               (declare (ignorable n))
                (let ((cx (screen-cursor-x screen))
                      (cy (screen-cursor-y screen))
                      (w  (screen-width    screen)))
-                 (declare (ignorable cx cy w n))
+                 (declare (ignorable cx cy w))
                  ,shift-loop
                  ,blank-loop
                  (setf (screen-dirty-p screen) t)))))

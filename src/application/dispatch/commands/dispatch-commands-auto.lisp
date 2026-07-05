@@ -1,5 +1,7 @@
 (in-package #:cl-tmux)
 
+(declaim (special *client-flags*))
+
 ;;; -- Window navigation and session management commands ----------------------
 ;;;
 

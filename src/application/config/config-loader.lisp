@@ -1,5 +1,7 @@
 (in-package #:cl-tmux/config)
 
+(declaim (special cl-tmux/model:*global-hidden-environment-names*))
+
 ;;; -- Directive dispatch + comment stripping + single-line application --------
 ;;;
 ;;; apply-config-directive routes one token list to the right directive handler;
