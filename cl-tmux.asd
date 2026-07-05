@@ -317,7 +317,10 @@
        (:file "events-keystroke-escape-mouse") ; X10/SGR mouse escape parsing
        (:file "events-keystroke-escape-prompt") ; prompt-local ESC sequences
        (:file "events-keystroke-escape-keys") ; SS3 / CSI-tilde key-name resolution
-       (:file "events-keystroke")          ; CPS state functions: ground-state, after-prefix-state
+       (:file "events-keystroke-state") ; shared dynamic state and escape-buffer utility
+       (:file "events-keystroke-menu") ; active menu key dispatch rules
+       (:file "events-keystroke-copy-mode") ; copy-mode digit prefix and table dispatch
+       (:file "events-keystroke") ; CPS ground-state coordinator
        (:file "events-prefix-csi-continuation") ; post-prefix CSI/SS3 CPS continuation
        (:file "events-keystroke-repeat-states") ; prefix/root repeat CPS states
        (:file "events-loop-timers") ; CPS process-byte + escape/repeat timer plumbing + synchronize-panes
