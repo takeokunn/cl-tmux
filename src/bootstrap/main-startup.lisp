@@ -1,7 +1,8 @@
-;;; Startup mode dispatch and CLI entry points.
+;;; Startup mode dispatch and CLI entry point.
 ;;;
-;;; This file is loaded after main.lisp so it can reuse the runtime helpers
-;;; defined there without making src/main.lisp carry the full startup surface.
+;;; Socket discovery/server auto-start helpers live in main-startup-socket.lisp.
+;;; Command-client forwarding helpers live in main-startup-forwarding.lisp.
+;;; This file owns the mode table and binary entry-point dispatch.
 
 (in-package :cl-tmux)
 
@@ -54,58 +55,6 @@
    Storing handler symbols (not function objects) means test stubs that rebind
    the function cell with SETF FDEFINITION are honoured at dispatch time.")
 
-(defconstant +server-socket-poll-interval-seconds+ 0.1
-  "Seconds between socket-existence probes while waiting for a server to start.")
-
-(defconstant +server-socket-poll-max-iterations+ 30
-  "Maximum number of socket-existence probes (30 x 0.1 s = 3 s total wait).")
-
-(defun %stale-socket-p (socket-path)
-  "True when SOCKET-PATH exists but no server accepts connections on it.
-   tmux treats such leftover socket files (e.g. after a crash) as stale:
-   it unlinks them and starts a fresh server instead of failing to attach."
-  (and (probe-file socket-path)
-       (not (handler-case
-                (let ((sock (cl-tmux/net:connect-to socket-path)))
-                  (cl-tmux/net:close-socket sock)
-                  t)
-              (error () nil)))))
-
-(defun %global-socket-flag-args ()
-  "The global -L/-S flags to re-inject into a spawned server child's argv so it
-   binds the same socket the parent resolved."
-  (append (when *socket-path-override* (list "-S" *socket-path-override*))
-          (when *socket-name-override* (list "-L" *socket-name-override*))))
-
-(defun %ensure-server-running (session-name)
-  "Start a background server for SESSION-NAME if no live socket exists.
-   A stale socket file (present but refusing connections) is unlinked first,
-   matching tmux's crash-recovery behaviour.
-   Uses sb-ext:run-program with *posix-argv* to spawn a separate process.
-   Only enters the polling loop when run-program succeeded.
-   Polls every +server-socket-poll-interval-seconds+ for up to
-   +server-socket-poll-max-iterations+ iterations for the socket to appear."
-  (let* ((socket-path (socket-path session-name))
-         (exe         (first sb-ext:*posix-argv*))
-         (args        (append (%global-socket-flag-args)
-                              (list "server" session-name))))
-    (when (%stale-socket-p socket-path)
-      (ignore-errors (delete-file socket-path)))
-    (unless (probe-file socket-path)
-      ;; Guard: run-program may fail in test environments or when the
-      ;; binary is not yet on PATH.  Only poll if the spawn succeeded.
-      ;; :wait nil means non-blocking, so run-program returns after starting the child.
-      (let ((launched (ignore-errors
-                        (sb-ext:run-program exe args
-                                            :wait nil
-                                            :output nil :error nil))))
-        ;; Poll only when we actually attempted a launch.  This avoids the
-        ;; unconditional 3-second dead-time when run-program silently failed.
-        (when launched
-          (loop repeat +server-socket-poll-max-iterations+
-                until (probe-file socket-path)
-                do (sleep +server-socket-poll-interval-seconds+)))))))
-
 (defun %startup-mode-raw-args-p (mode-name)
   "Return T when the startup mode named MODE-NAME receives the full raw argv tail.
    Returns NIL for unknown mode names or modes that receive only a session name."
@@ -144,89 +93,6 @@
   (:value "-n" win-name)
   (:bool  "-d" detach)
   (:value "-c" start-dir))
-
-(defun %socket-file-session-name (path)
-  "Extract the cl-tmux session/server name from a socket PATH, or NIL."
-  (when path
-    (let* ((name (pathname-name path))
-           (prefix "cl-tmux-"))
-      (when (and name
-                 (>= (length name) (length prefix))
-                 (string= prefix name :end2 (length prefix)))
-        (subseq name (length prefix))))))
-
-(defun %running-server-name (&optional preferred-name)
-  "Return the best known running server socket name, preferring PREFERRED-NAME.
-   Falls back to the default \"0\" socket, then to the first cl-tmux socket in
-   TMPDIR.  This supports CLI command forwarding even when the first server was
-   launched with `new-session -s NAME` or `attach NAME`."
-  (cond
-    ((and preferred-name (probe-file (socket-path preferred-name)))
-     preferred-name)
-    ((probe-file (socket-path "0")) "0")
-    (t
-     (let ((pattern (merge-pathnames
-                     "cl-tmux-*.sock"
-                     (parse-namestring (format nil "~A/" (%socket-directory))))))
-       (%socket-file-session-name (first (ignore-errors (directory pattern))))))))
-
-(defmacro %try-or-nil (&body body)
-  "Run BODY, returning its value, or NIL if it signals an ERROR.
-   Used for risky I/O (e.g. socket connections) where any failure should
-   collapse to a boolean/NIL result rather than propagate."
-  `(handler-case (progn ,@body) (error () nil)))
-
-(defun %forward-startup-command (server-name command raw-args)
-  "Forward COMMAND and RAW-ARGS to SERVER-NAME, returning T on success.
-   Stale socket files are common after crashes; connection failures must not make
-   startup/list/kill CLI commands crash before they can print a useful result."
-  (when server-name
-    (%try-or-nil
-      (run-command-client server-name (cons command raw-args))
-      t)))
-
-(defun %forward-or-die (command raw-args)
-  "Forward COMMAND + RAW-ARGS to a running server, or exit 1 on failure.
-   Looks up the running server, forwards the command, and prints a tmux-style
-   connection-failure message when no server is reachable."
-  (let ((server-name (%running-server-name)))
-    (unless (%forward-startup-command server-name command raw-args)
-      (format *error-output*
-              "error connecting to ~A (No such file or directory)~%"
-              (socket-path (or server-name "0")))
-      (sb-ext:exit :code 1))))
-
-(defmacro define-forwarding-commands (&rest specs)
-  "Generate a forwarding run-COMMAND function for each SPEC (fn cmd doc).
-   Each function forwards its RAW-ARGS to the running server via
-   %forward-or-die, then exits 0.  Adding a command is a one-row data change."
-  `(progn
-     ,@(mapcar (lambda (spec)
-                 (destructuring-bind (fn-name cmd-name doc) spec
-                   `(defun ,fn-name (raw-args)
-                      ,doc
-                      (%forward-or-die ,cmd-name raw-args)
-                      (sb-ext:exit :code 0))))
-               specs)))
-
-;;; ── Forwarding-command fact table ───────────────────────────────────────────
-;;;
-;;; All commands that simply forward to a running server live here.
-;;; Adding a new one only requires a new row — no logic change needed.
-
-(define-forwarding-commands
-  (run-kill-server         "kill-server"
-   "Send kill-server command via the socket, then exit.")
-  (run-list-sessions       "list-sessions"
-   "Print a list of active sessions to stdout and exit.")
-  (run-list-windows        "list-windows"
-   "Print a list of windows to stdout and exit.")
-  (run-display-message     "display-message"
-   "Forward display-message to the running server and exit.")
-  (run-show-options        "show-options"
-   "Forward show-options to the running server and exit.")
-  (run-show-window-options "show-window-options"
-   "Forward show-window-options to the running server and exit."))
 
 (defun run-new-session (raw-args)
   "Create a new session (optionally named via -s) and attach to it.

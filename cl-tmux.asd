@@ -324,6 +324,8 @@
        (:file "server-multi-loop") ; multi-client select-multiplexed serve loop
        (:file "client")
        (:file "main")
+       (:file "main-startup-socket") ; socket discovery + server auto-start helpers
+       (:file "main-startup-forwarding") ; command-client forwarding helpers + generated commands
        (:file "main-startup"))))))
   ;; Build a standalone binary: (asdf:make :cl-tmux)
   :build-operation "program-op"
