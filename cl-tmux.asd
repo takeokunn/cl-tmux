@@ -109,7 +109,9 @@
        (:file "format-operators")  ; comparison and logical operators (#{==:}/#{!=:}/#{||:}/#{&&:})
        (:file "format-iteration")  ; W:/S:/P: window/session/pane iteration expanders
        (:file "format-shell-command") ; bounded shell-command port for #(command) expansion
-       (:file "format-engine")     ; core %expand-brace, bracket/paren expanders, CPS processor, expand-format
+       (:file "format-delimiters") ; delimiter scanning plus #[...] and #(command) ports
+       (:file "format-brace")      ; core #{...} modifier/operator expansion
+       (:file "format-engine")     ; CPS processor and expand-format public entry points
        (:file "format-context-os-probe") ; OS probes (pgrep/ps/lsof/proc) for pane_current_command/pane_current_path
        (:file "format-context-screen") ; pane-geometry/screen/client section builders (mechanical getter tables)
        (:file "format-context")))  ; context builder: model objects → expand-format plist
