@@ -254,6 +254,7 @@
        (:file "dispatch-commands-option")   ; set-option (CPS) + show-options %cmd-*
        (:file "dispatch-commands-option-pane") ; rename/select %cmd-* handlers (loads option-pane-window/pane fragments)
        (:file "dispatch-commands-lifecycle") ; kill/link/unlink/swap/move/source-file %cmd-*
+       (:file "dispatch-commands-pane-layout-facts") ; select-layout canonical facts
        (:file "dispatch-commands-pane")   ; layout/window/pane helpers + *key-table*
        (:file "dispatch-commands-session-service") ; session switching/destruction services
        (:file "dispatch-commands-client-session") ; switch/attach/detach %cmd-* handlers

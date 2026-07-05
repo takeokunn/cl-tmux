@@ -2,34 +2,9 @@
 
 ;;; -- Window/pane/session structural commands ----------------------------------------
 ;;;
-;;; Named-layout macro, select-layout, list-panes, new-window, split-window,
-;;; new-session, switch-client, destroy-session, kill-session, resize-window,
-;;; detach, and the copy-mode -X command table (for send-keys -X).
-
-;;; -- Layout name → keyword dispatch macro ------------------------------------
-;;;
-;;; Each row is one canonical layout fact.  The macro generates a flat cond so
-;;; adding a new accepted layout requires appending one explicit fact here.
-
-(defmacro define-layout-name-table (&rest rows)
-  "Build %RESOLVE-LAYOUT-NAME from a declarative canonical-name table.
-   Each ROW is (keyword canonical-name).  Generates a function that maps a
-   layout name string to the corresponding keyword, or NIL for unknown names."
-  `(defun %resolve-layout-name (name)
-     "Map NAME (a string) to a layout keyword, or NIL when unrecognised."
-     (cond
-       ,@(mapcar (lambda (row)
-                   (destructuring-bind (kw canonical-name) row
-                     `((string-equal name ,canonical-name) ,kw)))
-                 rows)
-       (t nil))))
-
-(define-layout-name-table
-  (:even-horizontal "even-horizontal")
-  (:even-vertical   "even-vertical")
-  (:main-horizontal "main-horizontal")
-  (:main-vertical   "main-vertical")
-  (:tiled           "tiled"))
+;;; Select-layout, display-panes, new-window, split-window, and shared pane
+;;; helpers.  Canonical layout facts are defined in
+;;; dispatch-commands-pane-layout-facts.lisp.
 
 (defun %cmd-select-layout (session args)
   "select-layout [-npoE] [-t target-window] [layout-name]: apply or cycle layouts.
