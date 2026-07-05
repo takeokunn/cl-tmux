@@ -108,6 +108,7 @@
        (:file "format-search")     ; glob/regex matching + pane content search (#{m:}/#{m/r:}/#{C:})
        (:file "format-operators")  ; comparison and logical operators (#{==:}/#{!=:}/#{||:}/#{&&:})
        (:file "format-iteration")  ; W:/S:/P: window/session/pane iteration expanders
+       (:file "format-shell-command") ; bounded shell-command port for #(command) expansion
        (:file "format-engine")     ; core %expand-brace, bracket/paren expanders, CPS processor, expand-format
        (:file "format-context-os-probe") ; OS probes (pgrep/ps/lsof/proc) for pane_current_command/pane_current_path
        (:file "format-context-screen") ; pane-geometry/screen/client section builders (mechanical getter tables)

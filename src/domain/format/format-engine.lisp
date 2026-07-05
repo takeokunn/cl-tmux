@@ -1,19 +1,7 @@
 (in-package #:cl-tmux/format)
 
-;;;; Core brace expander (%expand-brace), bracket/paren expanders,
+;;;; Core brace expander (%expand-brace), bracket/paren dispatch,
 ;;;;  CPS character processor, and expand-format public entry point.
-
-(defconstant +format-shell-command-timeout+ 2
-  "Seconds to allow #(shell-command) format expansion commands to run.")
-
-(defun %run-format-shell-command (command)
-  "Run COMMAND for #(shell-command) expansion and return stdout or the empty string."
-  (handler-case
-      (uiop:run-program (list "/bin/sh" "-c" command)
-                        :output :string
-                        :ignore-error-status t
-                        :timeout +format-shell-command-timeout+)
-    (error () "")))
 
 (defun %prefixed-mod-p (mod letter)
   "T when MOD is exactly LETTER or LETTER followed by '/flags' — the shared
@@ -237,7 +225,7 @@
 
 (defun %expand-paren (template start out)
   "Expand #(shell-cmd) starting at START (just past the '(').
-   Runs the command via uiop:run-program and writes its stdout to OUT.
+   Routes the command through the bounded shell-command port and writes stdout to OUT.
    Returns the index just past the closing ')'.
    On any error (no closing paren, command failure) returns safely without
    crashing: missing ')' emits '#' literally; command errors emit empty string."
@@ -245,14 +233,7 @@
     (if (null close)
         (progn (write-char #\# out) (1- start))
         (let ((cmd (subseq template start close)))
-          (let ((result (%run-format-shell-command cmd)))
-            ;; Strip a single trailing newline (shell commands usually add one)
-            (write-string
-             (if (and (plusp (length result))
-                      (char= (char result (1- (length result))) #\Newline))
-                 (subseq result 0 (1- (length result)))
-                 result)
-             out))
+          (write-string (%run-format-shell-command cmd) out)
           (1+ close)))))
 
 ;;; ── CPS-style character processor ───────────────────────────────────────────

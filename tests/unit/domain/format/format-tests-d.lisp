@@ -251,6 +251,22 @@
     (destructuring-bind (spec expected desc) c
       (is (string= expected (fmt spec)) "~A" desc))))
 
+(test expand-format-shell-command-capture-is-bounded
+  "#(cmd) captures bounded stdout before building the Lisp string."
+  (let ((result (fmt "#(perl -e 'print \"x\" x 5000')"))
+        (limit cl-tmux/format::+format-shell-command-output-limit+))
+    (is (= limit (length result)) "output is capped to the configured limit")
+    (is (every (lambda (ch) (char= ch #\x)) result)
+        "captured output keeps command bytes before the cap")))
+
+(test expand-format-shell-command-wrapper-documents-port
+  "#(cmd) is routed through the bounded shell capture port."
+  (let ((wrapped (cl-tmux/format::%format-shell-capture-command "printf foo"))
+        (limit (write-to-string cl-tmux/format::+format-shell-command-output-limit+)))
+    (is (search "printf foo" wrapped) "original command remains present")
+    (is (search "head -c" wrapped) "capture is bounded with head")
+    (is (search limit wrapped) "configured limit is embedded in wrapper")))
+
 ;;; ── #[attr] style directive — no crash guarantee ─────────────────────────────
 
 (test expand-format-sgr-no-crash-complex-attr
