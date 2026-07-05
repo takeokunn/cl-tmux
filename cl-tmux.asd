@@ -73,8 +73,10 @@
        (:file "modes-dec-pm")     ; DEC modes — DEC PM rule-table macro + dispatch table (part II)
        (:file "modes-d")   ; DEC modes — focus, DECSC, reset, ANSI SM/RM, charset (parts III-IV)
        (:file "sgr")
-       (:file "csi-replies")   ; CSI reply-queue helpers (DSR/DA/CPR/DECRQM/XTWINOPS); loads before csi
-       (:file "csi")
+       (:file "csi-replies")    ; CSI reply-queue helpers (DSR/DA/CPR/DECRQM/XTWINOPS); loads before csi
+       (:file "csi-parameters") ; CSI parameter-to-domain-value translation
+       (:file "csi-dispatch")   ; DEFINE-CSI-RULES macro that emits EXECUTE-CSI
+       (:file "csi")            ; declarative CSI action rule table
        (:file "parser-dcs")    ; DCS passthrough/XTGETTCAP/DECRQSS helpers (loads before parser)
        (:file "parser-core")   ; parser byte predicates + Prolog-like DEFINE-STATE macro
        (:file "parser-csi")    ; CSI continuation builder and byte-class predicates

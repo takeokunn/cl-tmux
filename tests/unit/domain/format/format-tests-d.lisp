@@ -253,8 +253,9 @@
 
 (test expand-format-shell-command-capture-is-bounded
   "#(cmd) captures bounded stdout before building the Lisp string."
-  (let ((result (fmt "#(perl -e 'print \"x\" x 5000')"))
-        (limit cl-tmux/format::+format-shell-command-output-limit+))
+  (let* ((payload (make-string 5000 :initial-element #\x))
+         (result (fmt (format nil "#(printf '~A')" payload)))
+         (limit cl-tmux/format::+format-shell-command-output-limit+))
     (is (= limit (length result)) "output is capped to the configured limit")
     (is (every (lambda (ch) (char= ch #\x)) result)
         "captured output keeps command bytes before the cap")))

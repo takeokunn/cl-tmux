@@ -1,88 +1,13 @@
 (in-package #:cl-tmux/terminal/csi)
 
-;;;; CSI (Control Sequence Introducer) macro-driven dispatch.
+;;;; CSI (Control Sequence Introducer) declarative rule table.
 ;;;;
-;;;; define-csi-rules builds a COND-based dispatcher keyed on the final
-;;;; character and optional intermediate character of the escape sequence.
-;;;; execute-csi is the public entry point called by the parser.
-
-;;; ── Macro ──────────────────────────────────────────────────────────────────
-
-(defmacro define-csi-rules (&rest rules)
-  "Each RULE is (condition-form &body forms).
-   Available bindings in every rule body:
-     SCREEN   – the screen struct
-     FINAL    – the sequence final character (type character)
-     INTERMED – intermediate character (character or nil; e.g. #\\? for DEC)
-     PARAMS   – full parameter list (list of fixnum)
-     P1       – first  parameter or 0
-     P2       – second parameter or 0
-     P1*      – (max 1 p1)
-     P2*      – (max 1 p2)
-   Expands into a DEFUN for EXECUTE-CSI that dispatches via COND.
-   Unknown final bytes or unrecognized (INTERMED, FINAL) combinations are
-   silently ignored and return (values), matching real-terminal behaviour."
-  `(defun execute-csi (screen final intermed private params)
-     "Dispatch one complete CSI escape sequence to its terminal action.
-      SCREEN is the target screen struct.  FINAL is the sequence's final byte as
-      a character.  INTERMED is the optional true intermediate byte (#x20-#x2F,
-      e.g. #\\Space for DECSCUSR, #\\$ for DECRQM), or NIL.  PRIVATE is the optional
-      private/marker byte (#\\? for DEC private sequences, #\\> for secondary DA),
-      or NIL.  PARAMS is the list of integer parameters (possibly empty).
-      Unknown sequences are silently ignored; no error is signalled."
-     (declare (type screen screen)
-              (type character final)
-              (ignorable intermed private))
-     (let* ((p1  (%csi-leading-int (first  params)))
-            (p2  (%csi-leading-int (second params)))
-            (p1* (max 1 p1))
-            (p2* (max 1 p2)))
-       (declare (type fixnum p1 p2 p1* p2*) (ignorable p1 p2 p1* p2*))
-       (cond
-         ,@(mapcar (lambda (rule)
-                     (destructuring-bind (condition &rest body) rule
-                       `(,condition ,@body)))
-                   rules)
-         (t (values))))))
-
-(declaim (inline %csi-leading-int))
-(defun %csi-leading-int (param)
-  "The leading integer of a CSI PARAM for the scalar P1/P2 bindings.  A param
-   carrying colon sub-parameters arrives as a list (sub0 sub1 …) — non-SGR
-   handlers want only its leading value (sub0), matching pre-colon behaviour.
-   A plain integer is returned as-is; NIL → 0.  (apply-sgr keeps the raw list
-   so it can apply colon-form extended colour.)"
-  (cond ((consp param)    (or (first param) 0))
-        ((integerp param) param)
-        (t 0)))
-
-;;; All grid mutations (insert/delete chars, scroll-region margins, alternate
-;;; screen) live in cl-tmux/terminal/actions; the rule table below calls them
-;;; directly.  DECSTBM parameters arrive 1-based, so they are converted to the
-;;; 0-based inclusive margins that ACTIONS:DECSTBM expects at the call site.
-
-(declaim (inline %csi-decstbm-params))
-(defun %csi-decstbm-params (screen p1 p2)
-  "Convert 1-based DECSTBM CSI parameters P1 and P2 to the 0-based inclusive
-   (top bottom) pair expected by ACTIONS:DECSTBM.
-   P2 = 0 means 'full screen': the bottom margin defaults to height-1.
-   When top >= bottom (invalid margins), reset to full-screen (VT100 behaviour)."
-  (let* ((top    (1- (max 1 p1)))
-         (bottom (if (zerop p2) (1- (screen-height screen)) (1- p2))))
-    (if (>= top bottom)
-        (values 0 (1- (screen-height screen)))
-        (values top bottom))))
-
-(defun %cup-row (screen p1)
-  "Translate a 1-based CUP/HVP row P1 to a 0-based screen row, honoring DECOM
-   origin mode (?6): when set, the row is relative to the scroll-region top and
-   clamped to the scroll region; otherwise it is absolute."
-  (if (screen-origin-mode screen)
-      (min (+ (screen-scroll-top screen) (1- p1)) (screen-scroll-bottom screen))
-      (1- p1)))
-
-;;; ── CSI rule table ─────────────────────────────────────────────────────────
-;;;
+;;;; define-csi-rules in csi-dispatch.lisp builds EXECUTE-CSI from these facts.
+;;;; Parameter interpretation lives in csi-parameters.lisp.
+;;;; All grid mutations (insert/delete chars, scroll-region margins, alternate
+;;;; screen) live in cl-tmux/terminal/actions; the rule table below calls them
+;;;; directly.
+;;;;
 ;;; The response-queue reply layer (DSR/DA1/DA2/DA3/XTVERSION/CPR fixed and
 ;;; computed replies, DECRQM mode-state tables, XTWINOPS size-report helpers)
 ;;; called by the rules below lives in csi-replies.lisp, which loads first.
