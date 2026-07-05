@@ -76,7 +76,10 @@
        (:file "csi-replies")   ; CSI reply-queue helpers (DSR/DA/CPR/DECRQM/XTWINOPS); loads before csi
        (:file "csi")
        (:file "parser-dcs")    ; DCS passthrough/XTGETTCAP/DECRQSS helpers (loads before parser)
-       (:file "parser")
+       (:file "parser-core")   ; parser byte predicates + Prolog-like DEFINE-STATE macro
+       (:file "parser-csi")    ; CSI continuation builder and byte-class predicates
+       (:file "parser-utf8")   ; UTF-8 continuation builder and byte predicates
+       (:file "parser")        ; named CPS state-machine skeleton
        (:file "parser-osc-clipboard") ; OSC 52 Base64 helpers + clipboard callback
        (:file "parser-osc-uri")       ; OSC 7/8 URI decoding helpers
        (:file "parser-osc-color")      ; OSC color and palette helpers
