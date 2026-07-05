@@ -8,7 +8,8 @@
 ;;;; accessors, and side-effect-free constructors.
 ;;;;
 ;;;; Load order:
-;;;;   cell.lisp → screen.lisp → screen-logic.lisp → screen-wraps.lisp → …
+;;;;   cell.lisp → screen.lisp → screen-metadata.lisp → screen-resize.lisp
+;;;;   → screen-logic.lisp → …
 ;;;;
 ;;;; All three functions are exported from cl-tmux/terminal/types (declared in
 ;;;; src/bootstrap/package-terminal.lisp) and re-exported through the

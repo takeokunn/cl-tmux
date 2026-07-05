@@ -7,13 +7,11 @@
 ;;;; Layer boundaries:
 ;;;;   DATA:      defstruct definition, slot defaults, %make-blank-cells
 ;;;;   CONSTRUCT: make-screen — allocates lock, cells, scroll-bottom, parser
-;;;;   GRID:      screen-cell, setf screen-cell, screen-resize
-;;;;   LINE-WRAP: %mark-line-wrapped, %line-wrapped-p, %clear-*
-;;;;   PALETTE:   %palette-override-get/set/clear/clear-all
+;;;;   GRID:      screen-cell, setf screen-cell
 ;;;;
+;;;; screen-resize → screen-resize.lisp
 ;;;; screen-clear-dirty, screen-consume-bell, reset-sgr-pen → screen-logic.lisp
-;;;; Line-wrap helpers are also defined in this file (below the struct).
-;;;; Palette-override helpers are also defined in this file (below line-wrap).
+;;;; Line-wrap and palette metadata helpers → screen-metadata.lisp
 
 ;;; ── Screen ─────────────────────────────────────────────────────────────────
 
@@ -243,80 +241,6 @@
           (lambda (s byte) (cl-tmux/terminal/parser:ground-state s byte)))
     screen))
 
-;;; ── Line-wrap flags (capture-pane -J metadata) ──────────────────────────────
-
-(defun %mark-line-wrapped (screen row)
-  "Mark that ROW's line wraps (continues onto ROW+1) — set when an autowrap
-   actually carries content to the next row."
-  (let ((ht (or (screen-wrapped-rows screen)
-                (setf (screen-wrapped-rows screen) (make-hash-table :test #'eql)))))
-    (setf (gethash row ht) t)))
-
-(defun %line-wrapped-p (screen row)
-  "T when ROW's line wraps onto ROW+1 (capture-pane -J join boundary)."
-  (let ((ht (screen-wrapped-rows screen)))
-    (and ht (gethash row ht) t)))
-
-(defun %clear-line-wrapped (screen row)
-  "Clear ROW's wrap flag — its content no longer continues (repositioned/erased)."
-  (let ((ht (screen-wrapped-rows screen)))
-    (when ht (remhash row ht))))
-
-(defun %clear-all-line-wrapped (screen)
-  "Drop all wrap flags — a coarse reset for erase-display / RIS / resize / alt-screen."
-  (let ((ht (screen-wrapped-rows screen)))
-    (when ht (clrhash ht))))
-
-(defun %shift-line-wrapped-up (screen top bottom)
-  "Shift wrap flags to track a scroll-up of region [TOP,BOTTOM]: a flag at row Y in
-   (TOP,BOTTOM] moves to Y-1; the flag at TOP scrolls off; BOTTOM's flag is cleared."
-  (let ((ht (screen-wrapped-rows screen)))
-    (when ht
-      (let ((new (make-hash-table :test #'eql)))
-        (maphash (lambda (y v)
-                   (declare (ignore v))
-                   (cond
-                     ((and (> y top) (<= y bottom)) (setf (gethash (1- y) new) t))
-                     ((or (< y top) (> y bottom))   (setf (gethash y new) t))))
-                 ht)
-        (setf (screen-wrapped-rows screen) new)))))
-
-;;; ── OSC 4 / OSC 104 palette overrides ───────────────────────────────────────
-;;;
-;;; A custom palette entry set by OSC 4 shadows the built-in xterm palette for
-;;; that index.  Storage is lazily allocated (NIL until the first set) to keep the
-;;; common no-override screen cheap.  Mirrors tmux colour_palette_set/_get/_clear.
-
-(defun %palette-override-get (screen index)
-  "Return the custom 0xRRGGBB override for palette INDEX, or NIL when INDEX has no
-   override (caller falls back to the built-in xterm palette).  INDEX out of the
-   0..255 range returns NIL."
-  (let ((overrides (screen-palette-overrides screen)))
-    (and overrides
-         (<= 0 index 255)
-         (svref overrides index))))
-
-(defun %palette-override-set (screen index rgb)
-  "Set the custom 0xRRGGBB override for palette INDEX (0..255), allocating the
-   256-entry override vector on first use.  Out-of-range INDEX is ignored."
-  (when (<= 0 index 255)
-    (let ((overrides (or (screen-palette-overrides screen)
-                         (setf (screen-palette-overrides screen)
-                               (make-array 256 :initial-element nil)))))
-      (setf (svref overrides index) rgb))))
-
-(defun %palette-override-clear (screen index)
-  "Clear the custom override for palette INDEX (0..255), reverting it to the
-   built-in xterm palette.  No-op when no overrides exist or INDEX is out of range."
-  (let ((overrides (screen-palette-overrides screen)))
-    (when (and overrides (<= 0 index 255))
-      (setf (svref overrides index) nil))))
-
-(defun %palette-override-clear-all (screen)
-  "Drop all custom palette overrides (OSC 104 with an empty body), reverting every
-   index to the built-in xterm palette."
-  (setf (screen-palette-overrides screen) nil))
-
 ;;; ── Grid helpers ───────────────────────────────────────────────────────────
 
 (defun screen-cell (screen x y)
@@ -335,46 +259,3 @@
 ;;; screen-clear-dirty, screen-consume-bell, and reset-sgr-pen are defined in
 ;;; screen-logic.lisp (loaded immediately after this file).  They mutate screen
 ;;; slots and belong in the LOGIC layer, not in this DATA file.
-
-;;; ── Resize ─────────────────────────────────────────────────────────────────
-
-(defun %copy-overlapping-cells (screen old-cells old-width copy-cols copy-rows)
-  "Copy the top-left COPY-COLS x COPY-ROWS rectangle from OLD-CELLS (a raw
-   vector with OLD-WIDTH stride) into SCREEN's freshly installed grid."
-  (dotimes (y copy-rows)
-    (dotimes (x copy-cols)
-      (setf (screen-cell screen x y)
-            (aref old-cells (+ (* y old-width) x))))))
-
-(defun screen-resize (screen new-width new-height)
-  "Resize SCREEN to NEW-WIDTH x NEW-HEIGHT in place, preserving the
-   overlapping top-left rectangle of content.  Resets the scroll region to
-   the full new height and clamps the cursor into bounds.
-
-   Alt-cells geometry is not resized; callers that need alt-screen consistency
-   should exit alt-screen mode before resizing.
-
-   Callers that share the screen with a reader thread must hold SCREEN's
-   lock; this function does no locking of its own."
-  (when (and (= new-width  (screen-width  screen))
-             (= new-height (screen-height screen)))
-    (return-from screen-resize screen))
-  (let* ((old-width  (screen-width  screen))
-         (old-height (screen-height screen))
-         (old-cells  (screen-cells  screen)))
-    ;; Install the new grid before using screen-cell so the index arithmetic
-    ;; uses new-width.  Copy the old content via the raw old-cells vector
-    ;; (old-width stride) into the new grid using the screen-cell abstraction.
-    (setf (screen-cells  screen) (%make-blank-cells (* new-width new-height))
-          (screen-width  screen) new-width
-          (screen-height screen) new-height)
-    (%copy-overlapping-cells screen old-cells old-width
-                              (min old-width new-width) (min old-height new-height))
-    (setf (screen-scroll-top    screen) 0
-          (screen-scroll-bottom screen) (1- new-height)
-          (screen-cursor-x      screen) (clamp (screen-cursor-x screen) 0 (1- new-width))
-          (screen-cursor-y      screen) (clamp (screen-cursor-y screen) 0 (1- new-height))
-          (screen-dirty-p       screen) t)
-    ;; Content reflows on resize; drop the -J wrap flags (re-marked as new wraps occur).
-    (%clear-all-line-wrapped screen)
-    screen))

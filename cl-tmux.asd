@@ -60,7 +60,9 @@
       :serial t
       :components
       ((:file "cell")         ; immutable cell type, char-width table
-       (:file "screen")       ; screen struct (DATA layer): defstruct, grid helpers, resize
+       (:file "screen")       ; screen struct (DATA layer): defstruct, grid helpers
+       (:file "screen-metadata") ; screen capture/palette metadata mutation helpers
+       (:file "screen-resize") ; screen resize logic; depends on metadata reset helpers
        (:file "screen-logic") ; screen mutation helpers (LOGIC layer): screen-clear-dirty, screen-consume-bell, screen-drain-queue, reset-sgr-pen
        (:file "scroll")    ; row helpers + scroll-up/down + decstbm (loads before cursor/erase/edit)
        (:file "erase")     ; erase-region, erase-display, erase-line rule tables
