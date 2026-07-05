@@ -249,7 +249,8 @@
           (:file "events-tests-b") ; locked-session, drag/modifier, copy-mode cursor, vi nav - part II
           (:file "events-tests-h") ; byte-constants, make-input-state, forward-octets, maybe-rename-window - part VIII
           (:file "events-tests-c") ; app-cursor-keys, prompt-key, copy-mode nav, SGR, border-check - part III
-          (:file "events-tests-e") ; status-col, SGR-nil, copy-nav, flush-esc, reset-repeat, mouse/key-table - part IV
+          (:file "events-tests-e") ; status-col, SGR-nil, copy-nav, flush-esc, reset-repeat, mouse - part IV
+          (:file "events-copy-mode-key-table-tests") ; copy-mode key-table dispatch
           (:file "events-csi-u-tests") ; CSI-u extended key parsing and dispatch
           (:file "events-tests-d-defaults") ; app-cursor, defaults, :mark-pane, root table - part V.a
           (:file "events-tests-d-repeat") ; root repeat mode - part V.b
