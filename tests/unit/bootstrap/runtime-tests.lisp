@@ -1,6 +1,6 @@
 (in-package #:cl-tmux/test)
 
-;;;; global variables, reader-thread CPS, stop-reader-threads, wait-for-channel, status timer, remain-on-exit — part I
+;;;; global variables, pane-reader-loop, reader EOF, and alert actions
 
 (def-suite runtime-suite :description "Runtime state variables and threading utilities")
 (in-suite runtime-suite)
@@ -347,75 +347,3 @@
       (is-false fired "silence-action none must suppress the alert hook")
       (is-false (cl-tmux/model:window-silence-flag win)
                 "silence-action none must not set the silence flag"))))
-
-(test reader-remain-on-exit-state-returns-nil-when-not-running
-  :description "reader-remain-on-exit-state returns NIL immediately when *running* is NIL."
-  (with-dead-pane (pane)
-    (let ((cl-tmux::*running* nil))
-      (is (null (cl-tmux::reader-remain-on-exit-state pane))
-          "remain-on-exit state must return NIL when *running* is NIL"))))
-
-;;; Table-driven fbound checks for CPS reader state functions.
-(test reader-state-functions-are-all-fbound
-  :description "All CPS reader state machine functions are defined."
-  (dolist (sym '(cl-tmux::reader-idle-state
-                 cl-tmux::reader-reading-state
-                 cl-tmux::reader-remain-on-exit-state
-                 cl-tmux::reader-eof-state
-                 cl-tmux::%run-reader-states
-                 cl-tmux::start-reader-thread
-                 cl-tmux::install-sigwinch-handler
-                 cl-tmux::start-status-timer))
-    (is (fboundp sym) "~A must be fbound" sym)))
-
-(test run-reader-states-exits-when-running-nil
-  :description "%run-reader-states exits immediately when *running* is NIL, even
-given a non-NIL initial state (loop while *running*)."
-  (with-dead-pane (pane)
-    (let* ((cl-tmux::*running* nil)
-           ;; A state function that should never be called.
-           (boom (lambda (_p) (declare (ignore _p))
-                   (error "state function called despite *running*=NIL"))))
-      (finishes (cl-tmux::%run-reader-states pane boom)
-                "%run-reader-states must exit immediately when *running* is NIL"))))
-
-;;; ── %cap-list ─────────────────────────────────────────────────────────────────
-
-(test cap-list-returns-list-unchanged-when-under-limit
-  "%cap-list returns the list unchanged when its length is <= limit."
-  (let ((lst '(1 2 3)))
-    (is (equal '(1 2 3) (cl-tmux::%cap-list lst 5))
-        "%cap-list must return list unchanged when length <= limit")
-    (is (equal '(1 2 3) (cl-tmux::%cap-list lst 3))
-        "%cap-list must return list unchanged when length == limit")))
-
-(test cap-list-truncates-when-over-limit
-  "%cap-list returns a subseq of at most LIMIT elements when the list is longer."
-  (let ((lst '(a b c d e)))
-    (is (equal '(a b c) (cl-tmux::%cap-list lst 3))
-        "%cap-list must truncate to exactly LIMIT elements")))
-
-(test cap-list-returns-nil-for-nil-input
-  "%cap-list returns NIL for NIL input (empty list)."
-  (is (null (cl-tmux::%cap-list nil 5))
-      "%cap-list of NIL must return NIL"))
-
-(test cap-list-returns-nil-for-zero-limit
-  "%cap-list returns NIL when limit is 0."
-  (is (null (cl-tmux::%cap-list '(1 2 3) 0))
-      "%cap-list with limit 0 must return NIL"))
-
-;;; ── with-channel-plist macro ──────────────────────────────────────────────────
-
-(test with-channel-plist-binds-lock-and-cv
-  "with-channel-plist binds LK and CV to the :lock and :cv fields of a channel plist."
-  (let ((cl-tmux::*wait-channels* (make-hash-table :test #'equal)))
-    (let ((ch (cl-tmux::%ensure-channel "wplist-test")))
-      (cl-tmux::with-channel-plist (lk cv ch)
-        (is (eq (getf ch :lock) lk) "LK must be the :lock field")
-        (is (eq (getf ch :cv) cv)   "CV must be the :cv field")))))
-
-(test with-channel-plist-is-a-macro
-  "with-channel-plist is defined as a macro."
-  (is (macro-function 'cl-tmux::with-channel-plist)
-      "with-channel-plist must be a macro"))

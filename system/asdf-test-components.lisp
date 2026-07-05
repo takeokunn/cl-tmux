@@ -333,7 +333,9 @@
          :pathname "bootstrap"
          :serial t
          :components
-         ((:file "runtime-tests") ; globals, pane-reader-loop, monitor-activity/silence, alert-action - part I
+         ((:file "runtime-tests") ; globals, pane-reader-loop, EOF/remain-on-exit, alert actions
+          (:file "runtime-reader-cps-tests") ; reader CPS state machine contracts
+          (:file "runtime-channel-helper-tests") ; cap-list and channel plist helpers
           (:file "runtime-prompt-history-io-tests")
           (:file "runtime-message-log-core-tests")
           (:file "runtime-tests-c") ; stop-reader-threads, add-message-log, add-prompt-history, wait-for-channel - part III
