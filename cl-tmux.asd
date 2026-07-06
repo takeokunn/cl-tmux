@@ -230,11 +230,14 @@
      (:module "application/dispatch/core"
       :serial t
       :components
-      ((:file "dispatch-core")            ; dispatch macros + core dispatch infrastructure
+      ((:file "dispatch-core")            ; cyclic navigation primitives
+       (:file "dispatch-core-overlays")   ; overlay rendering helpers
        (:file "dispatch-core-targets")    ; target-string resolution helpers
+       (:file "dispatch-core-context")    ; target/session guard macros + active context
        (:file "dispatch-core-hooks")      ; command-hook dispatch helpers
        (:file "dispatch-core-window-cmds") ; window/pane/split command factories
        (:file "dispatch-core-focus")      ; focus event delivery helpers
+       (:file "dispatch-core-pane-ops")   ; pane, layout, and window-list helpers
        (:file "dispatch-core-commands"))) ; copy-mode table, format helpers, new-session, named-command table (loads dispatch-command-specs* fragments)
      (:module "application/dispatch/handlers"
       :serial t
