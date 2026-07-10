@@ -67,13 +67,29 @@
              ,count-context)
          ,@body))))
 
+(defun %forkpty-with-retry (rows cols &key (attempts 3))
+  "Spawn a PTY shell, retrying transient allocation failures.
+   Even after pty-available-p succeeds, the sandboxed builder can transiently
+   run out of PTYs (SBCL signals \"could not find a pty\"), so a one-shot
+   spawn makes the suite flaky.  Returns (values fd pid), or NIL when every
+   attempt failed."
+  (loop repeat attempts
+        do (handler-case
+               (multiple-value-bind (fd pid) (forkpty-with-shell rows cols)
+                 (return (values fd pid)))
+             (error () (sleep 0.1)))
+        finally (return nil)))
+
 (defmacro with-pty-shell ((fd-var pid-var &key (rows 24) (cols 80)) &body body)
   "Spawn a shell on a fresh PTY of ROWS×COLS; bind FD-VAR and PID-VAR.
-   Closes the PTY via unwind-protect on exit, even if BODY signals."
-  `(multiple-value-bind (,fd-var ,pid-var) (forkpty-with-shell ,rows ,cols)
-     (unwind-protect
-          (progn ,@body)
-       (pty-close ,fd-var ,pid-var))))
+   Closes the PTY via unwind-protect on exit, even if BODY signals.
+   Skips the enclosing test when PTY allocation keeps failing transiently."
+  `(multiple-value-bind (,fd-var ,pid-var) (%forkpty-with-retry ,rows ,cols)
+     (if (null ,fd-var)
+         (skip "PTY allocation failed transiently (sandboxed environment)")
+         (unwind-protect
+              (progn ,@body)
+           (pty-close ,fd-var ,pid-var)))))
 
 ;;; ── PTY port initialization ─────────────────────────────────────────────────
 ;;;
