@@ -1,5 +1,7 @@
 (in-package #:cl-tmux/test)
 
+(in-suite prompt-suite)
+
 ;;;; Wiring and display tests split out from prompt-tests.lisp so the base file
 ;;;; stays focused on prompt state, cursor, and kill/edit behaviour.
 

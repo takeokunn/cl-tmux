@@ -1,5 +1,7 @@
 (in-package #:cl-tmux/test)
 
+(in-suite main-suite)
+
 ;;;; Tests for bootstrap command argument parsing helpers.
 
 ;;; ── %socket-file-session-name ─────────────────────────────────────────────────

@@ -1,5 +1,7 @@
 (in-package #:cl-tmux/test)
 
+(in-suite config-suite)
+
 ;;;; Configuration defaults, initialization, and parsing tests split from
 ;;;; config-tests.lisp so the base file can stay focused on direct binding
 ;;;; lookup and prefix-table invariants.
@@ -50,41 +52,9 @@
   (is (null (lookup-key-binding #\Z))
       "#\\Z is intentionally unbound; lowercase #\\z is the canonical zoom binding"))
 
-(test describe-key-bindings-has-header
-  "describe-key-bindings output uses bind-key -T table format (real tmux list-keys format)."
-  (let ((text (describe-key-bindings)))
-    (is (search "bind-key" text)
-        "output must contain 'bind-key' (real tmux list-keys format)")
-    (is (search "-T" text)
-        "output must contain '-T' (table specifier)")))
-
-;;; ── Initialization and table-name defaults ───────────────────────────────
-
-(test initialize-default-key-tables-idempotent
-  "Calling initialize-default-key-tables twice does not duplicate bindings."
-  (let ((cl-tmux/config:*key-tables* (make-hash-table :test #'equal)))
-    (cl-tmux/config::initialize-default-key-tables)
-    (let* ((tbl-after-first  (cl-tmux/config:ensure-key-table "prefix"))
-           (count-after-first (hash-table-count tbl-after-first)))
-      (cl-tmux/config::initialize-default-key-tables)
-      (let ((count-after-second (hash-table-count tbl-after-first)))
-        (is (= count-after-first count-after-second)
-            "prefix table must not grow on second initialize-default-key-tables call")))
-    (is (not (null (gethash "root"      cl-tmux/config:*key-tables*)))
-        "\"root\" table must exist after double initialization")
-    (is (not (null (gethash "copy-mode" cl-tmux/config:*key-tables*)))
-        "\"copy-mode\" table must exist after double initialization")
-    (is (not (null (gethash "copy-mode-vi" cl-tmux/config:*key-tables*)))
-        "\"copy-mode-vi\" table must exist after double initialization")))
-
-(test table-name-constants
-  "Standard key-table constants have their expected string values."
-  (dolist (c `(("prefix"       ,cl-tmux/config:+table-prefix+)
-               ("root"         ,cl-tmux/config:+table-root+)
-               ("copy-mode"    ,cl-tmux/config:+table-copy-mode+)
-               ("copy-mode-vi" ,cl-tmux/config:+table-copy-mode-vi+)))
-    (destructuring-bind (expected actual) c
-      (is (string= expected actual) "constant must equal ~S" expected))))
+;;; describe-key-bindings-has-header, initialize-default-key-tables-idempotent,
+;;; and table-name-constants used to be duplicated here; the canonical copies
+;;; (with isolation helpers) live in config-key-table-runtime-tests.lisp.
 
 (test key-table-command-extracts-car
   "key-table-command returns the car of a key-table entry (the command keyword)."

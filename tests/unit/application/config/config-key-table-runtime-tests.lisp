@@ -1,5 +1,7 @@
 (in-package #:cl-tmux/test)
 
+(in-suite config-suite)
+
 ;;;; Runtime key-table state, numeric defaults, and default shell tests.
 
 ;;; ── Import the config symbols we need ────────────────────────────────────

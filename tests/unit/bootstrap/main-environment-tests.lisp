@@ -1,5 +1,7 @@
 (in-package #:cl-tmux/test)
 
+(in-suite main-suite)
+
 ;;;; Tests for bootstrap environment initialization and teardown helpers.
 
 ;;; ── Coverage: hostname / environment helpers ─────────────────────────────────

@@ -58,10 +58,10 @@
 
 ;;; ── bell-pending slot ────────────────────────────────────────────────────────
 
-(def-suite bell-pending-suite
+(def-suite bell-pending-c-suite
   :description "screen-bell-pending slot: default value, set/clear"
   :in terminal-suite)
-(in-suite bell-pending-suite)
+(in-suite bell-pending-c-suite)
 
 (test bell-pending-default-and-toggle
   "bell-pending defaults to NIL and can be toggled via setf."
@@ -87,10 +87,10 @@
 
 ;;; ── screen-consume-bell ──────────────────────────────────────────────────────
 
-(def-suite screen-consume-bell-suite
+(def-suite screen-consume-bell-c-suite
   :description "screen-consume-bell: consume and clear bell-pending atomically"
   :in terminal-suite)
-(in-suite screen-consume-bell-suite)
+(in-suite screen-consume-bell-c-suite)
 
 (test screen-consume-bell-returns-nil-when-no-bell-pending
   :description "screen-consume-bell returns NIL and has no side effect when bell is not pending."

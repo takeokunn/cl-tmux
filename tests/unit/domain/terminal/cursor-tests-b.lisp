@@ -32,10 +32,10 @@
 ;;;
 ;;; Repeated cursor-up/down/left/right cases at count=1 form a natural table.
 
-(def-suite cursor-movement-table
+(def-suite cursor-movement-table-suite
   :description "Table-driven single-step cursor movement"
   :in terminal-suite)
-(in-suite cursor-movement-table)
+(in-suite cursor-movement-table-suite)
 
 (test cursor-movements-single-step-table
   :description "Each direction moves by 1 from a known starting position."

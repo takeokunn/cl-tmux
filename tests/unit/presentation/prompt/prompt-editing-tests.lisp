@@ -1,5 +1,7 @@
 (in-package #:cl-tmux/test)
 
+(in-suite prompt-suite)
+
 ;;;; Prompt editing, cursor, kill/delete, and change-notification tests.
 ;;;; Shared prompt fixtures live in prompt-tests.lisp and are loaded first.
 

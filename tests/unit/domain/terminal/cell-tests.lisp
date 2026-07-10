@@ -305,10 +305,10 @@
 
 ;;; ── SUITE: combining characters ──────────────────────────────────────────────
 
-(def-suite combining-chars
+(def-suite cell-combining-chars
   :description "Unicode combining character detection and cell appending"
   :in terminal-suite)
-(in-suite combining-chars)
+(in-suite cell-combining-chars)
 
 (test combining-char-p-diacritic-marks-return-true
   :description "Code points in the Combining Diacritical Marks block are combining."

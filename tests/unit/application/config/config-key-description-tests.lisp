@@ -1,5 +1,7 @@
 (in-package #:cl-tmux/test)
 
+(in-suite config-suite)
+
 ;;;; Key binding description and list-keys rendering tests.
 
 ;;; ── Import the config symbols we need ────────────────────────────────────

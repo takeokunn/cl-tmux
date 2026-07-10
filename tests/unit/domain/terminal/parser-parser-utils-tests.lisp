@@ -26,6 +26,14 @@
       :encoding :utf-8)))
 
 ;;; Verify the helpers function correctly before relying on them in later tests.
+;;; FiveAM's *suite* is file-local under ASDF, so these tests need an explicit
+;;; suite here — before this file's first in-suite they would otherwise land
+;;; in the global suite, which the runner never runs.
+
+(def-suite parser-helper-suite
+  :description "Self-checks for the make-bytes / feed-osc test helpers"
+  :in terminal-suite)
+(in-suite parser-helper-suite)
 
 (test make-bytes-helper
   "make-bytes returns a (unsigned-byte 8) vector with the given byte values."
