@@ -16,10 +16,15 @@ permissions:
 
 jobs:
   # Everything runs through Nix: `nix flake check` builds cl-tmux and runs
-  # the FiveAM suite (checks.default in flake.nix).
+  # the FiveAM suite (checks.default in flake.nix). The matrix covers the two
+  # platforms users actually run: x86_64-linux and aarch64-darwin.
   nix:
-    name: nix flake check
-    runs-on: ubuntu-latest
+    name: nix flake check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     # Hoisted to job level so the step-level `if` below can read it. Secrets
     # cannot be referenced directly in an `if`, and a step cannot read its own
     # `env`, so this indirection is required.
