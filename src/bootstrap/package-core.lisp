@@ -30,6 +30,7 @@
    #:key-table-command
    #:key-table-repeatable-p
    #:key-table-note
+   #:copy-mode-count-command-p
    #:initialize-default-key-tables
    #:load-config-file
    #:load-config-from-stream

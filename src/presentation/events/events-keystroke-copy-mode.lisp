@@ -56,8 +56,9 @@
    Control bytes and single-byte special keys are probed by their canonical
    tmux name (\"C-b\", \"Enter\", \"BSpace\", ...), matching keys stored by
    the key-binding table.  Character-argument commands return a continuation
-   that consumes the next byte; otherwise COUNT repeats entries marked
-   repeatable by the key-table data and non-repeatable entries run once."
+   that consumes the next byte; otherwise COUNT repeats count-consuming
+   commands (COPY-MODE-COUNT-COMMAND-P) and entries the user bound with -r,
+   while other entries run once."
   (let ((entry (%key-table-entry-by-candidates
                 (%active-copy-mode-table)
                 (%single-byte-key-candidates byte))))
@@ -68,7 +69,11 @@
               (%copy-mode-char-argument-continuation (%active-screen session)
                                                      char-handler
                                                      count))
-            (loop repeat (if (key-table-repeatable-p entry) count 1)
+            (loop repeat (if (or (key-table-repeatable-p entry)
+                                 (copy-mode-count-command-p
+                                  (key-table-command entry)))
+                             count
+                             1)
                   do (%run-key-table-binding session entry byte))))))
   nil)
 

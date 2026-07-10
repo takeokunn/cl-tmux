@@ -167,13 +167,21 @@
 
 ;;; ── Install functions ─────────────────────────────────────────────────────
 
+(defun copy-mode-count-command-p (command)
+  "Does COMMAND consume the copy-mode numeric prefix as a repeat count?
+   This is a property of the copy-mode command itself, distinct from the
+   key-table -r (repeat-time) flag: tmux's default copy-mode bindings carry
+   no -r in list-keys, yet motions like cursor-down honour vi-style counts."
+  (not (null (member command +copy-mode-repeatable-commands+))))
+
 (defun %install-copy-mode-bindings (table-name bindings)
-  "Populate TABLE-NAME with copy-mode BINDINGS and per-command repeatability."
+  "Populate TABLE-NAME with copy-mode BINDINGS.
+   Deliberately does NOT set :repeatable — count consumption is derived from
+   the command via COPY-MODE-COUNT-COMMAND-P, so list-keys output matches
+   tmux (no -r on default copy-mode bindings)."
   (dolist (binding bindings)
     (destructuring-bind (key command) binding
-      (key-table-bind table-name key command
-                      :repeatable (not (null (member command
-                                                     +copy-mode-repeatable-commands+)))))))
+      (key-table-bind table-name key command))))
 
 (defun install-default-copy-mode-bindings ()
   "Populate the 'copy-mode' (emacs) key table with tmux 3.x default bindings.
