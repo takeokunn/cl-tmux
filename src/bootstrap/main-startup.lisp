@@ -47,7 +47,13 @@
     ("source-file"    . (run-source-file :raw-args-p t))
     ;; -C / control: control mode - text protocol on stdin/stdout (iTerm2/tmuxp).
     ("-C"             . (run-control-mode :raw-args-p t))
-    ("control"        . (run-control-mode :raw-args-p t)))
+    ("control"        . (run-control-mode :raw-args-p t))
+    ;; -V: print the version and exit (tmux -V). --version/-h/--help are
+    ;; cl-tmux conveniences; tmux only prints usage on a bad flag.
+    ("-V"             . (run-version :raw-args-p t))
+    ("--version"      . (run-version :raw-args-p t))
+    ("-h"             . (run-usage :raw-args-p t))
+    ("--help"         . (run-usage :raw-args-p t)))
   "Mode-name -> plist dispatch table for the binary entry point.
    Each entry is (mode-name . (handler-symbol &key :raw-args-p bool)).
    :raw-args-p T means the handler receives the full raw argv tail rather
@@ -178,6 +184,40 @@
         (format *error-output* "source-file: ~A~%" c)
         (sb-ext:exit :code 1)))))
 
+(defun run-version (raw-args)
+  "Print the cl-tmux version to stdout and exit 0 (the tmux -V behaviour)."
+  (declare (ignore raw-args))
+  (format t "cl-tmux ~A~%" (cl-tmux/version:version-string))
+  (sb-ext:exit :code 0))
+
+(defun %usage-string ()
+  "One-page usage summary for -h/--help and bad-flag errors."
+  (format nil "usage: cl-tmux [-L socket-name] [-S socket-path] [command [flags]]~%~
+               ~%~
+               Run with no command to start a standalone session.~%~
+               ~%~
+               Commands:~%~
+               ~2Tserver [name]~24Trun a headless server owning session NAME~%~
+               ~2Tattach [name]~24Tattach to session NAME (auto-starts a server)~%~
+               ~2Tattach-session -t name~30T-d detach others, -r read-only~%~
+               ~2Tnew-session [-s name] [-n window] [-d] [-c dir]~%~
+               ~2Thas-session -t name~24Texit 0 when the session exists~%~
+               ~2Tkill-server~24Tterminate the server~%~
+               ~2Tlist-sessions | list-windows | list-commands~%~
+               ~2Tdisplay-message | show-options | show-window-options~%~
+               ~2Tsource-file path~24Tapply a config file and exit~%~
+               ~2T-C | control~24Tcontrol mode (text protocol on stdin/stdout)~%~
+               ~2T-V | --version~24Tprint the version and exit~%~
+               ~%~
+               Any other command word is forwarded to a running server~%~
+               (e.g. `cl-tmux send-keys -t 0 ls Enter`).~%"))
+
+(defun run-usage (raw-args)
+  "Print the usage summary to stdout and exit 0 (-h/--help)."
+  (declare (ignore raw-args))
+  (write-string (%usage-string))
+  (sb-ext:exit :code 0))
+
 (defun %consume-global-socket-flags (argv)
   "Consume tmux's global socket flags from the front of ARGV, before the
    command word: -L <socket-name> and -S <socket-path>, in both the separated
@@ -227,11 +267,18 @@
 
 (defun %dispatch-unknown-mode (mode rest)
   "Handle an argv whose first item is not a known startup mode.
+   An unknown dash-flag is a usage error: print the usage summary to stderr
+   and exit 1 (tmux's bad-flag behaviour) instead of silently starting a
+   standalone session on a typo.
    When MODE names a command AND a default-session server is already running
    (its socket exists), forward MODE + REST to it as a command client; otherwise
    run the standalone multiplexer (the bare-invocation / no-server behaviour).
    Guarding on an existing socket keeps `cl-tmux` (no args) and the no-server
    case unchanged - only an explicit subcommand against a live server forwards."
-  (if (and mode (probe-file (socket-path "0")))
-      (run-command-client "0" (cons mode rest))
-      (run-standalone)))
+  (cond
+    ((and mode (plusp (length mode)) (char= (char mode 0) #\-))
+     (write-string (%usage-string) *error-output*)
+     (sb-ext:exit :code 1))
+    ((and mode (probe-file (socket-path "0")))
+     (run-command-client "0" (cons mode rest)))
+    (t (run-standalone))))

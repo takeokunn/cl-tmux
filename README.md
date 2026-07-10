@@ -78,6 +78,7 @@ cl-tmux attach -t work -r        # read-only attach
 cl-tmux list-sessions            # what's running
 cl-tmux kill-server              # stop everything
 cl-tmux -C                       # control mode (text protocol on stdin/stdout)
+cl-tmux -V                       # print version; --help prints a usage summary
 ```
 
 Socket selection works like tmux: `-L <name>` picks a named socket in the

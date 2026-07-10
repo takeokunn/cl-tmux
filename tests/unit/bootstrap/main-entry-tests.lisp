@@ -1,5 +1,7 @@
 (in-package #:cl-tmux/test)
 
+(in-suite main-suite)
+
 ;;;; Tests for CLI entry point reachability and command forwarding.
 
 ;;; ── run-attach-simple and run-attach-with-flags reachability ─────────────────
@@ -193,3 +195,64 @@
 		 cl-tmux::run-source-file
 		 cl-tmux::run-has-session))
     (is (fboundp sym) "~S must be fbound" sym)))
+
+;;; ── -V / --version / -h / --help / bad-flag usage ───────────────────────────
+
+(test run-version-prints-version-and-exits-zero
+  "run-version prints \"cl-tmux <version>\" to stdout and exits 0."
+  (let (exit-code output)
+    (setf output
+          (with-output-to-string (*standard-output*)
+            (with-stubbed-exit exit-code
+              (cl-tmux::run-version nil))))
+    (is (eql 0 exit-code) "run-version must exit 0")
+    (is (string= (format nil "cl-tmux ~A~%" (cl-tmux/version:version-string))
+                 output)
+        "run-version must print the cl-tmux version line")))
+
+(test run-usage-prints-usage-and-exits-zero
+  "run-usage prints a usage summary to stdout and exits 0."
+  (let (exit-code output)
+    (setf output
+          (with-output-to-string (*standard-output*)
+            (with-stubbed-exit exit-code
+              (cl-tmux::run-usage nil))))
+    (is (eql 0 exit-code) "run-usage must exit 0")
+    (is (eql 0 (search "usage: cl-tmux" output))
+        "usage output must start with \"usage: cl-tmux\"")))
+
+(test dispatch-version-and-help-flags
+  "argv -V/--version routes to run-version; -h/--help routes to run-usage."
+  (dolist (c '(("-V" :version) ("--version" :version)
+               ("-h" :usage)   ("--help" :usage)))
+    (destructuring-bind (flag expected) c
+      (let ((called nil))
+        (with-stubbed-fdefinition
+            ((cl-tmux::run-version
+              (lambda (&rest a) (declare (ignore a)) (setf called :version)))
+             (cl-tmux::run-usage
+              (lambda (&rest a) (declare (ignore a)) (setf called :usage))))
+          (let ((sb-ext:*posix-argv* (list "cl-tmux" flag)))
+            (cl-tmux::main))
+          (is (eq expected called)
+              "~A must dispatch to ~A" flag expected))))))
+
+(test dispatch-unknown-dash-flag-prints-usage-and-exits-one
+  "An unknown dash-flag is a usage error (stderr + exit 1), not a silent
+   standalone start."
+  (let ((standalone-called nil)
+        exit-code
+        errout)
+    (with-stubbed-fdefinition
+        ((cl-tmux::run-standalone
+          (lambda (&rest a) (declare (ignore a)) (setf standalone-called t))))
+      (setf errout
+            (with-output-to-string (*error-output*)
+              (with-stubbed-exit exit-code
+                (let ((sb-ext:*posix-argv* (list "cl-tmux" "-Z")))
+                  (cl-tmux::main))))))
+    (is (eql 1 exit-code) "unknown dash-flag must exit 1")
+    (is (eql 0 (search "usage: cl-tmux" errout))
+        "unknown dash-flag must print usage to stderr")
+    (is-false standalone-called
+              "unknown dash-flag must not fall through to run-standalone")))
