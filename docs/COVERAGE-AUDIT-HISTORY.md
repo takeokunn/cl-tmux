@@ -1,5 +1,11 @@
 # cl-tmux Implementation Roadmap: 100% tmux Feature Coverage
 
+> **Historical document.** This was the working roadmap used while driving
+> cl-tmux from a minimal multiplexer to full tmux command coverage. Every
+> sprint item below has since been implemented; the file is kept as an audit
+> trail of the coverage-closing process. For the *current* compatibility
+> statement, see [COMPATIBILITY.md](COMPATIBILITY.md).
+
 ## 1. Executive Summary
 
 **Current implementation coverage:** the old 12–15% estimate is no longer used. Several items that were previously tracked as blockers are already implemented in the current tree, so this roadmap focuses on confirmed gaps, regression coverage, and parity checks.
