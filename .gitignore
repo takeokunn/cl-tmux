@@ -8,4 +8,6 @@
 # Claude Code harness internals
 /.claude/
 
-# ASDF fasls go to ~/.cache by default; nothing to ignore here
+# ASDF fasls normally go to ~/.cache, but ad-hoc compile-file runs can leave
+# .fasl objects in the tree — never track them.
+*.fasl

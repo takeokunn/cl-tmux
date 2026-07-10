@@ -5,8 +5,11 @@
 (defsystem "cl-tmux"
   :description "A tmux-compatible terminal multiplexer in Common Lisp"
   :version "0.1.0"
-  :author "motoki317 <motoki317@gmail.com>"
+  :author "takeokunn <bararararatty@gmail.com>"
   :license "MIT"
+  :homepage "https://github.com/takeokunn/cl-tmux"
+  :source-control (:git "https://github.com/takeokunn/cl-tmux.git")
+  :bug-tracker "https://github.com/takeokunn/cl-tmux/issues"
   :depends-on (:cffi           ; C foreign-function interface
                :bordeaux-threads ; portable threads + locks
                :babel            ; string↔octet encoding
