@@ -28,7 +28,7 @@
                   str
                   :initial-value 0)))
 
-(defun %split-bounding-box (node)
+(defun layout-node-bounding-box (node)
   "Derive (values min-x min-y width height) for a LAYOUT-SPLIT node from its leaves.
    The bounding box is re-derived from the already-laid-out pane coordinates."
   (let* ((leaves (layout-leaves node))
@@ -40,7 +40,7 @@
 
 ;;; %node->string uses define-layout-fold to dispatch over tree node types,
 ;;; eliminating the manual etypecase branch.  In the split branch, the bounding
-;;; box is derived from already-laid-out leaf coordinates via %split-bounding-box.
+;;; box is derived from already-laid-out leaf coordinates via layout-node-bounding-box.
 ;;;
 ;;; orient-case dispatches on :h/:v (defined in layout.lisp).
 
@@ -54,7 +54,7 @@
                     (pane-id leaf-pane))
   :on-split (let ((open-bracket  (orient-case split-orient :h #\{ :v #\[))
                   (close-bracket (orient-case split-orient :h #\} :v #\])))
-               (multiple-value-bind (min-x min-y width height) (%split-bounding-box node)
+               (multiple-value-bind (min-x min-y width height) (layout-node-bounding-box node)
                  (format nil "~Dx~D,~D,~D~C~A,~A~C"
                          width height min-x min-y
                          open-bracket

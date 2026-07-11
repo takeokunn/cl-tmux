@@ -141,26 +141,26 @@
     (when prev-vrow
       (%copy-mode-match-previous-closing-bracket-at screen prev-vrow prev-col prev-ch))))
 
-(defun copy-mode-next-matching-bracket (screen)
-  "Jump to the bracket matching the char at the cursor (vi %).
-   Open bracket → scan forward to close; close bracket → scan backward to open.
-   Not on a bracket → find next bracket forward then jump to its match."
+(defun %copy-mode-bracket-jump (screen primary-fn fallback-fn)
+  "Run PRIMARY-FN on the bracket at the cursor, falling back to FALLBACK-FN
+   when it finds nothing; mark SCREEN dirty when copy-mode is active.
+   PRIMARY-FN takes (screen vrow col ch); FALLBACK-FN takes (screen vrow col)."
   (when (screen-copy-mode-p screen)
     (multiple-value-bind (cursor cur-vrow cur-col row-str ch)
         (%copy-mode-bracket-state screen)
       (declare (ignore cursor row-str))
-      (or (%copy-mode-match-bracket-at screen cur-vrow cur-col ch)
-          (%copy-mode-match-next-bracket screen cur-vrow cur-col))
+      (or (funcall primary-fn screen cur-vrow cur-col ch)
+          (funcall fallback-fn screen cur-vrow cur-col))
       (setf (screen-dirty-p screen) t))))
+
+(defun copy-mode-next-matching-bracket (screen)
+  "Jump to the bracket matching the char at the cursor (vi %).
+   Open bracket → scan forward to close; close bracket → scan backward to open.
+   Not on a bracket → find next bracket forward then jump to its match."
+  (%copy-mode-bracket-jump screen #'%copy-mode-match-bracket-at #'%copy-mode-match-next-bracket))
 
 (defun copy-mode-previous-matching-bracket (screen)
   "Jump backward to the opener matching the current or previous close bracket.
    Cursor on a close bracket scans backward from it.  Otherwise the previous
    close bracket is found first, then matched backward."
-  (when (screen-copy-mode-p screen)
-    (multiple-value-bind (cursor cur-vrow cur-col row-str ch)
-        (%copy-mode-bracket-state screen)
-      (declare (ignore cursor row-str))
-      (or (%copy-mode-match-previous-closing-bracket-at screen cur-vrow cur-col ch)
-          (%copy-mode-match-previous-closing-bracket screen cur-vrow cur-col))
-      (setf (screen-dirty-p screen) t))))
+  (%copy-mode-bracket-jump screen #'%copy-mode-match-previous-closing-bracket-at #'%copy-mode-match-previous-closing-bracket))

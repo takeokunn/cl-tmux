@@ -91,6 +91,74 @@
         ;; No direction, no -s/-t: swap forward (default tmux behaviour).
         (t (swap-pane win :right))))))
 
+(defun %command-prompt-dispatch (session flags template has-template prompt-list num-prompts single-key initial)
+  "Run the resolved command-prompt flow: multi-prompt template substitution,
+   concatenated -p prompts, template-only, or the plain C-b : prompt — then
+   apply the -i/-N/-e post-configuration to the resulting overlay."
+  (flet ((run-input (input)
+           (%run-command-line session input))
+         (run-template (input)
+           (let ((cmd (%substitute-prompt-response template input)))
+             ;; -F: the substituted command line is expanded as a format
+             ;; string before running (tmux command-prompt -F).
+             (when (%flag-present-p flags #\F)
+               (setf cmd (or (ignore-errors
+                               (cl-tmux/format:expand-format
+                                cmd
+                                (cl-tmux/format:format-context-from-session
+                                 session
+                                 (session-active-window session)
+                                 (session-active-pane session))))
+                             cmd)))
+             (%run-command-line session cmd))))
+    (cond
+      ;; -p with template: multi-prompt with %%N substitution
+      ((and prompt-list has-template)
+       (let ((answers (make-array num-prompts :initial-element "")))
+         (%command-prompt-ask-next session template prompt-list answers 0
+                                   num-prompts single-key initial)))
+      ;; -p without template: each prompt result is concatenated
+      (prompt-list
+       (let ((label (first prompt-list)))
+         (prompt-history-nonempty (or label ": ")
+                                  #'run-input
+                                  :single-key single-key
+                                  :history *prompt-history*
+                                  :initial initial)))
+      ;; Template without -p: the response replaces %% / %1 in the template
+      ;; (the classic `bind , command-prompt -I \"#W\" \"rename-window '%%'\"`
+      ;; shape; previously the template was ignored and raw input ran).
+      (has-template
+       (prompt-history-nonempty ": "
+                                #'run-template
+                                :single-key single-key
+                                :history *prompt-history*
+                                :initial initial))
+      ;; No -p, no template: standard C-b : interactive prompt
+      (t
+       (prompt-history-nonempty ": "
+                                #'run-input
+                                :single-key single-key
+                                :history *prompt-history*
+                                :initial initial)))
+    ;; -i: run the template against the in-progress input on every edit.
+    (when (and (%flag-present-p flags #\i)
+               has-template
+               cl-tmux/prompt:*prompt*)
+      (setf (cl-tmux/prompt:prompt-on-change cl-tmux/prompt:*prompt*)
+            #'run-template))
+    ;; -N: the prompt accepts numeric key presses only.
+    (when (and (%flag-present-p flags #\N)
+               cl-tmux/prompt:*prompt*)
+      (setf (cl-tmux/prompt:prompt-numeric-only cl-tmux/prompt:*prompt*)
+            t))
+    ;; -e: close the prompt when the client loses focus (?1004 focus-out).
+    (when (and (%flag-present-p flags #\e)
+               cl-tmux/prompt:*prompt*)
+      (setf (cl-tmux/prompt:prompt-close-on-focus-out
+             cl-tmux/prompt:*prompt*)
+            t))))
+
 (defun %cmd-command-prompt-arg (session args)
   "command-prompt [-p prompts] [template]: open a command prompt with optional args.
    -p prompts: comma-separated list of prompt labels; each label becomes a
@@ -130,69 +198,7 @@
                           (mapcar (lambda (s) (string-trim " " s))
                                   (uiop:split-string prompts-str :separator ","))))
            (num-prompts (length prompt-list)))
-      (flet ((run-input (input)
-               (%run-command-line session input))
-             (run-template (input)
-               (let ((cmd (%substitute-prompt-response template input)))
-                 ;; -F: the substituted command line is expanded as a format
-                 ;; string before running (tmux command-prompt -F).
-                 (when (%flag-present-p flags #\F)
-                   (setf cmd (or (ignore-errors
-                                   (cl-tmux/format:expand-format
-                                    cmd
-                                    (cl-tmux/format:format-context-from-session
-                                     session
-                                     (session-active-window session)
-                                     (session-active-pane session))))
-                                 cmd)))
-                 (%run-command-line session cmd))))
-        (cond
-          ;; -p with template: multi-prompt with %%N substitution
-          ((and prompt-list has-template)
-           (let ((answers (make-array num-prompts :initial-element "")))
-             (%command-prompt-ask-next session template prompt-list answers 0
-                                       num-prompts single-key initial)))
-          ;; -p without template: each prompt result is concatenated
-          (prompt-list
-           (let ((label (first prompt-list)))
-             (prompt-history-nonempty (or label ": ")
-                                      #'run-input
-                                      :single-key single-key
-                                      :history *prompt-history*
-                                      :initial initial)))
-          ;; Template without -p: the response replaces %% / %1 in the template
-          ;; (the classic `bind , command-prompt -I \"#W\" \"rename-window '%%'\"`
-          ;; shape; previously the template was ignored and raw input ran).
-          (has-template
-           (prompt-history-nonempty ": "
-                                    #'run-template
-                                    :single-key single-key
-                                    :history *prompt-history*
-                                    :initial initial))
-          ;; No -p, no template: standard C-b : interactive prompt
-          (t
-           (prompt-history-nonempty ": "
-                                    #'run-input
-                                    :single-key single-key
-                                    :history *prompt-history*
-                                    :initial initial)))
-        ;; -i: run the template against the in-progress input on every edit.
-        (when (and (%flag-present-p flags #\i)
-                   has-template
-                   cl-tmux/prompt:*prompt*)
-          (setf (cl-tmux/prompt:prompt-on-change cl-tmux/prompt:*prompt*)
-                #'run-template))
-        ;; -N: the prompt accepts numeric key presses only.
-        (when (and (%flag-present-p flags #\N)
-                   cl-tmux/prompt:*prompt*)
-          (setf (cl-tmux/prompt:prompt-numeric-only cl-tmux/prompt:*prompt*)
-                t))
-        ;; -e: close the prompt when the client loses focus (?1004 focus-out).
-        (when (and (%flag-present-p flags #\e)
-                   cl-tmux/prompt:*prompt*)
-          (setf (cl-tmux/prompt:prompt-close-on-focus-out
-                 cl-tmux/prompt:*prompt*)
-                t))))))
+      (%command-prompt-dispatch session flags template has-template prompt-list num-prompts single-key initial))))
 
 (defun %cmd-last-pane-arg (session args)
   "last-pane [-de] [-t target-window]: jump to the previously active pane.

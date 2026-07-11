@@ -47,30 +47,27 @@
 (defun %cmd-next-layout (session args)
   "next-layout [-t target-window]: cycle the window to the next preset layout.
    The scriptable form of the :next-layout binding."
-  (with-command-input (flags positionals args "t"
-                             :allowed-flags '(#\t)
-                             :max-positionals 0
-                             :message "next-layout: unsupported argument")
-    (declare (ignore positionals))
-    (let* ((target (%flag-value flags #\t))
-           (win    (if target
-                       (%resolve-window-target session target)
-                       (session-active-window session))))
-      (when win (%cycle-layout session win :next)))))
+  (%cmd-cycle-layout-arg session args :next "next-layout: unsupported argument"))
 
 (defun %cmd-previous-layout (session args)
   "previous-layout [-t target-window]: cycle the window to the previous preset
    layout.  The scriptable form of the :previous-layout binding."
+  (%cmd-cycle-layout-arg session args :prev "previous-layout: unsupported argument"))
+
+(defun %cmd-cycle-layout-arg (session args direction message)
+  "Shared body for next-layout/previous-layout: cycle the target window to
+   DIRECTION (:next or :prev) preset layout.  MESSAGE is the unsupported-
+   argument error text for the calling command."
   (with-command-input (flags positionals args "t"
                              :allowed-flags '(#\t)
                              :max-positionals 0
-                             :message "previous-layout: unsupported argument")
+                             :message message)
     (declare (ignore positionals))
     (let* ((target (%flag-value flags #\t))
            (win    (if target
                        (%resolve-window-target session target)
                        (session-active-window session))))
-      (when win (%cycle-layout session win :prev)))))
+      (when win (%cycle-layout session win direction)))))
 
 (defun %cmd-display-panes-arg (session args)
   "display-panes [-d duration]: show pane ids.

@@ -93,6 +93,30 @@
   "Remove NAME from the option store identified by SCOPE / TARGET."
   (%scope-remover scope name target))
 
+(defun %apply-set-option (scope target name value unset-p append-p only-if-unset-p quiet-p)
+  "Perform the set/unset/append operation for NAME once SCOPE/TARGET are
+   resolved.  -o (ONLY-IF-UNSET-P) refuses to overwrite an already-set option
+   (\"already set: NAME\" unless QUIET-P) instead of running the operation."
+  (if (and only-if-unset-p
+           (not unset-p)
+           (%scope-present-p name scope target))
+      ;; tmux: `set -o` on an already-set option is an error —
+      ;; "already set: NAME" unless -q — and nothing else runs.
+      (unless quiet-p
+        (%overlayf "already set: ~A" name))
+      (progn
+        (cond
+          (unset-p
+           (%scope-unset name scope target))
+          (append-p
+           (%scope-append name value scope target))
+          (t
+           (%scope-set name value scope target)))
+        ;; Side-effects for special options (prefix/status/escape-time
+        ;; etc.) run after the operation.  Passes RAW value —
+        ;; side-effect parsers expect strings, not coerced types.
+        (cl-tmux/config:apply-option-side-effects name value unset-p))))
+
 (defun %cmd-set-option (session args)
   "set-option [-aFgopqsuUw] [-t target] <name> <value...>: set an option.
    Scope: -p pane-local, -w window-local, -g global (default), -s server-local.
@@ -123,25 +147,7 @@
          (let ((value (%expand-F-flag flags session raw-value)))
            (%with-option-scope session flags target-str name
              (lambda (scope target)
-               (if (and only-if-unset-p
-                        (not unset-p)
-                        (%scope-present-p name scope target))
-                   ;; tmux: `set -o` on an already-set option is an error —
-                   ;; "already set: NAME" unless -q — and nothing else runs.
-                   (unless quiet-p
-                     (%overlayf "already set: ~A" name))
-                   (progn
-                     (cond
-                       (unset-p
-                        (%scope-unset name scope target))
-                       (append-p
-                        (%scope-append name value scope target))
-                       (t
-                        (%scope-set name value scope target)))
-                     ;; Side-effects for special options (prefix/status/escape-time
-                     ;; etc.) run after the operation.  Passes RAW value —
-                     ;; side-effect parsers expect strings, not coerced types.
-                     (cl-tmux/config:apply-option-side-effects name value unset-p)))))))))))
+               (%apply-set-option scope target name value unset-p append-p only-if-unset-p quiet-p)))))))))
 
 (defun %cmd-set-window-option (session args)
   "set-window-option: like set-option but defaults to WINDOW scope.  Prepends

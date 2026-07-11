@@ -62,6 +62,7 @@
                 #:make-layout-split
                 #:layout-leaf-pane
                 #:layout-leaves
+                #:layout-node-bounding-box
                 #:layout-find-leaf
                 #:layout-find-parent
                 #:all-panes

@@ -194,4 +194,4 @@
 
 ;;; Layout persistence (serialization) lives in layout-persistence.lisp,
 ;;; which is loaded immediately after this file.  That file defines:
-;;;   %layout-checksum, %split-bounding-box, %node->string, layout->string.
+;;;   %layout-checksum, layout-node-bounding-box, %node->string, layout->string.

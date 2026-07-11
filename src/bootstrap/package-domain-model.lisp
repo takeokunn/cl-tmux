@@ -125,7 +125,8 @@
    #:*suppress-update-environment*
    #:+default-update-environment+
    #:*update-environment*
-   #:get-update-environment-vars))
+   #:get-update-environment-vars
+   #:layout-node-bounding-box))
 
 (defpackage #:cl-tmux/format
   (:use #:cl #:cl-tmux/model)

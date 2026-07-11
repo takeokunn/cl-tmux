@@ -28,6 +28,37 @@
               (member window (session-windows (cdr entry))))
             *server-sessions*))
 
+(defun %link-window-perform (dst-sess src-win flags dst-index kill-p detach-p)
+  "Insert SRC-WIN into DST-SESS at its winlink index, resolving an index
+   collision (-k replaces, else refuses) and selecting the linked window
+   unless DETACH-P."
+  (let* ((desired (cond ((and dst-index (%flag-present-p flags #\a))
+                         (1+ dst-index))
+                        (dst-index dst-index)
+                        (t (window-id src-win))))
+         (collision (find desired (session-windows dst-sess)
+                          :key (lambda (w)
+                                 (cl-tmux/model:session-window-index
+                                  dst-sess w))))
+         (dst-active (session-active-window dst-sess)))
+    (if (and collision (not kill-p))
+        (show-overlay "link-window: target index in use (add -k to replace)")
+        (progn
+          (when collision (kill-window dst-sess collision))
+          (session-insert-window dst-sess src-win)
+          ;; Record the destination session's winlink index when it
+          ;; differs from the window's own id.
+          (cl-tmux/model:set-session-window-index dst-sess src-win desired)
+          (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-linked+ src-win)
+          ;; -k may select a replacement while removing the collision;
+          ;; -d means link without changing the destination current window.
+          (if detach-p
+              (session-select-window dst-sess dst-active)
+              (session-select-window dst-sess src-win))
+          (show-overlay (if collision
+                             "link-window: linked (replaced existing)"
+                             "link-window: linked"))))))
+
 (define-command-input-handler %cmd-link-window (session args)
   "link-window [-s src] -t dst [-abdk]: share a window into another session.
    -s src: source window target (session:window); default is the active window.
@@ -70,32 +101,7 @@
       ((member src-win (session-windows dst-sess))
        (show-overlay "link-window: window already linked in destination"))
       (t
-       (let* ((desired (cond ((and dst-index (%flag-present-p flags #\a))
-                              (1+ dst-index))
-                             (dst-index dst-index)
-                             (t (window-id src-win))))
-              (collision (find desired (session-windows dst-sess)
-                               :key (lambda (w)
-                                      (cl-tmux/model:session-window-index
-                                       dst-sess w))))
-              (dst-active (session-active-window dst-sess)))
-         (if (and collision (not kill-p))
-             (show-overlay "link-window: target index in use (add -k to replace)")
-             (progn
-               (when collision (kill-window dst-sess collision))
-               (session-insert-window dst-sess src-win)
-               ;; Record the destination session's winlink index when it
-               ;; differs from the window's own id.
-               (cl-tmux/model:set-session-window-index dst-sess src-win desired)
-               (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-linked+ src-win)
-               ;; -k may select a replacement while removing the collision;
-               ;; -d means link without changing the destination current window.
-               (if detach-p
-                   (session-select-window dst-sess dst-active)
-                   (session-select-window dst-sess src-win))
-               (show-overlay (if collision
-                                 "link-window: linked (replaced existing)"
-                                 "link-window: linked")))))))))
+       (%link-window-perform dst-sess src-win flags dst-index kill-p detach-p)))))
 
 (define-command-input-handler %cmd-unlink-window (session args)
   "unlink-window [-t target] [-k]: remove a window's link from its session.
@@ -238,6 +244,28 @@
       (when (<= dst (window-id w) (1- free))
         (incf (window-id w))))))
 
+(defun %move-window-to-index (session src-win dst-n after kill-p flags)
+  "Move SRC-WIN to index DST-N (or DST-N+1 when AFTER), shuffling windows up
+   to make room unless KILL-P replaces the occupant.  Selects SRC-WIN as
+   current afterwards unless -d is present in FLAGS."
+  (let ((target (if after (1+ dst-n) dst-n)))
+    (when (%window-id-occupied-p session target src-win)
+      (if kill-p
+          ;; -k: kill the window occupying the destination index.
+          (let ((occupant (find target (session-windows session)
+                                :key #'window-id)))
+            (when (and occupant (not (eq occupant src-win)))
+              (kill-window session occupant)))
+          (%shuffle-windows-up session target src-win)))
+    (setf (window-id src-win) target
+          (session-windows session)
+          (sort (copy-list (session-windows session)) #'< :key #'window-id))
+    (session-windows-changed session)
+    ;; Without -d the moved window becomes the current window (tmux selects
+    ;; the moved window in the destination session unless -d is given).
+    (unless (%flag-present-p flags #\d)
+      (session-select-window session src-win))))
+
 (define-command-input-handler %cmd-move-window (session args)
   "move-window [-s src-window] [-t dst-index] [-r] [-a] [-b] [-k] [-d]:
    move/renumber a window (tmux args \"abdkrs:t:\").
@@ -279,20 +307,4 @@
       ;; shift up to make room (tmux's winlink_shuffle_up) rather than the move
       ;; being silently dropped or another window orphaned.
       ((and src-win dst-n)
-       (let ((target (if after (1+ dst-n) dst-n)))
-         (when (%window-id-occupied-p session target src-win)
-           (if kill-p
-               ;; -k: kill the window occupying the destination index.
-               (let ((occupant (find target (session-windows session)
-                                     :key #'window-id)))
-                 (when (and occupant (not (eq occupant src-win)))
-                   (kill-window session occupant)))
-               (%shuffle-windows-up session target src-win)))
-         (setf (window-id src-win) target
-               (session-windows session)
-               (sort (copy-list (session-windows session)) #'< :key #'window-id))
-         (session-windows-changed session)
-         ;; Without -d the moved window becomes the current window (tmux selects
-         ;; the moved window in the destination session unless -d is given).
-         (unless (%flag-present-p flags #\d)
-           (session-select-window session src-win)))))))
+       (%move-window-to-index session src-win dst-n after kill-p flags)))))

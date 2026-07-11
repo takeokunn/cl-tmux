@@ -72,21 +72,19 @@
    to it, not the field splitter."
   (%top-level-char content start #\|))
 
-(defun %split-two (rest)
+(defun %split-two (rest &optional (default-second ""))
   "Split REST on the first top-level comma into (values first second).
-   When no comma is present, SECOND defaults to the empty string."
+   When no comma is present, SECOND defaults to DEFAULT-SECOND (the empty
+   string unless supplied)."
   (let ((comma (%top-level-comma rest 0)))
     (if comma
         (values (subseq rest 0 comma) (subseq rest (1+ comma)))
-        (values rest ""))))
+        (values rest default-second))))
 
 (defun %split-active-inactive (rest)
   "Split REST on the first top-level comma into (values active-fmt inactive-fmt).
    When no comma is present, INACTIVE defaults to ACTIVE (both use the same format)."
-  (let ((comma (%top-level-comma rest 0)))
-    (if comma
-        (values (subseq rest 0 comma) (subseq rest (1+ comma)))
-        (values rest rest))))
+  (%split-two rest rest))
 
 (defun %split-conditional (content)
   "Split CONTENT (text after '?') into (values cond true-branch false-branch).

@@ -7,12 +7,8 @@
 (defun layout-subtree-rect (node)
   "Bounding rectangle of NODE's leaves as a plist (:x :y :w :h), derived from the
    already-laid-out pane geometry."
-  (let* ((panes (layout-leaves node))
-         (min-x (reduce #'min panes :key #'pane-x))
-         (min-y (reduce #'min panes :key #'pane-y))
-         (max-x (reduce #'max panes :key (lambda (p) (+ (pane-x p) (pane-width p)))))
-         (max-y (reduce #'max panes :key (lambda (p) (+ (pane-y p) (pane-height p))))))
-    (list :x min-x :y min-y :w (- max-x min-x) :h (- max-y min-y))))
+  (multiple-value-bind (min-x min-y width height) (layout-node-bounding-box node)
+    (list :x min-x :y min-y :w width :h height)))
 
 (defun subtree-contains-p (node pane)
   "True when PANE is a leaf of NODE's subtree."

@@ -8,7 +8,7 @@
 ;;; ── Layout persistence: internal helpers ─────────────────────────────────────
 
 (test split-bounding-box-table
-  "%split-bounding-box derives correct bounding box for both :h and :v splits."
+  "layout-node-bounding-box derives correct bounding box for both :h and :v splits."
   (dolist (row '((:h  5  3  40 12   5  3  40 12 ":h split")
                  (:v  0  0  80 21   0  0  80 21 ":v split")))
     (destructuring-bind (orient x y w h exp-x exp-y exp-w exp-h desc) row
@@ -17,14 +17,14 @@
              (tree (make-layout-split orient l0 l1)))
         (cl-tmux/model::layout-assign tree x y w h)
         (multiple-value-bind (min-x min-y width height)
-            (cl-tmux/model::%split-bounding-box tree)
+            (layout-node-bounding-box tree)
           (is (= exp-x min-x)  "~A: bounding-box x" desc)
           (is (= exp-y min-y)  "~A: bounding-box y" desc)
           (is (= exp-w width)  "~A: bounding-box width" desc)
           (is (= exp-h height) "~A: bounding-box height" desc))))))
 
 (test split-bounding-box-aggregates-nested-subtree-not-top-level-assign
-  "%split-bounding-box on an inner split must aggregate the min/max of ITS OWN
+  "layout-node-bounding-box on an inner split must aggregate the min/max of ITS OWN
    leaves, not merely echo back the outer layout-assign() rectangle passed at
    the root. Tree: (outer :h (l0) (inner :v (l1) (l2))), assigned at 0,0,81,21.
    l0 occupies the left 40 cols; inner (l1 over l2) occupies the right 40 cols
@@ -37,7 +37,7 @@
          (outer (make-layout-split :h l0 inner)))
     (cl-tmux/model::layout-assign outer 0 0 81 21)
     ;; Sanity: outer's own bounding box does equal the top-level assign rectangle.
-    (multiple-value-bind (ox oy ow oh) (cl-tmux/model::%split-bounding-box outer)
+    (multiple-value-bind (ox oy ow oh) (layout-node-bounding-box outer)
       (is (= 0  ox) "outer bounding-box x matches root assign")
       (is (= 0  oy) "outer bounding-box y matches root assign")
       (is (= 81 ow) "outer bounding-box width matches root assign")
@@ -46,7 +46,7 @@
     ;; leaves (l1, l2), which occupy only the right half of the outer rectangle —
     ;; a bug in min/max aggregation across children would not shrink this to
     ;; match l1/l2's actual x/width and would instead leak the outer values.
-    (multiple-value-bind (ix iy iw ih) (cl-tmux/model::%split-bounding-box inner)
+    (multiple-value-bind (ix iy iw ih) (layout-node-bounding-box inner)
       (is (= 41 ix) "inner bounding-box x is l1/l2's own x (41), not outer's (0)")
       (is (= 0  iy) "inner bounding-box y")
       (is (= 40 iw) "inner bounding-box width is l1/l2's own span (40), not outer's (81)")

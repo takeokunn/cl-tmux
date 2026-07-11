@@ -113,18 +113,19 @@
        (= (aref buffer 3) +byte-csi-semi+)))
 
 (defun %escape-digit-leading-csi-accumulating-p (buffer length)
-  (and (>= length 4)
-       (= (aref buffer 1) +byte-csi-bracket+)
-       (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)
-       (cl-tmux/terminal/parser:csi-final-byte-before-p
-        (aref buffer (1- length)))))
+  (%escape-digit-leading-csi-p buffer length #'cl-tmux/terminal/parser:csi-final-byte-before-p))
 
 (defun %escape-digit-leading-csi-complete-p (buffer length)
+  (%escape-digit-leading-csi-p buffer length #'cl-tmux/terminal/parser:csi-final-byte-p))
+
+(defun %escape-digit-leading-csi-p (buffer length final-byte-predicate)
+  "Shared shape for a digit-leading CSI sequence (ESC [ <digit> ...): true when
+   the final byte satisfies FINAL-BYTE-PREDICATE.  ACCUMULATING-P/COMPLETE-P
+   pass the pending vs. terminal final-byte check, respectively."
   (and (>= length 4)
        (= (aref buffer 1) +byte-csi-bracket+)
        (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)
-       (cl-tmux/terminal/parser:csi-final-byte-p
-        (aref buffer (1- length)))))
+       (funcall final-byte-predicate (aref buffer (1- length)))))
 
 (defun %escape-4byte-accumulating-p (buffer length)
   (and (= length 4)
