@@ -146,14 +146,21 @@
               (screen-copy-cursor screen) (cons 0 0)))
     (setf (screen-dirty-p screen) t)))
 
+(defun %nearest-prompt-mark (screen here direction)
+  "Nearest OSC 133 prompt mark (from SCREEN-PROMPT-MARKS) relative to HERE in
+   DIRECTION (:before or :after the copy cursor), or NIL when none exists."
+  (let ((better-p (ecase direction
+                     (:before (lambda (m best) (and (< m here) (or (null best) (> m best)))))
+                     (:after  (lambda (m best) (and (> m here) (or (null best) (< m best))))))))
+    (reduce (lambda (best m) (if (funcall better-p m best) m best))
+            (screen-prompt-marks screen) :initial-value nil)))
+
 (defun copy-mode-previous-prompt (screen)
   "send-keys -X previous-prompt: jump to the nearest OSC 133 prompt mark above
    the copy cursor (shell-integration prompt jumping)."
   (when (screen-copy-mode-p screen)
     (let* ((here (%copy-mode-cursor-absolute screen))
-           (mark (reduce (lambda (best m)
-                           (if (and (< m here) (or (null best) (> m best))) m best))
-                         (screen-prompt-marks screen) :initial-value nil)))
+           (mark (%nearest-prompt-mark screen here :before)))
       (when mark (%copy-mode-jump-to-absolute screen mark)))))
 
 (defun copy-mode-next-prompt (screen)
@@ -161,9 +168,7 @@
    the copy cursor."
   (when (screen-copy-mode-p screen)
     (let* ((here (%copy-mode-cursor-absolute screen))
-           (mark (reduce (lambda (best m)
-                           (if (and (> m here) (or (null best) (< m best))) m best))
-                         (screen-prompt-marks screen) :initial-value nil)))
+           (mark (%nearest-prompt-mark screen here :after)))
       (when mark (%copy-mode-jump-to-absolute screen mark)))))
 
 (defun copy-mode-toggle-position (screen)
