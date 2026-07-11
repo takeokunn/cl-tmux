@@ -46,9 +46,10 @@
   (and (plusp (length str))
        (not (string= str "0"))))
 
-(defun %top-level-comma (content start)
-  "Index of the next comma in CONTENT at/after START that is NOT inside a nested
-   #{...}, or NIL.  Commas inside a nested format belong to it, not the splitter."
+(defun %top-level-char (content start target)
+  "Index of the next TARGET character in CONTENT at/after START that is NOT
+   inside a nested #{...}, or NIL.  A TARGET occurrence inside a nested format
+   belongs to it, not the caller's splitter."
   (let ((depth 0) (i start) (n (length content)))
     (loop while (< i n)
           do (let ((c (char content i)))
@@ -56,24 +57,20 @@
                  ((and (char= c #\#) (< (1+ i) n) (char= (char content (1+ i)) #\{))
                   (incf depth) (incf i 2))
                  ((and (char= c #\}) (plusp depth)) (decf depth) (incf i))
-                 ((and (char= c #\,) (zerop depth)) (return i))
+                 ((and (char= c target) (zerop depth)) (return i))
                  (t (incf i))))
           finally (return nil))))
+
+(defun %top-level-comma (content start)
+  "Index of the next comma in CONTENT at/after START that is NOT inside a nested
+   #{...}, or NIL.  Commas inside a nested format belong to it, not the splitter."
+  (%top-level-char content start #\,))
 
 (defun %top-level-pipe (content start)
   "Index of the next '|' in CONTENT at/after START that is NOT inside a nested
    #{...}, or NIL.  Pipes inside a nested format (e.g. a nested #{e|..}) belong
    to it, not the field splitter."
-  (let ((depth 0) (i start) (n (length content)))
-    (loop while (< i n)
-          do (let ((c (char content i)))
-               (cond
-                 ((and (char= c #\#) (< (1+ i) n) (char= (char content (1+ i)) #\{))
-                  (incf depth) (incf i 2))
-                 ((and (char= c #\}) (plusp depth)) (decf depth) (incf i))
-                 ((and (char= c #\|) (zerop depth)) (return i))
-                 (t (incf i))))
-          finally (return nil))))
+  (%top-level-char content start #\|))
 
 (defun %split-two (rest)
   "Split REST on the first top-level comma into (values first second).
